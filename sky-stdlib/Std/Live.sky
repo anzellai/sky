@@ -39,11 +39,13 @@ module Std.Live exposing
     , withAnalytics
     , withAnalyticsIdentify
     , withStatus
+    , withReactive
     )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Std.Html exposing (Html)
+import Std.Persist exposing (LiveBinding)
 
 -- | The built Sky.Live app configuration. Opaque — produced by `config`,
 -- refined by the `withX` builders, consumed by `app`. Phantom `model` /
@@ -210,3 +212,17 @@ withStatus : { reconnecting : String
 } -> AppConfig model msg -> AppConfig model msg
 withStatus =
     Ffi.kernel "Live_withStatus"
+
+
+-- | Register `Std.Persist` reactive bindings (built with `Std.Persist.liveInto`)
+-- — `withReactive (\model -> [ … ])`. Each binding keeps a Model `List a` live
+-- from a collection: whenever a same-tenant write changes the query's result
+-- set, the framework re-runs the query and folds the fresh list into the Model,
+-- then the normal diff repaints — no app `Msg`, no `Sub`. Live updates are
+-- scoped to the session's verified tenant (the write-time tag — a tenant-A
+-- write never reaches a tenant-B session). Embedded (`connectKeyValue`)
+-- backends get precise commit-path updates; the relational arm fills once
+-- (LISTEN/NOTIFY is Phase 4c).
+withReactive : (model -> List (LiveBinding model)) -> AppConfig model msg -> AppConfig model msg
+withReactive =
+    Ffi.kernel "Live_withReactive"

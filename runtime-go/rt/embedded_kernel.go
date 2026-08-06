@@ -409,6 +409,17 @@ func Embedded_put(storeArg, schemaArg, rowArg any) any {
 		if err != nil {
 			return Err[any, any](ErrInvalidInput("Embedded.put: " + err.Error()))
 		}
+		// Phase-4b write-time tenant tag (§3.4): on an AUTOCOMMIT write the *EmbeddedBackend
+		// stamps CommitReq.Tenant from the VERIFIED session tenant of the goroutine running the
+		// write (currentSessionTenant() — "" when unstamped: raw Http.Server handler, background,
+		// CLI — fail-closed). Inside a `transaction` body the handle is the tx surface and the tag
+		// was set on the Txn by Embedded_transaction, so route through the plain TxHandle.
+		if b, ok := embeddedBackend(storeArg); ok {
+			if err := b.PutTenant(cs, pk, row, nil, currentSessionTenant()); err != nil {
+				return Err[any, any](embeddedWriteErr("Embedded.put", err))
+			}
+			return Ok[any, any](nil)
+		}
 		if err := h.Put(cs, pk, row, nil); err != nil {
 			return Err[any, any](embeddedWriteErr("Embedded.put", err))
 		}
@@ -428,6 +439,14 @@ func Embedded_insert(storeArg, schemaArg, rowArg any) any {
 		if err != nil {
 			return Err[any, any](ErrInvalidInput("Embedded.insert: bad schema: " + err.Error()))
 		}
+		// Phase-4b write-time tenant tag (§3.4) — see Embedded_put.
+		if b, ok := embeddedBackend(storeArg); ok {
+			filled, err := b.InsertTenant(cs, []byte(AsString(rowArg)), nil, currentSessionTenant())
+			if err != nil {
+				return Err[any, any](embeddedWriteErr("Embedded.insert", err))
+			}
+			return Ok[any, any](string(filled))
+		}
 		filled, err := h.Insert(cs, []byte(AsString(rowArg)), nil)
 		if err != nil {
 			return Err[any, any](embeddedWriteErr("Embedded.insert", err))
@@ -446,6 +465,13 @@ func Embedded_delete(storeArg, schemaArg, keyArg any) any {
 		cs, err := parseEmbeddedSchema(schemaArg)
 		if err != nil {
 			return Err[any, any](ErrInvalidInput("Embedded.delete: bad schema: " + err.Error()))
+		}
+		// Phase-4b write-time tenant tag (§3.4) — see Embedded_put.
+		if b, ok := embeddedBackend(storeArg); ok {
+			if err := b.DeleteTenant(cs, AsString(keyArg), currentSessionTenant()); err != nil {
+				return Err[any, any](embeddedWriteErr("Embedded.delete", err))
+			}
+			return Ok[any, any](nil)
 		}
 		if err := h.Delete(cs, AsString(keyArg)); err != nil {
 			return Err[any, any](embeddedWriteErr("Embedded.delete", err))
@@ -522,7 +548,10 @@ func Embedded_transaction(storeArg, bodyArg any) any {
 		}
 		var captured SkyResult[any, any]
 		ran := false
-		txErr := b.Transaction(func(tx bluedb.TxHandle) error {
+		// Phase-4b write-time tenant tag (§3.4): stamp the VERIFIED session tenant on the Txn so
+		// every commit the body performs carries it — captured HERE (on the session goroutine),
+		// never re-derived inside the engine. currentSessionTenant() is "" for an unstamped writer.
+		txErr := b.TransactionTenant(currentSessionTenant(), func(tx bluedb.TxHandle) error {
 			txID := embeddedRegister(tx)
 			defer embeddedUnregister(txID)
 			task := SkyCall(bodyArg, int(txID))

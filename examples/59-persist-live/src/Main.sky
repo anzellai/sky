@@ -1,0 +1,129 @@
+module Main exposing (main)
+
+-- BlueDB Phase-4b — Sky.Live reactive persistence.
+--
+-- A `Std.Persist` embedded collection (`todos`) drives a live list in the
+-- Model via `Std.Live.withReactive` + `Std.Persist.liveInto`: adding a todo
+-- writes to BlueDB, and the framework re-runs the watched query on the
+-- commit-path change feed and folds the fresh list into the Model — no app
+-- `Msg`, no `Sub`, no manual re-query. Live updates are scoped to the session's
+-- verified tenant (the write-time tag). Embedded backends get precise
+-- commit-path updates; see docs/bluedb/phase4-reactivity-design.md.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task exposing (Task)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Live as Live
+import Std.Persist as P
+import Std.Codec as Codec exposing (Codec)
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.Sub as Sub exposing (Sub)
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Font as Font
+import Std.Html exposing (Html)
+
+type alias Todo =
+    { id : String
+    , title : String
+    , done : Bool
+    }
+
+type Page
+    = Home
+
+type alias Model =
+    { todos : List Todo }
+
+type Msg
+    = AddTodo
+    | Saved (Result Error ())
+
+
+todoCodec : Codec Todo
+todoCodec =
+    Codec.auto { id = "", title = "", done = False }
+
+
+todos : P.Collection Todo
+todos =
+    P.collection "todos" todoCodec |> P.key "id"
+
+
+-- Top-level memoised embedded handle (the "handle CAF" contract) — one engine
+-- shared by every write + the reactive query.
+store : P.Conn P.KeyValue
+store =
+    P.connectKeyValueSync "data/persist-live.bluedb"
+
+
+init : req -> ( Model, Cmd Msg )
+init _ =
+    ( { todos = [] }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        AddTodo ->
+            let
+                n = String.fromInt (List.length model.todos + 1)
+                fresh = { id = n, title = "Todo " ++ n, done = False }
+            in
+                ( model
+                , Cmd.perform
+                      (P.insert store todos fresh |> Task.map (\_ -> ()))
+                      Saved
+                )
+
+        Saved _ ->
+            -- No manual list refresh: `withReactive` keeps `model.todos` live.
+            ( model, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 12, Ui.padding 24 ]
+            ([ Ui.el
+                  [ Font.bold, Font.size 22 ]
+                  (Ui.text "Live todos (BlueDB reactive)")
+            , Ui.button
+                  []
+                  { onPress = Just AddTodo, label = Ui.text "Add todo" }
+            ]
+                ++ List.map todoRow model.todos))
+
+
+todoRow : Todo -> Element Msg
+todoRow t =
+    Ui.el [] (Ui.text (t.id ++ " — " ++ t.title))
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main =
+    Live.app
+        (Live.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes = [ Live.route "/" Home ]
+            , notFound = Home
+            }
+            |> Live.withReactive
+                   (\_ ->
+                       [ P.liveInto
+                             store
+                             todos
+                             (P.query todos)
+                             (\rows model -> { model | todos = rows })
+                       ]))

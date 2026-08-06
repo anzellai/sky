@@ -2435,6 +2435,11 @@ func (s *liveSession) markDone() {
 				reg.cancel()
 			}
 		}
+
+		// Phase-4b: stop every BlueDB reactive loop bound to this session (closes its precise
+		// subscription + releases its watermark token). Idempotent, via a hook so live.go never
+		// imports bluedb (gated out of non-Persist projects).
+		reactiveTeardownHook(s)
 	})
 }
 
@@ -2901,6 +2906,13 @@ type liveApp struct {
 	// Postgres LISTEN/NOTIFY — see docs/skylive/pubsub-design.md
 	// §11.2.5) implement the same Broker interface.
 	topics Broker
+
+	// reactiveBindings — the optional `Live.withReactive` accessor, a Sky
+	// `model -> List (Std.Persist.LiveBinding model)`. When set, each session
+	// starts a per-binding reactive loop (bluedb_reactive.go) that keeps a
+	// Model list live from a Std.Persist collection's commit-path change feed.
+	// nil ⇒ no reactive bindings (the common case pays nothing).
+	reactiveBindings any
 
 	// globalSeq — app-wide monotonic counter (Cycle 3 P47 / pub/sub
 	// prereq 2; see docs/skylive/pubsub-design.md §3.2). Bumped ONCE
@@ -3552,6 +3564,7 @@ func liveAppRun(cfg any) any {
 		onNavigate:         Field(cfg, "OnNavigate"),
 		analyticsPageViews: analyticsPageViewsFromCfg(cfg),
 		analyticsIdentify:  analyticsIdentifyFromCfg(cfg),
+		reactiveBindings:   Field(cfg, "ReactiveBindings"),
 		locker:             newSessionLocker(),
 		msgTags:            make(map[string]int),
 		bannerCfg:          resolveBannerStrings(loadLiveBannerConfig(), cfg),
@@ -5433,6 +5446,11 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	close(sess.cancelSub)
 	sess.cancelSub = make(chan struct{})
 	sess.cancelSubMu.Unlock()
+
+	// Phase-4b: start this session's BlueDB reactive loops once (idempotent). Runs here because
+	// setupSubscriptions is invoked post-init on every dispatch, so the session's Model exists.
+	// Via a hook so live.go never imports bluedb (gated out of non-Persist projects).
+	reactiveEnsureStartedHook(app, sess)
 
 	if app.subscriptions == nil {
 		// No subscriptions at all → tear down anything that was

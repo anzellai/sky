@@ -126,3 +126,9 @@ func Live_withAnalyticsIdentify(f, cfg any) any {
 // Live_withStatus — `status : { reconnecting : String, offline : String }`
 // connection-banner string overrides (invariant 4).
 func Live_withStatus(status, cfg any) any { return liveCfgSet(cfg, "Status", status) }
+
+// Live_withReactive — `reactive : model -> List (Std.Persist.LiveBinding model)`. Registers
+// Std.Persist reactive bindings (built with `Std.Persist.liveInto`): each keeps a Model list live
+// from a collection's commit-path change feed, tenant-scoped to the session (Phase-4b). The closure
+// is stored verbatim (invariant 2); liveAppRun reads it via Field(cfg,"ReactiveBindings").
+func Live_withReactive(fn, cfg any) any { return liveCfgSet(cfg, "ReactiveBindings", fn) }

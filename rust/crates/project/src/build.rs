@@ -1238,10 +1238,15 @@ fn materialise_rt(
             materialise_rt(&path, &dst.join(&name_s), console_needed, persist_needed)?;
         } else if name_s.ends_with("_test.go") {
             continue;
-        } else if name_s == "embedded_kernel.go" && !persist_needed {
-            // The ONLY `rt` file importing `sky-app/bluedb`. Skip it (and the
-            // `bluedb/` subtree) when the program never calls an `rt.Embedded_*`
-            // kernel, so a non-Persist project doesn't compile the Pebble engine.
+        } else if (name_s == "embedded_kernel.go" || name_s == "bluedb_reactive.go")
+            && !persist_needed
+        {
+            // The `rt` files importing `sky-app/bluedb` (the embedded-kernel bridge +
+            // the Phase-4b reactive pump). Skip them (and the `bluedb/` subtree) when
+            // the program never calls an `rt.Embedded_*` kernel, so a non-Persist
+            // project doesn't compile the Pebble engine. live.go stays bluedb-free by
+            // calling the reactive integration through hooks (live_reactive_hooks.go),
+            // which default to no-ops when bluedb_reactive.go is absent.
             continue;
         } else if name_s.ends_with(".go") {
             std::fs::copy(&path, dst.join(&name_s))?;

@@ -33,6 +33,7 @@ module Std.Persist exposing
     , key
     , index
     , connectKeyValue
+    , connectKeyValueSync
     , connectRelational
     , get
     , put
@@ -42,6 +43,8 @@ module Std.Persist exposing
     , count
     , selectRaw
     , transaction
+    , LiveBinding
+    , liveInto
     , Query
     , Cond
     , query
@@ -164,6 +167,25 @@ indexesOf (Collection c) =
 connectKeyValue : String -> Task Error (Conn KeyValue)
 connectKeyValue path =
     Task.map KvConn (openEmbedded path)
+
+
+-- | Open (or reuse) the embedded engine at `path` and return a ready-to-use
+-- key-value connection, FORCING the open at binding-init time — the memoised
+-- "handle" CAF pattern. Use this for the top-level `store` a Sky.Live app +
+-- `Live.withReactive` needs (a `liveInto` binding needs a concrete `Conn` when
+-- the app config is built, before `init`). On open failure it yields an INERT
+-- handle whose verbs return `Err`, so `store = connectKeyValueSync "…"` always
+-- type-checks as a `Conn KeyValue`. Prefer the `connectKeyValue` Task form
+-- inside a Task pipeline.
+connectKeyValueSync : String -> Conn KeyValue
+connectKeyValueSync path =
+    case Task.run (connectKeyValue path) of
+
+        Ok conn ->
+            conn
+
+        Err _ ->
+            KvConn (-1)
 
 
 -- | Open a relational connection (SQLite / Postgres) from the project's `[database]`
@@ -304,6 +326,57 @@ transaction conn fn =
 
         SqlConn db ->
             sqlSerializableTransaction db (\tx -> fn (SqlConn tx))
+
+-- ── Reactive (Phase 4b) ───────────────────────────────────────────────────────
+-- | A registered reactive binding: keeps a Model `List a` live from a
+-- collection's commit-path change feed. Build one with `liveInto` and register
+-- it on a Sky.Live app with `Std.Live.withReactive`. The element type `a` is
+-- hidden inside `run`, so a heterogeneous `List (LiveBinding model)` (bindings
+-- over different collections) type-checks.
+type alias LiveBinding model =
+    { store : Int
+    , coll : String
+    , schema : String
+    , plan : String
+    , run : () -> Task Error (model -> model)
+    }
+
+
+-- | Build a reactive binding: run `qry` on `conn`/`coll` for its baseline, and
+-- whenever a same-tenant write changes the query's result set, re-run it and
+-- install the fresh `List a` into the Model via `setter`. Register the result
+-- with `Std.Live.withReactive`. Embedded (`connectKeyValue`) backends get
+-- precise commit-path live updates scoped to the session's verified tenant; the
+-- relational arm fills once (Postgres LISTEN/NOTIFY is Phase 4c).
+--
+--     Live.config { … }
+--         |> Live.withReactive
+--                (\_ ->
+--                    [ P.liveInto store todos (P.query todos)
+--                          (\rows model -> { model | todos = rows })
+--                    ]
+--                )
+liveInto : Conn cap -> Collection a -> Query a -> (List a -> model -> model) -> LiveBinding model
+liveInto conn coll qry setter =
+    { store = connStoreId conn
+    , coll = collNameOf coll
+    , schema = schemaJson coll
+    , plan = planJson qry
+    , run = \_ -> Task.map setter (toList conn qry)
+    }
+
+
+-- The embedded store handle id a reactive loop watches. A relational connection
+-- yields -1 — the loop fills once but opens no commit-path subscription (4c).
+connStoreId : Conn cap -> Int
+connStoreId conn =
+    case conn of
+
+        KvConn store ->
+            store
+
+        SqlConn _ ->
+            -1
 
 -- ── Query builder ─────────────────────────────────────────────────────────────
 -- | A composable WHERE condition — build a leaf (`eq` / `gt` / `like` / …) and

@@ -355,8 +355,18 @@ func (b *EmbeddedBackend) scanFilter(r Reader, cs *CollSchema, cond *CondNode) [
 // ── Transaction (§2.6 read-set contract lives in embeddedTx.Query) ───────────────────────────
 
 func (b *EmbeddedBackend) Transaction(fn func(tx TxHandle) error) error {
+	return b.TransactionTenant("", fn)
+}
+
+// TransactionTenant is Transaction with the transient Phase-4 reactive tenant tag (§3.4) stamped
+// on the Txn, so every commit the body performs carries the writer's VERIFIED session tenant. The
+// rt Embedded_transaction kernel supplies currentSessionTenant(); "" ⇒ a no-verified-tenant txn
+// (routes ONLY to the "" bucket, never the union of tenants). The tag is set on the Txn before the
+// body runs and rides each commit — it is NEVER durably written (not in the changelog payload).
+func (b *EmbeddedBackend) TransactionTenant(tenant string, fn func(tx TxHandle) error) error {
 	return b.eng.Transact(func(tx *Txn) error {
 		b.installTxn(tx)
+		tx.SetTenant(tenant)
 		return fn(&embeddedTx{b: b, tx: tx})
 	})
 }
