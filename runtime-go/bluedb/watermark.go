@@ -46,6 +46,22 @@ func (w *watermarkRegistry) Register() (ReaderToken, HLC, error) {
 	return tok, readTs, nil
 }
 
+// RegisterAt records a token at an EXPLICIT readTs (the begin-snapshot path, §3.4). Unlike
+// Register (which picks readTs = current high-water), the caller pins readTs = durableHi and
+// hands it here so the snapshot and the token share exactly that timestamp (R-2.8). Still
+// enforces readTs >= T (the Fix-3 clamp keeps T ≤ durableHi = readTs, so it never trips).
+func (w *watermarkRegistry) RegisterAt(readTs HLC) (ReaderToken, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if readTs.Less(w.threshold) {
+		return 0, ErrSnapshotTooOld
+	}
+	w.nextID++
+	tok := w.nextID
+	w.live[tok] = readTs
+	return tok, nil
+}
+
 func (w *watermarkRegistry) Advance(tok ReaderToken, readTs HLC) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

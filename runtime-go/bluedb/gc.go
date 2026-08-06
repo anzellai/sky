@@ -39,6 +39,14 @@ func (e *pebbleEngine) GC() (GCStats, error) {
 	// high-water when the live set is empty (the load-bearing empty-set rule).
 	T, advanced := e.reg.advanceThreshold()
 
+	// Marshal the ring trim onto the committer goroutine (Fix-3/R-2.9): GC NEVER mutates the
+	// recent-changes ring directly (that would race the committer's append). It enqueues the
+	// new T; the committer drains it (drainTrimRequests) at the top of its next drain and
+	// applies recent.trim(T) on its own goroutine → the ring stays single-writer.
+	if advanced {
+		e.enqueueTrim(T)
+	}
+
 	// (2) Persist T durably BEFORE issuing any physical delete. If we crash between
 	// this Sync and the (NoSync) deletes, T is durable-high and the versions are still
 	// present → a later pass re-collects them. The reverse order could leave a durable

@@ -42,6 +42,10 @@ type config struct {
 	fs           vfs.FS          // nil ⇒ disk default
 	wallClock    wallClockMillis // nil ⇒ system clock
 	memTableSize uint64          // 0 ⇒ Pebble default; a small value forces early SSTable spills
+	// manualDrain (test seam): when true the auto committer goroutine is NOT started, so a
+	// test can enqueue several jobs and drain them into ONE deterministic batch (exercises the
+	// intra-batch `pending` validation path). Uses submitForTest/drainOnceForTest (test file).
+	manualDrain bool
 }
 
 // commitJob is one enqueued Commit awaiting the committer.
@@ -60,6 +64,14 @@ type pebbleEngine struct {
 	wg sync.WaitGroup
 
 	sealed atomic.Bool
+
+	// recent is the in-RAM recent-changes ring (§4.2), mutated ONLY by the committer
+	// goroutine (append/after/trim). trimReqs marshals GC's trim(T) onto the committer so
+	// the ring stays single-writer — GC enqueues, the committer drains at the top of each
+	// drain (Fix-3/R-2.9). Coalescing: a dropped request is re-sent (higher T) on the next
+	// GC pass; trim is monotone so over-retaining briefly is safe.
+	recent   *recentRing
+	trimReqs chan HLC
 
 	// durableHi is the highest commitTs whose Apply(Sync) has RETURNED (i.e. is
 	// durable on the WAL), advanced by the committer AFTER each successful Apply —
@@ -148,9 +160,82 @@ func openWith(cfg config) (*pebbleEngine, error) {
 	// Wire the durable-high accessor so GC's advanceThreshold can clamp T ≤ durableHi.
 	e.reg.durableHi = e.durableHi
 
-	e.wg.Add(1)
-	go e.committer()
+	// Recent-changes ring + trim channel (§4.2). Cold-start rebuild: seed the ring from the
+	// durable changelog tail above the GC floor so a txn that begins right after Open has its
+	// validation window served in-RAM (the retention invariant: the ring covers everything
+	// above T). Floored at persistedThreshold — the same watermark version-GC uses.
+	e.recent = newRecentRing()
+	e.trimReqs = make(chan HLC, 8)
+	if tail, terr := (&changelog{db: db}).Tail(persistedThreshold); terr == nil {
+		for _, entry := range tail {
+			if chg, derr := DecodeChangelogPayload(entry.Payload); derr == nil && len(chg) > 0 {
+				e.recent.append(entry.CommitTs, chg)
+			}
+		}
+	}
+	e.recent.floor = persistedThreshold
+
+	if !cfg.manualDrain {
+		e.wg.Add(1)
+		go e.committer()
+	}
 	return e, nil
+}
+
+// beginSnapshot backs Begin() (§3.4, R-2.8). In ONE critical section under durMu it reads
+// readTs = durableHi (the durably-applied high-water, advanced post-Apply), pins the Pebble
+// snapshot AFTER that read (so snap ⊇ every commit ≤ readTs), and registers the token at
+// readTs (flooring GC's T at readTs → the retention invariant). Holding durMu across the
+// RegisterAt serializes against GC's advanceThreshold (which reads durableHi under durMu
+// then takes w.mu — never both at once), so GC cannot advance T past readTs between the pin
+// and the registration. durMu is never nested under w.mu anywhere, so there is no lock cycle.
+func (e *pebbleEngine) beginSnapshot() (*pebbleReader, error) {
+	if e.isClosed() {
+		return nil, ErrClosed
+	}
+	e.durMu.Lock()
+	readTs := e.durableHiVal
+	snap := e.db.NewSnapshot() // ordered AFTER the durableHi read → snap ⊇ every commit ≤ readTs
+	tok, err := e.reg.RegisterAt(readTs)
+	e.durMu.Unlock()
+	if err != nil {
+		_ = snap.Close()
+		return nil, err
+	}
+	return &pebbleReader{snap: snap, readTs: readTs, tok: tok, reg: e.reg}, nil
+}
+
+// enqueueTrim is GC's hand-off of a new threshold T to the committer (Fix-3). Non-blocking:
+// a full channel drops the request and a later GC pass re-sends a higher T (trim is monotone
+// → dropping only over-retains briefly). GC NEVER touches the ring directly.
+func (e *pebbleEngine) enqueueTrim(T HLC) {
+	if e.trimReqs == nil {
+		return
+	}
+	select {
+	case e.trimReqs <- T:
+	default:
+	}
+}
+
+// drainTrimRequests applies any GC-enqueued trim(T) on the COMMITTER goroutine, at the top of
+// each drain, before the ring is otherwise touched (Fix-3). Coalesces to the highest T seen.
+func (e *pebbleEngine) drainTrimRequests() {
+	var maxT HLC
+	got := false
+	for {
+		select {
+		case t := <-e.trimReqs:
+			if !got || maxT.Less(t) {
+				maxT, got = t, true
+			}
+		default:
+			if got {
+				e.recent.trim(maxT)
+			}
+			return
+		}
+	}
 }
 
 // readMetaHLC reads an HLC-valued metadata key; returns {0,0} if absent.

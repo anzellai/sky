@@ -23,6 +23,11 @@ var (
 	ErrMissingCommitMetadata = errors.New("bluedb: logical-commit batch missing hlc_hi metadata")
 	// ErrClosed: the engine has been closed.
 	ErrClosed = errors.New("bluedb: engine closed")
+	// ErrConflict: a transaction's read-set failed commit-time validation (a concurrent
+	// commit touched a read point key or fell into a scanned index range). Retried by
+	// Transact; returned typed after maxTxnAttempts. errors.Is-friendly so Phase 3 can
+	// branch on it (§5.2).
+	ErrConflict = errors.New("bluedb: transaction conflict")
 )
 
 // Engine is the L1 substrate. One Engine == one open file == one committer (§3.1).
@@ -60,6 +65,20 @@ type Engine interface {
 
 	// Close drains the committer and closes Pebble.
 	Close() error
+
+	// Begin opens a single-attempt transaction pinned at a fresh begin-snapshot (§3.4):
+	// readTs = durableHi (the durably-applied high-water), the Pebble snapshot pinned
+	// atomically with that choice, and the readTs registered in the watermark — the
+	// retention invariant AND the window-boundary soundness (R-2.8). The body reads through
+	// the Txn (recording the read-set) and buffers writes; txn.Commit() funnels one
+	// CommitReq to the committer (§1.1).
+	Begin() (*Txn, error)
+
+	// Transact runs the optimistic loop: Begin → body → Commit; on ErrConflict it re-runs
+	// body against a FRESH snapshot (bounded retry + backoff), returning nil on durable
+	// commit or a typed ErrConflict after the bound. The body MUST be pure / re-runnable
+	// (§5.3) — the API only exposes effect-free Txn ops.
+	Transact(body func(tx *Txn) error) error
 }
 
 // Reader is a lock-free, snapshot-consistent view as of a fixed readTs.
@@ -115,10 +134,15 @@ type CommitResult struct {
 	Err      error // nil ⇒ durable
 }
 
-// ReadSet is the phase-2 validation input (opaque to L1 in phase 1). Declared so
-// CommitReq's shape is frozen; its fields are L2's in phase 2.
+// ReadSet is the phase-2 validation input (opaque to L1 in phase 1). Declared here so
+// CommitReq's shape stays frozen; its fields are L2's (§2). The committer runs validate()
+// over these against the (readTs, commitTs] window. Supporting types (pointRead, indexRange)
+// live in readset.go — same package (L2-embedded is more Go in bluedb).
 type ReadSet struct {
-	// TODO(phase1b): point keys + scanned index ranges for SSI validation (L2).
+	points       map[string]pointRead // point-key dependencies (§2.1)
+	ranges       []indexRange         // scanned index intervals (§2.2 — the SSI crux)
+	collWitness  map[CollID]bool      // conservative collection-level fallback witness (§2.2)
+	indexWitness map[IndexID]bool     // conservative index-level fallback witness (§2.2)
 }
 
 // Changelog exposes the commitTs-ordered post-commit stream (§4). Phase 1a

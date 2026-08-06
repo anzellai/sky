@@ -3,9 +3,14 @@ package bluedb
 import (
 	"fmt"
 	"os"
+	"sync/atomic"
 
 	"github.com/cockroachdb/pebble/v2"
 )
+
+// changelogTailCalls counts the ring-spill fallback (a Pebble scan). A test seam: T16 asserts
+// a fresh-readTs txn is served entirely by the in-RAM ring (zero Tail scans).
+var changelogTailCalls atomic.Int64
 
 // committer is the single writer goroutine (§3.2). It group-commits: grabs the
 // first queued job, drains up to maxBatch more non-blocking, and processes the
@@ -34,18 +39,37 @@ func (e *pebbleEngine) committer() {
 	}
 }
 
-// process assigns a DISTINCT commitTs PER JOB (in FIFO drain order — strictly
-// increasing, no collision), encodes every write's data version + each job's opaque
-// changelog entry + the commit metadata into ONE Pebble Batch, enforces the
-// logical-commit invariant, Apply(Sync)s once, and acks only AFTER Apply returns (C2
-// durable-on-ack). ONE batch + ONE Apply(Sync) means the fsync is still amortized
-// over the whole drained group (throughput preserved); only timestamp assignment is
-// per-job. A per-batch commitTs would collide every job's data + changelog keys at
-// one ts → all but the last silently overwritten (Fix-2). Pebble's Batch is atomic —
-// a failed Apply applies nothing — so the old hand-rolled torn-batch rollback is gone
-// (C3). Per-job commitTs also aligns forward: Phase-2 SSI needs each transaction to
-// carry its own commitTs.
+// process is the group-commit entry (§4.3). It drains any GC-enqueued ring-trim FIRST (Fix-3,
+// on the committer goroutine — the ring stays single-writer), then PRE-SCANS the batch: if NO
+// job carries a ReadSet, the whole drain window takes the pure Phase-1 blind path with ZERO
+// SSI cost (no decode, no pending, no validation — Fix-6/T24). Otherwise it runs the
+// validate-then-assign transactional path.
 func (e *pebbleEngine) process(batch []*commitJob) {
+	e.drainTrimRequests() // Fix-3: apply GC trim(T) here, before touching the ring
+
+	anyTxn := false
+	for _, j := range batch {
+		if j.req.ReadSet != nil {
+			anyTxn = true
+			break
+		}
+	}
+	if !anyTxn {
+		e.processBlindPhase1(batch)
+		return
+	}
+	e.processTxn(batch)
+}
+
+// processBlindPhase1 is the UNCHANGED Phase-1 blind-commit body (an all-blind drain window):
+// one DISTINCT commitTs per job, all writes + changelog + metadata in ONE batch, one
+// Apply(Sync), seal-on-fault, ack-after-Apply. NO validation, NO pending accumulation — the
+// OLTP firehose is byte-for-byte Phase 1 (Fix-6). The one addition: after a durable Apply,
+// blind commits that carry a KeyChange payload are appended to the recent-changes ring so a
+// CONCURRENT open transaction (readTs below these commits) still validates against them — the
+// ring invariant must hold regardless of who wrote the commit. Empty-payload blind writes
+// (the OLTP firehose / the throughput benchmark) append nothing → truly zero SSI cost.
+func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
 	if e.sealed.Load() {
 		for _, j := range batch {
 			j.done <- CommitResult{Err: ErrSealed}
@@ -53,22 +77,12 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 		return
 	}
 
-	// SEAL on a synchronous durability panic. At the pinned Pebble version a fatal
-	// write-path FS fault surfaces as a panic: quietLogger.Fatalf panics (pebble_engine.go)
-	// and it unwinds SYNCHRONOUSLY through Apply on THIS goroutine (the WAL sync is
-	// synchronous under pebble.Sync + !noSyncWait). Convert it to seal + errored ack
-	// (contained fail-loud) rather than letting it crash the process. A fault that panics
-	// on a Pebble BACKGROUND goroutine (e.g. an async memtable flush) is outside any
-	// recover here — that is Pebble's own unrecoverable-fault contract. Acks happen only
-	// AFTER Apply in the normal path, so on a panic no job has been acked yet and this
-	// recover acks each exactly once — every faulted write gets an ERRORED ack, never a
-	// false nil. A nil ack therefore always means durable.
+	// SEAL on a synchronous durability panic (see the Phase-1 contract). Acks happen only
+	// AFTER Apply, so on a panic no job has been acked and this recover acks each exactly once.
 	acked := false
 	defer func() {
 		if r := recover(); r != nil && !acked {
 			e.sealed.Store(true)
-			// Log to stderr at the seal so the durability fault is observable (it is
-			// otherwise swallowed into per-job error acks).
 			fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
 			err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
 			for _, j := range batch {
@@ -80,47 +94,25 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 	b := e.db.NewBatch()
 	defer b.Close()
 
-	// One DISTINCT commitTs per job, assigned in FIFO drain order so commit-order ==
-	// enqueue-order == strictly-increasing commitTs (Fix-2). jobTs[i] is job i's ts.
 	jobTs := make([]HLC, len(batch))
 	var hasWrites bool
 	var lastCommitTs HLC
 	for i, j := range batch {
 		commitTs := e.hlc.next() // §3.3 — strictly monotonic, floored across restart
 		jobTs[i] = commitTs
-		lastCommitTs = commitTs // FIFO → the last job carries the highest commitTs
-		for _, w := range j.req.Writes {
+		lastCommitTs = commitTs
+		if len(j.req.Writes) > 0 {
 			hasWrites = true
-			k := encodeDataKey(w.UserKey, commitTs)
-			if w.Op == OpDelete {
-				_ = b.Set(k, []byte{markerTombstone}, nil) // versioned delete marker
-			} else {
-				v := make([]byte, 0, 1+len(w.Value))
-				v = append(v, markerPut)
-				v = append(v, w.Value...)
-				_ = b.Set(k, v, nil)
-			}
 		}
-		if len(j.req.ChangelogPayload) > 0 {
-			// Keyed by this job's OWN commitTs → distinct changelog entries, none lost.
-			_ = b.Set(encodeChangelogKey(commitTs), j.req.ChangelogPayload, nil)
-		}
+		e.writeJob(b, j, commitTs)
 	}
 
-	// Commit metadata IN THE SAME batch (§3.4): hlc_hi + changelog_cursor set to the
-	// LAST (highest) job's commitTs. Because Apply is all-or-nothing, metadata can never
-	// diverge from the data it describes.
+	// Commit metadata IN THE SAME batch (§3.4) at the LAST (highest) job's commitTs.
 	hlcBytes := encodeHLC(lastCommitTs)
 	_ = b.Set(encodeMetaKey(metaHLCHi), hlcBytes, nil)
 	_ = b.Set(encodeMetaKey(metaChangelogCursor), hlcBytes, nil)
 
-	// ENFORCED invariant (§3.4), scoped to LOGICAL-COMMIT batches: refuse to Apply a
-	// commit batch that assigns a commitTs but lacks its hlc_hi metadata. Here the
-	// metadata is always present; the check is a defensive, testable gate.
-	hasHLCHi := true // set exactly when metaHLCHi was written above
-	if err := enforceLogicalBatchInvariant(hasWrites, hasHLCHi); err != nil {
-		// A logical batch missing metadata is a compiler-bug-class fault: seal, don't
-		// silently write.
+	if err := enforceLogicalBatchInvariant(hasWrites, true); err != nil {
 		e.sealed.Store(true)
 		acked = true
 		for _, j := range batch {
@@ -130,39 +122,226 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 	}
 
 	err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the whole group
-
-	// Durability fault → SEAL, never silent. A single-writer durable engine cannot know
-	// whether a failed Apply(Sync) partially reached the WAL; continuing could violate
-	// the monotonic commit total order the whole architecture rests on. So an Apply error
-	// (a) is NOT acked (the batch is treated as un-durable) and (b) refuses all further
-	// writes (ErrSealed). Recovery is a reopen (Pebble WAL replay restores the last
-	// durable prefix; the failed batch is not resurrected). Mirrors the retired engine's
-	// seal-on-unrollbackable-error contract (fault_test.go:143).
 	if err != nil {
 		e.sealed.Store(true)
 	} else {
-		// Durable now: advance durableHi to the highest just-applied commitTs, BEFORE the
-		// ack (Fix-3). GC's advanceThreshold clamps its candidate to durableHi so the
-		// persisted GC threshold T can never outrun the durable WAL — closing the crash
-		// window where recovery replays hlc_hi < gc_threshold (reader wedge + trimmed
-		// changelog tail). Only advanced on SUCCESS; a failed Apply leaves durableHi put.
 		e.advanceDurableHi(lastCommitTs)
+		// Ring append for concurrent-open-txn correctness (see doc above). Empty-payload
+		// writes decode to nothing → append nothing.
+		for i, j := range batch {
+			if len(j.req.ChangelogPayload) == 0 {
+				continue
+			}
+			if chg, derr := DecodeChangelogPayload(j.req.ChangelogPayload); derr == nil && len(chg) > 0 {
+				e.recent.append(jobTs[i], chg)
+			}
+		}
 	}
 
 	acked = true
 	for i, j := range batch {
-		// Each job acks with ITS OWN commitTs (Fix-2) — the shared per-batch ts is gone.
 		j.done <- CommitResult{CommitTs: jobTs[i], Err: err} // ACK ONLY AFTER Apply returns
 	}
+}
 
-	// TODO(phase1b): non-blocking changelog fan-out to subscribers AFTER ack, off the
-	// fsync path (ref changefeed.go:52-122 drop+resync). Not needed until L4.
+// appliedJob records a job that passed validation and was written into the batch (to
+// ring-append + ack post-Apply).
+type appliedJob struct {
+	job      *commitJob
+	commitTs HLC
+	changes  []KeyChange
+}
+
+// processTxn is the validate-then-assign path for a drain window containing >= 1 txn (§4.3).
+// Per job: a blind job (ReadSet==nil) commits directly (its payload joins `pending` so later
+// txns in this batch validate against it); a txn job validates its read-set against
+// window = ring.after(readTs) ++ pending — clean → assign commitTs, write, add to pending;
+// conflict → ack ErrConflict INLINE (assign no commitTs) and record in `acked` (Fix-7). Then
+// ONE Apply(Sync); on success append validated changes to the ring + advance durableHi.
+//
+// The four grill fixes are all here: Fix-5 (seal on Apply error), Fix-6 (the all-blind
+// pre-scan is in process(), routing away from this path), Fix-7 (the acked set excludes
+// inline-aborted jobs from the recover/seal loops), and Fix-3 (trim drained in process()).
+func (e *pebbleEngine) processTxn(batch []*commitJob) {
+	if e.sealed.Load() {
+		for _, j := range batch {
+			j.done <- CommitResult{Err: ErrSealed}
+		}
+		return
+	}
+
+	acked := make(map[*commitJob]bool) // Fix-7: jobs already acked inline (aborts + seals)
+	// SEAL on a synchronous durability panic. Validation runs before Apply, purely in RAM,
+	// so it cannot fault; the only panic source is Apply. On a panic no APPLIED job has been
+	// acked yet — the recover acks them ErrSealed, and SKIPS inline-acked jobs (Fix-7), so
+	// every j.done receives exactly one result.
+	defer func() {
+		if r := recover(); r != nil {
+			e.sealed.Store(true)
+			fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
+			err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
+			for _, j := range batch {
+				if acked[j] {
+					continue
+				}
+				j.done <- CommitResult{Err: err}
+			}
+		}
+	}()
+
+	b := e.db.NewBatch()
+	defer b.Close()
+
+	var pending []KeyChange // decoded changes of clean/blind jobs SO FAR this batch
+	var applied []appliedJob
+	var hasWrites bool
+	var maxApplied HLC
+
+	for _, j := range batch {
+		if j.req.ReadSet == nil {
+			// ── BLIND-WRITE FAST PATH within a mixed batch (§5.4). No validation; but a
+			// later txn in THIS batch must validate against it → decode into pending. ──
+			commitTs := e.hlc.next()
+			e.writeJob(b, j, commitTs)
+			if len(j.req.Writes) > 0 {
+				hasWrites = true
+			}
+			chg := decodePayload(j.req.ChangelogPayload)
+			pending = append(pending, chg...)
+			applied = append(applied, appliedJob{job: j, commitTs: commitTs, changes: chg})
+			if maxApplied.Less(commitTs) {
+				maxApplied = commitTs
+			}
+			continue
+		}
+
+		// ── TRANSACTIONAL JOB — validate against (readTs, now] = ring.after(readTs) ++ pending ──
+		base, spilled := e.recent.after(j.req.ReadTs)
+		if spilled {
+			// Fix-8 spill fallback: readTs fell below the ring floor → validate via the durable
+			// changelog (correct, off the in-RAM fast path). (In 2a the ring is uncapped, so
+			// this is only reached if GC trimmed past a lagging readTs — still correct.)
+			if tail, terr := changelogTailChanges(e.db, j.req.ReadTs); terr == nil {
+				base = tail
+			}
+		}
+		window := make([]KeyChange, 0, len(base)+len(pending))
+		window = append(window, base...)
+		window = append(window, pending...)
+
+		if conflict, _ := validate(j.req.ReadSet, window); conflict {
+			j.done <- CommitResult{Err: ErrConflict} // abort THIS job; assign NO commitTs
+			acked[j] = true                          // Fix-7: record the inline ack
+			continue
+		}
+
+		commitTs := e.hlc.next() // validate-then-assign (no burned ts)
+		e.writeJob(b, j, commitTs)
+		if len(j.req.Writes) > 0 {
+			hasWrites = true
+		}
+		chg := decodePayload(j.req.ChangelogPayload)
+		pending = append(pending, chg...)
+		applied = append(applied, appliedJob{job: j, commitTs: commitTs, changes: chg})
+		if maxApplied.Less(commitTs) {
+			maxApplied = commitTs
+		}
+	}
+
+	if len(applied) == 0 {
+		return // every job aborted (already acked inline) — nothing to apply, no metadata
+	}
+
+	// Metadata at the HIGHEST APPLIED commitTs (§4.3). Apply is all-or-nothing so metadata
+	// can never diverge from the data it describes.
+	hlcBytes := encodeHLC(maxApplied)
+	_ = b.Set(encodeMetaKey(metaHLCHi), hlcBytes, nil)
+	_ = b.Set(encodeMetaKey(metaChangelogCursor), hlcBytes, nil)
+
+	if err := enforceLogicalBatchInvariant(hasWrites, true); err != nil {
+		e.sealed.Store(true)
+		for _, a := range applied {
+			a.job.done <- CommitResult{Err: err}
+			acked[a.job] = true
+		}
+		return
+	}
+
+	err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the group
+	if err != nil {
+		e.sealed.Store(true) // Fix-5: seal on the durability fault (Phase-1 fail-loud)
+	} else {
+		e.advanceDurableHi(maxApplied)
+		for _, a := range applied { // ring commit AFTER durability
+			if len(a.changes) > 0 {
+				e.recent.append(a.commitTs, a.changes)
+			}
+		}
+	}
+	for _, a := range applied {
+		a.job.done <- CommitResult{CommitTs: a.commitTs, Err: err} // ack after Apply
+		acked[a.job] = true
+	}
+}
+
+// writeJob encodes one job's data versions + its opaque changelog entry into the batch at
+// commitTs. Shared by the blind and transactional paths (identical Phase-1 encoding).
+func (e *pebbleEngine) writeJob(b *pebble.Batch, j *commitJob, commitTs HLC) {
+	for _, w := range j.req.Writes {
+		k := encodeDataKey(w.UserKey, commitTs)
+		if w.Op == OpDelete {
+			_ = b.Set(k, []byte{markerTombstone}, nil) // versioned delete marker
+		} else {
+			v := make([]byte, 0, 1+len(w.Value))
+			v = append(v, markerPut)
+			v = append(v, w.Value...)
+			_ = b.Set(k, v, nil)
+		}
+	}
+	if len(j.req.ChangelogPayload) > 0 {
+		// Keyed by this job's OWN commitTs → distinct changelog entries, none lost.
+		_ = b.Set(encodeChangelogKey(commitTs), j.req.ChangelogPayload, nil)
+	}
+}
+
+// decodePayload decodes a changelog payload to its KeyChange list (nil on empty or error —
+// a malformed payload validates as "no changes" for that job, never a false accept of a
+// later txn against garbage).
+func decodePayload(payload []byte) []KeyChange {
+	if len(payload) == 0 {
+		return nil
+	}
+	chg, err := DecodeChangelogPayload(payload)
+	if err != nil {
+		return nil
+	}
+	return chg
+}
+
+// changelogTailChanges decodes the durable Changelog.Tail(after) into a flat KeyChange list —
+// the ring-spill fallback (Fix-8, §4.2) and available for cold-start rebuild.
+func changelogTailChanges(db *pebble.DB, after HLC) ([]KeyChange, error) {
+	changelogTailCalls.Add(1)
+	cl := &changelog{db: db}
+	entries, err := cl.Tail(after)
+	if err != nil {
+		return nil, err
+	}
+	var out []KeyChange
+	for _, entry := range entries {
+		chg, derr := DecodeChangelogPayload(entry.Payload)
+		if derr != nil {
+			return nil, derr
+		}
+		out = append(out, chg...)
+	}
+	return out, nil
 }
 
 // enforceLogicalBatchInvariant returns ErrMissingCommitMetadata iff a logical-commit
 // batch (one that writes logical versions, i.e. hasWrites) reached Apply without its
 // hlc_hi metadata (§3.4). GC batches are an EXEMPT class (physical-only, no commitTs,
-// no hlc_hi) and never flow through this path in phase 1a.
+// no hlc_hi) and never flow through this path.
 func enforceLogicalBatchInvariant(hasWrites, hasHLCHi bool) error {
 	if hasWrites && !hasHLCHi {
 		return ErrMissingCommitMetadata
