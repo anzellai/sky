@@ -1,6 +1,10 @@
 package bluedb
 
-import "github.com/cockroachdb/pebble/v2"
+import (
+	"fmt"
+
+	"github.com/cockroachdb/pebble/v2"
+)
 
 // committer is the single writer goroutine (§3.2). It group-commits: grabs the
 // first queued job, drains up to maxBatch more non-blocking, and processes the
@@ -42,6 +46,25 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 		return
 	}
 
+	// SEAL on a synchronous durability panic. At the pinned Pebble version a fatal
+	// write-path FS fault surfaces as a panic (Pebble treats it as unrollbackable). If
+	// it unwinds through Apply on THIS goroutine, convert it to seal + errored ack
+	// (contained fail-loud) rather than letting it crash the process. A fault that
+	// panics on a Pebble BACKGROUND goroutine (e.g. an async memtable flush) is outside
+	// any recover here — that is Pebble's own unrecoverable-fault contract. Acks happen
+	// only AFTER Apply in the normal path, so on a panic no job has been acked yet and
+	// this recover acks each exactly once.
+	acked := false
+	defer func() {
+		if r := recover(); r != nil && !acked {
+			e.sealed.Store(true)
+			err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
+			for _, j := range batch {
+				j.done <- CommitResult{Err: err}
+			}
+		}
+	}()
+
 	commitTs := e.hlc.next() // §3.3 — strictly monotonic, floored across restart
 	b := e.db.NewBatch()
 	defer b.Close()
@@ -79,6 +102,7 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 		// A logical batch missing metadata is a compiler-bug-class fault: seal, don't
 		// silently write.
 		e.sealed.Store(true)
+		acked = true
 		for _, j := range batch {
 			j.done <- CommitResult{Err: err}
 		}
@@ -87,7 +111,19 @@ func (e *pebbleEngine) process(batch []*commitJob) {
 
 	err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the whole group
 
+	// Durability fault → SEAL, never silent. A single-writer durable engine cannot know
+	// whether a failed Apply(Sync) partially reached the WAL; continuing could violate
+	// the monotonic commit total order the whole architecture rests on. So an Apply error
+	// (a) is NOT acked (the batch is treated as un-durable) and (b) refuses all further
+	// writes (ErrSealed). Recovery is a reopen (Pebble WAL replay restores the last
+	// durable prefix; the failed batch is not resurrected). Mirrors the retired engine's
+	// seal-on-unrollbackable-error contract (fault_test.go:143).
+	if err != nil {
+		e.sealed.Store(true)
+	}
+
 	res := CommitResult{CommitTs: commitTs, Err: err}
+	acked = true
 	for _, j := range batch {
 		j.done <- res // ACK ONLY AFTER Apply returns
 	}

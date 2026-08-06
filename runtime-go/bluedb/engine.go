@@ -47,9 +47,16 @@ type Engine interface {
 	// Changelog exposes the post-commit stream ordered by commitTs (§4).
 	Changelog() Changelog
 
-	// Readers advances/queries the GC watermark registry (§5). The GC pass itself is
-	// phase 1b; the registry here pins reader readTs for snapshot consistency.
+	// Readers advances/queries the GC watermark registry (§5). The registry pins
+	// reader readTs for snapshot consistency; GC advances the threshold behind it.
 	Readers() WatermarkRegistry
+
+	// GC runs one watermark version-GC pass (§5): advances the persisted, monotone
+	// threshold T behind the register barrier, then issues PHYSICAL-ONLY deletes of
+	// stale versions strictly below T (no commitTs, no changelog, no hlc_hi bump) and
+	// trims the below-T changelog. Safe to call concurrently with Commit. Idempotent
+	// when nothing is collectible.
+	GC() (GCStats, error)
 
 	// Close drains the committer and closes Pebble.
 	Close() error

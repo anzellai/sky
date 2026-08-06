@@ -2,15 +2,12 @@ package bluedb
 
 import "sync"
 
-// watermarkRegistry is the phase-1a WatermarkRegistry: it atomically picks a
-// reader's readTs and records its token in one critical section (closes the grill
-// 2a TOCTOU), and reports the persisted, monotone GC threshold T.
-//
-// TODO(phase1b): the GC pass that ADVANCES T behind a register barrier
-// (candidate floor = min over live tokens, high-water when empty) — §5.2. Phase
-// 1a keeps T at its persisted value (initially {0,0}) and never collects, so
-// Register can never be rejected; the token bookkeeping is what a phase-1b GC pass
-// will read to compute the candidate floor.
+// watermarkRegistry is the WatermarkRegistry (§5.2): it atomically picks a reader's
+// readTs and records its token in one critical section (closes the grill 2a TOCTOU),
+// reports the persisted, monotone GC threshold T, and ADVANCES T behind a register
+// barrier (advanceThreshold — candidate floor = min over live tokens, high-water when
+// the live set is empty). The phase-1b GC pass (gc.go) drives advanceThreshold, then
+// issues the physical-only deletes below T.
 type watermarkRegistry struct {
 	mu     sync.Mutex
 	nextID ReaderToken
@@ -70,11 +67,19 @@ func (w *watermarkRegistry) Threshold() HLC {
 
 // minLive returns the candidate GC floor: min over live tokens, or the current
 // high-water when the live set is empty (the load-bearing empty-set rule, §5.2).
-// Unused in phase 1a (no GC pass); provided so the phase-1b GC pass reads it under
-// the registry lock.
+// Read under the registry lock so a registration is never invisible to a
+// concurrent floor computation. Callers that ADVANCE the threshold must use
+// advanceThreshold (which computes the candidate AND commits it under one lock —
+// the register-before-advance barrier); minLive alone is a lock-consistent read.
 func (w *watermarkRegistry) minLive() HLC {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	return w.candidateLocked()
+}
+
+// candidateLocked computes the GC-floor candidate assuming w.mu is held: min over
+// live tokens, or the current high-water when the live set is empty (§5.2).
+func (w *watermarkRegistry) candidateLocked() HLC {
 	if len(w.live) == 0 {
 		return w.highWater()
 	}
@@ -86,4 +91,34 @@ func (w *watermarkRegistry) minLive() HLC {
 		}
 	}
 	return min
+}
+
+// advanceThreshold is the register-before-advance barrier (§5.2 part iii). In ONE
+// critical section it computes the candidate floor (min over live tokens, or the
+// high-water when the live set is empty) AND, iff the candidate is strictly greater
+// than the current threshold, commits it as the new T. Because the candidate is both
+// computed and stored under the same lock Register/Advance take, no in-flight
+// registration can sit below the new T: any token that will exist below the candidate
+// has already been recorded (and pulled the candidate down), and any token registered
+// after the barrier picks readTs >= high-water >= the new T. Returns the current
+// threshold and whether it moved. T only ever moves UP (monotone).
+func (w *watermarkRegistry) advanceThreshold() (HLC, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	candidate := w.candidateLocked()
+	if w.threshold.Less(candidate) {
+		w.threshold = candidate
+		return candidate, true
+	}
+	return w.threshold, false
+}
+
+// setThresholdAtLeast raises the in-memory threshold to at least T (used when a
+// persisted T is loaded or re-affirmed). Monotone: never lowers.
+func (w *watermarkRegistry) setThresholdAtLeast(t HLC) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.threshold.Less(t) {
+		w.threshold = t
+	}
 }

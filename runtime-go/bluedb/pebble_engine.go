@@ -22,9 +22,10 @@ func (quietLogger) Fatalf(string, ...any) {}
 
 // config carries Open parameters, including the test seams (injectable clock + FS).
 type config struct {
-	dir       string
-	fs        vfs.FS          // nil ⇒ disk default
-	wallClock wallClockMillis // nil ⇒ system clock
+	dir          string
+	fs           vfs.FS          // nil ⇒ disk default
+	wallClock    wallClockMillis // nil ⇒ system clock
+	memTableSize uint64          // 0 ⇒ Pebble default; a small value forces early SSTable spills
 }
 
 // commitJob is one enqueued Commit awaiting the committer.
@@ -64,6 +65,9 @@ func openWith(cfg config) (*pebbleEngine, error) {
 	if cfg.fs != nil {
 		opts.FS = cfg.fs
 	}
+	if cfg.memTableSize != 0 {
+		opts.MemTableSize = cfg.memTableSize
+	}
 	db, err := pebble.Open(cfg.dir, opts)
 	if err != nil {
 		return nil, err
@@ -83,7 +87,12 @@ func openWith(cfg config) (*pebbleEngine, error) {
 	e := &pebbleEngine{
 		db:  db,
 		hlc: newHLCClock(persistedHi, cfg.wallClock),
-		ch:  make(chan *commitJob),
+		// Buffered so concurrent writers ENQUEUE without blocking, letting the committer's
+		// drain coalesce many in-flight commits into ONE Apply(Sync)/one fsync (§3.2 group
+		// commit — the throughput lever, since the single committer forgoes Pebble's commit
+		// pipeline). FIFO delivery preserves the commitTs assignment order → the total order
+		// is unchanged. Cap = maxBatch (one full drain window).
+		ch: make(chan *commitJob, maxBatch),
 	}
 	e.reg = newWatermarkRegistry(e.hlc.highWater, persistedThreshold)
 

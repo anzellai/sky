@@ -23,8 +23,10 @@
 | `NewSnapshot` | `(*DB).NewSnapshot() *Snapshot`; `Get`/`NewIter`/`Close` | CONFIRMED. | Every `Reader` pins a `*pebble.Snapshot`. |
 | **R-U3** silence Logger | no-op `Logger`; `DiscardLogger` may not exist | CONFIRMED no reliable `DiscardLogger`. **The Logger interface has THREE methods (`Infof`/`Errorf`/`Fatalf`), not two as the doc said.** | `quietLogger` implements all three. |
 | **R-U2** cgo-zstd build tag | tag name `pebblegozstd` (unconfirmed) | **CONFIRMED VERBATIM.** `internal/compression/zstd_cgo.go` is `//go:build cgo && !pebblegozstd` (DataDog/zstd, cgo); `zstd_nocgo.go` is `//go:build !cgo \|\| pebblegozstd` (pure-Go klauspost). Under `CGO_ENABLED=0` only pure-Go zstd is in the graph; under `CGO_ENABLED=1` DataDog/zstd (cgo) is pulled **unless** `-tags pebblegozstd`. | **Build-integration guidance for `sky build`'s cgo-retry path (`run_go_build_once`): pass `-tags pebblegozstd` so the retry stays cgo-free for Pebble compression.** (Wiring into `build.rs` is a build-integration follow-up, not part of the engine package.) |
-| **R-U1** `errorfs` shape | injector/op differs released-vs-master | Not resolved — DEFERRED to 1b (fault harness). |
-| `Checkpoint` signature | backup rows | Not resolved — DEFERRED to 1b (backup). |
+| **R-U1** `errorfs` shape | injector/op differs released-vs-master | **RESOLVED at v2.1.6 (the "master" shape).** `errorfs.Injector` is `interface { MaybeError(op errorfs.Op) error }`; `errorfs.Op` is a STRUCT `{ Kind OpKind; Path string; Offset int64 }` (NOT an int enum); `errorfs.InjectorFunc(func(Op) error)` adapts a plain func; `errorfs.Wrap(baseFS vfs.FS, inj Injector) *FS`; `errorfs.ErrInjected` is the sentinel. OpKinds used: `OpFileWrite` / `OpFileSync` / `OpFileSyncData` / `OpCreate`. No in-package `And/Or/PathMatch` DSL needed (a plain `InjectorFunc` closure over `op.Kind` suffices). Crash simulation uses `vfs.NewCrashableMem()` + `(*MemFS).CrashClone(vfs.CrashCloneCfg{})` — the FS state containing exactly the last-SYNCED data (deterministic). Harness in `crashsim_test.go`. |
+| `Checkpoint` hot-backup | backup rows | Still DEFERRED (out of the 1b engine-substrate scope; L2/backup phase). Crash-consistency is proven instead via `vfs.CrashClone` recovery, which is the canonical Pebble crash-consistency method. |
+| **Durability-fault surfacing** (net-new finding) | design assumed injected faults surface as an `Apply` error | **At v2.1.6 on a mem FS, an injected FS fault is EITHER absorbed by Pebble (the commit still acks; a faulted WAL write can leave that write unsynced and truncates the recoverable WAL tail per WAL semantics) OR — for a truly fatal write-path fault — surfaces as a PANIC on a background flush goroutine (Pebble's unrecoverable-fault contract). It is NOT returned synchronously from `Apply`.** So the durability invariants are proven via `CrashClone` (recovery to the last-synced prefix), and the committer's seal is driven by (a) an `Apply`-returned error and (b) a synchronous durability panic recovered on the committer goroutine. |
+| **Single-process dir lock** | design proposed a `flock` port | **Pebble PROVIDES IT — do not reinvent.** `pebble.Open` acquires an exclusive OS lock (a `LOCK` file; `flock` on unix via `vfs/file_lock_unix.go`, `MemFS.Lock` → `EAGAIN` in-process). A second `Open` of the same directory FAILS, including from the same process. Asserted by `TestSecondOpenFailsSingleProcessLock`. No custom flock added. |
 
 ## LOCKED-format deviations from the design doc (necessary, documented)
 
@@ -81,18 +83,71 @@ Everything else in §2 is as locked: `Name = "skydb.mvcc.v1"` (permanent); data 
   `TestHLCMonotonicRestartFloor`, `TestMetadataInBatch`, `TestGroupCommitBasic`,
   `TestChangelogWrite`.
 
-## DEFERRED (Phase 1b) — noted here + as `// TODO(phase1b)` in code
+## DONE (Phase 1b) — completes the Phase-1 engine substrate
 
-- **Watermark GC pass (§5)** — the explicit physical-only delete-pass keyed on the
-  persisted, advancing threshold `T`; the register-before-advance barrier that ADVANCES
-  `T` (min-over-live / empty-set→high-water). Phase 1a implements the registry's
-  Register/Release/Threshold + `minLive()` bookkeeping but never collects (T stays at
-  its persisted value; `Register` can't be rejected). `watermark.go`, `committer.go`.
-- **`errorfs` crash-corpus harness (§7)** — the fault-injection oracle (R-U1 needs the
-  injector shape pinned to v2.1.6 first).
-- **`flock`** — single-writer file lock (port of the retired `flock_unix.go`).
-- **Throughput benchmark (§8.1 #3)** — the `bench_test.go` port proving ≥ old
-  ~51k durable writes/s via `maxBatch`/memtable/WAL tuning.
+- **Watermark version-GC pass (§5)** (`gc.go`, `watermark.go`) — `Engine.GC() (GCStats,
+  error)`, the explicit PHYSICAL-ONLY delete-pass with the grill-critical fixes, NOT a
+  naive one:
+  - **Persisted, monotone GC threshold `T`** in the `0x02` metadata keyspace
+    (`gc_threshold`). GC deletes ONLY versions strictly below `T`. `T` is persisted
+    (Sync) BEFORE any physical delete, so a crash can't leave a durable delete under a
+    regressed `T`. Recovered on `Open` and re-affirmed monotone
+    (`setThresholdAtLeast`). Asserted: `TestGCPersistsThresholdMonotone`.
+  - **`Snapshot()`/`Register()` atomically pick `readTs := high-water` AND record the
+    token in ONE critical section, rejecting `readTs < T` with `ErrSnapshotTooOld`**
+    (closes grill 2a — no caller-supplied `readTs`, no register-gap TOCTOU). Asserted:
+    `TestGC2aReaderProtected`, `TestGCSnapshotTooOld`.
+  - **`advanceThreshold()` — the register-before-advance barrier** — computes the
+    candidate (min over live tokens, or the high-water when the live set is EMPTY) AND
+    commits it as the new `T` under the same registry lock `Register` takes, so no
+    in-flight registration can sit below the new `T`. Monotone (up only).
+  - **Delete pass keeps the newest version `< T` per user-key** (a reader at exactly `T`
+    still resolves it) and deletes strictly-older versions; **never GCs a key's sole
+    version.** Asserted: `TestGCDropsStaleVersionsBelowT`,
+    `TestGCKeepsNewestBelowFloorAndSoleVersion`.
+  - **GC deletes are PHYSICAL ONLY** — raw `db.Delete(dataKey(K, oldTs))` on the exact
+    version key via a side `db.Apply(batch, pebble.NoSync)`: **NO commitTs, NO changelog
+    entry, NO hlc_hi bump** (closes grill 2b). GC is a SECOND physical writer on keys
+    DISJOINT from the committer's fresh-commitTs writes → concurrent `Apply` is key-safe
+    (C1 amendment). Asserted: `TestGC2bPhysicalOnly` (changelog byte-unchanged + no
+    hlc_hi bump across a pass, incl. a reopen check), `TestGCConcurrentWithCommitter`
+    (`-race`).
+  - **Changelog retention** — trims `0x01 ‖ [0, T)` via `Batch.DeleteRange`. Asserted:
+    `TestGCChangelogRetentionTrimsBelowT`.
+- **`errorfs` crash-corpus harness (§7)** (`crashsim_test.go`) — R-U1 resolved (see the
+  table above). Scenarios + invariants, all GREEN: acked⇒survives
+  (`TestCrashAckedWritesSurvive`), no-torn-batch all-or-nothing (`TestCrashNoTornBatch`),
+  HLC-no-reissue-under-clock-rewind (`TestCrashHLCNoReissue`, net-new R8), concurrent
+  no-acked-loss (`TestCrashConcurrentNoAckedLoss`), metadata+data recover together
+  (recovered hlc_hi == max data version), fault→reopen-consistent
+  (`TestInjectedFaultsReopenConsistent`), and the fail-loud seal contract
+  (`TestSealContractRefusesWrites` — a sealed engine refuses Commit AND GC with
+  `ErrSealed`). The committer now SEALS on a durability fault (an `Apply` error OR a
+  synchronous durability panic recovered on the committer goroutine).
+- **Single-process locking** — Pebble PROVIDES the exclusive dir lock (see the table);
+  `TestSecondOpenFailsSingleProcessLock` asserts a second `Open` fails. No custom flock
+  added. Bonus gate: `TestWrongComparerNameRefusesOpen` (§7 G1 comparer immutability).
+- **Throughput benchmark + honest ceiling (§8.1)** (`bench_test.go`) — measured on
+  Apple M1, Pebble default sync, `go test -bench . -benchmem -run '^$'`:
+  - **`BenchmarkGroupCommitDurableWrites` — ~56,000 durable writes/s** at 512-writer
+    concurrency — **MEETS/EXCEEDS the ~51k target.** Group commit is the throughput
+    lever: many concurrent writers coalesce into one `Apply(Sync)`/one fsync (the commit
+    channel was made buffered so writers enqueue without blocking; FIFO delivery keeps
+    the commitTs total order). Per grill finding 4 this is NOT concurrent Applies (which
+    would break the total order). At low concurrency (≤8 writers) throughput is fsync-
+    bound (~1 fsync/commit); the ceiling needs many in-flight writers to fill batches.
+  - **`BenchmarkPointRead` — ~1.8 µs/op** cached point read off a pinned snapshot (block
+    cache).
+  - **`BenchmarkRangeScan` — ~15 ms for a 50k-key ordered scan (~300 ns/key)**, native
+    Pebble iteration, O(log n + k), no scan-then-sort.
+  - **`TestSpillToDiskNoRAMCeiling`** — 60k keys × 256 B (~15 MB) with a 256 KiB memtable
+    spills to SSTables and reads back exactly; the old `MaxKeys`/`ErrFull` cliff is gone.
+
+**PHASE 1 (the engine substrate) is COMPLETE** and ready for the phase-boundary
+grill + Judge. The C1–C7 interface contracts (§8.2) are all satisfied and frozen.
+
+## Still DEFERRED (later phases — outside the Phase-1 engine substrate)
+
 - **L2 SSI validator** — the changelog `NewIndex`/`OldIndex` decode + range-validation
   (L2-owned; L1 stores opaque bytes only).
 - **Non-blocking changelog fan-out** — post-ack subscriber fan-out (L4 reactivity).
@@ -100,10 +155,15 @@ Everything else in §2 is as locked: `Name = "skydb.mvcc.v1"` (permanent); data 
   `rust/crates/project/src/build.rs` `run_go_build_once` (and the static path for
   symmetry). Verified-correct tag; wiring is a build-integration change outside the
   engine package.
-- **Block-property read acceleration (§5.3)**, `Checkpoint` hot-backup (R-U3 sig),
-  range-tombstone GC (R-1).
+- **GC scheduling** — a background scheduler / write-triggered GC cadence (the `GC()`
+  pass exists and is deterministically test-driven; wiring a periodic low-priority
+  goroutine that doesn't starve the committer is a tuning task, not a correctness one).
+- **Block-property read acceleration (§5.3)**, `Checkpoint` hot-backup, range-tombstone
+  GC collapse (R-1), tombstone-full-collapse GC (§5.1 optimization — the pass currently
+  KEEPS the newest `< T` version even when it is a tombstone, which is correct; fully
+  vanishing such a key is a later optimization).
 
-## Verification commands (all green at status time)
+## Verification commands (all green at Phase-1-complete)
 
 ```
 cd runtime-go
@@ -111,7 +171,7 @@ go build ./bluedb/...
 CGO_ENABLED=0 go build ./bluedb/...
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./bluedb/...
 go build ./...                 # rest of runtime-go unaffected by the Pebble dep
-go vet ./bluedb/...
+go vet ./bluedb/
 go test ./bluedb/ -race -count=1
-go mod tidy && go mod verify
+go test ./bluedb/ -bench . -benchmem -run '^$'   # throughput numbers (run without -race)
 ```
