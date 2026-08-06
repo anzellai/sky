@@ -1,16 +1,30 @@
-# BlueDB / Std.Persist — Phase 4: query-scoped reactivity in the commit path (L4)
+# BlueDB / Std.Persist — Phase 4: query-scoped reactivity (L4) — v2 (grill-folded)
 
-> **Status:** design, `feat/bluedb` @ `004cbb95`. Design only — no code specified for
-> merge. This doc is written to be **grilled** by ≥2 adversarial reviewers before any
-> Phase-4 code is written; the "Grill attacks pre-empted" (§10) and "Open questions /
-> weakest points" (§11) sections exist to be attacked.
+> **Status:** design, `feat/bluedb` @ `aba0611a`. Design only — no code specified for
+> merge. This is the **v2** rewrite that folds every finding from
+> `docs/bluedb/phase4-grill-findings.md` (A#1, A#2, B#1, B#2, B#3, NB-1, NB-2, NB-3).
+> It is written to be **re-grilled** by ≥2 adversarial reviewers before any Phase-4
+> code is written. §12 maps each finding → how it is now closed; §11 is the honest
+> remaining-weakest-points list to attack.
+>
+> **The v1 → v2 re-architecture in one line.** v1 put the fan-out on the commit-path
+> `bluedb`-layer goroutine, which had **no verified session identity** (→ cross-tenant
+> leak, B#1/B#2) and **no legal path to the rt `Broker`** (`bluedb` can't import `rt` —
+> B#3). v2 keeps the delta-match + subscription registry in `bluedb` but moves
+> **identity resolution + tenant-scoped publish to the rt/session layer**, bridged by a
+> `bluedb` **changefeed** (`DB.Subscribe`) that `rt` drains (the legal
+> `rt → bluedb` direction), with the tenant carried as a **write-time-verified tag**
+> stamped by the writing session on its identity-stamped goroutine — never re-derived on
+> the pump goroutine, never read from record data. This is the ref's proven architecture
+> (`(ref) changefeed.go` + `(ref) bluedb_reactive.go`), ported onto the clean-slate
+> engine's `OldIndex`-precise substrate.
 >
 > **Citation convention.** Paths under `runtime-go/bluedb/…`, `runtime-go/rt/…`,
-> `sky-stdlib/…`, `docs/…` are in **this** repo (`feat/bluedb`) unless prefixed
-> **`(ref)`**, which cites the read-only prior-art worktree
+> `sky-stdlib/…`, `docs/…` are in **this** repo (`feat/bluedb` @ `aba0611a`) unless
+> prefixed **`(ref)`**, which cites the read-only prior-art worktree
 > `.claude/worktrees/ref-exp-bluedb/` (the proven `exp/bluedb` reactive foundation we
-> port FROM). The Phase-1/2/3 clean-slate substrate is in THIS repo; the reactive
-> surface being ported is in the `(ref)` worktree.
+> port FROM). Line numbers marked **✅re-read** were verified against HEAD while writing
+> v2; the rest are inherited from v1's grilled citation set (same tree, undisputed).
 
 ---
 
@@ -18,46 +32,45 @@
 
 **Query-scoped reactivity is the exact dual of the SSI commit-time validation Phase 2/3
 already ships.** A serializable transaction records a *read-set footprint*
-(`ReadSet{points, ranges, collWitness, indexWitness}` — `engine.go:141-146`,
-`readset.go`) and the committer asks, over the `(readTs, commitTs]` window, *"did any
-committed `KeyChange` fall into my footprint → **abort**?"* (`validate.go:27-53`). A
+(`ReadSet{points, ranges, collWitness, indexWitness}` — `engine.go:141-146` ✅re-read)
+and the committer asks, over the `(readTs, commitTs]` window, *"did any committed
+`KeyChange` fall into my footprint → **abort**?"* (`validate.go:27-53`). A
 **subscription is the same footprint**, derived from the same resolved `Cond` by the
-same classifier (`classifyIndexable`, `cond.go:260`), and the commit path asks the
-same question with the opposite consequence: *"did any committed `KeyChange` fall into
-my footprint → **notify**?"* The membership transition (row **enters**, **leaves**, or
-**stays** in a query's result) falls directly out of the `KeyChange.NewIndex` /
-`KeyChange.OldIndex` coordinate pair the substrate **already computes and durably
-logs** for every committed change (`keychange.go:22-30`, `txn.go:193-244`) — and
-because a **delete/update-out** carries its vacated positions in `OldIndex` (derived
-from the pre-image at `ensurePreimage`, `txn.go:234-244`), **the classic "deletes
-silently drop" reactive bug is structurally impossible: a leaving row fires on the
-OldIndex hit exactly as a phantom-disappearance fires an SSI conflict**
-(`validate.go:47`, `coordHit` over `ch.OldIndex`). Phase 4 promotes this into the
-commit path: a per-process subscriber registry indexed by collection, matched
-in-committer against each durable `KeyChange` after `Apply(Sync)`, fanning **precise
-transitions** to affected Sky.Live sessions — degrading to a conservative
-**re-run nudge** (over-notify, never under-notify) exactly where the SSI layer already
-degrades to its `WitnessCollection`/`indexWitness` fallback (`txn.go:183-191`,
-`validate.go:41-49`). Cross-instance fan-out re-uses the existing verified-tenant
-broker; the capability leak (a multi-replica SQL app can't do cross-process reactivity)
-is made **runtime-loud** (compiler WARN + hard-fatal boot check + deploy preflight),
-never a silent stale — because compile-time backend-capability gating is impossible by
-theorem (clean-slate-architecture.md Decision 5).
+same classifier (`classifyIndexable`, `embedded.go:374` ✅re-read), and the commit path
+asks the same question with the opposite consequence: *"did any committed `KeyChange`
+fall into my footprint → **notify**?"* The membership transition (row **enters**,
+**leaves**, or **stays**) falls out of the `KeyChange.NewIndex`/`OldIndex` coordinate
+pair the substrate already computes and durably logs for every committed change
+(`keychange.go:23-30` ✅re-read) — and because a delete/update-out carries its vacated
+positions in `OldIndex` (from the pre-image, now emitted on **both** the transactional
+path (`ensurePreimage`) **and the autocommit blind path** (`blindPut`,
+`embedded.go:164-184` ✅re-read — the Phase-2 under-reject fix landed at `aba0611a`)),
+**the classic "deletes silently drop" reactive bug is structurally impossible.** v2
+promotes this into the commit path via a **`bluedb` changefeed** (`DB.Subscribe`, ported
+from `(ref) changefeed.go:52`) that an **rt-layer pump** drains; the pump does the
+**tenant-scoped publish** for cross-instance and hands each delta to the **`bluedb`
+subscription registry** for local precise fan-out. The tenant is a **write-time-verified
+tag** (§3.4), so the fan-out is scoped to the entitled tenant with an **enforced
+fail-closed gate** (§4.5) — the reactive analogue of the v0.16.6 SQL-`WHERE` gate.
+Cross-instance re-uses the existing verified-tenant broker (§5); the capability matrix
+(§6) is corrected so **every cell is proven or boots HARD-FATAL** — an unshared local
+store multi-replica is impossible and boots fatal, not a silent stale.
 
 ---
 
 ## 1. What Phase 4 consumes (the substrate is already built)
 
-Phase 4 writes **no new engine format**. Every primitive it needs already exists and is
-frozen by the Phase-1 comparer commitment. This section pins the exact substrate seams.
+Phase 4 writes **no new durable engine format** (the Phase-1 comparer commitment
+holds). The one **transient, non-persisted** field it adds (`CommitReq.Tenant`, §3.4) is
+never serialized to the changelog. This section pins the exact substrate seams.
 
 ### 1.1 The changelog already carries per-row transitions
 
-`KeyChange` (`keychange.go:22-30`) is one committed row-level change:
+`KeyChange` (`keychange.go:23-30` ✅re-read) is one committed row-level change:
 
 ```go
 type KeyChange struct {
-	Coll     CollID       // owning collection (per-change stamped, txn.go:270-282)
+	Coll     CollID       // owning collection (per-change stamped)
 	Pk       []byte       // the user-key — point-read / row-scoped match
 	Op       Op           // OpPut | OpDelete
 	Record   []byte       // put: row bytes (L4 body); delete: nil. Validation ignores it.
@@ -66,156 +79,192 @@ type KeyChange struct {
 }
 ```
 
-The `NewIndex`/`OldIndex` pair is **the reactive membership signal**, and it is
-populated for the delete case: `Txn.Put` sets `newIndex = indexer(userKey, value)` and
-derives `oldIndex` from the pre-image; `Txn.Delete` sets `newIndex = nil` and keeps the
-pre-image `oldIndex` (`txn.go:193-218`, `ensurePreimage` `txn.go:234-244`). The list is
-serialized into the **opaque, versioned changelog payload** (`keychange.go:42-63`
-`EncodeChangelogPayload`; the format tag `payloadFmtV1` lets the shape evolve without a
-store rewrite — `keychange.go:39-42`).
+The `NewIndex`/`OldIndex` pair is the reactive membership signal. **It is now populated
+for the delete case AND the autocommit blind-update case** — the fix landed at
+`aba0611a`:
+
+- `Txn.Put`/`Txn.Delete` (transactional path) set `oldIndex` from the pre-image via
+  `ensurePreimage`.
+- `blindPut` (`embedded.go:164-184` ✅re-read, the autocommit upsert) now reads the
+  pre-image Snapshot and emits `OldIndex` coords when the collection has indexes — the
+  same short-circuit `buildIndexer` uses (`if len(cs.Indexes) > 0`). **This is the fix
+  the grill's "⚠️ EXPOSED" section demanded**, and it is what makes the precise-tier
+  `Leave` fire on the blind path (A#1). `blindDelete` (`embedded.go:186-209` ✅re-read)
+  emits `OldIndex` from the pre-image for outright deletes.
 
 ### 1.2 The commit path already exposes exactly two durable-emit points
 
-The single committer (`committer.go:33-51`) group-commits and, **after** `Apply(Sync)`
-returns durable, appends each commit's decoded changes to the in-RAM recent ring
-(`committer.go:141-150` blind path; `committer.go:305-310` transactional path). These
-**two post-`Apply` sites are the Phase-4 fan-out hook** — durable-before-notify by
-construction (see §7, the ordering grill). The changes are *already decoded there* for
-the ring append, so the fan-out reuses that decode, not a second one.
+The single committer (`committer.go:33-51` ✅re-read) group-commits and, **after**
+`Apply(pebble.Sync)` returns durable, appends each commit's decoded changes to the
+in-RAM recent ring at **two sites**:
 
-### 1.3 The validation window machinery is the setup-race machinery
+- **Blind path** — `processBlindPhase1`, `committer.go:139-150` ✅re-read (after
+  `advanceDurableHi`, decode `DecodeChangelogPayload`, `e.recent.append`).
+- **Transactional path** — `processTxn`, `committer.go:304-310` ✅re-read (after
+  `advanceDurableHi`, iterate `applied[]`, `e.recent.append(a.commitTs, a.changes)`).
 
-`recentRing.after(readTs)` (`recent_changes.go:40-51`) returns every `KeyChange` with
-`commitTs > readTs` in O(commits-since-readTs) — a bounded tail walk — with a
-`spilled=true` fallback to the durable `Changelog.Tail(readTs)` (`changelog.go:17-47`)
-when a reader lags below the ring floor. This is **exactly** the "subscribe pins a
-`readTs`, backfill the gap, then go live" discipline Phase 4 needs (§7). The
-`WatermarkRegistry` (`engine.go:163-178`) pins a reader token so GC never drops a
-version or changelog entry a live subscription still needs, and `Advance(tok, readTs)`
-(`engine.go:171`) lets a subscription move its floor forward as it consumes commits
-(the R3 advancing-watermark, clean-slate-architecture.md R3).
+These two post-`Apply` sites are the Phase-4 **changefeed emit hook** — durable-before-
+notify by construction (§7). The changes are **already decoded there** for the ring
+append (`a.changes` on the txn path; `chg`/`DecodeChangelogPayload` on the blind path),
+so the changefeed reuses that decode, not a second one.
+
+### 1.3 The validation-window machinery IS the setup-race machinery
+
+`recent.after(readTs)` (`committer.go:230` ✅re-read, `recent_changes.go`) returns every
+`KeyChange` with `commitTs > readTs` in O(commits-since-readTs), with a `spilled=true`
+fallback to the durable `changelogTailChanges` → `Changelog.Tail` (`committer.go:245-252`
+✅re-read, `changelog.go`) when a reader lags below the ring floor — and that fallback is
+**fail-CLOSED** on a read error (`committer.go:247` aborts rather than validating against
+a nil window). This is exactly the "subscribe pins a `readTs`, backfill the gap, then go
+live" discipline Phase 4 needs (§7). The `WatermarkRegistry` (`engine.go:166-175`
+✅re-read) pins a reader token so GC never drops a version/changelog entry a live
+subscription still needs, and `Advance(tok, readTs)` (`engine.go:171` ✅re-read) lets a
+subscription move its floor forward as it consumes.
 
 ### 1.4 The predicate evaluator + range classifier already exist
 
-- `bluedbEvalCond(cols, *CondNode) bool` (`cond.go:52-105`) — the row predicate,
-  SQL-3-valued-logic-collapsed. **The residual filter** Phase 4 applies to a `NewIndex`
-  hit to confirm true membership (the same role the query executor gives it —
-  cond.go header, "the exact-filter applied to rows a scan returns").
-- `classifyIndexable(*CollSchema, *CondNode) (indexHit, bool)` (`cond.go:260-285`) —
-  decides whether a `Cond` is a clean single-column range/equality on a declared,
-  range-optimized index (→ a precise `[lo,hi]` footprint) or must fall through to the
-  conservative collection witness. **This is the exact function that decides a
-  subscription's footprint tier** (§3).
-- `encodeScanRange` / `encodeIndexKey` (`index_key.go:57-116`) — the ONE canonical
+- `bluedbEvalCond(cols, *CondNode) bool` (`cond.go`, used at `embedded.go:311,386`
+  ✅re-read) — the row predicate; the residual filter Phase 4 applies to a `NewIndex` hit
+  to confirm true membership.
+- `classifyIndexable(*CollSchema, *CondNode) (indexHit, bool)` (`embedded.go:374`
+  ✅re-read, `cond.go`) — decides whether a `Cond` is a clean single-column
+  range/equality on a declared range-optimized index (→ a precise `[lo,hi]` footprint) or
+  falls to the conservative witness. **The exact function that decides a subscription's
+  footprint tier** (§3).
+- `encodeScanRange`/`encodeIndexKey` (`index_key.go`) — the ONE canonical
   order-preserving encoder both the scan bound AND the change coord go through, so a
-  subscription's range bound and a `KeyChange` coord byte-match by construction
-  (`index_key.go:42-45`, the "no second encoder" invariant).
-- `validate` / `coordHit` (`validate.go:27-71`) — **the matcher to generalize** (§2).
+  subscription's range bound and a `KeyChange` coord byte-match by construction.
+- `validate`/`coordHit` (`validate.go:27-71`) — **the matcher to generalize** (§2).
 
-### 1.5 The Go seam Phase 4 fills
+### 1.5 The Go seams Phase 4 fills
 
-`EmbeddedBackend` (`embedded.go:23-35`) already declares
+`EmbeddedBackend` (`embedded.go:23-35` ✅re-read) declares
 `_ CrossInstanceReactive = (*EmbeddedBackend)(nil)` and `Capabilities()` returns
-`InProcessReactive: true, CrossInstanceReactive: true` (`embedded.go:386-396`).
+`InProcessReactive: true, CrossInstanceReactive: true` (`embedded.go:405-413` ✅re-read —
+**the `CrossInstanceReactive: true` cell is corrected in §6**).
 `Watch(CollSchema, QueryPlan) (Subscription, error)` currently returns
-`ErrReactiveSeamPhase4` (`embedded.go:403-405`). **Phase 4 = implement `Watch` +
-the commit-path evaluator + the fan-out.** The `Subscription`/`Change` shapes
-(`backend.go:92-105`) are the frozen seam; §6 extends `Change` with the transition tag.
+`ErrReactiveSeamPhase4` (`embedded.go:422-424` ✅re-read). The `Subscription`/`Change`
+shapes (`backend.go:92-105` ✅re-read) are the frozen seam; §6.2 extends `Change` with
+the transition tag. **`CommitReq` (`engine.go:107-122` ✅re-read) gains one transient
+`Tenant string` field** (§3.4) — not part of `ChangelogPayload`, never durably written.
+**`DB.Subscribe`/`emitChanges` (the changefeed) is NEW code on the engine**, ported from
+`(ref) changefeed.go` and wired at the two §1.2 sites.
 
 ---
 
-## 2. Delta-match: the SSI-validation dual (the core)
+## 2. Delta-match: the SSI-validation dual (the core — unchanged from v1, hardened)
 
-### 2.1 The symmetry, stated precisely
+### 2.1 The symmetry
 
-| | SSI validation (Phase 2, shipped) | Reactive delta-match (Phase 4) |
+| | SSI validation (shipped) | Reactive delta-match (Phase 4) |
 |---|---|---|
-| Footprint | `ReadSet{points,ranges,collWitness,indexWitness}` recorded by a txn's reads (`txn.go:51-56,162-191`) | The **same** struct, derived once from a subscription's resolved `Cond` (§3) |
-| Window | `ring.after(readTs)` = committed changes in `(readTs, commitTs]` (`recent_changes.go:40`) | The **one** just-durable commit's `[]KeyChange` (`committer.go:305-310`) |
+| Footprint | `ReadSet{points,ranges,collWitness,indexWitness}` (`engine.go:141-146`) | The **same** struct, derived once from a subscription's resolved `Cond` (§3) |
+| Window | `recent.after(readTs)` (`committer.go:230`) | The **one** just-durable commit's `[]KeyChange` (§1.2) |
 | Question | Did any change hit the footprint? (`validate.go:27`) | Which subscriptions' footprints does this change hit? |
 | On hit | **Abort** the committing txn (`committer.go:257-266`) | **Notify** the subscription (§4) |
-| Fallback | `WitnessCollection`/`indexWitness` → over-reject (`validate.go:41-49`) | Same witnesses → over-**notify** (§3.3) |
+| Fallback | `collWitness`/`indexWitness` → over-reject (`validate.go:41-49`) | Same witnesses → over-**notify** (§3.3) |
 
-The matcher is a **refinement** of `coordHit` (`validate.go:57-71`). Validation ORs
-`NewIndex` and `OldIndex` because it only cares *whether* a conflict exists
-(`validate.go:47`: `coordHit(rs, ch.NewIndex) || coordHit(rs, ch.OldIndex)`). Reactivity
-must **distinguish which side hit** to classify the transition:
+Validation ORs `NewIndex` and `OldIndex` (`validate.go:47`) because it only cares
+*whether* a conflict exists. Reactivity must **distinguish which side hit**:
 
 ```
 enteredRange := coordHit(subFootprint, ch.NewIndex)   // row now occupies a watched coord
 leftRange    := coordHit(subFootprint, ch.OldIndex)   // row vacated a watched coord
+wasDisplayed := sub.resultPks[string(ch.Pk)]          // A#1 belt: is this pk currently shown?
 ```
 
-### 2.2 Membership transition — the full truth table
+### 2.2 Membership transition — the full truth table (with the A#1 belt clause)
 
-For a subscription with an **indexable footprint** (a precise range on the query's
-leading indexed predicate column), and a committed `KeyChange ch`:
+For a subscription with an **indexable footprint** and a committed `KeyChange ch`:
 
-| `ch.Op` | `enteredRange` | `leftRange` | Residual `bluedbEvalCond(ch.Record)` | Transition | Justification |
+| `ch.Op` | `enteredRange` | `leftRange` | `wasDisplayed` | Residual `bluedbEvalCond` | Transition |
 |---|---|---|---|---|---|
-| Put (insert) | true | false | matches | **Enter** | row appeared inside the range and satisfies the full predicate |
-| Put (insert) | true | false | **no match** | **none** | inside the index range but a residual clause (e.g. a second AND term) excludes it — the index range is an over-approximation, residual is authoritative (`cond.go:257-259`) |
-| Put (update) | true | true | matches | **Stay** (value changed) | still in range; row body updated |
-| Put (update) | true | false | matches | **Enter** | moved INTO the range from outside |
-| Put (update-out) | false | true | — | **Leave** | moved OUT of the range → **must fire** (see §2.3) |
-| Delete | false | true | — (`Record=nil`) | **Leave** | vacated its position; the delete-re-run gate (§2.3) |
-| any | false | false | — | **none** | change is irrelevant to this subscription |
+| Put (insert) | true | false | false | matches | **Enter** |
+| Put (insert) | true | false | false | **no match** | **none** (residual excludes) |
+| Put (update) | true | true | true | matches | **Stay** — **re-sort if an order-column coord differs** (§2.5, A#1) |
+| Put (update-in) | true | false | false | matches | **Enter** (moved INTO range) |
+| Put (update-out) | false | true | true | — | **Leave** |
+| Put (update) | false | false | **true** | — | **Leave** (A#1 belt — displayed pk no longer hits the footprint) |
+| Delete | false | true | true/false | — (`Record=nil`) | **Leave** |
+| any | false | false | false | — | **none** |
 
-The residual re-eval is applied **only on a `NewIndex` hit** (Enter/Stay candidates),
-where `ch.Record` is present. A `Leave` never re-evals (a delete has `Record=nil`;
-an update-out's new row is by definition outside the range) — it fires purely on the
-`OldIndex` hit. This is why **Leave cannot be lost**: it does not depend on decoding a
-body, only on the durably-logged vacated coordinate.
+The residual re-eval is applied **only on a `NewIndex` hit** (`ch.Record` present). A
+`Leave` never re-evals — it fires purely on the `OldIndex` hit **or** the `wasDisplayed`
+belt clause. This is why Leave cannot be lost.
 
-### 2.3 Delete-re-run correctness — the proof
+### 2.3 Delete/leave correctness — the proof (three independent legs)
 
-**Claim:** a row leaving a query's result set ALWAYS fires a `Leave`, for both an
-outright delete and an update that moves the row out of the predicate range.
+**Claim.** A row leaving a query's result set ALWAYS fires a `Leave`, for an outright
+delete AND an update that moves the row out of range — on the blind path AND the
+transactional path.
 
-**Proof.** Consider a subscription watching `WHERE status = 'open'` (a range
-`[open,open]` on the `status` index) currently showing row `R`.
+**Leg 1 — `OldIndex` coord (transactional + blind, post-`aba0611a`).** A delete/update
+carries its vacated coordinate in `OldIndex` (from the pre-image: `ensurePreimage` on the
+txn path; the `blindPut`/`blindDelete` Snapshot read on the autocommit path,
+`embedded.go:164-209` ✅re-read). `leftRange = coordHit(sub, ch.OldIndex) = true` →
+**Leave**. **This leg was BROKEN on the blind path in v1** (`blindPut` emitted no
+`OldIndex`) — the grill's ⚠️EXPOSED finding. It is fixed at `aba0611a` and re-proven
+here.
 
-1. *R is deleted.* `Txn.Delete(R)` runs `ensurePreimage` (`txn.go:234-244`), which reads
-   `R`'s pre-image at `readTs` and sets `bw.oldIndex = indexCoords(userKey, pre)` — i.e.
-   the `status=open` coordinate. `buildReq` emits `KeyChange{Op:OpDelete, NewIndex:nil,
-   OldIndex:[open-coord], Record:nil}` (`txn.go:275-282`). At match time
-   `enteredRange=false`, `leftRange = coordHit(sub, [open-coord]) = true` → **Leave**. ∎
-2. *R is updated `status: open → closed`.* `Txn.Put(R)` sets `newIndex =
-   [closed-coord]`, and `ensurePreimage` gives `oldIndex = [open-coord]`
-   (`txn.go:193-204`, `:234-244`). At match time `enteredRange = coordHit(sub,
-   [closed-coord]) = false` (closed ∉ `[open,open]`), `leftRange = coordHit(sub,
-   [open-coord]) = true` → **Leave**. ∎
+**Leg 2 — `resultPks` membership belt (A#1).** Independent of `OldIndex`: the precise
+matcher also checks `wasDisplayed := sub.resultPks[pk]`. Any change to a displayed pk that
+does NOT re-enter the range → **Leave** (truth-table row 6). Ported from
+`(ref) bluedb_reactive.go:129-131` (`if s.resultPks[rc.Pk] { return true }`). So even if
+`OldIndex` were ever absent (an index-less collection, or a future coord-encoding gap),
+a leaving displayed row still fires.
 
-The bug this closes ((ref) `docs/bluedb/reactive-sync-design.md:296-301`, "the
-pk-erasing bug") is the failure mode where a change feed carries only the *new* row
-(or, for a delete, nothing) and the subscriber has no way to learn a row it currently
-displays is gone. Here the substrate **durably logs the vacated coordinate for every
-delete and update** as a side effect of the pre-image read the SSI layer already does
-for lost-update protection (`txn.go:233` docstring). Reactivity gets delete-safety
-**for free** from a mechanism that exists for isolation.
+**Leg 3 — conservative witness (§3.3).** A non-indexable predicate marks the sub dirty
+and re-queries; the diff against `resultPks` derives the Leave. Over-notify, never under.
 
-**Belt-and-braces (the prior-art `resultPks` guard).** For the conservative tier (§3.3)
-and cross-instance path (§5) where a subscription re-runs rather than reads coords, the
-ported `bluedbQuerySub.resultPks` set ((ref) `bluedb_reactive.go:94-98`) makes Leave
-detection independent of `OldIndex`: `if s.resultPks[rc.Pk] { return true }` ((ref)
-`bluedb_reactive.go:129-131`) fires on any change to a pk currently displayed, delete or
-not. The two mechanisms (coord-precise + resultPks-membership) are redundant on purpose:
-the indexable tier proves Leave from the log; the conservative tier proves it from the
-tracked result set. Neither can silently drop a leaving row.
+Three legs, each sufficient alone. The 4a `-race` gate exercises all three
+(delete→Leave, blind-update-out→Leave via `OldIndex`, and a displayed-pk update that
+misses the range→Leave via the belt).
 
-### 2.4 Why not the prior-art re-eval-the-record approach alone
+### 2.4 Why coords AND `resultPks` (both ship)
 
-The `(ref)` engine had no `OldIndex` — `bluedbChangeAffectsQuery` re-decodes `rc.Record`
-and re-runs `bluedbEvalCond` ((ref) `bluedb_reactive.go:124-142`), tracking `resultPks`
-in RAM to catch deletes (`rc.Record=""` for a delete → the `resultPks` membership test is
-the *only* delete signal). That works but (a) needs the record body on every change (a
-cross-tenant-leak risk the prior art mitigates by never broadcasting the body — (ref)
-`bluedb_reactive.go:157-162`), and (b) makes Leave detection depend on per-subscription
-RAM state that must be kept exactly in sync. The clean-slate substrate's `OldIndex`
-makes the **embedded, single-instance** Leave **structural and body-free**. Phase 4 uses
-the coord approach as the primary embedded mechanism and keeps `resultPks` as the
-conservative/cross-instance backstop (§3.3, §5). Both ship; §2.3's proof relies on the
-coord path, §5's cross-instance relies on the `resultPks` path.
+The coord path proves Leave from the durable log (body-free, structural); the `resultPks`
+path proves it from the tracked result set. v2 uses **coords as the primary embedded
+mechanism** and **`resultPks` as the belt + the sole cross-instance mechanism** (§5, where
+the receiving instance has no coords). Both ship.
+
+### 2.5 Order-only churn — the maintained-list staleness proof (A#1)
+
+**The hazard.** A subscription filtered on column `S`, ordered by column `C ≠ S`. A `Put`
+changing only `C` (row stays in the `S` range) hits the same `S` coord in `NewIndex` and
+`OldIndex` → classified **Stay** by the filter footprint alone. But the row's sort
+position changed → an *ordered* maintained list would be stale (right rows, wrong order).
+
+**The fix (two mechanisms, belt-and-braces):**
+
+1. **Order-column witness (precise tier).** When a subscription has `Orders` on
+   column(s) not already in its filter footprint, and those columns are **declared
+   indexes**, v2 adds them to the footprint as an `orderWitness` (an extra `ranges`/index
+   entry spanning the whole index, so any coord on the order index is "in"). On a `Stay`,
+   the matcher compares the order-column coord in `NewIndex` vs `OldIndex`: **if they
+   differ → the Stay is order-affecting → the delivered `Change` carries `Transition =
+   ChangeStay` with an `orderChanged` flag**. `buildIndexer(cs)` already emits coords for
+   **every** declared index on the collection (`embedded.go:83-89` ✅re-read), so the
+   order-column coord is present in the change whenever the order column is a declared
+   index — no new engine work.
+
+2. **Key-by-pk re-sort (maintained-list tier — the general belt).** `liveInto` owns its
+   maintained list and keys it **by pk**. On ANY delivered `Change` for a displayed pk
+   (Enter/Stay/Leave), the maintainer (a) replaces the row at that pk (never inserts a
+   duplicate — the pk key is the anti-dup invariant), then (b) **re-sorts the list by the
+   query's `Orders`** from the maintained rows themselves (no re-query — the rows are in
+   hand). Cost is O(k log k) for the bounded `k` a live list shows.
+
+**Staleness/dup proof.** *No stale order:* every `Change` to a displayed pk triggers a
+re-sort of the full maintained list against `Orders`; an order-only `Put` is a `Change`
+for a displayed pk (it hits the filter footprint as a Stay AND the pk is in `resultPks`),
+so it triggers the re-sort. *No duplicate:* the maintained list is a pk-keyed map rendered
+in sorted order; re-inserting a pk replaces, and a `Leave` removes the pk. A row can
+therefore never appear twice, and its position is always the re-sorted position. ∎
+
+For the **explicit `watchCollection`/`Change`-as-Msg** tier (§6.2) the app owns list
+maintenance; the `Change` carries `Transition` + `orderChanged` so the app's fold can
+re-sort. The 4a gate includes an order-only churn case (Stay with `orderChanged=true` on
+an ordered maintained list; assert the emitted list order matches a fresh baseline query).
 
 ---
 
@@ -223,589 +272,611 @@ coord path, §5's cross-instance relies on the `resultPks` path.
 
 ### 3.1 What a subscription IS
 
-A subscription is a **footprint + a delivery target + a scope key**:
+A subscription is a **footprint + a delivery channel + a scope key**, held in the
+**`bluedb` registry** (§4.1 — `bluedb` owns the match; the delivery channel is a plain Go
+channel, so `bluedb` never imports `rt`):
 
 ```go
-// registered in the per-process reactive registry (§4.1)
+// in the bluedb reactiveRegistry (§4.1). rt constructs one via Backend.Watch.
 type subscription struct {
-	id        subID
-	coll      CollID          // the ONE collection it watches (per-collection index key)
-	tenant    string          // verified sync-unit scope (§3.4); "" = process-global
-	footprint *ReadSet        // the SAME struct SSI uses — points/ranges/collWitness/indexWitness
-	plan      QueryPlan       // for residual bluedbEvalCond + re-run on the conservative tier
-	resultPks map[string]bool // tracked result set (Leave backstop + cross-instance, §2.3)
-	lastTs    HLC             // highest commitTs applied — monotonic apply + dedup (§7)
-	deliver   chan Change     // non-blocking; overflow → resync (§4.3)
+	id           subID
+	coll         CollID
+	tenant       string          // the OPAQUE scope key rt passes in (§3.4); "" = process-global bucket
+	footprint    *ReadSet        // the SAME struct SSI uses (points/ranges/collWitness/indexWitness)
+	orderWitness []IndexID       // declared order-column indexes (A#1, §2.5)
+	plan         QueryPlan       // for the residual bluedbEvalCond + conservative re-run
+	resultPks    map[string]bool // tracked result set (Leave belt + cross-instance, §2.3)
+	lastTs       HLC             // highest applied commitTs — monotonic apply + dedup (§7)
+	deliver      chan Change     // non-blocking; overflow → resync (§4.4). A plain channel: no rt type.
 }
 ```
 
-Three scope shapes, all expressed as one footprint:
+`bluedb` treats `tenant` as an opaque string it **matches** (delta tag vs sub tenant, §4)
+— it never **resolves** it (that is rt's job, §3.4). This is the layering that dissolves
+B#1/B#3: identity resolution lives where identity lives (rt), matching lives with the
+engine (`bluedb`).
 
-- **Whole collection** — `WitnessCollection(coll)` → `collWitness[coll]=true`
-  (`txn.go:188-191`). Every change to the collection notifies. `plan.Where = CondTrue`.
-- **Single row / PK** — a `points` entry keyed by the row's user-key. A `KeyChange` with
-  `Pk == that key` notifies (`validate.go:35-39`). This is `watch this one row`;
-  a delete of it fires (its `Pk` matches, `Op=OpDelete`, `Record=nil` → the caller sees
-  a Leave).
-- **Query predicate** — `classifyIndexable(schema, resolvedCond)` (`cond.go:260`):
-  a clean single-column range → a `ranges` entry (`indexRange{index,lo,hi}`,
-  `readset.go:20-24`); anything else → `collWitness`/`indexWitness` (the conservative
-  tier, §3.3). The resolved `Cond` is the **already-shared `Cond`/`Query` algebra**
-  from `Std.Db.Store` (clean-slate-architecture.md §L3), lowered to a `QueryPlan`
-  (`backend.go:174-182`) exactly as a query is.
+Three scope shapes, one footprint: **whole collection** (`collWitness`), **single row/PK**
+(a `points` entry), **query predicate** (`classifyIndexable` → a `ranges` entry, else a
+witness). The resolved `Cond` is the shared `Std.Db.Store` `Cond`/`Query` algebra lowered
+to a `QueryPlan` exactly as a query is.
 
-**The footprint is derived once, at `Watch`, by reusing `classifyIndexable`** — the
-identical code path a Phase-2 txn-`Query` uses to record its read-set ((see
-`embedded.go`'s `Transaction`→`embeddedTx.Query` read-set contract, `backend.go:52-54`).
-So a subscription's watched range and a committed change's coord are guaranteed to be in
-the same encoding — no drift class.
+### 3.2 Lifecycle — bound to a Sky.Live session (rt)
 
-### 3.2 Lifecycle — bound to a Sky.Live session
+Ported from `(ref) live_reactive.go`:
 
-A subscription's life is the session's life. Ported from `(ref)` `live_reactive.go`:
-
-1. **Create on mount.** When a Sky.Live session with reactive bindings starts,
-   `startReactive(sess)` ((ref) `live_reactive.go:82-147`) reads the bindings from the
-   Model, resolves the tenant topic per binding, and registers. Phase-4 change: instead
-   of subscribing a whole-collection broker topic and re-querying on any change, it calls
-   `Backend.Watch(coll, plan)` and threads the returned `Subscription.Changes()` channel
-   into the session loop.
-2. **Live.** The session loop (`reactiveLoop`, (ref) `live_reactive.go:170-194`) selects
-   on the subscription channel; each `Change` is coalesced (§4.4) and applied.
-3. **Drop on session end.** `teardownReactive()` ((ref) `live_reactive.go:151-163`) —
-   called from `markDone` — closes the subscription, which unregisters it from the
-   registry AND releases its `WatermarkRegistry` token (`engine.go:172` `Release`), so a
-   closed tab stops pinning the GC floor. Idempotent.
-
-The session goroutine stays identity-stamped (`setGoroutineLiveSession(sess)`, (ref)
-`live_reactive.go:178`) so the tenant scope re-derivation is fail-closed to empty on a
-missing identity — never a cross-tenant leak.
+1. **Create on mount.** `startReactive(sess)` (`(ref) live_reactive.go:82-147`) reads the
+   Model's reactive bindings, resolves the tenant per binding (§3.4), and for each calls
+   `Backend.Watch(coll, plan)` — threading the returned `Subscription.Changes()` channel
+   into the session loop (v1 subscribed a whole-collection broker topic; v2 gets a precise
+   channel from the registry).
+2. **Live.** `reactiveLoop` (`(ref) live_reactive.go:170-194`) selects on the channel;
+   each `Change` is coalesced (§4.3) and folded into Model under `sess.mu` (§8). The loop
+   goroutine is **identity-stamped** (`setGoroutineLiveSession(sess)`,
+   `(ref) live_reactive.go:178`; `live_session_ctx.go:47` ✅re-read).
+3. **Drop on session end.** `teardownReactive()` (`(ref) live_reactive.go:151-163`, from
+   `markDone`) closes the subscription → unregisters it from the `bluedb` registry AND
+   releases its `WatermarkRegistry` token (`engine.go:172` `Release`). Idempotent.
 
 ### 3.3 Non-indexable predicates — the conservative tier
 
-`classifyIndexable` returns `ok=false` for: an OR/nested/NOT predicate, a predicate on a
-non-declared column, an `IS NULL`/`IS NOT NULL` leaf, or any predicate on a
-NOT-order-preserving column (`Real`/`Money`/`Blob`/`Codec.map` — `cond.go:243-249`,
-`index_key.go:34-40`). For these, the subscription's footprint degrades to a **witness**,
-mirroring `Txn.ScanFallback`/`WitnessCollection` (`txn.go:183-191`):
+`classifyIndexable` returns `ok=false` for OR/nested/NOT, a non-declared column, an
+`IS NULL`, or a not-order-preserving column (`Real`/`Money`/`Blob`/`Codec.map`). The
+footprint degrades to a witness (`indexWitness`/`collWitness`), mirroring
+`Txn.ScanCollection` (`embedded.go:377` ✅re-read). **On a witness match Phase 4 marks the
+subscription dirty and re-runs its query** (the self-healing nudge), coalesced (§4.3); the
+re-run diffs the fresh result set against `resultPks` to derive Enter/Leave/Stay and
+updates `resultPks`. **Over-notify, never under-notify** — a witness fires on changes that
+may not affect the query (costing a re-run) but can never miss one.
 
-- **Index-level witness** (`indexWitness[idx]=true`) — a fallback-typed indexed column:
-  any `KeyChange` with a coord on that index (New OR Old) matches (`validate.go:60-62`).
-- **Collection-level witness** (`collWitness[coll]=true`) — the coarsest: any change to
-  the collection matches (`validate.go:41-44`).
+**Precise-delta available iff** the query is a single-column range/equality on a declared
+range-optimized ascending index (`IndexSpec` v1 scope is SINGLE-COLUMN ASCENDING,
+`backend.go:146-155` ✅re-read). Everything else re-runs. **We do NOT over-claim precise
+deltas for arbitrary `Cond`.**
 
-**On a witness match, Phase 4 does NOT compute a precise transition. It marks the
-subscription dirty and re-runs its query** (the self-healing nudge — (ref)
-`unit-architecture.md:54-60`), coalesced (§4.4). The re-run produces a fresh result set;
-the subscriber diffs it against `resultPks` to derive Enter/Leave/Stay, and updates
-`resultPks`. This is **over-notify, never under-notify**: a witness fires on changes that
-may not actually affect the query, costing a re-run, but it can never miss one.
+### 3.4 Tenant scoping — the WRITE-TIME-VERIFIED tag (B#1/B#2 root fix)
 
-**The exact boundary + cost.** Precise-delta (a `ranges` hit, no re-run) is available iff
-the query is a **single-column range/equality on a declared range-optimized (int/text/
-bool ascending) index** — the `classifyIndexable` v1 envelope (`cond.go:251-259`). Cost of
-a precise match: an O(coords) `coordHit` over the change's index coords (typically 1-few),
-plus one `bluedbEvalCond` residual on an Enter/Stay candidate — no query, no scan.
-Cost of a conservative match: one full `bluedbEvalCond`-filtered re-query
-(`bluedbRunQuery`, (ref) `bluedb_query_kernel.go:482-566`) per coalesced burst. The
-conservative tier is thus **correct-but-O(query) per relevant commit**; the design goal
-is that the common Sky.Live list view (`WHERE tenant=… AND status=…` on an indexed
-column) lands in the precise tier. **We do NOT over-claim precise deltas for arbitrary
-`Cond` — the honest envelope is single-column-ascending-indexed, everything else re-runs.**
+The scope key is **who shares state** (the tenant), a security model, not a storage
+mechanism. v2's central change: **the delta carries a tenant tag stamped by the WRITING
+session on its identity-stamped goroutine, BEFORE the commit** — never re-derived on the
+pump goroutine (which has no session), never read from record data (forgeable).
 
-### 3.4 Tenant scoping — the verified sync unit
+**Write side (stamp).** A Sky.Live `Persist` write runs on the session goroutine (update,
+or a `Cmd.perform` task — both identity-stamped, `(ref) live_reactive.go:176` comment;
+`live_session_ctx.go:34` ✅re-read `currentLiveSession`). The rt `Persist` write kernel
+reads the **verified** tenant `SessionIdentity(currentLiveSession()).Claims["tenant"]`
+(`(ref) bluedb_reactive.go:42-49` `reactiveTenantTopic`; the same verified claim
+`tenantPrefixForSession` uses — forgery-safe, returns `ok=false` unless a gate stamped
+`identityValid`) and threads it into the backend write as `CommitReq.Tenant`
+(`engine.go:107` ✅re-read — the new transient field). `blindPut`/`txWrite`
+(`embedded.go:164,215` ✅re-read) set `CommitReq.Tenant` from the value rt passed; the
+committer copies it onto the **in-RAM changefeed event** at the §1.2 emit sites. A write
+with no verified tenant (background job, CLI, unauth) stamps `""`.
 
-The scope key is **who shares state** (the tenant), not **what table changed** — a
-security model, not a storage mechanism (clean-slate-architecture.md §L4; (ref)
-`unit-architecture.md:16-23`). The tenant is read from the **verified**
-`SessionIdentity(sess)` `Claims["tenant"]` (`runtime-go/rt/session_identity.go:76`, which
-returns `ok=false` unless a gate stamped `sess.identityValid` — `live.go:2089-2090`,
-distinguishing "no gate ran" from "anonymous"; (ref) `bluedb_reactive.go:42-49`
-`reactiveTenantTopic`), read via `SessionIdentity(currentLiveSession())`
-(`live_session_ctx.go:34`) on the identity-stamped session goroutine — never from record
-data (forgery-safe). This gives:
+> **Why a field, not a re-derive.** The pump goroutine (§4) is NOT a session goroutine —
+> `currentLiveSession()` there is nil → a re-derive would fail-closed to `""` for EVERY
+> delta (v1's B#1 leak: nil identity → unscoped shared topic). Carrying the tag as
+> commit-time data means the trustworthy tenant travels WITH the delta to the pump. It is
+> **not read from record columns** (a tenant column is app data an attacker could forge);
+> it is the framework-verified claim of the goroutine that performed the write.
 
-- **Per-process:** the registry buckets subscriptions by `(coll, tenant)` so a change is
-  matched only against subscriptions whose tenant is entitled to see it. A change's
-  tenant is derived from its own row/collection scope; a subscription on tenant A never
-  sees tenant B's change even under a coarse collection witness (the witness is scoped
-  within the tenant bucket).
-- **Cross-instance:** the broker topic is `reactive:<tenant>:<coll>` ((ref)
-  `bluedb_reactive.go:42-49`) — a Redis SUBSCRIBE per tenant, so only instances hosting a
-  tenant-A session receive tenant-A changes (§5).
+> **Why not a `bluedb` goroutine-local (rejected alt).** rt could stamp a `bluedb`-side
+> goroutine-local the committer reads. Rejected: it duplicates the identity mechanism in
+> two layers and is untestable without a live session. Threading `CommitReq.Tenant`
+> explicitly is testable in the 4a two-tenant `-race` gate (NB-2) with a bare
+> `Backend.Put(..., tenant)` call, no session harness.
 
-**Prerequisite (R6, open).** The whole tenant-scoping is inert without a
-framework-verified `SessionIdentity` on the *standard* `Std.Auth` login path. Historically
-`sess.identity` was populated only by the sub-app mount gate (clean-slate-architecture.md
-R6). Phase 4 depends on `Live.withIdentify` populating it on the standard path; §11 flags
-this as a hard dependency, not a Phase-4 deliverable.
+**Match side (enforce, fail-closed — B#2).** The `bluedb` registry buckets subscriptions
+by `(coll, tenant)`. The fan-out visits **only** `byCollTenant[(ch.Coll, ch.Tenant)]` —
+where `ch.Tenant` is the delta's write-time tag. A subscription on tenant A is **never**
+visited for a tenant-B (or `""`) delta, even under a coarse collection witness (the
+witness is scoped inside the tenant bucket). A delta tagged `""` visits **only** the `""`
+bucket (single-tenant/dev), **never the union of all tenants** — this is the enforced
+reactive tenant gate: **absent verified identity ⇒ the subscription receives NOTHING from
+other tenants, never the unscoped firehose.** It is the reactive analogue of the v0.16.6
+SQL-`WHERE` gate: no verified tenant ⇒ scoped to the empty bucket, not the whole table.
+
+**Cross-instance (§5)** encodes the tenant in the broker topic
+`reactive:<tenant>:<coll>` (`(ref) bluedb_reactive.go:42-49`) — a per-tenant Redis
+SUBSCRIBE — and a verified session subscribes ONLY to its own tenant's topic. Both sides
+fail-closed.
+
+**R6 dependency (unchanged, external).** The whole scheme is inert without a
+framework-verified `SessionIdentity` on the **standard** `Std.Auth` login path. Phase 4
+depends on `Live.withIdentify` (or equivalent) populating it there; §11 #6 flags this as a
+hard external prerequisite, not a Phase-4 deliverable. **Fail-closed behaviour makes the
+missing-identity case SAFE (empty, not leaky)** — it is a liveness gap ("reactivity does
+nothing for authed multi-tenant"), not a confidentiality gap.
 
 ---
 
-## 4. Fan-out, coalescing, back-pressure
+## 4. The changefeed + rt pump + fan-out (the re-architecture — B#1/B#2/B#3)
 
-### 4.1 The registry + the commit-path match
+### 4.1 The `bluedb` changefeed (NEW; ported from `(ref) changefeed.go`)
 
-The registry lives on the `EmbeddedBackend` (`embedded.go:23-29`, alongside the existing
-`byName`/`serials` maps) — **per-process**, one per open engine:
+The engine grows a change-feed exactly like the ref's (`(ref) changefeed.go:52-122`), but
+carrying **decoded record-level `KeyChange`s** (the current tree already decodes them at
+the ring-append sites) plus the write-time tenant tag:
 
 ```go
-type reactiveRegistry struct {
-	mu    sync.RWMutex
-	// primary index: only subscriptions on the CHANGED collection are ever visited.
-	byColl map[CollID]map[subID]*subscription
+// on the engine. Ported from (ref) changefeed.go:52 (DB.Subscribe / emitChanges).
+type ChangeBatch struct {
+	CommitTs HLC
+	Tenant   string        // the CommitReq.Tenant write-time tag (§3.4)
+	Changes  []KeyChange   // already decoded at the §1.2 ring-append site
+}
+func (e *pebbleEngine) Subscribe(buf int) (*ChangeSub, func()) { … } // (ref) changefeed.go:52
+func (e *pebbleEngine) hasSubs() bool { … }                          // (ref) changefeed.go:80 — skip when nobody listens
+func (e *pebbleEngine) emitChanges(b ChangeBatch) { … }              // (ref) changefeed.go:108 — NON-BLOCKING; full buffer → overflow latch
+```
+
+**Emit is NON-BLOCKING** (`(ref) changefeed.go:112-122`: `select { case ch <- batch:
+default: overflow=1 }`) at the two §1.2 post-`Apply` sites. **The committer never blocks
+on a subscriber** (the R1 committer-never-stalls contract) — a slow drain drops its batch
+and latches `overflow`, forcing subscriber resync (§4.4). `hasSubs()` short-circuits the
+emit entirely in the common no-reactive process. The `bluedb` **subscription registry**
+(§3.1) also lives here — a plain-channel structure with no rt types.
+
+### 4.2 The rt pump (the ONE drain; ported from `(ref) bluedb_reactive.go:241`)
+
+rt owns a single pump goroutine per engine that drains the changefeed and does the two
+jobs `bluedb` legally cannot:
+
+```go
+// rt. Ported from (ref) bluedb_reactive.go:241 bluedbStartReactivePump.
+func bluedbStartReactivePump(eng bluedb.Engine, reg *bluedb.ReactiveRegistry) func() {
+	sub, cancel := eng.Subscribe(0)
+	go func() {
+		for batch := range sub.C {           // one committed group commit
+			overflowed := sub.Overflowed()   // (ref) changefeed.go:41
+			// (a) LOCAL precise fan-out — bluedb owns the match + registry (§3.1, §4.5).
+			//     Tenant-gated by comparing batch.Tenant to each sub's tenant bucket.
+			reg.DispatchLocal(batch)         // pushes precise Changes onto matched subs' channels
+			// (b) CROSS-INSTANCE — rt owns the broker (bluedb cannot import rt). Publish a
+			//     tenant-scoped NUDGE (Record=""), skip-origin, ONLY on a shared broker (§5).
+			if crossInstanceTopology() {
+				for _, ch := range batch.Changes {
+					reactivePublishTenantNudge(batch.Tenant, ch) // reactive:<tenant>:<coll>, no body
+				}
+			}
+			if overflowed { reg.MarkResyncAll(batch.Tenant) } // (ref) bluedb_reactive.go:261-265
+		}
+	}()
+	return func() { cancel() }
 }
 ```
 
-The commit path, at the two post-`Apply` sites (`committer.go:141-150`, `:305-310`),
-hands the just-durable `(commitTs, []KeyChange)` to a **non-blocking dispatcher** (a
-buffered channel to a separate fan-out goroutine — the changefeed pattern, (ref)
-`changefeed.go:112-122` `emitChanges`: `select { case ch <- changes: default:
-overflow=1 }`). **The committer never blocks on fan-out** — a slow dispatcher drops its
-batch and latches an overflow flag that forces subscriber resync. This preserves the R1
-committer-never-stalls contract ((ref) `changefeed.go:5-9`).
+- **The match is in `bluedb`** (`reg.DispatchLocal`) — it visits only
+  `byCollTenant[(ch.Coll, batch.Tenant)]` (§4.5) and computes the §2.2 transition via
+  `coordHit`(New/Old) + residual + the A#1 belt. It pushes precise `Change`s onto each
+  matched sub's plain channel. **No rt import, no broker, no session pointer in `bluedb`.**
+- **The publish is in `rt`** (`reactivePublishTenantNudge`) — the ONLY thing that touches
+  the broker (`(ref) reactivePublishScoped`, but here the tenant comes from the delta tag,
+  not `currentLiveSession()`, because the pump is not a session goroutine). **`Record` is
+  always `""` on the broker** (§5, the ref invariant `(ref) bluedb_reactive.go:149-162`).
+- **One drain goroutine** = one ordering point. No two goroutines race the changefeed.
 
-The fan-out goroutine, per change `ch`:
+**SQL backends have no engine changefeed** — sqlite/postgres reactivity is fed by the
+**write-layer publish** (`(ref) bluedb_reactive.go:188 reactivePublish`, backend-agnostic),
+which runs on the session goroutine and therefore uses `reactivePublishScoped`
+(`(ref) bluedb_reactive.go:217`, tenant from the writer's verified identity). The engine
+changefeed is the **embedded** precise mechanism; the write-layer publish is the **SQL**
+mechanism; both converge on the same rt subscription/broker plumbing.
 
-1. Look up `byColl[ch.Coll]` — **O(1); a change on collection X never visits a
-   subscription on collection Y.** If empty, drop the change (the `hasSubs()`
-   short-circuit, (ref) `changefeed.go:80-85`).
-2. For each subscription in that bucket whose tenant matches the change's scope:
-   compute the transition via §2.2 (`coordHit` New/Old + residual) for the indexable
-   tier, or mark-dirty for the witness tier.
-3. On a real transition, non-blockingly enqueue a `Change` on `sub.deliver` (§4.3).
+### 4.3 Coalescing
 
-### 4.2 Shared predicate evaluation (the amplification bound)
+- **Burst coalescing:** `drainChangeBurst` (`(ref) live_reactive.go:198-209`) non-blockingly
+  drains all queued changes before one re-render — a bulk write → ONE frame.
+- **Precise-delta coalescing:** multiple Enter/Leave/Stay in one burst fold into the Model
+  list in arrival order, then one render (+ one re-sort, §2.5).
+- **Monotonic apply + dedup:** each sub drops `commitTs <= lastTs` (guards the setup-race
+  overlap §7 and a conservative re-run racing a precise delta).
 
-Naively this is O(changes × subs-on-collection). The **honest** bounds:
+### 4.4 Back-pressure + overflow
 
-- **Collection-partitioned:** already only visits subs on the changed collection.
-- **Shared-predicate coalescing:** many subscriptions in a tenant watch the **identical**
-  `(coll, resolvedCond)` (every tenant-mate viewing the same list). The registry
-  **de-dups footprints**: identical resolved plans evaluate the predicate **once** and
-  fan the single result to all N sharing subscriptions. This drops match *detection* from
-  O(changes × subs) toward **O(changes × distinct-predicates-on-collection)**.
-- **Range-index bucketing (scaling lever, may defer to 4c):** within a collection, index
-  the `ranges` footprints by `IndexID` in a sorted structure so a coord lookup is
-  O(log P + hits) instead of O(P) over all P predicates. v1 (4a) may do a linear walk over
-  distinct predicates and be honest it is O(distinct-predicates); the interval index is the
-  documented lever if the bench (4c) shows it's needed.
+- The changefeed emit is non-blocking (§4.1); a full engine→pump buffer latches
+  `overflow` → the pump `MarkResyncAll` for the affected tenant → each affected sub
+  re-queries on next drain (self-heals all misses).
+- A full per-sub `deliver` channel latches the sub's own overflow → the sub re-queries.
+- The SSE send stays non-blocking with drop→resync
+  (`live.go` `recordSseDrop` + `markAllConnsOutOfSync`; `SKY_LIVE_SSE_BUFFER` inline
+  resync per CLAUDE.md) — unchanged Sky.Live machinery.
 
-### 4.3 Reaching the subscriber — a typed Msg into the session loop
+### 4.5 The enforced reactive tenant gate (B#2) + the amplification bound
 
-A matched `Change` is **not** applied to any Model directly. It is delivered as an event on
-`sub.deliver`, which the session's `reactiveLoop` ((ref) `live_reactive.go:170-194`)
-selects on and turns into a **Model fold** run under the **per-session serializing mutex**
-(§8). This is byte-for-byte the path a broker broadcast already takes today:
-`runSubscriberDispatch` (`runtime-go/rt/live.go:5767`) decodes an event → `msg`
-(`sky_call(toMsg, payload)`), takes `sess.mu.Lock()`, runs `app.dispatch(sess, msg)` (the
-same update loop as `Cmd.perform`, `live.go:5787`), snapshots a frame under the lock, and
-non-blockingly sends it to `sess.sseCh` (`live.go:5809-5811`). Everything downstream — the
-fold, the `view` re-render, `diffTrees`, the multi-tab fan-out (§8), the SSE frame — is
-**unchanged Sky.Live machinery** ((ref) `reactiveRefreshOnce` `live_reactive.go:277-366`;
-current-repo `dispatch` `live.go:4792`, `chooseSSEFrame` `live.go:2795`). Phase 4
-**composes with**, does not replace, the TEA render path. The SSE send stays non-blocking
-with drop→resync (`live.go:5370-5371` drop → `recordSseDrop` + `markAllConnsOutOfSync`;
-CLAUDE.md `SKY_LIVE_SSE_BUFFER` → `sky_live_sse_drops_total` + inline resync).
+**The gate (fail-closed).** `reg.DispatchLocal(batch)` computes
+`bucket := reg.byCollTenant[collTenantKey(ch.Coll, batch.Tenant)]` and matches ONLY within
+`bucket`. There is **no code path** that iterates all tenants' subscriptions for one
+change. A `batch.Tenant == ""` delta matches only the `""` bucket. This is the structural
+gate: a leak would require a `bluedb` bug that reads the wrong bucket, which the 4a
+two-tenant `-race` gate (NB-2) catches in the first sub-phase.
 
-### 4.4 Coalescing + back-pressure
-
-- **Burst coalescing:** `drainChangeBurst(ch)` ((ref) `live_reactive.go:198-209`)
-  non-blockingly drains all queued changes before a single re-render, so a bulk write
-  (or a rapid tick stream) produces ONE frame, not one-per-row.
-- **Precise-delta coalescing:** multiple precise Enter/Leave/Stay in one burst fold into
-  the Model list in arrival order, then one render.
-- **Monotonic apply + dedup:** each subscription carries `lastTs`; a change with
-  `commitTs <= lastTs` is dropped (guards the setup-race backfill/live overlap, §7, and a
-  conservative re-run racing a precise delta).
-- **Overflow → resync:** if `sub.deliver` overflows (a wedged session), the flag forces a
-  full re-query on next drain ((ref) `changefeed.go:41-43` `Overflowed()`), which
-  self-heals all prior misses ((ref) `unit-architecture.md:54-60`).
-
-### 4.5 Realistic-N honesty (grill fix #9 / R7 — NOT a rigged N=2 gate)
-
-**The O(writes) win is query RE-EVALUATION, not SSE fan-out.** Query-scoped delta-match
-gets match *detection* to O(writes × distinct-predicates). But **delivery to the N live
-sessions in a tenant is irreducibly O(N)** — the same wall as any LiveView/Phoenix system
-(clean-slate-architecture.md R7). The N=2 two-browser demo **hides** this. Phase 4's gate
-(§9, 4c) therefore requires, beyond the 2-browser demo, **EITHER**:
-
-- **(a)** a **realistic-N shared-feed benchmark** — hundreds of sessions per tenant on one
-  shared query — measuring (i) per-commit match-detection cost (must be
-  ~O(distinct-predicates), independent of N), (ii) per-commit fan-out delivery cost
-  (expected O(N), characterized and bounded), (iii) memory per subscription; **OR**
-- **(b)** an explicit **scope decision** deferring high-N shared feeds to Phase 6 (keyed
-  render + horizontal spread), stated as a first-class criterion — not buried in prose.
-
-The headline states the distinction plainly: **re-evaluation is O(writes); delivery is
-O(N).** The design's job is to make (i) provably N-independent; (ii) is the honest,
-LiveView-shaped floor.
+**The amplification bound (honest).** Within a `(coll, tenant)` bucket, naive match is
+O(changes × subs). Bounds:
+- **Collection + tenant partitioned:** a change visits only subs on its collection AND its
+  tenant.
+- **Shared-predicate coalescing:** identical resolved `(coll, cond)` plans in a tenant
+  evaluate the predicate **once** and fan the single transition to all N sharing subs —
+  match *detection* is **O(changes × distinct-predicates-per-(coll,tenant))**, N-independent.
+- **Range-index bucketing (scaling lever, may defer as an OPTIMIZATION to Phase 6):** index
+  the `ranges` footprints by `IndexID` in a sorted structure → O(log P + hits). 4a may do a
+  linear walk over distinct predicates and be honest it is O(distinct-predicates); this is
+  an optimization, not a proof deferral (§9, NB-1).
 
 ---
 
-## 5. Cross-instance (multi-replica)
+## 5. Cross-instance (multi-replica) — corrected + nudge-only (B#3)
 
-**Precise delta-match is LOCAL to each instance.** The commit-path evaluator on instance
-A holds only instance A's subscription registry. A tenant-A session may live on instance
-B. Therefore cross-instance reactivity is **broadcast-the-change, match-locally**:
+**Precise delta-match is LOCAL to each instance** (the commit-path registry holds only its
+own instance's subs). A tenant-A session may live on another instance. Cross-instance is
+therefore **broadcast-a-nudge, re-query-locally** — the ref's proven model:
 
-1. Instance A commits a change. Its fan-out goroutine, in addition to matching local subs,
-   publishes the **tenant-scoped raw change** on the broker topic `reactive:<tenant>:<coll>`
-   ((ref) `bluedb_reactive.go:217-221` `reactivePublishScoped`) — via the existing
-   `Broker` interface (`runtime-go/rt/live_topics.go:108`:
-   `Subscribe/SubscribeWithOwner/Publish/Close`). The broker itself is tenant-agnostic — it
-   keys only on the topic STRING and knows `Origin`/`ownerSid`, not tenant — so tenant
-   scoping is **encoded in the topic key** (`reactive:<tenant>:<coll>`, exact-match), which
-   is exactly what the existing registry supports. In-process tier: `topicRegistry`
-   (`live_topics.go:130`), non-blocking `Publish` (`live_topics.go:270,303-312`). Redis
-   tier: `redisBroker` (`live_redis_broker.go:102`), selected by `store=redis` (→
-   `brokerForRedisStore`, `live_store.go:1068`) or `SKY_LIVE_BROKER_URL`
-   (`maybeOverrideBroker`, `live_redis_broker.go:480`); `SKY_LIVE_BROKER=inprocess` forces
-   the in-process tier (`live_redis_broker.go:496`).
-2. Every instance hosting a tenant-A session is SUBSCRIBED to `reactive:<tenant>:<coll>`
-   (the topic is set up at `startReactive`, (ref) `live_reactive.go:111-122`
-   `app.topics.Subscribe(topic)`; current-repo `SubscribeWithOwner` at
-   `live.go:5670`/`live_topics.go:214`). It receives the change (Redis `receiveLoop` drops
-   its own echo via `InstanceID`, `live_redis_broker.go:266`) and runs its OWN local
-   delta-match against its OWN subscriptions.
-3. The tenant scoping bounds *which* instances receive the change: only instances hosting a
-   tenant-A session ever get it. Match compute happens once per receiving instance — fine,
-   each instance only matches its own subs.
+1. Instance A commits. Its rt pump (§4.2), **only when a shared broker is configured**
+   (`crossInstanceTopology()`), publishes a **tenant-scoped NUDGE** (`op/coll/pk`,
+   **`Record=""`**, `(ref) bluedb_reactive.go:149-162,203`) on `reactive:<tenant>:<coll>`
+   with **skip-origin** (`publishNoEcho`/`SkipOrigin` — so instance A does NOT receive its
+   own nudge; it already did the precise LOCAL fan-out). Redis drops the own-echo by
+   `InstanceID` (`live_redis_broker.go:266`); skip-origin covers the in-process tier.
+2. Every OTHER instance hosting a tenant-A session is SUBSCRIBED to `reactive:<tenant>:<coll>`
+   (set at `startReactive`, `(ref) live_reactive.go:111-122`). It receives the nudge and
+   runs a **conservative re-query** (`reactiveLoop` → `reactiveRefreshOnce`,
+   `(ref) live_reactive.go:277-366`) against **its own view of the shared backend**, using
+   `resultPks` membership (§2.3 Leg 2) to derive the transition — the nudge carries the pk,
+   so a delete-of-an-unshown-row is skipped, but any other nudge on a watched collection
+   re-queries.
+3. Tenant scoping bounds *which* instances receive: only instances hosting a tenant-A
+   session subscribe to `reactive:<tenant>:<coll>`. `Record=""` means **no body ever
+   crosses the broker** — even the per-tenant topic carries only a nudge, so a broker
+   misconfiguration or a future shared-topic reuse cannot leak a body. **This is stricter
+   than v1**, which proposed carrying the full record on the topic (the B#1 body-leak
+   vector). v2 keeps `Record` off the wire unconditionally.
 
-**The body-safety nuance.** The prior art broadcasts a **nudge only** — `Record` always
-`""` ((ref) `bluedb_reactive.go:157-162`) — to prevent cross-tenant body leaks over the
-broker, and the receiving instance re-queries with its own tenant filter. With a
-**verified per-tenant topic** the change body MAY be carried safely ("tenant-mates are
-entitled to it", clean-slate-architecture.md §L4) → the receiving instance can compute a
-**precise** transition from the broadcast `KeyChange` (New/Old coords + Record) rather than
-re-querying → O(writes) cross-instance too. **Design decision:** carry the full
-tenant-scoped `KeyChange` (coords + record) on the verified per-tenant topic; fall back to
-the nudge-only + re-query where the identity is unverified (fail-closed). This is the
-`resultPks`-membership Leave path (§2.3 belt-and-braces) doing the work when the receiving
-instance didn't originate the pre-image.
+**Why cross-instance is conservative (re-query), not precise.** The receiving instance has
+no `OldIndex`/coords (nudge-only, by the body-safety invariant) → it cannot compute a coord
+transition → it re-queries. Correct (over-notify never under), body-free, and it queries
+the **shared** backend (which has the write). Precise cross-instance (carrying coords) is a
+documented future optimization, gated behind the same verified-tenant topic — **NOT v1**,
+because the grill flagged body-carry as the leak vector.
 
-**Capability consequence:** cross-instance precise reactivity requires the broker
-(Redis). A multi-replica app whose backend/broker can't carry it must fail loud (§6) —
-never silently show one replica's users a stale list.
+**The critical correction (B#3 — a green cell that was never proven).** Cross-instance
+re-query is only sound when every instance queries the **same shared data**. **Embedded
+BlueDB is a single-writer LOCAL pebble store** — N replicas each hold an INDEPENDENT store,
+so instance B's re-query would NOT contain instance A's write. Therefore **embedded +
+multi-replica cannot do cross-instance reactivity at all** (the data is not shared), and v1
+asserting `CrossInstanceReactive=true` for that cell was the exact "boots green but the
+bridge doesn't work" B#3 failure. **v2 makes embedded + multi-replica a boot HARD-FATAL**
+(§6). The pump→broker→other-instances→re-query chain is proven ONLY for a **shared** backend
+(Postgres) + a **shared** broker (Redis).
 
 ---
 
-## 6. Capability check (runtime-loud) + the Sky surface
+## 6. Capability check (runtime-loud) + the Sky surface — corrected matrix
 
 ### 6.1 The three-part safety net (NOT a compile-time gate)
 
-Compile-time backend-capability gating is **impossible by theorem**
-(clean-slate-architecture.md Decision 5 / R5): a capability UNION isn't expressible in
-Sky's HM (no type classes, no HKT); the Postgres NOTIFY tag is un-mintable (dialect is a
-runtime property, `connectRelational` returns `Relational` for both sqlite and pg); and
-the backend axis is irreducibly RUNTIME (the image is built once, the backend injected at
-boot via env — HM types cannot depend on a runtime value). So safety is:
+Compile-time backend-capability gating is impossible by theorem (clean-slate Decision 5:
+no type classes/HKT; the backend axis is a runtime property injected at boot). So safety
+is runtime-loud:
 
-1. **Compiler WARN (compile-visible).** Whether an app *uses* `watch`/`live`/
-   `withReactive` is a static fact. If it does, the compiler emits a build-time WARN:
-   *"this app requires a reactive-capable backend."* (Emitted from the Rust HIR pass that
-   sees the `Ffi.kernel "Persist_watch"` / `withReactive` reference.)
-2. **Runtime-loud HARD-FATAL boot check.** At startup the runtime probes
-   `Backend.Capabilities()` (`backend.go:107-115`) and matches it against the declared
-   reactive requirement AND the replica topology:
-   - `InProcessReactive` is **always true** (`embedded.go:388`) → **single-instance
-     `watch` never fails** on any backend (KV / sqlite / pg). ~99% of apps.
-   - **Multi-replica** (replica count > 1, from the deploy/env — `SKY_LIVE_STORE` shared +
-     replica hint) **AND** the app declares reactive bindings **AND**
-     `Capabilities().CrossInstanceReactive == false` (sqlite/pg in v1) → **HARD FATAL at
-     boot** with a concrete message: *"app uses reactive `watch` but backend=sqlite can't
-     do cross-process reactivity across N replicas — use the embedded engine, or add the
-     Postgres LISTEN/NOTIFY bridge, or run single-instance."* **NEVER a silent stale read.**
-     This is the seam Phase 3 explicitly deferred here (phase3-status.md:272-279).
-3. **CI / deploy preflight.** `sky doctor` (and the SkyDeploy preflight) boots with the
-   **target** `[data]` config + replica count and asserts capabilities BEFORE production
-   traffic — catching the mismatch at deploy, not at 2am.
+1. **Compiler WARN (compile-visible).** Whether an app *uses* `watch`/`liveInto`/
+   `withReactive` is a static fact → a build-time WARN "this app requires a
+   reactive-capable backend" (emitted from the Rust HIR pass on the
+   `Persist_watch`/`withReactive` reference).
+2. **Runtime HARD-FATAL boot check.** At startup the runtime probes
+   `Backend.Capabilities()` (`backend.go:107-115` ✅re-read) and matches it against the
+   declared reactive requirement AND the replica topology:
+   - `InProcessReactive` is **always true** (`embedded.go:407` ✅re-read; every backend has
+     in-process pub/sub) → **single-instance `watch` never fails** on any backend (~99% of
+     apps).
+   - **Multi-replica AND reactive bindings AND the store is NOT a shared store** (embedded
+     local pebble, or sqlite local file) → **HARD FATAL**: *"reactive `watch` across N
+     replicas needs a SHARED backend — embedded/sqlite are single-writer local stores.
+     Run single-instance, or use Postgres + a Redis broker."*
+   - **Multi-replica AND reactive bindings AND store=postgres AND no shared broker
+     (`SKY_LIVE_BROKER`/Redis absent)** → **HARD FATAL**: *"reactive across replicas needs a
+     Redis broker to carry change nudges — set SKY_LIVE_BROKER_URL, or run single-instance."*
+   - **NEVER a silent stale read.**
+3. **CI / deploy preflight.** `sky doctor` + the SkyDeploy preflight boot with the *target*
+   config + replica count and assert capabilities BEFORE production traffic.
 
-The **embedded default is always cross-instance-reactive** (`embedded.go:389`), so the
-fatal only fires for the deliberate SQL-backend + multi-replica + reactive combination —
-where a silent stale would be a correctness disaster and a loud fatal is the only honest
-outcome.
-
-**Completeness (the grill target).** The backend × deployment matrix, every cell:
+### 6.2 The corrected backend × deployment matrix (every cell PROVEN or FATAL)
 
 | Backend | Single-instance | Multi-replica |
 |---|---|---|
-| **embedded (BlueDB)** | ✅ commit-path (InProcess) | ✅ commit-path + broker (CrossInstance=true) |
-| **sqlite** | ✅ in-process pub/sub (InProcess=true) | ❌ **HARD FATAL** (CrossInstance=false; no cross-process notify) |
-| **postgres** | ✅ in-process pub/sub | ❌ **HARD FATAL** in v1 (CrossInstance=false until the LISTEN/NOTIFY bridge, R10) → ✅ when the bridge ships |
+| **embedded (BlueDB, local pebble)** | ✅ commit-path changefeed → precise local fan-out (multi-tenant safe via §3.4) | ❌ **HARD FATAL** — single-writer local store; data not shared across replicas (B#3 correction — was a false ✅ in v1) |
+| **sqlite (local file)** | ✅ write-layer publish → in-process re-query | ❌ **HARD FATAL** — local file, not shareable |
+| **postgres (shared)** | ✅ write-layer publish → in-process re-query | ✅ **iff Redis broker** (pump/publish → Redis nudge → each instance re-queries shared PG); ❌ **HARD FATAL** without a shared broker |
 
-There is **no cell that silently degrades**: every ❌ is a boot fatal, every ✅ is wired.
-R10 (external SQL writers bypassing the commit path) is documented honestly as
-"reactivity covers Sky-originated writes; external SQL writes need the NOTIFY bridge"
-(clean-slate-architecture.md R10) — a known scope line, surfaced, not hidden.
+There is **no cell that silently degrades**: every ❌ is a boot fatal, every ✅ is wired
+end-to-end. The v1 matrix's `embedded multi-replica = ✅` cell is corrected to ❌ FATAL —
+it was the "asserted, not proven" cell B#3 attacked. **R10** (external SQL writers bypassing
+the commit path — a write to Postgres NOT via a Sky instance fires no publish) is documented
+as a known scope line with the LISTEN/NOTIFY-bridge answer, surfaced not hidden.
 
-### 6.2 The Sky surface
+### 6.3 The Sky surface
 
-**Raw tier (the 0.001%)** — `Std.Persist`:
+**Raw tier** — `Std.Persist`:
 
 ```elm
--- opaque handle; closed when the Sub is torn down
 type Subscription a
-
 type ChangeOp = Enter | Leave | Update
-
 type alias Change a =
-    { op  : ChangeOp     -- membership transition (§2.2)
-    , key : String       -- primary key of the affected row
-    , row : Maybe a      -- Just for Enter/Update; Nothing for Leave (delete carries no body)
+    { op          : ChangeOp     -- membership transition (§2.2)
+    , key         : String       -- primary key of the affected row
+    , row         : Maybe a      -- Just for Enter/Update; Nothing for Leave (delete carries no body)
+    , orderChanged : Bool        -- (A#1) a Stay whose sort-key column moved — re-sort
     }
-
 watch   : Conn cap -> Collection a -> Query a -> Task Error (Subscription a)
-changes : Subscription a -> Sub (Change a)     -- typed Sub-tier delivery
+changes : Subscription a -> Sub (Change a)
 unwatch : Subscription a -> Task Error ()
 ```
 
-The Go `Change` (`backend.go:99-105`) is extended with a `Transition` tag
-(`ChangeEnter|ChangeStay|ChangeLeave`) computed in the commit path (§2.2); `Op` stays for
-the row/collection tiers. `row = Nothing` on Leave is load-bearing: a delete's
-`Record=nil` (`keychange.go:27`) means the deleted body is genuinely unavailable
-(§11 weak point).
+The Go `Change` (`backend.go:99-105` ✅re-read) gains `Transition
+(ChangeEnter|ChangeStay|ChangeLeave)` + an `OrderChanged bool`, computed in the commit path
+(§2.2/§2.5). `row = Nothing` on Leave is load-bearing (`Record=nil`, `keychange.go:27`).
 
-**Easy tier (the 99.99% — magic-first, goal #3)** — Sky.Live builder integration, matching
-the v0.19 `Live.config |> withX` convention (CLAUDE.md; modeled on the shipped
-`Live.withAnalytics`/`withAnalyticsIdentify`):
+**Easy tier (magic-first)** — Sky.Live builder integration (v0.19 `config |> withX`):
 
 ```elm
-import Std.Live exposing (app, config, withReactive)
-
--- (a) explicit: each Change becomes a typed Msg the app folds into Model
-Live.watchCollection : Collection a -> Query a -> (Change a -> msg)
+Live.watchCollection : Collection a -> Query a -> (Change a -> msg) -> AppConfig msg -> AppConfig msg
+Live.liveInto        : Collection a -> Query a -> (model -> List a) -> (List a -> model -> model)
                     -> AppConfig msg -> AppConfig msg
-
--- (b) magic: bind a query to a Model list field; the runtime MAINTAINS the field
---     (applies Enter/Leave/Update to the list, re-sorts, re-renders) — no Msg wiring
-Live.liveInto : Collection a -> Query a -> (model -> List a) -> (List a -> model -> model)
-             -> AppConfig msg -> AppConfig msg
-
-main =
-    app
-        ( config { init = …, update = …, view = …, subscriptions = …, routes = …, notFound = … }
-            |> Live.liveInto users (Persist.query users |> where_ (eq "status" "open"))
-                 .openUsers (\rows m -> { m | openUsers = rows })
-        )
 ```
 
-`liveInto` re-homes the `(ref)` `Persist.liveInto`/`liveNamed` builders (which already
-carry the `condPlan` the runtime ignored — (ref) `Persist.sky:968`, "carried but
-unused"; `live_reactive.go:10-12`, "v1 refreshes at COLLECTION scope"). **Phase 4 wires
-`condPlan` → the subscription footprint** — that promotion IS L4. The **`Live.autoBlueDB`
-whole-Model-is-a-collection** magic (clean-slate-architecture.md §L0) is the ceiling: the
-entire Model is one scope-keyed reactive row (deferred to Phase 5's DX collapse, but the
-Phase-4 engine is what makes it live).
+`liveInto` re-homes the `(ref) Persist.liveInto`/`liveNamed` builders (which already carry
+the `condPlan` the ref runtime ignored — `(ref) live_reactive.go:10-12` "v1 refreshes at
+COLLECTION scope"). **Phase 4 wires `condPlan` → the subscription footprint** (that
+promotion IS L4) AND owns the pk-keyed maintained list + re-sort (§2.5). `Live.autoBlueDB`
+whole-Model-is-a-collection is Phase 5's DX ceiling; the Phase-4 engine makes it live.
 
 ---
 
-## 7. Ordering & consistency — the setup race
+## 7. Ordering & consistency — "subscribe before you snapshot" (A#2)
 
-**Two failure modes to close: (1) a subscriber must never see a change before its commit
-is durable; (2) a subscriber must never miss a change committed during subscription
-setup.** Both are closed by mirroring the Phase-2 window-boundary discipline.
+Two failure modes: (1) never see a change before it is durable; (2) never miss a change
+committed during subscription setup.
 
-**(1) Durable-before-notify.** Fan-out is dispatched **only from the two post-`Apply(Sync)`
-sites** (`committer.go:139-150` blind, `:303-310` txn) — *after* `advanceDurableHi` and
-the ring append, which run only when `err == nil` from `Apply(b, pebble.Sync)`
-(`committer.go:135-138`, `:300-304`). A subscriber therefore cannot observe a change that
-isn't durable; on a durability fault the engine seals and no fan-out fires
-(`committer.go:301-302`).
+**(1) Durable-before-notify.** The changefeed emits **only from the two post-`Apply(Sync)`
+sites** (`committer.go:139-150`, `:304-310` ✅re-read) — after `advanceDurableHi`. A
+subscriber cannot observe a non-durable change; a sealed engine (durability fault) fires
+nothing (`committer.go:301-302` ✅re-read).
 
-**(2) No-miss setup race.** `Watch` uses the same begin-snapshot boundary a txn uses
-(`txn.go:89-104`, R-2.8):
+**(2) No-miss setup race — REGISTER-LIVE-FIRST (the A#2 reorder).** v1 registered into the
+live registry AFTER backfill, leaving a window where a commit between the `Tail(readTs)`
+scan and registration was in neither. v2 registers live FIRST:
 
-1. **Pin.** `tok, readTs := engine.Readers().Register()` (`engine.go:169`) — atomically
-   picks `readTs = durableHi` AND registers a reader token in one critical section (closes
-   the 2a TOCTOU) so GC won't drop versions/changelog below `readTs`.
-2. **Baseline.** Run the initial query at the `readTs` snapshot → the starting result set →
-   seed `resultPks`.
-3. **Backfill the gap.** Drain `Changelog.Tail(readTs)` (`changelog.go:17-47`) — every
-   change committed *during* steps 1-2 — and apply them (dedup by `commitTs > lastTs`).
-   This is the exact `recent_changes.go:40` "validate against `(readTs, now]`" window, read
-   from the durable changelog.
-4. **Go live.** Register in `byColl` and consume live changes; drop any with
-   `commitTs <= lastTs` (the backfill/live overlap can double-deliver a boundary commit —
-   `lastTs` dedup makes it idempotent).
-5. **Advance.** As the subscription consumes commits, `engine.Readers().Advance(tok,
-   lastTs)` (`engine.go:171`) moves its GC floor forward (R3 advancing watermark) so a
-   long-lived tab doesn't pin the floor at its start-of-session `readTs` forever.
+1. **Register-live (start buffering).** Register the sub into the `bluedb` registry
+   `byCollTenant` **with an empty `resultPks`** and a `buffering=true` flag. From this
+   instant, the fan-out captures every matching delta into the sub's `deliver` buffer (it
+   does not yet compute precise transitions — it just buffers the raw `Change`s and their
+   `commitTs`).
+2. **Pin `readTs`.** `tok, readTs := engine.Readers().Register()` (`engine.go:169`
+   ✅re-read — atomically `readTs = durableHi` + token, closing the TOCTOU). **`readTs` is
+   pinned AFTER buffering starts**, so `readTs ≤ (any commitTs the buffer could still be
+   missing)` — the buffer already covers `(buffer-start, ∞) ⊇ (readTs, ∞)`.
+3. **Baseline.** Run the initial query at the `readTs` snapshot → seed `resultPks`. This
+   sees every commit `≤ readTs`.
+4. **Drain the buffer + go live.** Set `buffering=false`; process buffered + new deltas,
+   dropping `commitTs ≤ readTs` (already in baseline) and setting `lastTs`. Dedup is by
+   `lastTs`.
+5. **Backfill ONLY on buffer overflow.** If the setup buffer overflowed (slow setup, high
+   write rate), fall back to `changelogTailChanges(readTs)` (`committer.go:245-252`
+   ✅re-read — the durable, fail-CLOSED spill path) to reconstruct the `(readTs, now]`
+   window. In the common case the buffer is a superset and NO durable backfill is needed.
+6. **Advance.** As the sub consumes, `engine.Readers().Advance(tok, lastTs)` (`engine.go:171`
+   ✅re-read) moves its GC floor forward so a long-lived tab doesn't pin the floor forever.
 
-There is **no window** in which a commit is neither in the baseline (≤ readTs) nor in the
-backfill/live stream (> readTs): `readTs` is a clean cut, and the ring/`Tail` spill
-fallback (`recent_changes.go:40-51`, `committer.go:230-252`) guarantees the > readTs half is
-never lost even if the in-RAM ring trimmed under a slow setup (it falls back to the durable
-changelog, fail-CLOSED — `committer.go:245-250`).
+**No-window proof.** Buffering starts at `t_reg`; `readTs` is pinned at `t_readTs > t_reg`.
+Every commit with `commitTs ≤ readTs` is in the baseline. Every commit with
+`commitTs > readTs` committed at wall-time `> t_reg` (since commitTs is monotonic in commit
+order and `readTs = durableHi` at `t_readTs > t_reg`), so it is in the buffer (which
+captures from `t_reg`). The only escape is a buffer overflow → the durable `Tail(readTs)`
+fallback covers exactly `(readTs, now]`, fail-CLOSED. **Every commit is in the baseline OR
+the buffer OR the durable backfill — never in none.** ∎ (v1 could drop a commit between the
+`Tail` scan and a later registration; v2's register-first removes that gap.)
 
 ---
 
-## 8. Interaction with the per-session mutex + multi-tab fan-out
+## 8. Interaction with the per-session mutex + multi-tab fan-out (unchanged)
 
-CLAUDE.md: **one session = one Model, serialized by a per-session mutex; multi-tab of the
-same session mirrors one shared view.** Phase-4 reactivity composes cleanly:
-
-- A matched `Change` becomes a **Model fold** applied **under `sess.mu`**
-  (`runtime-go/rt/live.go:2146` the per-session mutex; (ref) `live_reactive.go:284-334`) —
-  serialized against user-driven dispatches (last-writer-wins, exactly the existing
-  `Cmd.perform`/`runSubscriberDispatch` discipline, `live.go:5767-5811`). A reactive fold
-  and a click never race; the mutex orders them.
-- The resulting frame is written to the single per-session ingress channel `sess.sseCh`
-  (`live.go:2157`); the `ensureSSERelay` goroutine (`live.go:6596`) drains it and
-  `fanOutFrame` (`live.go:6689`) fans each frame to **all** the session's live SSE
-  connections (`sess.sseConns`, `live.go:2181`) — non-blocking per-conn, drop→resync on a
-  full buffer (`live.go:6699-6710`). Reactivity produces the frame; the multi-tab fan-out is
-  unchanged (CLAUDE.md "Per-session fan-out"). Every tab of the session converges to the
-  same list.
-- **Panic-rollback discipline ports verbatim** ((ref) `live_reactive.go:313-334`): a
-  reactive fold that panics restores `sess.model`, `sess.lastComputedBody`, AND
-  `sess.handlers` (without the handler restore, `prevTree`'s handler IDs dangle → silent
-  no-op clicks) — the same invariant the existing reactive loop already enforces.
-- **Two people browsing INDEPENDENTLY are two sessions, not two tabs** — they get two
-  subscriptions with two tenant/identity scopes; cross-session sync is the tenant-topic
-  broker (§5), not the per-session fan-out. This is the existing model, unchanged.
-
-**Model-dependent-filter re-register (convergence hazard, (ref)
-`unit-architecture.md:182-197`).** A subscription whose `Query` depends on a Model field
-(`where owner = model.currentUser`) must **re-register** (unwatch + re-watch with the new
-footprint) when that field changes, else it watches a stale predicate. `liveInto`/
-`watchCollection` re-evaluate the binding's `reactiveQueries(model)` on Model change
-((ref) `live_reactive.go:56-78`) and re-register when the resolved plan differs. §11 flags
-this as a correctness obligation the builder must enforce by default.
+- A matched `Change` becomes a **Model fold under `sess.mu`** (`(ref) live_reactive.go:284-334`)
+  — serialized against user dispatches (last-writer-wins, the existing
+  `runSubscriberDispatch` discipline). A reactive fold and a click never race.
+- The frame goes to `sess.sseCh`; `fanOutFrame` fans it to all the session's SSE
+  connections (non-blocking, drop→resync). Every tab converges to the same list. The
+  multi-tab fan-out is unchanged Sky.Live machinery.
+- **Panic-rollback ports verbatim** (`(ref) live_reactive.go:313-334`): a fold that panics
+  restores `sess.model`, `sess.lastComputedBody`, AND `sess.handlers` (without the handler
+  restore, `prevTree`'s handler IDs dangle → silent no-op clicks).
+- **Two people browsing independently are two sessions** → two subscriptions with two
+  tenant scopes; cross-session sync is the tenant-topic broker (§5), not the per-session
+  fan-out.
+- **Model-dependent-filter re-register (§11 #7).** A subscription whose `Query` depends on a
+  Model field must re-register (unwatch + re-watch) when that field changes, using the SAME
+  register-live-first discipline (§7) so the re-register has no miss window.
 
 ---
 
 ## 9. Phasing — three independently verifiable sub-milestones
 
-### Phase 4a — delta-match engine + registry (Go, commit-path)
+### Phase 4a — changefeed + delta-match engine + registry (Go, commit-path)
 
-- **Build:** the `reactiveRegistry` on `EmbeddedBackend`; the footprint derivation
-  (`classifyIndexable` reuse → `subscription.footprint`); the commit-path dispatcher at the
-  two post-`Apply` sites; the transition matcher (§2.2, `coordHit` New/Old + residual +
-  witness tier); the setup-race Register/baseline/backfill/advance (§7); implement
-  `EmbeddedBackend.Watch` (replace `ErrReactiveSeamPhase4`, `embedded.go:403`).
-- **Gate (Go tests, `-race`):** insert→Enter; update-in-range→Stay; update-into-range→Enter;
-  **update-out-of-range→Leave**; **delete→Leave (the delete-re-run gate)**; residual
-  excludes an in-range-but-predicate-failing row; non-indexable predicate → conservative
-  re-run fires, never misses; **setup-race: a commit landing during Watch setup is delivered
-  exactly once** (no miss, no dup); committer never blocks under a wedged subscriber
-  (overflow→resync); a closed subscription releases its watermark token (GC floor advances).
-- **Independently verifiable:** pure Go, no Sky surface — provable with `go test`.
+- **Build:** the `bluedb` changefeed (`Subscribe`/`emitChanges`, `(ref) changefeed.go`) at
+  the two §1.2 sites carrying `ChangeBatch{CommitTs, Tenant, Changes}`; the `CommitReq.Tenant`
+  transient field + `blindPut`/`txWrite` stamp; the `bluedb` `reactiveRegistry` (byCollTenant)
+  + `DispatchLocal`; the transition matcher (§2.2, `coordHit` New/Old + residual + the A#1
+  belt + order-witness §2.5); the register-live-first setup (§7); implement `Watch` (replace
+  `ErrReactiveSeamPhase4`, `embedded.go:422-424`).
+- **Gate (Go `-race`):** insert→Enter; update-in-range→Stay; update-into-range→Enter;
+  **blind update-out-of-range→Leave** (Leg 1, the `aba0611a` fix); **delete→Leave**;
+  **displayed-pk update missing the range→Leave** (Leg 2 belt); **order-only churn on an
+  ordered maintained list → re-sort, no stale order, no dup** (§2.5); residual excludes an
+  in-range-but-predicate-failing row; non-indexable predicate → conservative re-run fires,
+  never misses; **setup-race: a commit landing during Watch setup is delivered exactly once**
+  (§7); committer never blocks under a wedged subscriber (overflow→resync); a closed
+  subscription releases its watermark token.
+- **★ NB-2 — TWO-TENANT COMMIT-PATH ISOLATION `-race` TEST (in 4a, not 4c):** register a
+  tenant-A sub and a tenant-B sub on the SAME collection; a tenant-A-tagged write MUST
+  deliver ONLY to the tenant-A sub, and a `""`-tagged write ONLY to a `""` sub — under
+  `go test -race`, with concurrent writers on both tenants. This catches the B#1/B#2 leak
+  class in the first sub-phase (v1 would have looked shippable through 4a+4b).
+- **Independently verifiable:** pure Go, no Sky surface.
 
 ### Phase 4b — Sky surface + Sky.Live integration
 
-- **Build:** `Std.Persist` `watch`/`changes`/`unwatch` + the typed `Change a`/`ChangeOp`;
-  the `Live.watchCollection`/`liveInto`/`withReactive` builders (re-home `(ref)`
-  `Persist.sky:947-1089` + `live_reactive.go`); wire `condPlan` → footprint; re-home the
-  SSE-frame/panic-rollback tail.
-- **Gate:** an example app (a live list); the **2-browser live demo**
-  (clean-slate-architecture.md README:179-204) — two browsers, one tenant, a write in one
-  reflects in the other; delete an on-screen row → it disappears in both.
-- **Independently verifiable:** the 2-browser demo + a Playwright script.
+- **Build:** `Std.Persist` `watch`/`changes`/`unwatch` + typed `Change a`; the rt pump
+  (`(ref) bluedbStartReactivePump`) doing LOCAL `DispatchLocal` + (shared-broker-only)
+  cross-instance nudge; the rt Persist write kernel stamping `CommitReq.Tenant` from the
+  verified identity (§3.4); `Live.watchCollection`/`liveInto` (re-home
+  `(ref) Persist.sky` + `live_reactive.go`); wire `condPlan` → footprint; the pk-keyed
+  maintained list + re-sort (§2.5); re-home the SSE-frame/panic-rollback tail.
+- **Gate:** a live-list example; the 2-browser live demo (one tenant, a write in one browser
+  reflects in the other; delete an on-screen row → gone in both); **a single-instance
+  two-tenant browser demo** — tenant-A's write is invisible to a tenant-B session on the same
+  process (the multi-tenant-on-one-box case that §3.4 protects).
+- **Independently verifiable:** the demos + Playwright.
 
 ### Phase 4c — capability check + cross-instance + realistic-N bench
 
-- **Build:** the boot HARD-FATAL capability check (§6.1) + the compiler WARN + the
-  `sky doctor`/deploy preflight; the cross-instance tenant-topic broadcast + local
-  match (§5); the realistic-N fan-out benchmark harness.
-- **Gate:** a **multi-replica sqlite/pg app with reactive bindings FATALS at boot** (every
-  matrix ❌ cell, §6.1) — and the embedded/single-instance cells DON'T; a **2-replica
-  cross-instance demo** (tenant-A write on replica 1 reaches a tenant-A session on
-  replica 2, tenant-B unaffected); the **realistic-N bench** (§4.5) — hundreds of subs on
-  one shared query, proving match-detection is N-independent and characterizing the O(N)
-  delivery floor — OR the explicit Phase-6 scope decision.
-- **Independently verifiable:** the boot-fatal test + the 2-replica demo + the bench numbers.
+- **Build:** the boot HARD-FATAL capability check (§6.1, incl. the corrected embedded/sqlite
+  multi-replica FATAL + postgres-needs-broker FATAL) + the compiler WARN + `sky doctor`/deploy
+  preflight; the cross-instance tenant-topic nudge + local re-query (§5) on Postgres+Redis;
+  the realistic-N bench harness.
+- **Gate:** every matrix ❌ cell FATALS at boot AND the ✅ cells DON'T; a **2-replica
+  Postgres+Redis cross-instance demo** (tenant-A write on replica 1 reaches a tenant-A session
+  on replica 2; tenant-B unaffected; **`Record` never on the wire** — assert the broker payload
+  is nudge-only); **an embedded multi-replica config FATALS at boot** (B#3 correction, proven
+  not asserted).
+- **★ NB-1 — REALISTIC-N BENCH IS REQUIRED (no proof-deferral loophole):** a
+  hundreds-of-sessions-per-tenant shared-feed bench measuring (i) per-commit match-detection
+  cost — **must be provably N-independent** (~O(distinct-predicates)); (ii) per-commit fan-out
+  delivery cost — **must be characterized AND BOUNDED linear up to a STATED N** (e.g. "≤ X
+  ms/commit to N=1000 sessions/tenant"); (iii) memory per subscription. The bench **must
+  close**; a Phase-6 *optimization* (keyed render + horizontal spread above the stated N) is
+  allowed, a Phase-6 *proof deferral* is not (per the no-deferral rule). The old "OR an
+  explicit Phase-6 scope decision" escape is REMOVED.
+- **★ NB-3 — RESYNC THUNDERING-HERD BOUND:** the bench includes a high-write × high-N
+  conservative-tier case that forces the resync path (buffer overflow → all affected subs
+  re-query). The design BOUNDS the herd: (a) **per-sub coalescing** collapses a burst to ONE
+  re-query regardless of how many deltas dropped; (b) a **global reactive re-query semaphore**
+  (default `K = min(GOMAXPROCS, 8)`) caps concurrent re-queries so an N-way synchronized
+  stampede runs at most K at a time (the rest queue) — the engine sees ≤ K concurrent scans,
+  not N; (c) resync is per-sub debounced. The gate asserts concurrent re-query count stays ≤ K
+  and total re-queries ≤ (affected subs) under a 10k-write burst on 500 subs. The bound is
+  **stated and enforced**, not left unbounded.
+- **Independently verifiable:** the boot-fatal tests + the 2-replica demo + the bench numbers.
 
 ---
 
 ## 10. Grill attacks pre-empted
 
-- **A1 — "Deletes silently drop" (the classic reactive bug).** Closed structurally: every
-  delete/update logs its vacated coordinate in `KeyChange.OldIndex` (from `ensurePreimage`,
-  `txn.go:234-244`), and Leave fires on the `OldIndex` `coordHit` (§2.3 proof) with the
-  `resultPks`-membership backstop for the conservative/cross-instance path (§2.3
-  belt-and-braces). A Leave never depends on decoding a body. **Both the coord path and the
-  resultPks path independently catch a leaving row.**
-- **A2 — "Index-coord matching isn't sound for arbitrary `Cond`."** Correct — and we don't
-  claim it is. Precise deltas are bounded to `classifyIndexable`'s v1 envelope
-  (single-column-ascending-indexed range/equality, `cond.go:251-259`); **everything else
-  degrades to a conservative witness + re-run** (§3.3), over-notify never under-notify,
-  identical to the SSI layer's own `WitnessCollection` fallback (`validate.go:41-49`). The
-  boundary is stated, the cost is stated, the fallback is proven safe by the same argument
-  that proves SSI's fallback safe.
-- **A3 — "Fan-out amplification is rigged by an N=2 gate."** §4.5 states the O(writes)
-  (re-evaluation) vs O(N) (delivery) distinction plainly and makes the 4c gate REQUIRE
-  either a realistic-N (hundreds/tenant) bench or an explicit Phase-6 scope decision.
-  Match-detection is bounded to O(changes × distinct-predicates) via collection
-  partitioning + shared-predicate coalescing; delivery O(N) is the honest LiveView floor,
-  not hidden.
-- **A4 — "Some backend × deployment cell silently goes stale."** §6.1's matrix enumerates
-  every cell; every non-reactive cell is a **boot HARD-FATAL**, never a silent degrade;
-  single-instance `watch` works everywhere (`InProcessReactive` always true). R10 (external
-  SQL writers) is documented as a known scope line with the NOTIFY-bridge answer.
-- **A5 — "Setup race: a change during Watch setup is missed or double-counted."** §7:
-  Register pins `readTs=durableHi` + token; baseline query at `readTs`; backfill
-  `Changelog.Tail(readTs)`; live with `commitTs > lastTs` dedup. `readTs` is a clean cut
-  with no gap; the ring/Tail spill fallback (fail-CLOSED, `committer.go:245-250`) guarantees
-  the > readTs half is never lost.
-- **A6 — "Subscriber sees a change before it's durable."** §7(1): fan-out dispatches only
-  from the post-`Apply(Sync)` sites; a sealed engine fires nothing.
-- **A7 — "Reactivity fights the per-session mutex / multi-tab model."** §8: a Change is a
-  Model fold under `sess.mu`, serialized with clicks (last-writer-wins); the frame uses the
-  existing multi-tab fan-out unchanged; panic-rollback restores handlers.
-- **A8 — "A long-lived tab pins the GC floor forever → version bloat."** §7(5): the
-  subscription advances its watermark token to each consumed `commitTs`
-  (`engine.Readers().Advance`, `engine.go:171`), so the floor tracks the slowest *live*
-  subscription's consumed position (R3), not its start; a closed tab releases the token
-  entirely (§3.2).
+- **A1 — "Deletes silently drop."** Closed by THREE independent legs (§2.3): `OldIndex`
+  coord (now on the blind path too, `aba0611a`), `resultPks` membership belt, and the
+  conservative witness. All three in the 4a `-race` gate.
+- **A2 — "A change during Watch setup is missed."** Closed by register-live-FIRST (§7): buffer
+  before pinning `readTs`; baseline; drain-with-dedup; durable `Tail` only on overflow. The
+  no-window proof is airtight (v2 removes v1's register-after-backfill gap).
+- **A3 — "Index-coord matching isn't sound for arbitrary `Cond`."** We don't claim it is.
+  Precise deltas are bounded to `classifyIndexable`'s single-column-ascending envelope;
+  everything else re-runs (§3.3), over-notify never under.
+- **A4 — "Fan-out is rigged by N=2."** §4.5 + NB-1: match-detection is O(changes ×
+  distinct-predicates-per-(coll,tenant)), N-independent; delivery is the honest O(N) LiveView
+  floor, and the 4c bench REQUIRES characterizing + bounding it to a stated N (no deferral).
+- **B1 — "Cross-tenant reactive leak."** Closed by the write-time-verified tenant tag (§3.4):
+  the delta carries the writer's verified tenant; the local match visits ONLY that tenant's
+  bucket; the cross-instance topic is per-tenant AND nudge-only (`Record=""`). No nil-identity
+  path reaches an unscoped topic — the tag is data on the delta, not a pump-goroutine re-derive.
+- **B2 — "Fails OPEN, not closed."** Closed by the enforced gate (§4.5): a `""`-tagged delta
+  matches ONLY the `""` bucket; there is no code path iterating all tenants. The reactive
+  analogue of the v0.16.6 SQL-`WHERE` gate. NB-2 puts the two-tenant `-race` test in 4a.
+- **B3 — "Cross-instance bridge is a layering inversion / a false-green cell."** Closed: (1)
+  the bridge is `rt → bluedb` (legal) via the changefeed + rt pump (§4); (2) the matrix is
+  corrected (§6.2) so **embedded/sqlite multi-replica boots HARD-FATAL** (unshared local
+  store — the write isn't in the other replica's store), and **postgres multi-replica requires
+  a Redis broker or boots FATAL**. No green cell that isn't proven end-to-end.
+- **A5/A6 (durability + before-durable)** — §7(1): emit only post-`Apply(Sync)`; sealed engine
+  fires nothing.
+- **A7 (mutex/multi-tab)** — §8: fold under `sess.mu`, existing multi-tab fan-out,
+  panic-rollback restores handlers.
+- **A8 (GC floor bloat)** — §7(6): `Advance` per consumed `commitTs`; a closed tab `Release`s.
 
 ---
 
-## 11. Open questions / weakest points (what I'm least sure survives a grill)
+## 11. Remaining weakest points (what I'm least sure survives a re-grill)
 
-1. **Order-only churn on a non-predicate index column.** A subscription ordered by column
-   `C` but filtered on column `S`: a `Put` that changes only `C` (row stays in the `S`
-   range) produces a `NewIndex`/`OldIndex` hit on the **`S` index** (Stay) but the row's
-   **sort position** changed. Unless the footprint also witnesses the order column, the
-   subscriber's *ordered* list is stale (right rows, wrong order). Mitigation options: (a)
-   on any Stay, re-sort the maintained list (cheap for small N); (b) also record an
-   `orderWitness` on order columns. **Leaning to (a) for `liveInto` (it owns the list) —
-   but this needs to be explicit and tested, and it's the most likely correctness gap a
-   griller finds.**
-2. **Delivery O(N) is irreducible.** §4.5 is honest that match-detection is N-independent
-   but delivery to N sessions is O(N). Shared-predicate eval reduces *detection* cost, not
-   *delivery* cost. If a griller demands sub-O(N) delivery for a 10k-session tenant, the
-   only answer is Phase-6 keyed-render + horizontal spread — i.e. **the honest answer is a
-   scope deferral, and the bench must show the O(N) constant is small enough to be
-   acceptable up to a stated N.** This is a real ceiling, not a bug, but it will be
-   attacked.
-3. **Leave carries no row body.** A delete's `Record=nil` (`keychange.go:27`), so a `Leave`
-   delivers only the pk (`row = Nothing`, §6.2). A subscriber that wants to render "X was
-   removed" with X's fields can't get them from the change — it must have cached the row (it
-   usually has, since the row was on-screen). Documented limitation; a griller may want an
-   opt-in "carry the tombstoned body" mode (costs a wider changelog payload).
-4. **Cross-instance recomputes the delta N times + the conservative broadcast is coarse.**
-   §5: each receiving instance re-matches. Fine for the precise tier, but a **collection
-   witness** (non-indexable predicate) broadcast forces *every* tenant instance to re-query
-   — the O(writes)-per-tenant claim degrades to O(writes × instances × query-cost) for
-   conservative-tier subscriptions on a multi-replica deployment. Honest, but the bench (4c)
-   must include a conservative-tier cross-instance case, not just the precise tier.
-5. **The `classifyIndexable` v1 envelope is narrow (single-column ascending).** Composite
-   and OR predicates — common in real list views (`status IN (…) AND tenant = …`) — fall to
-   the conservative tier today (`cond.go:281-318` handles only a two-bound AND on ONE
-   column). Correct (re-run), but a busy multi-tenant collection with many OR-predicate
-   subscriptions re-runs a lot. Widening the precise envelope (composite index footprints)
-   is real work; v1 honesty is "OR/composite → re-run." A griller may argue the *common*
-   case isn't in the precise tier, undercutting the O(writes) headline for realistic queries.
-6. **R6 verified-identity dependency is a hard external prerequisite.** §3.4: tenant
-   scoping is inert without framework-verified `SessionIdentity` on the standard `Std.Auth`
-   login path. If `Live.withIdentify` doesn't populate it by default (R6 open,
-   clean-slate-architecture.md), the whole tenant-scoped fan-out fail-closes to empty rows —
-   a silent "reactivity does nothing" for exactly the SaaS the magic targets. **This is a
-   Phase-4 blocker that lives outside Phase 4** — it must be confirmed, not assumed.
-7. **Model-dependent-filter re-register races.** §8: re-registering a subscription when a
-   Model field changes its predicate is a correctness obligation with a race window (old
-   sub torn down, new sub's baseline query + backfill running) during which a change could
-   be missed if the re-register isn't itself boundary-disciplined (§7). Needs the same
-   Register-pin-then-backfill discipline on every re-register, and that's easy to get subtly
-   wrong. Likely the second-most-likely correctness gap after #1.
+1. **The `Cmd.perform` write goroutine's identity stamp (write-time tag correctness).** §3.4
+   assumes every `Persist` write runs on an identity-stamped goroutine so
+   `SessionIdentity(currentLiveSession())` yields the writer's verified tenant. `update` and
+   `handleInitial` stamp their goroutines; the ref asserts `Cmd.perform` tasks do too
+   (`(ref) live_reactive.go:176` comment), but I have **not re-verified the current tree's
+   `Cmd.perform` stamps**. If a `Persist` write can run on an UNSTAMPED goroutine, its tag is
+   `""` → its delta fan-outs only to `""`-bucket subs → **a real tenant's write silently
+   fails to notify that tenant** (fail-closed, so SAFE — not a leak — but a liveness bug). The
+   4b two-tenant demo must include a write issued from `Cmd.perform`, not just `update`, to
+   prove the stamp holds. **Most likely re-grill target.**
+
+2. **Cross-instance is conservative-only (re-query), so the O(writes) headline is
+   single-instance.** §5: a multi-replica tenant re-queries the shared Postgres on every nudge
+   → cross-instance cost is O(nudges × instances-hosting-the-tenant × query-cost), not
+   O(writes). Honest, but a griller will note the O(writes) win evaporates the moment a tenant
+   spans replicas. The 4c bench must include a cross-instance conservative case, and the doc
+   must not headline O(writes) for multi-replica.
+
+3. **Order-witness only works when the order column is a DECLARED index.** §2.5 leg 1 needs
+   the order column's coord in `NewIndex`/`OldIndex`, which `buildIndexer` emits only for
+   declared indexes. For an order column that is NOT indexed, only leg 2 (pk-keyed re-sort on
+   any displayed-pk change) fires — which requires the change to be delivered at all. If the
+   filter footprint is a precise range and an order-only `Put` produces a Stay that the belt
+   catches (pk ∈ resultPks), the re-sort fires; but a griller may construct a case where an
+   order-only change to a displayed row does NOT hit the filter footprint's coord (e.g. the
+   filter column also changed in a compensating way) — needs an explicit 4a test to rule out.
+
+4. **`classifyIndexable`'s v1 envelope is narrow (single-column ascending).** Composite/OR
+   list-view predicates (`status IN (…) AND tenant = …`) fall to the conservative tier
+   (re-run). Correct, but the *common* multi-tenant list view may NOT be in the precise tier,
+   undercutting the O(writes) headline for realistic queries. Widening to composite footprints
+   is real work deferred as an optimization (not a proof) — but the 4c bench should report what
+   fraction of realistic queries land precise vs conservative.
+
+5. **R6 verified-identity is a hard external prerequisite (§3.4).** Tenant scoping (and hence
+   ALL multi-tenant reactivity) is inert without framework-verified `SessionIdentity` on the
+   standard `Std.Auth` path. Fail-closed makes the gap SAFE (empty, not leaky), but "reactivity
+   does nothing for exactly the authed SaaS the magic targets" is a Phase-4 blocker living
+   OUTSIDE Phase 4. It must be confirmed shipped, not assumed.
+
+6. **The `CommitReq.Tenant` threading touches the write path breadth.** Adding a transient
+   `Tenant` to `CommitReq` + stamping it in `blindPut`/`txWrite` + reading it in the committer
+   is a small change, but it crosses the L1/L2 boundary the engine keeps clean
+   (`engine.go:112` "OPAQUE to L1"). `Tenant` is NOT opaque-L1-payload (it is a transient
+   routing tag, never durably written), so it does not break the changelog format — but a
+   griller may argue it muddies the layering contract. The alternative (a `bluedb`
+   goroutine-local, §3.4 rejected-alt) trades layer-purity for mechanism-duplication; the
+   choice should be defended explicitly at implementation.
+
+7. **Model-dependent-filter re-register race (§8).** Re-registering on a Model-field change
+   uses the §7 register-live-first discipline, but the OLD sub must be torn down and the NEW
+   sub's baseline+buffer stood up without a miss window. It is easy to get subtly wrong (a
+   change during the swap). Needs a dedicated 4a re-register-race test, and it is the
+   second-most-likely correctness gap after #1.
+
+---
+
+## 12. Changes from the grilled v1 (per finding)
+
+| Finding | v1 flaw | v2 closure |
+|---|---|---|
+| **⚠️ EXPOSED (Phase-2)** | `blindPut` emitted no `OldIndex` → precise `Leave` never fired on the blind path | Fixed at `aba0611a` (`embedded.go:164-184`); §1.1/§2.3 Leg 1 re-prove it; 4a gate has blind-update-out→Leave |
+| **A#1** | precise matcher used only coord hits; order-only churn → stale order + dup | §2.2 belt clause (`wasDisplayed`) + §2.3 Leg 2 (`resultPks`) + §2.5 order-witness + pk-keyed re-sort with a no-stale/no-dup proof; 4a order-churn gate |
+| **A#2** | registered live AFTER backfill → miss window between `Tail` scan and registration | §7 REGISTER-LIVE-FIRST: buffer → pin `readTs` → baseline → drain-dedup → durable `Tail` only on overflow; airtight no-window proof |
+| **B#1** | commit-path fan-out goroutine had no identity → nil → unscoped shared topic + body-carry → cross-tenant leak | §3.4 WRITE-TIME-VERIFIED tenant tag (stamped by the writer, carried on the delta); §4.5 local match visits only the delta's tenant bucket; §5 nudge-only (`Record=""`) cross-instance |
+| **B#2** | failed OPEN (nil identity → firehose); mislabeled as liveness | §4.5 enforced fail-CLOSED gate — `""`-tagged delta matches ONLY the `""` bucket, no all-tenants code path; the reactive analogue of the v0.16.6 SQL-`WHERE` gate; NB-2 test in 4a |
+| **B#3** | `bluedb`→`rt` broker call is a cycle; embedded multi-replica claimed ✅ but the bridge didn't typecheck / the store isn't shared | §4 changefeed + rt pump (legal `rt→bluedb`); §6.2 corrected matrix — **embedded/sqlite multi-replica boots HARD-FATAL** (unshared local store), postgres multi-replica needs a Redis broker or FATALs; §5 chain proven for shared backend only |
+| **NB-1** | 4c allowed "realistic-N bench OR a Phase-6 scope decision" (proof-deferral loophole) | §9 4c: the realistic-N bench is REQUIRED; must bound O(N) delivery to a STATED N; only a Phase-6 *optimization* (not proof) may be deferred |
+| **NB-2** | two-tenant isolation exercised only in 4c | §9 4a gate now includes the two-tenant commit-path isolation `-race` test |
+| **NB-3** | resync thundering-herd unbounded | §9 NB-3: per-sub coalescing + a global re-query semaphore (`K = min(GOMAXPROCS, 8)`) + per-sub debounce; the bound is stated and gated (≤ K concurrent re-queries) |
+
+---
+
+*End of v2. Re-grill this before any Phase-4 code. The two most likely re-grill targets are
+§11 #1 (the `Cmd.perform` identity stamp — a liveness, not a leak, but it undermines the
+magic) and §11 #7 (the re-register race).*
