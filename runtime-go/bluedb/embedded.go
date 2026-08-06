@@ -151,12 +151,31 @@ func (b *EmbeddedBackend) Delete(coll CollSchema, key string) error {
 }
 
 // blindPut is the fast autocommit upsert (ReadSet == nil → the engine's blind fast path, §3.3).
-// It emits NewIndex coords so a concurrent txn scanner validates against the insert; an
-// index-less collection pays ZERO extra (buildIndexer returns nil without decoding the row).
+// It emits NewIndex coords so a concurrent txn scanner validates against the row's new position,
+// AND — when the collection has secondary indexes and this is an UPDATE — OldIndex coords from
+// the pre-image so a concurrent PRECISE-tier scanner sees the row LEAVE its scanned range
+// (mirrors blindDelete, §2.4). Without OldIndex a range-optimized scan (which records the
+// interval, not the returned row's PK) would miss an update moving a row OUT of range and commit
+// on a stale read — the Phase-2 under-reject (docs/bluedb/phase4-grill-findings.md).
+//
+// An index-less collection has no range to leave, so it keeps the ZERO-extra blind fast path: the
+// pre-image Snapshot is taken ONLY when len(cs.Indexes) > 0 (the same short-circuit buildIndexer
+// uses). For an INSERT (no pre-image present) OldIndex stays nil — nothing left.
 func (b *EmbeddedBackend) blindPut(cs *CollSchema, key string, row []byte) error {
 	uk := dataUserKey(cs.Name, key)
 	coords := buildIndexer(cs)(uk, row)
-	chg := KeyChange{Coll: cs.ID, Pk: uk, Op: OpPut, Record: row, NewIndex: coords}
+	var old []IndexCoord
+	if len(cs.Indexes) > 0 {
+		r, err := b.eng.Snapshot()
+		if err != nil {
+			return err
+		}
+		if pre, _, ok := r.Get(uk); ok {
+			old = buildIndexer(cs)(uk, append([]byte(nil), pre...))
+		}
+		r.Close()
+	}
+	chg := KeyChange{Coll: cs.ID, Pk: uk, Op: OpPut, Record: row, NewIndex: coords, OldIndex: old}
 	res := b.eng.Commit(CommitReq{
 		Writes:           []VersionedWrite{{UserKey: uk, Op: OpPut, Value: row}},
 		ChangelogPayload: EncodeChangelogPayload([]KeyChange{chg}),

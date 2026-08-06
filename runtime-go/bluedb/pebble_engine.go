@@ -324,9 +324,15 @@ func (e *pebbleEngine) NowTs() HLC { return e.hlc.highWater() }
 func (e *pebbleEngine) Changelog() Changelog       { return &changelog{db: e.db} }
 func (e *pebbleEngine) Readers() WatermarkRegistry { return e.reg }
 
+// snapshotCalls counts Engine.Snapshot() invocations — a test seam (mirrors validateCalls /
+// changelogTailCalls). It lets the blindPut fast-path test assert an index-less autocommit Put
+// pays ZERO pre-image snapshots. Package-level so tests can snapshot it around one Put.
+var snapshotCalls atomic.Int64
+
 // Snapshot atomically registers a reader token + picks readTs, then pins a Pebble
 // snapshot seqnum for a frozen, lock-free consistent view (§2.5 invariant, C4).
 func (e *pebbleEngine) Snapshot() (Reader, error) {
+	snapshotCalls.Add(1)
 	if e.isClosed() {
 		return nil, ErrClosed
 	}
