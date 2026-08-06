@@ -1203,6 +1203,12 @@ colTypeStr ct =
         CNull inner ->
             colTypeStr inner ++ "?"
 
+        CNotOrderable inner ->
+            -- physical/DDL-transparent (§2.3): a not-orderable column stores as its
+            -- inner type on the SQL side; the marker only affects the KV engine's
+            -- index/range choice, never the SQL column type.
+            colTypeStr inner
+
 
 dbCreateCols : Db -> String -> List ( String, String ) -> String -> Task Error ()
 dbCreateCols =

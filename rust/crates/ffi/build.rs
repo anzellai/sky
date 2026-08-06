@@ -175,6 +175,10 @@ fn stage_runtime(src: &Path, dst: &Path) {
         }
     }
     stage(&src.join("rt"), &dst.join("rt"));
+    // bluedb/ — the embedded database engine package `rt/embedded_kernel.go`
+    // imports (`sky-app/bluedb`). Materialised beside `rt/` in a user's sky-out so
+    // the emitted project links (v0.19 BlueDB Phase 3b).
+    stage(&src.join("bluedb"), &dst.join("bluedb"));
     // cmd/ — the `sky-hub` daemon main package (`sky console-serve`).
     stage(&src.join("cmd"), &dst.join("cmd"));
 }

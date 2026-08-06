@@ -76,17 +76,73 @@ durability path, and `encodeIndexKey` are untouched).
   single-column ascending only; they need NEW L0 builders. The engine's `encodeCompositeKey` +
   `Descending` flag exist but are not reachable from L0 in v1.
 
-## Phase 3b — Sky `Std.Persist` port + `Std.Codec` non-order-preserving MARKER — pending
+## Phase 3b — Sky `Std.Persist` port + `Std.Codec` non-order-preserving MARKER + a real Sky e2e — **DONE**
 
-- Port the pure-Sky `case conn of` dispatch + universal verbs; swap the `KvConn` payload to the
-  new embedded handle; rebuild the `Embedded_coll*` KV-arm kernels over the `Backend` (§3.2/§3.3).
-- The `Std.Codec` non-order-preserving marker that DERIVES the not-orderable `ColType` a Phase-3a
-  `CollSchema` currently takes explicitly (§2.3): a `Codec.map`/non-primitive-backed/Money/Decimal
-  column routes to the fallback engine `ColType`, and `colTypeFor`'s `Nothing`/`_` default routes
-  UNRESOLVED fields to the fallback too.
-- `CollSchema` derivation + memoization from the KV-arm kernel args (`Store.colsOf` +
-  `indexFieldValues`/`indexFieldTypes`, ADAPTED to carry `ColType`).
-- Does NOT touch the Sky stdlib or the compiler in 3a — this is the 3b surface.
+The first real Sky↔Go↔engine use of the embedded backend. `sky build` + `sky run` of
+`examples/56-persist-embedded` exercises insert / equality-query / range-query / count /
+transaction (read-modify-write) on the new engine with correct asserted output.
+
+### What shipped
+
+1. **Go `rt.Embedded_*` kernels (§6)** — `runtime-go/rt/embedded_kernel.go`. Thin
+   `Ffi.kernel`-shaped bridges (`func(...any) any` returning a `func() any { Ok/Err }` Task thunk,
+   mirroring the `Db_*` kernels): `Embedded_open`/`Embedded_get`/`Embedded_put`/`Embedded_insert`/
+   `Embedded_delete`/`Embedded_query`/`Embedded_count`/`Embedded_transaction`/`Embedded_selectRaw`.
+   They decode Sky args (a JSON **schema descriptor** → `bluedb.CollSchema`, a JSON row blob, a
+   JSON **plan** → `bluedb.QueryPlan`), call `bluedb.EmbeddedBackend`, and Task-shape the result.
+   The codec NEVER crosses to Go — the boundary is JSON strings only; the CollSchema + the row blob
+   drive the indexer + read-set. **Handle unification:** `connectKeyValue` mints a
+   `*EmbeddedBackend`; a `transaction` body is handed the `bluedb.TxHandle` — BOTH satisfy
+   `bluedb.TxHandle`, so the CRUD/query kernels are autocommit-vs-txn agnostic (§2.6). A
+   path-keyed registry dedupes engines so a memoised `connectKeyValue` CAF shares one engine.
+2. **`Std.Codec` non-order-preserving marker (§2.3)** — `sky-stdlib/Std/Codec.sky`. New `ColType`
+   case `CNotOrderable ColType` (carries the physical inner type). `Codec.map` now SETS it on any
+   scalar shape it wraps (`notOrderableShape` — Money-as-text, `intBool`, any bijection whose byte
+   order the codec can't vouch for). `colTypeKind` maps `CNotOrderable inner` transparently to
+   `inner`'s PHYSICAL kind (so `Std.Db.Store`/DDL are unchanged — the two `ColType` matches in
+   `Codec.colTypeKind` + `Store.colTypeStr` both keep the physical mapping). The NEW exposed
+   `colEngineKind` SURFACES the marker → `"notorderable"`, which the embedded backend maps to the
+   fallback `ColBlob` (never range-optimized). Existing order-preserving scalars (`CInt`/`CText`/
+   `CBool`) are untouched.
+3. **`Std.Persist` embedded arm (§1/§3)** — `sky-stdlib/Std/Persist.sky` (new). The phantom-tag
+   `Conn cap` (KV arm), `Collection a` (`collection`/`key`/`index` builders over a `Codec a`),
+   `connectKeyValue`, the universal verbs (`get`/`put`/`insert`/`delete`/`all`/`count`/
+   `transaction`) dispatching via `case conn of` to the `Embedded_*` kernels, and a self-contained
+   `Cond`/`Query` builder (`where_`/`eq`/`gt`/`orderAsc`/`toList`/`toCount`/…) that serializes to
+   the plan JSON the kernel decodes. `colTypeFor` uses `Codec.colEngineKind` and routes an
+   UNRESOLVED field to the fallback (§2.3), NOT range-optimized text. The SqlValue currency is
+   reused from `Std.Db`.
+4. **Sky e2e** — `examples/56-persist-embedded`. Declares a `Todo` collection (`Codec.auto` +
+   indexes on `priority`/`done`), inserts 4 rows, runs `eq`+`orderAsc` and `gte`+`orderDesc`
+   queries, counts, and a `transaction` read-modify-write, printing asserted results.
+
+### Packaging note (build-system, NOT compiler-semantics)
+
+The §6 zero-**compiler**-change claim HELD end to end: no change to `hir`/`ty`/`lower`/`kernel_api`
+— `Ffi.kernel "Embedded_*"` resolves generically to `rt.Embedded_*` via the lowerer's
+`alias_go_name` fallthrough, and the Sky pipeline (parse→canon→type→lower) accepts the new stdlib
+unchanged. But `rt/embedded_kernel.go` is the FIRST `rt → sky-app/bluedb` import, and the
+`bluedb` package was not previously shipped into user projects, so two **build-system** files
+changed to materialise it (packaging, not compiler semantics):
+`rust/crates/ffi/build.rs` (`stage_runtime` now stages `runtime-go/bluedb`) and
+`rust/crates/project/src/build.rs` (`write_out` now materialises `bluedb/` beside `rt/`). Because
+`rt` imports `bluedb` unconditionally, every project now compiles the `bluedb`/Pebble subtree —
+conditional materialisation (only when `Std.Persist` is used) is a Phase-3c optimization.
+
+### Deferred to 3b→later (documented)
+
+- **Codec.map marker through `autoWith` overrides** — a hand-written `Codec.object |> field`
+  codec preserves the `CNotOrderable` marker (via `colTypeOf`); an `autoWith` override round-trips
+  through kind-STRINGS (`autoColsK`) and loses it. Fine for 3b (queries on mapped-override columns
+  aren't a target); a full fix threads a `"notorderable"` string through the auto-cols kernel.
+- **Collection `unique`/`serial`/generated builders** — the embedded engine + `Embedded_insert`
+  support generated-PK fill + `unique` SSI, but `Std.Persist.Collection` only exposes
+  `key`/`index` in 3b (records carry their own PK). Surfacing `unique`/`serial` on the builder is
+  additive.
+- **`watch`/`live`** — single-instance in-process pub/sub reactivity is NOT wired in this Sky
+  surface yet (the engine seam is Phase 4). Deferred with the reactive path.
+
+## Phase 3c — SQL adapters + dialect-aware renderer + parity + capability check — pending
 
 ## Phase 3c — SQL adapters + dialect-aware renderer + parity + capability check — pending
 

@@ -1,0 +1,703 @@
+-- | Std.Persist — one backend-invisible persistence surface over the BlueDB
+-- embedded engine (v0.19 Phase 3b; docs/bluedb/phase3-api-design.md §1/§3).
+--
+-- A `Collection a` pairs a `Std.Codec` with a primary key + declared indexes;
+-- `connectKeyValue` mints an embedded `Conn`, and the universal verbs
+-- (`get`/`put`/`insert`/`delete`/`query`/`count`/`transaction`) persist records
+-- through it. The codec drives BOTH JSON and the engine's index/column mapping —
+-- write it once, persist it everywhere.
+--
+-- ```elm
+-- import Std.Persist as P
+-- import Std.Codec as Codec
+--
+-- todos : P.Collection Todo
+-- todos =
+--     P.collection "todos" todoCodec |> P.key "id" |> P.index "priority"
+--
+-- store = P.connectKeyValue "data/app.bluedb" |> Task.run |> Result.withDefault ...
+--
+-- P.insert store todos { id = "t1", title = "buy milk", priority = 2, done = False }
+-- P.query todos |> P.where_ (P.eq "done" (P.bool False)) |> P.orderAsc "priority" |> P.toList store
+-- ```
+--
+-- The KV/embedded arm routes to `Ffi.kernel "Embedded_*"` (→ `rt.Embedded_*`,
+-- resolved generically by the lowerer — zero compiler change, §6). SQLite/Postgres
+-- adapters + KV≡SQL parity land in Phase 3c; commit-path reactivity in Phase 4.
+module Std.Persist exposing
+    ( Conn
+    , KeyValue
+    , Collection
+    , collection
+    , key
+    , index
+    , connectKeyValue
+    , get
+    , put
+    , insert
+    , delete
+    , all
+    , count
+    , transaction
+    , Query
+    , Cond
+    , query
+    , where_
+    , orderAsc
+    , orderDesc
+    , limit
+    , offset
+    , toList
+    , toMaybe
+    , toCount
+    , eq
+    , neq
+    , gt
+    , gte
+    , lt
+    , lte
+    , like
+    , isNull
+    , notNull
+    , inList
+    , and_
+    , or_
+    , not_
+    , string
+    , int
+    , float
+    , bool
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task exposing (Task)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Json.Encode as E exposing (Value)
+import Std.Codec as Codec exposing (Codec, ColType(..), Shape(..))
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Decimal as Decimal
+import Std.Money as Money
+
+-- ── Capability phantom tag ────────────────────────────────────────────────────
+-- | The phantom capability marking a key-value (embedded) connection.
+type KeyValue
+    = KeyValue
+
+-- | A backend-invisible connection, tagged with its capability `cap`. The embedded
+-- arm wraps a runtime handle id (a registry-backed `*bluedb.EmbeddedBackend`, or the
+-- tx surface inside a `transaction` body — never destructured by user code, since
+-- the `KvConn` constructor is not exposed). SQLite/Postgres arms land in Phase 3c.
+type Conn cap
+    = KvConn Int
+
+-- ── Collection ────────────────────────────────────────────────────────────────
+-- | A persisted collection of `a`: a name, its codec (drives JSON + the engine's
+-- column/index mapping), its primary-key column, and its declared secondary
+-- indexes (single-column ascending, v1 — §2.5).
+type Collection a
+    = Collection { name : String
+, codec : Codec a
+, keyField : String
+, indexes : List String
+}
+
+
+-- | Declare a collection from a name + codec. Defaults the primary key to `"id"`;
+-- override with `key`, add indexes with `index`.
+collection : String -> Codec a -> Collection a
+collection name codec =
+    Collection { name = name, codec = codec, keyField = "id", indexes = [] }
+
+
+-- | Set the primary-key column (the record field the engine keys rows by).
+key : String -> Collection a -> Collection a
+key k (Collection c) =
+    Collection { c | keyField = k }
+
+
+-- | Declare a secondary index on a column (single-column ascending). A
+-- range-optimized column (int/text/bool) gets tight index-range validation under
+-- transactions; a not-order-preserving column (Money/`Codec.map`/blob) routes to
+-- the conservative witness (§2.3).
+index : String -> Collection a -> Collection a
+index f (Collection c) =
+    Collection { c | indexes = c.indexes ++ [ f ] }
+
+
+codecOf : Collection a -> Codec a
+codecOf (Collection c) =
+    c.codec
+
+
+collNameOf : Collection a -> String
+collNameOf (Collection c) =
+    c.name
+
+
+keyFieldOf : Collection a -> String
+keyFieldOf (Collection c) =
+    c.keyField
+
+
+indexesOf : Collection a -> List String
+indexesOf (Collection c) =
+    c.indexes
+
+
+-- ── Connect ───────────────────────────────────────────────────────────────────
+-- | Open (or reuse) the embedded engine at `path` (a directory) and mint a
+-- key-value connection. A memoised top-level binding shares ONE engine per path.
+connectKeyValue : String -> Task Error (Conn KeyValue)
+connectKeyValue path =
+    Task.map KvConn (openEmbedded path)
+
+
+-- ── Universal verbs ───────────────────────────────────────────────────────────
+-- | Fetch a record by primary key. `Nothing` when absent.
+get : Conn cap -> Collection a -> String -> Task Error (Maybe a)
+get conn coll keyStr =
+    case conn of
+
+        KvConn store ->
+            embeddedGet store (schemaJson coll) keyStr
+                |> Task.andThen (decodeMaybe (codecOf coll))
+
+
+-- | Upsert a record by its self-assigned primary key.
+put : Conn cap -> Collection a -> a -> Task Error ()
+put conn coll record =
+    case conn of
+
+        KvConn store ->
+            embeddedPut
+                store
+                (schemaJson coll)
+                (Codec.toJson (codecOf coll) record)
+
+
+-- | Insert a record, returning the persisted row (with any engine-filled generated
+-- columns). A duplicate primary key is rejected (deterministic, §2.7).
+insert : Conn cap -> Collection a -> a -> Task Error a
+insert conn coll record =
+    case conn of
+
+        KvConn store ->
+            embeddedInsert
+                store
+                (schemaJson coll)
+                (Codec.toJson (codecOf coll) record)
+                |> Task.andThen (decodeOne (codecOf coll))
+
+
+-- | Delete a record by primary key. Idempotent (a missing key is a no-op).
+delete : Conn cap -> Collection a -> String -> Task Error ()
+delete conn coll keyStr =
+    case conn of
+
+        KvConn store ->
+            embeddedDelete store (schemaJson coll) keyStr
+
+
+-- | Every record in the collection.
+all : Conn cap -> Collection a -> Task Error (List a)
+all conn coll =
+    toList conn (query coll)
+
+
+-- | Count every record in the collection.
+count : Conn cap -> Collection a -> Task Error Int
+count conn coll =
+    toCount conn (query coll)
+
+
+-- | Run `fn` inside a serializable transaction (SSI, bounded conflict-retry). The
+-- body is handed a `Conn` bound to the transaction; its `get`/`put`/`query` compose
+-- atomically (a txn-scoped `query` records a read-set, §2.6). A body that returns
+-- `Task.fail` rolls the transaction back and propagates the error.
+transaction : Conn cap -> (Conn cap -> Task Error a) -> Task Error a
+transaction conn fn =
+    case conn of
+
+        KvConn store ->
+            embeddedTransaction store (\txStore -> fn (KvConn txStore))
+
+-- ── Query builder ─────────────────────────────────────────────────────────────
+-- | A composable WHERE condition — build a leaf (`eq` / `gt` / `like` / …) and
+-- combine with `and_` / `or_` / `not_`; apply with `where_`.
+type Cond
+    = CondLeaf String String SqlValue
+    | CondNullC String Bool
+    | CondInC String (List SqlValue)
+    | CondAndC (List Cond)
+    | CondOrC (List Cond)
+    | CondNotC Cond
+
+-- | An in-progress query over a collection.
+type Query a
+    = Query { coll : Collection a
+, conds : List Cond
+, orders : List ( String, String )
+, limitN : Int
+, offsetN : Int
+}
+
+
+-- | Start a query over a collection.
+query : Collection a -> Query a
+query coll =
+    Query { coll = coll, conds = [], orders = [], limitN = -1, offsetN = 0 }
+
+
+-- | Add a condition (multiple `where_` calls AND together).
+where_ : Cond -> Query a -> Query a
+where_ c (Query q) =
+    Query { q | conds = c :: q.conds }
+
+
+-- | Order ascending by a column (priority order across calls).
+orderAsc : String -> Query a -> Query a
+orderAsc col (Query q) =
+    Query { q | orders = q.orders ++ [ ( col, "asc" ) ] }
+
+
+-- | Order descending by a column.
+orderDesc : String -> Query a -> Query a
+orderDesc col (Query q) =
+    Query { q | orders = q.orders ++ [ ( col, "desc" ) ] }
+
+
+-- | Cap the number of rows returned.
+limit : Int -> Query a -> Query a
+limit n (Query q) =
+    Query { q | limitN = n }
+
+
+-- | Skip the first `n` rows.
+offset : Int -> Query a -> Query a
+offset n (Query q) =
+    Query { q | offsetN = n }
+
+
+-- | Run the query, decoding each matching row via the collection's codec.
+toList : Conn cap -> Query a -> Task Error (List a)
+toList conn (Query q) =
+    case conn of
+
+        KvConn store ->
+            embeddedQuery store (schemaJson q.coll) (planJson (Query q))
+                |> Task.andThen (decodeRows (codecOf q.coll))
+
+
+-- | Run the query and return the first matching row (if any).
+toMaybe : Conn cap -> Query a -> Task Error (Maybe a)
+toMaybe conn qr =
+    Task.map List.head (toList conn qr)
+
+
+-- | Run the query's predicate and return the matching row count.
+toCount : Conn cap -> Query a -> Task Error Int
+toCount conn (Query q) =
+    case conn of
+
+        KvConn store ->
+            embeddedCount store (schemaJson q.coll) (planJson (Query q))
+
+
+-- ── Condition leaves + combinators ────────────────────────────────────────────
+-- | `col = value`.
+eq : String -> SqlValue -> Cond
+eq col v =
+    CondLeaf col "eq" v
+
+
+-- | `col <> value`.
+neq : String -> SqlValue -> Cond
+neq col v =
+    CondLeaf col "ne" v
+
+
+-- | `col > value`.
+gt : String -> SqlValue -> Cond
+gt col v =
+    CondLeaf col "gt" v
+
+
+-- | `col >= value`.
+gte : String -> SqlValue -> Cond
+gte col v =
+    CondLeaf col "gte" v
+
+
+-- | `col < value`.
+lt : String -> SqlValue -> Cond
+lt col v =
+    CondLeaf col "lt" v
+
+
+-- | `col <= value`.
+lte : String -> SqlValue -> Cond
+lte col v =
+    CondLeaf col "lte" v
+
+
+-- | `col LIKE pattern` (SQL `%` / `_` wildcards; ASCII, case-sensitive — §0.6).
+like : String -> String -> Cond
+like col pat =
+    CondLeaf col "like" (SqlString pat)
+
+
+-- | `col IS NULL`.
+isNull : String -> Cond
+isNull col =
+    CondNullC col True
+
+
+-- | `col IS NOT NULL`.
+notNull : String -> Cond
+notNull col =
+    CondNullC col False
+
+
+-- | `col IN (v1, v2, …)`. An empty list matches nothing.
+inList : String -> List SqlValue -> Cond
+inList col vs =
+    CondInC col vs
+
+
+-- | All of the conditions (AND).
+and_ : List Cond -> Cond
+and_ conds =
+    CondAndC conds
+
+
+-- | Any of the conditions (OR).
+or_ : List Cond -> Cond
+or_ conds =
+    CondOrC conds
+
+
+-- | Negation.
+not_ : Cond -> Cond
+not_ c =
+    CondNotC c
+
+
+-- ── Typed value constructors (injection-safe params) ─────────────────────────
+-- | A `String` value.
+string : String -> SqlValue
+string s =
+    SqlString s
+
+
+-- | An `Int` value.
+int : Int -> SqlValue
+int n =
+    SqlInt n
+
+
+-- | A `Float` value.
+float : Float -> SqlValue
+float f =
+    SqlFloat f
+
+
+-- | A `Bool` value.
+bool : Bool -> SqlValue
+bool b =
+    SqlBool b
+
+
+-- ── Kernels (Ffi.kernel "Embedded_*" → rt.Embedded_*, §6) ────────────────────
+openEmbedded : String -> Task Error Int
+openEmbedded =
+    Ffi.kernel "Embedded_open"
+
+
+embeddedGet : Int -> String -> String -> Task Error (Maybe String)
+embeddedGet =
+    Ffi.kernel "Embedded_get"
+
+
+embeddedPut : Int -> String -> String -> Task Error ()
+embeddedPut =
+    Ffi.kernel "Embedded_put"
+
+
+embeddedInsert : Int -> String -> String -> Task Error String
+embeddedInsert =
+    Ffi.kernel "Embedded_insert"
+
+
+embeddedDelete : Int -> String -> String -> Task Error ()
+embeddedDelete =
+    Ffi.kernel "Embedded_delete"
+
+
+embeddedQuery : Int -> String -> String -> Task Error (List String)
+embeddedQuery =
+    Ffi.kernel "Embedded_query"
+
+
+embeddedCount : Int -> String -> String -> Task Error Int
+embeddedCount =
+    Ffi.kernel "Embedded_count"
+
+
+embeddedTransaction : Int -> (Int -> Task Error a) -> Task Error a
+embeddedTransaction =
+    Ffi.kernel "Embedded_transaction"
+
+
+-- ── Decode helpers ────────────────────────────────────────────────────────────
+decodeMaybe : Codec a -> Maybe String -> Task Error (Maybe a)
+decodeMaybe codec m =
+    case m of
+
+        Nothing ->
+            Task.succeed Nothing
+
+        Just jsonStr ->
+            case Codec.fromJson codec jsonStr of
+
+                Ok v ->
+                    Task.succeed (Just v)
+
+                Err e ->
+                    Task.fail e
+
+
+decodeOne : Codec a -> String -> Task Error a
+decodeOne codec jsonStr =
+    case Codec.fromJson codec jsonStr of
+
+        Ok v ->
+            Task.succeed v
+
+        Err e ->
+            Task.fail e
+
+
+decodeRows : Codec a -> List String -> Task Error (List a)
+decodeRows codec rows =
+    case rows of
+
+        [] ->
+            Task.succeed []
+
+        jsonStr :: rest ->
+            case Codec.fromJson codec jsonStr of
+
+                Ok v ->
+                    Task.map (\vs -> v :: vs) (decodeRows codec rest)
+
+                Err e ->
+                    Task.fail e
+
+
+-- ── Schema descriptor (Sky → the Go kernel's CollSchema, §3.4) ───────────────
+schemaJson : Collection a -> String
+schemaJson coll =
+    E.encode
+        0
+        (E.object
+            [ ( "name", E.string (collNameOf coll) )
+            , ( "key", E.string (keyFieldOf coll) )
+            , ( "cols", E.list encCol (colDescriptors coll) )
+            , ( "indexes", E.list (encIndex coll) (indexesOf coll) )
+            ])
+
+
+encCol : ( String, String ) -> Value
+encCol pair =
+    E.object
+        [ ( "name", E.string (fst pair) )
+        , ( "type", E.string (snd pair) )
+        , ( "unique", E.bool False )
+        , ( "generated", E.bool False )
+        ]
+
+
+encIndex : Collection a -> String -> Value
+encIndex coll field =
+    E.object
+        [ ( "name", E.string field )
+        , ( "col", E.string field )
+        , ( "type", E.string (colTypeFor (codecOf coll) field) )
+        , ( "unique", E.bool False )
+        ]
+
+
+-- The collection's (column, engineKind) descriptors, from the codec's shape. A
+-- non-record codec (scalar collection) has no columns to enumerate here.
+colDescriptors : Collection a -> List ( String, String )
+colDescriptors coll =
+    case Codec.shape (codecOf coll) of
+
+        SRecord cols ->
+            List.map
+                (\pair -> ( fst pair, Codec.colEngineKind (snd pair) ))
+                cols
+
+        _ ->
+            []
+
+
+-- The engine kind string for a field (§2.3). An unresolved field routes to the
+-- non-order-preserving fallback, NEVER range-optimized text.
+colTypeFor : Codec a -> String -> String
+colTypeFor codec field =
+    case Codec.shape codec of
+
+        SRecord cols ->
+            case List.find
+                     (\pair -> normalizeCol (fst pair) == normalizeCol field)
+                     cols of
+
+                Just pair ->
+                    Codec.colEngineKind (snd pair)
+
+                Nothing ->
+                    "notorderable"
+
+        _ ->
+            "notorderable"
+
+
+normalizeCol : String -> String
+normalizeCol s =
+    String.toLower (String.replace "_" "" s)
+
+
+-- ── Plan descriptor (Sky → the Go kernel's QueryPlan, §4) ────────────────────
+planJson : Query a -> String
+planJson (Query q) =
+    E.encode
+        0
+        (E.object
+            [ ( "where", condJson (codecOf q.coll) (combined q.conds) )
+            , ( "orders", E.list orderJson q.orders )
+            , ( "limit", E.int q.limitN )
+            , ( "offset", E.int q.offsetN )
+            ])
+
+
+-- Fold the accumulated conditions into one node. A single leaf passes through bare
+-- (so a txn-scoped query can record a PRECISE index range, §2.6); multiple AND.
+combined : List Cond -> Cond
+combined conds =
+    case List.reverse conds of
+
+        [] ->
+            CondAndC []
+
+        [one] ->
+            one
+
+        many ->
+            CondAndC many
+
+
+condJson : Codec a -> Cond -> Value
+condJson codec cond =
+    case cond of
+
+        CondLeaf col op v ->
+            E.object
+                [ ( "op", E.string op )
+                , ( "col", E.string col )
+                , ( "type", E.string (colTypeFor codec col) )
+                , ( "val", valJson (colTypeFor codec col) v )
+                ]
+
+        CondNullC col isN ->
+            E.object
+                [ ( "op"
+                  , E.string
+                        (if isN then
+                            "isnull"
+
+                        else
+                            "notnull")
+                  )
+                , ( "col", E.string col )
+                ]
+
+        CondInC col vs ->
+            E.object
+                [ ( "op", E.string "in" )
+                , ( "col", E.string col )
+                , ( "type", E.string (colTypeFor codec col) )
+                , ( "vals", E.list (valJson (colTypeFor codec col)) vs )
+                ]
+
+        CondAndC kids ->
+            E.object
+                [ ( "op", E.string "and" )
+                , ( "kids", E.list (condJson codec) kids )
+                ]
+
+        CondOrC kids ->
+            E.object
+                [ ( "op", E.string "or" )
+                , ( "kids", E.list (condJson codec) kids )
+                ]
+
+        CondNotC k ->
+            E.object
+                [ ( "op", E.string "not" )
+                , ( "kids", E.list (condJson codec) [ k ] )
+                ]
+
+
+valJson : String -> SqlValue -> Value
+valJson kind v =
+    E.object [ ( "type", E.string kind ), ( "v", E.string (sqlValueStr v) ) ]
+
+
+orderJson : ( String, String ) -> Value
+orderJson pair =
+    E.object
+        [ ( "col", E.string (fst pair) )
+        , ( "desc", E.bool (snd pair == "desc") )
+        ]
+
+
+-- The textual form of a bound value (the byte form the engine normalizes under the
+-- column's engine kind, §2.3). Every SqlValue variant is covered.
+sqlValueStr : SqlValue -> String
+sqlValueStr v =
+    case v of
+
+        SqlString s ->
+            s
+
+        SqlInt n ->
+            String.fromInt n
+
+        SqlFloat f ->
+            String.fromFloat f
+
+        SqlBool b ->
+            if b then
+                "true"
+
+            else
+                "false"
+
+        SqlBytes s ->
+            s
+
+        SqlDecimal d ->
+            Decimal.toString d
+
+        SqlTime t ->
+            String.fromInt t
+
+        SqlMoney m ->
+            Money.formatWithCode m
+
+        SqlNull inner ->
+            sqlValueStr inner

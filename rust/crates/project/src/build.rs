@@ -1096,6 +1096,14 @@ fn write_out(
     // materialise a pruned copy of runtime-go/rt (tests stripped).
     let rt_dst = out_dir.join("rt");
     materialise_rt(&rt_src.join("rt"), &rt_dst, console_needed)?;
+    // materialise runtime-go/bluedb (the embedded DB engine `rt/embedded_kernel.go`
+    // imports as `sky-app/bluedb`). rt imports it unconditionally, so every project
+    // needs it linked (v0.19 BlueDB Phase 3b). `materialise_rt` strips `_test.go` +
+    // `testdata`; bluedb has no `console_app`, so `console_needed=false` is inert.
+    let bluedb_src = rt_src.join("bluedb");
+    if bluedb_src.is_dir() {
+        materialise_rt(&bluedb_src, &out_dir.join("bluedb"), false)?;
+    }
     Ok(())
 }
 

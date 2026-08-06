@@ -1,0 +1,166 @@
+module Main exposing (main)
+
+-- examples/56-persist-embedded — the first real Sky use of the BlueDB embedded
+-- engine through Std.Persist (v0.19 Phase 3b). Declares a Collection with a codec +
+-- declared indexes, opens a key-value connection, inserts rows, runs equality +
+-- range queries with ordering, counts, and does a read-modify-write inside a
+-- serializable transaction — asserting the output end-to-end (Sky ↔ Go ↔ engine).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task exposing (Task)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Error as Error exposing (Error)
+import Std.Codec as Codec exposing (Codec)
+import Std.Persist as P
+import Std.Log exposing (println)
+
+type alias Todo =
+    { id : String
+    , title : String
+    , priority : Int
+    , done : Bool
+    }
+
+
+blankTodo : Todo
+blankTodo =
+    { id = "", title = "", priority = 0, done = False }
+
+
+todoCodec : Codec Todo
+todoCodec =
+    Codec.auto blankTodo
+
+
+todos : P.Collection Todo
+todos =
+    P.collection "todos" todoCodec |> P.key "id" |> P.index "priority"
+        |> P.index "done"
+
+
+seed : List Todo
+seed =
+    [ { id = "t1", title = "buy milk", priority = 2, done = False }
+    , { id = "t2", title = "walk dog", priority = 1, done = True }
+    , { id = "t3", title = "write report", priority = 3, done = False }
+    , { id = "t4", title = "pay bills", priority = 1, done = False }
+    ]
+
+
+main : Task Error ()
+main =
+    P.connectKeyValue "skydata-todos" |> Task.andThen scenario
+        |> Task.onError reportError
+
+
+scenario : P.Conn P.KeyValue -> Task Error ()
+scenario conn =
+    clearAll conn |> Task.andThen (\_ -> insertAll conn)
+        |> Task.andThen (\_ -> reportOpen conn)
+        |> Task.andThen (\_ -> reportRange conn)
+        |> Task.andThen (\_ -> bumpInTransaction conn)
+        |> Task.andThen (\_ -> reportAfter conn)
+
+
+-- Delete any prior rows so the run is deterministic (delete is idempotent).
+clearAll : P.Conn P.KeyValue -> Task Error ()
+clearAll conn =
+    Task.map
+        (\_ -> ())
+        (Task.sequence
+            (List.map (P.delete conn todos) [ "t1", "t2", "t3", "t4" ]))
+
+
+insertAll : P.Conn P.KeyValue -> Task Error ()
+insertAll conn =
+    Task.map (\_ -> ()) (Task.sequence (List.map (P.insert conn todos) seed))
+
+
+-- Equality query on the bool index + ascending order on the int index.
+reportOpen : P.Conn P.KeyValue -> Task Error ()
+reportOpen conn =
+    P.query todos |> P.where_ (P.eq "done" (P.bool False))
+        |> P.orderAsc "priority"
+        |> P.toList conn
+        |> Task.andThen
+               (\rows ->
+                   let
+                       _ =
+                           println ("open (by priority asc): " ++ titles rows)
+                       _ =
+                           println
+                               ("open count: "
+                                   ++ String.fromInt (List.length rows))
+                   in
+                       Task.succeed ())
+
+
+-- Range query on the int index + descending order.
+reportRange : P.Conn P.KeyValue -> Task Error ()
+reportRange conn =
+    P.query todos |> P.where_ (P.gte "priority" (P.int 2))
+        |> P.orderDesc "priority"
+        |> P.toList conn
+        |> Task.andThen
+               (\rows ->
+                   let
+                       _ = println ("priority>=2 (desc): " ++ titles rows)
+                   in
+                       Task.succeed ())
+
+
+-- Read-modify-write inside a serializable transaction: mark "pay bills" done.
+bumpInTransaction : P.Conn P.KeyValue -> Task Error ()
+bumpInTransaction conn =
+    P.transaction
+        conn
+        (\tx ->
+            P.get tx todos "t4"
+                |> Task.andThen
+                       (\maybeTodo ->
+                           case maybeTodo of
+
+                               Just t ->
+                                   P.put tx todos { t | done = True }
+
+                               Nothing ->
+                                   Task.fail
+                                       (Error.unexpected
+                                           "t4 missing inside transaction")))
+
+
+reportAfter : P.Conn P.KeyValue -> Task Error ()
+reportAfter conn =
+    P.toCount conn (P.where_ (P.eq "done" (P.bool True)) (P.query todos))
+        |> Task.andThen
+               (\doneCount ->
+                   P.query todos |> P.where_ (P.eq "done" (P.bool False))
+                       |> P.orderAsc "priority"
+                       |> P.toList conn
+                       |> Task.andThen
+                              (\openRows ->
+                                  let
+                                      _ =
+                                          println
+                                              ("done count after txn: "
+                                                  ++ String.fromInt doneCount)
+                                      _ =
+                                          println
+                                              ("open after txn: "
+                                                  ++ titles openRows)
+                                  in
+                                      Task.succeed ()))
+
+
+titles : List Todo -> String
+titles rows =
+    String.join ", " (List.map .title rows)
+
+
+reportError : Error -> Task Error ()
+reportError e =
+    let
+        _ = println ("ERROR: " ++ errorToString e)
+    in
+        Task.succeed ()

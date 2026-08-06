@@ -31,6 +31,8 @@ module Std.Codec exposing
     , Shape(..)
     , ObjectCodec
     , shape
+    , colTypeKind
+    , colEngineKind
     , toValue
     , toJson
     , fromJson
@@ -65,6 +67,16 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 
 -- | The column type a codec maps to on the DB side.
+--
+-- `CNotOrderable inner` is a NON-order-preserving marker (v0.19 BlueDB Phase 3b,
+-- §2.3): the column's physical storage is `inner` (for DDL + decode), but its
+-- textual/byte order does NOT match its value order, so an ordered index / range
+-- scan on it would under-reject or sort wrong. `Codec.map` SETS this on any scalar
+-- it wraps (a `Money`-as-text newtype, an `intBool`, any bijection whose byte order
+-- the codec cannot vouch for). The DB backend routes such a column to the
+-- conservative fallback (witness-validated, never a byte-range) while DDL + decode
+-- still use `inner`'s physical type — so existing scalar codecs (`CInt`/`CText`/
+-- `CBool`) keep their order-preserving mapping unchanged.
 type ColType
     = CText
     | CInt
@@ -72,6 +84,7 @@ type ColType
     | CBool
     | CBlob
     | CNull ColType
+    | CNotOrderable ColType
 
 -- | The structural shape of a codec — a record maps to columns, a scalar to one
 -- typed column, anything else (list / nested / ADT) to a JSON TEXT blob.
@@ -194,7 +207,47 @@ list (Codec c) =
 -- encode). Useful for newtype-style wrappers.
 map : (a -> b) -> (b -> a) -> Codec a -> Codec b
 map to from (Codec c) =
-    Codec { enc = \b -> c.enc (from b), dec = D.map to c.dec, shp = c.shp }
+    Codec
+        { enc = \b -> c.enc (from b)
+        , dec = D.map to c.dec
+        , shp = notOrderableShape c.shp
+        }
+
+
+-- | Mark a scalar shape NON-order-preserving (§2.3). `Codec.map` wraps a bijection
+-- whose byte/text order the codec cannot vouch for (Money-as-text, intBool, …), so a
+-- mapped scalar column must route to the DB fallback (no ordered index / range scan)
+-- while keeping its physical storage type. Records / blobs and already-marked scalars
+-- pass through unchanged; nested nullables carry the marker onto their inner type.
+notOrderableShape : Shape -> Shape
+notOrderableShape shp =
+    case shp of
+
+        SScalar (CNotOrderable inner) ->
+            SScalar (CNotOrderable inner)
+
+        SScalar (CNull inner) ->
+            SScalar (CNull (markNotOrderable inner))
+
+        SScalar t ->
+            SScalar (CNotOrderable t)
+
+        _ ->
+            shp
+
+
+markNotOrderable : ColType -> ColType
+markNotOrderable ct =
+    case ct of
+
+        CNotOrderable inner ->
+            CNotOrderable inner
+
+        CNull inner ->
+            CNull (markNotOrderable inner)
+
+        _ ->
+            CNotOrderable ct
 
 -- ── Records (object builder) ─────────────────────────────────────────────────
 -- | Intermediate builder for a record codec. `a` is the record type; `b` is the
@@ -366,6 +419,32 @@ colTypeKind ct =
 
         CNull inner ->
             colTypeKind inner ++ "?"
+
+        CNotOrderable inner ->
+            -- physical/DDL-transparent: a not-orderable column still stores +
+            -- decodes as its inner type (an intBool column is INTEGER on the DB).
+            -- Orderability is a SEPARATE axis surfaced by `colEngineKind`.
+            colTypeKind inner
+
+
+-- | The kind string the BlueDB embedded backend maps to an engine ColType (§2.3).
+-- Unlike `colTypeKind` (physical/DDL), this SURFACES the non-order-preserving marker:
+-- a `CNotOrderable` column returns `"notorderable"` so the backend routes it to the
+-- conservative fallback (never a byte-range / ordered index). Order-preserving scalars
+-- (`CInt`/`CText`/`CBool`) return their physical kind; nullability rides as a `?`
+-- suffix. Used by `Std.Persist` when deriving a collection's engine schema.
+colEngineKind : ColType -> String
+colEngineKind ct =
+    case ct of
+
+        CNotOrderable _ ->
+            "notorderable"
+
+        CNull inner ->
+            colEngineKind inner ++ "?"
+
+        _ ->
+            colTypeKind ct
 
 
 autoEncK : Bool -> a -> Value
