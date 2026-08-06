@@ -75,6 +75,11 @@ type Txn struct {
 	// on-disk key format, the changelog payload, and encodeIndexKey are all untouched.
 	collResolver func(userKey []byte) CollID
 
+	// tenant is the Phase-4 TRANSIENT reactive routing tag (§3.4) this txn's commit carries on
+	// its CommitReq.Tenant. Set via SetTenant BEFORE Commit; stamped by the writing identity.
+	// Default "" — a no-verified-tenant write. NEVER durably written (see CommitReq.Tenant).
+	tenant string
+
 	done bool
 }
 
@@ -117,6 +122,10 @@ func (tx *Txn) SetCollection(coll CollID) { tx.coll = coll }
 // multi-collection transaction attributes every write to its OWN collection. When unset, all
 // changes fall back to the single SetCollection id — the Phase-2 single-collection behaviour.
 func (tx *Txn) SetCollResolver(fn func(userKey []byte) CollID) { tx.collResolver = fn }
+
+// SetTenant stamps the transient Phase-4 reactive routing tag (§3.4) buildReq copies onto
+// CommitReq.Tenant. Never durably written. "" ⇒ no verified tenant.
+func (tx *Txn) SetTenant(tenant string) { tx.tenant = tenant }
 
 // collOf returns the owning collection id for a data userKey: the installed resolver's
 // per-change attribution, else the single SetCollection fallback (§2.1).
@@ -291,6 +300,7 @@ func (tx *Txn) buildReq() CommitReq {
 		Writes:           writes,
 		ChangelogPayload: payload,
 		ReadTs:           tx.readTs,
+		Tenant:           tx.tenant, // transient reactive routing tag (§3.4) — never durable
 		ReadSet: &ReadSet{
 			points:       tx.points,
 			ranges:       tx.ranges,

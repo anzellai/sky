@@ -96,12 +96,31 @@ type Subscription interface {
 	Close()
 }
 
-// Change is one row-level change delivered to a reactive subscriber (the Phase-4 seam shape).
+// Transition is the membership transition a reactive delta represents for a subscription's
+// result set (§2.2). A subscriber folds it into its maintained list: Enter appends, Leave removes,
+// Stay refreshes the row in place (and re-sorts when OrderChanged, §2.5).
+type Transition uint8
+
+const (
+	// ChangeEnter — the row now matches the query and did not before (insert-in / update-in).
+	ChangeEnter Transition = iota
+	// ChangeLeave — the row no longer matches (delete / update-out / a displayed pk that stopped
+	// hitting the footprint). Record is nil on a Leave (delete carries no body; §2.2 truth table).
+	ChangeLeave
+	// ChangeStay — the row matched before and still matches (in-range update). OrderChanged marks
+	// a Stay whose ordering-column coordinate moved → the subscriber must re-sort (§2.5, A#1).
+	ChangeStay
+)
+
+// Change is one row-level change delivered to a reactive subscriber (§2.2). Record is Just for
+// Enter/Stay and nil for Leave (load-bearing: a delete/update-out carries no body).
 type Change struct {
-	Coll   CollID
-	Pk     []byte
-	Op     Op
-	Record []byte
+	Coll         CollID
+	Pk           []byte
+	Op           Op
+	Record       []byte
+	Transition   Transition // membership transition (§2.2)
+	OrderChanged bool        // (A#1) a Stay whose sort-key column moved — re-sort (§2.5)
 }
 
 // Capabilities is the per-backend probe (Decision 5, §1.2). InProcessReactive is TRUE on every

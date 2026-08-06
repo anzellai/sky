@@ -119,6 +119,15 @@ type CommitReq struct {
 	// does not interpret their contents.
 	ReadTs  HLC      // the body's read view = Reader.ReadTs() (never NowTs())
 	ReadSet *ReadSet // nil ⇒ skip validation
+
+	// Tenant is the Phase-4 TRANSIENT reactive routing tag (§3.4). It is stamped by the
+	// writing (identity-stamped) session on the write, copied onto the in-RAM changefeed
+	// ChangeBatch at the post-Apply emit sites, and used ONLY to fan a delta to the entitled
+	// tenant's subscription bucket (the fail-closed reactive gate, §4.5). It is NEVER written
+	// durably: it is not part of ChangelogPayload, never reaches EncodeChangelogPayload, and
+	// the L1 store never sees it. "" ⇒ a no-verified-tenant write (background/CLI/unauth) that
+	// routes ONLY to the "" bucket, never the union of tenants.
+	Tenant string
 }
 
 // VersionedWrite is one put/delete against a user-key.

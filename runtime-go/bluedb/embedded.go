@@ -26,6 +26,19 @@ type EmbeddedBackend struct {
 	mu      sync.RWMutex
 	byName  map[string]*CollSchema
 	serials map[string]*atomic.Int64
+
+	// Phase-4a reactive engine (reactive.go). The registry + delta-match live HERE (bluedb owns
+	// the match); an internal pump goroutine drains the engine change-feed (changefeed.go) into it
+	// — started lazily on the first Watch so the non-reactive path pays nothing. In 4b the pump
+	// moves to rt (via Subscribe), the registry + match stay here.
+	reactive     *reactiveRegistry
+	reactiveOnce sync.Once
+	reactiveStop func()
+
+	// afterPinHook is a TEST SEAM (register-live-first gate, §7): when set, WatchTenant calls it
+	// AFTER register + readTs pin and BEFORE the baseline, so a test can commit a row into the
+	// setup window deterministically and assert the no-miss delivery. nil in production.
+	afterPinHook func()
 }
 
 var (
@@ -110,19 +123,33 @@ func (b *EmbeddedBackend) Get(coll CollSchema, key string) ([]byte, bool, error)
 	return append([]byte(nil), v...), true, nil
 }
 
-func (b *EmbeddedBackend) Put(coll CollSchema, key string, row []byte, _ []ColValue) error {
+func (b *EmbeddedBackend) Put(coll CollSchema, key string, row []byte, cols []ColValue) error {
+	return b.PutTenant(coll, key, row, cols, "")
+}
+
+// PutTenant is Put with the transient Phase-4 reactive tenant tag (§3.4) stamped on the commit —
+// the write-time-verified tag the reactive fan-out scopes on. In 4b the rt Persist write kernel
+// supplies the verified tenant; 4a tests supply it directly. "" ⇒ a no-verified-tenant write
+// (routes ONLY to the "" bucket, never the union of tenants).
+func (b *EmbeddedBackend) PutTenant(coll CollSchema, key string, row []byte, _ []ColValue, tenant string) error {
 	b.ensureRegistered(coll)
 	if len(uniqueColRefs(&coll)) > 0 {
 		// A unique column needs the read+write SSI enforcement (§2.7) — route through a txn.
 		return b.eng.Transact(func(tx *Txn) error {
 			b.installTxn(tx)
+			tx.SetTenant(tenant)
 			return b.txWrite(tx, &coll, key, row, false)
 		})
 	}
-	return b.blindPut(&coll, key, row)
+	return b.blindPut(&coll, key, row, tenant)
 }
 
-func (b *EmbeddedBackend) Insert(coll CollSchema, row []byte, _ []ColValue) ([]byte, error) {
+func (b *EmbeddedBackend) Insert(coll CollSchema, row []byte, cols []ColValue) ([]byte, error) {
+	return b.InsertTenant(coll, row, cols, "")
+}
+
+// InsertTenant is Insert with the transient Phase-4 reactive tenant tag (§3.4) on the commit.
+func (b *EmbeddedBackend) InsertTenant(coll CollSchema, row []byte, _ []ColValue, tenant string) ([]byte, error) {
 	b.ensureRegistered(coll)
 	filled, pk, err := b.fillGenerated(&coll, row)
 	if err != nil {
@@ -130,6 +157,7 @@ func (b *EmbeddedBackend) Insert(coll CollSchema, row []byte, _ []ColValue) ([]b
 	}
 	err = b.eng.Transact(func(tx *Txn) error {
 		b.installTxn(tx)
+		tx.SetTenant(tenant)
 		return b.txWrite(tx, &coll, pk, filled, true) // require-new: duplicate pk → ErrUniqueViolation
 	})
 	if err != nil {
@@ -139,15 +167,21 @@ func (b *EmbeddedBackend) Insert(coll CollSchema, row []byte, _ []ColValue) ([]b
 }
 
 func (b *EmbeddedBackend) Delete(coll CollSchema, key string) error {
+	return b.DeleteTenant(coll, key, "")
+}
+
+// DeleteTenant is Delete with the transient Phase-4 reactive tenant tag (§3.4) on the commit.
+func (b *EmbeddedBackend) DeleteTenant(coll CollSchema, key string, tenant string) error {
 	b.ensureRegistered(coll)
 	if len(uniqueColRefs(&coll)) > 0 {
 		// Remove the row's stored unique keys atomically with the row (§2.7 upkeep).
 		return b.eng.Transact(func(tx *Txn) error {
 			b.installTxn(tx)
+			tx.SetTenant(tenant)
 			return b.txDelete(tx, &coll, key)
 		})
 	}
-	return b.blindDelete(&coll, key)
+	return b.blindDelete(&coll, key, tenant)
 }
 
 // blindPut is the fast autocommit upsert (ReadSet == nil → the engine's blind fast path, §3.3).
@@ -161,7 +195,7 @@ func (b *EmbeddedBackend) Delete(coll CollSchema, key string) error {
 // An index-less collection has no range to leave, so it keeps the ZERO-extra blind fast path: the
 // pre-image Snapshot is taken ONLY when len(cs.Indexes) > 0 (the same short-circuit buildIndexer
 // uses). For an INSERT (no pre-image present) OldIndex stays nil — nothing left.
-func (b *EmbeddedBackend) blindPut(cs *CollSchema, key string, row []byte) error {
+func (b *EmbeddedBackend) blindPut(cs *CollSchema, key string, row []byte, tenant string) error {
 	uk := dataUserKey(cs.Name, key)
 	coords := buildIndexer(cs)(uk, row)
 	var old []IndexCoord
@@ -179,13 +213,14 @@ func (b *EmbeddedBackend) blindPut(cs *CollSchema, key string, row []byte) error
 	res := b.eng.Commit(CommitReq{
 		Writes:           []VersionedWrite{{UserKey: uk, Op: OpPut, Value: row}},
 		ChangelogPayload: EncodeChangelogPayload([]KeyChange{chg}),
+		Tenant:           tenant, // transient reactive routing tag (§3.4) — never durable
 	})
 	return res.Err
 }
 
 // blindDelete emits OldIndex coords from the pre-image so a concurrent scanner sees the row
 // LEAVING its range (§2.4). Idempotent — a missing key commits nothing.
-func (b *EmbeddedBackend) blindDelete(cs *CollSchema, key string) error {
+func (b *EmbeddedBackend) blindDelete(cs *CollSchema, key string, tenant string) error {
 	uk := dataUserKey(cs.Name, key)
 	r, err := b.eng.Snapshot()
 	if err != nil {
@@ -204,6 +239,7 @@ func (b *EmbeddedBackend) blindDelete(cs *CollSchema, key string) error {
 	res := b.eng.Commit(CommitReq{
 		Writes:           []VersionedWrite{{UserKey: uk, Op: OpDelete}},
 		ChangelogPayload: EncodeChangelogPayload([]KeyChange{chg}),
+		Tenant:           tenant, // transient reactive routing tag (§3.4) — never durable
 	})
 	return res.Err
 }
@@ -412,15 +448,157 @@ func (b *EmbeddedBackend) Capabilities() Capabilities {
 	}
 }
 
-func (b *EmbeddedBackend) Close() error { return b.eng.Close() }
+func (b *EmbeddedBackend) Close() error {
+	if b.reactiveStop != nil {
+		b.reactiveStop() // stop the internal reactive pump before closing the engine
+	}
+	return b.eng.Close()
+}
 
-// Watch is the cross-instance reactive SEAM (§1.2/§5). Phase 3a leaves it; Phase 4 wires the
-// commit-path evaluation of the resolved plan.
-//
-// TODO(phase3b/4): promote bluedbChangeAffectsQuery / bluedbQuerySub into the commit path and
-// deliver scoped Changes on the Subscription channel.
-func (b *EmbeddedBackend) Watch(_ CollSchema, _ QueryPlan) (Subscription, error) {
-	return nil, ErrReactiveSeamPhase4
+// ── Phase-4a reactivity: change-feed passthrough + registry pump + Watch ──────────────────────
+
+// Subscribe exposes the raw engine change-feed at the backend level (§4.1): every durably-committed
+// commit's ChangeBatch (its decoded changes + transient tenant tag) on the returned channel, with a
+// cancel to unregister. In 4b the rt pump drains this to publish cross-instance nudges; 4a tests
+// use it to observe the tenant tag travelling transiently. The delta-matched Watch API (below) is
+// the precise per-subscription surface. Returns a nil channel if the engine has no change-feed.
+func (b *EmbeddedBackend) Subscribe(buf int) (<-chan ChangeBatch, func()) {
+	eng, ok := b.eng.(*pebbleEngine)
+	if !ok {
+		return nil, func() {}
+	}
+	sub, cancel := eng.subscribeChanges(buf)
+	return sub.C, cancel
+}
+
+// ensureReactive lazily builds the registry + starts the ONE internal pump goroutine that drains
+// the engine change-feed into the registry's fail-closed fan-out (§4.2). Idempotent; started on the
+// first Watch so the non-reactive path pays nothing.
+func (b *EmbeddedBackend) ensureReactive() {
+	b.reactiveOnce.Do(func() {
+		b.reactive = newReactiveRegistry()
+		eng, ok := b.eng.(*pebbleEngine)
+		if !ok {
+			b.reactiveStop = func() {}
+			return
+		}
+		feed, cancelFeed := eng.subscribeChanges(0)
+		done := make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-done:
+					return
+				case batch, live := <-feed.C:
+					if !live {
+						return
+					}
+					b.reactive.dispatchLocal(batch)
+					// An engine-feed overflow dropped >=1 batch of UNKNOWN tenant → resync
+					// everyone (over-resync, never under-notify — no permanent loss, §4.4).
+					if feed.Overflowed() {
+						b.reactive.markResyncAll()
+					}
+				}
+			}
+		}()
+		var stopOnce sync.Once
+		b.reactiveStop = func() {
+			stopOnce.Do(func() {
+				close(done)
+				cancelFeed()
+			})
+		}
+	})
+}
+
+// Watch implements CrossInstanceReactive with the process-global ("" tenant) scope. It replaces the
+// Phase-3a ErrReactiveSeamPhase4 seam. Multi-tenant callers use WatchTenant.
+func (b *EmbeddedBackend) Watch(coll CollSchema, plan QueryPlan) (Subscription, error) {
+	sub, _, err := b.WatchTenant(coll, plan, "")
+	if err != nil {
+		return nil, err
+	}
+	return sub, nil
+}
+
+// WatchTenant registers a precise query-scoped subscription on (coll, plan) scoped to `tenant` and
+// returns it plus the baseline result rows. It is REGISTER-LIVE-FIRST (§7, A#2): it registers the
+// sub (buffering live deltas) BEFORE pinning readTs + running the baseline, so a commit landing
+// during setup is delivered (at-least-once, no miss window). The apply is pk-keyed idempotent, so a
+// setup-overlap double-delivery is harmless. Seeds resultPks from the baseline (the Leave belt).
+func (b *EmbeddedBackend) WatchTenant(coll CollSchema, plan QueryPlan, tenant string) (*subscription, [][]byte, error) {
+	b.ensureRegistered(coll)
+	b.ensureReactive()
+	cs := b.schemaByName(coll.Name) // the registry-owned copy (stable pointer for the sub's life)
+
+	sub := &subscription{
+		coll:      coll.ID,
+		tenant:    tenant,
+		schema:    cs,
+		plan:      plan,
+		footprint: buildFootprint(cs, &plan),
+		orderIdx:  orderIndexIDs(cs, plan.Orders),
+		out:       make(chan Change, reactiveDeliverBuf),
+		resultPks: map[string]bool{},
+		buffering: true,
+		reg:       b.reactive,
+		b:         b,
+	}
+
+	// 1. Register-live FIRST — from here the pump buffers every matching delta into sub.buf.
+	b.reactive.register(sub)
+
+	// 2. Pin readTs (atomically picks readTs = high-water + a GC-protecting token, §7.2).
+	var readTs HLC
+	if eng, ok := b.eng.(*pebbleEngine); ok {
+		tok, rts, err := eng.reg.Register()
+		if err != nil {
+			b.reactive.unregister(sub)
+			return nil, nil, err
+		}
+		sub.tok = tok
+		readTs = rts
+	}
+
+	if b.afterPinHook != nil {
+		b.afterPinHook() // test seam: commit into the setup window (register-live-first gate, §7)
+	}
+
+	// 3. Baseline AT the pinned readTs (exact snapshot) → the rows the query sees ≤ readTs.
+	var rows [][]byte
+	if eng, ok := b.eng.(*pebbleEngine); ok {
+		r := eng.snapshotAt(readTs)
+		rows = orderAndPage(cs, b.scanFilter(r, cs, &plan.Where), plan)
+		r.Close()
+	} else {
+		rows, _ = b.Query(coll, plan)
+	}
+
+	// 4. Seed resultPks + drain the setup buffer + go live — ALL under one lock hold, so any
+	//    concurrent live delta the pump wants to apply serializes BEHIND this flip (no miss/double,
+	//    §7). Buffered deltas with commitTs ≤ readTs are already in the baseline → dropped.
+	sub.mu.Lock()
+	for _, row := range rows {
+		if pk, ok := pkUserKeyOfRow(cs, row); ok {
+			sub.resultPks[pk] = true
+		}
+	}
+	sub.lastTs = readTs
+	for i := range sub.buf {
+		bt := &sub.buf[i]
+		if !readTs.Less(bt.CommitTs) {
+			continue // commitTs ≤ readTs → covered by the baseline
+		}
+		for j := range bt.Changes {
+			sub.applyChangeLocked(bt.CommitTs, &bt.Changes[j])
+		}
+	}
+	sub.buf = nil
+	sub.buffering = false
+	sub.mu.Unlock()
+
+	return sub, rows, nil
 }
 
 // ── generated-field fill (§1.2 Insert) ───────────────────────────────────────────────────────

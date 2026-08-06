@@ -215,7 +215,15 @@ func TestPhase3a_CapabilitiesAndSeams(t *testing.T) {
 	if _, err := b.SelectRaw("SELECT 1", nil); err != ErrSelectRawSQLOnly {
 		t.Fatalf("embedded SelectRaw of SQL text should be SQL-only, got %v", err)
 	}
-	if _, err := b.Watch(ordersSchema(), QueryPlan{}); err != ErrReactiveSeamPhase4 {
-		t.Fatalf("cross-instance Watch should be the Phase-4 seam, got %v", err)
+	// Phase 4a WIRES the reactive seam: Watch now registers a live subscription (no longer
+	// ErrReactiveSeamPhase4). It must return a usable, closeable Subscription.
+	b.Register(ordersSchema())
+	sub, err := b.Watch(ordersSchema(), openPlan())
+	if err != nil {
+		t.Fatalf("Phase-4a Watch should register a subscription, got err %v", err)
 	}
+	if sub == nil {
+		t.Fatal("Phase-4a Watch returned a nil subscription")
+	}
+	sub.Close()
 }

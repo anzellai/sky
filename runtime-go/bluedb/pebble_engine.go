@@ -109,6 +109,15 @@ type pebbleEngine struct {
 	durMu        sync.Mutex
 	durableHiVal HLC
 
+	// Phase-4 change-feed (changefeed.go): the post-durability delta stream an rt pump (4b) or
+	// the EmbeddedBackend's internal reactive pump (4a) drains. subMu guards the subscriber set;
+	// emit is NON-BLOCKING (a full subscriber channel drops its batch + latches overflow) so the
+	// single committer is NEVER stalled by a slow drain (R1). Nil map ⇒ nobody listening ⇒
+	// hasChangeSubs() short-circuits the emit entirely (zero cost on the no-reactive firehose).
+	subMu         sync.RWMutex
+	changeSubs    map[uint64]*changeFeedSub
+	changeSubNext uint64
+
 	closeMu   sync.Mutex
 	closed    bool
 	closeOnce sync.Once

@@ -138,13 +138,19 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
 	} else {
 		e.advanceDurableHi(lastCommitTs)
 		// Ring append for concurrent-open-txn correctness (see doc above). Empty-payload
-		// writes decode to nothing → append nothing.
+		// writes decode to nothing → append nothing. The Phase-4 change-feed (§4.1) emits the
+		// SAME decoded changes here — strictly AFTER advanceDurableHi (durable-before-notify,
+		// §7), reusing this decode (not a second one), carrying the job's transient tenant tag.
+		feed := e.hasChangeSubs()
 		for i, j := range batch {
 			if len(j.req.ChangelogPayload) == 0 {
 				continue
 			}
 			if chg, derr := DecodeChangelogPayload(j.req.ChangelogPayload); derr == nil && len(chg) > 0 {
 				e.recent.append(jobTs[i], chg)
+				if feed {
+					e.emitChangeBatch(ChangeBatch{CommitTs: jobTs[i], Tenant: j.req.Tenant, Changes: chg})
+				}
 			}
 		}
 	}
@@ -302,9 +308,15 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 		e.sealed.Store(true) // Fix-5: seal on the durability fault (Phase-1 fail-loud)
 	} else {
 		e.advanceDurableHi(maxApplied)
+		feed := e.hasChangeSubs()
 		for _, a := range applied { // ring commit AFTER durability
 			if len(a.changes) > 0 {
 				e.recent.append(a.commitTs, a.changes)
+				// Phase-4 change-feed emit (§4.1), strictly AFTER advanceDurableHi
+				// (durable-before-notify, §7), reusing a.changes + the job's tenant tag.
+				if feed {
+					e.emitChangeBatch(ChangeBatch{CommitTs: a.commitTs, Tenant: a.job.req.Tenant, Changes: a.changes})
+				}
 			}
 		}
 	}
