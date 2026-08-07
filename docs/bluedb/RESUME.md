@@ -44,6 +44,19 @@ independent Judge may declare a phase done. Push at phase boundaries. This is wh
 > STILL OPEN: the first-class `Persist.durable`/ephemeral marker (fine-grained control; today
 > Time.every ticks stay ephemeral by construction, Cmd.perform persists always); **A2** (SQL
 > `synchronous=FULL` vs WAL NORMAL — host power-loss); **B3** (structural `fanOutFrame` enforcement).
+>
+> **Marker design analysis (done, for the implementer):** recommend **persist-by-DEFAULT + an
+> explicit `ephemeral` opt-out** (safe direction — a wrong default can't lose data; only the app's
+> explicit opt-out skips persist). The classification must be **race-free**: do NOT use a mutable
+> per-transition session field (`runPerformBody` reads the persist gate AFTER releasing `sess.mu`,
+> so a concurrent dispatch flipping a shared flag races → mis-gated persist → data loss). Two safe
+> options: (a) `dispatch` RETURNS the ephemeral bool (invasive — touches all `dispatch` callers:
+> `live.go:4181,4980,5338` + `dispatchBatched`), captured under the lock like `haveFrame`/`snap`;
+> or (b) **constructor-level static classification** — the app declares ephemeral Msg constructor
+> NAMES once at config time (like `msgTags`), and the persist gate does a READ-ONLY lookup of the
+> incoming msg's constructor (no per-transition mutation, no race). Option (b) is cleaner + race-free.
+> Cmd rep is `cmdT{kind:"..."}` (`live.go:1558-1560`); a marker cmd would be `cmdT{kind:"ephemeral"}`.
+> This is delicate concurrent surgery on the persist path → wants the grill/Judge, not sync self-review.
 - **A1 (acked-then-lost):** the design's semantic-vs-ephemeral HEURISTIC is undecidable at the emit
   site (an `onInput` autosave draft or a bare `onClick "Place Order"` would be classed ephemeral →
   acked without persist → lost on crash). FIX: a **first-class `Persist.durable` marker** the app
