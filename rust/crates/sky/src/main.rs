@@ -52,7 +52,10 @@ fn main() -> ExitCode {
         Some("init") => cmd_init(&args[1..]),
         Some("doc") => cmd_doc(&args[1..]),
         Some("watch") => cmd_watch(&args[1..]),
-        Some("db") => cmd_db(&args[1..]),
+        // `sky data` is the Phase-5 unified alias for `sky db` — same verbs
+        // (migrate/status/seed/push/reset/drop/init/gen), matching the unified
+        // `[data]` config section. `sky db` stays as the compatibility spelling.
+        Some("db") | Some("data") => cmd_db(&args[1..]),
         Some("add") => cmd_add(&args[1..]),
         Some("remove") => cmd_remove(&args[1..]),
         Some("install") => cmd_install(&args[1..]),
