@@ -200,6 +200,7 @@ sessionStore = "postgres"          # Sky.Live session store
 analyticsPath = "analytics.db"     # Std.Analytics store override
 retention    = "90d"               # analytics prune window
 reactiveScope = "single-instance"  # asserts single-replica for reactive Persist
+sessionVersion = 1                 # bump on a session-Model semantic change
 ```
 
 | Key             | Env var                       | Maps to (legacy)         |
@@ -211,11 +212,23 @@ reactiveScope = "single-instance"  # asserts single-replica for reactive Persist
 | `analyticsPath` | `<PREFIX>_ANALYTICS_DB_PATH`  | `[analytics] dbPath`     |
 | `retention`     | `<PREFIX>_ANALYTICS_RETENTION`| `[analytics] retention`  |
 | `reactiveScope` | `SKY_DATA_REACTIVE_SCOPE`     | (new — Phase-4 reactive boot gate) |
+| `sessionVersion`| `SKY_DATA_SESSION_VERSION`    | (new — session-blob schema version) |
 
 `reactiveScope = "single-instance"` satisfies the reactive-Persist boot
 gate: a non-dev deploy that uses `liveInto`/`withReactive` on the embedded
 (or sqlite) backend requires this assertion (one replica) or refuses to
 boot — the safeguard against silent cross-replica staleness.
+
+`sessionVersion` is the Sky.Live session-blob schema version. **Bump it
+whenever you change the session `Model` in a way that changes the meaning
+of existing bytes** — an enum reorder, a re-numbered `Int` field, any
+change gob can't see structurally. On a mismatch, a persisted session is
+**reset (logged), never decoded into the new meaning** — so a rolling
+deploy or a stale blob can't silently corrupt state (e.g. a `role` int
+whose meaning changed). A pure shape change (a field's type, add/remove)
+gob already rejects and resets on its own; the version covers the changes
+it can't. Default `1`; existing/legacy blobs (written before this feature)
+decode unchanged.
 
 ---
 

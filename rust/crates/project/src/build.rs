@@ -846,6 +846,11 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
                 data_defaults.push(("ANALYTICS_DB_PATH".into(), val))
             }
             ("data", "retention") => data_defaults.push(("ANALYTICS_RETENTION".into(), val)),
+            // sessionVersion → SKY_DATA_SESSION_VERSION (Phase-5c grill A4). The app
+            // bumps this on any session-Model change gob can't see structurally (enum
+            // reorder / int remap); a mismatch RESETS a persisted session rather than
+            // silently decoding stale bytes into the new meaning (priv-esc).
+            ("data", "sessionVersion") => data_defaults.push(("DATA_SESSION_VERSION".into(), val)),
             // reactiveScope → SKY_DATA_REACTIVE_SCOPE, the env the Phase-4 reactive boot
             // gate reads (bluedb_reactive_gate.go). SetSkyDefault seeds the SKY_-prefixed
             // env, so the gate's os.Getenv sees it — making its own sky.toml hint truthful.

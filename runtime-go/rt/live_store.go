@@ -23,6 +23,7 @@ import (
 	crand "crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -1275,6 +1276,49 @@ type storableSession struct {
 	AnalyticsUserID          string
 }
 
+// ── Session-blob version envelope (Phase 5c — grill A3/A4/A6) ─────────────────
+//
+// A persisted session is wrapped in a fixed, version-prefixed envelope that EVERY
+// binary — old or new — can parse WITHOUT gob-decoding the Model:
+//
+//	[4-byte magic "SKS1"][big-endian uint32 schemaVersion][gob blob]
+//
+// On decode, a schemaVersion mismatch returns errSessionVersionMismatch → the
+// store treats it like "no session" → a CLEAN, LOGGED fresh session, NEVER a
+// corrupt-decode. This closes the grill's data-loss classes:
+//   - A4 (gob-SILENT semantic change — enum reorder / int remap → a persisted
+//     role=0 "guest" silently read as the new meaning of 0, i.e. priv-esc):
+//     gob does NOT error on a same-shape value, so the ONLY safe signal is the
+//     app-declared schemaVersion. The developer bumps `[data] sessionVersion`
+//     (→ SKY_DATA_SESSION_VERSION) on any such change; the mismatch then RESETS
+//     the session instead of decoding stale bytes into the new meaning.
+//   - A3 (rolling deploy, NEW-blob → OLD-reader): once both binaries carry the
+//     envelope, the older reader parses the version it understands and REFUSES a
+//     newer one → reset, never corrupt. (A pure SHAPE change — int→string — gob
+//     already rejects with a decode error, which also resets; the version is the
+//     safety for the changes gob CANNOT see.)
+//   - A6 (wedged/stale session on a partial migration): a version mismatch is
+//     always a reset, never a silently-stale live decode.
+//
+// A legacy blob (no magic — pre-5c) decodes on the v0 path unchanged, so the
+// envelope's own introduction is backward-compatible (a new binary reads old
+// blobs; an old binary reading a new blob hits a gob error on the magic → reset).
+var sessionEnvelopeMagic = [4]byte{'S', 'K', 'S', '1'}
+
+var errSessionVersionMismatch = errors.New("session blob schema version mismatch — resetting session rather than decoding a stale/foreign Model shape")
+
+// sessionSchemaVersion is the app-declared session-Model version (grill A4). The
+// developer bumps `[data] sessionVersion` (→ SKY_DATA_SESSION_VERSION) on any
+// Model change gob cannot see structurally (enum reorder, int remap). Default 1.
+func sessionSchemaVersion() uint32 {
+	if v := os.Getenv(skyEnvName("DATA_SESSION_VERSION")); v != "" {
+		if n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 32); err == nil && n > 0 {
+			return uint32(n)
+		}
+	}
+	return 1
+}
+
 func encodeSession(s *liveSession) ([]byte, error) {
 	// Audit P2-5: validate the value graph against the session-safe
 	// whitelist BEFORE handing it to gob. Gob silently skips func /
@@ -1311,7 +1355,13 @@ func encodeSession(s *liveSession) ([]byte, error) {
 	if err := enc.Encode(blob); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	// Prepend the version envelope (grill A3/A4/A6): [magic][schemaVersion][gob].
+	gobBytes := buf.Bytes()
+	out := make([]byte, 8+len(gobBytes))
+	copy(out[0:4], sessionEnvelopeMagic[:])
+	binary.BigEndian.PutUint32(out[4:8], sessionSchemaVersion())
+	copy(out[8:], gobBytes)
+	return out, nil
 }
 
 // validateSessionValue walks v recursively and rejects kinds that
@@ -1387,6 +1437,20 @@ func walkValidateGob(v reflect.Value, path string, seen map[uintptr]bool) error 
 }
 
 func decodeSession(blob []byte) (*liveSession, error) {
+	// Version envelope (grill A3/A4/A6): gate on the app-declared schemaVersion
+	// BEFORE any gob-decode. A mismatch resets the session (fresh) rather than
+	// decoding a stale/foreign Model shape — which gob would SILENTLY accept for a
+	// same-shape semantic change (enum reorder / int remap → priv-esc). The reset
+	// is LOGGED, not silent. A legacy blob (no magic — pre-5c) skips the gate and
+	// decodes on the v0 path (backward-compatible introduction).
+	if len(blob) >= 8 && bytes.Equal(blob[0:4], sessionEnvelopeMagic[:]) {
+		storedVer := binary.BigEndian.Uint32(blob[4:8])
+		if curVer := sessionSchemaVersion(); storedVer != curVer {
+			log.Printf("[sky.live] session schema version mismatch (stored=%d current=%d) — resetting session rather than decoding a stale Model shape", storedVer, curVer)
+			return nil, errSessionVersionMismatch
+		}
+		blob = blob[8:]
+	}
 	var st storableSession
 	if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&st); err != nil {
 		return nil, err
