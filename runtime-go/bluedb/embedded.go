@@ -10,6 +10,7 @@ package bluedb
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -74,6 +75,20 @@ func (b *EmbeddedBackend) ensureRegistered(cs CollSchema) {
 	if !ok {
 		b.Register(cs)
 	}
+}
+
+// CollectionNames returns a snapshot of the registered collection names, sorted.
+// Used by the Sky Console's read-only admin Data view (goal #5) to enumerate the
+// app's collections. Read-only; takes the RLock.
+func (b *EmbeddedBackend) CollectionNames() []string {
+	b.mu.RLock()
+	names := make([]string, 0, len(b.byName))
+	for n := range b.byName {
+		names = append(names, n)
+	}
+	b.mu.RUnlock()
+	sort.Strings(names)
+	return names
 }
 
 func (b *EmbeddedBackend) schemaByName(name string) *CollSchema {

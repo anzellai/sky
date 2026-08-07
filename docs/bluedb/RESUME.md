@@ -17,7 +17,7 @@
 | **P5c** session-blob envelope | version-gate → reset-not-corrupt (priv-esc class) | ✅ shipped (`27470bff`), tested |
 | **P5c** store-as-collection | goal #1 — back sessions with bluedb Persist | ⏳ deferred (additive; existing stores serve #1) |
 | **P5d** durability | R1 acked-then-lost (A1) closed on ALL 6 mutate-and-ack paths + B3 tripwire | ✅ safety done; marker+A2 = deferred optimizations |
-| **P5e** Data tab | auto-admin read-only + fail-closed tenant (goal #5) | ❌ TODO — UI feature, wants browser verify |
+| **P5e** Data tab | auto-admin read-only + fail-closed tenant (goal #5) | 🟡 backend done (fail-closed gate + enum + row-read, tested); UI tab wants browser verify |
 | WHOLE-GOAL Judge | all 5 original goals, fresh-context adversarial | ❌ TODO (after 5d/5e) |
 
 ## ⚠️ AUTHORITATIVE SOURCES — in priority order
@@ -89,6 +89,16 @@ independent Judge may declare a phase done. Push at phase boundaries. This is wh
   bypass-prevention gate.
 
 ## 5e — read-only Data tab (auto-admin, goal #5). Grill B2.
+> **BACKEND DONE (sync mode):** `runtime-go/rt/console_data.go` — `consoleDataAccess` is the
+> FAIL-CLOSED gate (grill B2 fix: verified-but-no-tenant → DENY, never all-tenants; dev unscoped;
+> tenant claim → scoped; explicit super-admin → unscoped). `adminEmbeddedCollections` enumerates
+> collections across open embedded backends (`embeddedByID` + `EmbeddedBackend.CollectionNames`);
+> `adminReadRows` reads rows (unscoped all-scan — only reachable when the gate grants unscoped).
+> Tests: `console_data_test.go` (fail-closed matrix + non-vacuous B2 + enum + row-read). REMAINING:
+> (1) the **tenant-scoped row filter** (per-collection tenant column → a Where cond; until then a
+> scoped decision must NOT call adminReadRows); (2) the **console Data-tab UI** (a tab in
+> `sky-bundled/console/src/` consuming these, read-only) + wiring the tab to an admin endpoint; (3)
+> SQL-backend collections (only embedded enumerated today). The UI wants BROWSER verification.
 - Auto-render a read-only CRUD LIST/detail for every declared collection in the Sky Console.
 - **B2 (fail-OPEN today):** the reused v0.16.6 pattern returns "" for a no-tenant session
   (`hub_bridge.go:539-548`) and `rejectCrossTenantSvc(_, "")` returns IN-SCOPE (`:559-564`) → a
