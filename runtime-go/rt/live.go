@@ -5369,6 +5369,19 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	if !haveFrame {
 		return
 	}
+	// Persist-BEFORE-ack (Phase-5d, grill A1). This async Cmd.perform completion
+	// mutated the Model above and is about to ACK it to the client via the SSE
+	// frame below. Persist it FIRST — otherwise a crash after the ack (the client
+	// already saw success) but before the next sync `handleEvent` loses a change the
+	// user watched land. Mirrors handleEvent's store.Set-before-response
+	// (live.go:4567). A by-reference memory store is ~free; DB stores encode+write.
+	// A nil store (unit tests / no configured store) skips. Gated on haveFrame so we
+	// only persist a state the client actually observed (a shipped frame == an ack).
+	// (Time.every ticks stay ephemeral by construction — a clock refresh regenerates;
+	// fine-grained per-Msg control is the follow-on Persist.durable marker.)
+	if app.store != nil {
+		app.store.Set(sess.sid, sess)
+	}
 	// Marshal outside the lock. chooseSSEFrame picks event:patches
 	// (structural diff) vs event:patch (legacy full body) based on
 	// the diff result. Both paths run JSON marshalling outside the
