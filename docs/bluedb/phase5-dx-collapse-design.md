@@ -1,5 +1,13 @@
 # BlueDB Phase 5 — DX collapse: design
 
+> ⚠️ **SUPERSEDED IN PART — read `docs/bluedb/RESUME.md` + `docs/bluedb/phase5-grill-findings.md`
+> FIRST.** This v1 design was grilled → **9 blocking findings**. Its *structure and sub-phasing*
+> stand, but its *mechanisms* for session-versioning (auto-hash), durability (semantic-vs-ephemeral
+> heuristic), the emit funnel (`emitFrame`/`applyModelDelta` — which DON'T exist; the real method is
+> `fanOutFrame`), and auto-admin tenant scoping (fail-open) are WRONG. **5a/5b/5c already shipped
+> with the corrected mechanisms** (`edcfc5b8`/`c5153cc4`/`27470bff`). For **5d/5e**, follow the
+> grill-findings v2 directions, NOT the mechanisms below.
+
 > **Status:** design only (no implementation). Branch `feat/bluedb` @ `f3b1c2a6`.
 > Companion to `docs/bluedb/clean-slate-architecture.md` §"DX collapse" (`:367-390`),
 > §5.5-5.7 (`:883-940`), §6.5 (`:1044-1078`), Phase-5 roadmap (`:1182-1205`), and
