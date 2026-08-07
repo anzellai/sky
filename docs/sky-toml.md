@@ -184,7 +184,42 @@ driver     = "jwt"             # jwt / session / oauth
 
 ---
 
-## `[database]`
+## `[data]` *(v0.20+ — unified data config)*
+
+The single data section. It subsumes `[database]` + `[live].store` +
+`[analytics]` + the reactive-scope assertion, so one section configures
+the whole data layer. On a conflict, **`[data]` wins** over the legacy
+sections (they stay honored during the deprecation window, so existing
+apps build unchanged).
+
+```toml
+[data]
+backend      = "postgres"          # sqlite / postgres  (alias: driver)
+url          = "postgres://…"      # DB path/DSN         (alias: path)
+sessionStore = "postgres"          # Sky.Live session store
+analyticsPath = "analytics.db"     # Std.Analytics store override
+retention    = "90d"               # analytics prune window
+reactiveScope = "single-instance"  # asserts single-replica for reactive Persist
+```
+
+| Key             | Env var                       | Maps to (legacy)         |
+|-----------------|-------------------------------|--------------------------|
+| `backend`/`driver` | `<PREFIX>_DB_DRIVER`       | `[database] driver`      |
+| `url`/`path`    | `<PREFIX>_DB_PATH`            | `[database] path`/`url`  |
+| `sessionStore`  | `<PREFIX>_LIVE_STORE`         | `[live] store`           |
+| `sessionPath`   | `<PREFIX>_LIVE_STORE_PATH`    | `[live] storePath`       |
+| `analyticsPath` | `<PREFIX>_ANALYTICS_DB_PATH`  | `[analytics] dbPath`     |
+| `retention`     | `<PREFIX>_ANALYTICS_RETENTION`| `[analytics] retention`  |
+| `reactiveScope` | `SKY_DATA_REACTIVE_SCOPE`     | (new — Phase-4 reactive boot gate) |
+
+`reactiveScope = "single-instance"` satisfies the reactive-Persist boot
+gate: a non-dev deploy that uses `liveInto`/`withReactive` on the embedded
+(or sqlite) backend requires this assertion (one replica) or refuses to
+boot — the safeguard against silent cross-replica staleness.
+
+---
+
+## `[database]` *(subsumed by `[data]`; still honored)*
 
 Std.Db default connection. `Db.connect ()` (unit form) reads
 `<PREFIX>_DB_PATH` to find the database — set this here once and

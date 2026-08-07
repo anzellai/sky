@@ -807,6 +807,12 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         return cfg;
     };
     let mut section = String::new();
+    // [data] (Phase 5 unified config) entries are collected separately and, after the
+    // scan, emitted BEFORE the legacy [database]/[live]/[analytics] entries — so `[data]`
+    // WINS on conflict during the deprecation window. `SetSkyDefault` is set-if-unset
+    // (FIRST-writer wins — see lower.rs), so winning means being emitted first, regardless
+    // of the order the sections happen to appear in the file.
+    let mut data_defaults: Vec<(String, String)> = Vec::new();
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -826,6 +832,24 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         let val = parse_toml_scalar(v);
         match (section.as_str(), key) {
             ("", "port") => cfg.port = Some(val),
+            // ── [data] — the unified data config (Phase 5). ONE section subsuming
+            // [database] + [live].store + [analytics] + the reactive scope. Collected
+            // into `data_defaults` (emitted first ⇒ wins over any legacy section still
+            // present). `backend`/`driver` and `url`/`path` are aliases.
+            ("data", "driver" | "backend") => data_defaults.push(("DB_DRIVER".into(), val)),
+            ("data", "url" | "path") => data_defaults.push(("DB_PATH".into(), val)),
+            ("data", "sessionStore") => data_defaults.push(("LIVE_STORE".into(), val)),
+            ("data", "sessionPath" | "sessionStorePath") => {
+                data_defaults.push(("LIVE_STORE_PATH".into(), val))
+            }
+            ("data", "analyticsPath" | "analyticsDbPath") => {
+                data_defaults.push(("ANALYTICS_DB_PATH".into(), val))
+            }
+            ("data", "retention") => data_defaults.push(("ANALYTICS_RETENTION".into(), val)),
+            // reactiveScope → SKY_DATA_REACTIVE_SCOPE, the env the Phase-4 reactive boot
+            // gate reads (bluedb_reactive_gate.go). SetSkyDefault seeds the SKY_-prefixed
+            // env, so the gate's os.Getenv sees it — making its own sky.toml hint truthful.
+            ("data", "reactiveScope") => data_defaults.push(("DATA_REACTIVE_SCOPE".into(), val)),
             ("database", "driver") => cfg.extra_defaults.push(("DB_DRIVER".into(), val)),
             // `path` and `url` are aliases — both seed DB_PATH, which
             // `Db.connect ()` reads and `detectDriver` routes to sqlite or
@@ -871,6 +895,13 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             ("env", "prefix") => cfg.env_prefix = Some(val),
             _ => {}
         }
+    }
+    // `[data]` wins over legacy: emit its defaults FIRST (SetSkyDefault is first-wins),
+    // so a mixed `[data]` + `[database]`/`[live]` manifest resolves to the `[data]` value
+    // no matter which section the author typed first (Phase-5 grill B1).
+    if !data_defaults.is_empty() {
+        data_defaults.append(&mut cfg.extra_defaults);
+        cfg.extra_defaults = data_defaults;
     }
     cfg
 }
@@ -1502,6 +1533,52 @@ mod sky_toml_tests {
         // [env] prefix is a dedicated field (emitted as rt.SetEnvPrefix).
         assert_eq!(cfg.env_prefix.as_deref(), Some("FENCE"));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn data_section_maps_and_wins_over_legacy() {
+        // Phase 5 (grill B1): `[data]` subsumes [database]/[live].store/[analytics] and
+        // must WIN on conflict. `[database]` is written ABOVE `[data]` on purpose — since
+        // SetSkyDefault is first-wins, `[data]` wins only if emitted first regardless of
+        // file order. (grill N2): reactiveScope → SKY_DATA_REACTIVE_SCOPE the Phase-4 gate reads.
+        let dir = std::env::temp_dir().join(format!("skytoml-data-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(
+            &path,
+            "name = \"x\"\n\
+             [database]\ndriver = \"sqlite\"\npath = \"legacy.db\"\n\
+             [data]\nbackend = \"postgres\"\nurl = \"new.db\"\n\
+             sessionStore = \"postgres\"\nreactiveScope = \"single-instance\"\n\
+             analyticsPath = \"a.db\"\nretention = \"90d\"\n",
+        )
+        .unwrap();
+        let cfg = read_sky_toml_config(&path);
+        let first = |suffix: &str| -> Option<String> {
+            cfg.extra_defaults
+                .iter()
+                .find(|(s, _)| s == suffix)
+                .map(|(_, v)| v.clone())
+        };
+        // [data] WINS: the FIRST (winning) DB_PATH / DB_DRIVER entry is the [data] value,
+        // even though [database] appears earlier in the file.
+        assert_eq!(first("DB_PATH").as_deref(), Some("new.db"), "{:?}", cfg.extra_defaults);
+        assert_eq!(first("DB_DRIVER").as_deref(), Some("postgres"));
+        // [data] maps the rest of the unified knobs.
+        assert_eq!(first("LIVE_STORE").as_deref(), Some("postgres"));
+        assert_eq!(first("ANALYTICS_DB_PATH").as_deref(), Some("a.db"));
+        assert_eq!(first("ANALYTICS_RETENTION").as_deref(), Some("90d"));
+        // reactiveScope → the exact env the Phase-4 boot gate reads.
+        assert_eq!(first("DATA_REACTIVE_SCOPE").as_deref(), Some("single-instance"));
+        // Backward-compat: the legacy value is still present (emitted AFTER, so it loses).
+        assert!(
+            cfg.extra_defaults
+                .iter()
+                .any(|(s, v)| s == "DB_PATH" && v == "legacy.db"),
+            "legacy [database] retained for the deprecation window: {:?}",
+            cfg.extra_defaults
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
