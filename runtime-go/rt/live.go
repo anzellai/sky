@@ -4773,11 +4773,12 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 	if haveFrame {
 		// Cycle 3 P50a / Gap C11: ship event:patches when the diff
 		// is small, falling back to event:patch for first-render or
-		// full-replace shapes.
+		// full-replace shapes. persistAndShipFrame persists this event's
+		// mutation BEFORE it acks to other tabs (grill A1/B3). The batch
+		// caller ALSO persists the final cumulative state (its unload
+		// backstop) to cover view-identical mutations that ship no frame.
 		frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
-		select {
-		case sess.sseCh <- frame:
-		default:
+		if !app.persistAndShipFrame(sess, frame) {
 			// Cycle 3 P42 / Gap C14: buffer full; drop + count.
 			// Buffer capacity is SKY_LIVE_SSE_BUFFER (default 16).
 			recordSseDrop(sess.sid)
@@ -5322,6 +5323,31 @@ func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentCtx
 	})
 }
 
+// persistAndShipFrame is the SINGLE durability funnel for async server-initiated
+// frames (Phase-5d, grill A1/B3). It persists the session BEFORE enqueuing the
+// frame, so no async ack path (Cmd.perform, pub/sub, stream, Time.every tick,
+// batched-event) can ship a Model mutation the client will render without first
+// making it durable — a crash after the ack then cannot lose a change the user
+// saw. Returns true if the frame was enqueued; false if the sseCh buffer was full
+// (the caller does its site-specific drop bookkeeping). Persist is skipped for a
+// nil store (unit tests / no configured store).
+//
+// This replaces the earlier per-site `store.Set` + `select { case sseCh<- }`
+// duplication: persist can no longer be forgotten because it is INSIDE the only
+// helper that ships. `TestPersistBeforeAck_EmitSiteTripwire` asserts raw
+// `sess.sseCh <- frame` sends exist only here.
+func (app *liveApp) persistAndShipFrame(sess *liveSession, frame sseFrame) bool {
+	if app.store != nil {
+		app.store.Set(sess.sid, sess)
+	}
+	select {
+	case sess.sseCh <- frame:
+		return true
+	default:
+		return false
+	}
+}
+
 func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	// task is a Sky Task — a zero-arg func() any returning SkyResult.
 	// Wrap its execution in a cmd.perform span (Tier 1 auto-trace).
@@ -5383,22 +5409,14 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	// already saw success) but before the next sync `handleEvent` loses a change the
 	// user watched land. Mirrors handleEvent's store.Set-before-response
 	// (live.go:4567). A by-reference memory store is ~free; DB stores encode+write.
-	// A nil store (unit tests / no configured store) skips. Gated on haveFrame so we
-	// only persist a state the client actually observed (a shipped frame == an ack).
-	// (Time.every ticks stay ephemeral by construction — a clock refresh regenerates;
-	// fine-grained per-Msg control is the follow-on Persist.durable marker.)
-	if app.store != nil {
-		app.store.Set(sess.sid, sess)
-	}
 	// Marshal outside the lock. chooseSSEFrame picks event:patches
 	// (structural diff) vs event:patch (legacy full body) based on
 	// the diff result. Both paths run JSON marshalling outside the
 	// lock — wire-format equivalence with the pre-P50a shape is
-	// preserved for the fallback (legacy) path.
+	// preserved for the fallback (legacy) path. persistAndShipFrame
+	// persists-before-ack (grill A1) then enqueues; false = buffer full.
 	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
-	select {
-	case sess.sseCh <- frame:
-	default:
+	if !app.persistAndShipFrame(sess, frame) {
 		// Cycle 3 P42 / Gap C14: channel full; drop + count.
 		// Buffer capacity is SKY_LIVE_SSE_BUFFER (default 16).
 		recordSseDrop(sess.sid)
@@ -5616,22 +5634,13 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				if !haveFrame {
 					continue
 				}
-				// Persist-BEFORE-ack (Phase-5d, grill A1). A view-changing tick
-				// MUST have mutated the Model (view is a pure function of Model), and
-				// that mutation can be semantic (a countdown hitting zero, a scheduled
-				// state transition), not just a clock refresh — the runtime can't tell.
-				// Persist it before the frame acks so a crash can't lose it. Only
+				// persistAndShipFrame persists-before-ack (grill A1: a view-changing
+				// tick mutated the Model — could be semantic, e.g. a countdown hitting
+				// zero — so persist before the SSE frame acks it) then enqueues. Only
 				// view-changing ticks reach here (identical-view ticks `continue`
-				// above), so the cost tracks real state changes. nil store skips.
-				if app.store != nil {
-					app.store.Set(sess.sid, sess)
-				}
-				// Cycle 3 P50a / Gap C11: chooseSSEFrame picks
-				// event:patches vs event:patch per render.
+				// above), so the cost tracks real state changes.
 				frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
-				select {
-				case sess.sseCh <- frame:
-				default:
+				if !app.persistAndShipFrame(sess, frame) {
 					// Cycle 3 P42 / Gap C14: Time.every tick fired
 					// but the SSE consumer is wedged or slow; drop
 					// + count. Next tick's view-equality check (or
@@ -5855,17 +5864,10 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 	if !haveFrame {
 		return
 	}
-	// Persist-BEFORE-ack (Phase-5d, grill A1): a pub/sub broadcast mutated this
-	// receiver's Model and is about to ack it via the SSE frame. Persist first —
-	// else a crash after the ack (receiver saw the broadcast change land) before its
-	// next sync event loses it. Same shape as runPerformBody. nil store skips.
-	if app.store != nil {
-		app.store.Set(sess.sid, sess)
-	}
+	// persistAndShipFrame persists-before-ack (grill A1: a pub/sub broadcast mutated
+	// this receiver's Model — persist before the SSE frame acks it) then enqueues.
 	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
-	select {
-	case sess.sseCh <- frame:
-	default:
+	if !app.persistAndShipFrame(sess, frame) {
 		// Channel full — broadcast frame drops are surfaced through
 		// the same sky_live_sse_drops_total counter; the next user
 		// dispatch supersedes anyway (design doc §6.1).
@@ -6077,16 +6079,10 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 	if !haveFrame {
 		return
 	}
-	// Persist-BEFORE-ack (Phase-5d, grill A1): a stream/websocket inbound chunk
-	// mutated the Model and is about to ack it via the SSE frame. Persist first so a
-	// crash after the ack can't lose it. Same shape as runPerformBody. nil store skips.
-	if app.store != nil {
-		app.store.Set(sess.sid, sess)
-	}
+	// persistAndShipFrame persists-before-ack (grill A1: a stream/websocket inbound
+	// chunk mutated the Model — persist before the SSE frame acks it) then enqueues.
 	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
-	select {
-	case sess.sseCh <- frame:
-	default:
+	if !app.persistAndShipFrame(sess, frame) {
 		recordSseDrop(sess.sid)
 		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 	}
