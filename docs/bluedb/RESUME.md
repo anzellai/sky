@@ -16,8 +16,8 @@
 | **P5b** `sky data` verb | alias over `sky db` | ✅ shipped (`c5153cc4`) |
 | **P5c** session-blob envelope | version-gate → reset-not-corrupt (priv-esc class) | ✅ shipped (`27470bff`), tested |
 | **P5c** store-as-collection | goal #1 — back sessions with bluedb Persist | ⏳ deferred (additive; existing stores serve #1) |
-| **P5d** durability funnel | R1 acked-then-lost | ❌ TODO — data-loss-critical |
-| **P5e** Data tab | auto-admin read-only + fail-closed tenant | ❌ TODO |
+| **P5d** durability | R1 acked-then-lost (A1) closed on ALL 6 mutate-and-ack paths + B3 tripwire | ✅ safety done; marker+A2 = deferred optimizations |
+| **P5e** Data tab | auto-admin read-only + fail-closed tenant (goal #5) | ❌ TODO — UI feature, wants browser verify |
 | WHOLE-GOAL Judge | all 5 original goals, fresh-context adversarial | ❌ TODO (after 5d/5e) |
 
 ## ⚠️ AUTHORITATIVE SOURCES — in priority order
@@ -46,10 +46,14 @@ independent Judge may declare a phase done. Push at phase boundaries. This is wh
 > `live_perform_persist_test.go` (perform + pub/sub). Full rt -race green. ⇒ the `Persist.durable`/
 > ephemeral marker is now confirmed an **OPTIMIZATION** (skip the persist tax on known-ephemeral
 > high-frequency Msgs), NOT a blocking safety fix — A1 is closed by persist-default.
-> STILL OPEN (both refinements, not blocking A1): **A2** (SQL `synchronous=FULL` vs WAL NORMAL —
-> host power-loss vs process crash); **B3** (structural, not-convention, emit-site enforcement so a
-> FUTURE new mutate-and-ack path can't forget the persist — the audit had to be manual). The marker
-> (optimization) design analysis is below.
+> **B3 DONE:** `live_persist_invariant_test.go` — a tripwire pinning the 8 emit sites; a new one
+> trips it, forcing persist-before-ack. STILL OPEN (refinements, NOT blocking A1):
+> **A2 + the marker are COUPLED and deferred together.** persist-by-default now writes the session
+> store on every mutate-and-ack, so making sqlite sessions `synchronous=FULL` (A2, power-loss
+> durability) unconditionally would fsync EVERY write — a perf regression. Correct order: implement
+> the ephemeral/durable **marker first** (classify which writes matter), THEN durable writes use
+> FULL and ephemeral ones skip. Both are optimizations on top of the closed A1 (process-crash
+> durability holds today on all durable stores). Marker design analysis is below (race-free path).
 >
 > **Marker design analysis (done, for the implementer):** recommend **persist-by-DEFAULT + an
 > explicit `ephemeral` opt-out** (safe direction — a wrong default can't lose data; only the app's
