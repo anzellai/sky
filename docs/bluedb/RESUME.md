@@ -37,13 +37,19 @@ three-leg verify (unit -race + integration + real build) → fresh-context Judge
 independent Judge may declare a phase done. Push at phase boundaries. This is why 5d/5e want agents.
 
 ## 5d — R1 durability funnel (data-loss-critical). Grill A1/A2 + B3.
-> **PARTIAL DONE (sync mode):** persist-before-ack wired for **Cmd.perform completions**
-> (`runPerformBody`, `live.go` — `app.store.Set` before the SSE frame, gated on a shipped frame;
-> nil-store-guarded). Closes the PRIMARY A1 case (a perform result acked-then-lost) for the durable
-> session stores (sqlite/postgres/redis) against a PROCESS crash. Tests: `live_perform_persist_test.go`.
-> STILL OPEN: the first-class `Persist.durable`/ephemeral marker (fine-grained control; today
-> Time.every ticks stay ephemeral by construction, Cmd.perform persists always); **A2** (SQL
-> `synchronous=FULL` vs WAL NORMAL — host power-loss); **B3** (structural `fanOutFrame` enforcement).
+> **A1 FULLY CLOSED (sync mode, persist-by-default policy):** an audit of EVERY mutate-and-ack path
+> in `live.go` found the surface was wider than the initial fix — persist-before-ack is now wired at
+> ALL of them (`app.store.Set` before the ack, gated on a shipped frame, nil-store-guarded):
+> `handleEvent` (:4575, pre-existing) · sendBeacon **batch** (:4435) · **runPerformBody** (:5391) ·
+> **runSubscriberDispatch** pub/sub (:~5850) · **runStreamSubscriberDispatch** stream/websocket
+> (:~6072) · the **Time.every tick** goroutine (view-changing ticks only; :~5620). Tests:
+> `live_perform_persist_test.go` (perform + pub/sub). Full rt -race green. ⇒ the `Persist.durable`/
+> ephemeral marker is now confirmed an **OPTIMIZATION** (skip the persist tax on known-ephemeral
+> high-frequency Msgs), NOT a blocking safety fix — A1 is closed by persist-default.
+> STILL OPEN (both refinements, not blocking A1): **A2** (SQL `synchronous=FULL` vs WAL NORMAL —
+> host power-loss vs process crash); **B3** (structural, not-convention, emit-site enforcement so a
+> FUTURE new mutate-and-ack path can't forget the persist — the audit had to be manual). The marker
+> (optimization) design analysis is below.
 >
 > **Marker design analysis (done, for the implementer):** recommend **persist-by-DEFAULT + an
 > explicit `ephemeral` opt-out** (safe direction — a wrong default can't lose data; only the app's

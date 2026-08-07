@@ -4426,6 +4426,14 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		for _, ev := range req.Batch {
 			app.dispatchBatched(sess, ev)
 		}
+		// Persist the batch's mutations before acking (Phase-5d, grill A1). The
+		// sendBeacon-on-unload flush mutates the session Model; without a store.Set a
+		// DB-backed store keeps the pre-batch Model, so a reconnect within TTL loses
+		// the final debounced events. Once per batch (all events applied), under the
+		// per-session lock held above → race-free. nil store (tests) skips.
+		if app.store != nil {
+			app.store.Set(req.SessionID, sess)
+		}
 		// sendBeacon can't read the response — 204 just signals OK.
 		// X-Sky-Live header is harmless here (sendBeacon ignores it) but
 		// keeps the response signature consistent across all _sky/event
@@ -5608,6 +5616,16 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 				if !haveFrame {
 					continue
 				}
+				// Persist-BEFORE-ack (Phase-5d, grill A1). A view-changing tick
+				// MUST have mutated the Model (view is a pure function of Model), and
+				// that mutation can be semantic (a countdown hitting zero, a scheduled
+				// state transition), not just a clock refresh — the runtime can't tell.
+				// Persist it before the frame acks so a crash can't lose it. Only
+				// view-changing ticks reach here (identical-view ticks `continue`
+				// above), so the cost tracks real state changes. nil store skips.
+				if app.store != nil {
+					app.store.Set(sess.sid, sess)
+				}
 				// Cycle 3 P50a / Gap C11: chooseSSEFrame picks
 				// event:patches vs event:patch per render.
 				frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
@@ -5837,6 +5855,13 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 	if !haveFrame {
 		return
 	}
+	// Persist-BEFORE-ack (Phase-5d, grill A1): a pub/sub broadcast mutated this
+	// receiver's Model and is about to ack it via the SSE frame. Persist first —
+	// else a crash after the ack (receiver saw the broadcast change land) before its
+	// next sync event loses it. Same shape as runPerformBody. nil store skips.
+	if app.store != nil {
+		app.store.Set(sess.sid, sess)
+	}
 	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
 	select {
 	case sess.sseCh <- frame:
@@ -6051,6 +6076,12 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 	sess.mu.Unlock()
 	if !haveFrame {
 		return
+	}
+	// Persist-BEFORE-ack (Phase-5d, grill A1): a stream/websocket inbound chunk
+	// mutated the Model and is about to ack it via the SSE frame. Persist first so a
+	// crash after the ack can't lose it. Same shape as runPerformBody. nil store skips.
+	if app.store != nil {
+		app.store.Set(sess.sid, sess)
 	}
 	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
 	select {

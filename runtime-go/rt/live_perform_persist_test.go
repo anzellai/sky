@@ -98,3 +98,45 @@ func TestPerformBody_NoFrameNoRequiredPersist(t *testing.T) {
 		t.Fatalf("suppressed perform should not persist (no ack); setCalls %d -> %d", before, store.setCalls)
 	}
 }
+
+// Phase-5d (grill A1): a pub/sub broadcast (Cmd.publish → Sub.subscribeTopic)
+// mutates the RECEIVER's Model and acks it via an SSE frame — it must
+// persist-before-ack, else a crash after the receiver saw the broadcast land loses
+// it. runSubscriberDispatch previously never persisted.
+func TestSubscriberDispatch_PersistsBeforeAck(t *testing.T) {
+	store := &spyStore{}
+	app := &liveApp{
+		store: store,
+		update: func(_ any, model any) any {
+			n := 0
+			if v, ok := model.(int); ok {
+				n = v
+			}
+			return SkyTuple2{V0: n + 1, V1: cmdT{kind: "none"}}
+		},
+		view: func(model any) any {
+			return velement("div", nil, []any{vtext("s" + itoa(model.(int)))})
+		},
+	}
+	sess := &liveSession{
+		sid:       "sub-1",
+		cancelSub: make(chan struct{}),
+		sseCh:     make(chan sseFrame, 8),
+		model:     0,
+		handlers:  map[string]any{},
+	}
+	_ = app.dispatch(sess, 0)
+	sess.lastShippedBody = sess.lastComputedBody
+	before := store.setCalls
+
+	toMsg := func(payload any) any { return payload } // the payload IS the Msg
+	ev := SessionEvent{Topic: "chat", Payload: 0, GlobalSeq: 1}
+	app.runSubscriberDispatch(sess, toMsg, ev)
+
+	if store.setCalls <= before {
+		t.Fatal("A1: a pub/sub broadcast mutated the receiver's Model and acked a frame but never persisted (store.Set not called)")
+	}
+	if n, ok := store.lastModel.(int); !ok || n < 1 {
+		t.Fatalf("persisted a stale/wrong Model: %#v (want the mutated int >= 1)", store.lastModel)
+	}
+}
