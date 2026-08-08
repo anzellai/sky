@@ -1311,7 +1311,9 @@ fn cmd_doc(args: &[String]) -> ExitCode {
         };
         let project_dir = project::project_dir_for(&cwd.join("_"));
         let out = PathBuf::from(&dir);
-        if let Err(e) = project::render_doc_site(&repo_root, &project_dir, &out) {
+        // Export variant: reference.html + relative links + top nav (the static
+        // Pages site), vs render_doc_site's serve-oriented index.html.
+        if let Err(e) = project::render_doc_site_export(&repo_root, &project_dir, &out) {
             eprintln!("sky doc --export: could not render doc-site into {dir}: {e}");
             return ExitCode::FAILURE;
         }
@@ -1319,16 +1321,26 @@ fn cmd_doc(args: &[String]) -> ExitCode {
             eprintln!("sky doc --export: render produced no api/symbols.json under {dir}");
             return ExitCode::FAILURE;
         }
-        // Teaching layer: render the live prose docs (docs/, excluding history)
-        // into guide/*.html + a TOC, so the site carries the auto-generated API
-        // AND the hand-written walkthroughs.
+        // Teaching layer: the curated guide pages (docs/, excluding history +
+        // roadmaps + legacy), the "Learn Sky" tour (docs/learn/), and the
+        // hand-written landing page. Together with render_doc_site's reference.html
+        // + m/*.html, this is the full site: landing → Learn / Reference / Guides.
         if let Err(e) = project::render_guides(&repo_root, &out) {
             eprintln!("sky doc --export: could not render guides: {e}");
             return ExitCode::FAILURE;
         }
+        if let Err(e) = project::render_learn_tour(&repo_root, &out) {
+            eprintln!("sky doc --export: could not render learn tour: {e}");
+            return ExitCode::FAILURE;
+        }
+        if let Err(e) = project::render_landing(&out) {
+            eprintln!("sky doc --export: could not render landing page: {e}");
+            return ExitCode::FAILURE;
+        }
         let guides = std::fs::read_dir(out.join("guide")).map(|d| d.count()).unwrap_or(0);
+        let lessons = std::fs::read_dir(out.join("learn")).map(|d| d.count()).unwrap_or(0);
         println!(
-            "Exported Sky doc-site to {dir}/ (API index + m/*.html + api/symbols.json + {} guide page(s))",
+            "Exported Sky doc-site to {dir}/ (landing + reference + m/*.html + {} guide page(s) + {lessons}-lesson tour)",
             guides.saturating_sub(1)
         );
         return ExitCode::SUCCESS;

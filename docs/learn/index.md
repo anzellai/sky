@@ -1,36 +1,54 @@
-# Learn Sky
+# Welcome to the Sky tour
 
 Sky is a **pure-functional, Elm-family language that compiles to typed Go**. One
-language for the whole stack — web apps, APIs, CLIs, TUIs, desktop — with a
-single guiding promise: **if it compiles, it works.** No null, no user-written
-FFI, no runtime panics from well-typed code.
+language for the whole stack — web apps, APIs, CLIs, terminal UIs, desktop — with
+a single promise: **if it compiles, it works.** No null, no user-written FFI, no
+runtime panics from well-typed code.
 
-This is the guided path. Read it top to bottom if Sky is new to you.
+This tour teaches Sky from scratch. Each lesson is short: one idea, a small
+example, and a note or two. Work through it in order — every lesson builds on the
+one before. You can read it without installing anything, but you'll learn more if
+you follow along in a real project (the next lesson sets that up in a minute).
 
-1. **[Coming from another language](learn-coming-from-other-languages.html)** —
-   the mental-model shifts from JavaScript / Python / Go / Rust, side by side.
-2. **[Your first app](getting-started.html)** — install, `sky init`, build, run.
-3. **The language** — [syntax essentials](language-syntax.html) and
-   [modules](language-modules.html).
-4. **Build something real** — a web app with [Sky.Live](skylive-overview.html),
-   data with [Std.Db](skydb-overview.html), UI with [Std.Ui](skyui-overview.html).
-5. **[Using AI tools with Sky](learn-ai-tooling.html)** — Sky projects ship an
-   `AGENTS.md` so Claude, Copilot, Cursor, etc. write correct Sky out of the box.
+## How the tour is laid out
 
-Everything here is verified: every full example in these pages is compiled in CI
-(so it can't rot), and the [API reference](../index.html) for every module is
-generated from the standard-library source on each build — always current.
+- **Start** — install Sky and build your first program.
+- **The language** — values, functions, records, unions, lists, `Maybe`/`Result`,
+  pipelines, effects, modules. This is all of Sky's surface; it's small.
+- **Building apps** — your first web app with Sky.Live, UI, forms, routing, data,
+  auth, and shipping it.
+- **Next steps** — a chapter for developers **[coming from another
+  language](18-coming-from-other-languages.md)**, and how to **[use AI
+  tools](19-ai-tooling.md)** to write Sky.
 
-## Why Sky
+When you want to look something up rather than learn in order, the
+[API reference](../reference.html) has every standard-library module (searchable),
+and the [guides](../guide/index.html) go deep on each topic.
 
-- **One language, whole stack.** The same view code renders on the web
-  (Sky.Live), the terminal (Sky.Tui), and the desktop (Sky.Webview). No separate
-  front-end language, no serialization glue.
-- **Errors are values, effects are explicit.** Fallible things return
-  `Result Error a`; side effects return `Task Error a`. The type tells you what
-  can go wrong and what touches the outside world.
-- **Batteries included.** Auth, DB (with a codec that drives JSON *and* the
-  database from one definition), UI, HTTP, money/decimals, jobs, observability —
-  all in the standard library, all reviewed for security and scale.
-- **It compiles to Go.** You get Go's deployment story (a single static binary)
-  and ecosystem (any Go package via FFI, no hand-written bindings).
+## The shape of a Sky program
+
+Here's a whole program. Don't worry about the details yet — just notice the
+shape: a module header, some imports, a type, a function, and `main`.
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+type Msg = Increment | Decrement
+
+update : Msg -> Int -> Int
+update msg count =
+    case msg of
+        Increment -> count + 1
+        Decrement -> count - 1
+
+main =
+    println (String.fromInt (update Increment 0))
+```
+
+If you've written Elm, this is home. If you haven't, the next few lessons walk
+through every piece. Ready?
+
+**[Start → Your first app](01-first-app.md)**

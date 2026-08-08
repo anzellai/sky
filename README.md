@@ -1,6 +1,6 @@
 # Sky
 
-[sky-lang.org](https://sky-lang.org) · [Docs](docs/) · [Examples](examples/)
+[sky-lang.org](https://sky-lang.org) · [Docs & tour](https://anzellai.github.io/sky/) · [Examples](examples/)
 
 > **Status: v0.19.x release candidate.** Public APIs are stable for the
 > v1.0 line; minor versions ship features additively. Internals can
@@ -291,6 +291,14 @@ into a Docker `FROM scratch` image, or run it directly on any
 platform with a Go 1.22+ runtime.
 
 ## Documentation
+
+**📖 [Documentation site](https://anzellai.github.io/sky/)** — the guided
+**[Learn Sky tour](https://anzellai.github.io/sky/learn/index.html)** (from your
+first app to a real web app, plus a chapter for developers coming from another
+language), topic **[guides](https://anzellai.github.io/sky/guide/index.html)**,
+and a searchable **[API reference](https://anzellai.github.io/sky/reference.html)**
+generated from the stdlib source on every build. The links below point at the
+same content in the repo.
 
 - **[Getting started](docs/getting-started.md)** — install + your
   first app in 5 minutes.

@@ -98,10 +98,34 @@ fn render_kernel_module(module_arg: &str) -> Option<String> {
 /// loader (`runtime-go/rt/doc_catalog.go`, reads `module`/`name`/`sig`/`bucket`)
 /// and the `--serve` index's client-side search (reads `module`/`name`/`sig`/
 /// `summary`). `bucket` is `stdlib`/`project`.
+/// Render the API doc-site for `sky doc --serve` / `--tui` (the bundled doc
+/// server serves `/`, `/m/<mod>`, `/api/` and refuses `..` paths, so links stay
+/// root-absolute and the API index is `index.html`).
 pub fn render_doc_site(
     repo_root: &Path,
     project_dir: &Path,
     out_dir: &Path,
+) -> std::io::Result<()> {
+    render_doc_site_mode(repo_root, project_dir, out_dir, false)
+}
+
+/// Render the API pages for the STATIC export site (`sky doc --export`): the API
+/// index is `reference.html` (the root `index.html` is the hand-written
+/// landing), links are relative (`m/<mod>.html`) so the site works on any base
+/// path, and every page carries the shared top nav.
+pub fn render_doc_site_export(
+    repo_root: &Path,
+    project_dir: &Path,
+    out_dir: &Path,
+) -> std::io::Result<()> {
+    render_doc_site_mode(repo_root, project_dir, out_dir, true)
+}
+
+fn render_doc_site_mode(
+    repo_root: &Path,
+    project_dir: &Path,
+    out_dir: &Path,
+    export: bool,
 ) -> std::io::Result<()> {
     let mut mods = collect_module_files(repo_root, project_dir);
     mods.sort_by(|a, b| a.0.cmp(&b.0));
@@ -110,15 +134,26 @@ pub fn render_doc_site(
     std::fs::create_dir_all(out_dir.join("m"))?;
     std::fs::create_dir_all(out_dir.join("api"))?;
 
-    // index.html — a search bar + the module list linking to each per-module
-    // page. The list is shown when the query is empty; typing swaps it for the
-    // symbol search results rendered by the inline script below.
+    // The API index: a search bar + the module list. `export` picks the filename
+    // (reference.html vs index.html), the link style (relative vs root-absolute),
+    // and whether the shared top nav is present.
     let mut index = String::new();
     index.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
     index.push_str("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
-    index.push_str("<title>Sky API docs</title>");
+    index.push_str("<title>API reference — Sky</title>");
     index.push_str(INDEX_STYLE);
-    index.push_str("</head><body><h1>Sky API documentation</h1>");
+    index.push_str("</head><body>");
+    if export {
+        index.push_str(&topnav("", "reference"));
+        index.push_str("<h1>API reference</h1>");
+        index.push_str(
+            "<p class=\"lede\">Every standard-library module, generated from source on \
+             each build — always current. Search a name, or run <code>sky doc &lt;Module&gt;</code> \
+             locally. New to Sky? Start with the <a href=\"learn/index.html\">tour</a>.</p>",
+        );
+    } else {
+        index.push_str("<h1>Sky API documentation</h1>");
+    }
     index.push_str(
         "<input type=\"search\" id=\"q\" \
          placeholder=\"Search modules and symbols…\" \
@@ -126,17 +161,19 @@ pub fn render_doc_site(
     );
     index.push_str("<ul id=\"modlist\">");
     for (name, _) in &mods {
-        index.push_str(&format!(
-            "<li><a href=\"/m/{}\">{}</a></li>",
-            html_escape(name),
-            html_escape(name)
-        ));
+        let href = if export {
+            format!("m/{}.html", html_escape(name))
+        } else {
+            format!("/m/{}", html_escape(name))
+        };
+        index.push_str(&format!("<li><a href=\"{}\">{}</a></li>", href, html_escape(name)));
     }
     index.push_str("</ul>");
     index.push_str("<div id=\"results\" style=\"display:none\"></div>");
-    index.push_str(SEARCH_SCRIPT);
+    index.push_str(&search_script(export));
     index.push_str("</body></html>\n");
-    std::fs::write(out_dir.join("index.html"), index)?;
+    let index_name = if export { "reference.html" } else { "index.html" };
+    std::fs::write(out_dir.join(index_name), index)?;
 
     // Per-module pages + the per-symbol manifest. The manifest is shaped
     // `{"entries":[{module,name,sig,bucket,summary}]}` — the ONE format both
@@ -156,13 +193,21 @@ pub fn render_doc_site(
         } else {
             "project"
         };
+        let (nav, backlink) = if export {
+            (topnav("../", "reference"), "<a href=\"../reference.html\">&larr; all modules</a>")
+        } else {
+            (String::new(), "<a href=\"/\">&larr; all modules</a>")
+        };
         let html = format!(
             "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
              <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-             <title>{} — Sky docs</title>\
-             <style>body{{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem}}pre{{white-space:pre-wrap;font-family:ui-monospace,monospace}}pre span:target{{background:#dcfce7;border-radius:.2rem}}a{{color:#0b6}}</style>\
-             </head><body><p><a href=\"/\">&larr; all modules</a></p><pre>{}</pre></body></html>\n",
+             <title>{0} — Sky docs</title>\
+             <style>body{{font-family:system-ui,sans-serif;max-width:52rem;margin:0 auto;padding:0 1rem 3rem;line-height:1.5}}pre{{white-space:pre-wrap;font-family:ui-monospace,monospace}}pre span:target{{background:#dcfce7;border-radius:.2rem}}a{{color:#0b6}}{1}</style>\
+             </head><body>{2}<p>{3}</p><h1 style=\"font-size:1.4rem\">{0}</h1><pre>{4}</pre></body></html>\n",
             html_escape(name),
+            TOPNAV_STYLE,
+            nav,
+            backlink,
             render_pre_with_anchors(&page, &syms),
         );
         std::fs::write(out_dir.join("m").join(format!("{name}.html")), html)?;
@@ -190,10 +235,40 @@ pub fn render_doc_site(
     Ok(())
 }
 
-/// Inline `<style>` for `index.html` — extends the original system-ui / `#0b6`
-/// green-link palette with search-input + results-list styling.
+/// The one site-wide top navigation bar, shared by every generated page
+/// (landing, reference, per-module, guides, tour). `prefix` is the relative hop
+/// to the site root (`""` at root, `"../"` one level deep). `active` bolds the
+/// current section (`home` / `learn` / `guides` / `reference`).
+fn topnav(prefix: &str, active: &str) -> String {
+    let item = |slug: &str, href: &str, label: &str| -> String {
+        if slug == active {
+            format!("<a href=\"{prefix}{href}\" aria-current=\"page\"><b>{label}</b></a>")
+        } else {
+            format!("<a href=\"{prefix}{href}\">{label}</a>")
+        }
+    };
+    format!(
+        "<nav class=\"topnav\">{}{}{}{}\
+         <a href=\"https://github.com/anzellai/sky\">GitHub</a></nav>",
+        item("home", "index.html", "Home"),
+        item("learn", "learn/index.html", "Learn"),
+        item("guides", "guide/index.html", "Guides &amp; internals"),
+        item("reference", "reference.html", "API reference"),
+    )
+}
+
+/// Shared `<style>` rules for the top nav — reused by the API pages (which don't
+/// pull in `GUIDE_STYLE`).
+const TOPNAV_STYLE: &str = "nav.topnav{position:sticky;top:0;z-index:5;background:Canvas;border-bottom:1px solid #8884;padding:.7rem 0;margin:0 0 1.5rem;font-size:.95rem}nav.topnav a{color:#0b6;text-decoration:none;margin-right:.9rem}nav.topnav a:hover{text-decoration:underline}nav.topnav a[aria-current] b{color:inherit}";
+
+/// Inline `<style>` for `reference.html` — extends the original system-ui /
+/// `#0b6` green-link palette with search-input + results-list styling.
 const INDEX_STYLE: &str = "<style>\
-body{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;line-height:1.5}\
+:root{color-scheme:light dark}\
+body{font-family:system-ui,sans-serif;max-width:52rem;margin:0 auto;padding:0 1rem 3rem;line-height:1.5}\
+nav.topnav{position:sticky;top:0;z-index:5;background:Canvas;border-bottom:1px solid #8884;padding:.7rem 0;margin:0 0 1.5rem;font-size:.95rem}\
+nav.topnav a{color:#0b6;text-decoration:none;margin-right:.9rem}nav.topnav a:hover{text-decoration:underline}\
+p.lede{color:#666;margin:.2rem 0 1.2rem}p.lede code{background:#8882;padding:.1rem .3rem;border-radius:.3rem;font-family:ui-monospace,monospace}\
 h1{font-size:1.5rem}\
 input[type=search]{width:100%;box-sizing:border-box;font:inherit;padding:.55rem .7rem;margin:0 0 1.25rem;border:1px solid #ccc;border-radius:.4rem}\
 input[type=search]:focus{outline:none;border-color:#0b6;box-shadow:0 0 0 2px #0b64}\
@@ -207,59 +282,69 @@ a{text-decoration:none;color:#0b6}a:hover{text-decoration:underline}\
 b{font-weight:600}\
 </style>";
 
-/// Inline, dependency-free search script for `index.html`. Fetches
-/// `/api/symbols.json` once, then filters on every keystroke by
-/// module / name / signature substring (case-insensitive) and renders the
-/// matches as links into the per-module pages. CSP-safe: no remote scripts,
-/// no `eval`.
-const SEARCH_SCRIPT: &str = r#"<script>
-(function () {
+/// Inline, dependency-free search script for the API index. Fetches the symbol
+/// manifest once, then filters on every keystroke by module / name / signature
+/// substring (case-insensitive) and renders matches as links into the per-module
+/// pages. CSP-safe: no remote scripts, no `eval`. `export` picks relative
+/// (`m/<mod>.html#`, `api/…`) vs root-absolute (`/m/<mod>#`, `/api/…`) URLs so
+/// the same script works on the static Pages site and behind the serve server.
+fn search_script(export: bool) -> String {
+    let (mfetch, mprefix, msuffix) = if export {
+        ("api/symbols.json", "m/", ".html#")
+    } else {
+        ("/api/symbols.json", "/m/", "#")
+    };
+    format!(
+        r#"<script>
+(function () {{
   var q = document.getElementById('q');
   var modlist = document.getElementById('modlist');
   var results = document.getElementById('results');
   var SYMS = [];
-  function esc(s) {
+  function esc(s) {{
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-  function render() {
+  }}
+  function render() {{
     var query = q.value.trim().toLowerCase();
-    if (!query) {
+    if (!query) {{
       modlist.style.display = '';
       results.style.display = 'none';
       results.innerHTML = '';
       return;
-    }
+    }}
     modlist.style.display = 'none';
     results.style.display = '';
     var hits = [];
-    for (var i = 0; i < SYMS.length && hits.length < 300; i++) {
+    for (var i = 0; i < SYMS.length && hits.length < 300; i++) {{
       var s = SYMS[i];
       var hay = (s.module + '.' + s.name + ' ' + (s.sig || '')).toLowerCase();
       if (hay.indexOf(query) !== -1) hits.push(s);
-    }
-    if (!hits.length) {
+    }}
+    if (!hits.length) {{
       results.innerHTML = '<p class="empty">No matches for “' + esc(q.value) + '”.</p>';
       return;
-    }
+    }}
     var html = '<ul class="res">';
-    for (var j = 0; j < hits.length; j++) {
+    for (var j = 0; j < hits.length; j++) {{
       var h = hits[j];
       var sig = h.sig ? ' <span class="sig">: ' + esc(h.sig) + '</span>' : '';
       var sum = h.summary ? '<div class="sum">' + esc(h.summary) + '</div>' : '';
-      html += '<li><a href="/m/' + esc(h.module) + '#' + esc(h.name) + '">'
+      html += '<li><a href="{mprefix}' + esc(h.module) + '{msuffix}' + esc(h.name) + '">'
         + '<span class="mod">' + esc(h.module) + '.</span><b>' + esc(h.name) + '</b>'
         + sig + '</a>' + sum + '</li>';
-    }
+    }}
     html += '</ul>';
     results.innerHTML = html;
-  }
+  }}
   q.addEventListener('input', render);
-  fetch('/api/symbols.json')
-    .then(function (r) { return r.json(); })
-    .then(function (d) { SYMS = (d && d.entries) || []; render(); })
-    .catch(function () {});
-})();
-</script>"#;
+  fetch('{mfetch}')
+    .then(function (r) {{ return r.json(); }})
+    .then(function (d) {{ SYMS = (d && d.entries) || []; render(); }})
+    .catch(function () {{}});
+}})();
+</script>"#
+    )
+}
 
 /// Minimal HTML-escape for text embedded in an element body.
 fn html_escape(s: &str) -> String {
@@ -843,6 +928,9 @@ mod tests {
         .unwrap();
 
         let out = root.join("out");
+        // Serve mode: API index is index.html with root-absolute /m/ links (what
+        // the bundled doc server serves). Export mode (reference.html + relative
+        // links) is exercised by the doc-site export flow.
         render_doc_site(&root, &proj, &out).unwrap();
 
         let index = std::fs::read_to_string(out.join("index.html")).unwrap();
@@ -981,8 +1069,8 @@ mod tests {
 const GUIDE_STYLE: &str = "<style>\
 :root{color-scheme:light dark}\
 body{font-family:system-ui,sans-serif;max-width:52rem;margin:0 auto;padding:0 1rem 3rem;line-height:1.6}\
-nav.topnav{position:sticky;top:0;background:Canvas;border-bottom:1px solid #8884;padding:.7rem 0;margin:0 0 1.5rem;font-size:.95rem}\
-nav.topnav a{color:#0b6;text-decoration:none;margin-right:.4rem}nav.topnav a:hover{text-decoration:underline}\
+nav.topnav{position:sticky;top:0;z-index:5;background:Canvas;border-bottom:1px solid #8884;padding:.7rem 0;margin:0 0 1.5rem;font-size:.95rem}\
+nav.topnav a{color:#0b6;text-decoration:none;margin-right:.9rem}nav.topnav a:hover{text-decoration:underline}nav.topnav a[aria-current] b{color:inherit}\
 h1{font-size:1.7rem}h2{font-size:1.3rem;margin-top:2rem;border-bottom:1px solid #8883;padding-bottom:.2rem}h3{font-size:1.1rem}\
 a{color:#0b6}\
 pre{background:#8881;padding:.8rem 1rem;border-radius:.5rem;overflow-x:auto}\
@@ -992,6 +1080,35 @@ table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem;display
 th,td{border:1px solid #8884;padding:.4rem .6rem;text-align:left}th{background:#8881}\
 blockquote{border-left:3px solid #0b6;margin:1rem 0;padding:.2rem 0 .2rem 1rem;color:#666}\
 img{max-width:100%}\
+.toc-sec{margin:1.6rem 0}.toc-sec p.d{color:#666;margin:.1rem 0 .6rem}\
+</style>";
+
+/// Extra `<style>` for the landing page + the tour (sidebar/prev-next/cards).
+/// Appended after `GUIDE_STYLE` on those pages.
+const SITE_STYLE: &str = "<style>\
+.hero{margin:2rem 0 1rem}.hero h1{font-size:2.3rem;line-height:1.15;margin:0 0 .4rem}\
+.hero .tag{font-size:1.15rem;color:#666;margin:0 0 1.2rem;max-width:40rem}\
+.doors{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:1rem;margin:1.5rem 0 2rem}\
+.door{display:block;border:1px solid #8884;border-radius:.7rem;padding:1.1rem 1.2rem;text-decoration:none;color:inherit;background:#8881}\
+.door:hover{border-color:#0b6;text-decoration:none}\
+.door h3{margin:.1rem 0 .3rem;font-size:1.15rem;color:#0b6}.door p{margin:0;color:#666;font-size:.95rem}\
+.pros{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:1rem 1.5rem;margin:1rem 0 2rem}\
+.pros h3{font-size:1rem;margin:.2rem 0 .2rem}.pros p{margin:0;color:#666;font-size:.93rem}\
+.cta{display:inline-block;background:#0b6;color:#fff;padding:.55rem 1.1rem;border-radius:.5rem;text-decoration:none;font-weight:600}\
+.cta:hover{filter:brightness(1.08)}\
+.tour{display:grid;grid-template-columns:16rem 1fr;gap:2rem;max-width:64rem}\
+.tour aside{font-size:.9rem;border-right:1px solid #8884;padding-right:1rem}\
+.tour aside a{color:inherit;text-decoration:none;display:block;padding:.25rem .4rem;border-radius:.35rem}\
+.tour aside a:hover{background:#8881}\
+.tour aside a.cur{background:#0b62;color:#0b6;font-weight:600}\
+.tour aside a .n{color:#999}\
+.tour aside .sec{color:#888;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;margin:1rem 0 .3rem}\
+.tour aside .sec:first-child{margin-top:0}\
+.tour article{min-width:0}\
+.prevnext{display:flex;justify-content:space-between;gap:1rem;margin:2.5rem 0 0;padding-top:1rem;border-top:1px solid #8884;font-size:.95rem}\
+.prevnext a{text-decoration:none;max-width:48%}.prevnext .nx{margin-left:auto;text-align:right}\
+.prevnext .lbl{display:block;color:#999;font-size:.8rem}\
+@media(max-width:46rem){.tour{grid-template-columns:1fr}.tour aside{border-right:0;border-bottom:1px solid #8884;padding:0 0 1rem}}\
 </style>";
 
 /// Flatten a docs-relative path (`skylive/overview.md`) to one guide filename
@@ -1063,9 +1180,9 @@ fn resolve_md_link(src_rel: &str, href: &str) -> Option<String> {
     Some(out)
 }
 
-/// Render one Markdown doc to an HTML body, rewriting internal `*.md` links to
-/// their flattened guide filenames.
-fn markdown_to_html(md: &str, src_rel: &str) -> String {
+/// Render Markdown to an HTML body, rewriting each internal `href="…"` via the
+/// supplied resolver (`None` → leave the link untouched).
+fn render_md(md: &str, resolve: impl Fn(&str) -> Option<String>) -> String {
     use pulldown_cmark::{html, Options, Parser};
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
@@ -1073,7 +1190,6 @@ fn markdown_to_html(md: &str, src_rel: &str) -> String {
     opts.insert(Options::ENABLE_FOOTNOTES);
     let mut body = String::new();
     html::push_html(&mut body, Parser::new_ext(md, opts));
-    // Post-process `href="…md"` links → flattened guide filenames.
     let mut out = String::with_capacity(body.len());
     let mut rest = body.as_str();
     while let Some(i) = rest.find("href=\"") {
@@ -1081,7 +1197,7 @@ fn markdown_to_html(md: &str, src_rel: &str) -> String {
         rest = &rest[i + 6..];
         if let Some(j) = rest.find('"') {
             let href = &rest[..j];
-            match resolve_md_link(src_rel, href) {
+            match resolve(href) {
                 Some(rewritten) => out.push_str(&rewritten),
                 None => out.push_str(href),
             }
@@ -1091,6 +1207,57 @@ fn markdown_to_html(md: &str, src_rel: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Render one guide Markdown doc, rewriting internal `*.md` links to their
+/// flattened guide filenames (relative to the source doc's directory).
+fn markdown_to_html(md: &str, src_rel: &str) -> String {
+    render_md(md, |href| resolve_md_link(src_rel, href))
+}
+
+/// Render one tour lesson (all lessons live flat under `docs/learn/`). A `*.md`
+/// link to a sibling lesson becomes `<stem>.html`; a link out to another doc
+/// becomes `../guide/<flattened>.html`.
+fn markdown_to_html_learn(md: &str) -> String {
+    render_md(md, resolve_learn_md_link)
+}
+
+/// Resolve a `*.md` link written inside a `docs/learn/` lesson. Sibling lessons
+/// resolve to `<stem>.html`; anything else under `docs/` to
+/// `../guide/<flattened>.html`; links outside `docs/` (or into history) are left
+/// untouched.
+fn resolve_learn_md_link(href: &str) -> Option<String> {
+    let (path_part, frag) = match href.split_once('#') {
+        Some((p, f)) => (p, Some(f)),
+        None => (href, None),
+    };
+    if !path_part.ends_with(".md") {
+        return None;
+    }
+    let mut segs: Vec<&str> = vec!["learn"];
+    for part in path_part.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                segs.pop();
+            }
+            other => segs.push(other),
+        }
+    }
+    let joined = segs.join("/");
+    if joined.starts_with("history/") || joined.contains("/history/") {
+        return None;
+    }
+    let mut out = if let Some(stem) = joined.strip_prefix("learn/") {
+        flatten_guide_name(stem) // sibling lesson: `01-first-app.md` → `01-first-app.html`
+    } else {
+        format!("../guide/{}", flatten_guide_name(&joined))
+    };
+    if let Some(f) = frag {
+        out.push('#');
+        out.push_str(f);
+    }
+    Some(out)
 }
 
 fn guide_title(rel: &str, md: &str) -> String {
@@ -1112,15 +1279,51 @@ fn wrap_guide_page(title: &str, body: &str) -> String {
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <title>{} — Sky</title>{}</head><body>\
-         <nav class=\"topnav\"><a href=\"../index.html\">API reference</a> · \
-         <a href=\"index.html\">Guides</a> · \
-         <a href=\"https://github.com/anzellai/sky\">GitHub</a></nav>\
+         <title>{} — Sky</title>{}</head><body>{}\
          <article>{}</article></body></html>\n",
         html_escape(title),
         GUIDE_STYLE,
+        topnav("../", "guides"),
         body,
     )
+}
+
+/// Curated site map for the prose docs (everything under `docs/`, minus
+/// `history/`). Returns `Some(section)` for a doc that belongs on the site, or
+/// `None` to EXCLUDE it (legacy Haskell architecture, version roadmaps, RFCs,
+/// planning notes, findings — real but not user-facing live reference).
+///
+/// `rel` is the docs-relative path (`skylive/overview.md`). `learn/` is handled
+/// by the tour, not here, so it is excluded too.
+fn guide_section(rel: &str) -> Option<&'static str> {
+    // Hard excludes — not live user-facing reference.
+    let excluded_exact = [
+        "README.md",                                  // replaced by the landing
+        "architecture/sky-compiler-architecture.md",  // LEGACY Haskell pipeline
+        "conformance-findings.md",
+        "rust-rewrite/12-migration-and-milestones.md",
+        "skywebview/PLAN.md",
+    ];
+    if excluded_exact.contains(&rel) {
+        return None;
+    }
+    // Excluded directories: the tour owns learn/; the rest are plans/roadmaps.
+    for dir in ["learn/", "v0.19/", "rfcs/", "testing/"] {
+        if rel.starts_with(dir) {
+            return None;
+        }
+    }
+    // Contributor / compiler-internals section.
+    for dir in ["rust-rewrite/", "architecture/", "ffi/", "errors/"] {
+        if rel.starts_with(dir) {
+            return Some("Compiler &amp; contributing");
+        }
+    }
+    if rel == "development.md" {
+        return Some("Compiler &amp; contributing");
+    }
+    // Everything else that survived is a user-facing guide.
+    Some("Guides")
 }
 
 /// Render the live prose docs (`docs/`, excluding `docs/history/`) into
@@ -1139,40 +1342,281 @@ pub fn render_guides(repo_root: &Path, out_dir: &Path) -> std::io::Result<()> {
     collect_guide_md(&docs, &docs, &mut pages);
     pages.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Per-page render + a grouped TOC (by top-level docs subdir).
-    let mut groups: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new(); // section -> [(title, file)]
+    // Per-page render + a grouped TOC, curated by `guide_section` (excludes the
+    // tour, legacy Haskell architecture, roadmaps, RFCs, planning notes).
+    let mut groups: BTreeMap<&'static str, Vec<(String, String)>> = BTreeMap::new();
     for (rel, path) in &pages {
+        let Some(section) = guide_section(rel) else {
+            continue;
+        };
         let src = std::fs::read_to_string(path).unwrap_or_default();
         let title = guide_title(rel, &src);
         let body = markdown_to_html(&src, rel);
         std::fs::write(guide_dir.join(flatten_guide_name(rel)), wrap_guide_page(&title, &body))?;
-        let section = match rel.split_once('/') {
-            Some((dir, _)) => dir.to_string(),
-            None => "Overview".to_string(),
-        };
         groups
             .entry(section)
             .or_default()
             .push((title, flatten_guide_name(rel)));
     }
 
-    // guide/index.html — a grouped table of contents.
-    let mut toc = String::new();
-    toc.push_str(&wrap_guide_page("Guides", "__TOC__"));
-    let mut inner = String::from("<h1>Sky guides</h1><p>Hand-written walkthroughs and reference. The API for every module is auto-generated under <a href=\"../index.html\">API reference</a>.</p>");
-    for (section, mut items) in groups {
+    // guide/index.html — sectioned TOC. "Guides" (user-facing deep dives) first,
+    // then "Compiler & contributing". A short description sits under each header.
+    let mut inner = String::from(
+        "<h1>Guides &amp; internals</h1>\
+         <p>Topic deep-dives and compiler internals. New to Sky? Take the \
+         <a href=\"../learn/index.html\">tour</a> first. Looking up a module? See the \
+         <a href=\"../reference.html\">API reference</a>.</p>",
+    );
+    let section_order = [
+        (
+            "Guides",
+            "How to build things — the runtime, data, UI, auth, tooling, deployment.",
+        ),
+        (
+            "Compiler &amp; contributing",
+            "For contributors: the Rust compiler architecture, the FFI boundary, stdlib correctness, and how to work in the repo.",
+        ),
+    ];
+    for (section, desc) in section_order {
+        let Some(items) = groups.get_mut(section) else {
+            continue;
+        };
         items.sort_by(|a, b| a.0.cmp(&b.0));
-        inner.push_str(&format!("<h2>{}</h2><ul>", html_escape(&section)));
-        for (title, file) in items {
+        inner.push_str(&format!(
+            "<div class=\"toc-sec\"><h2>{section}</h2><p class=\"d\">{desc}</p><ul>"
+        ));
+        for (title, file) in items.iter() {
             inner.push_str(&format!(
                 "<li><a href=\"{}\">{}</a></li>",
-                html_escape(&file),
-                html_escape(&title)
+                html_escape(file),
+                html_escape(title)
             ));
         }
-        inner.push_str("</ul>");
+        inner.push_str("</ul></div>");
     }
-    let toc = toc.replace("__TOC__", &inner);
-    std::fs::write(guide_dir.join("index.html"), toc)?;
+    std::fs::write(guide_dir.join("index.html"), wrap_guide_page("Guides & internals", &inner))?;
+    Ok(())
+}
+
+// ── The "Learn Sky" tour ──────────────────────────────────────────────────
+// A Tour-of-Go-style progressive curriculum: an ordered set of lessons under
+// `docs/learn/`, rendered with a persistent sidebar + prev/next. The order +
+// grouping live in `LEARN_TOUR`; the prose lives in the `.md` files, so the
+// content stays live-editable while the structure is one place.
+
+/// One tour lesson: the `docs/learn/<stem>.md` source, its sidebar label, and
+/// the sidebar group it sits under. The `index` stem renders to
+/// `learn/index.html` (the tour's front door); every other stem to
+/// `learn/<stem>.html`.
+struct Lesson {
+    stem: &'static str,
+    title: &'static str,
+    section: &'static str,
+}
+
+const LEARN_TOUR: &[Lesson] = &[
+    Lesson { stem: "index", title: "Welcome", section: "Start" },
+    Lesson { stem: "01-first-app", title: "Your first app", section: "Start" },
+    Lesson { stem: "02-values-and-types", title: "Values & types", section: "The language" },
+    Lesson { stem: "03-functions", title: "Functions", section: "The language" },
+    Lesson { stem: "04-records", title: "Records", section: "The language" },
+    Lesson { stem: "05-unions-and-case", title: "Unions & case", section: "The language" },
+    Lesson { stem: "06-lists", title: "Lists", section: "The language" },
+    Lesson { stem: "07-maybe-and-result", title: "Maybe & Result", section: "The language" },
+    Lesson { stem: "08-pipelines-and-let", title: "Pipelines & let", section: "The language" },
+    Lesson { stem: "09-effects-and-task", title: "Effects & Task", section: "The language" },
+    Lesson { stem: "10-modules", title: "Modules & imports", section: "The language" },
+    Lesson { stem: "11-first-web-app", title: "Your first web app", section: "Building apps" },
+    Lesson { stem: "12-ui", title: "UI with Std.Ui", section: "Building apps" },
+    Lesson { stem: "13-forms-and-events", title: "Forms & events", section: "Building apps" },
+    Lesson { stem: "14-routing", title: "Routing & navigation", section: "Building apps" },
+    Lesson { stem: "15-data", title: "Data with Std.Db", section: "Building apps" },
+    Lesson { stem: "16-auth", title: "Auth", section: "Building apps" },
+    Lesson { stem: "17-deploying", title: "Deploying", section: "Building apps" },
+    Lesson {
+        stem: "18-coming-from-other-languages",
+        title: "Coming from another language",
+        section: "Next steps",
+    },
+    Lesson { stem: "19-ai-tooling", title: "Using AI tools", section: "Next steps" },
+];
+
+fn lesson_out_file(stem: &str) -> String {
+    if stem == "index" {
+        "index.html".to_string()
+    } else {
+        format!("{stem}.html")
+    }
+}
+
+/// The tour sidebar: every lesson grouped by section, numbered (the welcome page
+/// is unnumbered), with the current lesson highlighted.
+fn tour_sidebar(active: usize) -> String {
+    let mut out = String::from("<aside><nav>");
+    let mut cur_section = "";
+    let mut num = 0u32;
+    for (i, l) in LEARN_TOUR.iter().enumerate() {
+        if l.section != cur_section {
+            out.push_str(&format!("<div class=\"sec\">{}</div>", html_escape(l.section)));
+            cur_section = l.section;
+        }
+        let label = if l.stem == "index" {
+            html_escape(l.title)
+        } else {
+            num += 1;
+            format!("<span class=\"n\">{num}</span> {}", html_escape(l.title))
+        };
+        let cls = if i == active { " class=\"cur\"" } else { "" };
+        out.push_str(&format!(
+            "<a href=\"{}\"{cls}>{label}</a>",
+            lesson_out_file(l.stem)
+        ));
+    }
+    out.push_str("</nav></aside>");
+    out
+}
+
+fn tour_prevnext(i: usize) -> String {
+    let mut out = String::from("<div class=\"prevnext\">");
+    if i > 0 {
+        let p = &LEARN_TOUR[i - 1];
+        out.push_str(&format!(
+            "<a class=\"pv\" href=\"{}\"><span class=\"lbl\">&larr; Previous</span>{}</a>",
+            lesson_out_file(p.stem),
+            html_escape(p.title)
+        ));
+    }
+    if i + 1 < LEARN_TOUR.len() {
+        let n = &LEARN_TOUR[i + 1];
+        out.push_str(&format!(
+            "<a class=\"nx\" href=\"{}\"><span class=\"lbl\">Next &rarr;</span>{}</a>",
+            lesson_out_file(n.stem),
+            html_escape(n.title)
+        ));
+    }
+    out.push_str("</div>");
+    out
+}
+
+fn wrap_tour_page(title: &str, sidebar: &str, body: &str, prevnext: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>{} — Learn Sky</title>{}{}</head><body>{}\
+         <div class=\"tour\">{}<article>{}{}</article></div></body></html>\n",
+        html_escape(title),
+        GUIDE_STYLE,
+        SITE_STYLE,
+        topnav("../", "learn"),
+        sidebar,
+        body,
+        prevnext,
+    )
+}
+
+/// Render the `docs/learn/` tour into `<out_dir>/learn/`. A lesson listed in
+/// `LEARN_TOUR` whose `.md` is missing renders a small placeholder (so the tour
+/// never has a dead sidebar link while content is being authored).
+pub fn render_learn_tour(repo_root: &Path, out_dir: &Path) -> std::io::Result<()> {
+    let learn_src = repo_root.join("docs").join("learn");
+    let learn_out = out_dir.join("learn");
+    std::fs::create_dir_all(&learn_out)?;
+    for (i, l) in LEARN_TOUR.iter().enumerate() {
+        let src_path = learn_src.join(format!("{}.md", l.stem));
+        let md = std::fs::read_to_string(&src_path).unwrap_or_else(|_| {
+            format!("# {}\n\n_This lesson is being written._\n", l.title)
+        });
+        let body = markdown_to_html_learn(&md);
+        let page = wrap_tour_page(l.title, &tour_sidebar(i), &body, &tour_prevnext(i));
+        std::fs::write(learn_out.join(lesson_out_file(l.stem)), page)?;
+    }
+    Ok(())
+}
+
+// ── The landing page ──────────────────────────────────────────────────────
+
+/// Render the site root `index.html`: what Sky is, why, and the three doors
+/// (Learn / API reference / Guides & internals). Hand-written — it is the one
+/// page that is marketing rather than generated reference.
+pub fn render_landing(out_dir: &Path) -> std::io::Result<()> {
+    let mut b = String::new();
+    b.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    b.push_str("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
+    b.push_str("<title>Sky — one language for the whole stack</title>");
+    b.push_str(GUIDE_STYLE);
+    b.push_str(SITE_STYLE);
+    b.push_str("</head><body>");
+    b.push_str(&topnav("", "home"));
+    b.push_str(
+        "<section class=\"hero\">\
+         <h1>Sky</h1>\
+         <p class=\"tag\">A pure-functional, Elm-family language that compiles to typed Go. \
+         One language for the whole stack — web, API, CLI, terminal, desktop — with a single \
+         promise: <b>if it compiles, it works.</b></p>\
+         <p><a class=\"cta\" href=\"learn/index.html\">Start the tour →</a></p>\
+         </section>",
+    );
+    b.push_str("<div class=\"doors\">");
+    for (href, title, desc) in [
+        (
+            "learn/index.html",
+            "Learn Sky",
+            "New here? A guided tour from your first app to a real web app — plus a chapter for developers coming from JavaScript, Python, Go, or Rust.",
+        ),
+        (
+            "reference.html",
+            "API reference",
+            "Every standard-library module, generated from source and searchable. The place to look up a function or type.",
+        ),
+        (
+            "guide/index.html",
+            "Guides & internals",
+            "Topic deep-dives (Sky.Live, Std.Db, Std.Ui, auth, deployment) and — for contributors — the Rust compiler architecture.",
+        ),
+    ] {
+        b.push_str(&format!(
+            "<a class=\"door\" href=\"{href}\"><h3>{title}</h3><p>{desc}</p></a>"
+        ));
+    }
+    b.push_str("</div>");
+    b.push_str("<h2>Why Sky</h2><div class=\"pros\">");
+    for (h, p) in [
+        (
+            "One language, whole stack",
+            "The same view code renders on the web (Sky.Live), the terminal (Sky.Tui), and the desktop (Sky.Webview). No separate front-end language, no serialization glue.",
+        ),
+        (
+            "Errors are values, effects are explicit",
+            "Fallible things return Result Error a; side effects return Task Error a. The type tells you what can go wrong and what touches the outside world. No null, no hidden throws.",
+        ),
+        (
+            "Batteries included",
+            "Auth, DB (one codec drives JSON and the database), UI, HTTP, money/decimals, jobs, observability — all in the standard library, all reviewed for security and scale.",
+        ),
+        (
+            "It compiles to Go",
+            "You get Go's deployment story — a single static binary — and its ecosystem (any Go package via FFI, no hand-written bindings).",
+        ),
+    ] {
+        b.push_str(&format!("<div><h3>{h}</h3><p>{p}</p></div>"));
+    }
+    b.push_str("</div>");
+    b.push_str(
+        "<h2>Hello, Sky</h2>\
+         <pre><code>module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         type Msg = Increment | Decrement\n\n\
+         update : Msg -&gt; Int -&gt; Int\n\
+         update msg count =\n\
+         &nbsp;&nbsp;&nbsp;&nbsp;case msg of\n\
+         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Increment -&gt; count + 1\n\
+         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Decrement -&gt; count - 1\n\n\
+         main =\n\
+         &nbsp;&nbsp;&nbsp;&nbsp;println (String.fromInt (update Increment 0))</code></pre>\
+         <p style=\"color:#666\">Ready? <a href=\"learn/index.html\">Take the tour →</a></p>",
+    );
+    b.push_str("</body></html>\n");
+    std::fs::write(out_dir.join("index.html"), b)?;
     Ok(())
 }

@@ -30,7 +30,7 @@ installed compiler's template.
   + `Std.Codec` for data; internal `Std.Auth`; `Result Error`/`Task Error` (never
   `String`) for errors; `Std.Money` (never `Float`) for currency.
 - **The live API.** For any module, `sky doc <Module>` prints the current typed
-  signatures — the same content as the [API reference](../index.html) here,
+  signatures — the same content as the [API reference](../reference.html) here,
   generated from source, so the assistant never works from a stale table.
 
 ## A good prompt

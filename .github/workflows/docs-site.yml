@@ -11,6 +11,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'docs/**'
       - 'sky-stdlib/**'
       - 'rust/crates/project/src/doc.rs'
       - 'rust/crates/hir/src/**'

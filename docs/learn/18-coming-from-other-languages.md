@@ -87,5 +87,5 @@ describe shape =
   DB pool (`db = Task.run (Db.connect ())`); wrong for a fresh value per call —
   make those a function (`newId _ = …`; call `newId ()`).
 
-Next: **[your first app](getting-started.html)**, then a real
-**[web app with Sky.Live](skylive-overview.html)**.
+Next: **[your first app](01-first-app.md)**, then a real
+**[web app with Sky.Live](11-first-web-app.md)**.
