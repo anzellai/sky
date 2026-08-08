@@ -29,6 +29,8 @@ under [`archive/`](archive/) and the per-version directories below.
 * [`skywebview/`](skywebview/) — Sky.Webview (native desktop window).
 * [`skyauth/`](skyauth/) — `Std.Auth` (sessions + JWT + roles).
 * [`skydb/`](skydb/) — `Std.Db` (SQLite + PostgreSQL).
+* [`skypersist/`](skypersist/) — `Std.Persist` / BlueDB (embedded engine,
+  collections, serializable transactions, Sky.Live reactivity).
 * [`v0.16.x-console/`](v0.16.x-console/) — Sky Console embedded mode,
   hub mode (`sky console-serve`), HubExporter, telemetry flow.
 

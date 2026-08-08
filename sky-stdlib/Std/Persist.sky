@@ -1,11 +1,13 @@
--- | Std.Persist — one backend-invisible persistence surface over the BlueDB
--- embedded engine (v0.19 Phase 3b; docs/bluedb/phase3-api-design.md §1/§3).
+-- | Std.Persist — one persistence surface over the BlueDB embedded engine AND
+-- over SQLite/Postgres.
 --
 -- A `Collection a` pairs a `Std.Codec` with a primary key + declared indexes;
--- `connectKeyValue` mints an embedded `Conn`, and the universal verbs
+-- `connectKeyValue` mints an embedded `Conn` (`connectRelational` a SQL one),
+-- and the universal verbs
 -- (`get`/`put`/`insert`/`delete`/`query`/`count`/`transaction`) persist records
--- through it. The codec drives BOTH JSON and the engine's index/column mapping —
--- write it once, persist it everywhere.
+-- through it. The codec drives BOTH JSON and the storage column mapping —
+-- write it once, persist it everywhere. Column names are the CODEC's names
+-- (`Codec.auto` snake_cases: `priceMinor` → `price_minor`).
 --
 -- ```elm
 -- import Std.Persist as P
@@ -15,15 +17,20 @@
 -- todos =
 --     P.collection "todos" todoCodec |> P.key "id" |> P.index "priority"
 --
--- store = P.connectKeyValue "data/app.bluedb" |> Task.run |> Result.withDefault ...
+-- store : P.Conn P.KeyValue
+-- store =
+--     P.connectKeyValueSync "data/app.bluedb"
 --
 -- P.insert store todos { id = "t1", title = "buy milk", priority = 2, done = False }
 -- P.query todos |> P.where_ (P.eq "done" (P.bool False)) |> P.orderAsc "priority" |> P.toList store
 -- ```
 --
--- The KV/embedded arm routes to `Ffi.kernel "Embedded_*"` (→ `rt.Embedded_*`,
--- resolved generically by the lowerer — zero compiler change, §6). SQLite/Postgres
--- adapters + KV≡SQL parity land in Phase 3c; commit-path reactivity in Phase 4.
+-- The same verbs run on the embedded engine (`connectKeyValue`), SQLite, and
+-- PostgreSQL (`connectRelational`); the portable subset is asserted by
+-- `examples/57-persist-parity`. Commit-path reactivity (`liveInto` +
+-- `Std.Live.withReactive`) is EMBEDDED-ONLY.
+--
+-- Full guide, backend matrix, and limitations: `docs/skypersist/overview.md`.
 module Std.Persist exposing
     ( Conn
     , KeyValue
@@ -132,10 +139,21 @@ key k (Collection c) =
     Collection { c | keyField = k }
 
 
--- | Declare a secondary index on a column (single-column ascending). A
--- range-optimized column (int/text/bool) gets tight index-range validation under
--- transactions; a not-order-preserving column (Money/`Codec.map`/blob) routes to
--- the conservative witness (§2.3).
+-- | Declare a secondary index on a column (single-column ascending; no compound,
+-- unique, or partial indexes).
+--
+-- NOTE what this does and does not buy you. It does NOT yet speed up embedded
+-- reads — an embedded query is a primary-key-ordered scan of the collection with
+-- the predicate evaluated in memory. What a declared index gives you is
+-- TRANSACTIONAL PRECISION (a range-optimized column — int/text/bool — lets a
+-- serializable transaction record a tight index-range read-set instead of a
+-- coarse one, so fewer false conflicts) plus reactive change-feed matching. A
+-- not-order-preserving column (Money/`Codec.map`/blob) routes to the
+-- conservative witness. On the relational arm the database plans as usual.
+--
+-- A column name that is not in the codec does NOT error — it degrades silently
+-- to the conservative path. Use the CODEC's column names (`Codec.auto`
+-- snake_cases: `priceMinor` → `price_minor`).
 index : String -> Collection a -> Collection a
 index f (Collection c) =
     Collection { c | indexes = c.indexes ++ [ f ] }
@@ -188,9 +206,11 @@ connectKeyValueSync path =
             KvConn (-1)
 
 
--- | Open a relational connection (SQLite / Postgres) from the project's `[database]`
--- config and mint a relational connection. The same universal verbs then persist
--- records through `Std.Db`/`Std.Db.Store` — dialect-safe and codec-driven.
+-- | Open a relational connection (SQLite / Postgres) from the project's `[data]`
+-- (or legacy `[database]`) config and mint a relational connection. The same
+-- universal verbs then persist records through `Std.Db`/`Std.Db.Store` —
+-- dialect-safe and codec-driven. The DSN SHAPE selects the driver: a
+-- `postgres://` URL opens Postgres, anything else is a SQLite path.
 connectRelational : () -> Task Error (Conn Relational)
 connectRelational _ =
     Task.map SqlConn (Db.connect ())
@@ -234,8 +254,10 @@ put conn coll record =
                 |> Task.map (\_ -> ())
 
 
--- | Insert a record, returning the persisted row (with any engine-filled generated
--- columns). A duplicate primary key is rejected (deterministic, §2.7).
+-- | Insert a record. A duplicate primary key is rejected on every backend.
+-- RETURN VALUE DIFFERS BY BACKEND: the embedded arm returns the PERSISTED row
+-- (so engine-filled columns come back); the relational arm returns the record
+-- you passed in, unchanged — re-read with `get` if you need a DB-filled default.
 insert : Conn cap -> Collection a -> a -> Task Error a
 insert conn coll record =
     case conn of
@@ -286,9 +308,10 @@ count conn coll =
 
 
 -- | Escape hatch: run arbitrary SQL (JOIN / GROUP BY / aggregate) and decode each
--- row into a projection via `codec`. SQL-native on the relational arm; the embedded
--- arm supports only single-collection scans and returns an error on SQL text
--- (cross-collection joins are SQL-only — §4.4).
+-- row into a projection via `codec`. RELATIONAL ONLY — the embedded engine has no
+-- cross-collection join and returns an error for SQL text. Unlike the other
+-- verbs it does NOT create the collection's table first, so call it only after a
+-- verb that does.
 selectRaw : Conn cap -> Codec row -> String -> List SqlValue -> Task Error (List row)
 selectRaw conn codec sql params =
     case conn of
@@ -311,12 +334,13 @@ selectRaw conn codec sql params =
 --   * SQLite (`connectRelational`) → `BEGIN IMMEDIATE` (upfront write lock +
 --     the connect-time single-writer clamp).
 --
--- A retry-exhausted conflict surfaces as the SAME typed `Conflict` error (code
--- 8) on every backend, so a uniform `Task.retryWith` / typed-`Conflict` handler
--- spans all three. The body is handed a `Conn` bound to the transaction; its
--- `get`/`put`/`query` compose atomically (a txn-scoped `query` records a
--- read-set, §2.6). A body that returns `Task.fail` rolls the transaction back
--- and propagates the error.
+-- Retries are bounded and automatic; a retry-exhausted conflict surfaces as the
+-- SAME typed `Conflict` error on every backend, so one handler spans all three.
+-- NOTE `Error.isRetryable` does NOT cover `Conflict` (only Timeout/Network/
+-- Unavailable) — match the kind yourself. The body is handed a `Conn` bound to
+-- the transaction; its `get`/`put`/`query` compose atomically (a txn-scoped
+-- `query` records a read-set). A body that returns `Task.fail` rolls the
+-- transaction back and propagates the error.
 transaction : Conn cap -> (Conn cap -> Task Error a) -> Task Error a
 transaction conn fn =
     case conn of
@@ -345,9 +369,16 @@ type alias LiveBinding model =
 -- | Build a reactive binding: run `qry` on `conn`/`coll` for its baseline, and
 -- whenever a same-tenant write changes the query's result set, re-run it and
 -- install the fresh `List a` into the Model via `setter`. Register the result
--- with `Std.Live.withReactive`. Embedded (`connectKeyValue`) backends get
--- precise commit-path live updates scoped to the session's verified tenant; the
--- relational arm fills once (Postgres LISTEN/NOTIFY is Phase 4c).
+-- with `Std.Live.withReactive`.
+--
+-- EMBEDDED ONLY. `connectKeyValue`/`connectKeyValueSync` backends get precise
+-- commit-path live updates, scoped to the session's verified tenant. A binding
+-- on a RELATIONAL conn (or on an inert failed-open handle) cannot live-deliver:
+-- it paints once and never updates. That is gated, not silent — in dev the
+-- runtime warns; outside dev the process exits rather than serve a frozen list.
+-- Reactive on a local store is also SINGLE-INSTANCE only and needs
+-- `SKY_DATA_REACTIVE_SCOPE=single-instance` (or `[data] reactiveScope`) outside
+-- dev. See `docs/skypersist/overview.md` §Reactivity.
 --
 --     Live.config { … }
 --         |> Live.withReactive
@@ -543,7 +574,10 @@ lte col v =
     CondLeaf col "lte" v
 
 
--- | `col LIKE pattern` (SQL `%` / `_` wildcards; ASCII, case-sensitive — §0.6).
+-- | `col LIKE pattern` (SQL `%` / `_` wildcards). Case-INsensitive for ASCII on
+-- every backend (forced: `LIKE` on SQLite, `ILIKE` on Postgres, ASCII folding in
+-- the embedded engine). Non-ASCII case-folding is backend-specific and is NOT
+-- part of the cross-backend guarantee.
 like : String -> String -> Cond
 like col pat =
     CondLeaf col "like" (SqlString pat)

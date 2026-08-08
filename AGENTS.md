@@ -162,7 +162,7 @@ for UX/DX/security/scalability, not by accident.
 | Concern | Default (and why) |
 |---|---|
 | **View layer** | `Std.Ui` — the typed, no-CSS layout DSL — **not** `Std.Html`. The same `Element` view renders across **Sky.Live (web), Sky.Tui (terminal), and Sky.Webview (desktop)**, so one view function is cross-platform; `Std.Ui` also HTML-escapes everything. Reach for `Std.Html` *only* to wrap raw markup `Std.Ui` can't express. |
-| **Database** | **Tier-driven.** Pet / prototype / simple / single-instance → **SQLite** (embeds, single file, zero ops). Production / multi-instance → **PostgreSQL**. (Future: **BlueDB** — the Sky-native reactive data layer, WIP — will become the default once it lands; prefer it when it ships.) Always model records through **`Std.Db.Store` + `Std.Codec`** (one codec drives JSON + dialect-safe DB); drop to raw `Std.Db` only for joins / aggregates / transactions. The *same app code* works on SQLite and Postgres — only the driver differs. |
+| **Database** | **Tier-driven.** Pet / prototype / simple / single-instance → **SQLite** (embeds, single file, zero ops). Production / multi-instance → **PostgreSQL**. Always model records through **`Std.Db.Store` + `Std.Codec`** (one codec drives JSON + dialect-safe DB); drop to raw `Std.Db` only for joins / aggregates / transactions. The *same app code* works on SQLite and Postgres — only the driver differs. **`Std.Persist`** (BlueDB — the Sky-native embedded engine) is shipped and usable behind the same codec, and is the ONLY way to get a **live-updating Sky.Live Model field** (`liveInto` + `Live.withReactive`); pick it for a single-instance app that wants that or wants zero database to operate. It is **not** the default: embedded reads are full collection scans (indexes don't seek yet), reactivity is embedded-only + single-instance, and there is no migration tooling for collections. Read `docs/skypersist/overview.md` — especially its Limitations — before choosing it. |
 | **Auth** | The internal **`Std.Auth`** module by default (bcrypt + HS256 JWT cookies — you own the users). OAuth (Google/GitHub) or external (Auth0/Clerk) only when the user needs them. Never `fmt.Sprintf("%v", secret)` — secrets are typed. |
 | **Serialization** | `Std.Codec` (`Codec.auto blank`) for record↔JSON+DB from one definition. Raw `Json.Encode/Decode` only for a shape a codec can't express (legacy/third-party wire formats). |
 | **Money / decimals** | `Std.Money` on `Std.Decimal`. **Never** raw `Float` for currency. |
@@ -296,6 +296,7 @@ before assuming a limitation still holds.
 | Sky.Tui / Sky.Webview | `docs/skytui/`, `docs/skywebview/` |
 | `Std.Auth` | `docs/skyauth/overview.md` |
 | `Std.Db` / Codec / Store / migrations | `docs/skydb/overview.md` |
+| `Std.Persist` / BlueDB (embedded engine, reactivity) | `docs/skypersist/overview.md` |
 | CLI + LSP | `docs/tooling/cli.md`, `docs/tooling/lsp.md` |
 | `sky.toml` + env vars | `docs/sky-toml.md` |
 | Observability / console | `docs/observability.md` |
@@ -303,11 +304,13 @@ before assuming a limitation still holds.
 
 ## Examples
 
-`examples/00`–`examples/55`. Each builds clean from a wiped slate
+`examples/00`–`examples/59`. Each builds clean from a wiped slate
 (`rm -rf sky-out .skycache .skydeps && sky build`). `00-standard-libs` is the
 stdlib smoke test; `13-skyshop` the Stripe-SDK-scale FFI benchmark (76k symbols);
 `19-skyforum` the canonical multi-module Sky.Live form; `26-ui-showcase` every
-`Std.Ui` primitive. Read the example closest to what you're building first.
+`Std.Ui` primitive; `56`–`59` the `Std.Persist`/BlueDB set (embedded CRUD, the
+KV≡SQL parity gate, relational-only, and Sky.Live reactivity). Read the example
+closest to what you're building first.
 
 ## Project layout
 
