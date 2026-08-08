@@ -55,10 +55,52 @@ func registerWatchers(tb testing.TB, b *EmbeddedBackend, n int, plan QueryPlan) 
 }
 
 // firehose writes `changes` distinct open orders through the real autocommit commit path (each a
-// distinct commitTs + pk ⇒ no dedup) and waits until the async reactive pump has processed all of
-// them (observed via the decode counter reaching the target). Returns the observed (decodes, evals).
-func firehose(tb testing.TB, b *EmbeddedBackend, changes int) (uint64, uint64) {
+// distinct commitTs + pk ⇒ no dedup), then reads the detection counters AT A DETERMINISTIC
+// COMPLETION BARRIER. Returns the final (decodes, evals).
+//
+// Why a barrier and not a poll. The two counters are bumped at two DIFFERENT points inside a single
+// mc.matches call: the decode at reactive.go:161, the eval at reactive.go:180, with the actual
+// decodeColumns work between them. Waiting on the decode counter and then reading the eval counter
+// therefore samples the pump MID-CHANGE — the last change's decode is already visible while its eval
+// has not happened yet, so the eval count reads one short. That is an observation-point race in the
+// harness, not a missed evaluation: the eval always lands microseconds later.
+//
+// So instead of sampling, wait for COMPLETION. After the firehose we commit one EXTRA change and
+// wait until a barrier subscription is delivered it. The engine change-feed hands batches to
+// subscribers in commit order (changefeed.go:44-46) and ONE pump goroutine drains that feed serially
+// (embedded.go:512-529), so a delivery of the barrier commit proves every earlier commit's detection
+// work ran to completion. The counters are then FINAL, and both assertions are exact.
+//
+// The barrier commit contributes ZERO to both counters: considerCached short-circuits on
+// `ch.Op != OpDelete` BEFORE it ever calls mc.matches (reactive.go:295), so deleting a row decodes
+// and evaluates nothing — it fires a Leave purely off the resultPks belt. `barrierPlan` must be one
+// of the plans the caller already registered so the barrier subscription introduces no new DISTINCT
+// predicate (the distinct-predicate count is exactly what the eval assertion measures).
+func firehose(tb testing.TB, b *EmbeddedBackend, changes int, barrierPlan QueryPlan) (uint64, uint64) {
 	tb.Helper()
+	if changes < 1 {
+		tb.Fatalf("firehose needs >=1 change (the barrier deletes one of them)")
+	}
+	barrier, _, err := b.WatchTenant(ordersSchema(), barrierPlan, "")
+	if err != nil {
+		tb.Fatalf("barrier WatchTenant: %v", err)
+	}
+	defer barrier.Close()
+
+	// Drain the barrier from its own goroutine, started BEFORE the firehose, so its delivery buffer
+	// can never fill and drop the barrier change however large `changes` grows.
+	hit := make(chan struct{})
+	go func() {
+		for ch := range barrier.Changes() {
+			// Every firehose change is a Put; only the barrier commit is a delete, so an OpDelete
+			// delivery is unambiguously the barrier.
+			if ch.Op == OpDelete {
+				close(hit)
+				return
+			}
+		}
+	}()
+
 	atomic.StoreUint64(&reactiveMatchDecodes, 0)
 	atomic.StoreUint64(&reactiveMatchEvals, 0)
 	for i := 0; i < changes; i++ {
@@ -68,9 +110,17 @@ func firehose(tb testing.TB, b *EmbeddedBackend, changes int) (uint64, uint64) {
 			tb.Fatalf("Put %s: %v", key, err)
 		}
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for atomic.LoadUint64(&reactiveMatchDecodes) < uint64(changes) && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
+	// The barrier commit — a delete of a row every subscription is displaying (so the Leave is
+	// guaranteed to be delivered) and which costs no decode and no eval.
+	if err := b.Delete(ordersSchema(), "o0"); err != nil {
+		tb.Fatalf("barrier Delete: %v", err)
+	}
+
+	select {
+	case <-hit:
+	case <-time.After(30 * time.Second):
+		tb.Fatalf("barrier change never delivered — reactive pump stalled (decodes=%d evals=%d)",
+			atomic.LoadUint64(&reactiveMatchDecodes), atomic.LoadUint64(&reactiveMatchEvals))
 	}
 	return atomic.LoadUint64(&reactiveMatchDecodes), atomic.LoadUint64(&reactiveMatchEvals)
 }
@@ -86,7 +136,7 @@ func TestNB1_DetectionIsNIndependent(t *testing.T) {
 	run := func(n int) (decodes, evals uint64) {
 		b := newMemBackendTB(t)
 		registerWatchers(t, b, n, openPlan())
-		return firehose(t, b, changes)
+		return firehose(t, b, changes, openPlan())
 	}
 
 	dLow, eLow := run(40)
@@ -136,7 +186,9 @@ func TestNB1_MultiplePredicatesScaleWithDistinctNotN(t *testing.T) {
 	}
 
 	const changes = 100
-	decodes, evals := firehose(t, b, changes)
+	// The barrier subscription reuses p1 — an ALREADY-registered predicate — so the distinct-predicate
+	// count the eval assertion measures stays at 2.
+	decodes, evals := firehose(t, b, changes, p1)
 	t.Logf("200 subs / 2 distinct predicates / %d changes → decodes=%d evals=%d", changes, decodes, evals)
 
 	// One decode per change (body shared across all subs). Two distinct predicates → 2 evals per
