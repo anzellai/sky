@@ -149,12 +149,27 @@ jobs:
       # `go test ./rt/...` does not reach a sibling package. -race is what makes
       # this gate worth having (the suite is deliberately concurrent), and it
       # costs ~25 s wall; -race needs cgo, hence CGO_ENABLED=1 here.
+      #
+      # `-tags pebblegozstd` is NOT optional here, and CGO_ENABLED=1 is exactly why.
+      # Pebble picks its zstd implementation by build tag:
+      #   internal/compression/zstd_cgo.go   //go:build cgo && !pebblegozstd  → DataDog/zstd (cgo)
+      #   internal/compression/zstd_nocgo.go //go:build !cgo || pebblegozstd  → klauspost (pure Go)
+      # `sky build` prefers a static CGO_ENABLED=0 binary (build.rs
+      # run_go_build_detecting_cgo), so the compression implementation a Sky app
+      # actually ships is pure-Go klauspost. -race forces cgo on, so WITHOUT the tag
+      # this gate compiled DataDog/zstd instead — it race-tested a block
+      # compression/decompression implementation the default build never links.
+      # `go list -deps ./bluedb/...` shows the swap directly.
+      # The tag pins the gate to the shipped implementation while keeping -race.
+      # (Open follow-up, tracked in docs/bluedb/phase1-status.md: pass the same tag
+      # on build.rs's CGO_ENABLED=1 FFI retry path, the one build that still pulls
+      # cgo zstd today.)
       - name: Gate — BlueDB engine tests (SSI + contention + crash-sim, race)
         # timeout-minutes, not the `timeout` binary: coreutils' timeout is not on
         # the macOS runner that carries the sibling step, so the step-level key is
         # the portable way to bound both identically.
         timeout-minutes: 30
-        run: cd ../runtime-go && CGO_ENABLED=1 go test ./bluedb/... -count=1 -race
+        run: cd ../runtime-go && CGO_ENABLED=1 go test ./bluedb/... -count=1 -race -tags pebblegozstd
       - name: Gate — build-run (emit + go build every example; FFI skipped)
         run: cargo run -q -p xtask -- build-run --all
       - name: Gate — golden (runtime-correctness, CLI subset)
@@ -276,9 +291,14 @@ jobs:
       # 2nd platform carries it. No -race here — the Linux codegen-build job
       # already runs the race build; macOS runners are the expensive ones and
       # what this job is buying is PLATFORM divergence, not extra race coverage.
+      # `-tags pebblegozstd` is a no-op under CGO_ENABLED=0 (the `!cgo` arm already
+      # selects pure-Go klauspost zstd) and is passed anyway so BOTH gates spell the
+      # supported build configuration identically — the tag then keeps holding the
+      # pure-Go path if this step ever gains cgo, instead of silently swapping the
+      # compression implementation the way the sibling gate did.
       - name: Gate — BlueDB engine tests (2nd platform)
         timeout-minutes: 30
-        run: cd ../runtime-go && CGO_ENABLED=0 go test ./bluedb/... -count=1
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./bluedb/... -count=1 -tags pebblegozstd
       # Platform parity for the emit + go-build regression class. The #164/#166
       # alias-collision / record-update-field-drop bugs are gated only by these
       # `project` integration tests (they run real `go build` on emitted Go), and
