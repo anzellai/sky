@@ -2133,36 +2133,15 @@ impl<'a> Ctx<'a> {
                 // (single-constructor / tuple / record) binding.
                 let n = self.fresh_temp();
                 let ty = sig_ty.map(|t| self.goty(t)).unwrap_or(GoTy::Any);
-                // #170: an unannotated destructured param (a tuple pattern on a
+                // An unannotated destructured param (a tuple pattern on a
                 // `let`-bound local fn) arrives with Go type `any` when the fn is
                 // passed through a HOF that erases the callback to
-                // `func(any,any)any` (foldl/foldr). Reading `.V0` off `any` is
-                // invalid Go (`_t0.V0 undefined`). Recover the pattern's concrete
-                // Go type from its binder locals and destructure a coerced
-                // subject; the param's ABI type stays `ty` (the caller still
-                // passes `any`). HM already unified the pattern with the value
-                // flowing in, so the reconstructed element types match the
-                // constructed tuple's instantiation (both erase through `goty`).
-                let subj_ty = if ty == GoTy::Any {
-                    self.pattern_binder_goty(p).unwrap_or(GoTy::Any)
-                } else {
-                    ty.clone()
-                };
-                let subj = if subj_ty != GoTy::Any && subj_ty != ty {
-                    let raw = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
-                    GoExpr::new(
-                        GoExprKind::Coerce {
-                            inner: Box::new(raw),
-                            from: ty.clone(),
-                            to: subj_ty.clone(),
-                            reason: CoerceReason::FfiReturn,
-                        },
-                        subj_ty.clone(),
-                    )
-                } else {
-                    GoExpr::new(GoExprKind::Ident(n.clone()), subj_ty.clone())
-                };
-                let (_cond, binds) = self.pattern_test(&subj, &subj_ty, p);
+                // `func(any,any)any` (foldl/foldr). `pattern_test` self-heals an
+                // `any` tuple subject reflectively (via `rt.TupleField`, see the
+                // `Pattern::Tuple` arm) — #170 — so no subject coercion is needed
+                // here; passing the raw `any` subject is correct.
+                let subj = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
+                let (_cond, binds) = self.pattern_test(&subj, &ty, p);
                 (n, ty, binds)
             }
         }
@@ -5564,52 +5543,76 @@ impl<'a> Ctx<'a> {
             }
             Pattern::Tuple(pats) => {
                 let pats = pats.clone();
-                let elem_tys: Vec<GoTy> = match subj_ty {
-                    GoTy::Tuple(ts) => ts.clone(),
-                    _ => vec![GoTy::Any; pats.len()],
-                };
                 let mut cond = None;
                 let mut binds = Vec::new();
-                let slice_backed = pats.len() >= 10;
-                for (i, sp) in pats.iter().enumerate() {
-                    let ety = elem_tys.get(i).cloned().unwrap_or(GoTy::Any);
-                    // Element read is `any` — coerce to the element's concrete type
-                    // so a bound var carries its real type (e.g. an ADT for a
-                    // nested `case`). Arity 2..9 read `.V{i}` on `rt.T{n}`; arity
-                    // ≥10 read `.Vs[i]` on the slice-backed `rt.SkyTupleN`.
-                    let raw = if slice_backed {
-                        let vs = GoExpr::new(
-                            GoExprKind::Selector(Box::new(subj.clone()), "Vs".to_string()),
-                            GoTy::Any,
-                        );
-                        GoExpr::new(
-                            GoExprKind::Index(
-                                Box::new(vs),
-                                Box::new(GoExpr::new(
-                                    GoExprKind::IntLit(i as i64),
-                                    GoTy::Bare(Prim::Int),
-                                )),
-                            ),
-                            GoTy::Any,
-                        )
-                    } else {
-                        // Type the `.V{i}` read as the element's actual Go type
-                        // (`ety`, from `subj_ty`'s tuple element list). On a TYPED
-                        // tuple (`rt.T2[float64, int]`) the field IS already
-                        // concrete, so `coerce_if_needed(ety, ety)` elides the
-                        // redundant `rt.AsFloat`/`rt.AsInt`/… narrow (the typed-tuple
-                        // work made the field typed, but this read still claimed
-                        // `any` and re-narrowed). On an ERASED tuple `ety == Any`,
-                        // so this is byte-identical (`any` field, coerce no-op).
-                        GoExpr::new(
-                            GoExprKind::Selector(Box::new(subj.clone()), format!("V{i}")),
-                            ety.clone(),
-                        )
-                    };
-                    let field = self.coerce_if_needed(raw, &ety);
-                    let (c, b) = self.pattern_test(&field, &ety, *sp);
-                    cond = and_opt(cond, c);
-                    binds.extend(b);
+                // A CONCRETE tuple subject (`rt.T2[float64, int]` / the slice-backed
+                // `rt.SkyTupleN`) reads elements by direct field access. An `any`
+                // subject — a HOF-erased callback param (foldr's `func(any,any)any`),
+                // a let/case-bound erased value, `fst`/`snd` of an erased pair — has
+                // NO `.V{i}` field (`_t0.V0 undefined`, #170). Reading it reflectively
+                // via `rt.TupleField` (returns `any`, shape-erased across every tuple
+                // instantiation) is the robust route the sibling `Cons`/`List` arms
+                // and `fst`/`snd` already take; coercing the whole subject to a
+                // reconstructed generic instantiation is fragile (Go generics are
+                // invariant). Element types then come from each binder's own inferred
+                // type, not the erased subject.
+                match subj_ty {
+                    GoTy::Tuple(ts) => {
+                        let elem_tys = ts.clone();
+                        let slice_backed = pats.len() >= 10;
+                        for (i, sp) in pats.iter().enumerate() {
+                            let ety = elem_tys.get(i).cloned().unwrap_or(GoTy::Any);
+                            // Arity 2..9 read `.V{i}` on `rt.T{n}`; arity ≥10 read
+                            // `.Vs[i]` on the slice-backed `rt.SkyTupleN`. On a TYPED
+                            // tuple the field is already concrete, so
+                            // `coerce_if_needed(ety, ety)` elides the redundant narrow.
+                            let raw = if slice_backed {
+                                let vs = GoExpr::new(
+                                    GoExprKind::Selector(Box::new(subj.clone()), "Vs".to_string()),
+                                    GoTy::Any,
+                                );
+                                GoExpr::new(
+                                    GoExprKind::Index(
+                                        Box::new(vs),
+                                        Box::new(GoExpr::new(
+                                            GoExprKind::IntLit(i as i64),
+                                            GoTy::Bare(Prim::Int),
+                                        )),
+                                    ),
+                                    GoTy::Any,
+                                )
+                            } else {
+                                GoExpr::new(
+                                    GoExprKind::Selector(
+                                        Box::new(subj.clone()),
+                                        format!("V{i}"),
+                                    ),
+                                    ety.clone(),
+                                )
+                            };
+                            let field = self.coerce_if_needed(raw, &ety);
+                            let (c, b) = self.pattern_test(&field, &ety, *sp);
+                            cond = and_opt(cond, c);
+                            binds.extend(b);
+                        }
+                    }
+                    _ => {
+                        // `any` subject → reflective per-element read + coerce to the
+                        // binder's own inferred Go type (so a bound var carries its
+                        // real type for a nested `case` / downstream typed use).
+                        for (i, sp) in pats.iter().enumerate() {
+                            let ety = self.pattern_binder_goty(*sp).unwrap_or(GoTy::Any);
+                            let raw = call_rt(
+                                "rt.TupleField",
+                                vec![subj.clone(), int_lit(i as i64)],
+                                GoTy::Any,
+                            );
+                            let field = self.coerce_if_needed(raw, &ety);
+                            let (c, b) = self.pattern_test(&field, &ety, *sp);
+                            cond = and_opt(cond, c);
+                            binds.extend(b);
+                        }
+                    }
                 }
                 (cond, binds)
             }
@@ -5633,16 +5636,33 @@ impl<'a> Ctx<'a> {
                         .unwrap_or_default(),
                     _ => HashMap::new(),
                 };
+                // An `any` subject (a generic ADT payload extracted as `any`:
+                // `Full { x, y }` where `Box a`'s payload erased) has no `.Cap`
+                // field — `_v.X undefined`. Read fields reflectively via `rt.Field`
+                // (the same route `Expr::Access` takes on an `any` record) and
+                // coerce to the binder's own inferred type. Mirrors the reflective
+                // Tuple/Cons/List arms. A concrete Named / Struct subject keeps
+                // direct field access (fast path, byte-identical).
+                let reflective = matches!(subj_ty, GoTy::Any);
                 let mut binds = Vec::new();
                 for (fname, lid) in &fields {
                     let cap = capitalize(fname.as_str());
-                    let fty = field_tys.get(&cap).cloned().unwrap_or(GoTy::Any);
+                    let fty = if reflective {
+                        self.local_ty(*lid)
+                    } else {
+                        field_tys.get(&cap).cloned().unwrap_or(GoTy::Any)
+                    };
                     let name = self.fresh_local_named(*lid, Some(fname.as_str()));
                     self.local_tys.insert(*lid, fty.clone());
-                    binds.push(GoStmt::Short(
-                        name,
-                        GoExpr::new(GoExprKind::Selector(Box::new(subj.clone()), cap), fty),
-                    ));
+                    let read = if reflective {
+                        let cap_lit =
+                            GoExpr::new(GoExprKind::StrLit(cap), GoTy::Bare(Prim::Str));
+                        let raw = call_rt("rt.Field", vec![subj.clone(), cap_lit], GoTy::Any);
+                        self.coerce_if_needed(raw, &fty)
+                    } else {
+                        GoExpr::new(GoExprKind::Selector(Box::new(subj.clone()), cap), fty.clone())
+                    };
+                    binds.push(GoStmt::Short(name, read));
                 }
                 (None, binds)
             }

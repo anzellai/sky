@@ -1884,6 +1884,72 @@ func Basics_snd(t any) any {
 	return AsTuple2(t).V1
 }
 
+// TupleField reflectively reads the i-th element of a Sky tuple value, boxed as
+// `any`. It is shape-erased across EVERY tuple instantiation — SkyTuple2/3, the
+// typed generic structs T2..T9 (`rt.T2[string, int]`, …), and the slice-backed
+// SkyTupleN — the same robustness Basics_fst/snd and the Cons/List reflective
+// pattern accessors already rely on. The tuple pattern arm uses it when the
+// subject arrives as `any` (a HOF-erased callback param such as foldr's
+// `func(any,any)any`, or a let/case-bound erased value): `subj.V{i}` is invalid
+// Go on an `any`, and coercing the whole subject to a reconstructed generic
+// instantiation is fragile (Go generics are invariant — `rt.T2[[]int, any]` is
+// not `rt.T2[[]int, []int]`), so the element is read reflectively instead. A
+// non-tuple / out-of-range read yields nil (the zero-ish default the sibling
+// reflective accessors return).
+func TupleField(v any, i int) any {
+	if v == nil {
+		return nil
+	}
+	// Fast paths for the canonical erased tuple structs.
+	switch t := v.(type) {
+	case SkyTuple2:
+		switch i {
+		case 0:
+			return t.V0
+		case 1:
+			return t.V1
+		}
+		return nil
+	case SkyTuple3:
+		switch i {
+		case 0:
+			return t.V0
+		case 1:
+			return t.V1
+		case 2:
+			return t.V2
+		}
+		return nil
+	case SkyTupleN:
+		if i >= 0 && i < len(t.Vs) {
+			return t.Vs[i]
+		}
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return nil
+	}
+	// Slice-backed SkyTupleN reached via reflection (e.g. a pointer wrapper).
+	if vs := rv.FieldByName("Vs"); vs.IsValid() && vs.Kind() == reflect.Slice {
+		if i >= 0 && i < vs.Len() {
+			return vs.Index(i).Interface()
+		}
+		return nil
+	}
+	// Typed T2..T9 generic instantiations: fields V0..Vn.
+	if f := rv.FieldByName("V" + strconv.Itoa(i)); f.IsValid() {
+		return f.Interface()
+	}
+	return nil
+}
+
 // List_cons: Sky's `::` at runtime. Prepends head to tail. Tail can
 // arrive as either `[]any` (legacy any-kernel) or a typed slice
 // (`[]int`, `[]Piece_R`, …) under typed codegen. Previously the typed-
