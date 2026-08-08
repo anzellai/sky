@@ -71,6 +71,10 @@ func TestConcurrentEventsSerialise(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/_sky/event",
 				strings.NewReader(reqBody))
 			req.Header.Set("Content-Type", "application/json")
+			// The session cookie is the authority for which session an
+			// event dispatches into (boundSessionID) — a real browser
+			// always sends it alongside the body sid.
+			req.Header.Set("Cookie", "sky_sid=sid-conc")
 			rr := httptest.NewRecorder()
 			app.handleEvent(rr, req)
 
@@ -219,6 +223,7 @@ func TestLegacyFieldsPreserved(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/_sky/event",
 		strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", "sky_sid=sid-legacy")
 	rr := httptest.NewRecorder()
 	app.handleEvent(rr, req)
 	if rr.Code != http.StatusOK {
