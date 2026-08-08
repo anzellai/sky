@@ -5469,6 +5469,24 @@ func flattenSubs(s any, out []subT) []subT {
 // Sub.batch composes them — `subscriptions = \model -> Sub.batch [
 // Sub.every 1000 Tick, Sub.subscribeTopic "chat" ChatMsg ]` is the
 // canonical multi-source shape.
+//
+// LOCK CONTRACT (INVIOLABLE): setupSubscriptions MUST be called with sess.mu
+// HELD, and MUST NOT itself acquire sess.mu — synchronously or via any hook.
+// It already reads sess.model with no lock of its own (the sky_call below);
+// that read is race-free ONLY because the caller holds sess.mu. Every
+// production caller complies: handleInitial (lock taken just before the call,
+// around the model mutation + render) and dispatch (whose callers all lock
+// first). Any callee that re-acquires sess.mu SELF-DEADLOCKS the initial render
+// on the same goroutine — Go mutexes are not reentrant. That is exactly what
+// Phase-4b's reactive hook did, hanging every page load of every reactive app;
+// hence reactiveEnsureStartedHook takes the model as a parameter rather than
+// reading it back off the session. Pinned by
+// TestHandleInitial_ReactiveApp_DoesNotDeadlock; see
+// docs/bluedb/g1-reactive-deadlock-fix-design.md.
+//
+// Anything added below must keep to leaf locks (cancelSubMu, activeSubsMu,
+// activeStreamSubsMu, activeWsSubsMu) or defer its sess.mu acquisition to a
+// goroutine it spawns (as the Time.every tick does).
 func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	// Cancel existing ticker (Time.every always rebuilds; pub/sub
 	// uses its own per-topic cancels stored in sess.activeSubs).
@@ -5489,7 +5507,11 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	// Phase-4b: start this session's BlueDB reactive loops once (idempotent). Runs here because
 	// setupSubscriptions is invoked post-init on every dispatch, so the session's Model exists.
 	// Via a hook so live.go never imports bluedb (gated out of non-Persist projects).
-	reactiveEnsureStartedHook(app, sess)
+	//
+	// sess.model is read under the CALLER's sess.mu (this function's lock contract, above) and
+	// handed to the hook, so the hook never needs to lock. It MUST NOT: re-acquiring sess.mu here
+	// self-deadlocks the initial render (G1).
+	reactiveEnsureStartedHook(app, sess, sess.model)
 
 	if app.subscriptions == nil {
 		// No subscriptions at all → tear down anything that was

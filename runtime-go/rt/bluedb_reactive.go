@@ -38,7 +38,9 @@ import (
 // imports sky-app/bluedb and is GATED out of non-Persist projects (build.rs); when it's absent the
 // hooks stay no-ops, so live.go never depends on the Pebble engine.
 func init() {
-	reactiveEnsureStartedHook = func(app *liveApp, sess *liveSession) { app.ensureReactiveStarted(sess) }
+	reactiveEnsureStartedHook = func(app *liveApp, sess *liveSession, model any) {
+		app.ensureReactiveStarted(sess, model)
+	}
 	reactiveTeardownHook = func(sess *liveSession) { reactiveTeardown(sess) }
 }
 
@@ -129,7 +131,15 @@ func (app *liveApp) reactiveBindingsFor(model any) []reactiveBindingRT {
 // ensureReactiveStarted spins up the session's reactive loops exactly once, after the session's
 // initial Model exists (called from setupSubscriptions, which runs post-init on every dispatch).
 // No-op when the app declares no reactive bindings.
-func (app *liveApp) ensureReactiveStarted(sess *liveSession) {
+//
+// LOCK CONTRACT (INVIOLABLE): MUST be called with sess.mu HELD — that is setupSubscriptions'
+// contract (live.go, see its doc comment), and this runs inside the caller's critical section.
+// `model` is the caller's already-committed sess.model, so this function has no reason to touch
+// sess.mu and MUST NEVER acquire it: Go mutexes are not reentrant, so re-locking here self-
+// deadlocks every initial page load. That was the Phase-4b G1 bug; the regression that pins it is
+// TestHandleInitial_ReactiveApp_DoesNotDeadlock. See
+// docs/bluedb/g1-reactive-deadlock-fix-design.md.
+func (app *liveApp) ensureReactiveStarted(sess *liveSession, model any) {
 	if app.reactiveBindings == nil {
 		return
 	}
@@ -146,17 +156,19 @@ func (app *liveApp) ensureReactiveStarted(sess *liveSession) {
 	st.started = true
 	reactiveStateMu.Unlock()
 
-	sess.mu.Lock()
-	model := sess.model
-	sess.mu.Unlock()
+	// Evaluate the Sky `reactiveBindings model` accessor ONCE and share the result with the boot
+	// gate. This runs on the sess.mu critical path (the caller holds it), so the accessor must not
+	// be re-evaluated per consumer — reactiveDataBackendKind takes the decoded bindings rather than
+	// re-deriving them from the model.
+	bindings := app.reactiveBindingsFor(model)
 
 	// RG#2 capability boot-gate (§6.1): refuse to boot a reactive app on a single-writer local
 	// data backend in a non-dev env without the operator's single-instance assertion — the write
 	// isn't in the other replicas' stores, so cross-replica reactivity would silently stale. Runs
-	// once per process (sync.Once inside), needs a live model to resolve the data backend.
-	app.assertReactiveCapabilityOrExit(model)
+	// once per process (sync.Once inside).
+	app.assertReactiveCapabilityOrExit(bindings)
 
-	for _, b := range app.reactiveBindingsFor(model) {
+	for _, b := range bindings {
 		done := make(chan struct{})
 		var once sync.Once
 		cancel := func() { once.Do(func() { close(done) }) }
