@@ -11,6 +11,40 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.12 — codegen: pattern-destructure + Dict-of-records correctness (2026-08-08)
+
+### Fixed
+
+- **Tuple/record pattern destructuring on an erased subject (#170, #172).** A
+  tuple pattern whose subject arrived type-erased — a callback param a
+  higher-order function erases (`List.foldr (\x (a, b) -> …)`), a `let`/`case`
+  over an `any`-typed value — emitted `_t0.V0 undefined (type any has no field
+  V0)` and failed `go build`. Same class for a record pattern on an erased ADT
+  payload (`case status of Loaded { x, y } -> …`). The tuple and record pattern
+  arms now read their fields reflectively (`rt.TupleField` / `rt.Field`) when the
+  subject is erased, matching the `Cons`/`List`/`fst`/`snd` arms that already did.
+- **Nested constructor pattern on a generic ADT payload (#172).** Matching
+  `Loaded (Just xs)` where `Loaded`'s payload is a generic `a` narrowed the
+  payload to its nominal before testing the inner pattern, closing
+  `_v.V0.Tag undefined`.
+- **Row-polymorphic record update through `foldl`/`foldr` dropped fields (#171).**
+  A record updated inside a fold callback (`\item acc -> { acc | value = … }`)
+  was lowered to a subset struct that dropped the fields the callback didn't
+  touch, so a fold accumulator came back with those fields zeroed. Now preserved.
+- **`Dict k (List Record)` correctness (#173).** Three defects, all fixed:
+  - an annotated `Dict k (List Record)` returned an **empty** Dict at runtime
+    (the typed-map narrow dropped every entry whose value needed a reflect
+    narrow);
+  - `Dict.keys` / `Dict.toList` on a `Dict Int _` returned the stringified keys
+    narrowed to `0` (`[0, 0, …]`) — `Dict.keys` now reconstructs the typed keys
+    like `Dict.toList` already did;
+  - a record stored in the Dict's value list dropped the fields the builder
+    lambda didn't access (`item.name` came back `""`). More broadly, a record
+    held as an open-row subset view no longer silently loses its un-accessed
+    fields when stored in any container and read back.
+
+  The workaround from the issue (dropping the annotation) is no longer needed.
+
 ## v0.19.10 — Sky.Live: navigation scrolls the new page to the top (2026-08-04)
 
 ### Fixed
