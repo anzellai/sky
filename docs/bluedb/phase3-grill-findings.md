@@ -87,7 +87,10 @@ The embedded arm delivers real SSI (Phase 2). The SQL arm does NOT match it:
 - Truthful docs: correct `phase3-api-design.md` + `phase3-status.md` + `Persist.sky:281`
   docstring to the ACTUAL per-backend mechanism.
 - **Discriminating proof:** a two-writer write-skew e2e that FAILS under READ COMMITTED and
-  PASSES under the fix, on live pg (CI-gated) + sqlite + embedded.
+  PASSES under the fix, on live pg + sqlite + embedded. (The pg arm was written to read
+  `SKY_TEST_PG_URL` while CI supplied `SKY_TEST_POSTGRES_DSN`, so it silently skipped on every
+  CI run until the `rt/pgtest_test.go` DSN gate landed. It is genuinely CI-gated now, and
+  `SKY_TEST_REQUIRE_POSTGRES=1` makes a skip on that job a failure.)
 
 **Batch 2 — gate integrity (F1-local, F4, F5, F3).**
 - Parity gate fails closed: `report` divergence → `System.exit 1` (via `Task.onError`), and
@@ -131,7 +134,7 @@ Phase-3 stdlib batch; do not bundle with the stdlib fix.
    `Persist.sky:281` docstring to the ACTUAL delivered mechanism per backend.
 4. **Concurrent write-skew parity proof.** Extend the parity gate (or a new e2e) with a
    two-writer write-skew scenario that FAILS under READ COMMITTED and PASSES under the
-   serializable fix — proving A1/A4 closed on a live Postgres (CI-gated) + sqlite +
-   embedded.
+   serializable fix — proving A1/A4 closed on a live Postgres (CI-gated via
+   `rt/pgtest_test.go` + `SKY_TEST_REQUIRE_POSTGRES=1`) + sqlite + embedded.
 5. Re-run: cargo build, go test -race, parity gate, hello-world-no-bluedb, then a
    fresh-context Judge on the verbatim goal.
