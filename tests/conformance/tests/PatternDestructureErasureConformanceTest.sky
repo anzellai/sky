@@ -1,0 +1,145 @@
+module PatternDestructureErasureConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for the erase/re-narrow contract in pattern
+destructuring (GitHub #170, #171, #172 + siblings).
+
+Type-directed lowering erases polymorphic / row-polymorphic values to `any` at
+ABI boundaries — a generic ADT payload (`Loaded a`'s `a`), a callback param a
+HOF erases (`foldr`'s `func(any,any)any`), a row-poly record param shared with
+its result. Every pattern-destructure consuming site must RE-NARROW before a
+structural read. Historically the tuple + record pattern arms read fields
+directly (`subj.V0` / `subj.X`), which is invalid Go on an `any` (issues #170,
+#172); the row-poly local-fn param erased to a lossy subset struct that dropped
+the un-updated fields on a record update (#171).
+
+Each case below would FAIL on the pre-fix compiler (a `go build` error, or a
+zeroed field, or a wrong value). They assert VALUE correctness end-to-end
+through the compiled binary. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Test as Test exposing (Test)
+
+
+-- #170 — a tuple-pattern callback param threaded through `foldr`. The param
+-- `( trues, falses )` arrives as `any` (foldr's callback is `func(any,any)any`);
+-- destructuring must read `.V0`/`.V1` reflectively, not off `any`.
+partition : (a -> Bool) -> List a -> ( List a, List a )
+partition pred list =
+    let
+        step x ( trues, falses ) =
+            if pred x then
+                ( List.cons x trues, falses )
+
+            else
+                ( trues, List.cons x falses )
+    in
+    List.foldr step ( [], [] ) list
+
+
+-- #170 sibling — MIXED element types (`Int`, `List Int`) in the accumulator, so
+-- a whole-subject coerce to a reconstructed generic instantiation would be
+-- unsound (Go generics are invariant). The reflective per-element read handles
+-- it.
+tally : List Int -> ( Int, List Int )
+tally xs =
+    let
+        step x ( count, evens ) =
+            if modBy 2 x == 0 then
+                ( count + 1, List.cons x evens )
+
+            else
+                ( count + 1, evens )
+    in
+    List.foldl step ( 0, [] ) xs
+
+
+-- #171 — a row-poly local fn (`acc` is `{ value : Int | ρ }` shared with the
+-- result) updated inside a `foldl`. The un-updated `name` field must survive the
+-- update (pre-fix it erased to a subset struct and came back zeroed).
+type alias Item =
+    { name : Int, value : Int }
+
+
+sumInto : Item -> List Item -> Item
+sumInto head rest =
+    let
+        addValues item acc =
+            { acc | value = acc.value + item.value }
+    in
+    List.foldl addValues head rest
+
+
+-- #172 — a generic ADT payload matched with a NESTED CONTAINER pattern. `Loaded`
+-- carries `Maybe (List String)` boxed as `any`; matching `Loaded (Just xs)` must
+-- narrow the payload before reading `.Tag`.
+type Status a
+    = Loading
+    | Loaded a
+
+
+describeStatus : Status (Maybe (List String)) -> String
+describeStatus s =
+    case s of
+        Loaded (Just _) ->
+            "loaded-some"
+
+        Loaded Nothing ->
+            "loaded-none"
+
+        Loading ->
+            "loading"
+
+
+-- #172 sibling — a generic ADT payload matched with a RECORD pattern. `Box a`'s
+-- payload is `any`; matching `Full { x, y }` must read the fields reflectively.
+type Box a
+    = Empty
+    | Full a
+
+
+type alias Point =
+    { x : Int, y : Int }
+
+
+sumPoint : Box Point -> Int
+sumPoint b =
+    case b of
+        Full { x, y } ->
+            x + y
+
+        Empty ->
+            0
+
+
+tests : List Test
+tests =
+    [ Test.test "#170 tuple-param destructure through foldr — trues" <|
+        \_ -> Test.equal [ 4, 5 ] (fst (partition (\n -> n > 3) [ 1, 2, 3, 4, 5 ]))
+    , Test.test "#170 tuple-param destructure through foldr — falses" <|
+        \_ -> Test.equal [ 1, 2, 3 ] (snd (partition (\n -> n > 3) [ 1, 2, 3, 4, 5 ]))
+    , Test.test "#170 mixed-type tuple accumulator — count" <|
+        \_ -> Test.equal 4 (fst (tally [ 1, 2, 3, 4 ]))
+    , Test.test "#170 mixed-type tuple accumulator — evens" <|
+        \_ -> Test.equal [ 4, 2 ] (snd (tally [ 1, 2, 3, 4 ]))
+    , Test.test "#171 row-poly record update through foldl preserves name" <|
+        \_ ->
+            Test.equal
+                { name = 7, value = 6 }
+                (sumInto { name = 7, value = 1 } [ { name = 7, value = 2 }, { name = 7, value = 3 } ])
+    , Test.test "#171 empty rest leaves the head untouched" <|
+        \_ -> Test.equal { name = 9, value = 2 } (sumInto { name = 9, value = 2 } [])
+    , Test.test "#172 generic ADT payload — nested container pattern (Just)" <|
+        \_ -> Test.equal "loaded-some" (describeStatus (Loaded (Just [ "a", "b" ])))
+    , Test.test "#172 generic ADT payload — nested container pattern (Nothing)" <|
+        \_ -> Test.equal "loaded-none" (describeStatus (Loaded Nothing))
+    , Test.test "#172 generic ADT payload — record pattern" <|
+        \_ -> Test.equal 10 (sumPoint (Full { x = 3, y = 7 }))
+    , Test.test "#172 generic ADT payload — record pattern (Empty)" <|
+        \_ -> Test.equal 0 (sumPoint Empty)
+    ]
+
+
+main : Task Error ()
+main =
+    Test.runMain tests
