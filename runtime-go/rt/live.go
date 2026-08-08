@@ -6152,15 +6152,15 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 //     (proxy holds socket open but no data flows) within 2× the
 //     interval.
 func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
-	sid := ""
-	cookieName := app.cookieName
-	if cookieName == "" {
-		cookieName = "sky_sid"
-	}
-	if c, err := r.Cookie(cookieName); err == nil {
-		sid = c.Value
-	}
-	if sid == "" {
+	// Same session-binding rule as handleEvent, via the same helper: the
+	// cookie is the only input that selects a session. SSE has always
+	// worked this way (it takes no body), but it derived the cookie name
+	// inline with its own "sky_sid" fallback. Sharing boundSessionID means
+	// the two endpoints can never drift apart on that derivation — a
+	// sub-app's "sky_<name>_sid" (subapp_inprocess.go) resolves identically
+	// on both, and there is one place to change if the rule ever moves.
+	sid, bound := app.boundSessionID(r, "")
+	if !bound {
 		w.Header().Set("X-Sky-Live", "1")
 		http.Error(w, "no session", 400)
 		return
@@ -6174,9 +6174,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		// Critical for the memory-store-after-restart case (e.g. user
 		// flipped sky.toml [live] store from sqlite to memory, watch
 		// rebuilt, every browser session is now invalid).
-		w.Header().Set("X-Sky-Live", "1")
-		w.Header().Set("X-Sky-Status", "session-lost")
-		http.Error(w, "session not found", 404)
+		writeSessionLost(w)
 		return
 	}
 
