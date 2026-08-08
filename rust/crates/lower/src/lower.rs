@@ -2133,10 +2133,60 @@ impl<'a> Ctx<'a> {
                 // (single-constructor / tuple / record) binding.
                 let n = self.fresh_temp();
                 let ty = sig_ty.map(|t| self.goty(t)).unwrap_or(GoTy::Any);
-                let subj = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
-                let (_cond, binds) = self.pattern_test(&subj, &ty, p);
+                // #170: an unannotated destructured param (a tuple pattern on a
+                // `let`-bound local fn) arrives with Go type `any` when the fn is
+                // passed through a HOF that erases the callback to
+                // `func(any,any)any` (foldl/foldr). Reading `.V0` off `any` is
+                // invalid Go (`_t0.V0 undefined`). Recover the pattern's concrete
+                // Go type from its binder locals and destructure a coerced
+                // subject; the param's ABI type stays `ty` (the caller still
+                // passes `any`). HM already unified the pattern with the value
+                // flowing in, so the reconstructed element types match the
+                // constructed tuple's instantiation (both erase through `goty`).
+                let subj_ty = if ty == GoTy::Any {
+                    self.pattern_binder_goty(p).unwrap_or(GoTy::Any)
+                } else {
+                    ty.clone()
+                };
+                let subj = if subj_ty != GoTy::Any && subj_ty != ty {
+                    let raw = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
+                    GoExpr::new(
+                        GoExprKind::Coerce {
+                            inner: Box::new(raw),
+                            from: ty.clone(),
+                            to: subj_ty.clone(),
+                            reason: CoerceReason::FfiReturn,
+                        },
+                        subj_ty.clone(),
+                    )
+                } else {
+                    GoExpr::new(GoExprKind::Ident(n.clone()), subj_ty.clone())
+                };
+                let (_cond, binds) = self.pattern_test(&subj, &subj_ty, p);
                 (n, ty, binds)
             }
+        }
+    }
+
+    /// Reconstruct a destructured param pattern's concrete Go type from its
+    /// binder locals' inferred types — so an `any`-typed tuple param can be
+    /// coerced to `rt.T{n}[…]` before `pattern_test` reads its `.V{i}` fields
+    /// (#170). A tuple's element types come from each sub-pattern's binder local
+    /// (`( trues, falses )` where both binders infer `List a` → `rt.T2[[]any,
+    /// []any]`). Returns `None` for shapes this can't reconstruct (records,
+    /// nested ADTs — their `any` subject is left as-is), so the caller keeps the
+    /// pre-#170 behaviour there.
+    fn pattern_binder_goty(&mut self, p: PatId) -> Option<GoTy> {
+        match self.body.pats[p].clone() {
+            Pattern::Var(lid) => Some(self.local_ty(lid)),
+            Pattern::Tuple(pats) => {
+                let elems: Vec<GoTy> = pats
+                    .iter()
+                    .map(|sp| self.pattern_binder_goty(*sp).unwrap_or(GoTy::Any))
+                    .collect();
+                Some(GoTy::Tuple(elems))
+            }
+            _ => None,
         }
     }
 
