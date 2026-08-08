@@ -1,27 +1,104 @@
 # BlueDB clean-slate rebuild — RESUME (authoritative handoff)
 
 **Read this FIRST in a fresh session.** Single entry point for continuing the
-`feat/bluedb` mandate. Current tip: `feat/bluedb` @ `31b05b35` (pushed).
-**Rebased onto `origin/main` @ `fdbc398d` on 2026-08-08** (clean; the only overlap
-was `rust/crates/sky/src/main.rs` — the `sky data` verb vs main's `sky doc
---export`, auto-merged; both present). Builds clean (`cargo build --release -p
-sky`). A pre-rebase safety ref is at `feat/bluedb-backup-prerebase`.
+`feat/bluedb` mandate. Current tip: `feat/bluedb` @ `5c1beb69` (pushed).
+Rebased onto `origin/main` @ `fdbc398d` on 2026-08-08. A pre-rebase safety ref is
+at `feat/bluedb-backup-prerebase`.
 
-## Status: P5d + P5e-backend done; remaining = P5e UI + whole-goal Judge
+## ⚠️ 2026-08-09: a whole-goal Judge returned NOT ACHIEVED — 9 gaps
 
-Since this table was first written, P5d (durability) closed via the
-persist-before-ack **funnel** (`9ad00daf`, dissolving the 6-site band-aid;
-ADR-001 `9b9c2fa6`) and P5e's **backend** landed (`31b05b35`). Remaining, in order:
-1. **P5e finish** — tenant-scoped row filter · console Data-tab UI (browser verify)
-   · SQL-backend collection enumeration (see §"5e" below).
-2. Deferred optimizations — A2 + ephemeral/durable marker (durability tax); P5c
-   store-as-collection (goal #1 additive).
-3. **WHOLE-GOAL adversarial Judge** across all 5 original goals (fresh context).
+**This document previously said "4.5 of 5 phases done, remaining = P5e UI".
+That was wrong, and the way it was wrong is the most important thing on this
+page.** A fresh-context adversarial Judge over the five original goals found the
+branch was not close to done, and the follow-up work found more. Do not trust a
+phase marked ✅ below without re-verifying it — several were certified by gates
+that could not fail.
 
-> ⚠️ The remaining work is agent-heavy (design→grill≥2→implement→verify→Judge, and
-> only a fresh-context Judge may CLOSE). Run it in a session with subagent budget
-> available — the 2026-08-08 rebase session had exhausted its 200-agent cap, so it
-> did the rebase only and handed off here.
+### What the phase table got wrong (all verified, all now fixed)
+
+| Recorded as | Reality |
+|---|---|
+| P4 reactivity ✅ Judge-verified, gate = "2-browser live demo" | **Every reactive app deadlocked on initial page load.** `handleInitial` held `sess.mu`; `setupSubscriptions` → `reactiveEnsureStartedHook` → `ensureReactiveStarted` re-locked it. The demo gate cannot have been run on this code. Fixed `393b6ff9`. |
+| P5d durability ✅ "ALL 6 mutate-and-ack paths" + B3 tripwire | **It was 4 of 6, then 6 of 9.** `reactiveRefreshOnce` and `dispatchOneWsSub` acked with zero `store.Set`; a verification Judge then found three MORE (`handleSSE` resync persisted AFTER the ack; drop-resync never persisted; `handleEvent`'s desync arm returned before its persist). The B3 tripwire could not see them — it grepped `sseCh <-` while they wrote to the `ResponseWriter`. Fixed `393b6ff9` + `5c1beb69`. |
+| P5e backend ✅ "done, tested" (`31b05b35`) | **That commit broke every non-Persist Sky app.** It added a `sky-app/bluedb` import outside the materialisation gate, so `examples/01-hello-world` failed `go build`. `cargo test --workspace` and `go test ./rt/...` stayed green. Fixed `19cffb93`. The backend also had ZERO production callers — no route, no handler, no tab. |
+| goal #2 SERIALIZABLE ✅ | The only discriminating cross-backend proof (`TestWriteSkewPostgres`) had **never run**: the test read `SKY_TEST_PG_URL`, CI set `SKY_TEST_POSTGRES_DSN`. The whole `runtime-go/bluedb` suite was in no gate at all. Fixed `c248417c`. |
+
+### The lesson, stated plainly
+Three separate gates on this branch recorded PASS while the thing they guarded
+was broken or never executed. **A fix behind a gate that cannot fail is not a
+fix.** Every gate added since is proven non-vacuous BY MUTATION — reintroduce the
+defect, watch it go red, restore. Do the same for anything you add.
+
+## Status after the 2026-08-09 iteration
+
+**Closed and independently re-verified** (a fresh Judge re-ran them and confirmed
+2 of 4, then the remaining holes were closed and re-proven):
+- **G1** reactive-init deadlock — `59-persist-live` serves HTTP 200 in 56ms.
+- **G3** CI gating — bluedb suite gated on both runners with `-tags pebblegozstd`
+  (which is NOT cosmetic: without it CI links cgo DataDog zstd while shipped apps
+  link pure-Go klauspost); Postgres write-skew proof runs and discriminates.
+- **P0** non-Persist buildability — gate now derives from the file's real import,
+  plus symbol-level coverage.
+- **Persist-before-ack** — `persistBeforeAck` is now the sole persist and
+  DOMINATES all 15 acks. The tripwire is an AST dominance analysis that emits the
+  ack-site table itself (`go test -run EverySeqAdvancingAckPersistsFirst -v`), so
+  the inventory cannot drift. A textual rule was tried and rejected: it passes
+  with the bug reintroduced, because a persist in a mutually exclusive branch
+  satisfies it.
+- **Session hijack (NEW, pre-existing, all Sky.Live apps)** — `handleEvent` took
+  the session id from the request BODY with no cookie binding, so anyone holding
+  a victim's sid could drive their session. CSRF was never a backstop (it is a
+  double-submit check never bound to the sid — proven e2e with an attacker
+  carrying a fully valid session + CSRF token).
+- **Goal #3 docs** — `docs/skypersist/overview.md`, gated (16/16 doc examples
+  compile); `AGENTS.md` no longer tells users BlueDB is WIP.
+- Flaky `TestNB1` — was a mid-flight observation point in the test harness, not a
+  dropped eval; fixed with a real completion barrier.
+
+**Still open — in priority order:**
+1. **G2 / goal #5** — Console admin access. Design is grilled twice and ready
+   (`phase5e-closure-design-v2.md` v2.1); NOT implemented. See the scope question
+   below before starting.
+2. **G4** — SQLite "serializable" is a process-wide `SetMaxOpenConns(1)` clamp
+   emitting `BEGIN IMMEDIATE`, not an isolation level; the repo's own test proves
+   READ COMMITTED behaves identically. The guard `driver != "pgx"` fails open for
+   any future driver.
+3. **G5** — every transactional scan is O(all rows) (`txn.go` full-iterate +
+   RAM filter) against a Phase-1 gate demanding O(log n + k).
+4. **G6** — goal #1's RAM half: the bound came from main's pre-mandate tiered
+   cache, the default `memory` store never evicts, SSE-connected sessions are
+   never evicted, and no test caps session count or bytes.
+5. **G9** — non-durable insert serial (id reuse after restart); `liveInto`
+   silently never updating on a SQL backend.
+6. **`[data] driver` is a NO-OP** — the compiler writes `DB_DRIVER` (from `[data]`
+   AND legacy `[database]`) and NOTHING reads it; driver selection is by DSN
+   shape. `driver = "postgres"` beside `./app.db` silently opens SQLite. There is
+   a passing test (`build.rs:1576`) pinning the dead key.
+7. **`sendBeacon` unload flush has always been 403'd** on any CSRF-enabled app
+   (`sendBeacon` cannot set headers) — debounced input lost on tab close.
+   `docs/skylive/production-resilience.md:213` claims a session-bound CSRF token
+   the code does not implement.
+8. **Reactive capability gate `os.Exit(1)`s on the FIRST SESSION, not at boot**,
+   under `sess.mu` — an app passes its health check, then dies when the first
+   user loads a page.
+9. **Tenant-scoped reactive apps never see background-job writes** — writes are
+   tagged with the writing goroutine's session tenant; cron/CLI/plain-HTTP tag the
+   empty tenant and the partition is strict with no `withTenant` escape hatch.
+10. **`AGENTS.md:258` describes `kernel_api.rs` + its CI gate as current. Neither
+    exists** — not on this branch, not on `origin/main`. Phantom instruction.
+11. **`sky build` never passes `-tags pebblegozstd`**, so its `CGO_ENABLED=1`
+    FFI-retry path links cgo zstd (`phase1-status.md:205`).
+
+## ⛔ SCOPE QUESTION FOR THE USER — do not silently decide this
+Goal #5 verbatim is **"Built-in Sky Console admin access to records."** The words
+"read-only", "CRUD" and "LIST/detail" appear NOWHERE in the user's goal — they
+originate in agent-authored docs, and the doc previously cited as mandating
+read-only in fact RECOMMENDS shipping the edit form. The `goty.rs` collision long
+cited as blocking edits **does not block it**: fixed in v0.19.1, `Std.Live` never
+imports `Std.Analytics`, and `EventProp` appears 0 times in the generated console.
+v2.1 designs read-only as a complete 5e-1 and specifies the write surface as
+5e-2. **A Judge must return NOT ACHIEVED for goal #5 on read-only alone** until
+the user rules. Ask; do not narrow.
 
 ## Status (original phase table): 4.5 of 5 phases done (all on origin/feat/bluedb)
 
