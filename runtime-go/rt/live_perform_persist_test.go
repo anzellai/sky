@@ -140,3 +140,114 @@ func TestSubscriberDispatch_PersistsBeforeAck(t *testing.T) {
 		t.Fatalf("persisted a stale/wrong Model: %#v (want the mutated int >= 1)", store.lastModel)
 	}
 }
+
+// G1 (grill, no-deferral). Phase-5d built persistAndShipFrame as "the SINGLE
+// durability funnel" but only converted the live.go sites — reactiveRefreshOnce
+// and dispatchOneWsSub kept their own raw `sess.sseCh <- frame` send with NO
+// store.Set, so the funnel was 4 of 6 async ack sites.
+//
+// The reactive one is the sharper of the two, and G1 is what makes it reachable:
+// until the deadlock was fixed, no reactive app ever completed an initial render,
+// so this path had never run in a real app. The failure is worse than "the Model
+// is lost". reactiveRefreshOnce advances localSeq via prepareFrameSnapshot, so an
+// idle reactive dashboard ships seq 5..40 unpersisted; on restart the session
+// reloads at persisted seq 4 and re-ships 5, 6, 7 … which the client SILENTLY
+// DISCARDS (it drops any frame with seq <= its __skyLastAppliedSeq). The page is
+// frozen until a hard reload, and the SSE reconnect-resync only papers over it
+// when a connection re-opens — which for an idle dashboard is exactly what does
+// not happen.
+func TestReactiveRefreshOnce_PersistsBeforeAck(t *testing.T) {
+	store := &spyStore{}
+	app := &liveApp{
+		store: store,
+		update: func(_ any, model any) any { return SkyTuple2{V0: model, V1: cmdT{kind: "none"}} },
+		view: func(model any) any {
+			n, _ := model.(int)
+			return velement("div", nil, []any{vtext("r" + itoa(n))})
+		},
+	}
+	sess := &liveSession{
+		sid:       "react-1",
+		cancelSub: make(chan struct{}),
+		sseCh:     make(chan sseFrame, 8),
+		model:     0,
+		handlers:  map[string]any{},
+	}
+	// Bootstrap so the reactive refresh's frame differs from lastShippedBody.
+	_ = app.dispatch(sess, 0)
+	sess.lastShippedBody = sess.lastComputedBody
+	before := store.setCalls
+
+	// The binding's re-query closure: () -> Task Error (model -> model). The fold
+	// bumps the counter, so the re-render differs and a frame ships.
+	binding := reactiveBindingRT{
+		run: func(_ any) any {
+			return SkyTask[any, any](func() SkyResult[any, any] {
+				fold := func(m any) any {
+					n, _ := m.(int)
+					return any(n + 1)
+				}
+				return Ok[any, any](any(fold))
+			})
+		},
+	}
+	app.reactiveRefreshOnce(sess, binding)
+
+	// The frame must actually have shipped, else the assertion below is vacuous.
+	if len(sess.sseCh) == 0 {
+		t.Fatal("no frame shipped — fixture broken, the persist assertion would be vacuous")
+	}
+	if store.setCalls <= before {
+		t.Fatal("A1 acked-then-lost: reactiveRefreshOnce mutated the Model, advanced localSeq and " +
+			"shipped an SSE frame but never called store.Set. On restart the session reloads at the " +
+			"stale persisted seq and re-ships seq numbers the client silently discards — the page " +
+			"freezes. Route the send through app.persistAndShipFrame (the durability funnel).")
+	}
+	if n, ok := store.lastModel.(int); !ok || n < 1 {
+		t.Fatalf("persisted a stale/wrong Model: %#v (want the folded int >= 1)", store.lastModel)
+	}
+}
+
+// The websocket twin of the above: dispatchOneWsSub mutates the Model from an
+// inbound socket event and acks it with the same raw, unpersisted send.
+func TestWsSubDispatch_PersistsBeforeAck(t *testing.T) {
+	store := &spyStore{}
+	app := &liveApp{
+		store: store,
+		update: func(_ any, model any) any {
+			n, _ := model.(int)
+			return SkyTuple2{V0: n + 1, V1: cmdT{kind: "none"}}
+		},
+		view: func(model any) any {
+			n, _ := model.(int)
+			return velement("div", nil, []any{vtext("w" + itoa(n))})
+		},
+		// The inbound WebSocketMessage IS an ADT, so dispatch caches its
+		// SkyName→Tag pair; the map must exist (a plain-int Msg never gets here).
+		msgTags: map[string]int{},
+	}
+	sess := &liveSession{
+		sid:       "ws-1",
+		cancelSub: make(chan struct{}),
+		sseCh:     make(chan sseFrame, 8),
+		model:     0,
+		handlers:  map[string]any{},
+	}
+	_ = app.dispatch(sess, 0)
+	sess.lastShippedBody = sess.lastComputedBody
+	before := store.setCalls
+
+	reg := &wsSubReg{kind: "message", toMsg: func(payload any) any { return payload }}
+	app.dispatchOneWsSub(sess, reg, wsEvent{kind: wsMessageEv, text: "ping"})
+
+	if len(sess.sseCh) == 0 {
+		t.Fatal("no frame shipped — fixture broken, the persist assertion would be vacuous")
+	}
+	if store.setCalls <= before {
+		t.Fatal("A1 acked-then-lost: dispatchOneWsSub mutated the Model and acked an SSE frame but " +
+			"never called store.Set. Route the send through app.persistAndShipFrame.")
+	}
+	if n, ok := store.lastModel.(int); !ok || n < 1 {
+		t.Fatalf("persisted a stale/wrong Model: %#v (want the mutated int >= 1)", store.lastModel)
+	}
+}

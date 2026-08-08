@@ -124,9 +124,13 @@ func reactiveCapabilityError(prod bool, scopeAssertion string, usesReactive bool
 //
 // The sql-unsupported verdict WINS over embedded in a mixed app: any non-resolving binding is a
 // silent stale that must be surfaced. An empty binding set (nothing to gate) → "".
-func (app *liveApp) reactiveDataBackendKind(model any) string {
+//
+// Takes the DECODED bindings rather than the model: ensureReactiveStarted evaluates the Sky
+// `reactiveBindings model` accessor once and shares the result, so the accessor is not re-run per
+// consumer on the sess.mu critical path (G1 amendment M1).
+func reactiveDataBackendKind(bindings []reactiveBindingRT) string {
 	sawEmbedded := false
-	for _, b := range app.reactiveBindingsFor(model) {
+	for _, b := range bindings {
 		if _, ok := embeddedBackend(b.store); ok {
 			sawEmbedded = true
 			continue
@@ -147,14 +151,19 @@ var reactiveGateOnce sync.Once
 // actionable message + os.Exit(1) (mirroring AssertConsoleInvariantOrExit). In dev / unset env with
 // an un-asserted single-instance-local reactive app it emits ONE warn (visibility without blocking
 // dev). Called from ensureReactiveStarted — the first moment we know the app uses reactivity AND can
-// resolve its data backend from a live model.
-func (app *liveApp) assertReactiveCapabilityOrExit(model any) {
+// resolve its data backend — with the bindings that call already decoded from the live model.
+//
+// LOCK CONTRACT: runs with sess.mu HELD (ensureReactiveStarted's contract). Nothing on this path may
+// perform I/O, block, or acquire a non-leaf lock; it is O(#bindings) map lookups plus, at most once
+// per process, one stderr write. os.Exit(1) under the lock is intended — a fail-closed boot gate
+// must not serve one page that appears to work.
+func (app *liveApp) assertReactiveCapabilityOrExit(bindings []reactiveBindingRT) {
 	reactiveGateOnce.Do(func() {
 		usesReactive := app.reactiveBindings != nil
 		if !usesReactive {
 			return
 		}
-		backend := app.reactiveDataBackendKind(model)
+		backend := reactiveDataBackendKind(bindings)
 		prod := productionFromEnv()
 		scope := os.Getenv(reactiveScopeEnv)
 

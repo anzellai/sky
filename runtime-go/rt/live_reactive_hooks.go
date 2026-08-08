@@ -9,7 +9,12 @@ package rt
 
 var (
 	// reactiveEnsureStartedHook starts a session's BlueDB reactive loops once (idempotent).
-	reactiveEnsureStartedHook = func(app *liveApp, sess *liveSession) {}
+	//
+	// LOCK CONTRACT: called from setupSubscriptions with sess.mu HELD. `model` is the caller's
+	// already-committed sess.model, handed in PRECISELY so the implementation never needs — and
+	// must never take — sess.mu. Go mutexes are not reentrant: re-acquiring it here self-deadlocks
+	// every initial page load (docs/bluedb/g1-reactive-deadlock-fix-design.md).
+	reactiveEnsureStartedHook = func(app *liveApp, sess *liveSession, model any) {}
 	// reactiveTeardownHook stops every reactive loop bound to a session (from markDone).
 	reactiveTeardownHook = func(sess *liveSession) {}
 )
