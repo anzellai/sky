@@ -5752,11 +5752,40 @@ impl<'a> Ctx<'a> {
         let mut binds: Vec<GoStmt> = Vec::new();
         for (i, a) in args.iter().enumerate() {
             let fty = ftys.get(i).cloned().unwrap_or(GoTy::Any);
-            let field = GoExpr::new(
-                GoExprKind::Selector(Box::new(struct_val.clone()), format!("V{i}")),
-                fty.clone(),
-            );
-            let (c, b) = self.pattern_test(&field, &fty, *a);
+            // #172: when the field is `any` (an element-erased ADT payload —
+            // e.g. `Loaded a` where `a` erased to `any`) but the sub-pattern is
+            // itself a container / ADT / tuple (`Loaded (Just x)`,
+            // `Wrap (Ok v)`), narrow the extracted `.V{i}` to the sub-pattern's
+            // nominal so the recursive `pattern_test` reads `.Tag` / `.V{j}` off
+            // a concrete struct rather than off `any` (which emits
+            // `_v.V0.Tag undefined` in Go). Mirrors `bind_field_pat`.
+            let sub_ty = if fty == GoTy::Any {
+                self.pattern_nominal_ty(&self.body.pats[*a])
+                    .unwrap_or(GoTy::Any)
+            } else {
+                fty.clone()
+            };
+            let field = if sub_ty == GoTy::Any {
+                GoExpr::new(
+                    GoExprKind::Selector(Box::new(struct_val.clone()), format!("V{i}")),
+                    fty.clone(),
+                )
+            } else {
+                let raw = GoExpr::new(
+                    GoExprKind::Selector(Box::new(struct_val.clone()), format!("V{i}")),
+                    GoTy::Any,
+                );
+                GoExpr::new(
+                    GoExprKind::Coerce {
+                        inner: Box::new(raw),
+                        from: GoTy::Any,
+                        to: sub_ty.clone(),
+                        reason: CoerceReason::GenericErase,
+                    },
+                    sub_ty.clone(),
+                )
+            };
+            let (c, b) = self.pattern_test(&field, &sub_ty, *a);
             cond = and_opt(cond, c);
             binds.extend(b);
         }
