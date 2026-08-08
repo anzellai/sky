@@ -2456,6 +2456,22 @@ func AsMapT[V any](v any) map[string]V {
 			}
 			if valTy != nil && valTy.Kind() == reflect.String {
 				out[k.String()] = reflect.ValueOf(fmt.Sprintf("%v", iv)).Interface().(V)
+				continue
+			}
+			// Narrow via reflect for typed targets (typed slices / structs /
+			// SkyMaybe[T] / …) — mirrors the `map[string]any` branch above.
+			// Without this, a source map whose VALUES need a reflect narrow
+			// (`map[string][]struct{…}` → `map[string][]Record`, or
+			// `map[string][]any` → `map[string][]Record`) silently DROPPED
+			// every entry, so an annotated `Dict k (List Record)` return came
+			// back as an EMPTY Dict while the identical unannotated body (which
+			// returns the raw `any` dict, no AsMapT) worked (#173).
+			if valTy != nil && iv != nil {
+				sv := reflect.ValueOf(iv)
+				narrowed := narrowReflectValue(sv, valTy)
+				if narrowed.IsValid() {
+					out[k.String()] = narrowed.Interface().(V)
+				}
 			}
 		}
 		return out
