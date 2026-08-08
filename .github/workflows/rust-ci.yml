@@ -150,7 +150,11 @@ jobs:
       # this gate worth having (the suite is deliberately concurrent), and it
       # costs ~25 s wall; -race needs cgo, hence CGO_ENABLED=1 here.
       - name: Gate — BlueDB engine tests (SSI + contention + crash-sim, race)
-        run: cd ../runtime-go && CGO_ENABLED=1 timeout 1800 go test ./bluedb/... -count=1 -race
+        # timeout-minutes, not the `timeout` binary: coreutils' timeout is not on
+        # the macOS runner that carries the sibling step, so the step-level key is
+        # the portable way to bound both identically.
+        timeout-minutes: 30
+        run: cd ../runtime-go && CGO_ENABLED=1 go test ./bluedb/... -count=1 -race
       - name: Gate — build-run (emit + go build every example; FFI skipped)
         run: cargo run -q -p xtask -- build-run --all
       - name: Gate — golden (runtime-correctness, CLI subset)
@@ -273,7 +277,8 @@ jobs:
       # already runs the race build; macOS runners are the expensive ones and
       # what this job is buying is PLATFORM divergence, not extra race coverage.
       - name: Gate — BlueDB engine tests (2nd platform)
-        run: cd ../runtime-go && CGO_ENABLED=0 timeout 1800 go test ./bluedb/... -count=1
+        timeout-minutes: 30
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./bluedb/... -count=1
       # Platform parity for the emit + go-build regression class. The #164/#166
       # alias-collision / record-update-field-drop bugs are gated only by these
       # `project` integration tests (they run real `go build` on emitted Go), and
