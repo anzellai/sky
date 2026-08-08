@@ -5334,8 +5334,12 @@ func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentCtx
 //
 // This replaces the earlier per-site `store.Set` + `select { case sseCh<- }`
 // duplication: persist can no longer be forgotten because it is INSIDE the only
-// helper that ships. `TestPersistBeforeAck_EmitSiteTripwire` asserts raw
-// `sess.sseCh <- frame` sends exist only here.
+// helper that ships. `TestPersistBeforeAck_FunnelIsSoleSender` asserts raw
+// `sess.sseCh <- frame` sends exist only here — across the WHOLE package, not
+// just live.go. That scope matters: Phase-5d converted the live.go sites only,
+// leaving reactiveRefreshOnce (bluedb_reactive.go) and dispatchOneWsSub
+// (websocket.go) raw-sending unpersisted, so the "single funnel" was 4 of 6 ack
+// sites. Both are routed through here as of G1.
 func (app *liveApp) persistAndShipFrame(sess *liveSession, frame sseFrame) bool {
 	if app.store != nil {
 		app.store.Set(sess.sid, sess)

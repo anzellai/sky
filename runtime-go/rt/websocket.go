@@ -940,10 +940,11 @@ func (app *liveApp) dispatchOneWsSub(sess *liveSession, reg *wsSubReg, ev wsEven
 	if !haveFrame {
 		return
 	}
+	// persistAndShipFrame persists-before-ack (grill A1: an inbound socket event mutated the
+	// Model and is about to be acked to the client). Non-blocking, exactly as before — the funnel
+	// keeps the select/default shape and returns false on a full buffer.
 	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
-	select {
-	case sess.sseCh <- frame:
-	default:
+	if !app.persistAndShipFrame(sess, frame) {
 		recordSseDrop(sess.sid)
 	}
 }

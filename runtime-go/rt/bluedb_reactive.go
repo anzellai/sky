@@ -320,10 +320,14 @@ func (app *liveApp) reactiveRefreshOnce(sess *liveSession, b reactiveBindingRT) 
 	if !haveFrame {
 		return
 	}
+	// persistAndShipFrame persists-before-ack (grill A1): this refresh mutated the Model AND
+	// advanced localSeq via prepareFrameSnapshot. A raw send here would ack seq N to the client
+	// while the store still holds seq N-k, so after a restart the session re-ships seq numbers the
+	// client silently discards (it drops any frame with seq <= __skyLastAppliedSeq) and the page
+	// freezes until a hard reload. Non-blocking, exactly as before — the funnel keeps the
+	// select/default shape and returns false on a full buffer.
 	frame := chooseSSEFrame(snap, prevTree, patches)
-	select {
-	case sess.sseCh <- frame:
-	default:
+	if !app.persistAndShipFrame(sess, frame) {
 		recordSseDrop(sess.sid)
 		sess.markAllConnsOutOfSync()
 	}
