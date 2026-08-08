@@ -1778,19 +1778,29 @@ mod sky_toml_tests {
         );
     }
 
-    /// Every non-test `runtime-go/rt/*.go` that ACTUALLY imports `sky-app/bluedb`
-    /// must be skipped when a project does not need Persist — otherwise the
-    /// emitted project references a package whose subtree was never materialised
-    /// and `go build` fails with `package sky-app/bluedb is not in std`.
+    /// The detector `go_file_imports_bluedb` must discriminate a REAL import from
+    /// PROSE, and `materialise_rt` must act on that discrimination in BOTH
+    /// directions — dropping every real importer AND keeping the seam file that
+    /// only mentions the package in comments.
     ///
-    /// This is a ROT gate, not a unit test of the helper. It failed at the commit
-    /// that added `rt/console_data.go` (BlueDB Phase-5e): the fourth bluedb
-    /// importer was not added to the hardcoded skip list, which broke `go build`
-    /// for EVERY non-Persist example — 01-hello-world included — while every
-    /// Persist example still built. Nothing in CI ran an example build at the
-    /// time, so it shipped.
+    /// Complements `persist_gate_skips_every_bluedb_importer_for_non_persist_projects`,
+    /// which scans the materialised tree's CONTENT for leaked imports. This one is
+    /// the NAME-level, two-sided check: it is the only gate asserting the positive
+    /// case — that `rt/live_reactive_hooks.go` survives into a non-Persist project.
+    /// It must, because `live.go` calls the no-op hook defaults that file declares;
+    /// an over-eager detector (e.g. one matching the package name anywhere in the
+    /// text) would strip it and break every non-Persist build in the opposite
+    /// direction from the Phase-5e `console_data.go` P0.
+    ///
+    /// Non-vacuity: this test previously recomputed `go_file_imports_bluedb` on the
+    /// very list it had just filtered by that predicate and asserted the result was
+    /// true — true by construction, so it stayed green with `materialise_rt`'s gate
+    /// deleted. It now asserts against real `materialise_rt` OUTPUT: delete the
+    /// `go_file_imports_bluedb` clause from the gate and the "must NOT be
+    /// materialised" arm fails; make the detector match on prose and the "must BE
+    /// materialised" arm fails.
     #[test]
-    fn every_bluedb_importing_rt_file_is_skipped_without_persist() {
+    fn materialise_rt_drops_real_bluedb_importers_and_keeps_the_prose_only_seam() {
         let rt = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../runtime-go/rt")
             .canonicalize()
@@ -1812,27 +1822,39 @@ mod sky_toml_tests {
             !importers.is_empty(),
             "no rt file imports sky-app/bluedb — the detector is broken, not the tree"
         );
-
-        // The seam file documents the import in PROSE and must never be detected:
-        // live.go depends on its no-op hook defaults in non-Persist builds.
         assert!(
-            !importers.iter().any(|n| n == "live_reactive_hooks.go"),
-            "live_reactive_hooks.go only MENTIONS sky-app/bluedb in comments; \
-             detecting it would strip live.go's hook defaults. Importers: {importers:?}"
+            rt.join("live_reactive_hooks.go").is_file(),
+            "rt/live_reactive_hooks.go is the prose-only seam this gate pins; it moved \
+             or was renamed — re-point the gate at the new seam file, do not delete it"
         );
 
-        // The materialise_rt gate skips a file when it is one of the explicitly
-        // named ones OR imports bluedb. Assert the derived clause covers the rest.
-        for name in &importers {
-            let named = name == "embedded_kernel.go"
-                || name == "bluedb_reactive.go"
-                || name == "bluedb_reactive_gate.go";
-            let derived = go_file_imports_bluedb(&rt.join(name));
-            assert!(
-                named || derived,
-                "rt/{name} imports sky-app/bluedb but materialise_rt would copy it \
-                 into a non-Persist project → `package sky-app/bluedb is not in std`"
-            );
-        }
+        // Materialise for a project that does NOT need Persist, then assert on the
+        // ACTUAL output rather than on the predicate that produced the input list.
+        let dst = std::env::temp_dir().join(format!("sky-persist-seam-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dst);
+        crate::build::materialise_rt(&rt, &dst, true, /* persist_needed */ false).unwrap();
+
+        let present = |n: &str| dst.join(n).is_file();
+        let leaked: Vec<&String> = importers.iter().filter(|n| present(n)).collect();
+        let seam_kept = present("live_reactive_hooks.go");
+        let _ = std::fs::remove_dir_all(&dst);
+
+        assert!(
+            leaked.is_empty(),
+            "materialise_rt copied {} rt file(s) that really import sky-app/bluedb into a \
+             non-Persist project: {:?}\n\
+             The bluedb/ subtree is not materialised for such a project, so `go build` \
+             fails with `package sky-app/bluedb is not in std` for EVERY non-Persist app.",
+            leaked.len(),
+            leaked
+        );
+        assert!(
+            seam_kept,
+            "materialise_rt dropped rt/live_reactive_hooks.go from a non-Persist project. \
+             That file only MENTIONS sky-app/bluedb in prose — it declares the no-op \
+             reactive hook defaults live.go calls, so dropping it breaks `go build` with \
+             `undefined: liveReactive*` for every non-Persist app."
+        );
     }
+
 }
