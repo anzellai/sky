@@ -207,7 +207,25 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
             // detected structurally in `lower_def` (via the shared row-var name
             // across param+result) and erased there, keeping this map total +
             // baseline-identical for every other record.
-            let _ = ext;
+            // #173 facet #3: a genuinely OPEN record (`ext = Some(ρ)`, an
+            // unresolved row var) that reached here matched no nominal / Model
+            // above, so it is a SUBSET view of a fuller record — the runtime value
+            // carries fields beyond the ones named here. Lowering it to a CLOSED
+            // anon struct physically DROPS those fields when the full value is
+            // coerced in (`Dict k (List Record)` where the record is
+            // field-accessed → `name` lost; also every foldl/foldr accumulator or
+            // container that stores such a record and reads it back). Box as `any`
+            // instead — field access routes through the reflective `rt.Field` path
+            // (the documented irreducible floor: sound, recovers safely), and the
+            // FULL runtime value is preserved. This trades static typedness for the
+            // guarantee that no Sky program can ever silently lose record fields
+            // ("if it compiles it works" — the coerce-floor widening this causes is
+            // re-blessed as a justified correctness cost). A CLOSED record
+            // (`ext = None`) keeps its precise anon struct — unchanged; the
+            // row-poly param→result case is already erased in `lower_def`.
+            if ext.is_some() {
+                return GoTy::Any;
+            }
             // else: anonymous Go struct. Field names Go-exported (capitalised).
             // Go anonymous-struct field ORDER is part of the type's identity, so
             // every `Ty::Record` for the same field-set MUST lower to the SAME

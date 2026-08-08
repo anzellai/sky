@@ -160,6 +160,20 @@ tests =
                         False
                 )
         )
+    , -- #173 facet #3: a record stored in the Dict's value list must keep the
+      -- field the lambda did NOT access (`name`). Pre-fix the record erased to a
+      -- subset struct `struct{Value any}` and `name` came back "".
+      Test.test "#173 record in Dict value list preserves the un-accessed field"
+        (\_ ->
+            Test.equal "a"
+                (case Dict.get 10 (buildDict173 [ { name = "a", value = 10 } ]) of
+                    Just (x :: _) ->
+                        x.name
+
+                    _ ->
+                        "(miss)"
+                )
+        )
     , -- Dict.keys on an Int-keyed dict reconstructs the Int keys (numerically
       -- sorted), NOT the stringified runtime map keys. Before the typed-key
       -- dispatch for Dict.keys, an annotated `Dict Int v` returned `[0, 0, …]`
