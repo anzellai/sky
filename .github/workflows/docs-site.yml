@@ -1,0 +1,52 @@
+name: Docs site
+
+# Builds the static docs site (auto-generated API reference from the stdlib
+# source) and deploys it to GitHub Pages. Runs whenever the stdlib, the doc
+# renderer, or the site build script changes — so the published API tracks the
+# compiler with zero hand-maintenance — and on demand.
+#
+# ONE-TIME SETUP: repo Settings → Pages → Source: "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sky-stdlib/**'
+      - 'rust/crates/project/src/doc.rs'
+      - 'rust/crates/hir/src/**'
+      - 'scripts/build-docs-site.sh'
+      - '.github/workflows/docs-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build sky
+        working-directory: rust
+        run: cargo build --release -p sky --locked
+      - name: Build docs site
+        run: SKY_BIN="$PWD/rust/target/release/sky" scripts/build-docs-site.sh _site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4

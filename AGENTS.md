@@ -198,7 +198,7 @@ sky watch src/Main.sky           # file-watch rebuild + restart
 sky verify                       # project pre-release gate: fmt + check + build + tests
 sky fmt src/Main.sky             # opinionated formatter (idempotent)
 sky test tests/MyTest.sky        # Sky.Test runner
-sky doc <Module>                 # stdlib docs (--serve / --tui / --list)
+sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
 sky add <go/module> | remove | install | update                # Go FFI deps
 sky doctor [--fix] | upgrade | upgrade-claude | clean

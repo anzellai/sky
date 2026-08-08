@@ -1290,6 +1290,38 @@ fn cmd_doc(args: &[String]) -> ExitCode {
     if tui {
         return cmd_doc_tui();
     }
+    // `sky doc --export <dir>` renders the SAME static doc-site `--serve` serves
+    // (index.html + m/<module>.html + api/symbols.json + client-side search) to
+    // `<dir>`, then exits — no server. This is the auto-generated, from-source
+    // API reference the docs site + a CI GitHub-Pages deploy consume, so the
+    // published API tracks the stdlib on every build with zero hand-maintenance.
+    if let Some(dir) = args
+        .iter()
+        .position(|a| a == "--export")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .or_else(|| {
+            args.iter()
+                .find_map(|a| a.strip_prefix("--export=").map(str::to_string))
+        })
+    {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let Some(repo_root) = assets_root_for(&cwd) else {
+            return ExitCode::FAILURE;
+        };
+        let project_dir = project::project_dir_for(&cwd.join("_"));
+        let out = PathBuf::from(&dir);
+        if let Err(e) = project::render_doc_site(&repo_root, &project_dir, &out) {
+            eprintln!("sky doc --export: could not render doc-site into {dir}: {e}");
+            return ExitCode::FAILURE;
+        }
+        if !out.join("api").join("symbols.json").is_file() {
+            eprintln!("sky doc --export: render produced no api/symbols.json under {dir}");
+            return ExitCode::FAILURE;
+        }
+        println!("Exported Sky API doc-site to {dir}/ (index.html + m/*.html + api/symbols.json)");
+        return ExitCode::SUCCESS;
+    }
     let list = args.iter().any(|a| a == "--list");
     let target = args.iter().find(|a| !a.starts_with('-')).cloned();
 
