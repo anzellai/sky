@@ -1,9 +1,29 @@
 # BlueDB clean-slate rebuild — RESUME (authoritative handoff)
 
 **Read this FIRST in a fresh session.** Single entry point for continuing the
-`feat/bluedb` mandate. Current tip: `feat/bluedb` @ `27470bff` (all pushed).
+`feat/bluedb` mandate. Current tip: `feat/bluedb` @ `31b05b35` (pushed).
+**Rebased onto `origin/main` @ `fdbc398d` on 2026-08-08** (clean; the only overlap
+was `rust/crates/sky/src/main.rs` — the `sky data` verb vs main's `sky doc
+--export`, auto-merged; both present). Builds clean (`cargo build --release -p
+sky`). A pre-rebase safety ref is at `feat/bluedb-backup-prerebase`.
 
-## Status: 4.5 of 5 phases done (all on origin/feat/bluedb)
+## Status: P5d + P5e-backend done; remaining = P5e UI + whole-goal Judge
+
+Since this table was first written, P5d (durability) closed via the
+persist-before-ack **funnel** (`9ad00daf`, dissolving the 6-site band-aid;
+ADR-001 `9b9c2fa6`) and P5e's **backend** landed (`31b05b35`). Remaining, in order:
+1. **P5e finish** — tenant-scoped row filter · console Data-tab UI (browser verify)
+   · SQL-backend collection enumeration (see §"5e" below).
+2. Deferred optimizations — A2 + ephemeral/durable marker (durability tax); P5c
+   store-as-collection (goal #1 additive).
+3. **WHOLE-GOAL adversarial Judge** across all 5 original goals (fresh context).
+
+> ⚠️ The remaining work is agent-heavy (design→grill≥2→implement→verify→Judge, and
+> only a fresh-context Judge may CLOSE). Run it in a session with subagent budget
+> available — the 2026-08-08 rebase session had exhausted its 200-agent cap, so it
+> did the rebase only and handed off here.
+
+## Status (original phase table): 4.5 of 5 phases done (all on origin/feat/bluedb)
 
 | Phase | What | State |
 |---|---|---|
