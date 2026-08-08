@@ -1048,7 +1048,7 @@ fn cmd_init(args: &[String]) -> ExitCode {
         println!(
             "sky init [name] [--production]\n\n\
              Scaffold a new Sky project in ./<name> (default: sky-project):\n  \
-             sky.toml, src/Main.sky, .gitignore, docker-compose.yml, .env.example, CLAUDE.md.\n\n\
+             sky.toml, src/Main.sky, .gitignore, docker-compose.yml, .env.example, AGENTS.md, CLAUDE.md.\n\n\
              Default is SQLite + in-memory sessions — zero setup, `sky run` and go.\n\
              The production path (one Postgres for app data + sessions + analytics +\n\
              telemetry) is documented inline in sky.toml + ready in docker-compose.yml.\n\n\
@@ -1220,20 +1220,25 @@ fn cmd_init(args: &[String]) -> ExitCode {
         }
     }
 
-    // Best-effort CLAUDE.md: from the repo template in dev, else the copy
-    // embedded in the binary (doc 09 §E) so `sky init` scaffolds it standalone.
-    let mut copied_claude = false;
+    // Best-effort AI coding guide: AGENTS.md is the agent-agnostic source of
+    // truth (Claude/Copilot/Cursor/…); CLAUDE.md is a thin entry point that
+    // imports it (`@AGENTS.md`). Copy BOTH so the scaffold works for any tool and
+    // the import resolves. Prefer the repo template in dev, else the copy
+    // embedded in the binary (doc 09 §E) so `sky init` scaffolds standalone.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let dst = root.join("CLAUDE.md");
-    if let Some(repo_root) = repo_root_for(&cwd).or_else(|| repo_root_for(root)) {
-        let tmpl = repo_root.join("templates").join("CLAUDE.md");
-        if tmpl.is_file() && std::fs::copy(&tmpl, &dst).is_ok() {
-            copied_claude = true;
+    let repo_root = repo_root_for(&cwd).or_else(|| repo_root_for(root));
+    let copy_template = |name: &str| -> bool {
+        let dst = root.join(name);
+        if let Some(rr) = &repo_root {
+            let tmpl = rr.join("templates").join(name);
+            if tmpl.is_file() && std::fs::copy(&tmpl, &dst).is_ok() {
+                return true;
+            }
         }
-    }
-    if !copied_claude {
-        copied_claude = project::extract_template("CLAUDE.md", &dst);
-    }
+        project::extract_template(name, &dst)
+    };
+    let copied_agents = copy_template("AGENTS.md");
+    let copied_claude = copy_template("CLAUDE.md");
 
     println!("Created {}/", root.display());
     println!("  sky.toml");
@@ -1241,8 +1246,11 @@ fn cmd_init(args: &[String]) -> ExitCode {
     println!("  .gitignore");
     println!("  docker-compose.yml   (production Postgres — optional)");
     println!("  .env.example         (copy to .env for production)");
+    if copied_agents {
+        println!("  AGENTS.md            (AI coding guide — source of truth)");
+    }
     if copied_claude {
-        println!("  CLAUDE.md");
+        println!("  CLAUDE.md            (Claude Code entry point → @AGENTS.md)");
     }
     println!();
     if production {
@@ -3495,41 +3503,46 @@ fn apply_fix(root: &Path, check: &str, fix: &Fix) -> String {
 /// the byte delta. Exit 0 on success, 1 if the template can't be located.
 fn cmd_upgrade_claude(_args: &[String]) -> ExitCode {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let target = cwd.join("CLAUDE.md");
 
-    let Some(bytes) = template_claude_bytes(&cwd) else {
-        eprintln!(
-            "sky upgrade-claude: could not locate templates/CLAUDE.md\n\
-             (run inside the Sky repo tree, or reinstall the `sky` binary)."
-        );
-        return ExitCode::FAILURE;
-    };
-
-    let existed = target.is_file();
-    let old_size = if existed {
-        std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0)
-    } else {
-        0
-    };
-    if existed {
-        let bak = cwd.join("CLAUDE.md.bak");
-        if let Err(e) = std::fs::rename(&target, &bak) {
-            eprintln!("sky upgrade-claude: could not back up existing CLAUDE.md: {e}");
+    // Refresh BOTH the agent-agnostic source of truth (AGENTS.md) and the thin
+    // Claude Code entry point (CLAUDE.md → @AGENTS.md). CLAUDE.md alone would
+    // leave the imported guide stale. Each is backed up to `<name>.bak`.
+    let mut any = false;
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        let Some(bytes) = template_md_bytes(&cwd, name) else {
+            eprintln!(
+                "sky upgrade-claude: could not locate templates/{name}\n\
+                 (run inside the Sky repo tree, or reinstall the `sky` binary)."
+            );
+            return ExitCode::FAILURE;
+        };
+        let target = cwd.join(name);
+        let existed = target.is_file();
+        let old_size = if existed {
+            std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0)
+        } else {
+            0
+        };
+        if existed {
+            let bak = cwd.join(format!("{name}.bak"));
+            if let Err(e) = std::fs::rename(&target, &bak) {
+                eprintln!("sky upgrade-claude: could not back up existing {name}: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        if let Err(e) = std::fs::write(&target, &bytes) {
+            eprintln!("sky upgrade-claude: could not write {name}: {e}");
             return ExitCode::FAILURE;
         }
+        let verb = if existed { "Refreshed" } else { "Created" };
+        println!("{verb} {name} ({old_size} → {} bytes)", bytes.len());
+        if existed {
+            println!("  previous version saved as {name}.bak");
+        }
+        any = true;
     }
-    if let Err(e) = std::fs::write(&target, &bytes) {
-        eprintln!("sky upgrade-claude: could not write CLAUDE.md: {e}");
-        return ExitCode::FAILURE;
-    }
-    let new_size = bytes.len();
-    let verb = if existed { "Refreshed" } else { "Created" };
-    println!(
-        "{verb} CLAUDE.md ({old_size} → {new_size} bytes, from {})",
-        version_string()
-    );
-    if existed {
-        println!("  previous version saved as CLAUDE.md.bak");
+    if any {
+        println!("(from {})", version_string());
     }
     ExitCode::SUCCESS
 }
@@ -3537,9 +3550,9 @@ fn cmd_upgrade_claude(_args: &[String]) -> ExitCode {
 /// The template CLAUDE.md bytes: the repo `templates/CLAUDE.md` when running in
 /// the repo tree, else the copy embedded in the binary (extracted to a temp
 /// file and read back).
-fn template_claude_bytes(start: &Path) -> Option<Vec<u8>> {
+fn template_md_bytes(start: &Path, name: &str) -> Option<Vec<u8>> {
     if let Some(repo_root) = repo_root_for(start) {
-        let tmpl = repo_root.join("templates").join("CLAUDE.md");
+        let tmpl = repo_root.join("templates").join(name);
         if tmpl.is_file() {
             if let Ok(b) = std::fs::read(&tmpl) {
                 return Some(b);
@@ -3547,8 +3560,8 @@ fn template_claude_bytes(start: &Path) -> Option<Vec<u8>> {
         }
     }
     // Embedded fallback (standalone binary): extract to a temp file, read, drop.
-    let tmp = std::env::temp_dir().join(format!("sky-claude-{}.md", std::process::id()));
-    if project::extract_template("CLAUDE.md", &tmp) {
+    let tmp = std::env::temp_dir().join(format!("sky-tmpl-{}-{}", std::process::id(), name));
+    if project::extract_template(name, &tmp) {
         let b = std::fs::read(&tmp).ok();
         let _ = std::fs::remove_file(&tmp);
         return b;
