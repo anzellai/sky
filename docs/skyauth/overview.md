@@ -169,7 +169,7 @@ handleMe : Db -> Request -> Task Error Response
 handleMe db req =
     case Server.getCookie "sky_auth" req of
         Just token ->
-            case (Auth.verifyToken secret token : Result Error Claims) of
+            case Auth.verifyToken secret token of
                 Ok claims ->
                     Task.succeed (Server.json ("{\"sub\":" ++ String.fromInt claims.sub ++ "}"))
 

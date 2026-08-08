@@ -257,6 +257,14 @@ These apply to any Sky code you write or any compiler change you make:
   kernel-only `Sky.Http.Server` verbs) are hand-curated in
   `rust/crates/project/src/kernel_api.rs`; the `kernel_api_covers_registered_kernel_functions`
   gate fails CI on drift.
+- **Live docs — examples can't rot.** `docs/` is *only* live reference; frozen
+  per-version roadmaps and legacy material live under `docs/history/` (excluded
+  from gating). `scripts/doc-examples.sh` is the live-docs gate: it `sky check`s
+  every full-module (`module Main …`) Sky example in the live docs, so a doc
+  example that stops compiling fails CI. Run it after touching docs; opt an
+  intentionally-erroring example out with a `-- doc-example: skip` line. The
+  stdlib API itself never drifts — it comes from `sky doc <Module>`, generated
+  from source.
 
 ## Active limitations (verified against HEAD)
 

@@ -80,13 +80,15 @@ subscriptions : Model -> Sub Msg
 subscriptions _ = Sub.none
 
 
-view : Model -> Element Msg
+view : Model -> Html
 view model =
-    Ui.row [ Ui.spacing 12 ]
-        [ Ui.button [] { onPress = Just Dec, label = Ui.text "-" }
-        , Ui.text (String.fromInt model.count)
-        , Ui.button [] { onPress = Just Inc, label = Ui.text "+" }
-        ]
+    -- wrap the Element in `Ui.layout` → `Html`; a raw `Ui.row` gives a blank window
+    Ui.layout []
+        (Ui.row [ Ui.spacing 12 ]
+            [ Ui.button [] { onPress = Just Dec, label = Ui.text "-" }
+            , Ui.text (String.fromInt model.count)
+            , Ui.button [] { onPress = Just Inc, label = Ui.text "+" }
+            ])
 
 
 main =
