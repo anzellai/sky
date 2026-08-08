@@ -6068,14 +6068,13 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 //     (proxy holds socket open but no data flows) within 2× the
 //     interval.
 func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
-	sid := ""
-	cookieName := app.cookieName
-	if cookieName == "" {
-		cookieName = "sky_sid"
-	}
-	if c, err := r.Cookie(cookieName); err == nil {
-		sid = c.Value
-	}
+	// Cookie-only session resolution — SSE has always required it. Routed
+	// through boundSessionID (claimed == "": there is no body on a GET) so
+	// this and handleEvent share ONE derivation of the cookie name; the
+	// inline `app.cookieName else "sky_sid"` copy this replaces was a
+	// second copy of the same rule that could drift from the one the event
+	// channel now depends on for its security boundary.
+	sid, _ := app.boundSessionID(r, "")
 	if sid == "" {
 		w.Header().Set("X-Sky-Live", "1")
 		http.Error(w, "no session", 400)
