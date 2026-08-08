@@ -144,6 +144,13 @@ jobs:
         run: cargo run -q -p xtask -- coerce-floor
       - name: Gate — runtime rt tests (go test)
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
+      # BlueDB engine — the ordered-storage + MVCC/SSI core behind Std.Persist.
+      # ~40 concurrency/SSI/contention/crash-sim tests that were in NO gate:
+      # `go test ./rt/...` does not reach a sibling package. -race is what makes
+      # this gate worth having (the suite is deliberately concurrent), and it
+      # costs ~25 s wall; -race needs cgo, hence CGO_ENABLED=1 here.
+      - name: Gate — BlueDB engine tests (SSI + contention + crash-sim, race)
+        run: cd ../runtime-go && CGO_ENABLED=1 timeout 1800 go test ./bluedb/... -count=1 -race
       - name: Gate — build-run (emit + go build every example; FFI skipped)
         run: cargo run -q -p xtask -- build-run --all
       - name: Gate — golden (runtime-correctness, CLI subset)
@@ -212,10 +219,17 @@ jobs:
         with:
           go-version: '1.26'
           cache: false
-      - name: Postgres session-store integration tests
+      - name: Postgres session-store + write-skew integration tests
         working-directory: runtime-go
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+          # This job OWNS a live postgres:16 service container, so a skip here is
+          # a bug, not a graceful degradation. REQUIRE=1 turns the skip into a
+          # hard failure (rt/pgtest_test.go). It exists because
+          # TestWriteSkewPostgres — BlueDB's only cross-backend SERIALIZABLE-vs-
+          # READ-COMMITTED discriminator — read SKY_TEST_PG_URL while this job
+          # set SKY_TEST_POSTGRES_DSN, so it silently skipped on every run.
+          SKY_TEST_REQUIRE_POSTGRES: '1'
         run: CGO_ENABLED=0 go test -tags integration ./rt/ -run Postgres -v
 
   # ── macOS: platform-determinism subset only (the reason for a 2nd OS) ───────
@@ -253,6 +267,13 @@ jobs:
         run: cargo run -q -p xtask -- coerce-floor
       - name: Gate — runtime rt tests (go test, 2nd platform)
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
+      # BlueDB is a storage engine (Pebble): file locking, fsync ordering and
+      # crash-recovery are the parts most likely to diverge across OSes, so the
+      # 2nd platform carries it. No -race here — the Linux codegen-build job
+      # already runs the race build; macOS runners are the expensive ones and
+      # what this job is buying is PLATFORM divergence, not extra race coverage.
+      - name: Gate — BlueDB engine tests (2nd platform)
+        run: cd ../runtime-go && CGO_ENABLED=0 timeout 1800 go test ./bluedb/... -count=1
       # Platform parity for the emit + go-build regression class. The #164/#166
       # alias-collision / record-update-field-drop bugs are gated only by these
       # `project` integration tests (they run real `go build` on emitted Go), and
