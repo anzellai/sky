@@ -36,11 +36,16 @@ find "$OUT/m" -name '*.html' -print0 | while IFS= read -r -d '' f; do
   perl -i -pe 's{href="/"}{href="../index.html"}g; s{href="/m/([^"]+)"}{href="$1.html"}g; s{/api/}{../api/}g;' "$f"
 done
 
-echo "==> landing niceties (title, home link, .nojekyll)"
+echo "==> nav + landing niceties (.nojekyll, cross-links API ↔ Guides)"
 touch "$OUT/.nojekyll"   # serve dotfiles + skip Jekyll on GitHub Pages
-# A tiny header banner injected into the index so it reads as the Sky site home.
-perl -i -pe 's{<h1>Sky API documentation</h1>}{<p style="margin:0 0 4px"><a href="https://github.com/anzellai/sky">Sky</a> · pure-functional, compiles to typed Go</p><h1>Sky API documentation</h1><p style="color:#666;margin:.2em 0 1em">Generated from the stdlib source on every build — always current. Run <code>sky doc &lt;Module&gt;</code> locally for the same content.</p>}' "$OUT/index.html"
+# API index: a banner + a nav bar linking to the Guides + GitHub.
+perl -i -pe 's{<h1>Sky API documentation</h1>}{<p style="margin:0 0 .6rem;font-size:.95rem"><a href="guide/index.html">Guides</a> · <a href="index.html"><b>API reference</b></a> · <a href="https://github.com/anzellai/sky">GitHub</a></p><h1>Sky API documentation</h1><p style="color:#666;margin:.2em 0 1em">Every stdlib module, generated from source on each build — always current. See the <a href="guide/index.html">Guides</a> for walkthroughs, or run <code>sky doc &lt;Module&gt;</code> locally.</p>}' "$OUT/index.html"
+# Module pages: swap the bare "all modules" back-link for a small nav bar.
+find "$OUT/m" -name '*.html' -print0 | while IFS= read -r -d '' f; do
+  perl -i -pe 's{<p><a href="\.\./index\.html">&larr; all modules</a></p>}{<nav style="font-size:.9rem;margin-bottom:1rem"><a href="../index.html">&larr; API reference</a> · <a href="../guide/index.html">Guides</a></nav>}' "$f"
+done
 
 count=$(find "$OUT/m" -name '*.html' | wc -l | tr -d ' ')
+guides=$(( $(find "$OUT/guide" -name '*.html' 2>/dev/null | wc -l | tr -d ' ') - 1 ))
 echo "------------------------------------------------------------"
-echo "docs site built at $OUT/  ($count module pages + searchable index)"
+echo "docs site built at $OUT/  ($count API module pages + $guides guides + searchable index)"

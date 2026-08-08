@@ -1319,7 +1319,18 @@ fn cmd_doc(args: &[String]) -> ExitCode {
             eprintln!("sky doc --export: render produced no api/symbols.json under {dir}");
             return ExitCode::FAILURE;
         }
-        println!("Exported Sky API doc-site to {dir}/ (index.html + m/*.html + api/symbols.json)");
+        // Teaching layer: render the live prose docs (docs/, excluding history)
+        // into guide/*.html + a TOC, so the site carries the auto-generated API
+        // AND the hand-written walkthroughs.
+        if let Err(e) = project::render_guides(&repo_root, &out) {
+            eprintln!("sky doc --export: could not render guides: {e}");
+            return ExitCode::FAILURE;
+        }
+        let guides = std::fs::read_dir(out.join("guide")).map(|d| d.count()).unwrap_or(0);
+        println!(
+            "Exported Sky doc-site to {dir}/ (API index + m/*.html + api/symbols.json + {} guide page(s))",
+            guides.saturating_sub(1)
+        );
         return ExitCode::SUCCESS;
     }
     let list = args.iter().any(|a| a == "--list");

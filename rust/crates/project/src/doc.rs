@@ -968,3 +968,211 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+// ─── Prose guides (docs/*.md → static HTML) ────────────────────────────────
+//
+// The docs site's teaching layer: the live reference prose under `docs/`
+// (EXCLUDING `docs/history/`) rendered to HTML with a shared nav, alongside the
+// auto-generated API pages. Uses `pulldown-cmark` (tables/code/lists/etc.).
+// Internal `*.md` links are resolved relative to the source doc and rewritten
+// to the flattened guide filenames; links outside `docs/` (or into history) are
+// left untouched so they resolve on GitHub.
+
+const GUIDE_STYLE: &str = "<style>\
+:root{color-scheme:light dark}\
+body{font-family:system-ui,sans-serif;max-width:52rem;margin:0 auto;padding:0 1rem 3rem;line-height:1.6}\
+nav.topnav{position:sticky;top:0;background:Canvas;border-bottom:1px solid #8884;padding:.7rem 0;margin:0 0 1.5rem;font-size:.95rem}\
+nav.topnav a{color:#0b6;text-decoration:none;margin-right:.4rem}nav.topnav a:hover{text-decoration:underline}\
+h1{font-size:1.7rem}h2{font-size:1.3rem;margin-top:2rem;border-bottom:1px solid #8883;padding-bottom:.2rem}h3{font-size:1.1rem}\
+a{color:#0b6}\
+pre{background:#8881;padding:.8rem 1rem;border-radius:.5rem;overflow-x:auto}\
+code{font-family:ui-monospace,monospace;font-size:.9em}\
+:not(pre)>code{background:#8882;padding:.1rem .3rem;border-radius:.3rem}\
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.92rem;display:block;overflow-x:auto}\
+th,td{border:1px solid #8884;padding:.4rem .6rem;text-align:left}th{background:#8881}\
+blockquote{border-left:3px solid #0b6;margin:1rem 0;padding:.2rem 0 .2rem 1rem;color:#666}\
+img{max-width:100%}\
+</style>";
+
+/// Flatten a docs-relative path (`skylive/overview.md`) to one guide filename
+/// (`skylive-overview.html`). `README.md` at the docs root maps to `index`-safe
+/// `readme.html` (the guide index is generated separately).
+fn flatten_guide_name(rel_to_docs: &str) -> String {
+    let stem = rel_to_docs.strip_suffix(".md").unwrap_or(rel_to_docs);
+    format!("{}.html", stem.replace('/', "-").replace(' ', "-").to_lowercase())
+}
+
+/// Collect `*.md` under `dir` (recursively), EXCLUDING `docs/history/`, as
+/// (path-relative-to-`docs_root`, absolute-path) pairs.
+fn collect_guide_md(docs_root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if p.file_name().and_then(|s| s.to_str()) == Some("history") {
+                continue;
+            }
+            collect_guide_md(docs_root, &p, out);
+        } else if p.extension().and_then(|s| s.to_str()) == Some("md") {
+            if let Ok(rel) = p.strip_prefix(docs_root) {
+                out.push((rel.to_string_lossy().replace('\\', "/"), p));
+            }
+        }
+    }
+}
+
+/// Resolve a relative `*.md` link (`../skydb/overview.md#x`) from a source doc's
+/// docs-relative path into the flattened guide filename, or `None` if it points
+/// outside `docs/` or into `history/` (left as-is for GitHub).
+fn resolve_md_link(src_rel: &str, href: &str) -> Option<String> {
+    let (path_part, frag) = match href.split_once('#') {
+        Some((p, f)) => (p, Some(f)),
+        None => (href, None),
+    };
+    if !path_part.ends_with(".md") {
+        return None;
+    }
+    // Resolve `path_part` relative to the source doc's PARENT directory.
+    let base = std::path::Path::new(src_rel).parent().unwrap_or(Path::new(""));
+    let mut segs: Vec<&str> = base
+        .to_str()
+        .unwrap_or("")
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    for part in path_part.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                segs.pop();
+            }
+            other => segs.push(other),
+        }
+    }
+    let joined = segs.join("/");
+    if joined.starts_with("history/") || joined.contains("/history/") {
+        return None;
+    }
+    let mut out = flatten_guide_name(&joined);
+    if let Some(f) = frag {
+        out.push('#');
+        out.push_str(f);
+    }
+    Some(out)
+}
+
+/// Render one Markdown doc to an HTML body, rewriting internal `*.md` links to
+/// their flattened guide filenames.
+fn markdown_to_html(md: &str, src_rel: &str) -> String {
+    use pulldown_cmark::{html, Options, Parser};
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_FOOTNOTES);
+    let mut body = String::new();
+    html::push_html(&mut body, Parser::new_ext(md, opts));
+    // Post-process `href="…md"` links → flattened guide filenames.
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body.as_str();
+    while let Some(i) = rest.find("href=\"") {
+        out.push_str(&rest[..i + 6]);
+        rest = &rest[i + 6..];
+        if let Some(j) = rest.find('"') {
+            let href = &rest[..j];
+            match resolve_md_link(src_rel, href) {
+                Some(rewritten) => out.push_str(&rewritten),
+                None => out.push_str(href),
+            }
+            out.push('"');
+            rest = &rest[j + 1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn guide_title(rel: &str, md: &str) -> String {
+    // Prefer the first `# ` heading; else the filename stem.
+    for line in md.lines() {
+        if let Some(h) = line.strip_prefix("# ") {
+            return h.trim().to_string();
+        }
+    }
+    rel.rsplit('/')
+        .next()
+        .unwrap_or(rel)
+        .strip_suffix(".md")
+        .unwrap_or(rel)
+        .replace('-', " ")
+}
+
+fn wrap_guide_page(title: &str, body: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>{} — Sky</title>{}</head><body>\
+         <nav class=\"topnav\"><a href=\"../index.html\">API reference</a> · \
+         <a href=\"index.html\">Guides</a> · \
+         <a href=\"https://github.com/anzellai/sky\">GitHub</a></nav>\
+         <article>{}</article></body></html>\n",
+        html_escape(title),
+        GUIDE_STYLE,
+        body,
+    )
+}
+
+/// Render the live prose docs (`docs/`, excluding `docs/history/`) into
+/// `<out_dir>/guide/<flattened>.html` + a grouped `guide/index.html` TOC.
+/// Called by `sky doc --export` after the API pages so the site carries both
+/// the auto-generated reference AND the teaching prose.
+pub fn render_guides(repo_root: &Path, out_dir: &Path) -> std::io::Result<()> {
+    let docs = repo_root.join("docs");
+    if !docs.is_dir() {
+        return Ok(());
+    }
+    let guide_dir = out_dir.join("guide");
+    std::fs::create_dir_all(&guide_dir)?;
+
+    let mut pages: Vec<(String, PathBuf)> = Vec::new();
+    collect_guide_md(&docs, &docs, &mut pages);
+    pages.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Per-page render + a grouped TOC (by top-level docs subdir).
+    let mut groups: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new(); // section -> [(title, file)]
+    for (rel, path) in &pages {
+        let src = std::fs::read_to_string(path).unwrap_or_default();
+        let title = guide_title(rel, &src);
+        let body = markdown_to_html(&src, rel);
+        std::fs::write(guide_dir.join(flatten_guide_name(rel)), wrap_guide_page(&title, &body))?;
+        let section = match rel.split_once('/') {
+            Some((dir, _)) => dir.to_string(),
+            None => "Overview".to_string(),
+        };
+        groups
+            .entry(section)
+            .or_default()
+            .push((title, flatten_guide_name(rel)));
+    }
+
+    // guide/index.html — a grouped table of contents.
+    let mut toc = String::new();
+    toc.push_str(&wrap_guide_page("Guides", "__TOC__"));
+    let mut inner = String::from("<h1>Sky guides</h1><p>Hand-written walkthroughs and reference. The API for every module is auto-generated under <a href=\"../index.html\">API reference</a>.</p>");
+    for (section, mut items) in groups {
+        items.sort_by(|a, b| a.0.cmp(&b.0));
+        inner.push_str(&format!("<h2>{}</h2><ul>", html_escape(&section)));
+        for (title, file) in items {
+            inner.push_str(&format!(
+                "<li><a href=\"{}\">{}</a></li>",
+                html_escape(&file),
+                html_escape(&title)
+            ));
+        }
+        inner.push_str("</ul>");
+    }
+    let toc = toc.replace("__TOC__", &inner);
+    std::fs::write(guide_dir.join("index.html"), toc)?;
+    Ok(())
+}
