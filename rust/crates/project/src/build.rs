@@ -1274,20 +1274,34 @@ fn materialise_rt(
             materialise_rt(&path, &dst.join(&name_s), console_needed, persist_needed)?;
         } else if name_s.ends_with("_test.go") {
             continue;
-        } else if (name_s == "embedded_kernel.go"
-            || name_s == "bluedb_reactive.go"
-            || name_s == "bluedb_reactive_gate.go")
-            && !persist_needed
-        {
-            // The `rt` files importing `sky-app/bluedb` (the embedded-kernel bridge +
-            // the Phase-4b reactive pump). Skip them (and the `bluedb/` subtree) when
-            // the program never calls an `rt.Embedded_*` kernel, so a non-Persist
-            // project doesn't compile the Pebble engine. live.go stays bluedb-free by
-            // calling the reactive integration through hooks (live_reactive_hooks.go),
-            // which default to no-ops when bluedb_reactive.go is absent.
-            continue;
         } else if name_s.ends_with(".go") {
-            std::fs::copy(&path, dst.join(&name_s))?;
+            // Any `rt` file importing `sky-app/bluedb` (the embedded-kernel bridge, the
+            // Phase-4b reactive pump, the console data-access gate, …) is skipped — along
+            // with the `bluedb/` subtree — when the program never calls an `rt.Embedded_*`
+            // kernel, so a non-Persist project doesn't compile the Pebble engine. live.go
+            // stays bluedb-free by calling the reactive integration through hooks
+            // (live_reactive_hooks.go), which default to no-ops when those files are absent.
+            //
+            // The predicate is the file's ACTUAL import, not a hand-maintained name list:
+            // a name list silently breaks every non-Persist app the moment someone adds a
+            // bluedb-importing file and forgets to append to it. That is exactly how
+            // `console_data.go` (31b05b35) made `examples/01-hello-world` unbuildable —
+            // `go test ./rt/...` and `cargo test --workspace` stayed green throughout.
+            // Companions: files that do NOT import `sky-app/bluedb` themselves but reference
+            // package-level symbols defined in the files that do (so they fail to compile once
+            // those are skipped). `bluedb_reactive_gate.go` uses `reactiveBindingsFor` +
+            // `embeddedBackend` from `bluedb_reactive.go` / `embedded_kernel.go`. This half of
+            // the predicate is still by name — keep it in sync when adding such a file; the
+            // `persist_gate` test below fails loudly if you don't.
+            const PERSIST_COMPANIONS: [&str; 1] = ["bluedb_reactive_gate.go"];
+            let src_text = std::fs::read_to_string(&path)?;
+            if !persist_needed
+                && (src_text.contains("\"sky-app/bluedb\"")
+                    || PERSIST_COMPANIONS.contains(&name_s.as_str()))
+            {
+                continue;
+            }
+            std::fs::write(dst.join(&name_s), src_text)?;
         }
     }
     Ok(())
@@ -1684,5 +1698,57 @@ mod sky_toml_tests {
             cfg.extra_defaults
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A non-Persist project must never materialise an `rt` file that imports
+    /// `sky-app/bluedb` — the `bluedb/` subtree isn't materialised for it, so such a
+    /// file makes `go build` fail with "package sky-app/bluedb is not in std".
+    ///
+    /// This is a REGRESSION GATE. `31b05b35` added `rt/console_data.go` with that import
+    /// and did not extend the then-hardcoded filename skip-list, which made EVERY
+    /// non-Persist Sky app (including `examples/01-hello-world`) unbuildable. Both
+    /// `go test ./rt/...` and `cargo test --workspace` stayed green the whole time —
+    /// only an example build catches it, and no CI job ran one.
+    ///
+    /// Non-vacuity: revert `materialise_rt`'s gate to a filename list omitting
+    /// `console_data.go` and this test fails on the real tree.
+    #[test]
+    fn persist_gate_skips_every_bluedb_importer_for_non_persist_projects() {
+        let rt_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../runtime-go/rt")
+            .canonicalize()
+            .expect("runtime-go/rt must exist relative to the project crate");
+        let dst = std::env::temp_dir().join(format!("sky-persist-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dst);
+
+        crate::build::materialise_rt(&rt_src, &dst, false, /* persist_needed */ false).unwrap();
+
+        let mut leaked: Vec<String> = Vec::new();
+        let mut stack = vec![dst.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let p = entry.unwrap().path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().and_then(|e| e.to_str()) == Some("go") {
+                    let text = std::fs::read_to_string(&p).unwrap_or_default();
+                    if text.contains("\"sky-app/bluedb\"") {
+                        leaked.push(
+                            p.strip_prefix(&dst).unwrap().to_string_lossy().to_string(),
+                        );
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dst);
+
+        assert!(
+            leaked.is_empty(),
+            "non-Persist project materialised {} rt file(s) importing sky-app/bluedb: {:?}\n\
+             Add the file to materialise_rt's gate (it is import-scanned, so this means the \
+             import is spelled differently) — otherwise every non-Persist app fails to build.",
+            leaked.len(),
+            leaked
+        );
     }
 }
