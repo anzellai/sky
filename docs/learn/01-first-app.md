@@ -4,8 +4,19 @@ Let's get Sky running and build something in under a minute.
 
 ## Install
 
-Grab the latest release binary and put it on your `PATH` (the project README has
-the platform-specific command). Check it works:
+One command downloads the right binary for your machine and puts it on your
+`PATH`:
+
+```
+curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh
+```
+
+This works on **macOS**, **Linux**, and **Windows via WSL** (the Windows
+Subsystem for Linux). If it can't find a build for your platform, see the
+[README](https://github.com/anzellai/sky#install) for the manual download and the
+current list of supported targets.
+
+Check it worked:
 
 ```
 sky --version
