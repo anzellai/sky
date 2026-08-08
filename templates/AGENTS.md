@@ -72,6 +72,7 @@ landmarks anyway.
 | Auth | `Std.Auth` — bcrypt + HS256 JWT cookies. `Auth.login` / `Auth.register` return `Task Error Int` (the user id). Never `fmt`-print a secret. |
 | Password forms | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record arg. Never per-keystroke `onInput` on a password field. |
 | DB | Records → `Std.Db.Store` + `Std.Codec` (one codec drives JSON **and** dialect-safe DB). SQLite for prototypes, PostgreSQL for multi-instance. Schema via committed file migrations (`sky db migrate --gen`). See **Database** below for the layer choice + the `sky doc` API source of truth. |
+| Live-updating lists | `Std.Persist` (BlueDB embedded) — `P.liveInto` + `Live.withReactive` keeps a Model `List a` live from a collection with no `Msg`, no `Sub`, no re-fetch. The ONLY way to get this. Embedded backend + single-instance only; see **Database** below. |
 | Serialization | `Std.Codec` — **the portable default** for turning a record into JSON and back. ONE codec (`Codec.auto blank`) gives you `Codec.toJson` / `Codec.fromJson` AND, if you persist it, the dialect-safe DB mapping — from a single definition, with no drift between your JSON and DB shapes. Same codec works on every backend (Sky.Live / Http.Server / Cli). Reach for raw `Sky.Core.Json.Encode` / `Sky.Core.Json.Decode` only for a JSON shape a codec can't express — a custom/legacy wire format, or decoding third-party JSON you don't own (there, a hand-written `Decoder` + `Decode.decodeString` is right). |
 | Money / decimals | `Std.Money` on `Std.Decimal`. Never raw `Float` for currency. |
 | Concurrency | `Cmd.batch` / `Task.parallel`; in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
@@ -94,6 +95,7 @@ memorised signatures. This section covers *which layer to reach for*, not the AP
 | Records, JSON not needed | `Std.Db.Table` | Reflection record↔row mapper (camelCase↔snake_case), no codec to write. |
 | Explicit schema / DDL only | `Std.Db.Schema` | Typed, dialect-safe `CREATE TABLE` — one definition, correct on SQLite AND Postgres (no `INTEGER`-millis-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). Reach the migration tooling with `db = Schema.toProject allTables` (`Store.Project` for `sky db push` / `migrate --gen`; tables/PK/UNIQUE/DEFAULTs carry, indexes stay on `createSchema`). |
 | Joins, aggregates, transactions, custom SQL | `Std.Db` — `query` / `exec` / `withTransaction` + `SqlValue` | The escape hatch the mappers don't model. |
+| A live-updating Sky.Live list, or zero database to operate | `Std.Persist` (BlueDB) | Same codec, collection-style verbs, serializable transactions on embedded / SQLite / Postgres — plus `liveInto` + `Live.withReactive`, which nothing else offers. **Not the default:** embedded reads are full collection scans (declared indexes don't seek yet), reactivity is embedded-only AND single-instance (needs `[data] reactiveScope = "single-instance"` outside dev), and there is no migration tooling for collections. `sky doc Std.Persist`. |
 
 ### Default — `Store` + `Codec`
 
