@@ -114,8 +114,8 @@ persists-before-ack. If you added an emit path, route it through the funnel
 	// (3) THE PREDICATE THAT MAKES THIS TEST NON-VACUOUS: the funnel actually
 	// persists. Without this, deleting the store.Set leaves every other assertion
 	// here true and the test greenlights the exact data loss it is named for.
-	if !strings.Contains(body, "app.store.Set(") {
-		t.Fatal(`persistAndShipFrame no longer calls app.store.Set(.
+	if !strings.Contains(body, "app.persistBeforeAck(") {
+		t.Fatal(`persistAndShipFrame no longer calls app.persistBeforeAck(.
 
 INVARIANT (grill A1): the funnel's WHOLE PURPOSE is to persist BEFORE it acks.
 Every async ack site was converted to call it precisely so the persist could not
@@ -123,7 +123,7 @@ be forgotten. Without the store.Set the funnel is a plain send and every caller
 silently regressed to acked-then-lost.`)
 	}
 	// And it persists BEFORE the ack, not after.
-	if strings.Index(body, "app.store.Set(") > strings.Index(body, "sseCh <-") {
+	if strings.Index(body, "app.persistBeforeAck(") > strings.Index(body, "sseCh <-") {
 		t.Fatal("persistAndShipFrame sends BEFORE it persists — a crash between the two loses an acked change")
 	}
 
