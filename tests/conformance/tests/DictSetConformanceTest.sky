@@ -160,6 +160,12 @@ tests =
                         False
                 )
         )
+    , -- Dict.keys on an Int-keyed dict reconstructs the Int keys (numerically
+      -- sorted), NOT the stringified runtime map keys. Before the typed-key
+      -- dispatch for Dict.keys, an annotated `Dict Int v` returned `[0, 0, …]`
+      -- (the string keys narrowed to 0 by AsInt).
+      Test.test "Dict Int keys reconstructs numeric Int keys (not stringified 0s)"
+        (\_ -> Test.equal [ 2, 10, 20 ] (Dict.keys (Dict.fromList [ ( 10, "a" ), ( 2, "b" ), ( 20, "c" ) ])))
     , -- ══════════════════════════════════════════════════════════════
       -- ORDERING DETERMINISM (HIGH severity — Sky.Live depends on it)
       -- ══════════════════════════════════════════════════════════════

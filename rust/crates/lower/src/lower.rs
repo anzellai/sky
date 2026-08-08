@@ -1828,27 +1828,30 @@ impl<'a> Ctx<'a> {
         None
     }
 
-    /// A `Dict.toList` on a `Dict Int v` / `Dict Float v` must lower to the
-    /// typed-key kernel entry point (`rt.Dict_toListIntKey` /
-    /// `rt.Dict_toListFloatKey`) — the underlying runtime map is `map[string]V`,
-    /// so the default `rt.Dict_toList` leaks stringified keys and any downstream
-    /// `rt.AsInt` on a key panics with TypeMismatch. The key
+    /// A `Dict.toList` / `Dict.keys` on a `Dict Int v` / `Dict Float v` must lower
+    /// to the typed-key kernel entry point (`rt.Dict_toListIntKey` /
+    /// `rt.Dict_keysIntKey` / `…FloatKey`) — the underlying runtime map is
+    /// `map[string]V`, so the default `rt.Dict_toList` / `rt.Dict_keys` leaks
+    /// stringified keys and any downstream `rt.AsInt` on a key yields 0
+    /// (`Dict.keys` on an annotated `Dict Int v` came back `[0, 0, …]`). The key
     /// type is read from the argument's HM-inferred `Dict k v` shape at the call
     /// site (oracle: `rt.Dict_toListIntKey(byCounts)` vs
     /// `rt.Dict_toList(rt.AsMapAny(totals))`).
     fn dict_tolist_specialised(&self, base: &str, args: &[ExprId]) -> Option<&'static str> {
-        if base != "rt.Dict_toList" || args.len() != 1 {
+        if args.len() != 1 {
             return None;
         }
+        // (default-kernel, IntKey-variant, FloatKey-variant) per key-producing op.
+        let (int_variant, float_variant) = match base {
+            "rt.Dict_toList" => ("rt.Dict_toListIntKey", "rt.Dict_toListFloatKey"),
+            "rt.Dict_keys" => ("rt.Dict_keysIntKey", "rt.Dict_keysFloatKey"),
+            _ => return None,
+        };
         match self.sky_ty_of(args[0])? {
             Ty::App(dict, dargs) if dict.as_str() == "Dict" && dargs.len() == 2 => {
                 match &dargs[0] {
-                    Ty::App(k, ka) if ka.is_empty() && k.as_str() == "Int" => {
-                        Some("rt.Dict_toListIntKey")
-                    }
-                    Ty::App(k, ka) if ka.is_empty() && k.as_str() == "Float" => {
-                        Some("rt.Dict_toListFloatKey")
-                    }
+                    Ty::App(k, ka) if ka.is_empty() && k.as_str() == "Int" => Some(int_variant),
+                    Ty::App(k, ka) if ka.is_empty() && k.as_str() == "Float" => Some(float_variant),
                     _ => None,
                 }
             }

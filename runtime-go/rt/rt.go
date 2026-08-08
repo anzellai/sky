@@ -5203,6 +5203,53 @@ func Dict_toListFloatKey(dict any) any {
 	return result
 }
 
+// Dict_keysIntKey: like Dict_keys but returns []Int with each string key
+// parsed back to its Int form and sorted NUMERICALLY (Elm's Dict Int is ordered
+// by the integer key, not its stringified form). The underlying runtime map is
+// `map[string]V`, so the default Dict_keys leaks stringified keys — and a
+// downstream `rt.AsInt` on a string key yields 0 (`Dict.keys` on an annotated
+// `Dict Int v` came back `[0, 0, …]`). Mirrors Dict_toListIntKey's key parse +
+// numeric sort; un-parsable keys fall back to 0 so the call still returns.
+func Dict_keysIntKey(dict any) any {
+	m := AsDict(unwrapAny(dict))
+	ks := make([]int, 0, len(m))
+	for k := range m {
+		if n, err := strconv.Atoi(k); err == nil {
+			ks = append(ks, n)
+		} else if f, err := strconv.ParseFloat(k, 64); err == nil {
+			ks = append(ks, int(f))
+		} else {
+			ks = append(ks, 0)
+		}
+	}
+	sort.SliceStable(ks, func(i, j int) bool { return ks[i] < ks[j] })
+	result := make([]any, 0, len(ks))
+	for _, k := range ks {
+		result = append(result, k)
+	}
+	return result
+}
+
+// Dict_keysFloatKey: like Dict_keys but returns []Float with each string key
+// parsed through strconv.ParseFloat and sorted numerically; on failure 0.0.
+func Dict_keysFloatKey(dict any) any {
+	m := AsDict(unwrapAny(dict))
+	ks := make([]float64, 0, len(m))
+	for k := range m {
+		if f, err := strconv.ParseFloat(k, 64); err == nil {
+			ks = append(ks, f)
+		} else {
+			ks = append(ks, 0.0)
+		}
+	}
+	sort.SliceStable(ks, func(i, j int) bool { return ks[i] < ks[j] })
+	result := make([]any, 0, len(ks))
+	for _, k := range ks {
+		result = append(result, k)
+	}
+	return result
+}
+
 func Dict_foldl(fn any, acc any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	result := acc
