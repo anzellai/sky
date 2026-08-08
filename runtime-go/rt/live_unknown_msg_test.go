@@ -43,6 +43,7 @@ func TestUnknownMsg_DirectSend_Returns400(t *testing.T) {
 	body := strings.NewReader(`{"sessionId":"sid-unknown","msg":"DefinitelyNotARealMsg","args":[]}`)
 	req := httptest.NewRequest("POST", "/_sky/event", body)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", "sky_sid=sid-unknown")
 	rr := httptest.NewRecorder()
 
 	app.handleEvent(rr, req)
@@ -91,6 +92,7 @@ func TestUnknownMsg_SkySentinel_Returns200(t *testing.T) {
 	body := strings.NewReader(`{"sessionId":"sid-sentinel","msg":"__skySessionPing","args":[]}`)
 	req := httptest.NewRequest("POST", "/_sky/event", body)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", "sky_sid=sid-sentinel")
 	rr := httptest.NewRecorder()
 
 	app.handleEvent(rr, req)

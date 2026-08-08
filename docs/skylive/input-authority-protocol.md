@@ -76,6 +76,22 @@ Examples:
 
 ### Request: `POST /_sky/event`
 
+**The session cookie is the authority.** The server resolves the session
+*only* from the session cookie — `sky_sid` by default, or the app's
+configured `cookieName` (sub-apps mounted in-process use
+`sky_<name>_sid`). The `sessionId` in the body is **advisory**: it may
+agree with the cookie or be omitted, but it can never select a different
+session. A request whose body names a session other than the cookie's,
+or that carries no session cookie at all, is rejected with the same
+`404` + `X-Sky-Status: session-lost` as an unknown session — the
+endpoint deliberately gives no signal about which session ids exist.
+
+The browser satisfies this automatically: the in-page `fetch` uses
+`credentials: "same-origin"`, and `navigator.sendBeacon` (the unload
+batch flush) rides the same cookie jar. `GET /_sky/sse` has always
+required the cookie, so any client with a live connection already sends
+it. Non-browser clients must send the cookie explicitly.
+
 ```json
 {
   "sessionId": "3f2a8b...",
