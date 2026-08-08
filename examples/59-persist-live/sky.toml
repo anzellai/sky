@@ -3,7 +3,10 @@ version = "0.1.0"
 entry = "src/Main.sky"
 
 [live]
-port = 8000
+# 8059, not 8000: scripts/example-sweep.sh runs examples in PARALLEL and each
+# server example must own a distinct port (same reason 52-blog-analytics sits on
+# 8052 and 33-websocket-echo on 8033). A dozen sweep examples already bind 8000.
+port = 8059
 store = "memory"
 
 [log]

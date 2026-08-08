@@ -1240,6 +1240,31 @@ fn write_embedded_migrations(example_dir: &Path, out_dir: &Path) -> Result<(), S
     std::fs::write(&target, go).map_err(|e| e.to_string())
 }
 
+/// True when `path` is a Go source file with a REAL `sky-app/bluedb` import.
+///
+/// Deliberately conservative: it matches only a line whose last whitespace-
+/// separated token is the quoted import path (covering `import "sky-app/bluedb"`,
+/// a bare `"sky-app/bluedb"` inside an import block, and aliased / `_` / `.`
+/// forms), and it ignores comment lines. Prose mentioning the package by name is
+/// common in this runtime — `rt/live_reactive_hooks.go` documents the seam with
+/// the words "imports sky-app/bluedb" and must NOT be skipped, since live.go
+/// depends on its no-op hook defaults.
+fn go_file_imports_bluedb(path: &Path) -> bool {
+    let Ok(src) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    src.lines().any(|line| {
+        let t = line.trim();
+        if t.starts_with("//") || t.starts_with('*') || t.starts_with("/*") {
+            return false;
+        }
+        let t = t.strip_prefix("import ").unwrap_or(t).trim();
+        // Drop an alias / `_` / `.` qualifier if present.
+        let last = t.rsplit_once(char::is_whitespace).map_or(t, |(_, last)| last);
+        last.trim_end_matches(';') == "\"sky-app/bluedb\""
+    })
+}
+
 /// Copy `rt/` wholesale, skipping `*_test.go` and testdata (doc 09 §A.1). Copies
 /// recursively (the runtime has a `console_app/` subtree).
 ///
@@ -1274,34 +1299,34 @@ fn materialise_rt(
             materialise_rt(&path, &dst.join(&name_s), console_needed, persist_needed)?;
         } else if name_s.ends_with("_test.go") {
             continue;
-        } else if name_s.ends_with(".go") {
-            // Any `rt` file importing `sky-app/bluedb` (the embedded-kernel bridge, the
-            // Phase-4b reactive pump, the console data-access gate, …) is skipped — along
-            // with the `bluedb/` subtree — when the program never calls an `rt.Embedded_*`
-            // kernel, so a non-Persist project doesn't compile the Pebble engine. live.go
-            // stays bluedb-free by calling the reactive integration through hooks
-            // (live_reactive_hooks.go), which default to no-ops when those files are absent.
+        } else if !persist_needed
+            && name_s.ends_with(".go")
+            && (name_s == "embedded_kernel.go"
+                || name_s == "bluedb_reactive.go"
+                || name_s == "bluedb_reactive_gate.go"
+                || go_file_imports_bluedb(&path))
+        {
+            // The `rt` files that must not enter a non-Persist project: the
+            // embedded-kernel bridge, the Phase-4b reactive pump, and its boot-gate
+            // (which references the pump's symbols). Skipping them — and with them
+            // the `bluedb/` subtree — keeps the Pebble engine out of a program that
+            // never calls an `rt.Embedded_*` kernel. live.go stays bluedb-free by
+            // calling the reactive integration through hooks (live_reactive_hooks.go),
+            // which default to no-ops when bluedb_reactive.go is absent.
             //
-            // The predicate is the file's ACTUAL import, not a hand-maintained name list:
-            // a name list silently breaks every non-Persist app the moment someone adds a
-            // bluedb-importing file and forgets to append to it. That is exactly how
-            // `console_data.go` (31b05b35) made `examples/01-hello-world` unbuildable —
-            // `go test ./rt/...` and `cargo test --workspace` stayed green throughout.
-            // Companions: files that do NOT import `sky-app/bluedb` themselves but reference
-            // package-level symbols defined in the files that do (so they fail to compile once
-            // those are skipped). `bluedb_reactive_gate.go` uses `reactiveBindingsFor` +
-            // `embeddedBackend` from `bluedb_reactive.go` / `embedded_kernel.go`. This half of
-            // the predicate is still by name — keep it in sync when adding such a file; the
-            // `persist_gate` test below fails loudly if you don't.
-            const PERSIST_COMPANIONS: [&str; 1] = ["bluedb_reactive_gate.go"];
-            let src_text = std::fs::read_to_string(&path)?;
-            if !persist_needed
-                && (src_text.contains("\"sky-app/bluedb\"")
-                    || PERSIST_COMPANIONS.contains(&name_s.as_str()))
-            {
-                continue;
-            }
-            std::fs::write(dst.join(&name_s), src_text)?;
+            // The `go_file_imports_bluedb` clause is what stops this list ROTTING.
+            // It was a bare name list, and Phase-5e added a FOURTH bluedb importer
+            // (`rt/console_data.go`) without extending it — so every non-Persist
+            // example stopped building with
+            //   `rt/console_data.go:9:8: package sky-app/bluedb is not in std`
+            // while the Persist examples, which do materialise `bluedb/`, still
+            // built fine. Deriving the skip from the file's actual imports means a
+            // fifth importer is handled the day it lands. The explicit names stay
+            // because they encode skip decisions that are NOT import-derived
+            // (bluedb_reactive_gate.go imports no bluedb; it depends on the pump).
+            continue;
+        } else if name_s.ends_with(".go") {
+            std::fs::copy(&path, dst.join(&name_s))?;
         }
     }
     Ok(())
@@ -1491,7 +1516,8 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod sky_toml_tests {
     use super::{
-        configured_bin_name, configured_source_root, read_sky_toml_config, sky_build_goflags_from,
+        configured_bin_name, configured_source_root, go_file_imports_bluedb, read_sky_toml_config,
+        sky_build_goflags_from,
     };
 
     #[test]
@@ -1750,5 +1776,63 @@ mod sky_toml_tests {
             leaked.len(),
             leaked
         );
+    }
+
+    /// Every non-test `runtime-go/rt/*.go` that ACTUALLY imports `sky-app/bluedb`
+    /// must be skipped when a project does not need Persist — otherwise the
+    /// emitted project references a package whose subtree was never materialised
+    /// and `go build` fails with `package sky-app/bluedb is not in std`.
+    ///
+    /// This is a ROT gate, not a unit test of the helper. It failed at the commit
+    /// that added `rt/console_data.go` (BlueDB Phase-5e): the fourth bluedb
+    /// importer was not added to the hardcoded skip list, which broke `go build`
+    /// for EVERY non-Persist example — 01-hello-world included — while every
+    /// Persist example still built. Nothing in CI ran an example build at the
+    /// time, so it shipped.
+    #[test]
+    fn every_bluedb_importing_rt_file_is_skipped_without_persist() {
+        let rt = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../runtime-go/rt")
+            .canonicalize()
+            .expect("runtime-go/rt must exist");
+
+        let mut importers = Vec::new();
+        for entry in std::fs::read_dir(&rt).expect("read rt") {
+            let path = entry.expect("entry").path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.ends_with(".go") || name.ends_with("_test.go") {
+                continue;
+            }
+            if go_file_imports_bluedb(&path) {
+                importers.push(name);
+            }
+        }
+
+        assert!(
+            !importers.is_empty(),
+            "no rt file imports sky-app/bluedb — the detector is broken, not the tree"
+        );
+
+        // The seam file documents the import in PROSE and must never be detected:
+        // live.go depends on its no-op hook defaults in non-Persist builds.
+        assert!(
+            !importers.iter().any(|n| n == "live_reactive_hooks.go"),
+            "live_reactive_hooks.go only MENTIONS sky-app/bluedb in comments; \
+             detecting it would strip live.go's hook defaults. Importers: {importers:?}"
+        );
+
+        // The materialise_rt gate skips a file when it is one of the explicitly
+        // named ones OR imports bluedb. Assert the derived clause covers the rest.
+        for name in &importers {
+            let named = name == "embedded_kernel.go"
+                || name == "bluedb_reactive.go"
+                || name == "bluedb_reactive_gate.go";
+            let derived = go_file_imports_bluedb(&rt.join(name));
+            assert!(
+                named || derived,
+                "rt/{name} imports sky-app/bluedb but materialise_rt would copy it \
+                 into a non-Persist project → `package sky-app/bluedb is not in std`"
+            );
+        }
     }
 }

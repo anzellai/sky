@@ -20,9 +20,13 @@
 #   2. The cabal test includes ExampleSweep which delegates to
 #      scripts/example-sweep.sh — parallel, CPU/mem-aware via the
 #      concurrency helper.
-#   3. Hub / receiver / bridge Go tests (run as part of `go test
-#      ./runtime-go/...` inside cabal-test where applicable, or
-#      explicitly here for hub-only PRs).
+#   3. Go runtime tests — `runtime-go/rt` (the embedded runtime, incl.
+#      hub / receiver / bridge) AND `runtime-go/bluedb` (the BlueDB
+#      ordered-storage + MVCC/SSI engine behind Std.Persist). These
+#      mirror the `codegen-build` job's go-test steps in
+#      .github/workflows/rust-ci.yml. `./rt/...` does NOT reach the
+#      sibling bluedb package, so bluedb is named explicitly — it was
+#      in no gate at all until this phase existed.
 #
 # Concurrency: every parallel step reads MAX_WORKERS from the shared
 # helper scripts/lib/concurrency.sh. Operators can pin via
@@ -98,6 +102,30 @@ phase_rust_gates() {
     return $rc
 }
 
+# Phase 2b: Go runtime tests. Mirrors the `go test` steps of the
+# codegen-build job in .github/workflows/rust-ci.yml so a runtime or
+# BlueDB-engine regression surfaces LOCALLY before Actions.
+#
+# Two packages, deliberately named separately: `./rt/...` does not
+# match the sibling `./bluedb/...` package, which is how ~40 SSI /
+# contention / crash-sim tests sat in no gate whatsoever.
+#
+# bluedb runs under -race: the suite is deliberately concurrent, so the
+# race detector is the point of it, and it costs ~25 s. -race requires
+# cgo, hence no CGO_ENABLED=0 on that line.
+phase_go_runtime_tests() {
+    echo "--- phase: go runtime tests (rt + bluedb) ---"
+    local t0; t0=$(date +%s)
+    ( cd "$ROOT/runtime-go" && timeout 1800 bash -c '
+        CGO_ENABLED=0 go test ./rt/... || exit 1
+        go test ./bluedb/... -count=1 -race || exit 1
+    ' )
+    local rc=$?
+    local t1; t1=$(date +%s)
+    echo "  $(( t1 - t0 ))s (exit $rc)"
+    return $rc
+}
+
 # Phase 3: optional — summarise top time consumers from the
 # timings CSV. Useful for the operator to spot regressions.
 phase_summary() {
@@ -117,7 +145,13 @@ main() {
     if ! phase_rust_gates; then
         phase_summary
         echo
-        echo "FAIL: test-ci did not pass cleanly"
+        echo "FAIL: test-ci did not pass cleanly (rust gate suite)"
+        exit 1
+    fi
+    if ! phase_go_runtime_tests; then
+        phase_summary
+        echo
+        echo "FAIL: test-ci did not pass cleanly (go runtime tests)"
         exit 1
     fi
     phase_summary

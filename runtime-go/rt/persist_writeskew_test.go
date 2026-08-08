@@ -13,7 +13,10 @@ package rt
 //   • Postgres — the DISCRIMINATOR: under READ COMMITTED (bare Begin) the
 //     invariant is VIOLATED (0 on-call); under our serializable path
 //     (BeginTx SERIALIZABLE + 40001 retry) it is HELD (≥ 1 on-call). Gated on a
-//     reachable pg via SKY_TEST_PG_URL / DATABASE_URL.
+//     reachable pg via SKY_TEST_POSTGRES_DSN — see rt/pgtest_test.go, the single
+//     DSN gate shared by every real-Postgres test in this package. CI's
+//     integration-postgres job sets it AND sets SKY_TEST_REQUIRE_POSTGRES=1, so
+//     a skip here FAILS the build instead of passing silently.
 //
 // The test is DISCRIMINATING by construction: TestWriteSkewPostgres asserts the
 // READ COMMITTED baseline FAILS (invariant violated) and the serializable path
@@ -21,7 +24,6 @@ package rt
 // default would make the pg test fail.
 
 import (
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -138,18 +140,12 @@ func TestWriteSkewSQLiteReadCommittedAlsoHolds_MaxConns1(t *testing.T) {
 
 // ── Postgres (the discriminator) ──────────────────────────────────────────────
 
-func pgTestURL() string {
-	if u := os.Getenv("SKY_TEST_PG_URL"); u != "" {
-		return u
-	}
-	return os.Getenv("DATABASE_URL")
-}
-
 func TestWriteSkewPostgres(t *testing.T) {
-	url := pgTestURL()
-	if url == "" {
-		t.Skip("no SKY_TEST_PG_URL / DATABASE_URL — Postgres write-skew discrimination skipped")
-	}
+	// requireTestPostgresDSN (rt/pgtest_test.go) is the ONE place a real-Postgres
+	// DSN is resolved. It skips when unset, FAILS when a legacy spelling is set
+	// without the canonical one, and FAILS when SKY_TEST_REQUIRE_POSTGRES=1 —
+	// which is how CI asserts this discriminating proof actually ran.
+	url := requireTestPostgresDSN(t)
 	d := forceDbConnect(t, url)
 
 	// (1) READ COMMITTED baseline — write-skew VIOLATES the invariant (proves the

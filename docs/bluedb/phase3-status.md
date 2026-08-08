@@ -181,16 +181,26 @@ embedded + SQLite + Postgres), and the conditional-materialisation build fix.
    gate is **fail-closed** (`System.exit 1` on divergence — see the boundary-grill closure §F1 below).
    Proven LIVE:
    - **embedded ≡ SQLite** — self-contained, `sky run` prints `PARITY PASS` (the always-runnable gate).
-   - **embedded ≡ Postgres** — `DATABASE_URL=postgres://… ./run.sh` (CI-gated; verified live against a
-     Postgres 16 instance, `PARITY PASS`). The `%a%` LIKE probe is the discriminator: it returns
+   - **embedded ≡ Postgres** — `DATABASE_URL=postgres://… ./run.sh` (run manually; verified live
+     against a Postgres 16 instance, `PARITY PASS`). NOT CI-gated: `scripts/example-sweep.sh` runs
+     `57-persist-parity` via its `run.sh` with no `DATABASE_URL`, i.e. the embedded ≡ SQLite arm only.
+     The CI job that owns a `postgres:16` service container (`integration-postgres`) sets up Go but no
+     Rust toolchain, so it cannot build the compiler this example needs. The discriminating
+     SERIALIZABLE-vs-READ-COMMITTED proof that IS CI-gated is `rt.TestWriteSkewPostgres` (below).
+     The `%a%` LIKE probe is the discriminator: it returns
      `Alice` (capital A) on Postgres, proving `ILIKE` (not a case-sensitive bare `LIKE`) was emitted.
    Unit coverage without a live Postgres: `runtime-go/rt/db_dialect_test.go` (dialect classification)
    + `runtime-go/bluedb/like_test.go` (forced case-insensitive ASCII `LIKE`).
 
 4. **Conditional `bluedb` materialisation (the 3b build regression fix)** —
-   `rust/crates/project/src/build.rs`. `write_out` materialises `bluedb/` (and `rt/embedded_kernel.go`,
-   the sole `sky-app/bluedb` importer in `rt`) ONLY when the emitted `main.go` statically references an
-   `rt.Embedded_*` kernel. **HONEST SCOPE (boundary-grill F2 — corrected):** the gate is really
+   `rust/crates/project/src/build.rs`. `write_out` materialises `bluedb/` (and the `rt` files that
+   import `sky-app/bluedb`) ONLY when the emitted `main.go` statically references an
+   `rt.Embedded_*` kernel. **The importer set is DERIVED, not listed.** It was a hardcoded name list
+   when `rt/embedded_kernel.go` was the only importer; Phase-4b and Phase-5e each added another
+   (`rt/bluedb_reactive.go`, `rt/console_data.go`) and the Phase-5e one was not added to the list,
+   which broke `go build` for EVERY non-Persist example with `package sky-app/bluedb is not in std`.
+   `materialise_rt` now reads each file's imports (`go_file_imports_bluedb`), gated by
+   `project::build::every_bluedb_importing_rt_file_is_skipped_without_persist`. **HONEST SCOPE (boundary-grill F2 — corrected):** the gate is really
    "non-Persist app" vs "ANY Persist app", NOT "relational-only" vs "embedded". Every universal verb's
    `case conn of` has a `KvConn -> rt.Embedded_*` arm, and Sky's DCE is **per-binding, not per-branch**,
    so a `connectRelational`-only program STILL emits `rt.Embedded_*` and STILL links Pebble. Verified:

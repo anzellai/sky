@@ -4,7 +4,6 @@
 package rt
 
 import (
-	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -22,14 +21,15 @@ import (
 //	  go test -tags integration ./rt/ -run Postgres
 //
 // CI supplies the DSN via a `postgres:16` service container.
+//
+// The DSN itself is resolved by requireTestPostgresDSN in rt/pgtest_test.go —
+// the SINGLE gate shared with the (untagged) write-skew suite. Per-file DSN
+// helpers are what let TestWriteSkewPostgres skip silently in CI for its whole
+// lifetime; do not reintroduce one.
 
 func requirePostgresDSN(t *testing.T) string {
 	t.Helper()
-	dsn := os.Getenv("SKY_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SKY_TEST_POSTGRES_DSN unset — skipping real-Postgres integration test")
-	}
-	return dsn
+	return requireTestPostgresDSN(t)
 }
 
 // The CROSS-INSTANCE round-trip is the meaningful test: postgresStore.Get hits

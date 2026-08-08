@@ -223,6 +223,12 @@ run_with_timeout() {
 # server examples: start a listener; probe HTTP; kill after probe.
 # gui examples: require a display; build-only (skip runtime).
 # cli examples: exit 0, stdout non-empty.
+# script examples: run the example's own ./run.sh; exit 0. Use this when the
+#   example needs per-run SETUP (a wiped data dir) or asserts SEMANTICS beyond
+#   "exit 0 + some stdout". The Std.Persist parity/relational examples are both:
+#   they seed fixed primary keys, so a second bare run hits a unique-constraint
+#   violation, and their run.sh does the `rm -rf data && mkdir -p data` AND
+#   greps for the expected verdict line.
 #
 # Entries: "name:kind[:port][:path]"
 declare -a EXAMPLES=(
@@ -285,6 +291,34 @@ declare -a EXAMPLES=(
     # Panicked with `reflect: struct{OrderId} as struct{ProductId;Qty}`
     # before the lower_lambda full-record-return fix.
     "53-record-update-map:cli"
+    # ── BlueDB / Std.Persist (56–59) ────────────────────────────────────────
+    # These shipped with the BlueDB phases and were in NO gate: the sweep list
+    # stopped at 53, so a Std.Persist regression could not be caught by any
+    # automated run. The engine's own Go tests now run in CI too (the
+    # `./bluedb/...` steps in .github/workflows/rust-ci.yml) — these entries are
+    # the Sky-level, end-to-end half of that.
+    #
+    # 56 — the embedded BlueDB engine through Std.Persist: Collection + codec +
+    # declared indexes, equality/range queries with ordering, counts, and a
+    # read-modify-write in a serializable txn. Idempotent (upserts into its
+    # skydata-todos/ Pebble store), so a plain cli entry is honest here.
+    "56-persist-embedded:cli"
+    # 57 — the SQL≡KV parity gate. `script`, not `cli`: run.sh wipes data/ (the
+    # app seeds fixed primary keys, so a repeat bare run dies on a unique
+    # constraint) AND asserts `PARITY PASS` is present, so a divergence that
+    # still exits 0 cannot go green.
+    "57-persist-parity:script"
+    # 58 — relational-only Persist (never calls the KV arm). `script` for the
+    # same reason as 57, plus run.sh asserts the serializable transfer committed
+    # (75/75) and that the F6 identifier guard rejected an injected ORDER BY
+    # column.
+    "58-persist-relational-only:script"
+    # 59 — Sky.Live + Std.Persist reactive UI. `server`, so the sweep actually
+    # ISSUES A REQUEST and requires 2xx/3xx: a build-only entry is precisely
+    # what let the initial-page-load deadlock (bluedb_reactive.go re-locking a
+    # session mutex already held by live.go) ship — the binary builds and the
+    # listener binds; only a real GET exposes it. Port 8059 per sky.toml.
+    "59-persist-live:server:8059:/"
 )
 
 # Per-worker result files. Each call to run_example writes ONE LINE
@@ -352,6 +386,22 @@ run_example() {
                 return
             fi
             [[ -n "$out" ]] || { printf 'FAIL empty stdout\n' > "$result_file"; return; }
+            printf 'OK\n' > "$result_file" ;;
+        script)
+            # The example owns its harness: ./run.sh does the per-run setup and
+            # asserts the semantics, so the gate is `run.sh exits 0`. SKY is
+            # passed through so run.sh's own `$SKY build` uses the SAME compiler
+            # the sweep is testing, not whatever `sky` is on PATH.
+            local out rc=0
+            if [[ ! -x "$dir/run.sh" ]]; then
+                printf 'FAIL script kind but no executable run.sh\n' > "$result_file"
+                return
+            fi
+            out=$( (cd "$dir" && SKY="$SKY" run_with_timeout 180 ./run.sh) 2>&1 ) || rc=$?
+            if [[ $rc -ne 0 ]]; then
+                printf 'FAIL run.sh non-zero exit (rc=%s) — last 20 lines: %s\n' "$rc" "$(printf '%s' "$out" | tail -20 | tr '\n' ' | ')" > "$result_file"
+                return
+            fi
             printf 'OK\n' > "$result_file" ;;
         server)
             local pid log url
