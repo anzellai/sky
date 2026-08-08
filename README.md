@@ -239,7 +239,7 @@ Every Sky.Live and Sky.Http.Server app auto-mounts:
 
 Run **`sky console serve`** to stand up a central hub that
 multiple Sky apps push telemetry to via the `HubExporter`
-(OTLP/HTTP). See [docs/v0.16.x-console/HUB.md](docs/v0.16.x-console/HUB.md)
+(OTLP/HTTP). See [docs/history/v0.16.x-console/HUB.md](docs/history/v0.16.x-console/HUB.md)
 for the multi-service dashboard, tenant isolation, and the
 3-layer auth defense-in-depth model.
 
@@ -311,7 +311,7 @@ platform with a Go 1.22+ runtime.
   [Testing](docs/tooling/testing.md)**.
 - **[Known limitations](docs/KNOWN_LIMITATIONS.md)** —
   current-version constraints + workarounds.
-- **[Compiler journey](docs/compiler/journey.md)** — how Sky got
+- **[Compiler journey](docs/history/compiler/journey.md)** — how Sky got
   here (historical context, kept for contributors).
 
 ## Examples
@@ -337,7 +337,7 @@ Issues and PRs welcome at
 [github.com/anzellai/sky](https://github.com/anzellai/sky). The
 [Rust compiler architecture](docs/rust-rewrite/) write-up is the
 right starting point for compiler work (the Haskell-era
-[docs/compiler/](docs/compiler/) notes are kept as historical
+[docs/history/compiler/](docs/history/compiler/) notes are kept as historical
 reference). Run `cargo test --workspace` plus the xtask gate
 suite (`cargo run -p xtask -- <gate>`) before any PR;
 `scripts/example-sweep.sh` validates every example builds.

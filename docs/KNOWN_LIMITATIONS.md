@@ -51,7 +51,7 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
    container, primitive, tuple, map/dict, generic-param erasure). 214
    call sites on the canonical `examples/26-ui-showcase` benchmark.
    **All sites are documented sound** with explicit per-class
-   soundness proofs in `docs/v0.17/rt-coerce-residual-surface.md`. The
+   soundness proofs in `docs/history/v0.17/rt-coerce-residual-surface.md`. The
    synchronous-panic gate (`defer rt.LogPanicAndExit()`) catches any
    panic that does fire and routes it to an `Err`-classified clean
    exit. Sealed-interface ADT emission (#677) would drop ~476 of these

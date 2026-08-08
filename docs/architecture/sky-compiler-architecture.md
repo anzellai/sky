@@ -570,9 +570,9 @@ A tactic that targets the floor without user authorization is
 
 * `CLAUDE.md` — operational rules (§0 goal fidelity, §0.1 push
   discipline, §0.2 test cadence).
-* `docs/v1-rfc/type-soundness-deep-analysis.md` — Surface 1/2/3 typed
+* `docs/history/v1-rfc/type-soundness-deep-analysis.md` — Surface 1/2/3 typed
   lowering write-up.
-* `docs/v0.17-fully-typed-codegen-v5-plan.md` — v0.17 master plan.
+* `docs/history/v0.17-fully-typed-codegen-v5-plan.md` — v0.17 master plan.
 * `src/Sky/Build/Compile.hs` — the 22,305-line lowering core.
 * `src/Sky/Build/LowerCtx.hs` — the scoped state ADT.
 * `src/Sky/Type/Solve.hs` — SolvedTypes + RegionTypes.

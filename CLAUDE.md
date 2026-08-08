@@ -278,7 +278,7 @@ and judge verdicts.
    > env-CAFs}` DELETED **AND** any residual IORef in `Compile.hs`
    > carries a machine-verified single-writer / single-reader
    > monotonic contract (see
-   > `docs/v0.17-roadmap/phase-A-iter-0-anonrecords-contract.md`
+   > `docs/history/v0.17-roadmap/phase-A-iter-0-anonrecords-contract.md`
    > for the `globalAnonRecords` precedent and the
    > `Sky.Build.AnonRecordWriterAuditSpec` verification gate).
 
@@ -337,7 +337,7 @@ and judge verdicts.
    **AUTHORIZED 2026-06-23**: user has explicitly authorised
    floor-touching tactics for v0.17 close (literal-zero
    rt.Coerce via runtime rewrite — see
-   `docs/v0.17-roadmap/literal-zero-close-plan.md`).
+   `docs/history/v0.17-roadmap/literal-zero-close-plan.md`).
 
 #### Workflow Phase-0 template (mandatory entry phase)
 
@@ -568,7 +568,7 @@ Mitigations:
   >200 lines without a clear delegation strategy is a flag —
   delegate to a focused agent or stop and checkpoint.
 - **"I can't finish this in this session" is a valid outcome**
-  with a checkpoint file (e.g. `docs/v0.17/session-N-checkpoint.md`).
+  with a checkpoint file (e.g. `docs/history/v0.17/session-N-checkpoint.md`).
   "I'll keep trying" without a path forward is not.
 - **3 attempts on the same approach → halt and reclassify**, not
   a 4th retry. Per N-strikes above.
