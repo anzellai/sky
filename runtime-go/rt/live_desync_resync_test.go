@@ -54,6 +54,10 @@ func TestHandlerNotFoundSoftResyncs(t *testing.T) {
 	reqBody := `{"sessionId":"sid-1","seq":1,"msg":"ClickMsg","args":[],"handlerId":"r_stale_9_button_0.click"}`
 	req := httptest.NewRequest(http.MethodPost, "/_sky/event", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
+	// Cookie present and matching: the SESSION is fine, only the handler id
+	// is stale — this test must exercise the soft-resync path, not the
+	// session-binding rejection (boundSessionID).
+	req.Header.Set("Cookie", "sky_sid=sid-1")
 	rr := httptest.NewRecorder()
 	app.handleEvent(rr, req)
 
@@ -89,6 +93,10 @@ func TestSessionNotFoundIsSessionLost(t *testing.T) {
 	reqBody := `{"sessionId":"nonexistent","seq":1,"msg":"X","args":[],"handlerId":"a.click"}`
 	req := httptest.NewRequest(http.MethodPost, "/_sky/event", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
+	// A browser whose cookie survived a server restart / store sweep: the
+	// cookie AGREES with the body sid, so binding passes and we reach the
+	// genuine store-miss this test is about.
+	req.Header.Set("Cookie", "sky_sid=nonexistent")
 	rr := httptest.NewRecorder()
 	app.handleEvent(rr, req)
 

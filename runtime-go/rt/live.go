@@ -16,6 +16,7 @@ package rt
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -4383,23 +4384,40 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	sess, ok := app.store.Get(req.SessionID)
+	// SECURITY — session binding (see boundSessionID). The session COOKIE
+	// is the sole authority for which session this event dispatches into;
+	// req.SessionID is advisory and may only ever AGREE with it. Reading
+	// the session from the body alone let anyone who learned another
+	// user's sid drive that session: dispatch Msgs, mutate its Model, fire
+	// its handlers, and read back the rendered view. handleSSE has always
+	// required the cookie, so every functioning client already sends it.
+	sid, bound := app.boundSessionID(r, req.SessionID)
+	if !bound {
+		writeSessionLost(w)
+		return
+	}
+	sess, ok := app.store.Get(sid)
 	if !ok {
 		// Mark this 404 as a real Sky.Live response so the client's
 		// probe (in __skyForceReopenSSE) can distinguish "session gone,
 		// reload to recover" from a generic proxy-rewritten 404.
 		// X-Sky-Status: session-lost is the deterministic hard-reload signal
 		// (the client no longer has to sniff the response body string).
-		w.Header().Set("X-Sky-Live", "1")
-		w.Header().Set("X-Sky-Status", "session-lost")
-		http.Error(w, "session not found", 404)
+		writeSessionLost(w)
 		return
 	}
+	// Slide the browser's cookie lifetime on every dispatch, the way
+	// sessionIDNamed does on every page load ("L2"). Now that the cookie
+	// gates the event channel, a long-lived page that never navigates must
+	// not let the cookie lapse while the server session keeps sliding on
+	// activity via touchLastSeen — that would 404 every subsequent click on
+	// a session that is demonstrably alive.
+	writeSessionCookie(w, app.cookieNameOrDefault(), sid, app.sessionTTL)
 	// Per-session serial mutex: prevents two concurrent event handlers
 	// for the SAME session from racing each other's model updates.
 	// Different sessions proceed in parallel.
-	app.locker.Lock(req.SessionID)
-	defer app.locker.Unlock(req.SessionID)
+	app.locker.Lock(sid)
+	defer app.locker.Unlock(sid)
 
 	// Batch path — sendBeacon flushes a sequence of pending-debounce
 	// events on tab unload. Each entry is processed as if it had
@@ -4551,7 +4569,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	sess.mu.Unlock()
 	// Persist the mutated session so DB-backed stores see the new
 	// state. Memory store is a no-op on Set for an already-tracked sid.
-	app.store.Set(req.SessionID, sess)
+	app.store.Set(sid, sess)
 
 	// Phase 1 fan-out: mirror this dispatch to the OTHER live tabs of
 	// the session (same shared model) so they reflect the change without
@@ -6306,6 +6324,66 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 func sessionID(r *http.Request, w http.ResponseWriter, ttl time.Duration) string {
 	return sessionIDNamed(r, w, ttl, "sky_sid")
+}
+
+// boundSessionID resolves the session id an inbound request is ALLOWED to
+// act on, and is the single security boundary for every session-mutating
+// endpoint that also receives a session id in its payload.
+//
+// The rule: the session COOKIE is the sole authority. A `sessionId` in the
+// request body (or query) is advisory — it may agree with the cookie, or be
+// omitted entirely, but it can never select a different session.
+//
+// Why this has to be the cookie and not the body: the sid is not a secret.
+// It is HttpOnly on the wire, but the same value is templated into the page
+// JS as `var __skySid = %q` and echoed in every request body, so it leaks
+// through XSS, browser extensions, screenshots, proxy access logs and
+// referrers. The cookie, by contrast, is ambient credential material the
+// caller cannot forge for someone else's browser.
+//
+// Note that "no cookie" MUST fail. A rule that only rejected a MISMATCH,
+// and fell back to the body sid when no cookie was present, would be
+// defeated by simply not sending one — which is the easiest thing in the
+// world for the non-browser attacker this guards against.
+//
+// The cookie NAME is app.cookieNameOrDefault(), i.e. the same name the
+// session was minted with by sessionIDNamed. Sub-apps mounted via
+// MountLiveSubAppInProcess use "sky_<name>_sid" (subapp_inprocess.go), so a
+// hardcoded "sky_sid" here would both break every sub-app event and let a
+// decoy cookie under the default name satisfy the check.
+//
+// Constant-time comparison: the sids are equal-length hex, and a caller who
+// can already read the cookie has nothing to learn, but the comparison is
+// cheap and keeps a timing side-channel off the table for stores whose sids
+// are not fixed-width.
+func (a *liveApp) boundSessionID(r *http.Request, claimed string) (string, bool) {
+	if a == nil || r == nil {
+		return "", false
+	}
+	c, err := r.Cookie(a.cookieNameOrDefault())
+	if err != nil || c == nil || c.Value == "" {
+		return "", false
+	}
+	if claimed != "" &&
+		subtle.ConstantTimeCompare([]byte(claimed), []byte(c.Value)) != 1 {
+		return "", false
+	}
+	return c.Value, true
+}
+
+// writeSessionLost emits the canonical "this request has no session I will
+// act on" response. Used for BOTH an unknown sid and a sid the caller is not
+// bound to, so the endpoint is not an oracle for which sessions exist: an
+// attacker probing sids gets byte-identical status, headers and body whether
+// or not the sid is live.
+//
+// X-Sky-Status: session-lost is the client's deterministic hard-reload
+// signal (see __skyPostEvent / __skyProbeSessionLost) — a browser whose
+// cookie genuinely lapsed reloads, re-mints, and recovers.
+func writeSessionLost(w http.ResponseWriter) {
+	w.Header().Set("X-Sky-Live", "1")
+	w.Header().Set("X-Sky-Status", "session-lost")
+	http.Error(w, "session not found", 404)
 }
 
 // sessionIDNamed is the per-app cookie-name-aware session ID resolver.
