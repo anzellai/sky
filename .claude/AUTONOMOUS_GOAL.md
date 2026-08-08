@@ -1,179 +1,141 @@
-# AUTONOMOUS GOAL — known-but-unclosed close-out
+# AUTONOMOUS GOAL — BlueDB v2: architecture-first redefinition (feat/bluedb-v2)
 
-## The user's goal, VERBATIM (2026-08-11)
+Set 2026-08-09. Branch `feat/bluedb-v2`, off `origin/main` @ `fdbc398d`.
+Supersedes the `feat/bluedb` mandate (that branch is now REFERENCE ONLY).
 
-> yes please known-but-unclosed list, fully autonomous mode until e2e fully
-> implemented + tested + verified, usual workflow then main cicd + green + tag
-> release
+## Verbatim user mandate (2026-08-09)
 
-Prior standing decisions that remain in force:
-> this branch is to optimise + overhaul tests so we can tag release v0.20 once
-> everything goes green + well. after that we can then look at the
-> known-but-unclosed items? before the rebased bluedb work continues
+> could we start a NEW feature bluedb branch to redefine the bluedb architecture
+> correctly, with ALL learnings throughout to set out 100% correct pathways and
+> reimplement everything in a way that is complete and sound?
 
-So: close the known-but-unclosed list → CI green on main → tag a release →
-THEN rebase `feat/bluedb-v2`.
+And the diagnosis that shapes HOW (same session):
 
-## THE LIST — this is what "done" is measured against
+> your issue I realise is context, whenever you need to compact session or ask me
+> to start fresh session, everything goes downhill
 
-Every item below was declared honestly during the v0.20.0 cycle rather than
-hidden. None silently passes today.
+Carried from the original rebuild mandate (still the product goals, unchanged):
 
-1. **93 kernel members have no Sky signature** across 15 pseudo-modules.
-   Frozen by `rust/crates/project/tests/kernel_signature_coverage.rs`
-   (ratchets DOWN only); `lower::reject_over_application` stops any of them
-   reaching `go build` with a raw Go error. Closing them is per-module
-   signature work in `sky-stdlib/`.
+> the task is simple, e2e implemented, tested + verified; each phase is grilled
+> under our original goals.
 
-2. **Type-namespace ambiguity is not covered.** `[E1012]` covers values and
-   constructors. Several type paths synthesise a `DefId` leniently when a
-   module does not really export the name (kernel-implicit `Decoder`/`Value`/
-   `Error`, re-exports), so two modules can yield two `DefId`s for one
-   conceptual type — keying on that manufactures false rejections, the #164
-   failure mode. The lenient synthesis has to be fixed FIRST.
+## The five original goals (unchanged — the definition of the product)
 
-3. **67 of 87 stdlib modules are dark to Family S.** Most are `Task`-valued or
-   render `Element`s, which a value assertion cannot reach. `Sky.Core.Bytes`,
-   `Sky.Core.Jwt`, `Std.Codec`, `Std.Markdown`, `Std.Compression` are largely
-   pure and assertable — real, closeable gaps.
+1. Session-bounded Model state sync.
+2. Unified store: high-throughput lock-safe parallel + scalable + reliable + ACID
+   (**real SERIALIZABLE**) + secure, with UNIFIED APIs shareable across dbs
+   (sqlite/postgres/bluedb).
+3. Easy + simple; low-level APIs only for the 0.001%.
+4. Notify clients of changesets (query/row-scoped, in the commit path).
+5. Built-in Sky Console admin access to records.
 
-4. **Family S does not cross key TYPE against iteration OPERATION.** This is
-   why issue #174's `Dict.foldl` panic reached a release despite the new
-   corpus. Added 2026-08-11; the most direct evidence the suite has a shape
-   gap, not merely a size gap.
+Kills the 5 dev pains: juggling multiple stores · per-db quirks/non-portable code ·
+data migration · session RAM overflow · too many configs / no unified query.
 
-5. **15 reject-corpus files declare no diagnostic code** — their rejections are
-   unpinned, so any diagnostic satisfies them.
+## ⚠️ RULE ZERO — state is EXECUTABLE, never asserted
 
-6. **The LSP corpus is one synthetic fixture** (`scripts/lsp-test-nvim.lua`).
-   The GATE is genuinely enforced in CI (nvim installed, `lsp-fuzz` runs it);
-   it is the CORPUS that is thin.
+**This is the highest-priority architectural requirement, above any feature.**
+It exists because the previous attempt's handoff doc said "4.5 of 5 phases done"
+while the flagship path deadlocked on every page load, a P0 broke every
+non-Persist app, and three gates recorded PASS on things that were broken or had
+never executed. A fresh or compacted session inherits CLAIMS; claims survive
+compaction while the evidence behind them evaporates.
 
-7. **`Std.Email` SMTP silently drops attachments**; `Std.Markdown` is thin.
+Therefore, on this branch:
 
-8. **`toString`/`modBy`/`compare`/`negate` are asserted but uncountable** —
-   they come from the kernel `Basics` pseudo-module, appear in no `exposing`
-   list, so `api/symbols.json` has no entry and the coverage denominator cannot
-   see them.
+1. **Every one of the 5 goals has a numbered, runnable gate.** Goal status is
+   COMPUTED by running it — never read from prose.
+2. **`docs/bluedb/STATUS.md` is GENERATED OUTPUT** of that gate suite, never
+   hand-written. One command tells any fresh session the true state in ~60s.
+3. **No gate counts until proven falsifiable BY MUTATION** — reintroduce the
+   defect, watch it go red, restore, and record both outputs. A gate that cannot
+   fail is worse than no gate: it survives compaction as a green lie.
+4. **No phase is "closed" by me.** Only a fresh-context adversarial Judge, given
+   the verbatim goal, may close one. Any "but/except/however/caveat/mostly/
+   essentially/for the scope of/modulo" in a PASS verdict → NOT closed.
+5. **Prefer a real test on the real path over a source-grep tripwire.** Grep is
+   defensible only for a genuinely lexical property. For structural properties
+   (lock discipline, persist-before-ack) compute the property — see
+   `feat/bluedb`'s AST dominance analysis, which emits its own site table so the
+   inventory cannot drift. Note a TEXTUAL order rule was tried and rejected: it
+   passes with the bug reintroduced, because a persist in a mutually exclusive
+   branch satisfies it.
 
-9. **The Playwright tier is CI-unreachable** — `verify-all-web.sh` runs only in
-   `scripts/preflight-tag.sh`. That is how the `sky_sid` idle-eviction bug
-   survived: its only gate never ran in CI. Four Go tests now carry that
-   specific invariant, but the TIER is still release-only.
+## What this rebuild must FIX that the last architecture did not
 
-## Rules for this run (CLAUDE.md §0, plus what this session learned)
+These are the genuinely architectural gaps (verified on `feat/bluedb`). The
+previous attempt's failures were ~1/3 architectural, ~1/3 process, ~1/3
+pre-existing Sky.Live runtime bugs. Only this third is in scope here:
 
-* **I cannot declare done.** A fresh-context adversarial Judge, given this file
-  verbatim, returns the verdict. Any "but/except/mostly/for the scope of" in a
-  PASS verdict means NOT done.
-* **Every closure needs a gate that can FAIL**, proven by mutation. An item is
-  not closed because code was written; it is closed when something would go red
-  if it regressed.
-* **MEMORY: at most TWO heavy agents at once.** Running two concurrent
-  cargo+go builds OOM'd this 16 GB host earlier today and killed both agents.
-  `mem-guard` must be alive before spawning any (`pgrep -f mem-guard.sh`).
-* **Verify agent claims myself.** This session: a `db`-pool diagnosis of mine
-  was wrong, `skydeploy/control-plane` "fails on main" did not reproduce three
-  times, and a stale artefact produced four wrong verdicts. If a result
-  contradicts the source, suspect the artefact first.
-* **No new false greens.** A gate that cannot fail is worse than no gate — that
-  is the premise this whole cycle was built on.
+- **A1 — cross-backend isolation is not unified.** SQLite "serializable" is a
+  process-wide `SetMaxOpenConns(1)` clamp emitting `BEGIN IMMEDIATE`, not an
+  isolation level; the repo's own test proves READ COMMITTED behaves identically.
+  SSI is real but embedded-only. Goal #2 demands one contract across all three.
+- **A2 — the engine has no index seek.** Every transactional scan is O(all rows)
+  (full iterate + RAM filter); `P.index` does not seek (`TODO(phase3b/4)`).
+  Contradicts the "fast, frequent small reads" north star AND Phase-1's own
+  "ordered range O(log n+k)" gate.
+- **A3 — goal #1 was never designed.** The RAM bound came from main's pre-mandate
+  tiered cache; the default `memory` store never evicts, SSE-connected sessions
+  are never evicted, no test caps session count or bytes, sessions-as-collection
+  was deferred indefinitely.
+- **A4 — tenant identity is not durable, so scoping is unsound.** The engine's
+  write-time tenant tag is explicitly never persisted, so every tenant-scoped
+  read must compare against an app-written, FORGEABLE row column. Goal #5's
+  entire security model rested on this. Design durable, engine-attested tenancy.
+- **A5 — reactivity does not compose with scale.** Embedded-only and
+  single-instance (the capability gate exits the process otherwise), so goal #4
+  cannot hold with goal #2's "scalable" on multi-replica deployments.
+- **A6 — the config layer was never wired end-to-end.** `[data] driver` is a
+  no-op: the compiler writes `DB_DRIVER` (from `[data]` AND legacy `[database]`)
+  and NOTHING reads it; the driver is chosen by DSN shape. A passing test pins
+  the dead key.
 
-## Definition of done
+## Locked decisions (do NOT re-litigate)
 
-Every item above either CLOSED (with a falsifiable gate) or explicitly
-RE-DECLARED with evidence for why it cannot close now and a dated expiry — then
-`main` CI green, then a release tagged.
+- **KEEP the verified substrate; port TESTS, not code.** Pebble + MVCC-in-key
+  (`base.CheckComparer` gate, `Name="skydb.mvcc.v1"` irreversible), the
+  single-writer committer w/ HLC floor, the changefeed, SSI read-set validation,
+  and the errorfs crash corpus are the most-verified parts of the prior work.
+  Everything ABOVE that substrate is redesigned and rebuilt against the new
+  architecture.
+- **Pre-existing Sky.Live runtime bugs are OUT OF SCOPE here** — they affect every
+  Sky app and ship separately on `fix/skylive-runtime-soundness` (off main):
+  the `handleEvent` session hijack, the `sendBeacon` CSRF 403, the reactive
+  gate's first-session `os.Exit`, and `live.go`'s implicit lock contract.
+- **Goal #5 scope is UNRESOLVED and must not be narrowed silently.** The goal
+  says "admin access to records"; "read-only" came from agent-authored docs, not
+  the user. The `goty.rs` collision long blamed for blocking edits does NOT block
+  it (fixed v0.19.1; `Std.Live` never imports `Std.Analytics`). Ask the user.
 
----
+## Reference material (read, don't trust)
 
-## DISPOSITIONS — recorded 2026-08-12
+- `feat/bluedb` — the prior attempt. `docs/bluedb/RESUME.md` there is now
+  ACCURATE (rewritten 2026-08-09) and lists 11 open items + what each gate
+  actually proved. Its design docs are grilled research; its phase ✅ marks are
+  not evidence.
+- `salvage/p5e-foundation` — the console admin-access foundation (authorization
+  funnel with zero trust inputs, engine registry fix), with mutation proofs.
+  Port-worthy against the new design.
+- `exp/bluedb` — the first attempt; hardened SQL browse layer + prior art.
+- Memory: `gate_vacuity_class.md`, `bluedb_clean_slate.md`.
 
-Written after an adversarial Judge, given this file verbatim, returned
-NOT ACHIEVED on `c77b6ec5` with 11 findings. Every disposition below
-names the gate and the CI job that runs it, because "closed" here means
-*something goes red if it regresses*, not *code was written*.
+## Method (per CLAUDE.md §0 / §0.4)
 
-| # | Disposition | Gate | Runs in |
-|---|---|---|---|
-| 1 | **RE-DECLARED**, review by **2027-02-12** | `kernel_signature_coverage.rs` — exact-set ratchet + dated review test + a test asserting the declared count matches the list | `test-rest`, `macos-behaviour` |
-| 2 | **CLOSED** | lenient synthesis narrowed first, `[E1012]` pinned by `ty/tests/reject/corpus/ambiguous_type_name.sky` + census | `test-ty`, `parity-reject` |
-| 3 | **PARTIAL — five named gaps CLOSED, residual RE-DECLARED, review by 2027-02-12** | `DARK_MODULE_CEILING = 62` fail-on-increase + `ASSERTED_MODULES` exact pin | `test-rest` (structural), `behaviour-corpus` (behavioural) |
-| 4 | **PARTIAL — structural half per-push, behavioural half NIGHTLY** | 5x3 `Dict` key-type x ACCESS-SHAPE crossing (operations are crossed inside each cell), 15 manifest rows; the behavioural half now executes at all, which it previously did not anywhere | structural: `test-rest`; behavioural: `nightly-sweep.yml` `behaviour-corpus` (NEW) |
-| 5 | **CLOSED** | `EXPECTED_FILES_WITHOUT_DECLARED_CODE = 0`, three-way census, empty-corpus guard | `test-ty`, `parity-reject` |
-| 6 | **CLOSED** — the count ratchet moved to the per-push face in 6f5048fb; this row said "release-only" after that stopped being true | 49 cases; the skip-to-green path now FAILS when `CI` is set | `lsp-fuzz` |
-| 7 | **CLOSED** (`Std.Email`) / **RE-DECLARED to 2027-02-12** (`Std.Markdown`) | 10 wire-level Go tests; `declared_stdlib_gaps.rs` with expiry | Go wire-level tests: `codegen-build` + `macos-behaviour`; gaps test: `test-rest`; Sky-level suite: `behaviour-docs` |
-| 8 | **CLOSED** | `the_four_uncountable_basics_are_now_counted` asserts both ends | `test-rest` |
-| 9 | **PARTIAL — CI-reachable, not merge-blocking** | `nightly-sweep.yml` `web-runtime`, verdict from exit status | nightly only |
+Per phase: **decide scope → design → grill (≥2 fresh-context adversaries) →
+implement (worktree) → three-leg verify (unit -race + integration + REAL app) →
+fresh-context Judge.** Architecture-Consult is Phase 0 of every compiler-level
+workflow. Commit at verified sub-milestones; push at phase boundaries. Stop only
+on a genuine blocker — surface it and keep the loop alive.
 
-### What is honestly still open
+**Worktree hazard:** 8 of 8 agent worktrees in the prior session were created off
+`main` rather than the branch tip. EVERY agent brief must open with "confirm
+`git log --oneline -1` equals <base>; reset if not."
 
-* **Item 9 is not merge-blocking.** It HAS since been green on `main` — scheduled run 31678446956 at `9d2f6c30`, `web-runtime` success. An earlier line here said "never green on main", which was true when written and false within a day; the nightly that disproved it was dispatched deliberately to find out. Its snapshot
-  arm also cannot see paragraph rendering: the compared snapshots target
-  `section-*` ids that the paragraph/textColumn demo does not carry, which
-  is why it could not have caught the `<div>`-inside-`<p>` defect fixed in
-  `5b62285a`. Promoting it to per-push needs its runtime to be bounded
-  first; that is a separate change, not a line in this table.
-* **Item 6's `LSP_EXPECTED = 49` anti-shrink ratchet runs only at release.**
-  The corpus is enforced per-push; a SHRINK of it is caught one tier later.
-* **Item 3's residual 62 dark modules** are ratcheted against growth, not
-  against staying at 62.
-* **The T2 tier is NIGHTLY, not merge-blocking.** Review by **2027-02-12**.
-  It was first wired per-push on a warm-cache estimate of 274s. The real cost
-  is ~700s locally cold and **over 25 minutes on a GitHub runner**, where it
-  was killed by its own timeout — all 335 cases are `go build`-ed. T1 has a
-  900s ceiling that `ci-green` asserts, so keeping it there meant blowing the
-  budget or raising the ceiling to fit a job I had just added, which is the
-  drift that assertion exists to catch.
+## Non-negotiables
 
-  So a regression in the 383 behavioural assertions lands and is caught the
-  next night rather than at review. That is a real weakening versus per-push
-  and it is stated here rather than rounded up to "closed". The path to
-  closing it is SHARDING: `corpus --run` has no shard or filter flag, so
-  partitioning the 335 cases across a CI matrix is a change to the gate
-  itself. Until then this is strictly better than what it replaced, which
-  was no execution anywhere.
-
-### The lesson this round, recorded because it recurred
-
-Three release gates (`conformance` census, `denominators`, `coverage-ledger`)
-were red on `main` while per-push CI was green, because only `release.yml`
-runs them — the same structural shape as item 9. And the T2 tier, holding
-383 assertions including the crossing built after #174 escaped, ran in **no**
-workflow at all.
-
-Wiring T2 in closes those instances. `ci_green_needs_every_other_job_in_its_workflow`
-is what stops the next one: the fan-in's `needs` list is what makes a job
-merge-blocking, it was hand-maintained, and nothing checked it.
-
-**A tier nobody runs is indistinguishable from a tier that does not exist.**
-Before declaring any future item closed, name the workflow job that runs its
-gate, and confirm that job is in `ci-green.needs`.
-
-### Second Judge pass — 2026-08-13, and what it corrected
-
-A fresh Judge reviewed the table above and returned NOT ACHIEVED. It was right
-on every count below; each is now fixed or restated.
-
-* **The same defect, two tiers over.** T2 was wired in and T3/T4 were still
-  invoked by NOTHING — `apps-ledger-postgres`, `apps-dispatch-postgres`,
-  `apps-fleet` (T3) and `apps-ffi-scale` (T4, the PRE-RELEASE tier, whose whole
-  purpose is to run at release). T3 now runs nightly with a Postgres service;
-  T4 runs in `release.yml`. `every_harness_tier_with_gates_is_invoked_somewhere`
-  now fails if any tier with registered gates is invoked by no workflow and no
-  script — mutation-proven.
-* **Dates that nothing enforced.** Items 3 and 9, and the T2-is-nightly
-  declaration, carried review dates in PROSE only, while items 1 and 7 got real
-  dated gates in the same session. They are now tests in
-  `rust/crates/xtask/tests/mandate_declarations.rs` that go red on their date.
-* **`main` has NO required status checks.** `required_status_checks: null` —
-  PR review is required, green CI is not. So "in `ci-green.needs` ⇒
-  merge-blocking" was false, and the docstring asserting it has been corrected.
-  Enabling required checks is a repo SETTING, outside this tree; until it
-  happens, every gate in this cycle is advisory at merge time.
-* **Row inaccuracies**: item 7`s 10 wire-level Go tests run in `codegen-build` + `macos-behaviour` (not `behaviour-docs`); item 4`s second axis is ACCESS SHAPE, not operation. NOTE: an earlier bullet here claimed item 2`s census runs in `test-rest` rather than the two jobs originally named — a third Judge showed THAT correction was itself wrong (the census is `ty/src/reject_corpus.rs`, invoked from `ty/tests/reject.rs` -> `test-ty` and `xtask/src/reject_gate.rs` -> `parity-reject`). The original row was right; the correction was the error.
-* **Item 9`s gate was RED on `main`, and is now GREEN** — the 5-failure run predated the resilience fixes; scheduled run 31678446956 at `9d2f6c30` passed `web-runtime`. Recorded because the earlier entry was left standing after the evidence changed.
-
-**The rule this pass adds:** a claim about WHERE a gate runs is itself a claim
-that needs checking. Three rows named the wrong job, and one named a property of
-branch protection that was not true. Verify the job, not the intention.
+mem-guard running · timeout-bound every long run · CGO=0 cross-compile green ·
+`-tags pebblegozstd` in every Go test invocation AND in CI (without it CI links
+cgo DataDog zstd while shipped apps link pure-Go klauspost) · `base.CheckComparer`
+is the irreversible gate · no runtime panic or hang from well-typed Sky code ·
+the crash corpus is day-one · every new gate mutation-proven.
