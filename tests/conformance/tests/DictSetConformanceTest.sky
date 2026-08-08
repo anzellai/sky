@@ -128,9 +128,39 @@ setB =
     Set.fromList [ 2, 3, 4 ]
 
 
+-- #173 — an annotated function returning `Dict k (List Record)`. The annotation
+-- forces `rt.AsMapT[[]Record]` over the foldl accumulator (a typed
+-- `map[string][]…`), which used to hit AsMapT's reflect-fallback and drop EVERY
+-- entry → an empty Dict, while the identical unannotated body worked. Pins the
+-- Dict is non-empty AND round-trips its keys.
+type alias Item173 =
+    { name : String, value : Int }
+
+
+buildDict173 : List Item173 -> Dict Int (List Item173)
+buildDict173 items =
+    List.foldl (\item acc -> Dict.insert item.value [ item ] acc) Dict.empty items
+
+
 tests : List Test
 tests =
-    [ -- ══════════════════════════════════════════════════════════════
+    [ -- #173: annotated `Dict k (List Record)` return must NOT come back empty.
+      Test.test "#173 annotated Dict Int (List Record) is non-empty"
+        (\_ -> Test.equal False (Dict.isEmpty (buildDict173 [ { name = "a", value = 10 } ])))
+    , Test.test "#173 annotated Dict Int (List Record) has the inserted entry"
+        (\_ -> Test.equal 1 (Dict.size (buildDict173 [ { name = "a", value = 10 } ])))
+    , Test.test "#173 annotated Dict Int (List Record) is retrievable by key"
+        (\_ ->
+            Test.equal True
+                (case Dict.get 10 (buildDict173 [ { name = "a", value = 10 } ]) of
+                    Just _ ->
+                        True
+
+                    Nothing ->
+                        False
+                )
+        )
+    , -- ══════════════════════════════════════════════════════════════
       -- ORDERING DETERMINISM (HIGH severity — Sky.Live depends on it)
       -- ══════════════════════════════════════════════════════════════
       -- Int keys: numeric sort, independent of insertion order.
