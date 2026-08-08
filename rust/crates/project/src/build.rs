@@ -1857,4 +1857,235 @@ mod sky_toml_tests {
         );
     }
 
+    /// A gated `rt` file's package-level symbols must not be referenced by any
+    /// ungated one. Skipping a file removes its DECLARATIONS, not just its imports,
+    /// so an ungated file that merely *calls* something declared in a gated file
+    /// breaks `go build` for every non-Persist app with `undefined: <symbol>` —
+    /// the identical failure class as the Phase-5e `console_data.go` P0
+    /// (`31b05b35`), one level of indirection away from the import scan.
+    ///
+    /// The hardcoded `bluedb_reactive_gate.go` entry in `materialise_rt`'s skip
+    /// list exists precisely for this case (it imports no bluedb; it references the
+    /// pump's symbols) — and until this gate that mechanism had NO coverage. A
+    /// probe file `rt/zz_probe.go` calling `adminEmbeddedCollections()` while
+    /// importing nothing made every non-Persist app unbuildable with both cargo
+    /// regression tests green.
+    ///
+    /// TRADE-OFF. The strongest possible gate is a real `go build` of the
+    /// materialised tree — it catches imports, symbols, and anything else. It is
+    /// rejected here: `rt` pulls pebble/pgx/otel/sqlite and cgo-only
+    /// `webview_go`, so the build needs a warm module cache, a working cgo
+    /// toolchain and roughly a minute, and it would be a `cargo test` that silently
+    /// degrades wherever Go is absent — the exact "gate green while the thing it
+    /// guards is broken" shape this is fixing. That coverage is bought in CI by the
+    /// `xtask build-run --all` gate, which really `go build`s every example. This
+    /// test is the fast, hermetic, always-runs complement: pure text analysis, no
+    /// toolchain, ~milliseconds, deterministic on every platform.
+    ///
+    /// Non-vacuity: re-create the probe (`rt/zz_probe.go` referencing
+    /// `adminEmbeddedCollections`) and this test fails naming the file and symbol.
+    #[test]
+    fn no_ungated_rt_file_references_a_persist_gated_symbol() {
+        let rt = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../runtime-go/rt")
+            .canonicalize()
+            .expect("runtime-go/rt must exist");
+
+        // Derive the gated set from materialise_rt ITSELF — the difference between a
+        // Persist and a non-Persist materialisation — so it can never drift from the
+        // real gate the way a second hardcoded list would.
+        let base = std::env::temp_dir().join(format!("sky-symbol-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let with_persist = base.join("with");
+        let without_persist = base.join("without");
+        crate::build::materialise_rt(&rt, &with_persist, true, true).unwrap();
+        crate::build::materialise_rt(&rt, &without_persist, true, false).unwrap();
+
+        let listing = |root: &std::path::Path| -> Vec<String> {
+            let mut out = Vec::new();
+            let mut stack = vec![root.to_path_buf()];
+            while let Some(dir) = stack.pop() {
+                for entry in std::fs::read_dir(&dir).unwrap() {
+                    let p = entry.unwrap().path();
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else if p.extension().and_then(|e| e.to_str()) == Some("go") {
+                        out.push(p.strip_prefix(root).unwrap().to_string_lossy().to_string());
+                    }
+                }
+            }
+            out.sort();
+            out
+        };
+        let kept = listing(&without_persist);
+        let gated: Vec<String> = listing(&with_persist)
+            .into_iter()
+            .filter(|f| !kept.contains(f))
+            .collect();
+        let read = |root: &std::path::Path, rel: &str| {
+            std::fs::read_to_string(root.join(rel)).unwrap_or_default()
+        };
+        let gated_src: Vec<(String, String)> = gated
+            .iter()
+            .map(|f| (f.clone(), read(&with_persist, f)))
+            .collect();
+        let kept_src: Vec<(String, String)> = kept
+            .iter()
+            .map(|f| (f.clone(), read(&without_persist, f)))
+            .collect();
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert!(
+            !gated.is_empty(),
+            "the Persist and non-Persist materialisations are identical — materialise_rt's \
+             persist gate is gone, so this test has nothing to check"
+        );
+
+        // Package-level identifiers declared by the gated files, keyed to their file.
+        let mut declared: Vec<(String, String)> = Vec::new(); // (symbol, file)
+        for (file, src) in &gated_src {
+            let mut group: Option<char> = None; // inside `var (` / `const (` / `type (`
+            for line in src.lines() {
+                if group.is_some() {
+                    if line.starts_with(')') {
+                        group = None;
+                    } else if let Some(rest) = line.strip_prefix('\t') {
+                        // One tab exactly — deeper indentation is a continuation line,
+                        // not a declaration.
+                        if let Some(sym) = leading_ident(rest) {
+                            declared.push((sym, file.clone()));
+                        }
+                    }
+                    continue;
+                }
+                for kw in ["func ", "type ", "var ", "const "] {
+                    if let Some(rest) = line.strip_prefix(kw) {
+                        if rest.starts_with('(') && kw != "func " {
+                            group = Some('(');
+                        } else if let Some(sym) = leading_ident(rest) {
+                            // `func (r *T) M()` is a method, not a package-level name —
+                            // `leading_ident` rejects the `(` receiver. `init` is Go's
+                            // per-file initialiser: every file may declare its own and
+                            // none of them is a cross-file reference, so it is never a
+                            // gated symbol.
+                            if sym != "init" {
+                                declared.push((sym, file.clone()));
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        declared.sort();
+        declared.dedup();
+        assert!(
+            declared.len() > 5,
+            "extracted only {} package-level symbols from the gated files {:?} — the \
+             extractor is broken, so this gate would pass vacuously",
+            declared.len(),
+            gated
+        );
+
+        // Any use of those names from a file that DOES survive into a non-Persist
+        // project is an `undefined:` build failure waiting to happen.
+        let mut leaks: Vec<String> = Vec::new();
+        for (file, src) in &kept_src {
+            let body = strip_go_comments_and_strings(src);
+            for (sym, owner) in &declared {
+                if references_ident(&body, sym) {
+                    leaks.push(format!("rt/{file} references `{sym}` (declared in rt/{owner})"));
+                }
+            }
+        }
+        assert!(
+            leaks.is_empty(),
+            "{} ungated rt file(s) reference symbols declared ONLY in Persist-gated files:\n  \
+             {}\n\
+             Those declarations are absent from a non-Persist project, so `go build` fails \
+             with `undefined: <symbol>` for EVERY non-Persist app (01-hello-world included).\n\
+             Fix by moving the reference behind a hook whose default lives in an ungated \
+             file (the rt/live_reactive_hooks.go pattern), or by adding the referencing \
+             file to materialise_rt's skip list.",
+            leaks.len(),
+            leaks.join("\n  ")
+        );
+    }
+
+    /// First identifier at the head of `s`, if `s` starts with one.
+    fn leading_ident(s: &str) -> Option<String> {
+        let mut it = s.chars();
+        let first = it.next()?;
+        if !(first.is_ascii_alphabetic() || first == '_') {
+            return None;
+        }
+        let ident: String = std::iter::once(first)
+            .chain(it.take_while(|c| c.is_ascii_alphanumeric() || *c == '_'))
+            .collect();
+        if ident == "_" { None } else { Some(ident) }
+    }
+
+    /// Blank out comments and string/rune literals so identifier matching cannot
+    /// fire on prose or on data. Lengths are not preserved; only tokens matter.
+    fn strip_go_comments_and_strings(src: &str) -> String {
+        let b: Vec<char> = src.chars().collect();
+        let mut out = String::with_capacity(src.len());
+        let mut i = 0;
+        while i < b.len() {
+            let c = b[i];
+            let next = b.get(i + 1).copied();
+            if c == '/' && next == Some('/') {
+                while i < b.len() && b[i] != '\n' {
+                    i += 1;
+                }
+            } else if c == '/' && next == Some('*') {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == '*' && b[i + 1] == '/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                out.push(' ');
+            } else if c == '"' || c == '\'' {
+                i += 1;
+                while i < b.len() && b[i] != c {
+                    i += if b[i] == '\\' { 2 } else { 1 };
+                }
+                i += 1;
+                out.push(' ');
+            } else if c == '`' {
+                i += 1;
+                while i < b.len() && b[i] != '`' {
+                    i += 1;
+                }
+                i += 1;
+                out.push(' ');
+            } else {
+                out.push(c);
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// True when `body` uses `sym` as a bare identifier — not as a selector
+    /// (`x.sym`, which resolves against another package or a struct field) and not
+    /// as part of a longer name.
+    fn references_ident(body: &str, sym: &str) -> bool {
+        let bytes = body.as_bytes();
+        let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        let mut from = 0;
+        while let Some(rel) = body[from..].find(sym) {
+            let at = from + rel;
+            let end = at + sym.len();
+            let before = at.checked_sub(1).map(|i| bytes[i]);
+            let after = bytes.get(end).copied();
+            let boundary_l = before.is_none_or(|c| !word(c) && c != b'.');
+            let boundary_r = after.is_none_or(|c| !word(c));
+            if boundary_l && boundary_r {
+                return true;
+            }
+            from = end;
+        }
+        false
+    }
 }
