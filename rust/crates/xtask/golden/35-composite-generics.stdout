@@ -4,10 +4,10 @@ Rows: 20  Accounts: 7  Categories: 10
 Total: $9316.52  Avg: $465.83  Median: -$12.30  Max: $4200.00  Min: -$1800.00
 ------------------------------------------------------------
 Bucket       Count        Total      Average   Top Accounts
-income          0        $0.00        $0.00  
-expense         0        $0.00        $0.00  
-refund          0        $0.00        $0.00  
-transfer        0        $0.00        $0.00  
+income          6    $13020.80     $2170.13  eta,zeta,epsilon
+expense        11    -$4479.28     -$407.21  eta,zeta,epsilon
+refund          2      $275.00      $137.50  epsilon,beta
+transfer        1      $500.00      $500.00  gamma
 unknown         0        $0.00        $0.00  
 ------------------------------------------------------------
 Per-account totals
@@ -34,31 +34,44 @@ Generated at: <ts>
   "buckets": [
     {
       "bucket": "income",
-      "count": 0,
-      "totalCents": 0,
-      "averageCents": 0,
-      "topAccounts": []
+      "count": 6,
+      "totalCents": 1302080,
+      "averageCents": 217013.33333333334,
+      "topAccounts": [
+        "eta",
+        "zeta",
+        "epsilon"
+      ]
     },
     {
       "bucket": "expense",
-      "count": 0,
-      "totalCents": 0,
-      "averageCents": 0,
-      "topAccounts": []
+      "count": 11,
+      "totalCents": -447928,
+      "averageCents": -40720.72727272727,
+      "topAccounts": [
+        "eta",
+        "zeta",
+        "epsilon"
+      ]
     },
     {
       "bucket": "refund",
-      "count": 0,
-      "totalCents": 0,
-      "averageCents": 0,
-      "topAccounts": []
+      "count": 2,
+      "totalCents": 27500,
+      "averageCents": 13750,
+      "topAccounts": [
+        "epsilon",
+        "beta"
+      ]
     },
     {
       "bucket": "transfer",
-      "count": 0,
-      "totalCents": 0,
-      "averageCents": 0,
-      "topAccounts": []
+      "count": 1,
+      "totalCents": 50000,
+      "averageCents": 50000,
+      "topAccounts": [
+        "gamma"
+      ]
     },
     {
       "bucket": "unknown",
