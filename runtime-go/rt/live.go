@@ -4550,7 +4550,14 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		respAck := ackInputsForPrevTree(sess)
 		sess.mu.Unlock()
 		w.Header().Set("X-Sky-Status", "desync")
-		writeEventHTML(w, respSeq, respAck, body) // also sets X-Sky-Live: 1
+		// G2 (grill A1 — acked-then-lost). This arm re-rendered the view,
+		// advanced localSeq and is about to ack a FULL BODY, then `return`s —
+		// BEFORE handleEvent's store.Set further down. Unpersisted, the client's
+		// __skyLastAppliedSeq leads the stored OutSeq, and after a restart every
+		// replayed frame is silently discarded (the page freezes until a hard
+		// reload). Route through the funnel's POST-response arm so the persist
+		// cannot be skipped by an early return.
+		app.persistAndWriteEventHTML(sid, sess, w, respSeq, respAck, body) // also sets X-Sky-Live: 1
 		return
 	}
 	// TEA application: if msg is a curried constructor (for onInput /
@@ -5358,16 +5365,110 @@ func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentCtx
 // leaving reactiveRefreshOnce (bluedb_reactive.go) and dispatchOneWsSub
 // (websocket.go) raw-sending unpersisted, so the "single funnel" was 4 of 6 ack
 // sites. Both are routed through here as of G1.
+//
+// G2 generalised the funnel: persistAndShipFrame is the sess.sseCh ARM of it.
+// Three ack paths write their frame straight to the http.ResponseWriter instead
+// of enqueuing (the SSE reconnect-resync, the SSE drop-resync, and the
+// handleEvent desync reply) — they cannot use this helper's signature, and all
+// three were shipping unpersisted. They now share the same persist primitive
+// through persistAndWriteSSEFrame / persistAndWriteEventHTML below. See
+// `TestPersistBeforeAck_FunnelIsSoleSender` for the structural enforcement of
+// both arms.
 func (app *liveApp) persistAndShipFrame(sess *liveSession, frame sseFrame) bool {
-	if app.store != nil {
-		app.store.Set(sess.sid, sess)
-	}
+	app.persistBeforeAck(sess.sid, sess)
 	select {
 	case sess.sseCh <- frame:
 		return true
 	default:
 		return false
 	}
+}
+
+// persistBeforeAck is the durability funnel's PERSIST PRIMITIVE — the one place
+// the session is made durable ahead of a client-visible ack. Every arm of the
+// funnel calls it, so the "persist" half of persist-before-ack exists exactly
+// once and cannot drift between the channel arm and the direct-writer arms.
+//
+// `sid` is passed explicitly rather than read off sess.sid: only handleInitial
+// assigns sess.sid, so a session restored from a store (or built by a test)
+// can carry an empty sid while the request that is about to ack knows the real
+// one. Persisting under the wrong key is silently as bad as not persisting.
+//
+// nil store (unit tests / no configured store) is a no-op — the same tolerance
+// persistAndShipFrame has always had. Two of the three direct-writer sites this
+// replaced called app.store.Set UNGUARDED.
+func (app *liveApp) persistBeforeAck(sid string, sess *liveSession) {
+	if app == nil || sess == nil || app.store == nil {
+		return
+	}
+	app.store.Set(sid, sess)
+}
+
+// writeSSEEvent is the ONE raw SSE wire writer in the package: every `event: …`
+// line the server emits goes through here. Keeping it singular is what lets the
+// tripwire assert that no NEW direct-to-ResponseWriter ack path can appear
+// without going through the funnel — a hand-rolled `fmt.Fprintf(w, "event: …")`
+// anywhere else fails `TestPersistBeforeAck_NoRawSSEWriters`.
+func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event, data string) error {
+	// Escape newlines: an SSE `data:` line ends at the first newline, so an
+	// un-escaped body would truncate the frame mid-HTML.
+	escaped := strings.ReplaceAll(data, "\n", "\\n")
+	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, escaped); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	return nil
+}
+
+// writeSSEControl emits a CONNECTION-CONTROL event (hello, heartbeat). These
+// carry no session state, mutate no Model and advance no localSeq, so they are
+// outside the durability funnel by construction — there is nothing for a crash
+// to lose. Named distinctly from the frame writers so the tripwire can tell
+// "control chatter" apart from "an ack the client will apply".
+func writeSSEControl(w http.ResponseWriter, flusher http.Flusher, event, data string) error {
+	return writeSSEEvent(w, flusher, event, data)
+}
+
+// writeSSERelayed forwards a frame that ALREADY came off sess.sseCh — i.e. one
+// that persistAndShipFrame has already persisted. It is a transport step, not
+// an ack origin: it neither renders nor advances a seq. Anything that PRODUCES
+// a frame must go through persistAndShipFrame or persistAndWriteSSEFrame.
+func writeSSERelayed(w http.ResponseWriter, flusher http.Flusher, fr sseFrame) error {
+	return writeSSEEvent(w, flusher, sseEventNameOrDefault(fr), fr.data)
+}
+
+// sseEventNameOrDefault: producers leave `event` empty for the legacy
+// full-body envelope, whose wire name is `patch`.
+func sseEventNameOrDefault(fr sseFrame) string {
+	if fr.event == "" {
+		return "patch"
+	}
+	return fr.event
+}
+
+// persistAndWriteSSEFrame is the DIRECT-WRITER ARM of the durability funnel:
+// same persist-before-ack contract as persistAndShipFrame, but the frame goes
+// straight down an already-open SSE stream rather than onto sess.sseCh.
+//
+// Both resync paths need this shape. They deliberately bypass sess.sseCh so a
+// FULL buffer cannot block the correction they exist to deliver — which is
+// exactly why they could not call persistAndShipFrame, and exactly how they
+// ended up acking a fresh localSeq the store had never seen.
+func (app *liveApp) persistAndWriteSSEFrame(sid string, sess *liveSession, w http.ResponseWriter, flusher http.Flusher, fr sseFrame) error {
+	app.persistBeforeAck(sid, sess)
+	return writeSSEEvent(w, flusher, sseEventNameOrDefault(fr), fr.data)
+}
+
+// persistAndWriteEventHTML is the POST-RESPONSE ARM of the durability funnel:
+// the /_sky/event reply IS the ack (the client applies the body and advances
+// __skyLastAppliedSeq to the seq it carries), so a reply that ships a fresh
+// localSeq must persist first. Used by the desync soft-resync reply, which
+// returns before handleEvent's own store.Set.
+func (app *liveApp) persistAndWriteEventHTML(sid string, sess *liveSession, w http.ResponseWriter, seq int64, ackInputs map[string]int64, body string) {
+	app.persistBeforeAck(sid, sess)
+	writeEventHTML(w, seq, ackInputs, body)
 }
 
 func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
@@ -6220,11 +6321,8 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		"sid": sid,
 		"ts":  time.Now().UnixMilli(),
 	})
-	if _, err := fmt.Fprintf(w, "event: hello\ndata: %s\n\n", helloPayload); err != nil {
+	if err := writeSSEControl(w, flusher, "hello", string(helloPayload)); err != nil {
 		return
-	}
-	if flusher != nil {
-		flusher.Flush()
 	}
 
 	// Reconnect-resync: every fresh SSE connection re-renders the current
@@ -6242,82 +6340,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// Skips when sess.model is nil, which only happens before
 	// handleInitial has run for this session (defensive — the cookie
 	// path normally pre-creates the session before SSE opens).
-	sess.mu.Lock()
-	if sess.model != nil {
-		// v0.18.4 — reconcile the session's page with THIS connection's
-		// URL before the resync render. A full document load (fresh
-		// page, reload, or bfcache Back/Forward) reopens the SSE
-		// carrying its `location.pathname` in `?path`. Unlike a full
-		// GET, a bfcache restore does NOT re-run the route handler, so
-		// `sess.model.Page` can be stale relative to the URL the browser
-		// is actually showing (the last page navigated TO) — the resync
-		// would then push that stale page as a full-body frame over the
-		// restored DOM, so hitting Back "refreshes" onto the page you
-		// just left. Applying the route here lands the tab on the page
-		// its URL names; per the v0.18 shared-page mirror a full-document
-		// connection IS a navigation, so that becomes the session's page.
-		// Guards: only when the client sent a `path` AND it matches a
-		// registered route (an absent param from an older cached client,
-		// or an unroutable path, falls through to the pre-v0.18.4
-		// behaviour — render the stored page as-is). Idempotent when the
-		// tab is already on the page its URL names (the common reconnect
-		// / same-page case), so no extra work and no regression there.
-		if p := r.URL.Query().Get("path"); p != "" {
-			if _, ok := matchAnyRoute(app, p); ok {
-				sess.model = applyRoute(app, sess.model, p)
-			}
-		}
-		// Recover from any panic in view() so a bad render doesn't tear
-		// down the SSE connection. The recovered SSE just enters its
-		// for-select loop with the legacy prevTree / lastComputedBody /
-		// lastShippedBody untouched.
-		//
-		// Cycle 3 P41 / Gap C6: snapshot under sess.mu, then release
-		// the lock BEFORE the JSON marshal + HTTP write. The previous
-		// shape held the mutex for the full render + marshal + write,
-		// blocking every concurrent dispatcher on this session. The
-		// for-select loop below runs in this same goroutine so there
-		// is no race against sseCh-fed frames during the write; seq
-		// ordering is preserved because nextLocalSeq runs inside the
-		// lock-held prepareFrameSnapshot.
-		var snap frameSnapshot
-		var haveSnap bool
-		func() {
-			// v0.16.21: defer/recover absorbed into safeViewCall.
-			// Previously this was a bare `defer func() { _ = recover() }()`
-			// that silently swallowed panics with no log — admins couldn't
-			// see why frames started looking wrong. safeViewCall emits
-			// structured logs + renders a recoverable error notice.
-			vn, _ := app.safeViewCall(sess.model)
-			assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
-			applyStyleInjections(&vn)
-			sess.handlers = map[string]any{}
-			body := renderVNode(vn, sess.handlers)
-			// Reconnect-resync writes the resync frame DIRECTLY to
-			// the SSE response writer below — so this body is both
-			// just-computed AND just-shipped, and the next tick's
-			// suppression must compare against it.
-			sess.commitRender(&vn, body)
-			sess.lastShippedBody = body
-			snap = sess.prepareFrameSnapshot(body)
-			haveSnap = true
-		}()
-		sess.mu.Unlock()
-		if haveSnap {
-			frame := encodeSSEFrameFromSnapshot(snap)
-			escaped := strings.ReplaceAll(frame, "\n", "\\n")
-			_, _ = fmt.Fprintf(w, "event: patch\ndata: %s\n\n", escaped)
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-		// Persist the rebuilt prevTree + lastComputedBody +
-		// lastShippedBody so future events diff against the
-		// new-binary view and don't fall back to full-body.
-		app.store.Set(sid, sess)
-	} else {
-		sess.mu.Unlock()
-	}
+	app.shipReconnectResync(sid, sess, r.URL.Query().Get("path"), w, flusher)
 
 	// NOTE: a server-side "one SSE per session" supersede was tried and
 	// REVERTED. EventSource auto-reconnects when the server gracefully ends a
@@ -6356,36 +6379,25 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			// it. Written DIRECTLY to w (not via sseOut) so a full buffer can't
 			// block the correction; its fresh seq > any stale buffered frame's,
 			// so the client's seq guard orders it. Reuses the reconnect render.
-			if snap, ok := app.renderResyncFrame(sess); ok {
-				frame := encodeSSEFrameFromSnapshot(snap)
-				escaped := strings.ReplaceAll(frame, "\n", "\\n")
-				if _, err := fmt.Fprintf(w, "event: patch\ndata: %s\n\n", escaped); err != nil {
-					return
-				}
-				if flusher != nil {
-					flusher.Flush()
-				}
+			if err := app.shipDropResync(sid, sess, w, flusher); err != nil {
+				return
 			}
 			sess.clearConnOutOfSync(connID)
 		case fr := <-sseOut:
-			// Escape newlines for SSE data lines. Cycle 3 P50a /
-			// Gap C11: the event name now travels with the frame —
-			// producers choose `event: patches` (structural diff)
-			// or `event: patch` (legacy full body) via
-			// chooseSSEFrame. Both consumers exist on the client:
-			// the legacy `patch` listener is unchanged, and P50b
-			// adds the `patches` listener that routes through
+			// Cycle 3 P50a / Gap C11: the event name travels with the
+			// frame — producers choose `event: patches` (structural
+			// diff) or `event: patch` (legacy full body) via
+			// chooseSSEFrame. Both consumers exist on the client: the
+			// legacy `patch` listener is unchanged, and P50b adds the
+			// `patches` listener that routes through
 			// __skyApplyPatches.
-			ev := fr.event
-			if ev == "" {
-				ev = "patch"
-			}
-			escaped := strings.ReplaceAll(fr.data, "\n", "\\n")
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev, escaped); err != nil {
+			//
+			// This is a RELAY, not an ack origin: the frame came off
+			// sess.sseCh, so persistAndShipFrame already persisted the
+			// mutation it carries. Nothing is rendered and no seq is
+			// advanced here.
+			if err := writeSSERelayed(w, flusher, fr); err != nil {
 				return
-			}
-			if flusher != nil {
-				flusher.Flush()
 			}
 		case t := <-heartbeat.C:
 			// L3: an open connection keeps its session alive. Without this, only
@@ -6394,11 +6406,9 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			// next click then 404'd. The heartbeat already proves the client is
 			// present; treat it as activity.
 			sess.touchLastSeen()
-			if _, err := fmt.Fprintf(w, "event: heartbeat\ndata: {\"ts\":%d}\n\n", t.UnixMilli()); err != nil {
+			if err := writeSSEControl(w, flusher, "heartbeat",
+				fmt.Sprintf(`{"ts":%d}`, t.UnixMilli())); err != nil {
 				return
-			}
-			if flusher != nil {
-				flusher.Flush()
 			}
 		}
 	}
@@ -6893,21 +6903,114 @@ func (s *liveSession) hasSSEConnOtherThan(exceptTab string) bool {
 func (app *liveApp) renderResyncFrame(sess *liveSession) (frameSnapshot, bool) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	return app.renderResyncFrameLocked(sess)
+}
+
+// renderResyncFrameLocked is renderResyncFrame's body; the reconnect-resync
+// needs the SAME render but under a lock it already holds (it reconciles the
+// route into sess.model first, and that mutation plus this render must be one
+// atomic step). MUST be called with sess.mu held.
+func (app *liveApp) renderResyncFrameLocked(sess *liveSession) (frameSnapshot, bool) {
 	if sess.model == nil {
 		return frameSnapshot{}, false
 	}
 	var snap frameSnapshot
 	func() {
+		// v0.16.21: defer/recover absorbed into safeViewCall — a panicking
+		// view() is logged structurally and renders a recoverable notice
+		// instead of tearing down the SSE connection.
 		vn, _ := app.safeViewCall(sess.model)
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		sess.handlers = map[string]any{}
 		body := renderVNode(vn, sess.handlers)
+		// Both resync paths write the frame DIRECTLY to the SSE response
+		// writer — so this body is both just-computed AND just-shipped, and
+		// the next tick's suppression must compare against it.
 		sess.commitRender(&vn, body)
 		sess.lastShippedBody = body
 		snap = sess.prepareFrameSnapshot(body)
 	}()
 	return snap, true
+}
+
+// shipReconnectResync is the reconnect arm of the resync pair: reconcile the
+// session's page with THIS connection's URL, re-render, then persist-before-ack
+// the full-body frame straight down the freshly-opened SSE stream.
+//
+// v0.18.4 — the route reconcile. A full document load (fresh page, reload, or
+// bfcache Back/Forward) reopens the SSE carrying its `location.pathname` in
+// `?path`. Unlike a full GET, a bfcache restore does NOT re-run the route
+// handler, so sess.model.Page can be stale relative to the URL the browser is
+// actually showing (the last page navigated TO) — the resync would then push
+// that stale page as a full-body frame over the restored DOM, so hitting Back
+// "refreshes" onto the page you just left. Applying the route here lands the tab
+// on the page its URL names; per the v0.18 shared-page mirror a full-document
+// connection IS a navigation, so that becomes the session's page. Guards: only
+// when the client sent a `path` AND it matches a registered route (an absent
+// param from an older cached client, or an unroutable path, falls through to the
+// pre-v0.18.4 behaviour — render the stored page as-is). Idempotent when the tab
+// is already on the page its URL names (the common reconnect / same-page case).
+//
+// Cycle 3 P41 / Gap C6: snapshot under sess.mu, then release the lock BEFORE the
+// marshal + HTTP write, so a concurrent dispatcher isn't blocked for the whole
+// encode. handleSSE's for-select loop runs in this same goroutine, so there is
+// no race against sseCh-fed frames during the write; seq ordering is preserved
+// because nextLocalSeq runs inside the lock-held prepareFrameSnapshot.
+//
+// G2 (grill A1 — acked-then-lost): the persist used to come AFTER the write.
+// That is the precise inversion the funnel exists to prevent — the client's
+// __skyLastAppliedSeq advances to the resync seq, and a crash before the
+// trailing store.Set leaves the store behind it; on restart every replayed frame
+// is silently discarded and the page freezes with no error. It also called
+// app.store.Set unguarded, unlike the funnel. Routed through the funnel's
+// direct-writer arm, which persists first and tolerates a nil store.
+func (app *liveApp) shipReconnectResync(sid string, sess *liveSession, path string, w http.ResponseWriter, flusher http.Flusher) {
+	sess.mu.Lock()
+	if sess.model == nil {
+		sess.mu.Unlock()
+		return
+	}
+	if path != "" {
+		if _, ok := matchAnyRoute(app, path); ok {
+			sess.model = applyRoute(app, sess.model, path)
+		}
+	}
+	snap, haveSnap := app.renderResyncFrameLocked(sess)
+	sess.mu.Unlock()
+	if !haveSnap {
+		// The render produced no frame, so there is no ack — but the
+		// rebuilt session state is still worth persisting, exactly as the
+		// pre-funnel unconditional store.Set did.
+		app.persistBeforeAck(sid, sess)
+		return
+	}
+	// Write errors are ignored (as before): a dead connection is torn down by
+	// the for-select loop's r.Context().Done() arm, and the persist has
+	// already happened either way.
+	_ = app.persistAndWriteSSEFrame(sid, sess, w, flusher,
+		sseFrame{event: "patch", data: encodeSSEFrameFromSnapshot(snap)})
+}
+
+// shipDropResync is the drop arm of the resync pair (#9): a frame for THIS
+// connection was dropped by a full per-connection buffer, so its DOM has
+// silently diverged. Re-render and ship the current full view to correct it,
+// written DIRECTLY to w (not via sseOut) so a full buffer cannot block the
+// correction; the fresh seq exceeds any stale buffered frame's, so the client's
+// seq guard orders it.
+//
+// G2 (grill A1 — acked-then-lost): this path re-rendered and advanced localSeq
+// but NEVER persisted. It fires exactly when the client is already diverged, so
+// the stored OutSeq lagged what the client had actually applied — the worst
+// possible moment to lose the seq. Routed through the funnel's direct-writer arm.
+// Returns the write error so the caller can tear the connection down.
+func (app *liveApp) shipDropResync(sid string, sess *liveSession, w http.ResponseWriter, flusher http.Flusher) error {
+	snap, ok := app.renderResyncFrame(sess)
+	if !ok {
+		return nil
+	}
+	return app.persistAndWriteSSEFrame(sid, sess, w, flusher,
+		sseFrame{event: "patch", data: encodeSSEFrameFromSnapshot(snap)})
 }
 
 // liveJS keeps the historical signature (used by tests + any external
