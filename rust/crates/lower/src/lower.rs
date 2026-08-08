@@ -2380,11 +2380,29 @@ impl<'a> Ctx<'a> {
     /// `func(x, y) R { <destructure>; return body }`. Mirrors `lower_def`'s
     /// param binding; used for `let`-bound helper functions.
     fn lower_local_fn(&mut self, params: &[PatId], body: ExprId) -> GoExpr {
+        // Row-polymorphism detection for the LOCAL fn — the same rule `lower_def`
+        // applies to a top-level def's params, but scoped to THIS closure's
+        // params + its body result. A param whose inferred type is an OPEN record
+        // sharing its row-var with the result (or another param) must lower to
+        // `any` so the body's record reads/updates take the reflective
+        // `rt.Field`/`rt.RecordUpdate` path. A subset closed struct would DROP the
+        // row-carried fields (#171: `addValues acc = { acc | value = … }` erased
+        // `acc` to `struct{Value any}` and lost `name`, so a foldl accumulator
+        // came back with a zeroed `name`). `lower_def` runs this for top-level
+        // defs; local fns went through `bind_param` with no row-poly awareness.
+        let (rp_params, rp_result) = self.local_fn_row_poly(params, body);
+
         let mut gparams: Vec<GoParam> = Vec::new();
         let mut destructure: Vec<GoStmt> = Vec::new();
         let mut ptys: Vec<GoTy> = Vec::new();
-        for p in params {
-            let (pname, pty, binds) = self.bind_param(*p, None);
+        for (i, p) in params.iter().enumerate() {
+            let (pname, mut pty, binds) = self.bind_param(*p, None);
+            if *rp_params.get(i).unwrap_or(&false) {
+                pty = GoTy::Any;
+                if let Pattern::Var(id) = &self.body.pats[*p] {
+                    self.local_tys.insert(*id, GoTy::Any);
+                }
+            }
             ptys.push(pty.clone());
             gparams.push(GoParam {
                 name: pname,
@@ -2392,12 +2410,52 @@ impl<'a> Ctx<'a> {
             });
             destructure.extend(binds);
         }
-        let ret_ty = self.expr_ty(body);
+        // Row-poly result → `any` (matches the reflective `rt.RecordUpdate` body),
+        // mirroring `lower_def`'s `result_row_poly` handling.
+        let ret_ty = if rp_result {
+            GoTy::Any
+        } else {
+            self.expr_ty(body)
+        };
         let b = self.lower_expr(body, &ret_ty);
         let mut stmts = destructure;
         stmts.push(GoStmt::Return(Some(b)));
         let fn_ty = GoTy::Func(ptys, Box::new(ret_ty.clone()));
         GoExpr::new(GoExprKind::FuncLit(gparams, ret_ty, stmts), fn_ty)
+    }
+
+    /// Row-polymorphism flags for a LOCAL fn — `(per-param, result)`. Mirrors the
+    /// free `row_poly_flags` (which reads the enclosing def's `body.params` +
+    /// `types.result`), but over THIS closure's `params` and its body-expr result
+    /// type (`types.exprs[body]`). A position is row-poly when its inferred type
+    /// is an OPEN record whose extension-var name is SHARED (count ≥ 2) across the
+    /// param/result positions — the row var flows through, as in
+    /// `\acc -> { acc | value = … }`.
+    fn local_fn_row_poly(&self, params: &[PatId], body: ExprId) -> (Vec<bool>, bool) {
+        use std::collections::HashMap as Hm;
+        let param_tys: Vec<Option<Ty>> = params
+            .iter()
+            .map(|p| match &self.body.pats[*p] {
+                Pattern::Var(id) => self.types.locals.get(id).cloned(),
+                _ => None,
+            })
+            .collect();
+        let result_ty = self.types.exprs.get(&body).cloned();
+        let mut counts: Hm<Name, u32> = Hm::new();
+        for t in param_tys
+            .iter()
+            .map(|t| t.as_ref())
+            .chain(std::iter::once(result_ty.as_ref()))
+        {
+            if let Some(name) = record_ext_name(t) {
+                *counts.entry(name.clone()).or_insert(0) += 1;
+            }
+        }
+        let is_rp =
+            |t: Option<&Ty>| record_ext_name(t).is_some_and(|n| counts.get(n).copied().unwrap_or(0) >= 2);
+        let pflags = param_tys.iter().map(|t| is_rp(t.as_ref())).collect();
+        let rflag = is_rp(result_ty.as_ref());
+        (pflags, rflag)
     }
 
     // ---- expression lowering -------------------------------------------
