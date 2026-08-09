@@ -56,8 +56,6 @@ pub struct ChildRun {
     /// Set when a result file existed but carried a generation other than the
     /// one being awaited. The result is **discarded**, never used.
     pub generation_mismatch: bool,
-    pub stdout: String,
-    pub stderr: String,
 }
 
 impl ChildRun {
@@ -69,8 +67,6 @@ impl ChildRun {
             elapsed,
             spawn_error: Some(msg),
             generation_mismatch: false,
-            stdout: String::new(),
-            stderr: String::new(),
         }
     }
 }
@@ -111,8 +107,20 @@ pub fn run_gate_in_child(
         .arg(result_path)
         .current_dir(repo_root)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        // INHERITED, not piped. Two reasons, one of them a deadlock:
+        //
+        // 1. A piped child that outruns the 64 KB pipe buffer BLOCKS until the
+        //    parent reads, and the parent cannot read until it stops polling —
+        //    so a chatty gate would wedge, hit its budget, and be killed and
+        //    reported FAIL for being verbose. The supervisor must never be a
+        //    source of the failures it reports.
+        // 2. Inheriting keeps the wrapped verifier's human-readable output in
+        //    the CI log, which is the whole reason v2 §7.5 wraps these scripts
+        //    instead of rewriting them. The VERDICT still comes only from the
+        //    generation-stamped result file — streaming the text costs nothing
+        //    because nothing parses it.
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
 
     // The whole point. `process_group(0)` makes the child a process-group
     // leader (its pgid == its pid), so every process it spawns — and every
@@ -171,7 +179,6 @@ fn supervise(
     };
 
     let elapsed = started.elapsed();
-    let (stdout, stderr) = drain(&mut child);
 
     // Read the result BEFORE deciding anything, so a generation mismatch is
     // observable and reportable rather than silently absent.
@@ -184,22 +191,7 @@ fn supervise(
         elapsed,
         spawn_error: None,
         generation_mismatch,
-        stdout,
-        stderr,
     }
-}
-
-fn drain(child: &mut Child) -> (String, String) {
-    use std::io::Read;
-    let mut out = String::new();
-    let mut err = String::new();
-    if let Some(mut s) = child.stdout.take() {
-        let _ = s.read_to_string(&mut out);
-    }
-    if let Some(mut s) = child.stderr.take() {
-        let _ = s.read_to_string(&mut err);
-    }
-    (out, err)
 }
 
 /// Escalating kill of the child's entire process group.

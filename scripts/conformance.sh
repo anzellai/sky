@@ -11,13 +11,34 @@
 # if ANY suite has a failing assertion — wire this into `sky verify` / CI /
 # the release gate.
 #
-# Usage: scripts/conformance.sh            # run all suites
-#        scripts/conformance.sh Store      # run only *Store* suites
+# Usage: scripts/conformance.sh                 # run all suites
+#        scripts/conformance.sh Store           # run only *Store* suites
+#        scripts/conformance.sh --json <path>   # + a machine-readable manifest
+#
+# --json writes a manifest of (suite, exit_code, per-suite Sky.Test report).
+# It deliberately does NOT aggregate: this script emits only values it
+# controls (a basename, an integer, a path) and never parses JSON, because a
+# shell that parses its own output is how `grep -qE "0 fail"` came to match
+# inside "10 fail". The aggregation and the verdict belong to the caller, which
+# has a real JSON parser — see `xtask harness`'s `conformance` gate.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJ="$ROOT/tests/conformance"
-FILTER="${1:-}"
+
+FILTER=""
+JSON_OUT=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --json)
+            [ $# -ge 2 ] || { echo "conformance: --json requires a path" >&2; exit 2; }
+            JSON_OUT="$2"; shift 2 ;;
+        --*)
+            echo "conformance: unknown option $1" >&2; exit 2 ;;
+        *)
+            FILTER="$1"; shift ;;
+    esac
+done
 # Prefer the compiler in THIS tree over whatever `sky` is installed on PATH.
 # Defaulting to PATH meant the behavioural conformance suite could certify a
 # months-old installed binary while the tree under test was never exercised —
@@ -63,6 +84,15 @@ fi
 cd "$PROJ"
 fail=0
 ran=0
+
+# Per-suite Sky.Test JSON reports live here; the manifest points at them.
+REPORT_DIR="$ROOT/.skycache/conformance-reports"
+if [ -n "$JSON_OUT" ]; then
+    rm -rf "$REPORT_DIR"
+    mkdir -p "$REPORT_DIR"
+    : >| "$JSON_OUT.entries"
+fi
+
 for suite in tests/*Test.sky; do
     [ -e "$suite" ] || continue
     base="$(basename "$suite" .sky)"
@@ -73,17 +103,41 @@ for suite in tests/*Test.sky; do
     echo "── $base ──────────────────────────────────────────"
     # unique out dir per suite so parallel/repeat runs don't clobber
     out="sky-out-conf-$base"
-    if run_suite 180 "$SKY" test "$suite" --out "$out" 2>&1 | tee "/tmp/conf-$base.log" | tail -30; then
-        # `sky test` exit code is the source of truth; also guard on the summary line
-        if grep -qE "[1-9][0-9]* failed" "/tmp/conf-$base.log"; then
-            fail=$((fail + 1))
-        fi
-    else
-        echo "!! $base: sky test exited non-zero" >&2
+    report=""
+    if [ -n "$JSON_OUT" ]; then
+        report="$REPORT_DIR/$base.json"
+        rm -f "$report"
+    fi
+    rc=0
+    # Exported explicitly rather than as an assignment prefix: the prefix form
+    # in front of a shell FUNCTION has shell-dependent export semantics, and a
+    # silently-unset SKY_TEST_JSON would produce an empty manifest that the
+    # caller would have to treat as a failure.
+    export SKY_TEST_JSON="$report"
+    run_suite 180 "$SKY" test "$suite" --out "$out" 2>&1 \
+        | tee "/tmp/conf-$base.log" | tail -30
+    rc=${PIPESTATUS[0]}
+    unset SKY_TEST_JSON
+    if [ "$rc" -ne 0 ]; then
+        echo "!! $base: sky test exited non-zero (rc=$rc)" >&2
         fail=$((fail + 1))
+    fi
+    if [ -n "$JSON_OUT" ]; then
+        printf '{"name":"%s","exit_code":%d,"report":"%s"},\n' \
+            "$base" "$rc" "$report" >> "$JSON_OUT.entries"
     fi
     echo ""
 done
+
+if [ -n "$JSON_OUT" ]; then
+    {
+        printf '{\n  "suites": [\n'
+        # strip the trailing comma from the last entry
+        sed '$ s/,$//' "$JSON_OUT.entries"
+        printf '  ],\n  "suites_run": %d,\n  "filter": "%s"\n}\n' "$ran" "$FILTER"
+    } >| "$JSON_OUT"
+    rm -f "$JSON_OUT.entries"
+fi
 
 echo "════════════════════════════════════════════════════════"
 if [ "$ran" -eq 0 ]; then

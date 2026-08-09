@@ -31,9 +31,22 @@ use std::process::Command;
 pub const ROUNDTRIP_EXPECTED: u64 = 173;
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured.
 pub const REJECT_EXPECTED: u64 = 63;
-/// `Test.test` leaves across `tests/conformance/tests/`. Measured — and this
-/// is the number v2 §5.4 fixes as the conformance CASE count.
-pub const CONFORMANCE_EXPECTED: u64 = 772;
+/// Conformance cases that actually RUN on a healthy tree. Measured: **770**.
+///
+/// v2 §5.4 fixes this number at **772**, and 772 is what a static count of
+/// `Test.test` leaves in `tests/conformance/tests/` returns. The two disagree,
+/// and the static count is the wrong one for a gate:
+///
+/// `StoreConformanceTest.sky:75` and `StoreCrudConformanceTest.sky:68` each
+/// declare a `Test.test "setup"` leaf inside the `Err` arm of
+/// `case setup () of` — a case that materialises ONLY when the DB setup fails.
+/// On a healthy run those two arms are not taken, so 770 leaves exist.
+///
+/// Pinning 770 is strictly stronger than pinning 772 would have been: if a DB
+/// setup ever does fail, the count rises to 771/772 AND the new leaf fails, so
+/// the gate goes red on both counts rather than passing a suite that quietly
+/// swapped 13 real assertions for one "setup failed".
+pub const CONFORMANCE_EXPECTED: u64 = 770;
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -142,10 +155,42 @@ pub fn conformance(ctx: &GateCtx) -> GateOutcome {
         );
     };
 
-    let cases = u(&v, "cases");
-    let failed = u(&v, "cases_failed");
+    // The manifest names the suites; each suite's own `Sky.Test` report holds
+    // the per-case truth. Aggregation happens HERE, in a real JSON parser,
+    // rather than in the shell — a shell that parses its own output is how
+    // `grep -qE "0 fail"` came to match inside "10 fail".
     let suites_run = u(&v, "suites_run");
-    let suites_failed = u(&v, "suites_failed");
+    let empty = Vec::new();
+    let suites = v
+        .get("suites")
+        .and_then(|s| s.as_array())
+        .unwrap_or(&empty);
+
+    let mut cases = 0u64;
+    let mut failed = 0u64;
+    let mut suites_failed = 0u64;
+    let mut broken: Vec<String> = Vec::new();
+
+    for s in suites {
+        let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+        let exit_code = s.get("exit_code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        let report = s.get("report").and_then(|r| r.as_str()).unwrap_or("");
+
+        // A suite whose per-case report is missing or unreadable contributes
+        // ZERO cases and is counted FAILED. Treating it as "skipped" is the
+        // silent-shrink path that lets a suite stop running and still pass.
+        let Some(rep) = read_json(Path::new(report)) else {
+            suites_failed += 1;
+            broken.push(format!("{name} (no per-case report)"));
+            continue;
+        };
+        cases += u(&rep, "total");
+        failed += u(&rep, "failed");
+        if exit_code != 0 || u(&rep, "failed") > 0 {
+            suites_failed += 1;
+            broken.push(name.to_string());
+        }
+    }
 
     // EXACT, never `>=`. A suite that stops being discovered, or a case that
     // stops being emitted, shrinks `cases` and fails here.
@@ -164,7 +209,10 @@ pub fn conformance(ctx: &GateCtx) -> GateOutcome {
         return GateOutcome::new(
             false,
             cases,
-            format!("{failed} failing case(s) across {suites_failed} suite(s)"),
+            format!(
+                "{failed} failing case(s); {suites_failed} suite(s) red: {}",
+                preview(&broken.iter().map(String::as_str).collect::<Vec<_>>())
+            ),
         );
     }
     GateOutcome::new(

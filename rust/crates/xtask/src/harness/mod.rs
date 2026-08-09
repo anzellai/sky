@@ -405,16 +405,14 @@ fn classify(g: &Gate, run: &child::ChildRun) -> (GateState, String) {
         );
     }
     let Some(r) = &run.result else {
-        // Both streams are surfaced here because this is the one state with no
-        // structured explanation of itself: the body died before it could say
-        // anything, and the only evidence is what it managed to print.
+        // The body died before it could say anything. Its output went straight
+        // to the CI log (stdout/stderr are inherited, not piped — see
+        // child.rs), so the evidence is above this table rather than in it.
         return (
             GateState::NotRun,
             format!(
-                "the body produced no result (exit {:?}){}{}",
-                run.exit_code,
-                tail("stderr", &run.stderr),
-                tail("stdout", &run.stdout)
+                "the body produced no result (exit {:?}) — see its output above",
+                run.exit_code
             ),
         );
     };
@@ -437,18 +435,6 @@ fn classify(g: &Gate, run: &child::ChildRun) -> (GateState, String) {
         return (GateState::Fail, r.detail.clone());
     }
     (GateState::Pass, r.detail.clone())
-}
-
-fn tail(label: &str, s: &str) -> String {
-    let t: Vec<&str> = s.lines().rev().take(3).collect();
-    if t.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " [{label}: {}]",
-            t.into_iter().rev().collect::<Vec<_>>().join(" | ")
-        )
-    }
 }
 
 fn render(reports: &[Report]) {
