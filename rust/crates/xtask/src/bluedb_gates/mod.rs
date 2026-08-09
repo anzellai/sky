@@ -408,13 +408,14 @@ fn run_verify_mutations(root: &Path, verbose: bool, only: Option<&str>) -> i32 {
         }
     }
 
+    let canary_attempted = only.is_none() || only == Some(registry::CANARY_ID);
     println!(
         "\ncanary {}: {}",
         registry::CANARY_ID,
-        if report.canary_ok {
-            "VACUOUS ✔  (the verifier is measuring the worktree)"
-        } else {
-            "NOT VACUOUS ✗  (the verifier is not verifying — H3)"
+        match (canary_attempted, report.canary_ok) {
+            (false, _) => "not attempted (--only selected another gate)",
+            (true, true) => "VACUOUS ✔  (the verifier is measuring the worktree)",
+            (true, false) => "NOT VACUOUS ✗  (the verifier is not verifying — H3)",
         }
     );
 
@@ -426,7 +427,6 @@ fn run_verify_mutations(root: &Path, verbose: bool, only: Option<&str>) -> i32 {
     }
 
     // The canary is decisive even when it is the only thing that ran.
-    let canary_attempted = only.is_none() || only == Some(registry::CANARY_ID);
     if canary_attempted && !report.canary_ok {
         println!("\nVERIFY-MUTATIONS: HARNESS FAIL — the canary did not report VACUOUS");
         return 1;
