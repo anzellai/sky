@@ -496,9 +496,30 @@ fn verify_one(
     if let Some(parent) = expected.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&expected, &red.output);
+    let _ = std::fs::write(&expected, normalise(&red.output, guard));
 
     Some(ProofOutcome::Proven)
+}
+
+/// Recorded RED outputs are committed artefacts, so they must be
+/// **deterministic**: the scratch worktree path is unique per run, and leaving
+/// it in the file made every proof anchored on it go `MUTATION-STALE` on the
+/// next run — and leaked a developer's absolute paths into the repo.
+fn normalise(output: &str, guard: &WorktreeGuard) -> String {
+    let mut s = output.to_string();
+    for p in [
+        std::fs::canonicalize(&guard.wt).unwrap_or_else(|_| guard.wt.clone()),
+        guard.wt.clone(),
+    ] {
+        s = s.replace(&p.to_string_lossy().to_string(), "<scratch-worktree>");
+    }
+    for p in [
+        std::fs::canonicalize(&guard.scratch).unwrap_or_else(|_| guard.scratch.clone()),
+        guard.scratch.clone(),
+    ] {
+        s = s.replace(&p.to_string_lossy().to_string(), "<scratch-root>");
+    }
+    s
 }
 
 /// H3 mechanism 2 — the child must have resolved a root inside the worktree.

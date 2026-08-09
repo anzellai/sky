@@ -1,3 +1,3 @@
-PROBE gate=G0.5 state=FAIL root=/private/var/folders/pj/9tc4t43d6gd1q58c96p68jzw0000gn/T/nix-shell.aWkHp8/sky-bluedb-mutverify-8191-1786268067227/wt
+PROBE gate=G0.5 state=FAIL root=<scratch-worktree>
   go-build site / zstd tag contract broken
   expected exactly 1 `go build` site in rust/crates/project/src, found 2: rust/crates/project/src/build.rs:656, rust/crates/project/src/build.rs:1555
