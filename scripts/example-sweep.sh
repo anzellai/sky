@@ -494,9 +494,17 @@ go_cache_dir="${HOME}/Library/Caches/go-build"
 if [[ -d "$go_cache_dir" ]]; then
     cache_kb=$(du -sk "$go_cache_dir" 2>/dev/null | awk '{print $1}')
     cache_kb=${cache_kb:-0}
-    if [[ "$cache_kb" -gt 5242880 ]]; then
+    free_kb=$(df -k / 2>/dev/null | awk 'NR==2 {print $4}')
+    free_kb=${free_kb:-999999999}
+    # Prune on disk PRESSURE, not on cache size. A full sweep legitimately
+    # produces 11-18 GB of go-build cache, so a size-only trigger wiped it after
+    # every sweep and made the NEXT sweep cold — the single biggest source of
+    # wasted time in the release path. This is the same defect fixed in
+    # rust/crates/xtask/src/build_run_gate.rs; both sites now agree.
+    if [[ "$cache_kb" -gt 5242880 && "$free_kb" -lt 31457280 ]]; then
         cache_gb=$(( cache_kb / 1048576 ))
-        echo "  [hygiene] go-build cache is ${cache_gb} GB — running 'go clean -cache'"
+        free_gb=$(( free_kb / 1048576 ))
+        echo "  [hygiene] go-build cache ${cache_gb} GB with only ${free_gb} GB free — running 'go clean -cache'"
         go clean -cache 2>/dev/null || true
     fi
 fi

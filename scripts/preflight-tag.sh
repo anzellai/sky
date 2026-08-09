@@ -75,10 +75,18 @@ step "3/6 — rust gate suite"
 ( cd rust && timeout 3600 bash -c 'cargo test --workspace --locked && for g in roundtrip resolve infer reject fuzz coerce-floor repro; do cargo run --release -q -p xtask -- "$g" || exit 1; done && cargo run --release -q -p xtask -- build-run --all && cargo run --release -q -p xtask -- build-run --shape cli --run --golden' ) || fail "rust gate suite had failures"
 
 step "4/6 — Example sweep (build-only, all 19+ examples)"
-scripts/example-sweep.sh --build-only 2>&1 | tail -5
-tail=$(scripts/example-sweep.sh --build-only 2>&1 | tail -1)
-echo "$tail" | grep -qE "^sweep: [0-9]+ passed, 0 failed$" || \
-    fail "example-sweep failed: $tail"
+# Run the sweep ONCE. It used to run twice — once piped to `tail -5` for
+# display and again captured for the check — which doubled the slowest step in
+# the whole preflight for nothing.
+#
+# And grep the whole output for the summary, not `tail -1`: the sweep prints a
+# `[hygiene] go-build cache …` line AFTER its summary, so the last line is
+# never `sweep: N passed, 0 failed`. That mismatch failed a release whose sweep
+# had actually passed 29/0, reporting the hygiene line as the failure message.
+sweep_out=$(scripts/example-sweep.sh --build-only 2>&1)
+echo "$sweep_out" | tail -5
+echo "$sweep_out" | grep -qE "^sweep: [0-9]+ passed, 0 failed$" || \
+    fail "example-sweep failed: $(echo "$sweep_out" | grep -E '^sweep: ' | tail -1)"
 
 if [ $SKIP_WEB -eq 0 ]; then
     step "5/6 — Runtime verification (Playwright; web apps)"
