@@ -82,6 +82,64 @@ overlap, 29 of them absent from the sweep table, several referenced nowhere at
 all, three hardcoding port 8000 in Sky source. They are *documentation samples*
 being used as a *regression corpus*, and they serve neither role well.
 
+## REFINEMENT (user, 2026-08-09, after the first design brief) — TWO LAYERS
+
+> we should aim for compiler + standard lib + built-in 100% coverage with many
+> use cases, imagine those github issues we've been fixing? we could've caught
+> them if our tests include different variation of usage of those syntax +
+> imports etc.
+>
+> then on to practical realworld examples using sky.live sky server, sky.tui etc.
+
+This reorders the whole design. The corpus is **two layers**, and layer 1 is the
+one that would have caught the actual bug history:
+
+**Layer 1 — exhaustive, combinatorial coverage of the language + stdlib + builtins.**
+Not "more examples": systematic VARIATION. Every shipped defect in this repo's
+history was ordinary usage in a combination nobody had tried. The pattern is
+always the same — the simple case compiles clean, one axis changes, and it
+breaks:
+- **#164** same-named alias / import-alias collision (import shape varied)
+- **#166** record update inside a tuple dropped un-updated fields (context varied)
+- **#170/#172** tuple/record pattern destructure on an *erased* subject — through
+  `List.foldr`, a `let`, an `any`-typed value (subject typing varied)
+- **#171** row-polymorphic record update through `foldl`/`foldr` dropped fields
+  (higher-order context varied)
+- **#173** `Dict k (List Record)` — three defects (type nesting varied)
+- **goty.rs record-fieldset collision** — same field NAMES, different field TYPES,
+  and the erased-`any` recurrence via `fst`/`snd`/tuple destructure
+- **kernel-alias variadic arity**; **bare `Math.pi` lowering to `any`**
+- stdlib semantics: `Json.Decode.int` int64 platform-dependence,
+  `Money.allocate` negative residue, `Bytes.length/slice` rune-vs-byte,
+  `Time.addMonths` year-carry, `Time.timeString` host-TZ, `Uuid.parse` never
+  `Just`, `Auth.passwordStrength` panic
+So layer 1 must vary, systematically and by construction: **syntax forms x import
+shapes (aliased/exposing/qualified/cross-module/same-name) x type shapes (records,
+rows, generics, ADT payloads, nesting, Dict/List/Maybe/Result combinations) x
+erasure contexts (higher-order, callback params, `any`-typed) x every stdlib
+function's edge cases (boundaries, negatives, unicode, TZ, platform int width)**.
+Generated or table-driven where the axes are enumerable; hand-written where a
+bug taught us something a generator would not think of. Every past issue becomes
+a permanent case, and its NEIGHBOURS in the variation space become cases too —
+because the bug was never unique, only the combination was.
+
+"100% coverage" is the user's target. Interpret it as: every public stdlib
+function and every language construct has cases, and the *combinations* are
+covered systematically rather than by whatever an example happened to use. Where
+100% is not literally reachable, say what is uncovered and why — do not quietly
+redefine the target.
+
+**Layer 2 — practical real-world projects** using Sky.Live, Sky.Http.Server,
+Sky.Tui, Sky.Webview, Std.Db/Persist, auth, jobs — apps as a user would build
+them, exercising surfaces IN COMBINATION. This is the integration tier, and it
+is what catches the class layer 1 structurally cannot: session/SSE lifecycle,
+CSRF-idle strand, session hijack, `liveInto` silently not updating on Postgres,
+"compiles clean, behaves wrong" at runtime.
+
+Layer 1 is fast, deterministic, massively parallel — it belongs per-push. Layer 2
+is slower and tiered. Design both; do not let layer 2's cost crowd out layer 1's
+completeness.
+
 ## Design constraints (the user's words, made concrete)
 
 1. **Real-world-shaped projects, not sample sprawl.** A small number of
