@@ -1,0 +1,24 @@
+{
+  "gates": {
+    "canary": {
+      "mutation": "canary.noop",
+      "observed": "VACUOUS",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786313312
+    },
+    "reject": {
+      "mutation": "reject.neutralise-axis",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786313278
+    },
+    "roundtrip": {
+      "mutation": "roundtrip.error-node",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786313278
+    }
+  },
+  "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, or older than the declared window, renders UNPROVEN under `--require-proofs`.",
+  "window_days": 30
+}

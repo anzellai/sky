@@ -13,6 +13,7 @@ mod coerce_floor_gate;
 mod divergences_gate;
 mod fmt_gate;
 mod fuzz_gate;
+mod harness;
 mod infer_gate;
 mod lsp_gate;
 mod reject_gate;
@@ -61,6 +62,7 @@ const GATES: &[(&str, GateFn)] = &[
     ("repro", |args| repro_gate::run(args, &repo_root())),
     ("s8", |args| s8_gate::run(args, &repo_root())),
     ("lsp", |args| lsp_gate::run(args, &repo_root())),
+    ("harness", |args| harness::run(args, &repo_root())),
     ("errloc", errloc),
     ("diff", diff_stub),
 ];
@@ -153,11 +155,54 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-struct FileResult {
-    rel: String,
-    ok_roundtrip: bool,
-    error_nodes: usize,
-    diags: usize,
+pub(crate) struct FileResult {
+    pub(crate) rel: String,
+    pub(crate) ok_roundtrip: bool,
+    pub(crate) error_nodes: usize,
+    pub(crate) diags: usize,
+}
+
+impl FileResult {
+    /// The gate's per-file assertion: byte-exact reprint AND zero ERROR nodes.
+    pub(crate) fn ok(&self) -> bool {
+        self.ok_roundtrip && self.error_nodes == 0
+    }
+}
+
+/// Parse + reprint every corpus file and return one [`FileResult`] each.
+///
+/// Extracted from [`roundtrip`] so `xtask harness`'s `roundtrip` gate consults
+/// the SAME corpus discovery and the SAME two invariants as the CLI gate
+/// (v2 §10 — one `collect_sky`, never a second copy that can drift).
+pub(crate) fn roundtrip_scan(root: &Path) -> Vec<FileResult> {
+    let examples = root.join("examples");
+    let mut files = Vec::new();
+    collect_sky(&examples, &mut files);
+
+    let mut results = Vec::with_capacity(files.len());
+    for path in &files {
+        let src = match std::fs::read_to_string(path) {
+            Ok(_s) => _s,
+            Err(_) => {
+                results.push(FileResult {
+                    rel: rel(root, path),
+                    ok_roundtrip: false,
+                    error_nodes: usize::MAX,
+                    diags: 0,
+                });
+                continue;
+            }
+        };
+        let parse = syntax::parse(&src, base::FileId(0));
+        let reprint = parse.reprint();
+        results.push(FileResult {
+            rel: rel(root, path),
+            ok_roundtrip: reprint == src,
+            error_nodes: parse.error_node_count(),
+            diags: parse.errors().len(),
+        });
+    }
+    results
 }
 
 fn roundtrip(args: &[String]) -> i32 {
@@ -165,42 +210,13 @@ fn roundtrip(args: &[String]) -> i32 {
     let root = repo_root();
     let examples = root.join("examples");
 
-    let mut files = Vec::new();
-    collect_sky(&examples, &mut files);
-
-    if files.is_empty() {
+    let results = roundtrip_scan(&root);
+    if results.is_empty() {
         eprintln!(
             "xtask roundtrip: no .sky files found under {}",
             examples.display()
         );
         return 1;
-    }
-
-    let mut results = Vec::with_capacity(files.len());
-    for path in &files {
-        let src = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(e) => {
-                results.push(FileResult {
-                    rel: rel(&root, path),
-                    ok_roundtrip: false,
-                    error_nodes: usize::MAX,
-                    diags: 0,
-                });
-                if verbose {
-                    eprintln!("  read error {}: {e}", path.display());
-                }
-                continue;
-            }
-        };
-        let parse = syntax::parse(&src, base::FileId(0));
-        let reprint = parse.reprint();
-        results.push(FileResult {
-            rel: rel(&root, path),
-            ok_roundtrip: reprint == src,
-            error_nodes: parse.error_node_count(),
-            diags: parse.errors().len(),
-        });
     }
 
     // ---- report ----

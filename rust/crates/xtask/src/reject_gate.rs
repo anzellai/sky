@@ -21,26 +21,26 @@
 use hir::SourceDb;
 use std::path::{Path, PathBuf};
 
-struct Row {
-    name: String,
-    type_errors: usize,
-    name_errors: usize,
-    exhaustiveness: usize,
+pub(crate) struct Row {
+    pub(crate) name: String,
+    pub(crate) type_errors: usize,
+    pub(crate) name_errors: usize,
+    pub(crate) exhaustiveness: usize,
     /// Parser-recovery diagnostics (`[E0001]` class): a syntactically broken
     /// program the oracle rejects at parse time (e.g. a bare operator section
     /// `(+)`). The driver gates these before lower/emit; this gate mirrors that
     /// so such a program is counted REJECTED here too.
-    parse_errors: usize,
+    pub(crate) parse_errors: usize,
     /// A file tagged `-- gate: known-leniency` is a program the ORACLE rejects
     /// but the Rust checker deliberately accepts for a documented accept-parity
     /// reason (see the file's header). Tracked + reported, but NOT counted
     /// against the hard reject gate.
-    known_leniency: bool,
-    first_msg: String,
+    pub(crate) known_leniency: bool,
+    pub(crate) first_msg: String,
 }
 
 impl Row {
-    fn rejected(&self) -> bool {
+    pub(crate) fn rejected(&self) -> bool {
         self.type_errors > 0
             || self.name_errors > 0
             || self.exhaustiveness > 0
@@ -62,14 +62,21 @@ impl Row {
     }
 }
 
-pub fn run(_args: &[String], root: &Path) -> i32 {
+/// Run the reject corpus and return one [`Row`] per file.
+///
+/// Extracted from [`run`] so the gate harness (`xtask harness`) consults the
+/// SAME corpus discovery and the SAME rejection criterion as the CLI gate.
+/// v2 §10 keeps "one `corpus()` / `collect_sky` / `load_dir`" for a measured
+/// reason: six copies is how two gates silently come to disagree about what the
+/// corpus is, which is exactly the `ty/tests/reject.rs` vs `xtask reject`
+/// divergence catalogued in v2 §1.5.
+pub(crate) fn scan(root: &Path) -> Result<Vec<Row>, String> {
     let stdlib = load_dir(&root.join("sky-stdlib"), "sky-stdlib");
     if stdlib.is_empty() {
-        eprintln!(
+        return Err(format!(
             "reject: no stdlib modules under {}/sky-stdlib",
             root.display()
-        );
-        return 1;
+        ));
     }
 
     let corpus_dir = root.join("rust/crates/ty/tests/reject/corpus");
@@ -79,23 +86,31 @@ pub fn run(_args: &[String], root: &Path) -> i32 {
             .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("sky"))
             .collect(),
         Err(e) => {
-            eprintln!(
+            return Err(format!(
                 "reject: cannot read corpus dir {}: {e}",
                 corpus_dir.display()
-            );
-            return 1;
+            ));
         }
     };
     files.sort();
     if files.is_empty() {
-        eprintln!("reject: empty corpus under {}", corpus_dir.display());
-        return 1;
+        return Err(format!(
+            "reject: empty corpus under {}",
+            corpus_dir.display()
+        ));
     }
 
-    let mut rows: Vec<Row> = Vec::new();
-    for f in &files {
-        rows.push(check_one(f, &stdlib));
-    }
+    Ok(files.iter().map(|f| check_one(f, &stdlib)).collect())
+}
+
+pub fn run(_args: &[String], root: &Path) -> i32 {
+    let rows = match scan(root) {
+        Ok(r) => r,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return 1;
+        }
+    };
 
     // ---- report ----
     let w = rows.iter().map(|r| r.name.len()).max().unwrap_or(8).max(8);

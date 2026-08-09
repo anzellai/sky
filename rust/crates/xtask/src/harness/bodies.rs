@@ -1,0 +1,449 @@
+//! Gate bodies.
+//!
+//! Every body runs **inside the harness's child process** (see `child.rs`), so
+//! anything a body spawns inherits the gate's process group and dies with it.
+//!
+//! Two shapes, and the difference is deliberate:
+//!
+//! * **In-process gates** (`roundtrip`, `reject`) call the SAME Rust core the
+//!   CLI gate calls. There is no text between the check and the verdict, so
+//!   there is nothing to scrape.
+//! * **Wrapped external verifiers** (`conformance`, `verify-cli`) are NOT
+//!   rewritten — v2 §7.5 keeps them. They gain a `--json <path>` mode and the
+//!   gate reads the **file**. This is how v2 §5.3(d) ("no `grep` in a verdict
+//!   path") and §7.5 ("no verifier is rewritten, they are wrapped") stop
+//!   contradicting each other: wrapping a *text-emitting* script means parsing
+//!   text; wrapping a *JSON-emitting* script does not.
+//!
+//! Every gate asserts an **exact** count, never a `>=`. `ty/tests/reject.rs`
+//! asserts `>= 13` against an actual 63 — deleting 50 corpus files keeps it
+//! green today. Exact counts are why a shrinking corpus is a failure here.
+
+use super::registry::{GateCtx, GateOutcome};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+// ---------------------------------------------------------------------------
+// Expected assertion counts. Pinned, exact, and updated deliberately.
+// ---------------------------------------------------------------------------
+
+/// `.sky` files under `examples/`, excluding generated dirs. Measured.
+pub const ROUNDTRIP_EXPECTED: u64 = 173;
+/// Files in `rust/crates/ty/tests/reject/corpus/`. Measured.
+pub const REJECT_EXPECTED: u64 = 63;
+/// `Test.test` leaves across `tests/conformance/tests/`. Measured — and this
+/// is the number v2 §5.4 fixes as the conformance CASE count.
+pub const CONFORMANCE_EXPECTED: u64 = 772;
+/// `verify-cli.sh` entries that actually assert something. The 14th entry
+/// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
+/// v2's "SKIP counted as pass" defect is closed by making skips invisible to
+/// the assertion count rather than by counting them as successes.
+pub const VERIFY_CLI_EXPECTED: u64 = 13;
+/// `examples/*` projects that own a `tests/` directory. Measured: 6.
+pub const SKY_VERIFY_EXPECTED: u64 = 6;
+
+// ---------------------------------------------------------------------------
+// In-process gates
+// ---------------------------------------------------------------------------
+
+pub fn roundtrip(ctx: &GateCtx) -> GateOutcome {
+    let results = crate::roundtrip_scan(&ctx.repo_root);
+    let assertions = results.len() as u64;
+    let failing: Vec<&str> = results
+        .iter()
+        .filter(|r| !r.ok())
+        .map(|r| r.rel.as_str())
+        .collect();
+
+    if failing.is_empty() {
+        GateOutcome::new(
+            true,
+            assertions,
+            format!("{assertions} files: byte-exact reprint, zero ERROR nodes"),
+        )
+    } else {
+        GateOutcome::new(
+            false,
+            assertions,
+            format!(
+                "{} of {assertions} file(s) fail round-trip or contain ERROR nodes: {}",
+                failing.len(),
+                preview(&failing)
+            ),
+        )
+    }
+}
+
+pub fn reject(ctx: &GateCtx) -> GateOutcome {
+    let rows = match crate::reject_gate::scan(&ctx.repo_root) {
+        Ok(r) => r,
+        Err(msg) => return GateOutcome::new(false, 0, msg),
+    };
+    let assertions = rows.len() as u64;
+
+    // `known-leniency` files are documented accept-parity cases; they are
+    // reported but not part of the hard gate. They still COUNT as assertions —
+    // the file was checked — so removing one still shrinks the count.
+    let holes: Vec<&str> = rows
+        .iter()
+        .filter(|r| !r.known_leniency && !r.rejected())
+        .map(|r| r.name.as_str())
+        .collect();
+
+    if holes.is_empty() {
+        GateOutcome::new(
+            true,
+            assertions,
+            format!("{assertions} ill-typed programs, every hard-gate one rejected"),
+        )
+    } else {
+        GateOutcome::new(
+            false,
+            assertions,
+            format!(
+                "{} soundness hole(s) — accepted but must be rejected: {}",
+                holes.len(),
+                preview(&holes)
+            ),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wrapped external verifiers — read the JSON file, never the stdout
+// ---------------------------------------------------------------------------
+
+pub fn conformance(ctx: &GateCtx) -> GateOutcome {
+    let json = scratch(&ctx.repo_root).join("conformance.json");
+    let _ = std::fs::remove_file(&json);
+
+    let run = match sh(
+        &ctx.repo_root,
+        "scripts/conformance.sh",
+        &["--json".into(), json.display().to_string()],
+    ) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+
+    let Some(v) = read_json(&json) else {
+        // The script ran but produced no machine-readable result. That is a
+        // FAIL, not a pass-by-exit-code: the whole point of the wrapper is that
+        // the verdict comes from the file.
+        return GateOutcome::new(
+            false,
+            0,
+            format!(
+                "conformance.sh produced no JSON at {} (exit {:?}); \
+                 verdict refused — the gate asserts on the result file, not on stdout",
+                json.display(),
+                run.code
+            ),
+        );
+    };
+
+    let cases = u(&v, "cases");
+    let failed = u(&v, "cases_failed");
+    let suites_run = u(&v, "suites_run");
+    let suites_failed = u(&v, "suites_failed");
+
+    // EXACT, never `>=`. A suite that stops being discovered, or a case that
+    // stops being emitted, shrinks `cases` and fails here.
+    if cases != CONFORMANCE_EXPECTED {
+        return GateOutcome::new(
+            false,
+            cases,
+            format!(
+                "expected EXACTLY {CONFORMANCE_EXPECTED} conformance cases, got {cases} \
+                 across {suites_run} suite(s). If cases were deliberately added or removed, \
+                 update CONFORMANCE_EXPECTED in harness/bodies.rs in the same commit."
+            ),
+        );
+    }
+    if failed > 0 || suites_failed > 0 {
+        return GateOutcome::new(
+            false,
+            cases,
+            format!("{failed} failing case(s) across {suites_failed} suite(s)"),
+        );
+    }
+    GateOutcome::new(
+        true,
+        cases,
+        format!("{cases} cases across {suites_run} suites, all green"),
+    )
+}
+
+pub fn verify_cli(ctx: &GateCtx) -> GateOutcome {
+    let json = scratch(&ctx.repo_root).join("verify-cli.json");
+    let _ = std::fs::remove_file(&json);
+
+    // `--rebuild` is not optional for a gate.
+    //
+    // Without it `verify-cli.sh` only builds an example when `sky-out/app` is
+    // MISSING, so it certifies whatever binary an earlier run left behind. A
+    // gate that can pass on a stale artifact cannot be falsified by a source
+    // mutation — its declared mutation would report VACUOUS forever and be
+    // misread as a harness defect. Forcing the rebuild is what makes this gate
+    // verify the tree under test.
+    let run = match sh(
+        &ctx.repo_root,
+        "scripts/verify-cli.sh",
+        &[
+            "--rebuild".into(),
+            "--json".into(),
+            json.display().to_string(),
+        ],
+    ) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+
+    let Some(v) = read_json(&json) else {
+        return GateOutcome::new(
+            false,
+            0,
+            format!(
+                "verify-cli.sh produced no JSON at {} (exit {:?}); verdict refused",
+                json.display(),
+                run.code
+            ),
+        );
+    };
+
+    let pass = u(&v, "pass");
+    let fail = u(&v, "fail");
+    let skip = u(&v, "skip");
+    // A SKIP asserts nothing, so it contributes nothing. This is the structural
+    // form of v2's "SKIP counted as pass" defect fix: skips cannot inflate the
+    // numerator because they are not in it.
+    let assertions = pass + fail;
+
+    if assertions != VERIFY_CLI_EXPECTED {
+        return GateOutcome::new(
+            false,
+            assertions,
+            format!(
+                "expected EXACTLY {VERIFY_CLI_EXPECTED} asserting entries, got {assertions} \
+                 ({pass} pass / {fail} fail / {skip} skip). A newly-skipped entry shrinks \
+                 this count on purpose."
+            ),
+        );
+    }
+    if fail > 0 {
+        let names = v
+            .get("entries")
+            .and_then(|e| e.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter(|e| e.get("outcome").and_then(|o| o.as_str()) == Some("fail"))
+                    .filter_map(|e| e.get("name").and_then(|n| n.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        return GateOutcome::new(false, assertions, format!("{fail} failing: {names}"));
+    }
+    GateOutcome::new(
+        true,
+        assertions,
+        format!("{pass} entries verified, {skip} declared skip(s)"),
+    )
+}
+
+/// `sky verify` over every `examples/*` project that owns a `tests/` suite.
+///
+/// These suites hold real assertions and, before this gate, were invoked by
+/// **zero** scripts and **zero** workflows (v2 §6.1) — so they had never run in
+/// CI. The verdict is each project's **exit status**, which `sky verify`
+/// computes from structured internal state; no stdout is parsed.
+pub fn sky_verify(ctx: &GateCtx) -> GateOutcome {
+    let sky = ctx.repo_root.join("sky-out/sky");
+    if !sky.is_file() {
+        return GateOutcome::new(
+            false,
+            0,
+            format!(
+                "no compiler at {} — build it first (scripts/build.sh). \
+                 A gate that cannot run has not passed.",
+                sky.display()
+            ),
+        );
+    }
+
+    let projects = projects_with_tests(&ctx.repo_root);
+    let mut failures: Vec<String> = Vec::new();
+    let mut assertions = 0u64;
+
+    for p in &projects {
+        assertions += 1;
+        let out = Command::new(&sky)
+            .arg("verify")
+            .arg(p)
+            .current_dir(&ctx.repo_root)
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                let name = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let tail: String = String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|l| l.contains('✗'))
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                failures.push(format!("{name} ({tail})"));
+            }
+            Err(e) => failures.push(format!("{}: spawn failed: {e}", p.display())),
+        }
+    }
+
+    if assertions != SKY_VERIFY_EXPECTED {
+        return GateOutcome::new(
+            false,
+            assertions,
+            format!(
+                "expected EXACTLY {SKY_VERIFY_EXPECTED} projects with a tests/ suite, \
+                 found {assertions}"
+            ),
+        );
+    }
+    if failures.is_empty() {
+        GateOutcome::new(true, assertions, format!("{assertions} projects verified"))
+    } else {
+        GateOutcome::new(
+            false,
+            assertions,
+            format!("{} project(s) failed: {}", failures.len(), failures.join("; ")),
+        )
+    }
+}
+
+/// `examples/*` directories that own a non-empty `tests/` dir, sorted.
+///
+/// Discovery is by structure, not by a hand-maintained list, so a new suite is
+/// picked up automatically — and the EXACT `SKY_VERIFY_EXPECTED` count means
+/// adding one is a deliberate, visible registry edit rather than a silent
+/// budget change.
+fn projects_with_tests(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(root.join("examples")) else {
+        return out;
+    };
+    let mut dirs: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    dirs.sort();
+    for d in dirs {
+        if !d.is_dir() {
+            continue;
+        }
+        let tests = d.join("tests");
+        let has_suite = std::fs::read_dir(&tests)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("sky"))
+            })
+            .unwrap_or(false);
+        if has_suite {
+            out.push(d);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Harness self-verification
+// ---------------------------------------------------------------------------
+
+/// THE CANARY — permanently registered, deliberately vacuous.
+///
+/// It asserts `true`. Paired with a no-op patch (`MutationKind::NoOp`), a
+/// CORRECT falsifier runner must report `VACUOUS` for it, because nothing
+/// changed and so the gate cannot have gone red.
+///
+/// Reporting `PROVEN` here is a **harness failure**, and it is the only
+/// construction that catches a verifier whose every answer is "green" — or one
+/// that applies its patch in the wrong tree and then reports success from a
+/// run that never saw the patch (v2 §7.5).
+pub fn canary(_ctx: &GateCtx) -> GateOutcome {
+    GateOutcome::new(
+        true,
+        1,
+        "vacuous by construction — the falsifier must report VACUOUS for this gate",
+    )
+}
+
+/// SELF-TEST — hangs forever, having first spawned a grandchild that also hangs.
+///
+/// The grandchild is the point. Killing only the direct child would leave it
+/// running; only `killpg` over the gate's process group reaps both. The
+/// harness test asserts **both** pids are gone after the budget expires, which
+/// is the property the BlueDB precedent's detached-thread timeout cannot have.
+pub fn selftest_hang(_ctx: &GateCtx) -> GateOutcome {
+    let grandchild = Command::new("sh")
+        .arg("-c")
+        .arg("sleep 600")
+        .spawn()
+        .map(|c| c.id())
+        .unwrap_or(0);
+
+    if let Ok(p) = std::env::var("SKY_HARNESS_HANG_PIDFILE") {
+        let _ = std::fs::write(&p, format!("{}\n{}\n", std::process::id(), grandchild));
+    }
+
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+pub(crate) fn scratch(root: &Path) -> PathBuf {
+    let d = root.join(".skycache/harness");
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+
+struct Sh {
+    code: Option<i32>,
+}
+
+/// Run a repo script. Its stdout/stderr are inherited (so CI logs keep the
+/// human-readable output) and are NEVER consulted for the verdict.
+fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
+    let path = root.join(script);
+    if !path.is_file() {
+        return Err(format!("missing verifier script {}", path.display()));
+    }
+    let status = Command::new("bash")
+        .arg(&path)
+        .args(args)
+        .current_dir(root)
+        .status()
+        .map_err(|e| format!("could not run {script}: {e}"))?;
+    Ok(Sh {
+        code: status.code(),
+    })
+}
+
+fn read_json(p: &Path) -> Option<serde_json::Value> {
+    serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
+}
+
+fn u(v: &serde_json::Value, key: &str) -> u64 {
+    v.get(key).and_then(|x| x.as_u64()).unwrap_or(0)
+}
+
+fn preview(items: &[&str]) -> String {
+    let shown: Vec<&str> = items.iter().take(5).copied().collect();
+    if items.len() > shown.len() {
+        format!("{} … (+{} more)", shown.join(", "), items.len() - shown.len())
+    } else {
+        shown.join(", ")
+    }
+}
