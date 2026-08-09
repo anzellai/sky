@@ -1,3 +1,17 @@
 name = "store-partial-update"
 version = "0.1.0"
 entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+# Without this section `Db.connect ()` has nothing to connect to: it fails, the
+# whole Task chain in src/Main.sky short-circuits, and the example prints
+# NOTHING while still exiting 0. Every other `Db.connect` example (07, 27, 52)
+# carries a [database] section; this one was committed without it, and the
+# resulting empty run was blessed into a 1-byte golden that matched itself green
+# from then on. See the empty-capture refusal in
+# rust/crates/xtask/src/build_run_gate.rs.
+[database]
+driver = "sqlite"
+path = "products.db"
