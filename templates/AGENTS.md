@@ -309,7 +309,7 @@ sky build src/Main.sky       # compile → sky-out/app
 sky run src/Main.sky         # build + run   (--profile for runtime CPU/mem/hang profiling)
 sky check src/Main.sky       # type-check + go build (no binary)
 sky verify                   # one-shot project gate: fmt + check + build + tests
-sky test tests/MyTest.sky    # Sky.Test runner
+sky test tests/MyTest.sky    # Sky.Test runner (SKY_TEST_JSON=<path> also writes a per-case JSON report)
 sky fmt src/Main.sky         # format (always run after editing .sky)
 sky doc <Module> | --list    # API docs (the source of truth for signatures)
 sky watch src/Main.sky       # rebuild + restart on save

@@ -76,6 +76,46 @@ Output format:
 5 passed, 1 failed (6 total)
 ```
 
+## Machine-readable output (`SKY_TEST_JSON`)
+
+Set `SKY_TEST_JSON` to a path and the run additionally writes a per-case JSON
+report. The human output above is byte-identical either way, so turning this on
+never changes what you read in the terminal.
+
+```bash
+SKY_TEST_JSON=/tmp/report.json sky test tests/MyTest.sky
+```
+
+```json
+{
+  "schema": "sky-test/v1",
+  "cases": [
+    { "name": "String.trim", "outcome": "pass", "assertions": 1, "message": "" },
+    { "name": "String.split non-empty", "outcome": "fail", "assertions": 1,
+      "message": "expected True, got False" }
+  ],
+  "total": 6, "passed": 5, "failed": 1, "assertions": 6
+}
+```
+
+`name` is the fully-qualified leaf name, so `suite` labels appear exactly as the
+human summary prints them. This is what lets a CI gate attribute a failure to a
+**specific** test case rather than to a whole suite, and what lets it assert an
+exact case count so a suite that silently stops running cases fails instead of
+passing with fewer.
+
+Two limits, so they are not mistaken for bugs:
+
+- **`assertions` is 1 per case.** A `Test` leaf is `() -> TestResult` and yields
+  exactly one result. The count that detects a shrinking suite is the
+  suite-level `total`.
+- **There is no file/line.** `Test.test` carries a name and a thunk; Sky has no
+  source-location intrinsic, so the name is a case's only stable identity.
+
+`Sky.Test.jsonReport` (pure, `List (String, TestResult) -> String`) and
+`Sky.Test.writeJsonReport` (a `Task`, no-op on an empty path) are exposed for
+callers that drive `Sky.Test.run` themselves.
+
 ## Module discovery
 
 `sky test` synthesises an entry module that imports your test module and calls `Sky.Test.runMain tests`. The synthesis derives the module name from the path:

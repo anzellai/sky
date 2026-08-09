@@ -197,7 +197,7 @@ sky check src/Main.sky           # type-check + go build  (≡ sky build)
 sky watch src/Main.sky           # file-watch rebuild + restart
 sky verify                       # project pre-release gate: fmt + check + build + tests
 sky fmt src/Main.sky             # opinionated formatter (idempotent)
-sky test tests/MyTest.sky        # Sky.Test runner
+sky test tests/MyTest.sky        # Sky.Test runner (SKY_TEST_JSON=<path> → per-case JSON report)
 sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
 sky add <go/module> | remove | install | update                # Go FFI deps
