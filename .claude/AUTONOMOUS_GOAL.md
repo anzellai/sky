@@ -125,6 +125,24 @@ pre-existing Sky.Live runtime bugs. Only this third is in scope here:
   BlueDB-only and does not exist on `main`. §6.5's startup-check replacement is
   in scope for this branch.
 
+- **U1 — order-preserving `Decimal`/`Money` index encoding: BUILD IT. RULED BY
+  THE USER 2026-08-09.** v2.1 had parked this, leaving `Money`/`Decimal`
+  un-indexable on the DEFAULT backend while `Std.Money` on `Std.Decimal` is
+  `AGENTS.md`'s pinned currency default. The user chose to design it now, in P2
+  alongside the index keyspace. It needs its own ordering gate covering
+  negatives, zero, and differing scale (2 vs 8), plus round-trip. `P.index` on a
+  `Money`/`Decimal` column must WORK on embedded — a build error there is no
+  longer an acceptable outcome.
+
+- **U2 — throughput floors: DERIVE FROM `feat/bluedb`, THEN RATCHET. RULED BY
+  THE USER 2026-08-09.** Goal #2's "high-throughput" had no number, so no gate
+  could fail on it. Measure the `feat/bluedb` substrate once (its group-commit
+  and point-read numbers were gated and green), commit those as the floor in
+  `docs/bluedb/baselines.json`, and require v2 to meet-or-beat; raise the floor
+  when it improves. Do NOT seed baselines from whatever v2 happens to ship —
+  that is the self-seeding vacuity the grill flagged in G4.3, and it is
+  forbidden here.
+
 ## Reference material (read, don't trust)
 
 - `feat/bluedb` — the prior attempt. `docs/bluedb/RESUME.md` there is now
