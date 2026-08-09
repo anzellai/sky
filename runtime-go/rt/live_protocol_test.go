@@ -234,6 +234,8 @@ func TestHandleEventRoundTripsSeq(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/_sky/event",
 		strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
+	// Model the browser: boundSessionID takes the session from the cookie.
+	req.Header.Set("Cookie", "sky_sid=sid-1")
 	rr := httptest.NewRecorder()
 	app.handleEvent(rr, req)
 
@@ -314,6 +316,9 @@ func TestHandleEventBatch(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/_sky/event",
 		strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
+	// sendBeacon rides the same cookie jar (Beacon spec: credentials mode
+	// "include" on a same-origin URL), so the batch path is cookie-bound too.
+	req.Header.Set("Cookie", "sky_sid=sid-2")
 	rr := httptest.NewRecorder()
 	app.handleEvent(rr, req)
 

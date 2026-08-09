@@ -50,9 +50,12 @@ package rt
 //     loaded SPA, not an external link.
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -265,6 +268,21 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 				submitted = r.FormValue("__sky_csrf")
 			}
 		}
+		// sendBeacon path — see csrfTokenFromJSONBody. navigator.sendBeacon
+		// CANNOT set a header, so Sky.Live's unload flush carries the token
+		// in its JSON body instead. Scoped to the Live event endpoint and
+		// only reached when no header was supplied, so the fetch path is
+		// untouched and no other route pays a body read.
+		if submitted == "" && isLiveEventPath(r.URL.Path) &&
+			strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			tok, ok := csrfTokenFromJSONBody(r)
+			if !ok {
+				csrfReject(w, "csrf_missing",
+					"beacon body exceeded the CSRF peek limit or was not readable")
+				return
+			}
+			submitted = tok
+		}
 		if submitted == "" || cookieToken == "" {
 			csrfReject(w, "csrf_missing", "missing X-Sky-Csrf header / __sky_csrf form field, or __sky_csrf cookie")
 			return
@@ -278,6 +296,83 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// csrfBodyPeekMax bounds how much of a request body the middleware will
+// buffer to find a body-borne CSRF token. Beacon batches are a handful of
+// debounced field values plus an inputState snapshot — kilobytes. The
+// multi-MB payloads /_sky/event legitimately carries (Event.onFile /
+// Event.onImage ship a base64 data URL through the same endpoint) always
+// travel by `fetch`, which SETS the X-Sky-Csrf header, so they short-circuit
+// above and never reach the peek. A header-less JSON POST bigger than this
+// is rejected outright rather than buffered.
+const csrfBodyPeekMax = 1 << 20 // 1 MiB
+
+// isLiveEventPath reports whether a path is the Sky.Live event endpoint.
+// Root-mounted apps serve it at "/_sky/event"; sub-apps mounted in-process
+// (the console at "/_sky/console") serve it at "<prefix>/_sky/event"
+// (subapp_inprocess.go), hence the suffix match.
+func isLiveEventPath(path string) bool {
+	return path == "/_sky/event" || strings.HasSuffix(path, "/_sky/event")
+}
+
+// csrfTokenFromJSONBody extracts the `csrf` field from a JSON request body
+// and RESTORES the body so the downstream handler still sees it intact.
+//
+// WHY THIS EXISTS. `navigator.sendBeacon(url, data)` takes exactly two
+// arguments — there is no init/headers parameter, so a beacon PHYSICALLY
+// CANNOT set X-Sky-Csrf. Sky.Live's unload flush
+// (__skyFlushPendingBeacon in live.go) is a beacon, so before this it was
+// rejected `csrf_missing` on every CSRF-enabled app and the user's final
+// debounced keystrokes were dropped on tab close. The beacon does control
+// its own body, so the token rides there.
+//
+// WHY THIS IS A REAL BIND, NOT AN EXEMPTION. It is the same double-submit
+// property the header check has: the token is compared against the
+// __sky_csrf COOKIE, and a cross-origin page cannot read that cookie, so it
+// cannot populate the body half. Nothing here weakens the check — it only
+// moves where the submitted half is read from, for one request shape that
+// cannot use a header.
+//
+// WHY NOT application/x-www-form-urlencoded. Switching the beacon's Blob to
+// a form encoding would have hit the EXISTING r.FormValue fallback with a
+// one-line change, and it is UNSOUND: urlencoded (and text/plain, and
+// multipart) are CORS-SAFELISTED content types, so a cross-origin
+// sendBeacon using one fires with NO preflight. application/json is not
+// safelisted, so a cross-origin beacon is preflighted and refused by the
+// browser before it is ever sent. Keeping the JSON content type is
+// load-bearing, which is why the caller gates on it.
+//
+// WHY NOT a query parameter. It would need no body read at all, but it puts
+// the token in the URL, where proxy access logs and Referer headers capture
+// it. The body keeps it off that surface.
+//
+// Returns ok=false when the body is unreadable or exceeds csrfBodyPeekMax,
+// which the caller turns into a rejection — never a pass.
+func csrfTokenFromJSONBody(r *http.Request) (string, bool) {
+	if r.Body == nil {
+		return "", true
+	}
+	// Read one byte past the ceiling so "exactly at the limit" is accepted
+	// and "over" is detectable without buffering the whole oversize body.
+	buf, err := io.ReadAll(io.LimitReader(r.Body, csrfBodyPeekMax+1))
+	if err != nil {
+		return "", false
+	}
+	if len(buf) > csrfBodyPeekMax {
+		return "", false
+	}
+	// Restore the body unconditionally — handleEvent does its own
+	// io.ReadAll under a MaxBytesReader, and a consumed body would turn
+	// every beacon into an empty-JSON 400.
+	r.Body = io.NopCloser(bytes.NewReader(buf))
+	var probe struct {
+		Csrf string `json:"csrf"`
+	}
+	// A malformed body is not a CSRF failure per se; it yields an empty
+	// token, and the caller's `submitted == ""` check rejects it.
+	_ = json.Unmarshal(buf, &probe)
+	return probe.Csrf, true
 }
 
 // csrfReject writes a 403 with a JSON envelope explaining the

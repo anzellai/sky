@@ -444,6 +444,10 @@ func TestEventSessionNotFoundCarriesSkyLiveHeader(t *testing.T) {
 	body := strings.NewReader(`{"sessionId":"ghost","msg":"X","args":[]}`)
 	req := httptest.NewRequest("POST", "/_sky/event", body)
 	req.Header.Set("Content-Type", "application/json")
+	// Cookie agrees with the body sid, so boundSessionID passes and the 404
+	// under test is the genuine store-miss (the "ghost session" case), not
+	// the session-binding rejection.
+	req.Header.Set("Cookie", "sky_sid=ghost")
 	rr := httptest.NewRecorder()
 
 	app.handleEvent(rr, req)
@@ -487,6 +491,7 @@ func TestPostEventHasSkyLiveHeader(t *testing.T) {
 	body := strings.NewReader(`{"sessionId":"sid-post","msg":"Noop","args":[]}`)
 	req := httptest.NewRequest("POST", "/_sky/event", body)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", "sky_sid=sid-post")
 	rr := httptest.NewRecorder()
 
 	app.handleEvent(rr, req)

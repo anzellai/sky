@@ -211,6 +211,15 @@ unsound). The Sky.Live silent-degrade/strand class is closed.
 
 ### Tier 3 — original catalogue (for reference)
 - **L5 CSRF** persistent cookie + `HMAC(key,sid)` token + recovery signal.
+  *Status correction:* only the persistent+sliding cookie and the recovery
+  signal shipped. The token is **not** `HMAC(key,sid)` — `generateSkyCsrfToken`
+  (`csrf_middleware.go`) mints 32 random bytes and nothing binds it to a
+  session id, so the mechanism is a plain double-submit cookie (the file's own
+  header comment says so, and notes "Header alone: not bound to the session;
+  replay-attackable"). A session-bound token remains open. What the
+  double-submit *does* guarantee is that the submitted half cannot be
+  populated cross-origin, which is what makes the beacon body-token path
+  below sound.
 - **L6 multi-replica broker**: non-redis store on >1 replica → in-process broker
   silently drops cross-replica fan-out; require `SKY_LIVE_BROKER_URL` or warn.
 - **L7 typed route params** (reject non-String ctor, or coerce, never reflect
