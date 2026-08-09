@@ -54,8 +54,25 @@ SKIPS=()
 run_test() {
     local name="$1" mode="$2" input="$3" expect="$4"
     local bin="$REPO_ROOT/examples/$name/sky-out/app"
+    # Build it if it isn't there, instead of failing.
+    #
+    # This script used to hard-fail on a missing binary, which meant it could
+    # only ever pass on artifacts left behind by some EARLIER run. Six of its
+    # entries (00-standard-libs, 20-cli-counter, 21/22/23/24-tui-*) are not in
+    # scripts/example-sweep.sh's table — the only thing that builds
+    # `sky-out/app` — so on a clean checkout, or in a fresh git worktree, those
+    # six could never pass. That is how a release gate reported red for a
+    # reason having nothing to do with the release.
     if [ ! -f "$bin" ]; then
-        echo "✗ $name — binary missing at $bin"
+        echo "  … $name — binary missing, building it"
+        if ! ( cd "$REPO_ROOT/examples/$name" && timeout 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky >/dev/null 2>&1 ); then
+            echo "✗ $name — build failed (see: cd examples/$name && sky build src/Main.sky)"
+            fail=$((fail+1)); FAILS+=("$name")
+            return
+        fi
+    fi
+    if [ ! -f "$bin" ]; then
+        echo "✗ $name — binary still missing after build at $bin"
         fail=$((fail+1)); FAILS+=("$name")
         return
     fi

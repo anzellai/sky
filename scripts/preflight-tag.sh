@@ -92,7 +92,12 @@ if [ $SKIP_WEB -eq 0 ]; then
     step "5/6 — Runtime verification (Playwright; web apps)"
     out=$(scripts/verify-all-web.sh 2>&1)
     echo "$out" | tail -3
-    echo "$out" | grep -qE "0 fail" || fail "verify-all-web reported failures"
+    # Anchor the count. `grep -qE "0 fail"` matched the SUBSTRING inside
+    # "10 fail" / "20 fail" — so a run with exactly ten failures passed the
+    # gate. It did: a run that ended 0 pass / 12 fail (every Playwright check
+    # dead with ERR_MODULE_NOT_FOUND) sailed through because it printed
+    # "0 pass / 10 fail" on the way there. Require the whole field.
+    echo "$out" | grep -qE "(^|[^0-9])0 fail" || fail "verify-all-web reported failures"
 else
     echo ""
     echo "⚠ SKIPPED step 5 (--skip-web). This is ONLY acceptable in"
