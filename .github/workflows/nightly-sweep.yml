@@ -26,6 +26,11 @@ concurrency:
 jobs:
   example-sweep:
     runs-on: ubuntu-latest
+    # The one job that was already bounded. Kept at 90: a clean-slate rebuild of
+    # all 55 examples INCLUDING the FFI/Std.Db ones (skyshop's cold `sky install`
+    # over 76k Stripe symbols alone is 60-120 s) runs ~60 min, and 1.5x of that
+    # is 90 — which is also the T3 nightly ceiling in
+    # docs/ci-test-architecture-v2.md §8.1 (status: firm).
     timeout-minutes: 90
     env:
       GOCACHE: ${{ github.workspace }}/.gocache

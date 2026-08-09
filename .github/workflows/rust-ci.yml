@@ -33,6 +33,9 @@ jobs:
   #    this crate is the bulk of the old 30-min test step; on its own runner) ──
   test-ty:
     runs-on: ubuntu-latest
+    # Measured 1857 s (~31 min) — the CI critical path (docs/ci-test-architecture.md
+    # §3.3). 1.5x ≈ 47; 50 leaves headroom for a cache-cold `ty` rebuild.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -46,6 +49,10 @@ jobs:
   # ── Every other crate's tests + clippy + doctests ───────────────────────────
   test-rest:
     runs-on: ubuntu-latest
+    # Not separately measured. Reasoned: clippy --all-targets (~6 min debug) +
+    # workspace-minus-ty tests incl. `project`'s real `go build` integration
+    # tests (~10 min) + doctests (~2 min) ≈ 20 min. 1.5x = 30.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -65,6 +72,9 @@ jobs:
   # ── Accept-side parity gates (infer dominates ~13m) ─────────────────────────
   parity-accept:
     runs-on: ubuntu-latest
+    # infer ~13 min (this file's own header) + debug `cargo build --workspace`
+    # ~4 min + roundtrip/resolve/divergences/s8 ~3 min ≈ 20 min. 1.5x = 30.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -87,6 +97,10 @@ jobs:
   # ── Reject-side parity + fmt (reject dominates ~16m) ────────────────────────
   parity-reject:
     runs-on: ubuntu-latest
+    # reject measured 780 s DEBUG (74 s release — this job builds debug, so the
+    # debug number is the one that applies) + fmt gate + debug workspace build
+    # ≈ 20 min. 1.5x = 30. Drop this to ~12 if the gates ever build --release.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -103,6 +117,9 @@ jobs:
   # ── Byte-stable codegen across fresh processes (~15.5m) ─────────────────────
   repro:
     runs-on: ubuntu-latest
+    # repro ~15.5 min (this file's own header) + debug workspace build ~4 min
+    # ≈ 20 min. 1.5x = 30.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -117,6 +134,11 @@ jobs:
   # ── Codegen emit + go build + runtime (needs Go; cached) ────────────────────
   codegen-build:
     runs-on: ubuntu-latest
+    # The widest step list (coerce-floor, go test rt, build-run --all + 4 --shape
+    # passes, an extra --release sky build, conformance, doc-examples). Not
+    # separately measured, but bounded above by the audit's finding that test-ty
+    # (31 min) is the SLOWEST job, so ≈ 30 min. 1.5x = 45.
+    timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -169,6 +191,10 @@ jobs:
   # ── Editor-parity (Neovim) + fuzzer (small; isolated setup) ─────────────────
   lsp-fuzz:
     runs-on: ubuntu-latest
+    # "small; isolated setup" per this file's header. Reasoned: nvim setup ~1 min
+    # + debug workspace build ~4 min + lsp 17 cases (debug `sky`) ~4 min + fuzz
+    # ~4 min ≈ 13 min. 1.5x ≈ 20.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -192,6 +218,9 @@ jobs:
   # container + the `integration`-tagged tests close that gap.
   integration-postgres:
     runs-on: ubuntu-latest
+    # No Rust build at all: checkout + setup-go + postgres:16 service health-wait
+    # + one `go test -run Postgres` over the rt package ≈ 5 min. 1.5x ≈ 8.
+    timeout-minutes: 8
     services:
       postgres:
         image: postgres:16
@@ -224,6 +253,13 @@ jobs:
   # stay ubuntu-only above, so macOS carries just the determinism invariants.
   macos-determinism:
     runs-on: macos-latest
+    # THE 10x-BILLING JOB — a wedged `sky test` inside conformance.sh burned the
+    # full 6-hour default here on 2026-08-09. Content is repro + coerce-floor +
+    # rt tests + project integration + golden + a --release sky build +
+    # conformance; bounded above by the 31–34 min CI wall clock, so ≈ 30 min on
+    # this (slower, 3-core) runner. 1.5x = 45 — 45 macOS minutes billed at 10x
+    # instead of 360.
+    timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
