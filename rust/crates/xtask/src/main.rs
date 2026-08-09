@@ -21,9 +21,63 @@ mod resolve_gate;
 mod s8_gate;
 mod welltyped_gate;
 
+#[cfg(test)]
+mod gate_manifest_test;
+
 use std::path::{Path, PathBuf};
 
 const VERSION: &str = "xtask (rust bring-up) v0.1.0-m1";
+
+/// A subcommand entry point: argv tail (everything after the gate name) → exit
+/// code.
+type GateFn = fn(&[String]) -> i32;
+
+/// The SINGLE source of truth for the xtask subcommand surface.
+///
+/// Both `main`'s dispatch and the `usage:` line are derived from this table, so
+/// the help text can never drift from what actually runs. `gate_manifest_test`
+/// additionally asserts that every gate name referenced from
+/// `.github/workflows/**` and `scripts/**` appears here — a typo'd or renamed
+/// gate in CI (`coerce_floor` for `coerce-floor`) fails `cargo test -p xtask`
+/// instead of silently becoming a no-op step.
+///
+/// `--version` / `version` are handled separately in `main` (they are flags,
+/// not gates, and must not appear in the gate usage list).
+const GATES: &[(&str, GateFn)] = &[
+    ("roundtrip", roundtrip),
+    ("resolve", |args| resolve_gate::run(args, &repo_root())),
+    ("infer", |args| infer_gate::run(args, &repo_root())),
+    ("reject", |args| reject_gate::run(args, &repo_root())),
+    ("build-run", |args| build_run_gate::run(args, &repo_root())),
+    ("coerce-floor", |args| {
+        coerce_floor_gate::run(args, &repo_root())
+    }),
+    ("divergences", |args| {
+        divergences_gate::run(args, &repo_root())
+    }),
+    ("fmt", |args| fmt_gate::run(args, &repo_root())),
+    ("fuzz", |args| fuzz_gate::run(args, &repo_root())),
+    ("welltyped", |args| welltyped_gate::run(args, &repo_root())),
+    ("repro", |args| repro_gate::run(args, &repo_root())),
+    ("s8", |args| s8_gate::run(args, &repo_root())),
+    ("lsp", |args| lsp_gate::run(args, &repo_root())),
+    ("errloc", errloc),
+    ("diff", diff_stub),
+];
+
+/// A stub must not report success. `xtask diff` is the differential gate's
+/// name; wiring it into CI while it does nothing would give a permanently green
+/// step that verifies nothing.
+fn diff_stub(_args: &[String]) -> i32 {
+    eprintln!("xtask diff: NOT IMPLEMENTED (stub) — would shell stage-0 + rust over the corpus");
+    2
+}
+
+/// The `usage:` line, derived from [`GATES`] so it cannot drift from dispatch.
+fn usage() -> String {
+    let names: Vec<&str> = GATES.iter().map(|(name, _)| *name).collect();
+    format!("usage: xtask <{}> [args]", names.join("|"))
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -32,44 +86,24 @@ fn main() {
             println!("{VERSION}");
             0
         }
-        Some("roundtrip") => roundtrip(&args[1..]),
-        Some("resolve") => resolve_gate::run(&args[1..], &repo_root()),
-        Some("infer") => infer_gate::run(&args[1..], &repo_root()),
-        Some("reject") => reject_gate::run(&args[1..], &repo_root()),
-        Some("build-run") => build_run_gate::run(&args[1..], &repo_root()),
-        Some("coerce-floor") => coerce_floor_gate::run(&args[1..], &repo_root()),
-        Some("divergences") => divergences_gate::run(&args[1..], &repo_root()),
-        Some("fmt") => fmt_gate::run(&args[1..], &repo_root()),
-        Some("fuzz") => fuzz_gate::run(&args[1..], &repo_root()),
-        Some("welltyped") => welltyped_gate::run(&args[1..], &repo_root()),
-        Some("errloc") => errloc(&args[1..]),
-        Some("diff") => {
-            // A stub must not report success. `xtask diff` is the differential
-            // gate's name; wiring it into CI while it does nothing would give a
-            // permanently green step that verifies nothing.
-            eprintln!("xtask diff: NOT IMPLEMENTED (stub) — would shell stage-0 + rust over the corpus");
-            2
-        }
-        Some("repro") => repro_gate::run(&args[1..], &repo_root()),
-        Some("s8") => s8_gate::run(&args[1..], &repo_root()),
-        Some("lsp") => lsp_gate::run(&args[1..], &repo_root()),
         // An unrecognised subcommand MUST NOT exit 0. Every CI gate is invoked
-        // as `cargo run -q -p xtask -- <name>`; while this arm returned 0, a
-        // typo'd or renamed gate ("coerce_floor" for "coerce-floor") became a
-        // no-op that CI reported green — the gate silently stopped running and
-        // nothing said so. Verified: `xtask coerce_floor` printed usage and
-        // exited 0.
-        other => {
-            eprintln!("{VERSION}");
-            match other {
-                Some(name) => eprintln!("xtask: unknown subcommand `{name}`"),
-                None => eprintln!("xtask: no subcommand given"),
+        // as `cargo run -q -p xtask -- <name>`; while the fallback arm returned
+        // 0, a typo'd or renamed gate ("coerce_floor" for "coerce-floor")
+        // became a no-op that CI reported green — the gate silently stopped
+        // running and nothing said so. Verified: `xtask coerce_floor` printed
+        // usage and exited 0.
+        other => match other.and_then(|name| GATES.iter().find(|(n, _)| *n == name)) {
+            Some((_, run)) => run(&args[1..]),
+            None => {
+                eprintln!("{VERSION}");
+                match other {
+                    Some(name) => eprintln!("xtask: unknown subcommand `{name}`"),
+                    None => eprintln!("xtask: no subcommand given"),
+                }
+                eprintln!("{}", usage());
+                2
             }
-            eprintln!(
-                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|divergences|fmt|repro|s8|lsp|fuzz|welltyped> [args]"
-            );
-            2
-        }
+        },
     };
     std::process::exit(code);
 }
