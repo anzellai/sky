@@ -386,18 +386,23 @@ pub fn g0_6_mutations_verified(ctx: &Ctx) -> GateOutcome {
                 ));
                 continue;
             }
-            let expected_file = expected_path(m.patch);
-            match std::fs::read_to_string(ctx.path(&expected_file)) {
-                Err(_) => findings.push(format!(
-                    "{}: recorded proof ledger is stale — no expected output at {expected_file}",
-                    m.id
-                )),
-                Ok(text) => {
-                    if m.expect != "<never>" && !text.contains(m.expect) {
-                        findings.push(format!(
-                            "{}: recorded expected output does not contain the declared assertion {:?}",
-                            m.id, m.expect
-                        ));
+            // The canary declares `<never>`: it cannot go red, so there is no
+            // RED output to record. Requiring one would be requiring evidence
+            // the design says must not exist.
+            if m.expect != "<never>" {
+                let expected_file = expected_path(m.patch);
+                match std::fs::read_to_string(ctx.path(&expected_file)) {
+                    Err(_) => findings.push(format!(
+                        "{}: recorded proof ledger is stale — no expected output at {expected_file}",
+                        m.id
+                    )),
+                    Ok(text) => {
+                        if !text.contains(m.expect) {
+                            findings.push(format!(
+                                "{}: recorded expected output does not contain the declared assertion {:?}",
+                                m.id, m.expect
+                            ));
+                        }
                     }
                 }
             }

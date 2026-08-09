@@ -353,7 +353,10 @@ pub static REGISTRY: &[Gate] = &[
             id: "G0.6/corrupt-expected",
             patch: "docs/bluedb/mutations/G0.6.corrupt-expected.patch",
             expect: "does not contain the declared assertion",
-            targets: &["docs/bluedb/gate-state.tsv", "docs/bluedb/mutations"],
+            // NOT `gate-state.tsv`: `--verify-mutations` writes that file
+            // itself, so listing it would make this proof UNVERIFIED-SINCE the
+            // instant it was taken — a signal that always fires.
+            targets: &["docs/bluedb/mutations"],
         }]),
     },
     Gate {
