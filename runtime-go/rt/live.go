@@ -7591,6 +7591,15 @@ function __skyFlushPendingBeacon() {
   var body = { sessionId: __skySid };
   if (batch)    body.batch = batch;
   if (snapshot) body.inputState = snapshot;
+  // sendBeacon takes (url, data) only — there is NO headers argument, so
+  // this request cannot carry X-Sky-Csrf and the CSRF middleware would
+  // reject it (dropping the user's final debounced keystrokes on tab
+  // close). The token rides in the body instead; the server compares it to
+  // the __sky_csrf cookie exactly as it does the header, so this is the
+  // same double-submit bind, not an exemption. Keep the Blob type
+  // application/json: form/text encodings are CORS-safelisted and would
+  // let a cross-origin beacon through without a preflight.
+  if (__skyCsrfToken) body.csrf = __skyCsrfToken;
   try {
     var blob = new Blob([JSON.stringify(body)], {type: "application/json"});
     navigator.sendBeacon(__skyBase + "/_sky/event", blob);
