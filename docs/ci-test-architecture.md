@@ -1,5 +1,32 @@
 # Sky CI/CD + Test Architecture
 
+> ## ⚠️ SUPERSEDED by [`docs/ci-test-architecture-v2.md`](ci-test-architecture-v2.md)
+>
+> This document was one of **two** parallel designs (the other is
+> `docs/ci-corpus-proposal.md`). Both were adversarially grilled and both
+> returned 5 blocking findings. **v2 is the single reconciled design; where this
+> document conflicts with v2, v2 wins.** This file is retained for its evidence
+> — the measured gate defects, the surface inventory, and the CI topology audit
+> — not for its conclusions.
+>
+> Corrections v2 makes to this document (see v2 §0):
+> - **§0 Finding 1 / §4.2 are wrong about the cost.** The per-case tax is
+>   `World::build`, not `SourceDb` construction; the stdlib parses are already
+>   hoisted and the per-item db work is 0.2 %. **Route A is a no-op on the
+>   dominant term.** v2 §1.
+> - The "three measurements, one consistent model" corroboration is a sampling
+>   artefact (dropped); the `resolve` "58 world rebuilds" claim is falsified
+>   (measured 0.164 s total).
+> - `sky check` ≡ `sky build` — the "cheap, no `go build`" premise for
+>   `examples/` is false (v2 §9.3).
+> - Batching is **not** semantics-preserving for four case families (v2 §3.2).
+> - Falsifiability must be **per item**, not per gate (v2 §4).
+> - T1 = `setup + max(jobs)`; the 9-minute arithmetic omitted `setup` (v2 §8).
+> - The stdlib denominator is 1,744 / 1,623 / 121, not 1,762 / 1,640 / 122;
+>   "assertion" is redefined in v2 §5.4.
+> - `DEGRADED` is deleted as a state; the BlueDB harness is **built**, not
+>   adopted (v2 §7).
+>
 > **Status:** design, for grilling. Not implemented. Supersedes nothing until
 > §8's phases land.
 > **Mandate:** `.claude/AUTONOMOUS_GOAL.md` (verbatim user goal + the
