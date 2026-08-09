@@ -342,15 +342,26 @@ fn go_build_sites(ctx: &Ctx) -> Vec<(String, usize)> {
 pub fn g0_6_mutations_verified(ctx: &Ctx) -> GateOutcome {
     let state = GateState::load(ctx.root());
     let mut findings = Vec::new();
+    let mut unauthored = 0usize;
 
     for gate in REGISTRY {
         for m in gate.mutations.as_slice() {
             let patch = ctx.path(m.patch);
             if !patch.exists() {
-                findings.push(format!(
-                    "{}: no patch at {} — nobody has authored the falsification",
-                    m.id, m.patch
-                ));
+                if state.proofs.contains_key(m.id) {
+                    findings.push(format!(
+                        "{}: the ledger records a proof but the patch at {} is gone",
+                        m.id, m.patch
+                    ));
+                } else {
+                    // The gate is not authored yet. It already renders NOT RUN,
+                    // which renders its goal UNKNOWN, so counting it here would
+                    // drown the real findings without adding any signal. An
+                    // *implemented* gate with no patch cannot hide this way:
+                    // `--verify-mutations` records MUTATION-STALE for it, and
+                    // that lands in the ledger and is caught below.
+                    unauthored += 1;
+                }
                 continue;
             }
             let Some((outcome, sha)) = state.proofs.get(m.id) else {
@@ -400,10 +411,15 @@ pub fn g0_6_mutations_verified(ctx: &Ctx) -> GateOutcome {
     }
 
     if findings.is_empty() {
-        GateOutcome::pass("every registered mutation carries a current proof")
+        GateOutcome::pass(format!(
+            "every authored mutation carries a current proof ({unauthored} not authored yet)"
+        ))
     } else {
         GateOutcome::fail(
-            format!("{} mutation proof problem(s)", findings.len()),
+            format!(
+                "{} mutation proof problem(s) ({unauthored} not authored yet)",
+                findings.len()
+            ),
             findings,
         )
     }

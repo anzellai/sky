@@ -1,0 +1,9 @@
+diff --git a/docs/bluedb/STATUS.md b/docs/bluedb/STATUS.md
+index f1cacd28..6ed623aa 100644
+--- a/docs/bluedb/STATUS.md
++++ b/docs/bluedb/STATUS.md
+@@ -18,3 +18,3 @@
+ 
+-Legend: (blank)=PASS  ✗=FAIL  ⊘=NOT RUN  ⊗=UNPROVEN
++Legend: (blank)=PASS  ✗=FAIL  ⊘=NOT RUN  ⊗=UNPROVEN   (all green!)
+ 

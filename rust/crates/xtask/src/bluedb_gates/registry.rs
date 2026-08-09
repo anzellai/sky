@@ -321,7 +321,10 @@ pub static REGISTRY: &[Gate] = &[
         mutations: Mutations::new(&[Mutation {
             id: "G0.4/dead-key",
             patch: "docs/bluedb/mutations/G0.4.dead-key.patch",
-            expect: "dead config key",
+            // Names the key the patch introduces, not the generic message: the
+            // generic one already fires on the four pre-existing dead keys, so
+            // it would prove nothing.
+            expect: "dead config key DATA_BOGUS",
             targets: &["rust/crates/project/src/build.rs", "runtime-go/rt"],
         }]),
     },
@@ -349,7 +352,7 @@ pub static REGISTRY: &[Gate] = &[
         mutations: Mutations::new(&[Mutation {
             id: "G0.6/corrupt-expected",
             patch: "docs/bluedb/mutations/G0.6.corrupt-expected.patch",
-            expect: "recorded proof ledger is stale",
+            expect: "does not contain the declared assertion",
             targets: &["docs/bluedb/gate-state.tsv", "docs/bluedb/mutations"],
         }]),
     },

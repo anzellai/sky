@@ -33,11 +33,21 @@
 //!
 //! # A case §9.4 does not name
 //!
-//! §9.4's table assumes the gate is GREEN before the patch. If it is already
-//! RED, the patch proves nothing about it — the gate would have "gone red"
-//! either way. The runner therefore measures a baseline in the worktree first
-//! and reports `INCONCLUSIVE-BASELINE-RED`, which is a **failure**, not a pass:
-//! an already-broken gate is an unproven gate.
+//! §9.4's table assumes the gate is GREEN before the patch, and classifies on
+//! the exit code alone. That is not sufficient. A gate can be red for an
+//! unrelated reason — G0.4 is red on four pre-existing dead config keys, G0.7
+//! on fifty-eight untagged citations — and under §9.4's rule every such gate
+//! "goes red" under any patch and reports `PROVEN` without the patch having
+//! done anything. That is the same green lie the canary exists to catch, one
+//! level down.
+//!
+//! The runner therefore classifies on the **discriminating assertion**, not on
+//! the exit code: the mutation's `expect` string must be **absent from the
+//! baseline output and present after the patch**. A mutation whose assertion
+//! already fires before the patch is `INCONCLUSIVE-BASELINE-RED` — it proves
+//! nothing — and a patch that does not make the assertion fire is `VACUOUS`.
+//! This proves falsifiability of the specific property even when the gate has
+//! other, unrelated failures, which is exactly the situation P0 ships in.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -361,16 +371,23 @@ fn verify_one(
         report.failures.push(format!("{}: {bad}", m.id));
         return Some(ProofOutcome::WrongTree);
     }
-    match base.state.as_str() {
-        "PASS" => {}
-        "NOT" | "NOT_RUN" => return None,
-        other => {
-            report.notes.push(format!(
-                "{}: gate {gate_id} was already {other} before the patch — the mutation proves nothing about it",
-                m.id
-            ));
-            return Some(ProofOutcome::InconclusiveBaselineRed);
-        }
+    if base.state == "NOT_RUN" {
+        return None;
+    }
+    // The discriminating assertion must not already be firing.
+    if m.expect != "<never>" && base.output.contains(m.expect) {
+        report.notes.push(format!(
+            "{}: the assertion {:?} already fires before the patch — the mutation proves nothing about it",
+            m.id, m.expect
+        ));
+        return Some(ProofOutcome::InconclusiveBaselineRed);
+    }
+    if m.expect == "<never>" && !base.exit_ok {
+        report.notes.push(format!(
+            "{}: gate {gate_id} was already RED before the patch and declares no discriminating assertion",
+            m.id
+        ));
+        return Some(ProofOutcome::InconclusiveBaselineRed);
     }
 
     // --- apply, in the worktree only -------------------------------------
@@ -454,17 +471,23 @@ fn verify_one(
         return Some(ProofOutcome::WrongTree);
     }
 
-    if red.exit_ok {
-        // The gate stayed green under its own falsifying patch.
-        return Some(ProofOutcome::Vacuous);
+    if m.expect == "<never>" {
+        // The canary: it asserts `true`, so staying green IS the correct
+        // answer, and going red would mean the runner is not measuring what it
+        // claims.
+        return Some(if red.exit_ok {
+            ProofOutcome::Vacuous
+        } else {
+            ProofOutcome::Proven
+        });
     }
 
-    if m.expect != "<never>" && !red.output.contains(m.expect) {
-        report.failures.push(format!(
-            "{}: went red, but the recorded assertion {:?} does not appear in the output",
+    if red.exit_ok || !red.output.contains(m.expect) {
+        report.notes.push(format!(
+            "{}: the patch applied but the assertion {:?} did not fire — the gate does not detect the defect it claims to",
             m.id, m.expect
         ));
-        return Some(ProofOutcome::MutationStale);
+        return Some(ProofOutcome::Vacuous);
     }
 
     // Record the RED output verbatim (§9.4 — "the proof is a patch plus two

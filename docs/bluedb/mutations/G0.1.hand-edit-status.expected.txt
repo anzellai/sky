@@ -1,0 +1,3 @@
+PROBE gate=G0.1 state=FAIL root=/private/var/folders/pj/9tc4t43d6gd1q58c96p68jzw0000gn/T/nix-shell.aWkHp8/sky-bluedb-mutverify-96667-1786267944364/wt
+  STATUS.md is not trustworthy generated output
+  body-sha256 mismatch: recorded 0fd0986154106f09b618fcbaea3e7d4e0fd5acae65e151a2e17b4b1a098010ad, actual 8dd22c80f3ee179ac3438af814d179b85ad3cb96b3d526dbb3934c826c2956ef — STATUS.md was hand-edited; regenerate with `cargo run -p xtask -- bluedb-gates`

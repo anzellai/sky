@@ -1,0 +1,3 @@
+PROBE gate=G0.2 state=FAIL root=/private/var/folders/pj/9tc4t43d6gd1q58c96p68jzw0000gn/T/nix-shell.aWkHp8/sky-bluedb-mutverify-96667-1786267944364/wt
+  layering violated
+  forbidden edge rt -> bluedb: runtime-go/rt/bluedb_layering_probe.go:8 imports sky-app/bluedb
