@@ -44,18 +44,31 @@ fn main() {
         Some("welltyped") => welltyped_gate::run(&args[1..], &repo_root()),
         Some("errloc") => errloc(&args[1..]),
         Some("diff") => {
-            println!("xtask diff: (stub) will shell stage-0 + rust over the corpus");
-            0
+            // A stub must not report success. `xtask diff` is the differential
+            // gate's name; wiring it into CI while it does nothing would give a
+            // permanently green step that verifies nothing.
+            eprintln!("xtask diff: NOT IMPLEMENTED (stub) — would shell stage-0 + rust over the corpus");
+            2
         }
         Some("repro") => repro_gate::run(&args[1..], &repo_root()),
         Some("s8") => s8_gate::run(&args[1..], &repo_root()),
         Some("lsp") => lsp_gate::run(&args[1..], &repo_root()),
-        _ => {
-            println!("{VERSION}");
-            println!(
+        // An unrecognised subcommand MUST NOT exit 0. Every CI gate is invoked
+        // as `cargo run -q -p xtask -- <name>`; while this arm returned 0, a
+        // typo'd or renamed gate ("coerce_floor" for "coerce-floor") became a
+        // no-op that CI reported green — the gate silently stopped running and
+        // nothing said so. Verified: `xtask coerce_floor` printed usage and
+        // exited 0.
+        other => {
+            eprintln!("{VERSION}");
+            match other {
+                Some(name) => eprintln!("xtask: unknown subcommand `{name}`"),
+                None => eprintln!("xtask: no subcommand given"),
+            }
+            eprintln!(
                 "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|divergences|fmt|repro|s8|lsp|fuzz|welltyped> [args]"
             );
-            0
+            2
         }
     };
     std::process::exit(code);

@@ -345,10 +345,16 @@ run_example() {
             # them between sweeps is safe.
             rm -rf sky-out .skycache/lowered .skycache/go
         fi
+        # Both steps are timeout-bounded (AGENTS.md: timeout-bound every long
+        # command). A compiler that fails to terminate — an occurs-check loop,
+        # a non-terminating FFI introspection — otherwise wedges the worker
+        # forever, and the sweep has no ceiling of its own to stop it.
+        # 20 min for install: 13-skyshop introspects 76k Stripe/Firebase
+        # symbols and the repo documents that at 15+ min.
         if [[ -f sky.toml ]] && grep -qE '^\["?go\.dependencies"?\]' sky.toml; then
-            "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
+            run_with_timeout 1200 "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
         fi
-        "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1
+        run_with_timeout 900 "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1
     ) || { printf 'FAIL build failed — /tmp/sky-build-%s.log\n' "$name" > "$result_file"; return; }
 
     if [[ $BUILD_ONLY -eq 1 || "$kind" == "gui" ]]; then
@@ -378,21 +384,80 @@ run_example() {
             local pid log url
             log=$(mktemp)
             url="http://127.0.0.1:${port}${path}"
-            (cd "$dir" && "$bin" >"$log" 2>&1) &
+
+            # ── Port ownership ────────────────────────────────────────────────
+            # The header of this file claims "each example owns a distinct port
+            # in the table". It does not: fourteen entries share port 8000, and
+            # the workers run concurrently under `xargs -P $MAX_WORKERS`. Two
+            # examples therefore race for one listener — the loser's app dies
+            # with "address already in use" while the WINNER's server answers
+            # the loser's probe, and the loser is recorded OK.
+            #
+            # Demonstrated: with any process listening on :8000, this probe
+            # returns OK for an example whose binary prints `panic: runtime
+            # error` and exits 2 without serving anything.
+            #
+            # A mkdir lock is atomic on macOS and Linux alike (flock is not
+            # available on macOS). Serialising per PORT keeps the build phase
+            # fully parallel — only the probe is exclusive.
+            local lock="$RESULTS_DIR/.port-$port.lock" waited=0
+            while ! mkdir "$lock" 2>/dev/null; do
+                sleep 0.2; waited=$((waited+1))
+                if [[ $waited -gt 1500 ]]; then
+                    printf 'FAIL port %s held by another example for 300s\n' "$port" > "$result_file"
+                    rm -f "$log"; return
+                fi
+            done
+
+            # The lock stops OUR workers from racing, but a server leaked by an
+            # earlier run (see `exec` below) or by another tool can still be
+            # sitting on the port. Any answer we then got would be attributed
+            # to this example. So: assert the port is silent before we start.
+            # `curl` exit 0 here means SOMETHING responded — connection refused
+            # is the state we require. Reclaim a stale listener if we can, then
+            # insist; a port we cannot own is a hard failure, not a pass.
+            if curl -s -o /dev/null --max-time 1 "$url" 2>/dev/null; then
+                if command -v lsof >/dev/null 2>&1; then
+                    kill -9 $(lsof -ti ":$port" 2>/dev/null) 2>/dev/null
+                    sleep 0.5
+                fi
+                if curl -s -o /dev/null --max-time 1 "$url" 2>/dev/null; then
+                    printf 'FAIL port %s already served by a foreign listener — cannot attribute a response to this example\n' \
+                        "$port" > "$result_file"
+                    rmdir "$lock" 2>/dev/null; rm -f "$log"; return
+                fi
+            fi
+
+            # `exec` so $! is the APP, not the subshell wrapping it. Without it
+            # `kill -9 "$pid"` reaps only the shell and the app survives holding
+            # its port — leaking one server process per server example per
+            # sweep, and squatting the port for every later example and for the
+            # next sweep. Demonstrated: the child outlives the kill.
+            (cd "$dir" && exec "$bin" >"$log" 2>&1) &
             pid=$!
-            local ok=0 tries=0
+            local ok=0 tries=0 died=0
             while [[ $tries -lt 30 ]]; do
                 if curl -s -o /dev/null -w '%{http_code}' --max-time 1 "$url" 2>/dev/null | grep -qE '^(2|3)[0-9][0-9]$'; then
                     ok=1; break
                 fi
+                # Liveness AFTER the probe: an app that has exited can never
+                # start serving, so stop waiting and say so. Checked second so
+                # a fast, short-lived-but-correct startup is not mis-declared
+                # dead before its first response is read.
+                if ! kill -0 "$pid" 2>/dev/null; then died=1; break; fi
                 sleep 0.2; tries=$((tries+1))
             done
             kill -9 "$pid" 2>/dev/null
             wait "$pid" 2>/dev/null
+            rmdir "$lock" 2>/dev/null
             if [[ $ok -eq 1 ]]; then
                 printf 'OK\n' > "$result_file"
+            elif [[ $died -eq 1 ]]; then
+                printf 'FAIL server exited before serving %s — last 20 lines: %s\n' \
+                    "$url" "$(tail -20 "$log" 2>/dev/null | tr '\n' ' | ')" > "$result_file"
             else
-                printf 'FAIL no HTTP 2xx/3xx at %s — log %s\n' "$url" "$log" > "$result_file"
+                printf 'FAIL no HTTP 2xx/3xx at %s — last 20 lines: %s\n' \
+                    "$url" "$(tail -20 "$log" 2>/dev/null | tr '\n' ' | ')" > "$result_file"
             fi
             rm -f "$log" ;;
         *) printf 'FAIL unknown kind %s\n' "$kind" > "$result_file" ;;
@@ -434,8 +499,17 @@ printf '%s\n' "${EXAMPLES[@]}" \
     | xargs -P "$MAX_WORKERS" -I {} bash -c 'sweep_worker "$@"' _ {}
 
 # Aggregate results.
-pass=0; fail=0
+#
+# A SKIP is NOT a pass. It used to be counted as one, so the nightly sweep
+# reported "sweep: 29 passed, 0 failed" while 11-fyne-stopwatch,
+# 29-webview-threejs-spike and 31-webview-stopwatch-ui had never been built —
+# they are skipped as GUI examples on Linux, which is the only platform CI
+# sweeps on. Skips are now counted and named separately; the `sweep: N passed,
+# M failed` line keeps its exact shape so preflight-tag.sh's anchor still
+# matches, but N no longer silently includes examples nothing verified.
+pass=0; fail=0; skip=0
 declare -a failures=()
+declare -a skipped=()
 for entry in "${EXAMPLES[@]}"; do
     IFS=':' read -r name _ _ _ <<<"$entry"
     local_result="$RESULTS_DIR/$name.result"
@@ -447,13 +521,17 @@ for entry in "${EXAMPLES[@]}"; do
     line=$(head -1 "$local_result")
     case "$line" in
         OK)        pass=$((pass+1)) ;;
-        SKIP\ *)   pass=$((pass+1)) ;;
+        SKIP\ *)   skipped+=("$name: ${line#SKIP }"); skip=$((skip+1)) ;;
         FAIL\ *)   failures+=("$name: ${line#FAIL }"); fail=$((fail+1)) ;;
         *)         failures+=("$name: malformed result '$line'"); fail=$((fail+1)) ;;
     esac
 done
 
 echo
+if [[ $skip -gt 0 ]]; then
+    echo "sweep: $skip skipped — verified by nothing in this run:"
+    printf '  ~ %s\n' "${skipped[@]}"
+fi
 echo "sweep: $pass passed, $fail failed"
 if [[ $fail -gt 0 ]]; then
     printf '  - %s\n' "${failures[@]}"

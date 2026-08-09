@@ -177,13 +177,36 @@ function fail(label, msg) {
     failures.push(`${label}: ${msg}`);
 }
 
+// Compare a computed `rgb()` / `rgba()` string against an exact triple.
+// Substring matching on colours is not safe: rgb(96, 128, 224) "contains"
+// both 224 and 96, so it satisfies a naive test for rgb(224, 96, 96).
+function rgbEquals(computed, [r, g, b]) {
+    const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(computed || "");
+    if (!m) return false;
+    return Number(m[1]) === r && Number(m[2]) === g && Number(m[3]) === b;
+}
+
 async function snapshot(page, name, sel, viewport) {
     const baselinePath = resolve(SNAP_DIR, `${name}-${viewport}.png`);
     const target = sel ? await page.locator(`[data-test-id="${sel}"]`) : page;
     const buf = await target.screenshot({ animations: "disabled" });
-    if (UPDATE_BASELINE || !existsSync(baselinePath)) {
+    if (UPDATE_BASELINE) {
         writeFileSync(baselinePath, buf);
         console.log(`  WRITE ${name}-${viewport}.png (baseline)`);
+        return;
+    }
+    // A MISSING baseline used to be self-baselined and reported as a pass, so
+    // `rm -rf snapshots/` — or adding a new section name, or a rename — turned
+    // every snapshot gate green with zero comparison. Re-recording a baseline
+    // must be a deliberate act (`--update-baseline`, reviewed by eye); an
+    // absent one is a failure, not an invitation.
+    if (!existsSync(baselinePath)) {
+        writeFileSync(resolve(DIFF_DIR, `${name}-${viewport}-current.png`), buf);
+        fail(
+            `${name}-${viewport}`,
+            `no baseline at ${baselinePath} — nothing was compared. ` +
+            `Re-record deliberately with scripts/verify-ui-showcase.sh --update-baseline.`,
+        );
         return;
     }
     const baseline = readPng(readFileSync(baselinePath));
@@ -797,11 +820,16 @@ try {
             if (!el || !el.parentElement) return "";
             return window.getComputedStyle(el.parentElement).backgroundColor;
         });
-        // Expect rgb(224, 96, 96).
-        if (mqMobileParentBg.includes("224") && mqMobileParentBg.includes("96")) {
-            ok(`mq-mobile parent bg = red (mobile breakpoint fires at 375px)`);
+        // Expect rgb(224, 96, 96) — the mobile override.
+        //
+        // This was `includes("224") && includes("96")`, which the UNOVERRIDDEN
+        // desktop blue rgb(96, 128, 224) also satisfies: it contains "224" and
+        // it contains "96". So the assertion that the mobile breakpoint FIRED
+        // passed on the value that proves it did not. Compare the whole triple.
+        if (rgbEquals(mqMobileParentBg, [224, 96, 96])) {
+            ok(`mq-mobile parent bg = rgb(224, 96, 96) (mobile breakpoint fires at 375px)`);
         } else {
-            fail("mq-mobile parent bg (mobile)", `expected red mobile override, got ${mqMobileParentBg}`);
+            fail("mq-mobile parent bg (mobile)", `expected rgb(224, 96, 96), got ${mqMobileParentBg}`);
         }
         // `(min-width: 800px)` should NOT fire at 375 — wrapper stays
         // its base colour (transparent, since the wrapper has no base bg).

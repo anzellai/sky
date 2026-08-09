@@ -18,7 +18,15 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJ="$ROOT/tests/conformance"
 FILTER="${1:-}"
-SKY="${SKY_BIN:-sky}"
+# Prefer the compiler in THIS tree over whatever `sky` is installed on PATH.
+# Defaulting to PATH meant the behavioural conformance suite could certify a
+# months-old installed binary while the tree under test was never exercised —
+# a pass that says nothing about the change being verified. doc-examples.sh
+# already resolves in this order; conformance now agrees with it.
+SKY="${SKY_BIN:-}"
+if [ -z "$SKY" ]; then
+    if [ -x "$ROOT/sky-out/sky" ]; then SKY="$ROOT/sky-out/sky"; else SKY="sky"; fi
+fi
 
 # Portable per-suite timeout. GNU coreutils `timeout` is NOT on macOS runners by
 # default (only `gtimeout` via `brew install coreutils`), so a bare `timeout`
@@ -28,7 +36,23 @@ SKY="${SKY_BIN:-sky}"
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
 run_suite() { # run_suite <secs> <cmd...>
     local secs="$1"; shift
-    if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$secs" "$@"; else "$@"; fi
+    if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$secs" "$@"; return $?; fi
+    # No GNU timeout — do NOT fall through unbounded. macOS runners ship
+    # neither `timeout` nor `gtimeout`, and the macos-determinism job that runs
+    # this script has no timeout-minutes either, so the "the CI job still has
+    # its own outer timeout" assumption in the note above was false: a wedged
+    # `sky test` burned the full 6-hour GitHub default at the macOS minute
+    # multiplier. Race a killer against the command instead (the same portable
+    # fallback example-sweep.sh and verify-ui-showcase.sh already use).
+    "$@" &
+    local cmd_pid=$!
+    ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) &
+    local killer_pid=$!
+    local rc=0
+    wait "$cmd_pid" 2>/dev/null; rc=$?
+    kill -KILL "$killer_pid" 2>/dev/null
+    wait "$killer_pid" 2>/dev/null
+    return $rc
 }
 
 if [ ! -d "$PROJ/tests" ]; then

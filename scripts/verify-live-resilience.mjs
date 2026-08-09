@@ -176,20 +176,40 @@ async function readCount(page) {
 // Wait until the client has an open SSE (connected). The status banner
 // carries class sky-status--reconnecting / --offline while degraded; a
 // connected client leaves it hidden/empty. We poll a short bounded loop.
+// This asserted the ABSENCE of a degradation banner, which is not evidence of
+// a connection. `document.getElementById('__sky-status')` yields null before
+// the banner is ever rendered, `cls` is then '', the regex does not match, and
+// the function returned true on its first poll — before any EventSource
+// existed. `sseReady` was computed and never read. So the gate guarding the
+// 72-second idle scenario was, in effect, `return true`.
+//
+// Assert positively, using the runtime's own readiness test
+// (runtime-go/rt/live.go:8579): an OPEN EventSource *and* the server's hello
+// handshake for this connection. Both are `var`-declared at script top level
+// in the emitted page, so both are reachable as window properties.
 async function waitConnected(page, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
+    let last = null;
     while (Date.now() < deadline) {
         const state = await page.evaluate(() => {
             const el = document.getElementById('__sky-status');
-            const cls = el ? el.className : '';
-            const sseReady = (typeof window.__skySSE !== 'undefined' && window.__skySSE
-                && window.__skySSE.readyState === 1);
-            return { cls, sseReady };
+            const sse = window.__skySSE;
+            return {
+                cls: el ? el.className : '',
+                readyState: sse ? sse.readyState : null,
+                helloOk: window.__skyHelloOk === true,
+            };
         });
-        // Not degraded and (SSE OPEN or banner simply not shown yet).
-        if (!/reconnecting|offline/.test(state.cls)) return true;
+        last = state;
+        if (state.readyState === 1 && state.helloOk
+            && !/reconnecting|offline/.test(state.cls)) {
+            return true;
+        }
         await page.waitForTimeout(300);
     }
+    log(`  waitConnected timed out after ${timeoutMs}ms — last state: `
+        + `readyState=${last && last.readyState} helloOk=${last && last.helloOk} `
+        + `banner="${last && last.cls}"`);
     return false;
 }
 

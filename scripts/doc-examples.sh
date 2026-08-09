@@ -27,6 +27,33 @@ VERBOSE=0; [ "${1:-}" = "-v" ] && VERBOSE=1
 BLOCKS="$(mktemp -d)"; PROJ="$(mktemp -d)"
 trap 'rm -rf "$BLOCKS" "$PROJ"' EXIT
 
+# Timeout shim — macOS runners ship neither `timeout` nor `gtimeout`, so
+# resolve what exists and fall back to a bash watchdog. A `sky check` that
+# fails to terminate must not wedge the gate (AGENTS.md: timeout-bound every
+# long command).
+if command -v timeout >/dev/null 2>&1; then TIMEOUT_CMD=timeout
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=gtimeout
+else TIMEOUT_CMD=""; fi
+run_bounded() {
+  local secs="$1"; shift
+  if [ -n "$TIMEOUT_CMD" ]; then "$TIMEOUT_CMD" "$secs" "$@"; return $?; fi
+  "$@" & local cmd_pid=$!
+  ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) & local killer=$!
+  local rc=0; wait "$cmd_pid" 2>/dev/null; rc=$?
+  kill -KILL "$killer" 2>/dev/null; wait "$killer" 2>/dev/null
+  return $rc
+}
+
+# Anti-vacuity floor. `total` is derived from a text scan of docs/, so any
+# drift in fence syntax, a docs/ reorg, or a change to the `find` path can
+# empty the corpus — and an empty corpus printed "doc-examples: 0/0 …" followed
+# by "DOC-EXAMPLES GATE: PASS", exit 0. Demonstrated: a docs tree whose single
+# example is deliberately uncompilable passes when its fence carries an info
+# string. conformance.sh already guards this way (`ran -eq 0` -> exit 2);
+# doc-examples did not. Raise the floor when docs gain examples; never lower it
+# to make a red run green.
+DOC_EXAMPLES_FLOOR="${DOC_EXAMPLES_FLOOR:-12}"
+
 pass=0; fail=0; total=0
 declare -a failures
 
@@ -37,7 +64,11 @@ while IFS= read -r md; do
   rel="${md#"$ROOT"/}"
   awk -v dir="$BLOCKS" -v rel="$rel" '
     BEGIN { n=0 }
-    /^```(elm|sky)[ \t]*$/ { infence=1; first=1; buf=""; ismod=0; skip=0; startln=NR+1; next }
+    # Accept an info string after the language ("```elm title=Main.sky"), the
+    # form mkdocs/docusaurus emit. The old pattern anchored at end-of-line, so
+    # adding an attribute to a fence silently removed that example from the
+    # corpus — and with the corpus empty the gate still reported PASS.
+    /^```(elm|sky)([ \t].*)?$/ { infence=1; first=1; buf=""; ismod=0; skip=0; startln=NR+1; next }
     /^```[ \t]*$/ {
       if (infence && ismod && !skip) {
         n++; f=dir "/" NR "_" n ".sky"; printf "%s", buf > f; close(f)
@@ -64,11 +95,14 @@ while IFS=$'\t' read -r file rel startln; do
   # module name → last segment drives the source filename + entry
   modname="$(head -1 "$file" | sed -E 's/^module[ ]+([A-Za-z0-9_.]+).*/\1/')"
   last="${modname##*.}"
-  rm -rf "$PROJ"/* 2>/dev/null
-  mkdir -p "$PROJ/src"
+  # `rm -rf "$PROJ"/*` left the DOTFILES behind — .skycache/ and .skydeps/ —
+  # so each example inherited the previous one's resolved deps and lowered
+  # cache. An example could compile only because its predecessor had populated
+  # the cache. Recreate the project directory outright.
+  rm -rf "$PROJ"; mkdir -p "$PROJ/src"
   printf 'name = "docexamples"\nversion = "0.1.0"\nentry = "src/%s.sky"\n' "$last" > "$PROJ/sky.toml"
   cp "$file" "$PROJ/src/$last.sky"
-  if out="$( ( cd "$PROJ" && "$SKY" check "src/$last.sky" ) 2>&1 )"; then
+  if out="$( ( cd "$PROJ" && run_bounded 300 "$SKY" check "src/$last.sky" ) 2>&1 )"; then
     pass=$((pass + 1))
     [ "$VERBOSE" = 1 ] && printf '  ok    %s:%s (%s)\n' "$rel" "$startln" "$modname"
   else
@@ -83,6 +117,13 @@ done < "$BLOCKS/index"
 
 echo "------------------------------------------------------------"
 echo "doc-examples: $pass/$total full-module doc examples compile"
+if [ "$total" -lt "$DOC_EXAMPLES_FLOOR" ]; then
+  echo "DOC-EXAMPLES GATE: INCONCLUSIVE — extracted $total example(s), floor is $DOC_EXAMPLES_FLOOR."
+  echo "  The gate verifies nothing it cannot find. Either docs/ genuinely lost"
+  echo "  examples (lower DOC_EXAMPLES_FLOOR deliberately, in the same commit),"
+  echo "  or the fence/scan drifted and the corpus silently emptied."
+  exit 2
+fi
 if [ "$fail" -gt 0 ]; then
   echo "DOC-EXAMPLES GATE: FAIL — $fail example(s) no longer compile:"
   for f in "${failures[@]}"; do echo "  - $f"; done
