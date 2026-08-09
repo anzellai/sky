@@ -169,12 +169,30 @@ fn preflight_disk_guard() -> Result<(), String> {
         let xdg = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| format!("{home}/.cache"));
         cache = format!("{xdg}/go-build");
     }
+    // Prune only under REAL disk pressure — never on cache size alone.
+    //
+    // A full corpus sweep legitimately produces ~11 GB of go-build cache. Keying
+    // the prune off size alone (`> 5 GB`) therefore wiped the cache at the start
+    // of EVERY run, so every corpus build was cold: the gate deleted the exact
+    // artifacts it was about to rebuild. On a machine with plenty of free space
+    // that is pure cost, and it made `scripts/preflight-tag.sh` unpassable — its
+    // rust-gate step is bounded by `timeout 3600`, and a cold full-corpus build
+    // cannot finish inside an hour, so releases failed with no error text at all.
+    //
+    // The guard's actual purpose (AGENTS.md "Disk hygiene") is avoiding ENOSPC
+    // mid-sweep, which is a function of FREE SPACE, not of how big the cache got.
+    // Below we still refuse outright under 10 GB free; this prune gives the sweep
+    // room to breathe before that, and only when space is genuinely tight.
+    const PRUNE_CACHE_ABOVE_KB: u64 = 5 * 1024 * 1024; // 5 GB of cache …
+    const PRUNE_WHEN_FREE_BELOW_KB: u64 = 30 * 1024 * 1024; // … but only under 30 GB free
     if Path::new(&cache).is_dir() {
         if let Some(kb) = du_kb(&cache) {
-            if kb > 5 * 1024 * 1024 {
+            let free_kb = df_avail_kb().unwrap_or(u64::MAX);
+            if kb > PRUNE_CACHE_ABOVE_KB && free_kb < PRUNE_WHEN_FREE_BELOW_KB {
                 eprintln!(
-                    "[build-run] go-build cache is {} GB — running 'go clean -cache'",
-                    kb / 1024 / 1024
+                    "[build-run] go-build cache is {} GB and only {} GB free — running 'go clean -cache'",
+                    kb / 1024 / 1024,
+                    free_kb / 1024 / 1024
                 );
                 let _ = Command::new("go").args(["clean", "-cache"]).status();
             }
