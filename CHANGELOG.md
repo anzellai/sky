@@ -64,6 +64,29 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **`curl … | sh` failed when `/usr/local/bin` did not exist.** The installer
+  never created its target directory, so on a fresh macOS, a slim container image
+  or a CI runner without that path the writability test failed, the script fell
+  through to `sudo mv` into a directory that was not there, and the install died
+  with a bare "No such file or directory". The directory is now created — plainly
+  if possible, with `sudo` if the parent needs it, and falling back to
+  `~/.local/bin` when there is no writable system location and no `sudo` rather
+  than failing. A second defect on the same path: `chmod +x` ran unprivileged
+  even when the `mv` had needed `sudo`, so it failed on the root-owned binary and
+  `set -e` aborted *after* the file had landed, leaving a non-executable `sky`.
+  Both now go through the same privilege path.
+- **`INSTALL_DIR` is accepted as well as `SKY_INSTALL_DIR`** (and the existing
+  `--dir` flag); `SKY_INSTALL_DIR` wins if both are set. The installer also warns,
+  with the exact `export PATH=…` line, when the install directory is not on your
+  `PATH` — previously a install to `~/.local/bin` reported success and then
+  `sky` was not found.
+- **The release preflight could not stamp its own success from a git worktree,**
+  so `scripts/preflight-tag.sh` passed every gate and the pre-push hook still
+  refused the tag. Inside a worktree `.git` is a file, not a directory, so the
+  literal `$REPO_ROOT/.git/last-preflight-pass` path named nothing. Both the
+  script and the hook installer now resolve it via `git rev-parse
+  --git-common-dir`.
+
 - **The `sendBeacon` unload flush was rejected on every CSRF-enabled app, losing
   debounced input on tab close.** `sendBeacon` cannot set request headers, so the
   batch could not carry `X-Sky-Csrf` and was refused with `csrf_missing` — the

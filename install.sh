@@ -8,6 +8,12 @@
 # Environment variables (alternative to flags):
 #   SKY_VERSION       - specific version to install (default: latest)
 #   SKY_INSTALL_DIR   - installation directory (default: /usr/local/bin)
+#   INSTALL_DIR       - same thing; SKY_INSTALL_DIR wins if both are set
+#
+# The install directory is CREATED if it does not exist — a fresh macOS, a slim
+# container image and many CI runners have no /usr/local/bin — using sudo only
+# when the parent is not writable. With no writable target and no sudo, the
+# installer falls back to ~/.local/bin rather than failing.
 set -e
 
 # Parse arguments
@@ -22,7 +28,8 @@ while [ $# -gt 0 ]; do
 done
 
 REPO="anzellai/sky"
-INSTALL_DIR="${SKY_INSTALL_DIR:-/usr/local/bin}"
+# SKY_INSTALL_DIR wins, then INSTALL_DIR, then the default.
+INSTALL_DIR="${SKY_INSTALL_DIR:-${INSTALL_DIR:-/usr/local/bin}}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -108,27 +115,65 @@ install_sky() {
         error "Failed to download sky v${VERSION}\nCheck https://github.com/$REPO/releases"
     fi
 
-    # Install sky binary
-    if [ -w "$INSTALL_DIR" ]; then
-        mv "${ARTIFACT}${EXT}" "$INSTALL_DIR/sky${EXT}"
-    else
-        info "Requires sudo to install to $INSTALL_DIR"
-        sudo mv "${ARTIFACT}${EXT}" "$INSTALL_DIR/sky${EXT}"
+    # Make sure the target directory exists and decide ONCE how to write to it.
+    # A fresh macOS, a slim container image and many CI runners have no
+    # /usr/local/bin at all — without this the -w test is false, we fall through
+    # to `sudo mv` into a directory that does not exist, and the install dies
+    # with a bare "No such file or directory".
+    SUDO=""
+    if [ ! -d "$INSTALL_DIR" ]; then
+        if mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+            info "Created $INSTALL_DIR"
+        elif command -v sudo >/dev/null 2>&1 && sudo mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+            info "Created $INSTALL_DIR (sudo)"
+            SUDO="sudo"
+        else
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            info "No writable system directory — installing to $INSTALL_DIR"
+        fi
     fi
-    chmod +x "$INSTALL_DIR/sky${EXT}"
+
+    # Existing directory we cannot write to: use sudo when it is available,
+    # otherwise fall back rather than dying part-way through.
+    if [ ! -w "$INSTALL_DIR" ]; then
+        if command -v sudo >/dev/null 2>&1; then
+            info "Requires sudo to install to $INSTALL_DIR"
+            SUDO="sudo"
+        else
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            info "Target not writable and sudo unavailable — installing to $INSTALL_DIR"
+        fi
+    fi
+
+    # Install sky binary. chmod runs through the SAME privilege path as the mv:
+    # a root-owned binary cannot be chmod'ed by the invoking user, so `set -e`
+    # aborted AFTER the file had already landed — leaving a non-executable sky.
+    $SUDO mv "${ARTIFACT}${EXT}" "$INSTALL_DIR/sky${EXT}"
+    $SUDO chmod +x "$INSTALL_DIR/sky${EXT}"
     success "Installed sky -> ${INSTALL_DIR}/sky${EXT}"
 
     # Install sky-ffi-inspect if present in the archive
     FFI_BIN="sky-ffi-inspect-${ARTIFACT}${EXT}"
     if [ -f "$FFI_BIN" ]; then
-        if [ -w "$INSTALL_DIR" ]; then
-            mv "$FFI_BIN" "$INSTALL_DIR/sky-ffi-inspect${EXT}"
-        else
-            sudo mv "$FFI_BIN" "$INSTALL_DIR/sky-ffi-inspect${EXT}"
-        fi
-        chmod +x "$INSTALL_DIR/sky-ffi-inspect${EXT}"
+        $SUDO mv "$FFI_BIN" "$INSTALL_DIR/sky-ffi-inspect${EXT}"
+        $SUDO chmod +x "$INSTALL_DIR/sky-ffi-inspect${EXT}"
         success "Installed sky-ffi-inspect -> ${INSTALL_DIR}/sky-ffi-inspect${EXT}"
     fi
+
+    # A binary that is not on PATH is not installed as far as the user is
+    # concerned — the usual outcome for ~/.local/bin.
+    case ":${PATH}:" in
+        *":${INSTALL_DIR}:"*) ;;
+        *)
+            echo ""
+            printf "${BOLD}Note:${NC} %s is not on your PATH.\n" "$INSTALL_DIR"
+            printf "Add it, then restart your shell:\n\n"
+            printf "  ${CYAN}echo 'export PATH=\"%s:\$PATH\"' >> ~/.zshrc${NC}\n" "$INSTALL_DIR"
+            printf "  (or ~/.bashrc / ~/.profile for bash)\n"
+            ;;
+    esac
 }
 
 check_go() {
