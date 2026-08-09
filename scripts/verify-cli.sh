@@ -54,6 +54,21 @@ SKIPS=()
 run_test() {
     local name="$1" mode="$2" input="$3" expect="$4"
     local bin="$REPO_ROOT/examples/$name/sky-out/app"
+
+    # Decide skips BEFORE touching the binary. `skip-gui` is evaluated in the
+    # `case $mode` block further down, which used to sit after the binary
+    # check — so a GUI example the script intends to SKIP was first failed for
+    # having no binary, and (with the build-if-missing logic below) would even
+    # be built pointlessly. 11-fyne-stopwatch cannot be built at all on macOS:
+    # fyne needs cgo, while the FFI inspector pins GOOS=linux/amd64 with
+    # CGO_ENABLED=0, so its surface cannot be generated. Skipping is the
+    # script's own stated intent (see the header note).
+    if [ "$mode" = "skip-gui" ]; then
+        echo "⊘ $name — GUI app, skipped (needs a display; FFI surface needs cgo)"
+        skip=$((skip+1)); SKIPS+=("$name")
+        return
+    fi
+
     # Build it if it isn't there, instead of failing.
     #
     # This script used to hard-fail on a missing binary, which meant it could
