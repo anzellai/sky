@@ -8,6 +8,7 @@
 //!   1. byte-exact round-trip: `reprint(green_tree) == source_bytes` (L8);
 //!   2. zero `ERROR` nodes (the parser structured every construct).
 
+mod bluedb_gates;
 mod build_run_gate;
 mod ci_scan;
 mod coerce_floor_gate;
@@ -56,6 +57,9 @@ const GATES: &[(&str, GateFn)] = &[
     ("infer", |args| infer_gate::run(args, &repo_root())),
     ("reject", |args| reject_gate::run(args, &repo_root())),
     ("build-run", |args| build_run_gate::run(args, &repo_root())),
+    ("bluedb-gates", |args| {
+        bluedb_gates::run(args, &repo_root())
+    }),
     ("coerce-floor", |args| {
         coerce_floor_gate::run(args, &repo_root())
     }),
