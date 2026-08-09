@@ -14,7 +14,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK_DIR="$REPO_ROOT/.git/hooks"
+# --git-common-dir, not "$REPO_ROOT/.git": inside a git worktree `.git` is a
+# FILE pointing at the real gitdir, so the literal path resolves to nothing and
+# hooks install (and the stamp below lands) somewhere the hook can never read.
+HOOK_DIR="$(git -C "$REPO_ROOT" rev-parse --git-common-dir)/hooks"
 mkdir -p "$HOOK_DIR"
 
 cat > "$HOOK_DIR/pre-push" <<'EOF'
@@ -23,7 +26,8 @@ cat > "$HOOK_DIR/pre-push" <<'EOF'
 # Bypass: git push --no-verify (use ONLY for non-release pushes).
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-STAMP="$REPO_ROOT/.git/last-preflight-pass"
+# Shared across worktrees — see the note in install-git-hooks.sh.
+STAMP="$(git rev-parse --git-common-dir)/last-preflight-pass"
 MAX_AGE_SECONDS=1800   # 30 min
 
 is_tag_push=0

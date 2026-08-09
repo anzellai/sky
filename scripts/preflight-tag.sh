@@ -103,6 +103,10 @@ echo "════════════════════════�
 echo "✓ All preflight checks passed. Safe to tag."
 echo "════════════════════════════════════════════════════════════════"
 
-# Stamp success so the pre-push hook permits the tag push.
-touch "$REPO_ROOT/.git/last-preflight-pass"
-echo "  stamp: $REPO_ROOT/.git/last-preflight-pass updated"
+# Stamp success so the pre-push hook permits the tag push. Use --git-common-dir,
+# NOT "$REPO_ROOT/.git": inside a git worktree `.git` is a FILE, so the literal
+# path names nothing, the touch fails, and the tag push is refused even though
+# preflight passed — which is exactly what happened cutting v0.19.13.
+STAMP_PATH="$(git rev-parse --git-common-dir)/last-preflight-pass"
+touch "$STAMP_PATH"
+echo "  stamp: $STAMP_PATH updated"
