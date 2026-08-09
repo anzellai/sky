@@ -217,6 +217,14 @@ are necessary but **not sufficient**: a change is not verified until it also
 passes the full example sweep + a real app (see
 `docs/rust-rewrite/13-change-verification-and-edge-cases.md`).
 
+`cargo run --release -p xtask -- harness` runs the registered gates through the
+gate harness, which enforces each gate's budget by `killpg`, requires an exact
+assertion count, and refuses to report PASS when it cannot establish a verdict
+(`NOT RUN` / `UNPROVEN` → `UNKNOWN`, exit non-zero). Every registered gate
+declares a falsifying mutation — an empty set fails the build — and
+`--verify-falsifiers` proves the mutation makes the gate red. See
+`docs/tooling/gate-harness.md`.
+
 ## Non-negotiable code rules (enforced by `cargo test`)
 
 These apply to any Sky code you write or any compiler change you make:

@@ -4,19 +4,37 @@
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1786313312
+      "proven_at_unix": 1786314686
+    },
+    "conformance": {
+      "mutation": "conformance.break-expectation",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786314631
     },
     "reject": {
       "mutation": "reject.neutralise-axis",
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1786313278
+      "proven_at_unix": 1786314631
     },
     "roundtrip": {
       "mutation": "roundtrip.error-node",
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1786313278
+      "proven_at_unix": 1786314631
+    },
+    "sky-verify": {
+      "mutation": "sky-verify.break-a-suite",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786314631
+    },
+    "verify-cli": {
+      "mutation": "verify-cli.drop-expected-output",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786314631
     }
   },
   "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, or older than the declared window, renders UNPROVEN under `--require-proofs`.",

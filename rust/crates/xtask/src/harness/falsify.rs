@@ -221,6 +221,10 @@ fn verify_one(
     // A mutated run that times out IS red — the mutation broke it badly enough
     // to hang. That is a genuine falsification, and it is bounded, unlike the
     // precedent's untimed mutation probe.
+    // NEGATIVE CONTROL, run 2026-08-09: hard-coding `went_red = true` here —
+    // a runner whose every answer is "it went red" — makes the canary report
+    // PROVEN, and the canary is the ONLY gate that notices, failing the whole
+    // falsifier run. Every other gate's PROVEN looks identical either way.
     let went_red = run.timed_out
         || run
             .result
