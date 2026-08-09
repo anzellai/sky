@@ -11,6 +11,82 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.19.13 — SECURITY: Sky.Live session binding (2026-08-09)
+
+> **Security release. Upgrade and redeploy every Sky.Live app.** A session-fixation
+> flaw let one client act as another. Rebuild with `sky upgrade` and redeploy — no
+> app code changes are required.
+
+### Security
+
+- **`/_sky/event` accepted a session id from the request body without binding it
+  to the caller's session cookie (session hijack).** Every Sky.Live dispatch
+  posts a `sessionId` in its JSON body; the server looked the session up by that
+  value alone. `handleSSE` had always required the matching cookie —
+  `handleEvent` never did. Anyone who learned another user's session id could
+  therefore drive that session: dispatch messages into it, mutate its Model, fire
+  its handlers, and read whatever the resulting view rendered. On a multi-tenant
+  deployment that reaches another tenant's data, because the session carries the
+  identity.
+
+  **CSRF did not protect this.** Sky's CSRF check is a double-submit comparison
+  of header to cookie and was never bound to the session id, so a request
+  carrying the attacker's *own* valid CSRF pair passed the check and still drove
+  the victim's session. Requests under `/_sky/console/…` skipped CSRF entirely.
+
+  The session id is not a secret in practice: while the cookie is `HttpOnly`, the
+  same value is rendered into page JavaScript and echoed in request bodies, so it
+  is exposed to XSS, browser extensions, shared screenshots, and proxy/access
+  logs.
+
+  **Fixed:** `/_sky/event` now resolves the session from the request cookie and
+  refuses a body id that does not match it. A request with no session cookie is
+  refused rather than falling back to the body value (a mismatch-only rule is
+  defeated by simply omitting the cookie). The refusal is byte-identical to the
+  existing "session not found" response, so it cannot be used to probe which
+  session ids exist. `handleSSE` now resolves through the same helper, so the
+  cookie-name derivation has one definition and cannot drift — including for
+  console sub-apps, which use their own cookie name and correctly reject a decoy
+  under the default name. The session cookie is re-issued on dispatch, so a page
+  left open past the cookie TTL keeps working instead of failing every click.
+
+### ⚠ Breaking changes
+
+- **An app served cross-origin in an iframe now fails cleanly instead of
+  limping.** `/_sky/event` requires the session cookie, so a deployment where the
+  browser blocks third-party cookies — a cross-origin iframe *without*
+  `SKY_LIVE_FRAME_ANCESTORS` set — now returns a session-lost reload rather than
+  dispatching. Such a deployment was already broken: SSE could not connect and
+  the Model was wiped on every page load. The part that appeared to work was the
+  flaw itself. **Migration:** set `SKY_LIVE_FRAME_ANCESTORS` to the embedding
+  origin (which also sets `SameSite=None; Secure` on the session cookie), or
+  serve the app same-origin.
+
+### Fixed
+
+- **The `sendBeacon` unload flush was rejected on every CSRF-enabled app, losing
+  debounced input on tab close.** `sendBeacon` cannot set request headers, so the
+  batch could not carry `X-Sky-Csrf` and was refused with `csrf_missing` — the
+  batch path was effectively dead for default-configured browser apps. The beacon
+  now carries its token in the request body; the middleware accepts a body-borne
+  token only for the Live event path, only for `POST` with `application/json`,
+  and only when no header was supplied, comparing it constant-time against the
+  `__sky_csrf` cookie. This is the same double-submit binding, not an exemption —
+  a cross-origin page still cannot read the cookie. (The body is deliberately
+  kept as JSON: switching it to a CORS-safelisted content type would have let a
+  cross-origin beacon fire with no preflight.)
+
+### Docs
+
+- `docs/skylive/architecture.md` no longer advertises a session id passed "cookie
+  or query param", nor an `/_sky/sse?session=<id>` form that never existed. The
+  wire-protocol spec now states that the session cookie is the authority for
+  `/_sky/event`.
+- `docs/skylive/production-resilience.md` claimed the CSRF token was
+  `HMAC(key, sid)` — session-bound. It is not: the token is 32 random bytes with
+  no session binding. Corrected to describe what the code actually does. A
+  genuinely session-bound token remains future work.
+
 ## v0.19.12 — codegen: pattern-destructure + Dict-of-records correctness (2026-08-08)
 
 ### Fixed
@@ -44,6 +120,35 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     fields when stored in any container and read back.
 
   The workaround from the issue (dropping the annotation) is no longer needed.
+
+## v0.19.11 — Sky.Live: bounded session-store memory (tiered cache) (2026-08-05)
+
+### Fixed
+- **Durable session stores now bound RAM to the *active* working set instead of
+  every session held for the TTL.** Previously the sqlite / postgres / redis
+  session stores kept the live `liveSession` pointer (~tens of KB each — Model +
+  rendered tree + handlers) of EVERY session in an in-RAM `memCache` until its
+  full TTL expired. Under sustained cookie-less traffic — crawlers and bots each
+  minting a session — that accumulated `rate × TTL` sessions in RAM, enough to
+  OOM a small VM over hours-to-days even with little *human* traffic (it wedged a
+  1 GB instance on a 30-minute TTL, and was far worse on a 30-DAY TTL). The
+  stores now **evict an idle session's live pointer from `memCache` after a short
+  window** (default **5 min**) when it has no active SSE connection — persisting
+  a fresh blob first, then tearing down its goroutines — and keep the blob on
+  disk / in the external store until the full TTL, **resurrecting it from disk on
+  the next request** (single-flight; the reconnecting SSE re-establishes its
+  loops). RAM then tracks SSE-connected + recently-active sessions rather than
+  everything-within-TTL. On-by-default; no app changes required — an abandoned
+  tab / bot session evicts and a returning user resurrects transparently (one
+  full re-render on wake). Sessions with a non-gob-encodable Model (the
+  memCache-only fallback) are never evicted, so nothing is lost. The in-memory
+  store is unaffected (no disk backing). Rebuild or `sky upgrade` to pick it up.
+
+### Added
+- **`SKY_LIVE_IDLE_EVICT`** (and `Std.Live.withIdleEvict`) — the idle-evict
+  window for the tiered session cache above. Default `5m`; set `0` / `off` or a
+  value `>= ttl` to disable (falls back to the previous all-within-TTL
+  behaviour). Only the durable stores (sqlite / postgres / redis) honour it.
 
 ## v0.19.10 — Sky.Live: navigation scrolls the new page to the top (2026-08-04)
 
