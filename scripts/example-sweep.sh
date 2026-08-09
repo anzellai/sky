@@ -236,7 +236,7 @@ declare -a EXAMPLES=(
     "08-notes-app:server:8000:/"
     "09-live-counter:server:8000:/"
     "10-live-component:server:8000:/"
-    "11-fyne-stopwatch:gui"
+    "11-fyne-stopwatch:blocked"
     "12-skyvote:server:8000:/"
     "13-skyshop:server:8000:/"
     "14-task-demo:cli"
@@ -309,6 +309,27 @@ run_example() {
     # Set SKIP_GUI_LINUX=0 in an env with the libs installed to override.
     if [[ "$kind" == "gui" && "$(uname -s)" == "Linux" && "${SKIP_GUI_LINUX:-1}" == "1" ]]; then
         printf 'SKIP GUI example on Linux (set SKIP_GUI_LINUX=0 to run)\n' > "$result_file"
+        return
+    fi
+
+    # `blocked` — the example cannot be built ANYWHERE right now, for a reason
+    # outside Sky. Declared explicitly so the sweep reports the truth rather
+    # than either a silent pass or a permanent red that trains everyone to
+    # ignore the gate. Remove the marker the moment the cause is fixed.
+    #
+    # 11-fyne-stopwatch: fyne needs cgo (glfw -> OpenGL -> native windowing),
+    # but the FFI inspector pins GOOS=linux/GOARCH=amd64 with CGO_ENABLED=0 so
+    # generated surfaces are identical on every dev machine
+    # (rust/crates/ffi/src/inspect.rs:169-173). cgo cross-compilation to Linux
+    # from a macOS host needs a cross-toolchain that is not present, so the
+    # surface cannot be generated and `sky install` fails with "has no
+    # generated FFI surface". No fyne version avoids this — it is structural,
+    # not a bad pin. Upstream v2.8.0 is separately broken under CGO_ENABLED=0.
+    # Until the inspector grows a documented host-target + cgo fallback, this
+    # example is verified NOWHERE: Linux CI skips it as a GUI example and macOS
+    # cannot build it. See discussions #50.
+    if [[ "$kind" == "blocked" ]]; then
+        printf 'SKIP blocked — FFI surface needs cgo; inspector pins linux/amd64 CGO_ENABLED=0 (see #50)\n' > "$result_file"
         return
     fi
 
