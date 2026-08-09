@@ -1,0 +1,36 @@
+diff --git a/rust/crates/xtask/src/bluedb_gates/registry.rs b/rust/crates/xtask/src/bluedb_gates/registry.rs
+index c9393720..b19d2e9a 100644
+--- a/rust/crates/xtask/src/bluedb_gates/registry.rs
++++ b/rust/crates/xtask/src/bluedb_gates/registry.rs
+@@ -174,10 +174,8 @@ impl Mutations {
+     /// [`REGISTRY`] lives — the assertion is evaluated by const-eval, so
+     /// `Mutations::new(&[])` fails the **build**.
+     pub const fn new(m: &'static [Mutation]) -> Mutations {
+-        assert!(
+-            !m.is_empty(),
+-            "every gate must declare at least one mutation"
+-        );
++        // MUTATION (G0.7): the const-eval assertion removed, so a mutation-less
++        // gate constructs. §9.6 check 3 must then catch it at runtime.
+         Mutations(m)
+     }
+ 
+@@ -946,6 +944,18 @@ pub static REGISTRY: &[Gate] = &[
+             targets: &["runtime-go/rt/consoledata"],
+         }]),
+     },
++    // MUTATION (G0.7): a gate that declares no mutation at all. With the
++    // const-eval assertion removed above it constructs; §9.6 check 3 must then
++    // report it UNPROVEN.
++    Gate {
++        id: "G0.X",
++        goal: 0,
++        title: "MUTATION — a gate with no declared mutation",
++        tier: Tier::Fast,
++        run: gates_g0::g0_c_canary,
++        budget_s: 30,
++        mutations: Mutations::new(&[]),
++    },
+ ];
+ 
+ /// §9.4 — the canary is the one gate for which a *pass* under mutation is the

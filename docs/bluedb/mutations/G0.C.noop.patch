@@ -1,0 +1,9 @@
+diff --git a/docs/bluedb/mutations/CANARY_TOUCHED b/docs/bluedb/mutations/CANARY_TOUCHED
+new file mode 100644
+index 00000000..db0175ed
+--- /dev/null
++++ b/docs/bluedb/mutations/CANARY_TOUCHED
+@@ -0,0 +1,3 @@
++canary sentinel — created by G0.C.noop.patch INSIDE the scratch worktree only.
++If this file ever appears in the developer's tree, the mutation runner applied
++the patch to the wrong tree (H3). It is never committed.

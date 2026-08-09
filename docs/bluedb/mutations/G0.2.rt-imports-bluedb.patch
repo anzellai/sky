@@ -1,0 +1,17 @@
+diff --git a/runtime-go/rt/bluedb_layering_probe.go b/runtime-go/rt/bluedb_layering_probe.go
+new file mode 100644
+index 00000000..a2a6b47b
+--- /dev/null
++++ b/runtime-go/rt/bluedb_layering_probe.go
+@@ -0,0 +1,11 @@
++package rt
++
++// MUTATION (G0.2): an `rt` file that imports the engine. The layering scan must
++// report the forbidden edge rt -> bluedb.
++import (
++	"fmt"
++
++	_ "sky-app/bluedb"
++)
++
++func bluedbLayeringProbe() string { return fmt.Sprintf("probe") }

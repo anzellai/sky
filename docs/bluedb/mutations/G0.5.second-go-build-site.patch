@@ -1,0 +1,22 @@
+diff --git a/rust/crates/project/src/build.rs b/rust/crates/project/src/build.rs
+index 6824e786..7853eec1 100644
+--- a/rust/crates/project/src/build.rs
++++ b/rust/crates/project/src/build.rs
+@@ -1546,3 +1546,17 @@ mod sky_toml_tests {
+         let _ = std::fs::remove_dir_all(&dir);
+     }
+ }
++
++// MUTATION (G0.5): a second `go build` invocation that does not inherit
++// `run_go_build_once`'s tags. This is exactly how the property regresses — the
++// sole-site check must report two sites.
++#[allow(dead_code)]
++fn mutation_second_go_build_site(out_dir: &Path) {
++    let _ = Command::new("go")
++        .arg("build")
++        .arg("-o")
++        .arg("app")
++        .arg(".")
++        .current_dir(out_dir)
++        .output();
++}

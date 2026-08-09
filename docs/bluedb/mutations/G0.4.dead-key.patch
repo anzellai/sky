@@ -1,0 +1,16 @@
+diff --git a/rust/crates/project/src/build.rs b/rust/crates/project/src/build.rs
+index 6824e786..277024a9 100644
+--- a/rust/crates/project/src/build.rs
++++ b/rust/crates/project/src/build.rs
+@@ -1546,3 +1546,11 @@ mod sky_toml_tests {
+         let _ = std::fs::remove_dir_all(&dir);
+     }
+ }
++
++// MUTATION (G0.4): a `[data]` key the compiler writes and nothing in
++// `runtime-go/` reads — the exact shape of the `DB_DRIVER` defect. The reader
++// scan must report it as a dead config key.
++#[allow(dead_code)]
++fn mutation_dead_config_key(cfg: &mut lower::LowerConfig, val: String) {
++    cfg.extra_defaults.push(("DATA_BOGUS".into(), val));
++}
