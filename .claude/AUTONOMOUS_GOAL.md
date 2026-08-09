@@ -103,10 +103,27 @@ pre-existing Sky.Live runtime bugs. Only this third is in scope here:
   Sky app and ship separately on `fix/skylive-runtime-soundness` (off main):
   the `handleEvent` session hijack, the `sendBeacon` CSRF 403, the reactive
   gate's first-session `os.Exit`, and `live.go`'s implicit lock contract.
-- **Goal #5 scope is UNRESOLVED and must not be narrowed silently.** The goal
-  says "admin access to records"; "read-only" came from agent-authored docs, not
-  the user. The `goty.rs` collision long blamed for blocking edits does NOT block
-  it (fixed v0.19.1; `Std.Live` never imports `Std.Analytics`). Ask the user.
+- **Goal #5 = READ *AND* WRITE. RULED BY THE USER 2026-08-09.** Asked directly
+  whether "admin access to records" means read-only or read+write, the user chose
+  **"Read + write, both in scope"**. So:
+  - The Console can view AND edit/delete records.
+  - **Goal #5 CLOSES ONLY WHEN WRITES WORK.** A Judge MUST return NOT ACHIEVED
+    for goal #5 on a read-only surface. This is now a user decision, not an
+    agent's reading — do not re-narrow it, and do not cite any prior doc's
+    "read-only" wording as authority (that wording came from agent-authored docs;
+    the doc previously cited as mandating it in fact recommends shipping writes).
+  - 5e-2 must carry: the write path gated on the ENGINE-ATTESTED tenant (§5's
+    durable tenancy, not a forgeable app-written column), a per-mutation audit
+    trail, optimistic concurrency so the console cannot cause a lost update, and
+    a confirm/undo story.
+  - The `goty.rs` record-fieldset collision does NOT block the edit form (fixed
+    v0.19.1; `Std.Live` never imports `Std.Analytics`; `EventProp` appears 0
+    times in the generated console). Do not reinstate that excuse.
+
+- **The reactive capability gate's first-session `os.Exit` lands HERE, not on
+  `fix/skylive-runtime-soundness`** — verified 2026-08-09 that the gate is
+  BlueDB-only and does not exist on `main`. §6.5's startup-check replacement is
+  in scope for this branch.
 
 ## Reference material (read, don't trust)
 
