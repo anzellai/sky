@@ -64,7 +64,15 @@ echo "$ver" | grep -qE "^sky " || fail "sky --version did not print 'sky' line"
 step "3/6 — rust gate suite"
 # CLAUDE.md §2.3 — long-running commands must be timeout-bounded.
 # 60 min ceiling; if real runs need more, that's a flaky test.
-( cd rust && timeout 3600 bash -c 'cargo test --workspace --locked && for g in roundtrip resolve infer reject fuzz coerce-floor repro; do cargo run -q -p xtask -- "$g" || exit 1; done && cargo run -q -p xtask -- build-run --all && cargo run -q -p xtask -- build-run --shape cli --run --golden' ) || fail "rust gate suite had failures"
+#
+# The gates run --release. They are CPU-bound corpus walks (the checker over 63
+# ill-typed programs, ~1000 fuzz inputs, an emit of every example), and an
+# unoptimized xtask made them ~10x slower: `reject` alone measured 780s in debug
+# vs 74s in release, for the identical 63/63 PASS. Debug-built gates could not
+# finish inside the 60-minute ceiling at all — two release attempts died with no
+# error text, just a kill, after every gate had actually passed. Optimizing the
+# harness is the honest fix; raising the ceiling would only have hidden it.
+( cd rust && timeout 3600 bash -c 'cargo test --workspace --locked && for g in roundtrip resolve infer reject fuzz coerce-floor repro; do cargo run --release -q -p xtask -- "$g" || exit 1; done && cargo run --release -q -p xtask -- build-run --all && cargo run --release -q -p xtask -- build-run --shape cli --run --golden' ) || fail "rust gate suite had failures"
 
 step "4/6 — Example sweep (build-only, all 19+ examples)"
 scripts/example-sweep.sh --build-only 2>&1 | tail -5
