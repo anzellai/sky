@@ -42,8 +42,14 @@ DATABASE_URL='postgres://user@host:5432/ledger?sslmode=disable' ./sky-out/app
 `src/` contains **no port literal in bind position** — a Sky.Live app never
 names its port in source. `sky.toml`'s `[live] port` is only a default
 (`build.rs:820` → `rt.SetPortDefault` → `SetSkyDefault("LIVE_PORT", …)`,
-`runtime-go/rt/dotenv.go:29`), and `SKY_LIVE_PORT` is read *after* the config
-field in `runtime-go/rt/live.go:3665`, so the environment wins.
+`runtime-go/rt/dotenv.go`), and an **operator-set** `SKY_LIVE_PORT` beats it,
+so the environment wins.
+
+The precedence is resolved in `resolveLivePort` (`runtime-go/rt/live.go`):
+operator-set `SKY_LIVE_PORT` > `Live.withPort` > the `sky.toml` default >
+8080. `SetEnvDefault` records which variables it seeded, so the compiler's
+injected `sky.toml` default no longer masquerades as an operator choice —
+which is what used to make `Live.withPort` dead.
 
 ## Readiness line
 

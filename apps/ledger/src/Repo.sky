@@ -41,9 +41,14 @@ findOrgByName name =
     Task.run (Store.findBy Books.conn Books.orgs "name" name)
 
 
--- Returns the org's REAL id. `Store.insert`'s Int is rows-affected, not the
--- serial — see the note on `postEntry` — so the id is read back through the
--- UNIQUE name.
+-- Returns the org's REAL id.
+--
+-- `Store.insert`'s Int used to be rows-affected rather than the serial the
+-- database assigned — see the note on `postEntry` — so the id was read back
+-- through the UNIQUE name. That is fixed (`Store.insert` now returns the
+-- assigned id for an Int PK), but the read-back is KEPT: it also proves the
+-- row is retrievable by its natural key, which is what the caller goes on to
+-- rely on.
 insertOrg : String -> Result Error Int
 insertOrg name =
     case Task.run
@@ -164,13 +169,15 @@ linesForEntry orgId entryId =
 -- | Post a balanced entry: header + its two signed lines, inside ONE
 -- transaction so a half-written entry can never be observed.
 --
--- The header goes in through `Db.insertFieldsReturning … "id"`, NOT
--- `Store.insert`. `Store.insert : … -> Task Error Int` returns the AFFECTED
--- ROW COUNT (it routes to `Db_exec` — runtime-go/rt/db_codec.go:352), so its
--- Int is always 1 for a single-row insert, never the serial the database
--- just assigned. Wiring child rows to that value silently attributes every
--- line to entry 1. `RETURNING` is the portable way to get the real id
--- (SQLite >= 3.35 and Postgres both support it).
+-- The header goes in through `Db.insertFieldsReturning … "id"`, which returns
+-- the serial the database just assigned.
+--
+-- This used to be the ONLY way to get that id: `Store.insert` returned the
+-- AFFECTED ROW COUNT (it routed to `Db_exec`), so its Int was always 1 for a
+-- single-row insert and wiring child rows to it silently attributed every line
+-- to entry 1. `Store.insert` now returns the assigned id for an Int PK, so
+-- either verb would work here; `insertFieldsReturning` is kept because this
+-- header also needs DEFAULT-omittable columns.
 postEntry : Int -> String -> String -> Int -> Int -> Int -> Result Error Int
 postEntry orgId entryDate memo debitAccountId creditAccountId amountMinor =
     Task.run
