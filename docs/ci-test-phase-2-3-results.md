@@ -260,6 +260,39 @@ real limits:
 2. **The red rate** (v2 §2.3, Phase 3.5's 100-case spike). Unchanged by anything
    here, and still mandatory before a corpus size is committed.
 
+### `c_u` — the unbatchable per-unit cost, now the binding term
+
+v2 §3.3's cost line charges `N_iso` cases at `c_u`, the per-compilation-unit
+build-and-run cost, because the four families in §3.2 cannot share a compilation
+unit. Measured on this host with `examples/01-hello-world`, 10 units timed as a
+batch:
+
+| | per unit |
+|---|---|
+| warm rebuild (`touch` + `sky build`) | **0.70 s** |
+| clean slate (`rm -rf sky-out .skycache .skydeps` + build) | **1.40 s** |
+| build **+ run** | **0.70 s** |
+
+v2's host figure was 0.83 s warm; 0.70 s is consistent. (The "clean slate" row is
+not v2's 4.53 s cold: the Go build cache survives an example wipe, so it is a
+warm-Go, cold-Sky number.)
+
+**This is now the entire cost model.** Against v2's own first-cut `N_iso ≈ 130`
+units:
+
+```
+N_iso · c_u   = 130 × 0.70 s   ≈ 91 s   (P=1)   ≈ 23 s (P=4)
+N_s  · c_s    = 5 000 × 1.02 ms ≈ 5.1 s (P=1)
+```
+
+The unbatchable term is **~18× the whole static term at 5,000 cases**. Phase 4
+should budget `N_iso` first and treat `N_s` as approximately free — and v2 §3.3's
+instruction that `N_iso` is capped by the manifest, so growing a
+forbidden-from-batching family is a visible budget decision, is the load-bearing
+rule of the design rather than a detail.
+
+`c_u` on the CI runner class remains **U2**, unresolved. This is a host number.
+
 ### What the number is, and is not
 
 The pool is the 63-file reject corpus cycled to each size. The generated Layer-1
@@ -286,6 +319,47 @@ output** before and after both changes.
 The gates still run the whole-program path; C-1 is what speeds them up. Migrating
 them onto the shared path is a Phase 4 decision, and the differential harness is
 the evidence it can be taken safely.
+
+Everything else stayed green:
+
+```
+cargo test --workspace           470 passed, 0 failed, cargo exit 0
+xtask harness                    roundtrip 173/173 · reject 63/63 ·
+                                 conformance 770/770 · verify-cli 13/13 ·
+                                 sky-verify 6/6        VERDICT: PASS
+xtask harness --verify-falsifiers  5 mutations PROVEN, canary VACUOUS
+examples/01-hello-world          clean-slate build + run: "Hello from Sky!", exit 0
+```
+
+`shared-world` and `corpus-bench` are deliberately **not** registered in the gate
+harness. Registering the differential as a T1 gate is a Phase 4 step, taken with
+the corpus job's budget in hand; adding it here would have changed the five-gate
+set the phase was verified against.
+
+---
+
+## 6a. A harness defect found while verifying this
+
+Not part of C-1 or C-2, but found by running the verification and fixed under the
+no-deferral principle.
+
+`--verify-falsifiers` reverts its mutation in `Patch::drop`, documented as *"the
+revert is guaranteed … a panic between apply and revert cannot leave a mutated
+source in the tree."* **`Drop` does not run when the process is killed by a
+signal** — and this runner exists to be killed: the harness enforces budgets with
+`killpg`, CI cancels jobs, operators interrupt long runs.
+
+Observed: an interrupted falsifier run left
+`tests/conformance/tests/MathConformanceTest.sky` mutated. The next two `harness`
+runs reported `conformance 632/770` and a
+`min 3 7 == 3 … expected 4 but got 3` failure. Two runs were spent chasing a
+compiler regression that did not exist — the same wrong-verdict class this
+overhaul exists to remove, pointing the other way.
+
+Fixed by journalling the original content to disk **before** the file is touched
+and replaying any orphaned journal at harness startup, reported out loud rather
+than silently repaired. A journal that cannot be written is a refusal to mutate.
+The test models the kill with `mem::forget`, which is exactly a missing `Drop`.
 
 ---
 
