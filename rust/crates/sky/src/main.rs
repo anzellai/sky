@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use fmt::{format_source, is_formatted};
 use project::{
-    assets_root_for, build_example, is_compiler_repo_root, project_dir_for, repo_root_for, run_app,
-    BuildOptions,
+    assets_root_for, build_example, build_project, is_compiler_repo_root, project_dir_for,
+    repo_root_for, run_app, BuildOptions,
 };
 use testrunner::run_test;
 
@@ -1760,53 +1760,27 @@ fn cmd_db_gen(args: &[String]) -> ExitCode {
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     let name = positional.first().map(|s| s.as_str()).unwrap_or("migration");
     let file = Path::new("src/Main.sky");
-    let Some((repo_root, project_dir)) = resolve(file) else {
-        return ExitCode::FAILURE;
-    };
-    if is_compiler_repo_root(&project_dir) {
-        eprintln!("sky db: refusing to run from the Sky compiler repo root");
-        return ExitCode::FAILURE;
-    }
     let entry_module = entry_module_name(file).unwrap_or_else(|| "Main".into());
 
-    // 1. Write the temp DB-free schema-dump entry.
-    let gen_src = project_dir.join("src").join("_skydbgen.sky");
+    // 1-2. Synthesise + build the DB-free schema-dump entry. Routed through the
+    // shared helper so it lands in a scratch dir — this used to build into the
+    // project's real `sky-out/`, replacing the app binary with `SkyDbGen`.
     let gen_code = format!(
         "module SkyDbGen exposing (main)\n\nimport {entry_module} exposing (db)\nimport Std.Db.Store as Store\n\nmain =\n    Store.dumpSchema db\n"
     );
-    if let Err(e) = std::fs::write(&gen_src, gen_code) {
-        eprintln!("sky db --gen: cannot write temp entry: {e}");
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry(
+        &format!(
+            "sky db --gen: build failed — does module {entry_module} `exposing (db)` with `db = Store.project [...]`?\nsky db --gen"
+        ),
+        "SkyDbGen",
+        "_skydbgen.sky",
+        &gen_code,
+    ) else {
         return ExitCode::FAILURE;
-    }
-
-    // 2. Build the temp entry.
-    let opts = BuildOptions {
-        repo_root,
-        example_dir: project_dir.clone(),
-        out_dir_name: "sky-out".into(),
-        out_dir_abs: None,
-        run: false,
-        stdin: None,
-        entry_module: Some("SkyDbGen".into()),
-        progress: false,
     };
-    let report = build_example(&opts);
-    let ok = report.emitted && report.go_build_ok;
-    if !ok {
-        let _ = std::fs::remove_file(&gen_src);
-        eprintln!(
-            "sky db --gen: build failed — does module {entry_module} `exposing (db)` with `db = Store.project [...]`?\n{}\n{}",
-            report.note, report.go_build_stderr
-        );
-        return ExitCode::FAILURE;
-    }
 
     // 3. Run the dump binary, capture stdout.
-    let bin = project_dir
-        .join("sky-out")
-        .join(project::configured_bin_name(&project_dir));
     let output = Command::new(&bin).current_dir(&project_dir).output();
-    let _ = std::fs::remove_file(&gen_src);
     let stdout = match output {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
         Err(e) => {
@@ -1940,7 +1914,7 @@ fn cmd_db_gen(args: &[String]) -> ExitCode {
 /// apply; the quarantined `destructive` array is ignored by the runtime.
 fn cmd_db_apply(_args: &[String]) -> ExitCode {
     let file = Path::new("src/Main.sky");
-    let Some((repo_root, project_dir)) = resolve(file) else {
+    let Some((_repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
     if is_compiler_repo_root(&project_dir) {
@@ -1979,7 +1953,6 @@ fn cmd_db_apply(_args: &[String]) -> ExitCode {
     // 2. Write a temp entry that reads the staged file, connects, and applies.
     let entry_module = entry_module_name(file).unwrap_or_else(|| "Main".into());
     let _ = &entry_module; // apply entry is self-contained; project only supplies config/env
-    let apply_src = project_dir.join("src").join("_skydbapply.sky");
     let apply_code = r#"module SkyDbApply exposing (main)
 
 import Sky.Core.Prelude exposing (..)
@@ -2013,41 +1986,19 @@ report applied =
     in
     Task.succeed ()
 "#;
-    if let Err(e) = std::fs::write(&apply_src, apply_code) {
-        eprintln!("sky db migrate: cannot write temp entry: {e}");
+    // 3. Synthesise + build it. Routed through the shared helper so it lands in
+    // a scratch dir — this used to build into the project's real `sky-out/`,
+    // replacing the app binary with `SkyDbApply`.
+    let Some((bin, project_dir, _scratch)) =
+        build_temp_db_entry("sky db migrate", "SkyDbApply", "_skydbapply.sky", apply_code)
+    else {
         let _ = std::fs::remove_file(&apply_path);
         return ExitCode::FAILURE;
-    }
-
-    // 3. Build it.
-    let opts = BuildOptions {
-        repo_root,
-        example_dir: project_dir.clone(),
-        out_dir_name: "sky-out".into(),
-        out_dir_abs: None,
-        run: false,
-        stdin: None,
-        entry_module: Some("SkyDbApply".into()),
-        progress: false,
     };
-    let report = build_example(&opts);
-    if !(report.emitted && report.go_build_ok) {
-        let _ = std::fs::remove_file(&apply_src);
-        let _ = std::fs::remove_file(&apply_path);
-        eprintln!(
-            "sky db migrate: build failed\n{}\n{}",
-            report.note, report.go_build_stderr
-        );
-        return ExitCode::FAILURE;
-    }
 
     // 4. Run — the app's Db.connect reads the project's DB config from the env
     //    (SKY_DB_PATH / DATABASE_URL), inherited from this process.
-    let bin = project_dir
-        .join("sky-out")
-        .join(project::configured_bin_name(&project_dir));
     let status = Command::new(&bin).current_dir(&project_dir).status();
-    let _ = std::fs::remove_file(&apply_src);
     let _ = std::fs::remove_file(&apply_path);
     match status {
         Ok(s) if s.success() => ExitCode::SUCCESS,
@@ -2086,43 +2037,89 @@ fn cmd_db_init() -> ExitCode {
 /// success return the built binary path (caller runs it). Removes the temp source
 /// whether or not the build succeeds. `None` → build failed (message already
 /// printed with `label`).
+/// Owns a `sky db` helper build's scratch dir and removes it when the caller is
+/// done with the binary. Callers bind it (`let (_bin, _dir, _scratch) = …`) so
+/// the dir outlives the `Command` that runs the helper.
+struct DbScratch(PathBuf);
+
+impl Drop for DbScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A private scratch directory for one `sky db` helper build. Same shape as
+/// `testrunner::scratch_dir` — pid + monotonic nanos, so concurrent invocations
+/// never collide.
+fn db_scratch_dir(tag: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "sky-db-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
+/// Build a synthesised `sky db` helper entry — **entirely inside a scratch
+/// dir**, never the project's own tree.
+///
+/// Both halves of that used to be wrong. The synthesised `.sky` was written into
+/// the user's `src/` (so an aborted run left `src/_skydbseed.sky` behind, where
+/// module discovery picks it up on the next build), and the build ran with
+/// `out_dir_abs: None`, i.e. straight into the project's real `sky-out/`. Any db
+/// verb therefore REPLACED `sky-out/app` with the helper program: run
+/// `sky db status`, and the binary you were about to test is gone — or still
+/// there and silently a different program, so the test that follows exercises
+/// `SkyDbStatus` and passes.
+///
+/// `sky test` already solved this; `BuildOptions::out_dir_abs`'s own doc comment
+/// names it as the mechanism. The project dir is still `example_dir`, so the
+/// project's `src/`, FFI surface and go.mod pins load normally — only the synth
+/// entry and the output move.
 fn build_temp_db_entry(
     label: &str,
     module: &str,
     filename: &str,
     code: &str,
-) -> Option<(PathBuf, PathBuf)> {
+) -> Option<(PathBuf, PathBuf, DbScratch)> {
     let file = Path::new("src/Main.sky");
     let (repo_root, project_dir) = resolve(file)?;
     if is_compiler_repo_root(&project_dir) {
         eprintln!("{label}: refusing to run from the Sky compiler repo root");
         return None;
     }
-    let src = project_dir.join("src").join(filename);
-    if let Err(e) = std::fs::write(&src, code) {
-        eprintln!("{label}: cannot write temp entry: {e}");
+    let scratch = db_scratch_dir(module);
+    if let Err(e) = std::fs::create_dir_all(&scratch) {
+        eprintln!("{label}: cannot create scratch dir: {e}");
         return None;
     }
+    let src = scratch.join(filename);
+    if let Err(e) = std::fs::write(&src, code) {
+        eprintln!("{label}: cannot write temp entry: {e}");
+        let _ = std::fs::remove_dir_all(&scratch);
+        return None;
+    }
+    let out_dir = scratch.join("sky-out");
     let opts = BuildOptions {
         repo_root,
         example_dir: project_dir.clone(),
         out_dir_name: "sky-out".into(),
-        out_dir_abs: None,
+        out_dir_abs: Some(out_dir.clone()),
         run: false,
         stdin: None,
         entry_module: Some(module.to_string()),
         progress: false,
     };
-    let report = build_example(&opts);
-    let _ = std::fs::remove_file(&src);
+    let report = build_project(&opts, &[scratch.clone()], Some(module));
     if !(report.emitted && report.go_build_ok) {
         eprintln!("{label}: build failed\n{}\n{}", report.note, report.go_build_stderr);
+        let _ = std::fs::remove_dir_all(&scratch);
         return None;
     }
-    let bin = project_dir
-        .join("sky-out")
-        .join(project::configured_bin_name(&project_dir));
-    Some((bin, project_dir))
+    let bin = out_dir.join(project::configured_bin_name(&project_dir));
+    Some((bin, project_dir, DbScratch(scratch)))
 }
 
 /// `sky db status` (file-based) — list committed `db/migrations/*.json` and mark
@@ -2170,8 +2167,7 @@ printApplied ids =
     in
     Task.succeed ()
 "#;
-    let Some((bin, project_dir)) =
-        build_temp_db_entry("sky db status", "SkyDbStatus", "_skydbstatus.sky", code)
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry("sky db status", "SkyDbStatus", "_skydbstatus.sky", code)
     else {
         return ExitCode::FAILURE;
     };
@@ -2265,8 +2261,7 @@ done _ =
     Task.succeed ()
 "#
     );
-    let Some((bin, project_dir)) =
-        build_temp_db_entry("sky db seed", "SkyDbSeed", "_skydbseed.sky", &code)
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry("sky db seed", "SkyDbSeed", "_skydbseed.sky", &code)
     else {
         eprintln!(
             "sky db seed: your entry module must define + expose `seed : Db -> Task Error ()`."
@@ -2319,8 +2314,7 @@ report applied =
     Task.succeed ()
 "#
     );
-    let Some((bin, project_dir)) =
-        build_temp_db_entry("sky db push", "SkyDbPush", "_skydbpush.sky", &code)
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry("sky db push", "SkyDbPush", "_skydbpush.sky", &code)
     else {
         eprintln!("sky db push: your entry module must expose `db : Store.Project`.");
         return ExitCode::FAILURE;
@@ -2451,7 +2445,7 @@ fn cmd_db_reset_drop(args: &[String], op: DbDestructive) -> ExitCode {
     let module = if op == DbDestructive::Reset { "SkyDbReset" } else { "SkyDbDrop" };
     let filename = if op == DbDestructive::Reset { "_skydbreset.sky" } else { "_skydbdrop.sky" };
     let label = format!("sky db {verb}");
-    let Some((bin, project_dir)) = build_temp_db_entry(&label, module, filename, &code) else {
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry(&label, module, filename, &code) else {
         eprintln!(
             "sky db {verb}: your entry module must expose `db : Store.Project`{}.",
             if single { " (or pass a table name)" } else { "" }
