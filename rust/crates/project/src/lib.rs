@@ -16,7 +16,7 @@ pub use build::{
 };
 pub use doc::{
     list_modules, render_doc_site, render_doc_site_export, render_guides, render_landing,
-    render_learn_tour, render_module,
+    render_learn_tour, render_module, stdlib_denominators, ModuleDenominator,
 };
 pub use driver::{
     assets_root_for, is_compiler_repo_root, module_name_from_path, project_dir_for, repo_root_for,

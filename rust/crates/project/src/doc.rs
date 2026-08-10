@@ -127,9 +127,23 @@ fn render_doc_site_mode(
     out_dir: &Path,
     export: bool,
 ) -> std::io::Result<()> {
-    let mut mods = collect_module_files(repo_root, project_dir);
-    mods.sort_by(|a, b| a.0.cmp(&b.0));
-    mods.dedup_by(|a, b| a.0 == b.0);
+    // STRICT: a stdlib module that is unreadable, header-less or unparseable
+    // used to disappear from `api/symbols.json` while this returned Ok(()).
+    // That silently shrank the API denominator. It is now a hard failure with
+    // every offending file named (§5.3 "silence becomes an error").
+    let mut mods = collect_module_sources(repo_root, project_dir).map_err(|(_, problems)| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "{} stdlib module(s) would have been silently dropped from the API \
+                 denominator:\n  - {}",
+                problems.len(),
+                problems.join("\n  - ")
+            ),
+        )
+    })?;
+    mods.sort_by(|a, b| a.name.cmp(&b.name));
+    mods.dedup_by(|a, b| a.name == b.name);
 
     std::fs::create_dir_all(out_dir.join("m"))?;
     std::fs::create_dir_all(out_dir.join("api"))?;
@@ -160,7 +174,7 @@ fn render_doc_site_mode(
          autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" autofocus>",
     );
     index.push_str("<ul id=\"modlist\">");
-    for (name, _) in &mods {
+    for DocSource { name, .. } in &mods {
         let href = if export {
             format!("m/{}.html", html_escape(name))
         } else {
@@ -184,10 +198,13 @@ fn render_doc_site_mode(
     let stdlib_root = repo_root.join("sky-stdlib");
     let mut symbols = String::from("{\"entries\":[");
     let mut first = true;
-    for (name, path) in &mods {
-        let src = std::fs::read_to_string(path).unwrap_or_default();
-        let page = render_source(&src);
-        let syms = module_symbols(&src);
+    for DocSource { name, path, src } in &mods {
+        // NOT re-read from disk: `read_to_string(path).unwrap_or_default()` here
+        // degraded an unreadable file to an empty module (zero symbols, exit 0)
+        // — the fifth silent-shrink path. The bytes come from the strict
+        // enumeration above, which already proved the file readable.
+        let page = render_source(src);
+        let syms = module_symbols(src);
         let bucket = if path.starts_with(&stdlib_root) {
             "stdlib"
         } else {
@@ -416,25 +433,125 @@ pub fn list_modules(repo_root: &Path, project_dir: &Path) -> String {
     out
 }
 
+/// A module file that was read successfully AND carries a `module` header.
+/// Holding `src` is deliberate: the doc-site render used to re-read the file
+/// with `read_to_string(path).unwrap_or_default()`, so a file that became
+/// unreadable BETWEEN enumeration and render degraded to an empty module —
+/// zero symbols, exit 0. Reading once and passing the bytes along removes that
+/// path entirely (and the TOCTOU window with it).
+struct DocSource {
+    name: String,
+    path: PathBuf,
+    src: String,
+}
+
 /// Enumerate `(module_name, path)` for every `.sky` under `sky-stdlib/` and
 /// `project_dir/src/`. The module name is taken from the file's `module` header.
+///
+/// LENIENT: a file that cannot be read, or has no header, is skipped. This is
+/// the right behaviour for `sky doc <Module>` resolution and `sky doc --list`,
+/// which must keep working while the user has a half-written file open. The
+/// doc-SITE render uses [`collect_module_sources`] instead, which is strict —
+/// see its docstring for why the split exists.
 fn collect_module_files(repo_root: &Path, project_dir: &Path) -> Vec<(String, PathBuf)> {
+    match collect_module_sources(repo_root, project_dir) {
+        Ok(v) | Err((v, _)) => v.into_iter().map(|m| (m.name, m.path)).collect(),
+    }
+}
+
+/// Enumerate every module file WITH its source, reporting — rather than
+/// swallowing — every file that could not become a module.
+///
+/// # Why this is strict (docs/ci-test-architecture-v2.md §5.2, §5.3)
+///
+/// `api/symbols.json` is the stdlib API DENOMINATOR. Four separate paths used to
+/// shrink that denominator while exiting 0, which makes "100 % of the stdlib is
+/// covered" easier to claim by covering less:
+///
+/// 1. a file becomes unreadable → `let Ok(src) = … else { continue }` dropped it;
+/// 2. a module loses its `module` header → `if let Some(name) = …` with no
+///    `else` dropped it;
+/// 3. a module stops PARSING → `header_name`/`module_symbols` called
+///    `syntax::parse` and never once looked at `parse.errors()`, so a module with
+///    a broken declaration silently contributed only the symbols the recovering
+///    parser still managed to see;
+/// 4. the render then re-read the file with `unwrap_or_default()`, degrading an
+///    unreadable file to an EMPTY module rather than dropping it.
+///
+/// Every one of those is now an `Err`. Silence became an error.
+///
+/// # The one explicit, owned exemption
+///
+/// Strictness applies to files under `sky-stdlib/` — the shipped surface that IS
+/// the denominator. Files under the user's project `src/` stay lenient: a
+/// developer with a half-written module must still be able to run `sky doc`, and
+/// their files are not part of the stdlib denominator (they carry
+/// `"bucket":"project"`). This exemption is stated rather than hidden, per §5.5.
+fn collect_module_sources(
+    repo_root: &Path,
+    project_dir: &Path,
+) -> Result<Vec<DocSource>, (Vec<DocSource>, Vec<String>)> {
+    let stdlib_root = repo_root.join("sky-stdlib");
     let mut files = Vec::new();
-    collect_sky(&repo_root.join("sky-stdlib"), &mut files);
+    collect_sky(&stdlib_root, &mut files);
+    let stdlib_count = files.len();
     collect_sky(
         &project_dir.join(crate::build::configured_source_root(project_dir)),
         &mut files,
     );
+
     let mut out = Vec::new();
-    for path in files {
-        let Ok(src) = std::fs::read_to_string(&path) else {
-            continue;
+    let mut problems: Vec<String> = Vec::new();
+    for (i, path) in files.into_iter().enumerate() {
+        let strict = i < stdlib_count;
+        let show = path.display().to_string();
+        let src = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                if strict {
+                    problems.push(format!("{show}: unreadable ({e})"));
+                }
+                continue;
+            }
         };
-        if let Some(name) = header_name(&src) {
-            out.push((name, path));
+        // Parse ONCE, here, and look at the errors — the check that never existed.
+        let parse = syntax::parse(&src, FileId(0));
+        let errors = parse.errors();
+        if strict && !errors.is_empty() {
+            let first = errors
+                .first()
+                .map(|d| d.message.clone())
+                .unwrap_or_else(|| "parse error".to_string());
+            problems.push(format!(
+                "{show}: does not parse ({} error(s); first: {first})",
+                errors.len()
+            ));
+            continue;
+        }
+        let name = parse
+            .tree()
+            .module_header()
+            .and_then(|h| h.name())
+            .map(|n| n.text())
+            .filter(|n| !n.is_empty());
+        match name {
+            Some(name) => out.push(DocSource { name, path, src }),
+            None => {
+                if strict {
+                    problems.push(format!(
+                        "{show}: no `module <Name> exposing …` header — the module would \
+                         vanish from the API denominator"
+                    ));
+                }
+            }
         }
     }
-    out
+
+    if problems.is_empty() {
+        Ok(out)
+    } else {
+        Err((out, problems))
+    }
 }
 
 /// Resolve `module_arg` to a source file: a full dotted name matches the header
@@ -454,16 +571,11 @@ fn resolve_module_file(repo_root: &Path, project_dir: &Path, module_arg: &str) -
         .map(|(_, p)| p)
 }
 
-/// The `module <Name> exposing …` header name, if the source declares one.
-fn header_name(src: &str) -> Option<String> {
-    let parse = syntax::parse(src, FileId(0));
-    parse
-        .tree()
-        .module_header()
-        .and_then(|h| h.name())
-        .map(|n| n.text())
-        .filter(|n| !n.is_empty())
-}
+// NOTE: the old free-standing `header_name(src)` is gone. It re-parsed the file
+// purely to read the header and discarded `parse.errors()` in the process; the
+// header is now read from the SAME parse that checks for errors, inside
+// `collect_module_sources`, so a module can no longer be accepted by one parse
+// and silently mis-served by another.
 
 /// Format the terminal doc page from a module's source text.
 /// A union variant rendered WITH its argument types (`Resend String`), from the
@@ -602,9 +714,22 @@ struct DocSym {
 /// step. Robust to unannotated modules: an exported binding with no signature
 /// still appears (empty `signature`).
 fn module_symbols(src: &str) -> Vec<DocSym> {
+    module_symbols_with(src, true)
+}
+
+/// `module_symbols`, with the `exposing`-list filter switchable OFF.
+///
+/// The filter is the FIRST denominator-shrink path: narrowing a module's
+/// `exposing (…)` list removes symbols from `api/symbols.json` and nothing
+/// notices. It is legitimate for the published docs (the docs should show the
+/// public API), so it is not an error — but it means the denominator has two
+/// honest readings, and `xtask denominators` must report BOTH and never average
+/// them: `apply_exposing = true` is the public API surface, `false` is every
+/// top-level declaration the module contains.
+fn module_symbols_with(src: &str, apply_exposing: bool) -> Vec<DocSym> {
     let parse = syntax::parse(src, FileId(0));
     let tree = parse.tree();
-    let exposed = exposing_set(src, &tree);
+    let exposed = if apply_exposing { exposing_set(src, &tree) } else { None };
     let docs = doc_comments(src);
     let is_exported = |name: &str| exposed.as_ref().map(|s| s.contains(name)).unwrap_or(true);
 
@@ -671,6 +796,83 @@ fn module_symbols(src: &str) -> Vec<DocSym> {
 /// top-level symbol line an `id` anchor so `/m/<mod>#<name>` fragment links
 /// land on the binding. Only value/binding lines (whose first token IS the
 /// symbol name) are anchored; type lines lead with `type` so they render plain.
+/// One stdlib module's contribution to the API denominator, reported BOTH ways.
+///
+/// `filtered_*` is what `sky doc --export` publishes (the `exposing` list
+/// applied); `unfiltered_*` is every top-level declaration in the file. For a
+/// module whose header is `exposing (..)` the two are equal BY CONSTRUCTION —
+/// there is no public-API curation to apply, so its contribution is "every
+/// top-level declaration, including helpers never intended as API". Those
+/// modules are flagged with `exposes_all` so the ledger can report them
+/// separately instead of averaging two different kinds of number together.
+#[derive(Clone, Debug)]
+pub struct ModuleDenominator {
+    pub module: String,
+    /// The module header is `exposing (..)` — nothing is curated.
+    pub exposes_all: bool,
+    pub filtered_entries: usize,
+    pub filtered_values: usize,
+    pub filtered_types: usize,
+    pub unfiltered_entries: usize,
+    pub unfiltered_values: usize,
+    pub unfiltered_types: usize,
+}
+
+/// Per-module stdlib denominators, computed from the SAME code path
+/// `sky doc --export` uses to write `api/symbols.json` (`collect_module_sources`
+/// + `module_symbols`), so the two can never disagree.
+///
+/// Fails — rather than returning a smaller list — if any stdlib module is
+/// unreadable, header-less or unparseable.
+pub fn stdlib_denominators(repo_root: &Path) -> std::io::Result<Vec<ModuleDenominator>> {
+    let stdlib_root = repo_root.join("sky-stdlib");
+    // `project_dir` = the stdlib root itself: it has no `src/`, so nothing from
+    // a user project can leak into the stdlib denominator.
+    let mods = collect_module_sources(repo_root, &stdlib_root).map_err(|(_, problems)| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "{} stdlib module(s) cannot be measured:\n  - {}",
+                problems.len(),
+                problems.join("\n  - ")
+            ),
+        )
+    })?;
+
+    // A `type` entry is one whose signature starts with `type ` — the same rule
+    // any consumer of symbols.json applies (`type alias X` / `type X = A | B`);
+    // a value annotation is a type EXPRESSION and can never start with `type `.
+    let is_type = |s: &DocSym| s.signature.starts_with("type ");
+
+    let mut out: Vec<ModuleDenominator> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for m in mods {
+        if !m.path.starts_with(&stdlib_root) || !seen.insert(m.name.clone()) {
+            continue;
+        }
+        let filtered = module_symbols_with(&m.src, true);
+        let unfiltered = module_symbols_with(&m.src, false);
+        let ftypes = filtered.iter().filter(|s| is_type(s)).count();
+        let utypes = unfiltered.iter().filter(|s| is_type(s)).count();
+        let exposes_all = {
+            let parse = syntax::parse(&m.src, FileId(0));
+            exposing_set(&m.src, &parse.tree()).is_none()
+        };
+        out.push(ModuleDenominator {
+            module: m.name,
+            exposes_all,
+            filtered_entries: filtered.len(),
+            filtered_values: filtered.len() - ftypes,
+            filtered_types: ftypes,
+            unfiltered_entries: unfiltered.len(),
+            unfiltered_values: unfiltered.len() - utypes,
+            unfiltered_types: utypes,
+        });
+    }
+    out.sort_by(|a, b| a.module.cmp(&b.module));
+    Ok(out)
+}
+
 fn render_pre_with_anchors(page: &str, syms: &[DocSym]) -> String {
     let names: std::collections::BTreeSet<&str> = syms.iter().map(|s| s.name.as_str()).collect();
     let mut out = String::new();

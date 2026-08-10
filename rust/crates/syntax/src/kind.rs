@@ -17,7 +17,12 @@ macro_rules! syntax_kinds {
         }
 
         impl SyntaxKind {
-            const KINDS: &'static [SyntaxKind] = &[ $( SyntaxKind::$variant ),* ];
+            /// Every kind, indexed by discriminant. `pub` because it is the
+            /// LANGUAGE DENOMINATOR: `kind_class::KIND_CLASSES` classifies it
+            /// and `kind_class` asserts that classification is TOTAL over this
+            /// slice, so a kind added here fails the build until it is
+            /// classified (docs/ci-test-architecture-v2.md §5.3).
+            pub const KINDS: &'static [SyntaxKind] = &[ $( SyntaxKind::$variant ),* ];
 
             /// Total inverse of the `#[repr(u16)]` discriminant. Out-of-range
             /// values clamp to `Error` (defensive; rowan only ever hands back

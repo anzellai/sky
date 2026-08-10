@@ -9,6 +9,7 @@ mod event;
 mod grammar;
 mod interp;
 mod kind;
+pub mod kind_class;
 mod layout;
 mod lexer;
 mod parser;

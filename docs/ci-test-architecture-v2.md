@@ -36,7 +36,7 @@ the design:
 | **C13** | Adopt the BlueDB gate harness wholesale | Precedent is **41 of 48 gates stubbed, 7 of 48 mutations verified**, its timeout kills nothing (zero `kill`/`setsid`/`killpg`/`pgid` hits) and its mutation probe has no timeout. Phase 1 is re-scoped from **adopt** to **build** | §7 |
 | **C14** | Gate bodies on worker threads | Must be **child processes**. A thread's children are unreachable by `killpg`, and an orphaned thread can write a result after its gate was recorded FAIL, corrupting a *later* gate's verdict | §7.3 |
 | **C15** | `DEGRADED` state for a cache-cold P1 | A silent scope reduction. **`DEGRADED` is deleted as a state**; tiering is declared, never chosen at runtime | §7.2 |
-| **C16** | The "100 %" denominator (1,762 / 1,640 / 122 vs 1,744 / 1,623 / 121) | Two disagreeing hand-counts over a **gameable** export with four silent-shrink paths, all exit 0. ONE committed script owns every denominator | §5 |
+| **C16** | The "100 %" denominator (1,762 / 1,640 / 122 vs 1,744 / 1,623 / 121 — both hand-counts, both wrong; the truth is **1,746 / 1,625 / 121**) | Two disagreeing hand-counts over a **gameable** export with FIVE silent-shrink paths, all exit 0. ONE committed script — `xtask denominators` — owns every denominator | §5 |
 | **C17** | "772 assertions" / "575 assertions" | Neither. **Measured here**: conformance = **772 cases / 776 assertion calls**, 7 of which are `Test.pass` (unconditional). "Assertion" and "case" are defined once, in §5.4 | §5.4 |
 
 ### 0.1 Where the grills adjudicated between the two documents
@@ -537,28 +537,45 @@ unfalsifiable. With it, "this axis is covered" is a claim that can be shown fals
 
 ## 5. Denominators — one script, one definition, no hand-counting
 
-### 5.1 The measured truth, and the two wrong numbers
+### 5.1 The measured truth, and the three wrong numbers
 
-`sky doc --export` writes `api/symbols.json`. Measured:
-**1,744 entries / 87 modules / 1,623 values / 121 types.**
-The corpus doc is right; the topology doc's 1,762 / 1,640 / 122 is wrong. Neither
-should have been a hand-count.
+`sky doc --export` writes `api/symbols.json`. Measured by `xtask denominators`:
+**1,746 entries / 87 modules / 1,625 values / 121 types.**
+The topology doc's 1,762 / 1,640 / 122 is wrong; so was the corpus doc's
+1,744 / 1,623, and so was this section until the script existed to check it.
+That is the point — **every one of these was a hand-count, and every hand-count
+was wrong or went stale.** The number above is now reproduced by
+`xtask denominators` and checked in at `docs/coverage/denominators.json`; if a
+number here and a number there ever disagree again, the JSON wins.
 
-### 5.2 Four ways the denominator silently shrinks — all exit 0
+### 5.2 FIVE ways the denominator silently shrinks — all exit 0
 
 Every one of these makes "100 % covered" easier to claim by making the
-denominator smaller, and none of them fails anything today:
+denominator smaller. Paths 2–5 are now **hard failures**; path 1 is legitimate
+for the published docs and is instead reported twice, filtered and unfiltered.
 
-| # | Path | Site |
-|---|---|---|
-| 1 | a module narrows its `exposing` list | `doc.rs:657,664-666` — `is_exported` filters against `exposing_set` |
-| 2 | a module loses its header | `doc.rs:429-435` — `if let Some(name) = header_name(&src)` with **no `else`**; the module vanishes |
-| 3 | a file becomes unreadable | `doc.rs:429-431` — `let Ok(src) = … else { continue; }` |
-| 4 | a module fails to **parse** | `doc.rs:604-612` — `module_symbols` calls `syntax::parse` and **never inspects its errors** |
+| # | Path | Site (pre-fix) | Status |
+|---|---|---|---|
+| 1 | a module narrows its `exposing` list | `is_exported` filters against `exposing_set` | reported BOTH ways — `stdlib.entries` vs `stdlib.unfiltered.entries` |
+| 2 | a module loses its header | `if let Some(name) = header_name(&src)` with **no `else`**; the module vanishes | **FAILS** |
+| 3 | a file becomes unreadable | `let Ok(src) = … else { continue; }` | **FAILS** |
+| 4 | a module fails to **parse** | `module_symbols` called `syntax::parse` and **never inspected its errors** — `grep -n "errors()" doc.rs` returned zero hits in all 1,622 lines | **FAILS** |
+| 5 | a file becomes unreadable *between* enumeration and render | `read_to_string(path).unwrap_or_default()` on the export hot path — the file degraded to an EMPTY module (zero symbols), not a dropped one | **FAILS** (the bytes are now read once, in the strict enumeration, and passed along) |
 
-Additionally, **6 modules use `exposing (..)`**, contributing **34 % of the
-denominator unfiltered** — for those, the denominator is "every top-level
-declaration", including helpers never intended as API.
+Path 5 was missed by the first draft of this section. All five now live in
+`collect_module_sources` (`rust/crates/project/src/doc.rs`), which reports rather
+than swallows. The one explicit exemption: strictness applies to `sky-stdlib/`
+(the surface that IS the denominator), not to a user's project `src/`, so a
+developer with a half-written module can still run `sky doc`.
+
+Additionally, **6 modules use `exposing (..)`** — `Sky.Core.Error`, `Std.Css`,
+`Std.Html`, `Std.Html.Attributes`, `Std.Html.Events`, `Std.Ui` — contributing
+**593 entries, 34.0 % of the 1,746**. For those, the denominator is "every
+top-level declaration", including helpers never intended as API. The remaining
+**81 modules contribute 1,153** curated entries, and their `exposing` lists hide
+a further **222** declarations (1,968 unfiltered in total). These are three
+different numbers answering three different questions and the ledger never
+averages them.
 
 ### 5.3 The contract
 
@@ -574,13 +591,22 @@ declaration", including helpers never intended as API.
   then the ledger reports two numbers — filtered and unfiltered — and never
   averages them.
 - **The language denominator is `SyntaxKind::KINDS`**, which is **macro-generated
-  and total (124)** — *not* the topology doc's hand-counted 72. `KINDS` is made
-  `pub` (it is private today, so no test can reach it), and a **committed
-  classification table** assigns every kind to `construct` or
-  `non-construct + reason`. A gate asserts the table is **total over `KINDS`**, so
-  a newly added kind fails until classified. This also closes the live hole that
-  the `can_cast` `matches!` lists (`syntax/src/ast.rs:155,208,297,364`) are not
-  compiler-checked.
+  and total (124)** — *not* the topology doc's hand-counted 72. `KINDS` is now
+  `pub` (it was private, so no test could reach it), and the committed
+  classification table `syntax::kind_class::KIND_CLASSES` assigns every kind to
+  `Construct` or `NonConstruct(reason)`: **80 constructs, 44 non-constructs**.
+  `kind_class::assert_total()` is the gate — it runs as a `cargo test` and again
+  inside `xtask denominators`, which refuses to report a language denominator
+  computed from an incomplete table. A newly added kind fails the build until
+  classified. This also makes detectable the live hole that the `can_cast`
+  `matches!` lists (`syntax/src/ast.rs:155,208,297,364`) are not compiler-checked:
+  a new node kind that someone forgets to add to `Expr::can_cast` still has to be
+  classified here, and classifying it `Construct` puts it in the denominator.
+
+**Running it.** `xtask denominators` recomputes, ratchet-checks, and rewrites
+`docs/coverage/denominators.json`. `xtask denominators --check` is the CI form:
+it never writes, and fails if the checked-in file is stale or if any denominator
+fell without an accounting entry.
 
 ### 5.4 "Assertion" and "case" — defined once, measured here
 
@@ -602,12 +628,20 @@ Breakdown for conformance: `equal` 567 · `err` 79 · `isTrue` 56 · `fail` 24 �
 > **vacuous**. The topology doc counted cases; the corpus doc counted
 > `equal`+`notEqual` only. Both are superseded.
 
+The 776 and 95 in the table above **include** `Test.pass`, which the definition
+box excludes — the two readings were never distinguished, so the ledger now
+reports both explicitly and neither can be mistaken for the other:
+`tests.conformance.assertions` = **769** (strict, `pass` excluded) and
+`tests.conformance.assertion_calls_incl_pass` = **776**; for the example suites,
+**84** and **95**. `expectErrorKind` has **0** call sites in either body — a real
+zero, reported rather than omitted. All of these come from `xtask denominators`.
+
 ### 5.5 What "100 % coverage" will and will not mean
 
 Reachable and reported exactly:
 
-- **Unary, 100 %:** every one of the 1,623 public stdlib values and every
-  classified `SyntaxKind` construct has ≥ 1 **class-V** assertion.
+- **Unary, 100 %:** every one of the 1,625 public stdlib values and every one of
+  the 80 classified `SyntaxKind` constructs has ≥ 1 **class-V** assertion.
 - **Pairwise:** 100 % of all-pairs across the structural axes, reported as a
   computed percentage.
 - **Defect neighbourhoods:** exhaustive at distance 1 from every pinned
