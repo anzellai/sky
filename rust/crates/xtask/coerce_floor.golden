@@ -2,7 +2,11 @@
 # FAIL-ON-INCREASE: a count above its golden fails `xtask coerce-floor`.
 # A DECREASE is fine (floor tightened) — re-bless to ratchet it down.
 # Regenerate with: cargo run -p xtask -- coerce-floor --bless
-# Format: <example-name>\t<total-rt-narrowing-token-count>
+# Re-key (adds/moves rows) with: cargo run -p xtask -- coerce-floor --rekey,
+#   which additionally asserts sum(tokens) and count(rows) did not FALL.
+# Format: <key>\t<total-rt-narrowing-token-count>
+#   <key> without `/` is an examples/ directory; with `/` it is a
+#   repo-root-relative Layer-2 project path (apps/manifest.toml).
 00-standard-libs	221
 01-hello-world	1
 02-go-stdlib	9
@@ -13,12 +17,12 @@
 09-live-counter	92
 10-live-component	92
 11-fyne-stopwatch	10
-12-skyvote	713
+12-skyvote	716
 14-task-demo	5
 15-http-server	13
 16-skychess	678
 17-skymon	786
-18-job-queue	144
+18-job-queue	147
 19-skyforum	350
 20-cli-counter	3
 21-tui-stopwatch	9
@@ -27,7 +31,7 @@
 24-tui-kitchen-sink	280
 25-sky-console	286
 26-ui-showcase	615
-27-multi-session-chat	168
+27-multi-session-chat	171
 28-streaming-chat	55
 29-webview-threejs-spike	19
 30-sse-server-demo	7
@@ -36,9 +40,9 @@
 33-websocket-echo	8
 34-multi-tier-console	27
 35-composite-generics	180
-36-composite-server	245
-37-composite-live-shop	612
-38-composite-ui-multibackend	459
+36-composite-server	248
+37-composite-live-shop	613
+38-composite-ui-multibackend	460
 40-generic-adt-field	5
 41-nested-curry	7
 42-poly-record	3
@@ -51,7 +55,12 @@
 49-xmodule-adt	2
 50-open-row-closure	11
 51-kernel-variadic-arity	1
-52-blog-analytics	407
+52-blog-analytics	410
 53-record-update-map	28
 54-record-fieldset-collision	5
-55-store-partial-update	96
+55-store-partial-update	99
+apps/fieldbook	883
+apps/ledger	592
+apps/relay	190
+sky-bundled/console	461
+sky-bundled/doc	23
