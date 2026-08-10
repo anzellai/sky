@@ -2524,7 +2524,11 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
-        let node = self.lower_expr_inner(e, &actual);
+        // `expected` is threaded alongside `actual` because a KERNEL referenced as
+        // a value is emitted as its raw `any`-based runtime symbol: whether that
+        // needs a bridge depends on the SLOT it lands in, not on the node's own
+        // inferred type. See `kernel_value_eta` / `nullary_kernel_value`.
+        let node = self.lower_expr_inner(e, &actual, expected);
         self.coerce_if_needed(node, expected)
     }
 
@@ -2551,7 +2555,7 @@ impl<'a> Ctx<'a> {
         )
     }
 
-    fn lower_expr_inner(&mut self, e: ExprId, actual: &GoTy) -> GoExpr {
+    fn lower_expr_inner(&mut self, e: ExprId, actual: &GoTy, expected: &GoTy) -> GoExpr {
         match &self.body.exprs[e] {
             Expr::Int(n) => GoExpr::new(GoExprKind::IntLit(*n), actual.clone()),
             Expr::Float(f) => GoExpr::new(GoExprKind::FloatLit(*f), GoTy::Bare(Prim::Float)),
@@ -2559,7 +2563,7 @@ impl<'a> Ctx<'a> {
             Expr::Bool(b) => GoExpr::new(GoExprKind::BoolLit(*b), GoTy::Bare(Prim::Bool)),
             Expr::Chr(s) => rune_lit(s),
             Expr::Unit => GoExpr::new(GoExprKind::Ident("struct{}{}".into()), GoTy::Unit),
-            Expr::Var(res) => self.lower_var(res.clone(), actual),
+            Expr::Var(res) => self.lower_var(res.clone(), actual, expected),
             Expr::Call(callee, args) => self.lower_call(*callee, args, actual),
             Expr::Binop { op, lhs, rhs, .. } => self.lower_binop(op.as_str(), *lhs, *rhs, actual),
             Expr::Negate(inner) => {
@@ -2677,7 +2681,7 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn lower_var(&mut self, res: Res, actual: &GoTy) -> GoExpr {
+    fn lower_var(&mut self, res: Res, actual: &GoTy, expected: &GoTy) -> GoExpr {
         match res {
             Res::Local(id) => {
                 let name = self
@@ -2718,7 +2722,13 @@ impl<'a> Ctx<'a> {
                         .split_once('_')
                         .is_some_and(|(m, f)| crate::kernel::is_nullary_kernel_value(m, f));
                     if nullary {
-                        self.nullary_kernel_value(&go, actual)
+                        self.nullary_kernel_value(&go, actual, expected)
+                    } else if let Some(eta) = self.kernel_value_eta(&go, expected) {
+                        // Point-free alias of an arity-≥1 kernel
+                        // (`joinStr = String.append`) landing in a concretely-typed
+                        // func slot — eta-expand rather than emit the raw
+                        // `func(any…) any` symbol. See `kernel_value_eta`.
+                        eta
                     } else if let Some(n) = crate::kernel::generic_kernel_value_tyargs(&go) {
                         // A GENERIC runtime kernel used as a first-class value
                         // (`JsonEnc.list identity args`): Go requires the type
@@ -2795,7 +2805,11 @@ impl<'a> Ctx<'a> {
             Res::Kernel { module, func } => {
                 let go = kernel_go_name(module.as_str(), func.as_str());
                 if crate::kernel::is_nullary_kernel_value(module.as_str(), func.as_str()) {
-                    self.nullary_kernel_value(&go, actual)
+                    self.nullary_kernel_value(&go, actual, expected)
+                } else if let Some(eta) = self.kernel_value_eta(&go, expected) {
+                    // Same point-free class as the kernel-alias arm above, for a
+                    // DIRECT kernel reference. See `kernel_value_eta`.
+                    eta
                 } else if let Some(n) = crate::kernel::generic_kernel_value_tyargs(&go) {
                     // A GENERIC runtime kernel used as a first-class value
                     // (`JsonEnc.list identity args`): Go requires the type args
@@ -2826,19 +2840,38 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// Emit a nullary kernel *value* (`Dict.empty`, `Cmd.none`, `Math.pi`): its
-    /// runtime symbol is a zero-arg func, so CALL it (a bare `func() T` in a value
-    /// slot panics). The non-`T` symbols return Go `any` (`func Dict_empty() any`).
-    /// A CONCRETE-key map slot (`map[string]V` — `Dict.empty : Dict String ()`
-    /// passed to a `map[string]struct{}` param) needs the `any` value narrowed via
-    /// `rt.AsMapT` (matching the oracle) or `go build` rejects `any` in that slot.
-    /// Every other slot keeps the historical bare-call typed-`actual` form: an
-    /// any-key `map[interface{}]interface{}` (`Dict any any`, a widened `foldl`
-    /// accumulator) has NO sound coercion from the runtime's `map[string]any`, and
-    /// those contexts widen to `any` anyway — coercing there panics (CoerceFailure).
-    fn nullary_kernel_value(&mut self, go: &str, actual: &GoTy) -> GoExpr {
+    /// Emit a nullary kernel *value* (`Dict.empty`, `Cmd.none`, `Uuid.v7`,
+    /// `Math.pi`): its runtime symbol is a zero-arg func, so CALL it (a bare
+    /// `func() T` in a value slot panics). The symbol returns Go `any`
+    /// (`func Dict_empty() any`, `func Uuid_v7() any`).
+    ///
+    /// Historically the call node was typed `actual` — a LIE about the symbol.
+    /// The lie is harmless while the value is only widened (`any(rt.Dict_empty())`
+    /// is valid Go whatever the node claims), which is why it survived; it becomes
+    /// a defect the moment the value lands in a CONCRETELY-typed slot, because the
+    /// node then claims to already be that type, `coerce_if_needed` sees
+    /// `x.ty == expected` and inserts nothing, and raw `any` reaches the typed Go
+    /// slot: `return rt.Uuid_v7()` in a `rt.SkyTask[…]` return, which `go build`
+    /// rejects ("need type assertion").
+    ///
+    /// So the narrowing is driven by the SLOT (`expected`), not by the node's own
+    /// inferred type: type the call `Any` (the truth) and coerce, but only when
+    /// the slot actually demands a concrete type. An `any` slot keeps the
+    /// historical bare-call form, so every emission that was already correct is
+    /// byte-identical — the `coerce-floor` ratchet is what caught the first,
+    /// over-eager version of this fix widening 13 examples.
+    ///
+    /// The one slot that must NOT be coerced even when concrete is an ANY-KEY map
+    /// (`map[interface{}]interface{}` — a `Dict any any` from a widened `foldl`
+    /// accumulator). A Sky `Dict k v` is `map[string]V` at runtime, and
+    /// `rt.AsMapT` REBUILDS a `map[string]V`, which is a different (invariant) Go
+    /// map type, so there is no sound narrowing available.
+    fn nullary_kernel_value(&mut self, go: &str, actual: &GoTy, expected: &GoTy) -> GoExpr {
+        let any_key_map = matches!(actual, GoTy::Map(k, _) if **k == GoTy::Any);
+        // A concrete-key map slot narrowed via `rt.AsMapT` even when the node was
+        // only being widened — preserved verbatim so its emission does not move.
         let concrete_key_map = matches!(actual, GoTy::Map(k, _) if **k != GoTy::Any);
-        if concrete_key_map {
+        if !any_key_map && (concrete_key_map || *expected != GoTy::Any) {
             let fn_ty = GoTy::Func(vec![], Box::new(GoTy::Any));
             let call = GoExpr::new(
                 GoExprKind::Call(
@@ -2857,6 +2890,53 @@ impl<'a> Ctx<'a> {
             ),
             actual.clone(),
         )
+    }
+
+    /// A kernel referenced as a VALUE (never applied) landing in a slot that
+    /// demands a CONCRETELY-typed Go function — the point-free alias class
+    /// (`tickle = String.toUpper`, `joinStr = String.append`).
+    ///
+    /// Every runtime kernel is `any`-based (`func String_append(a, b any) any` —
+    /// see the [`crate::kernel`] module doc), so the bare symbol is a
+    /// `func(any…) any` and `go build` rejects it in a `func(string, string) string`
+    /// slot. Emitting it bare while *typing the node `actual`* was the defect: the
+    /// node claimed to be the slot's func type, so `coerce_if_needed` inserted
+    /// nothing and the raw symbol reached the typed slot verbatim.
+    ///
+    /// Bridge it with the SAME eta-expansion a partial application already uses —
+    /// [`Self::kernel_partial`] with zero given args — producing a closure whose
+    /// params carry the slot's concrete types, widening each into the `any`-based
+    /// call and coercing the `any` result back to the slot's return type.
+    ///
+    /// The decision is driven by the SLOT (`expected`), never by the reference's
+    /// own inferred type. A kernel passed as a HOF callback
+    /// (`List.map String.toUpper xs`) has a perfectly concrete inferred type
+    /// (`func(string) string`) yet is only ever widened — `any(rt.String_toUpper)`
+    /// is valid Go — so eta-expanding it would add a runtime coercion to output
+    /// that was already correct. The first version of this fix keyed on the
+    /// inferred type and did exactly that; `coerce-floor` caught it widening the
+    /// runtime-coercion floor across 13 examples.
+    ///
+    /// Returns `None` (leaving the historical bare emission byte-identical) unless
+    /// the SLOT is a func of exactly the kernel's RUNTIME arity whose shape the raw
+    /// symbol cannot already satisfy:
+    ///   * a non-func slot — including `any`, i.e. "only widened" — needs no bridge;
+    ///   * an all-`any` `func(any…) any` slot IS the symbol's own shape;
+    ///   * an arity mismatch means the slot is not this symbol's call shape
+    ///     (a function-returning kernel whose curried Sky type over-counts), and
+    ///     eta-expanding to the wrong arity would emit a bad call.
+    fn kernel_value_eta(&mut self, go: &str, expected: &GoTy) -> Option<GoExpr> {
+        let GoTy::Func(params, ret) = expected else {
+            return None;
+        };
+        let arity = self.kernel_runtime_arity(go)?;
+        if arity == 0 || params.len() != arity {
+            return None;
+        }
+        if params.iter().all(|p| *p == GoTy::Any) && **ret == GoTy::Any {
+            return None;
+        }
+        Some(self.kernel_partial(go, &[], arity, expected))
     }
 
     fn lower_ctor_value(&mut self, def: DefId, actual: &GoTy, pin: Option<String>) -> GoExpr {
