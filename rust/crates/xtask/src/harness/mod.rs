@@ -307,6 +307,42 @@ fn run_suite(o: &Opts, root: &Path) -> i32 {
             });
             continue;
         }
+        // A declared block is decided BEFORE the gate is spawned, and before
+        // --fail-fast, because whether the gate CAN run is a property of the
+        // declaration, not of this run. Expiry is checked here so the block
+        // turns itself into a FAIL on its deadline with nobody in the loop.
+        if let Some(b) = registry::block_for(g.name) {
+            let expired = registry::block_is_expired(b, registry::today_epoch_day());
+            reports.push(Report {
+                gate: g.name,
+                state: if expired {
+                    GateState::Fail
+                } else {
+                    GateState::Blocked
+                },
+                assertions: 0,
+                expected: g.expected,
+                elapsed_s: 0.0,
+                detail: if expired {
+                    format!(
+                        "BLOCK EXPIRED {} — {} ({}). A block is a deadline, not a parking space: \
+                         unblock the gate or re-declare the block with a new date and a reason \
+                         that survives review.",
+                        b.expires, b.reason, b.issue
+                    )
+                } else {
+                    format!(
+                        "blocked until {} — {} ({}). Never renders PASS; its surfaces count as \
+                         UNCOVERED in the coverage ledger.",
+                        b.expires, b.reason, b.issue
+                    )
+                },
+            });
+            if expired && o.fail_fast {
+                aborted = true;
+            }
+            continue;
+        }
         if aborted {
             // --fail-fast stopped us before reaching this gate. It is
             // registered and selected, and we do not know its verdict.
@@ -578,6 +614,13 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
         // be green and falsifying it is meaningless. It is exercised by the
         // harness's own tests instead.
         if g.name == "selftest-hang" && o.only.is_empty() {
+            continue;
+        }
+        // A blocked gate has no green baseline to falsify — by declaration it
+        // does not run. Its own falsifying property (the expiry flipping it to
+        // FAIL) is harness logic, not a gate assertion, and is proven by
+        // `registry`'s and `state`'s unit tests instead of by a mutation run.
+        if registry::block_for(g.name).is_some() {
             continue;
         }
         all.extend(falsify::verify_gate(g, &fopts, &mut generation));

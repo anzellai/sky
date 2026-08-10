@@ -42,9 +42,35 @@ pub enum GateState {
     /// Outside the selected tier or platform, or deselected by `--only`.
     ///
     /// Deliberate selection is **not** an unknown. Conflating them makes local
-    /// development emit `UNKNOWN` constantly, which trains people to ignore it
-    /// — the same failure mode as a soft `BLOCKED` (v2 §7.2).
+    /// development emit `UNKNOWN` constantly, which trains people to ignore it.
     NotApplicable,
+    /// Declared structurally impossible to run **right now**, with an issue
+    /// link and a hard expiry date (v2 §7.2).
+    ///
+    /// # Why this is not a soft skip
+    ///
+    /// A soft skip is a gate that quietly stops asserting and keeps reporting
+    /// non-failure for ever. That is the `SKIP counted as pass` class this
+    /// harness exists to kill, and it is why the first cut of this file
+    /// deliberately omitted the state. `BLOCKED` is admitted only because it
+    /// carries four properties a skip does not, and all four are enforced:
+    ///
+    /// 1. **Declared at compile time**, in `registry::BLOCKED`, with a
+    ///    non-empty issue link and a non-empty `YYYY-MM-DD` expiry — the
+    ///    constructor is `const fn` and an empty field fails the *build*.
+    /// 2. **It expires by itself.** Past the declared date the gate renders
+    ///    `FAIL`, with no human action required and nobody to forget. A block
+    ///    is a deadline, not a parking space.
+    /// 3. **It never renders `PASS`**, so it cannot be counted as a green gate.
+    /// 4. **Its surfaces count as UNCOVERED in the coverage ledger.** This is
+    ///    the property that actually removes the incentive to abuse it:
+    ///    blocking a gate does not preserve a coverage number, it lowers one.
+    ///
+    /// The suite verdict is *neutral* before expiry — deliberately, because a
+    /// state that turns CI permanently red is a state people delete rather than
+    /// fix, and deleting the row restores the invisible-absence class that
+    /// rendering rows from the registry was meant to end.
+    Blocked,
 }
 
 impl GateState {
@@ -56,12 +82,22 @@ impl GateState {
             GateState::NotRun => "NOT RUN",
             GateState::Unproven => "UNPROVEN",
             GateState::NotApplicable => "NOT APPLICABLE",
+            GateState::Blocked => "BLOCKED",
         }
     }
 
     /// Does this state leave the suite unable to claim a verdict?
     pub fn is_unknown(self) -> bool {
         matches!(self, GateState::NotRun | GateState::Unproven)
+    }
+
+    /// Does this state let the gate count as covering its surfaces?
+    ///
+    /// Consumed by the coverage ledger. `Blocked` answers **false**, which is
+    /// the whole reason the state is affordable: blocking a gate lowers a
+    /// coverage number instead of preserving it.
+    pub fn counts_as_cover(self) -> bool {
+        matches!(self, GateState::Pass)
     }
 }
 
@@ -165,6 +201,7 @@ mod tests {
             GateState::NotApplicable,
             GateState::NotRun,
             GateState::Unproven,
+            GateState::Blocked,
         ] {
             for unknown in [GateState::NotRun, GateState::Unproven] {
                 let v = SuiteVerdict::of([other, unknown]);
@@ -178,5 +215,43 @@ mod tests {
     fn fail_dominates_unknown() {
         let v = SuiteVerdict::of([GateState::NotRun, GateState::Fail]);
         assert_eq!(v, SuiteVerdict::Fail);
+    }
+
+    #[test]
+    fn blocked_never_counts_as_cover() {
+        // The property that makes BLOCKED affordable: it cannot prop up a
+        // coverage number. Only PASS does.
+        assert!(!GateState::Blocked.counts_as_cover());
+        assert!(GateState::Pass.counts_as_cover());
+        for s in [
+            GateState::Fail,
+            GateState::NotRun,
+            GateState::Unproven,
+            GateState::NotApplicable,
+        ] {
+            assert!(!s.counts_as_cover(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn blocked_is_neutral_but_is_not_a_pass_for_that_gate() {
+        // Neutral at the SUITE level, deliberately (see GateState::Blocked): a
+        // permanently red state is one people delete rather than fix.
+        let v = SuiteVerdict::of([GateState::Pass, GateState::Blocked]);
+        assert_eq!(v, SuiteVerdict::Pass);
+        assert_eq!(v.exit_code(), 0);
+        // ...but the blocked gate itself is never a pass, and never claims cover.
+        assert_ne!(GateState::Blocked, GateState::Pass);
+        assert!(!GateState::Blocked.counts_as_cover());
+    }
+
+    #[test]
+    fn blocked_alone_cannot_render_the_suite_green_on_a_lie() {
+        // A suite made only of blocked gates asserts nothing. It renders PASS
+        // (neutral), which is safe ONLY because the registry always contributes
+        // real rows and the ledger counts these surfaces as uncovered. This
+        // test pins that BLOCKED is not silently folded into Pass anywhere.
+        let states = [GateState::Blocked, GateState::Blocked];
+        assert!(states.iter().all(|s| !s.counts_as_cover()));
     }
 }

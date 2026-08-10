@@ -682,11 +682,176 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::canary,
     },
+    Gate {
+        name: "selftest-blocked",
+        tier: Tier::SelfTest,
+        platforms: ALL_PLATFORMS,
+        budget_s: 30,
+        expected: 1,
+        expect: Expect::Falsifiable,
+        summary: "PERMANENT WITNESS for the BLOCKED state — its body would PASS, \
+                  and the BLOCKED declaration must stop it rendering PASS anyway",
+        // The body is a plain passing assertion ON PURPOSE. A body that failed
+        // would make BLOCKED indistinguishable from FAIL, and the property under
+        // test is precisely that a gate which WOULD pass still does not render
+        // PASS while it is blocked.
+        mutations: Mutations::new(&[Mutation {
+            id: "selftest-blocked.expire-the-block",
+            description: "move this gate's BLOCKED expiry into the past; the gate \
+                          must flip from BLOCKED to FAIL with no human action",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/xtask/src/harness/registry.rs",
+                from: "\"2999-01-01\"",
+                to: "\"2000-01-01\"",
+            },
+        }]),
+        body: bodies::canary,
+    },
 ];
 
 /// Look a gate up by name.
 pub fn find(name: &str) -> Option<&'static Gate> {
     GATES.iter().find(|g| g.name == name)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLOCKED — the declared, expiring, coverage-losing block (v2 §7.2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A gate that is structurally impossible to run right now.
+///
+/// v2 §7.2 declares a `BLOCKED` state; the first cut of the harness deliberately
+/// did not implement one, on the correct grounds that a soft block is
+/// indistinguishable from the `SKIP counted as pass` class. The state is
+/// admitted here only with the four teeth that make it distinguishable —
+/// enumerated on [`crate::harness::state::GateState::Blocked`] — of which the
+/// load-bearing two are:
+///
+/// * **`expires` is mandatory and self-enforcing.** Past that date the gate
+///   renders `FAIL` with no human in the loop. A block is a deadline.
+/// * **A blocked gate's surfaces count as UNCOVERED** in the coverage ledger, so
+///   blocking never preserves a coverage number.
+///
+/// Every field is required, and empty fields fail the **build** — not a test —
+/// via the `const fn` constructor, for the same reason `Mutations::new(&[])`
+/// does: a block without an owner, a reason and a deadline is just a skip
+/// wearing a label.
+pub struct Blocked {
+    pub gate: &'static str,
+    /// Issue URL or `owner/repo#N`. Where the work to unblock is tracked.
+    pub issue: &'static str,
+    /// `YYYY-MM-DD`. **The gate FAILs from this date onward.**
+    pub expires: &'static str,
+    /// Why it cannot run — the structural obstacle, not "flaky" or "todo".
+    pub reason: &'static str,
+}
+
+impl Blocked {
+    pub const fn new(
+        gate: &'static str,
+        issue: &'static str,
+        expires: &'static str,
+        reason: &'static str,
+    ) -> Blocked {
+        assert!(!gate.is_empty(), "a BLOCKED row must name its gate");
+        assert!(
+            !issue.is_empty(),
+            "a BLOCKED row must carry an issue link — a block nobody tracks is a skip"
+        );
+        assert!(
+            expires.len() == 10,
+            "a BLOCKED row must carry a YYYY-MM-DD expiry — a block without a deadline is a parking space"
+        );
+        assert!(
+            !reason.is_empty(),
+            "a BLOCKED row must state the structural obstacle"
+        );
+        Blocked {
+            gate,
+            issue,
+            expires,
+            reason,
+        }
+    }
+
+    /// Days since the Unix epoch for this row's `expires` date, or `None` if it
+    /// is not a well-formed `YYYY-MM-DD`.
+    ///
+    /// A malformed date is NOT treated as "far future". [`block_for`]'s caller
+    /// turns `None` into a FAIL, because a block whose deadline cannot be read
+    /// has no deadline.
+    pub fn expires_epoch_day(&self) -> Option<i64> {
+        parse_ymd(self.expires)
+    }
+}
+
+/// THE blocked list. Empty is the healthy state.
+///
+/// `selftest-blocked` is the mechanism's live witness and is deliberately
+/// permanent: with an empty list, nothing would exercise the state and it would
+/// rot exactly like the gates this harness exists to police. It is `SelfTest`
+/// tier, so it never touches a product tier.
+pub static BLOCKED: &[Blocked] = &[Blocked::new(
+    "selftest-blocked",
+    "https://github.com/anzellai/sky/blob/main/docs/tooling/gate-harness.md#blocked",
+    "2999-01-01",
+    "the permanent witness for the BLOCKED mechanism: it proves a blocked gate \
+     renders BLOCKED, never PASS, and is counted as uncovered by the ledger. \
+     Its expiry is deliberately unreachable because the mechanism, unlike a \
+     real block, is not work anybody is going to finish",
+)];
+
+/// The blocked declaration for `gate`, if any.
+pub fn block_for(gate: &str) -> Option<&'static Blocked> {
+    BLOCKED.iter().find(|b| b.gate == gate)
+}
+
+/// `YYYY-MM-DD` → days since the Unix epoch. `None` on any malformation.
+///
+/// Hand-rolled rather than pulling a date crate into `xtask`: the harness is
+/// the thing that decides whether CI is green, and its dependency surface is
+/// kept deliberately small.
+pub fn parse_ymd(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| -> Option<i64> { s.get(r)?.parse::<i64>().ok() };
+    let (y, m, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // Howard Hinnant's days_from_civil. Exact for the proleptic Gregorian
+    // calendar; no leap-year special-casing to get wrong.
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// Has this block expired as of `today` (both in epoch days)?
+///
+/// A **malformed** `expires` is reported as EXPIRED, deliberately. The
+/// alternative — treating an unreadable date as "not yet" — would make a typo
+/// into an unbounded block, which is the parking space the expiry exists to
+/// forbid. Fail toward noticing.
+pub fn block_is_expired(b: &Blocked, today: i64) -> bool {
+    match b.expires_epoch_day() {
+        Some(day) => today >= day,
+        None => true,
+    }
+}
+
+/// Today, as days since the Unix epoch, from the system clock.
+pub fn today_epoch_day() -> i64 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    secs.div_euclid(86_400)
 }
 
 #[cfg(test)]
@@ -808,5 +973,104 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── BLOCKED ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn every_blocked_row_names_a_registered_gate() {
+        // A block on a gate that does not exist is an invisible absence: the
+        // row renders nowhere and nobody is reminded it is owed.
+        for b in BLOCKED {
+            assert!(
+                find(b.gate).is_some(),
+                "BLOCKED names `{}`, which is not a registered gate",
+                b.gate
+            );
+        }
+    }
+
+    #[test]
+    fn every_blocked_row_carries_a_readable_deadline() {
+        for b in BLOCKED {
+            assert!(
+                b.expires_epoch_day().is_some(),
+                "BLOCKED row for `{}` has an unparseable expiry {:?} \
+                 (must be YYYY-MM-DD)",
+                b.gate,
+                b.expires
+            );
+        }
+    }
+
+    #[test]
+    fn no_product_tier_gate_is_blocked() {
+        // A block is affordable because it costs coverage, not because it is
+        // free. Blocking a T0-T4 gate is a real decision and must be argued in
+        // review; this test makes it impossible to do quietly. Raise it only
+        // together with a ledger row showing the surface going uncovered.
+        for b in BLOCKED {
+            let g = find(b.gate).expect("checked by every_blocked_row_names_a_registered_gate");
+            assert_eq!(
+                g.tier,
+                Tier::SelfTest,
+                "gate `{}` is blocked but sits in product tier {} — a blocked \
+                 product gate silently removes coverage. If this is intended, \
+                 land the coverage-ledger row that shows the surface uncovered \
+                 in the SAME commit, then relax this test deliberately.",
+                b.gate,
+                g.tier.label()
+            );
+        }
+    }
+
+    /// THE demonstrated falsifier for the BLOCKED mechanism.
+    ///
+    /// `selftest-blocked`'s declared mutation is "move the expiry into the
+    /// past". This asserts the consequence directly, on the same pure function
+    /// the run loop calls — so the mechanism is proven red-able without a
+    /// 2-3 h falsifier sweep, and without depending on the system clock.
+    #[test]
+    fn an_expired_block_flips_from_blocked_to_fail() {
+        let b = block_for("selftest-blocked").expect("the permanent witness must be declared");
+        let deadline = b.expires_epoch_day().unwrap();
+
+        // The day before the deadline: still blocked.
+        assert!(!block_is_expired(b, deadline - 1));
+        // The deadline itself, and after: expired. `>=`, not `>` — a block
+        // expires ON its date, not the day after.
+        assert!(block_is_expired(b, deadline));
+        assert!(block_is_expired(b, deadline + 1));
+
+        // And the mutation's own effect, applied to a copy of the row.
+        let mutated = Blocked::new(b.gate, b.issue, "2000-01-01", b.reason);
+        assert!(
+            block_is_expired(&mutated, today_epoch_day()),
+            "the declared mutation must make the block expired TODAY"
+        );
+    }
+
+    #[test]
+    fn a_malformed_expiry_is_expired_not_forever() {
+        // Fail toward noticing: a typo must not buy an unbounded block.
+        let bad = Blocked::new("selftest-blocked", "issue", "not-a-date", "typo");
+        assert!(bad.expires_epoch_day().is_none());
+        assert!(block_is_expired(&bad, 0));
+    }
+
+    #[test]
+    fn parse_ymd_matches_known_epoch_days() {
+        assert_eq!(parse_ymd("1970-01-01"), Some(0));
+        assert_eq!(parse_ymd("1970-01-02"), Some(1));
+        assert_eq!(parse_ymd("2000-03-01"), Some(11017));
+        assert_eq!(parse_ymd("2024-02-29"), Some(19782)); // a real leap day
+        assert_eq!(parse_ymd("2026-08-10"), Some(20675));
+        // Malformations, each of which would otherwise become a silent block.
+        assert_eq!(parse_ymd(""), None);
+        assert_eq!(parse_ymd("2026-8-10"), None);
+        assert_eq!(parse_ymd("2026/08/10"), None);
+        assert_eq!(parse_ymd("2026-13-01"), None);
+        assert_eq!(parse_ymd("2026-00-01"), None);
+        assert_eq!(parse_ymd("2026-01-00"), None);
     }
 }
