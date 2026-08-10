@@ -2239,7 +2239,7 @@ impl<'a> Ctx<'a> {
             if is_unit_only {
                 out.push(GoStmt::Discard(lowered));
             } else {
-                out.push(GoStmt::Discard(any_task_run(lowered)));
+                entry_task_run(lowered, out);
             }
         }
     }
@@ -6162,6 +6162,77 @@ fn sig_result_after(sig: &Ty, n: usize) -> Ty {
         }
     }
     cur.clone()
+}
+
+/// The PROCESS ENTRY's task force. Runs the entry Task and honours its result:
+/// an `Err` is reported and the process exits non-zero.
+///
+/// This used to be a bare `_ = rt.AnyTaskRun(<main>)`, which threw the entry's
+/// `Result` into the blank identifier. A `main : Task Error ()` that FAILED
+/// therefore printed nothing about the failure and exited 0 — so every gate
+/// keyed on exit status was blind to app-level failure. That is how a golden
+/// file came to hold one byte encoding a dead `Db.connect` and stayed green.
+///
+/// Kept separate from [`any_task_run`] deliberately. `rt.AnyTaskRun` is shared
+/// with user-level `Task.run` / `Task.perform` and with every `let _ = <task>`
+/// discard, where "run it and ignore the result" is the CORRECT semantics —
+/// teaching the shared helper to exit the process would break them. Only the
+/// process entry has an exit code to report through, so only the process entry
+/// gets this wrapper.
+///
+/// Emits:
+/// ```go
+/// if _skyEntry := rt.AnyTaskRun(<main>); rt.ResultTag(_skyEntry) == 1 {
+///     _ = rt.Log_error(rt.Debug_toString(rt.ResultErr(_skyEntry)))
+///     _ = rt.System_exit(1)
+/// }
+/// ```
+/// `ResultTag` returns -1 for a non-`SkyResult` and 0 for `Ok`, so only a real
+/// `Err` (tag 1) trips it — a succeeding entry is untouched and still exits 0.
+fn entry_task_run(expr: GoExpr, out: &mut Vec<GoStmt>) {
+    const ENTRY: &str = "_skyEntry";
+    out.push(GoStmt::Short(ENTRY.to_string(), any_task_run(expr)));
+    let entry_ref = || GoExpr::new(GoExprKind::Ident(ENTRY.to_string()), GoTy::Any);
+    let cond = GoExpr::new(
+        GoExprKind::Binary(
+            GoBin::Eq,
+            Box::new(call_rt(
+                "rt.ResultTag",
+                vec![entry_ref()],
+                GoTy::Bare(Prim::Int),
+            )),
+            Box::new(GoExpr::new(
+                GoExprKind::IntLit(1),
+                GoTy::Bare(Prim::Int),
+            )),
+        ),
+        GoTy::Bare(Prim::Bool),
+    );
+    // `rt.Log_error` follows the Task-everywhere doctrine and returns a LAZY
+    // thunk — discarding it would emit nothing at all, which is most of the
+    // defect. Force it through the ordinary auto-force path.
+    let report = any_task_run(call_rt(
+        "rt.Log_error",
+        // `Basics_errorToStringT` routes a Sky `Error` through `renderSkyError`,
+        // so the entry reports "Unexpected: deliberate entry failure" rather than
+        // a raw Go struct dump; it falls back to `%v` for any other error type.
+        vec![call_rt(
+            "rt.Basics_errorToStringT",
+            vec![call_rt("rt.ResultErr", vec![entry_ref()], GoTy::Any)],
+            GoTy::Bare(Prim::Str),
+        )],
+        GoTy::Any,
+    ));
+    let exit = call_rt(
+        "rt.System_exit",
+        vec![GoExpr::new(GoExprKind::IntLit(1), GoTy::Bare(Prim::Int))],
+        GoTy::Any,
+    );
+    out.push(GoStmt::If(
+        cond,
+        vec![GoStmt::Discard(report), GoStmt::Discard(exit)],
+        Vec::new(),
+    ));
 }
 
 /// `rt.AnyTaskRun(expr)` — force a Task at an entry boundary (doc 08 §3).
