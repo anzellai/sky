@@ -50,3 +50,20 @@ all = "warn"
 [profile.release]
 # Deterministic, debuggable release builds for the reproducibility gate (L4).
 debug = 1
+
+[profile.dev]
+# The compiler is compute-bound: every gate (`reject`, `infer`, `repro`, the
+# `ty` corpus tests) is dominated by type-checking work, and an unoptimised
+# build of a compiler is pathologically slow at it.
+#
+# `opt-level = 2` — NOT `--release` — because it is the only option that keeps
+# `debug-assertions` and `overflow-checks` ON. Those are worth keeping in a
+# compiler: an integer overflow in an arena index or a span offset is a real
+# bug class, and `--release` silently wraps it. Sprinkling `--release` through
+# the CI gates would have bought the same speed by DISABLING those checks, and
+# would have kept the local-release / CI-debug divergence where a gate's verdict
+# depended on which profile it happened to be built with.
+#
+# One setting covers CI, the local preflight, and a plain `cargo test`, so all
+# three now run the same code with the same checks enabled.
+opt-level = 2

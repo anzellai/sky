@@ -95,38 +95,71 @@ jobs:
       - name: Smoke-test binary
         shell: bash
         run: |
+          set -euo pipefail
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           ACTUAL=$("./dist/${{ matrix.artifact }}${{ matrix.ext }}" --version)
           echo "$ACTUAL"
-          # Fail loudly if the released binary reports "sky dev" — that means
-          # SKY_BUILD_VERSION wasn't set at compile time, so option_env! baked in
-          # the dev fallback. This is the guard for the version-injection path.
-          echo "$ACTUAL" | grep -qF "sky v${TAG_VERSION}"
+          # ANCHORED comparison, not a substring match. `sky --version` prints
+          # exactly one line, `sky v<semver>` (rust/crates/sky/src/main.rs:4416),
+          # so the version token is extracted and compared WHOLE.
+          #
+          # The previous check was `grep -qF "sky v${TAG_VERSION}"`, an unanchored
+          # substring. Demonstrated failures it let through:
+          #   tag v0.19.1  + binary "sky v0.19.10"    -> passed (wrong release!)
+          #   tag v0.19.1  + binary "sky v0.19.1-rc1" -> passed (prerelease!)
+          # Both are rejected below. It still catches the case the step was
+          # written for: SKY_BUILD_VERSION unset bakes in the "sky dev" fallback,
+          # which yields no version token at all.
+          REPORTED=$(printf '%s\n' "$ACTUAL" | head -1 | sed -n 's/^sky v\([^ ]*\)$/\1/p')
+          if [ -z "$REPORTED" ]; then
+            echo "::error::binary did not report a version (got '$ACTUAL'); SKY_BUILD_VERSION was not baked in" >&2
+            exit 1
+          fi
+          if [ "$REPORTED" != "$TAG_VERSION" ]; then
+            echo "::error::version mismatch: tag says '$TAG_VERSION', binary says '$REPORTED'" >&2
+            exit 1
+          fi
+          echo "version OK: $REPORTED == $TAG_VERSION"
 
       - name: Package
         shell: bash
         run: |
+          set -euo pipefail
           cd dist
           case "${{ matrix.os }}" in
             windows-*)
-              7z a "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}${{ matrix.ext }}" "sky-ffi-inspect-${{ matrix.artifact }}${{ matrix.ext }}"
+              ARCHIVE="${{ matrix.artifact }}.zip"
+              7z a "$ARCHIVE" "${{ matrix.artifact }}${{ matrix.ext }}" "sky-ffi-inspect-${{ matrix.artifact }}${{ matrix.ext }}"
               ;;
             *)
               # --owner=0 --group=0 --numeric-owner: stamp root:root, not the CI
               # runner's UID/GID, so the installer never has to chown on extract
               # (unprivileged containers can't, and it blocked `sky` installs).
-              tar --owner=0 --group=0 --numeric-owner -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}${{ matrix.ext }}" "sky-ffi-inspect-${{ matrix.artifact }}${{ matrix.ext }}"
+              ARCHIVE="${{ matrix.artifact }}.tar.gz"
+              tar --owner=0 --group=0 --numeric-owner -czf "$ARCHIVE" "${{ matrix.artifact }}${{ matrix.ext }}" "sky-ffi-inspect-${{ matrix.artifact }}${{ matrix.ext }}"
               ;;
           esac
           ls -la
+          # Assert the archive actually materialised and is non-empty. Without
+          # this, a silent packaging failure reached upload-artifact, which was
+          # set to `if-no-files-found: ignore` and uploaded nothing — green.
+          if [ ! -s "$ARCHIVE" ]; then
+            echo "::error::packaging produced no (or empty) $ARCHIVE for ${{ matrix.artifact }}" >&2
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
+          # Exactly one of these two exists per matrix leg (.zip on Windows,
+          # .tar.gz elsewhere), so `error` fires only when the leg produced
+          # NEITHER — which is the real failure. It was `ignore`, under which a
+          # leg that built nothing still reported success and the release simply
+          # shipped without that platform's asset.
           path: |
             dist/${{ matrix.artifact }}.tar.gz
             dist/${{ matrix.artifact }}.zip
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   # ────────────────────────────────────────────────────────────────
   # Assemble release assets, generate checksums, publish GitHub Release.
@@ -149,14 +182,53 @@ jobs:
 
       - name: Stage release assets
         run: |
+          set -euo pipefail
           mkdir -p release
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release/ \;
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp -f {} release/ \;
           ls -la release/
+
+      # ── The gate: the asset set is asserted, not assumed ──────────────────
+      # `find … -exec cp` cannot fail the step when it copies nothing (find
+      # exits 0 on an empty result), and upload-artifact was `if-no-files-found:
+      # ignore`, so a matrix leg that produced no archive vanished silently and
+      # the Release published a PARTIAL asset set, green. `sky upgrade` then
+      # 404s for whichever platform went missing.
+      #
+      # This list is the release contract and must match the build matrix above.
+      - name: Assert the complete asset set is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED=(
+            sky-linux-x64.tar.gz
+            sky-linux-arm64.tar.gz
+            sky-darwin-arm64.tar.gz
+            sky-windows-x64.zip
+          )
+          missing=()
+          for f in "${EXPECTED[@]}"; do
+            [ -s "release/$f" ] || missing+=("$f")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::release is missing required asset(s): ${missing[*]}" >&2
+            find release -maxdepth 1 -type f -exec basename {} \; >&2
+            exit 1
+          fi
+          # Nothing unexpected either — an extra/renamed asset means the build
+          # matrix and this contract have drifted apart.
+          actual=$(find release -maxdepth 1 -type f -exec basename {} \; | sort | tr '\n' ' ')
+          want=$(printf '%s\n' "${EXPECTED[@]}" | sort | tr '\n' ' ')
+          if [ "$actual" != "$want" ]; then
+            echo "::error::asset set drift. want: $want" >&2
+            echo "got : $actual" >&2
+            exit 1
+          fi
+          echo "asset set complete: $want"
 
       - name: Generate checksums
         run: |
           cd release
-          sha256sum * > checksums.txt
+          sha256sum -- * > checksums.txt
           cat checksums.txt
 
       - name: Extract release notes from CHANGELOG
@@ -200,7 +272,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v6
         with:
