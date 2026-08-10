@@ -18,6 +18,12 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786369049
     },
+    "apps-fleet": {
+      "mutation": "apps-fleet.drop-the-production-gate",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786369944
+    },
     "apps-ledger": {
       "mutation": "apps-ledger.drop-the-ordering",
       "observed": "PROVEN",
@@ -40,7 +46,7 @@
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1786367624
+      "proven_at_unix": 1786370050
     },
     "cli-verbs": {
       "mutation": "cli-verbs.break-an-expectation",

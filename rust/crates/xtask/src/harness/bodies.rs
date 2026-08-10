@@ -1421,6 +1421,195 @@ pub fn apps_ledger_postgres(ctx: &GateCtx) -> GateOutcome {
     }
 }
 
+/// Member E: Fleet — Ledger run as a multi-replica topology.
+pub const APPS_FLEET_EXPECTED: u64 = 8;
+
+/// The environment the production-gate probe runs under.
+///
+/// A `const` rather than a literal so the falsifier can flip it to dev: under
+/// `ENV=production` an unreachable session store is a refusal to start, and in
+/// dev it is a warning and a silent in-memory fallback. If flipping this does
+/// NOT turn the gate red, the refusal is not being asserted.
+const FLEET_PROD_ENV: &str = "production";
+
+/// A DSN nothing is listening on — port 1 is never a Postgres.
+const FLEET_UNREACHABLE_DSN: &str = "postgres://skytest@127.0.0.1:1/nope?sslmode=disable";
+
+/// Not new source — **Ledger, run as a topology** (v2 §6 row E).
+///
+/// It is a scenario rather than a directory on purpose: `39-hub-demo` was two
+/// bespoke apps that existed only to push telemetry, and nothing built them.
+/// Running the *real* app in a multi-replica topology tests the same thing and
+/// **cannot rot into a mock**.
+///
+/// The load-bearing assertion is the **silent-fallback refusal**: under
+/// `ENV=production`, a session store that is configured but unreachable must
+/// make the app refuse to start, not degrade to an in-memory store whose
+/// sessions vanish on every restart and are invisible to the other replica.
+///
+/// It is asserted this way for a measured reason. The obvious assertion —
+/// "a session created on replica 1 is recognised by replica 2" — was written
+/// first and the falsifier reported it **VACUOUS**: pointing replica 2 at a
+/// private memory store did not change the observable, because a replica
+/// happily ADOPTS a client-supplied `sky_sid` and creates a fresh local session
+/// under the same id. Nothing in the response distinguishes "restored from the
+/// shared store" from "invented locally" for a state-free session. Rather than
+/// keep a decorative assertion, it was replaced with one that bites, and the
+/// vacuity is recorded here so it is not re-attempted blind.
+///
+/// The residual gap is real and stated: this gate proves the topology runs on
+/// one shared store and refuses to degrade silently; it does NOT yet prove
+/// session STATE migrates between replicas. That needs an authenticated flow.
+pub fn apps_fleet(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+    use std::time::Duration;
+
+    let Ok(dsn) = std::env::var("SKY_TEST_POSTGRES_DSN") else {
+        return GateOutcome::new(
+            false,
+            0,
+            "SKY_TEST_POSTGRES_DSN is unset — a multi-replica topology needs a SHARED \
+             session store. A gate that cannot run has not passed."
+                .to_string(),
+        );
+    };
+    if dsn.trim().is_empty() {
+        return GateOutcome::new(false, 0, "SKY_TEST_POSTGRES_DSN is empty".to_string());
+    }
+
+    const PROJECT: &str = "apps/ledger";
+    let dir = ctx.repo_root.join(PROJECT);
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+
+    let r = match layer2::clean_build(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    a += 1;
+    if !r.ok || !r.binary.is_file() {
+        return GateOutcome::new(
+            false,
+            a,
+            format!("`sky build` failed:\n{}", layer2::tail(&r.log, 12)),
+        );
+    }
+
+    let spawn_replica = |store: &str| -> Result<(layer2::Server, u16), String> {
+        let port = layer2::free_port()?;
+        let env: Vec<(&str, String)> = vec![
+            ("SKY_DB_PATH", dsn.clone()),
+            ("SKY_LIVE_PORT", port.to_string()),
+            ("SKY_LIVE_STORE", store.to_string()),
+            ("SKY_LIVE_STORE_PATH", dsn.clone()),
+            (
+                "SKY_AUTH_TOKEN_SECRET",
+                "layer2-fleet-gate-secret-at-least-32-bytes".to_string(),
+            ),
+        ];
+        let mut s = layer2::Server::spawn(&r.binary, &dir, port, &env)?;
+        s.wait_ready("ledger: listening on", Duration::from_secs(45))?;
+        Ok((s, port))
+    };
+
+    a += 1;
+    let (mut r1, p1) = match spawn_replica("postgres") {
+        Ok(v) => v,
+        Err(e) => return GateOutcome::new(false, a, format!("replica 1: {e}")),
+    };
+    a += 1;
+    let (mut r2, p2) = match spawn_replica("postgres") {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = r1.shutdown();
+            return GateOutcome::new(false, a, format!("replica 2: {e}"));
+        }
+    };
+
+    for (n, p) in [(1, p1), (2, p2)] {
+        a += 1;
+        match layer2::get(p, "/api/health") {
+            Ok(resp) if resp.status == 200 => {}
+            Ok(resp) => fail.push(format!("replica {n}: /api/health returned {}", resp.status)),
+            Err(e) => fail.push(format!("replica {n}: /api/health: {e}")),
+        }
+    }
+
+    // Replica 1 must issue a session at all — the topology is only meaningful
+    // if sessions exist.
+    a += 1;
+    if layer2::get(p1, "/")
+        .ok()
+        .and_then(|resp| resp.cookie("sky_sid"))
+        .is_none()
+    {
+        fail.push("replica 1 issued no sky_sid cookie".into());
+    }
+
+    // THE assertion: an unreachable session store under ENV=production must be
+    // a refusal to start, never a silent in-memory fallback.
+    a += 1;
+    let bad_port = layer2::free_port().unwrap_or(0);
+    let prod_env: Vec<(&str, String)> = vec![
+        ("ENV", FLEET_PROD_ENV.to_string()),
+        ("SKY_DB_PATH", dsn.clone()),
+        ("SKY_LIVE_PORT", bad_port.to_string()),
+        ("SKY_LIVE_STORE", "postgres".to_string()),
+        ("SKY_LIVE_STORE_PATH", FLEET_UNREACHABLE_DSN.to_string()),
+        (
+            "SKY_AUTH_TOKEN_SECRET",
+            "layer2-fleet-gate-secret-at-least-32-bytes".to_string(),
+        ),
+    ];
+    match layer2::Server::spawn(&r.binary, &dir, bad_port, &prod_env) {
+        Err(e) => fail.push(format!("production-gate probe: {e}")),
+        Ok(mut probe) => {
+            // The runtime retries the store 5 times with backoff (~8 s) before
+            // giving up, so the deadline must clear that.
+            match probe.wait_exit(Duration::from_secs(60)) {
+                Some(status) if !status.success() => {}
+                Some(status) => fail.push(format!(
+                    "with an UNREACHABLE session store under ENV={FLEET_PROD_ENV}, the app \
+                     exited {status} — it must refuse to start, not report success"
+                )),
+                None => {
+                    let served = layer2::port_in_use(bad_port);
+                    let _ = probe.shutdown();
+                    fail.push(format!(
+                        "with an UNREACHABLE session store under ENV={FLEET_PROD_ENV}, the app \
+                         kept running (serving={served}) — it degraded to a silent \
+                         in-memory fallback whose sessions vanish on restart and are \
+                         invisible to the other replica"
+                    ));
+                }
+            }
+        }
+    }
+
+    a += 1;
+    let d1 = r1.shutdown();
+    let d2 = r2.shutdown();
+    if let Err(e) = d1 {
+        fail.push(e);
+    }
+    if let Err(e) = d2 {
+        fail.push(e);
+    }
+
+    if fail.is_empty() {
+        GateOutcome::new(
+            true,
+            a,
+            format!(
+                "two replicas on :{p1} and :{p2} over one shared store; an unreachable \
+                 store under ENV={FLEET_PROD_ENV} refused to start rather than degrade"
+            ),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
 fn read_json(p: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }

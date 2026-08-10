@@ -541,6 +541,28 @@ pub static GATES: &[Gate] = &[
         body: bodies::apps_ledger_postgres,
     },
     Gate {
+        name: "apps-fleet",
+        tier: Tier::T3,
+        platforms: UNIX,
+        budget_s: 900,
+        expected: bodies::APPS_FLEET_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member E — Ledger as a multi-replica topology over one shared session store",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-fleet.drop-the-production-gate",
+            description: "run the unreachable-store probe in dev instead of \
+                          production, where the runtime warns and falls back to an \
+                          in-memory store instead of refusing; the silent-fallback \
+                          assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/xtask/src/harness/bodies.rs",
+                from: "const FLEET_PROD_ENV: &str = \"production\";",
+                to: "const FLEET_PROD_ENV: &str = \"\";",
+            },
+        }]),
+        body: bodies::apps_fleet,
+    },
+    Gate {
         name: "apps-relay",
         tier: Tier::T1,
         platforms: UNIX,

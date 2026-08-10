@@ -295,6 +295,27 @@ impl Server {
         ))
     }
 
+    /// Wait for the app to exit ON ITS OWN, up to `deadline`.
+    ///
+    /// `Some(status)` — it exited; `None` — it was still running at the
+    /// deadline. For asserting that a misconfiguration makes an app REFUSE to
+    /// start, "still running" is the failure, so the two must stay distinct:
+    /// collapsing them would turn "it degraded silently" into a pass.
+    pub fn wait_exit(&mut self, deadline: Duration) -> Option<std::process::ExitStatus> {
+        let t0 = Instant::now();
+        while t0.elapsed() < deadline {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    self.shut = true;
+                    return Some(status);
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Err(_) => return None,
+            }
+        }
+        None
+    }
+
     /// `killpg` the group, then assert the port came back.
     ///
     /// Returns an error when the port is STILL held after the kill — a leaked
@@ -367,17 +388,40 @@ pub struct Response {
 }
 
 impl Response {
+    /// The FIRST value for `name`.
     pub fn header(&self, name: &str) -> Option<String> {
+        self.headers(name).into_iter().next()
+    }
+
+    /// EVERY value for `name`.
+    ///
+    /// Not a convenience: `Set-Cookie` is legitimately repeated, and a helper
+    /// that returned only the first silently hid `sky_sid` behind `__sky_csrf`
+    /// while the gate reported "no session cookie was issued". Any header that
+    /// can repeat must be read as a list.
+    pub fn headers(&self, name: &str) -> Vec<String> {
         let lname = name.to_ascii_lowercase();
-        self.raw
-            .split("\r\n\r\n")
-            .next()?
-            .lines()
+        let Some(head) = self.raw.split("\r\n\r\n").next() else {
+            return Vec::new();
+        };
+        head.lines()
             .skip(1)
-            .find_map(|l| {
+            .filter_map(|l| {
                 let (k, v) = l.split_once(':')?;
                 (k.trim().to_ascii_lowercase() == lname).then(|| v.trim().to_string())
             })
+            .collect()
+    }
+
+    /// The value of `name` from any `Set-Cookie` on this response.
+    pub fn cookie(&self, name: &str) -> Option<String> {
+        let needle = format!("{name}=");
+        self.headers("set-cookie").into_iter().find_map(|c| {
+            let at = c.find(&needle)? + needle.len();
+            let rest = &c[at..];
+            let end = rest.find(';').unwrap_or(rest.len());
+            Some(rest[..end].to_string())
+        })
     }
 }
 
