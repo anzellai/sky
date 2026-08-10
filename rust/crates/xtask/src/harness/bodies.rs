@@ -1630,3 +1630,305 @@ fn preview(items: &[&str]) -> String {
         shown.join(", ")
     }
 }
+
+// ---------------------------------------------------------------------------
+// sky-suites — the root `tests/` Sky.Test suites
+// ---------------------------------------------------------------------------
+
+/// Cases that actually RUN and pass across the root `tests/` suites. Measured:
+/// **320**, across the 20 suites that build today.
+///
+/// How the number was obtained: `scripts/sky-suites.sh --json <p>` writes one
+/// `Sky.Test` report per suite; each report's `total` is that suite's case
+/// count, and `Sky/Test.sky:385` emits `"assertions": 1` per case, so cases and
+/// assertions are the same number by construction. Summing `total` over the
+/// green suites gives 320:
+///
+/// ```text
+///   Auth/AuthTest                 28    Live/PubsubTest                3
+///   Core/CoreTest                 30    Live/SessionTest              18
+///   Core/DictIntKeyTest            3    Server/HttpServerTest         43
+///   Core/WebSocketTest            16    Sky/Core/RandomExtTest         6
+///   Db/DbTest                     28    Sky/Core/StringInTest          9
+///   Json/PipelinePanic372Test      3    Std/Db/DecoderTest             3
+///   Lang/PatternTest              10    Std/UiAspectGridTest          16
+///   Live/CounterTest              19    Std/UiInputCheckboxTest        3
+///   Live/FormTest                 20    Std/UiMediaQueryTest          17
+///   Std/UiPseudoClassTest         21    Std/UiTransitionAnimationTest 24
+/// ```
+///
+/// 320 is the count on a tree where [`SKY_SUITES_BLOCKED`] is non-empty. The
+/// 10 cases in the two blocked suites are **NOT** in this number and are a
+/// declared coverage LOSS, not a rounding. When a block is lifted, this
+/// constant rises by that suite's cases in the same commit.
+pub const SKY_SUITES_EXPECTED: u64 = 320;
+
+/// Suites that are discovered and RUN, but whose failure does not fail the
+/// gate, because the defect is in the **compiler**, not in the suite.
+///
+/// This is a declared block with teeth, modelled on `reject`'s
+/// `known_leniency` and on `registry::BLOCKED`, and it is deliberately not a
+/// skip:
+///
+/// * the suite is still discovered and still executed — a block never removes
+///   a suite from the run, so the failure stays visible in CI logs;
+/// * its cases count as **ZERO**, so blocking can never preserve a coverage
+///   number (the loss shows up as a smaller [`SKY_SUITES_EXPECTED`]);
+/// * if a blocked suite starts **passing**, the gate FAILS and demands the
+///   entry be deleted. A block cannot outlive the bug it names;
+/// * it **EXPIRES**. Past the third field's date the gate FAILS with nobody in
+///   the loop, exactly as `registry::BLOCKED` does. Without this a block is a
+///   parking space: the two compiler defects below are real and fixable, and
+///   the only thing that reliably converts "known bug" into "fixed bug" is a
+///   date that turns CI red on its own.
+///
+/// An entry here is a coverage loss that must be declared in the ledger.
+///
+/// Format: `(suite, reason, expires YYYY-MM-DD)`.
+pub const SKY_SUITES_BLOCKED: &[(&str, &str, &str)] = &[
+    (
+        "Sky_Core_PointFreePolyTest",
+        "compiler codegen defect: a point-free top-level alias of a KERNEL \
+         function type-checks and then fails `go build`. Repro: \
+         `tickle : String -> String` / `tickle = String.toUpper` emits \
+         `return rt.String_toUpper` into a `func(string) string` slot, but \
+         `rt.String_toUpper` is `func(s any) any`. Origin: lower.rs:2721 \
+         (kernel-alias `Res::Def` value ref) and lower.rs:2798 \
+         (`Res::Kernel` value ref) stamp the caller's expected type onto a \
+         bare `Ident` without routing through `kernel_partial` \
+         (lower.rs:3925), which is the eta-expansion the CALL path already \
+         uses. This suite is the regression fence for #398; it must NOT be \
+         rewritten to a lambda, because that would delete the fence",
+        "2026-11-08",
+    ),
+    (
+        "Sky_Core_PureTest",
+        "compiler codegen defect: a zero-arity `Task` binding aliasing a \
+         nullary kernel type-checks and then fails `go build`. Repro: \
+         `Task.perform (Pure.uuidV7 ())` emits `return rt.Uuid_v7()` into an \
+         `rt.SkyTask[Sky_Core_Error_Error, string]` slot, but \
+         `rt.Uuid_v7()` returns `any` (runtime-go/rt/validate.go:163). \
+         Origin: `nullary_kernel_value` (lower.rs:2828) coerces only when the \
+         slot is a concrete-key map (lower.rs:2829), so the `rt.SkyTask` slot \
+         never gets the `rt.TaskCoerceT` wrap codegen already knows how to \
+         render (codegen/src/lib.rs:407)",
+        "2026-11-08",
+    ),
+];
+
+/// The root `tests/` Sky.Test suites — 22 suites in subdirectories of ONE Sky
+/// project (`tests/sky.toml`).
+///
+/// These had no runner and had NEVER executed. `scripts/conformance.sh` looks
+/// like it covered them, but its `PROJ` is `tests/conformance` and its loop
+/// globs `tests/*Test.sky` relative to that, so it only ever saw
+/// `tests/conformance/tests/`. The root suites live one directory deeper than
+/// a flat glob can reach; `scripts/sky-suites.sh` discovers RECURSIVELY.
+pub fn sky_suites(ctx: &GateCtx) -> GateOutcome {
+    let json = scratch(&ctx.repo_root).join("sky-suites.json");
+    let _ = std::fs::remove_file(&json);
+
+    let run = match sh(
+        &ctx.repo_root,
+        "scripts/sky-suites.sh",
+        &["--json".into(), json.display().to_string()],
+    ) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+
+    let Some(v) = read_json(&json) else {
+        // The script ran but produced no machine-readable result. That is a
+        // FAIL, not a pass-by-exit-code: the verdict comes from the file, never
+        // from stdout.
+        return GateOutcome::new(
+            false,
+            0,
+            format!(
+                "sky-suites.sh produced no JSON at {} (exit {:?}); \
+                 verdict refused — the gate asserts on the result file, not on stdout",
+                json.display(),
+                run.code
+            ),
+        );
+    };
+
+    let suites_run = u(&v, "suites_run");
+    let empty = Vec::new();
+    let suites = v.get("suites").and_then(|s| s.as_array()).unwrap_or(&empty);
+
+    let mut cases = 0u64;
+    let mut failed = 0u64;
+    let mut suites_failed = 0u64;
+    let mut broken: Vec<String> = Vec::new();
+    let mut stale_blocks: Vec<String> = Vec::new();
+    let mut seen_blocked: Vec<&str> = Vec::new();
+
+    for s in suites {
+        let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+        let exit_code = s.get("exit_code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        let report = s.get("report").and_then(|r| r.as_str()).unwrap_or("");
+        let rep = read_json(Path::new(report));
+
+        if let Some((blocked_name, _, _)) = SKY_SUITES_BLOCKED.iter().find(|(n, _, _)| *n == name) {
+            seen_blocked.push(blocked_name);
+            // THE tooth: a block that no longer describes reality is a lie in
+            // the ledger. If the suite now runs green, the gate goes red and
+            // names the entry to delete — a block cannot outlive its bug.
+            let green = exit_code == 0 && rep.as_ref().is_some_and(|r| u(r, "failed") == 0);
+            if green {
+                stale_blocks.push(name.to_string());
+            }
+            // Cases count as ZERO either way: blocking must never preserve a
+            // coverage number.
+            continue;
+        }
+
+        // A suite whose per-case report is missing or unreadable contributes
+        // ZERO cases and is counted FAILED. Treating it as "skipped" is the
+        // silent-shrink path that lets a suite stop running and still pass.
+        let Some(rep) = rep else {
+            suites_failed += 1;
+            broken.push(format!("{name} (no per-case report)"));
+            continue;
+        };
+        cases += u(&rep, "total");
+        failed += u(&rep, "failed");
+        if exit_code != 0 || u(&rep, "failed") > 0 {
+            suites_failed += 1;
+            broken.push(name.to_string());
+        }
+    }
+
+    // A blocked entry naming a suite that was never discovered is a dead block:
+    // it silently subtracts from the expected count forever. Same failure mode
+    // as a mutation whose `from` string no longer exists.
+    // A block that outlived its declared deadline fails, with nobody in the
+    // loop. Same contract as `registry::BLOCKED`, and a malformed date reads as
+    // expired for the same reason: a typo must not buy an unbounded block.
+    let today = crate::harness::registry::today_epoch_day();
+    let expired: Vec<String> = SKY_SUITES_BLOCKED
+        .iter()
+        .filter(|(_, _, exp)| {
+            crate::harness::registry::parse_ymd(exp).is_none_or(|day| today >= day)
+        })
+        .map(|(n, _, exp)| format!("{n} (expired {exp})"))
+        .collect();
+    if !expired.is_empty() {
+        return GateOutcome::new(
+            false,
+            cases,
+            format!(
+                "{} suite block(s) EXPIRED: {}. A block is a deadline, not a parking \
+                 space: fix the compiler defect and delete the entry (raising \
+                 SKY_SUITES_EXPECTED), or re-declare the block with a new date and a \
+                 reason that survives review.",
+                expired.len(),
+                expired.join(", ")
+            ),
+        );
+    }
+
+    let dead: Vec<&str> = SKY_SUITES_BLOCKED
+        .iter()
+        .map(|(n, _, _)| *n)
+        .filter(|n| !seen_blocked.contains(n))
+        .collect();
+    if !dead.is_empty() {
+        return GateOutcome::new(
+            false,
+            cases,
+            format!(
+                "SKY_SUITES_BLOCKED names {} suite(s) that discovery did not find: {}. \
+                 Delete the dead entry (and raise SKY_SUITES_EXPECTED) or fix discovery.",
+                dead.len(),
+                preview(&dead)
+            ),
+        );
+    }
+    if !stale_blocks.is_empty() {
+        let refs: Vec<&str> = stale_blocks.iter().map(String::as_str).collect();
+        return GateOutcome::new(
+            false,
+            cases,
+            format!(
+                "{} blocked suite(s) now PASS: {}. The compiler defect they name is fixed — \
+                 delete the SKY_SUITES_BLOCKED entry and raise SKY_SUITES_EXPECTED by that \
+                 suite's case count in the same commit.",
+                refs.len(),
+                preview(&refs)
+            ),
+        );
+    }
+
+    // EXACT, never `>=`. A suite that stops being discovered, or a case that
+    // stops being emitted, shrinks `cases` and fails here.
+    if cases != SKY_SUITES_EXPECTED {
+        return GateOutcome::new(
+            false,
+            cases,
+            format!(
+                "expected EXACTLY {SKY_SUITES_EXPECTED} sky-suite cases, got {cases} \
+                 across {suites_run} discovered suite(s). If cases were deliberately added \
+                 or removed, update SKY_SUITES_EXPECTED in harness/bodies.rs in the same commit."
+            ),
+        );
+    }
+    if failed > 0 || suites_failed > 0 {
+        return GateOutcome::new(
+            false,
+            cases,
+            format!(
+                "{failed} failing case(s); {suites_failed} suite(s) red: {}",
+                preview(&broken.iter().map(String::as_str).collect::<Vec<_>>())
+            ),
+        );
+    }
+
+    // The blocked suites are named in the PASS line ON PURPOSE. A green row
+    // that silently omits them would read as "22 of 22 suites green", which is
+    // the misreading the whole declared-block design exists to prevent.
+    let detail = if SKY_SUITES_BLOCKED.is_empty() {
+        format!("{cases} cases across {suites_run} suites, all green")
+    } else {
+        let names: Vec<String> =
+            SKY_SUITES_BLOCKED.iter().map(|(n, _, exp)| format!("{n} (until {exp})")).collect();
+        format!(
+            "{cases} cases green across {} of {suites_run} discovered suites; \
+             {} suite(s) BLOCKED on compiler codegen defects and contributing ZERO cases: {}",
+            suites_run as usize - SKY_SUITES_BLOCKED.len(),
+            SKY_SUITES_BLOCKED.len(),
+            names.join(", ")
+        )
+    };
+    GateOutcome::new(true, cases, detail)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// coverage-ledger — the ratchet over the coverage ledger itself
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The number of checks `coverage_ledger::check_body` performs: one per surface
+/// row verified, plus its four ratchet clauses (staleness, `surfaces_covered`
+/// non-decreasing, per-surface `cover_new` non-decreasing, and every `weaker`
+/// surface accounted by a `[[weakening]]` stanza).
+///
+/// It is EXACT, never a `>=`, for the same reason every other gate's count is:
+/// `ty/tests/reject.rs` asserted `>= 13` against an actual 63, so deleting 50
+/// corpus files kept it green. Here the analogous failure would be the ledger
+/// silently losing surface rows while still reporting PASS. The constant moves
+/// when the surface count moves — which is a real event that should be read,
+/// not absorbed.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 145;
+
+/// `xtask coverage-ledger --check`, run in-process.
+///
+/// In-process rather than shelling out, because the ledger's whole claim is
+/// that it is recomputed from the tree; invoking a possibly-stale prebuilt
+/// binary would let the gate measure a different tree than the one under test.
+/// That is the same reasoning `denominators` records for calling
+/// `render_doc_site_export` directly instead of running `sky doc --export`.
+pub fn coverage_ledger(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::coverage_ledger::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}

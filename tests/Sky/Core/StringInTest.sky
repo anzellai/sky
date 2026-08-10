@@ -20,10 +20,18 @@ tests =
           , Test.test
                 "containsIn — false on miss"
                 (\_ -> Test.equal False (String.containsIn "hello" "world"))
-          , Test.test
+          , -- `containsIn haystack needle` is haystack-FIRST, so the value that
+            -- arrives through the pipe is the NEEDLE, not the haystack:
+            -- `needle |> containsIn haystack` == `containsIn haystack needle`.
+            -- Written the other way round the call reduces to
+            -- `containsIn "hello" "hello world"` — "does the string \"hello\"
+            -- contain \"hello world\"" — which is False. See the report note on
+            -- Sky/Core/String.sky:109, whose docstring example has the same
+            -- inversion and also evaluates False while claiming True.
+            Test.test
                 "containsIn pipe — common idiom"
                 (\_ ->
-                    Test.equal True ("hello world" |> String.containsIn "hello"))
+                    Test.equal True ("world" |> String.containsIn "hello world"))
           , Test.test
                 "startsWithIn — prefix"
                 (\_ -> Test.equal True (String.startsWithIn "/api/users" "/api"))

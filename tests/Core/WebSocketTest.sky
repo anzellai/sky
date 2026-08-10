@@ -136,13 +136,18 @@ tests =
           "Sky.Http.Server.WebSocket.WebSocketServerCfg"
           [ Test.test
                 "defaultCfg.maxMessageBytes is 1 MiB"
-                (\_ -> Test.equal 1048576 ServerWs.defaultCfg.maxMessageBytes)
+                (\_ ->
+                    let
+                        cfg = ServerWs.defaultCfg
+                    in
+                        Test.equal 1048576 cfg.maxMessageBytes)
           , Test.test
                 "defaultCfg.originPatterns is empty"
                 (\_ ->
-                    Test.equal
-                        0
-                        (List.length ServerWs.defaultCfg.originPatterns))
+                    let
+                        cfg = ServerWs.defaultCfg
+                    in
+                        Test.equal 0 (List.length cfg.originPatterns))
           , Test.test
                 "withMaxMessageBytes overrides"
                 (\_ ->

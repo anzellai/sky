@@ -100,6 +100,7 @@ const GOLDEN_REL: &str = "rust/crates/xtask/coerce_floor.golden";
 
 pub fn run(args: &[String], root: &Path) -> i32 {
     let bless = args.iter().any(|a| a == "--bless");
+    let rekey = args.iter().any(|a| a == "--rekey");
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     let only: Option<Vec<String>> = args
         .iter()
@@ -123,7 +124,7 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     let mut counts: BTreeMap<String, Counts> = BTreeMap::new();
     let mut no_emit: Vec<(String, String)> = Vec::new();
     for name in &names {
-        let dir = root.join("examples").join(name);
+        let dir = dir_for_key(root, name);
         if !dir.is_dir() {
             continue;
         }
@@ -135,6 +136,24 @@ pub fn run(args: &[String], root: &Path) -> i32 {
                 no_emit.push((name.clone(), first_line(&note)));
             }
         }
+    }
+
+    if rekey {
+        // Conservation is asserted BEFORE the golden is overwritten. Blessing
+        // first and checking after would leave a lost row already committed to
+        // disk, which is precisely the failure the assertion exists to prevent.
+        match assert_conservation(root, &counts) {
+            Ok(note) => println!("coerce-floor --rekey: {note}"),
+            Err(problems) => {
+                eprintln!(
+                    "coerce-floor --rekey: CONSERVATION FAILED\n  {problems}\n\n\
+                     A re-key may add rows and may move them between keys. It may NOT \
+                     shrink the measured surface. Nothing was written."
+                );
+                return 1;
+            }
+        }
+        return bless_golden(root, &counts, &no_emit);
     }
 
     if bless {
@@ -227,6 +246,106 @@ fn load_golden(root: &Path) -> std::io::Result<BTreeMap<String, usize>> {
 }
 
 /// Write the current counts as the new golden (sorted, one line per example).
+/// THE conservation assertion (v2 §9.2), run once, on a re-keying commit.
+///
+/// # Why a second, inverted ratchet exists
+///
+/// In normal operation a DECREASE in a count is good — the floor tightened —
+/// and the gate reports it and lets you ratchet down. Across a **re-keying**
+/// the same decrease means something else entirely: measured surface was
+/// *lost*, not moved. A re-key that silently drops rows would retire the
+/// soundness ratchet over exactly as much of its surface as it dropped, and the
+/// normal ratchet would call that an improvement.
+///
+/// So on a re-key, and only on a re-key, both aggregates must not fall:
+///
+/// ```text
+///     sum(new tokens) >= sum(old tokens)   and   count(new rows) >= count(old rows)
+/// ```
+///
+/// The normal FAIL-ON-INCREASE ratchet resumes immediately afterwards. The two
+/// must never be conflated, which is why this lives behind its own flag rather
+/// than inside `--bless`.
+///
+/// # The aggregate form is NOT sufficient — measured, not reasoned
+///
+/// v2 §9.2 specifies exactly the two aggregate inequalities above. Implemented
+/// literally, the first re-key on this branch **passed** them — rows 52 -> 55,
+/// tokens 7,177 -> 9,333 — while silently dropping the rows for
+/// `03-tea-external` and `11-fyne-stopwatch`. Three large Layer-2 rows arriving
+/// paid for two small rows leaving, and both aggregates went up.
+///
+/// A ratchet that can lose a locked floor as long as some other row grew is not
+/// a ratchet. So a third clause is asserted here, and it is the one with teeth:
+/// **no key that had a row may end up without one.** A key may CHANGE (that is
+/// what re-keying is) but the change must be declared, not inferred from a
+/// disappearance.
+fn assert_conservation(root: &Path, counts: &BTreeMap<String, Counts>) -> Result<String, String> {
+    let old = load_golden(root).map_err(|e| {
+        format!(
+            "--rekey needs an existing golden to conserve against, and {GOLDEN_REL} \
+             could not be read: {e}"
+        )
+    })?;
+    let old_rows = old.len();
+    let old_tokens: usize = old.values().sum();
+
+    // `bless_golden` carries a still-present-but-non-emitting project forward at
+    // its last measured floor, so conservation must be judged against the rows
+    // that will actually be WRITTEN, not against this run's measurements alone.
+    let mut written: BTreeMap<String, usize> =
+        counts.iter().map(|(k, c)| (k.clone(), c.total)).collect();
+    for (name, v) in &old {
+        if !written.contains_key(name) && dir_for_key(root, name).is_dir() {
+            written.insert(name.clone(), *v);
+        }
+    }
+    let new_rows = written.len();
+    let new_tokens: usize = written.values().sum();
+
+    let mut problems = Vec::new();
+
+    // Clause 3 first: it is the one that actually bites.
+    let vanished: Vec<&str> = old
+        .keys()
+        .filter(|k| !written.contains_key(*k))
+        .map(|s| s.as_str())
+        .collect();
+    if !vanished.is_empty() {
+        problems.push(format!(
+            "{} row(s) VANISHED with no successor: {}\n  \
+             each of these had a locked floor and now has none. If the project was \
+             deliberately retired, retire its row in its own commit with the reason; \
+             a re-key must not be how a floor disappears.",
+            vanished.len(),
+            vanished.join(", ")
+        ));
+    }
+    if new_tokens < old_tokens {
+        problems.push(format!(
+            "token total FELL {old_tokens} -> {new_tokens} (-{}): across a re-key that means \
+             measured surface was LOST, not moved",
+            old_tokens - new_tokens
+        ));
+    }
+    if new_rows < old_rows {
+        problems.push(format!(
+            "row count FELL {old_rows} -> {new_rows}"
+        ));
+    }
+
+    if problems.is_empty() {
+        Ok(format!(
+            "CONSERVED: every one of the {old_rows} existing row(s) still has a floor; \
+             rows {old_rows} -> {new_rows} (+{}), tokens {old_tokens} -> {new_tokens} (+{})",
+            new_rows - old_rows,
+            new_tokens - old_tokens
+        ))
+    } else {
+        Err(problems.join("\n  "))
+    }
+}
+
 fn bless_golden(
     root: &Path,
     counts: &BTreeMap<String, Counts>,
@@ -238,14 +357,45 @@ fn bless_golden(
          # FAIL-ON-INCREASE: a count above its golden fails `xtask coerce-floor`.\n\
          # A DECREASE is fine (floor tightened) — re-bless to ratchet it down.\n\
          # Regenerate with: cargo run -p xtask -- coerce-floor --bless\n\
-         # Format: <example-name>\\t<total-rt-narrowing-token-count>\n",
+         # Re-key (adds/moves rows) with: cargo run -p xtask -- coerce-floor --rekey,\n\
+         #   which additionally asserts sum(tokens) and count(rows) did not FALL.\n\
+         # Format: <key>\\t<total-rt-narrowing-token-count>\n\
+         #   <key> without `/` is an examples/ directory; with `/` it is a\n\
+         #   repo-root-relative Layer-2 project path (apps/manifest.toml).\n",
     );
+    // A project that did not emit HERE keeps the floor it was last measured at.
+    //
+    // This is not politeness, it is a correctness requirement. `no_emit` means
+    // "cannot be measured in THIS environment" — 03-tea-external, 08-notes-app
+    // and 11-fyne-stopwatch have no generated FFI surface until their Go deps
+    // are fetched, and 13-skyshop needs a network `sky install`. Dropping their
+    // rows on a bless run would silently retire their locked floor on whichever
+    // machine happened to run the bless, and the loss would read as "the corpus
+    // shrank" rather than as an error. Carrying the old value forward keeps the
+    // ratchet armed; if the project is genuinely GONE from disk the row is
+    // dropped, which is a real deletion and is what the conservation assertion
+    // is there to catch.
+    let carried = load_golden(root).unwrap_or_default();
+    let mut rows: BTreeMap<String, usize> =
+        counts.iter().map(|(k, c)| (k.clone(), c.total)).collect();
+    let mut carried_forward: Vec<String> = Vec::new();
+    for (name, old) in &carried {
+        if rows.contains_key(name) {
+            continue;
+        }
+        if dir_for_key(root, name).is_dir() {
+            rows.insert(name.clone(), *old);
+            carried_forward.push(name.clone());
+        }
+    }
+
     // BTreeMap already sorted by name → deterministic output.
     let mut total = 0usize;
-    for (name, c) in counts {
-        out.push_str(&format!("{name}\t{}\n", c.total));
-        total += c.total;
+    for (name, n) in &rows {
+        out.push_str(&format!("{name}\t{n}\n"));
+        total += n;
     }
+    let counts = &rows;
     match std::fs::write(golden_path(root), &out) {
         Ok(()) => {
             println!(
@@ -255,13 +405,21 @@ fn bless_golden(
             );
             if !no_emit.is_empty() {
                 println!(
-                    "  ({} non-emitting example(s) omitted: {})",
+                    "  ({} project(s) did not emit here: {})",
                     no_emit.len(),
                     no_emit
                         .iter()
                         .map(|(n, _)| n.as_str())
                         .collect::<Vec<_>>()
                         .join(", ")
+                );
+            }
+            if !carried_forward.is_empty() {
+                println!(
+                    "  ({} row(s) CARRIED FORWARD at their last measured floor, \
+                     because the project exists but did not emit here: {})",
+                    carried_forward.len(),
+                    carried_forward.join(", ")
                 );
             }
             0
@@ -457,6 +615,36 @@ fn diff_and_gate(
 
 // ---- corpus --------------------------------------------------------------
 
+/// Resolve a golden KEY to the project directory it names.
+///
+/// Two key shapes, deliberately distinguishable by eye and by code:
+///
+/// * a bare name (`26-ui-showcase`) is an `examples/` directory — the original
+///   keying, left untouched so the existing 52 rows keep their identity and
+///   their history across this change;
+/// * a key containing `/` (`apps/ledger`) is a repo-root-relative project path
+///   — how Layer-2 members joined the ratchet.
+///
+/// Mixing the two is a deliberate choice over a mass re-key. Re-keying every
+/// row would have made every historical floor unattributable to its old value
+/// in one commit, for no gain: the point of adding Layer 2 is that the members
+/// contributed **zero** to the soundness ratchet while being the corpus that
+/// now carries regression duty for the product surfaces.
+fn dir_for_key(root: &Path, key: &str) -> PathBuf {
+    if key.contains('/') {
+        root.join(key)
+    } else {
+        root.join("examples").join(key)
+    }
+}
+
+/// The ratchet's corpus: every emitting `examples/` project PLUS every Layer-2
+/// member with Sky source.
+///
+/// Layer-2 members are read from `apps/manifest.toml`, the declared membership
+/// authority (`docs/ci-layer2-members.md` Decision 2) — **not** by `read_dir` on
+/// `apps/`, because discovery-by-listing is how `39-hub-demo` became invisible
+/// to six gates at once.
 fn corpus(root: &Path) -> Vec<String> {
     let mut ds: Vec<String> = std::fs::read_dir(root.join("examples"))
         .map(|rd| {
@@ -468,8 +656,67 @@ fn corpus(root: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
+
+    for key in layer2_keys(root) {
+        // Member D's declared path IS `examples/13-skyshop`, and member E is a
+        // scenario over member A's directory. Both would otherwise double-count.
+        let already = ds.iter().any(|n| dir_for_key(root, n) == dir_for_key(root, &key));
+        if !already {
+            ds.push(key);
+        }
+    }
+
     ds.sort();
+    ds.dedup();
     ds
+}
+
+/// Layer-2 member project paths, from the declared manifest.
+///
+/// Deliberately a small hand parser rather than a TOML dependency: this gate
+/// decides whether CI is green and its dependency surface is kept minimal. It
+/// reads `path = "..."` from each `[[member]]` block and keeps the ones that
+/// are actually Sky projects (`src/` present) — which drops member G
+/// (`rust/crates/sky/tests`, flow tests, not a project) without naming it.
+fn layer2_keys(root: &Path) -> Vec<String> {
+    let Ok(src) = std::fs::read_to_string(root.join("apps/manifest.toml")) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut in_member = false;
+    for line in src.lines() {
+        let t = line.trim();
+        if t.starts_with("[[member]]") {
+            in_member = true;
+            continue;
+        }
+        if t.starts_with('[') {
+            in_member = false;
+            continue;
+        }
+        if !in_member {
+            continue;
+        }
+        let Some(rest) = t.strip_prefix("path") else { continue };
+        let Some(v) = rest.split('=').nth(1) else { continue };
+        let p = v.trim().trim_matches('"').to_string();
+        if p.is_empty() {
+            continue;
+        }
+        // `sky-bundled` holds two projects side by side rather than one `src/`.
+        if root.join(&p).join("src").is_dir() {
+            out.push(p);
+        } else {
+            for sub in ["console", "doc"] {
+                if root.join(&p).join(sub).join("src").is_dir() {
+                    out.push(format!("{p}/{sub}"));
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 fn first_line(s: &str) -> String {

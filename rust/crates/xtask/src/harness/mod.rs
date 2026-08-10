@@ -307,6 +307,42 @@ fn run_suite(o: &Opts, root: &Path) -> i32 {
             });
             continue;
         }
+        // A declared block is decided BEFORE the gate is spawned, and before
+        // --fail-fast, because whether the gate CAN run is a property of the
+        // declaration, not of this run. Expiry is checked here so the block
+        // turns itself into a FAIL on its deadline with nobody in the loop.
+        if let Some(b) = registry::block_for(g.name) {
+            let expired = registry::block_is_expired(b, registry::today_epoch_day());
+            reports.push(Report {
+                gate: g.name,
+                state: if expired {
+                    GateState::Fail
+                } else {
+                    GateState::Blocked
+                },
+                assertions: 0,
+                expected: g.expected,
+                elapsed_s: 0.0,
+                detail: if expired {
+                    format!(
+                        "BLOCK EXPIRED {} — {} ({}). A block is a deadline, not a parking space: \
+                         unblock the gate or re-declare the block with a new date and a reason \
+                         that survives review.",
+                        b.expires, b.reason, b.issue
+                    )
+                } else {
+                    format!(
+                        "blocked until {} — {} ({}). Never renders PASS; its surfaces count as \
+                         UNCOVERED in the coverage ledger.",
+                        b.expires, b.reason, b.issue
+                    )
+                },
+            });
+            if expired && o.fail_fast {
+                aborted = true;
+            }
+            continue;
+        }
         if aborted {
             // --fail-fast stopped us before reaching this gate. It is
             // registered and selected, and we do not know its verdict.
@@ -580,6 +616,13 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
         if g.name == "selftest-hang" && o.only.is_empty() {
             continue;
         }
+        // A blocked gate has no green baseline to falsify — by declaration it
+        // does not run. Its own falsifying property (the expiry flipping it to
+        // FAIL) is harness logic, not a gate assertion, and is proven by
+        // `registry`'s and `state`'s unit tests instead of by a mutation run.
+        if registry::block_for(g.name).is_some() {
+            continue;
+        }
         all.extend(falsify::verify_gate(g, &fopts, &mut generation));
     }
 
@@ -665,6 +708,39 @@ impl Proofs {
         let mut map = Proofs::load(root).entries;
         let now = now_unix();
         for r in reports {
+            // AN INCONCLUSIVE RUN MUST NOT ERASE A RECORDED PROOF.
+            //
+            // `INCONCLUSIVE` means the run could not establish anything —
+            // typically because the gate's BASELINE was red for an
+            // environmental reason. It is not evidence that the mutation fails
+            // to falsify; it is the absence of evidence either way.
+            //
+            // Demonstrated on this branch: a full `--verify-falsifiers` sweep on
+            // a host with no `SKY_TEST_POSTGRES_DSN` reported INCONCLUSIVE for
+            // `apps-ledger-postgres` and `apps-fleet` — correctly, they cannot
+            // run without a server — and then OVERWROTE their `PROVEN` records
+            // with `NOT-as-declared`. `--require-proofs` would then have
+            // rendered both UNPROVEN and the coverage ledger would have scored
+            // their surfaces down, all because of a missing env var on a
+            // laptop. That is the same class as a `--bless` dropping a row for
+            // a project that did not emit locally: an environment-dependent run
+            // destroying a measurement taken somewhere it WAS possible.
+            //
+            // The existing record is left alone instead. It carries its own
+            // 30-day freshness window, so a proof that is never re-established
+            // still expires on its own — the signal degrades rather than being
+            // deleted. Only the timestamp of the failed attempt is noted, so
+            // the attempt is visible rather than silent.
+            if matches!(r.outcome, falsify::Falsified::Inconclusive(_)) {
+                if let Some(existing) = map.get_mut(r.gate) {
+                    if existing.get("outcome").and_then(|o| o.as_str()) == Some("as-declared") {
+                        if let Some(obj) = existing.as_object_mut() {
+                            obj.insert("last_inconclusive_at_unix".into(), serde_json::json!(now));
+                        }
+                        continue;
+                    }
+                }
+            }
             map.insert(
                 r.gate.to_string(),
                 serde_json::json!({
@@ -691,4 +767,93 @@ fn now_unix() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod proof_ledger_tests {
+    use super::*;
+    use falsify::{Falsified, FalsifyReport};
+
+    fn report(gate: &'static str, outcome: Falsified) -> FalsifyReport {
+        let as_declared = matches!(outcome, Falsified::Proven);
+        FalsifyReport { gate, mutation: "m", outcome, as_declared, detail: String::new() }
+    }
+
+    fn write_ledger(dir: &Path, body: &str) {
+        std::fs::create_dir_all(dir.join("docs/coverage")).unwrap();
+        std::fs::write(dir.join(PROOF_LEDGER), body).unwrap();
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("sky-proof-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// THE REGRESSION. An INCONCLUSIVE run must not erase a recorded proof.
+    ///
+    /// Observed for real: a full `--verify-falsifiers` sweep on a host with no
+    /// `SKY_TEST_POSTGRES_DSN` overwrote `apps-ledger-postgres`' and
+    /// `apps-fleet`'s `PROVEN` records with `NOT-as-declared`, because their
+    /// baselines could not run at all. `--require-proofs` would then have
+    /// rendered both UNPROVEN, and the coverage ledger would have scored their
+    /// surfaces down — over a missing environment variable on a laptop.
+    #[test]
+    fn an_inconclusive_run_does_not_erase_a_recorded_proof() {
+        let root = scratch_dir("keeps");
+        write_ledger(
+            &root,
+            r#"{"gates":{"apps-fleet":{"mutation":"m","observed":"PROVEN",
+                "outcome":"as-declared","proven_at_unix":1786369944}}}"#,
+        );
+
+        Proofs::record(&root, &[report("apps-fleet", Falsified::Inconclusive("no DSN".into()))])
+            .unwrap();
+
+        let after = Proofs::load(&root);
+        let e = after.entries.get("apps-fleet").expect("the row must survive");
+        assert_eq!(e["outcome"], "as-declared", "the proof was erased");
+        assert_eq!(e["observed"], "PROVEN");
+        assert_eq!(e["proven_at_unix"], 1786369944, "the proof's age must not be refreshed");
+        // The failed attempt is visible rather than silent.
+        assert!(e.get("last_inconclusive_at_unix").is_some());
+    }
+
+    /// The other direction: INCONCLUSIVE must still be RECORDED when there is
+    /// no prior proof to protect. Silence would read as "never attempted".
+    #[test]
+    fn an_inconclusive_run_is_recorded_when_there_is_no_prior_proof() {
+        let root = scratch_dir("fresh");
+        write_ledger(&root, r#"{"gates":{}}"#);
+
+        Proofs::record(&root, &[report("apps-fleet", Falsified::Inconclusive("no DSN".into()))])
+            .unwrap();
+
+        let after = Proofs::load(&root);
+        let e = after.entries.get("apps-fleet").expect("must be recorded");
+        assert_eq!(e["outcome"], "NOT-as-declared");
+        assert!(!after.fresh("apps-fleet"), "INCONCLUSIVE must never render a gate proven");
+    }
+
+    /// A real VACUOUS on a `Falsifiable` gate is a genuine defect finding and
+    /// MUST overwrite a prior proof — it is evidence, not the absence of it.
+    /// Only INCONCLUSIVE is protective.
+    #[test]
+    fn a_vacuous_result_still_overwrites_a_prior_proof() {
+        let root = scratch_dir("vacuous");
+        write_ledger(
+            &root,
+            r#"{"gates":{"roundtrip":{"mutation":"m","observed":"PROVEN",
+                "outcome":"as-declared","proven_at_unix":1786369944}}}"#,
+        );
+
+        Proofs::record(&root, &[report("roundtrip", Falsified::Vacuous)]).unwrap();
+
+        let after = Proofs::load(&root);
+        let e = after.entries.get("roundtrip").unwrap();
+        assert_eq!(e["observed"], "VACUOUS");
+        assert_eq!(e["outcome"], "NOT-as-declared");
+        assert!(!after.fresh("roundtrip"));
+    }
 }

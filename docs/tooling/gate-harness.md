@@ -43,6 +43,7 @@ Every rule below is a direct answer to one of those.
 | `NOT RUN` | registered and selected, but no usable verdict | **UNKNOWN (exit 3)** |
 | `UNPROVEN` | passed, but its falsifying mutation is unproven or stale | **UNKNOWN (exit 3)** |
 | `NOT APPLICABLE` | outside the selected tier/platform, or deselected by `--only` | none |
+| `BLOCKED` | declared unrunnable, with an issue and an expiry | none — **until the expiry, then FAIL** |
 
 Three properties follow, and they are the point:
 
@@ -53,6 +54,66 @@ Three properties follow, and they are the point:
   which trains people to ignore the one state that means "we do not know".
 - **Rows come from the registry, not from the run.** A gate cannot disappear by
   not executing. This kills "SKIP counted as pass" at the root.
+
+## Ordering: prove falsifiers BEFORE regenerating the coverage ledger
+
+`docs/coverage/falsifier-proofs.json` is an **input** to `xtask coverage-ledger`
+— a surface covered by a gate whose mutation is recorded `PROVEN` scores
+`Falsified` (4) rather than `Asserted` (3). So proving a falsifier legitimately
+changes the ledger, and running the two in the wrong order leaves the checked-in
+ledger stale.
+
+```sh
+cargo run --release -q -p xtask -- harness --verify-falsifiers   # 1. prove
+cargo run --release -q -p xtask -- coverage-ledger               # 2. regenerate
+cargo run --release -q -p xtask -- coverage-ledger --check       # 3. confirm
+```
+
+This is not a wrinkle to work around — it is the ledger noticing that the
+coverage claim actually improved. `--check` reporting STALE after a falsifier
+sweep is the mechanism working.
+
+## `BLOCKED` — a deadline, not a parking space
+
+A soft skip is a gate that quietly stops asserting and keeps reporting
+non-failure for ever. That is the class this harness exists to kill, which is
+why `BLOCKED` did not exist here at first even though the design declared it.
+It is admitted only with four teeth, all enforced in code:
+
+```rust
+pub static BLOCKED: &[Blocked] = &[Blocked::new(
+    "gate-name",
+    "https://github.com/anzellai/sky/issues/NNN",  // required, non-empty
+    "2026-12-31",                                  // required, YYYY-MM-DD
+    "the structural obstacle — not \"flaky\", not \"todo\"",
+)];
+```
+
+1. **Declared at compile time.** `Blocked::new` is `const fn`; an empty issue,
+   a missing reason or a non-`YYYY-MM-DD` expiry fails the **build**, exactly as
+   `Mutations::new(&[])` does.
+2. **It expires by itself.** From the declared date the gate renders `FAIL`,
+   with nobody in the loop to forget. A **malformed** date reads as *expired*,
+   not far-future — a typo must not buy an unbounded block.
+3. **It never renders `PASS`.**
+4. **Its surfaces count as UNCOVERED in the coverage ledger**
+   (`GateState::counts_as_cover()` is false). This is the property that removes
+   the incentive: blocking never preserves a coverage number, it lowers one.
+
+The suite verdict is *neutral* before expiry, deliberately. A state that turns
+CI permanently red is a state people delete rather than fix, and deleting the
+row restores exactly the invisible absence that rendering rows from the registry
+was meant to end.
+
+A registry test forbids blocking any **product-tier** gate. Blocking a T0-T4
+gate silently removes coverage, so it must land together with the ledger row
+that shows the surface going uncovered, and the test relaxed deliberately in the
+same commit.
+
+`selftest-blocked` is a permanent witness whose body *would* pass — so what it
+proves is that a gate which would pass still does not render `PASS` while it is
+blocked. With an empty `BLOCKED` list nothing would exercise the mechanism and
+it would rot like the gates it polices.
 
 ## Every gate declares a falsifier, and the compiler enforces it
 

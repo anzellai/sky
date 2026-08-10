@@ -130,17 +130,13 @@ tests =
                 (\_ ->
                     Test.equal
                         "alice@example.com"
-                        updateModel
-                        (SetEmail "alice@example.com")
-                        initial.email)
+                        (updateModel (SetEmail "alice@example.com") initial).email)
           , Test.test
                 "SetPassword updates field"
                 (\_ ->
                     Test.equal
                         "secret123"
-                        updateModel
-                        (SetPassword "secret123")
-                        initial.password)
+                        (updateModel (SetPassword "secret123") initial).password)
           , Test.test
                 "SetEmail clears prior error"
                 (\_ ->

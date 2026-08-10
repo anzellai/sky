@@ -46,7 +46,7 @@
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1786382641
+      "proven_at_unix": 1786397122
     },
     "cli-verbs": {
       "mutation": "cli-verbs.break-an-expectation",
@@ -84,6 +84,12 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786350806
     },
+    "coverage-ledger": {
+      "mutation": "coverage-ledger.drop-a-sole-owner-import",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786395077
+    },
     "reject": {
       "mutation": "reject.neutralise-axis",
       "observed": "PROVEN",
@@ -102,17 +108,23 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786349758
     },
+    "sky-suites": {
+      "mutation": "sky-suites.break-expectation",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786393814
+    },
     "sky-verify": {
       "mutation": "sky-verify.break-a-suite",
-      "observed": "INCONCLUSIVE",
-      "outcome": "NOT-as-declared",
-      "proven_at_unix": 1786349758
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786392770
     },
     "verify-cli": {
       "mutation": "verify-cli.drop-expected-output",
-      "observed": "INCONCLUSIVE",
-      "outcome": "NOT-as-declared",
-      "proven_at_unix": 1786349758
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786395531
     }
   },
   "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, or older than the declared window, renders UNPROVEN under `--require-proofs`.",
