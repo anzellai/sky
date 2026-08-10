@@ -431,10 +431,67 @@ fn metric_diff(base: &Value, cur: &Value) -> String {
 /// `removals.toml` gained at least as many accounted entries as the largest
 /// single-metric decrease — removing N symbols means writing down N removals,
 /// each with a reason, an owner and a commit.
+/// Metrics the FALL-IS-A-SHRINK rule must NOT be applied to, and why.
+///
+/// Both exclusions were forced by the rule producing a wrong verdict on a real
+/// change, and both would have trained people to write junk accounting entries —
+/// which is how a ratchet stops being read.
+///
+/// * **`vacuous_pass`** counts unconditional `Test.pass` calls. v2 §4.1 lists
+///   the 18 of them as a DEFECT: a test case that cannot fail. So a fall is the
+///   improvement the design asks for, and charging a `[[removal]]` entry for it
+///   is the ratchet paying people to leave vacuous tests in place. It is instead
+///   ratcheted the other way — see [`vacuity_ratchet`].
+/// * **`by_assertion_fn.*`** is the per-function breakdown (`equal`, `fail`,
+///   `isTrue`, …). It is diagnostic, not a denominator. Rewriting one
+///   `Test.fail` as a `Test.equal` moves two of these while the total
+///   `assertions` RISES; charging that as a shrink makes every honest refactor
+///   owe paperwork. The aggregate `assertions` and `cases` counts are still
+///   fully ratcheted, which is where the real claim lives.
+fn is_diagnostic_metric(key: &str) -> bool {
+    key.ends_with(".vacuous_pass") || key.contains(".by_assertion_fn.")
+}
+
+/// FAIL-ON-INCREASE for vacuity — the inverse ratchet.
+///
+/// A NEW unconditional `Test.pass` is a new test case that cannot fail, which is
+/// the exact class the per-item falsifiability model exists to kill. Falling is
+/// always fine and rewrites the baseline.
+fn vacuity_ratchet(base: &Value, cur: &Value) -> Result<(), String> {
+    let (mb, mc) = (metrics(base), metrics(cur));
+    let mut risen: Vec<String> = Vec::new();
+    for (k, c) in &mc {
+        if !k.ends_with(".vacuous_pass") {
+            continue;
+        }
+        let b = mb.get(k).copied().unwrap_or(0);
+        if *c > b {
+            risen.push(format!("  {k}: {b} -> {c}  (+{})", c - b));
+        }
+    }
+    if risen.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "VACUITY ROSE — {} metric(s) gained unconditional `Test.pass` calls:\n{}\n\n\
+         `Test.pass` is not an assertion; a case built on it cannot fail, and it is \
+         counted as VACUOUS everywhere else in this design. Write the assertion the \
+         case was meant to make, or delete the case. Do not add a removals entry — \
+         this ratchet runs the other way and no accounting will satisfy it.",
+        risen.len(),
+        risen.join("\n")
+    ))
+}
+
 fn ratchet(base: &Value, cur: &Value, removals_now: usize) -> Result<(), String> {
+    vacuity_ratchet(base, cur)?;
+
     let (mb, mc) = (metrics(base), metrics(cur));
     let mut decreases: Vec<(String, i64, i64)> = Vec::new();
     for (k, b) in &mb {
+        if is_diagnostic_metric(k) {
+            continue;
+        }
         if let Some(c) = mc.get(k) {
             if c < b {
                 decreases.push((k.clone(), *b, *c));
@@ -629,6 +686,53 @@ mod tests {
         // Entries already spent on the previous decrease do not pay again.
         assert!(ratchet(&doc(1746, 3), &doc(1745, 3), 3).is_err());
         assert!(ratchet(&doc(1746, 3), &doc(1745, 3), 4).is_ok());
+    }
+
+    fn tests_doc(vacuous: i64, fail_calls: i64, assertions: i64) -> Value {
+        json!({
+            "removals_accounted": 0,
+            "tests": { "examples": {
+                "vacuous_pass": vacuous,
+                "assertions": assertions,
+                "by_assertion_fn": { "fail": fail_calls, "equal": 100 }
+            }}
+        })
+    }
+
+    /// REMOVING a vacuous `Test.pass` must not owe paperwork.
+    ///
+    /// This is the case that exposed the defect: converting two unconditional
+    /// `Test.pass` calls into real assertions moved `vacuous_pass` 11 -> 9 and
+    /// the ratchet demanded two `[[removal]]` entries for it — charging a fee
+    /// for doing exactly what v2 §4.1 asks.
+    #[test]
+    fn falling_vacuity_is_an_improvement_not_a_shrink() {
+        assert!(ratchet(&tests_doc(11, 32, 84), &tests_doc(9, 32, 148), 0).is_ok());
+    }
+
+    /// ...and the inverse ratchet is real: NEW vacuity fails, and no amount of
+    /// accounting buys it off.
+    #[test]
+    fn rising_vacuity_fails_and_cannot_be_accounted_away() {
+        let err = ratchet(&tests_doc(9, 32, 148), &tests_doc(10, 32, 148), 0).unwrap_err();
+        assert!(err.contains("VACUITY ROSE"), "{err}");
+        assert!(ratchet(&tests_doc(9, 32, 148), &tests_doc(10, 32, 148), 99).is_err());
+    }
+
+    /// The per-function breakdown is diagnostic. Rewriting a `Test.fail` as a
+    /// `Test.equal` moves it while the aggregate RISES; that is a refactor, not
+    /// a coverage removal.
+    #[test]
+    fn per_assertion_fn_breakdown_is_not_ratcheted() {
+        assert!(ratchet(&tests_doc(9, 32, 148), &tests_doc(9, 31, 149), 0).is_ok());
+    }
+
+    /// But the AGGREGATE assertion count still is — that is where the claim lives.
+    #[test]
+    fn the_aggregate_assertion_count_is_still_ratcheted() {
+        let err = ratchet(&tests_doc(9, 32, 148), &tests_doc(9, 32, 147), 0).unwrap_err();
+        assert!(err.contains("DENOMINATOR SHRANK"), "{err}");
+        assert!(err.contains("tests.examples.assertions: 148 -> 147"), "{err}");
     }
 
     /// A metric that vanishes entirely is a decrease to zero, not a free pass.

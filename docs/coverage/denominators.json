@@ -13,7 +13,7 @@
     "explicit_exposing": {
       "entries": 1153,
       "modules": 81,
-      "unfiltered_entries": 1375
+      "unfiltered_entries": 1376
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
@@ -32,10 +32,10 @@
     "types": 121,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 1968,
-      "hidden_by_exposing": 222,
+      "entries": 1969,
+      "hidden_by_exposing": 223,
       "types": 128,
-      "values": 1840
+      "values": 1841
     },
     "values": 1625
   },
@@ -58,21 +58,21 @@
       "vacuous_pass": 7
     },
     "examples": {
-      "assertion_calls_incl_pass": 95,
-      "assertions": 84,
+      "assertion_calls_incl_pass": 157,
+      "assertions": 148,
       "by_assertion_fn": {
-        "equal": 39,
+        "equal": 102,
         "err": 0,
         "expectErrorKind": 0,
-        "fail": 32,
+        "fail": 31,
         "isFalse": 2,
-        "isTrue": 11,
+        "isTrue": 13,
         "notEqual": 0,
         "ok": 0
       },
-      "cases": 63,
+      "cases": 126,
       "suites": 6,
-      "vacuous_pass": 11
+      "vacuous_pass": 9
     }
   }
 }
