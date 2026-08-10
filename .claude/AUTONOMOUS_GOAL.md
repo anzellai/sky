@@ -174,3 +174,35 @@ boundaries. No phase closes on my own say-so.
 - The parallel-build hazard: the sweep spawns thousands of `xcrun` processes and
   exhausts the per-uid process table, which kills mem-guard's ability to fork
   and makes unrelated things fail. Cap concurrency.
+
+## AUTONOMOUS MANDATE (user, 2026-08-10)
+
+> deploy first then in fully autonomous mode for all remaining test overhaul e2e
+> phase 2/3 and whatever required
+
+Deploys: DONE (sky-lang.org @ settleby/us-central1-a; the second project @ its
+own VM). Both verified externally: HTTP 200 and a forged-session POST to
+`/_sky/event` refused 403 — the v0.19.13 session-binding fix is live in prod.
+The local toolchain was v0.19.11 before this; deploying without upgrading would
+have shipped the OLD compiler and looked successful.
+
+**Now autonomous for ALL remaining phases (2/3 and whatever required).**
+Per CLAUDE.md §0: each phase is design → grill (>=2 fresh-context adversaries)
+→ implement (worktree) → three-leg verify → fresh-context Judge. I cannot
+declare a phase done; only a Judge can. Push at phase boundaries. Stop only on a
+genuine blocker (surface it, keep the loop alive).
+
+Phase 3 is the pivot: it MEASURES the per-case cost, and Phase 4's case counts
+are DERIVED from that number against the break-even table (~80 ms/case at 1,500;
+~24 ms/case at 5,000 single-threaded). Shrinking to fit is forbidden; the abort
+branch is real.
+
+Known-open items to fold in as they become blocking:
+- `main : Task Error ()` that FAILS exits 0 and prints nothing (`lower.rs:6137`
+  discards the Result). Every exit-status-keyed gate is blind to app failure.
+  Its own change: it alters every app's exit contract and the emitted Go.
+- `build_run_gate`'s `--shape … --run` steps still cannot fail on `matched`.
+- fyne: the FFI inspector pins GOOS=linux/amd64 CGO_ENABLED=0 so a cgo-requiring
+  package has no surface; needs a documented host-target fallback. Then reply to
+  discussion #50.
+- `test-rest` shells out to a real `go build` with no `actions/setup-go` pin.
