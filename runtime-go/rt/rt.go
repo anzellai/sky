@@ -6077,6 +6077,36 @@ func Task_parallel(tasks any) any {
 	}
 }
 
+// Task_lazy : (() -> a) -> Task e a
+//
+// Defers a PURE thunk into a Task, so expensive computation only runs when the
+// Task is run (inside `Cmd.perform` / `Task.run`) rather than where it is
+// written. `Sky/Core/Task.sky` has always declared this as
+// `Ffi.kernel "Task_lazy"` and `rust/crates/lower/src/kernel.rs` has always
+// lowered it to `rt.Task_lazy` — the Go symbol was simply missing, so the
+// function type-checked and then failed the ABI guard with [E4005].
+//
+// The thunk is invoked through the same reflect path as every other Sky
+// callback. `() -> a` reaches Go either as a zero-argument func or as a
+// one-argument func taking unit, depending on how the caller wrote it, so both
+// are forced. A non-func value is passed through — `Task.lazy` on an already
+// evaluated value is a `Task.succeed`.
+//
+// Deferral only: the thunk re-runs on every run of the Task. Memoisation is
+// the CAF story (a zero-arg top-level binding), deliberately not this.
+func Task_lazy(thunk any) any {
+	return func() any {
+		rv := reflect.ValueOf(thunk)
+		if rv.Kind() != reflect.Func {
+			return Ok[any, any](thunk)
+		}
+		if rv.Type().NumIn() == 0 {
+			return Ok[any, any](SkyCall(thunk))
+		}
+		return Ok[any, any](SkyCall(thunk, struct{}{}))
+	}
+}
+
 func Task_map(fn any, task any) any {
 	return func() any {
 		tag, okV, errV := anyResultView(SkyCall(task))
