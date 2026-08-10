@@ -68,12 +68,67 @@ pub struct FalsifyReport {
     pub detail: String,
 }
 
-/// A textual mutation applied to the working tree, reverted on drop.
+/// The crash-recovery journal.
+///
+/// `Drop` restores on a panic, but it does **not** run when the process is
+/// killed by a signal — and this runner exists to be killed: the harness enforces
+/// budgets with `killpg`, CI cancels jobs, and operators interrupt long runs.
+/// A run killed between apply and revert leaves a **mutated source file in the
+/// working tree**, and the next run then measures the mutation instead of the
+/// change under test.
+///
+/// That is not hypothetical. It happened during Phase 3 (2026-08-10): an
+/// interrupted `--verify-falsifiers` left `MathConformanceTest.sky` mutated, and
+/// the next two `harness` runs reported a `632/770` conformance count and a
+/// spurious `min 3 7 == 3 … expected 4 but got 3` failure. Two runs were spent
+/// chasing a compiler regression that did not exist.
+///
+/// So the original content is journalled to disk **before** the file is touched,
+/// and [`restore_orphans`] replays any journal left behind before the next run
+/// starts. The journal is removed on a clean revert, so its mere presence is the
+/// signal that a previous run died mid-mutation.
+const JOURNAL_DIR: &str = ".skycache/harness/mutation-journal";
+
+/// Replay any mutation journal left by a previous run that died between apply
+/// and revert. Returns the files restored, so the caller can say so out loud
+/// rather than silently repairing.
+pub fn restore_orphans(root: &Path) -> Vec<String> {
+    let dir = root.join(JOURNAL_DIR);
+    let mut restored = Vec::new();
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return restored;
+    };
+    let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    entries.sort();
+    for entry in entries {
+        if entry.extension().and_then(|e| e.to_str()) != Some("journal") {
+            continue;
+        }
+        let Ok(blob) = std::fs::read_to_string(&entry) else {
+            continue;
+        };
+        // Format: the relative path, a newline, then the original bytes.
+        let Some((rel, original)) = blob.split_once('\n') else {
+            let _ = std::fs::remove_file(&entry);
+            continue;
+        };
+        let target = root.join(rel);
+        if std::fs::write(&target, original).is_ok() {
+            restored.push(rel.to_string());
+        }
+        let _ = std::fs::remove_file(&entry);
+    }
+    restored
+}
+
+/// A textual mutation applied to the working tree, reverted on drop **and**
+/// journalled to disk so a signal-kill cannot leave it applied.
 #[derive(Debug)]
 struct Patch {
     path: PathBuf,
     original: String,
     applied: bool,
+    journal: Option<PathBuf>,
 }
 
 impl Patch {
@@ -94,12 +149,35 @@ impl Patch {
             ));
         }
         let mutated = original.replacen(from, to, 1);
-        std::fs::write(&path, &mutated)
-            .map_err(|e| format!("cannot write mutation to {rel}: {e}"))?;
+
+        // Journal BEFORE touching the file — a crash between the write and the
+        // journal would be exactly the hole this closes.
+        let jdir = root.join(JOURNAL_DIR);
+        let _ = std::fs::create_dir_all(&jdir);
+        let jpath = jdir.join(format!("{}.journal", rel.replace(['/', '\\'], "_")));
+        let journal = match std::fs::write(&jpath, format!("{rel}\n{original}")) {
+            Ok(()) => Some(jpath),
+            // A journal we cannot write is a refusal, not a warning: proceeding
+            // would reintroduce the "killed run poisons the tree" class.
+            Err(e) => {
+                return Err(format!(
+                    "cannot journal mutation target {rel} ({e}); refusing to mutate \
+                     a tree we could not guarantee restoring"
+                ))
+            }
+        };
+
+        if let Err(e) = std::fs::write(&path, &mutated) {
+            if let Some(j) = &journal {
+                let _ = std::fs::remove_file(j);
+            }
+            return Err(format!("cannot write mutation to {rel}: {e}"));
+        }
         Ok(Patch {
             path,
             original,
             applied: true,
+            journal,
         })
     }
 
@@ -107,6 +185,11 @@ impl Patch {
         if self.applied {
             let _ = std::fs::write(&self.path, &self.original);
             self.applied = false;
+        }
+        // Only after the content is back: the journal's presence means "a
+        // mutation may still be applied", so it must outlive the restore.
+        if let Some(j) = self.journal.take() {
+            let _ = std::fs::remove_file(j);
         }
     }
 }
@@ -325,6 +408,62 @@ mod tests {
             std::fs::read_to_string(root.join("f.txt")).unwrap(),
             "hello world",
             "a panic between apply and revert must not leave a mutated tree"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The signal-kill case `Drop` cannot cover, and the one that actually bit
+    /// (Phase 3, 2026-08-10: an interrupted falsifier run left a conformance
+    /// suite mutated and two later harness runs reported a failure that did not
+    /// exist). `std::mem::forget` models the kill exactly: the guard's `Drop`
+    /// never runs, the file stays mutated — and the journal is what gets it back.
+    #[test]
+    fn a_journal_restores_a_mutation_whose_guard_never_dropped() {
+        let root = tmp("orphan");
+        std::fs::write(root.join("f.txt"), "hello world").unwrap();
+
+        let p = Patch::apply(&root, "f.txt", "world", "mutant").unwrap();
+        std::mem::forget(p); // the process was killed: no Drop, no revert
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "hello mutant",
+            "precondition: the tree really is left mutated"
+        );
+
+        let restored = restore_orphans(&root);
+        assert_eq!(restored, vec!["f.txt".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "hello world",
+            "the journal must restore a mutation no Drop ever reverted"
+        );
+
+        // Replaying an empty journal is a no-op, so recovery cannot itself
+        // clobber a later legitimate edit.
+        std::fs::write(root.join("f.txt"), "edited since").unwrap();
+        assert!(restore_orphans(&root).is_empty());
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "edited since"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A clean revert must leave no journal behind — otherwise every subsequent
+    /// run would "recover" from a mutation that was already undone.
+    #[test]
+    fn a_clean_revert_leaves_no_journal() {
+        let root = tmp("nojournal");
+        std::fs::write(root.join("f.txt"), "hello world").unwrap();
+        {
+            let _p = Patch::apply(&root, "f.txt", "world", "mutant").unwrap();
+        }
+        std::fs::write(root.join("f.txt"), "edited since").unwrap();
+        assert!(restore_orphans(&root).is_empty());
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "edited since",
+            "a stale journal clobbered a later edit"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

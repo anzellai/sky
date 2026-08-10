@@ -82,6 +82,25 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         return exec_gate(gate_name, &opts, root);
     }
 
+    // ---- crash recovery, BEFORE anything is measured ----------------------
+    // A previous `--verify-falsifiers` killed by a signal (budget `killpg`, CI
+    // cancellation, an operator's ^C) leaves its mutation applied — `Drop` does
+    // not run on a signal. Every later run then measures the mutation instead
+    // of the change under test, and reports it as a compiler failure. Replay any
+    // journal left behind, and say so loudly: a silently self-repairing harness
+    // hides the fact that a previous run died mid-mutation.
+    let restored = falsify::restore_orphans(root);
+    if !restored.is_empty() {
+        eprintln!(
+            "xtask harness: a previous falsifier run died mid-mutation; \
+             restored {} file(s) from the mutation journal:",
+            restored.len()
+        );
+        for r in &restored {
+            eprintln!("  {r}");
+        }
+    }
+
     if opts.list {
         return list(root);
     }
