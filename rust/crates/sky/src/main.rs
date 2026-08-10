@@ -2356,7 +2356,7 @@ fn db_driver_label() -> String {
     };
     let mut section = String::new();
     let mut driver: Option<String> = None;
-    let mut dsn_is_pg = false;
+    let mut dsn: Option<String> = None;
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -2373,16 +2373,21 @@ fn db_driver_label() -> String {
         if section == "database" {
             match key {
                 "driver" => driver = Some(val),
-                "path" | "url" => {
-                    if val.starts_with("postgres://") || val.starts_with("postgresql://") {
-                        dsn_is_pg = true;
-                    }
-                }
+                "path" | "url" => dsn = Some(val),
                 _ => {}
             }
         }
     }
-    let d = driver.unwrap_or_else(|| if dsn_is_pg { "postgres".into() } else { "sqlite".into() });
+    // The DSN decides, because the DSN is what the runtime decides from
+    // (`rt.detectDriver`). The declared `[database] driver` used to WIN here,
+    // which made this prompt lie in exactly the dangerous direction: with
+    // `driver = "postgres"` beside `./app.db` it announced "this will drop
+    // everything in postgres" while the drop ran against SQLite. The declared
+    // key is only a fallback for when no DSN is configured in sky.toml.
+    let d = match dsn.as_deref() {
+        Some(s) => project::driver_for_dsn(s).to_string(),
+        None => driver.unwrap_or_else(|| "sqlite".into()),
+    };
     match d.to_lowercase().as_str() {
         "postgres" | "postgresql" | "pgx" | "pg" => "postgres".to_string(),
         _ => "sqlite".to_string(),

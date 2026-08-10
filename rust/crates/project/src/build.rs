@@ -346,6 +346,9 @@ fn assemble_and_emit_with(
 
     // ---- lower + emit ----
     let mut cfg = read_sky_toml_config(&example_dir.join("sky.toml"));
+    // Captured before `cfg` is moved into the lowering config — used after the
+    // emit to report a `[database] driver` that contradicts its DSN.
+    let db_driver_diag = db_driver_conflict(cfg.db_driver.as_deref(), cfg.db_dsn.as_deref());
     // Load the pinned Go-FFI surface (doc 09): the committed `sky-ffi/`
     // directory is preferred; the oracle's gitignored `.skycache/` cache is the
     // fallback so a project that hasn't yet migrated to the committed layout
@@ -397,11 +400,19 @@ fn assemble_and_emit_with(
     if !abi_diags.is_empty() {
         return Err(render_diags(&abi_diags, &sources));
     }
+    // A `[database] driver` that contradicts the DSN it sits beside is reported
+    // here rather than silently ignored — the key was decorative before this
+    // (nothing read the `DB_DRIVER` it used to emit), so `driver = "postgres"`
+    // next to `./app.db` opened SQLite without a word.
+    let mut warnings = prog.warnings.clone();
+    if let Some(w) = db_driver_diag {
+        warnings.push(w);
+    }
     Ok(Emitted {
         source,
         registry,
         ffi_used: prog.ffi_used.clone(),
-        warnings: prog.warnings.clone(),
+        warnings,
         console_needed: prog.console_needed,
     })
 }
@@ -774,6 +785,61 @@ fn parse_toml_scalar(raw: &str) -> String {
     body.trim().trim_matches('"').to_string()
 }
 
+/// The driver the RUNTIME will actually use for a connection string — a mirror
+/// of `rt.detectDriver` (`runtime-go/rt/db_auth.go`), which is the only thing
+/// that decides this. Kept in lockstep with it: a `postgres://` / `postgresql://`
+/// URL or a libpq keyword DSN is Postgres, everything else is SQLite.
+pub fn driver_for_dsn(dsn: &str) -> &'static str {
+    let low = dsn.trim().to_ascii_lowercase();
+    if low.starts_with("postgres://")
+        || low.starts_with("postgresql://")
+        || (low.contains("host=") && low.contains("user="))
+    {
+        "pgx"
+    } else {
+        "sqlite"
+    }
+}
+
+/// True when a declared `[database] driver` names the same engine the DSN will
+/// actually open. `pgx` is the runtime's internal name for Postgres; users write
+/// `postgres` / `postgresql`.
+fn driver_names_match(declared: &str, actual: &str) -> bool {
+    let d = declared.trim().to_ascii_lowercase();
+    match actual {
+        "pgx" => matches!(d.as_str(), "pgx" | "postgres" | "postgresql"),
+        other => d == other,
+    }
+}
+
+/// The diagnostic for a `[database] driver` that contradicts the DSN it sits
+/// beside — `driver = "postgres"` next to `path = "./app.db"` opens SQLite.
+///
+/// This is what makes the key load-bearing instead of decorative. It reports
+/// rather than overrides: the DSN remains the single source of truth (it is what
+/// `rt.detectDriver` and every downstream dialect branch use), so a build is
+/// never silently rerouted to a different engine by a config key.
+///
+/// Returns `None` when there is no declared driver, no declared DSN (the DSN may
+/// legitimately arrive at runtime via `SKY_DB_PATH` / `DATABASE_URL`), or the two
+/// agree.
+pub fn db_driver_conflict(declared: Option<&str>, dsn: Option<&str>) -> Option<String> {
+    let declared = declared?;
+    let dsn = dsn?;
+    let actual = driver_for_dsn(dsn);
+    if driver_names_match(declared, actual) {
+        return None;
+    }
+    let shown = if actual == "pgx" { "postgres" } else { actual };
+    Some(format!(
+        "[database] driver = \"{declared}\" contradicts path/url \"{dsn}\", which \
+         opens {shown}. The driver is derived from the connection string's shape, \
+         not from this key — either give a {shown} connection string or correct \
+         the driver. (Set the DSN via SKY_DB_PATH / DATABASE_URL to choose at run \
+         time.)"
+    ))
+}
+
 fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
     let mut cfg = lower::LowerConfig::default();
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -799,13 +865,19 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         let val = parse_toml_scalar(v);
         match (section.as_str(), key) {
             ("", "port") => cfg.port = Some(val),
-            ("database", "driver") => cfg.extra_defaults.push(("DB_DRIVER".into(), val)),
+            // `driver` is RECORDED, never emitted. Nothing in runtime-go reads
+            // DB_DRIVER / SKY_DB_DRIVER; the driver comes from the DSN's shape.
+            // Kept as a declared expectation and checked against the DSN below.
+            ("database", "driver") => cfg.db_driver = Some(val),
             // `path` and `url` are aliases — both seed DB_PATH, which
             // `Db.connect ()` reads and `detectDriver` routes to sqlite or
             // postgres by DSN shape (`postgres://…` → pgx). `url` matches the
             // CLAUDE.md app-matrix wording; a bare `postgres://` DSN in either
             // key just works.
-            ("database", "path" | "url") => cfg.extra_defaults.push(("DB_PATH".into(), val)),
+            ("database", "path" | "url") => {
+                cfg.db_dsn = Some(val.clone());
+                cfg.extra_defaults.push(("DB_PATH".into(), val))
+            }
             // `[analytics] dbPath` → the Std.Analytics store override
             // (SKY_ANALYTICS_DB_PATH). Unset → analytics reuses the console DB
             // (SKY_CONSOLE_DB_PATH). See analytics_store.go.
@@ -1383,7 +1455,8 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod sky_toml_tests {
     use super::{
-        configured_bin_name, configured_source_root, read_sky_toml_config, sky_build_goflags_from,
+        configured_bin_name, configured_source_root, db_driver_conflict, driver_for_dsn,
+        read_sky_toml_config, sky_build_goflags_from,
     };
 
     #[test]
@@ -1438,13 +1511,67 @@ mod sky_toml_tests {
         // [log] keys → Std.Log's LOG_FORMAT / LOG_LEVEL.
         assert!(has("LOG_FORMAT", "json"));
         assert!(has("LOG_LEVEL", "debug"));
-        // [database] (unchanged).
-        assert!(has("DB_DRIVER", "sqlite"));
+        // [database]. `path` is real — the runtime reads DB_PATH. `driver` is
+        // NOT: nothing in runtime-go ever read DB_DRIVER / SKY_DB_DRIVER, and
+        // the driver is chosen from the DSN's shape (`rt.detectDriver`,
+        // runtime-go/rt/db_auth.go). Emitting it advertised a contract that did
+        // not exist — two docs promised `SKY_DB_DRIVER` would select the driver.
+        // The declared value is kept for the consistency check below, never
+        // emitted as an env default.
         assert!(has("DB_PATH", "app.db"));
+        assert!(
+            !cfg.extra_defaults.iter().any(|(s, _)| s == "DB_DRIVER"),
+            "DB_DRIVER must not be emitted — nothing reads it: {:?}",
+            cfg.extra_defaults
+        );
+        assert_eq!(cfg.db_driver.as_deref(), Some("sqlite"));
+        assert_eq!(cfg.db_dsn.as_deref(), Some("app.db"));
         // [env] prefix is a dedicated field (emitted as rt.SetEnvPrefix).
         assert_eq!(cfg.env_prefix.as_deref(), Some("FENCE"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `driver_for_dsn` must stay a faithful mirror of `rt.detectDriver`
+    /// (`runtime-go/rt/db_auth.go`) — it is the whole basis of the consistency
+    /// check, so a drift here would make the check itself lie.
+    #[test]
+    fn driver_for_dsn_mirrors_the_runtime() {
+        assert_eq!(driver_for_dsn("postgres://u:p@h/db"), "pgx");
+        assert_eq!(driver_for_dsn("postgresql://u:p@h/db"), "pgx");
+        assert_eq!(driver_for_dsn("POSTGRES://u:p@h/db"), "pgx");
+        assert_eq!(driver_for_dsn("host=localhost user=app dbname=x"), "pgx");
+        assert_eq!(driver_for_dsn("./app.db"), "sqlite");
+        assert_eq!(driver_for_dsn("app.db"), "sqlite");
+        assert_eq!(driver_for_dsn("file:x.db?cache=shared"), "sqlite");
+    }
+
+    /// The defect, pinned: `driver = "postgres"` beside a SQLite path used to be
+    /// accepted in silence while the app opened SQLite. It must now be reported.
+    #[test]
+    fn contradicting_driver_and_dsn_is_reported() {
+        let w = db_driver_conflict(Some("postgres"), Some("./app.db"))
+            .expect("a postgres driver over a sqlite path must be reported");
+        assert!(w.contains("sqlite"), "must name the driver actually used: {w}");
+        assert!(w.contains("./app.db"), "must quote the DSN: {w}");
+
+        let w = db_driver_conflict(Some("sqlite"), Some("postgres://u@h/db"))
+            .expect("a sqlite driver over a postgres URL must be reported");
+        assert!(w.contains("postgres"), "must name the driver actually used: {w}");
+    }
+
+    /// …and the converse, so the check cannot pass by shouting at everyone.
+    #[test]
+    fn agreeing_or_absent_driver_is_silent() {
+        assert!(db_driver_conflict(Some("sqlite"), Some("./app.db")).is_none());
+        // `pgx` is the runtime's internal name; users write postgres/postgresql.
+        assert!(db_driver_conflict(Some("postgres"), Some("postgres://u@h/d")).is_none());
+        assert!(db_driver_conflict(Some("postgresql"), Some("postgres://u@h/d")).is_none());
+        assert!(db_driver_conflict(Some("pgx"), Some("postgres://u@h/d")).is_none());
+        // No declared driver, or no declared DSN (it may arrive at run time via
+        // SKY_DB_PATH / DATABASE_URL) → nothing to check.
+        assert!(db_driver_conflict(None, Some("./app.db")).is_none());
+        assert!(db_driver_conflict(Some("postgres"), None).is_none());
     }
 
     #[test]

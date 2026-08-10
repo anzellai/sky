@@ -146,10 +146,28 @@ pub struct LowerConfig {
     /// read. Emitted as a leading `rt.SetEnvPrefix(...)` in `init()` (before the
     /// defaults, so they seed under the custom prefix). `None` keeps `SKY`.
     pub env_prefix: Option<String>,
-    /// Extra `rt.SetSkyDefault(suffix, value)` pairs — e.g. `[("DB_DRIVER",
-    /// "sqlite"), ("DB_PATH", "todos.db")]` from `[database]`. Emitted after the
-    /// fixed defaults so a config value wins.
+    /// Extra `rt.SetSkyDefault(suffix, value)` pairs — e.g. `[("DB_PATH",
+    /// "todos.db")]` from `[database]`. Emitted after the fixed defaults so a
+    /// config value wins. Every suffix here must be one the runtime actually
+    /// READS; a default nothing reads is a documented contract that does not
+    /// exist (see `db_driver` below).
     pub extra_defaults: Vec<(String, String)>,
+    /// The `[database] driver` value as DECLARED in sky.toml, if any.
+    ///
+    /// Deliberately NOT an entry in `extra_defaults`. It used to be emitted as
+    /// `DB_DRIVER` → `SKY_DB_DRIVER`, and **nothing in `runtime-go` has ever
+    /// read it**: the driver comes from the DSN's shape (`rt.detectDriver`,
+    /// `runtime-go/rt/db_auth.go`), which is what all ~15 downstream dialect
+    /// branches key off. So `driver = "postgres"` beside a `./app.db` path
+    /// silently opened SQLite while two docs advertised the key as the selector.
+    ///
+    /// It is kept here as a declared EXPECTATION, checked against the DSN at
+    /// build time (`db_driver_conflict`) so a contradiction is reported instead
+    /// of silently ignored. The DSN stays the single source of truth.
+    pub db_driver: Option<String>,
+    /// The `[database] path` / `url` DSN as declared in sky.toml, for the
+    /// consistency check above.
+    pub db_dsn: Option<String>,
     /// The pinned Go-FFI surface (doc 09) for this project — empty when the
     /// project imports no Go packages.
     pub ffi: FfiTable,

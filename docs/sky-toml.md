@@ -34,7 +34,7 @@ That's enough — every other field has a sensible default.
 | `[dependencies]`     | Sky-source dependencies (other Sky projects)         |
 | `[live]`             | Sky.Live runtime config (port, sessions, …)          |
 | `[auth]`             | Std.Auth defaults (JWT secret, cookie, TTL)          |
-| `[database]`         | Std.Db default driver + connection                   |
+| `[database]`         | Std.Db default connection (the DSN selects the driver) |
 | `[log]`              | Std.Log default format and level                     |
 | `[env]`              | Env-var namespace prefix (v0.11.5+)                  |
 
@@ -190,18 +190,32 @@ Std.Db default connection. `Db.connect ()` (unit form) reads
 `<PREFIX>_DB_PATH` to find the database — set this here once and
 all calls pick it up automatically.
 
+**The driver is derived from the connection string, not configured.** A
+`postgres://` / `postgresql://` URL (or a libpq `host=… user=…` DSN) opens
+Postgres; anything else is a SQLite file path. That single rule is what the
+runtime applies, and every dialect-specific behaviour downstream follows from it.
+
 ```toml
 [database]
-driver = "sqlite"          # sqlite / postgres
-path   = "./app.db"        # sqlite file path or postgres URL
+path   = "./app.db"        # sqlite file path or postgres URL → the driver
 # url  = "postgres://…"    # alias for `path` (same DB_PATH)
+driver = "sqlite"          # OPTIONAL assertion — must agree with the DSN above
 ```
 
-| Key      | Env var                  | Default   | Meaning                          |
-|----------|--------------------------|-----------|----------------------------------|
-| `driver` | `<PREFIX>_DB_DRIVER`     | `sqlite`  | `sqlite` / `postgres`            |
-| `path`   | `<PREFIX>_DB_PATH`       | (empty)   | File path or connection URL      |
-| `url`    | `<PREFIX>_DB_PATH`       | (empty)   | Alias for `path` (postgres DSN)  |
+| Key      | Env var                  | Default   | Meaning                                          |
+|----------|--------------------------|-----------|--------------------------------------------------|
+| `path`   | `<PREFIX>_DB_PATH`       | (empty)   | File path or connection URL — **selects the driver** |
+| `url`    | `<PREFIX>_DB_PATH`       | (empty)   | Alias for `path` (postgres DSN)                  |
+| `driver` | *(none)*                 | (unset)   | Optional consistency assertion; see below        |
+
+`driver` does **not** select anything. It is checked against `path`/`url` at
+build time and a contradiction is reported — `driver = "postgres"` beside
+`path = "./app.db"` warns that the app will open SQLite. To choose the engine at
+run time, set the DSN (`SKY_DB_PATH` / `DATABASE_URL`), not a driver name.
+
+> Before v0.19.9 this key emitted a `<PREFIX>_DB_DRIVER` env var that **nothing
+> in the runtime ever read**, so a mismatched `driver` was silently ignored and
+> the app quietly opened the other engine. The variable is no longer emitted.
 
 ---
 

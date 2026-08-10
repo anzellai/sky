@@ -313,8 +313,8 @@ Every operation that touches the disk returns `Task Error a` (per the [Task-ever
 
 | Function | Type | Notes |
 |---|---|---|
-| `Db.connect` | `() -> Task Error Db` | Reads driver + dsn from `sky.toml` `[database]` (or `SKY_DB_*` / `DATABASE_URL`). Preferred shape. |
-| `Db.open` | `String -> String -> Task Error Db` | Explicit driver + dsn. `Db.open "sqlite" "./app.db"` / `Db.open "postgres" "postgres://..."`. |
+| `Db.connect` | `() -> Task Error Db` | Reads the DSN from `sky.toml` `[database] path`/`url` (or `SKY_DB_PATH` / `DATABASE_URL`); the driver follows from its shape. Preferred shape. |
+| `Db.open` | `String -> String -> Task Error Db` | Takes a DSN, with the driver name as documentation — the **shape of the DSN still decides**, so `Db.open "postgres" "./app.db"` opens SQLite. |
 | `Db.close` | `Db -> Task Error ()` | Releases the connection pool |
 
 ### Statements
@@ -555,17 +555,26 @@ loadTodos db =
 
 ```toml
 [database]
-driver = "sqlite"          # SKY_DB_DRIVER (sqlite | postgres)
-path   = "./app.db"        # SKY_DB_PATH (sqlite file)
+path = "./app.db"          # SKY_DB_PATH — and it is this that selects the driver
 ```
 
-For Postgres, point `path` at a `postgres://...` URL or set `DATABASE_URL` (Postgres-conventional fallback):
+**The driver comes from the connection string's shape, not from a config key.** A
+`postgres://` / `postgresql://` URL (or a libpq `host=… user=…` DSN) opens
+Postgres; anything else is a SQLite file path.
+
+For Postgres, point `path` at a `postgres://...` URL or set `DATABASE_URL`
+(Postgres-conventional fallback):
 
 ```toml
 [database]
-driver = "postgres"
 # Connection string from DATABASE_URL — never commit a real one to sky.toml.
 ```
+
+An optional `driver = "sqlite" | "postgres"` may be declared as an **assertion**:
+it selects nothing, but the build reports a contradiction between it and
+`path`/`url`, so `driver = "postgres"` beside `./app.db` no longer opens SQLite
+in silence. (Before v0.19.9 it emitted a `SKY_DB_DRIVER` variable that nothing in
+the runtime read.)
 
 `.env`:
 
