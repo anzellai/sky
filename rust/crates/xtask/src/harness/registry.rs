@@ -532,6 +532,28 @@ pub static GATES: &[Gate] = &[
         body: bodies::apps_relay,
     },
     Gate {
+        name: "apps-fieldbook",
+        tier: Tier::T2,
+        platforms: UNIX,
+        // Measured: 6.7 s clean rebuild + ~130 ms across four dump invocations.
+        budget_s: 900,
+        expected: bodies::APPS_FIELDBOOK_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member C — one Std.Ui view renders identically across backends",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-fieldbook.diverge-one-backend",
+            description: "map one Std.Ui Region to a different tag on the Html side \
+                          only, so the same view canonicalises differently for Live \
+                          than for Tui; the structural-parity assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "apps/fieldbook/src/Structure.sky",
+                from: "Ui.DescContentInfo ->\n            \"footer\"",
+                to: "Ui.DescContentInfo ->\n            \"div\"",
+            },
+        }]),
+        body: bodies::apps_fieldbook,
+    },
+    Gate {
         name: "apps-ffi-scale",
         tier: Tier::T4,
         platforms: UNIX,

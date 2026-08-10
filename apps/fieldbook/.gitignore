@@ -1,0 +1,14 @@
+# Build output (repo root .gitignore already covers sky-out/ and .skycache/,
+# repeated here so the app directory is self-contained).
+sky-out/
+.skycache/
+.skydeps/
+probe/sky-out/
+
+# Transient run artefacts produced by verify.sh / run-tui-capture.sh.
+#
+# ALL of dumps/ is generated, including the structural dumps. They are compared
+# live-against-tui at gate time, never against a checked-in baseline — so a
+# committed copy would be a golden file that nothing verifies and that silently
+# rots away from what the app actually emits.
+dumps/

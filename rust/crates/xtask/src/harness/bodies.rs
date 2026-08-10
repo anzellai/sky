@@ -1050,6 +1050,160 @@ pub fn apps_relay(ctx: &GateCtx) -> GateOutcome {
     }
 }
 
+/// Member C: Fieldbook — one `Std.Ui` view, rendered by several backends.
+///
+/// Eight: build, artifact, no bind-position literal, a live dump, a tui dump,
+/// the two dumps agreeing, the app's own diff verdict, and the Cli export.
+pub const APPS_FIELDBOOK_EXPECTED: u64 = 8;
+
+/// The cross-backend `Std.Ui` parity assertion.
+///
+/// The claim under test is the one the product makes: the *same* view function
+/// renders across Sky.Live, Sky.Tui and Sky.Webview. So the member dumps a
+/// canonical structure of the real artefacts — the `Element` tree Sky.Tui is
+/// handed, and the `Html` tree Sky.Live serialises — and this gate asserts they
+/// are identical.
+///
+/// That is a **verdict**, not a liveness check: a `Std.Ui` change that renders
+/// correctly on Live and wrongly on Tui makes the two dumps differ and fails
+/// here, which is precisely what "one view, several backends" has to mean if it
+/// is to mean anything.
+pub fn apps_fieldbook(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+
+    const PROJECT: &str = "apps/fieldbook";
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+
+    let r = match layer2::clean_build(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    a += 1;
+    if !r.ok {
+        fail.push(format!("`sky build` failed:\n{}", layer2::tail(&r.log, 12)));
+    }
+    a += 1;
+    if !r.binary.is_file() {
+        fail.push(format!("no artifact at {}", r.binary.display()));
+    }
+    if !fail.is_empty() {
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    a += 1;
+    let literals = layer2::bind_position_port_literals(&ctx.repo_root, PROJECT);
+    if !literals.is_empty() {
+        fail.push(format!(
+            "bind-position port literal(s): {}",
+            literals.join(", ")
+        ));
+    }
+
+    let dir = ctx.repo_root.join(PROJECT);
+    let dump = |args: &[&str]| -> Result<String, String> {
+        let o = Command::new(&r.binary)
+            .args(args)
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| format!("spawn {args:?}: {e}"))?;
+        if !o.status.success() {
+            return Err(format!(
+                "{args:?} exited {:?}: {}",
+                o.status.code(),
+                layer2::tail(&String::from_utf8_lossy(&o.stderr), 6)
+            ));
+        }
+        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+
+    let live = dump(&["--dump-view", "live"]);
+    a += 1;
+    let live_ok = match &live {
+        Ok(s) if !s.trim().is_empty() => true,
+        Ok(_) => {
+            fail.push("--dump-view live produced an empty structure".into());
+            false
+        }
+        Err(e) => {
+            fail.push(e.clone());
+            false
+        }
+    };
+
+    let tui = dump(&["--dump-view", "tui"]);
+    a += 1;
+    let tui_ok = match &tui {
+        Ok(s) if !s.trim().is_empty() => true,
+        Ok(_) => {
+            fail.push("--dump-view tui produced an empty structure".into());
+            false
+        }
+        Err(e) => {
+            fail.push(e.clone());
+            false
+        }
+    };
+
+    // THE assertion this member exists for.
+    a += 1;
+    if live_ok && tui_ok {
+        let (l, t) = (live.as_ref().unwrap(), tui.as_ref().unwrap());
+        if l != t {
+            let first = l
+                .lines()
+                .zip(t.lines())
+                .enumerate()
+                .find(|(_, (a, b))| a != b)
+                .map(|(i, (a, b))| format!("line {}: live {a:?} vs tui {b:?}", i + 1))
+                .unwrap_or_else(|| {
+                    format!(
+                        "same prefix, different length: live {} lines, tui {} lines",
+                        l.lines().count(),
+                        t.lines().count()
+                    )
+                });
+            fail.push(format!(
+                "STRUCTURAL DIVERGENCE between the Live and Tui renders of the same \
+                 view — {first}"
+            ));
+        }
+    } else {
+        fail.push("cannot compare structures — a dump did not run".into());
+    }
+
+    // The app's own verdict, computed independently of our byte comparison.
+    a += 1;
+    if let Err(e) = dump(&["--dump-view", "diff"]) {
+        fail.push(format!("the app's own structural diff reported failure: {e}"));
+    }
+
+    a += 1;
+    match dump(&["--export"]) {
+        Err(e) => fail.push(e),
+        Ok(csv) => {
+            if !csv.lines().next().is_some_and(|h| h.contains("id,day,site")) {
+                fail.push(format!(
+                    "--export did not produce the expected CSV header, got {:?}",
+                    csv.lines().next().unwrap_or("")
+                ));
+            }
+        }
+    }
+
+    if fail.is_empty() {
+        let n = live.as_ref().map(|s| s.lines().count()).unwrap_or(0);
+        GateOutcome::new(
+            true,
+            a,
+            format!("one view, {n} structural nodes, identical across the Live and Tui renders"),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
 fn read_json(p: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }

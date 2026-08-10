@@ -1,0 +1,327 @@
+module Model exposing (..)
+
+-- Fieldbook — pure domain model.
+--
+-- Deliberately free of any `Std.Ui` import: the heavy Std.Ui
+-- unification load lives in View.sky, and keeping the domain module
+-- Ui-free keeps the per-module HM heap small (same discipline as
+-- examples/38-composite-ui-multibackend/src/State.sky).
+--
+-- Every value here is DETERMINISTIC — no clock, no uuid, no random.
+-- That is load-bearing: `--dump-view` has to produce byte-identical
+-- output on every run so a CI harness can diff two invocations.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+
+-- A single field note. `readingC` is decidegrees Celsius (92 → 9.2 °C)
+-- so the whole model stays integral — no Float rounding drift between
+-- the Live dump and the Tui dump.
+type alias Note =
+    { id : Int
+    , title : String
+    , body : String
+    , site : String
+    , tags : List String
+    , readingC : Int
+    , day : Int
+    }
+
+type alias Viewport =
+    { width : Int
+    , height : Int
+    }
+
+type alias Model =
+    { notes : List Note
+    , query : String
+    , selected : Maybe Int
+    , draftTitle : String
+    , draftBody : String
+    , editing : Bool
+    , nextId : Int
+    , viewport : Viewport
+    , status : String
+    }
+
+type Msg
+    = SetQuery String
+    | ClearQuery
+    | RunSearch
+    | SelectNote Int
+    | CloseNote
+    | StartEdit
+    | SetDraftTitle String
+    | SetDraftBody String
+    | SaveEdit
+    | CancelEdit
+    | NewNote
+    | DeleteNote Int
+    | QuitApp
+    | NoOp
+
+
+-- ─── Seed data ──────────────────────────────────────────────────────
+-- Fixed corpus. A CAF here is CORRECT (pure, no effect kernel), and
+-- the determinism is exactly what the structural dump needs.
+seedNotes : List Note
+seedNotes =
+    [ { id = 1
+      , title = "Heron at the weir"
+      , body =
+          "Grey heron holding the downstream lip of the weir for eleven minutes. Took two sticklebacks."
+      , site = "Loch Ard"
+      , tags = [ "birds", "water" ]
+      , readingC = 92
+      , day = 1
+      }
+    , { id = 2
+      , title = "Frogspawn count"
+      , body =
+          "Fourteen clumps along the north shelf, up from nine last week. Water still very cold."
+      , site = "Cairn Pool"
+      , tags = [ "amphibians", "spawn", "water" ]
+      , readingC = 41
+      , day = 2
+      }
+    , { id = 3
+      , title = "Windthrow on the ridge"
+      , body =
+          "Three mature spruce down across the path. Root plates intact, soil saturated."
+      , site = "Beinn Dubh"
+      , tags = [ "trees", "storm" ]
+      , readingC = 68
+      , day = 3
+      }
+    , { id = 4
+      , title = "Otter spraint"
+      , body =
+          "Fresh spraint on the flat rock below the alder. Fish scale and one crayfish claw."
+      , site = "Loch Ard"
+      , tags = [ "mammals", "water" ]
+      , readingC = 110
+      , day = 4
+      }
+    , { id = 5
+      , title = "First swifts"
+      , body =
+          "Six swifts over the steading at dusk, screaming party. Two weeks earlier than last year."
+      , site = "Steading"
+      , tags = [ "birds", "phenology" ]
+      , readingC = 154
+      , day = 5
+      }
+    , { id = 6
+      , title = "Bog cotton in flower"
+      , body =
+          "Dense stand across the flush. Peat surface dry enough to walk for the first time this season."
+      , site = "Beinn Dubh"
+      , tags = [ "plants", "peat" ]
+      , readingC = 176
+      , day = 6
+      }
+    , { id = 7
+      , title = "Pine marten scat"
+      , body =
+          "Twisted scat on the culvert lid, rowan seed throughout. Camera trap reset."
+      , site = "Cairn Pool"
+      , tags = [ "mammals", "trees" ]
+      , readingC = 133
+      , day = 7
+      }
+    ]
+
+
+-- Fixed initial model. Written as a `()`-function rather than a CAF so
+-- that intent is explicit at every call site; the body is pure so
+-- either form would be correct here.
+initialModel : () -> Model
+initialModel _ =
+    { notes = seedNotes
+    , query = ""
+    , selected = Just 1
+    , draftTitle = ""
+    , draftBody = ""
+    , editing = False
+    , nextId = 8
+    , viewport = { width = 1280, height = 800 }
+    , status = "ready"
+    }
+
+
+-- ─── Search ─────────────────────────────────────────────────────────
+-- Case-insensitive substring match across title, body, site and tags.
+matchesQuery : String -> Note -> Bool
+matchesQuery raw note =
+    let
+        q = String.toLower (String.trim raw)
+        hay =
+            String.toLower
+                (note.title ++ " " ++ note.body ++ " " ++ note.site ++ " "
+                    ++ String.join " " note.tags)
+    in
+        if String.isEmpty q then
+            True
+
+        else
+            String.contains q hay
+
+
+visibleNotes : Model -> List Note
+visibleNotes model =
+    List.filter (matchesQuery model.query) model.notes
+
+
+noteById : Int -> List Note -> Maybe Note
+noteById wanted notes =
+    List.find (\n -> n.id == wanted) notes
+
+
+selectedNote : Model -> Maybe Note
+selectedNote model =
+    case model.selected of
+
+        Nothing ->
+            Nothing
+
+        Just wanted ->
+            noteById wanted model.notes
+
+
+-- ─── Derived numbers ────────────────────────────────────────────────
+-- Chart series: temperature readings in day order, as (x, y) floats.
+readingPoints : List Note -> List ( Float, Float )
+readingPoints notes =
+    List.map (\n -> ( intToFloat n.day, intToFloat n.readingC / 10.0 )) notes
+
+
+-- Per-site note counts, in first-seen order. Feeds the bar chart and
+-- the summary tiles.
+siteCounts : List Note -> List ( String, Int )
+siteCounts notes =
+    List.foldl addSite [] notes
+
+
+addSite : Note -> List ( String, Int ) -> List ( String, Int )
+addSite note acc =
+    if List.any (\pair -> fst pair == note.site) acc then
+        List.map
+            (\pair ->
+                if fst pair == note.site then
+                    ( fst pair, snd pair + 1 )
+
+                else
+                    pair)
+            acc
+
+    else
+        acc ++ [ ( note.site, 1 ) ]
+
+
+-- Distinct tags across the corpus, in first-seen order.
+allTags : List Note -> List String
+allTags notes =
+    List.foldl addTags [] notes
+
+
+addTags : Note -> List String -> List String
+addTags note acc =
+    List.foldl addOneTag acc note.tags
+
+
+addOneTag : String -> List String -> List String
+addOneTag tag acc =
+    if List.member tag acc then
+        acc
+
+    else
+        acc ++ [ tag ]
+
+
+averageReading : List Note -> Int
+averageReading notes =
+    let
+        n = List.length notes
+        total = List.foldl (\note acc -> acc + note.readingC) 0 notes
+    in
+        if n == 0 then
+            0
+
+        else
+            total // n
+
+
+-- ─── Formatting ─────────────────────────────────────────────────────
+formatReading : Int -> String
+formatReading deci =
+    let
+        whole = deci // 10
+        frac = deci - (whole * 10)
+    in
+        String.fromInt whole ++ "." ++ String.fromInt frac ++ " C"
+
+
+tagLine : Note -> String
+tagLine note =
+    String.join " / " note.tags
+
+
+dayLabel : Int -> String
+dayLabel day =
+    "day " ++ pad2 day
+
+
+pad2 : Int -> String
+pad2 n =
+    let
+        s = String.fromInt n
+    in
+        if String.length s >= 2 then
+            s
+
+        else
+            String.repeat (2 - String.length s) "0" ++ s
+
+
+intToFloat : Int -> Float
+intToFloat n =
+    case String.toFloat (String.fromInt n) of
+
+        Just f ->
+            f
+
+        Nothing ->
+            0.0
+
+
+-- ─── CSV export (the Sky.Cli one-shot) ──────────────────────────────
+exportCsv : List Note -> String
+exportCsv notes =
+    String.join
+        "\n"
+        ("id,day,site,reading_c,tags,title" :: List.map exportRow notes)
+
+
+exportRow : Note -> String
+exportRow note =
+    String.join
+        ","
+        [ String.fromInt note.id
+        , String.fromInt note.day
+        , csvField note.site
+        , formatReading note.readingC
+        , csvField (String.join ";" note.tags)
+        , csvField note.title
+        ]
+
+
+-- Quote a field when it could contain a comma or a quote. Kept simple
+-- and total — no partial functions, no panics.
+csvField : String -> String
+csvField s =
+    if String.contains "," s || String.contains "\"" s then
+        "\"" ++ String.replace "\"" "\"\"" s ++ "\""
+
+    else
+        s
