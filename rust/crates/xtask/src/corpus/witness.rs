@@ -61,6 +61,45 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
     }
 }
 
+/// Strata for which emitted-Go equality is the CORRECT outcome, so the
+/// emit-shape witness does not apply.
+///
+/// v2 §5.5: *"Exemptions are explicit, counted, and owned."* This is the list,
+/// and every entry states why. It is deliberately a function returning a reason
+/// rather than a silent skip — an exempt case is REPORTED, not hidden, and the
+/// coverage claim for that stratum is correspondingly weaker.
+///
+/// # `import_shape`
+///
+/// Discovered by this gate, 2026-08-10: all 20 `import_shape` cases emit
+/// **byte-identical Go** across `plain` / `aliased` /
+/// `alias_not_last_segment` / `exposing_list` / `exposing_all`. That is the
+/// compiler being RIGHT — import syntax is erased by name resolution, and two
+/// spellings of the same import must produce the same program.
+///
+/// So the emit-shape witness cannot apply here. **The honest consequence is that
+/// this stratum's cases do not currently witness their axis by any mechanism**,
+/// and the reason is a real weakness in the generator rather than a property of
+/// the compiler: the `collision` axis is **inert**. Its non-`none` values add an
+/// unrelated local binding (`answer2`, `label2`) that collides with nothing, so
+/// no case ever creates the name conflict #164 was actually about.
+///
+/// These cases still carry a genuine class-V value assertion (the imported
+/// `answer` must read back as 42, which does prove the import resolved to the
+/// right symbol). They must NOT be claimed as covering the #164 defect class
+/// until the `collision` axis actually collides — see
+/// `docs/ci-test-phase-4-results.md` §4.
+fn witness_exemption(stratum: &str) -> Option<&'static str> {
+    match stratum {
+        "import_shape" => Some(
+            "import syntax is erased by name resolution — identical Go is the \
+             CORRECT outcome; the collision axis is inert and must be \
+             strengthened before this stratum can claim to cover #164",
+        ),
+        _ => None,
+    }
+}
+
 /// Build a case and return a fingerprint of the Go it emitted.
 ///
 /// The fingerprint is the emitted Go with whitespace collapsed — stable enough
@@ -100,12 +139,18 @@ pub fn run(root: &Path) -> i32 {
     // Candidates are cases NOT already sitting at the neutral value — a case at
     // the neutral value IS the baseline and has nothing to witness against.
     let mut candidates: Vec<(gen::GenCase, Assignment, Axis)> = Vec::new();
+    let mut exempt: Vec<(&'static str, usize, &'static str)> = Vec::new();
     for s in super::axes::STRATA {
         let (axis, neutral) = axis_under_test(s);
-        for a in super::axes::full_cross(s) {
-            if a.get(axis) == neutral {
-                continue;
-            }
+        let varied: Vec<Assignment> = super::axes::full_cross(s)
+            .into_iter()
+            .filter(|a| a.get(axis) != neutral)
+            .collect();
+        if let Some(reason) = witness_exemption(s.name) {
+            exempt.push((s.name, varied.len(), reason));
+            continue;
+        }
+        for a in varied {
             let neutralised = a.clone().with(axis, neutral);
             candidates.push((gen::build(s, &a), neutralised, axis));
         }
@@ -119,6 +164,15 @@ pub fn run(root: &Path) -> i32 {
     println!("CORPUS WITNESS GATE — v2 §4.4 (does each case witness its own axis?)");
     println!("  candidates : {}", candidates.len());
     println!("  shard      : {n} (offset {start}, rotates with the commit sha)");
+    if !exempt.is_empty() {
+        // Counted and named, never silent (v2 §5.5). An exempt stratum's
+        // coverage claim is weaker, and this is where that is said out loud.
+        let total: usize = exempt.iter().map(|(_, n, _)| n).sum();
+        println!("  EXEMPT     : {total} case(s) across {} stratum/strata —", exempt.len());
+        for (name, n, reason) in &exempt {
+            println!("      {name} ({n} cases): {reason}");
+        }
+    }
     println!();
 
     let scratch = runner::scratch_root("witness");

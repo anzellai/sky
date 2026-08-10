@@ -114,6 +114,38 @@ computes). So the value cannot also witness the axis. The `corpus-witness` gate
 **emitted Go to differ**. A case whose Go is byte-identical to its twin did not
 reach the compiler along the axis it claims to vary, and fails by name.
 
+### What the witness gate caught: `import_shape` does not cover #164
+
+On its first honest run the gate reported **11 of 16 sharded cases NOT
+WITNESSED**, all `import_shape`. Every one of that stratum's 20 cases emits
+**byte-identical Go** across `plain` / `aliased` / `alias_not_last_segment` /
+`exposing_list` / `exposing_all`.
+
+**That is the compiler being right.** Import syntax is erased by name
+resolution; two spellings of the same import must produce the same program. So
+the emit-shape witness cannot apply, and the stratum is **exempt** — explicitly,
+counted, and with the reason printed on every run (v2 §5.5: *"Exemptions are
+explicit, counted, and owned"*).
+
+**The honest consequence is a real weakness in the generator, not in the
+compiler.** The `collision` axis is **inert**: its non-`none` values add an
+unrelated local binding (`answer2`, `label2`) that collides with nothing, so no
+case ever creates the name conflict #164 was about. These 20 cases still carry a
+genuine class-V value assertion — the imported `answer` must read back as 42,
+which does prove the import resolved to the right symbol — but
+
+> **`import_shape` must NOT be counted as covering the #164 defect class until
+> the `collision` axis actually collides.**
+
+That correction is the witness requirement earning its cost on its first run:
+without it, 20 cases would have been counted as covering a defect class they
+never touch, and the coverage percentage would have been unfalsifiable in exactly
+the way v2 §4.4 warns about.
+
+Corrected accounting: **206 cases carry a class-V value assertion; 145 are
+subject to the emit-shape witness; 20 (`import_shape`) are exempt with a stated
+reason and a known coverage gap.**
+
 ---
 
 ## 4. The isolation gate (v2 §3.2), and a premise that did not reproduce
@@ -343,13 +375,15 @@ left unregistered by Phase 3 so as not to change the five-gate set that phase wa
 verified against; registering it is a Phase-4 step, taken now that the
 incremental world is load-bearing for the corpus.
 
-| Gate | Tier | Assertions | Mutation | Outcome |
-|---|---|---|---|---|
-| `shared-world` | T1 | 121 | route the shared path through the deliberately-wrong check that skips the case's body-derived passes | **PROVEN** — 18/121 diverge |
-| `corpus-manifest` | T1 | 206 | alter the checked-in manifest so it no longer matches the generator | **PROVEN** |
-| `corpus` | T2 | 206 | corrupt the EXPECTED value the generator constructs, leaving the program correct | **PROVEN** |
-| `corpus-isolation` | T2 | 24 | make the batched build report a different value than the alone build | **PROVEN** |
-| `corpus-witness` | T2 | 16 | build the "neutralised twin" from the case's OWN axes, so the fingerprints are identical by construction | **PROVEN** |
+| Gate | Tier | Assertions | Wall-clock | Mutation | Outcome |
+|---|---|---|---|---|---|
+| `shared-world` | T1 | 121 | 4.9 s | route the shared path through the deliberately-wrong check that skips the case's body-derived passes | **PROVEN** — 18/121 diverge |
+| `corpus-manifest` | T1 | 206 | 0.0 s | alter the checked-in manifest so it no longer matches the generator | **PROVEN** |
+| `corpus` | T2 | 206 | 95.4 s | corrupt the EXPECTED value the generator constructs, leaving the program correct | **PROVEN** |
+| `corpus-isolation` | T2 | 24 | 36.8 s | make the batched build report a different value than the alone build | **PROVEN** |
+| `corpus-witness` | T2 | 16 | 44.6 s | build the "neutralised twin" from the case's OWN axes, so the fingerprints are identical by construction | **PROVEN** |
+
+Added to T1: **4.9 s**. The whole new T2 tier: **177 s** (`HARNESS VERDICT: PASS`).
 
 The canary reports `VACUOUS`, as a correct runner must.
 
