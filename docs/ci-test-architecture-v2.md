@@ -39,6 +39,26 @@ the design:
 | **C16** | The "100 %" denominator (1,762 / 1,640 / 122 vs 1,744 / 1,623 / 121 — both hand-counts, both wrong; the truth is **1,746 / 1,625 / 121**) | Two disagreeing hand-counts over a **gameable** export with FIVE silent-shrink paths, all exit 0. ONE committed script — `xtask denominators` — owns every denominator | §5 |
 | **C17** | "772 assertions" / "575 assertions" | Neither. **Measured here**: conformance = **772 cases / 776 assertion calls**, 7 of which are `Test.pass` (unconditional). "Assertion" and "case" are defined once, in §5.4 | §5.4 |
 
+### 0.0 AMENDMENTS — premises of THIS document that did not survive contact
+
+> Read this table before quoting any number below it. Every row was measured, on
+> this branch, during the phase named. `docs/coverage/*.json` and
+> `rust/crates/xtask/coerce_floor.golden` are the live values; where they and
+> this document disagree, **they win** — the same rule §5.3 imposes on everyone
+> else, applied to this document.
+
+| Where | What v2 says | What was measured | Phase |
+|---|---|---|---|
+| §4.1 | `55-store-partial-update.stdout` is **one byte** | **38 bytes** — repaired in `f201cfa8`, and `bless_goldens` now refuses an empty capture. The stale claim survived into two later documents | 7 |
+| §9.2 | `coerce_floor.golden` is **59 lines summing 9,510 tokens** | **57 lines / 52 rows / 7,177 tokens** at `747e0b83`. After the Layer-2 re-key: **57 rows / 9,346** | 8 |
+| §9.2 | Conservation = `sum(tokens)` and `count(rows)` non-decreasing | **Insufficient, demonstrated.** The first re-key PASSED both aggregates (52→55 rows, 7,177→9,333 tokens) while silently dropping the rows for `03-tea-external` and `11-fyne-stopwatch`. A third clause is required and is now asserted: **no key that had a row may end up without one** | 8 |
+| §9.2 | "**11 examples** solely own stdlib modules" | Generated mechanically by `xtask coverage-ledger`; `docs/coverage/ledger.json` is the number. The hand-count was not reproduced | 7 |
+| §6.1 / §9.2 | **7** of 58 examples declare `[database]`, all sqlite | **8** examples, all sqlite (9 including `apps/ledger`). Zero Postgres — the load-bearing half — holds | 5 |
+| §7.2 | Four states, including `BLOCKED` | `BLOCKED` was **absent from the code** until Phase 7. It is now implemented with a compile-time-mandatory issue link and expiry, self-expiring to FAIL, and — the property that makes it affordable — **counted as UNCOVERED by the coverage ledger** | 7 |
+| §3.1 | Five Layer-1 families: **S** stdlib, **L** language, **E** emit-shape, **R** reject, **F** sampler | Only **L** was built: 6 strata / 206 cases, all mined from language-level defects. The generated corpus imports nothing but `Sky.Core.Prelude` and `Std.Log`, so it contributes **no stdlib-symbol coverage at all**. Stdlib behaviour rests on `tests/conformance/` and Layer 2 | 7 |
+| §10 | `release.yml` is listed among the things needing gating | It ran **no test gate of any kind** until Phase 8 | 8 |
+| §9.4 Phase 8 | "Prune `examples/`; deletes duplicative chains, `simple`, `test_pkg`" | **Overruled on evidence.** See §9.6 | 8 |
+
 ### 0.1 Where the grills adjudicated between the two documents
 
 Recorded so the reconciliation is auditable, not re-litigated:
@@ -953,6 +973,68 @@ deleted, what is kept, and what must be proven first.
 | **6** | CI topology: `setup` + artifacts, `ci-green` fan-in **with the tier assertion**, cache keys, gating `release.yml`. **Measure T1 on ten real PRs** | the six duplicate `cargo build --workspace` steps | T1 holds 15 min, or §2.2's escalation fires |
 | **7** | Reconnect the unreachable tiers: `setup-node` + `npm ci` + browser caching; wrap the Playwright verifiers, `example-e2e.sh`, `welltyped`, `sky-hub` in registered gates with `--json` | orphan scripts with no caller **and** no unique assertion, only after listing what each asserted | every orphaned assertion either runs or carries a `BLOCKED` row with an issue and an expiry |
 | **8** | Prune `examples/` to its documentation contract | duplicative chains, `simple`, `test_pkg` | every survivor is doc-referenced and builds |
+
+### 9.6 THE MIGRATION DECISION — `examples/` is reclassified, not deleted
+
+Phase 8's brief was to prune `examples/`. It does not, and the reason is that
+the economics the pruning rested on no longer exist. Recorded here because a
+future session will otherwise re-derive the original plan from §9.4's table.
+
+**What the deletion was for.** The 55-example corpus was compiled **666 times
+per CI push** (12.1x over) at **1,293 ms per case**, and `test-ty` alone was a
+1,857 s critical path. Deleting examples was how that number was going to come
+down.
+
+**Both halves of that motivation have dissolved, measured:**
+
+| Premise | Then | Now |
+|---|---|---|
+| Per-case cost | 1,293 ms | **1.02 ms** (Phase 3, C-1 + C-2) |
+| The duplicated reject face | believed ~1,114 s of a 1,857 s path | **~22 s** — re-measured in Phase 6a. The 1,857 s *was* the un-optimised corpus, not duplication |
+| `examples/` on a cheap check-only tier | "no `go build`" | **False.** `sky check` ≡ `sky build` (§C8). There was never a saving to collect |
+
+So the entire benefit column is now a rounding error, and the cost column is
+not. **What deleting would actually cost, measured, not asserted:**
+
+- **`coerce-floor`.** 52 of the golden's 57 rows are `examples/` projects. They
+  carry **7,197 of 9,346 locked tokens (77 %)**. Deleting examples retires the
+  soundness ratchet over three quarters of its measured surface.
+- **The stdout goldens.** All 24 are keyed to `examples/`. There is no other
+  whole-program byte-level witness in the repo.
+- **`roundtrip`.** Its 173 assertions come from `roundtrip_scan`, which walks
+  `examples/` and nothing else.
+- **`infer` and `shared-world`.** `shared-world`'s 121 items are 63 reject-corpus
+  files plus **58 `examples/*/src` trees**. Its whole claim — that the
+  incremental world changes no verdict — is measured over those trees.
+- **Sole ownership.** Generated by `xtask coverage-ledger` into
+  `docs/coverage/ledger.json`, including `lost_if_examples_retired`. It is not
+  empty, and several entries are not replaceable by anything currently built.
+- **Layer 1 covers none of it.** The generated corpus imports only
+  `Sky.Core.Prelude` and `Std.Log` (§0.0). It is not a successor to an example's
+  stdlib coverage; it never was.
+
+**The decision.** `examples/` keeps its path and gets a new contract (see
+`AGENTS.md`): documentation first, and the standing corpus for the
+*compiler-facing* ratchets that key on it. Product-facing regression duty —
+sessions, SSE, a real SQL engine, multi-replica, cross-backend `Std.Ui`, the CLI
+verbs — has moved to Layer 2, which asserts those verdicts properly instead of
+inferring them from an example that happened to exit 0.
+
+**Nothing is deleted in this phase.** Not `simple`, not `test_pkg`: both are
+already excluded from every corpus (`coerce_floor_gate.rs`, and the corpus
+proposal's own filter), so deleting them removes zero cost and zero coverage —
+it is a cosmetic edit that would spend the deletion ordering rule's budget for
+nothing. The rule from §9.1 stands and is now *enforceable* rather than
+aspirational: an example leaves when `docs/coverage/ledger.json` shows every
+surface it owns is owned elsewhere, and `xtask coverage-ledger --check` fails if
+a surface gets weaker without an accounted `[[weakening]]`.
+
+**What DID move, in the direction §9.2 requires — the ratchet was re-keyed
+first.** Layer 2 contributed **zero** to the soundness ratchet while being the
+corpus that now carries product regression duty. `apps/ledger`, `apps/relay`,
+`apps/fieldbook`, `sky-bundled/console` and `sky-bundled/doc` joined
+`coerce_floor.golden` (+2,149 tokens), with the conservation assertion proving
+every pre-existing row still holds a floor.
 
 ### 9.5 `ci-green` and branch protection — the ordering that cannot un-gate
 

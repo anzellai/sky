@@ -307,7 +307,7 @@ or the session store, and password managers don't re-prompt.
 sky init [name] [--production]  # new project — SQLite default; --production = Postgres one-DB + docker-compose
 sky build src/Main.sky       # compile → sky-out/app
 sky run src/Main.sky         # build + run   (--profile for runtime CPU/mem/hang profiling)
-sky check src/Main.sky       # type-check + go build (no binary)
+sky check src/Main.sky       # type-check + go build (keeps no binary — but DOES compile)
 sky verify                   # one-shot project gate: fmt + check + build + tests
 sky test tests/MyTest.sky    # Sky.Test runner (SKY_TEST_JSON=<path> also writes a per-case JSON report)
 sky fmt src/Main.sky         # format (always run after editing .sky)
@@ -319,6 +319,19 @@ sky add <go/pkg> | remove | install | update   # Go FFI deps
 Run `sky verify` before you consider a change done — it runs fmt-clean +
 type-check + production build + every `tests/*.sky` suite, and exits non-zero on
 any failure.
+
+**`sky check` is not a cheap tier.** It is `sky build` minus keeping the
+artifact: both invoke `go build` on the emitted Go. Do not design a "fast
+check-only" CI step around it — there is no saving to collect, and assuming
+there was is how a whole test-architecture proposal got built on a false
+premise.
+
+**Put every suite where your runner will find it.** A test file nothing runs is
+worse than no test: it reads as coverage and asserts nothing, and it rots
+silently until the day someone tries to run it. If you script your own suite
+runner, discover suites **recursively** — a flat `tests/*Test.sky` glob hid 22
+suites and ~280 assertions in this project's own history, every one of which had
+stopped compiling by the time anyone noticed.
 
 ## sky.toml
 
