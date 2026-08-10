@@ -191,28 +191,21 @@ pub struct Blocked {
 /// `corpus/repro/`. Adding an entry is how a corpus find is landed without
 /// either silencing it or blocking the branch — never a way to make a case
 /// stop mattering.
-fn blocked_reason(stratum: &str, a: &Assignment) -> Option<Blocked> {
-    if stratum == "fieldset_ctor"
-        && a.get(CONSTRUCTION) == "via_ctor_fn"
-        && a.get(COLLIDER) == "stdlib_eventprop"
-    {
-        return Some(Blocked {
-            issue: "sky/record-fieldset-collision-ctor (found by this corpus, 2026-08-10)",
-            expires: "2026-11-10",
-            reason:
-                "A user record `{ key : String, value : String }` built through an \
-                 ANNOTATED constructor function collides with the real \
-                 `Std.Analytics.EventProp = { key : String, value : PropValue }` \
-                 (sky-stdlib/Std/Analytics.sky:85-88). `record_fieldsets` \
-                 (lower/src/lower.rs:246-266) is keyed on the sorted field-NAME \
-                 vector, so both shapes land on `[key, value]`; the constructor's \
-                 `value` parameter is then coerced to `PropValue`. `sky build` \
-                 reports \"Types OK\" and the program panics at runtime: \
-                 `rt.Coerce: expected rt.SkyADT, got string`. No import of \
-                 Std.Analytics is needed — the stdlib is always in the \
-                 compilation. Repro: corpus/repro/fieldset-ctor-stdlib-collision.sky",
-        });
-    }
+fn blocked_reason(_stratum: &str, _a: &Assignment) -> Option<Blocked> {
+    // `fieldset_ctor` / `via_ctor_fn` / `stdlib_eventprop` was blocked here from
+    // 2026-08-10 until it was FIXED. A user record `{ key : String, value :
+    // String }` built through an annotated constructor collided with
+    // `Std.Analytics.EventProp = { key : String, value : PropValue }` (always in
+    // the compilation, no import needed) because `record_fieldsets` is keyed on
+    // the sorted field-NAME vector; `select_record_candidate` then fell back to
+    // `candidates.first()` and coerced the `value` param into an ADT slot —
+    // "Types OK", then `rt.Coerce: expected rt.SkyADT, got string` at runtime.
+    //
+    // Closed by two changes in `lower`: the candidate resolver no longer guesses
+    // (a nominal the field types contradict is refuted; several indistinguishable
+    // candidates resolve to none), and a record literal in a nominal record slot
+    // adopts that slot — so the literal is built AS the declared struct instead of
+    // anonymously and narrowed back. The case now runs as an ordinary PASS.
     None
 }
 

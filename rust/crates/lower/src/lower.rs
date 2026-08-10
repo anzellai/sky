@@ -2465,6 +2465,36 @@ impl<'a> Ctx<'a> {
         {
             actual = expected.clone();
         }
+        // Same principle, applied to a RECORD LITERAL: `{ key = k, value = v }`
+        // has no identity beyond its fields, so the slot it flows into is the
+        // authoritative statement of which record it is. The literal's own
+        // inferred type is frequently under-determined — the lowerer's typed
+        // table is deliberately NOT annotation-seeded (`Typer::body_types`), so a
+        // constructor's param-valued fields read back as unsolved vars — and
+        // `sky_ty_to_go` then cannot pick a nominal for it. Taking the slot type
+        // is both more accurate and strictly more typed: the literal is built AS
+        // the declared struct (`Main_Kv_R{Key: k, Value: v}`) instead of being
+        // built anonymously and narrowed back with `rt.Coerce`.
+        //
+        // Guarded to the case where the slot is a nominal record carrying EXACTLY
+        // this literal's field names, so it can only ever replace a coercion into
+        // that same nominal — never re-target the literal at an unrelated shape.
+        if *expected != GoTy::Any && actual != *expected {
+            if let (Expr::Record(fields), GoTy::Named(n, _)) = (&self.body.exprs[e], expected) {
+                if let Some(decl) = self.record_fields.get(n.as_str()) {
+                    // `record_fields` is keyed by the GO field name (capitalised);
+                    // the literal carries Sky names.
+                    let mut lit: Vec<String> =
+                        fields.iter().map(|(n, _)| capitalize(n.as_str())).collect();
+                    let mut dec: Vec<String> = decl.iter().map(|(n, _)| n.clone()).collect();
+                    lit.sort_unstable();
+                    dec.sort_unstable();
+                    if lit == dec {
+                        actual = expected.clone();
+                    }
+                }
+            }
+        }
         let node = self.lower_expr_inner(e, &actual);
         self.coerce_if_needed(node, expected)
     }
