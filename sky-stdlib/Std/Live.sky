@@ -148,7 +148,18 @@ withStaticUrl =
     Ffi.kernel "Live_withStaticUrl"
 
 
--- | Set the listen port (the `SKY_LIVE_PORT` env var still wins).
+-- | Set the listen port.
+--
+-- Precedence, highest first:
+--
+--   1. `SKY_LIVE_PORT` set by the operator (shell or `.env`)
+--   2. this `withPort` call
+--   3. `[live] port` in `sky.toml`
+--   4. 8080
+--
+-- So an operator can always override the binary, and `withPort` always beats
+-- the `sky.toml` default. (2 and 3 used to be inverted: `sky.toml`'s port is
+-- injected into `SKY_LIVE_PORT` at init, which made this call dead.)
 withPort : Int -> AppConfig model msg -> AppConfig model msg
 withPort =
     Ffi.kernel "Live_withPort"

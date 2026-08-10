@@ -6367,6 +6367,10 @@ func System_setenv(name, value any) any {
 		if err := os.Setenv(k, v); err != nil {
 			return Err[any, any](ErrFfi("setenv " + k + ": " + err.Error()))
 		}
+		// An explicit write is by definition not a compiler-seeded default;
+		// drop any recorded seeding so precedence consumers (resolveLivePort)
+		// treat this value as deliberately chosen.
+		clearSeededDefault(k)
 		return Ok[any, any](nil)
 	}
 }
@@ -6385,6 +6389,8 @@ func System_unsetenv(name any) any {
 		if err := os.Unsetenv(k); err != nil {
 			return Err[any, any](ErrFfi("unsetenv " + k + ": " + err.Error()))
 		}
+		// The value is gone; so is any record that it was seeded.
+		clearSeededDefault(k)
 		return Ok[any, any](nil)
 	}
 }

@@ -103,39 +103,31 @@ livePort =
     Maybe.withDefault 8000 (String.toInt (System.getenvOr "PORT" "8000"))
 
 
--- Resolve the bind port and make it STICK, then return it.
+-- Resolve the bind port.
 --
--- `Live.withPort livePort` is applied below because it is the intended
--- API — but on this compiler + runtime it is INERT, so on its own the
--- app would ignore PORT entirely. The mechanism:
---
---   * the compiler emits `rt.SetPortDefault("8000")` into generated
---     `init()` (see sky-out/main.go line 11), which seeds
---     `SKY_LIVE_PORT` from the sky.toml `[live] port` value or its
---     8000 default;
---   * `runtime-go/rt/live.go:3662` reads `cfg.Port` (8421 here), then
---     `live.go:3666` overwrites it from `SKY_LIVE_PORT` whenever that
---     is non-empty — which `init()` has just guaranteed.
---
--- So the compiler-injected default unconditionally beats the user's
--- `withPort`, inverting the precedence the runtime documents two lines
--- earlier at `live.go:3656` ("cfg.Port wins over env"). Reproduced
--- below by running the same binary two ways:
+-- `Live.withPort livePort` (applied below) is the intended API and now
+-- works. It used to be INERT: the compiler emits
+-- `rt.SetPortDefault("8000")` into generated `init()` (sky-out/main.go
+-- line 11), seeding `SKY_LIVE_PORT` from the sky.toml `[live] port`
+-- value or its 8000 default, and the runtime then let ANY non-empty
+-- `SKY_LIVE_PORT` overwrite `cfg.Port` — so the compiler-injected
+-- default beat the user's explicit call every time:
 --
 --   PORT=8421          ./sky-out/app → "Sky.Live listening on :8000"
 --   SKY_LIVE_PORT=8555 ./sky-out/app → "Sky.Live listening on :8555"
 --
--- Until that is fixed in the runtime, forwarding PORT onto the
--- runtime's own knob (from `main`, i.e. after every `init()` has run)
--- is the honest way to keep the bind port environment-derived.
+-- Fixed in `runtime-go/rt/live.go` (`resolveLivePort`): `SetEnvDefault`
+-- now records which env vars it seeded, so an operator-set value and a
+-- compiler-injected default are distinguishable. Precedence is
+-- operator env > withPort > sky.toml default > 8080, and `PORT=8421`
+-- now yields ":8421".
+--
+-- The `System.setenv "SKY_LIVE_PORT"` workaround this function used to
+-- carry is therefore gone; the port reaches the runtime through
+-- `withPort` alone.
 bindPort : () -> Int
 bindPort _ =
-    let
-        resolved = livePort
-        _ =
-            Task.run (System.setenv "SKY_LIVE_PORT" (String.fromInt resolved))
-    in
-        resolved
+    livePort
 
 
 -- ─── Sky.Cli one-shot export ────────────────────────────────────────
