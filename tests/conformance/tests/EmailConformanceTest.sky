@@ -1,0 +1,466 @@
+module EmailConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for Std.Email — the PURE builder surface: the
+`default*` constructors, the `with*` setters, and the `EmailProvider` ADT.
+Nothing in this repo imports Std.Email, so before this suite not one line of
+it had ever executed.
+
+Every assertion pins a DOCUMENTED value, never "it didn't crash":
+
+  * `defaultMessage` sets each optional field to its documented empty value
+    and carries from/to/subject through unchanged.
+  * `defaultSmtpConfig` defaults `port` to 587 (SMTP submission) — a real
+    defaulting decision, pinned so a silent change to 25/465 fails here.
+  * `withAttachment` APPENDS and PRESERVES ORDER — the one builder with order
+    semantics, asserted by value against `[ first, second ]`.
+  * Each `with*` setter writes ONLY its own field. Applied to a FULLY
+    populated record, the whole-record assertion catches a record-update
+    field drop — the defect class this repo has shipped more than once
+    (issues #166 / #171).
+  * The four `EmailProvider` variants build and pattern-match to their own
+    label, pinning the ADT payload marshalling.
+
+NOT covered here: `Email.send`. It is a `Task Error String` that performs the
+real provider I/O — SMTP wire format, MIME encoding, SES SigV4 signing — and
+needs a live provider or a wire-level fixture. That surface is covered at the
+Layer-2 tier, not by this pure-surface conformance suite. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Email as Email exposing (EmailProvider(..))
+import Sky.Test as Test exposing (Test)
+
+
+-- | Typed empty lists — avoids an ambiguous bare `[]` at assertion sites.
+noStrings : List String
+noStrings =
+    []
+
+
+noAttachments : List Email.Attachment
+noAttachments =
+    []
+
+
+-- | The baseline message under test, built through the public constructor.
+baseMessage : Email.EmailMessage
+baseMessage =
+    Email.defaultMessage
+        { from = "noreply@example.com"
+        , to = [ "alice@example.com", "bob@example.com" ]
+        , subject = "Quarterly report"
+        }
+
+
+pdfAttachment : Email.Attachment
+pdfAttachment =
+    { filename = "report.pdf"
+    , mimeType = "application/pdf"
+    , content = "%PDF-1.7 bytes"
+    }
+
+
+csvAttachment : Email.Attachment
+csvAttachment =
+    { filename = "rows.csv"
+    , mimeType = "text/csv"
+    , content = "a,b;1,2"
+    }
+
+
+-- | A message with EVERY field set to a non-default value. Applying one
+-- setter to this and comparing the WHOLE record is what makes the
+-- "writes only its own field" assertions non-vacuous: a builder that drops a
+-- neighbouring field back to its zero value fails by value.
+fullMessage : Email.EmailMessage
+fullMessage =
+    { from = "sender@example.com"
+    , to = [ "to@example.com" ]
+    , cc = [ "cc@example.com" ]
+    , bcc = [ "bcc@example.com" ]
+    , subject = "populated subject"
+    , textBody = "populated text body"
+    , htmlBody = "<p>populated html body</p>"
+    , attachments = [ pdfAttachment ]
+    , replyTo = "reply@example.com"
+    }
+
+
+-- | An Attachment with every field non-default (setter-isolation fixture).
+fullAttachment : Email.Attachment
+fullAttachment =
+    { filename = "invoice.pdf"
+    , mimeType = "application/pdf"
+    , content = "invoice bytes"
+    }
+
+
+-- | A SesConfig with every field non-default (setter-isolation fixture).
+fullSes : Email.SesConfig
+fullSes =
+    { region = "eu-west-2"
+    , key = "AKIAEXAMPLE"
+    , secret = "ses-secret"
+    }
+
+
+-- | An SmtpConfig with every field non-default (setter-isolation fixture).
+fullSmtp : Email.SmtpConfig
+fullSmtp =
+    { host = "smtp.example.com"
+    , port = 465
+    , user = "mailer"
+    , pass = "smtp-secret"
+    }
+
+
+-- | Pattern-matches every EmailProvider variant to a distinct label built
+-- from its payload. Exhaustive `case` — a variant whose payload failed to
+-- marshal produces the wrong label, not a silent pass.
+providerLabel : EmailProvider -> String
+providerLabel provider =
+    case provider of
+        Resend key ->
+            "resend:" ++ key
+
+        Ses cfg ->
+            "ses:" ++ cfg.region ++ "/" ++ cfg.key ++ "/" ++ cfg.secret
+
+        SendGrid key ->
+            "sendgrid:" ++ key
+
+        Smtp cfg ->
+            "smtp:"
+                ++ cfg.host
+                ++ ":"
+                ++ String.fromInt cfg.port
+                ++ "/"
+                ++ cfg.user
+                ++ "/"
+                ++ cfg.pass
+
+
+tests : List Test
+tests =
+    [ -- ── defaultMessage — required fields through, optional fields empty ──
+      Test.test "defaultMessage carries `from` through"
+        (\_ -> Test.equal "noreply@example.com" baseMessage.from)
+    , Test.test "defaultMessage carries `to` through in order"
+        (\_ -> Test.equal [ "alice@example.com", "bob@example.com" ] baseMessage.to)
+    , Test.test "defaultMessage carries `subject` through"
+        (\_ -> Test.equal "Quarterly report" baseMessage.subject)
+    , Test.test "defaultMessage defaults cc to []"
+        (\_ -> Test.equal noStrings baseMessage.cc)
+    , Test.test "defaultMessage defaults bcc to []"
+        (\_ -> Test.equal noStrings baseMessage.bcc)
+    , Test.test "defaultMessage defaults textBody to \"\""
+        (\_ -> Test.equal "" baseMessage.textBody)
+    , Test.test "defaultMessage defaults htmlBody to \"\""
+        (\_ -> Test.equal "" baseMessage.htmlBody)
+    , Test.test "defaultMessage defaults attachments to []"
+        (\_ -> Test.equal noAttachments baseMessage.attachments)
+    , Test.test "defaultMessage defaults replyTo to \"\""
+        (\_ -> Test.equal "" baseMessage.replyTo)
+    , Test.test "defaultMessage builds the whole documented record by value"
+        (\_ ->
+            Test.equal
+                { from = "noreply@example.com"
+                , to = [ "alice@example.com", "bob@example.com" ]
+                , cc = noStrings
+                , bcc = noStrings
+                , subject = "Quarterly report"
+                , textBody = ""
+                , htmlBody = ""
+                , attachments = noAttachments
+                , replyTo = ""
+                }
+                baseMessage
+        )
+
+      -- ── EmailMessage setters — each writes ONLY its own field ──
+    , Test.test "withCc writes cc and preserves every other field"
+        (\_ ->
+            Test.equal { fullMessage | cc = [ "new-cc@example.com" ] }
+                (Email.withCc [ "new-cc@example.com" ] fullMessage)
+        )
+    , Test.test "withBcc writes bcc and preserves every other field"
+        (\_ ->
+            Test.equal { fullMessage | bcc = [ "new-bcc@example.com" ] }
+                (Email.withBcc [ "new-bcc@example.com" ] fullMessage)
+        )
+    , Test.test "withTextBody writes textBody and preserves every other field"
+        (\_ ->
+            Test.equal { fullMessage | textBody = "replaced text" }
+                (Email.withTextBody "replaced text" fullMessage)
+        )
+    , Test.test "withHtmlBody writes htmlBody and preserves every other field"
+        (\_ ->
+            Test.equal { fullMessage | htmlBody = "<h1>replaced</h1>" }
+                (Email.withHtmlBody "<h1>replaced</h1>" fullMessage)
+        )
+    , Test.test "withReplyTo writes replyTo and preserves every other field"
+        (\_ ->
+            Test.equal { fullMessage | replyTo = "new-reply@example.com" }
+                (Email.withReplyTo "new-reply@example.com" fullMessage)
+        )
+    , Test.test "withAttachment appends and preserves every other field"
+        (\_ ->
+            Test.equal { fullMessage | attachments = [ pdfAttachment, csvAttachment ] }
+                (Email.withAttachment csvAttachment fullMessage)
+        )
+    , Test.test "withCc replaces (does not append to) the existing cc list"
+        (\_ ->
+            Test.equal [ "only@example.com" ]
+                (Email.withCc [ "only@example.com" ] fullMessage).cc
+        )
+    , Test.test "withBcc replaces (does not append to) the existing bcc list"
+        (\_ ->
+            Test.equal [ "only@example.com" ]
+                (Email.withBcc [ "only@example.com" ] fullMessage).bcc
+        )
+    , Test.test "withTextBody does NOT disturb htmlBody"
+        (\_ ->
+            Test.equal "<p>populated html body</p>"
+                (Email.withTextBody "changed" fullMessage).htmlBody
+        )
+    , Test.test "withHtmlBody does NOT disturb textBody"
+        (\_ ->
+            Test.equal "populated text body"
+                (Email.withHtmlBody "<b>changed</b>" fullMessage).textBody
+        )
+
+      -- ── withAttachment — APPENDS, preserving call order ──
+    , Test.test "withAttachment on a fresh message yields exactly one attachment"
+        (\_ ->
+            Test.equal [ pdfAttachment ]
+                (Email.withAttachment pdfAttachment baseMessage).attachments
+        )
+    , Test.test "withAttachment twice yields [ first, second ] — appends, not prepends"
+        (\_ ->
+            Test.equal [ pdfAttachment, csvAttachment ]
+                (baseMessage
+                    |> Email.withAttachment pdfAttachment
+                    |> Email.withAttachment csvAttachment
+                ).attachments
+        )
+    , Test.test "withAttachment twice in the other order yields [ csv, pdf ]"
+        (\_ ->
+            Test.equal [ csvAttachment, pdfAttachment ]
+                (baseMessage
+                    |> Email.withAttachment csvAttachment
+                    |> Email.withAttachment pdfAttachment
+                ).attachments
+        )
+    , Test.test "withAttachment of the SAME attachment twice keeps both (no dedupe)"
+        (\_ ->
+            Test.equal [ pdfAttachment, pdfAttachment ]
+                (baseMessage
+                    |> Email.withAttachment pdfAttachment
+                    |> Email.withAttachment pdfAttachment
+                ).attachments
+        )
+
+      -- ── Pipeline composition + order independence ──
+    , Test.test "a full |> pipeline builds the documented record by value"
+        (\_ ->
+            Test.equal
+                { from = "noreply@example.com"
+                , to = [ "alice@example.com", "bob@example.com" ]
+                , cc = [ "carol@example.com" ]
+                , bcc = [ "dave@example.com" ]
+                , subject = "Quarterly report"
+                , textBody = "plain text"
+                , htmlBody = "<p>rich</p>"
+                , attachments = [ pdfAttachment, csvAttachment ]
+                , replyTo = "support@example.com"
+                }
+                (baseMessage
+                    |> Email.withCc [ "carol@example.com" ]
+                    |> Email.withBcc [ "dave@example.com" ]
+                    |> Email.withTextBody "plain text"
+                    |> Email.withHtmlBody "<p>rich</p>"
+                    |> Email.withAttachment pdfAttachment
+                    |> Email.withAttachment csvAttachment
+                    |> Email.withReplyTo "support@example.com"
+                )
+        )
+    , Test.test "withCc then withBcc == withBcc then withCc (independent fields)"
+        (\_ ->
+            Test.equal
+                (baseMessage
+                    |> Email.withCc [ "carol@example.com" ]
+                    |> Email.withBcc [ "dave@example.com" ]
+                )
+                (baseMessage
+                    |> Email.withBcc [ "dave@example.com" ]
+                    |> Email.withCc [ "carol@example.com" ]
+                )
+        )
+    , Test.test "withTextBody then withHtmlBody == withHtmlBody then withTextBody"
+        (\_ ->
+            Test.equal
+                (baseMessage
+                    |> Email.withTextBody "t"
+                    |> Email.withHtmlBody "h"
+                )
+                (baseMessage
+                    |> Email.withHtmlBody "h"
+                    |> Email.withTextBody "t"
+                )
+        )
+    , Test.test "applying withCc twice keeps only the LAST value (last write wins)"
+        (\_ ->
+            Test.equal [ "second@example.com" ]
+                (baseMessage
+                    |> Email.withCc [ "first@example.com" ]
+                    |> Email.withCc [ "second@example.com" ]
+                ).cc
+        )
+    , Test.test "a setter returns a NEW message; the source keeps its own cc"
+        (\_ ->
+            Test.equal ( noStrings, [ "x@example.com" ] )
+                ( baseMessage.cc
+                , (Email.withCc [ "x@example.com" ] baseMessage).cc
+                )
+        )
+
+      -- ── defaultAttachment + Attachment setters ──
+    , Test.test "defaultAttachment carries the filename through"
+        (\_ -> Test.equal "report.pdf" (Email.defaultAttachment "report.pdf").filename)
+    , Test.test "defaultAttachment defaults mimeType to \"\""
+        (\_ -> Test.equal "" (Email.defaultAttachment "report.pdf").mimeType)
+    , Test.test "defaultAttachment defaults content to \"\""
+        (\_ -> Test.equal "" (Email.defaultAttachment "report.pdf").content)
+    , Test.test "defaultAttachment builds the whole documented record by value"
+        (\_ ->
+            Test.equal { filename = "report.pdf", mimeType = "", content = "" }
+                (Email.defaultAttachment "report.pdf")
+        )
+    , Test.test "withMimeType writes mimeType and preserves every other field"
+        (\_ ->
+            Test.equal { fullAttachment | mimeType = "text/plain" }
+                (Email.withMimeType "text/plain" fullAttachment)
+        )
+    , Test.test "withContent writes content and preserves every other field"
+        (\_ ->
+            Test.equal { fullAttachment | content = "replaced bytes" }
+                (Email.withContent "replaced bytes" fullAttachment)
+        )
+    , Test.test "defaultAttachment |> withMimeType |> withContent == pdfAttachment"
+        (\_ ->
+            Test.equal pdfAttachment
+                (Email.defaultAttachment "report.pdf"
+                    |> Email.withMimeType "application/pdf"
+                    |> Email.withContent "%PDF-1.7 bytes"
+                )
+        )
+
+      -- ── defaultSesConfig + SES setters ──
+    , Test.test "defaultSesConfig carries the region through"
+        (\_ -> Test.equal "us-east-1" (Email.defaultSesConfig "us-east-1").region)
+    , Test.test "defaultSesConfig defaults key to \"\""
+        (\_ -> Test.equal "" (Email.defaultSesConfig "us-east-1").key)
+    , Test.test "defaultSesConfig defaults secret to \"\""
+        (\_ -> Test.equal "" (Email.defaultSesConfig "us-east-1").secret)
+    , Test.test "defaultSesConfig builds the whole documented record by value"
+        (\_ ->
+            Test.equal { region = "us-east-1", key = "", secret = "" }
+                (Email.defaultSesConfig "us-east-1")
+        )
+    , Test.test "withSesKey writes key and preserves every other field"
+        (\_ ->
+            Test.equal { fullSes | key = "AKIAROTATED" }
+                (Email.withSesKey "AKIAROTATED" fullSes)
+        )
+    , Test.test "withSesSecret writes secret and preserves every other field"
+        (\_ ->
+            Test.equal { fullSes | secret = "rotated-secret" }
+                (Email.withSesSecret "rotated-secret" fullSes)
+        )
+    , Test.test "withSesKey does NOT disturb the secret"
+        (\_ -> Test.equal "ses-secret" (Email.withSesKey "AKIAOTHER" fullSes).secret)
+    , Test.test "defaultSesConfig |> withSesKey |> withSesSecret == fullSes shape"
+        (\_ ->
+            Test.equal { region = "eu-west-2", key = "AKIAEXAMPLE", secret = "ses-secret" }
+                (Email.defaultSesConfig "eu-west-2"
+                    |> Email.withSesKey "AKIAEXAMPLE"
+                    |> Email.withSesSecret "ses-secret"
+                )
+        )
+
+      -- ── defaultSmtpConfig + SMTP setters — port defaults to 587 ──
+    , Test.test "defaultSmtpConfig carries the host through"
+        (\_ -> Test.equal "smtp.example.com" (Email.defaultSmtpConfig "smtp.example.com").host)
+    , Test.test "defaultSmtpConfig defaults port to 587 (SMTP submission)"
+        (\_ -> Test.equal 587 (Email.defaultSmtpConfig "smtp.example.com").port)
+    , Test.test "defaultSmtpConfig defaults user to \"\""
+        (\_ -> Test.equal "" (Email.defaultSmtpConfig "smtp.example.com").user)
+    , Test.test "defaultSmtpConfig defaults pass to \"\""
+        (\_ -> Test.equal "" (Email.defaultSmtpConfig "smtp.example.com").pass)
+    , Test.test "defaultSmtpConfig builds the whole documented record by value"
+        (\_ ->
+            Test.equal { host = "smtp.example.com", port = 587, user = "", pass = "" }
+                (Email.defaultSmtpConfig "smtp.example.com")
+        )
+    , Test.test "withSmtpPort writes port and preserves every other field"
+        (\_ ->
+            Test.equal { fullSmtp | port = 25 }
+                (Email.withSmtpPort 25 fullSmtp)
+        )
+    , Test.test "withSmtpUser writes user and preserves every other field"
+        (\_ ->
+            Test.equal { fullSmtp | user = "postmaster" }
+                (Email.withSmtpUser "postmaster" fullSmtp)
+        )
+    , Test.test "withSmtpPass writes pass and preserves every other field"
+        (\_ ->
+            Test.equal { fullSmtp | pass = "rotated" }
+                (Email.withSmtpPass "rotated" fullSmtp)
+        )
+    , Test.test "withSmtpPort overrides the 587 default to 465 (implicit TLS)"
+        (\_ ->
+            Test.equal 465
+                (Email.defaultSmtpConfig "smtp.example.com"
+                    |> Email.withSmtpPort 465
+                ).port
+        )
+    , Test.test "defaultSmtpConfig |> port/user/pass builds fullSmtp exactly"
+        (\_ ->
+            Test.equal fullSmtp
+                (Email.defaultSmtpConfig "smtp.example.com"
+                    |> Email.withSmtpPort 465
+                    |> Email.withSmtpUser "mailer"
+                    |> Email.withSmtpPass "smtp-secret"
+                )
+        )
+
+      -- ── EmailProvider ADT — all four variants marshal their payload ──
+    , Test.test "Resend carries its API key through the case match"
+        (\_ -> Test.equal "resend:re_123" (providerLabel (Resend "re_123")))
+    , Test.test "SendGrid carries its API key through the case match"
+        (\_ -> Test.equal "sendgrid:SG.abc" (providerLabel (SendGrid "SG.abc")))
+    , Test.test "Ses carries its full SesConfig payload through the case match"
+        (\_ -> Test.equal "ses:eu-west-2/AKIAEXAMPLE/ses-secret" (providerLabel (Ses fullSes)))
+    , Test.test "Smtp carries its full SmtpConfig payload through the case match"
+        (\_ -> Test.equal "smtp:smtp.example.com:465/mailer/smtp-secret" (providerLabel (Smtp fullSmtp)))
+    , Test.test "Resend and SendGrid with the SAME payload take different branches"
+        (\_ -> Test.notEqual (providerLabel (Resend "k")) (providerLabel (SendGrid "k")))
+    , Test.test "Ses built from defaultSesConfig labels with empty credentials"
+        (\_ -> Test.equal "ses:us-east-1//" (providerLabel (Ses (Email.defaultSesConfig "us-east-1"))))
+    , Test.test "Smtp built from defaultSmtpConfig labels with port 587"
+        (\_ ->
+            Test.equal "smtp:smtp.example.com:587//"
+                (providerLabel (Smtp (Email.defaultSmtpConfig "smtp.example.com")))
+        )
+    , Test.test "two Resend values with the same key are equal"
+        (\_ -> Test.equal (Resend "re_123") (Resend "re_123"))
+    , Test.test "two Resend values with different keys are not equal"
+        (\_ -> Test.notEqual (Resend "re_123") (Resend "re_456"))
+    , Test.test "Resend \"x\" /= SendGrid \"x\" (constructor tag distinguishes)"
+        (\_ -> Test.notEqual (Resend "x") (SendGrid "x"))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

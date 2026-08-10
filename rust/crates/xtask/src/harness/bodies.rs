@@ -52,7 +52,14 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// setup ever does fail, the count rises to 771/772 AND the new leaf fails, so
 /// the gate goes red on both counts rather than passing a suite that quietly
 /// swapped 13 real assertions for one "setup failed".
-pub const CONFORMANCE_EXPECTED: u64 = 770;
+///
+/// **910 since 2026-08-10** (was 770). Two suites were added for stdlib modules
+/// that no test had ever executed because nothing in the repo imported them:
+/// `EmailConformanceTest` (+64, the whole pure `Std.Email` builder surface) and
+/// `DbSchemaConformanceTest` (+76, every `Std.Db.Schema` constructor/modifier
+/// plus the `toProject` encoding). `scripts/conformance.sh` globs
+/// `tests/*Test.sky`, so both are discovered by the existing gate.
+pub const CONFORMANCE_EXPECTED: u64 = 910;
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -1629,4 +1636,702 @@ fn preview(items: &[&str]) -> String {
     } else {
         shown.join(", ")
     }
+}
+
+// ---------------------------------------------------------------------------
+// Member H — Dispatch. The five never-imported stdlib modules.
+// ---------------------------------------------------------------------------
+
+/// Member H, per arm.
+///
+/// 22 = 5 `sky db` verbs (drop/status/migrate/status/seed) + build + artifact
+/// + port-literal scan + readiness + 2 health + 2 job-driving + 2 delivery
+/// + 2 job-failure + 2 markdown + 2 email + teardown.
+pub const APPS_DISPATCH_EXPECTED: u64 = 22;
+
+/// The destructive-diff gate's assertions.
+pub const APPS_DISPATCH_DESTRUCTIVE_EXPECTED: u64 = 5;
+
+/// The markdown fixture's injection payload, escaped, as it must appear in the
+/// rendered page.
+///
+/// A `const` so the falsifier can change it: if flipping this does NOT turn the
+/// gate red, the escaping assertion is not reading the rendered page.
+const DISPATCH_XSS_ESCAPED: &str = "&lt;script&gt;alert(1)&lt;/script&gt;";
+
+/// Run one `sky db <verb>` in the project and return its exit code.
+///
+/// The exit CODE is the verdict, never the output text. `sky db status` exits 1
+/// while a migration is pending and 0 once applied — that is the deploy gate,
+/// and reading it out of stdout would re-create the `grep "0 fail"` class.
+fn dispatch_db_verb(
+    sky: &Path,
+    dir: &Path,
+    verb: &str,
+    env: &[(String, String)],
+) -> Result<(i32, String), String> {
+    dispatch_db_verb_args(sky, dir, &[verb], env)
+}
+
+/// As [`dispatch_db_verb`], for a verb that takes flags (`drop --yes`).
+fn dispatch_db_verb_args(
+    sky: &Path,
+    dir: &Path,
+    argv: &[&str],
+    env: &[(String, String)],
+) -> Result<(i32, String), String> {
+    let mut cmd = Command::new(sky);
+    cmd.arg("db")
+        .args(argv)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| format!("could not spawn `sky db {}`: {e}", argv.join(" ")))?;
+    let mut log = String::from_utf8_lossy(&out.stdout).into_owned();
+    log.push_str(&String::from_utf8_lossy(&out.stderr));
+    Ok((out.status.code().unwrap_or(-1), log))
+}
+
+/// One arm of member H — the SAME source and the SAME assertions, with only the
+/// DSN changing.
+///
+/// Every one of the five modules this app exists for was imported by NOTHING
+/// before it, so each assertion below is the first execution of that surface:
+///
+///   * `Std.Db.Schema`  — the typed DDL and the `toProject` bridge, reached
+///     through the constraints the migration must preserve.
+///   * `Std.Db.Migrate` — the committed `db/migrations/*.json`, applied by
+///     `sky db migrate`. Before this member the file-based migration verbs were
+///     exercised by no project at all.
+///   * `Std.Jobs`       — asserted on what the worker WROTE, and on the failure
+///     it RECORDED. Not on `enqueue` returning an id, which it does whether or
+///     not a worker ever starts.
+///   * `Std.Markdown`   — asserted on the rendered page, including that
+///     untrusted markdown comes back escaped.
+///   * `Std.Email`      — asserted on the composed message's exact fields.
+fn dispatch_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome {
+    use super::layer2;
+    use std::time::{Duration, Instant};
+
+    const PROJECT: &str = "apps/dispatch";
+    let dir = ctx.repo_root.join(PROJECT);
+    let sky = match layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+
+    // The jobs store points at the SAME database as the app on purpose: it is
+    // what lets `/api/jobs/failures` read the queue's own `_sky_jobs` ledger,
+    // and so what makes "the failure was recorded" assertable from outside the
+    // process.
+    let db_env: Vec<(String, String)> = vec![
+        ("SKY_DB_PATH".to_string(), dsn.clone()),
+        ("SKY_JOBS_STORE".to_string(), expect_driver.to_string()),
+        ("SKY_JOBS_STORE_PATH".to_string(), dsn.clone()),
+    ];
+
+    // 0. Reset to a known-empty schema. This is what makes the gate
+    //    RE-RUNNABLE, which matters entirely for the Postgres arm: the SQLite
+    //    arm gets a virgin file every run, but a Postgres server persists, so
+    //    on the second run the migration was already applied and the
+    //    "status exits 1 while pending" assertion below could never fire. It
+    //    was caught by the falsifier reporting INCONCLUSIVE (baseline red) on
+    //    exactly that assertion.
+    //
+    //    `sky db drop --yes` removes the app's tables AND the `_sky_migrations`
+    //    ledger, and exits 0 against a database that does not exist yet — so it
+    //    is a valid idempotent reset on both arms. (`seed` separately clears
+    //    stale rows from the jobs tables, which belong to the runtime rather
+    //    than to this app's schema.)
+    a += 1;
+    match dispatch_db_verb_args(&sky, &dir, &["drop", "--yes"], &db_env) {
+        Err(e) => fail.push(e),
+        Ok((code, log)) if code != 0 => fail.push(format!(
+            "`sky db drop --yes` (the pre-run reset) failed (exit {code}):\n{}",
+            layer2::tail(&log, 10)
+        )),
+        Ok(_) => {}
+    }
+
+    // 1. The deploy gate BITES: status must exit 1 while a migration is
+    //    pending. Asserted before migrating, on a freshly-reset database.
+    a += 1;
+    match dispatch_db_verb(&sky, &dir, "status", &db_env) {
+        Err(e) => fail.push(e),
+        Ok((code, _)) if code != 1 => fail.push(format!(
+            "`sky db status` must exit 1 while a migration is PENDING (the deploy \
+             gate); got exit {code}. An exit 0 here would let a deploy ship against \
+             an unmigrated database."
+        )),
+        Ok(_) => {}
+    }
+
+    // 2. Apply the committed migrations (Std.Db.Migrate).
+    a += 1;
+    match dispatch_db_verb(&sky, &dir, "migrate", &db_env) {
+        Err(e) => fail.push(e),
+        Ok((code, log)) if code != 0 => fail.push(format!(
+            "`sky db migrate` failed (exit {code}):\n{}",
+            layer2::tail(&log, 10)
+        )),
+        Ok(_) => {}
+    }
+
+    // 3. …and status must now be clean.
+    a += 1;
+    match dispatch_db_verb(&sky, &dir, "status", &db_env) {
+        Err(e) => fail.push(e),
+        Ok((code, log)) if code != 0 => fail.push(format!(
+            "`sky db status` must exit 0 once every migration is applied; got exit \
+             {code}:\n{}",
+            layer2::tail(&log, 10)
+        )),
+        Ok(_) => {}
+    }
+
+    // 4. Seed. Runs BEFORE the build: `sky db seed` builds its temp entry into
+    //    the project's real sky-out/app, so seeding after a build would replace
+    //    the binary under test with the seed shim.
+    a += 1;
+    match dispatch_db_verb(&sky, &dir, "seed", &db_env) {
+        Err(e) => fail.push(e),
+        Ok((code, log)) if code != 0 => fail.push(format!(
+            "`sky db seed` failed (exit {code}):\n{}",
+            layer2::tail(&log, 10)
+        )),
+        Ok(_) => {}
+    }
+
+    if !fail.is_empty() {
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    let r = match layer2::clean_build(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+    a += 1;
+    if !r.ok {
+        fail.push(format!("`sky build` failed:\n{}", layer2::tail(&r.log, 12)));
+    }
+    a += 1;
+    if !r.binary.is_file() {
+        fail.push(format!("no artifact at {}", r.binary.display()));
+    }
+    if !fail.is_empty() {
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    a += 1;
+    let literals = layer2::bind_position_port_literals(&ctx.repo_root, PROJECT);
+    if !literals.is_empty() {
+        fail.push(format!(
+            "bind-position port literal(s): {}",
+            literals.join(", ")
+        ));
+    }
+
+    let port = match layer2::free_port() {
+        Ok(p) => p,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+    let env: Vec<(&str, String)> = vec![
+        ("SKY_DB_PATH", dsn.clone()),
+        ("SKY_JOBS_STORE", expect_driver.to_string()),
+        ("SKY_JOBS_STORE_PATH", dsn.clone()),
+        ("SKY_LIVE_PORT", port.to_string()),
+        (
+            "SKY_AUTH_TOKEN_SECRET",
+            "layer2-dispatch-gate-secret-at-least-32-bytes".to_string(),
+        ),
+    ];
+    let mut srv = match layer2::Server::spawn(&r.binary, &dir, port, &env) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+
+    a += 1;
+    if let Err(e) = srv.wait_ready("dispatch: listening on", Duration::from_secs(45)) {
+        fail.push(e);
+        let _ = srv.shutdown();
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    // ── health: served, on the driver this arm claims ──
+    match layer2::get(port, "/api/health") {
+        Err(e) => {
+            a += 2;
+            fail.push(format!("GET /api/health: {e}"));
+        }
+        Ok(resp) => {
+            a += 1;
+            if resp.status != 200 {
+                fail.push(format!(
+                    "GET /api/health: expected 200, got {}",
+                    resp.status
+                ));
+            }
+            a += 1;
+            let want = format!("\"driver\":\"{expect_driver}\"");
+            if !resp.body.contains(&want) {
+                fail.push(format!(
+                    "this arm must run on {expect_driver}; /api/health said {}",
+                    resp.body.trim()
+                ));
+            }
+        }
+    }
+
+    // ── Std.Jobs: enqueue + cancel ──
+    match layer2::get(port, "/api/dispatch/run") {
+        Err(e) => {
+            a += 2;
+            fail.push(format!("GET /api/dispatch/run: {e}"));
+        }
+        Ok(resp) => {
+            a += 1;
+            // Both seeded subscribers must have been enqueued. A zero here
+            // would mean the seed did not land, and every later job assertion
+            // would be vacuously satisfied by an empty queue.
+            if !resp.body.contains("\"enqueued\":2") {
+                fail.push(format!(
+                    "expected 2 delivery jobs enqueued (one per seeded subscriber); \
+                     /api/dispatch/run said {}",
+                    resp.body.trim()
+                ));
+            }
+            a += 1;
+            // `Jobs.cancel` on a job that is genuinely still pending.
+            if !resp.body.contains("\"cancel\":\"cancelled\"") {
+                fail.push(format!(
+                    "Jobs.cancel must succeed on a pending job; /api/dispatch/run said {}",
+                    resp.body.trim()
+                ));
+            }
+        }
+    }
+
+    // ── Std.Jobs: the worker actually RAN ──
+    // Poll rather than sleep: the worker's poll interval is 100 ms, so a fixed
+    // sleep would be either flaky or wasteful.
+    let mut deliveries = String::new();
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(30) {
+        match layer2::get(port, "/api/deliveries") {
+            Ok(resp) if resp.body.contains("\"count\":2") => {
+                deliveries = resp.body;
+                break;
+            }
+            Ok(resp) => deliveries = resp.body,
+            Err(e) => deliveries = format!("(request failed: {e})"),
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    a += 1;
+    if !deliveries.contains("\"count\":2") {
+        fail.push(format!(
+            "the delivery jobs must actually RUN and write their rows — `enqueue` \
+             returning an id proves nothing about a worker. /api/deliveries said {}",
+            deliveries.trim()
+        ));
+    }
+    a += 1;
+    // The payload is a RECORD and crosses a JSON encode/decode boundary in the
+    // runtime. Asserting the addresses came back attached to the right rows is
+    // what proves the record survived that round-trip rather than arriving
+    // field-shifted or empty.
+    if !(deliveries.contains("ada@example.test") && deliveries.contains("grace@example.test")) {
+        fail.push(format!(
+            "each delivery row must carry its subscriber's address — the job payload \
+             is a record crossing a JSON round-trip. /api/deliveries said {}",
+            deliveries.trim()
+        ));
+    }
+
+    // ── Std.Jobs: a failing job is OBSERVABLE ──
+    let mut failures = String::new();
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(30) {
+        match layer2::get(port, "/api/jobs/failures") {
+            Ok(resp) if resp.body.contains("\"count\":1") => {
+                failures = resp.body;
+                break;
+            }
+            Ok(resp) => failures = resp.body,
+            Err(e) => failures = format!("(request failed: {e})"),
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    a += 1;
+    if !failures.contains("\"count\":1") {
+        fail.push(format!(
+            "the always-failing job must be RECORDED in the queue ledger, not \
+             swallowed — a worker that dropped the error would leave the ledger \
+             clean and look identical to success. /api/jobs/failures said {}",
+            failures.trim()
+        ));
+    }
+    a += 1;
+    // The message must be READABLE. This field held
+    // `{0 Error [7 {the real message <nil>}]}` — a Go struct dump of the Sky
+    // Error ADT — until this app was built (fixed in rt/stdlib_extra.go). It is
+    // the operator's only record of why a job dead-lettered.
+    if !failures.contains("deliberate job failure for payload 42") || failures.contains("{0 Error")
+    {
+        fail.push(format!(
+            "the recorded job error must be the Sky error MESSAGE, with no Error-ADT \
+             struct rendering. /api/jobs/failures said {}",
+            failures.trim()
+        ));
+    }
+
+    // ── Std.Markdown ──
+    match layer2::get(port, "/") {
+        Err(e) => {
+            a += 2;
+            fail.push(format!("GET /: {e}"));
+        }
+        Ok(resp) => {
+            a += 1;
+            // Heading, bold span and a list item: three different block/inline
+            // paths, so a parser that produced one flat paragraph fails here.
+            let rendered = resp.body.contains("Release 1.0")
+                && resp.body.contains("today")
+                && resp.body.contains("durable queue");
+            if !rendered {
+                fail.push(
+                    "Std.Markdown must render the note's heading, bold span and list \
+                     items into the page"
+                        .to_string(),
+                );
+            }
+            a += 1;
+            // The security claim in Std.Markdown's own docstring: untrusted
+            // markdown is safe because everything routes through typed Std.Ui
+            // constructors and no raw HTML is ever emitted.
+            if !resp.body.contains(DISPATCH_XSS_ESCAPED) || resp.body.contains("<script>alert(1)") {
+                fail.push(
+                    "untrusted markdown must be ESCAPED — the note body contains a \
+                     <script> tag and the rendered page must carry it as text, never \
+                     as markup"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    // ── Std.Email composition ──
+    match layer2::get(port, "/api/email/preview") {
+        Err(e) => {
+            a += 2;
+            fail.push(format!("GET /api/email/preview: {e}"));
+        }
+        Ok(resp) => {
+            a += 1;
+            // Each of these is a different builder: defaultMessage's carried
+            // fields, withTextBody, withReplyTo, withCc.
+            let composed = resp.body.contains("\"from\":\"dispatch@example.test\"")
+                && resp.body.contains("\"subject\":\"New note: Release 1.0\"")
+                && resp.body.contains("\"replyTo\":\"no-reply@example.test\"")
+                && resp.body.contains("audit@example.test");
+            if !composed {
+                fail.push(format!(
+                    "Std.Email builders must carry every field through; \
+                     /api/email/preview said {}",
+                    resp.body.trim()
+                ));
+            }
+            a += 1;
+            // withAttachment appends, and the attachment's own builders apply.
+            if !(resp.body.contains("\"attachments\":1")
+                && resp.body.contains("\"attachmentName\":\"notes.txt\""))
+            {
+                fail.push(format!(
+                    "withAttachment must append the attachment and its builders must \
+                     apply; /api/email/preview said {}",
+                    resp.body.trim()
+                ));
+            }
+        }
+    }
+
+    a += 1;
+    if let Err(e) = srv.shutdown() {
+        fail.push(e);
+    }
+
+    if fail.is_empty() {
+        GateOutcome::new(
+            true,
+            a,
+            format!(
+                "migrated + seeded + served on :{port} against {expect_driver}; jobs \
+                 ran and their failure was recorded readably, markdown rendered and \
+                 escaped, email composed"
+            ),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
+/// Member H, SQLite arm (T1).
+pub fn apps_dispatch(ctx: &GateCtx) -> GateOutcome {
+    let db = scratch(&ctx.repo_root).join(format!("dispatch-gate-{}.db", std::process::id()));
+    // Remove the WAL sidecars too: deleting a SQLite file without its -wal/-shm
+    // yields `disk I/O error (522)` on the next open.
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+    dispatch_arm(ctx, "sqlite", db.display().to_string())
+}
+
+/// Member H, **Postgres arm** (T3).
+///
+/// The same source and the same assertions with only the DSN changed — which
+/// makes it the first time `Std.Db.Schema`'s DDL and the committed migrations
+/// are applied to Postgres, and the first time the Postgres jobs store backs a
+/// real app.
+///
+/// An absent DSN is a **FAIL**, never a skip.
+pub fn apps_dispatch_postgres(ctx: &GateCtx) -> GateOutcome {
+    match std::env::var("SKY_TEST_POSTGRES_DSN") {
+        Ok(dsn) if !dsn.trim().is_empty() => dispatch_arm(ctx, "postgres", dsn),
+        _ => GateOutcome::new(
+            false,
+            0,
+            "SKY_TEST_POSTGRES_DSN is unset — this gate asserts the Postgres arm and \
+             cannot do so without a server. A gate that cannot run has not passed; \
+             it is NOT skipped."
+                .to_string(),
+        ),
+    }
+}
+
+/// A destructive schema diff must be QUARANTINED, never silently applied.
+///
+/// This is the class that shipped: `sky db migrate` dropped UNIQUE,
+/// AUTOINCREMENT and DEFAULT where `sky db push` preserved them — duplicate
+/// rows accepted on SQLite, the app broken on Postgres. It was fixed once and
+/// nothing gated it, because no project declared constraints through a
+/// committed migration.
+///
+/// The gate works on a COPY in the scratch dir. A gate that edited
+/// `apps/dispatch` in place would leave the tree dirty and make every later
+/// gate's build non-reproducible.
+pub fn apps_dispatch_destructive(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+
+    let sky = match layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+
+    // Staged in the SYSTEM temp dir, deliberately NOT in `scratch()`
+    // (`.skycache/harness`). A Sky project living under a directory named
+    // `.skycache` is invisible to module discovery — the compiler skips
+    // build-cache directories — so `sky db migrate --gen` there reports
+    // "schema-dump produced no output (is `db` a Store.Project?)" and the gate
+    // would fail for a reason that has nothing to do with what it asserts.
+    // The pid suffix keeps concurrent runs from colliding.
+    let work = std::env::temp_dir().join(format!("sky-dispatch-destructive-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    if let Err(e) = copy_tree(&ctx.repo_root.join("apps/dispatch"), &work) {
+        return GateOutcome::new(false, 0, format!("could not stage a copy: {e}"));
+    }
+
+    // Drop a column from the typed Std.Db.Schema declaration. Removing the
+    // WHOLE line is what makes this a column DROP rather than an edit.
+    let schema_path = work.join("src/Schema.sky");
+    let src = match std::fs::read_to_string(&schema_path) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, format!("read Schema.sky: {e}")),
+    };
+    let needle = "        , Schema.text \"detail\" |> Schema.notNull |> Schema.defaultText \"\"\n";
+    a += 1;
+    if !src.contains(needle) {
+        return GateOutcome::new(
+            false,
+            a,
+            "the `detail` column declaration this gate drops is no longer present in \
+             apps/dispatch/src/Schema.sky — the gate would silently test nothing. \
+             Update the needle together with the schema."
+                .to_string(),
+        );
+    }
+    if let Err(e) = std::fs::write(&schema_path, src.replacen(needle, "", 1)) {
+        return GateOutcome::new(false, a, format!("write Schema.sky: {e}"));
+    }
+
+    let db = work.join("destructive.db");
+    let env: Vec<(String, String)> = vec![("SKY_DB_PATH".to_string(), db.display().to_string())];
+
+    a += 1;
+    match dispatch_db_verb(&sky, &work, "migrate", &env) {
+        Err(e) => return GateOutcome::new(false, a, e),
+        Ok((code, log)) if code != 0 => {
+            return GateOutcome::new(
+                false,
+                a,
+                format!(
+                    "baseline `sky db migrate` failed (exit {code}):\n{}",
+                    layer2::tail(&log, 10)
+                ),
+            )
+        }
+        Ok(_) => {}
+    }
+
+    // Generate against the reduced schema. Non-interactive (stdin is null), so
+    // there is no prompt to answer.
+    let before: Vec<PathBuf> = migration_files(&work);
+    a += 1;
+    let mut cmd = Command::new(&sky);
+    cmd.arg("db")
+        .arg("migrate")
+        .arg("--gen")
+        .arg("dropdetail")
+        .current_dir(&work)
+        .stdin(std::process::Stdio::null());
+    for (k, v) in &env {
+        cmd.env(k, v);
+    }
+    let out = match cmd.output() {
+        Ok(o) => o,
+        Err(e) => return GateOutcome::new(false, a, format!("spawn `sky db migrate --gen`: {e}")),
+    };
+    if !out.status.success() {
+        return GateOutcome::new(
+            false,
+            a,
+            format!(
+                "`sky db migrate --gen` failed (exit {:?}):\n{}",
+                out.status.code(),
+                layer2::tail(&String::from_utf8_lossy(&out.stdout), 10)
+            ),
+        );
+    }
+
+    let after = migration_files(&work);
+    let Some(generated) = after.iter().find(|p| !before.contains(p)) else {
+        return GateOutcome::new(
+            false,
+            a,
+            "`sky db migrate --gen` wrote no new migration file for a schema change"
+                .to_string(),
+        );
+    };
+
+    let Some(json) = read_json(generated) else {
+        return GateOutcome::new(
+            false,
+            a,
+            format!(
+                "generated migration {} is not readable JSON",
+                generated.display()
+            ),
+        );
+    };
+
+    // The verdict: the drop is recorded as destructive AND is not in `ops`.
+    a += 1;
+    let destructive = json
+        .get("destructive")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if destructive.is_empty() {
+        fail.push(format!(
+            "dropping a column must be QUARANTINED in the `destructive` array; the \
+             generated migration has none: {json}"
+        ));
+    } else {
+        let names: Vec<String> = destructive
+            .iter()
+            .map(|d| {
+                format!(
+                    "{}.{}/{}",
+                    d.get("table").and_then(|x| x.as_str()).unwrap_or("?"),
+                    d.get("column").and_then(|x| x.as_str()).unwrap_or("?"),
+                    d.get("kind").and_then(|x| x.as_str()).unwrap_or("?"),
+                )
+            })
+            .collect();
+        if !names.iter().any(|n| n == "deliveries.detail/dropColumn") {
+            fail.push(format!(
+                "the quarantined entry must name the dropped column; got {names:?}"
+            ));
+        }
+    }
+
+    a += 1;
+    let ops_len = json
+        .get("ops")
+        .and_then(|o| o.as_array())
+        .map(|o| o.len())
+        .unwrap_or(usize::MAX);
+    if ops_len != 0 {
+        fail.push(format!(
+            "a destructive-only diff must produce ZERO active ops — anything in `ops` \
+             would be APPLIED by `sky db migrate` and drop user data. Got {ops_len}: \
+             {json}"
+        ));
+    }
+
+    let _ = std::fs::remove_dir_all(&work);
+
+    if fail.is_empty() {
+        GateOutcome::new(
+            true,
+            a,
+            "a dropped column is quarantined in `destructive` with zero active ops"
+                .to_string(),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
+/// `db/migrations/*.json`, sorted.
+fn migration_files(project: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(project.join("db/migrations"))
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("json"))
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+/// Recursive copy, skipping build outputs. `sky-out`/`.skycache` must not come
+/// along: the copy is built from a wiped slate so the source edit is observable.
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for e in std::fs::read_dir(from)? {
+        let e = e?;
+        let name = e.file_name();
+        let n = name.to_string_lossy();
+        if matches!(n.as_ref(), "sky-out" | ".skycache" | ".skydeps" | "_sky") {
+            continue;
+        }
+        let src = e.path();
+        let dst = to.join(&name);
+        if src.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
 }

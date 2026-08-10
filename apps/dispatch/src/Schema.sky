@@ -1,0 +1,163 @@
+module Schema exposing (..)
+
+-- Schema — the persistence layer for Dispatch.
+--
+-- This module is the FIRST use of `Std.Db.Schema` anywhere in the repo. The
+-- module shipped with a typed, dialect-safe DDL builder and a `toProject`
+-- bridge into `Std.Db.Store.Project`, and nothing had ever imported it — so
+-- neither the builder nor the bridge had ever been executed.
+--
+-- ONE declaration drives everything:
+--
+--   * `Std.Db.Schema` typed columns (below) carry the constraints — UNIQUE,
+--     NOT NULL, DEFAULT, autoincrement primary key.
+--   * `Schema.toProject` turns them into the `Store.Project` that
+--     `sky db migrate --gen` reads to derive the committed, dialect-neutral
+--     migration files in `db/migrations/`.
+--   * `Std.Db.Store` codecs below read and write the SAME tables.
+--
+-- The constraints are the point. `sky db migrate` once dropped UNIQUE,
+-- AUTOINCREMENT and DEFAULT that `sky db push` preserved — duplicate rows
+-- accepted on SQLite, the app broken on Postgres. That was fixed once and
+-- nothing gated it, because no project declared constraints through a
+-- committed migration. This one does, and the gate asserts each constraint
+-- is live in the database that the migration actually built.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.System as System
+import Std.Log exposing (println)
+import Std.Codec as Codec exposing (Codec)
+import Std.Db as Db
+import Std.Db.Schema as Schema
+import Std.Db.Store as Store exposing (Store)
+
+
+-- ─── Connection ──────────────────────────────────────────────────
+-- Memoised CAF: ONE pool per process. `Db.connect ()` takes NO DSN — it reads
+-- SKY_DB_PATH, falling back to DATABASE_URL, and the driver is inferred from
+-- the DSN shape. That is the whole "identical source, driver from env"
+-- mechanism, and it is why this file runs unchanged on SQLite and Postgres.
+conn =
+    case Task.run (Db.connect ()) of
+
+        Ok c ->
+            c
+
+        Err e ->
+            let
+                _ =
+                    println
+                        ("dispatch: FATAL cannot open database: "
+                            ++ Error.toString e)
+            in
+                System.exit 1
+
+
+-- ─── Typed schema (Std.Db.Schema) ────────────────────────────────
+-- Every constraint here is asserted by the gate against the REAL database the
+-- committed migration built — not against this declaration.
+subscribersTable : Schema.Table
+subscribersTable =
+    Schema.table
+        "subscribers"
+        [ Schema.serial "id"
+        , Schema.text "email" |> Schema.notNull |> Schema.unique
+        , Schema.text "name" |> Schema.notNull |> Schema.defaultText "friend"
+        , Schema.int "active" |> Schema.notNull |> Schema.defaultInt 1
+        ]
+
+
+notesTable : Schema.Table
+notesTable =
+    Schema.table
+        "notes"
+        [ Schema.serial "id"
+        , Schema.text "slug" |> Schema.notNull |> Schema.unique
+        , Schema.text "title" |> Schema.notNull
+        , Schema.text "body_md" |> Schema.notNull |> Schema.defaultText ""
+        ]
+
+
+deliveriesTable : Schema.Table
+deliveriesTable =
+    Schema.table
+        "deliveries"
+        [ Schema.serial "id"
+        , Schema.int "note_id" |> Schema.notNull
+        , Schema.int "subscriber_id" |> Schema.notNull
+        , Schema.text "status" |> Schema.notNull |> Schema.defaultText "pending"
+        , Schema.text "detail" |> Schema.notNull |> Schema.defaultText ""
+        ]
+
+
+-- | The project declaration `sky db migrate --gen` reads. This is the
+-- `Std.Db.Schema` -> `Std.Db.Store` bridge that had never been run.
+project : Store.Project
+project =
+    Schema.toProject [ subscribersTable, notesTable, deliveriesTable ]
+
+-- ─── Row types + codecs (Std.Db.Store) ───────────────────────────
+-- The SAME tables, reached through the typed Store API. Field names are
+-- camelCase in Sky and snake_case in SQL — `Codec.auto` does that mapping,
+-- which is exactly the seam a schema/codec drift would show up in.
+type alias Subscriber =
+    { id : Int
+    , email : String
+    , name : String
+    , active : Int
+    }
+
+type alias Note =
+    { id : Int
+    , slug : String
+    , title : String
+    , bodyMd : String
+    }
+
+type alias Delivery =
+    { id : Int
+    , noteId : Int
+    , subscriberId : Int
+    , status : String
+    , detail : String
+    }
+
+
+blankSubscriber : Subscriber
+blankSubscriber =
+    { id = 0, email = "", name = "", active = 0 }
+
+
+blankNote : Note
+blankNote =
+    { id = 0, slug = "", title = "", bodyMd = "" }
+
+
+blankDelivery : Delivery
+blankDelivery =
+    { id = 0, noteId = 0, subscriberId = 0, status = "", detail = "" }
+
+
+subscribers : Store Subscriber
+subscribers =
+    Store.fromCodec "subscribers" (Codec.auto blankSubscriber)
+        |> Store.serial "id"
+        |> Store.unique "email"
+        |> Store.defaultText "name" "friend"
+        |> Store.defaultInt "active" 1
+
+
+notes : Store Note
+notes =
+    Store.fromCodec "notes" (Codec.auto blankNote) |> Store.serial "id"
+        |> Store.unique "slug"
+        |> Store.defaultText "bodyMd" ""
+
+
+deliveries : Store Delivery
+deliveries =
+    Store.fromCodec "deliveries" (Codec.auto blankDelivery) |> Store.serial "id"
+        |> Store.defaultText "status" "pending"
+        |> Store.defaultText "detail" ""

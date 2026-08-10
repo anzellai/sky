@@ -541,6 +541,74 @@ pub static GATES: &[Gate] = &[
         body: bodies::apps_ledger_postgres,
     },
     Gate {
+        name: "apps-dispatch",
+        tier: Tier::T1,
+        platforms: UNIX,
+        // migrate + status x2 + seed + a cold build + the worker poll windows.
+        budget_s: 900,
+        expected: bodies::APPS_DISPATCH_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member H (SQLite arm) — Std.Jobs, Std.Db.Schema/Migrate, Std.Markdown, Std.Email",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-dispatch.swallow-the-job-failure",
+            description: "make the always-failing job SUCCEED; the queue ledger then \
+                          records no failure at all, and the \"a failing job is \
+                          observable\" assertion must go red. This is the exact shape \
+                          of a worker that swallows errors — the state the gate exists \
+                          to make inexpressible",
+            kind: MutationKind::ReplaceOnce {
+                path: "apps/dispatch/src/Work.sky",
+                from: "failHandler n =\n    Task.fail",
+                to: "failHandler n =\n    alwaysOk n\n\n\nalwaysOk : Int -> Task Error ()\nalwaysOk _ =\n    Task.succeed ()\n\n\nunusedFail : Int -> Task Error ()\nunusedFail n =\n    Task.fail",
+            },
+        }]),
+        body: bodies::apps_dispatch,
+    },
+    Gate {
+        name: "apps-dispatch-destructive",
+        tier: Tier::T1,
+        platforms: UNIX,
+        // One baseline migrate + one --gen, both on a scratch copy.
+        budget_s: 600,
+        expected: bodies::APPS_DISPATCH_DESTRUCTIVE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a destructive schema diff is quarantined, never applied",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-dispatch-destructive.rename-the-quarantine-target",
+            description: "rename the column the gate drops, so the staged edit no longer \
+                          matches any declaration and the diff becomes empty; the \
+                          needle-present assertion must go red rather than let the gate \
+                          silently test nothing",
+            kind: MutationKind::ReplaceOnce {
+                path: "apps/dispatch/src/Schema.sky",
+                from: ", Schema.text \"detail\" |> Schema.notNull |> Schema.defaultText \"\"",
+                to: ", Schema.text \"detail2\" |> Schema.notNull |> Schema.defaultText \"\"",
+            },
+        }]),
+        body: bodies::apps_dispatch_destructive,
+    },
+    Gate {
+        name: "apps-dispatch-postgres",
+        tier: Tier::T3,
+        platforms: UNIX,
+        budget_s: 900,
+        expected: bodies::APPS_DISPATCH_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member H (Postgres arm) — the same source and assertions on real pgx",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-dispatch-postgres.break-health-driver",
+            description: "stop recognising a postgres:// DSN, so the app misreports \
+                          which backend it is on; the arm can no longer prove it ran \
+                          against Postgres and the driver assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "apps/dispatch/src/Api.sky",
+                from: "String.startsWith \"postgres://\" low",
+                to: "String.startsWith \"nomatch://\" low",
+            },
+        }]),
+        body: bodies::apps_dispatch_postgres,
+    },
+    Gate {
         name: "apps-fleet",
         tier: Tier::T3,
         platforms: UNIX,

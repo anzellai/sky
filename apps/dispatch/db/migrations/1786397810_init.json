@@ -1,0 +1,142 @@
+{
+  "id": "1786397810_init",
+  "ops": [
+    {
+      "columns": [
+        {
+          "autoinc": true,
+          "name": "id",
+          "nullable": false,
+          "pk": true,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "email",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": true
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "text": "friend"
+          },
+          "name": "name",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "int": 1
+          },
+          "name": "active",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        }
+      ],
+      "kind": "createTable",
+      "table": "subscribers"
+    },
+    {
+      "columns": [
+        {
+          "autoinc": true,
+          "name": "id",
+          "nullable": false,
+          "pk": true,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "slug",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": true
+        },
+        {
+          "autoinc": false,
+          "name": "title",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "text": ""
+          },
+          "name": "body_md",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        }
+      ],
+      "kind": "createTable",
+      "table": "notes"
+    },
+    {
+      "columns": [
+        {
+          "autoinc": true,
+          "name": "id",
+          "nullable": false,
+          "pk": true,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "note_id",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "subscriber_id",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "text": "pending"
+          },
+          "name": "status",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "text": ""
+          },
+          "name": "detail",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        }
+      ],
+      "kind": "createTable",
+      "table": "deliveries"
+    }
+  ]
+}
