@@ -122,6 +122,38 @@ func TestPgFields_updateFields_ExecutesOnPostgres(t *testing.T) {
 	}
 }
 
+// Store.insert's assigned-id contract on a real Postgres. The unit gate covers
+// SQLite; this covers the dialect where the id can only come from RETURNING,
+// there being no LastInsertId at all.
+func TestPgFields_StoreInsert_ReturnsAssignedIdOnPostgres(t *testing.T) {
+	db := openPgFieldsDb(t)
+	ins := func(name string) int {
+		t.Helper()
+		res := runTask(t, Db_execObjectWith(db, "pgfields_items",
+			colspec([2]string{"name", "text"}),
+			storeObj([]string{"name"}, []any{name}),
+			[]any{}, "id", "int"))
+		if res.Tag != 0 {
+			t.Fatalf("Store.insert %q: %+v", name, res.ErrValue)
+		}
+		return AsIntOrZero(res.OkValue)
+	}
+	first, second := ins("first"), ins("second")
+	if first == second {
+		t.Fatalf("Store.insert reported the same id %d for two rows on Postgres", first)
+	}
+	rows := mustRows(t, db, `SELECT id, name FROM pgfields_items ORDER BY id`)
+	if len(rows) != 2 {
+		t.Fatalf("row count: got %d want 2", len(rows))
+	}
+	if got := AsIntOrZero(rows[0]["id"]); got != first {
+		t.Errorf("first insert returned %d but the row has id %d", first, got)
+	}
+	if got := AsIntOrZero(rows[1]["id"]); got != second {
+		t.Errorf("second insert returned %d but the row has id %d", second, got)
+	}
+}
+
 func TestPgFields_insertFieldsReturning_ExecutesOnPostgres(t *testing.T) {
 	db := openPgFieldsDb(t)
 	res := runTask(t, Db_insertFieldsReturning(db, "pgfields_items", []any{
