@@ -263,6 +263,14 @@ fn check_one(file: &Path, stdlib: &[(String, syntax::Parse)]) -> Row {
 
 // ---- module loading (mirrors infer_gate) ---------------------------------
 
+/// [`load_dir`] for other gates. The shared-world differential harness must load
+/// the stdlib and each example's `src/` tree through the SAME discovery this gate
+/// uses, or the two paths would be comparing different corpora — the exact
+/// failure v2 §1.5 catalogues between `ty/tests/reject.rs` and this gate.
+pub(crate) fn load_dir_pub(dir: &Path, root_marker: &str) -> Vec<(String, syntax::Parse)> {
+    load_dir(dir, root_marker)
+}
+
 fn load_dir(dir: &Path, root_marker: &str) -> Vec<(String, syntax::Parse)> {
     let mut files = Vec::new();
     collect_sky(dir, &mut files);

@@ -20,6 +20,7 @@ mod reject_gate;
 mod repro_gate;
 mod resolve_gate;
 mod s8_gate;
+mod shared_world_gate;
 mod welltyped_gate;
 
 #[cfg(test)]
@@ -62,6 +63,9 @@ const GATES: &[(&str, GateFn)] = &[
     ("repro", |args| repro_gate::run(args, &repo_root())),
     ("s8", |args| s8_gate::run(args, &repo_root())),
     ("lsp", |args| lsp_gate::run(args, &repo_root())),
+    ("shared-world", |args| {
+        shared_world_gate::run(args, &repo_root())
+    }),
     ("harness", |args| harness::run(args, &repo_root())),
     ("errloc", errloc),
     ("diff", diff_stub),
