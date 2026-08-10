@@ -6,11 +6,17 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786366895
     },
+    "apps-ffi-scale": {
+      "mutation": "apps-ffi-scale.break-an-ffi-symbol",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786367992
+    },
     "canary": {
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1786350821
+      "proven_at_unix": 1786367624
     },
     "cli-verbs": {
       "mutation": "cli-verbs.break-an-expectation",

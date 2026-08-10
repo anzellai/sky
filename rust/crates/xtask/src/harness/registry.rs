@@ -496,6 +496,29 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::cli_verbs,
     },
+    Gate {
+        name: "apps-ffi-scale",
+        tier: Tier::T4,
+        platforms: UNIX,
+        // Measured cold on the dev host: install 131 s + build 105 s = 236 s.
+        // The ceiling allows for a slower runner and a cold Go module cache.
+        budget_s: 1800,
+        expected: bodies::APPS_FFI_SCALE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member D — Go FFI at 76k-symbol scale (install + build, pre-release)",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-ffi-scale.break-an-ffi-symbol",
+            description: "call a Stripe SDK symbol that does not exist; resolution \
+                          against the 76k-symbol FFI surface must fail, which is \
+                          the scale path this gate exists to exercise",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/13-skyshop/src/Lib/Stripe.sky",
+                from: "Stripe.setKey key",
+                to: "Stripe.setKeyNotASymbol key",
+            },
+        }]),
+        body: bodies::apps_ffi_scale,
+    },
     // ---- harness self-verification ----------------------------------------
     //
     // `selftest-hang` is deliberately registered BEFORE `canary`. Registry order

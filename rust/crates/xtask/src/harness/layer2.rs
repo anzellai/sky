@@ -78,6 +78,20 @@ pub struct BuildReport {
 /// declared mutation would report `VACUOUS` forever and be misread as a harness
 /// defect. A Layer-2 gate that reused artifacts would have the same hole.
 pub fn clean_build(root: &Path, project_rel: &str) -> Result<BuildReport, String> {
+    build_wiping(root, project_rel, &["sky-out", ".skycache", ".skydeps"])
+}
+
+/// As [`clean_build`], but keeps `.skydeps`.
+///
+/// For a project whose dependencies were just fetched over the network by
+/// `sky install`: wiping `.skydeps` would undo the fetch and make the gate
+/// re-download on every build. The compiled outputs are still wiped, so a source
+/// mutation is still recompiled — which is the property the falsifier needs.
+pub fn clean_build_keep_deps(root: &Path, project_rel: &str) -> Result<BuildReport, String> {
+    build_wiping(root, project_rel, &["sky-out", ".skycache"])
+}
+
+fn build_wiping(root: &Path, project_rel: &str, wipe: &[&str]) -> Result<BuildReport, String> {
     let sky = sky_binary(root)?;
     let dir = root.join(project_rel);
     if !dir.join("sky.toml").is_file() {
@@ -87,7 +101,7 @@ pub fn clean_build(root: &Path, project_rel: &str) -> Result<BuildReport, String
         ));
     }
 
-    for stale in ["sky-out", ".skycache", ".skydeps"] {
+    for stale in wipe {
         let _ = std::fs::remove_dir_all(dir.join(stale));
     }
 

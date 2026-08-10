@@ -763,6 +763,89 @@ pub fn cli_verbs(ctx: &GateCtx) -> GateOutcome {
     }
 }
 
+/// Member D: Go FFI at 76k-symbol scale.
+///
+/// Three assertions: the dependency fetch, the build, and the artifact.
+pub const APPS_FFI_SCALE_EXPECTED: u64 = 3;
+
+/// The FFI-at-scale member, run pre-release (T4).
+///
+/// Not new source. `examples/13-skyshop` **is** the 76k-symbol benchmark v2 §6
+/// row D is specified as the successor to, and nothing else in the corpus
+/// exercises the FFI *scale* path — `safePkgName` aliasing, the typed-FFI cache,
+/// `sky-ffi-inspect`'s memory behaviour.
+///
+/// It is T4 because the tier assignment justifies itself when measured: the
+/// project declares an external Sky package and **refuses to build** until
+/// `sky install` has fetched it. Measured cold on the dev host: install 131 s,
+/// build 105 s, a 144 MB binary. Network-dependent, cold-expensive work does not
+/// belong on the per-push path.
+pub fn apps_ffi_scale(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+
+    const PROJECT: &str = "examples/13-skyshop";
+    let sky = match layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let dir = ctx.repo_root.join(PROJECT);
+    let mut assertions = 0u64;
+
+    // `sky install` fetches the external Sky package + Go modules. This is the
+    // surface the member owns; a gate that skipped it would not be the
+    // FFI-at-scale gate.
+    assertions += 1;
+    let install = Command::new(&sky)
+        .arg("install")
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .output();
+    match install {
+        Err(e) => return GateOutcome::new(false, assertions, format!("`sky install` failed to spawn: {e}")),
+        Ok(o) if !o.status.success() => {
+            return GateOutcome::new(
+                false,
+                assertions,
+                format!(
+                    "`sky install` failed in {PROJECT} (exit {:?}):\n{}",
+                    o.status.code(),
+                    layer2::tail(&String::from_utf8_lossy(&o.stderr), 12)
+                ),
+            )
+        }
+        Ok(_) => {}
+    }
+
+    let r = match layer2::clean_build_keep_deps(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, assertions, e),
+    };
+
+    assertions += 1;
+    if !r.ok {
+        return GateOutcome::new(
+            false,
+            assertions,
+            format!("{PROJECT}: `sky build` failed:\n{}", layer2::tail(&r.log, 15)),
+        );
+    }
+
+    assertions += 1;
+    if !r.binary.is_file() {
+        return GateOutcome::new(
+            false,
+            assertions,
+            format!("{PROJECT}: no artifact at {}", r.binary.display()),
+        );
+    }
+
+    GateOutcome::new(
+        true,
+        assertions,
+        format!("76k-symbol FFI project installed and built ({:.0}s)", r.elapsed_s),
+    )
+}
+
 fn read_json(p: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }
