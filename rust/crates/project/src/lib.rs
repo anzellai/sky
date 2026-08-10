@@ -19,7 +19,8 @@ pub use doc::{
     render_learn_tour, render_module, stdlib_denominators, ModuleDenominator,
 };
 pub use driver::{
-    assets_root_for, is_compiler_repo_root, module_name_from_path, project_dir_for, repo_root_for,
+    assets_root_for, declared_module_name, is_compiler_repo_root, module_name_from_path,
+    project_dir_for, repo_root_for, source_root_for_declared,
     run_app,
 };
 /// Re-exported so `sky init` can scaffold an embedded template (`CLAUDE.md`)

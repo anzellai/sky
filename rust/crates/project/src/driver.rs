@@ -132,6 +132,43 @@ pub fn module_name_from_path(base: &Path, roots: &[&str], file: &Path) -> Option
     None
 }
 
+/// The module name a `.sky` file DECLARES in its `module … exposing (…)` header.
+///
+/// This is the name the loader registers the module under (`build::module_name`),
+/// so it — not the file's path — is the module's identity. Anything that needs to
+/// `import` a file it was handed must use this, because a path-derived guess that
+/// disagrees does not fail: `HirDb::classify_import` treats an unknown module as a
+/// Go FFI package, and the reference silently lowers to `nil`.
+///
+/// Returns `None` for a non-`.sky` file, an unreadable file, or a file with no
+/// (or an empty) module header.
+pub fn declared_module_name(file: &Path) -> Option<String> {
+    if file.extension().and_then(|e| e.to_str()) != Some("sky") {
+        return None;
+    }
+    let src = std::fs::read_to_string(file).ok()?;
+    let parse = syntax::parse(&src, base::FileId(0));
+    let name = parse.tree().module_header()?.name()?.text();
+    (!name.is_empty()).then_some(name)
+}
+
+/// The source ROOT a file must be loaded from for its declared module name to
+/// resolve — the file's directory with one level stripped per dotted segment
+/// beyond the last.
+///
+/// `tests/Std/UiMediaQueryTest.sky` declaring `Std.UiMediaQueryTest` has two
+/// segments, so one directory (`Std`) belongs to the module name and the root is
+/// `tests/`. A flat `FooTest` in `tests/Nested/` has one segment, so the root is
+/// `tests/Nested/` itself. Returns `None` if the path is too shallow for the
+/// declared name (a malformed pairing).
+pub fn source_root_for_declared(file: &Path, declared: &str) -> Option<PathBuf> {
+    let mut dir = file.parent()?.to_path_buf();
+    for _ in 0..declared.split('.').count().saturating_sub(1) {
+        dir = dir.parent()?.to_path_buf();
+    }
+    Some(dir)
+}
+
 fn cap_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
