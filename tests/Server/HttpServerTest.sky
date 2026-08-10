@@ -80,7 +80,7 @@ redirect url =
 -- String.split which returns []string and doesn't compose with
 -- Sky's List kernels — tracked separately).
 -- ══════════════════════════════════════════════════════════
-matchSegments : List String -> List String -> List ( String, String ) -> Maybe List ( String, String )
+matchSegments : List String -> List String -> List ( String, String ) -> Maybe (List ( String, String ))
 matchSegments pp ap acc =
     case pp of
 
@@ -113,7 +113,7 @@ matchSegments pp ap acc =
                         Nothing
 
 
-matchRouteSegs : List String -> List String -> Maybe List ( String, String )
+matchRouteSegs : List String -> List String -> Maybe (List ( String, String ))
 matchRouteSegs pp ap =
     matchSegments pp ap []
 
@@ -212,43 +212,40 @@ tests =
           "response builders"
           [ Test.test
                 "text status defaults to 200"
-                (\_ -> Test.equal 200 text "hi".status)
+                (\_ -> Test.equal 200 (text "hi").status)
           , Test.test
                 "text sets content-type"
-                (\_ -> Test.equal "text/plain" text "hi".contentType)
+                (\_ -> Test.equal "text/plain" (text "hi").contentType)
           , Test.test
                 "text body round-trips"
-                (\_ -> Test.equal "hello" text "hello".body)
+                (\_ -> Test.equal "hello" (text "hello").body)
           , Test.test
                 "json sets application/json"
-                (\_ -> Test.equal "application/json" json "{}".contentType)
+                (\_ -> Test.equal "application/json" (json "{}").contentType)
           , Test.test
                 "html sets text/html"
-                (\_ -> Test.equal "text/html" html "<p/>".contentType)
+                (\_ -> Test.equal "text/html" (html "<p/>").contentType)
           , Test.test
                 "withStatus overrides status"
-                (\_ -> Test.equal 201 withStatus 201 json "{}".status)
+                (\_ -> Test.equal 201 (withStatus 201 (json "{}")).status)
           , Test.test
                 "withStatus preserves body"
-                (\_ -> Test.equal "{}" withStatus 201 json "{}".body)
+                (\_ -> Test.equal "{}" (withStatus 201 (json "{}")).body)
           , Test.test
                 "withStatus preserves content-type"
                 (\_ ->
                     Test.equal
                         "application/json"
-                        withStatus
-                        201
-                        json
-                        "{}".contentType)
+                        (withStatus 201 (json "{}")).contentType)
           , Test.test
                 "redirect status is 302"
-                (\_ -> Test.equal 302 redirect "/login".status)
+                (\_ -> Test.equal 302 (redirect "/login").status)
           , Test.test
                 "redirect captures Location"
-                (\_ -> Test.equal "/login" redirect "/login".location)
+                (\_ -> Test.equal "/login" (redirect "/login").location)
           , Test.test
                 "redirect body is empty"
-                (\_ -> Test.equal "" redirect "/login".body)
+                (\_ -> Test.equal "" (redirect "/login").body)
           ]
     , Test.suite
           "route matching: literals"
@@ -414,8 +411,7 @@ tests =
                 (\_ ->
                     Test.equal
                         "{\"id\":\"42\"}"
-                        idResponseBody
-                        [ "users", "42" ].body)
+                        (idResponseBody [ "users", "42" ]).body)
           , Test.test
                 "non-matching segments yield Nothing"
                 (\_ ->
