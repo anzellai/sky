@@ -275,6 +275,44 @@ exactly:
   an additional, non-required check publishing the real number every run, which
   is what v2 §8.2 and the workflow's own header comment ask for.
 
+**The one local number that IS meaningful**, stated as exactly what it is:
+`xtask harness --tier t1` runs its 13 applicable gates **sequentially, warm, on
+the dev host in 219 s**:
+
+| gate | s | | gate | s |
+|---|---|---|---|---|
+| `sky-suites` | 80.6 | | `apps-ledger` | 12.2 |
+| `conformance` | 62.2 | | `shared-world` | 5.0 |
+| `sky-verify` | 27.0 | | `apps-bundled` | 3.2 |
+| `verify-cli` | 21.3 | | `cli-verbs` | 2.8 |
+| `apps-relay` | 2.5 | | `reject` | 2.2 |
+| `roundtrip` | 0.1 | | `coverage-ledger` | 0.2 |
+| `corpus-manifest` | 0.0 | | | |
+
+That is **not** the tier measurement. It excludes `setup` (the workspace build
+that dominates CI), it is warm rather than cold, and it is sequential where CI
+fans out. It does say that the *gate bodies* are not the problem: three gates
+are 76 % of the 219 s, and they are the three that shell out to real builds —
+which is the same conclusion the sharding lever rests on.
+
+### 4.1 A load-dependent failure worth recording
+
+Immediately after the ~2 h falsifier sweep, a T1 run reported
+`conformance 668/770` (`TimeConformanceTest` and `UuidConformanceTest` exiting
+non-zero) and `verify-cli` failing on `00-standard-libs — build failed`. None
+reproduced: `00-standard-libs` builds clean on demand, and re-running both gates
+in isolation gave `conformance PASS 770/770` and `verify-cli PASS 13/13`, as did
+a full T1 run after cleaning up stray processes.
+
+The coherent reading is resource contention on a loaded host, and it is recorded
+rather than dismissed because **v2 §7.6's persistent semaphore does not exist**.
+The harness runs gates sequentially, which bounds contention *between* gates but
+budgets nothing about the processes a gate spawns — and `sky-suites` alone
+spawns 22 `sky test` builds. §7.6's `EAGAIN`-is-a-FAIL rule is implemented
+(`child.rs:135-147`); the semaphore that would keep the process count under the
+limit in the first place is not. Under load this surface produces failures that
+look like flaky tests and are not.
+
 ---
 
 ## 5. Premise failures this phase found

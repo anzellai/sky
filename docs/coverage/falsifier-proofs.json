@@ -46,7 +46,7 @@
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1786394941
+      "proven_at_unix": 1786397122
     },
     "cli-verbs": {
       "mutation": "cli-verbs.break-an-expectation",
