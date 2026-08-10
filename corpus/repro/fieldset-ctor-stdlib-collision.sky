@@ -1,11 +1,22 @@
--- PINNED REPRO — LIVE DEFECT, found by this corpus on 2026-08-10.
+-- PINNED REPRO — found by this corpus on 2026-08-10, FIXED 2026-08-10.
 --
--- STATUS: BLOCKED (see gen::blocked_reason). This case RUNS, never contributes
--- PASS, and FAILS once its expiry passes. It is not skipped.
+-- STATUS: live PASS. It was BLOCKED (see gen::blocked_reason) while red; the
+-- block is gone because the defect is gone, not because the case was retired.
+-- It now asserts the fix and fails if the collision ever comes back.
 --
--- WHAT HAPPENS
---   `sky build` reports "Types OK (1 module(s))" and "Sky lowering succeeded".
---   The program then panics at runtime:
+-- HOW IT WAS FIXED (rust/crates/lower)
+--   1. `select_record_candidate` (goty.rs) no longer GUESSES. A nominal whose
+--      declared field types contradict the record is refuted outright, and when
+--      several candidates are equally indistinguishable it resolves to NONE
+--      rather than taking `candidates.first()` by registration order.
+--   2. A record literal flowing into a nominal record slot adopts that slot
+--      (lower.rs, the same expected-type threading `if`/`case`/`let` already
+--      use). `mk` now emits `Main_Kv_R{Key: v_0, Value: v_1}` directly — no
+--      coercion at all — instead of building an anonymous struct and narrowing.
+--
+-- WHAT USED TO HAPPEN
+--   `sky build` reported "Types OK (1 module(s))" and "Sky lowering succeeded".
+--   The program then panicked at runtime:
 --
 --     Sky panic: CoerceFailure
 --     panicMsg=rt.Coerce: expected rt.SkyADT, got string (42)
@@ -43,7 +54,7 @@
 --   the collision is the cause; it is the `collider = local` case of the
 --   `fieldset_ctor` stratum.
 --
--- expect: accept, stdout "42"   (CURRENTLY PANICS)
+-- expect: accept, stdout "42"
 --
 -- CHECKED IN, hand-written. Not generator output.
 module Main exposing (main)

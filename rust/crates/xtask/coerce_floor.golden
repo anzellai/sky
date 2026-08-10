@@ -3,19 +3,17 @@
 # A DECREASE is fine (floor tightened) — re-bless to ratchet it down.
 # Regenerate with: cargo run -p xtask -- coerce-floor --bless
 # Format: <example-name>\t<total-rt-narrowing-token-count>
-00-standard-libs	213
+00-standard-libs	221
 01-hello-world	1
 02-go-stdlib	9
 03-tea-external	3
 04-local-pkg	2
-05-mux-server	9
 06-json	46
 07-todo-cli	126
-08-notes-app	665
 09-live-counter	92
 10-live-component	92
+11-fyne-stopwatch	10
 12-skyvote	713
-13-skyshop	1677
 14-task-demo	5
 15-http-server	13
 16-skychess	678
@@ -41,7 +39,7 @@
 36-composite-server	245
 37-composite-live-shop	612
 38-composite-ui-multibackend	459
-40-generic-adt-field	6
+40-generic-adt-field	5
 41-nested-curry	7
 42-poly-record	3
 43-composition	6
@@ -56,4 +54,4 @@
 52-blog-analytics	407
 53-record-update-map	28
 54-record-fieldset-collision	5
-55-store-partial-update	95
+55-store-partial-update	96

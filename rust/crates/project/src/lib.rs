@@ -11,15 +11,17 @@ mod doc;
 mod driver;
 mod ffi_ops;
 pub use build::{
-    build_example, build_project, configured_bin_name, configured_source_root, emit_example_source,
-    enumerate_skydep_files, load_ffi_surface, BuildOptions, BuildReport,
+    build_example, build_project, configured_bin_name, configured_source_root, db_driver_conflict,
+    driver_for_dsn, emit_example_source, enumerate_skydep_files, load_ffi_surface, BuildOptions,
+    BuildReport,
 };
 pub use doc::{
     list_modules, render_doc_site, render_doc_site_export, render_guides, render_landing,
     render_learn_tour, render_module, stdlib_denominators, ModuleDenominator,
 };
 pub use driver::{
-    assets_root_for, is_compiler_repo_root, module_name_from_path, project_dir_for, repo_root_for,
+    assets_root_for, declared_module_name, is_compiler_repo_root, module_name_from_path,
+    project_dir_for, repo_root_for, source_root_for_declared,
     run_app,
 };
 /// Re-exported so `sky init` can scaffold an embedded template (`CLAUDE.md`)

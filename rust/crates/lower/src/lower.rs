@@ -146,10 +146,28 @@ pub struct LowerConfig {
     /// read. Emitted as a leading `rt.SetEnvPrefix(...)` in `init()` (before the
     /// defaults, so they seed under the custom prefix). `None` keeps `SKY`.
     pub env_prefix: Option<String>,
-    /// Extra `rt.SetSkyDefault(suffix, value)` pairs — e.g. `[("DB_DRIVER",
-    /// "sqlite"), ("DB_PATH", "todos.db")]` from `[database]`. Emitted after the
-    /// fixed defaults so a config value wins.
+    /// Extra `rt.SetSkyDefault(suffix, value)` pairs — e.g. `[("DB_PATH",
+    /// "todos.db")]` from `[database]`. Emitted after the fixed defaults so a
+    /// config value wins. Every suffix here must be one the runtime actually
+    /// READS; a default nothing reads is a documented contract that does not
+    /// exist (see `db_driver` below).
     pub extra_defaults: Vec<(String, String)>,
+    /// The `[database] driver` value as DECLARED in sky.toml, if any.
+    ///
+    /// Deliberately NOT an entry in `extra_defaults`. It used to be emitted as
+    /// `DB_DRIVER` → `SKY_DB_DRIVER`, and **nothing in `runtime-go` has ever
+    /// read it**: the driver comes from the DSN's shape (`rt.detectDriver`,
+    /// `runtime-go/rt/db_auth.go`), which is what all ~15 downstream dialect
+    /// branches key off. So `driver = "postgres"` beside a `./app.db` path
+    /// silently opened SQLite while two docs advertised the key as the selector.
+    ///
+    /// It is kept here as a declared EXPECTATION, checked against the DSN at
+    /// build time (`db_driver_conflict`) so a contradiction is reported instead
+    /// of silently ignored. The DSN stays the single source of truth.
+    pub db_driver: Option<String>,
+    /// The `[database] path` / `url` DSN as declared in sky.toml, for the
+    /// consistency check above.
+    pub db_dsn: Option<String>,
     /// The pinned Go-FFI surface (doc 09) for this project — empty when the
     /// project imports no Go packages.
     pub ffi: FfiTable,
@@ -2239,7 +2257,7 @@ impl<'a> Ctx<'a> {
             if is_unit_only {
                 out.push(GoStmt::Discard(lowered));
             } else {
-                out.push(GoStmt::Discard(any_task_run(lowered)));
+                entry_task_run(lowered, out);
             }
         }
     }
@@ -2464,6 +2482,36 @@ impl<'a> Ctx<'a> {
             )
         {
             actual = expected.clone();
+        }
+        // Same principle, applied to a RECORD LITERAL: `{ key = k, value = v }`
+        // has no identity beyond its fields, so the slot it flows into is the
+        // authoritative statement of which record it is. The literal's own
+        // inferred type is frequently under-determined — the lowerer's typed
+        // table is deliberately NOT annotation-seeded (`Typer::body_types`), so a
+        // constructor's param-valued fields read back as unsolved vars — and
+        // `sky_ty_to_go` then cannot pick a nominal for it. Taking the slot type
+        // is both more accurate and strictly more typed: the literal is built AS
+        // the declared struct (`Main_Kv_R{Key: k, Value: v}`) instead of being
+        // built anonymously and narrowed back with `rt.Coerce`.
+        //
+        // Guarded to the case where the slot is a nominal record carrying EXACTLY
+        // this literal's field names, so it can only ever replace a coercion into
+        // that same nominal — never re-target the literal at an unrelated shape.
+        if *expected != GoTy::Any && actual != *expected {
+            if let (Expr::Record(fields), GoTy::Named(n, _)) = (&self.body.exprs[e], expected) {
+                if let Some(decl) = self.record_fields.get(n.as_str()) {
+                    // `record_fields` is keyed by the GO field name (capitalised);
+                    // the literal carries Sky names.
+                    let mut lit: Vec<String> =
+                        fields.iter().map(|(n, _)| capitalize(n.as_str())).collect();
+                    let mut dec: Vec<String> = decl.iter().map(|(n, _)| n.clone()).collect();
+                    lit.sort_unstable();
+                    dec.sort_unstable();
+                    if lit == dec {
+                        actual = expected.clone();
+                    }
+                }
+            }
         }
         let node = self.lower_expr_inner(e, &actual);
         self.coerce_if_needed(node, expected)
@@ -6132,6 +6180,77 @@ fn sig_result_after(sig: &Ty, n: usize) -> Ty {
         }
     }
     cur.clone()
+}
+
+/// The PROCESS ENTRY's task force. Runs the entry Task and honours its result:
+/// an `Err` is reported and the process exits non-zero.
+///
+/// This used to be a bare `_ = rt.AnyTaskRun(<main>)`, which threw the entry's
+/// `Result` into the blank identifier. A `main : Task Error ()` that FAILED
+/// therefore printed nothing about the failure and exited 0 — so every gate
+/// keyed on exit status was blind to app-level failure. That is how a golden
+/// file came to hold one byte encoding a dead `Db.connect` and stayed green.
+///
+/// Kept separate from [`any_task_run`] deliberately. `rt.AnyTaskRun` is shared
+/// with user-level `Task.run` / `Task.perform` and with every `let _ = <task>`
+/// discard, where "run it and ignore the result" is the CORRECT semantics —
+/// teaching the shared helper to exit the process would break them. Only the
+/// process entry has an exit code to report through, so only the process entry
+/// gets this wrapper.
+///
+/// Emits:
+/// ```go
+/// if _skyEntry := rt.AnyTaskRun(<main>); rt.ResultTag(_skyEntry) == 1 {
+///     _ = rt.Log_error(rt.Debug_toString(rt.ResultErr(_skyEntry)))
+///     _ = rt.System_exit(1)
+/// }
+/// ```
+/// `ResultTag` returns -1 for a non-`SkyResult` and 0 for `Ok`, so only a real
+/// `Err` (tag 1) trips it — a succeeding entry is untouched and still exits 0.
+fn entry_task_run(expr: GoExpr, out: &mut Vec<GoStmt>) {
+    const ENTRY: &str = "_skyEntry";
+    out.push(GoStmt::Short(ENTRY.to_string(), any_task_run(expr)));
+    let entry_ref = || GoExpr::new(GoExprKind::Ident(ENTRY.to_string()), GoTy::Any);
+    let cond = GoExpr::new(
+        GoExprKind::Binary(
+            GoBin::Eq,
+            Box::new(call_rt(
+                "rt.ResultTag",
+                vec![entry_ref()],
+                GoTy::Bare(Prim::Int),
+            )),
+            Box::new(GoExpr::new(
+                GoExprKind::IntLit(1),
+                GoTy::Bare(Prim::Int),
+            )),
+        ),
+        GoTy::Bare(Prim::Bool),
+    );
+    // `rt.Log_error` follows the Task-everywhere doctrine and returns a LAZY
+    // thunk — discarding it would emit nothing at all, which is most of the
+    // defect. Force it through the ordinary auto-force path.
+    let report = any_task_run(call_rt(
+        "rt.Log_error",
+        // `Basics_errorToStringT` routes a Sky `Error` through `renderSkyError`,
+        // so the entry reports "Unexpected: deliberate entry failure" rather than
+        // a raw Go struct dump; it falls back to `%v` for any other error type.
+        vec![call_rt(
+            "rt.Basics_errorToStringT",
+            vec![call_rt("rt.ResultErr", vec![entry_ref()], GoTy::Any)],
+            GoTy::Bare(Prim::Str),
+        )],
+        GoTy::Any,
+    ));
+    let exit = call_rt(
+        "rt.System_exit",
+        vec![GoExpr::new(GoExprKind::IntLit(1), GoTy::Bare(Prim::Int))],
+        GoTy::Any,
+    );
+    out.push(GoStmt::If(
+        cond,
+        vec![GoStmt::Discard(report), GoStmt::Discard(exit)],
+        Vec::new(),
+    ));
 }
 
 /// `rt.AnyTaskRun(expr)` — force a Task at an entry boundary (doc 08 §3).

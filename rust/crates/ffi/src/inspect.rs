@@ -160,17 +160,121 @@ pub fn run_inspector(
     work_dir: &Path,
     pkgs: &[String],
 ) -> Result<Vec<PackageInfo>, String> {
+    run_inspector_reporting(bin, work_dir, pkgs).map(|(infos, _)| infos)
+}
+
+/// How a package's surface was inspected. Part of the surface's provenance: a
+/// host-inspected surface is NOT portable and must not be compared byte-for-byte
+/// against one generated on another machine.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InspectTarget {
+    /// The pinned `linux/amd64`, `CGO_ENABLED=0` target — reproducible anywhere.
+    Pinned,
+    /// The host's own `GOOS`/`GOARCH` with cgo ENABLED. Used only for packages
+    /// that cannot be type-checked under the pinned target at all.
+    HostCgo,
+}
+
+/// Like [`run_inspector`], but also reports a note when the **host + cgo
+/// fallback** was used, so the caller can warn and record the provenance.
+///
+/// # Why a fallback exists
+///
+/// The pinned target (`linux/amd64`, `CGO_ENABLED=0`) is what makes a macOS dev
+/// and a Linux CI read identical surface bytes, and it stays the default for
+/// every package. But it cannot type-check a package that genuinely REQUIRES
+/// cgo: Fyne reaches glfw → OpenGL → the platform's native windowing, none of
+/// which exists under `CGO_ENABLED=0`. Such a package could not be inspected on
+/// ANY machine, so `sky install` could not generate its surface, and
+/// `11-fyne-stopwatch` was verified on no platform at all — Linux CI skipped it
+/// and macOS could not build it (GitHub discussion #50).
+///
+/// So: try the pinned target first, always. Only if that fails outright, retry
+/// on the host's own target with cgo enabled. Normalisation is unchanged for
+/// everything else, and a package that succeeds under the pin never touches this
+/// path — the reproducibility guarantee is preserved exactly where it can hold,
+/// and traded away only where the alternative is no surface at all.
+///
+/// The returned note names the target used. A surface produced this way is
+/// host-specific by construction: it describes the platform it was generated on.
+pub fn run_inspector_reporting(
+    bin: &Path,
+    work_dir: &Path,
+    pkgs: &[String],
+) -> Result<(Vec<PackageInfo>, Option<String>), String> {
     if pkgs.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
-    let out = Command::new(bin)
-        .args(pkgs)
-        .current_dir(work_dir)
-        .env("GOOS", PIN_GOOS)
-        .env("GOARCH", PIN_GOARCH)
-        // CGO off: cross-GOOS type-checking of pure-Go SDKs must not try to
-        // compile cgo for the host (doc 09 §C.4 open-question mitigation).
-        .env("CGO_ENABLED", "0")
+    match run_inspector_on(bin, work_dir, pkgs, InspectTarget::Pinned) {
+        Ok(infos) => Ok((infos, None)),
+        Err(pinned_err) => {
+            // ANY pinned-target failure earns one retry on the host. The failure
+            // modes are not reliably distinguishable from the message: a
+            // cgo-requiring package can present as "build constraints exclude all
+            // Go files", as an undefined C symbol, OR — as Fyne actually does —
+            // as a plain type error deep inside its own driver, because
+            // CGO_ENABLED=0 selects a stub file set whose type no longer
+            // satisfies the interface ("gLDriver does not implement fyne.Driver
+            // (missing method DoubleTapDelay)"). A keyword whitelist over that
+            // surface would be permanently incomplete.
+            //
+            // Retrying broadly is safe because the retry only ever turns a
+            // FAILURE into a success, never changes a successful pinned result,
+            // and always reports its provenance. A genuinely broken or misspelt
+            // package fails both ways and gets both errors.
+            match run_inspector_on(bin, work_dir, pkgs, InspectTarget::HostCgo) {
+                Ok(infos) => Ok((
+                    infos,
+                    Some(format!(
+                        "FFI surface for {} was generated on the HOST target \
+                         ({}/{}, cgo enabled) because it cannot be type-checked \
+                         under the pinned {PIN_GOOS}/{PIN_GOARCH} CGO_ENABLED=0 \
+                         target. This surface describes THIS platform and is not \
+                         portable — regenerate it (`sky install`) on any machine \
+                         whose surface you need, and do not expect it to match \
+                         another platform's byte-for-byte.",
+                        pkgs.join(", "),
+                        std::env::consts::OS,
+                        std::env::consts::ARCH,
+                    )),
+                )),
+                // Report the PINNED error: it is the one describing the default
+                // path, and the fallback failing too means neither works.
+                Err(host_err) => Err(format!(
+                    "{pinned_err}\n\nhost+cgo fallback also failed:\n{host_err}"
+                )),
+            }
+        }
+    }
+}
+
+/// One inspector invocation at a given target.
+fn run_inspector_on(
+    bin: &Path,
+    work_dir: &Path,
+    pkgs: &[String],
+    target: InspectTarget,
+) -> Result<Vec<PackageInfo>, String> {
+    let mut cmd = Command::new(bin);
+    cmd.args(pkgs).current_dir(work_dir);
+    match target {
+        InspectTarget::Pinned => {
+            cmd.env("GOOS", PIN_GOOS)
+                .env("GOARCH", PIN_GOARCH)
+                // CGO off: cross-GOOS type-checking of pure-Go SDKs must not try
+                // to compile cgo for the host (doc 09 §C.4 mitigation).
+                .env("CGO_ENABLED", "0");
+        }
+        InspectTarget::HostCgo => {
+            // Inherit the host's GOOS/GOARCH by REMOVING any pin the parent
+            // process may carry, and turn cgo on so the C-backed files are in
+            // the build at all.
+            cmd.env_remove("GOOS")
+                .env_remove("GOARCH")
+                .env("CGO_ENABLED", "1");
+        }
+    }
+    let out = cmd
         .output()
         .map_err(|e| format!("spawn sky-ffi-inspect: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout);

@@ -67,9 +67,7 @@ stratum       = "fieldset_ctor"
 coordinate    = { construction = "via_ctor_fn", collider = "stdlib_eventprop" }
 expect        = "accept"
 expect_stdout = "42"
-status        = "BLOCKED"
-expires       = "2026-11-10"
-summary       = "LIVE: a user {key,value} record built through an annotated constructor collides with Std.Analytics.EventProp — compiles clean, panics at runtime"
+summary       = "FIXED: a user {key,value} record built through an annotated constructor collided with Std.Analytics.EventProp — compiled clean, panicked at runtime"
 
 [[repro]]
 file          = "issue-164-alias-not-last-segment.sky"

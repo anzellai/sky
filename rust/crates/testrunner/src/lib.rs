@@ -5,8 +5,8 @@
 //! (`app/Main.hs:1413`). The synthesised entry is removed regardless of outcome.
 
 use project::{
-    assets_root_for, build_project, configured_bin_name, module_name_from_path, project_dir_for,
-    BuildOptions,
+    assets_root_for, build_project, configured_bin_name, declared_module_name,
+    module_name_from_path, project_dir_for, source_root_for_declared, BuildOptions,
 };
 use std::path::Path;
 
@@ -61,9 +61,21 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
     };
     let project_dir = project_dir_for(suite_path);
 
-    let Some(module) = module_name_from_path(&project_dir, &["src", "tests"], suite_path) else {
+    // The suite's module identity is the name it DECLARES, not the one its path
+    // suggests. The loader registers every module under its `module … exposing`
+    // header; a path-derived guess that disagrees does NOT fail the build —
+    // `classify_import` treats an unknown module as a Go FFI package, the
+    // `Suite.tests` reference lowers to `nil`, and the run reports
+    // "0 passed, 0 failed (0 total)" and exits 0. Deriving from the path is only
+    // a fallback for a headerless file.
+    let declared = declared_module_name(suite_path);
+    let Some(module) = declared
+        .clone()
+        .or_else(|| module_name_from_path(&project_dir, &["src", "tests"], suite_path))
+    else {
         run.note = format!(
-            "{} must live under src/ or tests/ so its module name can be derived",
+            "{} declares no `module …` header and its module name cannot be \
+             derived from its path",
             suite_path.display()
         );
         return Ok(run);
@@ -99,12 +111,46 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
         progress: false,
     };
     // Extra source roots: the project's `tests/` tree (carries the suite when it
-    // lives under tests/) and the scratch dir (carries the synth entry).
-    let extra = vec![project_dir.join("tests"), scratch.clone()];
+    // lives under tests/), the root the suite's DECLARED name is relative to (so
+    // `tests/Std/ThingTest.sky` declaring `Std.ThingTest` loads from `tests/`
+    // even when that is the project root itself), and the scratch dir (carries
+    // the synth entry).
+    let mut extra = vec![project_dir.join("tests")];
+    if let Some(root) = declared
+        .as_deref()
+        .and_then(|d| source_root_for_declared(suite_path, d))
+    {
+        if !extra.contains(&root) {
+            extra.push(root);
+        }
+    }
+    extra.push(scratch.clone());
     let report = build_project(&opts, &extra, Some(ENTRY_MODULE));
 
     run.emitted = report.emitted;
     run.build_ok = report.go_build_ok;
+
+    // The suite reference must have resolved to a real Sky module. If it fell
+    // through to the FFI-package path the lowerer emits `nil` for `Suite.tests`
+    // and the run reports a cheerful "0 passed" — the exact failure this guard
+    // exists to make impossible. `sky build`/`sky run` print these warnings;
+    // `sky test` used to drop them, which is why nothing caught it.
+    let foreign = report
+        .warnings
+        .iter()
+        .find(|w| w.contains("foreign ref") && w.contains(&format!("{module}.")));
+    if report.emitted && foreign.is_some() {
+        run.emitted = false;
+        run.build_ok = false;
+        run.note = format!(
+            "suite module `{module}` did not resolve — it was treated as a Go FFI \
+             package, so its `tests` would run as an EMPTY list. Check that {} \
+             declares `module {module}` and sits under a source root.",
+            suite_path.display()
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+        return Ok(run);
+    }
 
     if !report.emitted {
         run.note = report.note;
