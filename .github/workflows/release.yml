@@ -162,10 +162,101 @@ jobs:
           if-no-files-found: error
 
   # ────────────────────────────────────────────────────────────────
+  # THE RELEASE TEST GATE.
+  #
+  # Until this job existed, `release.yml` ran NO test of any kind. Pushing a
+  # `v*` tag built four binaries, checked that each reported the tag's version,
+  # and published — so a tag cut from a red commit shipped, green. The only
+  # thing standing between a broken compiler and a published release was
+  # `scripts/preflight-tag.sh`, which a human has to remember to run locally.
+  # "A human remembers" is not a gate.
+  #
+  # WHAT IT RUNS, and why exactly this set: it is the `rust gate suite` arm of
+  # `scripts/preflight-tag.sh:75` — the set this repo already treats as the
+  # release bar — plus the gate harness, which is the only runner that can
+  # report NOT RUN / UNPROVEN instead of silently passing. Keeping the two in
+  # step is deliberate: a release must not be gated on something weaker than
+  # what the maintainer runs by hand.
+  #
+  # WHY IT DOES NOT `needs: build`: the matrix and the gate are independent, so
+  # they run concurrently and the gate does not lengthen the critical path. The
+  # dependency that matters is `release: needs: [build, gate]` — assets may be
+  # built, but nothing is PUBLISHED until the gate is green.
+  #
+  # T4 (pre-release) ceiling is 3 h (docs/ci-test-architecture-v2.md §8.1); the
+  # per-job timeout below is sized to this job's own estimate per §8.2, not to
+  # the tier.
+  # ────────────────────────────────────────────────────────────────
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # `test-rest` shelled out to a real `go build` with no toolchain pin,
+      # which meant it silently tested whatever Go the runner image happened to
+      # ship. Pin it here for the same reason the build job does.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Workspace tests
+        working-directory: rust
+        run: cargo test --workspace --locked
+
+      # Release-built, deliberately. `preflight-tag.sh:70-74` records the
+      # measurement: an unoptimised xtask made these ~10x slower, and `reject`
+      # alone measured 780 s debug against 74 s release for an IDENTICAL
+      # verdict. CI never got that fix; it gets it here.
+      - name: Corpus gates
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          for g in roundtrip resolve infer reject fuzz coerce-floor repro; do
+            echo "── xtask $g ──"
+            cargo run --release --locked -q -p xtask -- "$g"
+          done
+
+      - name: Codegen build + run
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          cargo run --release --locked -q -p xtask -- build-run --all
+          cargo run --release --locked -q -p xtask -- build-run --shape cli --run --golden
+
+      # The harness is the only runner here that CANNOT report a false green: a
+      # gate that did not execute renders NOT RUN, the suite renders UNKNOWN,
+      # and UNKNOWN exits 3. `--require-proofs` additionally demotes a PASS
+      # whose falsifying mutation has not been verified inside its declared
+      # window to UNPROVEN, which is also non-zero. A release should not ship
+      # behind a gate nobody has proven can fail.
+      - name: Gate harness (T1) with proof requirement
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs
+
+      # Denominator + ledger ratchets. These do not test the compiler; they
+      # assert that the coverage claims shipped alongside it are still true and
+      # still current. A release is exactly when a stale ledger does the most
+      # damage.
+      - name: Coverage ratchets
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          cargo run --release --locked -q -p xtask -- denominators --check
+          cargo run --release --locked -q -p xtask -- coverage-ledger --check
+
+  # ────────────────────────────────────────────────────────────────
   # Assemble release assets, generate checksums, publish GitHub Release.
   # ────────────────────────────────────────────────────────────────
   release:
-    needs: build
+    needs: [build, gate]
     runs-on: ubuntu-latest
     # No compilation: download 4 artifacts, checksum, extract CHANGELOG notes,
     # create the Release (asset upload dominates) ≈ 3 min. 1.5x ≈ 5.

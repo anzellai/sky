@@ -642,6 +642,34 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::apps_ffi_scale,
     },
+    Gate {
+        name: "sky-suites",
+        tier: Tier::T1,
+        platforms: UNIX,
+        // Measured warm on the dev host: 91 s for all 22 suites (each `sky test`
+        // re-type-checks the whole `tests/` project and runs `go build`). The
+        // ceiling is set for a COLD Go build cache on a slower runner, where the
+        // per-suite `go build` dominates — the same reason `conformance` (a
+        // comparable 20-suite Sky.Test run) sits at 2400.
+        budget_s: 1800,
+        expected: bodies::SKY_SUITES_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
+        mutations: Mutations::new(&[Mutation {
+            id: "sky-suites.break-expectation",
+            description: "corrupt one status-classification expectation; the suite's \
+                          own assertion must go red and the wrapper must see it in \
+                          the per-case JSON. Chosen over deleting a case on purpose: \
+                          it leaves the case COUNT at its pinned value, so the gate \
+                          can only go red by reading pass/fail, not by counting",
+            kind: MutationKind::ReplaceOnce {
+                path: "tests/Server/HttpServerTest.sky",
+                from: "Test.equal 401 (statusForCategory \"auth\")",
+                to: "Test.equal 402 (statusForCategory \"auth\")",
+            },
+        }]),
+        body: bodies::sky_suites,
+    },
     // ---- harness self-verification ----------------------------------------
     //
     // `selftest-hang` is deliberately registered BEFORE `canary`. Registry order
@@ -681,6 +709,31 @@ pub static GATES: &[Gate] = &[
             kind: MutationKind::NoOp,
         }]),
         body: bodies::canary,
+    },
+    Gate {
+        name: "coverage-ledger",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 300,
+        expected: bodies::COVERAGE_LEDGER_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the coverage ledger is current, and no surface got weaker unaccounted",
+        // The ledger is the thing every coverage CLAIM rests on, so it needs the
+        // same treatment as the claims: a mutation that proves it can go red.
+        // Removing a sole owner's import is the cheapest honest one — it is
+        // exactly the event the ledger exists to notice.
+        mutations: Mutations::new(&[Mutation {
+            id: "coverage-ledger.drop-a-sole-owner-import",
+            description: "delete the ONLY import of `Std.Cli` in the repo; \
+                          `stdlib.Std.Cli`'s cover_new must regress and the \
+                          checked-in ledger must go stale",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/20-cli-counter/src/Main.sky",
+                from: "import Std.Cli",
+                to: "-- import Std.Cli",
+            },
+        }]),
+        body: bodies::coverage_ledger,
     },
     Gate {
         name: "selftest-blocked",
