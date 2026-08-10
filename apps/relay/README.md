@@ -96,10 +96,15 @@ Relay carries both shapes the v0.18.9 / #155 regression needs:
 
 ## Known compiler/stdlib findings surfaced by this app
 
-1. **`Std.Config` applicative record decoding panics at runtime.** The shape in
-   `Std.Config`'s own module docstring compiles clean and then panics with
-   `TypeMismatch — rt.skyCallDirect: argument 0 type mismatch`. See the comment
-   block at `src/Config.sky:126-146`. Relay decodes field-by-field instead.
+1. ~~**`Std.Config` applicative record decoding panics at runtime.**~~ **FIXED.**
+   The shape in `Std.Config`'s own module docstring compiled clean and then
+   panicked with `TypeMismatch — rt.skyCallDirect: argument 0 type mismatch`,
+   because a function-typed type variable lost its concrete Go type crossing
+   the all-`any` decoder kernels while codegen had compiled the continuation
+   against the type HM inferred. `rt.skyCallDirect` now adapts a generic
+   curried closure to the concrete function type
+   (`adaptSkyFuncValue`, `runtime-go/rt/rt.go`). See the comment block at
+   `src/Config.sky`.
 2. **`Middleware.withCsrf` cookie name drift.** The docstring says
    `__Host-sky_csrf`; the runtime issues `__sky_csrf`. `csrfProbe` accepts both.
 3. **`Std.PubSub.publish` is unavailable in a pure `Sky.Http.Server` process** —

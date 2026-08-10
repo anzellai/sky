@@ -123,15 +123,15 @@ envDoc _ =
 
 
 -- ─── Typed decoders (Std.Config) ──────────────────────────────────
--- KNOWN DEFECT — the applicative record shape below is what
--- `Std.Config`'s own module docstring documents:
+-- FIXED — the applicative record shape that `Std.Config`'s own module
+-- docstring documents:
 --
 --     Cfg.succeed (\c r -> { capacity = c, refill = r })
 --         |> Cfg.andThen (\f -> Cfg.map f (Cfg.field "limits" ...))
 --         |> Cfg.andThen (\f -> Cfg.map f (Cfg.at [...] Cfg.int))
 --
--- It compiles clean and `go build`s clean, then panics the moment the
--- document actually parses:
+-- used to compile clean, `go build` clean, and then panic the moment the
+-- document actually parsed:
 --
 --     Sky panic: TypeMismatch — rt.skyCallDirect: argument 0 type
 --     mismatch — function expects func(int) main.Config_Limits_R,
@@ -139,11 +139,17 @@ envDoc _ =
 --       rt.Config_andThen.func1  (rt/config_kernel.go:200)
 --       rt.Config_decodeToml     (rt/config_kernel.go:217)
 --
--- The identical applicative shape over `Sky.Core.Task` works, so the
--- hole is in how the Std.Config decoder kernels carry a FUNCTION-typed
--- type variable across the `any` boundary.  Until that is fixed, Relay
--- decodes each field with its own decoder — which is why `Limits` and
--- `Features` are assembled in `fromDoc` rather than by one decoder.
+-- The hole was in how a FUNCTION-typed type variable crossed the `any`
+-- boundary: the decoder kernels are all-`any`, so the partially applied
+-- record constructor arrived as the runtime's generic curried closure,
+-- while codegen had compiled the continuation with the concrete function
+-- type HM inferred. `rt.skyCallDirect` now bridges the two
+-- (`adaptSkyFuncValue`), so the documented shape runs.
+--
+-- The per-field decoders below are kept as-is: they are not a workaround
+-- any more, just the shape this app already had, and they exercise
+-- `Cfg.field` / `Cfg.at` / `Cfg.map` rather than duplicating the
+-- applicative coverage.
 capacityDecoder : Cfg.Decoder Int
 capacityDecoder =
     Cfg.map atLeastOne (Cfg.field "limits" (Cfg.field "capacity" Cfg.int))

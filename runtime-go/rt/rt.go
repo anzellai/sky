@@ -10079,6 +10079,29 @@ func skyCallDirect(rv reflect.Value, args []any) any {
 					break
 				}
 			}
+			// FUNCTION-typed type variable crossing an `any` kernel boundary.
+			// A kernel whose signature is all-`any` (Std.Config's decoder
+			// combinators, and any other reflection-based higher-order kernel)
+			// hands on the runtime's own generic curried closure — shaped
+			// func(any) any. But HM DID infer the continuation's parameter, so
+			// codegen compiled it as a concrete, possibly multi-argument Go
+			// func. Both are correct; they just are not the same reflect.Type,
+			// and this used to be an outright panic on a well-typed program.
+			//
+			// Bridge them with an adapter that receives the concrete arguments
+			// and applies them through SkyCall, which already implements the
+			// currying the generic closure expects.
+			//
+			// This ONLY runs where the call previously panicked, so it cannot
+			// change the behaviour of any call that already worked. A non-func
+			// argument, or a result that does not fit the declared return
+			// type, still fails loudly.
+			if pt.Kind() == reflect.Func && av.Kind() == reflect.Func {
+				if adapted := adaptSkyFuncValue(av, pt); adapted.IsValid() {
+					vals[i] = adapted
+					break
+				}
+			}
 			// Audit P0-6: pre-fix this branch silently passed `av` into
 			// reflect.Call with a wrong type, which then panicked inside
 			// reflect with a cryptic "reflect: Call using X as Y" message.
@@ -10102,6 +10125,71 @@ func skyCallDirect(rv reflect.Value, args []any) any {
 		return nil
 	}
 	return out[0].Interface()
+}
+
+// adaptSkyFuncValue wraps a Sky-generic closure so it satisfies a concrete Go
+// function type.
+//
+// The generic closure is curried one argument at a time (func(any) any chains);
+// the target may take all its arguments at once. SkyCall already reconciles
+// those two calling conventions, so the adapter just forwards through it.
+//
+// Returns an invalid Value for shapes it will not fake — variadic targets and
+// multi-result targets — so the caller falls through to its normal diagnostic
+// instead of this producing a subtly wrong function.
+func adaptSkyFuncValue(fn reflect.Value, target reflect.Type) reflect.Value {
+	if target.IsVariadic() || target.NumOut() > 1 {
+		return reflect.Value{}
+	}
+	callee := fn.Interface()
+	return reflect.MakeFunc(target, func(args []reflect.Value) []reflect.Value {
+		callArgs := make([]any, len(args))
+		for i, a := range args {
+			callArgs[i] = a.Interface()
+		}
+		res := SkyCall(callee, callArgs...)
+		if target.NumOut() == 0 {
+			return nil
+		}
+		ot := target.Out(0)
+		out := skyValueAsType(res, ot)
+		if !out.IsValid() {
+			// The closure ran but produced something the declared return type
+			// cannot hold. Surface it rather than papering over it.
+			panic(fmt.Sprintf(
+				"rt.adaptSkyFuncValue: adapted function returned %T (%v), "+
+					"which does not fit the declared result type %v", res, res, ot))
+		}
+		return []reflect.Value{out}
+	})
+}
+
+// skyValueAsType converts an any-typed Sky value to a concrete reflect.Type
+// using the same rules as skyCallDirect's argument binding, including the
+// function-adaptation case so curried chains nest.
+//
+// Returns an invalid Value when no rule applies; callers decide the diagnostic.
+func skyValueAsType(v any, t reflect.Type) reflect.Value {
+	if v == nil {
+		return reflect.Zero(t)
+	}
+	rv := reflect.ValueOf(v)
+	switch {
+	case rv.Type() == t:
+		return rv
+	case t.Kind() == reflect.Interface && rv.Type().Implements(t):
+		return rv
+	case rv.Type().ConvertibleTo(t) && safeReflectConvert(rv.Kind(), t.Kind()):
+		return rv.Convert(t)
+	case rv.Kind() == reflect.Func && t.Kind() == reflect.Func:
+		return adaptSkyFuncValue(rv, t)
+	}
+	if isStructuralNarrowCandidate(rv.Kind(), t.Kind()) {
+		if narrowed := narrowReflectValue(rv, t); narrowed.IsValid() {
+			return narrowed
+		}
+	}
+	return reflect.Value{}
 }
 
 func skyCallOne(f any, arg any) any {
