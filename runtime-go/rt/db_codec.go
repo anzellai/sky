@@ -289,9 +289,84 @@ func rawToSqlArg(raw any, kind string) any {
 	}
 }
 
+// storeWriteResult runs an insert-shaped statement and produces the Int the
+// Store verb returns.
+//
+// The verbs are typed `Task Error Int`, and for a store whose primary key the
+// DATABASE assigns (`Store.serial`, or any integer PK) the only useful integer
+// is that assigned key — the caller cannot obtain it any other way, because the
+// PK is `generated` and therefore omitted from the INSERT. These kernels used
+// to end in `AnyTaskRun(Db_exec(...))`, which returns RowsAffected: always 1
+// for a single-row insert. Callers wiring child rows to it attributed every one
+// of them to id 1.
+//
+// Precedence is decided by the PK's declared kind, not by guessing:
+//
+//   - integer PK  → `RETURNING <pk>`, and the assigned key is returned.
+//   - other PK    → the caller already supplied the key, so there is no
+//     DB-assigned integer to report and the verb keeps returning rows
+//     affected. Fabricating a number here would be the same class of silent
+//     wrong value this fix exists to remove.
+//
+// `RETURNING` is used on BOTH dialects rather than `LastInsertId` on SQLite:
+// SQLite only updates `last_insert_rowid()` on a real INSERT, so an upsert that
+// took the `DO UPDATE` branch would report a stale rowid. RETURNING has no such
+// hole and is already the repo-wide floor (SQLite >= 3.35 / PostgreSQL), per
+// `Db_insertFieldsReturning`.
+//
+// The statement is passed through `d.rebind` — it is composed with literal `?`
+// (see the placeholder loops below), and Postgres rejects those.
+func storeWriteResult(d *SkyDb, verb, sqlText string, params []any, pk, pkKind string) any {
+	// These kernels used to reach the driver via Db_exec, which binds every
+	// argument through dbBindArg — that is what turns a `Store.defaultWith`
+	// SqlValue ADT into a driver-friendly Go value. Bypassing Db_exec means
+	// doing it here; dropping it would silently break UUID/Money defaults.
+	bound := make([]any, len(params))
+	for i, p := range params {
+		bound[i] = dbBindArg(p)
+	}
+	params = bound
+
+	base, _ := codecSplitKind(pkKind)
+	if base != "int" || pk == "" {
+		res, err := d.executor().Exec(d.rebind(sqlText), params...)
+		if err != nil {
+			return Err[any, any](ErrIo(verb + ": " + err.Error()))
+		}
+		n, _ := res.RowsAffected()
+		return Ok[any, any](int(n))
+	}
+	rows, err := d.executor().Query(d.rebind(sqlText+" RETURNING "+pk), params...)
+	if err != nil {
+		return Err[any, any](ErrIo(verb + ": " + err.Error()))
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		// No row came back — an `ON CONFLICT ... DO NOTHING` that did nothing.
+		if err := rows.Err(); err != nil {
+			return Err[any, any](ErrIo(verb + ": " + err.Error()))
+		}
+		return Ok[any, any](0)
+	}
+	var id any
+	if err := rows.Scan(&id); err != nil {
+		return Err[any, any](ErrIo(verb + " id: " + err.Error()))
+	}
+	if err := rows.Err(); err != nil {
+		return Err[any, any](ErrIo(verb + ": " + err.Error()))
+	}
+	return Ok[any, any](AsIntOrZero(normaliseSqlValue(id)))
+}
+
 // Db_execObject splits a record's JSON object into columns and INSERTs it.
-func Db_execObject(connArg, tableArg, colspecArg, objArg any) any {
+// `pkArg` / `pkKindArg` let it return the DB-assigned key — see
+// storeWriteResult.
+func Db_execObject(connArg, tableArg, colspecArg, objArg, pkArg, pkKindArg any) any {
 	return func() any {
+		d, isDb := connArg.(*SkyDb)
+		if !isDb {
+			return Err[any, any](ErrInvalidInput("Store.insert: first argument is not a Db"))
+		}
 		fields, ok := jsonObjFields(objArg)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.insert: value is not a record"))
@@ -311,16 +386,21 @@ func Db_execObject(connArg, tableArg, colspecArg, objArg any) any {
 		}
 		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 			AsString(tableArg), strings.Join(cols, ", "), strings.Join(ph, ", "))
-		return AnyTaskRun(Db_exec(connArg, sql, params))
+		return storeWriteResult(d, "Store.insert", sql, params,
+			AsString(pkArg), AsString(pkKindArg))
 	}
 }
 
 // Db_execObjectWith is Db_execObject plus a list of app-computed (column,
 // SqlValue) pairs (Store.defaultWith) appended to the INSERT — the SqlValue
-// params bind through Db_exec's SqlValue path, so a UUID PK generated in Sky
+// params bind through the same SqlValue path, so a UUID PK generated in Sky
 // lands in the row without the record carrying it.
-func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg any) any {
+func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg, pkArg, pkKindArg any) any {
 	return func() any {
+		d, isDb := connArg.(*SkyDb)
+		if !isDb {
+			return Err[any, any](ErrInvalidInput("Store.insert: first argument is not a Db"))
+		}
 		fields, ok := jsonObjFields(objArg)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.insert: value is not a record"))
@@ -348,7 +428,8 @@ func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg any) any 
 		}
 		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 			AsString(tableArg), strings.Join(cols, ", "), strings.Join(ph, ", "))
-		return AnyTaskRun(Db_exec(connArg, sql, params))
+		return storeWriteResult(d, "Store.insert", sql, params,
+			AsString(pkArg), AsString(pkKindArg))
 	}
 }
 
@@ -356,8 +437,16 @@ func Db_execObjectWith(connArg, tableArg, colspecArg, objArg, extraArg any) any 
 // conflict — `Store.upsert`. Uses `INSERT ... ON CONFLICT(pk) DO UPDATE SET
 // col = excluded.col` (SQLite ≥ 3.24 / Postgres), updating every non-PK column
 // to the incoming value. If the PK is the only column, DO NOTHING.
-func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg any) any {
+//
+// Shares Store.insert's return contract via storeWriteResult: an integer PK
+// yields the row's key, anything else yields rows affected. A DO NOTHING that
+// did nothing returns 0.
+func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg, pkKindArg any) any {
 	return func() any {
+		d, isDb := connArg.(*SkyDb)
+		if !isDb {
+			return Err[any, any](ErrInvalidInput("Store.upsert: first argument is not a Db"))
+		}
 		fields, ok := jsonObjFields(objArg)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("Store.upsert: value is not a record"))
@@ -388,7 +477,8 @@ func Db_upsertObject(connArg, tableArg, colspecArg, pkArg, objArg any) any {
 		}
 		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) %s",
 			AsString(tableArg), strings.Join(cols, ", "), strings.Join(ph, ", "), conflict)
-		return AnyTaskRun(Db_exec(connArg, sql, params))
+		return storeWriteResult(d, "Store.upsert", sql, params,
+			AsString(pkArg), AsString(pkKindArg))
 	}
 }
 
