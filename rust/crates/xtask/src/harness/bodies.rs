@@ -846,6 +846,210 @@ pub fn apps_ffi_scale(ctx: &GateCtx) -> GateOutcome {
     )
 }
 
+/// Member B: Relay, the headless HTTP/SSE/WebSocket gateway.
+///
+/// Twelve: build, artifact, no bind-position literal, readiness, `/health`
+/// status, `/health` identity, unauthenticated 401, authenticated 200, first
+/// request served, limiter engaged, CORS header, port released.
+pub const APPS_RELAY_EXPECTED: u64 = 12;
+
+/// Build Relay, run it on a harness-chosen port, and assert what it *did*.
+///
+/// Every assertion below is a verdict, not a liveness check. "No crash" would
+/// pass while a rate limiter never engaged and an unauthenticated request was
+/// served — which is the shape of the defect this tier exists to catch.
+///
+/// Readiness deliberately requires BOTH the app's own line and an accepting
+/// socket: `Sky.Http.Server.listen` has no post-bind hook, so the line is
+/// printed *before* the bind succeeds. A collision on the port prints the line
+/// and then dies, so grepping the line alone would report a server that is not
+/// there.
+pub fn apps_relay(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+    use std::time::Duration;
+
+    const PROJECT: &str = "apps/relay";
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+    macro_rules! check {
+        ($cond:expr, $($msg:tt)*) => {{
+            a += 1;
+            if !$cond { fail.push(format!($($msg)*)); }
+        }};
+    }
+
+    // ---- build ----------------------------------------------------------
+    let r = match layer2::clean_build(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    check!(r.ok, "`sky build` failed:\n{}", layer2::tail(&r.log, 12));
+    check!(r.binary.is_file(), "no artifact at {}", r.binary.display());
+    if !fail.is_empty() {
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    // ---- source guard ---------------------------------------------------
+    let literals = layer2::bind_position_port_literals(&ctx.repo_root, PROJECT);
+    check!(
+        literals.is_empty(),
+        "bind-position port literal(s) in project source: {} — a member with a \
+         hardcoded port cannot be scheduled concurrently",
+        literals.join(", ")
+    );
+
+    // ---- run ------------------------------------------------------------
+    let port = match layer2::free_port() {
+        Ok(p) => p,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+    let dir = ctx.repo_root.join(PROJECT);
+    let env = [
+        ("RELAY_PORT", port.to_string()),
+        (
+            "SKY_AUTH_TOKEN_SECRET",
+            "layer2-relay-gate-secret-least-32-bytes-long".to_string(),
+        ),
+    ];
+    let mut srv = match layer2::Server::spawn(&r.binary, &dir, port, &env) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+
+    let ready = srv.wait_ready("relay: listening on", Duration::from_secs(30));
+    check!(ready.is_ok(), "{}", ready.as_ref().err().cloned().unwrap_or_default());
+    if ready.is_err() {
+        let _ = srv.shutdown();
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    // ---- behaviour ------------------------------------------------------
+    match layer2::get(port, "/health") {
+        Err(e) => {
+            a += 2;
+            fail.push(format!("GET /health: {e}"));
+        }
+        Ok(resp) => {
+            check!(resp.status == 200, "GET /health: expected 200, got {}", resp.status);
+            check!(
+                resp.body.contains("\"service\":\"relay\""),
+                "GET /health: body does not identify the service: {}",
+                resp.body.trim()
+            );
+        }
+    }
+
+    // Unauthenticated access must be REFUSED. A gate that only asserted "200 on
+    // /health" would pass an app that served every protected route wide open.
+    match layer2::get(port, "/api/me") {
+        Err(e) => {
+            a += 1;
+            fail.push(format!("GET /api/me: {e}"));
+        }
+        Ok(resp) => check!(
+            resp.status == 401,
+            "GET /api/me without a token: expected 401, got {}",
+            resp.status
+        ),
+    }
+
+    // A token minted by the app must then be ACCEPTED — otherwise "401 always"
+    // would satisfy the assertion above.
+    let token = layer2::get(port, "/api/token?sub=gate")
+        .ok()
+        .and_then(|r| {
+            let b = r.body;
+            let i = b.find("\"token\":\"")? + 9;
+            let rest = &b[i..];
+            Some(rest[..rest.find('"')?].to_string())
+        });
+    match token {
+        None => {
+            a += 1;
+            fail.push("could not mint a token via /api/token".to_string());
+        }
+        Some(t) => match layer2::http(
+            port,
+            "GET",
+            "/api/me",
+            &[("Authorization", &format!("Bearer {t}"))],
+            None,
+            Duration::from_secs(15),
+        ) {
+            Err(e) => {
+                a += 1;
+                fail.push(format!("GET /api/me with a token: {e}"));
+            }
+            Ok(resp) => check!(
+                resp.status == 200,
+                "GET /api/me with a freshly minted token: expected 200, got {}",
+                resp.status
+            ),
+        },
+    }
+
+    // Rate limiting must actually ENGAGE. Asserted as "the first is served AND
+    // some later one is refused", which is robust to the bucket refilling
+    // mid-burst while still failing outright if the limiter is inert.
+    let mut statuses = Vec::new();
+    for _ in 0..12 {
+        match layer2::get(port, "/api/limited") {
+            Ok(r) => statuses.push(r.status),
+            Err(e) => {
+                statuses.push(0);
+                let _ = e;
+            }
+        }
+    }
+    check!(
+        statuses.first() == Some(&200),
+        "first /api/limited request should be served, got {:?}",
+        statuses.first()
+    );
+    check!(
+        statuses.contains(&429),
+        "rate limiter never engaged over 12 requests: {statuses:?}"
+    );
+
+    // CORS preflight — the non-variadic kernel-alias middleware shape.
+    match layer2::http(
+        port,
+        "OPTIONS",
+        "/health",
+        &[("Origin", "https://example.com")],
+        None,
+        Duration::from_secs(15),
+    ) {
+        Err(e) => {
+            a += 1;
+            fail.push(format!("OPTIONS /health: {e}"));
+        }
+        Ok(resp) => check!(
+            resp.header("access-control-allow-origin").is_some(),
+            "CORS preflight carried no Access-Control-Allow-Origin (status {})",
+            resp.status
+        ),
+    }
+
+    // ---- teardown -------------------------------------------------------
+    let down = srv.shutdown();
+    check!(
+        down.is_ok(),
+        "{}",
+        down.as_ref().err().cloned().unwrap_or_default()
+    );
+
+    if fail.is_empty() {
+        GateOutcome::new(
+            true,
+            a,
+            format!("built + served on :{port}; auth, rate limit and CORS all asserted"),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
 fn read_json(p: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }

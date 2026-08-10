@@ -497,6 +497,41 @@ pub static GATES: &[Gate] = &[
         body: bodies::cli_verbs,
     },
     Gate {
+        name: "apps-relay",
+        tier: Tier::T1,
+        platforms: UNIX,
+        // Measured: 2.5 s clean rebuild + 0.16 s to first 200 + <1 s of probes.
+        budget_s: 600,
+        expected: bodies::APPS_RELAY_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member B — headless HTTP: auth refusal, rate limiting, CORS, asserted live",
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "apps-relay.break-health-identity",
+                description: "change the service name /health reports; the body \
+                              assertion must go red (proves the gate reads the \
+                              response, not just the status)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "apps/relay/src/Handlers.sky",
+                    from: "\\\"service\\\":\\\"relay\\\"",
+                    to: "\\\"service\\\":\\\"not-relay\\\"",
+                },
+            },
+            Mutation {
+                id: "apps-relay.disable-rate-limiting",
+                description: "raise the default bucket capacity far above the burst \
+                              the gate sends, so the limiter never refuses; the \
+                              429 assertion must go red",
+                kind: MutationKind::ReplaceOnce {
+                    path: "apps/relay/src/Config.sky",
+                    from: "capacity = 5",
+                    to: "capacity = 100000",
+                },
+            },
+        ]),
+        body: bodies::apps_relay,
+    },
+    Gate {
         name: "apps-ffi-scale",
         tier: Tier::T4,
         platforms: UNIX,

@@ -12,6 +12,12 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786367992
     },
+    "apps-relay": {
+      "mutation": "apps-relay.disable-rate-limiting",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786368441
+    },
     "canary": {
       "mutation": "canary.noop",
       "observed": "VACUOUS",
