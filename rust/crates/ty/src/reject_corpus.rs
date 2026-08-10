@@ -53,10 +53,35 @@
 //!
 //! # THE DECLARED CODE RULE
 //!
-//! A corpus file may declare the diagnostic code(s) its defect is about, on any
-//! line mentioning `oracle: reject`, in the form `[E1234]`. Multiple codes on
-//! one line are all declared (e.g. `oracle: reject [E2001] + [E2007] arity
+//! A corpus file may declare the diagnostic code(s) its defect is about, in the
+//! form `[E1234]`, on a header line carrying one of TWO markers. Multiple codes
+//! on one line are all declared (e.g. `oracle: reject [E2001] + [E2007] arity
 //! gate`).
+//!
+//! ## PRECEDENCE — `-- rust:` WINS over `-- oracle:`
+//!
+//! 1. `-- rust: reject [CODE…]` — the RUST expectation. When present it WINS,
+//!    and the `-- oracle:` line on the same file is NOT consulted for codes.
+//! 2. `-- oracle: reject [CODE…]` — the ORACLE expectation, used as the Rust
+//!    expectation ON THE DOCUMENTED ASSUMPTION that the two agree. This is the
+//!    common case and it is a fallback, not a synonym.
+//! 3. Neither — no declared code; the file asserts rejection only.
+//!
+//! **Why this precedence exists — do NOT "simplify" it back to one header.**
+//! `-- oracle:` documents what the HASKELL ORACLE does; this gate observes what
+//! RUST emits. They are two different claims, and asserting the first against
+//! the second is a category error. It bit us concretely: `arity_call_value_
+//! with_unit.sky` and `regress_cli_over_application.sky` declare the oracle's
+//! generic `[E2001]` unify clash, while Rust emits the dedicated, STRICTLY MORE
+//! SPECIFIC arity diagnostic `[E2007]`. Rust is better there, and a gate must
+//! not punish a diagnostic improvement. Collapsing the two markers back into one
+//! would silently re-assert the oracle's taxonomy against Rust and re-open that
+//! exact failure.
+//!
+//! The two headers COEXISTING is the record of a legitimate divergence: the
+//! oracle expectation stays true and stays the differential's reference, while
+//! the `-- rust:` line states what this gate checks. Never delete an `--
+//! oracle:` line to "resolve" a mismatch.
 //!
 //! **Rule: AT LEAST.** A file with declared codes is satisfied iff the observed
 //! code set is a SUPERSET of the declared code set — every declared code must be
@@ -82,7 +107,9 @@
 //!
 //! Files declaring NO code still assert rejection, and are reported by name by
 //! both faces so the gap is visible rather than silent (see
-//! [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`]).
+//! [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`]). The three-way census
+//! (rust-declared / oracle-derived / undeclared) is asserted exactly, so the
+//! split cannot drift unnoticed either.
 
 use hir::SourceDb;
 use std::path::{Path, PathBuf};
@@ -111,17 +138,30 @@ pub const EXPECTED_KNOWN_LENIENCY_FILES: usize = 0;
 /// the stale `hard >= 13` floor: a floor is satisfied by deleting files.
 pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNOWN_LENIENCY_FILES;
 
-/// The EXACT number of corpus files that declare at least one diagnostic code
-/// in their header (see [`declared_codes`]). Ratchets upward: a new corpus file
-/// should declare its code, and moving one of the
-/// [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`] files into this set is a welcome
-/// change that updates BOTH constants in the same commit.
-pub const EXPECTED_FILES_WITH_DECLARED_CODE: usize = 47;
+/// The EXACT number of corpus files whose expectation comes from a RUST-specific
+/// `-- rust: reject [CODE…]` header — the files where Rust's diagnostic
+/// legitimately differs from the oracle's (see the precedence rule in the module
+/// docstring). Ratchets: adding a `-- rust:` line to a file moves it out of
+/// [`EXPECTED_FILES_WITH_ORACLE_CODE`] or
+/// [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`] and updates BOTH constants in the
+/// same commit.
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 3;
+
+/// The EXACT number of corpus files whose expectation is DERIVED from the
+/// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the
+/// oracle agree on the code. A file that turns out to disagree gains a
+/// `-- rust:` line (never an edited `-- oracle:` line) and moves to
+/// [`EXPECTED_FILES_WITH_RUST_CODE`].
+pub const EXPECTED_FILES_WITH_ORACLE_CODE: usize = 45;
+
+/// Total files that declare a code either way. Kept for the report line.
+pub const EXPECTED_FILES_WITH_DECLARED_CODE: usize =
+    EXPECTED_FILES_WITH_RUST_CODE + EXPECTED_FILES_WITH_ORACLE_CODE;
 
 /// The EXACT number of corpus files that declare NO diagnostic code. These
 /// still assert rejection, but the rejection is unpinned — any diagnostic
 /// satisfies them. Both faces print them by name. Ratchets DOWNWARD.
-pub const EXPECTED_FILES_WITHOUT_DECLARED_CODE: usize = 16;
+pub const EXPECTED_FILES_WITHOUT_DECLARED_CODE: usize = 15;
 
 /// Generated / cache trees that are never part of any corpus.
 fn is_generated(path: &Path) -> bool {
@@ -232,16 +272,56 @@ pub fn load_stdlib(root: &Path) -> Vec<(String, syntax::Parse)> {
     load_dir(&root.join("sky-stdlib"), "sky-stdlib")
 }
 
-/// Every `[E1234]` code declared on a line mentioning `oracle: reject`, in
-/// source order, deduplicated.
+/// Where a file's expected code(s) came from. See the PRECEDENCE section of the
+/// module docstring — `Rust` WINS over `Oracle`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CodeSource {
+    /// From a `-- rust: reject [CODE…]` header — Rust's own expectation, stated
+    /// because it differs from the oracle's.
+    Rust,
+    /// Derived from `-- oracle: reject [CODE…]`, on the documented assumption
+    /// that Rust and the oracle agree on the code.
+    Oracle,
+    /// No code declared; the file asserts rejection only.
+    None,
+}
+
+impl CodeSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            CodeSource::Rust => "rust",
+            CodeSource::Oracle => "oracle",
+            CodeSource::None => "unpinned",
+        }
+    }
+}
+
+/// The codes THIS GATE expects Rust to emit, plus where they came from.
 ///
-/// Only the text AFTER `oracle: reject` on that line is scanned, so a code
-/// mentioned in unrelated prose earlier on the line is not mistaken for a
-/// declaration. See the module docstring for the AT-LEAST satisfaction rule.
-pub fn declared_codes(src: &str) -> Vec<String> {
+/// Precedence: a `-- rust: reject [CODE…]` header WINS outright; otherwise
+/// `-- oracle: reject [CODE…]` is used as the Rust expectation; otherwise none.
+/// Only the text AFTER the marker on that line is scanned, so a code mentioned
+/// in unrelated prose earlier on the line is not mistaken for a declaration.
+/// See the module docstring for WHY the precedence exists and for the AT-LEAST
+/// satisfaction rule.
+pub fn declared_codes(src: &str) -> (Vec<String>, CodeSource) {
+    let rust = codes_after(src, "rust: reject");
+    if !rust.is_empty() {
+        return (rust, CodeSource::Rust);
+    }
+    let oracle = codes_after(src, "oracle: reject");
+    if !oracle.is_empty() {
+        return (oracle, CodeSource::Oracle);
+    }
+    (Vec::new(), CodeSource::None)
+}
+
+/// Every `[E1234]` code appearing after `marker` on any line, in source order,
+/// deduplicated.
+fn codes_after(src: &str, marker: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in src.lines() {
-        let Some((_, tail)) = line.split_once("oracle: reject") else {
+        let Some((_, tail)) = line.split_once(marker) else {
             continue;
         };
         for code in scan_codes(tail) {
@@ -293,8 +373,10 @@ pub struct Verdict {
     /// documented accept-parity reason (see the file's header). Tracked +
     /// reported, but NOT counted against the hard reject gate.
     pub known_leniency: bool,
-    /// Codes the file's header declares (see [`declared_codes`]).
+    /// Codes THIS GATE expects Rust to emit (see [`declared_codes`]).
     pub declared_codes: Vec<String>,
+    /// Which header the expectation came from — `-- rust:` beats `-- oracle:`.
+    pub code_source: CodeSource,
     /// Codes actually observed among the verdict-contributing diagnostics,
     /// deduplicated, sorted.
     pub observed_codes: Vec<String>,
@@ -352,7 +434,7 @@ pub fn evaluate(file: &Path, stdlib: &[(String, syntax::Parse)]) -> Verdict {
         .lines()
         .take(3)
         .any(|l| l.contains("gate: known-leniency"));
-    let declared = declared_codes(&src);
+    let (declared, code_source) = declared_codes(&src);
 
     let mut db = SourceDb::new();
     for (n, parse) in stdlib {
@@ -405,6 +487,7 @@ pub fn evaluate(file: &Path, stdlib: &[(String, syntax::Parse)]) -> Verdict {
         parse_errors,
         known_leniency,
         declared_codes: declared,
+        code_source,
         observed_codes: observed,
         first_msg,
     }
@@ -432,32 +515,41 @@ pub fn scan(root: &Path) -> Result<Vec<Verdict>, String> {
 
 /// The declared-code census, asserted exactly by both faces so the numbers
 /// ratchet. Returns `(with_code, without_code_names)`.
-pub fn code_census(rows: &[Verdict]) -> (usize, Vec<&str>) {
-    let with = rows.iter().filter(|r| !r.declared_codes.is_empty()).count();
-    let without: Vec<&str> = rows
+pub fn code_census(rows: &[Verdict]) -> (usize, usize, Vec<&str>) {
+    let rust = rows
         .iter()
-        .filter(|r| r.declared_codes.is_empty())
+        .filter(|r| r.code_source == CodeSource::Rust)
+        .count();
+    let oracle = rows
+        .iter()
+        .filter(|r| r.code_source == CodeSource::Oracle)
+        .count();
+    let none: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.code_source == CodeSource::None)
         .map(|r| r.name.as_str())
         .collect();
-    (with, without)
+    (rust, oracle, none)
 }
 
 /// Check the census against the ratchet constants. `Err` is the actionable
 /// message both faces surface verbatim.
 pub fn check_code_census(rows: &[Verdict]) -> Result<(), String> {
-    let (with, without) = code_census(rows);
-    if with != EXPECTED_FILES_WITH_DECLARED_CODE
-        || without.len() != EXPECTED_FILES_WITHOUT_DECLARED_CODE
+    let (rust, oracle, none) = code_census(rows);
+    if rust != EXPECTED_FILES_WITH_RUST_CODE
+        || oracle != EXPECTED_FILES_WITH_ORACLE_CODE
+        || none.len() != EXPECTED_FILES_WITHOUT_DECLARED_CODE
     {
         return Err(format!(
             "reject corpus code-declaration census changed: expected EXACTLY \
-             {EXPECTED_FILES_WITH_DECLARED_CODE} file(s) declaring a diagnostic code and \
-             {EXPECTED_FILES_WITHOUT_DECLARED_CODE} declaring none, found {with} / {}. \
-             Update ty::reject_corpus::EXPECTED_FILES_WITH_DECLARED_CODE / \
-             EXPECTED_FILES_WITHOUT_DECLARED_CODE in the SAME commit. \
-             Undeclared: {}",
-            without.len(),
-            without.join(", ")
+             {EXPECTED_FILES_WITH_RUST_CODE} file(s) with a rust-specific `-- rust: reject` \
+             code, {EXPECTED_FILES_WITH_ORACLE_CODE} deriving the code from `-- oracle: \
+             reject`, and {EXPECTED_FILES_WITHOUT_DECLARED_CODE} declaring none; found \
+             {rust} / {oracle} / {}. Update ty::reject_corpus::EXPECTED_FILES_WITH_RUST_CODE \
+             / EXPECTED_FILES_WITH_ORACLE_CODE / EXPECTED_FILES_WITHOUT_DECLARED_CODE in the \
+             SAME commit. Undeclared: {}",
+            none.len(),
+            none.join(", ")
         ));
     }
     Ok(())
@@ -469,20 +561,58 @@ mod tests {
 
     #[test]
     fn declared_codes_parses_single_multi_and_none() {
-        assert_eq!(declared_codes("-- oracle: reject [E2001]"), vec!["E2001"]);
+        assert_eq!(
+            declared_codes("-- oracle: reject [E2001]"),
+            (vec!["E2001".to_string()], CodeSource::Oracle)
+        );
         assert_eq!(
             declared_codes("-- oracle: reject [E2001] + [E2007] arity gate"),
-            vec!["E2001", "E2007"]
+            (
+                vec!["E2001".to_string(), "E2007".to_string()],
+                CodeSource::Oracle
+            )
         );
         assert_eq!(
             declared_codes("-- oracle: reject — exit 1, `[E0001] PARSE ERROR"),
-            vec!["E0001"]
+            (vec!["E0001".to_string()], CodeSource::Oracle)
         );
-        assert!(declared_codes("-- oracle: reject. no code here").is_empty());
+        assert_eq!(
+            declared_codes("-- oracle: reject. no code here").1,
+            CodeSource::None
+        );
         // A code BEFORE the marker is prose, not a declaration.
-        assert!(declared_codes("-- [E2001] was the old code; oracle: reject").is_empty());
+        assert_eq!(
+            declared_codes("-- [E2001] was the old code; oracle: reject").1,
+            CodeSource::None
+        );
         // Not a diagnostic code shape.
-        assert!(declared_codes("-- oracle: reject [nope] [E] [E12a]").is_empty());
+        assert_eq!(
+            declared_codes("-- oracle: reject [nope] [E] [E12a]").1,
+            CodeSource::None
+        );
+    }
+
+    #[test]
+    fn rust_header_wins_over_oracle_header() {
+        // The whole point of the precedence rule: `-- oracle:` records what the
+        // HASKELL ORACLE does; this gate observes what RUST emits. When they
+        // differ, the rust line is the expectation and the oracle line STAYS.
+        let src = "-- rust: reject [E2007] dedicated arity diagnostic\n\
+                   -- oracle: reject [E2001] generic unify clash\n";
+        assert_eq!(
+            declared_codes(src),
+            (vec!["E2007".to_string()], CodeSource::Rust)
+        );
+        // No rust line → the oracle expectation is used as the rust one.
+        assert_eq!(
+            declared_codes("-- oracle: reject [E2001] generic unify clash\n"),
+            (vec!["E2001".to_string()], CodeSource::Oracle)
+        );
+        // A rust line without a code does NOT suppress the oracle fallback.
+        assert_eq!(
+            declared_codes("-- rust: reject at check time\n-- oracle: reject [E2001]\n"),
+            (vec!["E2001".to_string()], CodeSource::Oracle)
+        );
     }
 
     #[test]
@@ -495,6 +625,7 @@ mod tests {
             parse_errors: 0,
             known_leniency: false,
             declared_codes: vec!["E2001".into()],
+            code_source: CodeSource::Oracle,
             observed_codes: vec!["E2001".into(), "E2007".into()],
             first_msg: String::new(),
         };

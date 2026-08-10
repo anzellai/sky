@@ -4,6 +4,9 @@
 --         shape of the arity defect (distinct from calling a non-function value in
 --         `arity_call_value_with_unit.sky`), and it too slipped the shipped CLI
 --         because the build driver never ran the checker.
+-- rust: reject [E2007] — Rust emits a dedicated arity diagnostic where the
+--   oracle emits a generic unify clash; the oracle line below stays true and
+--   the two coexisting IS the record of that divergence.
 -- oracle: reject [E2001] arity / type mismatch
 module Main exposing (main)
 

@@ -16,8 +16,11 @@
 //!   text; wrapping a *JSON-emitting* script does not.
 //!
 //! Every gate asserts an **exact** count, never a `>=`. `ty/tests/reject.rs`
-//! asserts `>= 13` against an actual 63 — deleting 50 corpus files keeps it
-//! green today. Exact counts are why a shrinking corpus is a failure here.
+//! USED to assert `>= 13` against an actual 63 — deleting 50 corpus files kept
+//! it green. It now reads the exact count from
+//! `ty::reject_corpus::EXPECTED_CORPUS_FILES`, the same constant
+//! [`REJECT_EXPECTED`] pins here. Exact counts are why a shrinking corpus is a
+//! failure.
 
 use super::registry::{GateCtx, GateOutcome};
 use std::path::{Path, PathBuf};
@@ -144,14 +147,15 @@ pub fn reject(ctx: &GateCtx) -> GateOutcome {
         return GateOutcome::new(false, assertions, msg);
     }
 
-    let (with_code, without_code) = ty::reject_corpus::code_census(&rows);
+    let (rust_code, oracle_code, no_code) = ty::reject_corpus::code_census(&rows);
     GateOutcome::new(
         true,
         assertions,
         format!(
             "{assertions} ill-typed programs, every hard-gate one rejected; \
-             {with_code} pin a diagnostic code, {} unpinned",
-            without_code.len()
+             {rust_code} pin a rust-specific code, {oracle_code} derive it from the \
+             oracle header, {} unpinned",
+            no_code.len()
         ),
     )
 }
@@ -195,10 +199,7 @@ pub fn conformance(ctx: &GateCtx) -> GateOutcome {
     // `grep -qE "0 fail"` came to match inside "10 fail".
     let suites_run = u(&v, "suites_run");
     let empty = Vec::new();
-    let suites = v
-        .get("suites")
-        .and_then(|s| s.as_array())
-        .unwrap_or(&empty);
+    let suites = v.get("suites").and_then(|s| s.as_array()).unwrap_or(&empty);
 
     let mut cases = 0u64;
     let mut failed = 0u64;
@@ -400,7 +401,11 @@ pub fn sky_verify(ctx: &GateCtx) -> GateOutcome {
         GateOutcome::new(
             false,
             assertions,
-            format!("{} project(s) failed: {}", failures.len(), failures.join("; ")),
+            format!(
+                "{} project(s) failed: {}",
+                failures.len(),
+                failures.join("; ")
+            ),
         )
     }
 }
@@ -524,7 +529,11 @@ fn u(v: &serde_json::Value, key: &str) -> u64 {
 fn preview(items: &[&str]) -> String {
     let shown: Vec<&str> = items.iter().take(5).copied().collect();
     if items.len() > shown.len() {
-        format!("{} … (+{} more)", shown.join(", "), items.len() - shown.len())
+        format!(
+            "{} … (+{} more)",
+            shown.join(", "),
+            items.len() - shown.len()
+        )
     } else {
         shown.join(", ")
     }

@@ -56,8 +56,12 @@ fn rejection_corpus_is_rejected() {
         let missing = r.missing_codes();
         if !missing.is_empty() {
             code_gaps.push(format!(
-                "{}: declared {:?}, observed {:?} (missing {:?})",
-                r.name, r.declared_codes, r.observed_codes, missing
+                "{}: declared {:?} (from `-- {}:`), observed {:?} (missing {:?})",
+                r.name,
+                r.declared_codes,
+                r.code_source.label(),
+                r.observed_codes,
+                missing
             ));
         }
     }
@@ -69,8 +73,10 @@ fn rejection_corpus_is_rejected() {
     assert!(
         code_gaps.is_empty(),
         "DIAGNOSTIC-CODE MISMATCH — rejected, but NOT by the declared code. Each \
-         file is rejected for a different reason than its header claims; fix the \
-         checker or correct the header deliberately, do NOT relax this gate:\n  {}",
+         file is rejected for a different reason than its header claims. Fix the \
+         checker, or — when Rust legitimately emits a different (usually more \
+         specific) code than the oracle — ADD a `-- rust: reject [CODE]` line \
+         WITHOUT deleting the `-- oracle:` line. Do NOT relax this gate:\n  {}",
         code_gaps.join("\n  ")
     );
 
@@ -78,15 +84,15 @@ fn rejection_corpus_is_rejected() {
     // diagnostic code, and the files that do not are named here rather than
     // passing silently.
     rc::check_code_census(&rows).unwrap_or_else(|e| panic!("{e}"));
-    let (with_code, without_code) = rc::code_census(&rows);
+    let (rust_code, oracle_code, no_code) = rc::code_census(&rows);
     eprintln!(
         "reject corpus: {hard} hard-gate programs all rejected; {lenient} documented leniency; \
-         {with_code} pin a diagnostic code"
+         {rust_code} pin a rust-specific code, {oracle_code} derive it from the oracle header"
     );
     eprintln!(
         "reject corpus: {} file(s) declare NO diagnostic code (rejection is unpinned): {}",
-        without_code.len(),
-        without_code.join(", ")
+        no_code.len(),
+        no_code.join(", ")
     );
 
     assert_eq!(

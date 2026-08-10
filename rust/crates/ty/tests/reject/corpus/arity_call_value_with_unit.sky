@@ -1,4 +1,7 @@
 -- defect: arity — calling a non-function value `answer : Int` with an argument
+-- rust: reject [E2007] — Rust emits a dedicated arity diagnostic where the
+--   oracle emits a generic unify clash; the oracle line below stays true and
+--   the two coexisting IS the record of that divergence.
 -- oracle: reject [E2001] + [E2007] arity gate
 module Main exposing (main)
 

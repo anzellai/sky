@@ -80,14 +80,18 @@ pub fn run(_args: &[String], root: &Path) -> i32 {
         let code_col = if r.declared_codes.is_empty() {
             "unpinned".to_string()
         } else if missing.is_empty() {
-            r.declared_codes.join("+")
+            format!("{}:{}", r.code_source.label(), r.declared_codes.join("+"))
         } else {
             format!("WRONG:{}", missing.join("+"))
         };
         if !r.known_leniency && r.rejected() && !missing.is_empty() {
             code_gaps.push(format!(
-                "{}: declared {:?}, observed {:?} (missing {:?})",
-                r.name, r.declared_codes, r.observed_codes, missing
+                "{}: declared {:?} (from `-- {}:`), observed {:?} (missing {:?})",
+                r.name,
+                r.declared_codes,
+                r.code_source.label(),
+                r.observed_codes,
+                missing
             ));
         }
         println!(
@@ -122,16 +126,19 @@ pub fn run(_args: &[String], root: &Path) -> i32 {
     }
 
     // ---- declared-code census (ratchets; unpinned files are NAMED) ----
-    let (with_code, without_code) = rc::code_census(&rows);
+    let (rust_code, oracle_code, no_code) = rc::code_census(&rows);
     println!(
-        "CODE-PARITY: {with_code}/{} file(s) pin a diagnostic code in their `oracle: reject [E….]` header",
+        "CODE-PARITY: {}/{} file(s) pin a diagnostic code — {rust_code} from a rust-specific \
+         `-- rust: reject [E….]` header (Rust differs from the oracle by design), \
+         {oracle_code} derived from `-- oracle: reject [E….]`",
+        rust_code + oracle_code,
         rows.len()
     );
-    if !without_code.is_empty() {
+    if !no_code.is_empty() {
         println!(
             "  * {} file(s) declare NO code — rejection is UNPINNED (any diagnostic satisfies them): {}",
-            without_code.len(),
-            without_code.join(", ")
+            no_code.len(),
+            no_code.join(", ")
         );
     }
     let census = rc::check_code_census(&rows);
@@ -154,8 +161,9 @@ pub fn run(_args: &[String], root: &Path) -> i32 {
     }
     if !code_gaps.is_empty() {
         println!(
-            "CODE GATE: FAIL  ({} file(s) rejected, but NOT by the declared code — the \
-             file exercises a different defect than its header claims):",
+            "CODE GATE: FAIL  ({} file(s) rejected, but NOT by the declared code. Fix the \
+             checker, or — when Rust legitimately emits a different code than the oracle \
+             — ADD a `-- rust: reject [CODE]` line WITHOUT deleting the `-- oracle:` line):",
             code_gaps.len()
         );
         for g in &code_gaps {
