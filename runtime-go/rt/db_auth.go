@@ -66,10 +66,22 @@ func (d *SkyDb) placeholder(i int) string {
 	return "?"
 }
 
-// rebind rewrites `?` placeholders in a RAW query to `$1,$2,…` for Postgres
+// rebind rewrites `?` placeholders in a query to `$1,$2,…` for Postgres
 // (pgx wants `$n`, not `?`), skipping `?` inside single-quoted string literals.
-// SQLite keeps `?`. Std.Db-BUILT queries already emit `$n` via placeholder(), so
-// they contain no `?` and pass through unchanged — no double conversion.
+// SQLite keeps `?`.
+//
+// EVERY statement handed to Exec/Query must pass through here. Some Std.Db
+// builders emit `$n` directly via placeholder() (dbInsertRowBody,
+// Db_updateById, Db_deleteById) and are idempotent under rebind because they
+// contain no `?`; others compose with literal `?` (dbBuildInsertFields, the
+// updateFields WHERE/SET clauses, db_codec.go's object writers) and depend on
+// this rewrite for Postgres correctness.
+//
+// An earlier version of this comment asserted that Std.Db-BUILT queries always
+// emit `$n` and therefore never need rebinding. That was false for the three
+// field-builder kernels, which called Exec/Query directly — the `?` reached pgx
+// and Postgres rejected the statement. Do not reintroduce that assumption; the
+// gate is db_pgx_placeholder_test.go.
 func (d *SkyDb) rebind(query string) string {
 	if d.driver != "pgx" || !strings.Contains(query, "?") {
 		return query
@@ -650,7 +662,7 @@ func Db_updateFields(db any, table any, whereCols any, setFields any) any {
 			if len(whereClauses) > 0 {
 				sql += " WHERE " + strings.Join(whereClauses, " AND ")
 			}
-			res, err := d.executor().Exec(sql, goArgs...)
+			res, err := d.executor().Exec(d.rebind(sql), goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.updateFields: " + err.Error()))
 			}
@@ -690,7 +702,7 @@ func Db_insertFields(db any, table any, setFields any) any {
 			if buildErr != nil {
 				return buildErr
 			}
-			res, err := d.executor().Exec(sql, goArgs...)
+			res, err := d.executor().Exec(d.rebind(sql), goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.insertFields: " + err.Error()))
 			}
@@ -801,7 +813,7 @@ func Db_insertFieldsReturning(db any, table any, setFields any, projection any, 
 			}
 			sql += " RETURNING " + proj
 
-			rows, err := d.executor().Query(sql, goArgs...)
+			rows, err := d.executor().Query(d.rebind(sql), goArgs...)
 			if err != nil {
 				return Err[any, any](ErrIo("db.insertFieldsReturning: " + err.Error()))
 			}
