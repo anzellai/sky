@@ -1,15 +1,34 @@
 module Main exposing (main)
 
--- Minimal reproduction for the Std.Ui.Events.onInput signature.
+-- Reproduction, now a fence, for the Std.Ui.Events.onInput signature.
 --
--- `sky-stdlib/Std/Ui/Events.sky:30` declares
+-- WAS: `sky-stdlib/Std/Ui/Events.sky:30` declared
 --     onInput : msg -> Ui.Attribute msg
--- but its body is `Ui.onInput m`, and `sky-stdlib/Std/Ui.sky:816`
--- declares
+-- while its body forwarded to `sky-stdlib/Std/Ui.sky:816`
 --     onInput : (String -> msg) -> Attribute msg
 --
--- So the re-export's annotation says "give me a Msg" while the only
--- value its body can accept is a `String -> Msg` callback.
+-- So the re-export's annotation said "give me a Msg" while the only
+-- value its body can accept is a `String -> Msg` callback. The bare-Msg
+-- form below type-checked because `Attribute`'s event arm holds an
+-- `any`, which makes `msg` phantom on that constructor — the annotation
+-- was never forced to agree with the payload.
+--
+-- It was wrong at runtime: the Sky.Live dispatcher only applies the
+-- typed input value to a handler that is a FUNCTION (`applyMsgArgs`,
+-- runtime-go/rt/live.go). A bare Msg is not, so every keystroke
+-- dispatched the same static message and the typed String the user
+-- typed was silently dropped.
+--
+-- FIXED by converging the re-export on `(String -> msg) -> Attribute msg`,
+-- matching Std.Ui.onInput and docs/skyui/overview.md. The bare-Msg form
+-- is now a TYPE ERROR:
+--
+--     probe = Events.onInput Bare
+--     -- [E2001] type mismatch: String -> _ vs Msg
+--
+-- so the runtime-wrong shape can no longer compile. This module keeps
+-- the CORRECT shape compiling, so the fence stays honest in both
+-- directions.
 
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
@@ -22,16 +41,23 @@ type Msg
     | Bare
 
 
--- What the re-export's OWN signature invites: a bare Msg. This
--- type-checks, and lowers to an AttrEvent whose payload is a plain
--- value where the wire driver expects a `String -> msg` callback.
+-- The shape the re-export now requires: a Msg constructor that takes
+-- the input's String value.
 probe : Ui.Attribute Msg
 probe =
-    Events.onInput Bare
+    Events.onInput Typed
+
+
+-- `Bare` still has a use that does NOT go through onInput, so the
+-- constructor is not dead weight in this fixture.
+clickProbe : Ui.Attribute Msg
+clickProbe =
+    Events.onClick Bare
 
 
 main =
     let
         _ = probe
+        _ = clickProbe
     in
         println "probe"

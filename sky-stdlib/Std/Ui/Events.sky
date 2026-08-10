@@ -27,6 +27,24 @@ onSubmit m =
     Ui.onSubmit m
 
 
-onInput : msg -> Ui.Attribute msg
-onInput m =
-    Ui.onInput m
+-- | Input change handler — fires per keystroke for text inputs. The
+-- callback receives the input's current value as a String, so pass a
+-- Msg constructor that takes one (`type Msg = ... | DraftChanged String`).
+--
+-- This re-export used to be annotated `msg -> Ui.Attribute msg`, which
+-- invited a BARE Msg. That type-checked — `Attribute`'s event arm holds
+-- an `any`, so `msg` is phantom there and the annotation was never
+-- forced to agree with the payload — and was wrong at runtime: the
+-- dispatcher only applies the typed value to a handler that is a
+-- function (`applyMsgArgs`), so a bare Msg silently dropped every
+-- keystroke and dispatched the same static message.
+--
+-- The signature now matches `Std.Ui.onInput`, which is also the shape
+-- pinned by docs/skyui/overview.md.
+--
+-- Note this is for ordinary text inputs. Never wire `onInput` to a
+-- password field — use `Ui.form [ Ui.onSubmit … ]` with a typed record,
+-- so the secret is not dispatched on every keystroke.
+onInput : (String -> msg) -> Ui.Attribute msg
+onInput cb =
+    Ui.onInput cb
