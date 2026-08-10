@@ -206,3 +206,41 @@ Known-open items to fold in as they become blocking:
   package has no surface; needs a documented host-target fallback. Then reply to
   discussion #50.
 - `test-rest` shells out to a real `go build` with no `actions/setup-go` pin.
+
+## MANDATE EXTENSION (user, 2026-08-10)
+
+> ok fully autonomous to implement + overhaul the tests for much better coverage
+> and use cases until you're satisfied.
+> then we can merge into main + then rebase bluedb feat branch and continue e2e
+> for bluedb + new tests
+
+**The arc, in order:**
+1. Keep closing coverage gaps autonomously until the named gaps are closed or
+   explicitly justified with a ratchet. "Until satisfied" is NOT "until tired" —
+   the bar is the ledger's own gap list reaching zero-unjustified.
+2. Merge `feat/ci-test-overhaul` → `main`.
+3. Rebase `feat/bluedb-v2` onto the new main, then continue BlueDB e2e under the
+   new test architecture (its own gates, its own Layer-2 member).
+
+**The named gaps as of 2026-08-10 (measured, not estimated):**
+- **5 stdlib modules imported by NOTHING**: `Std.Jobs`, `Std.Db.Schema`,
+  `Std.Db.Migrate`, `Std.Markdown`, `Std.Email`. Consequence: the **file-based
+  migration verbs are exercised by no project at all**.
+- `Std.Config` and `Sky.Http.Middleware` reached 1 importer via the new apps —
+  thin, not covered.
+- `release.yml` runs **no test gate**.
+- `ci-green` is RED on budget (~2217s vs a 990s ceiling). **Do not raise the
+  ceiling to make it pass** — close the gap or report it.
+- The **LSP corpus is a single synthetic file**; `lsp-fleet-sweep.cjs` hardcodes
+  an absolute path to one machine. The surface #164 fell through has never been
+  tested on a multi-module project.
+- The **Playwright tier is CI-unreachable**.
+- `tests/Db/DbTest.sky` has `Result Error List Row` (3 type args) at
+  :179/:198/:389/:396 — those suites never built.
+
+**Standing rules (unchanged, and they are why this worked):**
+- No gate weakened to go green; no coverage deleted to simplify.
+- Every gate ships a falsifier that is DEMONSTRATED to go red.
+- Anything unfixable lands BLOCKED with a repro and an expiry — never silenced.
+- Report premise failures rather than working around them. Every phase so far
+  found two or more, including in my own briefs.
