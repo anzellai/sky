@@ -244,3 +244,29 @@ Known-open items to fold in as they become blocking:
 - Anything unfixable lands BLOCKED with a repro and an expiry — never silenced.
 - Report premise failures rather than working around them. Every phase so far
   found two or more, including in my own briefs.
+
+### Endgame addendum (user, 2026-08-10)
+
+> once merge into main, we need cicd green + tag release
+
+So the arc is: close gaps → merge to `main` → **CI/CD green on main** → **tag a
+release** → rebase `feat/bluedb-v2` → continue BlueDB e2e.
+
+**Two things this forces, both of which must NOT be resolved by cheating:**
+
+1. **`ci-green` is currently RED on budget (~2217s vs a 990s ceiling).** "CI green"
+   must be achieved by closing the gap (dedupe, cache hits, parallelism, tier
+   placement) — **never by raising the ceiling**, and never by demoting the check.
+   The two-step rollout stands: `ci-green` is additive until it is genuinely
+   green, and only then becomes required.
+2. **This release contains behaviour changes, so the version is a USER decision.**
+   A failing `main : Task Error ()` now exits NON-ZERO with output (it previously
+   exited 0 silently) — that is a breaking change for anything relying on exit 0.
+   Emitted Go also changed (fieldset resolution + Store.insert kernel arity), so
+   goldens moved. Per `feedback_release_strategy`, do not invent the version or a
+   multi-version split — surface the choice (v0.19.14 vs v0.20.0) with the
+   breaking-change evidence and let the user decide.
+
+Release discipline carried in: run `scripts/preflight-tag.sh` (it now gates far
+more than before), CHANGELOG entry with a ⚠ Breaking-changes section so
+`sky upgrade` surfaces the banner, then tag + `gh release`.
