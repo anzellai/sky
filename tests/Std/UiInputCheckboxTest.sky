@@ -1,0 +1,80 @@
+module Std.UiInputCheckboxTest exposing (tests)
+
+-- Regression fence for `Std.Ui.Input.checkbox` — the rendered
+-- `<input type="checkbox">` must carry the `checked` attribute when
+-- `cfg.checked` is True.
+--
+-- `checkbox` fed `cfg.checked` to two places: the flipped value handed
+-- to `onChange`, and the decorative `cfg.icon` element. It never
+-- emitted the DOM attribute, so the NATIVE input rendered unchecked no
+-- matter what the model said. Apps that supply a custom tick icon mask
+-- it visually (examples/38 does), which is why it survived.
+--
+-- `checked` is not cosmetic: the runtime treats it as an
+-- authority-controlled attribute alongside `value`/`selected`
+-- (`runtime-go/rt/live.go` isAuthorityControlledAttr), and the browser
+-- driver syncs `el.checked` from it. With the attribute never emitted,
+-- neither the initial render nor any diff patch could ever check the box.
+--
+-- `Input.radio` already did this correctly (`renderRadioOption` appends
+-- `Ui.htmlAttribute "checked" "checked"`); the assertions below pin
+-- checkbox to the same behaviour, in both states, so a fix cannot
+-- satisfy the True case by emitting the attribute unconditionally.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Ui as Ui
+import Std.Ui.Input as Input
+import Sky.Test as Test exposing (Test)
+
+
+type Msg
+    = Toggled Bool
+
+
+-- Render a checkbox in the given state to HTML so the emitted
+-- attributes can be asserted directly.
+renderCheckbox : Bool -> String
+renderCheckbox isChecked =
+    Html.render
+        (Ui.layout
+            []
+            (Input.checkbox
+                []
+                { onChange = Toggled
+                , icon = \_ -> Ui.text ""
+                , checked = isChecked
+                , label = Input.labelHidden "Agree"
+                }
+            )
+        )
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui.Input.checkbox — checked attribute"
+          [ Test.test
+                "checked = True emits the checked attribute"
+                (\_ ->
+                    Test.equal
+                        True
+                        (String.contains "checked" (renderCheckbox True))
+                )
+          , Test.test
+                "checked = False omits the checked attribute"
+                (\_ ->
+                    Test.equal
+                        False
+                        (String.contains "checked" (renderCheckbox False))
+                )
+          , Test.test
+                "the rendered control is still an input of type checkbox"
+                (\_ ->
+                    Test.equal
+                        True
+                        (String.contains "type=\"checkbox\"" (renderCheckbox True))
+                )
+          ]
+    ]
