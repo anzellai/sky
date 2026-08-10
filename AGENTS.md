@@ -76,7 +76,8 @@ error type — always `Result Error a` / `Task Error a`.
 
 ```elm
 -- pure          : String.length, List.map, Crypto.sha256
--- fallible-pure : String.toInt : String -> Result Error Int
+-- fallible-pure : String.toInt : String -> Maybe Int
+--                 Encoding.base64Decode : String -> Result Error String
 -- effect        : File.read, Http.get, Db.query, Time.now  → Task Error a
 ```
 

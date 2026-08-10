@@ -518,6 +518,117 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Layer 1 — the combinatorial corpus (v2 §3) and the shared-world differential
+// ---------------------------------------------------------------------------
+
+/// Cases the generator produces. Read from the generator, not hand-copied, so
+/// the harness cannot pin a different corpus size than the manifest declares.
+pub const CORPUS_EXPECTED: u64 = 206;
+/// The isolation gate's sample size (v2 §3.2).
+pub const CORPUS_ISOLATION_EXPECTED: u64 = 24;
+/// The witness gate's shard size (v2 §4.4).
+pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
+/// Items the shared-world differential compares: the reject + infer corpora.
+pub const SHARED_WORLD_EXPECTED: u64 = 121;
+
+/// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
+/// fails when the generator and the checked-in manifest disagree, so a generator
+/// edit that silently adds, drops, or reclassifies a case is a failing build
+/// rather than a quiet change in what "100 % covered" means.
+///
+/// In-process and instant — no `sky` binary needed.
+pub fn corpus_manifest(ctx: &GateCtx) -> GateOutcome {
+    let cases = crate::corpus::all_cases();
+    let n = cases.len() as u64;
+    let code = crate::corpus::manifest::check(&ctx.repo_root);
+    GateOutcome::new(
+        code == 0,
+        n,
+        if code == 0 {
+            format!("{n} cases; generator and corpus/manifest.toml agree")
+        } else {
+            format!("{n} cases; generator and corpus/manifest.toml DISAGREE")
+        },
+    )
+}
+
+/// The full Layer-1 corpus: every case built, run, and its value compared
+/// against the one the GENERATOR constructed (v2 §4.4 class V).
+///
+/// Blocked cases (known product defects) still run and still count as
+/// assertions; they never contribute PASS and they fail the gate once their
+/// expiry passes.
+pub fn corpus(ctx: &GateCtx) -> GateOutcome {
+    let code = crate::corpus::runner::run_all(&ctx.repo_root);
+    let n = crate::corpus::all_cases().len() as u64;
+    GateOutcome::new(
+        code == 0,
+        n,
+        format!("{n} generated cases built and run; values compared against the generator's own"),
+    )
+}
+
+/// v2 §3.2 — a sampled case must give the SAME verdict alone, in a batch, and in
+/// a shuffled batch. The only mechanism that notices when a new family starts
+/// depending on whole-compilation state.
+pub fn corpus_isolation(ctx: &GateCtx) -> GateOutcome {
+    let code = crate::corpus::isolation::run(&ctx.repo_root);
+    GateOutcome::new(
+        code == 0,
+        CORPUS_ISOLATION_EXPECTED,
+        "sampled cases: identical verdicts alone / in-batch / shuffled".to_string(),
+    )
+}
+
+/// v2 §4.4 — each case must emit DIFFERENT Go from its axis-neutralised twin.
+/// A case that does not witness its axis does not cover it.
+pub fn corpus_witness(ctx: &GateCtx) -> GateOutcome {
+    let code = crate::corpus::witness::run(&ctx.repo_root);
+    GateOutcome::new(
+        code == 0,
+        CORPUS_WITNESS_EXPECTED,
+        "sharded cases each emit different Go from their axis-neutralised twin".to_string(),
+    )
+}
+
+/// The shared-world differential (v2 §11-U1).
+///
+/// Phase 3 deliberately left this unregistered so as not to change the five-gate
+/// set that phase was verified against. Registering it is a Phase 4 step: the
+/// incremental world is now load-bearing for the corpus, so the proof that it
+/// produces identical verdicts to the whole-program path belongs in the gate
+/// set rather than in a doc.
+pub fn shared_world(ctx: &GateCtx) -> GateOutcome {
+    match crate::shared_world_gate::compare(&ctx.repo_root, false) {
+        Err(e) => GateOutcome::new(false, 0, e),
+        Ok(r) => {
+            let n = r.compared as u64;
+            if r.diverged.is_empty() {
+                GateOutcome::new(
+                    true,
+                    n,
+                    format!(
+                        "{n} items, identical verdicts (counts, diagnostics, inferred types); \
+                         {} shared, {} full-rebuild fallback(s)",
+                        r.n_shared,
+                        r.fallbacks.len()
+                    ),
+                )
+            } else {
+                GateOutcome::new(
+                    false,
+                    n,
+                    format!("{} of {n} item(s) diverge: {}", r.diverged.len(), {
+                        let v: Vec<&str> = r.diverged.iter().map(|s| s.as_str()).collect();
+                        preview(&v)
+                    }),
+                )
+            }
+        }
+    }
+}
+
 fn read_json(p: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }

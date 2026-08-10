@@ -292,6 +292,31 @@ fn verify_one(
         MutationKind::NoOp => None,
     };
 
+    // A mutation to RUST SOURCE does nothing until the binary is rebuilt — the
+    // child re-execs `opts.exe`, which is the pre-mutation image. Without this
+    // step such a mutation is a silent no-op and the gate reports VACUOUS,
+    // indistinguishable from a gate whose assertion is genuinely dead.
+    //
+    // Every gate registered before 2026-08-10 happened to mutate a DATA file
+    // (a corpus `.sky`, an example, a test suite), so the hole never showed. The
+    // Layer-1 corpus gates are driven by generator logic in Rust, so it shows
+    // immediately. v2 §7.5 already costs falsification at "~13-24 s cold build
+    // per mutation" — it assumed this rebuild; the harness had not implemented
+    // it.
+    if let MutationKind::ReplaceOnce { path, .. } = m.kind {
+        if path.ends_with(".rs") {
+            if let Err(e) = rebuild_xtask(&opts.repo_root, budget) {
+                return FalsifyReport {
+                    gate: gate.name,
+                    mutation: m.id,
+                    outcome: Falsified::Inconclusive(e.clone()),
+                    as_declared: false,
+                    detail: e,
+                };
+            }
+        }
+    }
+
     let run = run_gate_in_child(
         &opts.exe,
         &opts.repo_root,
@@ -349,6 +374,25 @@ fn verify_one(
         (Falsified::Inconclusive(w), _) => w.clone(),
     };
 
+    // Restore the tree NOW, then rebuild, so the next gate does not run a
+    // binary built from mutated source. Reverting the FILE is not enough once a
+    // mutation can reach the compiled image: the artefact outlives the patch.
+    let rebuilt_source = matches!(
+        m.kind,
+        MutationKind::ReplaceOnce { path, .. } if path.ends_with(".rs")
+    );
+    drop(_patch);
+    if rebuilt_source {
+        if let Err(e) = rebuild_xtask(&opts.repo_root, budget) {
+            eprintln!(
+                "harness: WARNING — could not rebuild after reverting {}: {e}\n\
+                 The binary may still contain the mutation. Rebuild before trusting \
+                 any later result.",
+                m.id
+            );
+        }
+    }
+
     FalsifyReport {
         gate: gate.name,
         mutation: m.id,
@@ -356,7 +400,63 @@ fn verify_one(
         as_declared,
         detail,
     }
-    // `_patch` drops here → the tree is restored before the next gate runs.
+}
+
+/// Rebuild the `xtask` binary in place, bounded.
+///
+/// Used when a mutation edits Rust source: the child re-execs the binary at
+/// `opts.exe`, so the mutation only exists once it has been compiled into that
+/// path.
+fn rebuild_xtask(root: &Path, budget: Duration) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
+    let mut cmd = Command::new("cargo");
+    cmd.args(["build", "--release", "-p", "xtask"])
+        .current_dir(root.join("rust"))
+        // The harness is itself usually invoked under a wrapping CARGO_TARGET_DIR;
+        // inheriting it here would build into a different tree than the one
+        // `opts.exe` points at, and the mutation would silently not take effect
+        // — the exact failure this function exists to remove.
+        .env_remove("CARGO_TARGET_DIR")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let mut child = cmd.spawn().map_err(|e| format!("cargo spawn failed: {e}"))?;
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                if st.success() {
+                    return Ok(());
+                }
+                let mut err = String::new();
+                if let Some(mut s) = child.stderr.take() {
+                    use std::io::Read;
+                    let _ = s.read_to_string(&mut err);
+                }
+                let tail: Vec<&str> = err.lines().rev().take(8).collect();
+                return Err(format!(
+                    "cargo build failed under the mutation: {}",
+                    tail.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                ));
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("cargo build exceeded the gate's budget".into());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("cargo wait failed: {e}")),
+        }
+    }
 }
 
 #[cfg(test)]

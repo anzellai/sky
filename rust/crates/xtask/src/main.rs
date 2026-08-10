@@ -10,6 +10,7 @@
 
 mod build_run_gate;
 mod coerce_floor_gate;
+mod corpus;
 mod corpus_bench;
 mod denominators_gate;
 mod divergences_gate;
@@ -71,6 +72,7 @@ const GATES: &[(&str, GateFn)] = &[
     ("corpus-bench", |args| {
         corpus_bench::run(args, &repo_root())
     }),
+    ("corpus", |args| corpus::run(args, &repo_root())),
     ("denominators", |args| {
         denominators_gate::run(args, &repo_root())
     }),

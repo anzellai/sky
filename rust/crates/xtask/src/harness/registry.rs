@@ -339,6 +339,114 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::sky_verify,
     },
+    // ---- Layer 1: the combinatorial corpus (v2 §3) -------------------------
+    Gate {
+        name: "shared-world",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::SHARED_WORLD_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "whole-program vs shared-world: identical verdicts, per item",
+        mutations: Mutations::new(&[Mutation {
+            id: "shared-world.inject-divergence",
+            description: "route the shared path through the deliberately-wrong \
+                          check that skips the case's body-derived passes; the \
+                          per-item comparison must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/xtask/src/shared_world_gate.rs",
+                from: "shared.check_case(&item.modules, &item.to_check)",
+                to: "shared.check_case_injected_divergence(&item.modules, &item.to_check)",
+            },
+        }]),
+        body: bodies::shared_world,
+    },
+    Gate {
+        name: "corpus-manifest",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 120,
+        expected: bodies::CORPUS_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the generator and corpus/manifest.toml declare the same membership",
+        mutations: Mutations::new(&[Mutation {
+            id: "corpus-manifest.drift",
+            description: "alter the checked-in manifest so it no longer matches \
+                          what the generator produces; the membership comparison \
+                          must go red",
+            // A DATA mutation on purpose: it needs no rebuild, and it falsifies
+            // the comparison itself rather than crashing the generator.
+            kind: MutationKind::ReplaceOnce {
+                path: "corpus/manifest.toml",
+                from: "n_min = 206",
+                to: "n_min = 207",
+            },
+        }]),
+        body: bodies::corpus_manifest,
+    },
+    Gate {
+        name: "corpus",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 1800,
+        expected: bodies::CORPUS_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every generated case built + run; values compared against the generator's own",
+        mutations: Mutations::new(&[Mutation {
+            id: "corpus.wrong-expected-value",
+            description: "corrupt the EXPECTED value the generator constructs for \
+                          the record_update family, leaving the program correct; \
+                          that family's value comparison must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/xtask/src/corpus/gen.rs",
+                from: "(decls, check, format!(\"{UPDATED}/{SURVIVOR}\"))",
+                to: "(decls, check, format!(\"{UPDATED}/999\"))",
+            },
+        }]),
+        body: bodies::corpus,
+    },
+    Gate {
+        name: "corpus-isolation",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 900,
+        expected: bodies::CORPUS_ISOLATION_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "sampled cases give identical verdicts alone / in-batch / shuffled (v2 §3.2)",
+        mutations: Mutations::new(&[Mutation {
+            id: "corpus-isolation.perturb-batch",
+            description: "make the batched build report a different value than the \
+                          alone build; the three-way comparison must detect the \
+                          divergence",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/xtask/src/corpus/isolation.rs",
+                from: "prints.push(format!(\"\\\"{id}\\\\t\\\" ++ {leaf}.checkValue\"));",
+                to: "prints.push(format!(\"\\\"{id}\\\\t\\\" ++ {leaf}.checkValue ++ \\\"X\\\"\"));",
+            },
+        }]),
+        body: bodies::corpus_isolation,
+    },
+    Gate {
+        name: "corpus-witness",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 900,
+        expected: bodies::CORPUS_WITNESS_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "each case emits different Go from its axis-neutralised twin (v2 §4.4)",
+        mutations: Mutations::new(&[Mutation {
+            id: "corpus-witness.compare-against-itself",
+            description: "build the 'neutralised twin' from the case's OWN axes, so \
+                          the two fingerprints are identical by construction; every \
+                          case must then report NOT WITNESSED",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/xtask/src/corpus/witness.rs",
+                from: "let baseline = gen::build(stratum, neutralised);",
+                to: "let baseline = gen::build(stratum, &case.axes);",
+            },
+        }]),
+        body: bodies::corpus_witness,
+    },
     // ---- harness self-verification ----------------------------------------
     //
     // `selftest-hang` is deliberately registered BEFORE `canary`. Registry order

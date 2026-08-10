@@ -1,0 +1,46 @@
+-- PINNED REPRO — goty.rs record-fieldset collision (v0.19.1), and its
+-- erased-`any` recurrence (2026-08-03, still open at the time of writing).
+--
+-- `record_fieldsets` (lower/src/lower.rs:246-266) is keyed on the sorted field
+-- NAME vector, and its own comment at :256-258 records that two records with
+-- identical field names but different field types collide there.
+-- `select_record_candidate` then picks by type — but when the field values
+-- ERASE to `any` (via fst/snd or a tuple destructure) the type is gone and the
+-- wrong candidate is selected, yielding a CoerceFailure.
+--
+-- This is why `fieldset_collision` is `isolation = unit`: batching two of these
+-- into one compilation unit makes each case's verdict depend on its neighbour.
+--
+-- coordinate: collision=same_names_diff_types erasure=via_fst_snd
+-- expect: accept, stdout "42/s"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias KvA =
+    { key : String, value : Int }
+
+
+type alias KvB =
+    { key : String, value : String }
+
+
+main =
+    let
+        a0 =
+            { key = "k", value = 42 }
+
+        b0 =
+            { key = "k", value = "s" }
+
+        av =
+            (fst ( a0, 0 )).value
+
+        bv =
+            (fst ( b0, 0 )).value
+    in
+    println (String.fromInt av ++ "/" ++ bv)

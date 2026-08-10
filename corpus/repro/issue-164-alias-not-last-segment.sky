@@ -1,0 +1,34 @@
+-- PINNED REPRO — anzellai/sky#164
+--
+-- Same-named alias / import-alias collision. The first fix attempt was a
+-- QUALIFIER HEURISTIC that passed the whole corpus plus its own test and then
+-- regressed a real control-plane app — because the alias was not the last path
+-- segment (`import A.B.C as B`). It was reverted; the correct fix is HIR
+-- DefId-based resolution.
+--
+-- That history is the reason this repro pins the alias-not-last-segment shape
+-- specifically, and the reason `import_shape` is `isolation = unit`: the
+-- subject under test is whole-program name resolution, so a batched neighbour
+-- can change the answer.
+--
+-- coordinate: import_shape=alias_not_last_segment collision=none
+-- expect: accept, stdout "HI/42"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as Core
+import Std.Log exposing (println)
+
+
+main =
+    let
+        upper =
+            Core.toUpper "hi"
+
+        -- 42 characters: four "0123456789" runs plus "01".
+        n =
+            Core.length "012345678901234567890123456789012345678901"
+    in
+    println (upper ++ "/" ++ String.fromInt n)

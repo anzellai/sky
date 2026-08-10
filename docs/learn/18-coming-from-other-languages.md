@@ -40,7 +40,8 @@ returns `Task Error a`:
 
 ```elm
 -- pure:          List.map, String.length, Crypto.sha256
--- can fail:      String.toInt : String -> Result Error Int
+-- can fail:      String.toInt : String -> Maybe Int
+--                Encoding.base64Decode : String -> Result Error String
 -- side effect:   Http.get, Db.query, File.read : … -> Task Error a
 ```
 

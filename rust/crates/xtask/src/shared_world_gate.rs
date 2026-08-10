@@ -113,25 +113,38 @@ struct Item {
     to_check: Vec<String>,
 }
 
-pub fn run(args: &[String], root: &Path) -> i32 {
-    let inject = args.iter().any(|a| a == "--inject-divergence");
-    let quiet = args.iter().any(|a| a == "-q" || a == "--quiet");
+/// The differential's result, as data.
+///
+/// Extracted so the harness gate body and the CLI share ONE implementation of
+/// the comparison. Two copies of a verdict rule is exactly how the two reject
+/// faces drifted apart (v2 §1.5), and this differential is the evidence base for
+/// the shared-world change — it is the last thing that should exist twice.
+pub struct Report {
+    pub compared: usize,
+    pub n_shared: usize,
+    pub diverged: Vec<String>,
+    pub fallbacks: Vec<(String, Fallback)>,
+    pub base_modules: usize,
+}
 
+pub fn compare(root: &Path, inject: bool) -> Result<Report, String> {
     let stdlib = crate::reject_gate::load_dir_pub(&root.join("sky-stdlib"), "sky-stdlib");
     if stdlib.is_empty() {
-        eprintln!("shared-world: no stdlib modules under {}/sky-stdlib", root.display());
-        return 1;
+        return Err(format!(
+            "shared-world: no stdlib modules under {}/sky-stdlib",
+            root.display()
+        ));
     }
 
     let mut items = Vec::new();
     items.extend(reject_items(root));
     items.extend(infer_items(root));
     if items.is_empty() {
-        eprintln!("shared-world: no corpus items discovered — nothing was compared");
-        return 1;
+        return Err("shared-world: no corpus items discovered — nothing was compared".into());
     }
 
     let shared = SharedWorld::new(&stdlib);
+    let base_modules = shared.base_module_count();
 
     let mut compared = 0usize;
     let mut diverged: Vec<String> = Vec::new();
@@ -177,6 +190,33 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         }
     }
 
+    Ok(Report {
+        compared,
+        n_shared,
+        diverged,
+        fallbacks,
+        base_modules,
+    })
+}
+
+pub fn run(args: &[String], root: &Path) -> i32 {
+    let inject = args.iter().any(|a| a == "--inject-divergence");
+    let quiet = args.iter().any(|a| a == "-q" || a == "--quiet");
+
+    let Report {
+        compared,
+        n_shared,
+        diverged,
+        fallbacks,
+        base_modules,
+    } = match compare(root, inject) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+
     if !quiet {
         println!("SHARED-WORLD DIFFERENTIAL — whole-program vs shared-world, per item");
         println!("  corpora            : reject + infer");
@@ -186,7 +226,7 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         for (name, r) in &fallbacks {
             println!("      {name}  [{}]", r.label());
         }
-        println!("  stdlib base modules: {}", shared.base_module_count());
+        println!("  stdlib base modules: {base_modules}");
     }
 
     if diverged.is_empty() {
