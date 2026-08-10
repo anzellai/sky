@@ -1,0 +1,165 @@
+module Main exposing (main)
+
+-- Relay — a headless JSON API + event gateway.
+--
+-- Run:
+--
+--     RELAY_PORT=8091 SKY_AUTH_TOKEN_SECRET=$(head -c 48 /dev/urandom | base64) \
+--       ./sky-out/app
+--
+-- The process prints ONE greppable readiness line to stdout once the
+-- port is resolved and the router is handed to `Server.listen`:
+--
+--     relay: listening on <port>
+--
+-- Environment:
+--
+--   RELAY_PORT / PORT       — bind port.  REQUIRED in any real
+--                             deployment; there is no port literal in
+--                             bind position anywhere in this project.
+--   SKY_AUTH_TOKEN_SECRET   — HS256 signing secret (>= 32 bytes).
+--   RELAY_CONFIG_FILE       — path to a TOML/JSON/YAML config document.
+--   RELAY_CONFIG_TOML       — inline config document (used when no file).
+--   RELAY_ADMIN_USER        — Basic-auth + admin-token user.
+--   RELAY_ADMIN_PASSWORD    — admin password (bcrypt-hashed at boot).
+--   RELAY_TOKEN_TTL         — token lifetime in seconds.
+--   RELAY_UPSTREAM_PATH     — default outbound-fetch path.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Http.Server as Server
+import Sky.Http.Middleware as Mw
+import Std.Cache as Cache
+import Std.Log as Log
+import Config exposing (Config)
+import Handlers
+import Tokens
+
+
+main =
+    let
+        run = boot () |> Task.onError fatal
+        _ = Task.run run
+    in
+        ()
+
+
+boot : () -> Task Error ()
+boot _ =
+    Config.load ()
+        |> Task.andThen
+               (\cfg ->
+                   Time.unixMillis ()
+                       |> Task.andThen (\bootMs -> withCache cfg bootMs))
+
+
+withCache : Config -> Int -> Task Error ()
+withCache cfg bootMs =
+    Cache.new
+        (Cache.defaultCfg |> Cache.withMaxEntries 128
+            |> Cache.withTTL cfg.cacheTtlMs
+            |> Cache.withMaxBytes 1048576)
+        |> Task.andThen (\cache -> withAdminHash cfg bootMs cache)
+
+
+-- The admin password is bcrypt-hashed once at boot; the plaintext never
+-- reaches a comparison.
+withAdminHash : Config -> Int -> Cache.Cache String String -> Task Error ()
+withAdminHash cfg bootMs cache =
+    case Tokens.hashAdminPassword cfg.adminPassword of
+
+        Ok hashed ->
+            serve cfg bootMs cache hashed
+
+        Err e ->
+            Task.fail e
+
+
+serve : Config -> Int -> Cache.Cache String String -> String -> Task Error ()
+serve cfg bootMs cache adminHash =
+    let
+        baseUrl = "http://127.0.0.1:" ++ String.fromInt cfg.port
+        -- THE NON-VARIADIC KERNEL-ALIAS SHAPE (the #155 counter-example).
+        -- `Middleware_withCors` is `func(origins, handler any)` in Go and
+        -- `List String -> Handler -> Handler` in Sky — declared arity 2,
+        -- scanned arity 2.  It must curry exactly as declared: a fix that
+        -- "always full-applies" a kernel alias breaks here, which is why
+        -- Relay carries this next to the variadic `Http.request` chain in
+        -- Handlers.fetch.
+        cors h = Mw.withCors cfg.corsOrigins h
+        wrap h = cors (Mw.withLogging h)
+        _ =
+            Log.infoWith
+                "relay.boot"
+                [ ( "config", Config.describe cfg )
+                , ( "adminUser", cfg.adminUser )
+                ]
+        -- The readiness line.  One line, fixed prefix, port last — a test
+        -- harness greps for it instead of sleeping.
+        _ = Log.println ("relay: listening on " ++ String.fromInt cfg.port)
+    in
+        Server.listen
+            cfg.port
+            [ Server.get "/" (wrap Handlers.home)
+            , Server.api
+                  "GET /health"
+                  (wrap (\req -> Handlers.health cache bootMs req))
+            , Server.api
+                  "GET /api/config"
+                  (wrap (\req -> Handlers.configReport cfg req))
+            , Server.api
+                  "GET /api/token"
+                  (wrap (\req -> Handlers.issueToken cfg req))
+            , Server.api "GET /api/me" (wrap (\req -> Handlers.me cfg req))
+            , Server.api
+                  "POST /api/admin/token"
+                  (wrap (\req -> Handlers.adminToken cfg adminHash req))
+            , Server.api
+                  "GET /api/admin/whoami"
+                  (wrap (\req -> Handlers.adminWhoami cfg req))
+            -- Middleware-enforced rate limit (Sky.Http.Middleware).
+            , Server.api
+                  "GET /api/limited"
+                  (cors
+                      (Mw.withRateLimit
+                          "relay-mw"
+                          cfg.limits.capacity
+                          cfg.limits.refill
+                          Handlers.limited))
+            -- In-handler rate limit (Sky.Http.RateLimit.allow).
+            , Server.api
+                  "GET /api/bucket"
+                  (wrap (\req -> Handlers.bucket cfg req))
+            , Server.api
+                  "GET /api/fetch"
+                  (wrap (\req -> Handlers.fetch cfg baseUrl req))
+            , Server.api "POST /api/import" (wrap Handlers.importCsv)
+            , Server.api "POST /api/broadcast" (wrap Handlers.broadcast)
+            , Server.get "/api/csrf" (Mw.withCsrf Handlers.csrfProbe)
+            , Server.get
+                  "/admin/stats"
+                  (Mw.withBasicAuth
+                      cfg.adminUser
+                      cfg.adminPassword
+                      (\req -> Handlers.adminStats cache req))
+            , Server.get "/upstream" Handlers.upstream
+            -- Streaming routes stay OUTSIDE the middleware wrap: the CORS
+            -- and logging wrappers peek at the response status and drop
+            -- the stream-handler sentinel, which turns a chunked response
+            -- into a plain text body (same reason 36-composite-server
+            -- exports its CSV stream unwrapped).
+            , Server.get "/events" (\req -> Handlers.events cfg req)
+            , Server.get "/ws" Handlers.websocket
+            ]
+
+
+fatal : Error -> Task Error ()
+fatal e =
+    let
+        _ = Log.error ("relay: fatal — " ++ Error.toString e)
+    in
+        System.exit 1

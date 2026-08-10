@@ -1,0 +1,633 @@
+module Handlers exposing
+    ( home
+    , health
+    , issueToken
+    , me
+    , adminToken
+    , adminWhoami
+    , adminStats
+    , limited
+    , bucket
+    , fetch
+    , importCsv
+    , broadcast
+    , events
+    , upstream
+    , websocket
+    , csrfProbe
+    , configReport
+    )
+
+-- Relay's request handlers.  Everything returns JSON except `/` (a
+-- one-screen index) and the two streaming endpoints.
+--
+-- Kernel-alias arity note — this module carries BOTH shapes the
+-- v0.18.9 regression (anzellai/sky#155) needs to stay honest:
+--
+--   * VARIADIC over-count   — `fetch` below drives the real
+--     `Http.defaultRequest |> withHeader |> Http.request |> Task.andThen`
+--     chain with a live `Task.onError` path into `Error.toString`.
+--     `Http_request` is `func(firstArg any, rest ...any)` in Go, so the
+--     ABI scan counts 2 params for a declared arity-1 alias.
+--
+--   * NON-VARIADIC counter-example — `Middleware.withCors` (wired in
+--     Main.sky) is `func(origins, handler any)`, declared arity 2.  It
+--     must keep currying exactly as declared; it is the shape that
+--     catches an over-eager "always full-apply" fix.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Http as Http
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Sky.Http.Server.Stream as Stream
+import Sky.Http.Server.WebSocket as Ws
+import Sky.Http.RateLimit as RateLimit
+import Std.Cache as Cache
+import Std.Csv as Csv
+import Std.Log as Log
+import Std.PubSub as PubSub
+import Std.Trace as Trace
+import Config exposing (Config)
+import Tokens
+
+
+-- ─── Small JSON helpers ───────────────────────────────────────────
+esc : String -> String
+esc s =
+    String.replace
+        "\t"
+        "\\t"
+        (String.replace
+            "\r"
+            "\\r"
+            (String.replace
+                "\n"
+                "\\n"
+                (String.replace "\"" "\\\"" (String.replace "\\" "\\\\" s))))
+
+
+jsonStr : String -> String
+jsonStr s =
+    "\"" ++ esc s ++ "\""
+
+
+jsonList : List String -> String
+jsonList xs =
+    "[" ++ String.join "," (List.map jsonStr xs) ++ "]"
+
+
+-- `Time.now` hands back unix MILLIS; JWT `exp` / `nbf` / `iat` are unix
+-- SECONDS.  A `()` parameter keeps this a function — a zero-arg
+-- top-level binding would be a memoised CAF and freeze the clock.
+nowSeconds : () -> Task Error Int
+nowSeconds _ =
+    Time.now () |> Task.map (\ms -> ms // 1000)
+
+
+ok : String -> Task Error Response
+ok body =
+    Task.succeed (Server.json body)
+
+
+status : Int -> String -> Task Error Response
+status code body =
+    Task.succeed (Server.json body |> Server.withStatus code)
+
+
+errorBody : String -> Error -> String
+errorBody where_ e =
+    "{\"ok\":false,\"where\":" ++ jsonStr where_ ++ ",\"error\":"
+        ++ jsonStr (Error.toString e)
+        ++ "}"
+
+
+-- ─── / ────────────────────────────────────────────────────────────
+home : Request -> Task Error Response
+home _ =
+    Task.succeed
+        (Server.html
+            """<h1>Relay</h1>
+<p>A headless JSON API + event gateway.</p>
+<ul>
+  <li><code>GET  /health</code></li>
+  <li><code>GET  /api/config</code></li>
+  <li><code>GET  /api/token?sub=alice</code></li>
+  <li><code>GET  /api/me</code> (Bearer)</li>
+  <li><code>POST /api/admin/token</code> (password body)</li>
+  <li><code>GET  /api/admin/whoami</code> (Bearer)</li>
+  <li><code>GET  /api/limited</code> (middleware rate limit)</li>
+  <li><code>GET  /api/bucket</code> (in-handler token bucket)</li>
+  <li><code>GET  /api/fetch?url=...</code> (outbound)</li>
+  <li><code>POST /api/import</code> (CSV)</li>
+  <li><code>POST /api/broadcast</code> (pub/sub)</li>
+  <li><code>GET  /events</code> (SSE)</li>
+  <li><code>GET  /ws</code> (WebSocket echo)</li>
+</ul>""")
+
+
+-- ─── /health — Std.Cache + Std.Trace ──────────────────────────────
+health : Cache.Cache String String -> Int -> Request -> Task Error Response
+health cache bootMs req =
+    Trace.span
+        "relay.health"
+        (Trace.attr "relay.route" "/health"
+            |> Task.andThen (\_ -> Cache.get cache "health")
+            |> Task.andThen (\hit -> healthFromCache cache bootMs hit))
+
+
+healthFromCache : Cache.Cache String String -> Int -> Maybe String -> Task Error Response
+healthFromCache cache bootMs hit =
+    case hit of
+
+        Just cached ->
+            Trace.event "relay.health.cache-hit"
+                |> Task.andThen (\_ -> ok cached)
+
+        Nothing ->
+            Trace.event "relay.health.cache-miss"
+                |> Task.andThen (\_ -> Time.unixMillis ())
+                |> Task.andThen
+                       (\nowMs ->
+                           let
+                               body = healthBody (nowMs - bootMs)
+                           in
+                               Cache.put cache "health" body
+                                   |> Task.andThen (\_ -> ok body))
+
+
+healthBody : Int -> String
+healthBody uptimeMs =
+    "{\"ok\":true,\"service\":\"relay\",\"uptimeMs\":"
+        ++ String.fromInt uptimeMs
+        ++ "}"
+
+
+-- ─── /api/config — what Std.Config decoded ────────────────────────
+configReport : Config -> Request -> Task Error Response
+configReport cfg _ =
+    ok
+        ("{\"source\":" ++ jsonStr cfg.configSource ++ ",\"port\":"
+            ++ String.fromInt cfg.port
+            ++ ",\"capacity\":"
+            ++ String.fromInt cfg.limits.capacity
+            ++ ",\"refill\":"
+            ++ String.fromInt cfg.limits.refill
+            ++ ",\"ticks\":"
+            ++ String.fromInt cfg.sseTicks
+            ++ ",\"cacheTtlMs\":"
+            ++ String.fromInt cfg.cacheTtlMs
+            ++ ",\"tracing\":"
+            ++ boolJson cfg.features.tracing
+            ++ ",\"sampleRate\":"
+            ++ String.fromFloat cfg.features.sampleRate
+            ++ ",\"region\":"
+            ++ maybeJson cfg.features.region
+            ++ ",\"corsOrigins\":"
+            ++ jsonList cfg.corsOrigins
+            ++ "}")
+
+
+boolJson : Bool -> String
+boolJson b =
+    if b then
+        "true"
+
+    else
+        "false"
+
+
+maybeJson : Maybe String -> String
+maybeJson m =
+    case m of
+
+        Just v ->
+            jsonStr v
+
+        Nothing ->
+            "null"
+
+
+-- ─── /api/token + /api/me — Sky.Core.Jwt + Std.Auth ───────────────
+issueToken : Config -> Request -> Task Error Response
+issueToken cfg req =
+    let
+        subject =
+            Maybe.withDefault "anonymous" (Server.queryParam "sub" req)
+    in
+        nowSeconds ()
+            |> Task.andThen
+                   (\now ->
+                       case Tokens.issue
+                                cfg.jwtSecret
+                                subject
+                                now
+                                cfg.tokenTtlSeconds of
+
+                           Ok token ->
+                               ok
+                                   ("{\"token\":" ++ jsonStr token ++ ",\"sub\":"
+                                       ++ jsonStr subject
+                                       ++ ",\"expiresIn\":"
+                                       ++ String.fromInt cfg.tokenTtlSeconds
+                                       ++ "}")
+
+                           Err e ->
+                               status 500 (errorBody "token.sign" e))
+
+
+me : Config -> Request -> Task Error Response
+me cfg req =
+    case Tokens.bearer
+             (Maybe.withDefault "" (Server.header "Authorization" req)) of
+
+        Nothing ->
+            unauthorized "missing bearer token"
+
+        Just token ->
+            nowSeconds () |> Task.andThen (\now -> meVerified cfg now token)
+
+
+meVerified : Config -> Int -> String -> Task Error Response
+meVerified cfg now token =
+    case Tokens.verify cfg.jwtSecret now token of
+
+        Ok payload ->
+            ok ("{\"ok\":true,\"claims\":" ++ payload ++ "}")
+
+        Err e ->
+            let
+                _ =
+                    Log.warnWith
+                        "relay.auth.reject"
+                        [ ( "reason", Error.toString e ) ]
+            in
+                unauthorized (Error.toString e)
+
+
+unauthorized : String -> Task Error Response
+unauthorized reason =
+    Task.succeed
+        (Server.json ("{\"ok\":false,\"error\":" ++ jsonStr reason ++ "}")
+            |> Server.withStatus 401
+            |> Server.withHeader "WWW-Authenticate" "Bearer realm=\"relay\"")
+
+
+-- ─── /api/admin/* — bcrypt + short-form signToken ─────────────────
+adminToken : Config -> String -> Request -> Task Error Response
+adminToken cfg passwordHash req =
+    let
+        candidate = String.trim req.body
+    in
+        case Tokens.checkAdminPassword candidate passwordHash of
+
+            Ok True ->
+                case Tokens.issueAdmin
+                         cfg.jwtSecret
+                         cfg.adminUser
+                         cfg.tokenTtlSeconds of
+
+                    Ok token ->
+                        ok
+                            ("{\"token\":" ++ jsonStr token ++ ",\"strength\":"
+                                ++ jsonStr (Tokens.passwordAdvice candidate)
+                                ++ "}")
+
+                    Err e ->
+                        status 500 (errorBody "admin.sign" e)
+
+            Ok False ->
+                unauthorized "bad admin password"
+
+            Err e ->
+                status 500 (errorBody "admin.bcrypt" e)
+
+
+adminWhoami : Config -> Request -> Task Error Response
+adminWhoami cfg req =
+    case Tokens.bearer
+             (Maybe.withDefault "" (Server.header "Authorization" req)) of
+
+        Nothing ->
+            unauthorized "missing bearer token"
+
+        Just token ->
+            case Tokens.adminRole cfg.jwtSecret token of
+
+                Ok role ->
+                    ok
+                        ("{\"ok\":true,\"user\":" ++ jsonStr cfg.adminUser
+                            ++ ",\"role\":"
+                            ++ jsonStr role
+                            ++ "}")
+
+                Err e ->
+                    unauthorized (Error.toString e)
+
+
+adminStats : Cache.Cache String String -> Request -> Task Error Response
+adminStats cache _ =
+    Cache.size cache
+        |> Task.andThen
+               (\size ->
+                   Cache.stats cache
+                       |> Task.andThen
+                              (\st ->
+                                  ok
+                                      ("{\"entries\":" ++ String.fromInt size
+                                          ++ ",\"hits\":"
+                                          ++ String.fromInt st.hits
+                                          ++ ",\"misses\":"
+                                          ++ String.fromInt st.misses
+                                          ++ ",\"evictions\":"
+                                          ++ String.fromInt st.evictions
+                                          ++ "}")))
+
+
+-- ─── Rate limiting ────────────────────────────────────────────────
+-- Wrapped in `Sky.Http.Middleware.withRateLimit` at the router; this
+-- body only runs when the middleware let the request through.
+limited : Request -> Task Error Response
+limited _ =
+    ok "{\"ok\":true,\"gate\":\"middleware\"}"
+
+
+-- The in-handler shape: `Sky.Http.RateLimit.allow` returns a Bool, so
+-- the 429 is built here rather than by a wrapper.
+bucket : Config -> Request -> Task Error Response
+bucket cfg req =
+    let
+        ip = clientIp req
+    in
+        if RateLimit.allow "relay-bucket" ip cfg.limits.capacity cfg.limits.refill then
+            ok "{\"ok\":true,\"gate\":\"handler\"}"
+
+        else
+            Task.succeed
+                (Server.json "{\"ok\":false,\"error\":\"rate limit exceeded\"}"
+                    |> Server.withStatus 429
+                    |> Server.withHeader "Retry-After" "1")
+
+
+-- `req.remoteAddr` is `host:ephemeralPort`, and the ephemeral port
+-- changes on every connection — bucketing on it would hand each
+-- request its own fresh bucket and the limiter would never fire.
+-- Strip the port; honour `X-Forwarded-For` first when behind a proxy.
+clientIp : Request -> String
+clientIp req =
+    case Dict.get "X-Forwarded-For" req.headers of
+
+        Just v ->
+            String.trim (Maybe.withDefault v (List.head (String.split "," v)))
+
+        Nothing ->
+            stripPort req.remoteAddr
+
+
+stripPort : String -> String
+stripPort addr =
+    let
+        parts = String.split ":" addr
+        n = List.length parts
+    in
+        if n <= 1 then
+            addr
+
+        else
+            String.join ":" (List.take (n - 1) parts)
+
+
+-- ─── /api/fetch — the VARIADIC kernel-alias shape ─────────────────
+-- THE variadic shape.  `Http.request` is declared `HttpRequest ->
+-- Task Error HttpResponse` (arity 1) while its Go kernel is
+-- `func(firstArg any, rest ...any)` (scanned arity 2).  A full
+-- 1-argument application inside a `Task.andThen` chain must FULL-APPLY
+-- — if the compiler eta-expands it into a partial closure the
+-- continuation receives the closure instead of the resolved
+-- `HttpResponse`.  The `Task.onError` arm keeps the failure path live
+-- so `Error.toString` is reached on a real error value.
+fetch : Config -> String -> Request -> Task Error Response
+fetch cfg baseUrl req =
+    let
+        url =
+            Maybe.withDefault
+                (baseUrl ++ cfg.upstreamPath)
+                (Server.queryParam "url" req)
+    in
+        Trace.span
+            "relay.fetch"
+            (Http.defaultRequest url |> Http.withMethod "GET"
+                |> Http.withHeader "X-Relay-Hop" "1"
+                |> Http.withHeader "Accept" "application/json"
+                |> Http.withTimeout 5000
+                |> Http.withFollowRedirects True
+                |> Http.request
+                |> Task.andThen (\resp -> fetchOk url resp)
+                |> Task.onError (\e -> fetchFailed url e))
+
+
+fetchOk : String -> Http.HttpResponse -> Task Error Response
+fetchOk url resp =
+    ok
+        ("{\"ok\":true,\"url\":" ++ jsonStr url ++ ",\"upstreamStatus\":"
+            ++ String.fromInt resp.status
+            ++ ",\"upstreamBody\":"
+            ++ jsonStr resp.body
+            ++ "}")
+
+
+-- The error path the #155 regression needs: a real `Error` value
+-- flowing out of the variadic kernel call into `Error.toString`.
+fetchFailed : String -> Error -> Task Error Response
+fetchFailed url e =
+    let
+        _ = Log.errorWith "relay.fetch.failed" [ ( "url", url ) ]
+    in
+        Task.succeed
+            (Server.json
+                ("{\"ok\":false,\"url\":" ++ jsonStr url ++ ",\"error\":"
+                    ++ jsonStr (Error.toString e)
+                    ++ ",\"retryable\":"
+                    ++ boolJson (Error.isRetryable e)
+                    ++ "}")
+                |> Server.withStatus 502)
+
+
+-- The loopback target for the default `/api/fetch` hop.
+upstream : Request -> Task Error Response
+upstream _ =
+    ok "{\"ok\":true,\"source\":\"relay-upstream\"}"
+
+
+-- ─── /api/import — Std.Csv ────────────────────────────────────────
+importCsv : Request -> Task Error Response
+importCsv req =
+    case Server.queryParam "file" req of
+
+        Just path ->
+            importFromFile path
+
+        Nothing ->
+            importFromBody req
+
+
+importFromBody : Request -> Task Error Response
+importFromBody req =
+    let
+        delimiter = Maybe.withDefault "," (Server.queryParam "delim" req)
+        parsed =
+            if delimiter == "," then
+                Csv.parse req.body
+
+            else
+                Csv.parseWithDelimiter delimiter req.body
+    in
+        case parsed of
+
+            Ok doc ->
+                let
+                    normalised =
+                        Csv.defaultCsv |> Csv.withHeader doc.header
+                            |> Csv.withRows doc.rows
+                in
+                    ok
+                        ("{\"ok\":true,\"header\":" ++ jsonList doc.header
+                            ++ ",\"rows\":"
+                            ++ String.fromInt (List.length doc.rows)
+                            ++ ",\"csv\":"
+                            ++ jsonStr (Csv.encode normalised)
+                            ++ ",\"pipe\":"
+                            ++ jsonStr (Csv.encodeWithDelimiter "|" normalised)
+                            ++ "}")
+
+            Err e ->
+                status 400 (errorBody "csv.parse" e)
+
+
+importFromFile : String -> Task Error Response
+importFromFile path =
+    Csv.parseStreamFromFile path
+        |> Task.andThen
+               (\rows ->
+                   ok
+                       ("{\"ok\":true,\"source\":\"file\",\"rows\":"
+                           ++ String.fromInt (List.length rows)
+                           ++ "}"))
+        |> Task.onError (\e -> status 400 (errorBody "csv.stream" e))
+
+
+-- ─── /api/broadcast — Std.PubSub ──────────────────────────────────
+-- `Std.PubSub.publish` is documented to fail with `Unavailable` in a
+-- process with no `Live.app` registered — which a pure
+-- `Sky.Http.Server` binary like Relay is.  Both the success and the
+-- documented-failure arms are live here; the endpoint reports which
+-- one it took rather than pretending the publish landed.
+broadcast : Request -> Task Error Response
+broadcast req =
+    let
+        topic =
+            Maybe.withDefault "relay.events" (Server.queryParam "topic" req)
+        payload = String.trim req.body
+    in
+        PubSub.publish topic payload
+            |> Task.andThen
+                   (\n ->
+                       PubSub.publishNoEcho topic payload
+                           |> Task.andThen (\m -> broadcastOk topic (n + m)))
+            |> Task.onError (\e -> broadcastUnavailable topic e)
+
+
+broadcastOk : String -> Int -> Task Error Response
+broadcastOk topic delivered =
+    ok
+        ("{\"ok\":true,\"topic\":" ++ jsonStr topic ++ ",\"delivered\":"
+            ++ String.fromInt delivered
+            ++ "}")
+
+
+broadcastUnavailable : String -> Error -> Task Error Response
+broadcastUnavailable topic e =
+    Task.succeed
+        (Server.json
+            ("{\"ok\":false,\"topic\":" ++ jsonStr topic ++ ",\"delivered\":0"
+                ++ ",\"error\":"
+                ++ jsonStr (Error.toString e)
+                ++ "}")
+            |> Server.withStatus 503)
+
+
+-- ─── /events — Sky.Http.Server.Stream ─────────────────────────────
+-- A BOUNDED SSE feed: exactly `cfg.sseTicks` `tick` events, then one
+-- `done` event, then the stream finishes.  Bounded on purpose so a
+-- test harness can read to EOF instead of timing out.
+events : Config -> Request -> Task Error Response
+events cfg _ =
+    Stream.stream
+        "text/event-stream"
+        (\writer ->
+            Stream.withContentType "text/event-stream" writer
+                |> Task.andThen (\_ -> emitTicks writer 1 cfg.sseTicks)
+                |> Task.andThen (\_ -> Stream.finish writer))
+
+
+emitTicks : Stream.StreamWriter -> Int -> Int -> Task Error ()
+emitTicks writer n total =
+    if n > total then
+        Stream.emit "event: done\ndata: bye\n\n" writer
+
+    else
+        Stream.emit ("event: tick\ndata: " ++ String.fromInt n ++ "\n\n") writer
+            |> Task.andThen (\_ -> Time.sleep 20)
+            |> Task.andThen (\_ -> emitTicks writer (n + 1) total)
+
+
+-- ─── /ws — Sky.Http.Server.WebSocket ──────────────────────────────
+websocket : Request -> Task Error Response
+websocket req =
+    Ws.upgrade
+        req
+        (Ws.defaultCfg |> Ws.withOnConnect onWsConnect
+            |> Ws.withOnMessage onWsMessage
+            |> Ws.withOnClose onWsClose
+            |> Ws.withOnError onWsError
+            |> Ws.withMaxMessageBytes 65536
+            |> Ws.withOriginPatterns [ "*" ])
+
+
+onWsConnect : Ws.WebSocketServer -> Task Error ()
+onWsConnect _ =
+    Log.info "relay.ws.connect"
+
+
+onWsMessage : Ws.WebSocketServer -> String -> Task Error ()
+onWsMessage sock msg =
+    Ws.sendToClient sock ("echo: " ++ msg)
+
+
+onWsClose : Ws.WebSocketServer -> Task Error ()
+onWsClose _ =
+    Log.info "relay.ws.close"
+
+
+onWsError : Ws.WebSocketServer -> Error -> Task Error ()
+onWsError _ e =
+    Log.errorWith "relay.ws.error" [ ( "error", Error.toString e ) ]
+
+
+-- ─── /api/csrf — Sky.Http.Middleware.withCsrf probe ───────────────
+-- NOTE: `Sky.Http.Middleware.withCsrf`'s docstring names the cookie
+-- `__Host-sky_csrf`; the runtime actually issues `__sky_csrf`.  Relay
+-- accepts either so the probe reports the truth rather than the doc.
+csrfProbe : Request -> Task Error Response
+csrfProbe req =
+    ok
+        ("{\"ok\":true,\"cookiePresent\":"
+            ++ boolJson
+                   (Dict.member "__sky_csrf" req.cookies
+                       || Dict.member "__Host-sky_csrf" req.cookies)
+            ++ "}")

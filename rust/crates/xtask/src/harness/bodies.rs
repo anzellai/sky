@@ -629,6 +629,987 @@ pub fn shared_world(ctx: &GateCtx) -> GateOutcome {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Layer 2 — real-world projects (v2 §6)
+// ---------------------------------------------------------------------------
+
+/// Member F: `sky-bundled/console` + `sky-bundled/doc`.
+///
+/// Two assertions per project — the build's exit status, and the artifact it
+/// was supposed to leave behind. The artifact half is not redundant: a builder
+/// that exits 0 having emitted nothing is exactly the shape of the "could never
+/// pass on a clean checkout" defect, inverted.
+pub const APPS_BUNDLED_EXPECTED: u64 = 4;
+
+/// The single largest Sky application the project ships, gated by nothing.
+///
+/// `sky-bundled/console` is 5,746 lines across 11 modules, statically linked
+/// into every binary the compiler emits; `sky-bundled/doc` backs `sky doc
+/// --serve`. Neither is under `examples/`, so neither is in any corpus, and
+/// `grep -rn 'regenerate-console\|console_app' .github/` returns nothing.
+///
+/// Registering this gate immediately found that the console **did not compile**:
+/// `ef826e73` added `logoutUrl` to the shared `Model` in `State.sky` and updated
+/// `Main.sky` but not `MainTui.sky`, which constructs the same record. It had
+/// been broken since 2026-07-31 (fixed in the commit that added this gate).
+pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+
+    let projects = ["sky-bundled/console", "sky-bundled/doc"];
+    let mut assertions = 0u64;
+    let mut failures: Vec<String> = Vec::new();
+    let mut timings: Vec<String> = Vec::new();
+
+    for p in projects {
+        let r = match layer2::clean_build(&ctx.repo_root, p) {
+            Ok(r) => r,
+            // No compiler, or not a project: nothing was asserted. Reporting 0
+            // assertions is what makes this a FAIL rather than a quiet pass.
+            Err(e) => return GateOutcome::new(false, assertions, e),
+        };
+
+        assertions += 1;
+        if !r.ok {
+            failures.push(format!(
+                "{p}: `sky build` failed:\n{}",
+                layer2::tail(&r.log, 12)
+            ));
+        }
+
+        assertions += 1;
+        if !r.binary.is_file() {
+            failures.push(format!("{p}: no artifact at {}", r.binary.display()));
+        }
+
+        timings.push(format!("{p} {:.1}s", r.elapsed_s));
+    }
+
+    if failures.is_empty() {
+        GateOutcome::new(
+            true,
+            assertions,
+            format!("bundled Sky apps build from a wiped slate ({})", timings.join(", ")),
+        )
+    } else {
+        GateOutcome::new(false, assertions, failures.join(" | "))
+    }
+}
+
+/// Member G: the CLI verbs, owned by `rust/crates/sky/tests/cli_verb_flow.rs`.
+///
+/// v2 §6 row G puts the verbs in flow tests rather than an app, so this gate
+/// does not re-implement them — it runs them and pins their population. Two
+/// independent properties, neither of which scrapes test output:
+///
+///   * the suite's **exit status** (libtest's own verdict), and
+///   * the **number of `#[test]` functions** in the file, counted from source.
+///
+/// The second is what makes deletion visible. `cargo test` on a file whose tests
+/// were removed exits 0 having run nothing, which is the same shape as the
+/// `0/0 … GATE: PASS` defect.
+pub const CLI_VERBS_EXPECTED: u64 = 9;
+
+pub fn cli_verbs(ctx: &GateCtx) -> GateOutcome {
+    let suite = ctx
+        .repo_root
+        .join("rust/crates/sky/tests/cli_verb_flow.rs");
+    let Ok(src) = std::fs::read_to_string(&suite) else {
+        return GateOutcome::new(false, 0, format!("cannot read {}", suite.display()));
+    };
+    let n = src
+        .lines()
+        .filter(|l| l.trim_start().starts_with("#[test]"))
+        .count() as u64;
+
+    if n != CLI_VERBS_EXPECTED {
+        return GateOutcome::new(
+            false,
+            n,
+            format!(
+                "expected EXACTLY {CLI_VERBS_EXPECTED} CLI-verb tests, found {n}. \
+                 If a verb test was deliberately added or removed, update \
+                 CLI_VERBS_EXPECTED in harness/bodies.rs in the same commit."
+            ),
+        );
+    }
+
+    // `CARGO_TARGET_DIR` is unset deliberately: inheriting a caller's target dir
+    // has repeatedly produced cross-tree contamination on this repo.
+    let out = Command::new("cargo")
+        .args(["test", "-p", "sky", "--test", "cli_verb_flow"])
+        .current_dir(ctx.repo_root.join("rust"))
+        .env_remove("CARGO_TARGET_DIR")
+        .stdin(std::process::Stdio::null())
+        .output();
+
+    match out {
+        // A missing//unrunnable cargo is a FAIL, never a skip — "a gate that
+        // cannot run has not passed".
+        Err(e) => GateOutcome::new(false, 0, format!("could not run cargo test: {e}")),
+        Ok(o) if o.status.success() => GateOutcome::new(
+            true,
+            n,
+            format!("{n} CLI-verb flow tests green (toolchain-free assertions)"),
+        ),
+        Ok(o) => GateOutcome::new(
+            false,
+            n,
+            format!(
+                "cli_verb_flow suite failed (exit {:?}):\n{}",
+                o.status.code(),
+                super::layer2::tail(&String::from_utf8_lossy(&o.stdout), 25)
+            ),
+        ),
+    }
+}
+
+/// Member D: Go FFI at 76k-symbol scale.
+///
+/// Three assertions: the dependency fetch, the build, and the artifact.
+pub const APPS_FFI_SCALE_EXPECTED: u64 = 3;
+
+/// The FFI-at-scale member, run pre-release (T4).
+///
+/// Not new source. `examples/13-skyshop` **is** the 76k-symbol benchmark v2 §6
+/// row D is specified as the successor to, and nothing else in the corpus
+/// exercises the FFI *scale* path — `safePkgName` aliasing, the typed-FFI cache,
+/// `sky-ffi-inspect`'s memory behaviour.
+///
+/// It is T4 because the tier assignment justifies itself when measured: the
+/// project declares an external Sky package and **refuses to build** until
+/// `sky install` has fetched it. Measured cold on the dev host: install 131 s,
+/// build 105 s, a 144 MB binary. Network-dependent, cold-expensive work does not
+/// belong on the per-push path.
+pub fn apps_ffi_scale(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+
+    const PROJECT: &str = "examples/13-skyshop";
+    let sky = match layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let dir = ctx.repo_root.join(PROJECT);
+    let mut assertions = 0u64;
+
+    // `sky install` fetches the external Sky package + Go modules. This is the
+    // surface the member owns; a gate that skipped it would not be the
+    // FFI-at-scale gate.
+    assertions += 1;
+    let install = Command::new(&sky)
+        .arg("install")
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .output();
+    match install {
+        Err(e) => return GateOutcome::new(false, assertions, format!("`sky install` failed to spawn: {e}")),
+        Ok(o) if !o.status.success() => {
+            return GateOutcome::new(
+                false,
+                assertions,
+                format!(
+                    "`sky install` failed in {PROJECT} (exit {:?}):\n{}",
+                    o.status.code(),
+                    layer2::tail(&String::from_utf8_lossy(&o.stderr), 12)
+                ),
+            )
+        }
+        Ok(_) => {}
+    }
+
+    let r = match layer2::clean_build_keep_deps(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, assertions, e),
+    };
+
+    assertions += 1;
+    if !r.ok {
+        return GateOutcome::new(
+            false,
+            assertions,
+            format!("{PROJECT}: `sky build` failed:\n{}", layer2::tail(&r.log, 15)),
+        );
+    }
+
+    assertions += 1;
+    if !r.binary.is_file() {
+        return GateOutcome::new(
+            false,
+            assertions,
+            format!("{PROJECT}: no artifact at {}", r.binary.display()),
+        );
+    }
+
+    GateOutcome::new(
+        true,
+        assertions,
+        format!("76k-symbol FFI project installed and built ({:.0}s)", r.elapsed_s),
+    )
+}
+
+/// Member B: Relay, the headless HTTP/SSE/WebSocket gateway.
+///
+/// Twelve: build, artifact, no bind-position literal, readiness, `/health`
+/// status, `/health` identity, unauthenticated 401, authenticated 200, first
+/// request served, limiter engaged, CORS header, port released.
+pub const APPS_RELAY_EXPECTED: u64 = 12;
+
+/// Build Relay, run it on a harness-chosen port, and assert what it *did*.
+///
+/// Every assertion below is a verdict, not a liveness check. "No crash" would
+/// pass while a rate limiter never engaged and an unauthenticated request was
+/// served — which is the shape of the defect this tier exists to catch.
+///
+/// Readiness deliberately requires BOTH the app's own line and an accepting
+/// socket: `Sky.Http.Server.listen` has no post-bind hook, so the line is
+/// printed *before* the bind succeeds. A collision on the port prints the line
+/// and then dies, so grepping the line alone would report a server that is not
+/// there.
+pub fn apps_relay(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+    use std::time::Duration;
+
+    const PROJECT: &str = "apps/relay";
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+    macro_rules! check {
+        ($cond:expr, $($msg:tt)*) => {{
+            a += 1;
+            if !$cond { fail.push(format!($($msg)*)); }
+        }};
+    }
+
+    // ---- build ----------------------------------------------------------
+    let r = match layer2::clean_build(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    check!(r.ok, "`sky build` failed:\n{}", layer2::tail(&r.log, 12));
+    check!(r.binary.is_file(), "no artifact at {}", r.binary.display());
+    if !fail.is_empty() {
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    // ---- source guard ---------------------------------------------------
+    let literals = layer2::bind_position_port_literals(&ctx.repo_root, PROJECT);
+    check!(
+        literals.is_empty(),
+        "bind-position port literal(s) in project source: {} — a member with a \
+         hardcoded port cannot be scheduled concurrently",
+        literals.join(", ")
+    );
+
+    // ---- run ------------------------------------------------------------
+    let port = match layer2::free_port() {
+        Ok(p) => p,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+    let dir = ctx.repo_root.join(PROJECT);
+    let env = [
+        ("RELAY_PORT", port.to_string()),
+        (
+            "SKY_AUTH_TOKEN_SECRET",
+            "layer2-relay-gate-secret-least-32-bytes-long".to_string(),
+        ),
+    ];
+    let mut srv = match layer2::Server::spawn(&r.binary, &dir, port, &env) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+
+    let ready = srv.wait_ready("relay: listening on", Duration::from_secs(30));
+    check!(ready.is_ok(), "{}", ready.as_ref().err().cloned().unwrap_or_default());
+    if ready.is_err() {
+        let _ = srv.shutdown();
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    // ---- behaviour ------------------------------------------------------
+    match layer2::get(port, "/health") {
+        Err(e) => {
+            a += 2;
+            fail.push(format!("GET /health: {e}"));
+        }
+        Ok(resp) => {
+            check!(resp.status == 200, "GET /health: expected 200, got {}", resp.status);
+            check!(
+                resp.body.contains("\"service\":\"relay\""),
+                "GET /health: body does not identify the service: {}",
+                resp.body.trim()
+            );
+        }
+    }
+
+    // Unauthenticated access must be REFUSED. A gate that only asserted "200 on
+    // /health" would pass an app that served every protected route wide open.
+    match layer2::get(port, "/api/me") {
+        Err(e) => {
+            a += 1;
+            fail.push(format!("GET /api/me: {e}"));
+        }
+        Ok(resp) => check!(
+            resp.status == 401,
+            "GET /api/me without a token: expected 401, got {}",
+            resp.status
+        ),
+    }
+
+    // A token minted by the app must then be ACCEPTED — otherwise "401 always"
+    // would satisfy the assertion above.
+    let token = layer2::get(port, "/api/token?sub=gate")
+        .ok()
+        .and_then(|r| {
+            let b = r.body;
+            let i = b.find("\"token\":\"")? + 9;
+            let rest = &b[i..];
+            Some(rest[..rest.find('"')?].to_string())
+        });
+    match token {
+        None => {
+            a += 1;
+            fail.push("could not mint a token via /api/token".to_string());
+        }
+        Some(t) => match layer2::http(
+            port,
+            "GET",
+            "/api/me",
+            &[("Authorization", &format!("Bearer {t}"))],
+            None,
+            Duration::from_secs(15),
+        ) {
+            Err(e) => {
+                a += 1;
+                fail.push(format!("GET /api/me with a token: {e}"));
+            }
+            Ok(resp) => check!(
+                resp.status == 200,
+                "GET /api/me with a freshly minted token: expected 200, got {}",
+                resp.status
+            ),
+        },
+    }
+
+    // Rate limiting must actually ENGAGE. Asserted as "the first is served AND
+    // some later one is refused", which is robust to the bucket refilling
+    // mid-burst while still failing outright if the limiter is inert.
+    let mut statuses = Vec::new();
+    for _ in 0..12 {
+        match layer2::get(port, "/api/limited") {
+            Ok(r) => statuses.push(r.status),
+            Err(e) => {
+                statuses.push(0);
+                let _ = e;
+            }
+        }
+    }
+    check!(
+        statuses.first() == Some(&200),
+        "first /api/limited request should be served, got {:?}",
+        statuses.first()
+    );
+    check!(
+        statuses.contains(&429),
+        "rate limiter never engaged over 12 requests: {statuses:?}"
+    );
+
+    // CORS preflight — the non-variadic kernel-alias middleware shape.
+    match layer2::http(
+        port,
+        "OPTIONS",
+        "/health",
+        &[("Origin", "https://example.com")],
+        None,
+        Duration::from_secs(15),
+    ) {
+        Err(e) => {
+            a += 1;
+            fail.push(format!("OPTIONS /health: {e}"));
+        }
+        Ok(resp) => check!(
+            resp.header("access-control-allow-origin").is_some(),
+            "CORS preflight carried no Access-Control-Allow-Origin (status {})",
+            resp.status
+        ),
+    }
+
+    // ---- teardown -------------------------------------------------------
+    let down = srv.shutdown();
+    check!(
+        down.is_ok(),
+        "{}",
+        down.as_ref().err().cloned().unwrap_or_default()
+    );
+
+    if fail.is_empty() {
+        GateOutcome::new(
+            true,
+            a,
+            format!("built + served on :{port}; auth, rate limit and CORS all asserted"),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
+/// Member C: Fieldbook — one `Std.Ui` view, rendered by several backends.
+///
+/// Eight: build, artifact, no bind-position literal, a live dump, a tui dump,
+/// the two dumps agreeing, the app's own diff verdict, and the Cli export.
+pub const APPS_FIELDBOOK_EXPECTED: u64 = 8;
+
+/// The cross-backend `Std.Ui` parity assertion.
+///
+/// The claim under test is the one the product makes: the *same* view function
+/// renders across Sky.Live, Sky.Tui and Sky.Webview. So the member dumps a
+/// canonical structure of the real artefacts — the `Element` tree Sky.Tui is
+/// handed, and the `Html` tree Sky.Live serialises — and this gate asserts they
+/// are identical.
+///
+/// That is a **verdict**, not a liveness check: a `Std.Ui` change that renders
+/// correctly on Live and wrongly on Tui makes the two dumps differ and fails
+/// here, which is precisely what "one view, several backends" has to mean if it
+/// is to mean anything.
+pub fn apps_fieldbook(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+
+    const PROJECT: &str = "apps/fieldbook";
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+
+    let r = match layer2::clean_build(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    a += 1;
+    if !r.ok {
+        fail.push(format!("`sky build` failed:\n{}", layer2::tail(&r.log, 12)));
+    }
+    a += 1;
+    if !r.binary.is_file() {
+        fail.push(format!("no artifact at {}", r.binary.display()));
+    }
+    if !fail.is_empty() {
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    a += 1;
+    let literals = layer2::bind_position_port_literals(&ctx.repo_root, PROJECT);
+    if !literals.is_empty() {
+        fail.push(format!(
+            "bind-position port literal(s): {}",
+            literals.join(", ")
+        ));
+    }
+
+    let dir = ctx.repo_root.join(PROJECT);
+    let dump = |args: &[&str]| -> Result<String, String> {
+        let o = Command::new(&r.binary)
+            .args(args)
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| format!("spawn {args:?}: {e}"))?;
+        if !o.status.success() {
+            return Err(format!(
+                "{args:?} exited {:?}: {}",
+                o.status.code(),
+                layer2::tail(&String::from_utf8_lossy(&o.stderr), 6)
+            ));
+        }
+        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+
+    let live = dump(&["--dump-view", "live"]);
+    a += 1;
+    let live_ok = match &live {
+        Ok(s) if !s.trim().is_empty() => true,
+        Ok(_) => {
+            fail.push("--dump-view live produced an empty structure".into());
+            false
+        }
+        Err(e) => {
+            fail.push(e.clone());
+            false
+        }
+    };
+
+    let tui = dump(&["--dump-view", "tui"]);
+    a += 1;
+    let tui_ok = match &tui {
+        Ok(s) if !s.trim().is_empty() => true,
+        Ok(_) => {
+            fail.push("--dump-view tui produced an empty structure".into());
+            false
+        }
+        Err(e) => {
+            fail.push(e.clone());
+            false
+        }
+    };
+
+    // THE assertion this member exists for.
+    a += 1;
+    if live_ok && tui_ok {
+        let (l, t) = (live.as_ref().unwrap(), tui.as_ref().unwrap());
+        if l != t {
+            let first = l
+                .lines()
+                .zip(t.lines())
+                .enumerate()
+                .find(|(_, (a, b))| a != b)
+                .map(|(i, (a, b))| format!("line {}: live {a:?} vs tui {b:?}", i + 1))
+                .unwrap_or_else(|| {
+                    format!(
+                        "same prefix, different length: live {} lines, tui {} lines",
+                        l.lines().count(),
+                        t.lines().count()
+                    )
+                });
+            fail.push(format!(
+                "STRUCTURAL DIVERGENCE between the Live and Tui renders of the same \
+                 view — {first}"
+            ));
+        }
+    } else {
+        fail.push("cannot compare structures — a dump did not run".into());
+    }
+
+    // The app's own verdict, computed independently of our byte comparison.
+    a += 1;
+    if let Err(e) = dump(&["--dump-view", "diff"]) {
+        fail.push(format!("the app's own structural diff reported failure: {e}"));
+    }
+
+    a += 1;
+    match dump(&["--export"]) {
+        Err(e) => fail.push(e),
+        Ok(csv) => {
+            if !csv.lines().next().is_some_and(|h| h.contains("id,day,site")) {
+                fail.push(format!(
+                    "--export did not produce the expected CSV header, got {:?}",
+                    csv.lines().next().unwrap_or("")
+                ));
+            }
+        }
+    }
+
+    if fail.is_empty() {
+        let n = live.as_ref().map(|s| s.lines().count()).unwrap_or(0);
+        GateOutcome::new(
+            true,
+            a,
+            format!("one view, {n} structural nodes, identical across the Live and Tui renders"),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
+/// Member A: Ledger. Both arms assert the same eleven things.
+pub const APPS_LEDGER_EXPECTED: u64 = 11;
+
+/// One arm of member A — the SAME source and the SAME assertions, with only the
+/// DSN changing. That is the claim under test: "the same app code works on
+/// SQLite and Postgres; only the driver differs."
+///
+/// The ordering assertion is the important one. `Store.orderAsc` on (date, id)
+/// is asserted by **value**: the seed inserts ids 1,2,3,4 with dates
+/// Mar/Jan/Feb/Jan, so a correct ordering returns `2,4,3,1` — a sequence
+/// insertion order cannot produce. An assertion that merely checked "some rows
+/// came back" would pass an app that ignored the ORDER BY entirely.
+fn ledger_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome {
+    use super::layer2;
+    use std::time::Duration;
+
+    const PROJECT: &str = "apps/ledger";
+    let dir = ctx.repo_root.join(PROJECT);
+    let sky = match layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+
+    let db_env = |extra: &[(&str, String)]| -> Vec<(String, String)> {
+        let mut v = vec![("SKY_DB_PATH".to_string(), dsn.clone())];
+        v.extend(extra.iter().map(|(k, x)| (k.to_string(), x.clone())));
+        v
+    };
+
+    // `sky db migrate` applies the COMMITTED db/migrations/ files. Running it
+    // before the build is deliberate: `sky db seed` builds its temp entry into
+    // the project's real sky-out/app, so seeding after a build would replace the
+    // binary under test with the seed shim.
+    for (verb, label) in [("migrate", "sky db migrate"), ("seed", "sky db seed")] {
+        a += 1;
+        let mut cmd = Command::new(&sky);
+        cmd.arg("db").arg(verb).current_dir(&dir).stdin(std::process::Stdio::null());
+        for (k, v) in db_env(&[]) {
+            cmd.env(k, v);
+        }
+        match cmd.output() {
+            Err(e) => fail.push(format!("{label}: spawn failed: {e}")),
+            Ok(o) if !o.status.success() => fail.push(format!(
+                "{label} failed (exit {:?}):\n{}",
+                o.status.code(),
+                layer2::tail(&String::from_utf8_lossy(&o.stdout), 8)
+            )),
+            Ok(_) => {}
+        }
+    }
+
+    let r = match layer2::clean_build(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+    a += 1;
+    if !r.ok {
+        fail.push(format!("`sky build` failed:\n{}", layer2::tail(&r.log, 12)));
+    }
+    a += 1;
+    if !r.binary.is_file() {
+        fail.push(format!("no artifact at {}", r.binary.display()));
+    }
+    if !fail.is_empty() {
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    a += 1;
+    let literals = layer2::bind_position_port_literals(&ctx.repo_root, PROJECT);
+    if !literals.is_empty() {
+        fail.push(format!("bind-position port literal(s): {}", literals.join(", ")));
+    }
+
+    let port = match layer2::free_port() {
+        Ok(p) => p,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+    let env: Vec<(&str, String)> = vec![
+        ("SKY_DB_PATH", dsn.clone()),
+        ("SKY_LIVE_PORT", port.to_string()),
+        (
+            "SKY_AUTH_TOKEN_SECRET",
+            "layer2-ledger-gate-secret-at-least-32-bytes".to_string(),
+        ),
+    ];
+    let mut srv = match layer2::Server::spawn(&r.binary, &dir, port, &env) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+
+    a += 1;
+    let ready = srv.wait_ready("ledger: listening on", Duration::from_secs(45));
+    if let Err(e) = &ready {
+        fail.push(e.clone());
+        let _ = srv.shutdown();
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    // health: served, and reporting the driver this arm actually selected.
+    match layer2::get(port, "/api/health") {
+        Err(e) => {
+            a += 2;
+            fail.push(format!("GET /api/health: {e}"));
+        }
+        Ok(resp) => {
+            a += 1;
+            if resp.status != 200 {
+                fail.push(format!("GET /api/health: expected 200, got {}", resp.status));
+            }
+            a += 1;
+            let want = format!("\"driver\":\"{expect_driver}\"");
+            if !resp.body.contains(&want) {
+                fail.push(format!(
+                    "this arm must run on {expect_driver}; /api/health said {}",
+                    resp.body.trim()
+                ));
+            }
+        }
+    }
+
+    // Journal ordering, asserted by value.
+    a += 1;
+    match layer2::get(port, "/api/journal.json?org=1") {
+        Err(e) => fail.push(format!("GET /api/journal.json: {e}")),
+        Ok(resp) => {
+            let ids: Vec<String> = resp
+                .body
+                .match_indices("\"id\":")
+                .map(|(i, _)| {
+                    resp.body[i + 5..]
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect::<String>()
+                })
+                .collect();
+            if ids != ["2", "4", "3", "1"] {
+                fail.push(format!(
+                    "journal must be ordered by (entry_date, id) — expected ids \
+                     [2, 4, 3, 1], got {ids:?}. Insertion order is [1, 2, 3, 4], so \
+                     that sequence is only reachable through the ORDER BY."
+                ));
+            }
+        }
+    }
+
+    // Money.allocate residue: the parts must sum EXACTLY to the whole.
+    a += 1;
+    match layer2::get(port, "/api/selfcheck") {
+        Err(e) => fail.push(format!("GET /api/selfcheck: {e}")),
+        Ok(resp) => {
+            if !resp.body.contains("\"exact\":true") {
+                fail.push(format!(
+                    "Money.allocate must preserve the whole; /api/selfcheck said {}",
+                    resp.body.trim()
+                ));
+            }
+        }
+    }
+
+    a += 1;
+    if let Err(e) = srv.shutdown() {
+        fail.push(e);
+    }
+
+    if fail.is_empty() {
+        GateOutcome::new(
+            true,
+            a,
+            format!("migrated, seeded, served on :{port} against {expect_driver}; ordering and money residue asserted"),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
+/// Member A, SQLite arm (T1).
+pub fn apps_ledger(ctx: &GateCtx) -> GateOutcome {
+    let db = super::bodies::scratch(&ctx.repo_root).join(format!(
+        "ledger-gate-{}.db",
+        std::process::id()
+    ));
+    // Remove the WAL sidecars too: deleting a SQLite file without its -wal/-shm
+    // yields `disk I/O error (522)` on the next open.
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+    ledger_arm(ctx, "sqlite", db.display().to_string())
+}
+
+/// Member A, **Postgres arm** (T3) — the coverage that did not exist.
+///
+/// Measured on this commit: 58 example directories, 8 declare `[database]`, 8
+/// use `driver = "sqlite"`, 0 use Postgres. This arm is new coverage, and it
+/// earned itself immediately: it found that `Db.updateFields` /
+/// `insertFields` / `insertFieldsReturning` never call `d.rebind(...)`, so they
+/// emit `?` placeholders and fail on pgx with `unused argument: 0`.
+///
+/// The DSN comes from `SKY_TEST_POSTGRES_DSN` — the SAME variable the existing
+/// `integration-postgres` CI job already sets, rather than a new one. An absent
+/// DSN is a **FAIL**, never a skip: a Postgres gate that silently passes with no
+/// Postgres is the defect this whole mandate exists to remove.
+pub fn apps_ledger_postgres(ctx: &GateCtx) -> GateOutcome {
+    match std::env::var("SKY_TEST_POSTGRES_DSN") {
+        Ok(dsn) if !dsn.trim().is_empty() => ledger_arm(ctx, "postgres", dsn),
+        _ => GateOutcome::new(
+            false,
+            0,
+            "SKY_TEST_POSTGRES_DSN is unset — this gate asserts the Postgres arm and \
+             cannot do so without a server. A gate that cannot run has not passed; \
+             it is NOT skipped."
+                .to_string(),
+        ),
+    }
+}
+
+/// Member E: Fleet — Ledger run as a multi-replica topology.
+pub const APPS_FLEET_EXPECTED: u64 = 8;
+
+/// The environment the production-gate probe runs under.
+///
+/// A `const` rather than a literal so the falsifier can flip it to dev: under
+/// `ENV=production` an unreachable session store is a refusal to start, and in
+/// dev it is a warning and a silent in-memory fallback. If flipping this does
+/// NOT turn the gate red, the refusal is not being asserted.
+const FLEET_PROD_ENV: &str = "production";
+
+/// A DSN nothing is listening on — port 1 is never a Postgres.
+const FLEET_UNREACHABLE_DSN: &str = "postgres://skytest@127.0.0.1:1/nope?sslmode=disable";
+
+/// Not new source — **Ledger, run as a topology** (v2 §6 row E).
+///
+/// It is a scenario rather than a directory on purpose: `39-hub-demo` was two
+/// bespoke apps that existed only to push telemetry, and nothing built them.
+/// Running the *real* app in a multi-replica topology tests the same thing and
+/// **cannot rot into a mock**.
+///
+/// The load-bearing assertion is the **silent-fallback refusal**: under
+/// `ENV=production`, a session store that is configured but unreachable must
+/// make the app refuse to start, not degrade to an in-memory store whose
+/// sessions vanish on every restart and are invisible to the other replica.
+///
+/// It is asserted this way for a measured reason. The obvious assertion —
+/// "a session created on replica 1 is recognised by replica 2" — was written
+/// first and the falsifier reported it **VACUOUS**: pointing replica 2 at a
+/// private memory store did not change the observable, because a replica
+/// happily ADOPTS a client-supplied `sky_sid` and creates a fresh local session
+/// under the same id. Nothing in the response distinguishes "restored from the
+/// shared store" from "invented locally" for a state-free session. Rather than
+/// keep a decorative assertion, it was replaced with one that bites, and the
+/// vacuity is recorded here so it is not re-attempted blind.
+///
+/// The residual gap is real and stated: this gate proves the topology runs on
+/// one shared store and refuses to degrade silently; it does NOT yet prove
+/// session STATE migrates between replicas. That needs an authenticated flow.
+pub fn apps_fleet(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+    use std::time::Duration;
+
+    let Ok(dsn) = std::env::var("SKY_TEST_POSTGRES_DSN") else {
+        return GateOutcome::new(
+            false,
+            0,
+            "SKY_TEST_POSTGRES_DSN is unset — a multi-replica topology needs a SHARED \
+             session store. A gate that cannot run has not passed."
+                .to_string(),
+        );
+    };
+    if dsn.trim().is_empty() {
+        return GateOutcome::new(false, 0, "SKY_TEST_POSTGRES_DSN is empty".to_string());
+    }
+
+    const PROJECT: &str = "apps/ledger";
+    let dir = ctx.repo_root.join(PROJECT);
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+
+    let r = match layer2::clean_build(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    a += 1;
+    if !r.ok || !r.binary.is_file() {
+        return GateOutcome::new(
+            false,
+            a,
+            format!("`sky build` failed:\n{}", layer2::tail(&r.log, 12)),
+        );
+    }
+
+    let spawn_replica = |store: &str| -> Result<(layer2::Server, u16), String> {
+        let port = layer2::free_port()?;
+        let env: Vec<(&str, String)> = vec![
+            ("SKY_DB_PATH", dsn.clone()),
+            ("SKY_LIVE_PORT", port.to_string()),
+            ("SKY_LIVE_STORE", store.to_string()),
+            ("SKY_LIVE_STORE_PATH", dsn.clone()),
+            (
+                "SKY_AUTH_TOKEN_SECRET",
+                "layer2-fleet-gate-secret-at-least-32-bytes".to_string(),
+            ),
+        ];
+        let mut s = layer2::Server::spawn(&r.binary, &dir, port, &env)?;
+        s.wait_ready("ledger: listening on", Duration::from_secs(45))?;
+        Ok((s, port))
+    };
+
+    a += 1;
+    let (mut r1, p1) = match spawn_replica("postgres") {
+        Ok(v) => v,
+        Err(e) => return GateOutcome::new(false, a, format!("replica 1: {e}")),
+    };
+    a += 1;
+    let (mut r2, p2) = match spawn_replica("postgres") {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = r1.shutdown();
+            return GateOutcome::new(false, a, format!("replica 2: {e}"));
+        }
+    };
+
+    for (n, p) in [(1, p1), (2, p2)] {
+        a += 1;
+        match layer2::get(p, "/api/health") {
+            Ok(resp) if resp.status == 200 => {}
+            Ok(resp) => fail.push(format!("replica {n}: /api/health returned {}", resp.status)),
+            Err(e) => fail.push(format!("replica {n}: /api/health: {e}")),
+        }
+    }
+
+    // Replica 1 must issue a session at all — the topology is only meaningful
+    // if sessions exist.
+    a += 1;
+    if layer2::get(p1, "/")
+        .ok()
+        .and_then(|resp| resp.cookie("sky_sid"))
+        .is_none()
+    {
+        fail.push("replica 1 issued no sky_sid cookie".into());
+    }
+
+    // THE assertion: an unreachable session store under ENV=production must be
+    // a refusal to start, never a silent in-memory fallback.
+    a += 1;
+    let bad_port = layer2::free_port().unwrap_or(0);
+    let prod_env: Vec<(&str, String)> = vec![
+        ("ENV", FLEET_PROD_ENV.to_string()),
+        ("SKY_DB_PATH", dsn.clone()),
+        ("SKY_LIVE_PORT", bad_port.to_string()),
+        ("SKY_LIVE_STORE", "postgres".to_string()),
+        ("SKY_LIVE_STORE_PATH", FLEET_UNREACHABLE_DSN.to_string()),
+        (
+            "SKY_AUTH_TOKEN_SECRET",
+            "layer2-fleet-gate-secret-at-least-32-bytes".to_string(),
+        ),
+    ];
+    match layer2::Server::spawn(&r.binary, &dir, bad_port, &prod_env) {
+        Err(e) => fail.push(format!("production-gate probe: {e}")),
+        Ok(mut probe) => {
+            // The runtime retries the store 5 times with backoff (~8 s) before
+            // giving up, so the deadline must clear that.
+            match probe.wait_exit(Duration::from_secs(60)) {
+                Some(status) if !status.success() => {}
+                Some(status) => fail.push(format!(
+                    "with an UNREACHABLE session store under ENV={FLEET_PROD_ENV}, the app \
+                     exited {status} — it must refuse to start, not report success"
+                )),
+                None => {
+                    let served = layer2::port_in_use(bad_port);
+                    let _ = probe.shutdown();
+                    fail.push(format!(
+                        "with an UNREACHABLE session store under ENV={FLEET_PROD_ENV}, the app \
+                         kept running (serving={served}) — it degraded to a silent \
+                         in-memory fallback whose sessions vanish on restart and are \
+                         invisible to the other replica"
+                    ));
+                }
+            }
+        }
+    }
+
+    a += 1;
+    let d1 = r1.shutdown();
+    let d2 = r2.shutdown();
+    if let Err(e) = d1 {
+        fail.push(e);
+    }
+    if let Err(e) = d2 {
+        fail.push(e);
+    }
+
+    if fail.is_empty() {
+        GateOutcome::new(
+            true,
+            a,
+            format!(
+                "two replicas on :{p1} and :{p2} over one shared store; an unreachable \
+                 store under ENV={FLEET_PROD_ENV} refused to start rather than degrade"
+            ),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
 fn read_json(p: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }

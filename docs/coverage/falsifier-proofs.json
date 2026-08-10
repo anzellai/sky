@@ -1,10 +1,58 @@
 {
   "gates": {
+    "apps-bundled": {
+      "mutation": "apps-bundled.reintroduce-missing-field",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786370152
+    },
+    "apps-ffi-scale": {
+      "mutation": "apps-ffi-scale.break-an-ffi-symbol",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786367992
+    },
+    "apps-fieldbook": {
+      "mutation": "apps-fieldbook.diverge-one-backend",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786369049
+    },
+    "apps-fleet": {
+      "mutation": "apps-fleet.drop-the-production-gate",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786369944
+    },
+    "apps-ledger": {
+      "mutation": "apps-ledger.drop-the-ordering",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786370152
+    },
+    "apps-ledger-postgres": {
+      "mutation": "apps-ledger-postgres.break-health-driver",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786369355
+    },
+    "apps-relay": {
+      "mutation": "apps-relay.disable-rate-limiting",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786370152
+    },
     "canary": {
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1786350821
+      "proven_at_unix": 1786370198
+    },
+    "cli-verbs": {
+      "mutation": "cli-verbs.break-an-expectation",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786370152
     },
     "conformance": {
       "mutation": "conformance.break-expectation",

@@ -1,0 +1,260 @@
+module View.Common exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
+import Amounts
+import State exposing (..)
+
+
+ink : Ui.Color
+ink =
+    Ui.rgb 26 32 44
+
+
+paper : Ui.Color
+paper =
+    Ui.rgb 249 250 251
+
+
+card : Ui.Color
+card =
+    Ui.rgb 255 255 255
+
+
+muted : Ui.Color
+muted =
+    Ui.rgb 107 114 128
+
+
+hairline : Ui.Color
+hairline =
+    Ui.rgb 226 232 240
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 22 101 52
+
+
+danger : Ui.Color
+danger =
+    Ui.rgb 185 28 28
+
+
+navButton : Page -> String -> Element Msg
+navButton target label =
+    Ui.button
+        [ Background.color (Ui.rgb 255 255 255)
+        , Border.width 1
+        , Border.color hairline
+        , Border.rounded 4
+        , Font.color ink
+        , Font.size 13
+        , Ui.paddingXY 12 6
+        ]
+        { onPress = Just (Navigate target), label = Ui.text label }
+
+
+primaryButton : Msg -> String -> Element Msg
+primaryButton msg label =
+    Ui.button
+        [ Background.color accent
+        , Background.hoverColor (Ui.rgb 15 80 40)
+        , Font.color (Ui.rgb 255 255 255)
+        , Font.bold
+        , Font.size 13
+        , Border.rounded 4
+        , Ui.paddingXY 14 8
+        ]
+        { onPress = Just msg, label = Ui.text label }
+
+
+ghostButton : Msg -> String -> Element Msg
+ghostButton msg label =
+    Ui.button
+        [ Background.color (Ui.rgb 255 255 255)
+        , Border.width 1
+        , Border.color hairline
+        , Font.color muted
+        , Font.size 12
+        , Border.rounded 4
+        , Ui.paddingXY 10 6
+        ]
+        { onPress = Just msg, label = Ui.text label }
+
+
+heading : String -> Element Msg
+heading label =
+    Ui.el [ Region.heading 2, Font.size 20, Font.bold ] (Ui.text label)
+
+
+subtle : String -> Element Msg
+subtle label =
+    Ui.el [ Font.size 12, Font.color muted ] (Ui.text label)
+
+
+errorText : String -> Element Msg
+errorText message =
+    if String.isEmpty message then
+        Ui.text ""
+
+    else
+        Ui.el [ Font.size 12, Font.color danger ] (Ui.text message)
+
+
+panel : List (Element Msg) -> Element Msg
+panel children =
+    Ui.column
+        [ Ui.spacing 12
+        , Ui.paddingXY 16 16
+        , Background.color card
+        , Border.width 1
+        , Border.color hairline
+        , Border.rounded 6
+        , Ui.width Ui.fill
+        ]
+        children
+
+
+field : String -> String -> String -> String -> Element Msg
+field labelText nameAttr typeAttr placeholder =
+    Ui.column
+        [ Ui.spacing 4 ]
+        [ Ui.el [ Font.size 12, Font.color muted ] (Ui.text labelText)
+        , Ui.input
+              [ Ui.htmlAttribute "type" typeAttr
+              , Ui.name nameAttr
+              , Ui.htmlAttribute "placeholder" placeholder
+              , Border.width 1
+              , Border.color hairline
+              , Border.rounded 3
+              , Ui.paddingXY 8 6
+              ]
+        ]
+
+
+submitInput : String -> Element Msg
+submitInput label =
+    Ui.input
+        [ Ui.htmlAttribute "type" "submit"
+        , Ui.htmlAttribute "value" label
+        , Background.color accent
+        , Font.color (Ui.rgb 255 255 255)
+        , Font.bold
+        , Border.rounded 4
+        , Ui.paddingXY 12 8
+        ]
+
+
+cell : String -> Element Msg
+cell label =
+    Ui.el [ Font.size 13, Ui.width Ui.fill ] (Ui.text label)
+
+
+headCell : String -> Element Msg
+headCell label =
+    Ui.el
+        [ Font.size 12, Font.bold, Font.color muted, Ui.width Ui.fill ]
+        (Ui.text label)
+
+
+tableRow : List (Element Msg) -> Element Msg
+tableRow cells =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.spacing 12
+        , Ui.paddingXY 0 6
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color hairline
+        ]
+        cells
+
+
+flashBanner : Model -> Element Msg
+flashBanner model =
+    if String.isEmpty model.flash then
+        Ui.text ""
+
+    else
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.spacing 12
+            , Ui.paddingXY 12 8
+            , Background.color (Ui.rgb 236 253 245)
+            , Border.width 1
+            , Border.color (Ui.rgb 167 243 208)
+            , Border.rounded 4
+            ]
+            [ Ui.el [ Font.size 13, Font.color ink ] (Ui.text model.flash)
+            , Ui.el [ Ui.alignRight ] (ghostButton DismissFlash "dismiss")
+            ]
+
+
+topNav : Model -> Element Msg
+topNav model =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.spacing 12
+        , Ui.paddingXY 24 14
+        , Background.color (Ui.rgb 17 24 39)
+        , Region.navigation
+        ]
+        (List.append
+            [ Ui.el
+                  [ Region.heading 1
+                  , Font.color (Ui.rgb 255 255 255)
+                  , Font.bold
+                  , Font.size 18
+                  ]
+                  (Ui.text "Ledger")
+            ]
+            (navItems model))
+
+
+navItems : Model -> List (Element Msg)
+navItems model =
+    case model.session of
+
+        Nothing ->
+            [ Ui.el [ Ui.alignRight ] (navButton SignInPage "Sign in") ]
+
+        Just sess ->
+            [ navButton DashboardPage "Balances"
+            , navButton AccountsPage "Accounts"
+            , navButton JournalPage "Journal"
+            , navButton ClosePage "Close"
+            , Ui.el
+                  [ Ui.alignRight
+                  , Font.size 12
+                  , Font.color (Ui.rgb 209 213 219)
+                  ]
+                  (Ui.text (sess.orgName ++ " · " ++ sess.email))
+            , Ui.el [ Ui.alignRight ] (ghostButton SignOut "sign out")
+            ]
+
+
+footer : Model -> Element Msg
+footer model =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 24 16
+        , Ui.spacing 16
+        , Background.color (Ui.rgb 243 244 246)
+        , Region.footer
+        , Border.widthEach { top = 1, right = 0, bottom = 0, left = 0 }
+        , Border.color hairline
+        ]
+        [ subtle
+              ("Trial balance " ++ Amounts.render model.trialBalanceMinor
+                  ++ " (must be "
+                  ++ Amounts.render 0
+                  ++ ")")
+        , Ui.el [ Ui.alignRight ] (subtle "apps/ledger · Sky.Live × Std.Db")
+        ]

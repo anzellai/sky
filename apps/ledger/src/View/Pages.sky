@@ -1,0 +1,211 @@
+module View.Pages exposing (dashboardView, accountsView, journalView, closeView)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Error as Error
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Font as Font
+import Std.Ui.Keyed as Keyed
+import Std.Ui.Lazy as Lazy
+import Amounts
+import Books
+import State exposing (..)
+import View.Common as C
+
+
+-- ─── Balances ────────────────────────────────────────────────────
+dashboardView : Model -> Element Msg
+dashboardView model =
+    Ui.column
+        [ Ui.spacing 16, Ui.width Ui.fill ]
+        [ C.heading "Balances"
+        , C.panel
+              (List.append
+                  [ C.tableRow
+                        [ C.headCell "Code"
+                        , C.headCell "Account"
+                        , C.headCell "Kind"
+                        , C.headCell "Balance"
+                        ]
+                  ]
+                  (List.map balanceRow model.accounts))
+        , C.panel
+              [ Ui.el
+                    [ Font.size 13 ]
+                    (Ui.text
+                        ("Trial balance: "
+                            ++ Amounts.render model.trialBalanceMinor))
+              , C.subtle
+                    "Every posted entry writes two signed lines that sum to zero, so this total is always zero on a healthy book."
+              ]
+        ]
+
+
+balanceRow : AccountBalance -> Element Msg
+balanceRow b =
+    C.tableRow
+        [ C.cell b.code
+        , C.cell b.name
+        , C.cell b.kind
+        , C.cell (Amounts.render b.balanceMinor)
+        ]
+
+
+-- ─── Chart of accounts ───────────────────────────────────────────
+accountsView : Model -> Element Msg
+accountsView model =
+    Ui.column
+        [ Ui.spacing 16, Ui.width Ui.fill ]
+        [ C.heading "Chart of accounts"
+        , C.panel
+              (List.append
+                  [ C.tableRow
+                        [ C.headCell "Code"
+                        , C.headCell "Account"
+                        , C.headCell "Kind"
+                        ]
+                  ]
+                  (List.map accountRow model.accounts))
+        , C.panel
+              [ C.heading "Add an account"
+              , Ui.form
+                    [ Ui.onSubmit DoAddAccount ]
+                    [ Ui.column
+                          [ Ui.spacing 10, Ui.width Ui.fill ]
+                          [ C.field "Code" "code" "text" "6000"
+                          , C.field "Name" "name" "text" "Software"
+                          , C.field
+                                "Kind (asset/liability/equity/income/expense)"
+                                "kind"
+                                "text"
+                                "expense"
+                          , C.errorText (errorFor "code" model)
+                          , C.submitInput "Add account"
+                          ]
+                    ]
+              ]
+        ]
+
+
+accountRow : AccountBalance -> Element Msg
+accountRow b =
+    C.tableRow [ C.cell b.code, C.cell b.name, C.cell b.kind ]
+
+
+-- ─── Journal ─────────────────────────────────────────────────────
+journalView : Model -> Element Msg
+journalView model =
+    Ui.column
+        [ Ui.spacing 16, Ui.width Ui.fill ]
+        [ C.heading "Journal"
+        , C.subtle "Ordered by (date, id) — the order the SQL guarantees."
+        , C.panel
+              [ Keyed.column
+                    [ Ui.width Ui.fill, Ui.spacing 0 ]
+                    (List.append
+                        [ ( "header"
+                          , C.tableRow
+                                [ C.headCell "#"
+                                , C.headCell "Date"
+                                , C.headCell "Memo"
+                                , C.headCell "Debit"
+                                , C.headCell "Credit"
+                                , C.headCell "Amount"
+                                ]
+                          )
+                        ]
+                        (List.map keyedJournalRow model.journal))
+              ]
+        , entryForm model
+        ]
+
+
+keyedJournalRow : JournalRow -> ( String, Element Msg )
+keyedJournalRow r =
+    ( "entry-" ++ String.fromInt r.id, Lazy.lazy journalRow r )
+
+
+journalRow : JournalRow -> Element Msg
+journalRow r =
+    C.tableRow
+        [ C.cell (String.fromInt r.id)
+        , C.cell r.day
+        , C.cell r.memo
+        , C.cell r.debit
+        , C.cell r.credit
+        , C.cell (Amounts.render r.amountMinor)
+        ]
+
+
+-- The Cancel control sits INSIDE the form. `Ui.button` must not default to
+-- `type=submit` — if it did, Cancel would post the entry.
+entryForm : Model -> Element Msg
+entryForm model =
+    C.panel
+        [ C.heading "Post an entry"
+        , Ui.form
+              [ Ui.onSubmit DoPostEntry ]
+              [ Ui.column
+                    [ Ui.spacing 10, Ui.width Ui.fill ]
+                    [ C.field "Date (YYYY-MM-DD, blank = today)" "day" "text" ""
+                    , C.field "Memo" "memo" "text" "Invoice 1042"
+                    , C.field "Debit account code" "debit" "text" "1100"
+                    , C.field "Credit account code" "credit" "text" "4000"
+                    , C.field "Amount" "amount" "text" "125.50"
+                    , C.errorText (errorFor "amount" model)
+                    , C.errorText (errorFor "debit" model)
+                    , C.errorText (errorFor "credit" model)
+                    , Ui.row
+                          [ Ui.spacing 10 ]
+                          [ C.submitInput "Post entry"
+                          , C.ghostButton CancelEntry "Cancel"
+                          ]
+                    ]
+              ]
+        ]
+
+
+-- ─── Period close ────────────────────────────────────────────────
+closeView : Model -> Element Msg
+closeView model =
+    Ui.column
+        [ Ui.spacing 16, Ui.width Ui.fill ]
+        [ C.heading ("Period close — " ++ model.period)
+        , C.panel
+              [ C.subtle
+                    "Nets every income and expense line dated in the period and records the result. Runs off the update loop via Cmd.perform."
+              , C.primaryButton RunClose ("Close " ++ model.period)
+              , C.errorText (closeError model)
+              ]
+        , C.panel
+              (List.append
+                  [ C.tableRow
+                        [ C.headCell "Period"
+                        , C.headCell "Net"
+                        , C.headCell "Closed at"
+                        ]
+                  ]
+                  (List.map closeRow model.closes))
+        ]
+
+
+closeRow : Books.Close -> Element Msg
+closeRow c =
+    C.tableRow
+        [ C.cell c.period
+        , C.cell (Amounts.render c.netMinor)
+        , C.cell c.closedAt
+        ]
+
+
+closeError : Model -> String
+closeError model =
+    case model.lastClose of
+
+        Err e ->
+            Error.toString e
+
+        Ok _ ->
+            ""

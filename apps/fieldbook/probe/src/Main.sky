@@ -1,0 +1,37 @@
+module Main exposing (main)
+
+-- Minimal reproduction for the Std.Ui.Events.onInput signature.
+--
+-- `sky-stdlib/Std/Ui/Events.sky:30` declares
+--     onInput : msg -> Ui.Attribute msg
+-- but its body is `Ui.onInput m`, and `sky-stdlib/Std/Ui.sky:816`
+-- declares
+--     onInput : (String -> msg) -> Attribute msg
+--
+-- So the re-export's annotation says "give me a Msg" while the only
+-- value its body can accept is a `String -> Msg` callback.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Std.Ui as Ui
+import Std.Ui.Events as Events
+
+
+type Msg
+    = Typed String
+    | Bare
+
+
+-- What the re-export's OWN signature invites: a bare Msg. This
+-- type-checks, and lowers to an AttrEvent whose payload is a plain
+-- value where the wire driver expects a `String -> msg` callback.
+probe : Ui.Attribute Msg
+probe =
+    Events.onInput Bare
+
+
+main =
+    let
+        _ = probe
+    in
+        println "probe"

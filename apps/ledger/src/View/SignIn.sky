@@ -1,0 +1,59 @@
+module View.SignIn exposing (signInView)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import State exposing (..)
+import View.Common as C
+
+
+-- Both credentials arrive in ONE typed form submit (`Ui.onSubmit`), never
+-- per-keystroke `onInput` — a password must not stream over the wire.
+signInView : Model -> Element Msg
+signInView model =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 24 ]
+        [ signInPanel model, signUpPanel model ]
+
+
+signInPanel : Model -> Element Msg
+signInPanel model =
+    C.panel
+        [ C.heading "Sign in"
+        , Ui.form
+              [ Ui.onSubmit DoSignIn ]
+              [ Ui.column
+                    [ Ui.spacing 10, Ui.width Ui.fill ]
+                    [ C.field "Email" "email" "email" "you@example.com"
+                    , C.field "Password" "password" "password" "••••••••"
+                    , C.errorText (errorFor "email" model)
+                    , C.submitInput "Sign in"
+                    ]
+              ]
+        ]
+
+
+signUpPanel : Model -> Element Msg
+signUpPanel model =
+    C.panel
+        [ C.heading "Create a book"
+        , C.subtle
+              "A new organisation gets its own isolated set of accounts, journal and closes."
+        , Ui.form
+              [ Ui.onSubmit DoSignUp ]
+              [ Ui.column
+                    [ Ui.spacing 10, Ui.width Ui.fill ]
+                    [ C.field "Organisation" "org" "text" "Acme Ltd"
+                    , C.field "Email" "email" "email" "owner@acme.test"
+                    , C.field
+                          "Password"
+                          "password"
+                          "password"
+                          "at least 8 chars"
+                    , C.errorText (errorFor "org" model)
+                    , C.errorText (errorFor "email" model)
+                    , C.errorText (errorFor "password" model)
+                    , C.submitInput "Create book"
+                    ]
+              ]
+        ]

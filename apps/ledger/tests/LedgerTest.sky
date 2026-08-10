@@ -1,0 +1,105 @@
+module LedgerTest exposing (tests)
+
+-- Pure-domain regression suite. No database, no server — runs in
+-- milliseconds under `sky test tests/LedgerTest.sky` on either arm.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Test as Test exposing (Test)
+import Std.Money as Money
+import Amounts
+
+
+tests : List Test
+tests =
+    [ Test.suite "Money.allocate residue" allocationTests
+    , Test.suite "double entry" doubleEntryTests
+    , Test.suite "amount parsing" parseTests
+    , Test.suite "periods" periodTests
+    ]
+
+
+-- The incident: an invoice of 100 minor units split three ways must come
+-- back as 34/33/33 and sum to EXACTLY 100 — no unit may evaporate.
+allocationTests : List Test
+allocationTests =
+    [ Test.test
+          "100 over 3 parts -> [34, 33, 33]"
+          (\_ -> Test.equal [ 34, 33, 33 ] (Amounts.allocateParts 3 100))
+    , Test.test
+          "the parts sum back to the whole"
+          (\_ -> Test.equal 100 (Amounts.sumInts (Amounts.allocateParts 3 100)))
+    , Test.test
+          "Money.sumOf of the parts equals the original Money"
+          (\_ ->
+              Test.isTrue
+                  (Money.eq
+                      (Money.sumOf
+                          Amounts.book
+                          (Money.allocate 3 (Amounts.money 100)))
+                      (Amounts.money 100)))
+    , Test.test
+          "invoiceSplitCheck reports exact"
+          (\_ -> Test.isTrue (Amounts.invoiceSplitCheck ()).exact)
+    , Test.test
+          "residue also vanishes for 7 parts of 100"
+          (\_ -> Test.equal 100 (Amounts.sumInts (Amounts.allocateParts 7 100)))
+    , Test.test
+          "1 part is the identity"
+          (\_ -> Test.equal [ 100 ] (Amounts.allocateParts 1 100))
+    ]
+
+
+doubleEntryTests : List Test
+doubleEntryTests =
+    [ Test.test
+          "a debit and its matching credit net to zero"
+          (\_ -> Test.isTrue (Amounts.balanced [ 25050, 0 - 25050 ]))
+    , Test.test
+          "a lopsided pair does not balance"
+          (\_ -> Test.isFalse (Amounts.balanced [ 25050, 0 - 25000 ]))
+    , Test.test
+          "an empty entry trivially balances"
+          (\_ -> Test.isTrue (Amounts.balanced []))
+    , Test.test
+          "a multi-leg entry balances"
+          (\_ -> Test.isTrue (Amounts.balanced [ 100, 200, 0 - 300 ]))
+    ]
+
+
+parseTests : List Test
+parseTests =
+    [ Test.test
+          "125.50 -> 12550 minor units"
+          (\_ -> Test.equal (Ok 12550) (Amounts.parseMinor "125.50"))
+    , Test.test
+          "surrounding whitespace is tolerated"
+          (\_ -> Test.equal (Ok 12550) (Amounts.parseMinor "  125.50 "))
+    , Test.test
+          "a non-numeric amount is an Err, never a silent zero"
+          (\_ ->
+              Test.isTrue
+                  (case Amounts.parseMinor "not-a-number" of
+
+                      Err _ ->
+                          True
+
+                      Ok _ ->
+                          False))
+    , Test.test
+          "rendering round-trips through the minor units"
+          (\_ -> Test.equal "$125.50" (Amounts.render 12550))
+    , Test.test
+          "a negative balance renders signed"
+          (\_ -> Test.equal "-$350.00" (Amounts.render (0 - 35000)))
+    ]
+
+
+periodTests : List Test
+periodTests =
+    [ Test.test
+          "a date collapses to its YYYY-MM period"
+          (\_ -> Test.equal "2026-08" (Amounts.periodOf "2026-08-10"))
+    , Test.test
+          "a short string passes through untouched"
+          (\_ -> Test.equal "2026" (Amounts.periodOf "2026"))
+    ]

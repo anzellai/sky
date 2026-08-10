@@ -1,0 +1,135 @@
+module Amounts exposing (..)
+
+-- Amounts — money + the double-entry invariants.
+--
+-- Money is `Std.Money` on `Std.Decimal`, NEVER a Float. Rows store signed
+-- MINOR units (Int); this module is the only place that converts.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Time as Time
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Std.Money as Money exposing (Money, Currency(..))
+
+
+-- | The book currency. One currency per deployment keeps the invariant
+-- checks total; a multi-currency ledger would carry the code per account.
+book : Currency
+book =
+    USD
+
+
+money : Int -> Money
+money minor =
+    Money.fromMinor book minor
+
+
+render : Int -> String
+render minor =
+    Money.format (money minor)
+
+
+sumInts : List Int -> Int
+sumInts xs =
+    List.foldl (\x acc -> acc + x) 0 xs
+
+
+-- | Parse a user-typed major-unit amount ("125.50") into signed minor units.
+parseMinor : String -> Result Error Int
+parseMinor raw =
+    case Money.fromString book (String.trim raw) of
+
+        Ok m ->
+            Ok (Money.toMinor m)
+
+        Err e ->
+            Err e
+
+
+-- ─── Money.allocate residue ──────────────────────────────────────
+-- The incident this guards: splitting a whole across N parts must lose
+-- nothing. 100 minor units over 3 parts → 34 / 33 / 33, summing back to
+-- exactly 100. `allocate` hands the remainder out one minor unit at a time
+-- to the front.
+allocateParts : Int -> Int -> List Int
+allocateParts parts whole =
+    List.map Money.toMinor (Money.allocate parts (money whole))
+
+type alias AllocationCheck =
+    { whole : Int
+    , parts : List Int
+    , total : Int
+    , exact : Bool
+    }
+
+
+-- | The invoice split the CI gate asserts on: 100 → [34, 33, 33], sum 100.
+invoiceSplitCheck : a -> AllocationCheck
+invoiceSplitCheck _ =
+    let
+        whole = 100
+        splitMoney = Money.allocate 3 (money whole)
+        parts = List.map Money.toMinor splitMoney
+        total = sumInts parts
+        exact =
+            total == whole
+                && Money.eq (Money.sumOf book splitMoney) (money whole)
+    in
+        { whole = whole, parts = parts, total = total, exact = exact }
+
+
+allocationLine : AllocationCheck -> String
+allocationLine c =
+    let
+        verdict =
+            if c.exact then
+                "true"
+
+            else
+                "false"
+    in
+        "ledger: allocate " ++ String.fromInt c.whole ++ " -> ["
+            ++ String.join ", " (List.map String.fromInt c.parts)
+            ++ "] sum="
+            ++ String.fromInt c.total
+            ++ " exact="
+            ++ verdict
+
+
+-- ─── Double-entry invariant ──────────────────────────────────────
+-- An entry is balanced iff its signed lines sum to zero. Debit is positive,
+-- credit negative.
+balanced : List Int -> Bool
+balanced amounts =
+    sumInts amounts == 0
+
+
+-- ─── Dates ───────────────────────────────────────────────────────
+-- A FUNCTION, not a zero-arg binding: a top-level `today = …` would be
+-- memoised into a frozen clock (the CAF footgun).
+today : a -> String
+today _ =
+    case Task.run (Time.now ()) of
+
+        Ok t ->
+            Time.format "2006-01-02" t
+
+        Err _ ->
+            "1970-01-01"
+
+
+-- | "2026-08-10" -> "2026-08"
+periodOf : String -> String
+periodOf date =
+    if String.length date >= 7 then
+        String.slice 0 7 date
+
+    else
+        date
+
+
+currentPeriod : a -> String
+currentPeriod _ =
+    periodOf (today ())

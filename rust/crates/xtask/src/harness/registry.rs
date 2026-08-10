@@ -447,6 +447,201 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::corpus_witness,
     },
+    // ---- Layer 2: real-world projects (v2 §6) ------------------------------
+    Gate {
+        name: "apps-bundled",
+        tier: Tier::T1,
+        platforms: UNIX,
+        // Two full `go build`s of ~35 MB binaries from a wiped slate. Measured
+        // ~13 s warm on the dev host; the ceiling is sized for a cold CI runner
+        // with no Go build cache.
+        budget_s: 900,
+        expected: bodies::APPS_BUNDLED_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member F — the Sky apps shipped inside the compiler build from a wiped slate",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-bundled.reintroduce-missing-field",
+            description: "rename the field MainTui's init supplies, so the shared \
+                          Model is constructed incomplete again — the exact defect \
+                          this gate found on its first run; the build assertion \
+                          must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "sky-bundled/console/src/MainTui.sky",
+                from: ", logoutUrl = \"\"",
+                to: ", logoutUrlNotAField = \"\"",
+            },
+        }]),
+        body: bodies::apps_bundled,
+    },
+    Gate {
+        name: "cli-verbs",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // The suite itself runs in ~0.1 s; the ceiling is for the `cargo test`
+        // compile on a cold CI target dir.
+        budget_s: 900,
+        expected: bodies::CLI_VERBS_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member G — sky CLI verbs (init/clean/watch/db/install/update/upgrade/dispatch)",
+        mutations: Mutations::new(&[Mutation {
+            id: "cli-verbs.break-an-expectation",
+            description: "corrupt the string `sky clean` must print when there is \
+                          nothing to remove; the clean test must go red and take \
+                          the suite's exit status with it",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/sky/tests/cli_verb_flow.rs",
+                from: "out.contains(\"nothing to remove\")",
+                to: "out.contains(\"nothing to remove NEVER\")",
+            },
+        }]),
+        body: bodies::cli_verbs,
+    },
+    Gate {
+        name: "apps-ledger",
+        tier: Tier::T1,
+        platforms: UNIX,
+        // Measured: 19 s cold build, 0.08 s to listening, plus migrate + seed.
+        budget_s: 900,
+        expected: bodies::APPS_LEDGER_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member A (SQLite arm) — migrations, auth, journal ordering, money residue",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-ledger.drop-the-ordering",
+            description: "order the journal by id instead of (entry_date, id); the \
+                          by-value ordering assertion must go red, because insertion \
+                          order cannot produce the expected sequence",
+            kind: MutationKind::ReplaceOnce {
+                path: "apps/ledger/src/Repo.sky",
+                from: "|> Store.orderAsc \"entryDate\"\n            |> Store.orderAsc \"id\"\n            |> Store.limit 500",
+                to: "|> Store.limit 500",
+            },
+        }]),
+        body: bodies::apps_ledger,
+    },
+    Gate {
+        name: "apps-ledger-postgres",
+        tier: Tier::T3,
+        platforms: UNIX,
+        budget_s: 900,
+        expected: bodies::APPS_LEDGER_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member A (Postgres arm) — identical source, identical assertions, real pgx",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-ledger-postgres.break-health-driver",
+            description: "stop recognising a postgres:// DSN, so the app misreports \
+                          which backend it is on; the arm can then no longer prove \
+                          it ran against Postgres and the driver assertion must go \
+                          red (the SQLite arm is unaffected, which is the point)",
+            kind: MutationKind::ReplaceOnce {
+                path: "apps/ledger/src/Api.sky",
+                from: "String.startsWith \"postgres://\" low",
+                to: "String.startsWith \"nomatch://\" low",
+            },
+        }]),
+        body: bodies::apps_ledger_postgres,
+    },
+    Gate {
+        name: "apps-fleet",
+        tier: Tier::T3,
+        platforms: UNIX,
+        budget_s: 900,
+        expected: bodies::APPS_FLEET_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member E — Ledger as a multi-replica topology over one shared session store",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-fleet.drop-the-production-gate",
+            description: "run the unreachable-store probe in dev instead of \
+                          production, where the runtime warns and falls back to an \
+                          in-memory store instead of refusing; the silent-fallback \
+                          assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/xtask/src/harness/bodies.rs",
+                from: "const FLEET_PROD_ENV: &str = \"production\";",
+                to: "const FLEET_PROD_ENV: &str = \"\";",
+            },
+        }]),
+        body: bodies::apps_fleet,
+    },
+    Gate {
+        name: "apps-relay",
+        tier: Tier::T1,
+        platforms: UNIX,
+        // Measured: 2.5 s clean rebuild + 0.16 s to first 200 + <1 s of probes.
+        budget_s: 600,
+        expected: bodies::APPS_RELAY_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member B — headless HTTP: auth refusal, rate limiting, CORS, asserted live",
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "apps-relay.break-health-identity",
+                description: "change the service name /health reports; the body \
+                              assertion must go red (proves the gate reads the \
+                              response, not just the status)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "apps/relay/src/Handlers.sky",
+                    from: "\\\"service\\\":\\\"relay\\\"",
+                    to: "\\\"service\\\":\\\"not-relay\\\"",
+                },
+            },
+            Mutation {
+                id: "apps-relay.disable-rate-limiting",
+                description: "raise the default bucket capacity far above the burst \
+                              the gate sends, so the limiter never refuses; the \
+                              429 assertion must go red",
+                kind: MutationKind::ReplaceOnce {
+                    path: "apps/relay/src/Config.sky",
+                    from: "capacity = 5",
+                    to: "capacity = 100000",
+                },
+            },
+        ]),
+        body: bodies::apps_relay,
+    },
+    Gate {
+        name: "apps-fieldbook",
+        tier: Tier::T2,
+        platforms: UNIX,
+        // Measured: 6.7 s clean rebuild + ~130 ms across four dump invocations.
+        budget_s: 900,
+        expected: bodies::APPS_FIELDBOOK_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member C — one Std.Ui view renders identically across backends",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-fieldbook.diverge-one-backend",
+            description: "map one Std.Ui Region to a different tag on the Html side \
+                          only, so the same view canonicalises differently for Live \
+                          than for Tui; the structural-parity assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "apps/fieldbook/src/Structure.sky",
+                from: "Ui.DescContentInfo ->\n            \"footer\"",
+                to: "Ui.DescContentInfo ->\n            \"div\"",
+            },
+        }]),
+        body: bodies::apps_fieldbook,
+    },
+    Gate {
+        name: "apps-ffi-scale",
+        tier: Tier::T4,
+        platforms: UNIX,
+        // Measured cold on the dev host: install 131 s + build 105 s = 236 s.
+        // The ceiling allows for a slower runner and a cold Go module cache.
+        budget_s: 1800,
+        expected: bodies::APPS_FFI_SCALE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member D — Go FFI at 76k-symbol scale (install + build, pre-release)",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-ffi-scale.break-an-ffi-symbol",
+            description: "call a Stripe SDK symbol that does not exist; resolution \
+                          against the 76k-symbol FFI surface must fail, which is \
+                          the scale path this gate exists to exercise",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/13-skyshop/src/Lib/Stripe.sky",
+                from: "Stripe.setKey key",
+                to: "Stripe.setKeyNotASymbol key",
+            },
+        }]),
+        body: bodies::apps_ffi_scale,
+    },
     // ---- harness self-verification ----------------------------------------
     //
     // `selftest-hang` is deliberately registered BEFORE `canary`. Registry order

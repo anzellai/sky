@@ -1,0 +1,28 @@
+module Head exposing (headFor)
+
+-- Sky.Live-only `<head>` injection (`Std.Live.Head`). The `head` field
+-- is row-open on Live's config and invisible to Tui / Webview, so this
+-- module is imported ONLY by the Live branch of Main.sky.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html exposing (Html)
+import Std.Live.Head as Head
+import Model exposing (..)
+
+
+headFor : Model -> List (Html Msg)
+headFor model =
+    [ Head.title
+          ("Fieldbook — " ++ String.fromInt (List.length model.notes)
+              ++ " field notes")
+    , Head.meta
+          "description"
+          "One Std.Ui view rendered by Sky.Live, Sky.Tui and Sky.Webview, with a Sky.Cli export and a cross-backend structural diff."
+    , Head.canonical "https://fieldbook.example/"
+    , Head.metaProperty "og:title" "Fieldbook"
+    , Head.metaProperty "og:type" "website"
+    , Head.metaProperty "og:url" "https://fieldbook.example/"
+    , Head.themeColor "#3e7254"
+    ]

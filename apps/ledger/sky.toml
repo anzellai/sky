@@ -1,0 +1,35 @@
+name = "ledger"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+# Default only. `SKY_LIVE_PORT` in the environment WINS — see
+# runtime-go/rt/live.go:3665 (`skyGetenv("LIVE_PORT")` is read AFTER the
+# config field) and runtime-go/rt/dotenv.go:29 (`SetPortDefault` →
+# `SetSkyDefault("LIVE_PORT", …)`, which is set-if-unset). There is no port
+# literal anywhere in src/ — the bind port is environment-driven.
+port = 8090
+# Session store. `SKY_LIVE_STORE` / `SKY_LIVE_STORE_PATH` override, so the
+# Postgres arm can run a shared session store from the same source.
+store = "memory"
+ttl = "30m"
+
+[database]
+# NOTE (verified 2026-08-10): `driver` is DECORATIVE. It is parsed at
+# rust/crates/project/src/build.rs:802 into `SKY_DB_DRIVER`, which NOTHING in
+# runtime-go/ ever reads. The real driver selection happens at connect time
+# from the DSN shape — runtime-go/rt/db_auth.go:337-351 (`detectDriver`):
+# `postgres://` / `postgresql://` / libpq keyword form → pgx, everything else
+# → sqlite.
+#
+# `path` seeds SKY_DB_PATH (build.rs:808) via `rt.SetSkyDefault` which is
+# set-if-unset (runtime-go/rt/env_prefix.go:107), so the shell always wins:
+#
+#   SQLite   : SKY_DB_PATH=./ledger.db            ./sky-out/app
+#   Postgres : SKY_DB_PATH=postgres://u@h:5432/db ./sky-out/app
+#              (or DATABASE_URL=… — db_auth.go:217 fallback)
+driver = "sqlite"
+path = "ledger.db"

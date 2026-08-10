@@ -1,0 +1,121 @@
+module Tokens exposing
+    ( issue
+    , verify
+    , issueAdmin
+    , adminRole
+    , bearer
+    , hashAdminPassword
+    , checkAdminPassword
+    , passwordAdvice
+    )
+
+-- Token plumbing for Relay.
+--
+-- Two shapes on purpose:
+--
+--   * `issue` / `verify` — the TYPED builder path.  `Sky.Core.Jwt`
+--     composes the claim set, `Std.Auth.signTokenWithClaims` /
+--     `verifyTokenWithAlgorithm` sign and check it.  Returns the raw
+--     payload JSON, so nothing is coerced back out of `any`.
+--
+--   * `issueAdmin` / `adminRole` — the SHORT-FORM path.
+--     `Std.Auth.signToken secret claims ttl` with a `Dict String String`
+--     claim bag, verified by `Std.Auth.verifyToken`.
+--
+-- Passwords go through bcrypt (`Std.Auth.hashPassword` /
+-- `verifyPassword`); the admin password is never compared as a string.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Encode as JsonEnc
+import Sky.Core.Jwt as Jwt
+import Std.Auth as Auth
+
+
+-- | `issue secret subject now ttl` — a signed HS256 token carrying
+-- iss/sub/iat/exp plus a `scope` custom claim.
+issue : String -> String -> Int -> Int -> Result Error String
+issue secret subject now ttl =
+    Auth.signTokenWithClaims
+        (Jwt.hs256 secret)
+        (Jwt.claims |> Jwt.issuer "relay" |> Jwt.subject subject
+            |> Jwt.audience "relay-api"
+            |> Jwt.issuedAt now
+            |> Jwt.notBefore now
+            |> Jwt.expiresAt (now + ttl)
+            |> Jwt.jwtId ("relay-" ++ String.fromInt now)
+            |> Jwt.withClaim "scope" (JsonEnc.string "read"))
+
+
+-- | `verify secret now token` — returns the verified payload JSON.
+verify : String -> Int -> String -> Result Error String
+verify secret now token =
+    Auth.verifyTokenWithAlgorithm (Jwt.hs256 secret) now token
+
+
+-- | `issueAdmin secret user ttl` — short-form `Std.Auth.signToken`
+-- over a `Dict String String` claim bag.
+issueAdmin : String -> String -> Int -> Result Error String
+issueAdmin secret user ttl =
+    Auth.signToken secret (adminClaims user) ttl
+
+
+adminClaims : String -> Dict String String
+adminClaims user =
+    Dict.fromList [ ( "sub", user ), ( "role", "admin" ) ]
+
+
+-- | `adminRole secret token` — verify with `Std.Auth.verifyToken` and
+-- report whether the `role` claim survived the round trip.  Claim
+-- VALUES stay untouched inside the `Dict String any` the kernel hands
+-- back (JWT numeric claims are float-shaped there), so nothing is
+-- coerced out of `any`.
+adminRole : String -> String -> Result Error String
+adminRole secret token =
+    case Auth.verifyToken secret token of
+
+        Ok claimBag ->
+            if Dict.member "role" claimBag then
+                Ok "admin"
+
+            else
+                Ok "unknown"
+
+        Err e ->
+            Err e
+
+
+-- | Bcrypt hash for the configured admin password.
+hashAdminPassword : String -> Result Error String
+hashAdminPassword pw =
+    Auth.hashPasswordCost pw 10
+
+
+-- | Constant-time-ish bcrypt comparison.
+checkAdminPassword : String -> String -> Result Error Bool
+checkAdminPassword candidate hashed =
+    Auth.verifyPassword candidate hashed
+
+
+-- | `Std.Auth.passwordStrength` surfaced as a diagnostic string.
+passwordAdvice : String -> String
+passwordAdvice pw =
+    case Auth.passwordStrength pw of
+
+        Ok label ->
+            label
+
+        Err e ->
+            Error.toString e
+
+
+-- | Extract a bearer token from an `Authorization` header value.
+bearer : String -> Maybe String
+bearer headerValue =
+    if String.startsWith "Bearer " headerValue then
+        Just (String.trim (String.dropLeft 7 headerValue))
+
+    else
+        Nothing
