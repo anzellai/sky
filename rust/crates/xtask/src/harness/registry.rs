@@ -226,10 +226,10 @@ pub struct Gate {
     pub budget_s: u64,
     /// The **exact** number of assertions this gate must report.
     ///
-    /// Exact, never `>=`. `ty/tests/reject.rs:121,147` asserts `>= 13` against
-    /// an actual 63: deleting 50 corpus files keeps it green today. An exact
-    /// count makes a shrinking corpus a build failure with an actionable
-    /// message.
+    /// Exact, never `>=`. `ty/tests/reject.rs` USED to assert `>= 13` against an
+    /// actual 63 — deleting 50 corpus files kept it green. Both reject faces now
+    /// read the exact count from `ty::reject_corpus::EXPECTED_CORPUS_FILES`, so
+    /// a shrinking corpus is a build failure with an actionable message.
     pub expected: u64,
     pub mutations: Mutations,
     pub expect: Expect,

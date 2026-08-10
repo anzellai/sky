@@ -17,6 +17,7 @@ mod check;
 mod db;
 mod exhaustive;
 mod infer;
+pub mod reject_corpus;
 pub mod shared;
 mod sig;
 mod unify;

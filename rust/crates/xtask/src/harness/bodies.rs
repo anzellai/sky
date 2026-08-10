@@ -29,8 +29,11 @@ use std::process::Command;
 
 /// `.sky` files under `examples/`, excluding generated dirs. Measured.
 pub const ROUNDTRIP_EXPECTED: u64 = 173;
-/// Files in `rust/crates/ty/tests/reject/corpus/`. Measured.
-pub const REJECT_EXPECTED: u64 = 63;
+/// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
+/// SINGLE declaration both reject faces share, so the harness cannot pin a
+/// different corpus size than `xtask reject` and `cargo test -p ty --test
+/// reject` enforce.
+pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64;
 /// Conformance cases that actually RUN on a healthy tree. Measured: **770**.
 ///
 /// v2 §5.4 fixes this number at **772**, and 772 is what a static count of
@@ -103,14 +106,8 @@ pub fn reject(ctx: &GateCtx) -> GateOutcome {
         .map(|r| r.name.as_str())
         .collect();
 
-    if holes.is_empty() {
-        GateOutcome::new(
-            true,
-            assertions,
-            format!("{assertions} ill-typed programs, every hard-gate one rejected"),
-        )
-    } else {
-        GateOutcome::new(
+    if !holes.is_empty() {
+        return GateOutcome::new(
             false,
             assertions,
             format!(
@@ -118,8 +115,45 @@ pub fn reject(ctx: &GateCtx) -> GateOutcome {
                 holes.len(),
                 preview(&holes)
             ),
-        )
+        );
     }
+
+    // Rejection alone is not the whole criterion: where a corpus file DECLARES
+    // the diagnostic code its defect is about, the rejection must carry that
+    // code (`ty::reject_corpus`, AT-LEAST rule). Without this the harness would
+    // be a THIRD, weaker face of the same check.
+    let code_gaps: Vec<String> = rows
+        .iter()
+        .filter(|r| !r.known_leniency && r.rejected() && !r.missing_codes().is_empty())
+        .map(|r| format!("{} (missing {:?})", r.name, r.missing_codes()))
+        .collect();
+    if !code_gaps.is_empty() {
+        let refs: Vec<&str> = code_gaps.iter().map(|s| s.as_str()).collect();
+        return GateOutcome::new(
+            false,
+            assertions,
+            format!(
+                "{} file(s) rejected, but NOT by the declared diagnostic code: {}",
+                refs.len(),
+                preview(&refs)
+            ),
+        );
+    }
+
+    if let Err(msg) = ty::reject_corpus::check_code_census(&rows) {
+        return GateOutcome::new(false, assertions, msg);
+    }
+
+    let (with_code, without_code) = ty::reject_corpus::code_census(&rows);
+    GateOutcome::new(
+        true,
+        assertions,
+        format!(
+            "{assertions} ill-typed programs, every hard-gate one rejected; \
+             {with_code} pin a diagnostic code, {} unpinned",
+            without_code.len()
+        ),
+    )
 }
 
 // ---------------------------------------------------------------------------
