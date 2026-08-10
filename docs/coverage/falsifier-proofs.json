@@ -1,10 +1,22 @@
 {
   "gates": {
+    "apps-bundled": {
+      "mutation": "apps-bundled.reintroduce-missing-field",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786366895
+    },
     "canary": {
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
       "proven_at_unix": 1786350821
+    },
+    "cli-verbs": {
+      "mutation": "cli-verbs.break-an-expectation",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786367145
     },
     "conformance": {
       "mutation": "conformance.break-expectation",

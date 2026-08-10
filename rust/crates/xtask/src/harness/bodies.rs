@@ -629,6 +629,140 @@ pub fn shared_world(ctx: &GateCtx) -> GateOutcome {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Layer 2 — real-world projects (v2 §6)
+// ---------------------------------------------------------------------------
+
+/// Member F: `sky-bundled/console` + `sky-bundled/doc`.
+///
+/// Two assertions per project — the build's exit status, and the artifact it
+/// was supposed to leave behind. The artifact half is not redundant: a builder
+/// that exits 0 having emitted nothing is exactly the shape of the "could never
+/// pass on a clean checkout" defect, inverted.
+pub const APPS_BUNDLED_EXPECTED: u64 = 4;
+
+/// The single largest Sky application the project ships, gated by nothing.
+///
+/// `sky-bundled/console` is 5,746 lines across 11 modules, statically linked
+/// into every binary the compiler emits; `sky-bundled/doc` backs `sky doc
+/// --serve`. Neither is under `examples/`, so neither is in any corpus, and
+/// `grep -rn 'regenerate-console\|console_app' .github/` returns nothing.
+///
+/// Registering this gate immediately found that the console **did not compile**:
+/// `ef826e73` added `logoutUrl` to the shared `Model` in `State.sky` and updated
+/// `Main.sky` but not `MainTui.sky`, which constructs the same record. It had
+/// been broken since 2026-07-31 (fixed in the commit that added this gate).
+pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+
+    let projects = ["sky-bundled/console", "sky-bundled/doc"];
+    let mut assertions = 0u64;
+    let mut failures: Vec<String> = Vec::new();
+    let mut timings: Vec<String> = Vec::new();
+
+    for p in projects {
+        let r = match layer2::clean_build(&ctx.repo_root, p) {
+            Ok(r) => r,
+            // No compiler, or not a project: nothing was asserted. Reporting 0
+            // assertions is what makes this a FAIL rather than a quiet pass.
+            Err(e) => return GateOutcome::new(false, assertions, e),
+        };
+
+        assertions += 1;
+        if !r.ok {
+            failures.push(format!(
+                "{p}: `sky build` failed:\n{}",
+                layer2::tail(&r.log, 12)
+            ));
+        }
+
+        assertions += 1;
+        if !r.binary.is_file() {
+            failures.push(format!("{p}: no artifact at {}", r.binary.display()));
+        }
+
+        timings.push(format!("{p} {:.1}s", r.elapsed_s));
+    }
+
+    if failures.is_empty() {
+        GateOutcome::new(
+            true,
+            assertions,
+            format!("bundled Sky apps build from a wiped slate ({})", timings.join(", ")),
+        )
+    } else {
+        GateOutcome::new(false, assertions, failures.join(" | "))
+    }
+}
+
+/// Member G: the CLI verbs, owned by `rust/crates/sky/tests/cli_verb_flow.rs`.
+///
+/// v2 §6 row G puts the verbs in flow tests rather than an app, so this gate
+/// does not re-implement them — it runs them and pins their population. Two
+/// independent properties, neither of which scrapes test output:
+///
+///   * the suite's **exit status** (libtest's own verdict), and
+///   * the **number of `#[test]` functions** in the file, counted from source.
+///
+/// The second is what makes deletion visible. `cargo test` on a file whose tests
+/// were removed exits 0 having run nothing, which is the same shape as the
+/// `0/0 … GATE: PASS` defect.
+pub const CLI_VERBS_EXPECTED: u64 = 9;
+
+pub fn cli_verbs(ctx: &GateCtx) -> GateOutcome {
+    let suite = ctx
+        .repo_root
+        .join("rust/crates/sky/tests/cli_verb_flow.rs");
+    let Ok(src) = std::fs::read_to_string(&suite) else {
+        return GateOutcome::new(false, 0, format!("cannot read {}", suite.display()));
+    };
+    let n = src
+        .lines()
+        .filter(|l| l.trim_start().starts_with("#[test]"))
+        .count() as u64;
+
+    if n != CLI_VERBS_EXPECTED {
+        return GateOutcome::new(
+            false,
+            n,
+            format!(
+                "expected EXACTLY {CLI_VERBS_EXPECTED} CLI-verb tests, found {n}. \
+                 If a verb test was deliberately added or removed, update \
+                 CLI_VERBS_EXPECTED in harness/bodies.rs in the same commit."
+            ),
+        );
+    }
+
+    // `CARGO_TARGET_DIR` is unset deliberately: inheriting a caller's target dir
+    // has repeatedly produced cross-tree contamination on this repo.
+    let out = Command::new("cargo")
+        .args(["test", "-p", "sky", "--test", "cli_verb_flow"])
+        .current_dir(ctx.repo_root.join("rust"))
+        .env_remove("CARGO_TARGET_DIR")
+        .stdin(std::process::Stdio::null())
+        .output();
+
+    match out {
+        // A missing//unrunnable cargo is a FAIL, never a skip — "a gate that
+        // cannot run has not passed".
+        Err(e) => GateOutcome::new(false, 0, format!("could not run cargo test: {e}")),
+        Ok(o) if o.status.success() => GateOutcome::new(
+            true,
+            n,
+            format!("{n} CLI-verb flow tests green (toolchain-free assertions)"),
+        ),
+        Ok(o) => GateOutcome::new(
+            false,
+            n,
+            format!(
+                "cli_verb_flow suite failed (exit {:?}):\n{}",
+                o.status.code(),
+                super::layer2::tail(&String::from_utf8_lossy(&o.stdout), 25)
+            ),
+        ),
+    }
+}
+
 fn read_json(p: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }

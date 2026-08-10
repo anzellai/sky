@@ -447,6 +447,55 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::corpus_witness,
     },
+    // ---- Layer 2: real-world projects (v2 §6) ------------------------------
+    Gate {
+        name: "apps-bundled",
+        tier: Tier::T1,
+        platforms: UNIX,
+        // Two full `go build`s of ~35 MB binaries from a wiped slate. Measured
+        // ~13 s warm on the dev host; the ceiling is sized for a cold CI runner
+        // with no Go build cache.
+        budget_s: 900,
+        expected: bodies::APPS_BUNDLED_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member F — the Sky apps shipped inside the compiler build from a wiped slate",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-bundled.reintroduce-missing-field",
+            description: "rename the field MainTui's init supplies, so the shared \
+                          Model is constructed incomplete again — the exact defect \
+                          this gate found on its first run; the build assertion \
+                          must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "sky-bundled/console/src/MainTui.sky",
+                from: ", logoutUrl = \"\"",
+                to: ", logoutUrlNotAField = \"\"",
+            },
+        }]),
+        body: bodies::apps_bundled,
+    },
+    Gate {
+        name: "cli-verbs",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // The suite itself runs in ~0.1 s; the ceiling is for the `cargo test`
+        // compile on a cold CI target dir.
+        budget_s: 900,
+        expected: bodies::CLI_VERBS_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member G — sky CLI verbs (init/clean/watch/db/install/update/upgrade/dispatch)",
+        mutations: Mutations::new(&[Mutation {
+            id: "cli-verbs.break-an-expectation",
+            description: "corrupt the string `sky clean` must print when there is \
+                          nothing to remove; the clean test must go red and take \
+                          the suite's exit status with it",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/sky/tests/cli_verb_flow.rs",
+                from: "out.contains(\"nothing to remove\")",
+                to: "out.contains(\"nothing to remove NEVER\")",
+            },
+        }]),
+        body: bodies::cli_verbs,
+    },
     // ---- harness self-verification ----------------------------------------
     //
     // `selftest-hang` is deliberately registered BEFORE `canary`. Registry order
