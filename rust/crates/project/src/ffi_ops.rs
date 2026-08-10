@@ -88,8 +88,15 @@ pub fn add(project_dir: &Path, repo_root: &Path, pkg: &str, spec: Option<&str>) 
         ffi::inspect::PIN_GOOS,
         ffi::inspect::PIN_GOARCH
     ));
-    let info = match ffi::run_inspector(&bin, &sky_out, &[pkg.to_string()]) {
-        Ok(mut v) if !v.is_empty() => v.remove(0),
+    let info = match ffi::run_inspector_reporting(&bin, &sky_out, &[pkg.to_string()]) {
+        Ok((mut v, note)) if !v.is_empty() => {
+            // Surface the host+cgo fallback rather than letting a non-portable
+            // surface be committed silently.
+            if let Some(n) = note {
+                r.say(format!("  note: {n}"));
+            }
+            v.remove(0)
+        }
         Ok(_) => return r.fail(format!("sky add: inspector returned no package for {pkg}")),
         Err(e) => return r.fail(format!("sky add: {e}")),
     };
@@ -503,10 +510,13 @@ fn install_go_deps(
                 Err(e) => r.say(format!("  note: could not verify {dep}: {e}")),
             }
         } else {
-            match regenerate_committed(&bin, &sky_out, project_dir, dep) {
-                Ok(slug) => {
+            match regenerate_committed_reporting(&bin, &sky_out, project_dir, dep) {
+                Ok((slug, note)) => {
                     regenerated += 1;
                     r.say(format!("  generated missing surface sky-ffi/{slug}.*"));
+                    if let Some(n) = note {
+                        r.say(format!("  note: {n}"));
+                    }
                 }
                 Err(e) => r.say(format!("  note: could not generate {dep}: {e}")),
             }
@@ -718,12 +728,24 @@ fn regenerate_committed(
     project_dir: &Path,
     pkg: &str,
 ) -> Result<String, String> {
-    let info = match ffi::run_inspector(bin, sky_out, &[pkg.to_string()]) {
-        Ok(mut v) if !v.is_empty() => v.remove(0),
+    regenerate_committed_reporting(bin, sky_out, project_dir, pkg).map(|(slug, _)| slug)
+}
+
+/// As [`regenerate_committed`], also returning the inspector's provenance note
+/// when the host+cgo fallback produced the surface — so `sky install` can say so
+/// rather than committing a non-portable surface in silence.
+fn regenerate_committed_reporting(
+    bin: &Path,
+    sky_out: &Path,
+    project_dir: &Path,
+    pkg: &str,
+) -> Result<(String, Option<String>), String> {
+    let (info, note) = match ffi::run_inspector_reporting(bin, sky_out, &[pkg.to_string()]) {
+        Ok((mut v, note)) if !v.is_empty() => (v.remove(0), note),
         Ok(_) => return Err(format!("inspector returned no package for {pkg}")),
         Err(e) => return Err(e),
     };
-    write_surface(project_dir, &info)
+    write_surface(project_dir, &info).map(|slug| (slug, note))
 }
 
 /// Write the three surface files for one inspected package. Returns the slug.

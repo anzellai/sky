@@ -236,7 +236,7 @@ declare -a EXAMPLES=(
     "08-notes-app:server:8000:/"
     "09-live-counter:server:8000:/"
     "10-live-component:server:8000:/"
-    "11-fyne-stopwatch:blocked"
+    "11-fyne-stopwatch:gui"
     "12-skyvote:server:8000:/"
     "13-skyshop:server:8000:/"
     "14-task-demo:cli"
@@ -317,17 +317,19 @@ run_example() {
     # than either a silent pass or a permanent red that trains everyone to
     # ignore the gate. Remove the marker the moment the cause is fixed.
     #
-    # 11-fyne-stopwatch: fyne needs cgo (glfw -> OpenGL -> native windowing),
-    # but the FFI inspector pins GOOS=linux/GOARCH=amd64 with CGO_ENABLED=0 so
-    # generated surfaces are identical on every dev machine
-    # (rust/crates/ffi/src/inspect.rs:169-173). cgo cross-compilation to Linux
-    # from a macOS host needs a cross-toolchain that is not present, so the
-    # surface cannot be generated and `sky install` fails with "has no
-    # generated FFI surface". No fyne version avoids this — it is structural,
-    # not a bad pin. Upstream v2.8.0 is separately broken under CGO_ENABLED=0.
-    # Until the inspector grows a documented host-target + cgo fallback, this
-    # example is verified NOWHERE: Linux CI skips it as a GUI example and macOS
-    # cannot build it. See discussions #50.
+    # No example is currently `blocked`. 11-fyne-stopwatch was, and is not any
+    # more: fyne needs cgo (glfw -> OpenGL -> native windowing), but the FFI
+    # inspector pinned GOOS=linux/GOARCH=amd64 with CGO_ENABLED=0, under which
+    # fyne cannot be type-checked at all — so its surface could not be generated
+    # and the example was verified NOWHERE (Linux CI skipped it as a GUI
+    # example, macOS could not build it; discussions #50). The inspector now has
+    # the documented host-target + cgo fallback that was missing
+    # (`run_inspector_reporting`, rust/crates/ffi/src/inspect.rs): the pin is
+    # still tried first for every package and still governs every package that
+    # works under it, and only a package that FAILS the pin is retried on the
+    # host with cgo, with its non-portable provenance reported. 11-fyne-stopwatch
+    # is now an ordinary `gui` example — built and run on macOS, skipped on Linux
+    # unless the X11/GTK dev libs are present (SKIP_GUI_LINUX=0).
     if [[ "$kind" == "blocked" ]]; then
         printf 'SKIP blocked — FFI surface needs cgo; inspector pins linux/amd64 CGO_ENABLED=0 (see #50)\n' > "$result_file"
         return
