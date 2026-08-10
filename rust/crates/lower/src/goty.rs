@@ -311,6 +311,34 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
 /// ordinary structural→nominal path every example depends on — but two or more
 /// are genuinely indistinguishable, and `None` is returned so the record keeps
 /// its structural form instead of being guessed onto one of them.
+/// Does `t` contain anything the checker has not pinned down — a free type var,
+/// an unresolved super (`number` / `comparable` / …), or an error node — at ANY
+/// depth?
+///
+/// A type carrying one of these cannot refute a candidate alias: `Maybe t0`
+/// against a declared `Maybe String` is under-determined, not contradictory. A
+/// var that the caller HAS bound (a parametric alias instantiation) is resolved
+/// and does not count.
+fn has_unresolved(t: &Ty, params: &HashMap<Name, GoTy>) -> bool {
+    match t {
+        Ty::Var(n) => !params.contains_key(n),
+        Ty::Error => true,
+        Ty::App(n, args) => {
+            matches!(
+                n.as_str(),
+                "number" | "comparable" | "appendable" | "compappend"
+            ) || args.iter().any(|a| has_unresolved(a, params))
+        }
+        Ty::Fun(a, b) => has_unresolved(a, params) || has_unresolved(b, params),
+        Ty::Tuple(xs) => xs.iter().any(|x| has_unresolved(x, params)),
+        // An OPEN row is itself missing information about the rest of the record.
+        Ty::Record(fs, ext) => {
+            ext.is_some() || fs.iter().any(|(_, ft)| has_unresolved(ft, params))
+        }
+        Ty::Unit => false,
+    }
+}
+
 fn select_record_candidate<'a>(
     candidates: &'a [String],
     fields: &[(Name, Ty)],
@@ -320,15 +348,16 @@ fn select_record_candidate<'a>(
 ) -> Option<&'a String> {
     let concrete: HashMap<&str, &Ty> = fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
 
-    // Does this concrete field type carry no usable information? An erased `any`,
-    // or an unresolved super var. `number` lowers to `int`, so comparing it
-    // against a `Float`-typed template would read as a definite mismatch when it
-    // is really "not yet known" — classify it as unknown, never as a refutation.
+    // Does this concrete field type carry no usable information — anywhere?
+    //
+    // The check must be RECURSIVE, not just top-level. `Codec.auto { note =
+    // Nothing }` infers the field as `Maybe t0` where the alias declares
+    // `Maybe String`; `items = []` infers `List t0` against `List Int`. Those
+    // lower to different Go types, but they do not CONTRADICT the template —
+    // they are simply not resolved yet. Treating them as refutations refused the
+    // alias, erased the record, and `Codec.auto` then saw a bare `interface{}`.
     let uninformative = |ct: &Ty| -> bool {
-        if matches!(ct, Ty::App(n, a) if a.is_empty() && n.as_str() == "number") {
-            return true;
-        }
-        go_ty(ct, env, cur_mod, params) == GoTy::Any
+        has_unresolved(ct, params) || go_ty(ct, env, cur_mod, params) == GoTy::Any
     };
 
     // (viable, unknown_count) — `None` when the candidate is refuted outright.
