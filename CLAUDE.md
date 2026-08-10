@@ -613,8 +613,19 @@ ps -u $USER -o pid,command | awk '/while pgrep|until ! pgrep/ && /\/bin\/zsh -c/
 
 # Stray sleeps + verification leftovers
 ps -u $USER -o pid,ppid,command | awk '$3 == "sleep" && $2 != 1 {print $1}' | xargs -n1 kill -9 2>/dev/null
-pkill -f "playwright"; pkill -f "chromium"
-pkill -f "examples/.*/sky-out/app"
+
+# Verification leftovers — SCOPED TO THIS AGENT'S OWN WORKTREE.
+#
+# `pkill -f "examples/.*/sky-out/app"` (and the bare playwright/chromium
+# equivalents) match by command name across the whole uid. When several agents
+# run at once — the normal case now, each in its own worktree, all building the
+# same example binaries — a finishing agent's cleanup kills a SIBLING's
+# in-flight gate. That surfaces as a failure unrelated to the code under test,
+# indistinguishable from a real regression, and it is the victim who
+# investigates. Leaving an orphan costs memory; a wrong kill costs a false red.
+MY_TREE="$(git rev-parse --show-toplevel)"
+pkill -f "$MY_TREE/examples/.*/sky-out/app"
+pkill -f "$MY_TREE.*playwright"; pkill -f "$MY_TREE.*chromium"
 
 # mem-guard alive?
 pgrep -f mem-guard.sh >/dev/null || (nohup ./scripts/mem-guard.sh > /tmp/mem-guard.out 2>&1 & disown)
