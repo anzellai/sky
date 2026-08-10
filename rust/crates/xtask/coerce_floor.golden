@@ -12,8 +12,10 @@
 02-go-stdlib	9
 03-tea-external	3
 04-local-pkg	2
+05-mux-server	9
 06-json	46
 07-todo-cli	126
+08-notes-app	665
 09-live-counter	92
 10-live-component	92
 11-fyne-stopwatch	10
@@ -60,6 +62,7 @@
 53-record-update-map	28
 54-record-fieldset-collision	5
 55-store-partial-update	99
+apps/dispatch	628
 apps/fieldbook	883
 apps/ledger	592
 apps/relay	190

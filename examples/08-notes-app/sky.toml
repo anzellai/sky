@@ -10,11 +10,19 @@ root = "src"
 driver = "sqlite"
 path = "skynotes.db"
 
-[auth]
-method = "password"
-secret = "notes-app-dev-secret-change-in-prod"
-session_ttl = "24h"
-email_verification = true
+# No `[auth]` block. This app does its own session handling — `Lib/Auth.sky`
+# generates an opaque token and stores it in a `sessions` table — so it reads
+# neither a signing secret nor a TTL from configuration.
+#
+# There used to be one here (`method` / `secret` / `session_ttl` /
+# `email_verification`). Not one of those four is a key Sky reads: `method` and
+# `email_verification` are not keys at all, `secret` is env-only by design, and
+# the real TTL key is `tokenTtl`. The compiler now WARNS on keys like these
+# instead of dropping them silently, which is how they were found.
+#
+# NOTE for anyone copying this example: sessions here never expire — nothing
+# checks `created_at` on lookup. The `session_ttl = "24h"` that used to sit in
+# this file described behaviour the code does not implement.
 
 ["go.dependencies"]
 "net/http" = "latest"

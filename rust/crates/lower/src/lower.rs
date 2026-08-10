@@ -168,6 +168,17 @@ pub struct LowerConfig {
     /// The `[database] path` / `url` DSN as declared in sky.toml, for the
     /// consistency check above.
     pub db_dsn: Option<String>,
+    /// `(section, key)` for every sky.toml key that sits in a RUNTIME CONFIG
+    /// section and is honoured by nothing.
+    ///
+    /// Same rationale as `db_driver` directly above: a declared expectation the
+    /// build reports rather than drops. The parser's fallthrough arm used to be
+    /// a bare `_ => {}`, which is how `examples/08-notes-app` and
+    /// `examples/12-skyvote` came to set `[auth] session_ttl` (the real key is
+    /// `tokenTtl`) and get the default TTL with no indication, and how `[jobs]`
+    /// stayed a section that the runtime's error messages told operators to set
+    /// while the compiler ignored it.
+    pub unknown_config_keys: Vec<(String, String)>,
     /// The pinned Go-FFI surface (doc 09) for this project — empty when the
     /// project imports no Go packages.
     pub ffi: FfiTable,

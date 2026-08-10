@@ -29,7 +29,7 @@ package rt
 //
 // What's NOT here:
 //   - Web UI at /_sky/jobs (lands with the Phase 1.1b dashboard).
-//   - `sky.toml [jobs]` parsing. Configuration is env-only; see jobsBoot.
+//   (`sky.toml [jobs]` parsing landed in v0.19.14 — see jobsBoot.)
 //
 // (The Postgres and SQLite backends listed here as "deferred" both exist —
 // rt/jobs/postgres_store.go and rt/jobs/sqlite_store.go.)
@@ -64,18 +64,21 @@ var (
 
 // jobsBoot starts the default worker on first use. Idempotent.
 //
-// Backend selection is ENVIRONMENT-ONLY (read via skyGetenv with the [env]
-// prefix):
+// Backend selection is read via skyGetenv (honouring the `[env] prefix`):
 //   SKY_JOBS_STORE       — "memory" (default) | "sqlite" | "postgres"
 //   SKY_JOBS_STORE_PATH  — file path (sqlite, default "./_sky/jobs.db")
 //                          or URL (postgres; falls back to DATABASE_URL)
 //
-// There is NO `sky.toml [jobs]` section. Several comments in this file used to
-// describe one as the primary configuration surface, but nothing parses it:
-// `rust/crates/project/src/build.rs` has no `jobs` key and `docs/sky-toml.md`
-// documents no such section. A `[jobs]` block in a project's sky.toml is
-// silently ignored, so it is worth being precise here rather than sending
-// readers to a setting that does nothing.
+// `sky.toml [jobs] store` / `storePath` seed those two, exactly as `[live]`
+// seeds the session store (`rust/crates/project/src/build.rs`). Shell env still
+// wins, so a deployment overrides the file without a rebuild.
+//
+// Until v0.19.14 that was NOT true: comments here described `[jobs]` as the
+// configuration surface, and the degrade message below told operators to set
+// `[jobs] store_path` — while the compiler parsed no such section and dropped
+// the block on the floor. In production the app then refused to start, naming
+// the key the operator had just set. Both halves are fixed: the section is
+// parsed, and `docs/sky-toml.md` documents it.
 //
 // All three backends implement the same Store interface — the worker code
 // doesn't care. Choose based on deploy shape (single-host file-backed →
@@ -285,7 +288,7 @@ func makeTaskThunk(fn func() any) any {
 var jobsStoreFatalf = log.Fatalf
 
 // chooseJobsStore picks the backend implementation from SKY_JOBS_STORE +
-// SKY_JOBS_STORE_PATH (see jobsBoot — there is no sky.toml [jobs] section).
+// SKY_JOBS_STORE_PATH, which `sky.toml [jobs]` seeds (see jobsBoot).
 //
 // A DURABLE store that was explicitly asked for and cannot be provided is a
 // hard failure in production, and a warning + memory fallback in dev.
@@ -329,7 +332,7 @@ func chooseJobsStore() jobs.Store {
 			// Asked for a durable shared queue and named no server: a config
 			// error, not a connect failure.
 			return jobsStoreDegrade("postgres",
-				"no connection string (set sky.toml [jobs] store_path or DATABASE_URL)")
+				"no connection string (set sky.toml [jobs] storePath, SKY_JOBS_STORE_PATH, or DATABASE_URL)")
 		}
 		s, err := jobs.NewPostgresStore(url)
 		if err != nil {

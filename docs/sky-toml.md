@@ -177,10 +177,21 @@ driver     = "jwt"             # jwt / session / oauth
 
 | Key          | Env var                       | Default      | Meaning                              |
 |--------------|-------------------------------|--------------|--------------------------------------|
-| `secret`     | `<PREFIX>_AUTH_SECRET`        | (empty)      | JWT signing key — **MUST** override in prod |
 | `tokenTtl`   | `<PREFIX>_AUTH_TOKEN_TTL`     | `86400`      | JWT lifetime in seconds              |
 | `cookieName` | `<PREFIX>_AUTH_COOKIE`        | `sky_auth`   | Session cookie name                  |
 | `driver`     | `<PREFIX>_AUTH_DRIVER`        | `jwt`        | `jwt` / `session` / `oauth`          |
+
+> **`secret` is NOT a sky.toml key.** It appears in the example block above only
+> to be explicit that it does not work: the compiler deliberately refuses to
+> seed a signing key from a file that is normally committed to source control.
+> Set `<PREFIX>_AUTH_SECRET` in the environment (shell, `.env`, secret manager).
+> A `secret = "…"` line in sky.toml is inert, and since v0.19.14 the build warns
+> about it rather than ignoring it silently.
+
+Keys are **camelCase**. `session_ttl` is not `tokenTtl`; it is nothing, and two
+examples in this repository shipped it for months advertising a 24-hour session
+they never got. Any key in a runtime config section that Sky does not read now
+produces a build warning naming the accepted keys.
 
 ---
 
@@ -216,6 +227,38 @@ run time, set the DSN (`SKY_DB_PATH` / `DATABASE_URL`), not a driver name.
 > Before v0.19.9 this key emitted a `<PREFIX>_DB_DRIVER` env var that **nothing
 > in the runtime ever read**, so a mismatched `driver` was silently ignored and
 > the app quietly opened the other engine. The variable is no longer emitted.
+
+---
+
+## `[jobs]` *(v0.19.14+)*
+
+`Std.Jobs` queue backend. Same shape as `[live] store` — the keys seed env
+defaults the runtime reads, and shell env still wins without a rebuild.
+
+```toml
+[jobs]
+store     = "postgres"          # memory (default) / sqlite / postgres
+storePath = "postgres://…"      # sqlite: file path · postgres: DSN
+```
+
+| Key         | Env var                     | Default          | Meaning                          |
+|-------------|-----------------------------|------------------|----------------------------------|
+| `store`     | `<PREFIX>_JOBS_STORE`       | `memory`         | `memory` / `sqlite` / `postgres` |
+| `storePath` | `<PREFIX>_JOBS_STORE_PATH`  | `./_sky/jobs.db` | sqlite path, or the Postgres DSN |
+
+`store_path` is accepted as a spelling of `storePath`, because that is the name
+the runtime's own error message used.
+
+**`memory` is single-instance and volatile** — enqueued jobs are lost on restart
+and are never shared between replicas. That is fine for development and is a
+deliberate opt-in; it is not a default to deploy on. With `ENV=production` set,
+a `sqlite`/`postgres` store that cannot be opened is a **hard startup failure**
+rather than a silent fall back to the memory queue.
+
+> This section was referenced by the runtime's error messages and parsed by
+> nothing until v0.19.14: setting `[jobs] store` did exactly nothing, while in
+> production the app refused to start and told the operator to set the key they
+> had just set.
 
 ---
 

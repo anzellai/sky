@@ -14,7 +14,11 @@ storePath = "skyvote.db"
 driver = "sqlite"
 path = "skyvote.db"
 
-[auth]
-method = "password"
-secret = "skyvote-dev-secret-change-in-prod"
-session_ttl = "24h"
+# No `[auth]` block — this app manages its own sessions in `Lib/Auth.sky` and
+# reads neither a signing secret nor a TTL from configuration. The `method` /
+# `secret` / `session_ttl` keys that used to be here were honoured by nothing:
+# two are not keys at all, `secret` is env-only by design, and the real TTL key
+# is `tokenTtl`. The compiler now warns on such keys rather than dropping them.
+#
+# As in 08-notes-app, sessions here do not expire; `session_ttl = "24h"`
+# described behaviour the code does not implement.

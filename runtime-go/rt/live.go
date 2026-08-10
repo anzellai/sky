@@ -4377,9 +4377,38 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 func (app *liveApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"inputMode":    "debounce", // or "blur"
-		"pollInterval": 0,          // 0 = SSE only
+		"inputMode":    liveInputMode(),
+		"pollInterval": 0, // 0 = SSE only
 	})
+}
+
+// liveInputMode is when the JS driver reports an input's value: after a typing
+// pause ("debounce", the default) or only when the field loses focus ("blur").
+// Set via `sky.toml [live] input` or SKY_LIVE_INPUT_MODE.
+//
+// This was a hardcoded "debounce" carrying the comment `// or "blur"` — a
+// choice the code named and offered no way to make. Meanwhile
+// `examples/19-skyforum` and `examples/37-composite-live-shop` both shipped
+// `[live] input = "debounce"`, the key that was evidently meant to drive it;
+// the compiler parsed no such key, so it did nothing. Same root cause as the
+// `[jobs]` section and the `[auth] session_ttl` spelling: config that reads as
+// set and is wired to nothing.
+//
+// An unrecognised value falls back to the default with a warning rather than
+// serving a mode the client cannot honour — the client would silently ignore it
+// and the operator would be left believing the setting took.
+func liveInputMode() string {
+	switch mode := skyGetenv("LIVE_INPUT_MODE"); mode {
+	case "":
+		return "debounce"
+	case "debounce", "blur":
+		return mode
+	default:
+		fmt.Printf("[sky.live] WARNING: input mode %q is not recognised "+
+			"(valid: debounce, blur) — using \"debounce\". "+
+			"Set sky.toml [live] input or SKY_LIVE_INPUT_MODE.\n", mode)
+		return "debounce"
+	}
 }
 
 func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {

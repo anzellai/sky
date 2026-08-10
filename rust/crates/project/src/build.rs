@@ -349,6 +349,9 @@ fn assemble_and_emit_with(
     // Captured before `cfg` is moved into the lowering config — used after the
     // emit to report a `[database] driver` that contradicts its DSN.
     let db_driver_diag = db_driver_conflict(cfg.db_driver.as_deref(), cfg.db_dsn.as_deref());
+    // Captured for the same reason as `db_driver_diag`: `cfg` is moved into the
+    // lowering config below, and these are reported after the emit.
+    let unknown_keys = cfg.unknown_config_keys.clone();
     // Load the pinned Go-FFI surface (doc 09): the committed `sky-ffi/`
     // directory is preferred; the oracle's gitignored `.skycache/` cache is the
     // fallback so a project that hasn't yet migrated to the committed layout
@@ -408,6 +411,9 @@ fn assemble_and_emit_with(
     if let Some(w) = db_driver_diag {
         warnings.push(w);
     }
+    // Same principle, applied to every runtime config section: a key that is
+    // honoured by nothing is reported, not dropped.
+    warnings.extend(unknown_config_keys(&unknown_keys));
     Ok(Emitted {
         source,
         registry,
@@ -897,8 +903,31 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             ("live", "store") => cfg.extra_defaults.push(("LIVE_STORE".into(), val)),
             ("live", "storePath") => cfg.extra_defaults.push(("LIVE_STORE_PATH".into(), val)),
             ("live", "ttl") => cfg.extra_defaults.push(("LIVE_TTL".into(), val)),
+            // `input` = when the JS driver reports an input's value: "debounce"
+            // (default) or "blur". The runtime hardcoded "debounce" behind a
+            // `// or "blur"` comment while two examples carried this key, so
+            // the setting existed on both sides and connected in neither.
+            ("live", "input") => cfg.extra_defaults.push(("LIVE_INPUT_MODE".into(), val)),
             ("live", "maxBodyBytes") => {
                 cfg.extra_defaults.push(("LIVE_MAX_BODY_BYTES".into(), val))
+            }
+            // `[jobs]` runtime keys → the suffixes jobs_kernel.go reads
+            // (`skyGetenv("JOBS_STORE")` / `JOBS_STORE_PATH`).
+            //
+            // These existed as a CONFIG SECTION IN NAME ONLY. Nothing parsed
+            // `[jobs]`, so the `_ => {}` arm below swallowed it — while
+            // jobs_kernel.go's own error text told the operator to "set sky.toml
+            // [jobs] store_path", and the production path made that a HARD
+            // startup failure. Following that instruction produced a file the
+            // compiler ignored and an app that then refused to start, with the
+            // error still pointing at the key that had just been set.
+            //
+            // `store_path` is accepted alongside `storePath` precisely because
+            // the runtime message named the snake_case spelling; both map to the
+            // same suffix rather than leaving one of them silently inert.
+            ("jobs", "store") => cfg.extra_defaults.push(("JOBS_STORE".into(), val)),
+            ("jobs", "storePath" | "store_path") => {
+                cfg.extra_defaults.push(("JOBS_STORE_PATH".into(), val))
             }
             // `[auth]` keys (canonical names per docs/sky-toml.md) → the suffixes
             // the runtime's fixed AUTH defaults use, so sky.toml overrides them
@@ -914,10 +943,92 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             // must emit `rt.SetEnvPrefix(...)` for it to take effect (the Rust
             // compiler previously emitted nothing, so it was silently ignored).
             ("env", "prefix") => cfg.env_prefix = Some(val),
-            _ => {}
+            // Everything else falls through. For a RECOGNISED config section,
+            // record the key instead of dropping it — see `unknown_config_keys`.
+            _ => {
+                if is_runtime_config_section(&section) {
+                    cfg.unknown_config_keys.push((section.clone(), key.to_string()));
+                }
+            }
         }
     }
     cfg
+}
+
+/// The sky.toml sections whose keys are seeded into runtime env defaults, and so
+/// whose keys have a FIXED accepted set.
+///
+/// `[project]`, `[source]`, `[dependencies]`, `[go.dependencies]` and `[lib]` are
+/// deliberately absent: they are consumed elsewhere (or by cargo/go tooling), so
+/// an unrecognised key there is not evidence of a mistake.
+fn is_runtime_config_section(section: &str) -> bool {
+    matches!(
+        section,
+        "live" | "database" | "auth" | "log" | "analytics" | "jobs" | "env"
+    )
+}
+
+/// The keys each runtime config section actually honours — the same set the
+/// `match` above arms on, kept adjacent so the two cannot drift apart silently.
+fn accepted_config_keys(section: &str) -> &'static [&'static str] {
+    match section {
+        "live" => &[
+            "port",
+            "static",
+            "store",
+            "storePath",
+            "ttl",
+            "maxBodyBytes",
+            "input",
+        ],
+        "database" => &["driver", "path", "url"],
+        "auth" => &["cookieName", "tokenTtl", "driver"],
+        "log" => &["format", "level"],
+        "analytics" => &["dbPath", "retention"],
+        "jobs" => &["store", "storePath", "store_path"],
+        "env" => &["prefix"],
+        _ => &[],
+    }
+}
+
+/// A build warning per sky.toml key that sits in a runtime config section and is
+/// honoured by nothing.
+///
+/// # Why this is a warning and not silence
+///
+/// Until now the parser's final arm was a bare `_ => {}`: any key it did not
+/// recognise was dropped without a word. That is not a hypothetical hazard —
+/// it shipped in the repository's own examples:
+///
+/// * `examples/08-notes-app` and `examples/12-skyvote` both set `[auth]`
+///   `method`, `secret`, `session_ttl` and `email_verification`. Not one of the
+///   four is parsed, and three of them are not keys at all. `session_ttl` is the
+///   real setting `tokenTtl` under a spelling that does nothing, so both
+///   examples advertise a 24-hour session and get the default.
+/// * `[jobs]` was referenced by four comments in `runtime-go/rt/jobs_kernel.go`
+///   and parsed by nobody, while the runtime's own error text instructed the
+///   operator to "set sky.toml [jobs] store_path" — and, in production, made it
+///   a hard startup failure. Doing as instructed changed nothing.
+///
+/// A silently-ignored key is the worst of both worlds: the config LOOKS set, so
+/// nobody looks again, and the behaviour is the default. This mirrors
+/// `db_driver_conflict`, which already refuses to let a `[database] driver`
+/// contradict its DSN in silence.
+///
+/// Warning, not error: a project may legitimately carry keys a NEWER Sky honours
+/// (downgrade), and failing the build over an inert key would be worse than the
+/// key being inert. The message names the accepted keys so the fix is mechanical.
+pub fn unknown_config_keys(keys: &[(String, String)]) -> Vec<String> {
+    keys.iter()
+        .map(|(section, key)| {
+            let accepted = accepted_config_keys(section).join(", ");
+            format!(
+                "sky.toml: `[{section}] {key}` is not a key Sky reads — it has no effect. \
+                 Accepted keys in `[{section}]`: {accepted}. \
+                 (See docs/sky-toml.md; keys are camelCase.)"
+            )
+        })
+        .collect()
 }
 
 /// Read a `[project]`-scoped (or bare top-level, or `[source]`-table) string key
@@ -1455,8 +1566,8 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod sky_toml_tests {
     use super::{
-        configured_bin_name, configured_source_root, db_driver_conflict, driver_for_dsn,
-        read_sky_toml_config, sky_build_goflags_from,
+        accepted_config_keys, configured_bin_name, configured_source_root, db_driver_conflict,
+        driver_for_dsn, read_sky_toml_config, sky_build_goflags_from, unknown_config_keys,
     };
 
     #[test]
@@ -1529,6 +1640,130 @@ mod sky_toml_tests {
         // [env] prefix is a dedicated field (emitted as rt.SetEnvPrefix).
         assert_eq!(cfg.env_prefix.as_deref(), Some("FENCE"));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[jobs]` must reach the two suffixes `jobs_kernel.go` actually reads.
+    ///
+    /// It reached NOTHING before v0.19.14: no `jobs` arm existed, so the
+    /// parser's `_ => {}` dropped the section — while the runtime's own degrade
+    /// message instructed operators to "set sky.toml [jobs] store_path", and
+    /// with `ENV=production` turned an unopenable store into a hard startup
+    /// failure. Following the instruction changed nothing and the app still
+    /// refused to start.
+    #[test]
+    fn jobs_section_seeds_the_store_env_defaults() {
+        let dir = std::env::temp_dir().join("sky-jobs-toml-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(
+            &path,
+            "name = \"x\"\n[jobs]\nstore = \"postgres\"\n\
+             storePath = \"postgres://u:p@h/db\"\n",
+        )
+        .unwrap();
+        let cfg = read_sky_toml_config(&path);
+        let has = |suffix: &str, value: &str| {
+            cfg.extra_defaults
+                .iter()
+                .any(|(s, v)| s == suffix && v == value)
+        };
+        assert!(has("JOBS_STORE", "postgres"), "{:?}", cfg.extra_defaults);
+        assert!(has("JOBS_STORE_PATH", "postgres://u:p@h/db"));
+        // A section Sky reads in full must not also report itself unknown.
+        assert!(
+            cfg.unknown_config_keys.is_empty(),
+            "{:?}",
+            cfg.unknown_config_keys
+        );
+
+        // `store_path` is the spelling the runtime message used. It is accepted
+        // rather than left inert, which is the whole point of this fix.
+        std::fs::write(&path, "[jobs]\nstore_path = \"/tmp/j.db\"\n").unwrap();
+        let cfg = read_sky_toml_config(&path);
+        assert!(cfg
+            .extra_defaults
+            .iter()
+            .any(|(s, v)| s == "JOBS_STORE_PATH" && v == "/tmp/j.db"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A key in a runtime config section that Sky does not read must be
+    /// REPORTED, not dropped.
+    ///
+    /// The four `[auth]` keys below are not hypothetical: `examples/08-notes-app`
+    /// and `examples/12-skyvote` both shipped exactly these. Three are not keys
+    /// at all, and `session_ttl` is `tokenTtl` misspelled — so both examples
+    /// advertised a 24-hour session and silently got the default.
+    #[test]
+    fn unknown_keys_in_config_sections_are_reported() {
+        let dir = std::env::temp_dir().join("sky-unknown-key-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(
+            &path,
+            "name = \"x\"\n[auth]\nmethod = \"password\"\n\
+             session_ttl = \"24h\"\nemail_verification = true\n\
+             cookieName = \"ok\"\n[live]\nprot = 9000\n\
+             [source]\nroot = \"src\"\n[\"go.dependencies\"]\n\"os\" = \"latest\"\n",
+        )
+        .unwrap();
+        let cfg = read_sky_toml_config(&path);
+
+        let flagged: Vec<&str> = cfg
+            .unknown_config_keys
+            .iter()
+            .map(|(_, k)| k.as_str())
+            .collect();
+        assert!(flagged.contains(&"method"), "{flagged:?}");
+        assert!(flagged.contains(&"session_ttl"), "{flagged:?}");
+        assert!(flagged.contains(&"email_verification"), "{flagged:?}");
+        // A typo in a real section is the other half of the class.
+        assert!(flagged.contains(&"prot"), "{flagged:?}");
+        // Keys Sky DOES read are not flagged.
+        assert!(!flagged.contains(&"cookieName"), "{flagged:?}");
+        // Sections consumed elsewhere are out of scope — flagging `root` or a Go
+        // module path would be noise, and noise is what gets warnings ignored.
+        assert!(!flagged.contains(&"root"), "{flagged:?}");
+        assert!(!flagged.contains(&"\"os\""), "{flagged:?}");
+
+        // The message has to name the fix, or it just tells you something is
+        // wrong and leaves you guessing.
+        let msgs = unknown_config_keys(&cfg.unknown_config_keys);
+        let ttl = msgs
+            .iter()
+            .find(|m| m.contains("session_ttl"))
+            .expect("session_ttl warned");
+        assert!(ttl.contains("tokenTtl"), "{ttl}");
+        assert!(ttl.contains("no effect"), "{ttl}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The accepted-key table must not drift from the `match` that implements
+    /// it. If it does, the warning starts recommending a key the parser ignores
+    /// — advice that is worse than no advice.
+    ///
+    /// This asserts the direction that matters: every key the table advertises
+    /// is a key the parser actually honours.
+    #[test]
+    fn advertised_keys_are_keys_the_parser_honours() {
+        let dir = std::env::temp_dir().join("sky-accepted-keys-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        for section in ["live", "database", "auth", "log", "analytics", "jobs", "env"] {
+            for key in accepted_config_keys(section) {
+                std::fs::write(&path, format!("[{section}]\n{key} = \"v\"\n")).unwrap();
+                let cfg = read_sky_toml_config(&path);
+                assert!(
+                    cfg.unknown_config_keys.is_empty(),
+                    "`[{section}] {key}` is advertised as accepted but the parser \
+                     does not handle it: {:?}",
+                    cfg.unknown_config_keys
+                );
+            }
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
