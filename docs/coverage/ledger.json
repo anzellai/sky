@@ -200,7 +200,7 @@
     },
     "coverage-ledger": {
       "expected_assertions": 145,
-      "falsifier_proven": false,
+      "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
       "surfaces": [
         "meta.coverage-accounting"
@@ -258,7 +258,7 @@
     },
     "verify-cli": {
       "expected_assertions": 13,
-      "falsifier_proven": false,
+      "falsifier_proven": true,
       "summary": "CLI/TUI examples start, produce expected output, and do not panic",
       "surfaces": [
         "ui.tui",
@@ -475,15 +475,15 @@
     {
       "category": "cli",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "gate `verify-cli`",
-            "class": "Asserted",
-            "strength": 3
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -696,8 +696,8 @@
         "evidence": [
           {
             "by": "gate `verify-cli`",
-            "class": "Asserted",
-            "strength": 3
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
@@ -1302,8 +1302,8 @@
         "evidence": [
           {
             "by": "gate `verify-cli`",
-            "class": "Asserted",
-            "strength": 3
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "gate `apps-ledger`",
@@ -1719,15 +1719,15 @@
     {
       "category": "meta",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "gate `coverage-ledger`",
-            "class": "Asserted",
-            "strength": 3
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -9868,8 +9868,8 @@
         "evidence": [
           {
             "by": "gate `verify-cli`",
-            "class": "Asserted",
-            "strength": 3
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "gate `apps-fieldbook`",

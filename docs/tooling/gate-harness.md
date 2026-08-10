@@ -55,6 +55,24 @@ Three properties follow, and they are the point:
 - **Rows come from the registry, not from the run.** A gate cannot disappear by
   not executing. This kills "SKIP counted as pass" at the root.
 
+## Ordering: prove falsifiers BEFORE regenerating the coverage ledger
+
+`docs/coverage/falsifier-proofs.json` is an **input** to `xtask coverage-ledger`
+— a surface covered by a gate whose mutation is recorded `PROVEN` scores
+`Falsified` (4) rather than `Asserted` (3). So proving a falsifier legitimately
+changes the ledger, and running the two in the wrong order leaves the checked-in
+ledger stale.
+
+```sh
+cargo run --release -q -p xtask -- harness --verify-falsifiers   # 1. prove
+cargo run --release -q -p xtask -- coverage-ledger               # 2. regenerate
+cargo run --release -q -p xtask -- coverage-ledger --check       # 3. confirm
+```
+
+This is not a wrinkle to work around — it is the ledger noticing that the
+coverage claim actually improved. `--check` reporting STALE after a falsifier
+sweep is the mechanism working.
+
 ## `BLOCKED` — a deadline, not a parking space
 
 A soft skip is a gate that quietly stops asserting and keeps reporting

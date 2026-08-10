@@ -98,7 +98,7 @@ None.
 |---|---|---|---|---|
 | `auth.password-session` | auth | Asserted | Falsified | stronger |
 | `cli.add` | cli | None | Falsified | stronger |
-| `cli.build` | cli | Runs | Asserted | stronger |
+| `cli.build` | cli | Runs | Falsified | stronger |
 | `cli.check` | cli | None | None | equal |
 | `cli.clean` | cli | None | Falsified | stronger |
 | `cli.console` | cli | None | None | equal |
@@ -141,7 +141,7 @@ None.
 | `http.sse-websocket` | http | Asserted | Falsified | stronger |
 | `lang.constructs` | language | Asserted | Falsified | stronger |
 | `lsp` | tooling | Asserted | Asserted | equal |
-| `meta.coverage-accounting` | meta | None | Asserted | stronger |
+| `meta.coverage-accounting` | meta | None | Falsified | stronger |
 | `observability.console` | observability | Asserted | Falsified | stronger |
 | `runtime.go-rt` | runtime | Asserted | Asserted | equal |
 | `runtime.panic-classes` | runtime | Asserted | Falsified | stronger |
@@ -255,10 +255,10 @@ None.
 | `corpus-isolation` | T2 | PROVEN | `compiler.shared-world` · `lang.constructs` |
 | `corpus-manifest` | T1 | PROVEN | `lang.constructs` |
 | `corpus-witness` | T2 | PROVEN | `compiler.codegen-determinism` · `compiler.lower-emit-shape` |
-| `coverage-ledger` | T1 | not proven | `meta.coverage-accounting` |
+| `coverage-ledger` | T1 | PROVEN | `meta.coverage-accounting` |
 | `reject` | T1 | PROVEN | `compiler.reject` · `compiler.infer` |
 | `roundtrip` | T1 | PROVEN | `compiler.parse` · `lang.constructs` |
 | `shared-world` | T1 | PROVEN | `compiler.shared-world` · `compiler.resolve` |
 | `sky-suites` | T1 | PROVEN | `lang.constructs` |
 | `sky-verify` | T1 | PROVEN | `compiler.fmt` · `lang.constructs` |
-| `verify-cli` | T1 | not proven | `ui.tui` · `config.sky-toml` |
+| `verify-cli` | T1 | PROVEN | `ui.tui` · `config.sky-toml` |
