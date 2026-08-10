@@ -10,6 +10,7 @@
 
 mod build_run_gate;
 mod coerce_floor_gate;
+mod corpus_bench;
 mod divergences_gate;
 mod fmt_gate;
 mod fuzz_gate;
@@ -65,6 +66,9 @@ const GATES: &[(&str, GateFn)] = &[
     ("lsp", |args| lsp_gate::run(args, &repo_root())),
     ("shared-world", |args| {
         shared_world_gate::run(args, &repo_root())
+    }),
+    ("corpus-bench", |args| {
+        corpus_bench::run(args, &repo_root())
     }),
     ("harness", |args| harness::run(args, &repo_root())),
     ("errloc", errloc),
