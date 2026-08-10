@@ -1,0 +1,270 @@
+module Main exposing (main, db, seed)
+
+-- Ledger — a small multi-tenant double-entry bookkeeping app.
+--
+-- ONE source tree, TWO backends. The driver is chosen at connect time from
+-- the DSN shape, and the DSN comes from the environment:
+--
+--   SQLite   SKY_DB_PATH=./ledger.db                      ./sky-out/app
+--   Postgres SKY_DB_PATH=postgres://u@h:5432/ledger?...   ./sky-out/app
+--            (DATABASE_URL works too — db_auth.go:217)
+--
+-- Nothing in src/ names a driver, a DSN, or a port. `sky.toml` supplies
+-- defaults; every one of them is `SetSkyDefault` (set-if-unset), so the
+-- shell always wins.
+--
+-- Migrations live in the committed `db/migrations/*.json`, derived from the
+-- `db : Store.Project` binding below by `sky db migrate --gen`. `sky build`
+-- bakes them into the binary, so `SKY_DB_OP=migrate ./sky-out/app` applies
+-- them dialect-correctly on either backend with no source tree present.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Std.Cmd as Cmd
+import Std.Db.Store as Store
+import Std.Html exposing (Html)
+import Std.Live exposing (app, api, config, route, withHead)
+import Std.Live.Head as Head
+import Std.Log exposing (println)
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Font as Font
+import Amounts
+import Api
+import Books
+import Repo
+import State exposing (..)
+import Update exposing (update)
+import View.Common as C
+import View.Pages as P
+import View.SignIn exposing (signInView)
+
+
+-- ─── Schema declaration (read by `sky db migrate --gen`) ─────────
+db : Store.Project
+db =
+    Books.project
+
+
+-- ─── Seed (`sky db seed`) ────────────────────────────────────────
+-- Idempotent: only writes when the demo org is absent.
+seed : Db -> Task Error ()
+seed _conn =
+    Task.andThen (\_ -> Task.succeed (seedNow ())) (Task.succeed ())
+
+
+seedNow : a -> ()
+seedNow _ =
+    case Repo.findOrg 1 of
+
+        Ok (Just _) ->
+            let
+                _ = println "ledger: seed skipped (org 1 exists)"
+            in
+                ()
+
+        _ ->
+            let
+                _ = Repo.insertOrg "Demo Books"
+                _ = Repo.insertAccount 1 "1000" "Cash" "asset"
+                _ =
+                    Repo.insertAccount 1 "1100" "Accounts receivable" "asset"
+                _ = Repo.insertAccount 1 "4000" "Sales income" "income"
+                _ =
+                    Repo.insertAccount 1 "5000" "Operating expense" "expense"
+                _ = println "ledger: seed wrote demo org + 4 accounts"
+                _ = seedJournal ()
+            in
+                ()
+
+
+-- Entries are INSERTED out of chronological order on purpose: ids ascend
+-- 1,2,3,4 while dates go Mar, Jan, Feb, Jan. Only a real
+-- `ORDER BY entry_date ASC, id ASC` can put them back — insertion order
+-- cannot. /api/journal.json is the assertion point.
+seedJournal : a -> ()
+seedJournal _ =
+    let
+        cash = accountIdFor "1000"
+        recv = accountIdFor "1100"
+        sales = accountIdFor "4000"
+        opex = accountIdFor "5000"
+        _ =
+            report
+                (Repo.postEntry 1 "2026-03-05" "March invoice" recv sales 25000)
+        _ =
+            report
+                (Repo.postEntry 1 "2026-01-10" "January invoice" recv sales 10000)
+        _ =
+            report
+                (Repo.postEntry 1 "2026-02-14" "February rent" opex cash 45000)
+        _ =
+            report
+                (Repo.postEntry
+                    1
+                    "2026-01-10"
+                    "January cash receipt"
+                    cash
+                    recv
+                    10000)
+        _ =
+            println "ledger: seed posted 4 journal entries (out of date order)"
+    in
+        ()
+
+
+report : Result Error Int -> ()
+report r =
+    case r of
+
+        Ok entryId ->
+            let
+                _ =
+                    println ("ledger: seeded entry " ++ String.fromInt entryId)
+            in
+                ()
+
+        Err e ->
+            let
+                _ =
+                    println ("ledger: SEED ENTRY FAILED: " ++ Error.toString e)
+            in
+                ()
+
+
+accountIdFor : String -> Int
+accountIdFor code =
+    case Repo.findAccountByCode 1 code of
+
+        Ok (Just a) ->
+            a.id
+
+        _ ->
+            0
+
+
+-- ─── Startup self-check ──────────────────────────────────────────
+-- Printed once, before the listener opens. The allocation line is the
+-- Money.allocate residue assertion in greppable form.
+-- A zero-arg top-level binding is a memoised CAF, so this evaluates exactly
+-- ONCE for the process no matter how many sessions `init` opens. That is the
+-- property that makes the readiness line safe to grep for.
+banner : ()
+banner =
+    let
+        check = Amounts.invoiceSplitCheck ()
+        _ = println ("ledger: driver=" ++ Api.driverName ())
+        _ = println (Amounts.allocationLine check)
+        _ =
+            println
+                ("ledger: listening on "
+                    ++ System.getenvOr "SKY_LIVE_PORT" "(sky.toml [live] port)")
+    in
+        ()
+
+
+-- ─── TEA ─────────────────────────────────────────────────────────
+init : a -> ( Model, Cmd Msg )
+init _req =
+    let
+        _ = banner
+    in
+        ( { page = SignInPage
+          , session = Nothing
+          , fieldErrors = noErrors ()
+          , flash = ""
+          , accounts = []
+          , journal = []
+          , trialBalanceMinor = 0
+          , closes = []
+          , lastClose = Ok 0
+          , period = Amounts.currentPeriod ()
+          , entryDraft = emptyEntryForm ()
+          }
+        , Cmd.none
+        )
+
+
+view : Model -> any
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.width Ui.fill
+            , Ui.spacing 20
+            , Background.color C.paper
+            , Font.family "system-ui, -apple-system, sans-serif"
+            , Font.size 14
+            , Font.color C.ink
+            ]
+            [ C.topNav model
+            , Ui.column
+                  [ Ui.paddingXY 24 8, Ui.spacing 16, Ui.width Ui.fill ]
+                  [ C.flashBanner model, body model ]
+            , C.footer model
+            ])
+
+
+body : Model -> Element Msg
+body model =
+    case model.session of
+
+        Nothing ->
+            signInView model
+
+        Just _ ->
+            case model.page of
+
+                DashboardPage ->
+                    P.dashboardView model
+
+                AccountsPage ->
+                    P.accountsView model
+
+                JournalPage ->
+                    P.journalView model
+
+                ClosePage ->
+                    P.closeView model
+
+                SignInPage ->
+                    signInView model
+
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+headFor : Model -> List (Html Msg)
+headFor model =
+    [ Head.title ("Ledger — " ++ pageTitle model.page) ]
+
+
+main =
+    app
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes =
+                [ route "/" DashboardPage
+                , route "/accounts" AccountsPage
+                , route "/journal" JournalPage
+                , route "/close" ClosePage
+                , route "/sign-in" SignInPage
+                , api "/api/health" Api.health
+                , api "/api/selfcheck" Api.selfcheck
+                , api "/api/journal.json" Api.journalJson
+                , api "/api/journal.csv" Api.journalCsv
+                , api "/api/balances" Api.balancesJson
+                ]
+            , notFound = DashboardPage
+            }
+            |> withHead headFor)

@@ -1,0 +1,228 @@
+{
+  "tables": [
+    {
+      "name": "orgs",
+      "pk": "id",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "int",
+          "nullable": false,
+          "autoinc": true
+        },
+        {
+          "name": "name",
+          "kind": "text",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "created_at",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "now": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "users",
+      "pk": "id",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "int",
+          "nullable": false,
+          "autoinc": true
+        },
+        {
+          "name": "org_id",
+          "kind": "int",
+          "nullable": false
+        },
+        {
+          "name": "email",
+          "kind": "text",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "password_hash",
+          "kind": "text",
+          "nullable": false
+        },
+        {
+          "name": "role",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "text": "member"
+          }
+        },
+        {
+          "name": "created_at",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "now": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "accounts",
+      "pk": "id",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "int",
+          "nullable": false,
+          "autoinc": true
+        },
+        {
+          "name": "org_id",
+          "kind": "int",
+          "nullable": false
+        },
+        {
+          "name": "code",
+          "kind": "text",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "kind": "text",
+          "nullable": false
+        },
+        {
+          "name": "kind",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "text": "asset"
+          }
+        },
+        {
+          "name": "created_at",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "now": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "journal_entries",
+      "pk": "id",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "int",
+          "nullable": false,
+          "autoinc": true
+        },
+        {
+          "name": "org_id",
+          "kind": "int",
+          "nullable": false
+        },
+        {
+          "name": "entry_date",
+          "kind": "text",
+          "nullable": false
+        },
+        {
+          "name": "memo",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "text": ""
+          }
+        },
+        {
+          "name": "created_at",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "now": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "journal_lines",
+      "pk": "id",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "int",
+          "nullable": false,
+          "autoinc": true
+        },
+        {
+          "name": "org_id",
+          "kind": "int",
+          "nullable": false
+        },
+        {
+          "name": "entry_id",
+          "kind": "int",
+          "nullable": false
+        },
+        {
+          "name": "account_id",
+          "kind": "int",
+          "nullable": false
+        },
+        {
+          "name": "amount_minor",
+          "kind": "int",
+          "nullable": false,
+          "default": {
+            "int": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "period_closes",
+      "pk": "id",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "int",
+          "nullable": false,
+          "autoinc": true
+        },
+        {
+          "name": "org_id",
+          "kind": "int",
+          "nullable": false
+        },
+        {
+          "name": "period",
+          "kind": "text",
+          "nullable": false
+        },
+        {
+          "name": "net_minor",
+          "kind": "int",
+          "nullable": false,
+          "default": {
+            "int": 0
+          }
+        },
+        {
+          "name": "closed_at",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "now": true
+          }
+        }
+      ]
+    }
+  ]
+}

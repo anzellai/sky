@@ -497,6 +497,50 @@ pub static GATES: &[Gate] = &[
         body: bodies::cli_verbs,
     },
     Gate {
+        name: "apps-ledger",
+        tier: Tier::T1,
+        platforms: UNIX,
+        // Measured: 19 s cold build, 0.08 s to listening, plus migrate + seed.
+        budget_s: 900,
+        expected: bodies::APPS_LEDGER_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member A (SQLite arm) — migrations, auth, journal ordering, money residue",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-ledger.drop-the-ordering",
+            description: "order the journal by id instead of (entry_date, id); the \
+                          by-value ordering assertion must go red, because insertion \
+                          order cannot produce the expected sequence",
+            kind: MutationKind::ReplaceOnce {
+                path: "apps/ledger/src/Repo.sky",
+                from: "|> Store.orderAsc \"entryDate\"\n            |> Store.orderAsc \"id\"\n            |> Store.limit 500",
+                to: "|> Store.limit 500",
+            },
+        }]),
+        body: bodies::apps_ledger,
+    },
+    Gate {
+        name: "apps-ledger-postgres",
+        tier: Tier::T3,
+        platforms: UNIX,
+        budget_s: 900,
+        expected: bodies::APPS_LEDGER_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "member A (Postgres arm) — identical source, identical assertions, real pgx",
+        mutations: Mutations::new(&[Mutation {
+            id: "apps-ledger-postgres.break-health-driver",
+            description: "stop recognising a postgres:// DSN, so the app misreports \
+                          which backend it is on; the arm can then no longer prove \
+                          it ran against Postgres and the driver assertion must go \
+                          red (the SQLite arm is unaffected, which is the point)",
+            kind: MutationKind::ReplaceOnce {
+                path: "apps/ledger/src/Api.sky",
+                from: "String.startsWith \"postgres://\" low",
+                to: "String.startsWith \"nomatch://\" low",
+            },
+        }]),
+        body: bodies::apps_ledger_postgres,
+    },
+    Gate {
         name: "apps-relay",
         tier: Tier::T1,
         platforms: UNIX,

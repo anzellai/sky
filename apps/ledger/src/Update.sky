@@ -1,0 +1,538 @@
+module Update exposing (update, refresh, buildJournal, buildBalances)
+
+-- Update — the TEA reducer.
+--
+-- Reads run synchronously through `Task.run` (the pattern
+-- examples/27-multi-session-chat uses) so a render always shows committed
+-- state; the period close runs through `Cmd.perform` so the update loop is
+-- never blocked by it.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Std.Auth as Auth
+import Std.Cmd as Cmd
+import Std.Log as Log
+import Books
+import Amounts
+import Repo
+import State exposing (..)
+
+
+-- ─── Data loading ────────────────────────────────────────────────
+buildBalances : List Books.Account -> List Books.BalanceRow -> List AccountBalance
+buildBalances accts rows =
+    List.map
+        (\a ->
+            { code = a.code
+            , name = a.name
+            , kind = a.kind
+            , balanceMinor = Repo.balanceOf a.id rows
+            })
+        accts
+
+
+accountCode : Int -> List Books.Account -> String
+accountCode accountId accts =
+    case List.find (\a -> a.id == accountId) accts of
+
+        Just a ->
+            a.code
+
+        Nothing ->
+            "?"
+
+
+buildJournal : List Books.Account -> List Books.Entry -> List Books.Line -> List JournalRow
+buildJournal accts entries allLines =
+    List.map
+        (\e ->
+            let
+                mine = List.filter (\l -> l.entryId == e.id) allLines
+                debits = List.filter (\l -> l.amountMinor > 0) mine
+                credits = List.filter (\l -> l.amountMinor < 0) mine
+                amountMinor = Amounts.sumInts (List.map .amountMinor debits)
+            in
+                { id = e.id
+                , day = e.entryDate
+                , memo = e.memo
+                , debit = codesOf accts debits
+                , credit = codesOf accts credits
+                , amountMinor = amountMinor
+                })
+        entries
+
+
+codesOf : List Books.Account -> List Books.Line -> String
+codesOf accts ls =
+    String.join "+" (List.map (\l -> accountCode l.accountId accts) ls)
+
+
+-- | Reload every tenant-scoped projection. One call after each mutation.
+refresh : Model -> Model
+refresh model =
+    case model.session of
+
+        Nothing ->
+            model
+
+        Just sess ->
+            let
+                accts =
+                    case Repo.listAccounts sess.orgId of
+
+                        Ok a ->
+                            a
+
+                        Err _ ->
+                            []
+                rows =
+                    case Repo.balances sess.orgId of
+
+                        Ok r ->
+                            r
+
+                        Err _ ->
+                            []
+                ents =
+                    case Repo.listEntries sess.orgId of
+
+                        Ok e ->
+                            e
+
+                        Err _ ->
+                            []
+                ls =
+                    case Repo.listLines sess.orgId of
+
+                        Ok l ->
+                            l
+
+                        Err _ ->
+                            []
+                cls =
+                    case Repo.listCloses sess.orgId of
+
+                        Ok c ->
+                            c
+
+                        Err _ ->
+                            []
+            in
+                { model | accounts = buildBalances accts rows
+                , journal = buildJournal accts ents ls
+                , trialBalanceMinor = Repo.trialBalance rows
+                , closes = cls
+                }
+
+
+-- ─── Auth ────────────────────────────────────────────────────────
+sessionFor : Books.User -> Books.Org -> Session
+sessionFor user org =
+    { userId = user.id
+    , orgId = user.orgId
+    , orgName = org.name
+    , email = user.email
+    , role = user.role
+    }
+
+
+signInWith : String -> String -> Model -> Model
+signInWith email password model =
+    case Repo.findUserByEmail (String.trim (String.toLower email)) of
+
+        Err e ->
+            failWith "email" ("Sign-in unavailable: " ++ Error.toString e) model
+
+        Ok Nothing ->
+            failWith "email" "Invalid email or password." model
+
+        Ok (Just user) ->
+            case Auth.verifyPassword password user.passwordHash of
+
+                Ok True ->
+                    case Repo.findOrg user.orgId of
+
+                        Ok (Just org) ->
+                            refresh
+                                { model | session = Just (sessionFor user org)
+                                , page = DashboardPage
+                                , fieldErrors = noErrors ()
+                                , flash = "Signed in as " ++ user.email
+                                }
+
+                        _ ->
+                            failWith "email" "Organisation missing." model
+
+                _ ->
+                    failWith "email" "Invalid email or password." model
+
+
+failWith : String -> String -> Model -> Model
+failWith key message model =
+    { model | fieldErrors = Dict.insert key message (noErrors ()), flash = "" }
+
+
+signUpWith : SignUpForm -> Model -> Model
+signUpWith form model =
+    let
+        email = String.trim (String.toLower form.email)
+        orgName = String.trim form.org
+    in
+        if String.length form.password < 8 then
+            failWith "password" "Password must be at least 8 characters." model
+
+        else if orgName == "" || email == "" then
+            failWith "org" "Organisation and email are required." model
+
+        else
+            case Repo.findUserByEmail email of
+
+                Ok (Just _) ->
+                    failWith "email" "That email is already registered." model
+
+                Err e ->
+                    failWith
+                        "email"
+                        ("Sign-up unavailable: " ++ Error.toString e)
+                        model
+
+                Ok Nothing ->
+                    case Auth.hashPassword form.password of
+
+                        Err e ->
+                            failWith "password" (Error.toString e) model
+
+                        Ok hash ->
+                            case Repo.insertOrg orgName of
+
+                                Err e ->
+                                    failWith "org" (Error.toString e) model
+
+                                Ok orgId ->
+                                    case Repo.insertUser orgId email hash of
+
+                                        Err e ->
+                                            failWith
+                                                "email"
+                                                (Error.toString e)
+                                                model
+
+                                        Ok _ ->
+                                            seedChartOfAccounts
+                                                orgId
+                                                (signInWith
+                                                    email
+                                                    form.password
+                                                    model)
+
+
+-- | A brand-new book gets the minimum viable chart of accounts so the very
+-- first journal entry has somewhere to land.
+seedChartOfAccounts : Int -> Model -> Model
+seedChartOfAccounts orgId model =
+    let
+        _ = Repo.insertAccount orgId "1000" "Cash" "asset"
+        _ = Repo.insertAccount orgId "1100" "Accounts receivable" "asset"
+        _ = Repo.insertAccount orgId "4000" "Sales income" "income"
+        _ = Repo.insertAccount orgId "5000" "Operating expense" "expense"
+    in
+        refresh model
+
+
+-- ─── Journal posting ─────────────────────────────────────────────
+postEntryFrom : EntryForm -> Session -> Model -> Model
+postEntryFrom form sess model =
+    let
+        day =
+            if String.trim form.day == "" then
+                Amounts.today ()
+
+            else
+                String.trim form.day
+    in
+        case Amounts.parseMinor form.amount of
+
+            Err _ ->
+                failWith "amount" "Enter an amount like 125.50" model
+
+            Ok amountMinor ->
+                if amountMinor <= 0 then
+                    failWith "amount" "Amount must be positive." model
+
+                else
+                    resolvePair form sess day amountMinor model
+
+
+resolvePair : EntryForm -> Session -> String -> Int -> Model -> Model
+resolvePair form sess day amountMinor model =
+    case Repo.findAccountByCode sess.orgId (String.trim form.debit) of
+
+        Ok (Just debitAcct) ->
+            case Repo.findAccountByCode sess.orgId (String.trim form.credit) of
+
+                Ok (Just creditAcct) ->
+                    if debitAcct.id == creditAcct.id then
+                        failWith
+                            "credit"
+                            "Debit and credit must be different accounts."
+                            model
+
+                    else if not (Amounts.balanced [ amountMinor, 0 - amountMinor ]) then
+                        failWith "amount" "Entry does not balance." model
+
+                    else
+                        commitEntry
+                            sess
+                            day
+                            form.memo
+                            debitAcct.id
+                            creditAcct.id
+                            amountMinor
+                            model
+
+                _ ->
+                    failWith "credit" "Unknown credit account code." model
+
+        _ ->
+            failWith "debit" "Unknown debit account code." model
+
+
+commitEntry : Session -> String -> String -> Int -> Int -> Int -> Model -> Model
+commitEntry sess day memo debitId creditId amountMinor model =
+    case Repo.postEntry sess.orgId day memo debitId creditId amountMinor of
+
+        Err e ->
+            failWith "amount" ("Could not post: " ++ Error.toString e) model
+
+        Ok entryId ->
+            let
+                _ =
+                    Log.infoWith
+                        "journal.post"
+                        [ "org"
+                        , String.fromInt sess.orgId
+                        , "entry"
+                        , String.fromInt entryId
+                        , "amount"
+                        , Amounts.render amountMinor
+                        ]
+            in
+                refresh
+                    { model | fieldErrors = noErrors ()
+                    , entryDraft = emptyEntryForm ()
+                    , flash =
+                        "Posted entry #" ++ String.fromInt entryId ++ " for "
+                            ++ Amounts.render amountMinor
+                    }
+
+
+-- ─── Period close (async) ────────────────────────────────────────
+-- Net movement across income + expense accounts for the period, written to
+-- `period_closes`. Runs off the update loop via Cmd.perform.
+closeTask : Session -> String -> Task Error Int
+closeTask sess period =
+    -- `Task.succeed () |> andThen` (not `Task.lazy`) is what defers the work
+    -- onto the Cmd.perform goroutine. `Task.lazy` type-checks but the Go
+    -- runtime exports no `rt.Task_lazy`, so it fails at codegen [E4005].
+    Task.andThen
+        (\_ ->
+            Task.fromResult
+                (Repo.recordClose sess.orgId period (netForPeriod sess period)))
+        (Task.succeed ())
+
+
+netForPeriod : Session -> String -> Int
+netForPeriod sess period =
+    let
+        ents =
+            case Repo.listEntriesInPeriod sess.orgId period of
+
+                Ok e ->
+                    e
+
+                Err _ ->
+                    []
+        ids = List.map .id ents
+        allLines =
+            case Repo.listLines sess.orgId of
+
+                Ok l ->
+                    l
+
+                Err _ ->
+                    []
+        inPeriod = List.filter (\l -> List.member l.entryId ids) allLines
+        accts =
+            case Repo.listAccounts sess.orgId of
+
+                Ok a ->
+                    a
+
+                Err _ ->
+                    []
+        pnl = List.filter (\l -> isPnlAccount l.accountId accts) inPeriod
+    in
+        Amounts.sumInts (List.map .amountMinor pnl)
+
+
+isPnlAccount : Int -> List Books.Account -> Bool
+isPnlAccount accountId accts =
+    case List.find (\a -> a.id == accountId) accts of
+
+        Just a ->
+            a.kind == "income" || a.kind == "expense"
+
+        Nothing ->
+            False
+
+
+-- ─── Reducer ─────────────────────────────────────────────────────
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigate page ->
+            if isSignInPage page || isSignedIn model then
+                ( refresh { model | page = page, fieldErrors = noErrors () }
+                , Cmd.none
+                )
+
+            else
+                ( { model | page = SignInPage, flash = "Sign in to continue." }
+                , Cmd.none
+                )
+
+        DismissFlash ->
+            ( { model | flash = "" }, Cmd.none )
+
+        DoSignIn form ->
+            ( signInWith form.email form.password model, Cmd.none )
+
+        DoSignUp form ->
+            ( signUpWith form model, Cmd.none )
+
+        SignOut ->
+            ( { model | session = Nothing
+              , page = SignInPage
+              , accounts = []
+              , journal = []
+              , closes = []
+              , trialBalanceMinor = 0
+              , flash = "Signed out."
+              , fieldErrors = noErrors ()
+              }
+            , Cmd.none
+            )
+
+        DoAddAccount form ->
+            case model.session of
+
+                Nothing ->
+                    ( { model | page = SignInPage }, Cmd.none )
+
+                Just sess ->
+                    addAccount form sess model
+
+        DoPostEntry form ->
+            case model.session of
+
+                Nothing ->
+                    ( { model | page = SignInPage }, Cmd.none )
+
+                Just sess ->
+                    ( postEntryFrom form sess model, Cmd.none )
+
+        -- The Cancel control inside the entry form. If `Ui.button` ever
+        -- defaults back to `type=submit`, clicking Cancel would arrive as
+        -- DoPostEntry instead and a row would be written — the regression
+        -- this branch makes observable.
+        CancelEntry ->
+            ( { model | entryDraft = emptyEntryForm ()
+              , fieldErrors = noErrors ()
+              , flash = "Entry cancelled — nothing was posted."
+              }
+            , Cmd.none
+            )
+
+        RunClose ->
+            case model.session of
+
+                Nothing ->
+                    ( { model | page = SignInPage }, Cmd.none )
+
+                Just sess ->
+                    ( { model | flash = "Closing " ++ model.period ++ "…" }
+                    , Cmd.perform (closeTask sess model.period) CloseFinished
+                    )
+
+        CloseFinished result ->
+            case result of
+
+                Ok _ ->
+                    ( refresh
+                          { model | lastClose = result
+                          , flash = "Closed " ++ model.period ++ "."
+                          }
+                    , Cmd.none
+                    )
+
+                Err e ->
+                    ( { model | lastClose = result
+                      , flash = "Close failed: " ++ Error.toString e
+                      }
+                    , Cmd.none
+                    )
+
+
+-- Deliberately UNANNOTATED, and it returns a record-update tuple with both a
+-- Dict field and a parametric-ADT field live in the model — the shape that
+-- once dropped un-updated fields.
+addAccount form sess model =
+    let
+        code = String.trim form.code
+        name = String.trim form.name
+        kind = normaliseKind form.kind
+    in
+        if code == "" || name == "" then
+            ( failWith "code" "Code and name are required." model, Cmd.none )
+
+        else
+            case Repo.findAccountByCode sess.orgId code of
+
+                Ok (Just _) ->
+                    ( failWith "code" "That account code already exists." model
+                    , Cmd.none
+                    )
+
+                _ ->
+                    case Repo.insertAccount sess.orgId code name kind of
+
+                        Err e ->
+                            ( failWith "code" (Error.toString e) model
+                            , Cmd.none
+                            )
+
+                        Ok _ ->
+                            ( refresh
+                                  { model | flash = "Added account " ++ code
+                                  , fieldErrors = noErrors ()
+                                  }
+                            , Cmd.none
+                            )
+
+
+normaliseKind : String -> String
+normaliseKind raw =
+    let
+        k = String.toLower (String.trim raw)
+    in
+        if k == "asset" || k == "liability" || k == "equity" || k == "income" || k
+            == "expense" then
+            k
+
+        else
+            "asset"

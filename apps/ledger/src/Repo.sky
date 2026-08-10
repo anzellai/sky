@@ -1,0 +1,298 @@
+module Repo exposing (..)
+
+-- Repo — every database access in one place.
+--
+-- Tenant isolation is structural: every read and every write is filtered on
+-- `orgId`. There is no query in this module that can return another tenant's
+-- rows.
+--
+-- Ordering is EXPLICIT: the journal is ordered by (entryDate, id), never by
+-- insertion order. `Store.orderAsc` prepends internally and the renderer
+-- reverses, so the two calls below emit `ORDER BY entry_date ASC, id ASC`
+-- — the multi-column order that regressed once and is asserted by
+-- /api/journal.json.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Db.Decode as Decode
+import Std.Db.Store as Store
+import Books
+import Amounts
+
+
+-- ─── Orgs + users ────────────────────────────────────────────────
+findUserByEmail : String -> Result Error (Maybe Books.User)
+findUserByEmail email =
+    Task.run (Store.findBy Books.conn Books.users "email" email)
+
+
+findOrg : Int -> Result Error (Maybe Books.Org)
+findOrg orgId =
+    Task.run
+        (Store.query Books.orgs |> Store.where_ (Store.eq "id" (SqlInt orgId))
+            |> Store.toMaybe Books.conn)
+
+
+findOrgByName : String -> Result Error (Maybe Books.Org)
+findOrgByName name =
+    Task.run (Store.findBy Books.conn Books.orgs "name" name)
+
+
+-- Returns the org's REAL id. `Store.insert`'s Int is rows-affected, not the
+-- serial — see the note on `postEntry` — so the id is read back through the
+-- UNIQUE name.
+insertOrg : String -> Result Error Int
+insertOrg name =
+    case Task.run
+             (Store.insert
+                 Books.conn
+                 Books.orgs
+                 { id = 0, name = name, createdAt = "" }) of
+
+        Err e ->
+            Err e
+
+        Ok _ ->
+            case findOrgByName name of
+
+                Err e ->
+                    Err e
+
+                Ok (Just org) ->
+                    Ok org.id
+
+                Ok Nothing ->
+                    Err (Error.invalidInput "org insert did not persist")
+
+
+insertUser : Int -> String -> String -> Result Error Int
+insertUser orgId email passwordHash =
+    Task.run
+        (Store.insert
+            Books.conn
+            Books.users
+            { id = 0
+            , orgId = orgId
+            , email = email
+            , passwordHash = passwordHash
+            , role = "owner"
+            , createdAt = ""
+            })
+
+
+-- ─── Accounts ────────────────────────────────────────────────────
+listAccounts : Int -> Result Error (List Books.Account)
+listAccounts orgId =
+    Task.run
+        (Store.query Books.accounts
+            |> Store.where_ (Store.eq "orgId" (SqlInt orgId))
+            |> Store.orderAsc "code"
+            |> Store.toList Books.conn)
+
+
+findAccountByCode : Int -> String -> Result Error (Maybe Books.Account)
+findAccountByCode orgId code =
+    Task.run
+        (Store.query Books.accounts
+            |> Store.where_ (Store.eq "orgId" (SqlInt orgId))
+            |> Store.where_ (Store.eq "code" (SqlString code))
+            |> Store.toMaybe Books.conn)
+
+
+insertAccount : Int -> String -> String -> String -> Result Error Int
+insertAccount orgId code name kind =
+    Task.run
+        (Store.insert
+            Books.conn
+            Books.accounts
+            { id = 0
+            , orgId = orgId
+            , code = code
+            , name = name
+            , kind = kind
+            , createdAt = ""
+            })
+
+
+-- ─── Journal ─────────────────────────────────────────────────────
+-- (entryDate, id) — the explicit, observable ordering.
+listEntries : Int -> Result Error (List Books.Entry)
+listEntries orgId =
+    Task.run
+        (Store.query Books.journalEntries
+            |> Store.where_ (Store.eq "orgId" (SqlInt orgId))
+            |> Store.orderAsc "entryDate"
+            |> Store.orderAsc "id"
+            |> Store.limit 500
+            |> Store.toList Books.conn)
+
+
+listEntriesInPeriod : Int -> String -> Result Error (List Books.Entry)
+listEntriesInPeriod orgId period =
+    Task.run
+        (Store.query Books.journalEntries
+            |> Store.where_ (Store.eq "orgId" (SqlInt orgId))
+            |> Store.where_ (Store.like "entryDate" (period ++ "%"))
+            |> Store.orderAsc "entryDate"
+            |> Store.orderAsc "id"
+            |> Store.toList Books.conn)
+
+
+listLines : Int -> Result Error (List Books.Line)
+listLines orgId =
+    Task.run
+        (Store.query Books.journalLines
+            |> Store.where_ (Store.eq "orgId" (SqlInt orgId))
+            |> Store.orderAsc "entryId"
+            |> Store.orderAsc "id"
+            |> Store.toList Books.conn)
+
+
+linesForEntry : Int -> Int -> Result Error (List Books.Line)
+linesForEntry orgId entryId =
+    Task.run
+        (Store.query Books.journalLines
+            |> Store.where_ (Store.eq "orgId" (SqlInt orgId))
+            |> Store.where_ (Store.eq "entryId" (SqlInt entryId))
+            |> Store.orderAsc "id"
+            |> Store.toList Books.conn)
+
+
+-- | Post a balanced entry: header + its two signed lines, inside ONE
+-- transaction so a half-written entry can never be observed.
+--
+-- The header goes in through `Db.insertFieldsReturning … "id"`, NOT
+-- `Store.insert`. `Store.insert : … -> Task Error Int` returns the AFFECTED
+-- ROW COUNT (it routes to `Db_exec` — runtime-go/rt/db_codec.go:352), so its
+-- Int is always 1 for a single-row insert, never the serial the database
+-- just assigned. Wiring child rows to that value silently attributes every
+-- line to entry 1. `RETURNING` is the portable way to get the real id
+-- (SQLite >= 3.35 and Postgres both support it).
+postEntry : Int -> String -> String -> Int -> Int -> Int -> Result Error Int
+postEntry orgId entryDate memo debitAccountId creditAccountId amountMinor =
+    Task.run
+        (Store.transaction
+            Books.conn
+            (\tx ->
+                insertEntryHeader tx orgId entryDate memo
+                    |> Task.andThen
+                           (\entryId ->
+                               insertLine
+                                   tx
+                                   orgId
+                                   entryId
+                                   debitAccountId
+                                   amountMinor
+                                   |> Task.andThen
+                                          (\_ ->
+                                              insertLine
+                                                  tx
+                                                  orgId
+                                                  entryId
+                                                  creditAccountId
+                                                  (0 - amountMinor))
+                                   |> Task.andThen (\_ -> Task.succeed entryId))))
+
+
+-- `Db.queryDecode` (not `Db.insertFieldsReturning`) because the latter is
+-- BROKEN ON POSTGRES: `dbBuildInsertFields` emits `?` placeholders
+-- (runtime-go/rt/db_auth.go:745) and both `Db_insertFields` (:692) and
+-- `Db_insertFieldsReturning` (:804) hand the SQL to the executor WITHOUT
+-- `d.rebind(...)`, so pgx sees a zero-parameter statement and fails with
+-- `unused argument: 0`. `Db_query` DOES rebind (db_auth.go:974), and
+-- `queryDecode` routes through it — so this form is correct on both
+-- backends. `INSERT ... RETURNING` needs SQLite >= 3.35 / any Postgres.
+insertEntryHeader : Db -> Int -> String -> String -> Task Error Int
+insertEntryHeader tx orgId entryDate memo =
+    Db.queryDecode
+        tx
+        "INSERT INTO journal_entries (org_id, entry_date, memo) VALUES (?, ?, ?) RETURNING id"
+        [ SqlInt orgId, SqlString entryDate, SqlString memo ]
+        (Decode.int "id")
+        |> Task.andThen firstId
+
+
+firstId : List Int -> Task Error Int
+firstId ids =
+    case List.head ids of
+
+        Just entryId ->
+            Task.succeed entryId
+
+        Nothing ->
+            Task.fail
+                (Error.invalidInput
+                    "journal_entries INSERT ... RETURNING id produced no row")
+
+
+insertLine : Db -> Int -> Int -> Int -> Int -> Task Error Int
+insertLine tx orgId entryId accountId amountMinor =
+    Store.insert
+        tx
+        Books.journalLines
+        { id = 0
+        , orgId = orgId
+        , entryId = entryId
+        , accountId = accountId
+        , amountMinor = amountMinor
+        }
+
+
+-- ─── Balances ────────────────────────────────────────────────────
+-- Raw ANSI aggregate. `?` is rebound to `$N` for pgx by the runtime, and
+-- SUM/GROUP BY are portable — so this one query is correct on BOTH
+-- backends. Column aliases are snake_case because `Codec.auto` reflects
+-- record fields that way.
+balances : Int -> Result Error (List Books.BalanceRow)
+balances orgId =
+    Task.run
+        (Store.selectRaw
+            Books.conn
+            Books.balanceRowCodec
+            "SELECT account_id AS account_id, SUM(amount_minor) AS total_minor FROM journal_lines WHERE org_id = ? GROUP BY account_id ORDER BY account_id ASC"
+            [ SqlInt orgId ])
+
+
+-- ─── Period closes ───────────────────────────────────────────────
+listCloses : Int -> Result Error (List Books.Close)
+listCloses orgId =
+    Task.run
+        (Store.query Books.closes
+            |> Store.where_ (Store.eq "orgId" (SqlInt orgId))
+            |> Store.orderDesc "period"
+            |> Store.toList Books.conn)
+
+
+recordClose : Int -> String -> Int -> Result Error Int
+recordClose orgId period netMinor =
+    Task.run
+        (Store.insert
+            Books.conn
+            Books.closes
+            { id = 0
+            , orgId = orgId
+            , period = period
+            , netMinor = netMinor
+            , closedAt = ""
+            })
+
+
+-- ─── Derived helpers (pure over fetched rows) ────────────────────
+balanceOf : Int -> List Books.BalanceRow -> Int
+balanceOf accountId rows =
+    case List.find (\r -> r.accountId == accountId) rows of
+
+        Just r ->
+            r.totalMinor
+
+        Nothing ->
+            0
+
+
+-- | Trial balance: every signed line in the book must net to zero.
+trialBalance : List Books.BalanceRow -> Int
+trialBalance rows =
+    Amounts.sumInts (List.map .totalMinor rows)

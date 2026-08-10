@@ -1204,6 +1204,223 @@ pub fn apps_fieldbook(ctx: &GateCtx) -> GateOutcome {
     }
 }
 
+/// Member A: Ledger. Both arms assert the same eleven things.
+pub const APPS_LEDGER_EXPECTED: u64 = 11;
+
+/// One arm of member A — the SAME source and the SAME assertions, with only the
+/// DSN changing. That is the claim under test: "the same app code works on
+/// SQLite and Postgres; only the driver differs."
+///
+/// The ordering assertion is the important one. `Store.orderAsc` on (date, id)
+/// is asserted by **value**: the seed inserts ids 1,2,3,4 with dates
+/// Mar/Jan/Feb/Jan, so a correct ordering returns `2,4,3,1` — a sequence
+/// insertion order cannot produce. An assertion that merely checked "some rows
+/// came back" would pass an app that ignored the ORDER BY entirely.
+fn ledger_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome {
+    use super::layer2;
+    use std::time::Duration;
+
+    const PROJECT: &str = "apps/ledger";
+    let dir = ctx.repo_root.join(PROJECT);
+    let sky = match layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let mut a = 0u64;
+    let mut fail: Vec<String> = Vec::new();
+
+    let db_env = |extra: &[(&str, String)]| -> Vec<(String, String)> {
+        let mut v = vec![("SKY_DB_PATH".to_string(), dsn.clone())];
+        v.extend(extra.iter().map(|(k, x)| (k.to_string(), x.clone())));
+        v
+    };
+
+    // `sky db migrate` applies the COMMITTED db/migrations/ files. Running it
+    // before the build is deliberate: `sky db seed` builds its temp entry into
+    // the project's real sky-out/app, so seeding after a build would replace the
+    // binary under test with the seed shim.
+    for (verb, label) in [("migrate", "sky db migrate"), ("seed", "sky db seed")] {
+        a += 1;
+        let mut cmd = Command::new(&sky);
+        cmd.arg("db").arg(verb).current_dir(&dir).stdin(std::process::Stdio::null());
+        for (k, v) in db_env(&[]) {
+            cmd.env(k, v);
+        }
+        match cmd.output() {
+            Err(e) => fail.push(format!("{label}: spawn failed: {e}")),
+            Ok(o) if !o.status.success() => fail.push(format!(
+                "{label} failed (exit {:?}):\n{}",
+                o.status.code(),
+                layer2::tail(&String::from_utf8_lossy(&o.stdout), 8)
+            )),
+            Ok(_) => {}
+        }
+    }
+
+    let r = match layer2::clean_build(&ctx.repo_root, PROJECT) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+    a += 1;
+    if !r.ok {
+        fail.push(format!("`sky build` failed:\n{}", layer2::tail(&r.log, 12)));
+    }
+    a += 1;
+    if !r.binary.is_file() {
+        fail.push(format!("no artifact at {}", r.binary.display()));
+    }
+    if !fail.is_empty() {
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    a += 1;
+    let literals = layer2::bind_position_port_literals(&ctx.repo_root, PROJECT);
+    if !literals.is_empty() {
+        fail.push(format!("bind-position port literal(s): {}", literals.join(", ")));
+    }
+
+    let port = match layer2::free_port() {
+        Ok(p) => p,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+    let env: Vec<(&str, String)> = vec![
+        ("SKY_DB_PATH", dsn.clone()),
+        ("SKY_LIVE_PORT", port.to_string()),
+        (
+            "SKY_AUTH_TOKEN_SECRET",
+            "layer2-ledger-gate-secret-at-least-32-bytes".to_string(),
+        ),
+    ];
+    let mut srv = match layer2::Server::spawn(&r.binary, &dir, port, &env) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, a, e),
+    };
+
+    a += 1;
+    let ready = srv.wait_ready("ledger: listening on", Duration::from_secs(45));
+    if let Err(e) = &ready {
+        fail.push(e.clone());
+        let _ = srv.shutdown();
+        return GateOutcome::new(false, a, fail.join(" | "));
+    }
+
+    // health: served, and reporting the driver this arm actually selected.
+    match layer2::get(port, "/api/health") {
+        Err(e) => {
+            a += 2;
+            fail.push(format!("GET /api/health: {e}"));
+        }
+        Ok(resp) => {
+            a += 1;
+            if resp.status != 200 {
+                fail.push(format!("GET /api/health: expected 200, got {}", resp.status));
+            }
+            a += 1;
+            let want = format!("\"driver\":\"{expect_driver}\"");
+            if !resp.body.contains(&want) {
+                fail.push(format!(
+                    "this arm must run on {expect_driver}; /api/health said {}",
+                    resp.body.trim()
+                ));
+            }
+        }
+    }
+
+    // Journal ordering, asserted by value.
+    a += 1;
+    match layer2::get(port, "/api/journal.json?org=1") {
+        Err(e) => fail.push(format!("GET /api/journal.json: {e}")),
+        Ok(resp) => {
+            let ids: Vec<String> = resp
+                .body
+                .match_indices("\"id\":")
+                .map(|(i, _)| {
+                    resp.body[i + 5..]
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect::<String>()
+                })
+                .collect();
+            if ids != ["2", "4", "3", "1"] {
+                fail.push(format!(
+                    "journal must be ordered by (entry_date, id) — expected ids \
+                     [2, 4, 3, 1], got {ids:?}. Insertion order is [1, 2, 3, 4], so \
+                     that sequence is only reachable through the ORDER BY."
+                ));
+            }
+        }
+    }
+
+    // Money.allocate residue: the parts must sum EXACTLY to the whole.
+    a += 1;
+    match layer2::get(port, "/api/selfcheck") {
+        Err(e) => fail.push(format!("GET /api/selfcheck: {e}")),
+        Ok(resp) => {
+            if !resp.body.contains("\"exact\":true") {
+                fail.push(format!(
+                    "Money.allocate must preserve the whole; /api/selfcheck said {}",
+                    resp.body.trim()
+                ));
+            }
+        }
+    }
+
+    a += 1;
+    if let Err(e) = srv.shutdown() {
+        fail.push(e);
+    }
+
+    if fail.is_empty() {
+        GateOutcome::new(
+            true,
+            a,
+            format!("migrated, seeded, served on :{port} against {expect_driver}; ordering and money residue asserted"),
+        )
+    } else {
+        GateOutcome::new(false, a, fail.join(" | "))
+    }
+}
+
+/// Member A, SQLite arm (T1).
+pub fn apps_ledger(ctx: &GateCtx) -> GateOutcome {
+    let db = super::bodies::scratch(&ctx.repo_root).join(format!(
+        "ledger-gate-{}.db",
+        std::process::id()
+    ));
+    // Remove the WAL sidecars too: deleting a SQLite file without its -wal/-shm
+    // yields `disk I/O error (522)` on the next open.
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+    ledger_arm(ctx, "sqlite", db.display().to_string())
+}
+
+/// Member A, **Postgres arm** (T3) — the coverage that did not exist.
+///
+/// Measured on this commit: 58 example directories, 8 declare `[database]`, 8
+/// use `driver = "sqlite"`, 0 use Postgres. This arm is new coverage, and it
+/// earned itself immediately: it found that `Db.updateFields` /
+/// `insertFields` / `insertFieldsReturning` never call `d.rebind(...)`, so they
+/// emit `?` placeholders and fail on pgx with `unused argument: 0`.
+///
+/// The DSN comes from `SKY_TEST_POSTGRES_DSN` — the SAME variable the existing
+/// `integration-postgres` CI job already sets, rather than a new one. An absent
+/// DSN is a **FAIL**, never a skip: a Postgres gate that silently passes with no
+/// Postgres is the defect this whole mandate exists to remove.
+pub fn apps_ledger_postgres(ctx: &GateCtx) -> GateOutcome {
+    match std::env::var("SKY_TEST_POSTGRES_DSN") {
+        Ok(dsn) if !dsn.trim().is_empty() => ledger_arm(ctx, "postgres", dsn),
+        _ => GateOutcome::new(
+            false,
+            0,
+            "SKY_TEST_POSTGRES_DSN is unset — this gate asserts the Postgres arm and \
+             cannot do so without a server. A gate that cannot run has not passed; \
+             it is NOT skipped."
+                .to_string(),
+        ),
+    }
+}
+
 fn read_json(p: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }
