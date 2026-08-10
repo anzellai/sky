@@ -4,7 +4,7 @@
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1786314686
+      "proven_at_unix": 1786323024
     },
     "conformance": {
       "mutation": "conformance.break-expectation",

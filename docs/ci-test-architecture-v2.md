@@ -973,10 +973,20 @@ These survive from v1 and are **not** re-opened:
 
 Stated explicitly, per the mandate. Each row names the phase it gates.
 
+> **U1 is RESOLVED and three premises in §1.3/§1.4 proved wrong when this design
+> met the compiler.** See [`ci-test-phase-2-3-results.md`](ci-test-phase-2-3-results.md)
+> before acting on §1.3, §1.4(a), or the "why C-2 is not optional" argument in
+> §1.2. In brief: C-1's invalidation obligation is wider than "drop that entry";
+> §1.4(a)'s `corpus.defid-disjoint` gate is unsatisfiable as worded and asserts
+> the wrong property; and C-1 alone measured **34.4 ms/case**, not the predicted
+> ~318 ms, which already clears every break-even entry. `c_measured` with C-1 +
+> C-2 is **1.02 ms/case**, and the differential over 121 corpus items is
+> identical. The `PROCEED` branch of §2.2 fires.
+
 | # | Uncertainty | Gates | Resolution |
 |---|---|---|---|
-| **U1** | **Can `World::build` be made incremental without changing verdicts?** Passes 5–8 read app def bodies and the world is whole-program. Restricting them to the case's modules may change results for cases that shadow or extend stdlib. This is the design's largest technical risk | **Phase 4** | Phase 3's differential harness asserts **identical per-item verdicts** over the reject + infer corpora. If verdicts diverge, C-2 is not viable as specified and §2.2's abort branch fires |
-| **U2** | **`c_u` — behavioural cost per compilation unit on the CI runner class.** Every number in both v1 docs is host-measured, and the 2× derating factor is itself unverified. `N_iso` (§3.3) is budgeted against it | **Phase 4, Phase 6** | Measure on the runner during Phase 3; re-derive the corpus job budget in Phase 6 on ten real PRs |
+| **U1** | **Can `World::build` be made incremental without changing verdicts?** Passes 5–8 read app def bodies and the world is whole-program. Restricting them to the case's modules may change results for cases that shadow or extend stdlib. This is the design's largest technical risk | **Phase 4** | **RESOLVED (Phase 3, 2026-08-10): YES.** `xtask shared-world` compares both paths per item over the reject + infer corpora on error counts, every diagnostic, and every inferred type — **121 items, identical**, 120 shared / 1 counted full-rebuild fallback. `--inject-divergence` is caught in 18/121, so the comparison is live. Two constructions genuinely cannot use a prebuilt world (stdlib-module shadowing; bare-alias collision); both are detected before forking and fall back as counted, reported states |
+| **U2** | **`c_u` — behavioural cost per compilation unit on the CI runner class.** Every number in both v1 docs is host-measured, and the 2× derating factor is itself unverified. `N_iso` (§3.3) is budgeted against it | **Phase 4, Phase 6** | **Still open, and now the WHOLE cost model.** The static term collapsed to 1.02 ms/case, so `N_iso × c_u` is the binding constraint on Layer 1's budget rather than a correction to it. Host `c_u` re-measured in Phase 3; the runner-class value and the corpus job budget remain Phase 6 on ten real PRs |
 | **U3** | **Is per-item self-falsification affordable for behavioural items, and are family-typed perturbations strong enough?** A perturbation that *any* assertion in a batched unit catches does not prove **this item's** assertion is live. Per-item attribution needs the `Sky.Test` JSON reporter (§4.3), which does not exist yet | **Phase 2** | Build the reporter in Phase 1; in Phase 2, prove attribution on a batched unit by perturbing one leaf and asserting **exactly that leaf** goes red. If attribution cannot be made precise, behavioural items move to `isolation = "unit"`, which raises `N_iso` and re-enters §3.3's budget |
 | U4 | The red rate of a neighbourhood-expanding generator | Phase 4 | Phase 3.5's 100-case spike |
 | U5 | Whether the 6 `exposing (..)` modules can be migrated to explicit lists without breaking consumers | Phase 4 | ledger reports filtered + unfiltered until migrated |
