@@ -27,16 +27,17 @@ package rt
 //     sky_jobs_inflight / sky_jobs_queue_depth via the worker's
 //     OnSuccess / OnFailure / OnDeadLetter / OnInflight callbacks.
 //
-// What's NOT here (deferred to 1.3.x):
-//   - Postgres backend (the Store interface is in place; impl is
-//     a 200-line file similar to live_store_postgres.go).
+// What's NOT here:
 //   - Web UI at /_sky/jobs (lands with the Phase 1.1b dashboard).
-//   - sky.toml [jobs] store = "sqlite" wiring (sqlite backend
-//     itself lands in 1.3.x; defaulting to memory means apps work
-//     out of the box).
+//   - `sky.toml [jobs]` parsing. Configuration is env-only; see jobsBoot.
+//
+// (The Postgres and SQLite backends listed here as "deferred" both exist —
+// rt/jobs/postgres_store.go and rt/jobs/sqlite_store.go.)
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"sync"
@@ -63,20 +64,22 @@ var (
 
 // jobsBoot starts the default worker on first use. Idempotent.
 //
-// Backend selection (Phase 1.3.x):
-//   * sky.toml [jobs] store = "memory" (default) → in-process
-//   * sky.toml [jobs] store = "sqlite" → SQLite at
-//     [jobs] store_path (default "./_sky/jobs.db")
-//   * sky.toml [jobs] store = "postgres" → Postgres at
-//     [jobs] store_path (a postgres:// URL) OR DATABASE_URL env
+// Backend selection is ENVIRONMENT-ONLY (read via skyGetenv with the [env]
+// prefix):
+//   SKY_JOBS_STORE       — "memory" (default) | "sqlite" | "postgres"
+//   SKY_JOBS_STORE_PATH  — file path (sqlite, default "./_sky/jobs.db")
+//                          or URL (postgres; falls back to DATABASE_URL)
 //
-// All three implement the same Store interface — the worker code
-// doesn't care. Choose at startup based on the user's deploy
-// shape (single-host file-backed → sqlite, multi-host → postgres).
+// There is NO `sky.toml [jobs]` section. Several comments in this file used to
+// describe one as the primary configuration surface, but nothing parses it:
+// `rust/crates/project/src/build.rs` has no `jobs` key and `docs/sky-toml.md`
+// documents no such section. A `[jobs]` block in a project's sky.toml is
+// silently ignored, so it is worth being precise here rather than sending
+// readers to a setting that does nothing.
 //
-// Env-var overrides (read via skyGetenv with the [env] prefix):
-//   SKY_JOBS_STORE       — store kind ("memory" | "sqlite" | "postgres")
-//   SKY_JOBS_STORE_PATH  — file path (sqlite) or URL (postgres)
+// All three backends implement the same Store interface — the worker code
+// doesn't care. Choose based on deploy shape (single-host file-backed →
+// sqlite, multi-host → postgres).
 func jobsBoot() {
 	jobsRuntimeMu.Lock()
 	defer jobsRuntimeMu.Unlock()
@@ -122,8 +125,15 @@ func jobsBoot() {
 	jobsWorker.Start()
 }
 
-// JobsShutdown stops the worker. Called from SIGTERM handler in
-// Sky.Live + Sky.Http.Server (added in the next edit). Idempotent.
+// JobsShutdown stops the worker. Idempotent.
+//
+// Called from ONE place: Sky.Live's SIGTERM handler (live.go). This comment
+// used to claim "Sky.Live + Sky.Http.Server (added in the next edit)"; that
+// second call site was never added, so a `Sky.Http.Server` app running jobs
+// does NOT drain its queue on SIGTERM — in-flight jobs are lost rather than
+// completed, and their leases expire before another worker reclaims them.
+// Recorded rather than silently fixed: wiring the HTTP server's shutdown path
+// changes that server's termination behaviour and belongs in its own change.
 func JobsShutdown() {
 	jobsRuntimeMu.Lock()
 	w := jobsWorker
@@ -169,7 +179,14 @@ func Jobs_define(name any, handler any) any {
 		// the Result). Force it.
 		if result := AnyTaskRun(taskResult); result != nil {
 			if isErrResult(result) {
-				return fmt.Errorf("%v", extractErrResultValue(result))
+				// `extractErrMsg`, NOT `fmt.Errorf("%v", extractErrResultValue(…))`.
+				// The latter renders the Sky Error ADT's Go struct, so the only
+				// durable record of a failure — `_sky_jobs.last_error` and
+				// `_sky_jobs_dead.final_error` — read
+				// `{0 Error [7 {the real message {1 <nil>}}]}` instead of the
+				// message. `extractErrMsg` is the package's existing unwrapper
+				// (stdlib_extra.go) and is what every other Err call site uses.
+				return errors.New(extractErrMsg(result))
 			}
 		}
 		return nil
@@ -261,12 +278,29 @@ func makeTaskThunk(fn func() any) any {
 
 // ─── Metrics: queue-depth gauge (polled) ──────────────────────
 
-// chooseJobsStore picks the backend implementation per the sky.toml
-// [jobs] config (env-overridable via SKY_JOBS_STORE +
-// SKY_JOBS_STORE_PATH). Falls back to in-memory on any error so a
-// misconfigured Postgres URL doesn't block the runtime from
-// booting — it logs + degrades to memory, surfacing the issue in
-// the logs / dashboard but keeping the app alive.
+// jobsStoreFatalf is the fail-loud action for a jobs-store misconfiguration;
+// overridable in tests so the contract can be asserted without killing the test
+// binary. Mirrors `storeFatalf` in live_store.go — the session store's
+// equivalent, whose contract this one had never been given.
+var jobsStoreFatalf = log.Fatalf
+
+// chooseJobsStore picks the backend implementation from SKY_JOBS_STORE +
+// SKY_JOBS_STORE_PATH (see jobsBoot — there is no sky.toml [jobs] section).
+//
+// A DURABLE store that was explicitly asked for and cannot be provided is a
+// hard failure in production, and a warning + memory fallback in dev.
+//
+// It used to degrade to an in-process memory queue on every failure path —
+// unknown kind, unopenable SQLite, missing Postgres URL, unreachable Postgres —
+// with nothing but a line on stderr. That converts a durability guarantee into
+// RAM without the operator asking: enqueued jobs are lost on every restart and
+// never shared across replicas, while the app reports healthy. It is the same
+// silent-degrade class the session store closed in v0.19.4/#8
+// (live_store.go:1578); the jobs store never got the treatment because nothing
+// in the repo imported Std.Jobs, so this switch had no coverage at all.
+//
+// `memory` (and an unset kind) stay a memory store in production on purpose —
+// that is the deliberate opt-in to a volatile queue, not a degradation.
 func chooseJobsStore() jobs.Store {
 	kind := skyGetenv("JOBS_STORE")
 	if kind == "" {
@@ -282,10 +316,8 @@ func chooseJobsStore() jobs.Store {
 		}
 		s, err := jobs.NewSQLiteStore(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr,
-				"[sky.jobs] SQLite backend init failed (%q): %v — falling back to memory store\n",
-				path, err)
-			return jobs.NewMemoryStore()
+			return jobsStoreDegrade("sqlite",
+				fmt.Sprintf("cannot open %q: %v", path, err))
 		}
 		return s
 	case "postgres":
@@ -294,22 +326,39 @@ func chooseJobsStore() jobs.Store {
 			url = os.Getenv("DATABASE_URL")
 		}
 		if url == "" {
-			fmt.Fprintf(os.Stderr,
-				"[sky.jobs] Postgres backend requested but no URL configured "+
-					"(set sky.toml [jobs] store_path or DATABASE_URL) — "+
-					"falling back to memory store\n")
-			return jobs.NewMemoryStore()
+			// Asked for a durable shared queue and named no server: a config
+			// error, not a connect failure.
+			return jobsStoreDegrade("postgres",
+				"no connection string (set sky.toml [jobs] store_path or DATABASE_URL)")
 		}
 		s, err := jobs.NewPostgresStore(url)
 		if err != nil {
-			fmt.Fprintf(os.Stderr,
-				"[sky.jobs] Postgres backend init failed: %v — falling back to memory store\n", err)
-			return jobs.NewMemoryStore()
+			return jobsStoreDegrade("postgres", fmt.Sprintf("connect failed: %v", err))
 		}
 		return s
 	default:
-		fmt.Fprintf(os.Stderr,
-			"[sky.jobs] unknown store kind %q — falling back to memory store\n", kind)
-		return jobs.NewMemoryStore()
+		// A kind we do not recognise: a typo ("postgress" / "psql"), or a
+		// backend named somewhere in the docs that has no branch here.
+		return jobsStoreDegrade(kind, "unknown store kind — valid kinds are memory, sqlite, postgres")
 	}
+}
+
+// jobsStoreDegrade is the ONE place a requested durable jobs store turns into a
+// memory queue. Fatal in production, loud warning + fallback in dev.
+func jobsStoreDegrade(kind, reason string) jobs.Store {
+	if productionFromEnv() {
+		jobsStoreFatalf("[sky.jobs] FATAL: jobs store %q unavailable — %s. Refusing to "+
+			"start with a silent in-memory fallback in production (every enqueued job "+
+			"would be lost on restart and never shared across replicas). Fix [jobs] "+
+			"store / SKY_JOBS_STORE, or set it to \"memory\" to opt in to the "+
+			"in-memory queue deliberately.", kind, reason)
+		// jobsStoreFatalf is log.Fatalf in prod (never returns); a test override
+		// may return, so fall through to a valid value.
+	}
+	log.Printf("┌─ [sky.jobs] WARNING ────────────────────────────────────────")
+	log.Printf("│ jobs store %q unavailable — %s", kind, reason)
+	log.Printf("│ DEV fallback → in-memory queue: jobs lost on restart, single-instance only.")
+	log.Printf("│ In PRODUCTION (ENV set) this is a HARD failure — the app refuses to start.")
+	log.Printf("└─────────────────────────────────────────────────────────────")
+	return jobs.NewMemoryStore()
 }

@@ -11,10 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Postgres store tests. Require a live Postgres at SKY_PG_TEST_URL
-// (e.g. `postgres://postgres@localhost:5432/postgres`). Skip
-// otherwise — CI without Postgres can still build + run the rest
-// of the suite.
+// Postgres store tests. Require a live Postgres, taken from
+// `SKY_TEST_POSTGRES_DSN` — the SAME variable the `integration-postgres` CI job
+// and the Layer-2 `apps-*-postgres` gates already set.
+//
+// These ten tests were DEAD until 2026-08-10. They read `SKY_PG_TEST_URL`, a
+// name set in exactly zero places in this repo — not by CI, not by any script,
+// not by any doc outside the one that recorded the finding. Every one of them
+// hit `t.Skip` on every runner, so the Postgres job store had never been
+// executed by anything. Reading the canonical variable is what makes them run;
+// `SKY_PG_TEST_URL` is still honoured as a fallback so an existing local setup
+// does not break.
 //
 // Each test scopes itself to a unique queue name (per-test
 // timestamp suffix) so concurrent runs / leftover state from a
@@ -22,9 +29,12 @@ import (
 
 func newPostgresFixture(t *testing.T) (Store, string) {
 	t.Helper()
-	url := os.Getenv("SKY_PG_TEST_URL")
+	url := os.Getenv("SKY_TEST_POSTGRES_DSN")
 	if url == "" {
-		t.Skip("SKY_PG_TEST_URL not set — Postgres tests require a live DB")
+		url = os.Getenv("SKY_PG_TEST_URL")
+	}
+	if url == "" {
+		t.Skip("SKY_TEST_POSTGRES_DSN not set — Postgres tests require a live DB")
 	}
 
 	store, err := NewPostgresStore(url)

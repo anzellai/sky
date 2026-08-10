@@ -6,6 +6,24 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786370152
     },
+    "apps-dispatch": {
+      "mutation": "apps-dispatch.swallow-the-job-failure",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786401903
+    },
+    "apps-dispatch-destructive": {
+      "mutation": "apps-dispatch-destructive.rename-the-quarantine-target",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786401903
+    },
+    "apps-dispatch-postgres": {
+      "mutation": "apps-dispatch-postgres.break-health-driver",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786401903
+    },
     "apps-ffi-scale": {
       "mutation": "apps-ffi-scale.break-an-ffi-symbol",
       "observed": "PROVEN",
@@ -46,7 +64,7 @@
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1786397122
+      "proven_at_unix": 1786402612
     },
     "cli-verbs": {
       "mutation": "cli-verbs.break-an-expectation",
@@ -84,12 +102,6 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786350806
     },
-    "coverage-ledger": {
-      "mutation": "coverage-ledger.drop-a-sole-owner-import",
-      "observed": "PROVEN",
-      "outcome": "as-declared",
-      "proven_at_unix": 1786395077
-    },
     "reject": {
       "mutation": "reject.neutralise-axis",
       "observed": "PROVEN",
@@ -108,23 +120,17 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786349758
     },
-    "sky-suites": {
-      "mutation": "sky-suites.break-expectation",
-      "observed": "PROVEN",
-      "outcome": "as-declared",
-      "proven_at_unix": 1786393814
-    },
     "sky-verify": {
       "mutation": "sky-verify.break-a-suite",
-      "observed": "PROVEN",
-      "outcome": "as-declared",
-      "proven_at_unix": 1786392770
+      "observed": "INCONCLUSIVE",
+      "outcome": "NOT-as-declared",
+      "proven_at_unix": 1786349758
     },
     "verify-cli": {
       "mutation": "verify-cli.drop-expected-output",
-      "observed": "PROVEN",
-      "outcome": "as-declared",
-      "proven_at_unix": 1786395531
+      "observed": "INCONCLUSIVE",
+      "outcome": "NOT-as-declared",
+      "proven_at_unix": 1786349758
     }
   },
   "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, or older than the declared window, renders UNPROVEN under `--require-proofs`.",

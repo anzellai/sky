@@ -13,13 +13,14 @@
 #   pending — specified by v2 §6 but not yet built; NOT counted as coverage
 
 [layer2]
-members = 7
-gated = 7
+members = 8
+gated = 8
 # Gates registered for these members, in registry order:
-#   apps-ledger (T1) · apps-ledger-postgres (T3) · apps-fleet (T3) ·
-#   apps-relay (T1) · apps-fieldbook (T2) · apps-ffi-scale (T4) ·
-#   apps-bundled (T1) · cli-verbs (T1)
-gates = 8
+#   apps-ledger (T1) · apps-ledger-postgres (T3) · apps-dispatch (T1) ·
+#   apps-dispatch-destructive (T1) · apps-dispatch-postgres (T3) ·
+#   apps-fleet (T3) · apps-relay (T1) · apps-fieldbook (T2) ·
+#   apps-ffi-scale (T4) · apps-bundled (T1) · cli-verbs (T1)
+gates = 11
 
 # ---------------------------------------------------------------------------
 # A — Ledger. Sky.Live full-stack, the Postgres arm.
@@ -41,6 +42,40 @@ owns = [
     "Std.Money / Std.Decimal allocation residue",
     "committed migrations/",
     "the Postgres arm — zero coverage before this member",
+]
+
+# ---------------------------------------------------------------------------
+# H — Dispatch. The five stdlib modules nothing imported.
+#
+# Added 2026-08-10 to close the largest measured coverage gap: `Std.Jobs`,
+# `Std.Db.Schema`, `Std.Db.Migrate`, `Std.Markdown` and `Std.Email` each had
+# ZERO importers anywhere in the repo, so no test had ever executed them — and
+# the consequence was that the file-based migration verbs (`sky db init`,
+# `migrate --gen`, `migrate`, `status`, `seed`) were exercised by no project.
+#
+# Sky.Live rather than Sky.Http.Server on purpose: Sky.Live's SIGTERM path is
+# the only one that calls `JobsShutdown()` (runtime-go/rt/live.go), so it is the
+# shape a jobs-bearing app should actually take today.
+# ---------------------------------------------------------------------------
+[[member]]
+id = "H"
+name = "dispatch"
+path = "apps/dispatch"
+kind = "jobs-and-migrations"
+status = "gated"
+gate = "apps-dispatch"
+gate_destructive = "apps-dispatch-destructive"
+gate_postgres = "apps-dispatch-postgres"
+tier = "T1"
+tier_postgres = "T3"
+owns = [
+    "Std.Jobs — define / enqueue / enqueueIn / cancel, a real worker, a real failure",
+    "Std.Db.Schema — typed dialect-safe DDL + the toProject bridge",
+    "Std.Db.Migrate — committed db/migrations/ applied by `sky db migrate`",
+    "the file-based migration verbs (init / --gen / migrate / status / seed)",
+    "destructive-diff quarantine (drop is never silently applied)",
+    "Std.Markdown — render, including escaping of untrusted input",
+    "Std.Email — the whole builder chain",
 ]
 
 # ---------------------------------------------------------------------------

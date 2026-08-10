@@ -372,6 +372,38 @@ static CROSS_CUTTING: &[CrossSurface] = &[
 /// product, and giving them product surfaces would let harness self-tests
 /// count as product coverage.
 static GATE_SURFACES: &[(&str, &[&str])] = &[
+    // Layer-2 member H (`apps/dispatch`). These three gates are the ONLY cover
+    // for five modules that, until 2026-08-10, were imported by nothing at all
+    // — and with them the file-based migration verbs, which no project
+    // exercised. Declared explicitly so the ledger charges them as coverage
+    // rather than letting the modules keep reading as uncovered.
+    (
+        "apps-dispatch",
+        &[
+            "stdlib.Std.Jobs",
+            "stdlib.Std.Db.Schema",
+            "stdlib.Std.Db.Migrate",
+            "stdlib.Std.Markdown",
+            "stdlib.Std.Email",
+            "db.migrations",
+            "db.sqlite",
+            "cli.db",
+        ],
+    ),
+    // The destructive-diff arm is what pins the incident class: `sky db migrate`
+    // once dropped UNIQUE + AUTOINCREMENT + DEFAULT, breaking apps on Postgres.
+    // It was fixed once and nothing gated it until now.
+    ("apps-dispatch-destructive", &["db.migrations", "cli.db"]),
+    (
+        "apps-dispatch-postgres",
+        &[
+            "stdlib.Std.Jobs",
+            "stdlib.Std.Db.Schema",
+            "stdlib.Std.Db.Migrate",
+            "db.migrations",
+            "db.postgres",
+        ],
+    ),
     ("roundtrip", &["compiler.parse", "lang.constructs"]),
     ("reject", &["compiler.reject", "compiler.infer"]),
     (

@@ -1,0 +1,252 @@
+module Main exposing (main, db, seed)
+
+-- Dispatch — a note-publishing + notification service.
+--
+-- It exists to cover five stdlib modules that, before it, were imported by
+-- NOTHING in this repo and therefore executed by no test at all:
+--
+--   Std.Db.Schema   typed dialect-safe DDL + the `toProject` bridge
+--   Std.Db.Migrate  applying committed migrations (via `sky db migrate`)
+--   Std.Jobs        durable background jobs — a headline product surface
+--   Std.Markdown    markdown -> Std.Ui Element (pure Sky, ~790 lines)
+--   Std.Email       message composition + SMTP send
+--
+-- The consequence of that gap was that the file-based migration verbs
+-- (`sky db init/gen/status/migrate/seed`) were exercised by no project.
+--
+-- ONE source tree, TWO backends. The driver is chosen at connect time from
+-- the DSN shape, and the DSN comes from the environment:
+--
+--   SQLite   SKY_DB_PATH=./dispatch.db                     ./sky-out/app
+--   Postgres SKY_DB_PATH=postgres://u@h:5432/dispatch?...  ./sky-out/app
+--
+-- Nothing in src/ names a driver, a DSN, or a port.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Std.Cmd as Cmd
+import Std.Db as Db
+import Std.Db.Store as Store
+import Std.Html exposing (Html)
+import Std.Live exposing (app, api, config, route, withHead)
+import Std.Live.Head as Head
+import Std.Log exposing (println)
+import Std.Markdown as Markdown
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Font as Font
+import Api
+import Schema
+import Work
+
+
+-- ─── Schema declaration (read by `sky db migrate --gen`) ─────────
+db : Store.Project
+db =
+    Schema.project
+
+
+-- ─── Seed (`sky db seed`) ────────────────────────────────────────
+-- Idempotent: only writes when the demo subscriber is absent.
+seed : Db -> Task Error ()
+seed _conn =
+    Task.andThen (\_ -> Task.succeed (seedNow ())) (Task.succeed ())
+
+
+seedNow : a -> ()
+seedNow _ =
+    case Api.findNote "release-1-0" of
+
+        Just _ ->
+            let
+                _ = println "dispatch: seed skipped (note exists)"
+            in
+                ()
+
+        Nothing ->
+            let
+                _ = clearQueue ()
+                _ = seedSubscribers ()
+                _ = seedNote ()
+                _ = println "dispatch: seed wrote 2 subscribers + 1 note"
+            in
+                ()
+
+
+-- Seeding puts the app into its known demo state, and that includes an EMPTY
+-- queue. Without this, a re-run against a persistent server (the Postgres arm)
+-- inherits the previous run's failed job and the failure count is off by the
+-- number of times the gate has ever run — the gate would pass once and then
+-- fail forever, or worse, be quietly satisfied by stale rows.
+--
+-- The tables belong to the jobs runtime, not to this app's schema, so they may
+-- not exist yet; `Task.onError` makes each delete a no-op in that case rather
+-- than failing the seed.
+clearQueue : a -> ()
+clearQueue _ =
+    let
+        _ = wipe "DELETE FROM _sky_jobs WHERE name LIKE 'dispatch-%'"
+        _ = wipe "DELETE FROM _sky_jobs_dead WHERE name LIKE 'dispatch-%'"
+    in
+        ()
+
+
+wipe : String -> ()
+wipe sql =
+    let
+        _ =
+            Task.run
+                (Db.exec Schema.conn sql []
+                    |> Task.onError (\_ -> Task.succeed 0))
+    in
+        ()
+
+
+seedSubscribers : a -> ()
+seedSubscribers _ =
+    let
+        _ =
+            Task.run
+                (Store.insert
+                    Schema.conn
+                    Schema.subscribers
+                    { id = 0
+                    , email = "ada@example.test"
+                    , name = "Ada"
+                    , active = 1
+                    })
+        _ =
+            Task.run
+                (Store.insert
+                    Schema.conn
+                    Schema.subscribers
+                    { id = 0
+                    , email = "grace@example.test"
+                    , name = "Grace"
+                    , active = 1
+                    })
+    in
+        ()
+
+
+-- The markdown body is the Std.Markdown fixture. It deliberately carries an
+-- INJECTION attempt: `Std.Markdown` routes everything through typed Std.Ui
+-- constructors and never emits raw HTML, so the script tag must come back
+-- ESCAPED. The gate asserts that, not merely that the page rendered.
+noteMarkdown : String
+noteMarkdown =
+    "# Release 1.0\n\nShipping **today** with `dispatch` jobs.\n\n- durable queue\n- retries\n\n<script>alert(1)</script>\n"
+
+
+seedNote : a -> ()
+seedNote _ =
+    let
+        _ =
+            Task.run
+                (Store.insert
+                    Schema.conn
+                    Schema.notes
+                    { id = 0
+                    , slug = "release-1-0"
+                    , title = "Release 1.0"
+                    , bodyMd = noteMarkdown
+                    })
+    in
+        ()
+
+
+-- ─── Startup banner ──────────────────────────────────────────────
+-- A memoised CAF: evaluates exactly ONCE per process however many sessions
+-- `init` opens, which is what makes the readiness line safe to grep for.
+banner : ()
+banner =
+    let
+        _ = println ("dispatch: driver=" ++ Api.driverName ())
+        _ =
+            println
+                ("dispatch: listening on "
+                    ++ System.getenvOr "SKY_LIVE_PORT" "(sky.toml [live] port)")
+    in
+        ()
+
+-- ─── TEA ─────────────────────────────────────────────────────────
+type alias Model =
+    { slug : String }
+
+type Msg
+    = NoOp
+
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    let
+        _ = banner
+    in
+        ( { slug = "release-1-0" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _msg model =
+    ( model, Cmd.none )
+
+
+view : Model -> any
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.width Ui.fill
+            , Ui.spacing 20
+            , Ui.paddingXY 24 16
+            , Font.family "system-ui, -apple-system, sans-serif"
+            , Font.size 14
+            ]
+            [ Ui.el [] (Ui.text "dispatch"), noteBody model ])
+
+
+-- The Std.Markdown render. `Markdown.render` returns an `Element msg` built
+-- from typed Std.Ui constructors, so it composes directly into the view.
+noteBody : Model -> Element Msg
+noteBody model =
+    case Api.findNote model.slug of
+
+        Just note ->
+            Markdown.render note.bodyMd
+
+        Nothing ->
+            Ui.el [] (Ui.text "no note")
+
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+headFor : Model -> List (Html Msg)
+headFor _model =
+    [ Head.title "Dispatch" ]
+
+
+main =
+    app
+        (config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            , routes =
+                [ route "/" NoOp
+                , api "/api/health" Api.health
+                , api "/api/dispatch/run" Api.dispatchRun
+                , api "/api/deliveries" Api.deliveriesJson
+                , api "/api/jobs/failures" Api.jobFailuresJson
+                , api "/api/email/preview" Api.emailPreview
+                ]
+            , notFound = NoOp
+            }
+            |> withHead headFor)

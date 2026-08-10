@@ -1,0 +1,168 @@
+module Work exposing (..)
+
+-- Work — the background-job + email layer.
+--
+-- `Std.Jobs` and `Std.Email` were both imported by NOTHING before this app, so
+-- neither had ever been executed by a test. Background jobs are a headline
+-- product surface; the whole worker, its retry/backoff schedule and its
+-- dead-letter path had never run outside the Go unit tests.
+--
+-- Two handlers are defined on purpose:
+--
+--   * `deliverJob` SUCCEEDS and leaves a row behind. That is how the gate
+--     proves a job actually RAN — not that `enqueue` returned an id, which it
+--     does whether or not a worker ever picks the job up.
+--   * `failJob` always FAILS. That is how the gate proves a failure is
+--     OBSERVABLE rather than silently swallowed: the runtime must record the
+--     error against the job (attempts + last_error in the `_sky_jobs` ledger)
+--     and schedule a retry. A worker that dropped the error would leave a
+--     clean ledger and look identical to success.
+--
+-- `Jobs.define` is pure (it returns an opaque `Job a`), so these are memoised
+-- CAFs. Evaluating them registers the handler in the runtime registry; because
+-- `enqueue` takes the `Job a` as an argument, registration always happens
+-- before the worker can claim the job.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Std.Db.Store as Store
+import Std.Email as Email
+import Std.Jobs as Jobs
+import Std.Log exposing (println)
+import Schema
+
+
+-- ─── Email composition (Std.Email) ───────────────────────────────
+-- Pure record building; no network unless `send` is called. The gate asserts
+-- these fields over the wire, so the values are deliberately distinctive.
+noteEmail : String -> String -> Email.EmailMessage
+noteEmail toAddr title =
+    Email.defaultMessage
+        { from = "dispatch@example.test"
+        , to = [ toAddr ]
+        , subject = "New note: " ++ title
+        }
+        |> Email.withTextBody ("A new note was published: " ++ title)
+        |> Email.withReplyTo "no-reply@example.test"
+        |> Email.withCc [ "audit@example.test" ]
+
+
+-- | The SMTP provider the delivery job sends through, taken from the
+-- environment so the harness can point it at a local sink. When
+-- `DISPATCH_SMTP_HOST` is unset the job records `sent-nosmtp` and skips the
+-- network entirely — the DB-observable half of the assertion still holds.
+smtpProvider : a -> Email.EmailProvider
+smtpProvider _ =
+    Email.Smtp
+        (Email.defaultSmtpConfig (System.getenvOr "DISPATCH_SMTP_HOST" "")
+            |> Email.withSmtpPort (envInt "DISPATCH_SMTP_PORT" 0))
+
+
+envInt : String -> Int -> Int
+envInt name fallback =
+    case String.toInt (System.getenvOr name "") of
+
+        Just n ->
+            n
+
+        Nothing ->
+            fallback
+
+
+smtpConfigured : a -> Bool
+smtpConfigured _ =
+    System.getenvOr "DISPATCH_SMTP_HOST" "" /= ""
+
+-- ─── Jobs (Std.Jobs) ─────────────────────────────────────────────
+-- The payload is a RECORD, not a scalar. That is deliberate: the payload
+-- crosses a JSON encode/decode boundary in the runtime and comes back as a
+-- generically-decoded value, which is precisely the erasure seam where this
+-- repo's record-shape defects have lived (#166 / #171 / the goty.rs fieldset
+-- collision). A scalar payload would not exercise it.
+type alias DeliverPayload =
+    { noteId : Int
+    , subscriberId : Int
+    , email : String
+    , title : String
+    }
+
+
+deliverJob : Jobs.Job DeliverPayload
+deliverJob =
+    Jobs.define "dispatch-deliver" deliverHandler
+
+
+deliverHandler : DeliverPayload -> Task Error ()
+deliverHandler payload =
+    let
+        outcome = sendFor payload
+        _ =
+            Task.run
+                (Store.insert
+                    Schema.conn
+                    Schema.deliveries
+                    { id = 0
+                    , noteId = payload.noteId
+                    , subscriberId = payload.subscriberId
+                    , status = outcome
+                    , detail = payload.email
+                    })
+        _ =
+            println
+                ("dispatch: delivered note " ++ String.fromInt payload.noteId
+                    ++ " to "
+                    ++ payload.email
+                    ++ " ("
+                    ++ outcome
+                    ++ ")")
+    in
+        Task.succeed ()
+
+
+-- Returns the status string recorded against the delivery row.
+sendFor : DeliverPayload -> String
+sendFor payload =
+    if smtpConfigured () then
+        case Task.run
+                 (Email.send
+                     (smtpProvider ())
+                     (noteEmail payload.email payload.title)) of
+
+            Ok _ ->
+                "sent"
+
+            Err e ->
+                "smtp-error: " ++ Error.toString e
+
+    else
+        "sent-nosmtp"
+
+
+-- | A handler that always fails. The gate asserts the runtime RECORDED the
+-- failure (attempts >= 1, non-empty last_error) rather than swallowing it.
+failJob : Jobs.Job Int
+failJob =
+    Jobs.define "dispatch-always-fails" failHandler
+
+
+failHandler : Int -> Task Error ()
+failHandler n =
+    Task.fail
+        (Error.invalidInput
+            ("dispatch: deliberate job failure for payload " ++ String.fromInt n))
+
+
+-- | A job that is enqueued far in the future and then cancelled, so `cancel`
+-- is exercised on a job that is genuinely still pending.
+cancellableJob : Jobs.Job Int
+cancellableJob =
+    Jobs.define "dispatch-cancellable" cancellableHandler
+
+
+cancellableHandler : Int -> Task Error ()
+cancellableHandler _ =
+    Task.succeed ()

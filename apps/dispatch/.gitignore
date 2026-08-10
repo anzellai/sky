@@ -1,0 +1,9 @@
+sky-out/
+.sky/
+_sky/
+.skycache/
+.skydeps/
+dist/
+*.db
+*.db-wal
+*.db-shm

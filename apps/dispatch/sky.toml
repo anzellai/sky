@@ -1,0 +1,41 @@
+name = "dispatch"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+# Default only. `SKY_LIVE_PORT` in the environment WINS (set-if-unset via
+# `SetPortDefault`), so the harness chooses the port and there is no port
+# literal in bind position anywhere in src/.
+port = 8095
+store = "memory"
+ttl = "30m"
+
+[database]
+# `driver` is DECORATIVE — the real selection happens at connect time from the
+# DSN shape (runtime-go/rt/db_auth.go `detectDriver`). `path` seeds SKY_DB_PATH
+# via `SetSkyDefault` (set-if-unset), so the shell always wins:
+#
+#   SQLite   : SKY_DB_PATH=./dispatch.db            ./sky-out/app
+#   Postgres : SKY_DB_PATH=postgres://u@h:5432/db   ./sky-out/app
+driver = "sqlite"
+path = "dispatch.db"
+
+# NOTE — there is deliberately NO `[jobs]` section here.
+#
+# `runtime-go/rt/jobs_kernel.go` refers to "sky.toml [jobs] store = ..." in
+# four separate comments, but NOTHING parses it: `rust/crates/project/src/build.rs`
+# has no `jobs` key, `docs/sky-toml.md` documents no `[jobs]` section, and the
+# runtime only ever reads the env vars. A `[jobs]` block here would be silently
+# ignored — the false-confidence shape this corpus exists to eliminate — so the
+# jobs backend is configured by environment only:
+#
+#   SKY_JOBS_STORE       memory | sqlite | postgres
+#   SKY_JOBS_STORE_PATH  file path (sqlite) or URL (postgres)
+#
+# The gate sets SKY_JOBS_STORE=sqlite — NOT the `memory` default — on purpose:
+# it asserts a failing job is OBSERVABLE by reading the `_sky_jobs` ledger that
+# backend writes (attempts + last_error). A memory queue leaves no artifact
+# outside the process, so "the failure was recorded" would be unassertable.

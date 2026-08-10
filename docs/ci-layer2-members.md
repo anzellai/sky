@@ -108,6 +108,71 @@ Tiers are v2 §6's table. "Owns" is the surface no other member covers.
 | **E** | Fleet | scenario over A | `apps-fleet` | T3 | multi-replica · shared session store · `ENV=production` refusal |
 | **F** | console + doc | `sky-bundled/` | `apps-bundled` | T1 | 5,746 lines linked into every emitted binary |
 | **G** | CLI verbs | `rust/crates/sky/tests/` | `cli-verbs` | T1 | `init` · `clean` · `watch` · `db` · `install/update/upgrade` |
+| **H** | Dispatch | `apps/dispatch` | `apps-dispatch`, `apps-dispatch-destructive`, `apps-dispatch-postgres` | T1 / T1 / T3 | `Std.Jobs` · `Std.Db.Schema` · `Std.Db.Migrate` · `Std.Markdown` · `Std.Email` · **the file-based migration verbs** |
+
+### Member H exists because five stdlib modules had zero importers
+
+Measured 2026-08-10: `Std.Jobs`, `Std.Db.Schema`, `Std.Db.Migrate`,
+`Std.Markdown` and `Std.Email` were imported by **nothing** in the repo — not an
+example, not an app, not a test, not the bundled console. No test had ever
+executed them. `examples/18-job-queue` is named for the surface and hand-rolls a
+queue on `Std.Db` instead of importing `Std.Jobs`.
+
+The consequence was structural rather than cosmetic: **the file-based migration
+verbs (`sky db init` / `migrate --gen` / `migrate` / `status` / `seed`) were
+exercised by no project at all**, because they are driven by a
+`db : Store.Project` that only a real project can declare.
+
+Dispatch is a Sky.Live app rather than a `Sky.Http.Server` one on purpose:
+Sky.Live's SIGTERM path is the only one that calls `JobsShutdown()`
+(`runtime-go/rt/live.go`), despite `jobs_kernel.go`'s comment claiming
+`Sky.Http.Server` does too.
+
+**Building it found four defects on first contact**, which is the pattern every
+previous tier reported:
+
+1. `chooseJobsStore` degraded to an in-process memory queue on *every* failure
+   path — unknown kind, unopenable SQLite, missing Postgres URL, unreachable
+   Postgres — with only a line on stderr. The identical defect was closed for
+   the *session* store in v0.19.4/#8; the jobs store never got the treatment
+   because nothing imported `Std.Jobs`. Now fatal in production, warn+fallback
+   in dev (`runtime-go/rt/jobs_kernel.go`).
+2. A failed job's `last_error` — the operator's only record of why a job
+   dead-lettered — contained `{0 Error [7 {the real message <nil>}]}`, a Go
+   struct rendering of the Sky Error ADT. `extractErrMsg` type-asserted on the
+   runtime's own error types, which a compiled app never produces: codegen emits
+   a per-app `Sky_Core_Error_ErrorInfo_R`. Fixed structurally in
+   `runtime-go/rt/stdlib_extra.go`, which also closes the same latent hole for
+   every other caller of that helper.
+3. The ten `rt/jobs` Postgres tests were dead — they gated on `SKY_PG_TEST_URL`,
+   a name set nowhere in the repo, while CI sets `SKY_TEST_POSTGRES_DSN`. They
+   pass on first real execution; the store was sound, the tests were unreachable.
+4. `sky.toml [jobs]` is referenced in four `jobs_kernel.go` comments and parsed
+   by nothing — no key in `rust/crates/project/src/build.rs`, no section in
+   `docs/sky-toml.md`. `apps/dispatch/sky.toml` carries a note rather than a
+   block that would be silently ignored.
+
+#### Why the Postgres arm resets first
+
+The arm's first assertion is that `sky db status` exits **1** while a migration
+is pending — the deploy gate. The SQLite arm gets a virgin file every run, but a
+Postgres server persists, so on a second run the migration was already applied
+and that assertion could never fire. The **falsifier caught it**, reporting
+`INCONCLUSIVE (baseline is red)` rather than `PROVEN`. Both arms now begin with
+`sky db drop --yes`, which removes the app's tables and the `_sky_migrations`
+ledger and exits 0 against a database that does not exist yet; `seed`
+additionally clears stale rows from the runtime-owned jobs tables. Verified by
+running the Postgres arm twice in a row.
+
+#### What member H does NOT cover
+
+`Std.Email.send`'s wire behaviour. The gate asserts composition — every builder,
+every field, attachment append order — but not the SMTP bytes, MIME structure,
+or SES SigV4 signing, which live entirely in Go and need a live transport. Worth
+recording: `sendSmtp` reads `m.Attachments` and **never encodes them**, so an
+attachment added through `withAttachment` is silently dropped on the SMTP path
+while the HTTP providers send it. That is an unasserted, unfixed gap, not a
+covered one.
 
 ### Why Postgres is the point of member A
 

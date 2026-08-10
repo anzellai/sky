@@ -1,0 +1,498 @@
+module DbSchemaConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for Std.Db.Schema — the typed, dialect-aware schema
+builder. Nothing in this repo imports Std.Db.Schema, so before this suite not
+one line of it had ever executed.
+
+Two surfaces are pinned by value:
+
+  1. The `Column` / `Table` builders. `Column` is a public type alias, so every
+     constructor and modifier is asserted as a WHOLE-RECORD equality against a
+     hand-written expected record. Applying a modifier to a column whose every
+     field is already non-default is what makes "preserves every other field"
+     non-vacuous — a record-update field drop (issues #166 / #171) fails here
+     by value.
+
+  2. `toProject` — the load-bearing bridge that `sky db migrate --gen` /
+     `sky db push` consume. It encodes each column into a string mini-DSL:
+     base kind (`bigint`/`timestamp` -> `int`, `json` -> `blob`), `?` when the
+     column is nullable (NOT notNull and NOT pk), `!` when auto-increment,
+     `|u` when unique, and a default suffix `|dtext=` / `|dint=` / `|dbool=` /
+     `|dnow`. `Store.Project` is opaque, so each assertion compares the whole
+     `toProject` result against a `Store.project` built from the expected
+     `Store.Table` — an exact by-value pin of the encoding, suffix order
+     included.
+
+NOT covered here: `Schema.createTable` / `Schema.createSchema`. Both are
+`Task Error _` kernels that need a live `Db` connection and emit dialect-
+specific DDL against SQLite / Postgres. That surface is covered at the
+Layer-2 tier, not by this pure-surface conformance suite. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Std.Db.Schema as Schema
+import Std.Db.Store as Store
+import Sky.Test as Test exposing (Test)
+
+
+-- | The documented zero-state of a column: named, typed, no flags, no
+-- default, no foreign key. Mirrors the private `newColumn` in the module, so
+-- every constructor assertion below is a whole-record pin.
+baseColumn : String -> String -> Schema.Column
+baseColumn n k =
+    { name = n
+    , kind = k
+    , isPk = False
+    , isNotNull = False
+    , isUnique = False
+    , isAutoInc = False
+    , defaultKind = "none"
+    , defaultVal = ""
+    , foreignKey = ""
+    }
+
+
+-- | `id "id"` — a TEXT primary key.
+idExpected : Schema.Column
+idExpected =
+    { name = "id"
+    , kind = "text"
+    , isPk = True
+    , isNotNull = False
+    , isUnique = False
+    , isAutoInc = False
+    , defaultKind = "none"
+    , defaultVal = ""
+    , foreignKey = ""
+    }
+
+
+-- | `serial "id"` — an auto-incrementing bigint primary key.
+serialExpected : Schema.Column
+serialExpected =
+    { idExpected | kind = "bigint", isAutoInc = True }
+
+
+-- | A column with EVERY field set to a non-default value. Modifiers that
+-- write a value field (defaults / foreign key) are applied to this, so the
+-- whole-record assertion proves the other eight fields survive.
+populated : Schema.Column
+populated =
+    { name = "order_id"
+    , kind = "text"
+    , isPk = True
+    , isNotNull = True
+    , isUnique = True
+    , isAutoInc = True
+    , defaultKind = "text"
+    , defaultVal = "seed"
+    , foreignKey = "orders(id)"
+    }
+
+
+-- | `populated` with the four boolean flags cleared — so the flag modifiers
+-- have something to actually flip, while name/kind/default/foreignKey stay
+-- non-default and any drop shows up.
+flagsOff : Schema.Column
+flagsOff =
+    { populated
+        | isPk = False
+        , isNotNull = False
+        , isUnique = False
+        , isAutoInc = False
+    }
+
+
+-- | A column whose `kind` is not one of the eight known kinds — reaches the
+-- catch-all branch of the base-kind encoder.
+unknownKind : Schema.Column
+unknownKind =
+    baseColumn "weird" "uuid"
+
+
+-- | Run ONE column through the real `toProject` bridge.
+encoded : Schema.Column -> Store.Project
+encoded col =
+    Schema.toProject [ Schema.table "t" [ col ] ]
+
+
+-- | The expected `toProject` output for a single-column table `t`.
+expectEncoded : String -> String -> String -> Store.Project
+expectEncoded colName pk kindStr =
+    Store.project [ { name = "t", pk = pk, cols = [ ( colName, kindStr ) ] } ]
+
+
+-- | A realistic users table: serial pk, unique text, defaulted text, and a
+-- nullable text — so the suffix COMBINATIONS are exercised together.
+usersTable : Schema.Table
+usersTable =
+    Schema.table "users"
+        [ Schema.serial "id"
+        , Schema.text "email" |> Schema.notNull |> Schema.unique
+        , Schema.text "role" |> Schema.notNull |> Schema.defaultText "customer"
+        , Schema.text "nickname"
+        ]
+
+
+-- | Two indexes attached in a known order, one plain and one unique.
+indexedTable : Schema.Table
+indexedTable =
+    Schema.table "orders"
+        [ Schema.id "id"
+        , Schema.text "user_id" |> Schema.notNull |> Schema.references "users" "id"
+        ]
+        |> Schema.withIndex "idx_orders_user" [ "user_id" ]
+        |> Schema.withUniqueIndex "idx_orders_ref" [ "user_id", "id" ]
+
+
+tests : List Test
+tests =
+    [ -- ── Column constructors — kind string + preset flags, whole record ──
+      Test.test "text builds kind \"text\" with no flags set"
+        (\_ -> Test.equal (baseColumn "slug" "text") (Schema.text "slug"))
+    , Test.test "int builds kind \"int\" with no flags set"
+        (\_ -> Test.equal (baseColumn "qty" "int") (Schema.int "qty"))
+    , Test.test "bigInt builds kind \"bigint\" with no flags set"
+        (\_ -> Test.equal (baseColumn "created_at" "bigint") (Schema.bigInt "created_at"))
+    , Test.test "real builds kind \"real\" with no flags set"
+        (\_ -> Test.equal (baseColumn "ratio" "real") (Schema.real "ratio"))
+    , Test.test "bool builds kind \"bool\" with no flags set"
+        (\_ -> Test.equal (baseColumn "active" "bool") (Schema.bool "active"))
+    , Test.test "timestamp builds kind \"timestamp\" with no flags set"
+        (\_ -> Test.equal (baseColumn "seen_at" "timestamp") (Schema.timestamp "seen_at"))
+    , Test.test "blob builds kind \"blob\" with no flags set"
+        (\_ -> Test.equal (baseColumn "payload" "blob") (Schema.blob "payload"))
+    , Test.test "json builds kind \"json\" with no flags set"
+        (\_ -> Test.equal (baseColumn "meta" "json") (Schema.json "meta"))
+    , Test.test "id presets primaryKey over kind \"text\" (and nothing else)"
+        (\_ -> Test.equal idExpected (Schema.id "id"))
+    , Test.test "serial presets autoIncrement + primaryKey over kind \"bigint\""
+        (\_ -> Test.equal serialExpected (Schema.serial "id"))
+    , Test.test "id is NOT notNull — the pk flag alone carries non-nullability"
+        (\_ -> Test.isFalse (Schema.id "id").isNotNull)
+    , Test.test "serial is autoInc AND pk (both flags, not just one)"
+        (\_ ->
+            Test.equal ( True, True )
+                ( (Schema.serial "id").isAutoInc, (Schema.serial "id").isPk )
+        )
+    , Test.test "constructors carry the column name through verbatim"
+        (\_ -> Test.equal "user_id" (Schema.text "user_id").name)
+
+      -- ── Flag modifiers — flip exactly one field, preserve the other eight ──
+    , Test.test "primaryKey sets isPk and preserves every other field"
+        (\_ -> Test.equal { flagsOff | isPk = True } (Schema.primaryKey flagsOff))
+    , Test.test "notNull sets isNotNull and preserves every other field"
+        (\_ -> Test.equal { flagsOff | isNotNull = True } (Schema.notNull flagsOff))
+    , Test.test "unique sets isUnique and preserves every other field"
+        (\_ -> Test.equal { flagsOff | isUnique = True } (Schema.unique flagsOff))
+    , Test.test "autoIncrement sets isAutoInc and preserves every other field"
+        (\_ -> Test.equal { flagsOff | isAutoInc = True } (Schema.autoIncrement flagsOff))
+    , Test.test "flag modifiers compose: notNull |> unique sets both"
+        (\_ ->
+            Test.equal { flagsOff | isNotNull = True, isUnique = True }
+                (flagsOff |> Schema.notNull |> Schema.unique)
+        )
+    , Test.test "flag modifiers are idempotent: notNull twice == notNull once"
+        (\_ ->
+            Test.equal (Schema.notNull flagsOff)
+                (flagsOff |> Schema.notNull |> Schema.notNull)
+        )
+    , Test.test "flag modifiers are order-independent: notNull|>unique == unique|>notNull"
+        (\_ ->
+            Test.equal (flagsOff |> Schema.notNull |> Schema.unique)
+                (flagsOff |> Schema.unique |> Schema.notNull)
+        )
+
+      -- ── Default modifiers — exact defaultKind / defaultVal pairs ──
+    , Test.test "defaultInt 7 writes defaultKind \"int\" + defaultVal \"7\""
+        (\_ ->
+            Test.equal { populated | defaultKind = "int", defaultVal = "7" }
+                (Schema.defaultInt 7 populated)
+        )
+    , Test.test "defaultInt 0 writes defaultVal \"0\" (not the empty string)"
+        (\_ ->
+            Test.equal ( "int", "0" )
+                ( (Schema.defaultInt 0 flagsOff).defaultKind
+                , (Schema.defaultInt 0 flagsOff).defaultVal
+                )
+        )
+    , Test.test "defaultInt -3 writes the negative sign into defaultVal"
+        (\_ -> Test.equal "-3" (Schema.defaultInt (-3) flagsOff).defaultVal)
+    , Test.test "defaultText \"x\" writes defaultKind \"text\" + defaultVal \"x\""
+        (\_ ->
+            Test.equal { populated | defaultKind = "text", defaultVal = "x" }
+                (Schema.defaultText "x" populated)
+        )
+    , Test.test "defaultText \"\" writes defaultKind \"text\" with an empty value"
+        (\_ ->
+            Test.equal ( "text", "" )
+                ( (Schema.defaultText "" flagsOff).defaultKind
+                , (Schema.defaultText "" flagsOff).defaultVal
+                )
+        )
+    , Test.test "defaultBool True writes defaultKind \"bool\" + defaultVal \"true\""
+        (\_ ->
+            Test.equal { populated | defaultKind = "bool", defaultVal = "true" }
+                (Schema.defaultBool True populated)
+        )
+    , Test.test "defaultBool False writes defaultKind \"bool\" + defaultVal \"false\""
+        (\_ ->
+            Test.equal { populated | defaultKind = "bool", defaultVal = "false" }
+                (Schema.defaultBool False populated)
+        )
+    , Test.test "defaultNow writes defaultKind \"now\" + CLEARS defaultVal to \"\""
+        (\_ ->
+            Test.equal { populated | defaultKind = "now", defaultVal = "" }
+                (Schema.defaultNow populated)
+        )
+    , Test.test "a later default modifier overwrites an earlier one (last wins)"
+        (\_ ->
+            Test.equal ( "bool", "true" )
+                ( (flagsOff |> Schema.defaultInt 1 |> Schema.defaultBool True).defaultKind
+                , (flagsOff |> Schema.defaultInt 1 |> Schema.defaultBool True).defaultVal
+                )
+        )
+    , Test.test "an unmodified column carries defaultKind \"none\""
+        (\_ -> Test.equal "none" (Schema.text "slug").defaultKind)
+
+      -- ── references — writes "table(column)" into foreignKey ──
+    , Test.test "references \"users\" \"id\" writes foreignKey \"users(id)\""
+        (\_ ->
+            Test.equal { populated | foreignKey = "users(id)" }
+                (Schema.references "users" "id" populated)
+        )
+    , Test.test "references composes the two arguments in table(column) order"
+        (\_ -> Test.equal "orders(ref)" (Schema.references "orders" "ref" flagsOff).foreignKey)
+    , Test.test "references does NOT set any flag or default"
+        (\_ ->
+            Test.equal { flagsOff | foreignKey = "users(id)" }
+                (Schema.references "users" "id" flagsOff)
+        )
+
+      -- ── table / withIndex / withUniqueIndex ──
+    , Test.test "table carries its name through"
+        (\_ -> Test.equal "users" usersTable.name)
+    , Test.test "table carries its columns through in declaration order"
+        (\_ ->
+            Test.equal [ "id", "email", "role", "nickname" ]
+                (List.map .name usersTable.columns)
+        )
+    , Test.test "table starts with zero indexes"
+        (\_ -> Test.equal 0 (List.length (Schema.table "t" [ Schema.id "id" ]).indexes))
+    , Test.test "withIndex + withUniqueIndex APPEND in call order"
+        (\_ ->
+            Test.equal [ "idx_orders_user", "idx_orders_ref" ]
+                (List.map .name indexedTable.indexes)
+        )
+    , Test.test "isUniqueIndex is True only for withUniqueIndex"
+        (\_ -> Test.equal [ False, True ] (List.map .isUniqueIndex indexedTable.indexes))
+    , Test.test "index column lists carry through verbatim (multi-column supported)"
+        (\_ ->
+            Test.equal [ [ "user_id" ], [ "user_id", "id" ] ]
+                (List.map .columns indexedTable.indexes)
+        )
+    , Test.test "reversing the index calls reverses the stored order (append, not prepend)"
+        (\_ ->
+            Test.equal [ "idx_orders_ref", "idx_orders_user" ]
+                (List.map .name
+                    (Schema.table "orders" [ Schema.id "id" ]
+                        |> Schema.withUniqueIndex "idx_orders_ref" [ "user_id", "id" ]
+                        |> Schema.withIndex "idx_orders_user" [ "user_id" ]
+                    ).indexes
+                )
+        )
+    , Test.test "withIndex leaves the table name and columns untouched"
+        (\_ ->
+            Test.equal ( "orders", [ "id", "user_id" ] )
+                ( indexedTable.name, List.map .name indexedTable.columns )
+        )
+
+      -- ── toProject — base kind mapping (one column, no flags) ──
+    , Test.test "toProject encodes a nullable text column as \"text?\""
+        (\_ -> Test.equal (expectEncoded "slug" "" "text?") (encoded (Schema.text "slug")))
+    , Test.test "toProject encodes a nullable int column as \"int?\""
+        (\_ -> Test.equal (expectEncoded "qty" "" "int?") (encoded (Schema.int "qty")))
+    , Test.test "toProject maps bigint down to base \"int\""
+        (\_ -> Test.equal (expectEncoded "ms" "" "int?") (encoded (Schema.bigInt "ms")))
+    , Test.test "toProject maps timestamp down to base \"int\""
+        (\_ -> Test.equal (expectEncoded "seen_at" "" "int?") (encoded (Schema.timestamp "seen_at")))
+    , Test.test "toProject maps json down to base \"blob\""
+        (\_ -> Test.equal (expectEncoded "meta" "" "blob?") (encoded (Schema.json "meta")))
+    , Test.test "toProject encodes blob as base \"blob\""
+        (\_ -> Test.equal (expectEncoded "payload" "" "blob?") (encoded (Schema.blob "payload")))
+    , Test.test "toProject encodes bool as base \"bool\""
+        (\_ -> Test.equal (expectEncoded "active" "" "bool?") (encoded (Schema.bool "active")))
+    , Test.test "toProject encodes real as base \"real\""
+        (\_ -> Test.equal (expectEncoded "ratio" "" "real?") (encoded (Schema.real "ratio")))
+    , Test.test "toProject falls back to base \"text\" for an unrecognised kind"
+        (\_ -> Test.equal (expectEncoded "weird" "" "text?") (encoded unknownKind))
+
+      -- ── toProject — the nullable "?" suffix rule ──
+    , Test.test "notNull drops the \"?\" suffix"
+        (\_ ->
+            Test.equal (expectEncoded "slug" "" "text")
+                (encoded (Schema.notNull (Schema.text "slug")))
+        )
+    , Test.test "a primary key drops the \"?\" suffix even without notNull"
+        (\_ -> Test.equal (expectEncoded "id" "id" "text") (encoded (Schema.id "id")))
+    , Test.test "pk + notNull together still encode as plain \"text\" (no double suffix)"
+        (\_ ->
+            Test.equal (expectEncoded "id" "id" "text")
+                (encoded (Schema.notNull (Schema.id "id")))
+        )
+
+      -- ── toProject — the "!" autoInc suffix, after the nullable slot ──
+    , Test.test "serial encodes as \"int!\" (bigint base, pk drops ?, autoInc adds !)"
+        (\_ -> Test.equal (expectEncoded "id" "id" "int!") (encoded (Schema.serial "id")))
+    , Test.test "autoIncrement on a nullable int encodes as \"int?!\" (? before !)"
+        (\_ ->
+            Test.equal (expectEncoded "n" "" "int?!")
+                (encoded (Schema.autoIncrement (Schema.int "n")))
+        )
+
+      -- ── toProject — the "|u" unique suffix ──
+    , Test.test "unique on a notNull text encodes as \"text|u\""
+        (\_ ->
+            Test.equal (expectEncoded "email" "" "text|u")
+                (encoded (Schema.unique (Schema.notNull (Schema.text "email"))))
+        )
+    , Test.test "unique on a nullable text encodes as \"text?|u\" (? then |u)"
+        (\_ ->
+            Test.equal (expectEncoded "email" "" "text?|u")
+                (encoded (Schema.unique (Schema.text "email")))
+        )
+    , Test.test "unique serial encodes as \"int!|u\" (! before |u)"
+        (\_ ->
+            Test.equal (expectEncoded "id" "id" "int!|u")
+                (encoded (Schema.unique (Schema.serial "id")))
+        )
+
+      -- ── toProject — the default suffixes ──
+    , Test.test "defaultText encodes as \"|dtext=<value>\""
+        (\_ ->
+            Test.equal (expectEncoded "role" "" "text|dtext=customer")
+                (encoded (Schema.defaultText "customer" (Schema.notNull (Schema.text "role"))))
+        )
+    , Test.test "defaultInt encodes as \"|dint=<value>\""
+        (\_ ->
+            Test.equal (expectEncoded "qty" "" "int|dint=0")
+                (encoded (Schema.defaultInt 0 (Schema.notNull (Schema.int "qty"))))
+        )
+    , Test.test "defaultBool True encodes as \"|dbool=true\""
+        (\_ ->
+            Test.equal (expectEncoded "active" "" "bool|dbool=true")
+                (encoded (Schema.defaultBool True (Schema.notNull (Schema.bool "active"))))
+        )
+    , Test.test "defaultBool False encodes as \"|dbool=false\""
+        (\_ ->
+            Test.equal (expectEncoded "active" "" "bool|dbool=false")
+                (encoded (Schema.defaultBool False (Schema.notNull (Schema.bool "active"))))
+        )
+    , Test.test "defaultNow encodes as a bare \"|dnow\" (no value)"
+        (\_ ->
+            Test.equal (expectEncoded "created_at" "" "int|dnow")
+                (encoded (Schema.defaultNow (Schema.notNull (Schema.timestamp "created_at"))))
+        )
+    , Test.test "no default modifier emits NO default suffix"
+        (\_ ->
+            Test.equal (expectEncoded "role" "" "text")
+                (encoded (Schema.notNull (Schema.text "role")))
+        )
+    , Test.test "unique + default emit in |u-then-default order"
+        (\_ ->
+            Test.equal (expectEncoded "slug" "" "text?|u|dtext=x")
+                (encoded (Schema.defaultText "x" (Schema.unique (Schema.text "slug"))))
+        )
+    , Test.test "nullable + defaultNow encodes as \"int?|dnow\""
+        (\_ ->
+            Test.equal (expectEncoded "seen_at" "" "int?|dnow")
+                (encoded (Schema.defaultNow (Schema.timestamp "seen_at")))
+        )
+    , Test.test "references does NOT appear in the toProject encoding"
+        (\_ ->
+            Test.equal (expectEncoded "user_id" "" "text")
+                (encoded (Schema.references "users" "id" (Schema.notNull (Schema.text "user_id"))))
+        )
+
+      -- ── toProject — the pk field ──
+    , Test.test "pk is the name of the primaryKey column"
+        (\_ -> Test.equal (expectEncoded "uid" "uid" "text") (encoded (Schema.id "uid")))
+    , Test.test "pk is \"\" when no column is a primary key"
+        (\_ ->
+            Test.equal (expectEncoded "slug" "" "text")
+                (encoded (Schema.notNull (Schema.text "slug")))
+        )
+    , Test.test "pk picks the FIRST primaryKey column when two are marked"
+        (\_ ->
+            Test.equal
+                (Store.project
+                    [ { name = "t"
+                      , pk = "a"
+                      , cols = [ ( "a", "text" ), ( "b", "text" ) ]
+                      }
+                    ]
+                )
+                (Schema.toProject
+                    [ Schema.table "t" [ Schema.id "a", Schema.id "b" ] ]
+                )
+        )
+
+      -- ── toProject — whole-table + multi-table ──
+    , Test.test "toProject encodes the realistic users table exactly"
+        (\_ ->
+            Test.equal
+                (Store.project
+                    [ { name = "users"
+                      , pk = "id"
+                      , cols =
+                            [ ( "id", "int!" )
+                            , ( "email", "text|u" )
+                            , ( "role", "text|dtext=customer" )
+                            , ( "nickname", "text?" )
+                            ]
+                      }
+                    ]
+                )
+                (Schema.toProject [ usersTable ])
+        )
+    , Test.test "toProject preserves table order across multiple tables"
+        (\_ ->
+            Test.equal
+                (Store.project
+                    [ { name = "users", pk = "id", cols = [ ( "id", "text" ) ] }
+                    , { name = "orders", pk = "id", cols = [ ( "id", "text" ) ] }
+                    ]
+                )
+                (Schema.toProject
+                    [ Schema.table "users" [ Schema.id "id" ]
+                    , Schema.table "orders" [ Schema.id "id" ]
+                    ]
+                )
+        )
+    , Test.test "toProject of an empty table list yields a zero-table project"
+        (\_ -> Test.equal 0 (Store.projectTableCount (Schema.toProject [])))
+    , Test.test "toProject table count matches the number of tables in"
+        (\_ -> Test.equal 2 (Store.projectTableCount (Schema.toProject [ usersTable, indexedTable ])))
+    , Test.test "toProject DROPS indexes — documented: tables + columns only"
+        (\_ ->
+            Test.equal
+                (Schema.toProject
+                    [ Schema.table "orders"
+                        [ Schema.id "id"
+                        , Schema.text "user_id" |> Schema.notNull |> Schema.references "users" "id"
+                        ]
+                    ]
+                )
+                (Schema.toProject [ indexedTable ])
+        )
+    , Test.test "toProject of a column-less table encodes an empty cols list"
+        (\_ ->
+            Test.equal (Store.project [ { name = "t", pk = "", cols = [] } ])
+                (Schema.toProject [ Schema.table "t" [] ])
+        )
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

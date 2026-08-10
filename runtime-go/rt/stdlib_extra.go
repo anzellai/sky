@@ -544,6 +544,20 @@ func extractErrMsg(result any) string {
 			if s, ok := adt.Fields[1].(string); ok {
 				return s
 			}
+			// The COMPILED-APP shape. `Error.invalidInput` in real Sky source
+			// lowers to a GENERATED info struct (`Sky_Core_Error_ErrorInfo_R`)
+			// declared in the app's own package — not `rt.SkyErrorInfo`. The
+			// type assertions above can never match it, so before this branch
+			// every caller fell through to `%v` and rendered the ADT:
+			//
+			//   {0 Error [7 {the real message <nil>}]}
+			//
+			// which is what `_sky_jobs.last_error` actually contained. The
+			// runtime cannot name an app-package type, so it reads the field
+			// structurally.
+			if msg, ok := messageFieldOf(adt.Fields[1]); ok {
+				return msg
+			}
 		}
 		if len(adt.Fields) > 0 {
 			if s, ok := adt.Fields[0].(string); ok {
@@ -552,6 +566,27 @@ func extractErrMsg(result any) string {
 		}
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// messageFieldOf reads a string `Message` field out of any struct, however it
+// was declared. Codegen emits one generated info struct per app, so the
+// runtime can only ever reach it structurally.
+func messageFieldOf(v any) (string, bool) {
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
+		if rv.IsNil() {
+			return "", false
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return "", false
+	}
+	f := rv.FieldByName("Message")
+	if !f.IsValid() || f.Kind() != reflect.String {
+		return "", false
+	}
+	return f.String(), true
 }
 
 func JsonDec_decodeString(decoder any, input any) any {
