@@ -6466,12 +6466,13 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 		cookieName = "sky_sid"
 	}
 	if c, err := r.Cookie(cookieName); err == nil {
-		// L2: re-issue the cookie with a fresh MaxAge on every page load so the
-		// BROWSER's expiry window SLIDES in lockstep with the server-side TTL
-		// (which slides on activity via touchLastSeen). Without this, the cookie
-		// expired at its ORIGINAL fixed window while the server session kept
-		// sliding — an actively-used session past that window lost its cookie →
-		// new session → `init` wiped the Model (cart / auth / form) mid-use.
+		// L2: re-issue the cookie with a fresh MaxAge on every page load, so an
+		// actively-browsed session keeps a young cookie. Note this re-issue can
+		// only ever cover ACTIVITY — a GET here, a POST in handleEvent. It does
+		// NOT put the browser in lockstep with the server-side TTL, because that
+		// TTL also slides on the SSE heartbeat, which cannot write a cookie into
+		// an already-open stream. Idle-under-SSE is covered by the Max-Age floor
+		// in slidingCookieMaxAgeSeconds, not by this re-issue.
 		writeSessionCookie(w, cookieName, c.Value, ttl)
 		return c.Value
 	}
@@ -6482,18 +6483,20 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 	return sid
 }
 
-// writeSessionCookie sets the session cookie with a fresh MaxAge (a sliding
-// window keyed to the store TTL). Persistent (not a session cookie) so it
-// survives tab-close + browser-restart up to the same window the stored session
-// is valid for — a session cookie (no MaxAge) would be dropped by browsers that
-// clear session cookies on last-tab-close (Chrome without "continue where you
-// left off", some Safari configs), forcing `init` on every reopen and wiping
-// the user's Model even though the sqlite/redis/postgres store still had it.
+// writeSessionCookie sets the session cookie with a fresh MaxAge. Persistent
+// (not a session cookie) so it survives tab-close + browser-restart — a session
+// cookie (no MaxAge) would be dropped by browsers that clear session cookies on
+// last-tab-close (Chrome without "continue where you left off", some Safari
+// configs), forcing `init` on every reopen and wiping the user's Model even
+// though the sqlite/redis/postgres store still had it.
+//
+// The MaxAge is deliberately NOT the store TTL. See slidingCookieMaxAgeSeconds:
+// the server session slides without bound on the SSE heartbeat while this
+// cookie can only be re-issued by a GET/POST, so a TTL-keyed MaxAge expires the
+// cookie out from under a session that is still alive. Server-side reap remains
+// the sole authority on when a session ends.
 func writeSessionCookie(w http.ResponseWriter, cookieName, sid string, ttl time.Duration) {
-	maxAge := int(ttl.Seconds())
-	if maxAge <= 0 {
-		maxAge = 30 * 60 // 30 min sane default
-	}
+	maxAge := slidingCookieMaxAgeSeconds(ttl)
 	// SameSite: when SKY_LIVE_FRAME_ANCESTORS opts this deploy into being iframed
 	// cross-origin (e.g. a control plane's preview pane), the browser would
 	// silently drop a Lax-default cookie on every iframe request — Sky.Live's

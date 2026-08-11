@@ -118,6 +118,16 @@ L2/L3/L4 shipped with the L2 regression; full runtime `go test ./rt/` green.
 
 ### Tier 2 — session-lifecycle correctness (ship with Tier 1)
 - **L2 sliding `sky_sid` cookie** (re-issue MaxAge each request; live.go:6022).
+  *Correction (v0.20.0):* re-issuing on each request is necessary but NOT
+  sufficient, and L2 alone left the incident open. A request only happens on a
+  page GET or an event POST; an IDLE tab makes neither, while its SSE heartbeat
+  keeps sliding the server session (L3 below). Keying the cookie's Max-Age to
+  the store TTL therefore expired it out from under a session that was still
+  alive — the next click got `X-Sky-Status: session-lost` and the client
+  hard-reloaded. An SSE stream's headers are written once at connect, so no
+  heartbeat can re-issue a cookie mid-stream; the Max-Age must simply outlive
+  the sliding window. See `slidingCookieMaxAgeSeconds` (live_store.go), now
+  shared with the `__sky_csrf` cookie, which had the identical defect (bug #11).
 - **L3 SSE heartbeat touches `lastSeen` + `case <-sessDone: return`** in the SSE
   loop (live.go:5974) so an idle-but-connected session isn't evicted under a
   live connection.

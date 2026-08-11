@@ -304,9 +304,27 @@ async function scenarioIdle(browser) {
             const noteAfter = await page.locator('#note-echo').innerText().catch(() => '');
 
             if (gotSessionLost) {
-                failure = 'post-idle interaction returned X-Sky-Status: session-lost — '
-                    + 'the server EVICTED the session under a live SSE (heartbeat '
-                    + 'touchLastSeen / sliding sky_sid keep-alive FAILED).';
+                // TWO distinct mechanisms produce this one header, and they live in
+                // different subsystems. writeSessionLost is deliberately identical for
+                // both (it must not be an oracle for which sids exist), so the header
+                // alone cannot tell them apart — do not guess:
+                //   (a) the server EVICTED the session — the SSE heartbeat's
+                //       touchLastSeen failed to slide lastSeen and the store's cleanup
+                //       tick reaped it (runtime-go/rt/live_store.go cleanupLoop).
+                //   (b) the browser DROPPED the sky_sid cookie while the server session
+                //       was still alive — its Max-Age tracked the store TTL, and nothing
+                //       re-issues the cookie during idle (an SSE writes headers once, at
+                //       connect). boundSessionID then sees no cookie and reports the
+                //       SAME session-lost. This was the actual cause pre-v0.20.0.
+                // Discriminate by re-requesting with an explicit `Cookie: sky_sid=<sid>`
+                // header (bypasses Max-Age): still 404 => (a); 200 => (b).
+                failure = 'post-idle interaction returned X-Sky-Status: session-lost. '
+                    + 'EITHER the server evicted the session under a live SSE '
+                    + '(heartbeat touchLastSeen failed) OR the browser dropped the '
+                    + 'sky_sid cookie while the session was still alive (Max-Age keyed '
+                    + 'to the store TTL). Discriminate: replay the request with an '
+                    + 'explicit `Cookie: sky_sid=<sid>` header — still 404 means '
+                    + 'eviction, 200 means cookie expiry.';
             } else if (got403) {
                 failure = 'post-idle event POST returned HTTP 403 (CSRF). The session is '
                     + 'ALIVE server-side (SSE stayed connected, no reload), but the '

@@ -75,13 +75,12 @@ import (
 // refresh fixes it" incident. The double-submit token's security is the
 // cookie==header match, NOT a short cookie lifetime, so use a long fixed floor
 // (30 days) decoupled from the session TTL, never below a longer configured TTL.
+// Shares slidingCookieMaxAgeSeconds with the sky_sid session cookie
+// (writeSessionCookie): both guard the same sliding session, so the rule lives
+// in ONE place rather than being re-derived per cookie — the drift that left
+// sky_sid on a TTL-keyed Max-Age after this one was fixed.
 func csrfCookieMaxAgeSeconds() int {
-	const floorSeconds = 30 * 24 * 3600 // 30 days — outlives any realistic idle-slide
-	ttl := parseTTL(skyGetenv("LIVE_TTL"), "", 30*24*time.Hour)
-	if s := int(ttl.Seconds()); s > floorSeconds {
-		return s
-	}
-	return floorSeconds
+	return slidingCookieMaxAgeSeconds(parseTTL(skyGetenv("LIVE_TTL"), "", 30*24*time.Hour))
 }
 
 const (
