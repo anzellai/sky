@@ -309,8 +309,6 @@ jobs:
         run: cargo run -q -p xtask -- coerce-floor
       - name: Gate — runtime rt tests (go test)
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
-      - name: Gate — build-run (emit + go build every example; FFI skipped)
-        run: cargo run -q -p xtask -- build-run --all
       - name: Gate — golden (runtime-correctness, CLI subset)
         run: cargo run -q -p xtask -- build-run --shape cli --run --golden
       - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
@@ -319,6 +317,55 @@ jobs:
         run: cargo run -q -p xtask -- build-run --shape http --run
       - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
         run: cargo run -q -p xtask -- build-run --shape tui --run
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── Emit + go build every example (split out of codegen-build) ──────────────
+  #
+  # 544s of codegen-build's 941s, and the single largest step in the tier after
+  # two rounds of optimisation. Making it concurrent helped less here than
+  # locally — 3.2x on a 10-core dev box, ~1.35x on a 4-core runner, because
+  # `go build` already saturates those cores by itself. Splitting is the lever
+  # that still works when parallelism inside a step has run out: the tier is
+  # `setup + max(dependent)`, so this leaves the critical path rather than
+  # merely shrinking on it.
+  #
+  # Nothing is dropped — `ci-green` requires this job, so the fan-in cannot pass
+  # while every example is not building.
+  build-corpus:
+    needs: setup
+    runs-on: ubuntu-latest
+    # ~76s workspace build + ~59s cache restore + ~544s build-run ≈ 12 min.
+    # 1.5x = 18.
+    timeout-minutes: 18
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-linux-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - run: cargo build --workspace --locked
+      - name: Gate — build-run (emit + go build every example; FFI skipped)
+        run: cargo run -q -p xtask -- build-run --all
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -523,6 +570,7 @@ jobs:
       - parity-reject
       - repro
       - codegen-build
+      - build-corpus
       - behaviour-docs
       - lsp-fuzz
       - integration-postgres
