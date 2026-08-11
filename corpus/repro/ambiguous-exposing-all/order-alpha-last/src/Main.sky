@@ -1,0 +1,20 @@
+-- PINNED REPRO — the same program with the two import lines SWAPPED.
+--
+-- Byte-identical to `../order-beta-last/src/Main.sky` apart from the order of
+-- the last two imports, and it prints ALPHA where that one prints BETA. The
+-- pair IS the defect: the value is a function of import order, with no
+-- diagnostic either way.
+--
+-- expect: REJECT (ambiguous name). Actual today: accept, order-dependent value.
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Ambig.Beta exposing (..)
+import Ambig.Alpha exposing (..)
+
+
+main =
+    println label

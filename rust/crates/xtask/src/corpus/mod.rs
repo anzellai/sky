@@ -35,6 +35,7 @@ pub mod isolation;
 pub mod manifest;
 pub mod reject_matrix;
 pub mod runner;
+pub mod stdlib;
 pub mod witness;
 
 use std::path::Path;
@@ -60,9 +61,45 @@ pub fn commit_seed(root: &Path) -> usize {
         .unwrap_or(0)
 }
 
+/// Write every generated case's Sky source under `dir`, one project per case.
+///
+/// A debugging aid, not a gate: the corpus checks in a manifest rather than
+/// thousands of `.sky` files (see `manifest.rs`), which is right for review and
+/// unhelpful the moment a generator edit produces a syntax error. This turns
+/// "run 320 builds and read the tail" into "look at the file".
+fn dump_sources(root: &Path, dir: &Path) -> i32 {
+    let _ = root;
+    let cases = all_cases();
+    for c in &cases {
+        let base = dir.join(c.id.replace('/', "__")).join("src");
+        for (name, src) in &c.modules {
+            let p = base.join(name.replace('.', "/")).with_extension("sky");
+            if let Some(parent) = p.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!("corpus: mkdir {}: {e}", parent.display());
+                    return 1;
+                }
+            }
+            if let Err(e) = std::fs::write(&p, src) {
+                eprintln!("corpus: write {}: {e}", p.display());
+                return 1;
+            }
+        }
+    }
+    println!("wrote {} case project(s) under {}", cases.len(), dir.display());
+    0
+}
+
 pub fn run(args: &[String], root: &Path) -> i32 {
+    if let Some(a) = args.iter().find(|a| a.starts_with("--dump-sources=")) {
+        let dir = a.split_once('=').map(|(_, v)| v).unwrap_or_default();
+        return dump_sources(root, Path::new(dir));
+    }
     if args.iter().any(|a| a == "--prove-isolation-needed") {
         return isolation::prove_isolation_needed(root);
+    }
+    if args.iter().any(|a| a == "--stdlib-coverage") {
+        return stdlib::report(root);
     }
     if args.iter().any(|a| a == "--isolation") {
         return isolation::run(root);
@@ -94,7 +131,8 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     }
     eprintln!(
         "usage: xtask corpus [--spike[=N] | --run | --isolation | --witness \
-         | --reject | --emit-shape | --emit-manifest | --check-manifest]"
+         | --reject | --emit-shape | --emit-manifest | --check-manifest \
+         | --stdlib-coverage | --dump-sources=DIR]"
     );
     2
 }
@@ -159,6 +197,13 @@ mod tests {
             let pin_id = format!("{}/{}", s.name, pin.slug());
             assert!(ids.contains(&pin_id), "pinned coordinate {pin_id} is not in the corpus");
             for n in pin.neighbourhood(s.axes) {
+                // An inadmissible neighbour is not a gap: it is a point where
+                // the generator has nothing it can independently predict, and
+                // `axes::admissible` says so by name. Requiring it here would
+                // force a vacuous case into existence to satisfy a count.
+                if !axes::admissible(s.name, &n) {
+                    continue;
+                }
                 let nid = format!("{}/{}", s.name, n.slug());
                 assert!(
                     ids.contains(&nid),

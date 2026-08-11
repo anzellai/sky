@@ -28,7 +28,8 @@
 //! always the latter.
 
 use super::axes::{
-    Assignment, Axis, Stratum, COLLIDER, COLLISION, ERASURE, IMPORT_SHAPE, INNER, POSITION,
+    Assignment, Axis, Stratum, COLLIDER, COLLISION, EDGE, ERASURE, IMPORT_SHAPE, INNER, POSITION,
+    SHADOW,
 };
 use super::gen;
 use super::runner;
@@ -57,6 +58,16 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         // nothing in the stdlib — is what makes the otherwise-identical program
         // correct, so that is the axis this stratum is about.
         "fieldset_ctor" => (COLLIDER, "local"),
+        // Family S. `nominal` is the happy path that always worked; moving to
+        // an empty / boundary / unicode / failure input is what breaks a
+        // surface, so `edge` is the axis and `nominal` neutralises it.
+        "stdlib_edge" => (EDGE, "nominal"),
+        // NOT `import_shape` — see the module docstring and
+        // [`witness_exemption`]: import syntax is erased by name resolution, so
+        // no emit-shape witness for it can exist, on this stratum or any other.
+        // `shadow` is the axis that does reach the compiler, and its values
+        // produce different programs AND different values.
+        "stdlib_import" => (SHADOW, "none"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }
@@ -89,6 +100,18 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
 /// right symbol). They must NOT be claimed as covering the #164 defect class
 /// until the `collision` axis actually collides — see
 /// `docs/ci-test-phase-4-results.md` §4.
+///
+/// **Family S's `stdlib_import` stratum is the repair**, and it is a separate
+/// stratum rather than a rewrite of this one because the two record different
+/// things: this one keeps the historical shape (a generated helper module
+/// graph), the new one collides against REAL stdlib names — `String.length` vs
+/// `List.length` vs a local `length` — exactly as v2 §3.1 requires. Its
+/// axis-under-test is `shadow`, not `import_shape`, so it is WITNESSED rather
+/// than exempt; the exemption below is a property of import syntax and applies
+/// to any stratum that tries to make `import_shape` its subject. On its first
+/// run that stratum found a live defect: two modules that both
+/// `exposing (..)` the same name resolve to the LAST import, silently
+/// (`gen::blocked_reason`).
 fn witness_exemption(stratum: &str) -> Option<&'static str> {
     match stratum {
         "import_shape" => Some(
@@ -151,8 +174,18 @@ pub fn run(root: &Path) -> i32 {
             continue;
         }
         for a in varied {
+            let case = gen::build(s, &a);
+            // A case that expects a REJECTION has no emitted Go to fingerprint
+            // once it starts being rejected — its witness is the diagnostic
+            // (`Witness::Diagnostic`), not the emit shape. Including it here
+            // would make the gate report a spurious FAIL on the day the defect
+            // it pins is fixed, which is the worst possible time for a gate to
+            // cry wolf.
+            if matches!(case.expect, gen::Expect::Reject { .. }) {
+                continue;
+            }
             let neutralised = a.clone().with(axis, neutral);
-            candidates.push((gen::build(s, &a), neutralised, axis));
+            candidates.push((case, neutralised, axis));
         }
     }
     candidates.sort_by(|x, y| x.0.id.cmp(&y.0.id));

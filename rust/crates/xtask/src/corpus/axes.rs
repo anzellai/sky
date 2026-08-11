@@ -142,6 +142,69 @@ pub const CONSTRUCTION: Axis = Axis::new("construction", &["inline", "via_ctor_f
 pub const COLLIDER: Axis = Axis::new("collider", &["local", "stdlib_eventprop"]);
 
 // ---------------------------------------------------------------------------
+// Family S axes (v2 §3.1)
+// ---------------------------------------------------------------------------
+
+/// **Which stdlib module** the case exercises.
+///
+/// Not a taxonomy: each value is a real module under `sky-stdlib/`, and
+/// `stdlib::SURFACES` is checked against the filesystem by
+/// `stdlib::tests::every_surface_names_a_real_stdlib_module`. Before Family S
+/// the entire Layer-1 corpus imported two modules; this axis is the mechanism
+/// by which "the standard library" becomes something the corpus can be said to
+/// cover at all.
+pub const SURFACE: Axis = Axis::new(
+    "surface",
+    &[
+        "string", "list", "dict", "set", "maybe", "result", "char", "encoding", "crypto", "math",
+        "basics", "tostring", "path", "error", "decimal", "money", "csv", "regex", "json",
+    ],
+);
+
+/// **The edge class of the input.**
+///
+/// The mandate's *"many use cases"*, made mechanical. `nominal` is the happy
+/// path that always worked — it is the axis's NEUTRAL value, and the baseline
+/// the witness gate builds each case against. The other four are where surfaces
+/// break: the empty collection / string, the identity or clamp boundary, a
+/// multi-byte code point where the type is `String`, and the failure branch of
+/// anything returning `Result` / `Maybe`.
+///
+/// Not every surface has a case in every class — there is no unicode edge for
+/// `Sky.Core.Math`. Those points are dropped by [`admissible`] rather than
+/// padded, so the manifest counts cases that assert something.
+pub const EDGE: Axis = Axis::new(
+    "edge",
+    &["nominal", "empty", "boundary", "unicode", "failure"],
+);
+
+/// **What competes with the imported name.**
+///
+/// The replacement for the older `import_shape` stratum's `collision` axis,
+/// which `witness.rs` records as **inert**: its non-`none` values add a local
+/// binding that collides with nothing, so no case ever creates the conflict
+/// #164 was about. These values do collide, and against REAL stdlib names:
+///
+/// * `none` — the imported symbol, uncontested.
+/// * `local_shadow` — a local top-level definition with the same bare name.
+///   The qualified read must still reach the module.
+/// * `cross_stdlib` — two real stdlib modules that both export `length`
+///   (`Sky.Core.String` and `Sky.Core.List`), both in scope.
+/// * `ambiguous_exposing_all` — two modules that both `exposing (..)` the SAME
+///   name at the SAME type, referenced unqualified. **This one is a live
+///   defect**, found by this stratum: the program compiles clean and the value
+///   it computes depends on IMPORT ORDER. See `gen::blocked_reason`.
+pub const SHADOW: Axis = Axis::new(
+    "shadow",
+    &[
+        "none",
+        "local_shadow",
+        "cross_stdlib",
+        "ambiguous_exposing_all",
+    ],
+);
+
+// ---------------------------------------------------------------------------
 // Assignments
 // ---------------------------------------------------------------------------
 
@@ -289,7 +352,56 @@ pub const STRATA: &[Stratum] = &[
         coordinate: Some("goty.rs fieldset collision — construction site"),
         isolated: true,
     },
+    // ---- Family S (v2 §3.1) ----------------------------------------------
+    Stratum {
+        name: "stdlib_edge",
+        axes: &[SURFACE, EDGE],
+        coordinate: Some("mandate: stdlib behaviour at its edge classes"),
+        isolated: false,
+    },
+    Stratum {
+        name: "stdlib_import",
+        axes: &[IMPORT_SHAPE, SHADOW],
+        // Same defect as `import_shape`, but colliding against REAL stdlib
+        // names rather than the local ones that made that stratum's collision
+        // axis inert.
+        coordinate: Some("anzellai/sky#164 — against real stdlib names"),
+        // v2 §3.2 family 3: whole-program name resolution IS the subject.
+        isolated: true,
+    },
 ];
+
+/// Whether a point in a stratum's cross is a real case.
+///
+/// Most strata have none — every point in their cross is meaningful, and that
+/// is what makes a full cross the right shape for them. Family S is the
+/// exception in two places, and in both the alternative would be a case that
+/// asserts nothing (`Sky.Core.Math` has no unicode edge) or a case whose
+/// expected value this generator does not independently know (a local
+/// definition competing with an explicitly-exposed import is a language-policy
+/// question, and guessing at it would be exactly the change-detector this
+/// corpus refuses to be).
+///
+/// A dropped point is not a silent skip: it never appears in the manifest, so
+/// the coverage claim is over the cases that exist rather than over a cross
+/// that was padded to look complete.
+pub fn admissible(stratum: &str, a: &Assignment) -> bool {
+    match stratum {
+        // The surface must have something to assert in that edge class.
+        "stdlib_edge" => !super::stdlib::battery(a.get(SURFACE), a.get(EDGE)).is_empty(),
+        "stdlib_import" => match a.get(SHADOW) {
+            // `local_shadow` needs the import NOT to also bind the bare name.
+            "local_shadow" => !matches!(a.get(IMPORT_SHAPE), "exposing_list" | "exposing_all"),
+            // The ambiguity only arises when BOTH imports bind the bare name,
+            // which only `exposing (..)` on both does. At every other shape the
+            // reference is qualified and there is nothing to be ambiguous
+            // about, so a case there would assert nothing.
+            "ambiguous_exposing_all" => a.get(IMPORT_SHAPE) == "exposing_all",
+            _ => true,
+        },
+        _ => true,
+    }
+}
 
 /// The pinned coordinate for each stratum — the axis assignment of the ORIGINAL
 /// defect. Distance-1 expansion runs from these points.
@@ -337,11 +449,26 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
                 .with(CONSTRUCTION, "via_ctor_fn")
                 .with(COLLIDER, "stdlib_eventprop"),
         ),
+        // Family S has no single historical coordinate — it is aimed at a
+        // SURFACE, not at one past bug. The pin is the point that most nearly
+        // is one: `String` at its unicode edge, the byte-vs-rune class.
+        "stdlib_edge" => Some(
+            Assignment::new()
+                .with(SURFACE, "string")
+                .with(EDGE, "unicode"),
+        ),
+        // #164's own coordinate: an alias that is not the last path segment,
+        // with a real competing name in scope.
+        "stdlib_import" => Some(
+            Assignment::new()
+                .with(IMPORT_SHAPE, "alias_not_last_segment")
+                .with(SHADOW, "local_shadow"),
+        ),
         _ => None,
     }
 }
 
-/// The full cross of a stratum's axes.
+/// The full cross of a stratum's axes, minus the points [`admissible`] rejects.
 pub fn full_cross(s: &Stratum) -> Vec<Assignment> {
     let mut acc = vec![Assignment::new()];
     for axis in s.axes {
@@ -353,6 +480,7 @@ pub fn full_cross(s: &Stratum) -> Vec<Assignment> {
         }
         acc = next;
     }
+    acc.retain(|a| admissible(s.name, a));
     acc
 }
 
@@ -360,14 +488,44 @@ pub fn full_cross(s: &Stratum) -> Vec<Assignment> {
 mod tests {
     use super::*;
 
+    /// The cross is the product of the axis sizes, minus exactly the points
+    /// [`admissible`] rejects — never fewer (a case silently lost) and never
+    /// more (a point counted twice).
     #[test]
-    fn full_cross_is_the_product_of_the_axis_sizes() {
+    fn full_cross_is_the_product_minus_the_inadmissible_points() {
         for s in STRATA {
-            let expected: usize = s.axes.iter().map(|a| a.values.len()).product();
+            let product: usize = s.axes.iter().map(|a| a.values.len()).product();
+            let mut all = vec![Assignment::new()];
+            for axis in s.axes {
+                let mut next = Vec::new();
+                for a in &all {
+                    for &v in axis.values {
+                        next.push(a.clone().with(*axis, v));
+                    }
+                }
+                all = next;
+            }
+            assert_eq!(all.len(), product, "stratum {} unfiltered cross", s.name);
+            let dropped = all.iter().filter(|a| !admissible(s.name, a)).count();
             assert_eq!(
                 full_cross(s).len(),
-                expected,
-                "stratum {} full cross size",
+                product - dropped,
+                "stratum {} full cross size ({} point(s) inadmissible)",
+                s.name,
+                dropped
+            );
+        }
+    }
+
+    /// Every stratum's cross is non-empty. A stratum whose every point is
+    /// inadmissible contributes nothing while still appearing in the table —
+    /// coverage that reads as present and is not.
+    #[test]
+    fn every_stratum_contributes_at_least_one_case() {
+        for s in STRATA {
+            assert!(
+                !full_cross(s).is_empty(),
+                "stratum {} produces no admissible cases",
                 s.name
             );
         }
@@ -414,6 +572,22 @@ mod tests {
                 pin.neighbourhood(s.axes).len(),
                 expected,
                 "stratum {} neighbourhood size",
+                s.name
+            );
+        }
+    }
+
+    /// Every pinned coordinate is itself an ADMISSIBLE point. A pin that the
+    /// filter drops would leave the stratum without the coordinate its
+    /// neighbourhood expansion runs from — the mandate's *"its NEIGHBOURS
+    /// become cases too"* with no centre.
+    #[test]
+    fn every_pinned_coordinate_is_admissible() {
+        for s in STRATA {
+            let pin = pinned_coordinate(s.name).unwrap();
+            assert!(
+                admissible(s.name, &pin),
+                "stratum {}'s pinned coordinate {pin} is not admissible",
                 s.name
             );
         }

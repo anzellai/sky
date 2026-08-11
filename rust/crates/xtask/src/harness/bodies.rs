@@ -535,13 +535,13 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **342 since 2026-08-11** (was 206): families R (126 code-pinned reject pairs)
 /// and E (10 emit-shape property cases) joined the manifest.
-pub const CORPUS_EXPECTED: u64 = 342;
+pub const CORPUS_EXPECTED: u64 = 432;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
 /// the emitted Go), so pinning the full count there would have made the gate's
 /// declared assertion count a number it never reaches.
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 206;
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 296;
 /// Family R: 126 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.

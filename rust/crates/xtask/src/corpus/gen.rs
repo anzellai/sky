@@ -208,7 +208,54 @@ pub struct Blocked {
 /// `corpus/repro/`. Adding an entry is how a corpus find is landed without
 /// either silencing it or blocking the branch — never a way to make a case
 /// stop mattering.
-fn blocked_reason(_stratum: &str, _a: &Assignment) -> Option<Blocked> {
+fn blocked_reason(stratum: &str, a: &Assignment) -> Option<Blocked> {
+    // ---- ambiguous unqualified name across two `exposing (..)` imports ----
+    //
+    // Found by Family S's `stdlib_import` stratum, 2026-08-11. Two modules that
+    // both `exposing (..)` the same name at the same type; the reference is
+    // unqualified; the program COMPILES CLEAN and prints whichever module was
+    // imported LAST. Swapping the two import lines — a formatter reordering
+    // them, or a developer adding an import above an existing one — silently
+    // changes the answer:
+    //
+    //     import Ambig.Alpha exposing (..)   -- label = "ALPHA"
+    //     import Ambig.Beta exposing (..)    -- label = "BETA"
+    //     main = println label               -- prints BETA
+    //
+    //     import Ambig.Beta exposing (..)
+    //     import Ambig.Alpha exposing (..)
+    //     main = println label               -- prints ALPHA
+    //
+    // Elm rejects this as an ambiguous name. Sky accepts it. That makes it the
+    // exact defect class this corpus exists for — "compiles clean, behaves
+    // wrong" — and it is the #164 family: whole-program name resolution
+    // producing a different program from a difference that should not matter.
+    //
+    // NOT FIXED HERE, deliberately. The obvious rule ("an unqualified name
+    // bound by two imports is an error") cannot be applied naively: with
+    // `import Sky.Core.Prelude exposing (..)` and `import Sky.Core.Math
+    // exposing (..)` both in scope, `abs` / `min` / `max` / `sqrt` are bound
+    // twice today and a strict rule would reject working programs. The correct
+    // rule has to privilege the implicit prelude the way Elm does, and that is
+    // a language decision with app-breaking blast radius — CLAUDE.md §0.3 rule
+    // 2 puts it at the user level, and the `rust_ty_alias_resolution_164`
+    // postmortem is the standing reminder that a resolution heuristic which
+    // passes the corpus can still regress a real app.
+    //
+    // So it is BLOCKED, not silenced: the case runs on every corpus run, it
+    // never contributes PASS, its transition to green would be reported, and
+    // after the expiry it FAILS the gate outright.
+    if stratum == "stdlib_import" && a.get(SHADOW) == "ambiguous_exposing_all" {
+        return Some(Blocked {
+            issue: "sky/ambiguous-unqualified-name-across-exposing-all (found by Family S, 2026-08-11)",
+            expires: "2026-09-30",
+            reason: "two modules both `exposing (..)` the same name resolve to the LAST \
+                     import, silently — the program compiles clean and its value depends \
+                     on import ORDER. Needs a language decision (Elm rejects; a naive \
+                     rule would break the Prelude/Math `abs`/`min`/`max` overlap).",
+        });
+    }
+
     // `fieldset_ctor` / `via_ctor_fn` / `stdlib_eventprop` was blocked here from
     // 2026-08-10 until it was FIXED. A user record `{ key : String, value :
     // String }` built through an annotated constructor collided with
@@ -705,6 +752,18 @@ fn import_shape(a: &Assignment) -> (Vec<(String, String)>, String, String) {
 /// unit — which is precisely what the v2 §3.2 isolation gate has to compare.
 #[derive(Clone, Debug)]
 pub struct Body {
+    /// Import lines the case needs beyond the shared prelude, each ending in
+    /// `\n`. Empty for the language strata, which reach everything through
+    /// `Sky.Core.Prelude`.
+    ///
+    /// Carried on `Body` rather than baked into `standalone_module` so that the
+    /// SAME case can be built both ways — standalone and as one member of a
+    /// batched compilation unit — which is what the v2 §3.2 isolation gate
+    /// compares. A Family-S case whose imports only existed in the standalone
+    /// wrapper would simply fail to build when batched, and the isolation gate
+    /// would report a divergence that is an artefact of the harness rather than
+    /// a fact about the compiler.
+    pub imports: String,
     pub decls: String,
     pub check: String,
 }
@@ -712,7 +771,9 @@ pub struct Body {
 /// The standalone form: its own `Main`, printing the checked value.
 pub fn standalone_module(b: &Body) -> String {
     format!(
-        "{PRELUDE}{decls}\n\ncheckValue : String\ncheckValue =\n    {check}\n\n\nmain =\n    println checkValue\n",
+        "{PRELUDE}{imports}{gap}{decls}\n\ncheckValue : String\ncheckValue =\n    {check}\n\n\nmain =\n    println checkValue\n",
+        imports = b.imports,
+        gap = if b.imports.is_empty() { "" } else { "\n\n" },
         decls = b.decls,
         check = b.check,
     )
@@ -723,11 +784,26 @@ pub fn standalone_module(b: &Body) -> String {
 pub fn batch_module(index: usize, b: &Body) -> (String, String) {
     let name = format!("Batch.Case{index:04}");
     let src = format!(
-        "module {name} exposing (checkValue)\n\nimport Sky.Core.Prelude exposing (..)\n\n\n{decls}\n\ncheckValue : String\ncheckValue =\n    {check}\n",
+        "module {name} exposing (checkValue)\n\nimport Sky.Core.Prelude exposing (..)\n{imports}\n\n{decls}\n\ncheckValue : String\ncheckValue =\n    {check}\n",
+        imports = b.imports,
         decls = b.decls,
         check = b.check,
     );
     (name, src)
+}
+
+/// Which v2 §3.1 family a stratum belongs to.
+///
+/// Declared per stratum rather than fixed at the construction site, because the
+/// construction site used to hard-code `Family::L` and would have labelled
+/// every stdlib case as a language case — a manifest that says `family = "L"`
+/// for a `Sky.Core.Crypto` assertion is a membership authority that lies about
+/// what it authorises.
+fn family_of(stratum: &str) -> Family {
+    match stratum {
+        "stdlib_edge" | "stdlib_import" => Family::S,
+        _ => Family::L,
+    }
 }
 
 /// Build the case at `assignment` in `stratum`.
@@ -738,6 +814,60 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
             let (mods, entry, out) = import_shape(assignment);
             (mods, entry, out, None)
         }
+        // ---- Family S: the body already carries its own imports ------------
+        "stdlib_edge" => {
+            let (body, out) = super::stdlib::stdlib_edge(assignment);
+            (
+                vec![("Main".to_string(), standalone_module(&body))],
+                "Main".to_string(),
+                out,
+                Some(body),
+            )
+        }
+        "stdlib_import" => match super::stdlib::stdlib_import(assignment) {
+            super::stdlib::ImportCase::Single { body, stdout } => (
+                vec![("Main".to_string(), standalone_module(&body))],
+                "Main".to_string(),
+                stdout,
+                Some(body),
+            ),
+            // The one point that expects a REJECTION rather than a value.
+            // Returned early below, because the shared tail assembles an
+            // `Expect::Accept`.
+            super::stdlib::ImportCase::Graph {
+                modules,
+                entry,
+                expect,
+            } => {
+                return GenCase {
+                    id: format!("{}/{}", stratum.name, assignment.slug()),
+                    stratum: stratum.name,
+                    family: family_of(stratum.name),
+                    mode: Mode::Static,
+                    isolation: Isolation::Unit,
+                    axes: assignment.clone(),
+                    // A rejection is not a value the generator constructed, so
+                    // it does not count toward the coverage numerator (v2
+                    // §5.5). Labelled honestly rather than counted.
+                    class: Class::D,
+                    witness: Witness::Diagnostic,
+                    coordinate: stratum.coordinate.map(|s| s.to_string()),
+                    modules,
+                    entry,
+                    expect,
+                    body: None,
+                    blocked: blocked_reason(stratum.name, assignment),
+                    // Family R's twin rule reaches this Family-S case, and it is
+                    // right to: a reject case with no accepted twin cannot tell
+                    // "rejected for the stated reason" from "rejects anything
+                    // that shape". `stdlib_import` supplies the minimally
+                    // different graph that MUST compile — one module exposing
+                    // the name instead of two.
+                    twin: super::stdlib::import_twin(assignment),
+                    emit_properties: Vec::new(),
+                };
+            }
+        },
         name => {
             let (decls, check, out) = match name {
                 "record_update" => record_update(assignment),
@@ -747,7 +877,11 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
                 "fieldset_ctor" => fieldset_ctor(assignment),
                 other => panic!("no emitter for stratum {other:?}"),
             };
-            let body = Body { decls, check };
+            let body = Body {
+                imports: String::new(),
+                decls,
+                check,
+            };
             (
                 vec![("Main".to_string(), standalone_module(&body))],
                 "Main".to_string(),
@@ -760,7 +894,7 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
     GenCase {
         id: format!("{}/{}", stratum.name, assignment.slug()),
         stratum: stratum.name,
-        family: Family::L,
+        family: family_of(stratum.name),
         // Every stratum here carries a generator-constructed value, so every one
         // is behavioural: the program is built AND RUN and its stdout compared.
         // A static-only verdict would miss the entire "compiles clean, behaves
@@ -802,12 +936,40 @@ mod tests {
                         assert!(!stdout.is_empty(), "{} {a}: empty expected stdout", s.name);
                         // The load-bearing property: the expectation mentions a
                         // literal the GENERATOR chose, never one it observed.
-                        assert!(
-                            stdout.contains(&SURVIVOR.to_string())
-                                || stdout.contains(&UPDATED.to_string()),
-                            "{} {a}: expected stdout {stdout:?} rests on no generator-chosen literal",
-                            s.name
-                        );
+                        //
+                        // For the language strata that literal is `SURVIVOR` or
+                        // `UPDATED`. For Family S it is every item of the
+                        // battery, each one written down in `stdlib.rs` next to
+                        // the expression it predicts — so the check there is
+                        // that the expectation has exactly as many `|`-joined
+                        // items as the battery has assertions. A case that
+                        // silently lost an item would otherwise still pass by
+                        // comparing a shorter string to a shorter string.
+                        match family_of(s.name) {
+                            Family::S => {
+                                let items = if s.name == "stdlib_edge" {
+                                    crate::corpus::stdlib::battery(a.get(SURFACE), a.get(EDGE))
+                                        .len()
+                                } else {
+                                    stdout.split('/').count()
+                                };
+                                assert!(items > 0, "{} {a}: no assertions", s.name);
+                                if s.name == "stdlib_edge" {
+                                    assert_eq!(
+                                        stdout.split('|').count(),
+                                        items,
+                                        "{} {a}: expectation and battery disagree on item count",
+                                        s.name
+                                    );
+                                }
+                            }
+                            _ => assert!(
+                                stdout.contains(&SURVIVOR.to_string())
+                                    || stdout.contains(&UPDATED.to_string()),
+                                "{} {a}: expected stdout {stdout:?} rests on no generator-chosen literal",
+                                s.name
+                            ),
+                        }
                     }
                     Expect::Reject { .. } => {}
                 }

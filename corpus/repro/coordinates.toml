@@ -77,3 +77,12 @@ coordinate    = { import_shape = "alias_not_last_segment", collision = "none" }
 expect        = "accept"
 expect_stdout = "HI/42"
 summary       = "import alias that is not the module's last path segment"
+
+[[repro]]
+file          = "ambiguous-exposing-all/"
+issue         = "sky/ambiguous-unqualified-name-across-exposing-all (found by Family S, 2026-08-11)"
+stratum       = "stdlib_import"
+coordinate    = { import_shape = "exposing_all", shadow = "ambiguous_exposing_all" }
+expect        = "reject"
+expect_stdout = ""
+summary       = "OPEN: two modules both `exposing (..)` the same name resolve to the LAST import, silently — the program compiles clean and its value depends on import ORDER. A directory rather than one file, because the pair of import orderings IS the reproduction. Blocked with expiry 2026-09-30; see the directory's README for why a naive fix would reject working programs."

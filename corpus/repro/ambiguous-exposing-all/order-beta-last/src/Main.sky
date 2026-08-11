@@ -1,0 +1,21 @@
+-- PINNED REPRO — ambiguous unqualified name across two `exposing (..)` imports.
+--
+-- `label` is exported by BOTH Ambig.Alpha ("ALPHA") and Ambig.Beta ("BETA"),
+-- both imported `exposing (..)`, and referenced here unqualified. This builds
+-- clean and prints BETA — the LAST import. The sibling project
+-- `../order-alpha-last` is byte-identical except that the two import lines are
+-- swapped, and it prints ALPHA.
+--
+-- expect: REJECT (ambiguous name). Actual today: accept, order-dependent value.
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Ambig.Alpha exposing (..)
+import Ambig.Beta exposing (..)
+
+
+main =
+    println label
