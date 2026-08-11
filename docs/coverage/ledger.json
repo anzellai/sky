@@ -197,7 +197,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 296,
+      "expected_assertions": 335,
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
       "surfaces": [
@@ -223,7 +223,12 @@
         "stdlib.Sky.Core.Json.Decode",
         "stdlib.Std.Decimal",
         "stdlib.Std.Money",
-        "stdlib.Std.Csv"
+        "stdlib.Std.Csv",
+        "stdlib.Sky.Core.Bytes",
+        "stdlib.Sky.Core.Jwt",
+        "stdlib.Std.Codec",
+        "stdlib.Std.Markdown",
+        "stdlib.Std.Compression"
       ],
       "tier": "T2"
     },
@@ -248,7 +253,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 441,
+      "expected_assertions": 481,
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
       "surfaces": [
@@ -2117,6 +2122,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -3216,6 +3226,11 @@
           },
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
           }
@@ -6498,6 +6513,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -6574,6 +6594,11 @@
         "evidence": [
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
           }
@@ -8567,6 +8592,11 @@
           },
           {
             "by": "gate `apps-dispatch`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
           }
@@ -12718,7 +12748,7 @@
       "refs_generous": 11,
       "refs_qualified": 2,
       "role": "Layer1",
-      "sky_files": 10,
+      "sky_files": 11,
       "sky_toml_sections": []
     },
     {

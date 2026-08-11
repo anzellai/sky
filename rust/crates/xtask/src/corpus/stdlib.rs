@@ -86,8 +86,23 @@ pub struct Check {
     covers: &'static [&'static str],
 }
 
+impl Check {
+    /// The Sky expression, already rendered to `String`.
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+    /// The value the generator predicted, before any compiler ran.
+    pub fn expect(&self) -> &str {
+        &self.expect
+    }
+    /// `Module.symbol` this item exercises — the coverage claim, per item.
+    pub fn covers(&self) -> &'static [&'static str] {
+        self.covers
+    }
+}
+
 /// A `String`-valued expression.
-fn s(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
+pub fn s(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
     Check {
         body: expr.to_string(),
         expect: expect.to_string(),
@@ -96,7 +111,7 @@ fn s(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
 }
 
 /// An `Int`-valued expression.
-fn i(covers: &'static [&'static str], expr: &str, expect: i64) -> Check {
+pub fn i(covers: &'static [&'static str], expr: &str, expect: i64) -> Check {
     Check {
         body: format!("String.fromInt ({expr})"),
         expect: expect.to_string(),
@@ -105,7 +120,7 @@ fn i(covers: &'static [&'static str], expr: &str, expect: i64) -> Check {
 }
 
 /// A `Float`-valued expression, rendered through `String.fromFloat`.
-fn f(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
+pub fn f(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
     Check {
         body: format!("String.fromFloat ({expr})"),
         expect: expect.to_string(),
@@ -115,7 +130,7 @@ fn f(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
 
 /// A `Bool`-valued expression. `"T"` / `"F"` rather than `toString`, so the
 /// assertion does not also depend on how `Bool` renders.
-fn bo(covers: &'static [&'static str], expr: &str, expect: bool) -> Check {
+pub fn bo(covers: &'static [&'static str], expr: &str, expect: bool) -> Check {
     Check {
         body: format!("if {expr} then\n        \"T\"\n\n    else\n        \"F\""),
         expect: if expect { "T" } else { "F" }.to_string(),
@@ -124,7 +139,7 @@ fn bo(covers: &'static [&'static str], expr: &str, expect: bool) -> Check {
 }
 
 /// A `Maybe Int`. `Nothing` renders as `"N"`.
-fn mi(covers: &'static [&'static str], expr: &str, expect: Option<i64>) -> Check {
+pub fn mi(covers: &'static [&'static str], expr: &str, expect: Option<i64>) -> Check {
     Check {
         body: format!(
             "case {expr} of\n        Just v ->\n            String.fromInt v\n\n        Nothing ->\n            \"N\""
@@ -135,7 +150,7 @@ fn mi(covers: &'static [&'static str], expr: &str, expect: Option<i64>) -> Check
 }
 
 /// A `Maybe String`. `Nothing` renders as `"N"`.
-fn ms(covers: &'static [&'static str], expr: &str, expect: Option<&str>) -> Check {
+pub fn ms(covers: &'static [&'static str], expr: &str, expect: Option<&str>) -> Check {
     Check {
         body: format!(
             "case {expr} of\n        Just v ->\n            v\n\n        Nothing ->\n            \"N\""
@@ -148,7 +163,7 @@ fn ms(covers: &'static [&'static str], expr: &str, expect: Option<&str>) -> Chec
 /// A `Result Error String`. `Err` renders as `"E"` — the case asserts THAT the
 /// failure branch was taken, never the message, because a message is not a
 /// value the generator constructed.
-fn rs(covers: &'static [&'static str], expr: &str, expect: Option<&str>) -> Check {
+pub fn rs(covers: &'static [&'static str], expr: &str, expect: Option<&str>) -> Check {
     Check {
         body: format!(
             "case {expr} of\n        Ok v ->\n            v\n\n        Err _ ->\n            \"E\""
@@ -159,7 +174,7 @@ fn rs(covers: &'static [&'static str], expr: &str, expect: Option<&str>) -> Chec
 }
 
 /// A `Result Error Int`.
-fn ri(covers: &'static [&'static str], expr: &str, expect: Option<i64>) -> Check {
+pub fn ri(covers: &'static [&'static str], expr: &str, expect: Option<i64>) -> Check {
     Check {
         body: format!(
             "case {expr} of\n        Ok v ->\n            String.fromInt v\n\n        Err _ ->\n            \"E\""
@@ -170,7 +185,7 @@ fn ri(covers: &'static [&'static str], expr: &str, expect: Option<i64>) -> Check
 }
 
 /// A `List Int`, rendered comma-joined.
-fn li(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
+pub fn li(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
     Check {
         body: format!("String.join \",\" (List.map String.fromInt ({expr}))"),
         expect: expect.to_string(),
@@ -179,7 +194,7 @@ fn li(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
 }
 
 /// A `List String`, rendered comma-joined.
-fn ls(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
+pub fn ls(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
     Check {
         body: format!("String.join \",\" ({expr})"),
         expect: expect.to_string(),
@@ -190,7 +205,7 @@ fn ls(covers: &'static [&'static str], expr: &str, expect: &str) -> Check {
 /// The LENGTH of a list. Used where the elements' order or spelling is not a
 /// promise the surface makes, so asserting them would be asserting the
 /// implementation.
-fn ln(covers: &'static [&'static str], expr: &str, expect: i64) -> Check {
+pub fn ln(covers: &'static [&'static str], expr: &str, expect: i64) -> Check {
     Check {
         body: format!("String.fromInt (List.length ({expr}))"),
         expect: expect.to_string(),
@@ -258,6 +273,34 @@ pub const SURFACES: &[Surface] = &[
         "Sky.Core.Json.Encode",
         &["Sky.Core.Json.Decode as Decode"],
     ),
+    // ---- the five modules the ledger named as dark-but-assertable ----------
+    //
+    // `.claude/AUTONOMOUS_GOAL.md`: *"67 of 87 stdlib modules are dark to Family
+    // S. Most are `Task`-valued or render `Element`s, which a value assertion
+    // cannot reach. `Sky.Core.Bytes`, `Sky.Core.Jwt`, `Std.Codec`,
+    // `Std.Markdown`, `Std.Compression` are pure and assertable — real,
+    // closeable gaps."* These are those five, and two of them needed a way in
+    // that did not exist for the modules above:
+    //
+    // * `Std.Compression` is entirely `Task Error a`. `Task.run : Task e a ->
+    //   Result e a` is the bridge, and the operations are deterministic, so a
+    //   `Result` assertion is a value assertion.
+    // * `Std.Markdown` returns `Element msg`. The case walks the tree with its
+    //   own fold over `Std.Ui`'s exposed constructors — which also makes the
+    //   module's SECURITY promise ("never emits raw HTML, scripts, or event
+    //   handlers") assertable, by counting `Raw` nodes.
+    sf2("bytes", "Sky.Core.Bytes", &["Sky.Core.Maybe as Maybe"]),
+    sf2("jwt", "Sky.Core.Jwt", &["Sky.Core.Json.Encode as Encode"]),
+    sf("codec", "Std.Codec"),
+    // `Std.Ui` for the `Element` fold (the `Raw`-node count) and for
+    // `Ui.layout`; `Std.Html` for `render`, which is what turns the tree into
+    // the HTML string the security assertions are actually about.
+    sf2("markdown", "Std.Markdown", &["Std.Ui", "Std.Html as Html"]),
+    sf2(
+        "compression",
+        "Std.Compression",
+        &["Sky.Core.Task as Task", "Sky.Core.Bytes as Bytes"],
+    ),
 ];
 
 pub fn surface(slug: &str) -> &'static Surface {
@@ -313,24 +356,34 @@ pub fn covered_symbols() -> std::collections::BTreeSet<(String, String)> {
                     // `JsonEncode` / `JsonDecode` are written in the tags
                     // because `Encode` / `Decode` alone do not say which module
                     // a symbol belongs to.
+                    // `Kernel.<Pseudo>.<name>` — a member of a KERNEL
+                    // pseudo-module (`hir::KERNEL_FUNCTIONS`), not a symbol in
+                    // any `.sky` module's `exposing` list. `toString`, `modBy`,
+                    // `compare`, `negate`, `List.sort`, … are reachable in
+                    // every Sky program and appear in NO `api/symbols.json`
+                    // entry, because that manifest is built entirely from
+                    // `sky-stdlib/**.sky` headers + `exposing` lists.
+                    //
+                    // Until 2026-08-11 they were tagged `Prelude.*` and mapped
+                    // to `Sky.Core.Prelude`, a module the inventory does not
+                    // contain — so they contributed to NEITHER the numerator
+                    // nor the denominator and simply vanished. They are now
+                    // attributed to a `kernel:<Pseudo>` namespace which
+                    // [`kernel_inventory`] gives a real denominator, so the
+                    // report divides them by something instead of dropping
+                    // them. See `report`'s KERNEL section.
+                    if q == "Kernel" {
+                        if let Some((pseudo, name)) = sym.split_once('.') {
+                            out.insert((format!("kernel:{pseudo}"), name.to_string()));
+                        }
+                        continue;
+                    }
                     let module = match q {
+                        // `JsonEncode` / `JsonDecode` are written in the tags
+                        // because `Encode` / `Decode` alone do not say which
+                        // module a symbol belongs to.
                         "JsonEncode" => "Sky.Core.Json.Encode",
                         "JsonDecode" => "Sky.Core.Json.Decode",
-                        // `toString`, `modBy`, `compare`, `negate` and friends
-                        // are reachable in EVERY Sky program but belong to no
-                        // module's `exposing` list — they come from the kernel
-                        // `Basics` pseudo-module (`hir/src/kernel.rs`
-                        // BUILTIN_VARS / KERNEL_FUNCTIONS). So they appear in
-                        // no `api/symbols.json` entry, `sky doc` cannot show
-                        // them, and the coverage denominator cannot count them.
-                        //
-                        // Family S still ASSERTS them — `modBy 3 -1 == 2` is one
-                        // of the sharpest edges in the language — but it does
-                        // not claim them as covered surface, because there is no
-                        // denominator entry to divide by. Recorded here so the
-                        // discrepancy is visible rather than quietly rounded
-                        // into `Sky.Core.Basics`, which does not export them.
-                        "Prelude" => "Sky.Core.Prelude",
                         other => owners
                             .iter()
                             .find(|(alias, _)| *alias == other)
@@ -342,8 +395,85 @@ pub fn covered_symbols() -> std::collections::BTreeSet<(String, String)> {
             }
         }
     }
+    // The `dict_key_crossing` stratum is Family S too, and its claim is the same
+    // shape: `(module, symbol)` derived from per-item `covers` tags, never from
+    // the fact that it imports `Sky.Core.Dict`.
+    out.extend(super::dict_crossing::covered_symbols());
     out
 }
+
+/// The KERNEL pseudo-module surface: pseudo-module -> every member it
+/// advertises, read from `hir::KERNEL_FUNCTIONS` through the same accessor the
+/// `exposing (..)` binder uses.
+///
+/// **This is the answer to a denominator that omitted real symbols.**
+/// `api/symbols.json` is built entirely from `sky-stdlib/**.sky` module headers
+/// and `exposing` lists (`project::render_doc_site_export`), so a symbol that
+/// exists only as a kernel-qualifier member — `toString`, `modBy`, `compare`,
+/// `negate`, `List.sort`, `List.sortBy`, and 90-odd others — has no entry, is
+/// invisible to `sky doc`, and cannot be divided by. The bridge that once
+/// carried kernel metadata into the doc path (`project/src/kernel_api.rs`) was
+/// deleted in `054f6d26`, so nothing has fed it since v0.19.
+///
+/// The honest repair is not to invent `.sky` signatures for them — that is a
+/// per-module typing project with its own ratchet
+/// (`project/tests/kernel_signature_coverage.rs`) and its own regression
+/// history — but to COUNT them, in their own namespace, against their own
+/// denominator. `hir` is the single source of truth for both, so this table
+/// cannot drift from what the surface advertises.
+pub fn kernel_inventory() -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>>
+{
+    let mut out: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        Default::default();
+    for (_, pseudo) in hir::KERNEL_MODULES {
+        let Some(members) = hir::kernel_functions(pseudo) else {
+            continue;
+        };
+        out.entry((*pseudo).to_string())
+            .or_default()
+            .extend(members.iter().map(|m| (*m).to_string()));
+    }
+    for (pseudo, member) in ROUTED_ONLY_KERNEL_MEMBERS {
+        out.entry((*pseudo).to_string())
+            .or_default()
+            .insert((*member).to_string());
+    }
+    out
+}
+
+/// Kernel members that a user can CALL but that `hir::KERNEL_FUNCTIONS` does not
+/// advertise — the surface is bounded by the LOWERER's routing table, not by
+/// `hir`'s, and the two have drifted.
+///
+/// Found by this file's own `every_kernel_covers_tag_is_advertised_by_hir` test
+/// on its first run. `List.sortWith` type-checks, lowers, builds and runs:
+///
+/// ```text
+/// import Sky.Core.List as List
+/// main = println (String.join "," (List.map String.fromInt
+///          (List.sortWith (\a b -> b - a) [ 2, 10, 9 ])))   -- prints 10,9,2
+/// ```
+///
+/// …yet it is in neither `KERNEL_FUNCTIONS` nor `PRELUDE_QUALIFIERS`. It
+/// resolves because the qualifier surface is only checked at CODEGEN
+/// (`[E4005] List has no member notAThing (the Sky runtime exports no
+/// rt.List_notAThing)`), against `lower::kernel`'s table — which does route it
+/// (`rust/crates/lower/src/kernel.rs:206`).
+///
+/// The consequence for a coverage number: a symbol users call is in no
+/// inventory at all, so it can be neither covered nor reported as uncovered.
+/// That is the same dishonesty class this whole section exists to remove, one
+/// layer down, so it is DECLARED here rather than dropped — and the declaration
+/// is checked from both ends (see
+/// `every_routed_only_member_is_really_routed_and_really_unadvertised`), so a
+/// row cannot rot into a lie either by the member disappearing or by `hir`
+/// catching up.
+///
+/// The fix belongs in `hir` (advertise it) plus a `.sky` signature, which is the
+/// declared "93 kernel members have no Sky signature" work with its own ratchet
+/// (`project/tests/kernel_signature_coverage.rs`) — not a coverage-accounting
+/// change, and not something to smuggle in here.
+const ROUTED_ONLY_KERNEL_MEMBERS: &[(&str, &str)] = &[("List", "sortWith")];
 
 /// Print what Family S covers, against the SAME stdlib inventory the coverage
 /// ledger uses (`api/symbols.json`, via the `sky doc --export` code path).
@@ -481,6 +611,77 @@ pub fn report(root: &std::path::Path) -> i32 {
         "  This number counts a symbol only when a battery item asserts a value \
          ABOUT it. Importing a module is not covering it."
     );
+
+    // ---- the KERNEL surface, counted separately and never merged -----------
+    //
+    // Two inventories with two denominators, reported apart. Merging them would
+    // dilute one number with the other's shape; omitting the kernel one is what
+    // the ledger's own gap list called out, and it is what this section closes.
+    let kernel = kernel_inventory();
+    let mut k_cov = 0usize;
+    let mut k_pub = 0usize;
+    let mut k_gaps: Vec<(String, Vec<String>)> = Vec::new();
+    println!();
+    println!(
+        "KERNEL pseudo-modules (hir::KERNEL_FUNCTIONS) — a SEPARATE denominator."
+    );
+    println!(
+        "  These members are reachable in every Sky program and appear in NO"
+    );
+    println!(
+        "  `api/symbols.json` entry: that manifest is built from `sky-stdlib/**.sky`"
+    );
+    println!(
+        "  `exposing` lists alone. Reported here so the count is stated rather than"
+    );
+    println!("  silently dropped. NOT added to the stdlib totals above.");
+    println!();
+    println!("  {:<26} {:>9} {:>9} {:>7}", "pseudo-module", "asserted", "advertised", "%");
+    println!("  {}", "-".repeat(56));
+    for (pseudo, members) in &kernel {
+        let key = format!("kernel:{pseudo}");
+        let mine: std::collections::BTreeSet<&str> = covered
+            .iter()
+            .filter(|(mm, _)| *mm == key)
+            .map(|(_, s)| s.as_str())
+            .collect();
+        let hit = members.iter().filter(|s| mine.contains(s.as_str())).count();
+        k_cov += hit;
+        k_pub += members.len();
+        if hit > 0 {
+            println!(
+                "  {pseudo:<26} {hit:>9} {:>9} {:>6.0}%",
+                members.len(),
+                hit as f64 / members.len() as f64 * 100.0
+            );
+        }
+        let missing: Vec<String> = members
+            .iter()
+            .filter(|s| !mine.contains(s.as_str()))
+            .cloned()
+            .collect();
+        if !missing.is_empty() && hit > 0 {
+            k_gaps.push((pseudo.clone(), missing));
+        }
+    }
+    println!("  {}", "-".repeat(56));
+    println!(
+        "  {:<26} {k_cov:>9} {k_pub:>9} {:>6.0}%",
+        "TOTAL (all kernel pseudos)",
+        if k_pub == 0 {
+            0.0
+        } else {
+            k_cov as f64 / k_pub as f64 * 100.0
+        }
+    );
+    if !k_gaps.is_empty() {
+        println!();
+        println!("  ---- kernel members with no Family-S assertion, in a pseudo-module we touch ----");
+        for (m, missing) in &k_gaps {
+            println!("  {m} ({}):", missing.len());
+            println!("      {}", missing.join(", "));
+        }
+    }
     0
 }
 
@@ -516,7 +717,545 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "csv" => csv_battery(edge),
         "regex" => regex_battery(edge),
         "json" => json_battery(edge),
+        "bytes" => bytes_battery(edge),
+        "jwt" => jwt_battery(edge),
+        "codec" => codec_battery(edge),
+        "markdown" => markdown_battery(edge),
+        "compression" => compression_battery(edge),
         other => panic!("no battery for surface {other:?}"),
+    }
+}
+
+// --- Sky.Core.Bytes --------------------------------------------------------
+//
+// The module's whole reason to exist is that `String.length` / `String.slice`
+// are RUNE-based and a byte buffer needs BYTE semantics — its docstring says so
+// in as many words ("`Bytes.length "世界"` is 6 bytes"). So the unicode edge is
+// not decoration here: it is the only place the promise can be checked at all,
+// and a `Bytes` that delegated to `String` would pass every ASCII case above it.
+//
+// Hex and base64 expectations are RFC 4648 / the hex encoding of UTF-8 code
+// points — published constants, not observations.
+
+fn bytes_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            i(&["Bytes.length"], "Bytes.length \"abc\"", 3),
+            s(&["Bytes.toHex"], "Bytes.toHex \"abc\"", "616263"),
+            ms(&["Bytes.fromHex"], "Bytes.fromHex \"616263\"", Some("abc")),
+            // RFC 4648 §4: "Hello" is SGVsbG8= — five bytes, one pad char.
+            s(&["Bytes.toBase64"], "Bytes.toBase64 \"Hello\"", "SGVsbG8="),
+            ms(&["Bytes.fromBase64"], "Bytes.fromBase64 \"SGVsbG8=\"", Some("Hello")),
+            s(&["Bytes.append"], "Bytes.append \"a\" \"b\"", "ab"),
+            // End-exclusive, byte-indexed.
+            s(&["Bytes.slice"], "Bytes.slice 1 3 \"abcd\"", "bc"),
+            s(&["Bytes.fromString"], "Bytes.fromString \"xy\"", "xy"),
+            ms(&["Bytes.toString"], "Bytes.toString \"abc\"", Some("abc")),
+            bo(&["Bytes.isEmpty"], "Bytes.isEmpty \"a\"", false),
+            // `fromHex` is documented case-insensitive; `toHex` is documented
+            // lowercase. Both halves in one item.
+            ms(
+                &["Bytes.fromHex", "Bytes.toHex"],
+                "Maybe.map Bytes.toHex (Bytes.fromHex \"ABC1\")",
+                Some("abc1"),
+            ),
+        ],
+        "empty" => vec![
+            i(&["Bytes.length", "Bytes.empty"], "Bytes.length Bytes.empty", 0),
+            bo(&["Bytes.isEmpty", "Bytes.empty"], "Bytes.isEmpty Bytes.empty", true),
+            s(&["Bytes.toHex", "Bytes.empty"], "Bytes.toHex Bytes.empty", ""),
+            s(&["Bytes.toBase64", "Bytes.empty"], "Bytes.toBase64 Bytes.empty", ""),
+            ms(&["Bytes.fromHex"], "Bytes.fromHex \"\"", Some("")),
+            ms(&["Bytes.fromBase64"], "Bytes.fromBase64 \"\"", Some("")),
+            s(&["Bytes.append", "Bytes.empty"], "Bytes.append Bytes.empty \"a\"", "a"),
+        ],
+        "boundary" => vec![
+            // Negative indices count from the end (the docstring's promise).
+            s(&["Bytes.slice"], "Bytes.slice 1 -1 \"abcd\"", "bc"),
+            s(&["Bytes.slice"], "Bytes.slice 0 0 \"abcd\"", ""),
+            s(&["Bytes.slice"], "Bytes.slice 0 4 \"abcd\"", "abcd"),
+            // hex and base64 are inverses, by the docstring, so a round trip
+            // over a non-printable byte must be the identity.
+            ms(
+                &["Bytes.fromHex", "Bytes.toHex"],
+                "Maybe.map Bytes.toHex (Bytes.fromHex \"00ff10\")",
+                Some("00ff10"),
+            ),
+            ms(
+                &["Bytes.fromBase64", "Bytes.toBase64"],
+                "Maybe.map Bytes.toBase64 (Bytes.fromBase64 \"AP8Q\")",
+                Some("AP8Q"),
+            ),
+        ],
+        "unicode" => vec![
+            // The load-bearing one. `String.length "世界"` is 2 (code points);
+            // `Bytes.length` promises 6 (UTF-8 bytes). A `Bytes` that delegated
+            // to `String` is red here and green everywhere else.
+            i(&["Bytes.length"], "Bytes.length \"世界\"", 6),
+            s(&["Bytes.toHex"], "Bytes.toHex \"世\"", "e4b896"),
+            // Slicing on BYTE indices lands exactly on the first code point,
+            // which `String.slice 0 3` would not.
+            ms(&["Bytes.slice", "Bytes.toString"], "Bytes.toString (Bytes.slice 0 3 \"世界\")", Some("世")),
+            i(&["Bytes.length", "Bytes.fromString"], "Bytes.length (Bytes.fromString \"🎉\")", 4),
+        ],
+        "failure" => vec![
+            // Odd length, and a non-hex character.
+            ms(&["Bytes.fromHex"], "Bytes.fromHex \"6\"", None),
+            ms(&["Bytes.fromHex"], "Bytes.fromHex \"zz\"", None),
+            ms(&["Bytes.fromBase64"], "Bytes.fromBase64 \"!!!!\"", None),
+            // `toString` is Nothing on invalid UTF-8 — 0xFF is never a valid
+            // lead byte. Constructed through `fromHex` so the case never has to
+            // spell an invalid byte in Sky source.
+            ms(
+                &["Bytes.toString"],
+                "Maybe.andThen Bytes.toString (Bytes.fromHex \"ff\")",
+                None,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Sky.Core.Jwt ----------------------------------------------------------
+//
+// The `nominal` battery asserts a COMPLETE HS256 TOKEN, byte for byte, and the
+// bytes were computed outside this repository:
+//
+//   header  = {"alg":"HS256","typ":"JWT"}      (the shape `Jwt.encode` builds)
+//   payload = {"sub":"u1"}                     (the shape `Jwt.subject` builds)
+//   token   = b64url(header) "." b64url(payload) "." b64url(HMAC-SHA256(k, …))
+//
+// computed with `openssl dgst -sha256 -hmac k`. That makes it a genuine
+// third-party oracle for `encode` — RFC 7515's algorithm, not the compiler's
+// answer — which is the strongest form of expectation this corpus admits.
+//
+// `decode`'s time checks are asserted AT their boundaries, because the module's
+// own source fixes which side of each is inclusive: `exp` fails when
+// `now >= exp`, `nbf` fails when `now < nbf`.
+
+/// The token the generator predicts, computed from RFC 7515 + RFC 4648 outside
+/// this repository. See the battery's note.
+const JWT_HS256_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1MSJ9.\
+                               _EcUsalm3HB8fiInqvnvLgcAJUDMbPwG8idbTrQ9n_0";
+
+fn jwt_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            rs(
+                &["Jwt.encode", "Jwt.hs256", "Jwt.claims", "Jwt.subject"],
+                "Jwt.encode (Jwt.hs256 \"k\") (Jwt.subject \"u1\" Jwt.claims)",
+                Some(JWT_HS256_TOKEN),
+            ),
+            // `decode` hands back the VERIFIED payload JSON.
+            rs(
+                &["Jwt.decode"],
+                "Jwt.decode (Jwt.hs256 \"k\") 0 tok",
+                Some("{\"sub\":\"u1\"}"),
+            ),
+            // The registered-claim builders, in the order `withClaim` appends.
+            rs(
+                &[
+                    "Jwt.issuer",
+                    "Jwt.audience",
+                    "Jwt.issuedAt",
+                    "Jwt.jwtId",
+                    "Jwt.withClaim",
+                ],
+                "Jwt.decode (Jwt.hs256 \"k\") 0 (signed (Jwt.claims |> Jwt.issuer \"iss1\" \
+                 |> Jwt.audience \"aud1\" |> Jwt.issuedAt 5 |> Jwt.jwtId \"id1\" \
+                 |> Jwt.withClaim \"role\" (Encode.string \"admin\")))",
+                Some("{\"iss\":\"iss1\",\"aud\":\"aud1\",\"iat\":5,\"jti\":\"id1\",\"role\":\"admin\"}"),
+            ),
+        ],
+        "empty" => vec![
+            // No claims at all is a valid token with an empty JSON object
+            // payload — not an error, and not `null`.
+            rs(
+                &["Jwt.encode", "Jwt.claims"],
+                "Jwt.decode (Jwt.hs256 \"k\") 0 (signed Jwt.claims)",
+                Some("{}"),
+            ),
+            // An empty secret is a legal HMAC key.
+            rs(
+                &["Jwt.hs256"],
+                "Jwt.decode (Jwt.hs256 \"\") 0 (rok (Jwt.encode (Jwt.hs256 \"\") Jwt.claims))",
+                Some("{}"),
+            ),
+        ],
+        "boundary" => vec![
+            // `exp`: `now >= exp` is EXPIRED, so equality fails and one second
+            // earlier passes. A `>` instead of `>=` passes the second and fails
+            // the first.
+            rs(
+                &["Jwt.expiresAt", "Jwt.decode"],
+                "Jwt.decode (Jwt.hs256 \"k\") 99 (signed (Jwt.expiresAt 100 Jwt.claims))",
+                Some("{\"exp\":100}"),
+            ),
+            rs(
+                &["Jwt.expiresAt", "Jwt.decode"],
+                "Jwt.decode (Jwt.hs256 \"k\") 100 (signed (Jwt.expiresAt 100 Jwt.claims))",
+                None,
+            ),
+            // `nbf`: `now < nbf` is NOT-YET-VALID, so equality PASSES.
+            rs(
+                &["Jwt.notBefore", "Jwt.decode"],
+                "Jwt.decode (Jwt.hs256 \"k\") 100 (signed (Jwt.notBefore 100 Jwt.claims))",
+                Some("{\"nbf\":100}"),
+            ),
+            rs(
+                &["Jwt.notBefore", "Jwt.decode"],
+                "Jwt.decode (Jwt.hs256 \"k\") 99 (signed (Jwt.notBefore 100 Jwt.claims))",
+                None,
+            ),
+        ],
+        "unicode" => vec![
+            // base64url is byte-oriented, so a multi-byte claim value must
+            // survive the round trip exactly.
+            rs(
+                &["Jwt.subject", "Jwt.decode"],
+                "Jwt.decode (Jwt.hs256 \"k\") 0 (signed (Jwt.subject \"世界\" Jwt.claims))",
+                Some("{\"sub\":\"世界\"}"),
+            ),
+        ],
+        "failure" => vec![
+            // The security-relevant branches. Each must be `Err`, and a token
+            // verifier that returned `Ok` on any of them is a vulnerability
+            // rather than a bug.
+            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 \"wrong\") 0 tok", None),
+            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 \"k\") 0 (tok ++ \"x\")", None),
+            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 \"k\") 0 \"abc\"", None),
+            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 \"k\") 0 \"\"", None),
+            // RS256 with a key that is not a PEM cannot sign.
+            rs(&["Jwt.encode", "Jwt.rs256"], "Jwt.encode (Jwt.rs256 \"not-a-pem\") Jwt.claims", None),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Codec -------------------------------------------------------------
+//
+// Every expectation is JSON (RFC 8259) or the module's own written promise:
+// `auto` snake_cases a column name and `autoCamel` "keeps camelCase … priceMinor
+// stays", `maybe`'s `Nothing` "encodes as JSON null", `map` adapts "via a
+// bijection (`to` on decode, `from` on encode)", `fromJsonSafe` rejects "input
+// longer than maxChars BEFORE parsing".
+
+fn codec_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(&["Codec.toJson", "Codec.int"], "Codec.toJson Codec.int 5", "5"),
+            s(&["Codec.toJson", "Codec.string"], "Codec.toJson Codec.string \"a\"", "\"a\""),
+            s(&["Codec.bool"], "Codec.toJson Codec.bool True", "true"),
+            s(&["Codec.float"], "Codec.toJson Codec.float 1.5", "1.5"),
+            s(&["Codec.list"], "Codec.toJson (Codec.list Codec.int) [ 1, 2 ]", "[1,2]"),
+            s(&["Codec.maybe"], "Codec.toJson (Codec.maybe Codec.int) (Just 3)", "3"),
+            ri(&["Codec.fromJson"], "Codec.fromJson Codec.int \"5\"", Some(5)),
+            // The record path: object / field / buildObject.
+            s(
+                &["Codec.object", "Codec.field", "Codec.buildObject"],
+                "Codec.toJson pcodec { name = \"x\", priceMinor = 9 }",
+                "{\"name\":\"x\",\"priceMinor\":9}",
+            ),
+            rs(
+                &["Codec.fromJson", "Codec.buildObject"],
+                "Result.map (\\p -> p.name ++ \"/\" ++ String.fromInt p.priceMinor) \
+                 (Codec.fromJson pcodec \"{\\\"name\\\":\\\"y\\\",\\\"priceMinor\\\":4}\")",
+                Some("y/4"),
+            ),
+            // A nullary enum is stored as its readable TEXT name.
+            s(&["Codec.enum"], "Codec.toJson colourCodec Blue", "\"blue\""),
+            // `map`'s bijection: `from` runs on ENCODE, so 5 encodes as 4.
+            s(
+                &["Codec.map"],
+                "Codec.toJson (Codec.map (\\n -> n + 1) (\\n -> n - 1) Codec.int) 5",
+                "4",
+            ),
+            // `toValue` is the encoder as a plain function.
+            s(&["Codec.toValue"], "Encode.encode 0 (Codec.toValue Codec.int 7)", "7"),
+        ],
+        "empty" => vec![
+            s(&["Codec.list"], "Codec.toJson (Codec.list Codec.int) emptyInts", "[]"),
+            s(&["Codec.string"], "Codec.toJson Codec.string \"\"", "\"\""),
+            // `Nothing` is JSON null, not an omitted key and not "".
+            s(&["Codec.maybe"], "Codec.toJson (Codec.maybe Codec.int) Nothing", "null"),
+        ],
+        "boundary" => vec![
+            // `fromJsonSafe` compares `String.length s > maxChars`, so an input
+            // of EXACTLY `maxChars` is accepted and one over is not. Both sides
+            // of the inequality, because an off-by-one here silently changes a
+            // DoS guard.
+            ri(&["Codec.fromJsonSafe"], "Codec.fromJsonSafe 1 Codec.int \"5\"", Some(5)),
+            ri(&["Codec.fromJsonSafe"], "Codec.fromJsonSafe 0 Codec.int \"5\"", None),
+            // `auto` derives snake_case column / key names; `autoCamel` keeps
+            // the camelCase spelling. The two differ on exactly one field, so
+            // this pair is what distinguishes them.
+            s(
+                &["Codec.auto"],
+                "Codec.toJson (Codec.auto blank) { name = \"x\", priceMinor = 9 }",
+                "{\"name\":\"x\",\"price_minor\":9}",
+            ),
+            s(
+                &["Codec.autoCamel"],
+                "Codec.toJson (Codec.autoCamel blank) { name = \"x\", priceMinor = 9 }",
+                "{\"name\":\"x\",\"priceMinor\":9}",
+            ),
+            // `shape` is what the DB backend derives columns from — a record
+            // codec must report its columns in declaration order, a scalar must
+            // report its column TYPE.
+            ls(
+                &["Codec.shape"],
+                "List.map fst (recordCols (Codec.shape pcodec))",
+                "name,priceMinor",
+            ),
+            s(&["Codec.shape", "Codec.int"], "scalarTag (Codec.shape Codec.int)", "int"),
+        ],
+        "unicode" => vec![
+            s(&["Codec.toJson", "Codec.string"], "Codec.toJson Codec.string \"世界\"", "\"世界\""),
+            rs(
+                &["Codec.fromJson", "Codec.string"],
+                "Codec.fromJson Codec.string \"\\\"世界\\\"\"",
+                Some("世界"),
+            ),
+        ],
+        "failure" => vec![
+            // A type mismatch is an `Err`, never a zero value.
+            ri(&["Codec.fromJson", "Codec.int"], "Codec.fromJson Codec.int \"\\\"x\\\"\"", None),
+            ri(&["Codec.fromJson"], "Codec.fromJson Codec.int \"{\"", None),
+            // A missing record field is an `Err`, not a default.
+            rs(
+                &["Codec.fromJson", "Codec.field"],
+                "Result.map (\\p -> p.name) (Codec.fromJson pcodec \"{\\\"name\\\":\\\"y\\\"}\")",
+                None,
+            ),
+            // An enum name outside the table is an `Err`, not the first variant.
+            rs(
+                &["Codec.enum"],
+                "Result.map colourName (Codec.fromJson colourCodec \"\\\"green\\\"\")",
+                None,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Markdown ----------------------------------------------------------
+//
+// `render : String -> Element msg`, so the case folds the tree with its own
+// walk over `Std.Ui`'s exposed constructors. Two things become assertable that
+// way, and the second is the important one:
+//
+//   `mdText`  — the text content, in order. Enough to say a marker was CONSUMED
+//               (`# Title` renders "Title", not "# Title").
+//   `mdRaw`   — the number of `Raw` nodes. The module's headline promise is
+//               *"the parser never emits raw HTML, scripts, or event handlers …
+//               safe to feed UNTRUSTED markdown"*, and `Ui.Raw` is the ONLY
+//               constructor that could carry any. Counting it is that promise,
+//               stated as a number.
+//
+// The `failure` edge is where "thin" is made concrete: the module documents
+// blockquotes and images as unsupported, and this battery pins what they
+// actually do instead — a `> quote` keeps its marker as literal text, an
+// `![alt](img.png)` renders as `!` plus the link text. Those are the DECLARED
+// gaps, asserted so they cannot change silently.
+
+fn markdown_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(&["Markdown.render"], "mdText \"hello\"", "hello"),
+            // Every header level consumes its marker.
+            s(&["Markdown.render"], "mdText \"# Title\"", "Title"),
+            s(&["Markdown.render"], "mdText \"###### H6\"", "H6"),
+            s(&["Markdown.render"], "mdText \"**bold**\"", "bold"),
+            s(&["Markdown.render"], "mdText \"*it*\"", "it"),
+            s(&["Markdown.render"], "mdText \"`code`\"", "code"),
+            // A link renders its TEXT, never its URL.
+            s(&["Markdown.render"], "mdText \"[txt](http://x)\"", "txt"),
+            s(&["Markdown.render"], "mdText \"```\\nfn x\\n```\"", "fn x"),
+            s(&["Markdown.renderInline"], "mdInline \"**b** and `c`\"", "b and c"),
+        ],
+        "empty" => vec![
+            s(&["Markdown.render"], "mdText \"\"", ""),
+            i(&["Markdown.render"], "mdRaw \"\"", 0),
+            s(&["Markdown.renderInline"], "mdInline \"\"", ""),
+            // A horizontal rule is a block with no text.
+            s(&["Markdown.render"], "mdText \"---\"", ""),
+        ],
+        "boundary" => vec![
+            // Bullet and ordered lists keep their items in order, with the
+            // marker replaced by the renderer's own glyph.
+            s(&["Markdown.render"], "mdText \"- a\\n- b\"", "•a•b"),
+            s(&["Markdown.render"], "mdText \"1. a\\n2. b\"", "1.a2.b"),
+            // Tables ARE rendered — cells in row-major order. The module's
+            // docstring said they were "deliberately not supported in v1" while
+            // `Block` carried a `TableBlock` and the parser handled it; the
+            // docstring is corrected in the same commit as this case.
+            s(
+                &["Markdown.render"],
+                "mdText \"| a | b |\\n| --- | --- |\\n| 1 | 2 |\"",
+                "ab12",
+            ),
+        ],
+        "unicode" => vec![
+            s(&["Markdown.render"], "mdText \"世界 **粗体**\"", "世界 粗体"),
+            i(&["Markdown.render"], "mdRaw \"世界 **粗体**\"", 0),
+        ],
+        "failure" => vec![
+            // **The security promise, as a number.** Untrusted markdown must
+            // produce ZERO `Raw` nodes — `Ui.Raw` is the only constructor that
+            // can carry unescaped HTML — and the script must survive as literal
+            // TEXT, which `Std.Ui` escapes on render.
+            i(&["Markdown.render"], "mdRaw \"<script>alert(1)</script>\"", 0),
+            s(
+                &["Markdown.render"],
+                "mdText \"<script>alert(1)</script>\"",
+                "<script>alert(1)</script>",
+            ),
+            i(&["Markdown.render"], "mdRaw \"[x](javascript:alert(1))\"", 0),
+            // **The href half of the same promise, and it did NOT hold.**
+            // Zero `Raw` nodes is necessary and not sufficient: a link's URL
+            // becomes an `href` attribute, and a `javascript:` URL executes on
+            // navigation without needing a single metacharacter — so
+            // HTML-escaping, which is all `Std.Ui` had, leaves it intact.
+            // `Markdown.render "[x](javascript:alert(1))"` emitted
+            // `<a href="javascript:alert(1)">` verbatim against a docstring
+            // that says "safe to feed UNTRUSTED markdown … no
+            // bluemonday-equivalent sanitiser needed".
+            //
+            // Neutralised in the RUNTIME, at the one place every attribute
+            // enters a `VNode` (`rt.SafeAttrURL`), so `Std.Ui`, `Std.Html` and
+            // `Std.Markdown` are covered by one guard on both the server-render
+            // and the diff/patch path. The assertion is therefore made on the
+            // RENDERED HTML — which is the level the promise is about, and the
+            // only level that can see a fix living in the renderer.
+            //
+            // The casing / whitespace variants are here because a browser
+            // normalises a URL before resolving its scheme, and a naive prefix
+            // test catches none of them.
+            bo(&["Markdown.render"], "hasBlank \"[x](javascript:alert(1))\"", true),
+            bo(&["Markdown.render"], "hasBlank \"[x](JaVaScRiPt:alert(1))\"", true),
+            bo(&["Markdown.render"], "hasBlank \"[x](  javascript:alert(1))\"", true),
+            bo(&["Markdown.render"], "hasBlank \"[x](data:text/html,hello)\"", true),
+            // The complementary assertion: the payload is GONE, not merely
+            // accompanied by an `about:blank` somewhere else in the document.
+            bo(&["Markdown.render"], "hasScript \"[x](javascript:alert(1))\"", false),
+            bo(&["Markdown.render"], "hasScript \"[x](java\\tscript:alert(1))\"", false),
+            // …and an ordinary link is untouched, which is what stops the
+            // guard from being a blanket "block every URL" that would pass
+            // every assertion above while breaking every app.
+            bo(&["Markdown.render"], "hasBlank \"[x](https://ok.example/p)\"", false),
+            bo(
+                &["Markdown.render"],
+                "String.contains \"href=\\\"https://ok.example/p\\\"\" (mdHtml \"[x](https://ok.example/p)\")",
+                true,
+            ),
+            // The DECLARED gaps, pinned. A blockquote is not parsed, so its
+            // marker survives as literal text…
+            s(&["Markdown.render"], "mdText \"> quote\"", "> quote"),
+            // …and an image renders as `!` followed by the link text, which is
+            // what "images are not supported" means in practice.
+            s(&["Markdown.render"], "mdText \"![alt](img.png)\"", "!alt"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Compression -------------------------------------------------------
+//
+// Every operation is `Task Error String`, which is why this module was dark:
+// `checkValue : String` cannot hold a `Task`. `Task.run : Task e a -> Result e a`
+// is the bridge, and gzip / zstd are deterministic, so the `Result` carries a
+// value the generator can predict.
+//
+// Two kinds of expectation, both published:
+//
+//   * The CONTAINER HEADER. RFC 1952 §2.3.1 fixes gzip's first bytes as
+//     `1f 8b` (magic) then `08` (deflate); RFC 8478 §3.1.1 fixes zstd's frame
+//     magic as `0xFD2FB528` little-endian, i.e. `28 b5 2f fd`. Neither comes
+//     from this repository.
+//   * The IDENTITY. `gunzip . gzip == id` is what a compressor means; it needs
+//     no oracle at all, and it is the assertion that catches a codec that
+//     round-trips through the wrong window size or drops the final block.
+
+fn compression_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            // RFC 1952 §2.3.1: ID1=0x1f, ID2=0x8b, CM=8 (deflate).
+            s(&["Compression.gzip"], "headOf (Compression.gzip \"hello\")", "1f8b08"),
+            s(
+                &["Compression.gzip", "Compression.gunzip"],
+                "runOf (Task.andThen Compression.gunzip (Compression.gzip \"hello\"))",
+                "hello",
+            ),
+            // RFC 8478 §3.1.1: frame magic 0xFD2FB528, little-endian.
+            s(
+                &["Compression.zstdCompress"],
+                "headOf (Compression.zstdCompress \"hello\")",
+                "28b52f",
+            ),
+            s(
+                &["Compression.zstdCompress", "Compression.zstdDecompress"],
+                "runOf (Task.andThen Compression.zstdDecompress (Compression.zstdCompress \"hello\"))",
+                "hello",
+            ),
+        ],
+        "empty" => vec![
+            // The empty input is a real gzip stream, not an error and not "".
+            s(&["Compression.gzip"], "headOf (Compression.gzip \"\")", "1f8b08"),
+            s(
+                &["Compression.gzip", "Compression.gunzip"],
+                "runOf (Task.andThen Compression.gunzip (Compression.gzip \"\"))",
+                "",
+            ),
+            s(
+                &["Compression.zstdCompress", "Compression.zstdDecompress"],
+                "runOf (Task.andThen Compression.zstdDecompress (Compression.zstdCompress \"\"))",
+                "",
+            ),
+        ],
+        "boundary" => vec![
+            // A highly compressible input is the case a broken window size or a
+            // dropped final block shows up in; the identity must still hold.
+            s(
+                &["Compression.gzip", "Compression.gunzip"],
+                "runOf (Task.andThen Compression.gunzip (Compression.gzip (String.repeat 500 \"ab\")))",
+                "1000",
+            ),
+            s(
+                &["Compression.zstdCompress", "Compression.zstdDecompress"],
+                "runOf (Task.andThen Compression.zstdDecompress (Compression.zstdCompress (String.repeat 500 \"ab\")))",
+                "1000",
+            ),
+        ],
+        "unicode" => vec![
+            // gzip and zstd are BYTE codecs, so multi-byte code points must
+            // survive unchanged rather than being re-encoded.
+            s(
+                &["Compression.gzip", "Compression.gunzip"],
+                "runOf (Task.andThen Compression.gunzip (Compression.gzip \"世界🎉\"))",
+                "世界🎉",
+            ),
+            s(
+                &["Compression.zstdCompress", "Compression.zstdDecompress"],
+                "runOf (Task.andThen Compression.zstdDecompress (Compression.zstdCompress \"世界🎉\"))",
+                "世界🎉",
+            ),
+        ],
+        "failure" => vec![
+            // Input that is not a container at all must FAIL, not return the
+            // input unchanged and not panic.
+            s(&["Compression.gunzip"], "runOf (Compression.gunzip \"not gzip at all\")", "E"),
+            s(&["Compression.zstdDecompress"], "runOf (Compression.zstdDecompress \"nope\")", "E"),
+            s(&["Compression.gunzip"], "runOf (Compression.gunzip \"\")", "E"),
+            // A TRUNCATED gzip stream — a real header, then nothing. The
+            // docstring promises `gunzip` "fails on truncated" input, and a
+            // decoder that stopped at the header would return "" instead.
+            s(
+                &["Compression.gunzip"],
+                "runOf (Task.andThen (\\b -> Compression.gunzip (Bytes.slice 0 6 b)) (Compression.gzip \"hello\"))",
+                "E",
+            ),
+        ],
+        _ => vec![],
     }
 }
 
@@ -679,6 +1418,37 @@ fn list_battery(edge: &str) -> Vec<Check> {
             mi(&["List.find"], "List.find (\\x -> x > 1) [ 1, 2, 3 ]", Some(2)),
             mi(&["List.head"], "List.head [ 7, 8 ]", Some(7)),
             ln(&["List.zip"], "List.zip [ 1, 2 ] [ 3, 4 ]", 2),
+            // ---- the ORDERING surface -------------------------------------
+            //
+            // `List.sort` / `List.sortBy` / `List.sortWith` had ZERO cases in
+            // this battery, in any edge class, at any element type — and no
+            // `.sky` signature either, so nothing anywhere asserted an order.
+            // `List.sort [ 10, 9, 2 ]` returned `10, 2, 9`: it compared
+            // `fmt.Sprintf("%v", …)`, i.e. it sorted the RENDERING rather than
+            // the value. `List String` was correct, which is exactly why it
+            // survived — the rendering of a string IS the string, the same
+            // reason every `String`-keyed `Dict` assertion passed through #174.
+            //
+            // So the element type is an axis of BEHAVIOUR for the ordering ops,
+            // and the multi-digit set below is what tells lexical from ordinal.
+            li(&["Kernel.List.sort"], "List.sort [ 10, 9, 2 ]", "2,9,10"),
+            ls(&["Kernel.List.sort"], "List.sort [ \"b\", \"a\", \"c\" ]", "a,b,c"),
+            li(&["Kernel.List.sortBy"], "List.sortBy identity [ 10, 9, 2 ]", "2,9,10"),
+            // A projection to a DIFFERENT type than the element: sort strings
+            // by their length, which is the shape `sortBy` exists for.
+            ls(
+                &["Kernel.List.sortBy"],
+                "List.sortBy String.length [ \"ccc\", \"a\", \"bb\" ]",
+                "a,bb,ccc",
+            ),
+            // `sortWith` takes the caller's comparator, so it was always
+            // correct — it is here so the fix is pinned as not having changed
+            // the one ordering entry point that never used the rendering.
+            li(
+                &["Kernel.List.sortWith"],
+                "List.sortWith (\\a b -> b - a) [ 2, 10, 9 ]",
+                "10,9,2",
+            ),
         ],
         "empty" => vec![
             i(&["List.length"], "List.length emptyInts", 0),
@@ -714,6 +1484,32 @@ fn list_battery(edge: &str) -> Vec<Check> {
             // A single-element list: `tail` is `Just []`, not `Nothing`.
             ln(&["List.tail"], "Maybe.withDefault [ 9, 9 ] (List.tail [ 1 ])", 0),
             li(&["List.take"], "List.take 1 [ 5 ]", "5"),
+            // ---- the ordering surface, at its boundaries -------------------
+            //
+            // Negatives are where the rendered compare is at its worst: "-1"
+            // sorts BEFORE "-20", so `[ -1, -20, 3 ]` came back unchanged and
+            // looked plausible.
+            li(&["Kernel.List.sort"], "List.sort [ -1, -20, 3 ]", "-20,-1,3"),
+            // Floats: "10.5" < "2.5" lexically.
+            s(
+                &["Kernel.List.sort"],
+                "String.join \",\" (List.map String.fromFloat (List.sort [ 10.5, 9.5, 2.5 ]))",
+                "2.5,9.5,10.5",
+            ),
+            // Elm orders LISTS of comparables lexicographically, shorter-is-less
+            // on a common prefix. The dispatch already implemented this; the
+            // sort path did not reach it.
+            s(
+                &["Kernel.List.sort"],
+                "String.join \"/\" (List.map (\\xs -> String.join \",\" (List.map String.fromInt xs)) (List.sort [ [ 2 ], [ 10 ], [ 1, 0 ] ]))",
+                "1,0/2/10",
+            ),
+            // Duplicates: an ordering that is not a consistent total order lets
+            // `sort` return anything at all, so a repeated element is a real
+            // boundary rather than a filler case.
+            li(&["Kernel.List.sort"], "List.sort [ 2, 1, 2, 1 ]", "1,1,2,2"),
+            ln(&["Kernel.List.sort"], "List.sort emptyInts", 0),
+            li(&["Kernel.List.sort"], "List.sort [ 7 ]", "7"),
         ],
         "unicode" => vec![
             i(&["List.length"], "List.length (String.toList \"世界🎉\")", 3),
@@ -723,6 +1519,21 @@ fn list_battery(edge: &str) -> Vec<Check> {
                 "界世",
             ),
             ls(&["List.filter"], "List.filter (\\x -> x /= \"b\") [ \"é\", \"b\" ]", "é"),
+            // A `Char` is a Go `rune`, and the rendered form of a rune is its
+            // DECIMAL CODE POINT — so the rendered order had nothing to do with
+            // the code-point order: 'a'(97), 'é'(233), '界'(30028) sorted as
+            // "233" < "30028" < "97", i.e. é, 界, a. This is the sharpest cell
+            // of the element-type × operation crossing for `List`.
+            s(
+                &["Kernel.List.sort"],
+                "String.fromList (List.sort [ '界', 'é', 'a' ])",
+                "aé界",
+            ),
+            s(
+                &["Kernel.List.sortBy"],
+                "String.fromList (List.sortBy identity [ '界', 'é', 'a' ])",
+                "aé界",
+            ),
         ],
         "failure" => vec![
             mi(&["List.head"], "List.head emptyInts", None),
@@ -1341,7 +2152,16 @@ fn basics_battery(edge: &str) -> Vec<Check> {
             i(&["Basics.fst"], "fst ( 1, 2 )", 1),
             i(&["Basics.snd"], "snd ( 1, 2 )", 2),
             i(&["Basics.clamp"], "clamp 1 3 2", 2),
-            s(&["Prelude.toString"], "toString 42", "42"),
+            s(&["Kernel.Basics.toString"], "toString 42", "42"),
+            // `compare` and `negate` are kernel `Basics` members too, and until
+            // now Family S asserted NEITHER — they were named in the ledger's
+            // gap list as "asserted but uncountable", which was true of
+            // `toString`/`modBy` and not of these two. Elm's `compare` is
+            // LT/EQ/GT as -1/0/1.
+            i(&["Kernel.Basics.compare"], "compare 1 2", -1),
+            i(&["Kernel.Basics.compare"], "compare 2 2", 0),
+            i(&["Kernel.Basics.compare"], "compare 3 2", 1),
+            i(&["Kernel.Basics.negate"], "negate 5", -5),
         ],
         "boundary" => vec![
             // `clamp lo hi x` — low arg first.
@@ -1352,10 +2172,15 @@ fn basics_battery(edge: &str) -> Vec<Check> {
             // Elm's `modBy` is FLOORED and divisor-first: `modBy 3 -1 == 2`,
             // not `-1`. Truncated `%` would give `-1` and pass every positive
             // case above.
-            i(&["Prelude.modBy"], "modBy 3 7", 1),
-            i(&["Prelude.modBy"], "modBy 3 -1", 2),
-            i(&["Prelude.modBy"], "modBy 3 0", 0),
-            s(&["Prelude.toString"], "toString -7", "-7"),
+            i(&["Kernel.Basics.modBy"], "modBy 3 7", 1),
+            i(&["Kernel.Basics.modBy"], "modBy 3 -1", 2),
+            i(&["Kernel.Basics.modBy"], "modBy 3 0", 0),
+            s(&["Kernel.Basics.toString"], "toString -7", "-7"),
+            // `negate 0` must not render `-0`, and `compare` on the equal
+            // boundary must be exactly 0 rather than merely "not less".
+            i(&["Kernel.Basics.negate"], "negate 0", 0),
+            i(&["Kernel.Basics.negate"], "negate -5", 5),
+            i(&["Kernel.Basics.compare"], "compare -20 -1", -1),
         ],
         _ => vec![],
     }
@@ -2049,6 +2874,67 @@ fn fixtures(slug: &str) -> &'static str {
             "emptyInts : List Int\nemptyInts =\n    []\n\n\n\
              emptyIntDecoders : List (Decoder Int)\nemptyIntDecoders =\n    []\n"
         }
+        // `tok` is the fixed token every `Jwt.decode` item verifies against, and
+        // `signed` is "encode these claims with the same key, or die" — the
+        // decode assertions are about DECODE, so an encode failure must not be
+        // laundered into a decode `Err` that would pass a `None` expectation.
+        "jwt" => {
+            "tok : String\ntok =\n    signed (Jwt.subject \"u1\" Jwt.claims)\n\n\n\
+             signed : Jwt.Claims -> String\nsigned c =\n    rok (Jwt.encode (Jwt.hs256 \"k\") c)\n\n\n\
+             rok : Result Error String -> String\nrok r =\n    case r of\n\
+             \x20       Ok v ->\n            v\n\n        Err _ ->\n            \"ENCODE-FAILED\"\n"
+        }
+        "codec" => {
+            "type alias P =\n    { name : String, priceMinor : Int }\n\n\n\
+             type Colour\n    = Red\n    | Blue\n\n\n\
+             blank : P\nblank =\n    { name = \"\", priceMinor = 0 }\n\n\n\
+             emptyInts : List Int\nemptyInts =\n    []\n\n\n\
+             pcodec : Codec P\npcodec =\n    Codec.buildObject\n        (Codec.object P\n\
+             \x20           |> Codec.field \"name\" .name Codec.string\n\
+             \x20           |> Codec.field \"priceMinor\" .priceMinor Codec.int\n        )\n\n\n\
+             colourCodec : Codec Colour\ncolourCodec =\n    Codec.enum [ ( Red, \"red\" ), ( Blue, \"blue\" ) ]\n\n\n\
+             colourName : Colour -> String\ncolourName c =\n    case c of\n\
+             \x20       Red ->\n            \"red\"\n\n        Blue ->\n            \"blue\"\n\n\n\
+             recordCols : Shape -> List ( String, ColType )\nrecordCols sh =\n    case sh of\n\
+             \x20       SRecord cols ->\n            cols\n\n        _ ->\n            []\n\n\n\
+             scalarTag : Shape -> String\nscalarTag sh =\n    case sh of\n\
+             \x20       SScalar CInt ->\n            \"int\"\n\n        SScalar _ ->\n            \"other\"\n\n\
+             \x20       _ ->\n            \"not-scalar\"\n"
+        }
+        // The Element fold. `mdRaw` is the module's security promise expressed
+        // as a number: `Ui.Raw` is the only constructor that can carry
+        // unescaped HTML, so "never emits raw HTML" IS "this count is zero".
+        "markdown" => {
+            "mdText : String -> String\nmdText src =\n    uiText (Markdown.render src)\n\n\n\
+             mdInline : String -> String\nmdInline src =\n    uiText (Markdown.renderInline src)\n\n\n\
+             mdRaw : String -> Int\nmdRaw src =\n    uiRaw (Markdown.render src)\n\n\n\
+             mdHtml : String -> String\nmdHtml src =\n    Html.render (Ui.layout [] (Markdown.render src))\n\n\n\
+             hasBlank : String -> Bool\nhasBlank src =\n    String.contains \"href=\\\"about:blank\\\"\" (mdHtml src)\n\n\n\
+             hasScript : String -> Bool\nhasScript src =\n    String.contains \"javascript:\" (mdHtml src)\n\n\n\
+             uiText : Element msg -> String\nuiText el =\n    case el of\n\
+             \x20       Empty ->\n            \"\"\n\n        Text t ->\n            t\n\n\
+             \x20       Node _ _ kids ->\n            String.concat (List.map uiText kids)\n\n\
+             \x20       TaggedNode _ _ _ kids ->\n            String.concat (List.map uiText kids)\n\n\
+             \x20       Raw _ ->\n            \"<RAW>\"\n\n\n\
+             uiRaw : Element msg -> Int\nuiRaw el =\n    case el of\n\
+             \x20       Empty ->\n            0\n\n        Text _ ->\n            0\n\n\
+             \x20       Node _ _ kids ->\n            List.foldl (\\k acc -> acc + uiRaw k) 0 kids\n\n\
+             \x20       TaggedNode _ _ _ kids ->\n            List.foldl (\\k acc -> acc + uiRaw k) 0 kids\n\n\
+             \x20       Raw _ ->\n            1\n"
+        }
+        // `Task.run` is the bridge from `Task Error String` to a value.
+        // `runOf` renders the length for inputs too large to spell as an
+        // expectation, so the identity is still asserted without pasting 1000
+        // characters into a table.
+        "compression" => {
+            "runOf : Task Error String -> String\nrunOf tk =\n    case Task.run tk of\n\
+             \x20       Ok v ->\n            if String.length v > 64 then\n\
+             \x20               String.fromInt (String.length v)\n\n            else\n                v\n\n\
+             \x20       Err _ ->\n            \"E\"\n\n\n\
+             headOf : Task Error String -> String\nheadOf tk =\n    case Task.run tk of\n\
+             \x20       Ok v ->\n            Bytes.toHex (Bytes.slice 0 3 v)\n\n\
+             \x20       Err _ ->\n            \"E\"\n"
+        }
         _ => "",
     }
 }
@@ -2063,6 +2949,9 @@ fn extra_imports(slug: &str) -> &'static [&'static str] {
         "result" => &["Sky.Core.Error as Error"],
         // The AEAD round-trips go through `Result.andThen`.
         "crypto" => &[],
+        // `Result.map` lifts a projection over a decode result, so a failure
+        // stays a failure instead of being papered over by a default.
+        "codec" => &["Sky.Core.Result as Result", "Sky.Core.Json.Encode as Encode"],
         // `Std.Money` needs `Decimal` only through its own re-exports; the
         // battery uses the `Currency` constructors, which `Std.Money` exposes.
         _ => &[],
@@ -2103,6 +2992,13 @@ fn import_exposing(module: &str) -> Option<&'static str> {
         // `ErrorKind(..)` for `kindLabel Io`; `ErrorDetails(..)` for
         // `withDetails (HttpStatus 404)`.
         "Sky.Core.Error" => Some("ErrorKind(..), ErrorDetails(..)"),
+        // `Codec` so the fixture can name the type; `Shape(..)` / `ColType(..)`
+        // so `Codec.shape`'s result can be taken apart at all.
+        "Std.Codec" => Some("Codec, Shape(..), ColType(..)"),
+        // `Element(..)` so the Markdown case can FOLD the tree rather than
+        // asserting a rendered string — which is what makes the `Raw`-node
+        // count (the security promise) statable.
+        "Std.Ui" => Some("Element(..)"),
         _ => None,
     }
 }
@@ -2137,7 +3033,15 @@ pub fn stdlib_edge(a: &Assignment) -> (Body, String) {
 
     let mut imports = import_line(sf.module);
     for m in sf.also {
-        imports.push_str(&format!("import {m}\n"));
+        // An `also` entry that already carries its own `as` alias is written
+        // verbatim; a bare module path goes through `import_line` so any
+        // `exposing (…)` clause it needs (`Std.Ui exposing (Element(..))`)
+        // applies to it exactly as it does to the surface's own module.
+        if m.contains(" as ") {
+            imports.push_str(&format!("import {m}\n"));
+        } else {
+            imports.push_str(&import_line(m));
+        }
     }
     for m in extra_imports(slug) {
         imports.push_str(&format!("import {m}\n"));
@@ -2467,6 +3371,14 @@ mod tests {
         let root = repo_root();
         let mut unknown = Vec::new();
         for (module, sym) in covered_symbols() {
+            // `kernel:<Pseudo>` names a kernel pseudo-module, which has no
+            // `.sky` source and therefore no `exposing` list to contradict.
+            // Those tags are checked against `hir` instead — see
+            // `every_kernel_covers_tag_is_advertised_by_hir`, which is exactly
+            // as strong: a typo fails there.
+            if module.starts_with("kernel:") {
+                continue;
+            }
             let Some(list) = exposing(&root, &module) else {
                 // `exposing (..)` — every top-level declaration is public, so
                 // there is no list to contradict.
@@ -2480,6 +3392,84 @@ mod tests {
             unknown.is_empty(),
             "these `covers` tags name symbols their module does not expose: {unknown:?}"
         );
+    }
+
+    /// Every `Kernel.<Pseudo>.<name>` tag must name a member `hir` actually
+    /// advertises for that pseudo-module.
+    ///
+    /// This is the kernel half of the `covers`-tag contract, and it is the
+    /// mechanism that makes those symbols COUNTABLE rather than merely
+    /// asserted: a tag that named nothing would previously have been mapped to
+    /// `Sky.Core.Prelude`, a module no inventory contains, and would have
+    /// vanished from both the numerator and the denominator without a word.
+    #[test]
+    fn every_kernel_covers_tag_is_advertised_by_hir() {
+        let inv = kernel_inventory();
+        let mut unknown = Vec::new();
+        for (module, sym) in covered_symbols() {
+            let Some(pseudo) = module.strip_prefix("kernel:") else {
+                continue;
+            };
+            match inv.get(pseudo) {
+                Some(members) if members.contains(&sym) => {}
+                _ => unknown.push(format!("{pseudo}.{sym}")),
+            }
+        }
+        assert!(
+            unknown.is_empty(),
+            "these `Kernel.*` covers tags name members no kernel pseudo-module \
+             advertises (hir::KERNEL_FUNCTIONS): {unknown:?}"
+        );
+    }
+
+    /// Both halves of every [`ROUTED_ONLY_KERNEL_MEMBERS`] row are checked, so
+    /// the row cannot rot into a lie in either direction: the member must still
+    /// be ROUTED by the lowerer (or the assertion is aimed at nothing), and it
+    /// must still be UNADVERTISED by `hir` (or the row is stale and the symbol
+    /// belongs in the ordinary inventory).
+    #[test]
+    fn every_routed_only_member_is_really_routed_and_really_unadvertised() {
+        for (pseudo, member) in ROUTED_ONLY_KERNEL_MEMBERS {
+            assert!(
+                lower::kernel::kernel_go_name_opt(pseudo, member).is_some(),
+                "{pseudo}.{member} is declared routed-only but `lower::kernel` \
+                 does not route it — the row names nothing"
+            );
+            let advertised = hir::kernel_functions(pseudo)
+                .map_or(false, |ms| ms.contains(member));
+            assert!(
+                !advertised,
+                "{pseudo}.{member} IS advertised by hir::KERNEL_FUNCTIONS now — \
+                 delete the ROUTED_ONLY_KERNEL_MEMBERS row; the drift it records \
+                 has been closed"
+            );
+        }
+    }
+
+    /// The four symbols the ledger's gap list named — `toString`, `modBy`,
+    /// `compare`, `negate` — are asserted AND countable.
+    ///
+    /// They were the worked example of a denominator that omits real symbols:
+    /// asserted by Family S, tagged `Prelude.*`, mapped to a module that is in
+    /// no inventory, and therefore invisible to every number the ledger prints.
+    /// This test is what stops that regressing to invisible again.
+    #[test]
+    fn the_four_uncountable_basics_are_now_counted() {
+        let covered = covered_symbols();
+        for sym in ["toString", "modBy", "compare", "negate"] {
+            assert!(
+                covered.contains(&("kernel:Basics".to_string(), sym.to_string())),
+                "`{sym}` is a kernel `Basics` member Family S asserts, but it is \
+                 not attributed to the kernel namespace — so no denominator can \
+                 see it"
+            );
+        }
+        // And the inventory that divides them is non-empty and real.
+        let inv = kernel_inventory();
+        let basics = inv.get("Basics").expect("hir advertises a `Basics` pseudo-module");
+        for sym in ["toString", "modBy", "compare", "negate"] {
+            assert!(basics.contains(sym), "hir no longer advertises Basics.{sym}");
+        }
     }
 
     /// The coverage claim is non-trivial: the batteries assert something about

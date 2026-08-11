@@ -776,7 +776,7 @@ pub fn batch_module(index: usize, b: &Body) -> (String, String) {
 /// what it authorises.
 fn family_of(stratum: &str) -> Family {
     match stratum {
-        "stdlib_edge" | "stdlib_import" => Family::S,
+        "stdlib_edge" | "stdlib_import" | "dict_key_crossing" => Family::S,
         _ => Family::L,
     }
 }
@@ -792,6 +792,15 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
         // ---- Family S: the body already carries its own imports ------------
         "stdlib_edge" => {
             let (body, out) = super::stdlib::stdlib_edge(assignment);
+            (
+                vec![("Main".to_string(), standalone_module(&body))],
+                "Main".to_string(),
+                out,
+                Some(body),
+            )
+        }
+        "dict_key_crossing" => {
+            let (body, out) = super::dict_crossing::case(assignment);
             (
                 vec![("Main".to_string(), standalone_module(&body))],
                 "Main".to_string(),
@@ -922,20 +931,38 @@ mod tests {
                         // comparing a shorter string to a shorter string.
                         match family_of(s.name) {
                             Family::S => {
-                                let items = if s.name == "stdlib_edge" {
-                                    crate::corpus::stdlib::battery(a.get(SURFACE), a.get(EDGE))
-                                        .len()
-                                } else {
-                                    stdout.split('/').count()
+                                let items = match s.name {
+                                    "stdlib_edge" => Some(
+                                        crate::corpus::stdlib::battery(
+                                            a.get(SURFACE),
+                                            a.get(EDGE),
+                                        )
+                                        .len(),
+                                    ),
+                                    "dict_key_crossing" => Some(
+                                        crate::corpus::dict_crossing::battery_len(
+                                            a.get(DICT_KEY),
+                                            a.get(DICT_ACCESS),
+                                        ),
+                                    ),
+                                    _ => None,
                                 };
-                                assert!(items > 0, "{} {a}: no assertions", s.name);
-                                if s.name == "stdlib_edge" {
-                                    assert_eq!(
-                                        stdout.split('|').count(),
-                                        items,
-                                        "{} {a}: expectation and battery disagree on item count",
+                                match items {
+                                    Some(n) => {
+                                        assert!(n > 0, "{} {a}: no assertions", s.name);
+                                        assert_eq!(
+                                            stdout.split('|').count(),
+                                            n,
+                                            "{} {a}: expectation and battery disagree on \
+                                             item count",
+                                            s.name
+                                        );
+                                    }
+                                    None => assert!(
+                                        stdout.split('/').count() > 0,
+                                        "{} {a}: no assertions",
                                         s.name
-                                    );
+                                    ),
                                 }
                             }
                             _ => assert!(

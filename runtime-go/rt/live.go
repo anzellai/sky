@@ -160,7 +160,12 @@ func applyHtmlAttr(vn *VNode, a any) {
 	case "Attr":
 		if len(fields) >= 2 {
 			k := AsString(fields[0])
-			v := AsString(fields[1])
+			// A URL-bearing attribute whose scheme executes script is
+			// neutralised HERE, the one place every attribute enters a VNode —
+			// so `Std.Ui`, `Std.Html` and `Std.Markdown` are all covered by one
+			// guard, on the server-render path and the diff/patch path alike.
+			// See `SafeAttrURL`.
+			v := SafeAttrURL(k, AsString(fields[1]))
 			// `class` and `style` are HTML's space- and
 			// semicolon-separated multi-valued attributes — multiple
 			// `class "foo bar"` + `class "baz"` calls on the same
@@ -280,8 +285,12 @@ func init() {
 		switch name {
 		case "Attr":
 			if len(fields) >= 2 {
-				return AsString(fields[0]) + "=\"" +
-					htmlEscapeAttr(AsString(fields[1])) + "\""
+				// `Html.attrToString` is a second, independent path from an
+				// `Attribute` to markup, so it needs the same guard — a check
+				// applied on only one of two renderers is not a check.
+				k := AsString(fields[0])
+				return k + "=\"" +
+					htmlEscapeAttr(SafeAttrURL(k, AsString(fields[1]))) + "\""
 			}
 		case "BoolAttr":
 			if len(fields) >= 2 && AsBool(fields[1]) {

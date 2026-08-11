@@ -8,10 +8,12 @@
 -- sanitiser needed.
 --
 -- Supported subset is "chat-grade": headers, paragraphs, fenced
--- code blocks, bullet / ordered lists, horizontal rules, bold,
--- italic, inline code, links, trailing-double-space → `<br>`.
--- Deliberately not supported in v1: tables, blockquotes, images,
--- footnotes, raw HTML, math, mermaid.
+-- code blocks, bullet / ordered lists, horizontal rules, tables,
+-- bold, italic, inline code, links, trailing-double-space →
+-- `<br>`.  Deliberately not supported in v1: blockquotes, images,
+-- footnotes, raw HTML, math, mermaid — a `> quote` keeps its
+-- marker as literal text and an `![alt](url)` renders as `!` plus
+-- a link, so neither is silently dropped.
 module Std.Markdown exposing (render, renderInline)
 
 -- Std.Markdown — render markdown source to Std.Ui Element trees.
@@ -25,16 +27,27 @@ module Std.Markdown exposing (render, renderInline)
 -- responses, commit messages, PR bodies, prompt history. Block
 -- types: headers (# / ## / ### / #### / ##### / ######),
 -- paragraphs, fenced code blocks (```), bullet lists (- / *),
--- ordered lists (1.), horizontal rules (---). Inline: **bold**,
--- *italic*, `code`, [text](url), trailing-double-space → <br>.
--- Deliberately not supported in v1 (add when needed): tables,
--- blockquotes, images, footnotes, raw HTML, math, mermaid.
+-- ordered lists (1.), horizontal rules (---), tables (pipe syntax
+-- with a `| --- |` separator row). Inline: **bold**, *italic*,
+-- `code`, [text](url), trailing-double-space → <br>.
+-- Deliberately not supported in v1 (add when needed):
+-- blockquotes, images, footnotes, raw HTML, math, mermaid. What
+-- an unsupported construct DOES, so it is not a surprise: a
+-- `> quote` keeps its marker and renders as an ordinary
+-- paragraph; an `![alt](url)` renders as `!` followed by a link
+-- labelled `alt`.
 --
 -- Security: the parser never emits raw HTML, scripts, or event
 -- handlers — everything routes through typed Std.Ui constructors.
--- Safe to feed untrusted markdown without an extra sanitisation
--- step (compare: HTML-string renderers need bluemonday or
--- equivalent).
+-- A link's URL is neutralised by the renderer: a `javascript:`
+-- / `vbscript:` / non-image `data:` href becomes `about:blank`,
+-- so the "safe with untrusted input" promise covers the href and
+-- not only the escaping. Before v0.20.1 it did not —
+-- `[x](javascript:alert(1))` reached the page verbatim, because
+-- HTML-escaping cannot help a payload that needs no
+-- metacharacter. So: safe to feed untrusted markdown without an
+-- extra sanitisation step (compare: HTML-string renderers need
+-- bluemonday or equivalent).
 --
 -- Performance note: pure Sky implementation. Linear in input
 -- length for typical chat-sized inputs (≤10 KB). For multi-MB

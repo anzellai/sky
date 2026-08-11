@@ -11,6 +11,38 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## Unreleased
+
+### Fixes
+
+- **`List.sort` and `List.sortBy` sorted the RENDERING, not the value.**
+  `List.sort [ 10, 9, 2 ]` returned `10, 2, 9`; `[ -1, -20, 3 ]` came back
+  unchanged; `List Float` and `List Char` were wrong the same way (a `Char` is a
+  rune, and its rendered form is its decimal code point, so `[ 'a', '~', 'B' ]`
+  sorted as `~ B a`). `List String` was correct, which is why it survived.
+  Both now share the ordering dispatch `<` / `>` / `compare` already used, so
+  the four cannot disagree. `List.sortWith` was always correct — it takes your
+  comparator.
+
+- **`Std.Markdown` did not filter link URLs, against its own promise.**
+  `Markdown.render "[x](javascript:alert(1))"` emitted
+  `<a href="javascript:alert(1)">` verbatim, while the module documents itself
+  as *"safe to feed UNTRUSTED markdown … no bluemonday-equivalent sanitiser
+  needed"*. HTML-escaping does not help: the payload contains no metacharacter.
+  Fixed in `Std.Ui`, at the single site every URL-bearing attribute passes
+  through, so `Ui.link`, `Ui.image`, a form `action` and a hand-written
+  `Ui.htmlAttribute "href" …` are all covered.
+
+  **Behaviour change:** an `href` / `src` / `action` whose scheme is
+  `javascript:`, `vbscript:`, or `data:` other than `data:image/` now renders as
+  `about:blank`. Every other URL — relative, `https:`, `mailto:`, `tel:`,
+  `blob:`, `#fragment`, custom app schemes — is unchanged.
+
+- **`Std.Markdown` documented tables as unsupported while rendering them.**
+  The docstring now matches the parser, and says what the genuinely unsupported
+  constructs do instead (a blockquote keeps its `>` marker; an `![alt](url)`
+  renders as `!` plus a link).
+
 ## v0.20.0 — the tests that find bugs, and the 30 they found (2026-08-11)
 
 > **Upgrade note.** Two classes of program that used to compile are now

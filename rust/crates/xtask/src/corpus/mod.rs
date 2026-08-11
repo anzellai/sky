@@ -29,6 +29,7 @@
 //! manifest lists.
 
 pub mod axes;
+pub mod dict_crossing;
 pub mod emit_shape;
 pub mod gen;
 pub mod isolation;

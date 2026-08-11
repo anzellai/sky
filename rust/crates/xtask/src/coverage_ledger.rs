@@ -475,6 +475,24 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
             "stdlib.Std.Decimal",
             "stdlib.Std.Money",
             "stdlib.Std.Csv",
+            // The five the ledger's own gap list named as dark-but-assertable
+            // ("`Sky.Core.Bytes`, `Sky.Core.Jwt`, `Std.Codec`, `Std.Markdown`,
+            // `Std.Compression` are pure and assertable — real, closeable
+            // gaps"). Now covered by Family S at all five edge classes.
+            //
+            // Two of them needed a route that did not exist for the modules
+            // above: `Std.Compression` is entirely `Task`-valued and is reached
+            // through `Task.run`, and `Std.Markdown` returns an `Element` and is
+            // reached by folding the tree over `Std.Ui`'s exposed constructors —
+            // which is also what makes its SECURITY promise assertable, by
+            // counting `Raw` nodes and reading back the link hrefs. That
+            // assertion found a live XSS: a `javascript:` markdown link reached
+            // the page verbatim.
+            "stdlib.Sky.Core.Bytes",
+            "stdlib.Sky.Core.Jwt",
+            "stdlib.Std.Codec",
+            "stdlib.Std.Markdown",
+            "stdlib.Std.Compression",
         ],
     ),
     ("corpus-isolation", &["compiler.shared-world", "lang.constructs"]),
