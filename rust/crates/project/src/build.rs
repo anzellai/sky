@@ -308,13 +308,20 @@ fn assemble_and_emit_with(
         return Err(render_diags(&ambiguous, &sources));
     }
     if checked.type_errors > 0 {
+        // Select by the type-error BAND (`E2…`), not by an enumerated allowlist.
+        // The allowlist that used to sit here (`E2001 || E2007`) was a
+        // silent-failure generator: `type_errors > 0` decides that the build
+        // FAILS, while this filter decides what the user is TOLD. The first new
+        // code in the band — `[E2008]`, the unsupported-`Dict`-key check — made
+        // `sky check` exit 1 with a completely EMPTY message. Measured, not
+        // reasoned: that is exactly what it did before this line changed. Every
+        // producer of `CheckOutput::type_errors` codes in the `E2…` band
+        // (`ty::check`), so band membership is the honest predicate, and a
+        // future `[E2009]` cannot reintroduce the hole.
         let ds: Vec<diagnostics::Diagnostic> = checked
             .diagnostics
             .iter()
-            .filter(|d| {
-                d.severity == diagnostics::Severity::Error
-                    && (d.code.0 == "E2001" || d.code.0 == "E2007")
-            })
+            .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0.starts_with("E2"))
             .cloned()
             .collect();
         return Err(render_diags(&ds, &sources));

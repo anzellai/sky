@@ -758,6 +758,7 @@ stable (tests + LSP key off them):
 | `E2005` | record-update mismatch | `Diagnostic.hs:195` |
 | `E2006` | function arity (generic HM) | `Diagnostic.hs:197-198` |
 | `E2007` | strict-HM arity mismatch (declared D vs supplied S) | `Diagnostic.hs:205-206`, §7.5 |
+| `E2008` | unsupported `Dict` key — a `Dict` keyed by anything other than `String`/`Int`/`Float`/`Char`/`Bool`. **Rust-only, no oracle counterpart**: the oracle accepts these and panics at runtime (`rt.Dict: unsupported key type`), which "if it compiles, it works" forbids. Silent on a key type that is not concrete, so a key-polymorphic `Dict k v` is unaffected | `ty/src/dictkey.rs`, `ty/src/check.rs` |
 | `E3001` | non-exhaustive case (**hard error**) | `Diagnostic.hs:210-211`, §11 |
 | `E3002` | redundant arm — **defined, unused** (do not emit) | `Diagnostic.hs:213-214` |
 | `E4001` | typed kernel call with `any`-typed primitive arg | `Diagnostic.hs:218-219` |

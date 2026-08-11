@@ -17,17 +17,17 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 432
+n_min = 441
 n_iso = 57
 n_iso_ceiling = 58
-n_iso_static = 137
+n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 431
+class_v = 440
 class_d = 1
 family_S = 90
 family_L = 206
 family_E = 10
-family_R = 126
+family_R = 135
 family_F = 0
 
 [[case]]
@@ -5641,6 +5641,132 @@ axes       = { defect = "task_vs_pure", rimport = "exposing_list", rposition = "
 coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
 expect     = "reject"
 code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/dict_composite_key-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "dict_composite_key", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2008"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/dict_composite_key-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "dict_composite_key", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2008"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/dict_composite_key-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "dict_composite_key", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2008"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/dict_composite_key-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "dict_composite_key", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2008"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/dict_composite_key-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "dict_composite_key", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2008"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/dict_composite_key-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "dict_composite_key", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2008"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/dict_composite_key-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "dict_composite_key", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2008"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/dict_composite_key-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "dict_composite_key", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2008"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/dict_composite_key-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "dict_composite_key", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2008"
 twin       = true
 
 [[case]]

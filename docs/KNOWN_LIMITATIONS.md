@@ -78,17 +78,29 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
    inside a key-polymorphic helper (`f : Dict k v -> …`), because the
    encoded key carries its own type tag. One case does not:
 
-   - **Composite keys** (tuple, list, record, custom type). Their
+   - **Composite keys** (tuple, list, record, custom type) — now a
+     COMPILE-TIME rejection, `[E2008]`, not a runtime failure. Their
      stringification is not injective — `("a b", "c")` and
      `("a", "b c")` both render `{a b c}` — so no decoder could be
-     correct. `Dict.foldl` / `Dict.map` on such a Dict fails with an
-     `UnsupportedDictKey` panic naming the key type rather than
-     silently handing back a string. **Workaround**: key by a primitive
-     rendering of the composite (e.g. `String.fromInt a ++ ":" ++ String.fromInt b`)
-     and keep the structured form in the value.
+     correct, and a defect that can never be fixed downstream belongs
+     to the type checker rather than to the runtime. `sky check` (and
+     the LSP, live in the editor) refuses `Dict ( Int, Int ) v` with
+     the offending key type, the five that do work, and the workaround;
+     the old `UnsupportedDictKey` panic is now unreachable from code
+     that type-checks. The check resolves through type aliases
+     (`type alias Coord = ( Int, Int )` is rejected too) and fires only
+     when the key type is CONCRETE — a key-polymorphic `Dict k v` is
+     ordinary Sky and stays accepted, with a call site that
+     instantiates `k` to a composite rejected at that call site.
+     **Workaround**: key by a primitive rendering of the composite
+     (e.g. `String.fromInt a ++ ":" ++ String.fromInt b`) and keep the
+     structured form in the value, or hold the entries as a
+     `List ( k, v )` of pairs if you do not need lookup.
 
-   Closing that one means changing what a composite key is *encoded* as,
-   not how it is decoded — a wider change than the decode side.
+   Making that one WORK would mean changing what a composite key is
+   *encoded* as, not how it is decoded — a wider change than the decode
+   side. It is closed in the other direction instead: rejected at check
+   time, so it can no longer reach the runtime at all.
 
 ## Roadmap (not active bugs, just deferred)
 

@@ -1,0 +1,42 @@
+-- defect: a `Dict` keyed by a COMPOSITE type. A Sky `Dict k v` is a Go
+-- `map[string]v` — the key is stringified on the way in and decoded on the way
+-- out — and `fmt.Sprintf("%v", key)` is NOT injective on a tuple: ( "a b", "c" )
+-- and ( "a", "b c" ) both render `{a b c}`, so two distinct keys collide and one
+-- entry is silently lost. No decoder can recover the original, which is why this
+-- is unfixable at the runtime layer rather than merely unimplemented.
+--
+-- The key is written through the alias `Coord`, so this file also pins that
+-- alias expansion happens BEFORE the check (`sig::World::expand`) — a bypass
+-- via `type alias Coord = ( Int, Int )` would otherwise be trivial.
+--
+-- rust: reject [E2008] — check-time rejection with source context.
+-- oracle: ACCEPTS this program and panics at runtime (`rt.Dict: unsupported key
+-- type`, classified `UnsupportedDictKey` by `runtime-go/rt/panic_recover.go`).
+-- This is a DELIBERATE Sky-rust divergence in the strict direction: a panic out
+-- of code that passed `sky check` violates "if it compiles, it works"
+-- (AGENTS.md), so the checker refuses the program instead. Never "reconcile"
+-- this by relaxing the Rust side.
+--
+-- ACCEPTED TWIN — `rust/crates/ty/tests/dict_key.rs`
+-- (`accepts_every_supported_key_type` + `accepts_key_polymorphic_signature`)
+-- checks the same program with each of the five supported key types, and with a
+-- key-polymorphic `Dict k v` helper. Without those, this file would be satisfied
+-- by a checker that rejects everything.
+module Main exposing (main)
+
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Coord =
+    ( Int, Int )
+
+
+grid : Dict Coord String
+grid =
+    Dict.insert ( 1, 2 ) "wall" Dict.empty
+
+
+main =
+    println (String.fromInt (Dict.size grid))

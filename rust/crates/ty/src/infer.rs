@@ -149,6 +149,47 @@ impl<'a> Infer<'a> {
         self
     }
 
+    /// Record the per-expression type-var table WITHOUT otherwise changing
+    /// inference — what the `[E2008]` unsupported-`Dict`-key scan needs from the
+    /// accept-parity path (`check.rs`).
+    ///
+    /// **This flag is inference-neutral by construction.** Every one of its read
+    /// sites (`infer_expr`, and the three local-binder sites) does nothing but
+    /// `push` onto `expr_vars` / `local_vars`; none of them unifies, mints a
+    /// var, or branches the algorithm. So switching it on for the checker cannot
+    /// change which programs are accepted — it only makes the types the checker
+    /// already computed READABLE afterwards, via [`Infer::recorded_expr_types`].
+    pub fn with_record_exprs(mut self, on: bool) -> Self {
+        self.record_exprs = on;
+        self
+    }
+
+    /// Drain the recorded per-expression table, reading each type back.
+    ///
+    /// Read-back is memoised per union-find ROOT: a def's expressions share very
+    /// few distinct solved types (every reference to one param resolves to the
+    /// same root), so this costs strictly less than `infer_def_typed`'s
+    /// unconditional per-expression `read_back` — which the build path already
+    /// pays for every def. Empty unless [`Infer::with_record_exprs`] was set.
+    pub fn recorded_expr_types(&mut self) -> Vec<(ExprId, Ty)> {
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        let mut memo: HashMap<TyVarId, Ty> = HashMap::new();
+        let mut out = Vec::with_capacity(recorded.len());
+        for (e, tv) in recorded {
+            let root = self.uf.find(tv);
+            let t = match memo.get(&root) {
+                Some(t) => t.clone(),
+                None => {
+                    let t = self.read_back(tv);
+                    memo.insert(root, t.clone());
+                    t
+                }
+            };
+            out.push((e, t));
+        }
+        out
+    }
+
     /// Infer a top-level def body, returning its read-back type (the result
     /// type — params are stripped in the resolved HIR). `None` for bodyless
     /// defs (annotation-only / type decls).

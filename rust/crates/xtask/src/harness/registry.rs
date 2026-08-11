@@ -378,8 +378,13 @@ pub static GATES: &[Gate] = &[
             // the comparison itself rather than crashing the generator.
             kind: MutationKind::ReplaceOnce {
                 path: "corpus/manifest.toml",
-                from: "n_min = 432",
-                to: "n_min = 433",
+                // Tracks `[corpus] n_min` in corpus/manifest.toml. Growing the
+                // generated corpus moves it, and `every_replace_once_mutation_
+                // targets_a_real_unique_site` fails loudly when this literal no
+                // longer occurs — which is how the family-R `dict_composite_key`
+                // defect (+9 cases, 432 → 441) surfaced here.
+                from: "n_min = 441",
+                to: "n_min = 442",
             },
         }]),
         body: bodies::corpus_manifest,

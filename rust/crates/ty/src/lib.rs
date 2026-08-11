@@ -15,6 +15,7 @@ use base::Name;
 
 mod check;
 mod db;
+pub mod dictkey;
 mod exhaustive;
 mod infer;
 pub mod reject_corpus;
