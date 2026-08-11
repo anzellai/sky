@@ -345,3 +345,25 @@ kills sibling agents' in-flight gates.
 
 Claims in this file that name a file:line or a number were run, not recalled.
 Anything I did not verify says so.
+
+### CORRECTION to the block above (same session)
+
+The "the fix is incomplete" finding recorded above was **WRONG**, and the reason
+is worth more than the finding was.
+
+`scripts/build.sh` copied `rust/target/release/sky` while cargo, honouring the
+`CARGO_TARGET_DIR` set on this machine, had written the binary somewhere else.
+So `sky-out/sky` was a PRE-FIX compiler with a fresh mtime from the `cp`. The
+two suites failed for that reason alone. The kernel-value fix was complete when
+it was merged.
+
+Fixed in `b958958e` at all three script sites via `scripts/lib/cargo-target.sh`,
+which asks cargo for the executable path (`--message-format=json`) instead of
+guessing it. `preflight-tag.sh` had the same bug, which means a release tag could
+have shipped a binary none of its six checks had examined.
+
+`sky-suites` is now **330/330 across 22 suites with SKY_SUITES_BLOCKED empty**.
+
+The lesson for anyone reading this later: when a gate contradicts a fix that its
+own unit tests say is present, suspect the ARTEFACT before the fix. `cargo test`
+and `sky-out/sky` are built by different paths, and only one of them was lying.
