@@ -245,21 +245,48 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         None => CLI_FAMILY.iter().map(|s| s.to_string()).collect(),
     };
 
-    let mut rows = Vec::new();
-    for name in &names {
-        let dir = root.join("examples").join(name);
-        if !dir.is_dir() {
-            continue;
-        }
-        let shape = classify(&dir, name);
-        if let Some(want) = shape_filter {
-            if shape != want {
-                continue;
+    // The examples this invocation will actually touch, resolved up front so the
+    // work can be handed out and the table still printed in corpus order.
+    let selected: Vec<(String, Shape)> = names
+        .iter()
+        .filter_map(|name| {
+            let dir = root.join("examples").join(name);
+            if !dir.is_dir() {
+                return None;
             }
-        }
-        let row = verify_one(root, &dir, name, shape, do_verify, golden, bless, verbose);
-        rows.push(row);
-    }
+            let shape = classify(&dir, name);
+            if let Some(want) = shape_filter {
+                if shape != want {
+                    return None;
+                }
+            }
+            Some((name.clone(), shape))
+        })
+        .collect();
+
+    // Emit + `go build` for every example is the longest single step in CI —
+    // 735s of the codegen-build job's 1338s, which is what puts the T1 tier over
+    // its ceiling. Each example builds in its OWN directory, so the work is
+    // independent; only GOCACHE is shared, and Go makes that safe for concurrent
+    // use.
+    //
+    // RUNNING is a different matter and stays SERIAL. `verify_one` with
+    // `do_verify` starts the built binary, and the server shapes bind a fixed
+    // port — two at once would fight over it and produce a failure that says
+    // nothing about the code. Those invocations (`--shape live --run` and
+    // friends) measure 10-32s in CI, so there is nothing to win there anyway.
+    let concurrent = !do_verify && !bless;
+    let rows: Vec<Row> = if concurrent {
+        build_run_parallel(root, &selected, do_verify, golden, bless, verbose, jobs(args))
+    } else {
+        selected
+            .iter()
+            .map(|(name, shape)| {
+                let dir = root.join("examples").join(name);
+                verify_one(root, &dir, name, *shape, do_verify, golden, bless, verbose)
+            })
+            .collect()
+    };
 
     print_table(&rows);
     let base = gate_result(&rows);
@@ -440,6 +467,80 @@ fn main_binding(src: &str) -> String {
 }
 
 // ---- per-example verification -------------------------------------------
+
+/// How many examples to build CONCURRENTLY. `--jobs N`, else `XTASK_BUILD_JOBS`,
+/// else the machine's parallelism capped at 8 — each worker drives a `go build`
+/// that already parallelises internally, so more than that oversubscribes.
+fn jobs(args: &[String]) -> usize {
+    args.iter()
+        .position(|a| a == "--jobs")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<usize>().ok())
+        .or_else(|| {
+            std::env::var("XTASK_BUILD_JOBS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+        })
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+                .min(8)
+        })
+        .max(1)
+}
+
+/// Build every selected example, up to `jobs` at a time, preserving corpus order
+/// in the returned rows so the printed table does not reorder run to run.
+#[allow(clippy::too_many_arguments)]
+fn build_run_parallel(
+    root: &Path,
+    selected: &[(String, Shape)],
+    do_verify: bool,
+    golden: bool,
+    bless: bool,
+    verbose: bool,
+    jobs: usize,
+) -> Vec<Row> {
+    let mut slots: Vec<Option<Row>> = (0..selected.len()).map(|_| None).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..jobs.min(selected.len().max(1)) {
+            handles.push(scope.spawn(|| {
+                let mut done: Vec<(usize, Row)> = Vec::new();
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((name, shape)) = selected.get(i) else {
+                        break;
+                    };
+                    let dir = root.join("examples").join(name);
+                    done.push((
+                        i,
+                        verify_one(root, &dir, name, *shape, do_verify, golden, bless, verbose),
+                    ));
+                }
+                done
+            }));
+        }
+        for h in handles {
+            // A panicking worker must abort the gate. Dropping it would remove
+            // its examples from the table and shrink the denominator silently —
+            // which is how a gate comes to report PASS over a corpus it never
+            // finished building.
+            for (i, row) in h.join().expect("build-run worker thread panicked") {
+                slots[i] = Some(row);
+            }
+        }
+    });
+
+    slots
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| r.unwrap_or_else(|| panic!("build-run: example {i} produced no row")))
+        .collect()
+}
 
 fn verify_one(
     root: &Path,

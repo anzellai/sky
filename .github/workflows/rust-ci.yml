@@ -313,23 +313,70 @@ jobs:
         run: cargo run -q -p xtask -- build-run --all
       - name: Gate — golden (runtime-correctness, CLI subset)
         run: cargo run -q -p xtask -- build-run --shape cli --run --golden
-      - name: Gate — stdlib behavioral conformance (sky test suites)
-        # The behavioral layer the corpus gates + oracle DON'T cover: asserts
-        # documented stdlib semantics with adversarial inputs (Store multi-col
-        # order, memoised-CAF stale reads, Log attrs, fromJson-ADT, stack safety).
-        run: |
-          cargo build --release -p sky --locked
-          SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh
-      - name: Gate — live docs (full-module doc examples still compile)
-        # Every `module Main …` Sky example in the live docs (docs/, excluding
-        # docs/history/) must `sky check` — so a doc example can't silently rot.
-        run: SKY_BIN="$PWD/target/release/sky" ../scripts/doc-examples.sh
       - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
         run: cargo run -q -p xtask -- build-run --shape live --run
       - name: Gate — http runtime (Sky.Http.Server examples start + serve)
         run: cargo run -q -p xtask -- build-run --shape http --run
       - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
         run: cargo run -q -p xtask -- build-run --shape tui --run
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── Behavioural stdlib + live docs (split out of codegen-build) ─────────────
+  #
+  # Both gates need a --release `sky` and neither needs anything else
+  # codegen-build produces, so they were pure serial tail on that job: measured
+  # 167s (conformance, incl. the release build) + 48s (doc-examples) inside a
+  # 1338s job whose length was what put the T1 tier over its ceiling.
+  #
+  # The tier formula is `setup + max(dependent job)`, so moving independent work
+  # into a SIBLING job removes it from the critical path entirely rather than
+  # merely making it faster. Nothing is dropped — both gates still run on every
+  # push, and `ci-green` requires this job like any other.
+  behaviour-docs:
+    needs: setup
+    runs-on: ubuntu-latest
+    # ~81s workspace build + ~167s conformance (incl. the release sky build) +
+    # ~48s doc-examples ≈ 5 min. 1.5x ≈ 8, rounded up for runner variance.
+    timeout-minutes: 12
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-linux-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Gate — stdlib behavioral conformance (sky test suites)
+        # The behavioral layer the corpus gates + oracle DON'T cover: asserts
+        # documented stdlib semantics with adversarial inputs (Store multi-col
+        # order, memoised-CAF stale reads, Log attrs, fromJson-ADT, stack safety).
+        working-directory: rust
+        run: |
+          cargo build --release -p sky --locked
+          SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh
+      - name: Gate — live docs (full-module doc examples still compile)
+        # Every `module Main …` Sky example in the live docs (docs/, excluding
+        # docs/history/) must `sky check` — so a doc example can't silently rot.
+        working-directory: rust
+        run: SKY_BIN="$PWD/target/release/sky" ../scripts/doc-examples.sh
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -476,6 +523,7 @@ jobs:
       - parity-reject
       - repro
       - codegen-build
+      - behaviour-docs
       - lsp-fuzz
       - integration-postgres
       - macos-determinism
