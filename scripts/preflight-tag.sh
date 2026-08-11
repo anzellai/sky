@@ -51,9 +51,16 @@ fail() {
 }
 
 step "1/6 — Rebuild compiler from clean state"
+# `cp rust/target/release/sky` was wrong here for the same reason it was wrong
+# in build.sh: cargo honours CARGO_TARGET_DIR and friends, so that path can name
+# an older build. In a RELEASE gate that is the worst possible place for it —
+# every check below would have certified a binary that is not the one just
+# compiled, and the tag would ship the other one.
+# shellcheck source=lib/cargo-target.sh
+source "$REPO_ROOT/scripts/lib/cargo-target.sh"
 ( cd rust && cargo build --release --locked -p sky ) 2>&1 | tail -5
-mkdir -p ./sky-out
-cp rust/target/release/sky ./sky-out/sky
+install_binary "$(cargo_bin_path "$REPO_ROOT/rust" sky --release)" "$REPO_ROOT/sky-out/sky" \
+    || fail "could not install the compiler cargo just built"
 [ -x ./sky-out/sky ] || fail "compiler binary missing after cargo build"
 
 step "2/6 — Smoke-test binary"
