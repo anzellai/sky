@@ -28,8 +28,8 @@
 //! always the latter.
 
 use super::axes::{
-    Assignment, Axis, Stratum, COLLIDER, COLLISION, EDGE, ERASURE, IMPORT_SHAPE, INNER, POSITION,
-    SHADOW,
+    Assignment, Axis, Stratum, COLLIDER, COLLISION, DICT_KEY, EDGE, ERASURE, IMPORT_SHAPE, INNER,
+    POSITION, SHADOW,
 };
 use super::gen;
 use super::runner;
@@ -68,6 +68,14 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         // `shadow` is the axis that does reach the compiler, and its values
         // produce different programs AND different values.
         "stdlib_import" => (SHADOW, "none"),
+        // #174. `string` is the key type that ALWAYS worked — a `String` key
+        // decodes to itself and sorts lexically, which is byte-for-byte what a
+        // Go `map[string]V` always did — so it is the neutral, and moving off it
+        // is what broke every iteration-shaped operation. The emitted Go differs
+        // between key types (different literals, a different `rt` entry point
+        // per routed key kind), so this axis IS witnessed by emit shape while
+        // the VALUE assertion stays independent.
+        "dict_key_crossing" => (DICT_KEY, "string"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }

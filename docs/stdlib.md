@@ -894,7 +894,11 @@ view model =
 | `Markdown.render` | `String -> Element msg` — block-level (Ui.column of paragraphs / headings / code / lists) |
 | `Markdown.renderInline` | `String -> Element msg` — single line of inline-only markdown |
 
-Renders straight into Std.Ui Element trees (no HTML round-trip) so the surrounding theme controls colour and typography. Subset is "chat-grade": headings (`#`-`######`), paragraphs, fenced code, bullet / ordered lists, horizontal rules, `**bold**` / `*italic*` / `` `code` `` / `[text](url)` / trailing double-space `<br>`. **Safe with untrusted input** — never emits raw HTML or event handlers; every node routes through typed Std.Ui constructors.
+Renders straight into Std.Ui Element trees (no HTML round-trip) so the surrounding theme controls colour and typography. Subset is "chat-grade": headings (`#`-`######`), paragraphs, fenced code, bullet / ordered lists, horizontal rules, tables (pipe syntax with a `| --- |` separator row), `**bold**` / `*italic*` / `` `code` `` / `[text](url)` / trailing double-space `<br>`.
+
+Not supported, and what happens instead: a blockquote keeps its `>` marker and renders as an ordinary paragraph; an `![alt](url)` renders as `!` followed by a link labelled `alt`. Footnotes, raw HTML, math and mermaid are passed through as text.
+
+**Safe with untrusted input** — never emits raw HTML or event handlers; every node routes through typed Std.Ui constructors, and a link's URL is neutralised by the renderer, so a `javascript:` / `vbscript:` / non-image `data:` href becomes `about:blank`. (Before v0.20.1 the href was NOT filtered: `[x](javascript:alert(1))` reached the page verbatim, because HTML-escaping does not help against a payload that needs no metacharacter.)
 
 ---
 

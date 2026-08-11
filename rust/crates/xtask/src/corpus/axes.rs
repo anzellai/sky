@@ -157,7 +157,8 @@ pub const SURFACE: Axis = Axis::new(
     "surface",
     &[
         "string", "list", "dict", "set", "maybe", "result", "char", "encoding", "crypto", "math",
-        "basics", "tostring", "path", "error", "decimal", "money", "csv", "regex", "json",
+        "basics", "tostring", "path", "error", "decimal", "money", "csv", "regex", "json", "bytes",
+        "jwt", "codec", "markdown", "compression",
     ],
 );
 
@@ -176,6 +177,45 @@ pub const SURFACE: Axis = Axis::new(
 pub const EDGE: Axis = Axis::new(
     "edge",
     &["nominal", "empty", "boundary", "unicode", "failure"],
+);
+
+/// **The KEY TYPE of the `Dict` under test** (anzellai/sky#174).
+///
+/// A `Dict k v` is a Go `map[string]V`, so every key is stringified on the way
+/// in. The lookup-shaped operations stringify the probe too and therefore agree
+/// for ANY key type; only the iteration-shaped ones let a key leave the runtime
+/// again. That makes the key type an axis of BEHAVIOUR, and the `surface` axis
+/// — which has one value, `dict` — cannot cross it.
+///
+/// `string` is the neutral: a `String` key decodes to itself and sorts
+/// lexically, i.e. byte-for-byte what a `map[string]V` always did. That is
+/// exactly why every `String`-keyed assertion in `dict_battery` passed straight
+/// through #174.
+///
+/// The five values are the five kinds `rt.decodeTaggedDictKey` can decode.
+/// Composite keys (tuple / list / record / ADT) are absent because `%v` is not
+/// injective for them — they are a REJECTION (`[E2008]`), and the reject matrix
+/// owns that case.
+pub const DICT_KEY: Axis = Axis::new("dict_key", &["string", "int", "float", "char", "bool"]);
+
+/// **How the `Dict` operation is REACHED.**
+///
+/// The third axis, and the one that was still broken after the first #174 fix.
+/// That fix recovered the key type from OUTSIDE the key through two STATIC
+/// channels — the compiler's call-site routing and the callback's declared
+/// first parameter. A key-polymorphic helper (`f : Dict k v -> …`) has neither:
+/// the lowering erases `k` to `any`, so there is nothing to route on and nothing
+/// to sniff, and `Dict.keys` through one still panicked. It took a second fix
+/// (a self-describing kind tag on the key itself) to close it.
+///
+/// So `direct` and `poly_helper` were repaired by different mechanisms on
+/// different days, and a corpus that only ever calls `Dict.keys` directly would
+/// have read green in between. `poly_value` adds the second hop and the
+/// first-class-value application, the two shapes the fix's own commit message
+/// records that neither dictionary-passing nor monomorphisation would close.
+pub const DICT_ACCESS: Axis = Axis::new(
+    "dict_access",
+    &["direct", "poly_helper", "poly_value"],
 );
 
 /// **What competes with the imported name.**
@@ -369,6 +409,14 @@ pub const STRATA: &[Stratum] = &[
         // v2 §3.2 family 3: whole-program name resolution IS the subject.
         isolated: true,
     },
+    Stratum {
+        name: "dict_key_crossing",
+        axes: &[DICT_KEY, DICT_ACCESS],
+        coordinate: Some("anzellai/sky#174 — key TYPE x iteration OPERATION"),
+        // A plain single-module value case: nothing here depends on a
+        // neighbour, so batching is safe and the `N_iso` ceiling is untouched.
+        isolated: false,
+    },
 ];
 
 /// Whether a point in a stratum's cross is a real case.
@@ -463,6 +511,16 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
             Assignment::new()
                 .with(IMPORT_SHAPE, "alias_not_last_segment")
                 .with(SHADOW, "local_shadow"),
+        ),
+        // #174's own coordinate, and it is a coordinate the corpus did not have
+        // a case at: an `Int` key reached DIRECTly. `Dict.foldl` over one
+        // panicked. The distance-1 neighbourhood — every other key type at
+        // `direct`, and `Int` at both polymorphic access shapes — is the rest of
+        // the reported + unreported surface, and the full cross covers it.
+        "dict_key_crossing" => Some(
+            Assignment::new()
+                .with(DICT_KEY, "int")
+                .with(DICT_ACCESS, "direct"),
         ),
         _ => None,
     }

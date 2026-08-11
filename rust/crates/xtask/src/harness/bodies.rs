@@ -537,13 +537,29 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// E (10 emit-shape property cases) joined the manifest. **441 since the
 /// `dict_composite_key` defect** (+9 = 1 defect × 3 positions × 3 import shapes),
 /// the `[E2008]` unsupported-`Dict`-key rejection.
-pub const CORPUS_EXPECTED: u64 = 441;
+///
+/// **481 since the Family-S shape close** (+40), and both halves are Family S:
+///
+/// * **+15** — the `dict_key_crossing` stratum: 5 key types × 3 access shapes.
+///   #174 reached a release WITH Family S already asserting `Sky.Core.Dict` at
+///   five edge classes, because the battery crossed neither the key TYPE nor
+///   the polymorphic-helper ACCESS shape against the ITERATION operations. It
+///   asserted `String` keys, which are the one type that always worked.
+/// * **+25** — five surfaces the ledger listed as dark-but-assertable
+///   (`Sky.Core.Bytes`, `Sky.Core.Jwt`, `Std.Codec`, `Std.Markdown`,
+///   `Std.Compression`) × their five edge classes.
+pub const CORPUS_EXPECTED: u64 = 481;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
 /// the emitted Go), so pinning the full count there would have made the gate's
 /// declared assertion count a number it never reaches.
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 296;
+///
+/// **335 since the Family-S shape close** (was 296): all 40 new cases carry a
+/// generator-constructed value, so all 40 are built and run. Measured cost of
+/// the addition on this host: 40 × 1.39 s/case at 4 workers ≈ 56 s of the
+/// `corpus` gate's wall clock (see `xtask corpus-bench`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 335;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.

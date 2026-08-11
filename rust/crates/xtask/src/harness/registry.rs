@@ -382,9 +382,10 @@ pub static GATES: &[Gate] = &[
                 // generated corpus moves it, and `every_replace_once_mutation_
                 // targets_a_real_unique_site` fails loudly when this literal no
                 // longer occurs — which is how the family-R `dict_composite_key`
-                // defect (+9 cases, 432 → 441) surfaced here.
-                from: "n_min = 441",
-                to: "n_min = 442",
+                // defect (+9 cases, 432 → 441) surfaced here, and the Family-S
+                // shape close (+40 cases, 441 → 481) after it.
+                from: "n_min = 481",
+                to: "n_min = 482",
             },
         }]),
         body: bodies::corpus_manifest,

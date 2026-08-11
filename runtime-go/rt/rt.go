@@ -2955,32 +2955,70 @@ func Lte(a, b any) any { return cmp(a, b) <= 0 }
 // shared `cmp` (numbers / strings / chars / tuples / lists lexicographic).
 func Basics_compare(a, b any) any { return cmp(a, b) }
 
+// cmp is the ordering `<` / `>` / `compare` use: it PANICS on a pair it cannot
+// order, because a mis-typed comparison reaching here in well-typed Sky is a
+// bug worth reporting rather than a silent arbitrary answer.
+//
+// The dispatch itself lives in [cmpSafe], which `List.sort` / `List.sortBy`
+// share under a different policy — see the note there.
 func cmp(a, b any) int {
+	c, ok := cmpSafe(a, b)
+	if !ok {
+		panic(fmt.Sprintf("rt.cmp: type mismatch (left %T, right %T)", a, b))
+	}
+	return c
+}
+
+// cmpSafe is THE ordering dispatch. It returns `(order, false)` — never panics —
+// for a pair it cannot order, so its two callers can apply two different
+// policies to that case:
+//
+//   - [cmp] panics, which is right for `<` / `>` / `compare`, where the checker
+//     has already established the operands are comparable.
+//   - [skyLessThan] falls back to a rendered compare, which is right for
+//     `List.sort` / `List.sortBy`: neither has a `.sky` signature (both are on
+//     `UNTYPED_KERNEL_MEMBERS`) so the checker does NOT constrain the element to
+//     `comparable`, and turning a program that used to sort into one that panics
+//     would trade a wrong answer for a crash.
+//
+// ONE dispatch, two policies. Before this there were THREE implementations of
+// "which of these comes first" — this one, `skyLessThan`'s type switch, and an
+// inline `fmt.Sprintf("%v", …) < fmt.Sprintf("%v", …)` in `List_sort` — and the
+// two that were not this one ordered `[10, 9, 2]` as `10, 2, 9`, `[-1, -20, 3]`
+// as `-1, -20, 3`, and `['a', '~', 'B']` by the DECIMAL CODE POINT'S SPELLING
+// (`"126" < "66" < "97"`). See `list_sort_order_test.go`.
+func cmpSafe(a, b any) (int, bool) {
 	// String vs string.
 	if sa, ok := a.(string); ok {
 		sb, bok := b.(string)
 		if !bok {
-			panic(fmt.Sprintf("rt.cmp: type mismatch (left %T, right %T)", a, b))
+			return 0, false
 		}
 		switch {
 		case sa < sb:
-			return -1
+			return -1, true
 		case sa > sb:
-			return 1
+			return 1, true
 		}
-		return 0
+		return 0, true
+	}
+	if _, ok := b.(string); ok {
+		return 0, false
 	}
 	// Numeric (int or float). Promote to float if either side is float,
 	// preserving sub-integer precision.
 	if isFloatish(a) || isFloatish(b) {
+		if !isNumeric(a) || !isNumeric(b) {
+			return 0, false
+		}
 		fa, fb := AsFloat(a), AsFloat(b)
 		switch {
 		case fa < fb:
-			return -1
+			return -1, true
 		case fa > fb:
-			return 1
+			return 1, true
 		}
-		return 0
+		return 0, true
 	}
 	// Composite comparables: Elm's `comparable` includes tuples and lists OF
 	// comparables, ordered lexicographically. The checker only admits `<`/`>` on
@@ -2988,16 +3026,43 @@ func cmp(a, b any) int {
 	// well-typed — compare it recursively rather than falling through to AsInt
 	// (which panics on a struct/slice: the class this closes).
 	if c, ok := cmpComposite(a, b); ok {
-		return c
+		return c, true
+	}
+	// Every remaining integer width, INCLUDING `int32` — which is what a Sky
+	// `Char` is. `Char` had no arm anywhere before this, which is why
+	// `List.sort [ 'a', '~', 'B' ]` came back `~ B a`.
+	if !isNumeric(a) || !isNumeric(b) {
+		return 0, false
 	}
 	ia, ib := AsInt(a), AsInt(b)
 	switch {
 	case ia < ib:
-		return -1
+		return -1, true
 	case ia > ib:
-		return 1
+		return 1, true
 	}
-	return 0
+	return 0, true
+}
+
+// isNumeric reports whether `AsInt` / `AsFloat` can read the value without
+// panicking. Kept next to [cmpSafe] because its whole purpose is to let that
+// function answer "no" instead of taking the process down.
+func isNumeric(v any) bool {
+	switch v.(type) {
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
+		return true
+	}
+	// `AsInt` / `AsFloat` unwrap a Result/Maybe container before giving up, so
+	// this must too — otherwise `cmpSafe` would answer "cannot order" for a pair
+	// the old code ordered fine.
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return isNumeric(u)
+		}
+	}
+	return false
 }
 
 // cmpComposite compares two tuple (struct) or list (slice/array) values
@@ -3018,7 +3083,14 @@ func cmpComposite(a, b any) (int, bool) {
 			n = vb.Len()
 		}
 		for i := 0; i < n; i++ {
-			if c := cmp(va.Index(i).Interface(), vb.Index(i).Interface()); c != 0 {
+			// cmpSafe, not cmp: an element the dispatch cannot order must make
+			// the WHOLE composite unorderable, so `skyLessThan` can fall back
+			// rather than have a nested panic escape past it.
+			c, ok := cmpSafe(va.Index(i).Interface(), vb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			if c != 0 {
 				return c, true
 			}
 		}
@@ -3042,7 +3114,11 @@ func cmpComposite(a, b any) (int, bool) {
 			if !fa.CanInterface() || !fb.CanInterface() {
 				return 0, false // unexported field — not a tuple; let the caller decide
 			}
-			if c := cmp(fa.Interface(), fb.Interface()); c != 0 {
+			c, ok := cmpSafe(fa.Interface(), fb.Interface())
+			if !ok {
+				return 0, false
+			}
+			if c != 0 {
 				return c, true
 			}
 		}
@@ -8235,18 +8311,33 @@ func Io_writeString(args ...any) any {
 	return Ok[any, any](struct{}{})
 }
 
+// List_sort(xs) — ascending sort by the ELEMENT's own ordering (Elm's
+// `List.sort`).
+//
+// It compared `fmt.Sprintf("%v", …)` until 2026-08-11, i.e. it sorted the
+// RENDERING rather than the value: `[10, 9, 2]` came back `10, 2, 9`,
+// `[-1, -20, 3]` unchanged, and `['a', '~', 'B']` by the decimal spelling of
+// the code point. `List String` was correct, which is why it survived — the
+// rendering of a string is the string, exactly as the stringified form of a
+// `String` Dict key was the key (#174, the same shape one layer down).
+//
+// Now it shares the ordering dispatch `cmp` already had, so `List.sort`,
+// `List.sortBy`, `<`, `>` and `compare` cannot disagree with each other.
+// SliceStable rather than Slice: equal elements keep their input order, which
+// makes the output deterministic and matches `List_sortBy` / `List_sortWith`.
 func List_sort(list any) any {
 	items := asList(list)
 	result := make([]any, len(items))
 	copy(result, items)
-	sort.Slice(result, func(i, j int) bool {
-		return fmt.Sprintf("%v", result[i]) < fmt.Sprintf("%v", result[j])
+	sort.SliceStable(result, func(i, j int) bool {
+		return skyLessThan(result[i], result[j])
 	})
 	return result
 }
 
 // List_sortBy(keyFn, xs) — stable sort by the `keyFn elem` projection.
-// Keys may be Int, Float, String, or anything fmt.Sprintf can format.
+// Keys may be Int, Float, String, Char, a tuple or list of those, or anything
+// fmt.Sprintf can format (see [skyLessThan]).
 func List_sortBy(keyFn any, list any) any {
 	items := asList(list)
 	result := make([]any, len(items))
@@ -8274,26 +8365,24 @@ func List_sortWith(cmp any, list any) any {
 	return result
 }
 
-// skyLessThan — generic ordering used by List_sortBy. Treats numeric types
-// specially; falls back to lexicographic string compare for everything else.
+// skyLessThan — the ordering behind `List.sort` and `List.sortBy`.
+//
+// It defers to [cmpSafe], the same dispatch `<` / `>` / `compare` use, and falls
+// back to a lexicographic compare of the RENDERED values only for a pair that
+// dispatch cannot order at all. The fallback is deliberate and is why this is
+// not simply `cmp`: neither sort kernel has a `.sky` signature, so the checker
+// does not constrain the element to `comparable`, and a `List Bool` or an
+// `any`-typed FFI list must still come back sorted somehow rather than take the
+// process down. `List_sort` has no `comparable` constraint to lean on and a
+// panic there would be a new failure mode, not a fix.
+//
+// Its own type switch used to be the ordering, with arms for `int` / `int64` /
+// `float64` / `string` ONLY — so every `Char` (a Go `int32`), every `int32` /
+// `uint` / other width, and every tuple key fell into the rendered compare and
+// came back in the wrong order.
 func skyLessThan(a, b any) bool {
-	switch x := a.(type) {
-	case int:
-		if y, ok := b.(int); ok {
-			return x < y
-		}
-	case int64:
-		if y, ok := b.(int64); ok {
-			return x < y
-		}
-	case float64:
-		if y, ok := b.(float64); ok {
-			return x < y
-		}
-	case string:
-		if y, ok := b.(string); ok {
-			return x < y
-		}
+	if c, ok := cmpSafe(a, b); ok {
+		return c < 0
 	}
 	return fmt.Sprintf("%v", a) < fmt.Sprintf("%v", b)
 }

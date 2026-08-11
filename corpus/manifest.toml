@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 441
+n_min = 481
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 440
+class_v = 480
 class_d = 1
-family_S = 90
+family_S = 130
 family_L = 206
 family_E = 10
 family_R = 135
@@ -2784,7 +2784,7 @@ witness    = "value"
 axes       = { edge = "nominal", surface = "list" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "3|3,2,1|1,2|2,3|1,2|1,2,3|1,2,3|2,4|2,3|0,1|1,1|10,21|6|2|T|T|T|F|2|7|2"
+stdout     = "3|3,2,1|1,2|2,3|1,2|1,2,3|1,2,3|2,4|2,3|0,1|1,1|10,21|6|2|T|T|T|F|2|7|2|2,9,10|a,b,c|2,9,10|a,bb,ccc|10,9,2"
 
 [[case]]
 id         = "stdlib_edge/empty-list"
@@ -2810,7 +2810,7 @@ witness    = "value"
 axes       = { edge = "boundary", surface = "list" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "0|1,2|0|1,2|0|1,2|3|0|1|0|5"
+stdout     = "0|1,2|0|1,2|0|1,2|3|0|1|0|5|-20,-1,3|2.5,9.5,10.5|1,0/2/10|1,1,2,2|0|7"
 
 [[case]]
 id         = "stdlib_edge/unicode-list"
@@ -2823,7 +2823,7 @@ witness    = "value"
 axes       = { edge = "unicode", surface = "list" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "3|界世|é"
+stdout     = "3|界世|é|aé界|aé界"
 
 [[case]]
 id         = "stdlib_edge/failure-list"
@@ -3252,7 +3252,7 @@ witness    = "value"
 axes       = { edge = "nominal", surface = "basics" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "5|1|F|T|1|2|2|42"
+stdout     = "5|1|F|T|1|2|2|42|-1|0|1|-5"
 
 [[case]]
 id         = "stdlib_edge/boundary-basics"
@@ -3265,7 +3265,7 @@ witness    = "value"
 axes       = { edge = "boundary", surface = "basics" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "3|1|1|3|1|2|0|-7"
+stdout     = "3|1|1|3|1|2|0|-7|0|5|-1"
 
 [[case]]
 id         = "stdlib_edge/nominal-tostring"
@@ -3697,6 +3697,331 @@ expect     = "accept"
 stdout     = "E|E|E|E|E|E|E|E|E"
 
 [[case]]
+id         = "stdlib_edge/nominal-bytes"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "bytes" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "3|616263|abc|SGVsbG8=|Hello|ab|bc|xy|abc|F|abc1"
+
+[[case]]
+id         = "stdlib_edge/empty-bytes"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "bytes" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "0|T|||||a"
+
+[[case]]
+id         = "stdlib_edge/boundary-bytes"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "bytes" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "bc||abcd|00ff10|AP8Q"
+
+[[case]]
+id         = "stdlib_edge/unicode-bytes"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "bytes" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "6|e4b896|世|4"
+
+[[case]]
+id         = "stdlib_edge/failure-bytes"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "bytes" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "N|N|N|N"
+
+[[case]]
+id         = "stdlib_edge/nominal-jwt"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "jwt" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1MSJ9._EcUsalm3HB8fiInqvnvLgcAJUDMbPwG8idbTrQ9n_0|{"sub":"u1"}|{"iss":"iss1","aud":"aud1","iat":5,"jti":"id1","role":"admin"}"
+
+[[case]]
+id         = "stdlib_edge/empty-jwt"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "jwt" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "{}|{}"
+
+[[case]]
+id         = "stdlib_edge/boundary-jwt"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "jwt" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "{"exp":100}|E|{"nbf":100}|E"
+
+[[case]]
+id         = "stdlib_edge/unicode-jwt"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "jwt" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "{"sub":"世界"}"
+
+[[case]]
+id         = "stdlib_edge/failure-jwt"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "jwt" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-codec"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "codec" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "5|"a"|true|1.5|[1,2]|3|5|{"name":"x","priceMinor":9}|y/4|"blue"|4|7"
+
+[[case]]
+id         = "stdlib_edge/empty-codec"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "codec" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "[]|""|null"
+
+[[case]]
+id         = "stdlib_edge/boundary-codec"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "codec" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "5|E|{"name":"x","price_minor":9}|{"name":"x","priceMinor":9}|name,priceMinor|int"
+
+[[case]]
+id         = "stdlib_edge/unicode-codec"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "codec" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = ""世界"|世界"
+
+[[case]]
+id         = "stdlib_edge/failure-codec"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "codec" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-markdown"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "markdown" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "hello|Title|H6|bold|it|code|txt|fn x|b and c"
+
+[[case]]
+id         = "stdlib_edge/empty-markdown"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "markdown" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "|0||"
+
+[[case]]
+id         = "stdlib_edge/boundary-markdown"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "markdown" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "•a•b|1.a2.b|ab12"
+
+[[case]]
+id         = "stdlib_edge/unicode-markdown"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "markdown" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "世界 粗体|0"
+
+[[case]]
+id         = "stdlib_edge/failure-markdown"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "markdown" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "0|<script>alert(1)</script>|0|T|T|T|T|F|F|F|T|> quote|!alt"
+
+[[case]]
+id         = "stdlib_edge/nominal-compression"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "compression" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "1f8b08|hello|28b52f|hello"
+
+[[case]]
+id         = "stdlib_edge/empty-compression"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "compression" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "1f8b08||"
+
+[[case]]
+id         = "stdlib_edge/boundary-compression"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "compression" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "1000|1000"
+
+[[case]]
+id         = "stdlib_edge/unicode-compression"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "compression" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "世界🎉|世界🎉"
+
+[[case]]
+id         = "stdlib_edge/failure-compression"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "compression" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E"
+
+[[case]]
 id         = "stdlib_import/plain-none"
 family     = "S"
 stratum    = "stdlib_import"
@@ -3878,6 +4203,201 @@ coordinate = "anzellai/sky#164 — against real stdlib names"
 expect     = "reject"
 code       = "E1012"
 twin       = true
+
+[[case]]
+id         = "dict_key_crossing/direct-string"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "direct", dict_key = "string" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "ka,kb,kc|ka=p,kb=q,kc=r|p,q,r|kakbkc|kap,kbq,kcr|3|q|T|z|2|F|b|1|L|ka,kb|T|0|0|F|N|3|ka,kb,kc,zz"
+
+[[case]]
+id         = "dict_key_crossing/poly_helper-string"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_helper", dict_key = "string" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "ka,kb,kc|ka=p,kb=q,kc=r|p,q,r|kakbkc|kap,kbq,kcr|3|q|T|z|2|F|b|1|L|ka,kb|T|0|0|F|N|3|ka,kb,kc,zz"
+
+[[case]]
+id         = "dict_key_crossing/poly_value-string"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_value", dict_key = "string" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "ka,kb,kc|ka=p,kb=q,kc=r|p,q,r|kakbkc|kap,kbq,kcr|3|q|T|z|2|F|b|1|L|ka,kb|T|0|0|F|N|3|ka,kb,kc,zz"
+
+[[case]]
+id         = "dict_key_crossing/direct-int"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "direct", dict_key = "int" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "1,2,10|1=p,2=q,10=r|p,q,r|1210|1p,2q,10r|3|q|T|z|2|F|b|1|L|1,2|T|0|0|F|N|3|1,2,10,77"
+
+[[case]]
+id         = "dict_key_crossing/poly_helper-int"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_helper", dict_key = "int" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "1,2,10|1=p,2=q,10=r|p,q,r|1210|1p,2q,10r|3|q|T|z|2|F|b|1|L|1,2|T|0|0|F|N|3|1,2,10,77"
+
+[[case]]
+id         = "dict_key_crossing/poly_value-int"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_value", dict_key = "int" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "1,2,10|1=p,2=q,10=r|p,q,r|1210|1p,2q,10r|3|q|T|z|2|F|b|1|L|1,2|T|0|0|F|N|3|1,2,10,77"
+
+[[case]]
+id         = "dict_key_crossing/direct-float"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "direct", dict_key = "float" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "0.5,2.5,10.5|0.5=p,2.5=q,10.5=r|p,q,r|0.52.510.5|0.5p,2.5q,10.5r|3|q|T|z|2|F|b|1|L|0.5,2.5|T|0|0|F|N|3|0.5,2.5,9.25,10.5"
+
+[[case]]
+id         = "dict_key_crossing/poly_helper-float"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_helper", dict_key = "float" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "0.5,2.5,10.5|0.5=p,2.5=q,10.5=r|p,q,r|0.52.510.5|0.5p,2.5q,10.5r|3|q|T|z|2|F|b|1|L|0.5,2.5|T|0|0|F|N|3|0.5,2.5,9.25,10.5"
+
+[[case]]
+id         = "dict_key_crossing/poly_value-float"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_value", dict_key = "float" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "0.5,2.5,10.5|0.5=p,2.5=q,10.5=r|p,q,r|0.52.510.5|0.5p,2.5q,10.5r|3|q|T|z|2|F|b|1|L|0.5,2.5|T|0|0|F|N|3|0.5,2.5,9.25,10.5"
+
+[[case]]
+id         = "dict_key_crossing/direct-char"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "direct", dict_key = "char" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "B,a,~|B=p,a=q,~=r|p,q,r|Ba~|Bp,aq,~r|3|q|T|z|2|F|b|1|L|B,a|T|0|0|F|N|3|B,Z,a,~"
+
+[[case]]
+id         = "dict_key_crossing/poly_helper-char"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_helper", dict_key = "char" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "B,a,~|B=p,a=q,~=r|p,q,r|Ba~|Bp,aq,~r|3|q|T|z|2|F|b|1|L|B,a|T|0|0|F|N|3|B,Z,a,~"
+
+[[case]]
+id         = "dict_key_crossing/poly_value-char"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_value", dict_key = "char" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "B,a,~|B=p,a=q,~=r|p,q,r|Ba~|Bp,aq,~r|3|q|T|z|2|F|b|1|L|B,a|T|0|0|F|N|3|B,Z,a,~"
+
+[[case]]
+id         = "dict_key_crossing/direct-bool"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "direct", dict_key = "bool" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "F,T|F=p,T=q|p,q|FT|Fp,Tq|2|q|T|z|1|F|b|1|L|F,T|T|0|0"
+
+[[case]]
+id         = "dict_key_crossing/poly_helper-bool"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_helper", dict_key = "bool" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "F,T|F=p,T=q|p,q|FT|Fp,Tq|2|q|T|z|1|F|b|1|L|F,T|T|0|0"
+
+[[case]]
+id         = "dict_key_crossing/poly_value-bool"
+family     = "S"
+stratum    = "dict_key_crossing"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { dict_access = "poly_value", dict_key = "bool" }
+coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
+expect     = "accept"
+stdout     = "F,T|F=p,T=q|p,q|FT|Fp,Tq|2|q|T|z|1|F|b|1|L|F,T|T|0|0"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"
