@@ -286,6 +286,49 @@ func parseTTL(envVal, tomlVal string, def time.Duration) time.Duration {
 	return def
 }
 
+// slidingCookieMaxAgeSeconds — the browser Max-Age for a cookie that guards a
+// SLIDING server-side session.
+//
+// The invariant: a cookie must never expire while the session it identifies is
+// still alive. Sky.Live sessions slide WITHOUT BOUND — every store Get/Set
+// touches lastSeen, and so does the SSE heartbeat (handleSSE, every
+// sseHeartbeatInterval), so a tab sitting IDLE with an open SSE keeps its
+// server session alive indefinitely. The browser cookie, by contrast, is only
+// re-issued on a full page GET (sessionIDNamed) or an event POST (handleEvent)
+// — neither of which happens while the tab is idle. There is no third
+// mechanism: an SSE stream's headers are written once, at connect, so the
+// heartbeat physically cannot re-issue a cookie mid-stream.
+//
+// Keying Max-Age to the session TTL therefore breaks exactly the case the
+// sliding TTL exists to support. With ttl=30m, a tab idle 31m under a live SSE
+// has a server session that is demonstrably ALIVE and a browser that has
+// silently dropped its cookie. The next click POSTs with no cookie,
+// boundSessionID fails, writeSessionLost returns X-Sky-Status: session-lost,
+// the client hard-reloads, and the user's Model (cart / auth / half-filled
+// form) is gone. That is the "idle 20-30min → disconnected → refresh fixes it"
+// incident. It was reported and fixed once for the __sky_csrf cookie (bug #11)
+// and left unfixed on the sky_sid cookie __sky_csrf guards — the SAME defect,
+// one layer down, so the gate that caught the 403 then caught the session-lost.
+//
+// Neither cookie's LIFETIME is a security control:
+//   - sky_sid is an opaque 128-bit random handle, HttpOnly. The session's real
+//     expiry is enforced SERVER-side by the store's TTL reap; presenting a sid
+//     whose session was reaped yields writeSessionLost → the client re-mints.
+//     A cookie that outlives its session is therefore inert, and that path is
+//     already the designed, tested recovery.
+//   - __sky_csrf's security is the cookie==header double-submit match, not a
+//     short cookie lifetime.
+//
+// So both use a long fixed floor decoupled from the session TTL, never below a
+// longer configured TTL.
+func slidingCookieMaxAgeSeconds(ttl time.Duration) int {
+	const floorSeconds = 30 * 24 * 3600 // 30 days — outlives any realistic idle-slide
+	if s := int(ttl.Seconds()); s > floorSeconds {
+		return s
+	}
+	return floorSeconds
+}
+
 // parseIdleEvict — resolve the tiered-session-cache idle-evict window from
 // env > sky.toml > default, mirroring parseTTL's precedence + duration/seconds
 // parsing. Differs in ONE way: an EXPLICIT "0" / "off" / "none" / "disable(d)"
