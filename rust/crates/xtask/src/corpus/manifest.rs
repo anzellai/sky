@@ -49,7 +49,27 @@ use std::path::Path;
 ///   it bought a **live runtime-panic defect** the corpus had otherwise missed
 ///   (see `gen::blocked_reason`). That is the trade this cap exists to make
 ///   visible, and it is the right side of it.
-pub const N_ISO_CEILING: usize = 44;
+/// * `58` — **raised deliberately** to admit Family S's `stdlib_import`
+///   stratum: 14 units (5 `import_shape` × 4 `shadow`, less the 2 points where
+///   a local shadow would compete with an explicitly-exposed import and the 4
+///   where there is no ambiguity to be had). It is `isolation = unit` under v2
+///   §3.2 family 3 — whole-program name resolution IS the subject.
+///
+///   What it buys is the repair of a weakness this repo had already written
+///   down and left open: `witness.rs::witness_exemption` records that the
+///   original `import_shape` stratum's `collision` axis is **inert** — its
+///   non-`none` values add a local binding that collides with nothing — and
+///   that the stratum therefore *"must NOT be claimed as covering the #164
+///   defect class"*. `stdlib_import` collides against REAL stdlib names
+///   (`Sky.Core.String.length` vs `Sky.Core.List.length`, and a local
+///   definition of the same bare name) exactly as v2 §3.1 requires, and its
+///   axis-under-test is witnessed rather than exempt.
+///
+///   The 14th unit is the one that paid for the rest: it is a LIVE defect the
+///   stratum found on its first run — two modules that both `exposing (..)` the
+///   same name resolve to the last import, silently, so the program's value
+///   depends on import order (`gen::blocked_reason`).
+pub const N_ISO_CEILING: usize = 58;
 
 pub fn render() -> String {
     let cases = super::all_cases();

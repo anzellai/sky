@@ -415,9 +415,48 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("shared-world", &["compiler.shared-world", "compiler.resolve"]),
     ("coverage-ledger", &["meta.coverage-accounting"]),
     ("corpus-manifest", &["lang.constructs"]),
+    // Layer 1's `corpus` gate. The `lang.*` / `compiler.*` claims are the
+    // language strata; the `stdlib.*` claims are **Family S**, which asserts
+    // 323 of the 336 public symbols these 20 modules export, at their empty /
+    // boundary / unicode / failure edges (`xtask corpus --stdlib-coverage`
+    // prints the numerator and names every gap).
+    //
+    // Declared here rather than inferred, because the ledger derives a Layer-1
+    // module import from the string LITERALS in `corpus/*.rs`
+    // (`enumerate_units`, the `parse_imports(&emitted)` call) and Family S
+    // builds its import lines with `format!("import {module}")` — the literal
+    // is the module path alone, so the inference misses it. Leaving it to the
+    // inference would have recorded `Sky.Core.Basics`, `Sky.Core.Char` and
+    // `Sky.Core.Path` as having ZERO new cover while 18 assertions ran against
+    // each of them every corpus run. Undeclared coverage looks like no
+    // coverage; that is the right default, and this is the declaration.
     (
         "corpus",
-        &["lang.constructs", "compiler.infer", "compiler.lower-emit-shape"],
+        &[
+            "lang.constructs",
+            "compiler.infer",
+            "compiler.lower-emit-shape",
+            "stdlib.Sky.Core.String",
+            "stdlib.Sky.Core.List",
+            "stdlib.Sky.Core.Dict",
+            "stdlib.Sky.Core.Set",
+            "stdlib.Sky.Core.Maybe",
+            "stdlib.Sky.Core.Result",
+            "stdlib.Sky.Core.Char",
+            "stdlib.Sky.Core.Encoding",
+            "stdlib.Sky.Core.Crypto",
+            "stdlib.Sky.Core.Math",
+            "stdlib.Sky.Core.Basics",
+            "stdlib.Sky.Core.ToString",
+            "stdlib.Sky.Core.Path",
+            "stdlib.Sky.Core.Error",
+            "stdlib.Sky.Core.Regex",
+            "stdlib.Sky.Core.Json.Encode",
+            "stdlib.Sky.Core.Json.Decode",
+            "stdlib.Std.Decimal",
+            "stdlib.Std.Money",
+            "stdlib.Std.Csv",
+        ],
     ),
     ("corpus-isolation", &["compiler.shared-world", "lang.constructs"]),
     (

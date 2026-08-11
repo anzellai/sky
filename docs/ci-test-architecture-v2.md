@@ -332,11 +332,42 @@ plus the topology doc's L1e, reconciled:
 
 | Family | Mode | What it asserts | Where |
 |---|---|---|---|
-| **S** — stdlib behaviour | `behavioural` | every public symbol's value at its edge classes | `corpus/stdlib/*.sky`, `Sky.Test` |
+| **S** — stdlib behaviour | `behavioural` | every public symbol's value at its edge classes | `xtask/src/corpus/stdlib.rs`, generated |
 | **L** — language matrix | `static` + `behavioural` | accept/reject, inferred type, and (class V only) the computed value | `corpus/lang/`, generated |
 | **E** — emit shape | `emit_shape` | assertions on the *generated Go*: no stray `any` in a fully-typed expression; record update keeps every field; the right struct is selected | in-process, **no `go build`** |
 | **R** — reject matrix | `static` | rejection **by diagnostic code**, with a paired accepted twin (§4.4) | `ty/tests/reject/corpus`, extended |
 | **F** — deep sampler | `behavioural` | randomised deep space; **the only mechanism that finds unconceived values** | nightly, promotion path to L |
+
+Family **S** landed 2026-08-11 as two generated strata rather than the
+hand-written `corpus/stdlib/*.sky` this table originally imagined, for the
+reason the honesty constraint gives (§4.4): what makes a stdlib assertion class
+V is not where it lives but where its expected value came from. Every
+expectation in `xtask/src/corpus/stdlib.rs` comes from a published constant
+(SHA-256 of the empty string, RFC 4648 base64), from Elm semantics (`String.length
+"世界" == 2`, `modBy 3 -1 == 2`, `take -1 xs == []`), or from the module's own
+written promise — never from the Go runtime's implementation, and never from
+what the compiler printed. Where a docstring and the implementation disagree,
+the docstring is asserted, because that is the promise the product made.
+
+Its two strata:
+
+* **`stdlib_edge`** — `surface` × `edge`. 19 real modules × {nominal, empty,
+  boundary, unicode, failure}, 76 admissible points, ~460 individual
+  assertions, 323 of the 336 public symbols those modules export. Points where
+  a surface has no case in an edge class (there is no unicode edge for
+  `Sky.Core.Math`) are dropped by `axes::admissible`, never padded.
+* **`stdlib_import`** — `import_shape` × `shadow`, `isolation = unit` under
+  §3.2 family 3. This is the repair of the weakness `witness.rs` recorded
+  against the original `import_shape` stratum: its `collision` axis was
+  **inert**, so it could not be claimed as covering #164. `shadow` collides
+  against real stdlib names and against a local definition, and its values
+  produce different programs with different generator-predicted values.
+
+`xtask corpus --stdlib-coverage` prints the numerator against
+`api/symbols.json` — the same inventory the coverage ledger uses, per the §5.3
+denominator contract — and names every public symbol with no assertion. It
+counts a symbol only when a battery item asserts a value **about** it:
+importing a module is not covering it.
 
 Family **E** is the highest-leverage idea either document had and it survives
 intact: #166, #171, #173 and the `goty.rs` fieldset collision are all "compiles

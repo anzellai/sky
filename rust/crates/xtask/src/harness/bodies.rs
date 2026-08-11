@@ -531,7 +531,7 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 
 /// Cases the generator produces. Read from the generator, not hand-copied, so
 /// the harness cannot pin a different corpus size than the manifest declares.
-pub const CORPUS_EXPECTED: u64 = 206;
+pub const CORPUS_EXPECTED: u64 = 296;
 /// The isolation gate's sample size (v2 §3.2).
 pub const CORPUS_ISOLATION_EXPECTED: u64 = 24;
 /// The witness gate's shard size (v2 §4.4).

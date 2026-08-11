@@ -378,8 +378,8 @@ pub static GATES: &[Gate] = &[
             // the comparison itself rather than crashing the generator.
             kind: MutationKind::ReplaceOnce {
                 path: "corpus/manifest.toml",
-                from: "n_min = 206",
-                to: "n_min = 207",
+                from: "n_min = 296",
+                to: "n_min = 297",
             },
         }]),
         body: bodies::corpus_manifest,
@@ -392,17 +392,40 @@ pub static GATES: &[Gate] = &[
         expected: bodies::CORPUS_EXPECTED,
         expect: Expect::Falsifiable,
         summary: "every generated case built + run; values compared against the generator's own",
-        mutations: Mutations::new(&[Mutation {
-            id: "corpus.wrong-expected-value",
-            description: "corrupt the EXPECTED value the generator constructs for \
-                          the record_update family, leaving the program correct; \
-                          that family's value comparison must go red",
-            kind: MutationKind::ReplaceOnce {
-                path: "rust/crates/xtask/src/corpus/gen.rs",
-                from: "(decls, check, format!(\"{UPDATED}/{SURVIVOR}\"))",
-                to: "(decls, check, format!(\"{UPDATED}/999\"))",
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "corpus.wrong-expected-value",
+                description: "corrupt the EXPECTED value the generator constructs for \
+                              the record_update family, leaving the program correct; \
+                              that family's value comparison must go red",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/gen.rs",
+                    from: "(decls, check, format!(\"{UPDATED}/{SURVIVOR}\"))",
+                    to: "(decls, check, format!(\"{UPDATED}/999\"))",
+                },
             },
-        }]),
+            // A family-specific mutation, because the one above proves only
+            // that `record_update` bites. Family S is 90 of the 296 cases and a
+            // mutation that never touches it would let the whole family be
+            // vacuous behind a PROVEN badge — the exact accounting failure this
+            // branch exists to remove.
+            //
+            // The target is the published SHA-256 of the empty string, which is
+            // the strongest class-V assertion in the corpus: it is fixed by
+            // FIPS 180-4, so corrupting the EXPECTATION while leaving the
+            // program correct can only be caught by a live comparison.
+            Mutation {
+                id: "corpus.wrong-stdlib-digest",
+                description: "corrupt the published SHA-256 digest Family S asserts \
+                              for the empty string, leaving the program correct; the \
+                              stdlib_edge/empty-crypto value comparison must go red",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/stdlib.rs",
+                    from: "\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"",
+                    to: "\"0000000000000000000000000000000000000000000000000000000000000000\"",
+                },
+            },
+        ]),
         body: bodies::corpus,
     },
     Gate {
