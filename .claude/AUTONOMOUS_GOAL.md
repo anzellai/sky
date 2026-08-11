@@ -367,3 +367,52 @@ have shipped a binary none of its six checks had examined.
 The lesson for anyone reading this later: when a gate contradicts a fix that its
 own unit tests say is present, suspect the ARTEFACT before the fix. `cargo test`
 and `sky-out/sky` are built by different paths, and only one of them was lying.
+
+---
+
+## USER DECISION 2026-08-11 — v0.20.0, and the order of work
+
+Verbatim: *"this branch is to optimise + overhaul tests so we can tag release
+v0.20 once everything goes green + well. after that we can then look at the
+known-but-unclosed items? before the rebased bluedb work continues"*
+
+The sequence is settled. Do NOT reorder it:
+
+1. **Everything green** — CI (the T1 budget assert is the last red) + the
+   `coverage-ledger` ratchet.
+2. **Merge to `main`**, CI green there.
+3. **Tag v0.20.0.** The version is the user's decision and it is now MADE — a
+   major-minor bump, which the breaking changes justify:
+   - a failing `main : Task Error ()` exits NON-ZERO (it exited 0 silently)
+   - emitted Go changed (coerce-floor tightened on 16 examples)
+   - ambiguous `exposing (..)` is now REJECTED [E1012]
+   - over-applied kernel qualifiers are now REJECTED [E2007]
+   The last two are source-compatibility breaks. Both were accepting genuinely
+   broken programs, but a program that compiled yesterday may not today, and
+   the CHANGELOG needs a ⚠ Breaking-changes section saying so.
+4. **THEN the known-but-unclosed items** (below) — after the release, not before.
+5. **THEN** rebase `feat/bluedb-v2` and continue BlueDB e2e.
+
+### The known-but-unclosed list, for step 4
+
+Each is DECLARED with an expiry, not hidden. None of them silently pass.
+
+- **93 kernel members have no Sky signature** across 15 pseudo-modules. Frozen
+  by `project/tests/kernel_signature_coverage.rs` (ratchets down only); the
+  `lower::reject_over_application` backstop stops any of them reaching
+  `go build` with a raw Go error. Closing them is per-module signature work.
+- **Type-namespace ambiguity is not covered.** Deliberate: several type paths
+  synthesise a `DefId` leniently, so two modules can yield two `DefId`s for one
+  conceptual type; keying on that manufactures false rejections — the #164
+  failure mode. Needs the lenient synthesis fixed first.
+- **67 of 87 stdlib modules are dark to Family S.** Most are `Task`-valued or
+  render `Element`s, which a value assertion cannot reach. `Sky.Core.Bytes`,
+  `Sky.Core.Jwt`, `Std.Codec`, `Std.Markdown`, `Std.Compression` are pure and
+  assertable — real, closeable gaps.
+- **15 reject-corpus files declare no diagnostic code** (unpinned rejections).
+- **The LSP corpus is one synthetic fixture.** The GATE is genuinely enforced in
+  CI (nvim installed, `lsp-fuzz` runs it) — the corpus is thin, not the gate.
+- **`Std.Email` SMTP silently drops attachments**; `Std.Markdown` thin.
+- **`toString`/`modBy`/`compare`/`negate`** are asserted but uncountable: they
+  come from the kernel `Basics` pseudo-module and appear in no `exposing` list,
+  so `api/symbols.json` has no entry and the denominator cannot see them.
