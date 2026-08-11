@@ -42,17 +42,16 @@
   "config": {
     "_note": "counted over distinct paths: apps/ledger backs two member rows and must not have its sections counted twice.",
     "database_drivers": {
-      "sqlite": 9
+      "sqlite": 10
     },
-    "paths_with_sky_toml": 56,
+    "paths_with_sky_toml": 57,
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
-      "[auth]": 2,
-      "[database]": 9,
+      "[database]": 10,
       "[dependencies]": 1,
-      "[live]": 19,
-      "[source]": 46
+      "[live]": 20,
+      "[source]": 47
     }
   },
   "gates": {
@@ -65,6 +64,45 @@
         "skylive.session-sse-csrf"
       ],
       "tier": "T1"
+    },
+    "apps-dispatch": {
+      "expected_assertions": 22,
+      "falsifier_proven": true,
+      "summary": "member H (SQLite arm) — Std.Jobs, Std.Db.Schema/Migrate, Std.Markdown, Std.Email",
+      "surfaces": [
+        "stdlib.Std.Jobs",
+        "stdlib.Std.Db.Schema",
+        "stdlib.Std.Db.Migrate",
+        "stdlib.Std.Markdown",
+        "stdlib.Std.Email",
+        "db.migrations",
+        "db.sqlite",
+        "cli.db"
+      ],
+      "tier": "T1"
+    },
+    "apps-dispatch-destructive": {
+      "expected_assertions": 5,
+      "falsifier_proven": true,
+      "summary": "a destructive schema diff is quarantined, never applied",
+      "surfaces": [
+        "db.migrations",
+        "cli.db"
+      ],
+      "tier": "T1"
+    },
+    "apps-dispatch-postgres": {
+      "expected_assertions": 22,
+      "falsifier_proven": true,
+      "summary": "member H (Postgres arm) — the same source and assertions on real pgx",
+      "surfaces": [
+        "stdlib.Std.Jobs",
+        "stdlib.Std.Db.Schema",
+        "stdlib.Std.Db.Migrate",
+        "db.migrations",
+        "db.postgres"
+      ],
+      "tier": "T3"
     },
     "apps-ffi-scale": {
       "expected_assertions": 3,
@@ -148,7 +186,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 770,
+      "expected_assertions": 910,
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
       "surfaces": [
@@ -159,15 +197,45 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 206,
+      "expected_assertions": 296,
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
       "surfaces": [
         "lang.constructs",
         "compiler.infer",
-        "compiler.lower-emit-shape"
+        "compiler.lower-emit-shape",
+        "stdlib.Sky.Core.String",
+        "stdlib.Sky.Core.List",
+        "stdlib.Sky.Core.Dict",
+        "stdlib.Sky.Core.Set",
+        "stdlib.Sky.Core.Maybe",
+        "stdlib.Sky.Core.Result",
+        "stdlib.Sky.Core.Char",
+        "stdlib.Sky.Core.Encoding",
+        "stdlib.Sky.Core.Crypto",
+        "stdlib.Sky.Core.Math",
+        "stdlib.Sky.Core.Basics",
+        "stdlib.Sky.Core.ToString",
+        "stdlib.Sky.Core.Path",
+        "stdlib.Sky.Core.Error",
+        "stdlib.Sky.Core.Regex",
+        "stdlib.Sky.Core.Json.Encode",
+        "stdlib.Sky.Core.Json.Decode",
+        "stdlib.Std.Decimal",
+        "stdlib.Std.Money",
+        "stdlib.Std.Csv"
       ],
       "tier": "T2"
+    },
+    "corpus-emit-shape": {
+      "expected_assertions": 46,
+      "falsifier_proven": true,
+      "summary": "properties of the generated Go (no `go build`): no erasure, no `any` in a concrete signature, no raw `.(T)`, declared field order, fieldset selected by TYPE",
+      "surfaces": [
+        "compiler.lower-emit-shape",
+        "compiler.codegen-determinism"
+      ],
+      "tier": "T1"
     },
     "corpus-isolation": {
       "expected_assertions": 24,
@@ -180,10 +248,21 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 206,
+      "expected_assertions": 432,
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
       "surfaces": [
+        "lang.constructs"
+      ],
+      "tier": "T1"
+    },
+    "corpus-reject": {
+      "expected_assertions": 252,
+      "falsifier_proven": true,
+      "summary": "reject matrix: rejection by DIAGNOSTIC CODE, each with an accepted twin",
+      "surfaces": [
+        "compiler.reject",
+        "compiler.resolve",
         "lang.constructs"
       ],
       "tier": "T1"
@@ -208,7 +287,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 63,
+      "expected_assertions": 66,
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
       "surfaces": [
@@ -228,7 +307,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 121,
+      "expected_assertions": 122,
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
       "surfaces": [
@@ -238,7 +317,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 320,
+      "expected_assertions": 330,
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
       "surfaces": [
@@ -367,6 +446,18 @@
           "apps:relay"
         ]
       },
+      "Std.Jobs": {
+        "path": "apps/dispatch",
+        "units": [
+          "apps:dispatch"
+        ]
+      },
+      "Std.Markdown": {
+        "path": "apps/dispatch",
+        "units": [
+          "apps:dispatch"
+        ]
+      },
       "Std.Trace": {
         "path": "apps/relay",
         "units": [
@@ -389,22 +480,22 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1746,
+    "stdlib_entries": 1748,
     "stdlib_modules": 87,
-    "surfaces_covered": 119,
-    "surfaces_covered_pct": 84.4,
-    "surfaces_equal": 30,
-    "surfaces_stronger": 111,
+    "surfaces_covered": 127,
+    "surfaces_covered_pct": 90.1,
+    "surfaces_equal": 20,
+    "surfaces_stronger": 121,
     "surfaces_total": 141,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
       "Example": 57,
       "Layer1": 1,
-      "Layer2": 7,
+      "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 75
+    "units_total": 76
   },
   "surfaces": [
     {
@@ -582,6 +673,16 @@
         "evidence": [
           {
             "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch-destructive`",
             "class": "Falsified",
             "strength": 4
           },
@@ -928,6 +1029,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `corpus-emit-shape`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `corpus-witness`",
             "class": "Falsified",
             "strength": 4
@@ -1088,6 +1194,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `corpus-emit-shape`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
@@ -1207,6 +1318,11 @@
             "strength": 4
           },
           {
+            "by": "gate `corpus-reject`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": ".github/workflows/release.yml: xtask reject (`xtask:reject` is not harness-registered — no proven falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -1236,6 +1352,11 @@
         "evidence": [
           {
             "by": "gate `shared-world`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus-reject`",
             "class": "Falsified",
             "strength": 4
           },
@@ -1377,6 +1498,21 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `apps-dispatch`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch-destructive`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch-postgres`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `apps-ledger`",
             "class": "Falsified",
             "strength": 4
@@ -1410,6 +1546,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `apps-dispatch-postgres`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `apps-ledger-postgres`",
             "class": "Falsified",
             "strength": 4
@@ -1437,6 +1578,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "gate `apps-dispatch`",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "gate `conformance`",
             "class": "Falsified",
@@ -1647,6 +1793,11 @@
           },
           {
             "by": "gate `corpus-manifest`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus-reject`",
             "class": "Falsified",
             "strength": 4
           },
@@ -1932,9 +2083,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -1943,7 +2100,7 @@
       },
       "description": "the Sky.Core.Basics public API",
       "id": "stdlib.Sky.Core.Basics",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -1976,9 +2133,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -1987,12 +2150,12 @@
       },
       "description": "the Sky.Core.Char public API",
       "id": "stdlib.Sky.Core.Char",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -2033,9 +2196,14 @@
             "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Asserted",
@@ -2085,7 +2253,7 @@
       },
       "description": "the Sky.Core.Crypto public API",
       "id": "stdlib.Sky.Core.Crypto",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -2174,6 +2342,11 @@
           },
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
           }
@@ -2279,6 +2452,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -2320,6 +2498,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -2455,6 +2638,11 @@
           },
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
           }
@@ -2789,6 +2977,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -2892,6 +3085,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
             "strength": 4
@@ -2928,6 +3126,11 @@
           },
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
           }
@@ -3029,6 +3232,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -3184,6 +3392,16 @@
           },
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "corpus:layer1 (gate `corpus`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
           }
@@ -3349,6 +3567,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -3385,6 +3608,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -3465,6 +3693,11 @@
           },
           {
             "by": "tests/Sky (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
           }
@@ -3549,9 +3782,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -3560,7 +3799,7 @@
       },
       "description": "the Sky.Core.Path public API",
       "id": "stdlib.Sky.Core.Path",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -3700,6 +3939,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -3808,6 +4052,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -3906,6 +4155,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -3932,6 +4186,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -4189,6 +4448,16 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "corpus:layer1 (gate `corpus`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -4444,6 +4713,11 @@
             "strength": 4
           },
           {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -4613,6 +4887,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -5115,7 +5394,7 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "examples/35-composite-generics (retained; tests/ suite run by gate `sky-verify`)",
@@ -5131,9 +5410,14 @@
             "by": "examples/38-composite-ui-multibackend (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Asserted",
@@ -5158,7 +5442,7 @@
       },
       "description": "the Sky.Core.ToString public API",
       "id": "stdlib.Sky.Core.ToString",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -5278,6 +5562,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -5846,6 +6135,11 @@
             "strength": 4
           },
           {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -6113,6 +6407,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
@@ -6418,6 +6717,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -6447,6 +6751,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
@@ -6631,9 +6940,20 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `apps-dispatch`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch-postgres`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -6642,29 +6962,61 @@
       },
       "description": "the Std.Db.Migrate public API",
       "id": "stdlib.Std.Db.Migrate",
-      "verdict": "equal"
-    },
-    {
-      "category": "stdlib",
-      "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
-      },
-      "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
-      },
-      "description": "the Std.Db.Schema public API",
-      "id": "stdlib.Std.Db.Schema",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch-postgres`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Db.Schema public API",
+      "id": "stdlib.Std.Db.Schema",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
@@ -6833,6 +7185,11 @@
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -6865,24 +7222,51 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "description": "the Std.Email public API",
       "id": "stdlib.Std.Email",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
@@ -7380,9 +7764,25 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch-postgres`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -7391,7 +7791,7 @@
       },
       "description": "the Std.Jobs public API",
       "id": "stdlib.Std.Jobs",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -7400,6 +7800,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -7628,6 +8033,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -7682,6 +8092,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -8121,9 +8536,20 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `apps-dispatch`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -8132,7 +8558,7 @@
       },
       "description": "the Std.Markdown public API",
       "id": "stdlib.Std.Markdown",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -8161,6 +8587,11 @@
           },
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
           }
@@ -8232,6 +8663,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -8698,6 +9134,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -9245,6 +9686,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -9941,21 +10387,17 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 11,
+      "count": 7,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Char",
         "Sky.Core.Io",
         "Sky.Core.Path",
         "Std.Db.Migrate",
-        "Std.Db.Schema",
         "Std.Db.Table",
-        "Std.Email",
-        "Std.Jobs",
-        "Std.Live.Console",
-        "Std.Markdown"
+        "Std.Live.Console"
       ],
-      "pct_of_denominator": 12.6
+      "pct_of_denominator": 8.0
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -9965,7 +10407,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 18,
+      "count": 10,
       "surfaces": [
         "cli.check",
         "cli.console",
@@ -9974,17 +10416,9 @@
         "cli.lsp",
         "cli.upgrade-claude",
         "cli.verify",
-        "stdlib.Sky.Core.Basics",
-        "stdlib.Sky.Core.Char",
         "stdlib.Sky.Core.Io",
-        "stdlib.Sky.Core.Path",
-        "stdlib.Std.Db.Migrate",
-        "stdlib.Std.Db.Schema",
         "stdlib.Std.Db.Table",
-        "stdlib.Std.Email",
-        "stdlib.Std.Jobs",
-        "stdlib.Std.Live.Console",
-        "stdlib.Std.Markdown"
+        "stdlib.Std.Live.Console"
       ]
     },
     "symbols_unreferenced_generous": {
@@ -10109,12 +10543,14 @@
           ]
         },
         "Sky.Core.Path": {
-          "count": 4,
+          "count": 6,
           "symbols": [
             "base",
             "dir",
             "ext",
-            "isAbsolute"
+            "isAbsolute",
+            "join",
+            "safeJoin"
           ]
         },
         "Sky.Core.Process": {
@@ -10464,39 +10900,14 @@
           ]
         },
         "Std.Db.Schema": {
-          "count": 27,
+          "count": 2,
           "symbols": [
-            "Column",
-            "Table",
-            "autoIncrement",
-            "bigInt",
-            "blob",
-            "bool",
             "createSchema",
-            "createTable",
-            "defaultBool",
-            "defaultInt",
-            "defaultNow",
-            "defaultText",
-            "id",
-            "int",
-            "json",
-            "notNull",
-            "primaryKey",
-            "real",
-            "references",
-            "serial",
-            "table",
-            "text",
-            "timestamp",
-            "toProject",
-            "unique",
-            "withIndex",
-            "withUniqueIndex"
+            "createTable"
           ]
         },
         "Std.Db.Store": {
-          "count": 20,
+          "count": 19,
           "symbols": [
             "Cond",
             "Table",
@@ -10512,7 +10923,6 @@
             "migrate",
             "neq",
             "not_",
-            "projectTableCount",
             "pushProject",
             "resetProject",
             "resetTable",
@@ -10554,34 +10964,6 @@
             "one",
             "oneHundred",
             "toStringFixed"
-          ]
-        },
-        "Std.Email": {
-          "count": 23,
-          "symbols": [
-            "Attachment",
-            "EmailMessage",
-            "EmailProvider",
-            "SesConfig",
-            "SmtpConfig",
-            "defaultAttachment",
-            "defaultMessage",
-            "defaultSesConfig",
-            "defaultSmtpConfig",
-            "send",
-            "withAttachment",
-            "withBcc",
-            "withCc",
-            "withContent",
-            "withHtmlBody",
-            "withMimeType",
-            "withReplyTo",
-            "withSesKey",
-            "withSesSecret",
-            "withSmtpPass",
-            "withSmtpPort",
-            "withSmtpUser",
-            "withTextBody"
           ]
         },
         "Std.Html": {
@@ -10691,14 +11073,9 @@
           ]
         },
         "Std.Jobs": {
-          "count": 6,
+          "count": 1,
           "symbols": [
-            "Job",
-            "JobId",
-            "cancel",
-            "define",
-            "enqueue",
-            "enqueueIn"
+            "JobId"
           ]
         },
         "Std.Live": {
@@ -10743,9 +11120,8 @@
           ]
         },
         "Std.Markdown": {
-          "count": 2,
+          "count": 1,
           "symbols": [
-            "render",
             "renderInline"
           ]
         },
@@ -11071,8 +11447,8 @@
           ]
         }
       },
-      "count": 741,
-      "pct_of_denominator": 42.4
+      "count": 688,
+      "pct_of_denominator": 39.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -11205,12 +11581,14 @@
           ]
         },
         "Sky.Core.Path": {
-          "count": 4,
+          "count": 6,
           "symbols": [
             "base",
             "dir",
             "ext",
-            "isAbsolute"
+            "isAbsolute",
+            "join",
+            "safeJoin"
           ]
         },
         "Sky.Core.Process": {
@@ -11403,9 +11781,8 @@
           ]
         },
         "Std.Codec": {
-          "count": 9,
+          "count": 8,
           "symbols": [
-            "Codec",
             "ColType",
             "ObjectCodec",
             "Shape",
@@ -11577,39 +11954,14 @@
           ]
         },
         "Std.Db.Schema": {
-          "count": 27,
+          "count": 2,
           "symbols": [
-            "Column",
-            "Table",
-            "autoIncrement",
-            "bigInt",
-            "blob",
-            "bool",
             "createSchema",
-            "createTable",
-            "defaultBool",
-            "defaultInt",
-            "defaultNow",
-            "defaultText",
-            "id",
-            "int",
-            "json",
-            "notNull",
-            "primaryKey",
-            "real",
-            "references",
-            "serial",
-            "table",
-            "text",
-            "timestamp",
-            "toProject",
-            "unique",
-            "withIndex",
-            "withUniqueIndex"
+            "createTable"
           ]
         },
         "Std.Db.Store": {
-          "count": 21,
+          "count": 20,
           "symbols": [
             "Cond",
             "Store",
@@ -11626,7 +11978,6 @@
             "migrate",
             "neq",
             "not_",
-            "projectTableCount",
             "pushProject",
             "resetProject",
             "resetTable",
@@ -11668,34 +12019,6 @@
             "one",
             "oneHundred",
             "toStringFixed"
-          ]
-        },
-        "Std.Email": {
-          "count": 23,
-          "symbols": [
-            "Attachment",
-            "EmailMessage",
-            "EmailProvider",
-            "SesConfig",
-            "SmtpConfig",
-            "defaultAttachment",
-            "defaultMessage",
-            "defaultSesConfig",
-            "defaultSmtpConfig",
-            "send",
-            "withAttachment",
-            "withBcc",
-            "withCc",
-            "withContent",
-            "withHtmlBody",
-            "withMimeType",
-            "withReplyTo",
-            "withSesKey",
-            "withSesSecret",
-            "withSmtpPass",
-            "withSmtpPort",
-            "withSmtpUser",
-            "withTextBody"
           ]
         },
         "Std.Html": {
@@ -11859,14 +12182,9 @@
           ]
         },
         "Std.Jobs": {
-          "count": 6,
+          "count": 1,
           "symbols": [
-            "Job",
-            "JobId",
-            "cancel",
-            "define",
-            "enqueue",
-            "enqueueIn"
+            "JobId"
           ]
         },
         "Std.Live": {
@@ -11914,9 +12232,8 @@
           ]
         },
         "Std.Markdown": {
-          "count": 2,
+          "count": 1,
           "symbols": [
-            "render",
             "renderInline"
           ]
         },
@@ -12243,8 +12560,8 @@
           ]
         }
       },
-      "count": 821,
-      "pct_of_denominator": 47.0
+      "count": 767,
+      "pct_of_denominator": 43.9
     }
   },
   "units": [
@@ -12271,6 +12588,24 @@
       "role": "Layer2",
       "sky_files": 0,
       "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [
+        "sqlite"
+      ],
+      "gate": "apps-dispatch",
+      "id": "apps:dispatch",
+      "modules_imported": 23,
+      "path": "apps/dispatch",
+      "refs_generous": 95,
+      "refs_qualified": 82,
+      "role": "Layer2",
+      "sky_files": 4,
+      "sky_toml_sections": [
+        "[database]",
+        "[live]",
+        "[source]"
+      ]
     },
     {
       "db_drivers": [],
@@ -12358,12 +12693,12 @@
       "db_drivers": [],
       "gate": "corpus",
       "id": "corpus:layer1",
-      "modules_imported": 1,
+      "modules_imported": 3,
       "path": "corpus:layer1",
-      "refs_generous": 1,
-      "refs_qualified": 0,
+      "refs_generous": 11,
+      "refs_qualified": 2,
       "role": "Layer1",
-      "sky_files": 7,
+      "sky_files": 10,
       "sky_toml_sections": []
     },
     {
@@ -12496,7 +12831,6 @@
       "sky_files": 5,
       "sky_toml_sections": [
         "[\"go.dependencies\"]",
-        "[auth]",
         "[database]",
         "[source]"
       ]
@@ -12557,7 +12891,6 @@
       "role": "Example",
       "sky_files": 17,
       "sky_toml_sections": [
-        "[auth]",
         "[database]",
         "[live]",
         "[source]"
@@ -13314,12 +13647,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 29,
+      "modules_imported": 31,
       "path": "tests/conformance",
-      "refs_generous": 340,
-      "refs_qualified": 335,
+      "refs_generous": 390,
+      "refs_qualified": 384,
       "role": "Conformance",
-      "sky_files": 20,
+      "sky_files": 22,
       "sky_toml_sections": []
     }
   ]

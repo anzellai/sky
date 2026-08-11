@@ -114,6 +114,12 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786350806
     },
+    "coverage-ledger": {
+      "mutation": "coverage-ledger.drop-a-sole-owner-import",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786442352
+    },
     "reject": {
       "mutation": "reject.neutralise-axis",
       "observed": "PROVEN",
@@ -132,17 +138,23 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786349758
     },
+    "sky-suites": {
+      "mutation": "sky-suites.break-expectation",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786442301
+    },
     "sky-verify": {
       "mutation": "sky-verify.break-a-suite",
-      "observed": "INCONCLUSIVE",
-      "outcome": "NOT-as-declared",
-      "proven_at_unix": 1786349758
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786442086
     },
     "verify-cli": {
       "mutation": "verify-cli.drop-expected-output",
-      "observed": "INCONCLUSIVE",
-      "outcome": "NOT-as-declared",
-      "proven_at_unix": 1786349758
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786442086
     }
   },
   "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, or older than the declared window, renders UNPROVEN under `--require-proofs`.",

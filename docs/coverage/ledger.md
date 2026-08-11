@@ -21,21 +21,21 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 141 |
-| covered by the new corpus (>= Asserted) | 119 |
-| verdict `stronger` | 111 |
-| verdict `equal` | 30 |
+| covered by the new corpus (>= Asserted) | 127 |
+| verdict `stronger` | 121 |
+| verdict `equal` | 20 |
 | verdict `weaker` | 0 |
-| corpus units | 75 |
+| corpus units | 76 |
 | stdlib modules (denominator) | 87 |
-| stdlib entries (denominator) | 1746 |
+| stdlib entries (denominator) | 1748 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 11 | 12.6% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 821 | 47.0% |
-| symbols unreferenced under the generous rule | 741 | 42.4% |
+| stdlib modules imported by nothing | 7 | 8.0% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 767 | 43.9% |
+| symbols unreferenced under the generous rule | 688 | 39.4% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -47,17 +47,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.lsp`
 - `cli.upgrade-claude`
 - `cli.verify`
-- `stdlib.Sky.Core.Basics`
-- `stdlib.Sky.Core.Char`
 - `stdlib.Sky.Core.Io`
-- `stdlib.Sky.Core.Path`
-- `stdlib.Std.Db.Migrate`
-- `stdlib.Std.Db.Schema`
 - `stdlib.Std.Db.Table`
-- `stdlib.Std.Email`
-- `stdlib.Std.Jobs`
 - `stdlib.Std.Live.Console`
-- `stdlib.Std.Markdown`
 
 ## Sole ownership
 
@@ -66,7 +58,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 16 |
-| stdlib modules owned by exactly one unit of any role | 11 |
+| stdlib modules owned by exactly one unit of any role | 13 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **2** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -147,10 +139,10 @@ None.
 | `runtime.panic-classes` | runtime | Asserted | Falsified | stronger |
 | `skylive.multi-replica` | skylive | Asserted | Falsified | stronger |
 | `skylive.session-sse-csrf` | skylive | Asserted | Falsified | stronger |
-| `stdlib.Sky.Core.Basics` | stdlib | None | None | equal |
+| `stdlib.Sky.Core.Basics` | stdlib | None | Falsified | stronger |
 | `stdlib.Sky.Core.Bytes` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Sky.Core.Char` | stdlib | None | None | equal |
-| `stdlib.Sky.Core.Crypto` | stdlib | Asserted | Asserted | equal |
+| `stdlib.Sky.Core.Char` | stdlib | None | Falsified | stronger |
+| `stdlib.Sky.Core.Crypto` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Dict` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Encoding` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Error` | stdlib | Asserted | Falsified | stronger |
@@ -165,7 +157,7 @@ None.
 | `stdlib.Sky.Core.List` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Math` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Maybe` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Sky.Core.Path` | stdlib | None | None | equal |
+| `stdlib.Sky.Core.Path` | stdlib | None | Falsified | stronger |
 | `stdlib.Sky.Core.Process` | stdlib | Runs | Runs | equal |
 | `stdlib.Sky.Core.Pure` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Random` | stdlib | Asserted | Falsified | stronger |
@@ -176,7 +168,7 @@ None.
 | `stdlib.Sky.Core.System` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Task` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Time` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Sky.Core.ToString` | stdlib | Asserted | Asserted | equal |
+| `stdlib.Sky.Core.ToString` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Uuid` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.WebSocket` | stdlib | None | Falsified | stronger |
 | `stdlib.Sky.Http.Middleware` | stdlib | None | Falsified | stronger |
@@ -197,21 +189,21 @@ None.
 | `stdlib.Std.Csv` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db.Decode` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Db.Migrate` | stdlib | None | None | equal |
-| `stdlib.Std.Db.Schema` | stdlib | None | None | equal |
+| `stdlib.Std.Db.Migrate` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Db.Schema` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db.Store` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db.Table` | stdlib | None | None | equal |
 | `stdlib.Std.Decimal` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Email` | stdlib | None | None | equal |
+| `stdlib.Std.Email` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Jobs` | stdlib | None | None | equal |
+| `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Live` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Live.Console` | stdlib | None | None | equal |
 | `stdlib.Std.Live.Head` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Markdown` | stdlib | None | None | equal |
+| `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
@@ -243,6 +235,9 @@ None.
 | gate | tier | falsifier | surfaces |
 |---|---|---|---|
 | `apps-bundled` | T1 | PROVEN | `observability.console` · `skylive.session-sse-csrf` |
+| `apps-dispatch` | T1 | PROVEN | `stdlib.Std.Jobs` · `stdlib.Std.Db.Schema` · `stdlib.Std.Db.Migrate` · `stdlib.Std.Markdown` · `stdlib.Std.Email` · `db.migrations` · `db.sqlite` · `cli.db` |
+| `apps-dispatch-destructive` | T1 | PROVEN | `db.migrations` · `cli.db` |
+| `apps-dispatch-postgres` | T3 | PROVEN | `stdlib.Std.Jobs` · `stdlib.Std.Db.Schema` · `stdlib.Std.Db.Migrate` · `db.migrations` · `db.postgres` |
 | `apps-ffi-scale` | T4 | PROVEN | `ffi.scale` · `ffi.cgo-host-target` |
 | `apps-fieldbook` | T2 | PROVEN | `ui.cross-backend` · `ui.tui` · `ui.webview` |
 | `apps-fleet` | T3 | PROVEN | `skylive.multi-replica` · `skylive.session-sse-csrf` |
@@ -251,9 +246,11 @@ None.
 | `apps-relay` | T1 | PROVEN | `http.middleware-ratelimit` · `http.sse-websocket` · `runtime.panic-classes` |
 | `cli-verbs` | T1 | PROVEN | `cli.init` · `cli.clean` · `cli.watch` · `cli.db` · `cli.install` · `cli.update` · `cli.upgrade` |
 | `conformance` | T1 | PROVEN | `db.sqlite` · `db.codec-store` · `auth.password-session` |
-| `corpus` | T2 | PROVEN | `lang.constructs` · `compiler.infer` · `compiler.lower-emit-shape` |
+| `corpus` | T2 | PROVEN | `lang.constructs` · `compiler.infer` · `compiler.lower-emit-shape` · `stdlib.Sky.Core.String` · `stdlib.Sky.Core.List` · `stdlib.Sky.Core.Dict` · `stdlib.Sky.Core.Set` · `stdlib.Sky.Core.Maybe` · `stdlib.Sky.Core.Result` · `stdlib.Sky.Core.Char` · `stdlib.Sky.Core.Encoding` · `stdlib.Sky.Core.Crypto` · `stdlib.Sky.Core.Math` · `stdlib.Sky.Core.Basics` · `stdlib.Sky.Core.ToString` · `stdlib.Sky.Core.Path` · `stdlib.Sky.Core.Error` · `stdlib.Sky.Core.Regex` · `stdlib.Sky.Core.Json.Encode` · `stdlib.Sky.Core.Json.Decode` · `stdlib.Std.Decimal` · `stdlib.Std.Money` · `stdlib.Std.Csv` |
+| `corpus-emit-shape` | T1 | PROVEN | `compiler.lower-emit-shape` · `compiler.codegen-determinism` |
 | `corpus-isolation` | T2 | PROVEN | `compiler.shared-world` · `lang.constructs` |
 | `corpus-manifest` | T1 | PROVEN | `lang.constructs` |
+| `corpus-reject` | T1 | PROVEN | `compiler.reject` · `compiler.resolve` · `lang.constructs` |
 | `corpus-witness` | T2 | PROVEN | `compiler.codegen-determinism` · `compiler.lower-emit-shape` |
 | `coverage-ledger` | T1 | PROVEN | `meta.coverage-accounting` |
 | `reject` | T1 | PROVEN | `compiler.reject` · `compiler.infer` |
