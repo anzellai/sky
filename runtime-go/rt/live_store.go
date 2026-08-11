@@ -1418,7 +1418,13 @@ func walkValidateGob(v reflect.Value, path string, seen map[uintptr]bool) error 
 	case reflect.Map:
 		it := v.MapRange()
 		for it.Next() {
+			// The path is shown to the developer, so a Dict key is
+			// rendered in its logical form, not the tagged runtime form
+			// `encodeDictKey` stores (`Model.byId[10]`, not `Model.byId[\x01i10]`).
 			k := fmt.Sprintf("%v", it.Key().Interface())
+			if ks, isStr := it.Key().Interface().(string); isStr {
+				k = detagDisplayKey(ks)
+			}
 			if err := walkValidateGob(it.Value(), path+"["+k+"]", seen); err != nil {
 				return err
 			}

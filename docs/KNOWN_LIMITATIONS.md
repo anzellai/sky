@@ -69,12 +69,14 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
 ## Stdlib
 
 8. **`Dict` keys must be a primitive to survive iteration.** A `Dict k v`
-   is a Go `map[string]V` at runtime: every key is stringified on the
-   way in. Lookup (`get` / `member` / `insert` / `remove`) stringifies
+   is a Go `map[string]V` at runtime: every key is encoded to a string on
+   the way in. Lookup (`get` / `member` / `insert` / `remove`) encodes
    the probe the same way and therefore works for ANY key type, but the
    operations that let the key back OUT — `toList`, `keys`, `values`,
-   `foldl`, `map` — have to decode it, and `String`, `Int`, `Float`,
-   `Char` and `Bool` are the key types that decode. Two cases do not:
+   `foldl`, `map` — have to decode it. `String`, `Int`, `Float`, `Char`
+   and `Bool` decode, and they do so wherever they are used, including
+   inside a key-polymorphic helper (`f : Dict k v -> …`), because the
+   encoded key carries its own type tag. One case does not:
 
    - **Composite keys** (tuple, list, record, custom type). Their
      stringification is not injective — `("a b", "c")` and
@@ -85,14 +87,8 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
      rendering of the composite (e.g. `String.fromInt a ++ ":" ++ String.fromInt b`)
      and keep the structured form in the value.
 
-   - **Key-polymorphic helpers** (`f : Dict k v -> …`). The lowering
-     erases `k` to `any`, so neither the compiler nor the callback says
-     what to decode to, and iteration yields the string form. Elm-style
-     code rarely writes these; **workaround**: annotate the helper with
-     the concrete key type (`f : Dict Int v -> …`).
-
-   Closing either properly means changing what a Dict key is *encoded*
-   as, not how it is decoded — a wider change than the decode side.
+   Closing that one means changing what a composite key is *encoded* as,
+   not how it is decoded — a wider change than the decode side.
 
 ## Roadmap (not active bugs, just deferred)
 

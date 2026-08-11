@@ -2448,7 +2448,19 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// declared coverage loss and are counted here. When a block is lifted, this
 /// constant rises by that suite's cases in the same commit — that is this
 /// change: 320 + 4 + 6 = 330.
-pub const SKY_SUITES_EXPECTED: u64 = 330;
+///
+/// 330 -> 384 across the two issue-#174 Dict commits, which this constant had
+/// not been raised for:
+///
+/// * `Core/DictTypedKeyTest` (20) — the typed-key decode. It landed without
+///   raising this constant, so the gate was already failing on `main` by 20
+///   before the change below; the arithmetic here absorbs it rather than
+///   leaving a known-red gate for someone else to trip over.
+/// * `Core/DictPolyKeyTest` (34) — the same decode through a key-polymorphic
+///   helper, where the key type is erased.
+///
+/// 330 + 20 + 34 = 384.
+pub const SKY_SUITES_EXPECTED: u64 = 384;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

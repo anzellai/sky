@@ -98,9 +98,11 @@ theme = Dict.get "theme" prefs   -- Just "dark"
 
 `empty`, `insert`, `get`, `remove`, `member`, `keys`, `values`, `toList`, `fromList`, `map`, `foldl`, `union`, `size`, `isEmpty`.
 
-> **Key types.** The runtime representation is `map[string]V` regardless of the Sky-level key type, so keys are stringified on the way in. Lookup (`get` / `member` / `insert` / `remove`) stringifies the probe the same way and works for any key type; the operations that hand the key back — `toList`, `keys`, `values`, `foldl`, `map` — decode it to its Sky type, and `String`, `Int`, `Float`, `Char` and `Bool` decode. Enumeration is ordered by the decoded key, so a `Dict Int v` visits 9 before 10.
+> **Key types.** The runtime representation is `map[string]V` regardless of the Sky-level key type, so keys are encoded to strings on the way in. Lookup (`get` / `member` / `insert` / `remove`) encodes the probe the same way and works for any key type; the operations that hand the key back — `toList`, `keys`, `values`, `foldl`, `map` — decode it to its Sky type, and `String`, `Int`, `Float`, `Char` and `Bool` decode. Enumeration is ordered by the decoded key, so a `Dict Int v` visits 9 before 10.
 >
-> Composite keys (tuple, list, record, custom type) do **not** decode — their stringification is not reversible — and inside a key-polymorphic helper (`f : Dict k v -> …`) the key type is erased, so iteration there sees the string form. Both are recorded in [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
+> The encoded key carries its own type tag, so the decode works with no type information from the call site — a helper written over `Dict k v`, where the compiler has erased the key, hands back Ints from a `Dict Int v` just as a `Dict Int v`-typed call site does. A `Dict String v` is encoded verbatim, so the shape that crosses into JSON objects, `Std.Db` rows and HTTP headers keeps exactly the keys you gave it.
+>
+> Composite keys (tuple, list, record, custom type) do **not** decode — their stringification is not reversible; see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
 
 ### `Set` — unique-element collections
 

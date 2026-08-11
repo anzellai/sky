@@ -13,22 +13,24 @@
 -- (`Dict_*` helpers; the typed `Dict_*T[V]` variants live alongside).
 --
 -- Key-type note: at runtime the underlying map is `map[string]V`, so
--- every key is stringified on the way in. Lookup-shaped operations
--- (`get`, `member`, `insert`, `remove`) stringify the probe the same
--- way and so agree for any key type. The operations that let the key
--- back OUT — `toList`, `keys`, `values`, `foldl`, `map` — decode it
--- back to the Sky type: the compiler routes them to a typed-key
--- entry point (`Dict_toListIntKey`, `Dict_foldlCharKey`, …) from the
--- HM-inferred `Dict k v` at the call site, and `foldl` / `map` also
--- recover it from the callback's own key parameter. `String`, `Int`,
--- `Float`, `Char` and `Bool` keys round-trip; enumeration is ordered
--- by the DECODED key, so a `Dict Int v` visits 9 before 10 rather
--- than in the lexical order of "9" and "10".
+-- every key is encoded to a string on the way in. Lookup-shaped
+-- operations (`get`, `member`, `insert`, `remove`) encode the probe
+-- the same way and so agree for any key type. The operations that let
+-- the key back OUT — `toList`, `keys`, `values`, `foldl`, `map` —
+-- decode it back to the Sky type. The encoded key carries its own
+-- kind tag, so the decode needs no type information from the call
+-- site: it is just as correct inside a key-polymorphic helper
+-- (`f : Dict k v -> …`), where the compiler has erased `k`, as it is
+-- at a call site typed `Dict Int v`. `String`, `Int`, `Float`, `Char`
+-- and `Bool` keys round-trip; enumeration is ordered by the DECODED
+-- key, so a `Dict Int v` visits 9 before 10 rather than in the lexical
+-- order of "9" and "10". A `Dict String v` is encoded verbatim — the
+-- shape that crosses into JSON objects, `Std.Db` rows and HTTP headers
+-- keeps exactly the keys you gave it.
 --
 -- Composite keys (tuple, list, record, custom type) do NOT round-trip
--- — their stringification is not injective — and a key-polymorphic
--- helper (`f : Dict k v -> …`) erases the key type, so iteration
--- inside it sees the string form. See `docs/KNOWN_LIMITATIONS.md`.
+-- — their stringification is not injective. See
+-- `docs/KNOWN_LIMITATIONS.md`.
 module Sky.Core.Dict exposing
     ( empty
     , isEmpty

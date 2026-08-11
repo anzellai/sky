@@ -317,7 +317,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 330,
+      "expected_assertions": 384,
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
       "surfaces": [
@@ -396,6 +396,12 @@
         "path": "tests/conformance",
         "units": [
           "tests/conformance"
+        ]
+      },
+      "Sky.Core.Char": {
+        "path": "tests/Core",
+        "units": [
+          "tests/Core"
         ]
       },
       "Sky.Core.Process": {
@@ -2136,6 +2142,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/Core (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
@@ -2145,7 +2156,13 @@
       },
       "cover_today": {
         "class": "None",
-        "evidence": [],
+        "evidence": [
+          {
+            "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          }
+        ],
         "strength": 0
       },
       "description": "the Sky.Core.Char public API",
@@ -10387,22 +10404,22 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 7,
+      "count": 6,
       "modules": [
         "Sky.Core.Basics",
-        "Sky.Core.Char",
         "Sky.Core.Io",
         "Sky.Core.Path",
         "Std.Db.Migrate",
         "Std.Db.Table",
         "Std.Live.Console"
       ],
-      "pct_of_denominator": 8.0
+      "pct_of_denominator": 6.9
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
-      "count": 1,
+      "count": 2,
       "modules": [
+        "Sky.Core.Char",
         "Sky.Core.WebSocket"
       ]
     },
@@ -10441,14 +10458,13 @@
           ]
         },
         "Sky.Core.Char": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "fromCode",
             "isAlpha",
             "isDigit",
             "isLower",
             "isUpper",
-            "toCode",
             "toLower",
             "toUpper"
           ]
@@ -11447,8 +11463,8 @@
           ]
         }
       },
-      "count": 688,
-      "pct_of_denominator": 39.4
+      "count": 687,
+      "pct_of_denominator": 39.3
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -11470,14 +11486,13 @@
           ]
         },
         "Sky.Core.Char": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "fromCode",
             "isAlpha",
             "isDigit",
             "isLower",
             "isUpper",
-            "toCode",
             "toLower",
             "toUpper"
           ]
@@ -12560,8 +12575,8 @@
           ]
         }
       },
-      "count": 767,
-      "pct_of_denominator": 43.9
+      "count": 766,
+      "pct_of_denominator": 43.8
     }
   },
   "units": [
@@ -13551,12 +13566,12 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Core",
-      "modules_imported": 9,
+      "modules_imported": 10,
       "path": "tests/Core",
-      "refs_generous": 41,
-      "refs_qualified": 39,
+      "refs_generous": 50,
+      "refs_qualified": 48,
       "role": "SkySuite",
-      "sky_files": 3,
+      "sky_files": 5,
       "sky_toml_sections": []
     },
     {

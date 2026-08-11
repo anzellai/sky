@@ -166,12 +166,12 @@ func TestDictMapIntKeyPassesIntKeys(t *testing.T) {
 	if !ok {
 		t.Fatalf("Dict_mapIntKey must return map[string]any")
 	}
-	// The result keeps the ORIGINAL (stringified) keys — only values change.
-	if got, want := out["10"], any("10j"); got != want {
-		t.Errorf("out[\"10\"] = %#v, want %#v", got, want)
+	// The result keeps the ORIGINAL (encoded) keys — only values change.
+	if got, want := out["\x01i10"], any("10j"); got != want {
+		t.Errorf("out[%q] = %#v, want %#v", "\x01i10", got, want)
 	}
-	if got, want := out["1"], any("1a"); got != want {
-		t.Errorf("out[\"1\"] = %#v, want %#v", got, want)
+	if got, want := out["\x01i1"], any("1a"); got != want {
+		t.Errorf("out[%q] = %#v, want %#v", "\x01i1", got, want)
 	}
 }
 
@@ -199,8 +199,8 @@ func TestDictMapInfersKeyTypeFromCallback(t *testing.T) {
 	if !ok {
 		t.Fatalf("Dict_map must return map[string]any")
 	}
-	if got, want := out["97"], any(98); got != want {
-		t.Errorf("out[\"97\"] = %#v, want %#v", got, want)
+	if got, want := out["\x01c97"], any(98); got != want {
+		t.Errorf("out[%q] = %#v, want %#v", "\x01c97", got, want)
 	}
 }
 
@@ -223,19 +223,22 @@ func TestDictFoldlInfersKeyTypeFromCurriedCallback(t *testing.T) {
 }
 
 // A key-polymorphic callback (`func(any, any, any) any`) has no key type to
-// read, so the string key is what it gets — the historical behaviour, kept
-// deliberately rather than guessed at.
-func TestDictFoldlKeyPolymorphicCallbackKeepsStringKeys(t *testing.T) {
+// read. It used to get the string key for that reason — and that is the #174
+// tail: `f : Dict k v -> …` lowers its callback to exactly this shape, so
+// `String.fromInt` on the result panicked with "rt.AsInt: expected numeric
+// value, got string (10)".
+//
+// The key now carries its own kind, so the callback gets the Int regardless.
+// See dict_poly_key_test.go for the full matrix.
+func TestDictFoldlKeyPolymorphicCallbackStillDecodes(t *testing.T) {
 	var seen []any
 	fn := func(k any, _ any, acc any) any {
 		seen = append(seen, k)
 		return acc
 	}
 	Dict_foldl(fn, nil, intDict())
-	for _, k := range seen {
-		if _, ok := k.(string); !ok {
-			t.Fatalf("expected the string key for an any-typed callback, got %T", k)
-		}
+	if want := []any{1, 2, 9, 10}; !reflect.DeepEqual(seen, want) {
+		t.Fatalf("an any-typed callback saw %#v, want %#v", seen, want)
 	}
 }
 

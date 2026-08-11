@@ -1,0 +1,273 @@
+module Core.DictPolyKeyTest exposing (tests)
+
+-- Issue #174 tail — the key type has to survive ERASURE, not just be
+-- visible at the call site.
+--
+-- `Core/DictTypedKeyTest.sky` covers the case where the compiler can see
+-- `Dict Int v` where the iteration happens. This file covers the case it
+-- cannot: a helper written over `Dict k v`. There the lowering erases `k`
+-- to `any`, so neither of the two channels that fix existed —
+--
+--   * the COMPILER's call-site routing (`dict_typed_key_specialised`) has
+--     no concrete key type to route on, and
+--   * the CALLBACK's declared first parameter (`dictKeyKindForFn`) is
+--     `any`, so `foldl`/`map` cannot read the key type off it either.
+--
+-- — and the runtime handed back the stringified key. That is a PANIC, not
+-- a wrong value, at the first thing the caller does with it:
+--
+--     keysOf : Dict k v -> List k
+--     keysOf d = Dict.keys d
+--     main = println (String.join "," (List.map String.fromInt (keysOf d)))
+--     -- Sky panic: TypeMismatch — rt.AsInt: expected numeric value,
+--     --            got string (10)
+--
+-- A runtime panic from well-typed Sky, so this file is a soundness gate.
+--
+-- The fix makes the key SELF-DESCRIBING: the kind is encoded into the
+-- runtime map key at insert time, so decoding needs no static type at all
+-- and works through any number of polymorphic hops. These suites therefore
+-- exercise every one of the five iteration operations behind a
+-- `Dict k v` helper, for every key type that round-trips, and at two
+-- levels of indirection.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Char as Char
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+-- ── The key-polymorphic helpers ────────────────────────────────────
+-- Each is annotated `Dict k v -> …`, which is what erases the key.
+polyKeys : Dict k v -> List k
+polyKeys d =
+    Dict.keys d
+
+
+polyToList : Dict k v -> List ( k, v )
+polyToList d =
+    Dict.toList d
+
+
+polyValues : Dict k v -> List v
+polyValues d =
+    Dict.values d
+
+
+polyFoldKeys : Dict k v -> List k
+polyFoldKeys d =
+    Dict.foldl (\k _ acc -> k :: acc) [] d
+
+
+polyMapToKeys : Dict k v -> List k
+polyMapToKeys d =
+    Dict.values (Dict.map (\k _ -> k) d)
+
+
+-- A second hop: the helper the caller reaches is polymorphic AND its
+-- callee is polymorphic, so there is no point in the chain where a
+-- concrete key type exists.
+polyKeysTwice : Dict k v -> List k
+polyKeysTwice d =
+    polyKeys d
+
+
+-- ── Fixtures, one per decodable key type ───────────────────────────
+-- Int keys deliberately span the 9/10 boundary: lexically "10" < "9",
+-- numerically 9 < 10, so ordering catches a sort over the string form.
+intDict : Dict Int String
+intDict =
+    Dict.fromList [ ( 1, "a" ), ( 2, "b" ), ( 10, "j" ), ( 9, "i" ) ]
+
+
+charDict : Dict Char Int
+charDict =
+    Dict.fromList [ ( 'a', 1 ), ( 'b', 2 ) ]
+
+
+floatDict : Dict Float String
+floatDict =
+    Dict.fromList [ ( 1.5, "a" ), ( 10.25, "j" ), ( 9.75, "i" ) ]
+
+
+boolDict : Dict Bool String
+boolDict =
+    Dict.fromList [ ( True, "t" ), ( False, "f" ) ]
+
+
+strDict : Dict String Int
+strDict =
+    Dict.fromList [ ( "a", 1 ), ( "b", 2 ) ]
+
+
+-- ── The reported reproduction, verbatim in shape ───────────────────
+-- `String.fromInt` on the result is what panicked: it received the
+-- runtime map's `string` key where the Sky type says `Int`.
+reportedRepro : String
+reportedRepro =
+    String.join "," (List.map String.fromInt (polyKeys intDict))
+
+
+reportedReproFold : String
+reportedReproFold =
+    String.join "," (List.map String.fromInt (polyFoldKeys intDict))
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "the reported reproduction (#174 tail)"
+          [ Test.test
+                "Dict.keys behind a `Dict k v` helper hands back Ints"
+                (\_ -> Test.equal "1,2,9,10" reportedRepro)
+          , Test.test
+                "Dict.foldl behind a `Dict k v` helper hands back Ints"
+                (\_ -> Test.equal "10,9,2,1" reportedReproFold)
+          ]
+    , Test.suite
+          "all five iteration ops, behind a `Dict k v` helper — Int keys"
+          [ Test.test
+                "keys"
+                (\_ -> Test.equal [ 1, 2, 9, 10 ] (polyKeys intDict))
+          , Test.test
+                "toList"
+                (\_ ->
+                    Test.equal
+                        [ ( 1, "a" ), ( 2, "b" ), ( 9, "i" ), ( 10, "j" ) ]
+                        (polyToList intDict))
+          , Test.test
+                "values (ordered by the numeric key, not its string form)"
+                (\_ -> Test.equal [ "a", "b", "i", "j" ] (polyValues intDict))
+          , Test.test
+                "foldl"
+                (\_ -> Test.equal [ 10, 9, 2, 1 ] (polyFoldKeys intDict))
+          , Test.test
+                "map"
+                (\_ -> Test.equal [ 1, 2, 9, 10 ] (polyMapToKeys intDict))
+          ]
+    , Test.suite
+          "all five iteration ops, behind a `Dict k v` helper — Char keys"
+          [ Test.test
+                "keys"
+                (\_ ->
+                    Test.equal
+                        [ 97, 98 ]
+                        (List.map Char.toCode (polyKeys charDict)))
+          , Test.test
+                "toList"
+                (\_ ->
+                    Test.equal
+                        [ 97, 98 ]
+                        (List.map
+                            (\pair -> Char.toCode (fst pair))
+                            (polyToList charDict)))
+          , Test.test "values" (\_ -> Test.equal [ 1, 2 ] (polyValues charDict))
+          , Test.test
+                "foldl"
+                (\_ ->
+                    Test.equal
+                        [ 98, 97 ]
+                        (List.map Char.toCode (polyFoldKeys charDict)))
+          , Test.test
+                "map"
+                (\_ ->
+                    Test.equal
+                        [ 97, 98 ]
+                        (List.map Char.toCode (polyMapToKeys charDict)))
+          ]
+    , Test.suite
+          "all five iteration ops, behind a `Dict k v` helper — Float keys"
+          [ Test.test
+                "keys"
+                (\_ -> Test.equal [ 1.5, 9.75, 10.25 ] (polyKeys floatDict))
+          , Test.test
+                "toList"
+                (\_ ->
+                    Test.equal
+                        [ 1.5, 9.75, 10.25 ]
+                        (List.map fst (polyToList floatDict)))
+          , Test.test
+                "values"
+                (\_ -> Test.equal [ "a", "i", "j" ] (polyValues floatDict))
+          , Test.test
+                "foldl"
+                (\_ -> Test.equal [ 10.25, 9.75, 1.5 ] (polyFoldKeys floatDict))
+          , Test.test
+                "map"
+                (\_ -> Test.equal [ 1.5, 9.75, 10.25 ] (polyMapToKeys floatDict))
+          ]
+    , Test.suite
+          "all five iteration ops, behind a `Dict k v` helper — Bool keys"
+          [ Test.test
+                "keys"
+                (\_ -> Test.equal [ False, True ] (polyKeys boolDict))
+          , Test.test
+                "toList"
+                (\_ ->
+                    Test.equal
+                        [ False, True ]
+                        (List.map fst (polyToList boolDict)))
+          , Test.test
+                "values"
+                (\_ -> Test.equal [ "f", "t" ] (polyValues boolDict))
+          , Test.test
+                "foldl"
+                (\_ -> Test.equal [ True, False ] (polyFoldKeys boolDict))
+          , Test.test
+                "map"
+                (\_ -> Test.equal [ False, True ] (polyMapToKeys boolDict))
+          ]
+    , Test.suite
+          "String keys behind the same helper are unchanged (baseline)"
+          [ Test.test "keys" (\_ -> Test.equal [ "a", "b" ] (polyKeys strDict))
+          , Test.test
+                "toList"
+                (\_ -> Test.equal [ ( "a", 1 ), ( "b", 2 ) ] (polyToList strDict))
+          , Test.test "values" (\_ -> Test.equal [ 1, 2 ] (polyValues strDict))
+          , Test.test
+                "foldl"
+                (\_ -> Test.equal [ "b", "a" ] (polyFoldKeys strDict))
+          , Test.test
+                "map"
+                (\_ -> Test.equal [ "a", "b" ] (polyMapToKeys strDict))
+          ]
+    , Test.suite
+          "two levels of polymorphic indirection"
+          [ Test.test
+                "Int keys survive a polymorphic helper calling a polymorphic helper"
+                (\_ -> Test.equal [ 1, 2, 9, 10 ] (polyKeysTwice intDict))
+          , Test.test
+                "Char keys survive two hops"
+                (\_ ->
+                    Test.equal
+                        [ 97, 98 ]
+                        (List.map Char.toCode (polyKeysTwice charDict)))
+          , Test.test
+                "String keys survive two hops (baseline)"
+                (\_ -> Test.equal [ "a", "b" ] (polyKeysTwice strDict))
+          ]
+    , Test.suite
+          "lookup still agrees with iteration after the helper"
+          [ Test.test
+                "get finds the key the helper handed back"
+                (\_ -> Test.equal (Just "j") (Dict.get 10 intDict))
+          , Test.test
+                "insert then read back through the helper"
+                (\_ ->
+                    Test.equal
+                        [ 1, 2, 3, 9, 10 ]
+                        (polyKeys (Dict.insert 3 "c" intDict)))
+          , Test.test
+                "remove then read back through the helper"
+                (\_ -> Test.equal [ 1, 2, 9 ] (polyKeys (Dict.remove 10 intDict)))
+          , Test.test
+                "union then read back through the helper"
+                (\_ ->
+                    Test.equal
+                        [ 1, 2, 9, 10, 42 ]
+                        (polyKeys
+                            (Dict.union intDict (Dict.fromList [ ( 42, "z" ) ]))))
+          ]
+    ]

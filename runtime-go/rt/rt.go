@@ -1148,12 +1148,18 @@ func ComposeR[A any, B any, C any](g func(B) C, f func(A) B) func(A) C {
 
 // Debug_toString: universal stringify for any Sky value. Used by the
 // multiline-string interpolation desugarer at canonicalise time.
+// Debug_toString backs `Debug.toString`, `Basics.toString` and multiline-string
+// interpolation (kernel.rs:118 / :422) — the compiler's one stringifier of a
+// whole Sky value, and therefore the one place a Dict is rendered for a human.
+// `toStringForDisplay` is `%v` plus the Dict-key decode: the runtime map key of
+// a `Dict Int v` carries a kind tag (see `encodeDictKey`) and the user must see
+// `map[10:j 9:i]`, not the encoded form.
 func Debug_toString(v any) any {
 	v = derefPointer(unwrapAny(v))
 	if s, ok := v.(string); ok {
 		return s
 	}
-	return fmt.Sprintf("%v", v)
+	return toStringForDisplay(v)
 }
 
 // Log_println / Log_printlnT match the Task-everywhere kernel sig
@@ -1672,7 +1678,7 @@ func Basics_toString(v any) string {
 	if s, ok := renderSkyError(v); ok {
 		return s
 	}
-	return fmt.Sprintf("%v", derefPointer(unwrapAny(v)))
+	return toStringForDisplay(derefPointer(unwrapAny(v)))
 }
 
 // errorKindLabels mirrors Sky.Core.Error.kindLabel, indexed by the
@@ -4852,13 +4858,16 @@ func Dict_insert(key any, val any, dict any) any {
 	for k, v := range m {
 		new[k] = v
 	}
-	new[fmt.Sprintf("%v", key)] = val
+	// dictProbeKey, not encodeDictKey: inserting an Int key into a map that
+	// came from FFI/Std.Db with bare "10" keys must REPLACE that entry, not
+	// add a second one alongside it. See the typed-key section below.
+	new[dictProbeKey(m, key)] = val
 	return new
 }
 
 func Dict_get(key any, dict any) any {
 	m := AsDict(unwrapAny(dict))
-	v, ok := m[fmt.Sprintf("%v", key)]
+	v, ok := m[dictProbeKey(m, key)]
 	if ok {
 		return Just[any](derefPointer(v))
 	}
@@ -4868,7 +4877,7 @@ func Dict_get(key any, dict any) any {
 func Dict_remove(key any, dict any) any {
 	m := AsDict(unwrapAny(dict))
 	new := make(map[string]any, len(m))
-	k := fmt.Sprintf("%v", key)
+	k := dictProbeKey(m, key)
 	for kk, v := range m {
 		if kk != k {
 			new[kk] = v
@@ -4879,7 +4888,7 @@ func Dict_remove(key any, dict any) any {
 
 func Dict_member(key any, dict any) any {
 	m := AsDict(unwrapAny(dict))
-	_, ok := m[fmt.Sprintf("%v", key)]
+	_, ok := m[dictProbeKey(m, key)]
 	return ok
 }
 
@@ -4944,7 +4953,7 @@ func Dict_fromList(list any) any {
 		// Dict.fromList's Sky type is `List (comparable, v)`, so AsTuple2
 		// always receives a tuple.
 		t := AsTuple2(item)
-		result[fmt.Sprintf("%v", t.V0)] = t.V1
+		result[encodeDictKey(t.V0)] = t.V1
 	}
 	return result
 }
@@ -5001,6 +5010,16 @@ func Dict_memberT[V any](key string, d map[string]V) bool {
 	return ok
 }
 
+// The `Dict_*T` family below takes and returns the runtime map's key as a bare
+// Go `string`. The Rust compiler does not emit any of them — `kernel.rs` maps
+// every `Sky.Core.Dict` entry to the `any` kernel above (plus the routed
+// `…IntKey` / `…CharKey` / … variants), so nothing here sees an encoded key from
+// a Sky program. They are retained for the legacy oracle's ABI, where the
+// `key string` parameter means the compiler only ever routed them for a
+// `Dict String v` — the one key type `encodeDictKey` leaves verbatim, so they
+// keep agreeing with it. `Dict_keysT` is the one exception worth hardening: it
+// hands keys OUT, so it decodes a tag if it finds one.
+
 // Return []any so Sky's List runtime shape ([]any) is preserved and
 // downstream List.* typed companions unify cleanly (e.g. List_lengthT).
 // Strings are boxed through `any(k)` so V=any inference works when
@@ -5009,6 +5028,10 @@ func Dict_keysT[V any](d map[string]V) []any {
 	sk := sortedDictKeys(d)
 	keys := make([]any, 0, len(d))
 	for _, k := range sk {
+		if dk, _, ok := decodeTaggedDictKey(k); ok {
+			keys = append(keys, dk)
+			continue
+		}
 		keys = append(keys, any(k))
 	}
 	return keys
@@ -5073,7 +5096,7 @@ func Dict_fromListT[V any](list []any) map[string]V {
 			// silent-on-bad-pair behaviour (would panic in the type assert).
 			continue
 		}
-		key := fmt.Sprintf("%v", t.V0)
+		key := encodeDictKey(t.V0)
 		if v, ok := t.V1.(V); ok {
 			out[key] = v
 		} else {
@@ -5095,7 +5118,7 @@ func Dict_fromListTA(list []any) any {
 		// a non-tuple yields V0==nil, preserving the prior `ok` skip.
 		t := AsTuple2(item)
 		if t.V0 != nil {
-			out[fmt.Sprintf("%v", t.V0)] = t.V1
+			out[encodeDictKey(t.V0)] = t.V1
 		}
 	}
 	return out
@@ -5113,22 +5136,57 @@ func Dict_fromListTA(list []any) any {
 // The ITERATION-shaped operations are where the key leaves the runtime again —
 // `toList` and `keys` hand it to the caller, `foldl` and `map` hand it to a
 // user function, and `values` is ordered by it. Those five must UNDO the
-// stringification, and the string alone does not say what to undo it to: "97"
-// is a `Dict Int v` key 97 and a `Dict Char v` key 'a'. So the key type comes
-// from outside the string —
+// stringification, and a bare `%v` string does not say what to undo it to:
+// "97" is a `Dict Int v` key 97 and a `Dict Char v` key 'a'.
 //
-//   * from the COMPILER, which knows the HM-inferred `Dict k v` at the call
-//     site and routes to the `…IntKey` / `…FloatKey` / `…CharKey` / `…BoolKey`
-//     entry point below (see `dict_typed_key_specialised` in lower.rs); or
-//   * from the CALLBACK, for `foldl` / `map`, whose declared first parameter is
-//     the key type the lowering already committed to (`func(int, string, …)`
-//     for a `Dict Int String`). This is what makes the un-routed path safe:
-//     handing that function a `string` is what panicked in issue #174.
+// So the key SAYS SO ITSELF. `encodeDictKey` writes a two-byte kind tag in
+// front of every non-String key, and `decodeTaggedDictKey` reads it back:
 //
-// Neither channel exists for a key-POLYMORPHIC helper (`f : Dict k v -> …`),
-// where the lowering erases the key to `any` — there the string form is still
-// what the caller sees, exactly as before. Tuple, list, record and ADT keys are
-// likewise still one-way: they stringify but do not decode.
+//	Dict Int v    key 10     → "\x01i10"
+//	Dict Char v   key 'a'    → "\x01c97"
+//	Dict Float v  key 1.5    → "\x01f1.5"
+//	Dict Bool v   key True   → "\x01btrue"
+//	Dict String v key "a"    → "a"           (unchanged — see below)
+//
+// A SELF-DESCRIBING key is what closes issue #174 in full, because the two
+// channels the first fix used both come from the STATIC type and the static
+// type is exactly what a key-polymorphic helper does not have:
+//
+//   - the COMPILER routes a call site whose `Dict k v` it can see to the
+//     `…IntKey` / `…CharKey` / … entry point below (`dict_typed_key_specialised`
+//     in lower.rs) — but in `f : Dict k v -> …` the key erases to `any`, so
+//     there is nothing to route on;
+//   - the CALLBACK carries the key type in its declared first parameter for
+//     `foldl` / `map` (`dictKeyKindForFn`) — but the same erasure makes that
+//     parameter `any`.
+//
+// Both channels are KEPT, as the fallback for a map whose keys were never
+// encoded here: an FFI or `Std.Db` `map[string]any`, a JSON object, a session
+// payload written by an older binary. Per key the order is
+//
+//	tag on the key  →  compiler-routed kind  →  callback-declared kind  →  string
+//
+// so an untagged map behaves exactly as it did before this change and a tagged
+// one needs no static type at all.
+//
+// String keys are deliberately NOT tagged. A `Dict String v` is the shape that
+// crosses into JSON objects, `Std.Db` rows, HTTP headers and FFI `map[string]any`
+// — where the key IS the external name and must stay verbatim — and it is also
+// the overwhelmingly common case, so it keeps its exact prior bytes. The one
+// string that would otherwise be ambiguous (a key that itself starts with the
+// tag byte) is escaped to `"\x01s"+key`, which keeps the encoding injective.
+//
+// Tuple, list, record and ADT keys remain one-way: `%v` is not injective for
+// them (`("a b", "c")` and `("a", "b c")` both render `{a b c}`), so they
+// stringify untagged and `requireDecodableDictKey` reports them.
+
+// dictKeyTagByte prefixes every encoded non-String Dict key.
+//
+// It is `\x01`, not `\x00`: an encoded key travels wherever the Dict does, and
+// PostgreSQL rejects a NUL byte in `text`/`jsonb` — a `Dict Int v` inside a
+// Sky.Live model persisted to a Postgres session store would have failed to
+// write. `\x01` has no such restriction, and JSON escapes it as ``.
+const dictKeyTagByte = '\x01'
 
 // dictKeyKind is the Sky type a stringified runtime key decodes back to.
 type dictKeyKind uint8
@@ -5142,6 +5200,137 @@ const (
 	dictKeyChar
 	dictKeyBool
 )
+
+// dictKeyKindOf classifies a LIVE Sky key value the way `dictKeyKindForFn`
+// classifies a callback's declared parameter — off the Go kind, because that is
+// what the lowering committed the Sky type to. Sky's `Char` is a Go `rune`
+// (`int32`) and Sky's `Int` is a Go `int`, so the int32 case is Char and every
+// other integer width is Int; the two agree with each other by construction,
+// which is what makes `insert`'s encoding and `foldl`'s decoding meet.
+//
+// `ok=false` means "not a key type that round-trips" — a tuple, record, list or
+// ADT key. Those stringify untagged, exactly as before.
+func dictKeyKindOf(k any) (dictKeyKind, bool) {
+	rv := reflect.ValueOf(k)
+	if !rv.IsValid() {
+		return dictKeyString, false
+	}
+	switch rv.Kind() {
+	case reflect.String:
+		return dictKeyString, true
+	case reflect.Int32:
+		return dictKeyChar, true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return dictKeyInt, true
+	case reflect.Float32, reflect.Float64:
+		return dictKeyFloat, true
+	case reflect.Bool:
+		return dictKeyBool, true
+	}
+	return dictKeyString, false
+}
+
+// dictKeyKindLetter is the tag byte for each kind. `dictKeyString`'s 's' is
+// only ever emitted for the escape case described above.
+func dictKeyKindLetter(kind dictKeyKind) byte {
+	switch kind {
+	case dictKeyInt:
+		return 'i'
+	case dictKeyFloat:
+		return 'f'
+	case dictKeyChar:
+		return 'c'
+	case dictKeyBool:
+		return 'b'
+	}
+	return 's'
+}
+
+// encodeDictKey turns a Sky key into the runtime map's string key. It REPLACES
+// the bare `fmt.Sprintf("%v", key)` at every Dict entry point, so that insertion
+// and lookup keep agreeing while iteration gains the ability to invert.
+//
+// The payload after the tag is still `%v` — decimal for Int, the code point for
+// Char, Go's shortest round-trip form for Float, "true"/"false" for Bool — so
+// `decodeDictKey` (which already inverted those) is unchanged and a tagged key
+// stays human-readable in a hex dump.
+func encodeDictKey(k any) string {
+	// Fast path for the dominant case: a `Dict String v` key is returned
+	// verbatim without touching reflect. Only a key that starts with the tag
+	// byte falls through to the escape.
+	if s, ok := k.(string); ok && (len(s) == 0 || s[0] != dictKeyTagByte) {
+		return s
+	}
+	k = derefPointer(unwrapAny(k))
+	kind, ok := dictKeyKindOf(k)
+	if !ok {
+		// Composite key: one-way, exactly as before.
+		return fmt.Sprintf("%v", k)
+	}
+	if kind == dictKeyString {
+		s := reflect.ValueOf(k).String()
+		if len(s) > 0 && s[0] == dictKeyTagByte {
+			// Escape, so a String key that happens to start with the tag
+			// byte can never be read back as some other kind's key.
+			return string([]byte{dictKeyTagByte, 's'}) + s
+		}
+		return s
+	}
+	return string([]byte{dictKeyTagByte, dictKeyKindLetter(kind)}) + fmt.Sprintf("%v", k)
+}
+
+// decodeTaggedDictKey inverts encodeDictKey. `ok=false` means the key carries no
+// tag — an FFI / Std.Db / JSON / pre-upgrade map — and the caller falls back to
+// the statically-supplied kind, which is the behaviour that predates this.
+func decodeTaggedDictKey(s string) (any, dictKeyKind, bool) {
+	if len(s) < 2 || s[0] != dictKeyTagByte {
+		return nil, dictKeyString, false
+	}
+	payload := s[2:]
+	switch s[1] {
+	case 's':
+		return payload, dictKeyString, true
+	case 'i':
+		return decodeDictKey(dictKeyInt, payload), dictKeyInt, true
+	case 'f':
+		return decodeDictKey(dictKeyFloat, payload), dictKeyFloat, true
+	case 'c':
+		return decodeDictKey(dictKeyChar, payload), dictKeyChar, true
+	case 'b':
+		return decodeDictKey(dictKeyBool, payload), dictKeyBool, true
+	}
+	// An unknown tag letter is not ours — treat the whole thing as a String
+	// key rather than silently dropping the entry.
+	return nil, dictKeyString, false
+}
+
+// dictProbeKey is the lookup counterpart of encodeDictKey: it returns the key
+// under which `key` is actually stored in `m`.
+//
+// The encoded form is tried first. The bare `%v` form is the fallback, and it is
+// what keeps a map that was NOT built by these kernels working: an FFI or
+// `Std.Db` `map[string]any` typed as a `Dict Int v` holds "10", not "\x01i10",
+// and `Dict.get 10` on it must still find the entry. Insertion uses the same
+// resolution, so inserting into such a map overwrites the existing entry rather
+// than adding a second, logically-equal key.
+func dictProbeKey(m map[string]any, key any) string {
+	enc := encodeDictKey(key)
+	if len(enc) < 2 || enc[0] != dictKeyTagByte {
+		// Untagged: the encoded form IS the plain form, so there is no second
+		// place to look. This is every `Dict String v` probe, and it costs one
+		// map lookup exactly as it did before.
+		return enc
+	}
+	if _, ok := m[enc]; ok {
+		return enc
+	}
+	plain := fmt.Sprintf("%v", derefPointer(unwrapAny(key)))
+	if _, ok := m[plain]; ok {
+		return plain
+	}
+	return enc
+}
 
 // decodeDictKey inverts the `fmt.Sprintf("%v", key)` that put the key into the
 // map. Every branch has a total fallback: a malformed key (an FFI-supplied
@@ -5188,45 +5377,86 @@ func decodeDictKey(kind dictKeyKind, s string) any {
 
 // dictEntry is one map entry with its key decoded back to the Sky type.
 type dictEntry struct {
-	raw string // the runtime map key, i.e. the stringified form
-	key any    // decoded to `kind`
-	val any
+	raw  string      // the runtime map key, i.e. the encoded form
+	key  any         // decoded
+	kind dictKeyKind // what it decoded AS — per entry, see dictEntries
+	val  any
 }
 
 // dictEntries decodes every entry and sorts them by the DECODED key.
 //
 // Sorting the decoded key is the whole point: Sky's Dict is Elm-shaped, so
 // enumeration is defined to visit entries in ascending key order, and the
-// stringified form does not sort the same way ("10" < "9" lexically, 9 < 10
+// encoded form does not sort the same way ("10" < "9" lexically, 9 < 10
 // numerically). Sorting also makes enumeration deterministic despite Go's
 // randomised map iteration.
+//
+// The kind is resolved PER ENTRY: a key that carries its own tag decodes by
+// that tag and needs no static type (which is what makes a key-polymorphic
+// helper work), and one that does not falls back to `kind` — the compiler-routed
+// or callback-declared type, i.e. the pre-existing behaviour for maps this
+// runtime did not build. A map can legitimately hold both, e.g. after inserting
+// into an FFI-supplied `map[string]any`, so the ordering below is total across
+// kinds rather than assuming one.
 func dictEntries(dict any, kind dictKeyKind) []dictEntry {
 	m := AsDict(unwrapAny(dict))
 	ents := make([]dictEntry, 0, len(m))
 	for k, v := range m {
-		ents = append(ents, dictEntry{raw: k, key: decodeDictKey(kind, k), val: v})
+		if dk, dkind, ok := decodeTaggedDictKey(k); ok {
+			ents = append(ents, dictEntry{raw: k, key: dk, kind: dkind, val: v})
+			continue
+		}
+		ents = append(ents, dictEntry{raw: k, key: decodeDictKey(kind, k), kind: kind, val: v})
 	}
-	switch kind {
-	case dictKeyInt:
-		sort.SliceStable(ents, func(i, j int) bool {
-			return ents[i].key.(int) < ents[j].key.(int)
-		})
-	case dictKeyFloat:
-		sort.SliceStable(ents, func(i, j int) bool {
-			return ents[i].key.(float64) < ents[j].key.(float64)
-		})
-	case dictKeyChar:
-		sort.SliceStable(ents, func(i, j int) bool {
-			return ents[i].key.(rune) < ents[j].key.(rune)
-		})
-	case dictKeyBool:
-		sort.SliceStable(ents, func(i, j int) bool {
-			return !ents[i].key.(bool) && ents[j].key.(bool)
-		})
-	default:
-		sort.SliceStable(ents, func(i, j int) bool { return ents[i].raw < ents[j].raw })
-	}
+	sort.SliceStable(ents, func(i, j int) bool { return dictEntryLess(ents[i], ents[j]) })
 	return ents
+}
+
+// dictEntryLess orders two decoded entries. Within one kind it is the kind's own
+// ascending order — which for a homogeneous dict (every real one) is exactly the
+// order the per-kind comparators gave before. Across kinds it falls back to the
+// kind rank, so a mixed-provenance map still enumerates deterministically
+// instead of tripping a failed type assertion in the comparator.
+func dictEntryLess(a, b dictEntry) bool {
+	if a.kind != b.kind {
+		return a.kind < b.kind
+	}
+	switch a.kind {
+	case dictKeyInt:
+		x, xok := a.key.(int)
+		y, yok := b.key.(int)
+		if xok && yok {
+			return x < y
+		}
+	case dictKeyFloat:
+		x, xok := a.key.(float64)
+		y, yok := b.key.(float64)
+		if xok && yok {
+			return x < y
+		}
+	case dictKeyChar:
+		x, xok := a.key.(rune)
+		y, yok := b.key.(rune)
+		if xok && yok {
+			return x < y
+		}
+	case dictKeyBool:
+		x, xok := a.key.(bool)
+		y, yok := b.key.(bool)
+		if xok && yok {
+			return !x && y
+		}
+	case dictKeyString:
+		// The decoded string, not the raw key: they are the same except for
+		// an escaped key, where the raw carries the escape prefix and would
+		// sort away from its unescaped neighbours.
+		x, xok := a.key.(string)
+		y, yok := b.key.(string)
+		if xok && yok {
+			return x < y
+		}
+	}
+	return a.raw < b.raw
 }
 
 // dictKeyKindForFn reads the key type off a Dict callback's DECLARED first
