@@ -431,12 +431,15 @@ jobs:
         working-directory: rust
         run: |
           cargo build --release -p sky --locked
-          SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh
+          source ../scripts/lib/cargo-target.sh
+          SKY_BIN="20 20 12 61 79 80 81 98 33 100 204 250 395 398 399 400 701cargo_bin_path "" sky --release)" ../scripts/conformance.sh
       - name: Gate — live docs (full-module doc examples still compile)
         # Every `module Main …` Sky example in the live docs (docs/, excluding
         # docs/history/) must `sky check` — so a doc example can't silently rot.
         working-directory: rust
-        run: SKY_BIN="$PWD/target/release/sky" ../scripts/doc-examples.sh
+        run: |
+          source ../scripts/lib/cargo-target.sh
+          SKY_BIN="20 20 12 61 79 80 81 98 33 100 204 250 395 398 399 400 701cargo_bin_path "" sky --release)" ../scripts/doc-examples.sh
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -614,7 +617,8 @@ jobs:
       - name: Gate — stdlib behavioral conformance (2nd platform)
         run: |
           cargo build --release -p sky --locked
-          SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh
+          source ../scripts/lib/cargo-target.sh
+          SKY_BIN="20 20 12 61 79 80 81 98 33 100 204 250 395 398 399 400 701cargo_bin_path "" sky --release)" ../scripts/conformance.sh
       - name: Bound the Go caches before save
         if: always()
         working-directory: .

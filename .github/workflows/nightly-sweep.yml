@@ -65,13 +65,94 @@ jobs:
           workspaces: rust
           shared-key: sky-gates-linux
       - name: Build sky binary
+        # Ask cargo where it put the binary instead of assuming
+        # `rust/target/release/sky`: cargo honours CARGO_TARGET_DIR and friends,
+        # and a hardcoded path silently installs an OLDER build when they are
+        # set. That cost a full release cycle on a developer machine (the
+        # compiler under test was pre-fix, so a completed fix was declared
+        # broken). CI does not set those vars today, so this site was benign —
+        # but it is the same trap, and `scripts/lib/cargo-target.sh` exists
+        # precisely so no one has to remember which sites are safe.
         run: |
+          source scripts/lib/cargo-target.sh
           cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
-          mkdir -p sky-out
-          cp rust/target/release/sky sky-out/sky
+          install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
           sky-out/sky --version
       - name: Full example sweep (clean-slate build of every example, incl. FFI/Std.Db)
         run: scripts/example-sweep.sh
+      - name: Bound the Go caches before save
+        if: always()
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── The browser tier — the ONLY runner of scripts/verify-all-web.sh in CI ───
+  #
+  # Until now this tier ran in exactly one place: `scripts/preflight-tag.sh`,
+  # i.e. only when a human cut a release. That is not a theoretical gap. It is
+  # how the `sky_sid` idle-eviction bug survived to a release: an idle-but-alive
+  # Sky.Live session was evicted because the session COOKIE's Max-Age was keyed
+  # to the store TTL, and the only gate that exercised it —
+  # `resilience-idle` — never ran in CI. It had never passed since it was
+  # written, and nobody saw it, because nothing ran it.
+  #
+  # It belongs at T3, not T1. The tier drives real browsers against real
+  # servers: ~80s for the idle case alone, which must cross the 60s store
+  # cleanup tick and therefore cannot be made fast. Per-push cannot afford it;
+  # nightly can, and nightly is where the expensive coverage already lives.
+  #
+  # Four Go tests now carry the specific `sky_sid` invariant into per-push CI,
+  # so the class is guarded there too. This job guards the TIER — the
+  # click-is-a-no-op, console-error, server-panic and desync/idle classes that
+  # only a browser can see.
+  web-runtime:
+    runs-on: ubuntu-latest
+    # The tier measures ~10 min locally (10 checks incl. two ~80s resilience
+    # holds and the console e2e). 1.5x = 15; 25 leaves room for a cold Go cache
+    # and browser download, still far inside the 90-min T3 ceiling.
+    timeout-minutes: 25
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      GO_CACHE_BUDGET_MB: '6144'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-web-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-web-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+          save-if: 'false'
+      - name: Install Playwright + its browser
+        run: |
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Build sky binary
+        run: |
+          source scripts/lib/cargo-target.sh
+          cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
+          install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
+          sky-out/sky --version
+      - name: Gate — browser runtime verification (Sky.Live + Http.Server + resilience)
+        # verify-all-web.sh emits exactly ONE "VERIFY:" line, last, and exits
+        # with its failure count. Take the EXIT STATUS as the verdict: an
+        # earlier form of this check grepped for "0 fail" and matched the
+        # substring inside "10 fail", passing a run where every Playwright
+        # check was dead.
+        run: scripts/verify-all-web.sh
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh

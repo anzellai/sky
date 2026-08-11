@@ -48,7 +48,14 @@ jobs:
         working-directory: rust
         run: cargo build --release -p sky --locked
       - name: Build docs site
-        run: SKY_BIN="$PWD/rust/target/release/sky" scripts/build-docs-site.sh _site
+        # Resolve the binary through cargo rather than assuming
+        # `rust/target/release/sky` — see scripts/lib/cargo-target.sh. Benign
+        # here today (CI sets no CARGO_TARGET_DIR), but this is the last site
+        # that still assumed, and "the safe ones" is not a list anyone should
+        # have to keep in their head.
+        run: |
+          source scripts/lib/cargo-target.sh
+          SKY_BIN="$(cargo_bin_path "$PWD/rust" sky --release)" scripts/build-docs-site.sh _site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
