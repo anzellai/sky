@@ -85,4 +85,4 @@ stratum       = "stdlib_import"
 coordinate    = { import_shape = "exposing_all", shadow = "ambiguous_exposing_all" }
 expect        = "reject"
 expect_stdout = ""
-summary       = "OPEN: two modules both `exposing (..)` the same name resolve to the LAST import, silently — the program compiles clean and its value depends on import ORDER. A directory rather than one file, because the pair of import orderings IS the reproduction. Blocked with expiry 2026-09-30; see the directory's README for why a naive fix would reject working programs."
+summary       = "FIXED 2026-08-11: two modules both `exposing (..)` the same name used to resolve to the LAST import, silently — the program compiled clean and its value depended on import ORDER. Now rejected [E1012] at the use site via the unqualified-name precedence lattice (ambient < open < explicit < local), which keeps the autoloaded Prelude from colliding with explicit imports. A directory rather than one file, because the pair of import orderings IS the reproduction."

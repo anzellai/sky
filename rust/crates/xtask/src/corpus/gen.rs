@@ -209,52 +209,27 @@ pub struct Blocked {
 /// either silencing it or blocking the branch — never a way to make a case
 /// stop mattering.
 fn blocked_reason(stratum: &str, a: &Assignment) -> Option<Blocked> {
-    // ---- ambiguous unqualified name across two `exposing (..)` imports ----
+    // `stdlib_import` / `ambiguous_exposing_all` was blocked here from
+    // 2026-08-11 until it was FIXED. Two modules both `exposing (..)` the same
+    // name at the same type, referenced unqualified, compiled clean and printed
+    // whichever module was imported LAST — swapping two import lines silently
+    // changed the answer, with no diagnostic either way.
     //
-    // Found by Family S's `stdlib_import` stratum, 2026-08-11. Two modules that
-    // both `exposing (..)` the same name at the same type; the reference is
-    // unqualified; the program COMPILES CLEAN and prints whichever module was
-    // imported LAST. Swapping the two import lines — a formatter reordering
-    // them, or a developer adding an import above an existing one — silently
-    // changes the answer:
+    // The block said the naive rule ("bound by two imports = error") could not
+    // be applied, because `Sky.Core.Prelude exposing (..)` + `Sky.Core.Math
+    // exposing (..)` already double-bind `abs`/`min`/`max`/`sqrt` and real
+    // examples rely on it. The fix is a PRECEDENCE LATTICE
+    // (`hir::resolve::BindLayer`: ambient < open < explicit < local) plus a
+    // USE-SITE ambiguity error `[E1012]`. The Prelude sits in the ambient layer,
+    // so an explicit import shadows it silently; ambiguity is reported only when
+    // a reference actually reads a name whose winning layer holds two different
+    // definitions. That is Elm's rule, and it leaves the Prelude/Math overlap —
+    // and every example that imports `Std.Html exposing (..)` alongside
+    // `Std.Html.Attributes exposing (..)` — compiling.
     //
-    //     import Ambig.Alpha exposing (..)   -- label = "ALPHA"
-    //     import Ambig.Beta exposing (..)    -- label = "BETA"
-    //     main = println label               -- prints BETA
-    //
-    //     import Ambig.Beta exposing (..)
-    //     import Ambig.Alpha exposing (..)
-    //     main = println label               -- prints ALPHA
-    //
-    // Elm rejects this as an ambiguous name. Sky accepts it. That makes it the
-    // exact defect class this corpus exists for — "compiles clean, behaves
-    // wrong" — and it is the #164 family: whole-program name resolution
-    // producing a different program from a difference that should not matter.
-    //
-    // NOT FIXED HERE, deliberately. The obvious rule ("an unqualified name
-    // bound by two imports is an error") cannot be applied naively: with
-    // `import Sky.Core.Prelude exposing (..)` and `import Sky.Core.Math
-    // exposing (..)` both in scope, `abs` / `min` / `max` / `sqrt` are bound
-    // twice today and a strict rule would reject working programs. The correct
-    // rule has to privilege the implicit prelude the way Elm does, and that is
-    // a language decision with app-breaking blast radius — CLAUDE.md §0.3 rule
-    // 2 puts it at the user level, and the `rust_ty_alias_resolution_164`
-    // postmortem is the standing reminder that a resolution heuristic which
-    // passes the corpus can still regress a real app.
-    //
-    // So it is BLOCKED, not silenced: the case runs on every corpus run, it
-    // never contributes PASS, its transition to green would be reported, and
-    // after the expiry it FAILS the gate outright.
-    if stratum == "stdlib_import" && a.get(SHADOW) == "ambiguous_exposing_all" {
-        return Some(Blocked {
-            issue: "sky/ambiguous-unqualified-name-across-exposing-all (found by Family S, 2026-08-11)",
-            expires: "2026-09-30",
-            reason: "two modules both `exposing (..)` the same name resolve to the LAST \
-                     import, silently — the program compiles clean and its value depends \
-                     on import ORDER. Needs a language decision (Elm rejects; a naive \
-                     rule would break the Prelude/Math `abs`/`min`/`max` overlap).",
-        });
-    }
+    // A block is a deadline, not a parking space: the entry is DELETED in the
+    // same commit as the fix, because the harness fails when a blocked case
+    // starts passing.
 
     // `fieldset_ctor` / `via_ctor_fn` / `stdlib_eventprop` was blocked here from
     // 2026-08-10 until it was FIXED. A user record `{ key : String, value :

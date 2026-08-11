@@ -25,24 +25,33 @@ imports is something a formatter, a merge, or an added import does routinely.
 
 ## Reproducing
 
-    cd corpus/repro/ambiguous-exposing-all/order-beta-last && sky build src/Main.sky && ./sky-out/app   # BETA
-    cd corpus/repro/ambiguous-exposing-all/order-alpha-last && sky build src/Main.sky && ./sky-out/app  # ALPHA
+    cd corpus/repro/ambiguous-exposing-all/order-beta-last && sky build src/Main.sky   # rejected [E1012]
+    cd corpus/repro/ambiguous-exposing-all/order-alpha-last && sky build src/Main.sky  # rejected [E1012]
 
-## Why it is BLOCKED rather than fixed
+## FIXED — 2026-08-11
 
-The obvious rule — "an unqualified name bound by two imports is an error" —
-cannot be applied naively. With `import Sky.Core.Prelude exposing (..)` and
-`import Sky.Core.Math exposing (..)` both in scope, `abs` / `min` / `max` /
-`sqrt` are already bound twice today, and a strict rule would reject working
-programs. The correct rule has to privilege the implicit prelude the way Elm
-does, so this is a language decision with app-breaking blast radius:
-CLAUDE.md §0.3 rule 2 puts strategic feasibility at the user level, and the
-`rust_ty_alias_resolution_164` postmortem is the standing reminder that a
-name-resolution heuristic which passes the whole corpus can still regress a real
-app.
+Both directories are now REJECTED, which is what the pair was always asking for:
+the two programs differ only in import order, so either they mean the same thing
+or the compiler must refuse to guess.
 
-The generated case `stdlib_import/exposing_all-ambiguous_exposing_all` carries
-this as a `Blocked` entry (`corpus/gen.rs::blocked_reason`): it RUNS on every
-corpus run, it never contributes PASS, a transition to green is reported, and
-after `expires = 2026-09-30` it FAILS the gate outright. A block is a deadline,
-not a parking space.
+The rule is a **precedence lattice** over unqualified bindings
+(`hir::resolve::BindLayer`, doc `rust-rewrite/05-name-resolution.md` §6b):
+
+    ambient (0) < open (1) < explicit (2) < local (3)
+
+A name bound in several layers resolves to the highest, deterministically and
+independently of import order. Only a tie *inside* the winning layer is
+ambiguous, and it is reported at the **use site** as `[E1012] AMBIGUOUS NAME`.
+
+That is what made the fix non-breaking. The naive rule — "an unqualified name
+bound by two imports is an error" — rejects working programs: with `import
+Sky.Core.Prelude exposing (..)` and `import Sky.Core.Math exposing (..)` both in
+scope, `abs` / `min` / `max` / `sqrt` are bound twice and real examples rely on
+it. `Sky.Core.Prelude` is autoloaded, so it sits in the ambient layer and any
+explicit import shadows it silently. And because the error fires only where a
+name is actually *read*, the ubiquitous `Std.Html exposing (..)` +
+`Std.Html.Attributes exposing (..)` pairing — which genuinely overlaps — keeps
+compiling.
+
+These two directories stay checked in as the regression: if either ever builds
+again, "swapping two import lines changes the answer" is back.

@@ -145,7 +145,7 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// [`EXPECTED_FILES_WITH_ORACLE_CODE`] or
 /// [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`] and updates BOTH constants in the
 /// same commit.
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 4;
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 5;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

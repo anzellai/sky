@@ -136,6 +136,7 @@ fn code_title(code: &str) -> &'static str {
         "E1006" => "UNSUPPORTED PATTERN",
         "E1010" => "IMPORT CYCLE",
         "E1011" => "NOT EXPOSED",
+        "E1012" => "AMBIGUOUS NAME",
         "E2001" => "TYPE ERROR",
         "E2007" => "ARITY MISMATCH",
         "E3001" => "MISSING PATTERNS",

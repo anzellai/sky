@@ -287,6 +287,26 @@ fn assemble_and_emit_with(
     // check-time diagnostic. Name-resolution + exhaustiveness handling stays with
     // the existing lowering path; only the type-clash hole is closed here.
     let checked = ty::check_modules(&db, &check_ids);
+    // Ambiguity (`[E1012]`) is reported BEFORE the type gate, because it is the
+    // CAUSE and any type error under it is the consequence. When a bare name is
+    // bound by two imports, the resolver still has to hand lowering one of them
+    // so resolution stays total — and whichever it picks, the use site may then
+    // fail to unify. Reporting that clash would tell the user their types are
+    // wrong when the real defect is that the compiler could not tell which of two
+    // `length`s they meant. Measured, not reasoned: `import Sky.Core.String
+    // exposing (..)` + `import Sky.Core.List exposing (..)` with a bare `length`
+    // printed `[E2001] type mismatch: List _ vs String` and never mentioned the
+    // ambiguity. The other `[E1xxx]` name errors keep their existing position
+    // after the type gate — only the cause/consequence inversion is fixed here.
+    let ambiguous: Vec<diagnostics::Diagnostic> = checked
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0 == "E1012")
+        .cloned()
+        .collect();
+    if !ambiguous.is_empty() {
+        return Err(render_diags(&ambiguous, &sources));
+    }
     if checked.type_errors > 0 {
         let ds: Vec<diagnostics::Diagnostic> = checked
             .diagnostics
