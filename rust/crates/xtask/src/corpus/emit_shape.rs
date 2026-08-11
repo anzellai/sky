@@ -274,108 +274,29 @@ fn probe(a: &Assignment) -> Probe {
 /// contributes PASS, a transition to green is reported loudly, and after the
 /// expiry it FAILS. It is deliberately not a skip — a skip is how "SKIP counted
 /// as pass" happened.
-fn blocked_property(a: &Assignment, prop: &str) -> Option<Blocked> {
-    let eshape = a.get(ESHAPE);
-    let etype = a.get(ETYPE);
-
-    // FOUND BY THIS FAMILY, 2026-08-11, and NOT fixed here.
+fn blocked_property(_a: &Assignment, _prop: &str) -> Option<Blocked> {
+    // EMPTY, and that is the point. This family opened with two blocks, both
+    // alias-only, both found by the gate itself on its first run:
     //
-    //     pick : ( Rec, Int ) -> Int
-    //     pick p =
-    //         (fst p).gamma
+    //   * `emit_shape/field_read-alias [no-narrowing]` — `pick r = r.gamma`
+    //     emitted `rt.AsInt(v_0.Gamma)` for a field the struct declares `int`,
+    //     because `Expr::Access` typed the selector from the expected slot
+    //     instead of the struct's own field type.
+    //   * `emit_shape/tuple_projection-alias [no-erasure]` — `pick p = (fst
+    //     p).gamma` on `( Rec, Int )` emitted
+    //     `rt.AsInt(rt.Field(rt.Basics_fst(any(v_0)), "Gamma"))` while the
+    //     parameter was already `rt.T2[Main_Rec_R, int]`.
     //
-    // emits
+    // Both said "NOT fixed here" for the same reason: the fix moves emitted
+    // bytes, and CLAUDE.md §0.3 rule 2 puts that call with the user. The user
+    // authorised it; both are fixed in `lower/src/lower.rs` (`Expr::Access`
+    // takes the declared field type; `tuple_projection` reads `.V0`/`.V1` off a
+    // statically typed tuple), the gate reported both NOW GREEN, and the blocks
+    // are deleted in the same commit — the contract's own instruction, since a
+    // block that outlives its bug hides the next regression.
     //
-    //     func Main_pick(v_0 rt.T2[Main_Rec_R, int]) int {
-    //         return rt.AsInt(rt.Field(rt.Basics_fst(any(v_0)), "Gamma"))
-    //     }
-    //
-    // Three runtime narrowings on an expression whose type is fully known — the
-    // parameter is literally `rt.T2[Main_Rec_R, int]`, so the first component's
-    // struct is in the signature. The lowerer widens that typed tuple back to
-    // `any` to call the untyped runtime `rt.Basics_fst`, reflects the field out
-    // of the `any` result with `rt.Field`, and narrows the result again.
-    //
-    // This is NOT the §8 irreducible floor. The floor covers erasure a
-    // type-variable genuinely forces; here the static type survives into the Go
-    // signature and is discarded at the kernel call. It is also the exact shape
-    // of #170/#172 — "destructure on an erased subject", the class that produced
-    // WRONG VALUES rather than merely slow ones — so it is blocked (dated,
-    // counted, never contributing PASS) rather than exempted.
-    //
-    // Not fixed here for the same reason as the block below: a typed `fst` on
-    // `rt.T2[A, B]` changes emitted bytes across the differential corpus, which
-    // is an oracle-parity decision.
-    // ALIAS-ONLY, and that is the sharpest thing this gate found. The same
-    // program with the record spelled structurally (`etype = inline`) emits NO
-    // erasure at all. Both of this family's blocked coordinates are alias-only:
-    // naming a record type is what loses the information the structural spelling
-    // keeps. The gate reported `tuple_projection-inline [no-erasure] NOW GREEN`
-    // against a block written for the whole shape, which is how the coordinate
-    // got narrowed to the one that is actually red.
-    if prop == "no-erasure" && eshape == "tuple_projection" && etype == "alias" {
-        return Some(Blocked {
-            issue: "typed tuple widened to `any` for `rt.Basics_fst`, then read back \
-                    with `rt.Field` (lower/src/lower.rs kernel-call path)",
-            expires: "2026-11-30",
-            reason: "`pick p = (fst p).gamma` on `( Rec, Int )` emits \
-                     `rt.AsInt(rt.Field(rt.Basics_fst(any(v_0)), \"Gamma\"))` although \
-                     the parameter is emitted as `rt.T2[Main_Rec_R, int]`. The static \
-                     type reaches the signature and is thrown away at the kernel call.",
-        });
-    }
-    blocked_narrowing(eshape, etype, prop)
-}
-
-/// The redundant-narrowing block, split out because it is keyed on BOTH axes.
-///
-/// The inline (structural) spelling of the same program does NOT emit the
-/// redundant `rt.AsInt`; only the named-alias spelling does. That difference was
-/// found by this gate reporting `field_read-inline [no-narrowing] NOW GREEN`
-/// against a block that had been written for the whole `field_read` shape — the
-/// BLOCKED contract's "a defect that quietly started working is a fact about the
-/// product" clause, doing its job on its first run. Narrowing the block to the
-/// coordinate that is actually red is the required response; leaving it wide
-/// would have hidden a regression in the inline spelling.
-fn blocked_narrowing(eshape: &str, etype: &str, prop: &str) -> Option<Blocked> {
-    // FOUND BY THIS FAMILY, 2026-08-11, and NOT fixed here.
-    //
-    //     pick : Rec -> Int
-    //     pick r =
-    //         r.gamma
-    //
-    // emits `return /* FFI return */ rt.AsInt(v_0.Gamma)` even though `Gamma` is
-    // declared `int` in the emitted struct and the function returns `int`. A
-    // runtime narrowing on a statically-known type is precisely what the v0.17
-    // typed-emit contract forbids, and `rt.AsInt` is in the `coerce-floor`
-    // tracked set.
-    //
-    // Mechanism (`lower/src/lower.rs`, `Expr::Access`): the selector is typed
-    // from `actual` (the expected slot). `declared_field_ty` is consulted only to
-    // detect a field that erased to `any`; for a CONCRETE field type it is
-    // computed and then discarded, so in a def-return slot `actual` is `any`, the
-    // selector is typed `any`, and `coerce_if_needed` narrows it back.
-    // `field_read_in_binop` is the control: the binop pins the operand type and
-    // the same read emits `(v_0.Gamma + 0)` with no narrowing at all.
-    //
-    // NOT fixed here, and the reason is not effort. The Rust emitter is held
-    // byte-for-byte against the Haskell oracle over the differential corpus
-    // (`xtask build-run`'s oracle comparison, doc 11 §2b). Tightening this
-    // changes emitted bytes for a large fraction of real programs, so it is an
-    // oracle-parity decision, not a local codegen edit — CLAUDE.md §0.3 rule 2
-    // puts that class of call with the user, not with an agent mid-task.
-    if prop == "no-narrowing" && eshape == "field_read" && etype == "alias" {
-        return Some(Blocked {
-            issue: "redundant rt.AsInt on a statically-typed record field read \
-                    (lower/src/lower.rs Expr::Access — selector typed from `actual`)",
-            expires: "2026-11-30",
-            reason: "`pick r = r.gamma` emits `rt.AsInt(v_0.Gamma)` for a field the \
-                     emitted struct declares as `int`. Sound but a widening of the \
-                     runtime-narrowing floor on a fully-HM-typed expression. The fix \
-                     is an oracle-byte-parity decision (see the note in \
-                     `emit_shape::blocked_property`), not a local edit.",
-        });
-    }
+    // Keep the hook. The next coordinate this family finds red is declared here,
+    // with a date, and is charged as blocked rather than silenced.
     None
 }
 

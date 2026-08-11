@@ -657,6 +657,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             ffi: &cfg.ffi,
             ffi_used: BTreeSet::new(),
             kernel_arity: &cfg.kernel_arity,
+            variadic_kernels: &cfg.variadic_kernels,
             cur_module: e.module_name.clone(),
             cur_def: d,
             tco: None,
@@ -1780,6 +1781,10 @@ struct Ctx<'a> {
     /// Runtime kernel arities (`rt.<Name>` sans prefix → param count) — the
     /// authoritative arity for the partial-kernel eta-expansion decision.
     kernel_arity: &'a BTreeMap<String, usize>,
+    /// Runtime kernel symbols whose Go func is VARIADIC (`func F(a any, rest
+    /// ...any)`), keyed sans `rt.` prefix. A variadic symbol has no fixed arity,
+    /// so the over-application reject below must not fire on one.
+    variadic_kernels: &'a std::collections::BTreeSet<String>,
     /// The module the def currently being lowered belongs to — disambiguates a
     /// nominal type name (`Msg`/`Model`) declared in more than one module.
     cur_module: String,
@@ -2632,22 +2637,37 @@ impl<'a> Ctx<'a> {
                     let sel = GoExpr::new(GoExprKind::Selector(Box::new(b), cap), GoTy::Any);
                     return self.coerce_if_needed(sel, actual);
                 }
-                // A func-typed struct field (`OnChange func(bool) any`) accessed
-                // in callee position must carry its REAL func type, not the
-                // expected slot type (`actual`, frequently `any` for a callee) —
-                // `lower_call` reads the callee's param types off this node to
-                // coerce `any`-returning kernel args (`rt.Basics_not`) into the
-                // concrete param slot (`bool`). Non-func fields keep the existing
-                // `actual` typing (zero baseline change).
-                let field_ty = match &b.ty {
-                    GoTy::Struct(fs) => fs
-                        .iter()
-                        .find(|(n, _)| n.as_str() == cap)
-                        .map(|(_, t)| t.clone())
-                        .filter(|t| matches!(t, GoTy::Func(_, _))),
-                    _ => None,
-                }
-                .unwrap_or_else(|| actual.clone());
+                // The selector's Go type is the STRUCT'S OWN field type. Go
+                // decided it at the `type … struct` declaration; nothing at the
+                // use site can change what `v_0.Gamma` statically is.
+                //
+                // This used to fall back to `actual` (the expected slot) for
+                // every non-func field, which inverted the direction of truth: in
+                // a def-return slot `actual` is frequently `any`, so a field the
+                // emitted struct declares `int` was typed `any` and the outer
+                // `coerce_if_needed` narrowed it straight back —
+                //
+                //     pick : Rec -> Int
+                //     pick r = r.gamma      ==>  return rt.AsInt(v_0.Gamma)
+                //
+                // a runtime narrowing on a fully-HM-typed expression, and a
+                // widening of the runtime-narrowing floor. (`r.gamma + 0` was the
+                // control: the binop pinned the operand type and the same read
+                // emitted `v_0.Gamma + 0` with no narrowing at all — the read was
+                // never the problem, the slot-typing was.)
+                //
+                // The func-typed case is the same rule, and was the only part of
+                // it previously honoured: `lower_call` reads a callee field's
+                // param types off this node to coerce `any`-returning kernel args
+                // (`rt.Basics_not`) into the concrete param slot (`bool`).
+                //
+                // `declared_field_ty` is computed above and covers both spellings
+                // (a `GoTy::Struct` inline record and a `GoTy::Named` alias). The
+                // `Any`-declared case already returned above; what reaches here is
+                // a CONCRETE declared type, or `None` when the base is neither
+                // shape (a type-var / erased base — keep the slot type, which is
+                // all we know).
+                let field_ty = declared_field_ty.unwrap_or_else(|| actual.clone());
                 GoExpr::new(GoExprKind::Selector(Box::new(b), cap), field_ty)
             }
             Expr::Record(fields) => self.lower_record(fields, actual),
@@ -3447,6 +3467,9 @@ impl<'a> Ctx<'a> {
                     if arity > args.len() {
                         return self.kernel_partial(&go, args, arity, actual);
                     }
+                    if let Some(e) = self.reject_over_application(&go, arity, args.len(), actual) {
+                        return e;
+                    }
                 }
                 return self.kernel_call(&go, args, actual);
             }
@@ -3454,6 +3477,11 @@ impl<'a> Ctx<'a> {
         // kernel direct call
         if let Expr::Var(Res::Kernel { module, func }) = &self.body.exprs[callee] {
             let go = kernel_go_name(module.as_str(), func.as_str());
+            // `fst`/`snd` on a STATICALLY TYPED tuple is a field read, not a
+            // reflective lookup — see `tuple_projection`.
+            if let Some(e) = self.tuple_projection(&go, args, actual) {
+                return e;
+            }
             // Partial application: Sky curries but the Go runtime symbol does not,
             // so an under-applied kernel must eta-expand into a closure instead of
             // emitting an under-applied call. The arity comes from the runtime
@@ -3462,6 +3490,9 @@ impl<'a> Ctx<'a> {
             if let Some(arity) = self.kernel_runtime_arity(&go) {
                 if arity > args.len() {
                     return self.kernel_partial(&go, args, arity, actual);
+                }
+                if let Some(e) = self.reject_over_application(&go, arity, args.len(), actual) {
+                    return e;
                 }
             }
             return self.kernel_call(&go, args, actual);
@@ -3976,6 +4007,14 @@ impl<'a> Ctx<'a> {
                 widen(e)
             })
             .collect();
+        self.kernel_call_lowered(go, largs, actual)
+    }
+
+    /// [`kernel_call`]'s tail, over ALREADY-LOWERED arguments. Split out so a
+    /// caller that had to lower an argument to decide something about it (see
+    /// [`tuple_projection`]) can fall back to the ordinary call without lowering
+    /// that argument a second time.
+    fn kernel_call_lowered(&mut self, go: &str, largs: Vec<GoExpr>, actual: &GoTy) -> GoExpr {
         let call = GoExpr::new(
             GoExprKind::Call(
                 Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),
@@ -4007,6 +4046,111 @@ impl<'a> Ctx<'a> {
     fn kernel_runtime_arity(&self, go: &str) -> Option<usize> {
         let sym = go.strip_prefix("rt.").unwrap_or(go);
         self.kernel_arity.get(sym).copied()
+    }
+
+    /// `fst`/`snd` applied to a value whose Go type is a STATICALLY TYPED tuple
+    /// (`rt.T2[Main_Rec_R, int]`) is a plain field read — `v_0.V0` — whose Go
+    /// type is the element type Go already declared.
+    ///
+    /// The reflective route was emitting, for `pick p = (fst p).gamma` on
+    /// `( Rec, Int )`:
+    ///
+    /// ```go
+    /// func Main_pick(v_0 rt.T2[Main_Rec_R, int]) int {
+    ///     return rt.AsInt(rt.Field(rt.Basics_fst(any(v_0)), "Gamma"))
+    /// }
+    /// ```
+    ///
+    /// The element type reached the SIGNATURE and was then thrown away one line
+    /// later: `rt.Basics_fst` takes and returns `any`, so the argument was widened
+    /// (`any(v_0)`), the record came back `any`, the field had to be read
+    /// reflectively (`rt.Field`), and the result had to be narrowed (`rt.AsInt`).
+    /// Three runtime operations to read a field Go could resolve statically.
+    ///
+    /// This does NOT go through `rt.Basics_fstT`: that companion takes the
+    /// value-erased `SkyTuple2` (= `T2[any, any]`), a DIFFERENT nominal from
+    /// `rt.T2[Main_Rec_R, int]`, so reaching it would need the very widening
+    /// being removed. `T2`'s fields are `V0`/`V1` (see `runtime-go/rt/rt.go`),
+    /// and Go resolves the selector on the instantiated generic statically.
+    ///
+    /// Deliberately narrow: exactly one argument, a 2-element `GoTy::Tuple`
+    /// (`fst`/`snd` are pair-only). An erased tuple keeps `GoTy::Any` elements,
+    /// so it still reads `.V0` — typed `any`, exactly what the reflective route
+    /// produced, minus the widen/lookup round-trip. `None` means "not `fst`/`snd`
+    /// of one argument": the caller carries on with the unchanged kernel path.
+    ///
+    /// It lowers that argument EXACTLY ONCE and owns BOTH outcomes — a pair
+    /// becomes the selector, anything else becomes the ordinary reflective call
+    /// built from the same lowered argument. `lower_expr` is not a pure query: it
+    /// mints local names, records discovered defs, and can push diagnostics. A
+    /// "probe, discard, fall through and re-lower" shape would double every one
+    /// of those — including the local-name counter, which would silently move
+    /// emitted bytes — for each `fst`/`snd` whose argument was not a typed pair.
+    fn tuple_projection(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> Option<GoExpr> {
+        let idx = match go {
+            "rt.Basics_fst" => 0usize,
+            "rt.Basics_snd" => 1usize,
+            _ => return None,
+        };
+        let [arg] = args else { return None };
+        let t = self.lower_expr(*arg, &GoTy::Any);
+        if let GoTy::Tuple(elems) = &t.ty {
+            if elems.len() == 2 {
+                let ety = elems[idx].clone();
+                return Some(GoExpr::new(
+                    GoExprKind::Selector(Box::new(t), format!("V{idx}")),
+                    ety,
+                ));
+            }
+        }
+        // Not a statically typed pair — the unchanged reflective call, built from
+        // the argument already lowered above.
+        Some(self.kernel_call_lowered(go, vec![widen(t)], actual))
+    }
+
+    /// A kernel applied to MORE arguments than its runtime symbol takes.
+    ///
+    /// `Path.join "a" "b"` used to lower to `rt.Path_join("a", "b")` and hand the
+    /// user a raw Go error — *too many arguments in call to rt.Path_join, have
+    /// (any, any), want (any)* — which breaks `sky check ≡ sky build` (AGENTS.md).
+    /// The type layer is the real fix and now rejects that program ([E2007], via
+    /// `Path.join`'s declared signature); this is the CLASS backstop, because the
+    /// type layer can only fire where a signature exists. A kernel-qualifier
+    /// member whose pseudo-module declares no Sky signature (the set is measured
+    /// and frozen by `project/tests/kernel_signature_coverage.rs`) infers as a
+    /// bare flex var, and a flex var absorbs any number of arrows — so without
+    /// this, every remaining member of that class can still reach `go build` with
+    /// a raw error.
+    ///
+    /// Same register as the `[E1001]` and Go-FFI-fallthrough rejects: refuse at
+    /// check time rather than emit Go we know does not compile.
+    ///
+    /// VARIADIC symbols are exempt — `func F(a any, rest ...any)` scans as a fixed
+    /// arity it does not have, and `F a b c` is legal Go.
+    ///
+    /// Firing here can never break a working program: the alternative on this
+    /// path is an over-applied Go call, which `go build` already rejects.
+    fn reject_over_application(
+        &mut self,
+        go: &str,
+        arity: usize,
+        given: usize,
+        actual: &GoTy,
+    ) -> Option<GoExpr> {
+        if given <= arity {
+            return None;
+        }
+        let sym = go.strip_prefix("rt.").unwrap_or(go);
+        if self.variadic_kernels.contains(sym) {
+            return None;
+        }
+        self.errors.push(format!(
+            "[E2007] `{sym}` takes {arity} argument(s), but is called with {given} \
+             (in module {}). Its result is not a function, so the extra argument(s) \
+             have nothing to apply to.",
+            self.cur_module
+        ));
+        Some(GoExpr::new(GoExprKind::Nil, actual.clone()))
     }
 
     /// Eta-expand a partially-applied kernel into a Go closure. A kernel runtime

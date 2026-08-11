@@ -1,0 +1,20 @@
+-- defect: a kernel-QUALIFIER call over-applied. `Path.join : List String ->
+--         String` takes one argument (a list of segments), but `Path.join "a"
+--         "b"` passes two. This used to type-check and then fail `go build`
+--         with a raw Go error reaching the user ("too many arguments in call
+--         to rt.Path_join — have (any, any), want (any)"), breaking `sky check
+--         ≡ sky build`. The cause was structural, not local to `Path`: a
+--         kernel-qualifier reference whose pseudo-module has NO Sky-level
+--         signature infers as a bare flex var, and the [E2007] arity gate
+--         self-disables on `Ty::Var`. Declaring `join`/`safeJoin` in
+--         `sky-stdlib/Sky/Core/Path.sky` gives the qualifier a real HM type, so
+--         the arity gate fires with a proper Sky diagnostic.
+-- oracle: reject [E2007]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+main =
+    println (Path.join "a" "b")

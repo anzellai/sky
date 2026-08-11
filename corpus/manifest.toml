@@ -5686,8 +5686,6 @@ coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
 expect     = "accept"
 stdout     = "42"
 properties = ["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert", "field-order-declared", "fieldset-by-type"]
-blocked    = "redundant rt.AsInt on a statically-typed record field read (lower/src/lower.rs Expr::Access — selector typed from `actual`)"
-expires    = "2026-11-30"
 
 [[case]]
 id         = "emit_shape/field_read-inline"
@@ -5744,8 +5742,6 @@ coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
 expect     = "accept"
 stdout     = "42"
 properties = ["no-erasure", "no-any-in-signature", "no-raw-type-assert", "field-order-declared", "fieldset-by-type"]
-blocked    = "typed tuple widened to `any` for `rt.Basics_fst`, then read back with `rt.Field` (lower/src/lower.rs kernel-call path)"
-expires    = "2026-11-30"
 
 [[case]]
 id         = "emit_shape/tuple_projection-inline"
