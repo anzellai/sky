@@ -95,6 +95,9 @@ func classifyPanic(msg string) (kind, hint string) {
 		strings.Contains(msg, "rt.skyCallDirect: argument"):
 		return "TypeMismatch",
 			"A value flowed into a numeric/boolean position with the wrong runtime type — usually from a heterogeneous list or untyped FFI return. Check the type at the source."
+	case strings.Contains(msg, "rt.Dict: unsupported key type"):
+		return "UnsupportedDictKey",
+			"A Sky Dict stringifies its keys at runtime, and only String, Int, Float, Char and Bool keys decode back — the stringification of a tuple/list/record/custom key is not reversible. Iterating such a Dict (Dict.foldl / Dict.map) cannot hand the key back. Key by a primitive rendering of the composite instead."
 	case strings.Contains(msg, "rt.Coerce: expected"),
 		strings.Contains(msg, "rt.coerceInner: type mismatch"):
 		return "CoerceFailure",

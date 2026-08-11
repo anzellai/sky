@@ -1,0 +1,200 @@
+module Core.DictTypedKeyTest exposing (tests)
+
+-- Issue #174 regression spec — Dict iteration with non-String keys.
+--
+-- The runtime Dict is a Go `map[string]V`: every key is stringified on
+-- the way in. `get`/`insert`/`member`/`remove` agree because both sides
+-- stringify, but the ITERATION path (`toList`, `keys`, `values`,
+-- `foldl`, `map`) handed the STRING form back where the Sky type says
+-- `Int` / `Char` / `Float` / `Bool`. Two symptoms were reported:
+--
+--   * `Dict.toList` on a `Dict Char v` returned char code 0 — the
+--     "97" string coerced to a rune through `rt.AsListT[rt.T2[rune,…]]`
+--     and failed to 0.
+--   * `Dict.foldl` on a `Dict Int v` PANICKED — the fold function's
+--     first parameter is a Go `int` and the runtime handed it a
+--     `string`, tripping `rt.skyCallDirect`'s argument type check.
+--     A runtime panic from well-typed Sky violates the language's
+--     central promise, so this file is a soundness gate, not a
+--     convenience one.
+--
+-- The third symptom, unreported but the same root cause, is ORDERING:
+-- Sky's Dict is Elm-shaped, so enumeration is defined to visit entries
+-- in ascending KEY order. Sorting the stringified keys puts "10"
+-- before "9", so `Dict.values` on a `Dict Int v` came back in
+-- lexical-key order.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Char as Char
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Test as Test exposing (Test)
+
+
+charDict : Dict Char Int
+charDict =
+    Dict.fromList [ ( 'a', 1 ), ( 'b', 2 ) ]
+
+
+-- Keys deliberately span the 9/10 boundary: lexically "10" < "9",
+-- numerically 9 < 10, so any test over these keys catches a sort that
+-- orders the stringified form.
+intDict : Dict Int String
+intDict =
+    Dict.fromList [ ( 1, "a" ), ( 2, "b" ), ( 10, "j" ), ( 9, "i" ) ]
+
+
+floatDict : Dict Float String
+floatDict =
+    Dict.fromList [ ( 1.5, "a" ), ( 10.25, "j" ), ( 9.75, "i" ) ]
+
+
+boolDict : Dict Bool String
+boolDict =
+    Dict.fromList [ ( True, "t" ), ( False, "f" ) ]
+
+
+strDict : Dict String Int
+strDict =
+    Dict.fromList [ ( "a", 1 ), ( "b", 2 ) ]
+
+
+-- ── Symptom 1: Char keys zeroed on the way out ─────────────────────
+charToListCodes : List Int
+charToListCodes =
+    List.map (\pair -> Char.toCode (fst pair)) (Dict.toList charDict)
+
+
+charKeyCodes : List Int
+charKeyCodes =
+    List.map Char.toCode (Dict.keys charDict)
+
+
+-- ── Symptom 2: foldl hands the key to a typed function ─────────────
+intFoldKeys : List Int
+intFoldKeys =
+    Dict.foldl (\k _ acc -> k :: acc) [] intDict
+
+
+-- The pipeline form is how the issue reported it; it must route the
+-- same way as the direct call.
+intFoldKeysPiped : List Int
+intFoldKeysPiped =
+    intDict |> Dict.foldl (\k _ acc -> k :: acc) []
+
+
+charFoldCodes : List Int
+charFoldCodes =
+    Dict.foldl (\k _ acc -> Char.toCode k :: acc) [] charDict
+
+
+floatFoldKeys : List Float
+floatFoldKeys =
+    Dict.foldl (\k _ acc -> k :: acc) [] floatDict
+
+
+boolFoldKeys : List Bool
+boolFoldKeys =
+    Dict.foldl (\k _ acc -> k :: acc) [] boolDict
+
+
+strFoldKeys : List String
+strFoldKeys =
+    Dict.foldl (\k _ acc -> k :: acc) [] strDict
+
+
+-- ── Symptom 3: Dict.map passes the key to the mapping function ─────
+mappedInt : List String
+mappedInt =
+    Dict.values (Dict.map (\k v -> String.fromInt k ++ v) intDict)
+
+
+mappedChar : List String
+mappedChar =
+    Dict.values (Dict.map (\k v -> String.fromInt (Char.toCode k + v)) charDict)
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Dict Char keys survive iteration (issue #174 symptom 1)"
+          [ Test.test
+                "Dict.toList keeps the Char key"
+                (\_ -> Test.equal [ 97, 98 ] charToListCodes)
+          , Test.test
+                "Dict.keys keeps the Char key"
+                (\_ -> Test.equal [ 97, 98 ] charKeyCodes)
+          , Test.test
+                "Dict.toList round-trips the whole pair"
+                (\_ ->
+                    Test.equal [ ( 'a', 1 ), ( 'b', 2 ) ] (Dict.toList charDict))
+          ]
+    , Test.suite
+          "Dict.foldl passes typed keys (issue #174 symptom 2)"
+          [ Test.test
+                "Int keys fold without panicking, in ascending key order"
+                (\_ -> Test.equal [ 10, 9, 2, 1 ] intFoldKeys)
+          , Test.test
+                "Int keys fold the same way through a pipeline"
+                (\_ -> Test.equal [ 10, 9, 2, 1 ] intFoldKeysPiped)
+          , Test.test
+                "Char keys fold as Chars"
+                (\_ -> Test.equal [ 98, 97 ] charFoldCodes)
+          , Test.test
+                "Float keys fold as Floats in numeric order"
+                (\_ -> Test.equal [ 10.25, 9.75, 1.5 ] floatFoldKeys)
+          , Test.test
+                "Bool keys fold as Bools"
+                (\_ -> Test.equal [ True, False ] boolFoldKeys)
+          , Test.test
+                "String keys are unchanged (regression baseline)"
+                (\_ -> Test.equal [ "b", "a" ] strFoldKeys)
+          ]
+    , Test.suite
+          "Dict.map passes typed keys (issue #174, same root cause)"
+          [ Test.test
+                "Int keys reach the mapping function as Ints"
+                (\_ -> Test.equal [ "1a", "2b", "9i", "10j" ] mappedInt)
+          , Test.test
+                "Char keys reach the mapping function as Chars"
+                (\_ -> Test.equal [ "98", "100" ] mappedChar)
+          ]
+    , Test.suite
+          "Dict enumeration is ordered by the KEY, not its string form"
+          [ Test.test
+                "Dict.keys on Dict Int is numerically ordered"
+                (\_ -> Test.equal [ 1, 2, 9, 10 ] (Dict.keys intDict))
+          , Test.test
+                "Dict.toList on Dict Int is numerically ordered"
+                (\_ ->
+                    Test.equal
+                        [ 1, 2, 9, 10 ]
+                        (List.map fst (Dict.toList intDict)))
+          , Test.test
+                "Dict.values on Dict Int follows numeric key order"
+                (\_ -> Test.equal [ "a", "b", "i", "j" ] (Dict.values intDict))
+          , Test.test
+                "Dict.values on Dict Float follows numeric key order"
+                (\_ -> Test.equal [ "a", "i", "j" ] (Dict.values floatDict))
+          , Test.test
+                "Dict.values on Dict Char follows code-point order"
+                (\_ -> Test.equal [ 1, 2 ] (Dict.values charDict))
+          , Test.test
+                "Dict.values on Dict String is unchanged (baseline)"
+                (\_ -> Test.equal [ 1, 2 ] (Dict.values strDict))
+          ]
+    , Test.suite
+          "Dict lookup still agrees with iteration"
+          [ Test.test
+                "Char key round-trips through get"
+                (\_ -> Test.equal (Just 1) (Dict.get 'a' charDict))
+          , Test.test
+                "Int key round-trips through get"
+                (\_ -> Test.equal (Just "j") (Dict.get 10 intDict))
+          , Test.test
+                "removing an Int key removes exactly that key"
+                (\_ ->
+                    Test.equal [ 1, 2, 9 ] (Dict.keys (Dict.remove 10 intDict)))
+          ]
+    ]
