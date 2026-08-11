@@ -185,12 +185,50 @@ impl Patch {
         if self.applied {
             let _ = std::fs::write(&self.path, &self.original);
             self.applied = false;
+            // Restoring the SOURCE is not enough. The mutated run may have
+            // emitted Go and built a binary FROM the mutation, and those
+            // artifacts outlive the source restore — leaving an example whose
+            // `sky-out/` disagrees with its own `.sky` file.
+            //
+            // This is the same defect the journal above exists to prevent, one
+            // layer down, and it cost a release: `01-hello-world` printed
+            // "Goodbye from Sky!" from a stale `sky-out/main.go` while its
+            // source read "Hello from Sky!" and git reported the tree clean.
+            // `preflight-tag.sh` failed the build-run gate on an oracle
+            // divergence that did not exist. The dangerous version of this is
+            // the mirror image: a stale artefact that happens to match, letting
+            // a gate PASS over a compiler that never produced it.
+            discard_build_artifacts(&self.path);
         }
         // Only after the content is back: the journal's presence means "a
         // mutation may still be applied", so it must outlive the restore.
         if let Some(j) = self.journal.take() {
             let _ = std::fs::remove_file(j);
         }
+    }
+}
+
+/// Delete the build output of the project a mutated file belongs to, so the
+/// next gate re-emits from the restored source instead of reading what the
+/// mutation produced.
+///
+/// Walks up from the mutated file to the nearest directory holding a
+/// `sky.toml`, and removes that project's generated trees. Deleting them is
+/// safe by construction: both are build artefacts, both are gitignored, and the
+/// gates that need them rebuild them. Doing nothing is what is unsafe.
+fn discard_build_artifacts(mutated: &Path) {
+    let mut dir = mutated.parent();
+    while let Some(d) = dir {
+        if d.join("sky.toml").is_file() {
+            for generated in ["sky-out", ".skycache"] {
+                let p = d.join(generated);
+                if p.exists() {
+                    let _ = std::fs::remove_dir_all(&p);
+                }
+            }
+            return;
+        }
+        dir = d.parent();
     }
 }
 
@@ -565,6 +603,47 @@ mod tests {
             "edited since",
             "a stale journal clobbered a later edit"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Reverting a mutated source must also discard what the mutated run BUILT.
+    ///
+    /// Restoring only the source leaves an example whose `sky-out/` was emitted
+    /// from the mutation. That is not theoretical: `01-hello-world` printed
+    /// "Goodbye from Sky!" from a stale `sky-out/main.go` while its source read
+    /// "Hello from Sky!" and git called the tree clean — failing the release
+    /// preflight on an oracle divergence that did not exist. The mirror image
+    /// is worse: a stale artefact that happens to MATCH lets a gate pass over a
+    /// compiler that never produced it.
+    #[test]
+    fn a_revert_discards_artifacts_built_from_the_mutation() {
+        let root = tmp("artifacts");
+        let proj = root.join("examples/ex");
+        std::fs::create_dir_all(proj.join("src")).unwrap();
+        std::fs::write(proj.join("sky.toml"), "name = \"ex\"\n").unwrap();
+        std::fs::write(proj.join("src/Main.sky"), "println \"hello\"\n").unwrap();
+
+        {
+            let _p = Patch::apply(&root, "examples/ex/src/Main.sky", "hello", "goodbye").unwrap();
+            // Stand in for what a mutated run emits and builds.
+            std::fs::create_dir_all(proj.join("sky-out")).unwrap();
+            std::fs::write(proj.join("sky-out/main.go"), "goodbye").unwrap();
+            std::fs::create_dir_all(proj.join(".skycache")).unwrap();
+        }
+
+        assert_eq!(
+            std::fs::read_to_string(proj.join("src/Main.sky")).unwrap(),
+            "println \"hello\"\n",
+            "source was not restored"
+        );
+        assert!(
+            !proj.join("sky-out").exists(),
+            "sky-out/ survived the revert — the next gate would read Go emitted \
+             from the mutation"
+        );
+        assert!(!proj.join(".skycache").exists(), ".skycache/ survived");
+        // The project itself must not be collateral damage.
+        assert!(proj.join("sky.toml").is_file());
         let _ = std::fs::remove_dir_all(&root);
     }
 
