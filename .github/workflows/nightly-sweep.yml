@@ -26,10 +26,25 @@ concurrency:
 jobs:
   example-sweep:
     runs-on: ubuntu-latest
+    # The one job that was already bounded. Kept at 90: a clean-slate rebuild of
+    # all 55 examples INCLUDING the FFI/Std.Db ones (skyshop's cold `sky install`
+    # over 76k Stripe symbols alone is 60-120 s) runs ~60 min, and 1.5x of that
+    # is 90 — which is also the T3 nightly ceiling in
+    # docs/ci-test-architecture-v2.md §8.1 (status: firm).
     timeout-minutes: 90
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      # This job is where the Go module cache actually explodes: the full sweep
+      # builds the FFI examples, whose Go dependencies float on `"latest"`, so
+      # every resolution can add another module version and nothing removes the
+      # old ones. Measured at 75 GB locally — against a 10 GB budget for the
+      # WHOLE repo's Actions cache. Left unbounded it evicts every other cache
+      # entry (including the cargo caches `setup` primes in rust-ci) and makes
+      # unrelated jobs silently cache-cold. 6 GiB here: the sweep legitimately
+      # needs more than a per-push job, and one runtime-go build alone is
+      # ~742 MiB.
+      GO_CACHE_BUDGET_MB: '6144'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -57,3 +72,6 @@ jobs:
           sky-out/sky --version
       - name: Full example sweep (clean-slate build of every example, incl. FFI/Std.Db)
         run: scripts/example-sweep.sh
+      - name: Bound the Go caches before save
+        if: always()
+        run: bash scripts/ci/bound-go-cache.sh

@@ -1,0 +1,614 @@
+module Structure exposing
+    ( dumpLines
+    , diffReport
+    , liveHtml
+    , backendLabel
+    )
+
+-- Fieldbook — THE LOAD-BEARING ASSERTION.
+--
+-- ════════════════════════════════════════════════════════════════════
+-- WHAT THIS MODULE ACTUALLY PROVES (read this before trusting it)
+-- ════════════════════════════════════════════════════════════════════
+--
+-- `Std.Ui` has TWO distinct lowerings of an `Element msg` tree:
+--
+--   * Sky.Tui  — the Go TUI renderer (`runtime-go/rt/tui_ui.go`,
+--     `renderElementFrameScroll`) walks the `Element` ADT DIRECTLY.
+--     The value it walks is exactly `View.viewElement model`.
+--
+--   * Sky.Live / Sky.Webview — `Std.Ui.layout` lowers the SAME
+--     `Element` tree into a `Std.Html` tree (`Std.Ui.renderElement`
+--     → `renderNodeAs` → `dispatchTag`), and the Live/Webview
+--     runtimes serialise THAT. The value they serialise is exactly
+--     `Ui.layout [] (View.viewElement model)`.
+--
+-- Both `Std.Ui.Element` and `Std.Html.Html` are ordinary Sky ADTs with
+-- public constructors, so this module can pattern-match BOTH REAL
+-- ARTEFACTS — no shadow structure is maintained alongside the view,
+-- and no rendering is re-implemented.
+--
+--   `--dump-view tui`     → canonicalise `View.viewElement model`
+--                           (the exact value Sky.Tui walks)
+--   `--dump-view live`    → canonicalise `Ui.layout [] (viewElement m)`
+--                           (the exact value Sky.Live serialises)
+--   `--dump-view webview` → same artefact as `live` (Sky.Webview also
+--                           consumes `View.view`)
+--
+-- So a `diff` of the two dumps compares the Element-side contract
+-- against the Html-side realisation of that contract. A `Std.Ui`
+-- change that drops a child, reorders siblings, loses a text node,
+-- picks the wrong semantic tag, drops an `aria-*`, or silently
+-- discards an event handler on the Live path makes the diff non-empty.
+--
+-- ── WHAT IT DOES *NOT* PROVE ────────────────────────────────────────
+--
+--   1. It does not inspect the terminal cell grid Sky.Tui paints.
+--      Sky.Tui's renderer is Go-side and exposes no Sky-visible
+--      artefact and no headless dump mode (`Tui_app` in
+--      `runtime-go/rt/tui_ui.go:262` hard-refuses a non-TTY stdin).
+--      The `tui` dump is therefore the Element tree Sky.Tui is
+--      HANDED, not the cells it draws. A bug purely inside
+--      `tui_ui.go`'s cell layout is out of this gate's reach.
+--
+--   2. `tagFor` below is an INDEPENDENT restatement of the
+--      Region-description → HTML-tag contract (Region.heading 1 must
+--      become <h1>, Region.footer must become <footer>, …). It is
+--      deliberately NOT a call into `Std.Ui.tagForDescription`, so a
+--      regression in that mapping surfaces as a diff rather than
+--      being masked by both sides agreeing.
+--
+--   3. Three normalisations are applied so the comparison is about
+--      STRUCTURE rather than about the two encodings' inevitable
+--      surface differences. Each is stated here so nobody has to
+--      guess what was swept under the rug:
+--
+--        (a) `<div>` and `<span>` are TRANSPARENT — their children
+--            splice into the parent. On the Element side the same rule
+--            applies to any node whose resolved tag is `div`. Layout
+--            containers (`Ui.row` / `Ui.column` / `Ui.grid` /
+--            `Ui.breakpoint` / `Keyed.*`'s key wrapper) are pure
+--            boxes on both sides and carry no structural meaning.
+--
+--        (b) The `<style>` element `Ui.layoutWith` injects as the page
+--            wrapper's first child (`html,body{…}`) is dropped. It has
+--            no Element-side counterpart by construction — it is
+--            document chrome, not view content.
+--
+--        (c) A tag `Std.Ui.dispatchTag` cannot emit (anything outside
+--            `stdUiTags` below — in practice `<svg>` and its subtree
+--            from `Std.Ui.Chart`) is folded to a single opaque node
+--            with its children dropped. That mirrors the Element side
+--            exactly: `Chart.*` returns `Ui.html <svg>` = `Element.Raw`,
+--            whose payload is `any` and therefore opaque to HM on the
+--            Element side too. Both sides see one opaque leaf.
+--
+--      Nothing else is normalised. Text is compared verbatim (trimmed);
+--      element order is compared verbatim; nesting depth is compared
+--      verbatim; the watched attribute set is compared verbatim and in
+--      order; the per-element event-handler COUNT is compared verbatim.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+import Std.Ui as Ui
+import Model exposing (..)
+import View exposing (viewElement)
+
+
+-- ─── The canonical structure ────────────────────────────────────────
+type SNode
+    = SText String
+    | SOpaque String
+    | STag String (List ( String, String )) (List SNode)
+
+
+-- The exact `Std.Html` value Sky.Live and Sky.Webview serialise.
+-- `Ui.layout` is declared `-> any`; the runtime value it returns is a
+-- genuine `Std.Html.Html msg` built by `Std.Ui.dispatchTag`, so the
+-- annotation here is a re-typing of the real artefact, not a cast of a
+-- reconstruction.
+liveHtml : Model -> Html.Html Msg
+liveHtml model =
+    Ui.layout [] (viewElement model)
+
+
+-- ─── Public entry points ────────────────────────────────────────────
+-- Byte-identical output is the contract: no backend name, no counts,
+-- no timestamps on stdout. `diff <(app --dump-view live)
+-- <(app --dump-view tui)` must be empty.
+dumpLines : String -> Model -> List String
+dumpLines backend model =
+    List.concatMap (renderNode 0) (dumpNodes backend model)
+
+
+dumpNodes : String -> Model -> List SNode
+dumpNodes backend model =
+    if backend == "tui" then
+        fromElement (viewElement model)
+
+    else
+        fromHtml (liveHtml model)
+
+
+backendLabel : String -> String
+backendLabel backend =
+    if backend == "tui" then
+        "Element ADT handed to Sky.Tui (View.viewElement)"
+
+    else if backend == "webview" then
+        "Std.Html tree handed to Sky.Webview (Ui.layout . View.viewElement)"
+
+    else
+        "Std.Html tree handed to Sky.Live (Ui.layout . View.viewElement)"
+
+
+-- In-process gate: canonicalise both artefacts and report the first
+-- divergence. Returns ( ok, report-lines ).
+diffReport : Model -> ( Bool, List String )
+diffReport model =
+    let
+        liveLines = dumpLines "live" model
+        tuiLines = dumpLines "tui" model
+        firstDiff = firstDivergence 1 liveLines tuiLines
+    in
+        case firstDiff of
+
+            Nothing ->
+                ( True
+                , [ "STRUCTURAL MATCH"
+                  , "  live nodes : " ++ String.fromInt (List.length liveLines)
+                  , "  tui  nodes : " ++ String.fromInt (List.length tuiLines)
+                  , "  the Element tree Sky.Tui walks and the Std.Html tree"
+                  , "  Sky.Live serialises canonicalise identically."
+                  ]
+                )
+
+            Just entry ->
+                ( False
+                , [ "STRUCTURAL DIVERGENCE"
+                  , "  live nodes : " ++ String.fromInt (List.length liveLines)
+                  , "  tui  nodes : " ++ String.fromInt (List.length tuiLines)
+                  , "  first differing line: " ++ String.fromInt entry.line
+                  , "  live: " ++ entry.left
+                  , "  tui : " ++ entry.right
+                  ]
+                )
+
+
+type alias Divergence =
+    { line : Int
+    , left : String
+    , right : String
+    }
+
+
+firstDivergence : Int -> List String -> List String -> Maybe Divergence
+firstDivergence n left right =
+    case ( left, right ) of
+
+        ( [], [] ) ->
+            Nothing
+
+        ( [], r :: _ ) ->
+            Just { line = n, left = "<end of dump>", right = r }
+
+        ( l :: _, [] ) ->
+            Just { line = n, left = l, right = "<end of dump>" }
+
+        ( l :: ls, r :: rs ) ->
+            if l == r then
+                firstDivergence (n + 1) ls rs
+
+            else
+                Just { line = n, left = l, right = r }
+
+
+-- ─── Element → SNode (the Sky.Tui artefact) ─────────────────────────
+fromElement : Ui.Element Msg -> List SNode
+fromElement el =
+    case el of
+
+        Ui.Empty ->
+            []
+
+        Ui.Text s ->
+            textNodes s
+
+        Ui.Node _ attrs kids ->
+            -- `Std.Ui.renderElement` resolves a bare Node's tag from the
+            -- FIRST `AttrDescribe` in its attribute list (not from the
+            -- Node's own Description field, which the renderer ignores).
+            emitNode (semanticTag "div" attrs) attrs (childList kids)
+
+        Ui.TaggedNode tag _ attrs kids ->
+            emitNode (dispatchTagName tag) attrs (childList kids)
+
+        Ui.Raw _ ->
+            [ SOpaque "escape-hatch" ]
+
+
+childList : List (Ui.Element Msg) -> List SNode
+childList kids =
+    List.concatMap fromElement kids
+
+
+emitNode : String -> List (Ui.Attribute Msg) -> List SNode -> List SNode
+emitNode tag attrs kids =
+    let
+        pairs = elementAttrs attrs
+    in
+        if isTransparent tag pairs then
+            kids
+
+        else if isVoid tag then
+            [ STag tag pairs [] ]
+
+        else
+            [ STag tag pairs kids ]
+
+
+-- `Std.Ui.dispatchTag` routes an unrecognised TaggedNode tag to
+-- `Html.div`. Mirrored here so a TaggedNode carrying an exotic tag
+-- canonicalises the same way on both sides.
+dispatchTagName : String -> String
+dispatchTagName tag =
+    if List.member tag stdUiTags then
+        tag
+
+    else
+        "div"
+
+
+-- INDEPENDENT restatement of the Region contract (see the header note).
+semanticTag : String -> List (Ui.Attribute Msg) -> String
+semanticTag fallback attrs =
+    case attrs of
+
+        [] ->
+            fallback
+
+        (Ui.AttrDescribe d) :: _ ->
+            tagFor fallback d
+
+        _ :: rest ->
+            semanticTag fallback rest
+
+
+tagFor : String -> Ui.Description -> String
+tagFor fallback d =
+    case d of
+
+        Ui.NoDescription ->
+            fallback
+
+        Ui.DescMain ->
+            "main"
+
+        Ui.DescNavigation ->
+            "nav"
+
+        Ui.DescContentInfo ->
+            "footer"
+
+        Ui.DescComplementary ->
+            "aside"
+
+        Ui.DescHeading level ->
+            headingTag level
+
+        Ui.DescLabel _ ->
+            fallback
+
+        Ui.DescLivePolite ->
+            fallback
+
+        Ui.DescLiveAssertive ->
+            fallback
+
+        Ui.DescButton ->
+            "button"
+
+        Ui.DescParagraph ->
+            "p"
+
+
+headingTag : Int -> String
+headingTag level =
+    if level <= 1 then
+        "h1"
+
+    else if level >= 6 then
+        "h6"
+
+    else
+        "h" ++ String.fromInt level
+
+
+-- ─── Html → SNode (the Sky.Live / Sky.Webview artefact) ─────────────
+fromHtml : Html.Html Msg -> List SNode
+fromHtml node =
+    case node of
+
+        Html.HText s ->
+            textNodes s
+
+        Html.HRaw _ ->
+            [ SOpaque "escape-hatch" ]
+
+        Html.HElement tag attrs kids ->
+            if tag == "style" || tag == "script" then
+                -- Normalisation (b): document chrome injected by
+                -- `Ui.layoutWith`; no Element-side counterpart exists.
+                []
+
+            else if not (List.member tag stdUiTags) then
+                -- Normalisation (c): only reachable through
+                -- `Ui.html` / `Element.Raw` (in practice `Chart.*`'s
+                -- <svg>). Opaque on the Element side too.
+                [ SOpaque "escape-hatch" ]
+
+            else
+                emitHtmlNode tag (htmlAttrs attrs) kids
+
+
+emitHtmlNode :
+    String
+    -> List ( String, String )
+    -> List (Html.Html Msg)
+    -> List SNode
+emitHtmlNode tag pairs kids =
+    if isTransparent tag pairs then
+        List.concatMap fromHtml kids
+
+    else if isVoid tag then
+        [ STag tag pairs [] ]
+
+    else
+        [ STag tag pairs (List.concatMap fromHtml kids) ]
+
+
+-- ─── Shared vocabulary ──────────────────────────────────────────────
+-- Every tag `Std.Ui.dispatchTag` is able to emit.
+stdUiTags : List String
+stdUiTags =
+    [ "div"
+    , "span"
+    , "a"
+    , "p"
+    , "h1"
+    , "h2"
+    , "h3"
+    , "h4"
+    , "h5"
+    , "h6"
+    , "button"
+    , "form"
+    , "label"
+    , "section"
+    , "nav"
+    , "footer"
+    , "header"
+    , "main"
+    , "aside"
+    , "img"
+    , "input"
+    , "textarea"
+    ]
+
+
+-- A `<div>` / `<span>` is transparent ONLY when it is a pure layout
+-- box: no watched attribute and no event handler. A wrapper carrying
+-- `aria-label` (Input.labelHidden), `aria-live` (Region.announce),
+-- `sky-key` (Std.Ui.Keyed) or a handler (Std.Ui.Events.onClick) is
+-- semantically load-bearing and stays in the dump on BOTH sides, so a
+-- lowering that drops it shows up as a diff.
+isTransparent : String -> List ( String, String ) -> Bool
+isTransparent tag pairs =
+    (tag == "div" || tag == "span") && isPlainBox pairs
+
+
+isPlainBox : List ( String, String ) -> Bool
+isPlainBox pairs =
+    case pairs of
+
+        [ only ] ->
+            fst only == "@events" && snd only == "0"
+
+        _ ->
+            False
+
+
+-- `Std.Ui.dispatchTag` discards children for these two (they are void
+-- elements in HTML). Mirrored so the Element side agrees.
+isVoid : String -> Bool
+isVoid tag =
+    tag == "img" || tag == "input"
+
+
+textNodes : String -> List SNode
+textNodes s =
+    let
+        trimmed = String.trim s
+    in
+        if String.isEmpty trimmed then
+            []
+
+        else
+            [ SText trimmed ]
+
+
+-- Attributes carrying structural / semantic meaning. Presentation
+-- attributes (`style`, the `data-sky-*` render markers) are excluded:
+-- they are CSS payload, not structure, and they are generated on the
+-- Html side only.
+watchedKeys : List String
+watchedKeys =
+    [ "href"
+    , "src"
+    , "alt"
+    , "type"
+    , "name"
+    , "placeholder"
+    , "value"
+    , "id"
+    , "class"
+    , "for"
+    , "title"
+    , "min"
+    , "max"
+    , "step"
+    , "spellcheck"
+    , "disabled"
+    , "checked"
+    , "aria-label"
+    , "aria-live"
+    , "sky-key"
+    ]
+
+
+keep : String -> String -> List ( String, String )
+keep key value =
+    if List.member key watchedKeys then
+        [ ( key, value ) ]
+
+    else
+        []
+
+
+elementAttrs : List (Ui.Attribute Msg) -> List ( String, String )
+elementAttrs attrs =
+    List.concatMap elementAttr attrs
+        ++ [ ( "@events", String.fromInt (countElementEvents attrs) ) ]
+
+
+elementAttr : Ui.Attribute Msg -> List ( String, String )
+elementAttr a =
+    case a of
+
+        Ui.AttrAttribute key value ->
+            keep key value
+
+        Ui.AttrClass c ->
+            keep "class" c
+
+        Ui.AttrDescribe d ->
+            ariaPairs d
+
+        _ ->
+            []
+
+
+-- Mirrors `Std.Ui.ariaForDescription`: the descriptions whose meaning
+-- is carried by an aria-* attribute rather than by the chosen tag.
+ariaPairs : Ui.Description -> List ( String, String )
+ariaPairs d =
+    case d of
+
+        Ui.DescLabel s ->
+            [ ( "aria-label", s ) ]
+
+        Ui.DescLivePolite ->
+            [ ( "aria-live", "polite" ) ]
+
+        Ui.DescLiveAssertive ->
+            [ ( "aria-live", "assertive" ) ]
+
+        _ ->
+            []
+
+
+countElementEvents : List (Ui.Attribute Msg) -> Int
+countElementEvents attrs =
+    List.length (List.filter isElementEvent attrs)
+
+
+isElementEvent : Ui.Attribute Msg -> Bool
+isElementEvent a =
+    case a of
+
+        Ui.AttrEvent _ ->
+            True
+
+        _ ->
+            False
+
+
+htmlAttrs : List (Attr.Attribute Msg) -> List ( String, String )
+htmlAttrs attrs =
+    List.concatMap htmlAttr attrs
+        ++ [ ( "@events", String.fromInt (countHtmlEvents attrs) ) ]
+
+
+htmlAttr : Attr.Attribute Msg -> List ( String, String )
+htmlAttr a =
+    case a of
+
+        Attr.Attr key value ->
+            keep key value
+
+        Attr.BoolAttr key on ->
+            if on then
+                keep key key
+
+            else
+                []
+
+        Attr.EventAttr _ ->
+            []
+
+        Attr.NoAttr ->
+            []
+
+
+countHtmlEvents : List (Attr.Attribute Msg) -> Int
+countHtmlEvents attrs =
+    List.length (List.filter isHtmlEvent attrs)
+
+
+isHtmlEvent : Attr.Attribute Msg -> Bool
+isHtmlEvent a =
+    case a of
+
+        Attr.EventAttr _ ->
+            True
+
+        _ ->
+            False
+
+
+-- ─── Rendering ──────────────────────────────────────────────────────
+renderNode : Int -> SNode -> List String
+renderNode depth node =
+    case node of
+
+        SText s ->
+            [ indent depth ++ "#text " ++ s ]
+
+        SOpaque kind ->
+            [ indent depth ++ "#opaque " ++ kind ]
+
+        STag tag attrs kids ->
+            (indent depth ++ "<" ++ tag ++ ">" ++ renderAttrs attrs)
+                :: List.concatMap (renderNode (depth + 1)) kids
+
+
+renderAttrs : List ( String, String ) -> String
+renderAttrs attrs =
+    if List.isEmpty attrs then
+        ""
+
+    else
+        " [" ++ String.join " " (List.map renderAttr attrs) ++ "]"
+
+
+renderAttr : ( String, String ) -> String
+renderAttr pair =
+    fst pair ++ "=" ++ snd pair
+
+
+indent : Int -> String
+indent depth =
+    String.repeat depth "  "

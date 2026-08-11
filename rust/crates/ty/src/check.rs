@@ -195,7 +195,22 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
     // inference, which consults the body-derived `app_check_sigs` /
     // `any_result_check_sigs` pins. `type_world` (declarations only) omits them so
     // it can backdate on the salsa backend — the checker takes `check_world`.
-    let world = db.check_world();
+    check_modules_with_world(db, db.check_world(), to_check)
+}
+
+/// [`check_modules`] against an ALREADY-ASSEMBLED world.
+///
+/// The one seam the shared-world corpus path (`crate::shared`) needs: it forks a
+/// prebuilt stdlib world and folds in the case's modules, so it must hand the
+/// checker that world instead of having the checker demand a fresh
+/// `db.check_world()` — which is the whole 1.29 s/case this exists to remove.
+/// Everything after the world is obtained is shared verbatim between the two
+/// paths, so a divergence can only come from the world, never from the checking.
+pub fn check_modules_with_world(
+    db: &dyn TyDb,
+    world: std::rc::Rc<crate::sig::World>,
+    to_check: &[ModuleId],
+) -> CheckOutput {
     let sky = db.as_sky_db();
     let mut out = CheckOutput::default();
 

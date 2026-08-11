@@ -1,0 +1,777 @@
+Gate-integrity fixes, targeted at `main` (apply after the tag).
+
+    git apply -p1 gate-fixes-for-main.patch
+
+Generated against main @ be94c71c and verified with `git apply --check` plus a
+post-apply `bash -n` / `node --check` on every touched script.
+
+The same changes are already committed on feat/bluedb-v2 as ee88707f, aeba9bc8,
+46585068, c0d2e242, 859d06cf, 495d5367, 05097cab — EXCEPT the preflight-tag.sh
+hunk, which exists only here because that file has diverged between the two
+branches.
+
+What this patch closes:
+
+  scripts/preflight-tag.sh    the verify-cli arm still used the UNANCHORED
+                              `grep -qE "0 fail"` that was fixed for the web
+                              arm; "3 pass / 10 fail / 0 skip" passes it. Both
+                              arms now check the exit status AND the anchored
+                              field.
+  scripts/verify-all-web.sh   console-e2e could not fail (pipeline into `tail`);
+                              several "VERIFY:" lines let a stale one mask a
+                              later gate; examples were never rebuilt against a
+                              newer compiler; no ceiling on any node verifier.
+  scripts/example-sweep.sh    14 entries share port 8000 under `xargs -P`, so a
+                              broken example passed on a peer's response; the
+                              server process outlived `kill -9`; sky build /
+                              install were unbounded; SKIP counted as PASS.
+  scripts/doc-examples.sh     0/0 examples reported GATE: PASS; info-string
+                              fences silently left the corpus; sky check had no
+                              ceiling; scratch project leaked .skycache between
+                              examples.
+  scripts/conformance.sh      no per-suite bound where GNU timeout is absent
+                              (i.e. every macOS runner); defaulted to whatever
+                              `sky` is on PATH rather than the tree under test.
+  xtask main.rs / infer_gate  a typo'd subcommand, the `diff` stub, and
+                              `infer --file=<missing>` all exited 0.
+  ui-showcase / scenarios /   a missing snapshot baseline self-blessed as a
+  live-resilience / lsp-fleet pass; a colour assertion satisfied by the value
+                              disproving it; an `await` precedence bug that
+                              removed a settle; a "connected" gate equivalent
+                              to `return true`; an LSP sweep with no exit code.
+
+Not included (higher blast radius — needs a human call): build_run_gate's
+`gate_result` ignoring run_ok/matched and non-emitting examples, welltyped's
+both-reject-everything PASS, wait_bounded fabricating a success ExitStatus,
+reject_gate accepting rejection for the wrong reason, and the missing
+timeout-minutes across .github/workflows.
+
+diff -ruN pristine/rust/crates/xtask/src/infer_gate.rs patched/rust/crates/xtask/src/infer_gate.rs
+--- a/rust/crates/xtask/src/infer_gate.rs	2026-08-09 19:05:49.000000000 +0100
++++ b/rust/crates/xtask/src/infer_gate.rs	2026-08-09 19:40:59.782037988 +0100
+@@ -99,7 +99,16 @@
+     for (n, parse) in &stdlib {
+         db.add_module(n, parse.clone());
+     }
+-    let src = std::fs::read_to_string(file).unwrap_or_default();
++    // An unreadable path used to become an empty module, which typechecks
++    // clean — so `xtask infer --file=/nonexistent.sky` printed
++    // "---- errors (0) ----" and exited 0. Say what happened instead.
++    let src = match std::fs::read_to_string(file) {
++        Ok(s) => s,
++        Err(e) => {
++            eprintln!("xtask infer --file={file}: {e}");
++            return 2;
++        }
++    };
+     let parse = syntax::parse(&src, base::FileId(0));
+     let name = parse
+         .tree()
+@@ -127,7 +136,10 @@
+             println!("  {}", d.message);
+         }
+     }
+-    0
++    // Report the verdict in the exit status too. This arm returned a bare 0,
++    // so a file full of type errors was indistinguishable from a clean one to
++    // any caller that checked the status rather than reading the output.
++    if out.type_errors > 0 { 1 } else { 0 }
+ }
+ 
+ struct Row {
+diff -ruN pristine/rust/crates/xtask/src/main.rs patched/rust/crates/xtask/src/main.rs
+--- a/rust/crates/xtask/src/main.rs	2026-08-09 19:05:49.000000000 +0100
++++ b/rust/crates/xtask/src/main.rs	2026-08-09 19:43:38.373334630 +0100
+@@ -44,18 +44,31 @@
+         Some("welltyped") => welltyped_gate::run(&args[1..], &repo_root()),
+         Some("errloc") => errloc(&args[1..]),
+         Some("diff") => {
+-            println!("xtask diff: (stub) will shell stage-0 + rust over the corpus");
+-            0
++            // A stub must not report success. `xtask diff` is the differential
++            // gate's name; wiring it into CI while it does nothing would give a
++            // permanently green step that verifies nothing.
++            eprintln!("xtask diff: NOT IMPLEMENTED (stub) — would shell stage-0 + rust over the corpus");
++            2
+         }
+         Some("repro") => repro_gate::run(&args[1..], &repo_root()),
+         Some("s8") => s8_gate::run(&args[1..], &repo_root()),
+         Some("lsp") => lsp_gate::run(&args[1..], &repo_root()),
+-        _ => {
+-            println!("{VERSION}");
+-            println!(
++        // An unrecognised subcommand MUST NOT exit 0. Every CI gate is invoked
++        // as `cargo run -q -p xtask -- <name>`; while this arm returned 0, a
++        // typo'd or renamed gate ("coerce_floor" for "coerce-floor") became a
++        // no-op that CI reported green — the gate silently stopped running and
++        // nothing said so. Verified: `xtask coerce_floor` printed usage and
++        // exited 0.
++        other => {
++            eprintln!("{VERSION}");
++            match other {
++                Some(name) => eprintln!("xtask: unknown subcommand `{name}`"),
++                None => eprintln!("xtask: no subcommand given"),
++            }
++            eprintln!(
+                 "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|divergences|fmt|repro|s8|lsp|fuzz|welltyped> [args]"
+             );
+-            0
++            2
+         }
+     };
+     std::process::exit(code);
+diff -ruN pristine/scripts/conformance.sh patched/scripts/conformance.sh
+--- a/scripts/conformance.sh	2026-08-09 19:05:49.000000000 +0100
++++ b/scripts/conformance.sh	2026-08-09 19:40:59.846453721 +0100
+@@ -18,7 +18,15 @@
+ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ PROJ="$ROOT/tests/conformance"
+ FILTER="${1:-}"
+-SKY="${SKY_BIN:-sky}"
++# Prefer the compiler in THIS tree over whatever `sky` is installed on PATH.
++# Defaulting to PATH meant the behavioural conformance suite could certify a
++# months-old installed binary while the tree under test was never exercised —
++# a pass that says nothing about the change being verified. doc-examples.sh
++# already resolves in this order; conformance now agrees with it.
++SKY="${SKY_BIN:-}"
++if [ -z "$SKY" ]; then
++    if [ -x "$ROOT/sky-out/sky" ]; then SKY="$ROOT/sky-out/sky"; else SKY="sky"; fi
++fi
+ 
+ # Portable per-suite timeout. GNU coreutils `timeout` is NOT on macOS runners by
+ # default (only `gtimeout` via `brew install coreutils`), so a bare `timeout`
+@@ -28,7 +36,23 @@
+ TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
+ run_suite() { # run_suite <secs> <cmd...>
+     local secs="$1"; shift
+-    if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$secs" "$@"; else "$@"; fi
++    if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$secs" "$@"; return $?; fi
++    # No GNU timeout — do NOT fall through unbounded. macOS runners ship
++    # neither `timeout` nor `gtimeout`, and the macos-determinism job that runs
++    # this script has no timeout-minutes either, so the "the CI job still has
++    # its own outer timeout" assumption in the note above was false: a wedged
++    # `sky test` burned the full 6-hour GitHub default at the macOS minute
++    # multiplier. Race a killer against the command instead (the same portable
++    # fallback example-sweep.sh and verify-ui-showcase.sh already use).
++    "$@" &
++    local cmd_pid=$!
++    ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) &
++    local killer_pid=$!
++    local rc=0
++    wait "$cmd_pid" 2>/dev/null; rc=$?
++    kill -KILL "$killer_pid" 2>/dev/null
++    wait "$killer_pid" 2>/dev/null
++    return $rc
+ }
+ 
+ if [ ! -d "$PROJ/tests" ]; then
+diff -ruN pristine/scripts/doc-examples.sh patched/scripts/doc-examples.sh
+--- a/scripts/doc-examples.sh	2026-08-09 19:05:49.000000000 +0100
++++ b/scripts/doc-examples.sh	2026-08-09 19:40:59.759284922 +0100
+@@ -27,6 +27,33 @@
+ BLOCKS="$(mktemp -d)"; PROJ="$(mktemp -d)"
+ trap 'rm -rf "$BLOCKS" "$PROJ"' EXIT
+ 
++# Timeout shim — macOS runners ship neither `timeout` nor `gtimeout`, so
++# resolve what exists and fall back to a bash watchdog. A `sky check` that
++# fails to terminate must not wedge the gate (AGENTS.md: timeout-bound every
++# long command).
++if command -v timeout >/dev/null 2>&1; then TIMEOUT_CMD=timeout
++elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=gtimeout
++else TIMEOUT_CMD=""; fi
++run_bounded() {
++  local secs="$1"; shift
++  if [ -n "$TIMEOUT_CMD" ]; then "$TIMEOUT_CMD" "$secs" "$@"; return $?; fi
++  "$@" & local cmd_pid=$!
++  ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) & local killer=$!
++  local rc=0; wait "$cmd_pid" 2>/dev/null; rc=$?
++  kill -KILL "$killer" 2>/dev/null; wait "$killer" 2>/dev/null
++  return $rc
++}
++
++# Anti-vacuity floor. `total` is derived from a text scan of docs/, so any
++# drift in fence syntax, a docs/ reorg, or a change to the `find` path can
++# empty the corpus — and an empty corpus printed "doc-examples: 0/0 …" followed
++# by "DOC-EXAMPLES GATE: PASS", exit 0. Demonstrated: a docs tree whose single
++# example is deliberately uncompilable passes when its fence carries an info
++# string. conformance.sh already guards this way (`ran -eq 0` -> exit 2);
++# doc-examples did not. Raise the floor when docs gain examples; never lower it
++# to make a red run green.
++DOC_EXAMPLES_FLOOR="${DOC_EXAMPLES_FLOOR:-12}"
++
+ pass=0; fail=0; total=0
+ declare -a failures
+ 
+@@ -37,7 +64,11 @@
+   rel="${md#"$ROOT"/}"
+   awk -v dir="$BLOCKS" -v rel="$rel" '
+     BEGIN { n=0 }
+-    /^```(elm|sky)[ \t]*$/ { infence=1; first=1; buf=""; ismod=0; skip=0; startln=NR+1; next }
++    # Accept an info string after the language ("```elm title=Main.sky"), the
++    # form mkdocs/docusaurus emit. The old pattern anchored at end-of-line, so
++    # adding an attribute to a fence silently removed that example from the
++    # corpus — and with the corpus empty the gate still reported PASS.
++    /^```(elm|sky)([ \t].*)?$/ { infence=1; first=1; buf=""; ismod=0; skip=0; startln=NR+1; next }
+     /^```[ \t]*$/ {
+       if (infence && ismod && !skip) {
+         n++; f=dir "/" NR "_" n ".sky"; printf "%s", buf > f; close(f)
+@@ -64,11 +95,14 @@
+   # module name → last segment drives the source filename + entry
+   modname="$(head -1 "$file" | sed -E 's/^module[ ]+([A-Za-z0-9_.]+).*/\1/')"
+   last="${modname##*.}"
+-  rm -rf "$PROJ"/* 2>/dev/null
+-  mkdir -p "$PROJ/src"
++  # `rm -rf "$PROJ"/*` left the DOTFILES behind — .skycache/ and .skydeps/ —
++  # so each example inherited the previous one's resolved deps and lowered
++  # cache. An example could compile only because its predecessor had populated
++  # the cache. Recreate the project directory outright.
++  rm -rf "$PROJ"; mkdir -p "$PROJ/src"
+   printf 'name = "docexamples"\nversion = "0.1.0"\nentry = "src/%s.sky"\n' "$last" > "$PROJ/sky.toml"
+   cp "$file" "$PROJ/src/$last.sky"
+-  if out="$( ( cd "$PROJ" && "$SKY" check "src/$last.sky" ) 2>&1 )"; then
++  if out="$( ( cd "$PROJ" && run_bounded 300 "$SKY" check "src/$last.sky" ) 2>&1 )"; then
+     pass=$((pass + 1))
+     [ "$VERBOSE" = 1 ] && printf '  ok    %s:%s (%s)\n' "$rel" "$startln" "$modname"
+   else
+@@ -83,6 +117,13 @@
+ 
+ echo "------------------------------------------------------------"
+ echo "doc-examples: $pass/$total full-module doc examples compile"
++if [ "$total" -lt "$DOC_EXAMPLES_FLOOR" ]; then
++  echo "DOC-EXAMPLES GATE: INCONCLUSIVE — extracted $total example(s), floor is $DOC_EXAMPLES_FLOOR."
++  echo "  The gate verifies nothing it cannot find. Either docs/ genuinely lost"
++  echo "  examples (lower DOC_EXAMPLES_FLOOR deliberately, in the same commit),"
++  echo "  or the fence/scan drifted and the corpus silently emptied."
++  exit 2
++fi
+ if [ "$fail" -gt 0 ]; then
+   echo "DOC-EXAMPLES GATE: FAIL — $fail example(s) no longer compile:"
+   for f in "${failures[@]}"; do echo "  - $f"; done
+diff -ruN pristine/scripts/example-sweep.sh patched/scripts/example-sweep.sh
+--- a/scripts/example-sweep.sh	2026-08-09 19:05:49.000000000 +0100
++++ b/scripts/example-sweep.sh	2026-08-09 19:40:59.737483858 +0100
+@@ -345,10 +345,16 @@
+             # them between sweeps is safe.
+             rm -rf sky-out .skycache/lowered .skycache/go
+         fi
++        # Both steps are timeout-bounded (AGENTS.md: timeout-bound every long
++        # command). A compiler that fails to terminate — an occurs-check loop,
++        # a non-terminating FFI introspection — otherwise wedges the worker
++        # forever, and the sweep has no ceiling of its own to stop it.
++        # 20 min for install: 13-skyshop introspects 76k Stripe/Firebase
++        # symbols and the repo documents that at 15+ min.
+         if [[ -f sky.toml ]] && grep -qE '^\["?go\.dependencies"?\]' sky.toml; then
+-            "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
++            run_with_timeout 1200 "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
+         fi
+-        "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1
++        run_with_timeout 900 "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1
+     ) || { printf 'FAIL build failed — /tmp/sky-build-%s.log\n' "$name" > "$result_file"; return; }
+ 
+     if [[ $BUILD_ONLY -eq 1 || "$kind" == "gui" ]]; then
+@@ -378,21 +384,80 @@
+             local pid log url
+             log=$(mktemp)
+             url="http://127.0.0.1:${port}${path}"
+-            (cd "$dir" && "$bin" >"$log" 2>&1) &
++
++            # ── Port ownership ────────────────────────────────────────────────
++            # The header of this file claims "each example owns a distinct port
++            # in the table". It does not: fourteen entries share port 8000, and
++            # the workers run concurrently under `xargs -P $MAX_WORKERS`. Two
++            # examples therefore race for one listener — the loser's app dies
++            # with "address already in use" while the WINNER's server answers
++            # the loser's probe, and the loser is recorded OK.
++            #
++            # Demonstrated: with any process listening on :8000, this probe
++            # returns OK for an example whose binary prints `panic: runtime
++            # error` and exits 2 without serving anything.
++            #
++            # A mkdir lock is atomic on macOS and Linux alike (flock is not
++            # available on macOS). Serialising per PORT keeps the build phase
++            # fully parallel — only the probe is exclusive.
++            local lock="$RESULTS_DIR/.port-$port.lock" waited=0
++            while ! mkdir "$lock" 2>/dev/null; do
++                sleep 0.2; waited=$((waited+1))
++                if [[ $waited -gt 1500 ]]; then
++                    printf 'FAIL port %s held by another example for 300s\n' "$port" > "$result_file"
++                    rm -f "$log"; return
++                fi
++            done
++
++            # The lock stops OUR workers from racing, but a server leaked by an
++            # earlier run (see `exec` below) or by another tool can still be
++            # sitting on the port. Any answer we then got would be attributed
++            # to this example. So: assert the port is silent before we start.
++            # `curl` exit 0 here means SOMETHING responded — connection refused
++            # is the state we require. Reclaim a stale listener if we can, then
++            # insist; a port we cannot own is a hard failure, not a pass.
++            if curl -s -o /dev/null --max-time 1 "$url" 2>/dev/null; then
++                if command -v lsof >/dev/null 2>&1; then
++                    kill -9 $(lsof -ti ":$port" 2>/dev/null) 2>/dev/null
++                    sleep 0.5
++                fi
++                if curl -s -o /dev/null --max-time 1 "$url" 2>/dev/null; then
++                    printf 'FAIL port %s already served by a foreign listener — cannot attribute a response to this example\n' \
++                        "$port" > "$result_file"
++                    rmdir "$lock" 2>/dev/null; rm -f "$log"; return
++                fi
++            fi
++
++            # `exec` so $! is the APP, not the subshell wrapping it. Without it
++            # `kill -9 "$pid"` reaps only the shell and the app survives holding
++            # its port — leaking one server process per server example per
++            # sweep, and squatting the port for every later example and for the
++            # next sweep. Demonstrated: the child outlives the kill.
++            (cd "$dir" && exec "$bin" >"$log" 2>&1) &
+             pid=$!
+-            local ok=0 tries=0
++            local ok=0 tries=0 died=0
+             while [[ $tries -lt 30 ]]; do
+                 if curl -s -o /dev/null -w '%{http_code}' --max-time 1 "$url" 2>/dev/null | grep -qE '^(2|3)[0-9][0-9]$'; then
+                     ok=1; break
+                 fi
++                # Liveness AFTER the probe: an app that has exited can never
++                # start serving, so stop waiting and say so. Checked second so
++                # a fast, short-lived-but-correct startup is not mis-declared
++                # dead before its first response is read.
++                if ! kill -0 "$pid" 2>/dev/null; then died=1; break; fi
+                 sleep 0.2; tries=$((tries+1))
+             done
+             kill -9 "$pid" 2>/dev/null
+             wait "$pid" 2>/dev/null
++            rmdir "$lock" 2>/dev/null
+             if [[ $ok -eq 1 ]]; then
+                 printf 'OK\n' > "$result_file"
++            elif [[ $died -eq 1 ]]; then
++                printf 'FAIL server exited before serving %s — last 20 lines: %s\n' \
++                    "$url" "$(tail -20 "$log" 2>/dev/null | tr '\n' ' | ')" > "$result_file"
+             else
+-                printf 'FAIL no HTTP 2xx/3xx at %s — log %s\n' "$url" "$log" > "$result_file"
++                printf 'FAIL no HTTP 2xx/3xx at %s — last 20 lines: %s\n' \
++                    "$url" "$(tail -20 "$log" 2>/dev/null | tr '\n' ' | ')" > "$result_file"
+             fi
+             rm -f "$log" ;;
+         *) printf 'FAIL unknown kind %s\n' "$kind" > "$result_file" ;;
+@@ -434,8 +499,17 @@
+     | xargs -P "$MAX_WORKERS" -I {} bash -c 'sweep_worker "$@"' _ {}
+ 
+ # Aggregate results.
+-pass=0; fail=0
++#
++# A SKIP is NOT a pass. It used to be counted as one, so the nightly sweep
++# reported "sweep: 29 passed, 0 failed" while 11-fyne-stopwatch,
++# 29-webview-threejs-spike and 31-webview-stopwatch-ui had never been built —
++# they are skipped as GUI examples on Linux, which is the only platform CI
++# sweeps on. Skips are now counted and named separately; the `sweep: N passed,
++# M failed` line keeps its exact shape so preflight-tag.sh's anchor still
++# matches, but N no longer silently includes examples nothing verified.
++pass=0; fail=0; skip=0
+ declare -a failures=()
++declare -a skipped=()
+ for entry in "${EXAMPLES[@]}"; do
+     IFS=':' read -r name _ _ _ <<<"$entry"
+     local_result="$RESULTS_DIR/$name.result"
+@@ -447,13 +521,17 @@
+     line=$(head -1 "$local_result")
+     case "$line" in
+         OK)        pass=$((pass+1)) ;;
+-        SKIP\ *)   pass=$((pass+1)) ;;
++        SKIP\ *)   skipped+=("$name: ${line#SKIP }"); skip=$((skip+1)) ;;
+         FAIL\ *)   failures+=("$name: ${line#FAIL }"); fail=$((fail+1)) ;;
+         *)         failures+=("$name: malformed result '$line'"); fail=$((fail+1)) ;;
+     esac
+ done
+ 
+ echo
++if [[ $skip -gt 0 ]]; then
++    echo "sweep: $skip skipped — verified by nothing in this run:"
++    printf '  ~ %s\n' "${skipped[@]}"
++fi
+ echo "sweep: $pass passed, $fail failed"
+ if [[ $fail -gt 0 ]]; then
+     printf '  - %s\n' "${failures[@]}"
+diff -ruN pristine/scripts/lsp-fleet-sweep.cjs patched/scripts/lsp-fleet-sweep.cjs
+--- a/scripts/lsp-fleet-sweep.cjs	2026-08-09 19:05:49.000000000 +0100
++++ b/scripts/lsp-fleet-sweep.cjs	2026-08-09 19:40:59.805389012 +0100
+@@ -73,6 +73,25 @@
+         const badge = r.diagCount === 0 ? "OK " : r.diagCount === -1 ? "?? " : "! ";
+         console.log(`${badge}${dir.padEnd(30)} diag=${r.diagCount}${r.firstDiag ? " → " + r.firstDiag : ""}`);
+     }
++    // `diagCount === -1` means the LSP never answered — a dead, missing or
++    // wedged `sky lsp`. It was badged "??" and then filtered OUT of `bad`, and
++    // the script had no `process.exit` at all, so a totally broken LSP printed
++    // "?? " for every example and the sweep still exited 0. Both a diagnostic
++    // and a non-answer are failures, and the exit status now says so.
+     const bad = results.filter(r => r.diagCount > 0);
+-    console.log(`---\n${results.length} examples · ${bad.length} with diagnostics`);
++    const dead = results.filter(r => r.diagCount === -1);
++    console.log(
++        `---\n${results.length} examples · ${bad.length} with diagnostics · ` +
++        `${dead.length} with no LSP response`);
++    if (results.length === 0) {
++        console.error("FAIL: no examples probed — the sweep verified nothing");
++        process.exit(2);
++    }
++    if (dead.length > 0) {
++        console.error(`FAIL: LSP never responded for: ${dead.map(r => r.dir).join(", ")}`);
++    }
++    if (bad.length > 0) {
++        console.error(`FAIL: diagnostics reported for: ${bad.map(r => r.dir).join(", ")}`);
++    }
++    process.exit(bad.length + dead.length > 0 ? 1 : 0);
+ })();
+diff -ruN pristine/scripts/preflight-tag.sh patched/scripts/preflight-tag.sh
+--- a/scripts/preflight-tag.sh	2026-08-09 19:05:49.000000000 +0100
++++ b/scripts/preflight-tag.sh	2026-08-09 19:44:01.446118005 +0100
+@@ -90,13 +90,25 @@
+ 
+ if [ $SKIP_WEB -eq 0 ]; then
+     step "5/6 — Runtime verification (Playwright; web apps)"
++    # Take the gate's EXIT STATUS as the verdict, and keep the anchored grep as
++    # a second, independent witness.
++    #
++    # The anchor alone was not enough. verify-all-web.sh used to print a
++    # "VERIFY: N pass / M fail" line after its example loop AND after each
++    # later gate, so its output held several verdict lines and this grep
++    # matched the FIRST one — a run whose examples all passed but whose
++    # console-e2e / ui-showcase / resilience gate then failed still contained
++    # " 0 fail" and was declared safe to tag. (The earlier form of this check
++    # also matched the substring inside "10 fail": a run that ended
++    # 0 pass / 12 fail, every Playwright check dead with ERR_MODULE_NOT_FOUND,
++    # sailed through because it printed "0 pass / 10 fail" on the way there.)
++    #
++    # verify-all-web.sh now emits exactly one "VERIFY:" line, last, and exits
++    # with its failure count. Both readings agree; require both.
+     out=$(scripts/verify-all-web.sh 2>&1)
++    web_rc=$?
+     echo "$out" | tail -3
+-    # Anchor the count. `grep -qE "0 fail"` matched the SUBSTRING inside
+-    # "10 fail" / "20 fail" — so a run with exactly ten failures passed the
+-    # gate. It did: a run that ended 0 pass / 12 fail (every Playwright check
+-    # dead with ERR_MODULE_NOT_FOUND) sailed through because it printed
+-    # "0 pass / 10 fail" on the way there. Require the whole field.
++    [ "$web_rc" -eq 0 ] || fail "verify-all-web exited $web_rc"
+     echo "$out" | grep -qE "(^|[^0-9])0 fail" || fail "verify-all-web reported failures"
+ else
+     echo ""
+@@ -108,9 +120,21 @@
+ if [ $SKIP_CLI -eq 0 ]; then
+     step "6/6 — Runtime verification (CLI / Sky.Tui / Sky.Cli)"
+     if [ -x scripts/verify-cli.sh ]; then
++        # The CLI arm was left on the UNANCHORED pattern when the web arm above
++        # was fixed. `grep -qE "0 fail"` matches the substring inside "10 fail",
++        # and verify-cli.sh prints "VERIFY: $pass pass / $fail fail / $skip
++        # skip" — so a run of 3 pass / 10 fail / 0 skip passed this gate.
++        # Demonstrated:
++        #   $ echo "VERIFY: 3 pass / 10 fail / 0 skip" | grep -qE "0 fail" \
++        #       && echo PASS
++        #   PASS
++        # Use the exit status (verify-cli.sh ends in `exit $fail`) plus the
++        # anchored field.
+         out=$(scripts/verify-cli.sh 2>&1)
++        cli_rc=$?
+         echo "$out" | tail -3
+-        echo "$out" | grep -qE "0 fail" || fail "verify-cli reported failures"
++        [ "$cli_rc" -eq 0 ] || fail "verify-cli exited $cli_rc"
++        echo "$out" | grep -qE "(^|[^0-9])0 fail" || fail "verify-cli reported failures"
+     else
+         echo "  (verify-cli.sh not present; skipping)"
+     fi
+diff -ruN pristine/scripts/verify-all-web.sh patched/scripts/verify-all-web.sh
+--- a/scripts/verify-all-web.sh	2026-08-09 19:05:49.000000000 +0100
++++ b/scripts/verify-all-web.sh	2026-08-09 19:40:59.715368919 +0100
+@@ -11,6 +11,31 @@
+ RESULTS_DIR="$REPO_ROOT/.skycache/verify"
+ mkdir -p "$RESULTS_DIR"
+ 
++# Cross-platform timeout shim (mirrors verify-ui-showcase.sh). Every node
++# verifier below is a browser driver: a Playwright wait that never settles
++# would otherwise wedge the release gate with no ceiling. macOS runners ship
++# neither `timeout` nor `gtimeout`, hence the pure-bash fallback.
++if command -v timeout >/dev/null 2>&1; then
++    TIMEOUT_CMD="timeout"
++elif command -v gtimeout >/dev/null 2>&1; then
++    TIMEOUT_CMD="gtimeout"
++else
++    TIMEOUT_CMD=""
++fi
++bounded() {
++    local secs="$1"; shift
++    if [ -n "$TIMEOUT_CMD" ]; then "$TIMEOUT_CMD" "$secs" "$@"; return $?; fi
++    "$@" &
++    local cmd_pid=$!
++    ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) &
++    local killer_pid=$!
++    local rc=0
++    wait "$cmd_pid" 2>/dev/null; rc=$?
++    kill -KILL "$killer_pid" 2>/dev/null
++    wait "$killer_pid" 2>/dev/null
++    return $rc
++}
++
+ # (example-name, scenario, port).
+ #
+ # Apps that hardcode port 8000 in their Sky source (05-mux-server,
+@@ -46,18 +71,25 @@
+ for entry in "${TESTS[@]}"; do
+     set -- $entry
+     name=$1; scenario=$2; port=$3
+-    # Build the app if its binary is missing — robust to clean checkouts and to
+-    # artifacts pruned by disk hygiene (the example sweep normally pre-builds
+-    # them; without this, a pruned example fails with "binary missing" rather
+-    # than being verified). Uses the freshly-built compiler at sky-out/sky.
+-    if [ ! -x "$REPO_ROOT/examples/$name/sky-out/app" ] && [ -x "$REPO_ROOT/sky-out/sky" ]; then
+-        echo "  building $name (binary missing) ..."
+-        ( cd "$REPO_ROOT/examples/$name" && "$REPO_ROOT/sky-out/sky" build src/Main.sky >/dev/null 2>&1 )
++    # Build the app if its binary is missing OR older than the compiler under
++    # test — robust to clean checkouts and to artifacts pruned by disk hygiene
++    # (the example sweep normally pre-builds them; without this, a pruned
++    # example fails with "binary missing" rather than being verified).
++    #
++    # The `-ot` half matters as much as the existence check: this script is
++    # step 5 of the release preflight, and step 1 rebuilds sky-out/sky. Without
++    # it, a binary left behind by ANY earlier compiler satisfies the existence
++    # test, so the browser gate certifies the previous release's codegen and a
++    # codegen regression sails through green.
++    app="$REPO_ROOT/examples/$name/sky-out/app"
++    if [ -x "$REPO_ROOT/sky-out/sky" ] && { [ ! -x "$app" ] || [ "$app" -ot "$REPO_ROOT/sky-out/sky" ]; }; then
++        echo "  building $name (binary missing or older than the compiler) ..."
++        ( cd "$REPO_ROOT/examples/$name" && bounded 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky >/dev/null 2>&1 )
+     fi
+     # Kill any process on this port pre-flight
+     pid=$(lsof -ti ":$port" 2>/dev/null || true)
+     [ -n "$pid" ] && kill -9 $pid 2>/dev/null || true
+-    out=$(node "$REPO_ROOT/scripts/verify-live-app.mjs" "$name" "$port" "$scenario" 2>&1)
++    out=$(bounded 300 node "$REPO_ROOT/scripts/verify-live-app.mjs" "$name" "$port" "$scenario" 2>&1)
+     if echo "$out" | grep -q "^PASS "; then
+         pass=$((pass+1))
+         echo "✓ $name (port $port, $scenario)"
+@@ -70,8 +102,14 @@
+ done
+ 
+ echo ""
+-echo "VERIFY: $pass pass / $fail fail (out of ${#TESTS[@]})"
+-[ ${#FAILS[@]} -eq 0 ] || echo "FAILED: ${FAILS[*]}"
++# NOTE: this is a PROGRESS line, not the verdict — the gates below still have
++# to run. It must NOT say "VERIFY: … N fail". Callers grep this script's output
++# for its summary; when the example loop printed "VERIFY: 10 pass / 0 fail" and
++# a LATER gate then failed, that stale first line satisfied the caller's
++# `grep "0 fail"` and the release was declared safe to tag. There is now exactly
++# ONE "VERIFY:" line in the output and it is the last thing printed.
++echo "progress (examples): $pass pass / $fail fail (out of ${#TESTS[@]})"
++[ ${#FAILS[@]} -eq 0 ] || echo "FAILED so far: ${FAILS[*]}"
+ 
+ # Console end-to-end test — spawns parent + console child, drives
+ # a real browser through every tab, asserts the wire is clean +
+@@ -83,13 +121,20 @@
+ if [ "${SKY_VERIFY_SKIP_CONSOLE_E2E:-0}" != "1" ]; then
+     echo ""
+     echo "--- console e2e ---"
+-    if node "$REPO_ROOT/scripts/verify-console-e2e.mjs" 2>&1 | tail -8; then
++    # Same trap the ui-showcase block below documents: piping the gate straight
++    # into `tail` in the `if` condition tests TAIL's exit status (always 0), not
++    # the gate's. console-e2e was left on the broken form, so it printed
++    # "✓ console-e2e" unconditionally — including on ERR_MODULE_NOT_FOUND, a
++    # missing binary, or every assertion failing. Capture, then tail.
++    ce_out=$(bounded 600 node "$REPO_ROOT/scripts/verify-console-e2e.mjs" 2>&1)
++    ce_rc=$?
++    echo "$ce_out" | tail -8
++    if [ "$ce_rc" -eq 0 ]; then
+         echo "✓ console-e2e"
+     else
+-        echo "✗ console-e2e"
++        echo "✗ console-e2e (exit $ce_rc)"
+         fail=$((fail+1))
+         FAILS+=("console-e2e")
+-        echo "VERIFY: $pass pass / $fail fail (with console-e2e)"
+     fi
+ fi
+ 
+@@ -104,7 +149,7 @@
+     # NOTE: run the gate, capture its exit, THEN tail its output. Piping the gate
+     # straight into `tail` in the `if` condition tests tail's exit status (always
+     # 0), not the gate's — which silently swallowed real snapshot failures.
+-    ui_out=$(bash "$REPO_ROOT/scripts/verify-ui-showcase.sh" 2>&1)
++    ui_out=$(bounded 900 bash "$REPO_ROOT/scripts/verify-ui-showcase.sh" 2>&1)
+     ui_rc=$?
+     echo "$ui_out" | tail -15
+     if [ "$ui_rc" -eq 0 ]; then
+@@ -113,7 +158,6 @@
+         echo "✗ ui-showcase"
+         fail=$((fail+1))
+         FAILS+=("ui-showcase")
+-        echo "VERIFY: $pass pass / $fail fail (with ui-showcase)"
+     fi
+ fi
+ 
+@@ -131,7 +175,7 @@
+     # stale handler id must return X-Sky-Status: desync + a fresh inline
+     # re-render, and the NEXT interaction must round-trip (no strand, no
+     # full reload). This is a hard gate.
+-    res_out=$(node "$REPO_ROOT/scripts/verify-live-resilience.mjs" desync 2>&1)
++    res_out=$(bounded 300 node "$REPO_ROOT/scripts/verify-live-resilience.mjs" desync 2>&1)
+     res_rc=$?
+     echo "$res_out" | tail -4
+     if [ "$res_rc" -eq 0 ]; then
+@@ -140,7 +184,6 @@
+         echo "✗ resilience-desync"
+         fail=$((fail+1))
+         FAILS+=("resilience-desync")
+-        echo "VERIFY: $pass pass / $fail fail (with resilience-desync)"
+     fi
+ 
+     # idle-survival — reproduces the darraghstudio "idle → disconnected →
+@@ -152,7 +195,7 @@
+     # ~80s (must cross the 60s memory-store cleanup tick); the idle hold is a
+     # fixed wait + a deterministic POST-200 assertion, so it is not timing-flaky.
+     echo "--- resilience idle-survival (~80s) ---"
+-    idle_out=$(node "$REPO_ROOT/scripts/verify-live-resilience.mjs" idle 2>&1)
++    idle_out=$(bounded 300 node "$REPO_ROOT/scripts/verify-live-resilience.mjs" idle 2>&1)
+     idle_rc=$?
+     echo "$idle_out" | tail -6
+     if [ "$idle_rc" -eq 0 ]; then
+@@ -164,4 +207,10 @@
+     fi
+ fi
+ 
++# The one and only verdict line, printed after EVERY gate has run. A caller may
++# grep it or read the exit status; both now agree.
++echo ""
++echo "VERIFY: $pass pass / $fail fail"
++[ ${#FAILS[@]} -eq 0 ] || echo "FAILED: ${FAILS[*]}"
++
+ exit $fail
+diff -ruN pristine/scripts/verify-live-resilience.mjs patched/scripts/verify-live-resilience.mjs
+--- a/scripts/verify-live-resilience.mjs	2026-08-09 19:05:49.000000000 +0100
++++ b/scripts/verify-live-resilience.mjs	2026-08-09 19:40:59.826906200 +0100
+@@ -176,20 +176,40 @@
+ // Wait until the client has an open SSE (connected). The status banner
+ // carries class sky-status--reconnecting / --offline while degraded; a
+ // connected client leaves it hidden/empty. We poll a short bounded loop.
++// This asserted the ABSENCE of a degradation banner, which is not evidence of
++// a connection. `document.getElementById('__sky-status')` yields null before
++// the banner is ever rendered, `cls` is then '', the regex does not match, and
++// the function returned true on its first poll — before any EventSource
++// existed. `sseReady` was computed and never read. So the gate guarding the
++// 72-second idle scenario was, in effect, `return true`.
++//
++// Assert positively, using the runtime's own readiness test
++// (runtime-go/rt/live.go:8579): an OPEN EventSource *and* the server's hello
++// handshake for this connection. Both are `var`-declared at script top level
++// in the emitted page, so both are reachable as window properties.
+ async function waitConnected(page, timeoutMs) {
+     const deadline = Date.now() + timeoutMs;
++    let last = null;
+     while (Date.now() < deadline) {
+         const state = await page.evaluate(() => {
+             const el = document.getElementById('__sky-status');
+-            const cls = el ? el.className : '';
+-            const sseReady = (typeof window.__skySSE !== 'undefined' && window.__skySSE
+-                && window.__skySSE.readyState === 1);
+-            return { cls, sseReady };
++            const sse = window.__skySSE;
++            return {
++                cls: el ? el.className : '',
++                readyState: sse ? sse.readyState : null,
++                helloOk: window.__skyHelloOk === true,
++            };
+         });
+-        // Not degraded and (SSE OPEN or banner simply not shown yet).
+-        if (!/reconnecting|offline/.test(state.cls)) return true;
++        last = state;
++        if (state.readyState === 1 && state.helloOk
++            && !/reconnecting|offline/.test(state.cls)) {
++            return true;
++        }
+         await page.waitForTimeout(300);
+     }
++    log(`  waitConnected timed out after ${timeoutMs}ms — last state: `
++        + `readyState=${last && last.readyState} helloOk=${last && last.helloOk} `
++        + `banner="${last && last.cls}"`);
+     return false;
+ }
+ 
+diff -ruN pristine/scripts/verify-scenarios.mjs patched/scripts/verify-scenarios.mjs
+--- a/scripts/verify-scenarios.mjs	2026-08-09 19:05:49.000000000 +0100
++++ b/scripts/verify-scenarios.mjs	2026-08-09 19:40:59.805660012 +0100
+@@ -55,7 +55,14 @@
+     const before = opts.skyEventPosts.length;
+     await fn();
+     // Give the SSE round-trip a moment to land.
+-    await opts.pause ? opts.pause(500) : new Promise(r => setTimeout(r, 500));
++    //
++    // This was `await opts.pause ? opts.pause(500) : new Promise(...)`.
++    // `await` binds tighter than `?:`, so it awaited the FUNCTION VALUE
++    // (truthy, resolves immediately), then called `opts.pause(500)` and threw
++    // the returned promise away unawaited — no settle happened at all, and the
++    // /_sky/event POST count below was read before the round-trip landed.
++    // Parenthesise the conditional.
++    await (opts.pause ? opts.pause(500) : new Promise(r => setTimeout(r, 500)));
+     const fired = opts.skyEventPosts.length - before;
+     if (fired === 0) {
+         throw new Error(`expected /_sky/event POST after "${label}" but none fired `
+diff -ruN pristine/scripts/verify-ui-showcase.mjs patched/scripts/verify-ui-showcase.mjs
+--- a/scripts/verify-ui-showcase.mjs	2026-08-09 19:05:49.000000000 +0100
++++ b/scripts/verify-ui-showcase.mjs	2026-08-09 19:40:59.806027095 +0100
+@@ -177,15 +177,38 @@
+     failures.push(`${label}: ${msg}`);
+ }
+ 
++// Compare a computed `rgb()` / `rgba()` string against an exact triple.
++// Substring matching on colours is not safe: rgb(96, 128, 224) "contains"
++// both 224 and 96, so it satisfies a naive test for rgb(224, 96, 96).
++function rgbEquals(computed, [r, g, b]) {
++    const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(computed || "");
++    if (!m) return false;
++    return Number(m[1]) === r && Number(m[2]) === g && Number(m[3]) === b;
++}
++
+ async function snapshot(page, name, sel, viewport) {
+     const baselinePath = resolve(SNAP_DIR, `${name}-${viewport}.png`);
+     const target = sel ? await page.locator(`[data-test-id="${sel}"]`) : page;
+     const buf = await target.screenshot({ animations: "disabled" });
+-    if (UPDATE_BASELINE || !existsSync(baselinePath)) {
++    if (UPDATE_BASELINE) {
+         writeFileSync(baselinePath, buf);
+         console.log(`  WRITE ${name}-${viewport}.png (baseline)`);
+         return;
+     }
++    // A MISSING baseline used to be self-baselined and reported as a pass, so
++    // `rm -rf snapshots/` — or adding a new section name, or a rename — turned
++    // every snapshot gate green with zero comparison. Re-recording a baseline
++    // must be a deliberate act (`--update-baseline`, reviewed by eye); an
++    // absent one is a failure, not an invitation.
++    if (!existsSync(baselinePath)) {
++        writeFileSync(resolve(DIFF_DIR, `${name}-${viewport}-current.png`), buf);
++        fail(
++            `${name}-${viewport}`,
++            `no baseline at ${baselinePath} — nothing was compared. ` +
++            `Re-record deliberately with scripts/verify-ui-showcase.sh --update-baseline.`,
++        );
++        return;
++    }
+     const baseline = readPng(readFileSync(baselinePath));
+     let current;
+     try {
+@@ -797,11 +820,16 @@
+             if (!el || !el.parentElement) return "";
+             return window.getComputedStyle(el.parentElement).backgroundColor;
+         });
+-        // Expect rgb(224, 96, 96).
+-        if (mqMobileParentBg.includes("224") && mqMobileParentBg.includes("96")) {
+-            ok(`mq-mobile parent bg = red (mobile breakpoint fires at 375px)`);
++        // Expect rgb(224, 96, 96) — the mobile override.
++        //
++        // This was `includes("224") && includes("96")`, which the UNOVERRIDDEN
++        // desktop blue rgb(96, 128, 224) also satisfies: it contains "224" and
++        // it contains "96". So the assertion that the mobile breakpoint FIRED
++        // passed on the value that proves it did not. Compare the whole triple.
++        if (rgbEquals(mqMobileParentBg, [224, 96, 96])) {
++            ok(`mq-mobile parent bg = rgb(224, 96, 96) (mobile breakpoint fires at 375px)`);
+         } else {
+-            fail("mq-mobile parent bg (mobile)", `expected red mobile override, got ${mqMobileParentBg}`);
++            fail("mq-mobile parent bg (mobile)", `expected rgb(224, 96, 96), got ${mqMobileParentBg}`);
+         }
+         // `(min-width: 800px)` should NOT fire at 375 — wrapper stays
+         // its base colour (transparent, since the wrapper has no base bg).

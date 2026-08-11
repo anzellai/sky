@@ -1,0 +1,9 @@
+-- PINNED REPRO — half of the ambiguous-exposing-all pair. Hand-written.
+module Ambig.Beta exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+
+label : String
+label =
+    "BETA"

@@ -1,0 +1,268 @@
+module Main exposing (main)
+
+-- Fieldbook — member C of the Layer-2 CI corpus.
+--
+-- ONE `Std.Ui` view (`View.viewElement`) rendered by four backends,
+-- plus a structural dump mode that lets CI diff the Live lowering
+-- against the Tui lowering.
+--
+--   ./sky-out/app                     → Sky.Live  (PORT env, default 8000)
+--   ./sky-out/app --tui               → Sky.Tui   (needs a real TTY)
+--   ./sky-out/app --webview           → Sky.Webview (macOS + cgo)
+--   ./sky-out/app --export [path]     → Sky.Cli one-shot CSV export
+--   ./sky-out/app --dump-view live    → canonical structure, Live path
+--   ./sky-out/app --dump-view tui     → canonical structure, Tui path
+--   ./sky-out/app --dump-view webview → canonical structure, Webview path
+--   ./sky-out/app --dump-view diff    → in-process gate; exit 1 on diff
+--
+-- The CI assertion is:
+--
+--     app --dump-view live > live.txt
+--     app --dump-view tui  > tui.txt
+--     diff live.txt tui.txt        # must be empty
+--
+-- See Structure.sky's header for precisely what that diff does and
+-- does not prove.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Cmd as Cmd
+import Std.Live as Live
+import Std.Log as Log
+import Std.Sub as Sub
+import Std.Sub exposing (Sub)
+import Std.Tui as Tui
+import Std.Webview as Webview
+import Head
+import Model exposing (..)
+import Structure
+import Update exposing (update)
+import View exposing (view, viewElement)
+
+
+-- ─── TEA wiring shared by every backend ─────────────────────────────
+-- `init` takes a polymorphic argument: Sky.Live hands it a request
+-- record, Sky.Tui and Sky.Webview hand it unit. The body ignores it,
+-- so one function satisfies all three configs.
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( initialModel (), Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+type Page
+    = HomePage
+
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    }
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.kind == "char" && k.value == "q" then
+        QuitApp
+
+    else if k.kind == "ctrl" && k.value == "c" then
+        QuitApp
+
+    else
+        NoOp
+
+
+-- ─── argv ───────────────────────────────────────────────────────────
+argsList : List String
+argsList =
+    Result.withDefault [] (Task.run (System.args ()))
+
+
+argAt : Int -> String
+argAt i =
+    case List.head (List.drop i argsList) of
+
+        Just s ->
+            s
+
+        Nothing ->
+            ""
+
+
+-- ─── Bind port ──────────────────────────────────────────────────────
+-- The port comes from the environment, never from a literal in the
+-- bind position. `sky.toml` carries no `[live] port` key either.
+livePort : Int
+livePort =
+    Maybe.withDefault 8000 (String.toInt (System.getenvOr "PORT" "8000"))
+
+
+-- Resolve the bind port.
+--
+-- `Live.withPort livePort` (applied below) is the intended API and now
+-- works. It used to be INERT: the compiler emits
+-- `rt.SetPortDefault("8000")` into generated `init()` (sky-out/main.go
+-- line 11), seeding `SKY_LIVE_PORT` from the sky.toml `[live] port`
+-- value or its 8000 default, and the runtime then let ANY non-empty
+-- `SKY_LIVE_PORT` overwrite `cfg.Port` — so the compiler-injected
+-- default beat the user's explicit call every time:
+--
+--   PORT=8421          ./sky-out/app → "Sky.Live listening on :8000"
+--   SKY_LIVE_PORT=8555 ./sky-out/app → "Sky.Live listening on :8555"
+--
+-- Fixed in `runtime-go/rt/live.go` (`resolveLivePort`): `SetEnvDefault`
+-- now records which env vars it seeded, so an operator-set value and a
+-- compiler-injected default are distinguishable. Precedence is
+-- operator env > withPort > sky.toml default > 8080, and `PORT=8421`
+-- now yields ":8421".
+--
+-- The `System.setenv "SKY_LIVE_PORT"` workaround this function used to
+-- carry is therefore gone; the port reaches the runtime through
+-- `withPort` alone.
+bindPort : () -> Int
+bindPort _ =
+    livePort
+
+
+-- ─── Sky.Cli one-shot export ────────────────────────────────────────
+-- Writes the CSV to the path given after `--export`, or to stdout when
+-- no path is supplied. Task-shaped end to end; no String errors.
+runExport : () -> Task Error ()
+runExport _ =
+    let
+        csv = exportCsv seedNotes
+        target = argAt 1
+    in
+        if String.isEmpty target then
+            Log.println csv
+
+        else
+            -- On the stdout path `println` supplies the terminating
+            -- newline; on the file path terminate the final record
+            -- explicitly so the CSV is a well-formed POSIX text file.
+            File.writeFile target (csv ++ "\n")
+                |> Task.andThen
+                       (\_ ->
+                           Log.println
+                               ("fieldbook: exported "
+                                   ++ String.fromInt (List.length seedNotes)
+                                   ++ " notes to "
+                                   ++ target))
+
+
+-- ─── Structural dump ────────────────────────────────────────────────
+-- stdout carries ONLY the canonical structure — no banner, no counts,
+-- no backend name — so `diff <(app --dump-view live)
+-- <(app --dump-view tui)` is meaningful and must be empty.
+runDump : () -> Task Error ()
+runDump _ =
+    let
+        backend = argAt 1
+    in
+        if backend == "diff" then
+            runSelfDiff ()
+
+        else if backend == "live" || backend == "tui" || backend == "webview" then
+            Log.println
+                (String.join "\n" (Structure.dumpLines backend (initialModel ())))
+
+        else if backend == "explain" then
+            Log.println
+                (String.join
+                    "\n"
+                    [ "live    : " ++ Structure.backendLabel "live"
+                    , "tui     : " ++ Structure.backendLabel "tui"
+                    , "webview : " ++ Structure.backendLabel "webview"
+                    ])
+
+        else
+            Log.error
+                "fieldbook: --dump-view expects live | tui | webview | diff | explain"
+                |> Task.andThen (\_ -> exitWith 2)
+
+
+runSelfDiff : () -> Task Error ()
+runSelfDiff _ =
+    let
+        outcome = Structure.diffReport (initialModel ())
+        ok = fst outcome
+        report = String.join "\n" (snd outcome)
+    in
+        Log.println report
+            |> Task.andThen
+                   (\_ ->
+                       if ok then
+                           Task.succeed ()
+
+                       else
+                           exitWith 1)
+
+
+-- `System.exit : Int -> a` — evaluating it terminates the process, so
+-- it inhabits `Task Error ()` without a bespoke wrapper.
+exitWith : Int -> Task Error ()
+exitWith code =
+    System.exit code
+
+
+-- ─── main ───────────────────────────────────────────────────────────
+main =
+    case List.head argsList of
+
+        Just "--tui" ->
+            Tui.app
+                (Tui.config
+                    { init = init
+                    , update = update
+                    , view = viewElement
+                    , subscriptions = subscriptions
+                    }
+                    |> Tui.withOnKey onKey)
+                |> Task.run
+
+        Just "--webview" ->
+            Webview.app
+                { init = init
+                , update = update
+                , view = view
+                , subscriptions = subscriptions
+                , window = { title = "Fieldbook", size = ( 1100, 800 ) }
+                }
+                |> Task.run
+
+        Just "--export" ->
+            Task.run (runExport ())
+
+        Just "--dump-view" ->
+            Task.run (runDump ())
+
+        _ ->
+            let
+                -- Greppable readiness marker. Printed immediately before
+                -- the runtime binds; Sky.Live's own
+                -- "Sky.Live listening on :<port>" line follows it on
+                -- stdout once the listener is up.
+                _ =
+                    Log.println
+                        ("fieldbook: listening on "
+                            ++ String.fromInt (bindPort ()))
+            in
+                Live.app
+                    (Live.config
+                        { init = init
+                        , update = update
+                        , view = view
+                        , subscriptions = subscriptions
+                        , routes = [ Live.route "/" HomePage ]
+                        , notFound = HomePage
+                        }
+                        |> Live.withPort livePort
+                        |> Live.withStore "memory"
+                        |> Live.withHead Head.headFor)
+                    |> Task.run

@@ -99,7 +99,16 @@ fn infer_file(file: &str, root: &Path) -> i32 {
     for (n, parse) in &stdlib {
         db.add_module(n, parse.clone());
     }
-    let src = std::fs::read_to_string(file).unwrap_or_default();
+    // An unreadable path used to become an empty module, which typechecks
+    // clean — so `xtask infer --file=/nonexistent.sky` printed
+    // "---- errors (0) ----" and exited 0. Say what happened instead.
+    let src = match std::fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("xtask infer --file={file}: {e}");
+            return 2;
+        }
+    };
     let parse = syntax::parse(&src, base::FileId(0));
     let name = parse
         .tree()
@@ -127,7 +136,10 @@ fn infer_file(file: &str, root: &Path) -> i32 {
             println!("  {}", d.message);
         }
     }
-    0
+    // Report the verdict in the exit status too. This arm returned a bare 0,
+    // so a file full of type errors was indistinguishable from a clean one to
+    // any caller that checked the status rather than reading the output.
+    if out.type_errors > 0 { 1 } else { 0 }
 }
 
 struct Row {

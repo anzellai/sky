@@ -1,0 +1,43 @@
+-- gate: reject
+-- defect: an ALIASED import of a module that does not exist
+-- rust: reject [E1001] unknown Sky module, reported at the import
+--
+-- Found 2026-08-11 by the generated reject matrix (`xtask corpus --reject`,
+-- v2 §3.1 family R), which crosses defect classes against import shapes. This
+-- program used to be ACCEPTED: `sky check` printed "Names resolved", "Types OK",
+-- emitted Go, `go build` succeeded, and the binary panicked at run time with
+--
+--     Sky panic: TypeMismatch — rt.AsInt: expected numeric value, got <nil>
+--
+-- Both "if it compiles, it works" and "no runtime panic from well-typed Sky"
+-- were false for a one-character typo in an import.
+--
+-- ROOT CAUSE. `SourceDb::classify_import` (hir/src/db.rs) resolves parsed dep >
+-- kernel pseudo > **Foreign**, and that last arm is a TOTAL fallback: every
+-- unrecognised path becomes a Go-FFI package, whose references resolve leniently
+-- to `nil` by design (the documented class-(b) FFI contract). A Sky-namespaced
+-- path can never be a Go package, so for `Std.*` / `Sky.*` that leniency was a
+-- soundness hole.
+--
+-- WHY IT SURVIVED. The one shape anybody had tried WAS covered: a direct CALL
+-- through the unknown module (`Nope.compute 1`) already produced lower.rs's
+-- "unknown Sky module" error. Three other shapes reached the same fallback with
+-- no check at all — a bare value reference (this file), a type reference
+-- (`Nope.Thing`), and an import that is never used. Also note the un-aliased
+-- spelling `import Std.NoSuchModule` + `Std.NoSuchModule.answer` was correctly
+-- rejected [E1001] the whole time; only the ALIAS path was open, which is the
+-- same import-alias resolution seam as #164.
+--
+-- FIX. `hir::resolve::process_import` checks the classification at the IMPORT,
+-- so all four shapes are rejected by one rule and the diagnostic points at the
+-- line the user has to change. `hir::is_reserved_sky_namespace` is the single
+-- definition of the predicate; `lower.rs`'s call-site message now reads it
+-- instead of keeping the private copy that let the two drift.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Std.NoSuchModule as Nope
+
+main =
+    println (String.fromInt Nope.answer)

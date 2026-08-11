@@ -1,0 +1,34 @@
+-- PINNED REPRO — anzellai/sky#171
+--
+-- A row-polymorphic record update reached through `foldl`/`foldr` dropped the
+-- fields the row variable was carrying. Directly it was fine; through the
+-- higher-order context the un-mentioned fields were lost.
+--
+-- coordinate: position=bare annotation=annotated row=open_subset carrier=via_foldr
+-- expect: accept, stdout "7/42"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Rec =
+    { a : Int, b : String, c : Int }
+
+
+bump : { r | a : Int } -> { r | a : Int }
+bump r =
+    { r | a = 7 }
+
+
+main =
+    let
+        base =
+            { a = 1, b = "x", c = 42 }
+
+        res =
+            List.foldr (\x _ -> bump x) (bump base) [ base ]
+    in
+    println (String.fromInt res.a ++ "/" ++ String.fromInt res.c)

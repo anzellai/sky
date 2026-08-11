@@ -1,0 +1,330 @@
+module Api exposing (..)
+
+-- Api — the machine-readable endpoints the harness asserts on.
+--
+-- Every endpoint reports a VERDICT, not liveness. `/api/dispatch/run` does not
+-- say "jobs were enqueued" (enqueue succeeds whether or not a worker ever runs
+-- them); it returns the ids, and `/api/deliveries` then reports what the
+-- worker actually WROTE. The gate asserts the second.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Encode as Enc exposing (Value)
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Codec as Codec
+import Std.Db.Store as Store
+import Std.Email as Email
+import Std.Jobs as Jobs
+import Schema
+import Work
+
+
+jsonBody : List ( String, Value ) -> Response
+jsonBody fields =
+    Server.json (Enc.encode 0 (Enc.object fields))
+
+
+-- | Which driver actually opened, derived from the DSN shape exactly as the
+-- runtime derives it — not from the decorative `[database] driver` key.
+driverName : a -> String
+driverName _ =
+    let
+        skyPath = System.getenvOr "SKY_DB_PATH" ""
+        dsn =
+            if skyPath /= "" then
+                skyPath
+
+            else
+                System.getenvOr "DATABASE_URL" ""
+        low = String.toLower dsn
+    in
+        if String.startsWith "postgres://" low then
+            "postgres"
+
+        else if String.startsWith "postgresql://" low then
+            "postgres"
+
+        else if String.contains "host=" low && String.contains "user=" low then
+            "postgres"
+
+        else
+            "sqlite"
+
+
+health : Request -> Task Error Response
+health _req =
+    Task.succeed
+        (jsonBody
+            [ ( "status", Enc.string "ok" )
+            , ( "app", Enc.string "dispatch" )
+            , ( "driver", Enc.string (driverName ()) )
+            , ( "jobsStore"
+              , Enc.string (System.getenvOr "SKY_JOBS_STORE" "memory")
+              )
+            ])
+
+
+-- ─── Reads ───────────────────────────────────────────────────────
+listSubscribers : a -> List Schema.Subscriber
+listSubscribers _ =
+    case Task.run
+             (Store.query Schema.subscribers |> Store.orderAsc "id"
+                 |> Store.toList Schema.conn) of
+
+        Ok rows ->
+            rows
+
+        Err _ ->
+            []
+
+
+listNotes : a -> List Schema.Note
+listNotes _ =
+    case Task.run
+             (Store.query Schema.notes |> Store.orderAsc "id"
+                 |> Store.toList Schema.conn) of
+
+        Ok rows ->
+            rows
+
+        Err _ ->
+            []
+
+
+listDeliveries : a -> List Schema.Delivery
+listDeliveries _ =
+    case Task.run
+             (Store.query Schema.deliveries |> Store.orderAsc "id"
+                 |> Store.toList Schema.conn) of
+
+        Ok rows ->
+            rows
+
+        Err _ ->
+            []
+
+
+findNote : String -> Maybe Schema.Note
+findNote slug =
+    case Task.run (Store.findBy Schema.conn Schema.notes "slug" slug) of
+
+        Ok found ->
+            found
+
+        Err _ ->
+            Nothing
+
+
+-- ─── Job driving ─────────────────────────────────────────────────
+-- Enqueues one delivery per subscriber, one always-failing job, and one
+-- delayed job that is immediately cancelled.
+dispatchRun : Request -> Task Error Response
+dispatchRun _req =
+    let
+        subs = listSubscribers ()
+        note = List.head (listNotes ())
+        enqueued = List.map (enqueueFor note) subs
+        failId = enqueueFail ()
+        cancelOutcome = enqueueThenCancel ()
+    in
+        Task.succeed
+            (jsonBody
+                [ ( "enqueued", Enc.int (List.length enqueued) )
+                , ( "subscribers", Enc.int (List.length subs) )
+                , ( "failEnqueued", Enc.string failId )
+                , ( "cancel", Enc.string cancelOutcome )
+                ])
+
+
+enqueueFor : Maybe Schema.Note -> Schema.Subscriber -> String
+enqueueFor note sub =
+    let
+        noteId =
+            case note of
+
+                Just n ->
+                    n.id
+
+                Nothing ->
+                    0
+        title =
+            case note of
+
+                Just n ->
+                    n.title
+
+                Nothing ->
+                    "(no note)"
+    in
+        case Task.run
+                 (Jobs.enqueue
+                     Work.deliverJob
+                     { noteId = noteId
+                     , subscriberId = sub.id
+                     , email = sub.email
+                     , title = title
+                     }) of
+
+            Ok _ ->
+                "ok"
+
+            Err e ->
+                Error.toString e
+
+
+enqueueFail : a -> String
+enqueueFail _ =
+    case Task.run (Jobs.enqueue Work.failJob 42) of
+
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            Error.toString e
+
+
+-- `enqueueIn` a long way out, then `cancel` it. Cancelling a job that is
+-- genuinely still pending is the only way this exercises the real path — a
+-- job that already ran would make `cancel` a no-op and the assertion vacuous.
+enqueueThenCancel : a -> String
+enqueueThenCancel _ =
+    case Task.run (Jobs.enqueueIn 3600000 Work.cancellableJob 7) of
+
+        Err e ->
+            "enqueue-failed: " ++ Error.toString e
+
+        Ok jobId ->
+            case Task.run (Jobs.cancel jobId) of
+
+                Ok _ ->
+                    "cancelled"
+
+                Err e ->
+                    "cancel-failed: " ++ Error.toString e
+
+
+deliveriesJson : Request -> Task Error Response
+deliveriesJson _req =
+    let
+        rows = listDeliveries ()
+    in
+        Task.succeed
+            (jsonBody
+                [ ( "count", Enc.int (List.length rows) )
+                , ( "rows", Enc.list deliveryValue rows )
+                ])
+
+
+deliveryValue : Schema.Delivery -> Value
+deliveryValue d =
+    Enc.object
+        [ ( "id", Enc.int d.id )
+        , ( "noteId", Enc.int d.noteId )
+        , ( "subscriberId", Enc.int d.subscriberId )
+        , ( "status", Enc.string d.status )
+        , ( "detail", Enc.string d.detail )
+        ]
+
+-- ─── Job failure observability ───────────────────────────────────
+-- The harness points SKY_JOBS_STORE_PATH at the SAME database as the app, so
+-- the queue's own ledger is readable through the app's connection. That is
+-- what makes "a failing job is observable" assertable from outside: the
+-- runtime must have recorded the attempt AND a readable message against the
+-- job. A worker that swallowed the error would leave `last_error` empty and be
+-- indistinguishable from success.
+type alias JobFailure =
+    { name : String
+    , attempts : Int
+    , lastError : String
+    }
+
+
+jobFailureCodec : Codec.Codec JobFailure
+jobFailureCodec =
+    Codec.auto { name = "", attempts = 0, lastError = "" }
+
+
+jobFailures : a -> List JobFailure
+jobFailures _ =
+    case Task.run
+             (Store.selectRaw
+                 Schema.conn
+                 jobFailureCodec
+                 "SELECT name AS name, attempts AS attempts, last_error AS last_error FROM _sky_jobs WHERE last_error <> '' ORDER BY id ASC"
+                 []
+                 |> Task.onError (\_ -> Task.succeed [])) of
+
+        Ok rows ->
+            rows
+
+        Err _ ->
+            []
+
+
+jobFailuresJson : Request -> Task Error Response
+jobFailuresJson _req =
+    let
+        rows = jobFailures ()
+    in
+        Task.succeed
+            (jsonBody
+                [ ( "count", Enc.int (List.length rows) )
+                , ( "rows", Enc.list jobFailureValue rows )
+                ])
+
+
+jobFailureValue : JobFailure -> Value
+jobFailureValue f =
+    Enc.object
+        [ ( "name", Enc.string f.name )
+        , ( "attempts", Enc.int f.attempts )
+        , ( "lastError", Enc.string f.lastError )
+        ]
+
+
+-- ─── Std.Email composition ───────────────────────────────────────
+-- The composed message, rendered as JSON. This asserts the pure builder
+-- surface (defaults, appends, per-field updates) without a network.
+emailPreview : Request -> Task Error Response
+emailPreview _req =
+    let
+        msg =
+            Work.noteEmail "reader@example.test" "Release 1.0"
+                |> Email.withAttachment
+                       (Email.defaultAttachment "notes.txt"
+                           |> Email.withMimeType "text/plain"
+                           |> Email.withContent "hello")
+    in
+        Task.succeed
+            (jsonBody
+                [ ( "from", Enc.string msg.from )
+                , ( "to", Enc.list Enc.string msg.to )
+                , ( "cc", Enc.list Enc.string msg.cc )
+                , ( "bcc", Enc.int (List.length msg.bcc) )
+                , ( "subject", Enc.string msg.subject )
+                , ( "textBody", Enc.string msg.textBody )
+                , ( "htmlBody", Enc.string msg.htmlBody )
+                , ( "replyTo", Enc.string msg.replyTo )
+                , ( "attachments", Enc.int (List.length msg.attachments) )
+                , ( "attachmentName"
+                  , Enc.string (firstAttachmentName msg.attachments)
+                  )
+                ])
+
+
+firstAttachmentName : List Email.Attachment -> String
+firstAttachmentName atts =
+    case List.head atts of
+
+        Just a ->
+            a.filename
+
+        Nothing ->
+            ""

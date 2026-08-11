@@ -19,7 +19,9 @@ pub use assets::{
     embedded_assets, embedded_runtime, embedded_stdlib, extract_assets_root, extract_template,
 };
 pub use gen::{generate, GeneratedSurface};
-pub use inspect::{ensure_inspector, run_inspector, PackageInfo};
+pub use inspect::{
+    ensure_inspector, run_inspector, run_inspector_reporting, InspectTarget, PackageInfo,
+};
 
 // ---------------------------------------------------------------------------
 // Committed pinned-surface loader (doc 09 §C).

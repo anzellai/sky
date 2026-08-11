@@ -1585,7 +1585,9 @@ dependencies = [
  "fmt",
  "hir",
  "lower",
+ "nix",
  "project",
+ "serde_json",
  "syntax",
  "ty",
 ]

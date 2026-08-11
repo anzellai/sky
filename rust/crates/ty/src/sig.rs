@@ -96,6 +96,16 @@ pub struct World {
     /// Lowering-path only (never read on the check path). Keyed by def; the
     /// `Vec` is indexed by top-level param position.
     pub callsite_param_records: HashMap<DefId, Vec<Option<Ty>>>,
+    /// The `(def, param-index)` slots pass 8 saw with CONFLICTING concrete
+    /// records across call sites. `callsite_param_records[def][i] == None` is
+    /// ambiguous on its own — it means *either* "conflicting call sites" *or*
+    /// "no concrete record here yet" — and the two must not be confused when a
+    /// harvest is **merged** into a world that already carries one (the
+    /// incremental / shared-world path, `World::extend_bodies`). A conflict is
+    /// sticky: once two callers disagree the slot stays open forever, so a later
+    /// merge must not promote it back to `Some`. Whole-program builds populate
+    /// it identically, so the two paths stay value-comparable.
+    pub callsite_param_conflicts: HashSet<(DefId, usize)>,
     /// Constructor schemes, keyed by constructor name (matches `Res::Ctor`).
     pub ctors: HashMap<String, Scheme>,
     /// Constructor schemes keyed by the ctor's own `DefId` — disambiguates
@@ -141,25 +151,53 @@ impl World {
     /// (`check_world`). See `skydb::type_world_query` / `check_world_query`.
     pub fn build(db: &dyn SkyDb) -> World {
         let mut world = World::build_decls(db);
+        world.extend_bodies(db);
+        world
+    }
 
+    /// The body-derived passes (5-8) over **`db`'s module set**.
+    ///
+    /// Factored out of [`World::build`] so the shared-world path
+    /// (`crate::shared`) can run them over a *restricted* module set — a
+    /// `ScopedDb` whose `module_ids()` is the case's modules only — on top of a
+    /// world that already carries the stdlib's passes 1-8. Called with the full
+    /// module set this is exactly the old inline body, so the whole-program path
+    /// is unchanged.
+    ///
+    /// Every pass here is additive per module *except* pass 8, whose harvest is
+    /// a whole-program fold; it merges rather than assigns (see
+    /// [`World::harvest_callsite_param_records`]).
+    pub fn extend_bodies(&mut self, db: &dyn SkyDb) {
         // ---- pass 5: precise CHECK-ONLY schemes for UNANNOTATED app defs ----
         // (F1c narrow subset — see `infer_app_check_sigs`.) Runs on top of the
         // decls world so it can consult every declaration channel + its own prior
         // topo-order admissions.
-        world.infer_app_check_sigs(db);
+        self.infer_app_check_sigs(db);
 
         // ---- pass 6: wildcard-`any` RESULT pins (D1, check-only) ----
-        world.infer_any_result_check_sigs(db);
+        self.infer_any_result_check_sigs(db);
 
         // ---- pass 7: full record result types (D2, lowering-path only) ----
-        world.infer_record_result_sigs(db);
+        self.infer_record_result_sigs(db);
 
         // ---- pass 8: call-site param records for UNANNOTATED defs (#166,
         // lowering-path only) — the concrete record each caller passes, so the
         // record-update close can pin an unannotated `{ model | … }` base. ----
-        world.harvest_callsite_param_records(db);
+        self.harvest_callsite_param_records(db);
+    }
 
-        world
+    /// Is `name` a BARE alias name already declared in this world?
+    ///
+    /// The shared-world runner consults this to detect the one declaration-pass
+    /// interaction a prebuilt world cannot represent: the bare `aliases` table is
+    /// last-writer-wins and is completed (pass 1a) *before* any signature is
+    /// expanded (pass 2), so in a whole-program build a case-module alias that
+    /// collides on a bare name can change how a **stdlib** signature expands. A
+    /// world whose stdlib pass 2 has already run cannot reproduce that, so such a
+    /// case falls back to a full rebuild rather than being checked against a
+    /// world that is subtly wrong for it.
+    pub fn has_bare_alias(&self, name: &str) -> bool {
+        self.aliases.contains_key(name)
     }
 
     /// Pass 8 (see `build`). For every UNANNOTATED def, record the CONCRETE
@@ -178,10 +216,19 @@ impl World {
     /// * annotated callees are skipped (they use `value_sigs`).
     /// Lowering-path only — `infer` reads it under `use_inferred`, so accept/
     /// reject + LSP are byte-identical.
+    ///
+    /// **Merge, not assign.** The harvest folds over `db.module_ids()`; on the
+    /// shared-world path that is the case's modules only, on top of a world that
+    /// already carries the stdlib's harvest. So it seeds from what is already in
+    /// the world (records *and* the sticky conflict set) and folds the new
+    /// callers into it, rather than overwriting. With the full module set the
+    /// seed is empty and this is byte-identical to the previous assignment.
     fn harvest_callsite_param_records(&mut self, db: &dyn SkyDb) {
         use crate::infer::Infer;
-        let mut collected: HashMap<DefId, Vec<Option<Ty>>> = HashMap::new();
-        let mut conflict: std::collections::HashSet<(DefId, usize)> = std::collections::HashSet::new();
+        let mut collected: HashMap<DefId, Vec<Option<Ty>>> =
+            std::mem::take(&mut self.callsite_param_records);
+        let mut conflict: std::collections::HashSet<(DefId, usize)> =
+            std::mem::take(&mut self.callsite_param_conflicts);
         for m in db.module_ids() {
             let resolved = db.resolve(m);
             for body in resolved.bodies.values() {
@@ -232,6 +279,7 @@ impl World {
             }
         }
         self.callsite_param_records = collected;
+        self.callsite_param_conflicts = conflict;
     }
 }
 
@@ -337,8 +385,16 @@ impl World {
     /// are left EMPTY here and supplied lazily/per-def instead of baked into the
     /// aggregate world (which would couple every `infer` to every body).
     pub fn build_decls(db: &dyn SkyDb) -> World {
-        let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
+        let mut world = World::empty_seeded();
+        world.extend_decls(db, true);
+        world
+    }
 
+    /// The empty world with only the builtin constructors seeded — the base every
+    /// declaration pass folds into. Split out of [`World::build_decls`] so the
+    /// shared-world path can extend a *prebuilt* world instead of always starting
+    /// from nothing.
+    fn empty_seeded() -> World {
         let mut world = World {
             value_sigs: HashMap::new(),
             inferred_sigs: HashMap::new(),
@@ -353,12 +409,41 @@ impl World {
             ctor_union: HashMap::new(),
             union_ctors: HashMap::new(),
             callsite_param_records: HashMap::new(),
+            callsite_param_conflicts: HashSet::new(),
             union_members_by_def: HashMap::new(),
             aliases: HashMap::new(),
             alias_by_mod: HashMap::new(),
             alias_keys: HashSet::new(),
         };
         world.seed_builtin_ctors();
+        world
+    }
+
+    /// The DECLARATION passes (1-4) over **`db`'s module set**, folded into
+    /// `self`.
+    ///
+    /// `seed_static` runs pass 4 ([`World::seed_check_sigs`]), which seeds a
+    /// fixed table of stdlib combinator schemes and is a property of the stdlib,
+    /// not of any module set. The shared-world path passes `false` when
+    /// extending a prebuilt world: the seeds are already there, and re-seeding
+    /// would be redundant work, not a correctness change.
+    ///
+    /// Called with the full module set on a freshly seeded world, this is exactly
+    /// the old `build_decls` body.
+    ///
+    /// **What this can and cannot represent incrementally.** Passes 1a/1b are
+    /// order-sensitive by design — the alias key set must be complete before any
+    /// alias body resolves, because an alias body may forward-reference an alias
+    /// declared in a later module. Extending is sound for the *added* modules
+    /// (their bodies resolve against a key set that now contains everything) and
+    /// for the already-built ones **provided the added modules cannot change
+    /// them**. A stdlib module never imports an app module, so the app→stdlib
+    /// direction is empty; the one channel that does flow backwards is the BARE,
+    /// last-writer-wins `aliases` table read as a fallback during pass-2
+    /// expansion. `crate::shared` detects that collision and rebuilds instead.
+    pub fn extend_decls(&mut self, db: &dyn SkyDb, seed_static: bool) {
+        let world = self;
+        let path_to_pseudo: HashMap<&str, &str> = KERNEL_MODULES.iter().copied().collect();
 
         // ---- pass 1a: collect alias names — the bare table (unchanged) + the
         // module-qualified key set + a stash of each alias's (module, name,
@@ -475,9 +560,9 @@ impl World {
         // into the pass-3-inferred Result schemes the lowerer consumes. Both run
         // with `use_inferred=false`; today no Result combinator body calls a List
         // HOF, but seed-after makes the isolation structural, not incidental.
-        world.seed_check_sigs(db);
-
-        world
+        if seed_static {
+            world.seed_check_sigs(db);
+        }
     }
 
     /// Pass 5 (see `build`, F1c narrow subset). Infer + register CHECK-ONLY

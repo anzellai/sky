@@ -245,21 +245,48 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         None => CLI_FAMILY.iter().map(|s| s.to_string()).collect(),
     };
 
-    let mut rows = Vec::new();
-    for name in &names {
-        let dir = root.join("examples").join(name);
-        if !dir.is_dir() {
-            continue;
-        }
-        let shape = classify(&dir, name);
-        if let Some(want) = shape_filter {
-            if shape != want {
-                continue;
+    // The examples this invocation will actually touch, resolved up front so the
+    // work can be handed out and the table still printed in corpus order.
+    let selected: Vec<(String, Shape)> = names
+        .iter()
+        .filter_map(|name| {
+            let dir = root.join("examples").join(name);
+            if !dir.is_dir() {
+                return None;
             }
-        }
-        let row = verify_one(root, &dir, name, shape, do_verify, golden, bless, verbose);
-        rows.push(row);
-    }
+            let shape = classify(&dir, name);
+            if let Some(want) = shape_filter {
+                if shape != want {
+                    return None;
+                }
+            }
+            Some((name.clone(), shape))
+        })
+        .collect();
+
+    // Emit + `go build` for every example is the longest single step in CI —
+    // 735s of the codegen-build job's 1338s, which is what puts the T1 tier over
+    // its ceiling. Each example builds in its OWN directory, so the work is
+    // independent; only GOCACHE is shared, and Go makes that safe for concurrent
+    // use.
+    //
+    // RUNNING is a different matter and stays SERIAL. `verify_one` with
+    // `do_verify` starts the built binary, and the server shapes bind a fixed
+    // port — two at once would fight over it and produce a failure that says
+    // nothing about the code. Those invocations (`--shape live --run` and
+    // friends) measure 10-32s in CI, so there is nothing to win there anyway.
+    let concurrent = !do_verify && !bless;
+    let rows: Vec<Row> = if concurrent {
+        build_run_parallel(root, &selected, do_verify, golden, bless, verbose, jobs(args))
+    } else {
+        selected
+            .iter()
+            .map(|(name, shape)| {
+                let dir = root.join("examples").join(name);
+                verify_one(root, &dir, name, *shape, do_verify, golden, bless, verbose)
+            })
+            .collect()
+    };
 
     print_table(&rows);
     let base = gate_result(&rows);
@@ -440,6 +467,80 @@ fn main_binding(src: &str) -> String {
 }
 
 // ---- per-example verification -------------------------------------------
+
+/// How many examples to build CONCURRENTLY. `--jobs N`, else `XTASK_BUILD_JOBS`,
+/// else the machine's parallelism capped at 8 — each worker drives a `go build`
+/// that already parallelises internally, so more than that oversubscribes.
+fn jobs(args: &[String]) -> usize {
+    args.iter()
+        .position(|a| a == "--jobs")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<usize>().ok())
+        .or_else(|| {
+            std::env::var("XTASK_BUILD_JOBS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+        })
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+                .min(8)
+        })
+        .max(1)
+}
+
+/// Build every selected example, up to `jobs` at a time, preserving corpus order
+/// in the returned rows so the printed table does not reorder run to run.
+#[allow(clippy::too_many_arguments)]
+fn build_run_parallel(
+    root: &Path,
+    selected: &[(String, Shape)],
+    do_verify: bool,
+    golden: bool,
+    bless: bool,
+    verbose: bool,
+    jobs: usize,
+) -> Vec<Row> {
+    let mut slots: Vec<Option<Row>> = (0..selected.len()).map(|_| None).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..jobs.min(selected.len().max(1)) {
+            handles.push(scope.spawn(|| {
+                let mut done: Vec<(usize, Row)> = Vec::new();
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((name, shape)) = selected.get(i) else {
+                        break;
+                    };
+                    let dir = root.join("examples").join(name);
+                    done.push((
+                        i,
+                        verify_one(root, &dir, name, *shape, do_verify, golden, bless, verbose),
+                    ));
+                }
+                done
+            }));
+        }
+        for h in handles {
+            // A panicking worker must abort the gate. Dropping it would remove
+            // its examples from the table and shrink the denominator silently —
+            // which is how a gate comes to report PASS over a corpus it never
+            // finished building.
+            for (i, row) in h.join().expect("build-run worker thread panicked") {
+                slots[i] = Some(row);
+            }
+        }
+    });
+
+    slots
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| r.unwrap_or_else(|| panic!("build-run: example {i} produced no row")))
+        .collect()
+}
 
 fn verify_one(
     root: &Path,
@@ -1019,23 +1120,39 @@ fn has_panic(s: &str) -> bool {
 
 // ---- process helper ------------------------------------------------------
 
-/// Wait for a child up to `dur`, killing it if it overruns. Returns its output.
+/// Wait for a child up to `dur`. Returns its output ONLY when the child exited
+/// on its own within the bound; `None` when it had to be killed on overrun, or
+/// when waiting on it failed.
+///
+/// A TIMEOUT IS NOT A SUCCESSFUL RUN. This function previously returned
+/// `Some(Output { status: ExitStatus::default(), .. })` on *every* path —
+/// including the kill-on-overrun path — and `ExitStatus::default()` is
+/// `success() == true` on Unix. Three consequences, all of them a gate that
+/// could not fail:
+///   * a wedged child was byte-for-byte indistinguishable from a clean exit 0;
+///   * `verify_tui`'s `None => (false, "tui hung")` arm was unreachable dead
+///     code, so a TUI that never exited passed the no-panic check;
+///   * a hung CLI produced an EMPTY capture that `bless_goldens` then wrote as
+///     a one-byte golden (see the empty-capture refusal there).
+/// The status is now the child's REAL `ExitStatus` rather than a fabricated one.
 fn wait_bounded(child: &mut Child, dur: Duration) -> Option<std::process::Output> {
     let deadline = Instant::now() + dur;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(st)) => break st,
             Ok(None) => {
                 if Instant::now() >= deadline {
+                    // Overran the bound: kill it and report a timeout. The
+                    // partial output of a killed child is not a run result.
                     let _ = child.kill();
                     let _ = child.wait();
-                    break;
+                    return None;
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err(_) => break,
+            Err(_) => return None,
         }
-    }
+    };
     // Drain stdout/stderr after exit.
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -1046,7 +1163,7 @@ fn wait_bounded(child: &mut Child, dur: Duration) -> Option<std::process::Output
         let _ = std::io::Read::read_to_end(&mut e, &mut stderr);
     }
     Some(std::process::Output {
-        status: std::process::ExitStatus::default(),
+        status,
         stdout,
         stderr,
     })
@@ -1510,6 +1627,95 @@ fn gate_result(rows: &[Row]) -> i32 {
         );
         return 1;
     }
+
+    // ---- run + oracle-match verdict ------------------------------------
+    //
+    // Until now this function consulted `run_ok` for `01-hello-world` ONLY, and
+    // never consulted `matched` at all. Both fields were computed, stored on
+    // every Row, printed in the table — and then ignored by the verdict. So the
+    // three CI steps
+    //     xtask build-run --shape live --run
+    //     xtask build-run --shape http --run
+    //     xtask build-run --shape tui  --run
+    // could not fail: an app that panicked on boot, a server that never came
+    // up, and a page that differed from the oracle all printed their row and
+    // exited 0. `--shape cli --run` was covered only indirectly, via the
+    // separate golden gate.
+    //
+    // The acceptable states are enumerated rather than assumed, because a gate
+    // that fires on a known-acceptable state is as bad as one that never fires:
+    //
+    //   run_ok == None       ACCEPTABLE. The run was not attempted: no `--run`
+    //                        flag, or `go build` failed (the block that sets
+    //                        run_ok is guarded on `rep.go_build_ok`, so the
+    //                        native-link ceilings partitioned off above never
+    //                        reach here), or the shape is Webview/Ffi, whose
+    //                        documented ceiling is build-only (a macOS GUI with
+    //                        a blocking event loop cannot be run headless).
+    //   run_ok == Some(true) ACCEPTABLE. It ran.
+    //   run_ok == Some(false) FAIL. The binary was built and the gate tried to
+    //                        run it and it did not run — a boot panic, a server
+    //                        that never printed its listening line, a TUI that
+    //                        hung (now reachable: see `wait_bounded`).
+    //
+    //   matched == None      ACCEPTABLE. No comparison was possible or intended:
+    //                        run_kind "no-panic" (the NONDETERMINISTIC_OUTPUT
+    //                        CLI set and every Tui row, where stdout genuinely
+    //                        cannot be pinned), or no oracle binary exists (a
+    //                        fresh CI checkout is deliberately oracle-free), or
+    //                        the ORACLE failed to start (an oracle-side
+    //                        environment problem is not a rust regression).
+    //   matched == Some(true)  ACCEPTABLE. Rust output == oracle output.
+    //   matched == Some(false) FAIL. Rust and the oracle both ran and produced
+    //                        different output. That is a runtime-correctness
+    //                        divergence with no benign reading.
+    let run_failures: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.run_ok == Some(false))
+        .map(|r| r.name.as_str())
+        .collect();
+    let mismatches: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.matched == Some(false))
+        .map(|r| r.name.as_str())
+        .collect();
+
+    let mut failed = false;
+    if !run_failures.is_empty() {
+        failed = true;
+        eprintln!(
+            "BUILD-RUN GATE: FAIL — {} example(s) built but did NOT run: {}",
+            run_failures.len(),
+            run_failures
+                .iter()
+                .map(|n| {
+                    let why = rows
+                        .iter()
+                        .find(|r| r.name == *n)
+                        .map(|r| r.blocker.as_str())
+                        .unwrap_or("");
+                    if why.is_empty() {
+                        (*n).to_string()
+                    } else {
+                        format!("{n} ({why})")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    if !mismatches.is_empty() {
+        failed = true;
+        eprintln!(
+            "BUILD-RUN GATE: FAIL — {} example(s) whose output differs from the ORACLE \
+             (runtime-correctness divergence): {}",
+            mismatches.len(),
+            mismatches.join(", ")
+        );
+    }
+    if failed {
+        return 1;
+    }
     0
 }
 
@@ -1596,6 +1802,7 @@ fn golden_gate(root: &Path, rows: &[Row], golden_flag: bool, do_verify: bool, su
     let mut mismatches: Vec<String> = Vec::new();
     let mut missing_golden: Vec<String> = Vec::new();
     let mut not_run: Vec<String> = Vec::new();
+    let mut empty: Vec<String> = Vec::new();
     let mut drift: Vec<String> = Vec::new();
 
     // header
@@ -1611,6 +1818,7 @@ fn golden_gate(root: &Path, rows: &[Row], golden_flag: bool, do_verify: bool, su
                 GoldenStatus::Mismatch => mismatches.push(r.name.clone()),
                 GoldenStatus::Missing => missing_golden.push(r.name.clone()),
                 GoldenStatus::NotRun => not_run.push(r.name.clone()),
+                GoldenStatus::Empty => empty.push(r.name.clone()),
             }
             println!(
                 "{:<w$}  {:>8}  {}",
@@ -1690,6 +1898,16 @@ fn golden_gate(root: &Path, rows: &[Row], golden_flag: bool, do_verify: bool, su
                 not_run.join(", ")
             );
         }
+        if !empty.is_empty() {
+            fail = true;
+            eprintln!(
+                "\nGOLDEN GATE: FAIL — {} example(s) whose golden and/or run output is EMPTY. \
+                 An empty golden matches an empty run, so the pair is green forever while \
+                 asserting nothing. Fix the example so it produces output, then re-bless: {}",
+                empty.len(),
+                empty.join(", ")
+            );
+        }
     }
     // drift is a hard failure regardless of the golden_flag (it means a stale
     // golden that would silently pass CI).
@@ -1720,6 +1938,10 @@ enum GoldenStatus {
     Mismatch,
     Missing,
     NotRun,
+    /// The committed golden (or the run it is compared against) is empty. An
+    /// empty golden matches an empty run, so this pair is green forever while
+    /// asserting nothing — it must be reported as a FAILURE, not a match.
+    Empty,
 }
 
 impl GoldenStatus {
@@ -1729,6 +1951,7 @@ impl GoldenStatus {
             GoldenStatus::Mismatch => "MISMATCH",
             GoldenStatus::Missing => "MISSING-GOLDEN",
             GoldenStatus::NotRun => "did-not-run",
+            GoldenStatus::Empty => "EMPTY-GOLDEN",
         }
     }
 }
@@ -1742,6 +1965,12 @@ fn golden_status(root: &Path, row: &Row) -> (bool, GoldenStatus) {
     };
     let rust_norm = normalise_stdout(rust);
     match load_golden(root, &row.name) {
+        // Checked BEFORE the equality arm: an empty golden and an empty run are
+        // equal, so the `g == rust_norm` arm would call this a match. It is not
+        // a match, it is two nothings agreeing.
+        Some(g) if g.trim().is_empty() || rust_norm.trim().is_empty() => {
+            (true, GoldenStatus::Empty)
+        }
         Some(g) if g == rust_norm => (true, GoldenStatus::Match),
         Some(_) => (true, GoldenStatus::Mismatch),
         None => (false, GoldenStatus::Missing),
@@ -1767,6 +1996,7 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
     let mut refused_mismatch: Vec<(String, String)> = Vec::new();
     let mut refused_nondet: Vec<String> = Vec::new();
     let mut refused_leak: Vec<(String, String)> = Vec::new();
+    let mut refused_empty: Vec<String> = Vec::new();
     let mut skipped_no_run: Vec<String> = Vec::new();
 
     println!("\nbless — capturing oracle-verified CLI goldens\n");
@@ -1781,6 +2011,24 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
                 continue;
             }
         };
+        // An EMPTY capture is never a golden. `format!("{}\n", cap1.trim_end())`
+        // turns an empty capture into `"\n"`, so a run that produced no output
+        // at all was committed as a one-byte golden and matched itself green
+        // forever after. That is exactly how
+        // `rust/crates/xtask/golden/55-store-partial-update.stdout` became 1
+        // byte: the example's `sky.toml` was missing the `[database]` section
+        // every other `Db.connect` example has, so `Db.connect ()` failed, the
+        // whole Task chain short-circuited, and the app printed nothing. The
+        // bless refused on no-run, nondeterminism, no-oracle, rust!=oracle and
+        // machine-leak — but not on "asserted nothing".
+        //
+        // This check is deliberately placed BEFORE the oracle comparison: when
+        // BOTH rust and oracle produce no output they agree, and agreement on
+        // emptiness is not evidence of correctness.
+        if cap1.trim().is_empty() {
+            refused_empty.push(name.to_string());
+            continue;
+        }
         // rust capture #2: re-run the rust binary. Nondeterminism → refuse.
         let out_dir = root.join("examples").join(name).join("sky-out-rust");
         let cap2 = match run_rust_stdout(&out_dir, stdin_for(name)) {
@@ -1836,13 +2084,14 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
     println!(
         "bless summary: {} written (oracle-verified)  |  {} skipped (no oracle)  |  \
          {} skipped (no run)  |  {} refused (nondeterministic)  |  {} refused (rust != oracle)  \
-         |  {} refused (machine leak)",
+         |  {} refused (machine leak)  |  {} refused (empty capture)",
         written.len(),
         skipped_no_oracle.len(),
         skipped_no_run.len(),
         refused_nondet.len(),
         refused_mismatch.len(),
         refused_leak.len(),
+        refused_empty.len(),
     );
     if !written.is_empty() {
         println!("  written: {}", written.join(", "));
@@ -1885,6 +2134,20 @@ fn bless_goldens(root: &Path, rows: &[Row], verbose: bool) -> i32 {
         return 1;
     }
     if !refused_nondet.is_empty() {
+        return 1;
+    }
+    // An empty capture means the run asserted NOTHING. Blessing it commits a
+    // one-byte golden that matches itself forever — the strongest form of a
+    // gate that cannot fail. Treated as hard as a rust != oracle mismatch,
+    // because in practice it has the same cause: the program did not work.
+    if !refused_empty.is_empty() {
+        eprintln!(
+            "\nBLESS: REFUSED — {} example(s) produced NO output; an empty capture is not a \
+             golden (the run asserted nothing). Fix the example so it actually runs, then \
+             re-bless: {}",
+            refused_empty.len(),
+            refused_empty.join(", ")
+        );
         return 1;
     }
     0
@@ -1993,6 +2256,56 @@ mod golden_gate_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // 0d — the one-byte-golden class. An EMPTY committed golden matches an
+    // EMPTY run byte-for-byte, so the equality arm called it `Match` and the
+    // gate was green forever while asserting nothing. This is precisely how
+    // `golden/55-store-partial-update.stdout` sat at 1 byte: the example's
+    // sky.toml had no [database] section, `Db.connect ()` failed, the Task
+    // chain short-circuited, and the app printed nothing.
+    //
+    // The bad input is constructed three ways — empty golden + empty run
+    // (the historical case), empty golden + real run, real golden + empty run
+    // — and none of them may classify Match.
+    #[test]
+    fn empty_golden_is_never_a_match() {
+        let root = std::env::temp_dir().join(format!("golden-gate-test-empty-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(golden_dir(&root));
+
+        // (a) empty golden + empty run — what 55-store-partial-update was.
+        std::fs::write(golden_file(&root, "99-fixture"), "\n").unwrap();
+        let (_, status) = golden_status(&root, &cli_row("99-fixture", ""));
+        assert!(
+            matches!(status, GoldenStatus::Empty),
+            "empty golden + empty run must be Empty (was Match — green forever, asserting nothing)"
+        );
+
+        // (b) empty golden + a real run — the state right after the underlying
+        // example defect is fixed but before a re-bless.
+        let (_, status_b) = golden_status(&root, &cli_row("99-fixture", "name=Big Mug stock=7\n"));
+        assert!(
+            matches!(status_b, GoldenStatus::Empty),
+            "empty golden + real output must not be Mismatch-or-Match, it must be Empty"
+        );
+
+        // (c) a real golden + an empty run — the app regressed to silence.
+        std::fs::write(golden_file(&root, "99-fixture"), "name=Big Mug stock=7\n").unwrap();
+        let (_, status_c) = golden_status(&root, &cli_row("99-fixture", "   \n  \n"));
+        assert!(
+            matches!(status_c, GoldenStatus::Empty),
+            "a run that produced nothing must be Empty, not silently compared"
+        );
+
+        // Control: a real golden + the matching real run still classifies Match,
+        // so the guard did not simply break the gate.
+        let (_, status_ok) = golden_status(&root, &cli_row("99-fixture", "name=Big Mug stock=7\n"));
+        assert!(
+            matches!(status_ok, GoldenStatus::Match),
+            "non-empty matching pair must still be Match"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // The machine-specific leak guard refuses a golden carrying an absolute
     // home path (would make the snapshot non-portable across machines/CI).
     #[test]
@@ -2000,6 +2313,177 @@ mod golden_gate_tests {
         assert!(machine_leak("ok\n/Users/alice/project/out\n").is_some());
         assert!(machine_leak("ok\n/home/bob/x\n").is_some());
         assert!(machine_leak("count = 3\nresult: ok").is_none());
+    }
+}
+
+// 0c — a timeout must be a distinct, propagated failure, not a fabricated
+// success. Before the fix `wait_bounded` returned
+// `Some(Output { status: ExitStatus::default(), .. })` on EVERY path including
+// kill-on-overrun, and `ExitStatus::default().success()` is `true` on Unix.
+#[cfg(test)]
+mod wait_bounded_tests {
+    use super::*;
+
+    /// Construct the bad input: a child that never exits on its own.
+    fn hung_child() -> Child {
+        Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn sleep")
+    }
+
+    #[test]
+    fn a_hung_child_is_a_timeout_not_a_success() {
+        let mut child = hung_child();
+        let started = Instant::now();
+        let out = wait_bounded(&mut child, Duration::from_millis(300));
+        let elapsed = started.elapsed();
+
+        assert!(
+            out.is_none(),
+            "a child that overran its bound must report None (a timeout); it previously \
+             returned Some(Output) whose fabricated ExitStatus::default() reported success, \
+             making a hung app indistinguishable from a clean exit 0"
+        );
+        // It was actually killed rather than waited out.
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "must kill on overrun, not block for the child's full lifetime (took {elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn a_clean_child_still_returns_its_real_status() {
+        // Control: the fix must not break the normal path, and the status must
+        // now be the child's REAL status rather than a fabricated default.
+        let mut ok = Command::new("sh")
+            .args(["-c", "printf hello"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+        let out = wait_bounded(&mut ok, Duration::from_secs(10)).expect("clean child → Some");
+        assert!(out.status.success(), "exit 0 child reports success");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "hello");
+
+        let mut bad = Command::new("sh")
+            .args(["-c", "exit 3"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+        let out2 = wait_bounded(&mut bad, Duration::from_secs(10)).expect("clean child → Some");
+        assert!(
+            !out2.status.success(),
+            "a child that exited 3 must NOT report success — before the fix every child \
+             reported ExitStatus::default(), i.e. success, whatever it actually did"
+        );
+    }
+
+    /// The consequence the fix unlocks: `verify_tui`'s `None => (false, \"tui hung\")`
+    /// arm was unreachable dead code, because `wait_bounded` never returned None.
+    #[test]
+    fn tui_hung_branch_is_now_reachable() {
+        let mut child = hung_child();
+        assert!(
+            wait_bounded(&mut child, Duration::from_millis(200)).is_none(),
+            "verify_tui's `None => (false, \"tui hung\")` arm depends on this being None"
+        );
+    }
+}
+
+// 0e — `gate_result` computed `run_ok` and `matched` on every Row, printed
+// them, and then ignored them in the verdict. The three `--shape … --run` CI
+// steps therefore could not fail.
+#[cfg(test)]
+mod gate_result_verdict_tests {
+    use super::*;
+
+    fn row(name: &str, shape: Shape, run_ok: Option<bool>, matched: Option<bool>) -> Row {
+        Row {
+            name: name.into(),
+            shape,
+            emitted: true,
+            build_ok: true,
+            run_ok,
+            matched,
+            run_kind: "match",
+            blocker: String::new(),
+            rust_stdout: None,
+            oracle_stdout: None,
+        }
+    }
+
+    /// The hard floor must stay satisfied in every fixture, or we would be
+    /// measuring the hello-world check instead of the new one.
+    fn hello_ok() -> Row {
+        row("01-hello-world", Shape::Cli, Some(true), Some(true))
+    }
+
+    #[test]
+    fn a_healthy_run_still_passes() {
+        let rows = vec![
+            hello_ok(),
+            row("19-skyforum", Shape::Live, Some(true), Some(true)),
+            row("20-cli-counter", Shape::Cli, Some(true), Some(true)),
+        ];
+        assert_eq!(gate_result(&rows), 0, "all-green must still exit 0");
+    }
+
+    #[test]
+    fn an_app_that_panics_on_boot_fails_the_gate() {
+        let rows = vec![
+            hello_ok(),
+            row("19-skyforum", Shape::Live, Some(false), None),
+        ];
+        assert_eq!(
+            gate_result(&rows),
+            1,
+            "a built example that did not run must fail; before the fix this exited 0"
+        );
+    }
+
+    #[test]
+    fn an_oracle_mismatch_fails_the_gate() {
+        let rows = vec![
+            hello_ok(),
+            row("19-skyforum", Shape::Live, Some(true), Some(false)),
+        ];
+        assert_eq!(
+            gate_result(&rows),
+            1,
+            "rust output != oracle output must fail; before the fix `matched` was never read"
+        );
+    }
+
+    /// The other half of the contract: the gate must NOT fire on states that
+    /// are genuinely acceptable, or it becomes a different kind of useless.
+    #[test]
+    fn acceptable_states_do_not_fail_the_gate() {
+        let rows = vec![
+            hello_ok(),
+            // Not run at all (no --run flag / build-only invocation).
+            row("07-todo-cli", Shape::Cli, None, None),
+            // Documented build-only ceilings: a macOS GUI with a blocking event
+            // loop cannot be run headless.
+            row("11-fyne-stopwatch", Shape::Ffi, None, None),
+            row("38-composite-ui", Shape::Webview, None, None),
+            // Ran fine, but no comparison was possible: nondeterministic stdout,
+            // or a fresh CI checkout with no oracle binary, or the ORACLE itself
+            // failed to start (an oracle-side environment problem).
+            row("02-go-stdlib", Shape::Cli, Some(true), None),
+            row("30-tui-demo", Shape::Tui, Some(true), None),
+        ];
+        assert_eq!(
+            gate_result(&rows),
+            0,
+            "None run_ok/matched are acceptable states and must not be failed"
+        );
     }
 }
 

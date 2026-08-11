@@ -51,9 +51,16 @@ fail() {
 }
 
 step "1/6 — Rebuild compiler from clean state"
+# `cp rust/target/release/sky` was wrong here for the same reason it was wrong
+# in build.sh: cargo honours CARGO_TARGET_DIR and friends, so that path can name
+# an older build. In a RELEASE gate that is the worst possible place for it —
+# every check below would have certified a binary that is not the one just
+# compiled, and the tag would ship the other one.
+# shellcheck source=lib/cargo-target.sh
+source "$REPO_ROOT/scripts/lib/cargo-target.sh"
 ( cd rust && cargo build --release --locked -p sky ) 2>&1 | tail -5
-mkdir -p ./sky-out
-cp rust/target/release/sky ./sky-out/sky
+install_binary "$(cargo_bin_path "$REPO_ROOT/rust" sky --release)" "$REPO_ROOT/sky-out/sky" \
+    || fail "could not install the compiler cargo just built"
 [ -x ./sky-out/sky ] || fail "compiler binary missing after cargo build"
 
 step "2/6 — Smoke-test binary"
@@ -90,13 +97,25 @@ echo "$sweep_out" | grep -qE "^sweep: [0-9]+ passed, 0 failed$" || \
 
 if [ $SKIP_WEB -eq 0 ]; then
     step "5/6 — Runtime verification (Playwright; web apps)"
+    # Take the gate's EXIT STATUS as the verdict, and keep the anchored grep as
+    # a second, independent witness.
+    #
+    # The anchor alone was not enough. verify-all-web.sh used to print a
+    # "VERIFY: N pass / M fail" line after its example loop AND after each
+    # later gate, so its output held several verdict lines and this grep
+    # matched the FIRST one — a run whose examples all passed but whose
+    # console-e2e / ui-showcase / resilience gate then failed still contained
+    # " 0 fail" and was declared safe to tag. (The earlier form of this check
+    # also matched the substring inside "10 fail": a run that ended
+    # 0 pass / 12 fail, every Playwright check dead with ERR_MODULE_NOT_FOUND,
+    # sailed through because it printed "0 pass / 10 fail" on the way there.)
+    #
+    # verify-all-web.sh now emits exactly one "VERIFY:" line, last, and exits
+    # with its failure count. Both readings agree; require both.
     out=$(scripts/verify-all-web.sh 2>&1)
+    web_rc=$?
     echo "$out" | tail -3
-    # Anchor the count. `grep -qE "0 fail"` matched the SUBSTRING inside
-    # "10 fail" / "20 fail" — so a run with exactly ten failures passed the
-    # gate. It did: a run that ended 0 pass / 12 fail (every Playwright check
-    # dead with ERR_MODULE_NOT_FOUND) sailed through because it printed
-    # "0 pass / 10 fail" on the way there. Require the whole field.
+    [ "$web_rc" -eq 0 ] || fail "verify-all-web exited $web_rc"
     echo "$out" | grep -qE "(^|[^0-9])0 fail" || fail "verify-all-web reported failures"
 else
     echo ""
@@ -108,9 +127,21 @@ fi
 if [ $SKIP_CLI -eq 0 ]; then
     step "6/6 — Runtime verification (CLI / Sky.Tui / Sky.Cli)"
     if [ -x scripts/verify-cli.sh ]; then
+        # The CLI arm was left on the UNANCHORED pattern when the web arm above
+        # was fixed. `grep -qE "0 fail"` matches the substring inside "10 fail",
+        # and verify-cli.sh prints "VERIFY: $pass pass / $fail fail / $skip
+        # skip" — so a run of 3 pass / 10 fail / 0 skip passed this gate.
+        # Demonstrated:
+        #   $ echo "VERIFY: 3 pass / 10 fail / 0 skip" | grep -qE "0 fail" \
+        #       && echo PASS
+        #   PASS
+        # Use the exit status (verify-cli.sh ends in `exit $fail`) plus the
+        # anchored field.
         out=$(scripts/verify-cli.sh 2>&1)
+        cli_rc=$?
         echo "$out" | tail -3
-        echo "$out" | grep -qE "0 fail" || fail "verify-cli reported failures"
+        [ "$cli_rc" -eq 0 ] || fail "verify-cli exited $cli_rc"
+        echo "$out" | grep -qE "(^|[^0-9])0 fail" || fail "verify-cli reported failures"
     else
         echo "  (verify-cli.sh not present; skipping)"
     fi

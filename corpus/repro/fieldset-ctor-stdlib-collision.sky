@@ -1,0 +1,76 @@
+-- PINNED REPRO — found by this corpus on 2026-08-10, FIXED 2026-08-10.
+--
+-- STATUS: live PASS. It was BLOCKED (see gen::blocked_reason) while red; the
+-- block is gone because the defect is gone, not because the case was retired.
+-- It now asserts the fix and fails if the collision ever comes back.
+--
+-- HOW IT WAS FIXED (rust/crates/lower)
+--   1. `select_record_candidate` (goty.rs) no longer GUESSES. A nominal whose
+--      declared field types contradict the record is refuted outright, and when
+--      several candidates are equally indistinguishable it resolves to NONE
+--      rather than taking `candidates.first()` by registration order.
+--   2. A record literal flowing into a nominal record slot adopts that slot
+--      (lower.rs, the same expected-type threading `if`/`case`/`let` already
+--      use). `mk` now emits `Main_Kv_R{Key: v_0, Value: v_1}` directly — no
+--      coercion at all — instead of building an anonymous struct and narrowing.
+--
+-- WHAT USED TO HAPPEN
+--   `sky build` reported "Types OK (1 module(s))" and "Sky lowering succeeded".
+--   The program then panicked at runtime:
+--
+--     Sky panic: CoerceFailure
+--     panicMsg=rt.Coerce: expected rt.SkyADT, got string (42)
+--     main.Main_mk(...) at sky-out/main.go
+--
+-- WHY
+--   `record_fieldsets` (rust/crates/lower/src/lower.rs:246-266) is keyed on the
+--   SORTED FIELD-NAME VECTOR, and its own comment at :256-258 records that
+--   "Two records with identical field names but different field types collide
+--   here." The stdlib contains
+--
+--     Std.Analytics.EventProp = { key : String, value : PropValue }
+--         (sky-stdlib/Std/Analytics.sky:85-88)
+--
+--   so a USER record `{ key : String, value : String }` lands on the same
+--   `[key, value]` key. `select_record_candidate` is supposed to disambiguate by
+--   TYPE, and at the CONSTRUCTION SITE inside an annotated function it picks the
+--   stdlib candidate: the `value` parameter is coerced to `PropValue`, an ADT.
+--
+-- THE PART THAT MAKES IT SEVERE
+--   * No import of `Std.Analytics` is required. The stdlib is always in the
+--     compilation, so ANY app defining a `{ key, value }` record with a
+--     constructor function is affected.
+--   * No erasure is required. The previously-recorded form of this bug
+--     (2026-08-03) was characterised as needing `fst`/`snd`/tuple destructure to
+--     erase the field types. It does not: a plain annotated constructor is
+--     enough. This repro is the minimal form.
+--   * `{ key, value }` is an extremely common record shape.
+--   * It violates two non-negotiable rules at once: "if it compiles, it works"
+--     and "no runtime panic from well-typed Sky code".
+--
+-- THE NEUTRALISED TWIN
+--   Renaming the fields to `gkey`/`gvalue` — colliding with nothing in the
+--   stdlib — makes the identical program correct. That pairing is what proves
+--   the collision is the cause; it is the `collider = local` case of the
+--   `fieldset_ctor` stratum.
+--
+-- expect: accept, stdout "42"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Kv =
+    { key : String, value : String }
+
+
+mk : String -> String -> Kv
+mk k v =
+    { key = k, value = v }
+
+
+main =
+    println (mk "a" "42").value

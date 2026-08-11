@@ -3,15 +3,44 @@ module CompositeGenericsTest exposing (main, tests)
 -- Sky.Test assertions over the composite's pipeline. Touches every
 -- module in src/ so a regression anywhere in the State / Decode /
 -- Compute / Report chain shows up here.
+--
+-- ── Why the numbers below are hand-derived ───────────────────────────
+--
+-- `rust/crates/xtask/golden/35-composite-generics.stdout` used to be the
+-- ONLY witness for this example's aggregations. It FROZE anzellai/sky#173
+-- (`Dict k (List Record)` grouping losing the grouped records' fields, so
+-- every per-bucket aggregate came back `count 0 / $0.00 / topAccounts []`)
+-- because the golden was blessed from a run that agreed with the oracle —
+-- and both sides were wrong. "Both sides agree" is not evidence.
+--
+-- Every expected value in this file is therefore derived by READING
+-- `Decode.sampleCsv` and applying the rules in `Compute.classify`,
+-- `Compute.amountToCents`, `Report.summariseBucket` and `Report.formatCents`
+-- by hand. None of it is copied from program output. The derivation is
+-- recorded next to each block so a future reader can re-check it without
+-- running anything.
+--
+-- ── Accept-parity ordering (mirrors rust/crates/ty/tests/inferred_sig_snapshot.rs) ──
+--
+-- `inferred_sig_snapshot.rs` asserts the fixture type-checks clean BEFORE it
+-- pins any inferred signature, so a snapshot can never encode a broken
+-- program. `fixtureSuite` is the same guard for this suite and is listed
+-- FIRST: it proves `Decode.sampleCsv` parses into 20 fully-populated rows
+-- before any later suite pins a value computed from them. If the fixture
+-- degrades, the guard goes red on its own terms rather than letting a
+-- zeroed aggregate be pinned as "expected".
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Dict as Dict
 import Sky.Core.Maybe as Maybe
+import Sky.Core.Math as Math
 import Sky.Core.Result as Result
+import Sky.Core.Error as Error
+import Sky.Core.Json.Decode as JsonDec
 import Sky.Test as Test exposing (Test)
-import State exposing (Transaction, Bucket(..))
+import State exposing (Transaction, Bucket(..), BucketSummary)
 import Decode
 import Compute
 import Report
@@ -23,7 +52,17 @@ main =
 
 tests : List Test
 tests =
-    [ csvSuite, bucketSuite, aggregationSuite, reportSuite, encodingSuite ]
+    [ fixtureSuite
+    , csvSuite
+    , bucketSuite
+    , aggregationSuite
+    , groupedRecordSuite
+    , bucketSummarySuite
+    , reportSuite
+    , renderSuite
+    , jsonSuite
+    , encodingSuite
+    ]
 
 
 sampleRows : List Transaction
@@ -40,6 +79,161 @@ sampleRows =
 enrichedRows : List Compute.EnrichedRow
 enrichedRows =
     List.map Compute.enrich sampleRows
+
+
+report : State.Report
+report =
+    Report.buildReport "0" enrichedRows
+
+
+-- ─── Hand-derived expectations ───────────────────────────────────────
+--
+-- `Decode.sampleCsv` holds 20 rows. Applying `Compute.amountToCents`
+-- (dollars × 100, banker's-rounded at 2dp — every cell here is exact to
+-- the cent) and `Compute.classify` (regex on the lower-cased category,
+-- then sign of the amount) row by row:
+--
+--   id acct     amount    cents    category         bucket
+--    1 acme     1200.55   120055   salary           Income
+--    2 acme      -49.99    -4999   coffee           Expense (negative)
+--    3 acme    -1800.00  -180000   rent             Expense (negative)
+--    4 beta      200.00    20000   refund-purchase  Refund  (/refund/)
+--    5 beta      -15.50    -1550   grocery          Expense (negative)
+--    6 beta     3500.00   350000   salary           Income
+--    7 gamma    -220.10   -22010   utility-bill     Expense (negative)
+--    8 gamma     -99.00    -9900   coffee           Expense (negative)
+--    9 gamma     500.00    50000   transfer-in      Transfer (/^transfer/)
+--   10 delta    -450.00   -45000   rent             Expense (negative)
+--   11 delta    1100.25   110025   bonus            Income
+--   12 delta     -22.00    -2200   coffee           Expense (negative)
+--   13 epsilon    75.00     7500   refund-misc      Refund  (/refund/)
+--   14 epsilon  -310.40   -31040   utility-bill     Expense (negative)
+--   15 epsilon  2200.00   220000   salary           Income
+--   16 zeta      -12.30    -1230   coffee           Expense (negative)
+--   17 zeta      820.00    82000   bonus            Income
+--   18 zeta      -99.99    -9999   subscription     Expense (negative)
+--   19 eta     -1400.00  -140000   rent             Expense (negative)
+--   20 eta      4200.00   420000   salary           Income
+--
+-- Counts: Income 6, Expense 11, Refund 2, Transfer 1, Unknown 0.
+-- (Nothing reaches `Unknown`: every non-matching category in the fixture
+-- carries a negative amount, so it falls into the `not isPositive` arm.)
+-- Income totals: 120055 + 350000 + 110025 + 220000 + 82000 + 420000.
+incomeTotalCents : Int
+incomeTotalCents =
+    1302080
+
+
+-- Expense totals: -4999 - 180000 - 1550 - 22010 - 9900 - 45000 - 2200
+--                 - 31040 - 1230 - 9999 - 140000.
+expenseTotalCents : Int
+expenseTotalCents =
+    -447928
+
+
+-- Refund totals: 20000 + 7500. Transfer totals: 50000.
+refundTotalCents : Int
+refundTotalCents =
+    27500
+
+
+transferTotalCents : Int
+transferTotalCents =
+    50000
+
+
+-- Per-account sums over the table above. `Dict.toList` yields keys in
+-- ascending order, so the pair list is alphabetical by account:
+--   acme     120055 - 4999 - 180000       = -64944
+--   beta      20000 - 1550 + 350000       = 368450
+--   delta    -45000 + 110025 - 2200       =  62825
+--   epsilon    7500 - 31040 + 220000      = 196460
+--   eta     -140000 + 420000              = 280000
+--   gamma    -22010 - 9900 + 50000        =  18090
+--   zeta      -1230 + 82000 - 9999        =  70771
+expectedAccountTotals : List ( String, Int )
+expectedAccountTotals =
+    [ ( "acme", -64944 )
+    , ( "beta", 368450 )
+    , ( "delta", 62825 )
+    , ( "epsilon", 196460 )
+    , ( "eta", 280000 )
+    , ( "gamma", 18090 )
+    , ( "zeta", 70771 )
+    ]
+
+
+-- `Compute.countsByBucket` keys by `Compute.bucketIndex`
+-- (Income 0, Expense 1, Refund 2, Transfer 3, Unknown 4). No row reaches
+-- Unknown, so key 4 is absent entirely — it is never inserted.
+expectedBucketIdCounts : List ( Int, Int )
+expectedBucketIdCounts =
+    [ ( 0, 6 ), ( 1, 11 ), ( 2, 2 ), ( 3, 1 ) ]
+
+
+-- Sum of every account total: -64944 + 368450 + 62825 + 196460 + 280000
+--                             + 18090 + 70771 = 931652.
+grandTotalCents : Int
+grandTotalCents =
+    931652
+
+
+-- The 20 cents values sorted ascending are
+--   -180000 -140000 -45000 -31040 -22010 -9999 -9900 -4999 -2200 -1550
+--   -1230 7500 20000 50000 82000 110025 120055 220000 350000 420000
+-- `Compute.medianCents` takes `List.head (List.drop (20 // 2) sorted)`,
+-- i.e. the element at 0-based index 10 — the 11th, which is -1230.
+medianCentsExpected : Int
+medianCentsExpected =
+    -1230
+
+
+-- ─── Suites ──────────────────────────────────────────────────────────
+--
+-- Accept-parity guard. Nothing below this suite may pin a value unless the
+-- fixture itself decodes clean and keeps every field.
+fixtureSuite : Test
+fixtureSuite =
+    Test.suite
+        "Fixture accept-parity guard"
+        [ Test.test
+              "sampleCsv parses to 20 rows with no decode error"
+              (\_ ->
+                  case Decode.parseCsv Decode.sampleCsv of
+
+                      Ok xs ->
+                          Test.equal 20 (List.length xs)
+
+                      Err e ->
+                          Test.fail
+                              ("fixture must decode clean, got: "
+                                  ++ Error.toString e))
+        , Test.test
+              "no decoded row has a blank field"
+              (\_ ->
+                  Test.equal 0 (List.length (List.filter rowIsBlank sampleRows)))
+        , Test.test
+              "every enriched row still carries its transaction fields"
+              (\_ ->
+                  Test.equal
+                      20
+                      (List.length
+                          (List.filter
+                              (\r ->
+                                  String.length r.tx.account > 0
+                                      && String.length r.tx.amount
+                                      > 0
+                                      && r.tx.id
+                                      > 0)
+                              enrichedRows)))
+        ]
+
+
+rowIsBlank : Transaction -> Bool
+rowIsBlank r =
+    r.id <= 0 || String.length r.account == 0 || String.length r.amount == 0
+        || String.length r.category
+        == 0
 
 
 csvSuite : Test
@@ -88,13 +282,9 @@ bucketSuite =
                   case List.head sampleRows of
 
                       Just row ->
-                          case Compute.classify row of
-
-                              Income ->
-                                  Test.pass
-
-                              _ ->
-                                  Test.fail "salary row should be Income"
+                          Test.equal
+                              "income"
+                              (State.bucketName (Compute.classify row))
 
                       Nothing ->
                           Test.fail "no rows")
@@ -111,13 +301,9 @@ bucketSuite =
                           , timestamp = 0
                           }
                   in
-                      case Compute.classify tx of
-
-                          Expense ->
-                              Test.pass
-
-                          _ ->
-                              Test.fail "negative should be Expense")
+                      Test.equal
+                          "expense"
+                          (State.bucketName (Compute.classify tx)))
         , Test.test
               "amountToCents handles decimal correctly"
               (\_ -> Test.equal 12055 (Compute.amountToCents "120.55"))
@@ -134,6 +320,58 @@ bucketSuite =
 
                       Nothing ->
                           Test.fail "no enriched rows")
+        , Test.test
+              "every fixture row lands in its derived bucket"
+              (\_ ->
+                  Test.equal
+                      [ "income"
+                      , "expense"
+                      , "expense"
+                      , "refund"
+                      , "expense"
+                      , "income"
+                      , "expense"
+                      , "expense"
+                      , "transfer"
+                      , "expense"
+                      , "income"
+                      , "expense"
+                      , "refund"
+                      , "expense"
+                      , "income"
+                      , "expense"
+                      , "income"
+                      , "expense"
+                      , "expense"
+                      , "income"
+                      ]
+                      (List.map (\r -> State.bucketName r.bucket) enrichedRows))
+        , Test.test
+              "every fixture row converts to its derived cents"
+              (\_ ->
+                  Test.equal
+                      [ 120055
+                      , -4999
+                      , -180000
+                      , 20000
+                      , -1550
+                      , 350000
+                      , -22010
+                      , -9900
+                      , 50000
+                      , -45000
+                      , 110025
+                      , -2200
+                      , 7500
+                      , -31040
+                      , 220000
+                      , -1230
+                      , 82000
+                      , -9999
+                      , -140000
+                      , 420000
+                      ]
+                      (List.map (\r -> r.amountCents) enrichedRows))
         ]
 
 
@@ -162,12 +400,30 @@ aggregationSuite =
                       7
                       (List.length (Compute.uniqueAccountList enrichedRows)))
         , Test.test
+              "uniqueCategoryList dedup count"
+              (\_ ->
+                  Test.equal
+                      10
+                      (List.length (Compute.uniqueCategoryList enrichedRows)))
+        , Test.test
               "accountTotals dict size matches accounts"
               (\_ ->
                   Test.equal
                       7
                       (List.length
                           (Dict.keys (Compute.accountTotals enrichedRows))))
+        , Test.test
+              "accountTotals sums each account's cents"
+              (\_ ->
+                  Test.equal
+                      expectedAccountTotals
+                      (Dict.toList (Compute.accountTotals enrichedRows)))
+        , Test.test
+              "countsByBucket counts each bucket index"
+              (\_ ->
+                  Test.equal
+                      expectedBucketIdCounts
+                      (Dict.toList (Compute.countsByBucket enrichedRows)))
         , Test.test
               "totalCents is the integer sum"
               (\_ ->
@@ -179,6 +435,198 @@ aggregationSuite =
                               enrichedRows
                   in
                       Test.equal manual (Compute.totalCents enrichedRows))
+        , Test.test
+              "totalCents matches the hand-summed table"
+              (\_ -> Test.equal grandTotalCents (Compute.totalCents enrichedRows))
+        , Test.test
+              "averageCents is the grand total over 20 rows"
+              (\_ ->
+                  -- 931652 / 20 = 46582.6 exactly in the reals, so IEEE
+                  -- division and the decimal literal round to the same double.
+                  Test.equal 46582.6 (Compute.averageCents enrichedRows))
+        , Test.test
+              "medianCents picks the 11th smallest value"
+              (\_ ->
+                  Test.equal
+                      medianCentsExpected
+                      (Compute.medianCents enrichedRows))
+        , Test.test
+              "maxCents is row 20's salary"
+              (\_ -> Test.equal 420000 (Compute.maxCents enrichedRows))
+        , Test.test
+              "minCents is row 3's rent"
+              (\_ -> Test.equal (-180000) (Compute.minCents enrichedRows))
+        ]
+
+
+-- ─── The #173 shape, asserted directly ───────────────────────────────
+--
+-- `Compute.bucketsByName` / `bucketsByIndex` build `Dict k (List EnrichedRow)`
+-- by `Dict.insert key (row :: existing)`. #173 was the grouped RECORDS coming
+-- back with their fields dropped, which made the group non-empty but every
+-- field zero. Counting the group is therefore not enough: these assertions
+-- also re-sum `amountCents` and re-read `tx.account` THROUGH the Dict, so a
+-- field-loss regression fails here even if the lengths survive.
+--
+-- `List.foldl` with `row :: existing` reverses input order, so each group is
+-- in descending row id: the income group heads on row 20 (eta, 420000).
+groupedRecordSuite : Test
+groupedRecordSuite =
+    Test.suite
+        "Dict-grouped records keep their fields (#173)"
+        [ Test.test
+              "income group holds 6 rows"
+              (\_ -> Test.equal 6 (List.length (groupByName "income")))
+        , Test.test
+              "expense group holds 11 rows"
+              (\_ -> Test.equal 11 (List.length (groupByName "expense")))
+        , Test.test
+              "refund group holds 2 rows"
+              (\_ -> Test.equal 2 (List.length (groupByName "refund")))
+        , Test.test
+              "transfer group holds 1 row"
+              (\_ -> Test.equal 1 (List.length (groupByName "transfer")))
+        , Test.test
+              "unknown key is never inserted"
+              (\_ -> Test.equal 0 (List.length (groupByName "unknown")))
+        , Test.test
+              "income group re-sums to its derived total through the Dict"
+              (\_ ->
+                  Test.equal incomeTotalCents (sumCents (groupByName "income")))
+        , Test.test
+              "expense group re-sums to its derived total through the Dict"
+              (\_ ->
+                  Test.equal
+                      expenseTotalCents
+                      (sumCents (groupByName "expense")))
+        , Test.test
+              "refund group re-sums to its derived total through the Dict"
+              (\_ ->
+                  Test.equal refundTotalCents (sumCents (groupByName "refund")))
+        , Test.test
+              "transfer group re-sums to its derived total through the Dict"
+              (\_ ->
+                  Test.equal
+                      transferTotalCents
+                      (sumCents (groupByName "transfer")))
+        , Test.test
+              "grouped rows keep their nested tx.account"
+              (\_ ->
+                  Test.equal
+                      [ "eta", "zeta", "epsilon", "delta", "beta", "acme" ]
+                      (List.map (\r -> r.tx.account) (groupByName "income")))
+        , Test.test
+              "grouped rows keep their amountCents in fold order"
+              (\_ ->
+                  Test.equal
+                      [ 420000, 82000, 220000, 110025, 350000, 120055 ]
+                      (List.map (\r -> r.amountCents) (groupByName "income")))
+        , Test.test
+              "Int-keyed income group holds 6 rows"
+              (\_ -> Test.equal 6 (List.length (groupById 0)))
+        , Test.test
+              "Int-keyed expense group holds 11 rows"
+              (\_ -> Test.equal 11 (List.length (groupById 1)))
+        , Test.test
+              "Int-keyed unknown key is never inserted"
+              (\_ -> Test.equal 0 (List.length (groupById 4)))
+        , Test.test
+              "Int-keyed income group re-sums through the Dict"
+              (\_ -> Test.equal incomeTotalCents (sumCents (groupById 0)))
+        ]
+
+
+groupByName : String -> List Compute.EnrichedRow
+groupByName key =
+    Maybe.withDefault [] (Dict.get key (Compute.bucketsByName enrichedRows))
+
+
+groupById : Int -> List Compute.EnrichedRow
+groupById key =
+    Maybe.withDefault [] (Dict.get key (Compute.bucketsByIndex enrichedRows))
+
+
+sumCents : List Compute.EnrichedRow -> Int
+sumCents rows =
+    List.foldl (\r acc -> acc + r.amountCents) 0 rows
+
+
+-- ─── Per-bucket summaries ────────────────────────────────────────────
+--
+-- `Report.summariseBucket` reads the group out of the same Dict, so these
+-- pin the values the stdout golden's `buckets[]` block used to be the sole
+-- witness for.
+--
+-- `topAccounts` is `rows |> map .tx.account |> uniqueKeepingFirst |> take 3`
+-- over the fold-reversed group:
+--   income   eta zeta epsilon delta beta acme          → eta, zeta, epsilon
+--   expense  eta zeta zeta epsilon delta delta gamma
+--            gamma beta acme acme                      → eta, zeta, epsilon
+--   refund   epsilon beta                              → epsilon, beta
+--   transfer gamma                                     → gamma
+--   unknown  (empty)                                   → []
+bucketSummarySuite : Test
+bucketSummarySuite =
+    Test.suite
+        "Report.summariseBucket"
+        [ Test.test
+              "summaries follow State.allBuckets order"
+              (\_ ->
+                  Test.equal
+                      [ "income", "expense", "refund", "transfer", "unknown" ]
+                      (List.map
+                          (\bs -> State.bucketName bs.bucket)
+                          report.buckets))
+        , Test.test
+              "counts per bucket"
+              (\_ ->
+                  Test.equal
+                      [ 6, 11, 2, 1, 0 ]
+                      (List.map (\bs -> bs.count) report.buckets))
+        , Test.test
+              "totals per bucket"
+              (\_ ->
+                  Test.equal
+                      [ incomeTotalCents
+                      , expenseTotalCents
+                      , refundTotalCents
+                      , transferTotalCents
+                      , 0
+                      ]
+                      (List.map (\bs -> bs.totalCents) report.buckets))
+        , Test.test
+              "topAccounts per bucket"
+              (\_ ->
+                  Test.equal
+                      [ [ "eta", "zeta", "epsilon" ]
+                      , [ "eta", "zeta", "epsilon" ]
+                      , [ "epsilon", "beta" ]
+                      , [ "gamma" ]
+                      , []
+                      ]
+                      (List.map (\bs -> bs.topAccounts) report.buckets))
+        , Test.test
+              "exactly-representable averages are exact"
+              (\_ ->
+                  -- refund 27500/2 = 13750, transfer 50000/1 = 50000 and the
+                  -- empty bucket's 0.0 short-circuit are all exact in binary
+                  -- floating point, so they can be pinned as literals.
+                  Test.equal
+                      [ 13750.0, 50000.0, 0.0 ]
+                      (List.map
+                          (\bs -> bs.averageCents)
+                          (List.drop 2 report.buckets)))
+        , Test.test
+              "repeating averages round to their derived cents"
+              (\_ ->
+                  -- 1302080/6 = 217013.33… → 217013;
+                  -- -447928/11 = -40720.72… → -40721 (Math.round is
+                  -- half-away-from-zero).
+                  Test.equal
+                      [ 217013, -40721 ]
+                      (List.map
+                          (\bs -> Math.round bs.averageCents)
+                          (List.take 2 report.buckets)))
         ]
 
 
@@ -188,37 +636,244 @@ reportSuite =
         "Report"
         [ Test.test
               "report rowCount matches input"
-              (\_ ->
-                  let
-                      r = Report.buildReport "0" enrichedRows
-                  in
-                      Test.equal 20 r.rowCount)
+              (\_ -> Test.equal 20 report.rowCount)
         , Test.test
               "report has 5 buckets"
+              (\_ -> Test.equal 5 (List.length report.buckets))
+        , Test.test
+              "report uniqueAccounts"
+              (\_ -> Test.equal 7 report.uniqueAccounts)
+        , Test.test
+              "report uniqueCategories"
               (\_ ->
-                  let
-                      r = Report.buildReport "0" enrichedRows
-                  in
-                      Test.equal 5 (List.length r.buckets))
+                  -- salary, coffee, rent, refund-purchase, grocery,
+                  -- utility-bill, transfer-in, bonus, refund-misc,
+                  -- subscription = 10 distinct lower-cased categories.
+                  Test.equal 10 report.uniqueCategories)
+        , Test.test
+              "report totalCents"
+              (\_ -> Test.equal grandTotalCents report.totalCents)
+        , Test.test
+              "report averageCents"
+              (\_ -> Test.equal 46582.6 report.averageCents)
+        , Test.test
+              "report medianCents"
+              (\_ -> Test.equal medianCentsExpected report.medianCents)
+        , Test.test "report maxCents" (\_ -> Test.equal 420000 report.maxCents)
+        , Test.test
+              "report minCents"
+              (\_ -> Test.equal (-180000) report.minCents)
+        , Test.test
+              "report byAccount pairs"
+              (\_ -> Test.equal expectedAccountTotals report.byAccount)
+        , Test.test
+              "report byCategoryId pairs"
+              (\_ -> Test.equal expectedBucketIdCounts report.byCategoryId)
         , Test.test
               "encodeReport is valid-ish JSON"
               (\_ ->
-                  let
-                      r = Report.buildReport "now" enrichedRows
-                      json = Report.encodeReport r
-                  in
-                      Test.isTrue
-                          (String.contains "\"rowCount\"" json
-                              && String.contains "\"buckets\"" json))
+                  Test.isTrue
+                      (String.contains "\"rowCount\"" reportJson
+                          && String.contains "\"buckets\"" reportJson))
+        ]
+
+
+-- ─── Rendered text ───────────────────────────────────────────────────
+--
+-- `Report.formatCents` prints sign ++ "$" ++ (abs // 100) ++ "." ++ 2-digit
+-- remainder; `formatFloat` rounds first. `padString` right-aligns to the
+-- given width, `padStringRight` left-aligns. Composing those by hand over
+-- the derived aggregates gives the exact lines below — the same lines the
+-- stdout golden carries, but arrived at from the source rather than copied
+-- from a run.
+--
+--   formatBucketLine = padStringRight 12 name ++ " " ++ padString 4 count
+--                      ++ " " ++ padString 12 total ++ " "
+--                      ++ padString 12 avg ++ "  " ++ join "," topAccounts
+renderSuite : Test
+renderSuite =
+    Test.suite
+        "Report.renderText"
+        [ Test.test
+              "income bucket line"
+              (\_ ->
+                  Test.equal
+                      "income          6    $13020.80     $2170.13  eta,zeta,epsilon"
+                      (bucketLineAt 0))
+        , Test.test
+              "expense bucket line"
+              (\_ ->
+                  Test.equal
+                      "expense        11    -$4479.28     -$407.21  eta,zeta,epsilon"
+                      (bucketLineAt 1))
+        , Test.test
+              "refund bucket line"
+              (\_ ->
+                  Test.equal
+                      "refund          2      $275.00      $137.50  epsilon,beta"
+                      (bucketLineAt 2))
+        , Test.test
+              "transfer bucket line"
+              (\_ ->
+                  Test.equal
+                      "transfer        1      $500.00      $500.00  gamma"
+                      (bucketLineAt 3))
+        , Test.test
+              "unknown bucket line is the only zero row"
+              (\_ ->
+                  Test.equal
+                      "unknown         0        $0.00        $0.00  "
+                      (bucketLineAt 4))
+        , Test.test
+              "account line formatting"
+              (\_ ->
+                  Test.equal
+                      "acme             -$649.44"
+                      (Report.formatAccountLine ( "acme", -64944 )))
+        , Test.test
+              "meta line"
+              (\_ ->
+                  Test.isTrue
+                      (String.contains
+                          "Rows: 20  Accounts: 7  Categories: 10"
+                          reportText))
+        , Test.test
+              "totals line"
+              (\_ ->
+                  -- 931652 → $9316.52; round(46582.6) = 46583 → $465.83;
+                  -- -1230 → -$12.30; 420000 → $4200.00; -180000 → -$1800.00.
+                  Test.isTrue
+                      (String.contains
+                          "Total: $9316.52  Avg: $465.83  Median: -$12.30  Max: $4200.00  Min: -$1800.00"
+                          reportText))
         , Test.test
               "renderText contains the divider"
-              (\_ ->
-                  let
-                      r = Report.buildReport "now" enrichedRows
-                      txt = Report.renderText r
-                  in
-                      Test.isTrue (String.contains "------" txt))
+              (\_ -> Test.isTrue (String.contains "------" reportText))
         ]
+
+
+reportText : String
+reportText =
+    Report.renderText report
+
+
+bucketLineAt : Int -> String
+bucketLineAt i =
+    Maybe.withDefault
+        ""
+        (List.head
+            (List.drop i (List.map Report.formatBucketLine report.buckets)))
+
+
+-- ─── JSON payload ────────────────────────────────────────────────────
+--
+-- Decoded back rather than string-matched, so these assert the VALUES the
+-- encoder emitted and stay independent of `JsonEnc.encode`'s whitespace.
+jsonSuite : Test
+jsonSuite =
+    Test.suite
+        "Report.encodeReport"
+        [ Test.test
+              "rowCount round-trips"
+              (\_ -> Test.equal 20 (jsonInt "rowCount"))
+        , Test.test
+              "uniqueAccounts round-trips"
+              (\_ -> Test.equal 7 (jsonInt "uniqueAccounts"))
+        , Test.test
+              "uniqueCategories round-trips"
+              (\_ -> Test.equal 10 (jsonInt "uniqueCategories"))
+        , Test.test
+              "totalCents round-trips"
+              (\_ -> Test.equal grandTotalCents (jsonInt "totalCents"))
+        , Test.test
+              "medianCents round-trips"
+              (\_ -> Test.equal medianCentsExpected (jsonInt "medianCents"))
+        , Test.test
+              "maxCents round-trips"
+              (\_ -> Test.equal 420000 (jsonInt "maxCents"))
+        , Test.test
+              "minCents round-trips"
+              (\_ -> Test.equal (-180000) (jsonInt "minCents"))
+        , Test.test
+              "bucket counts round-trip"
+              (\_ ->
+                  Test.equal
+                      (Ok [ 6, 11, 2, 1, 0 ])
+                      (JsonDec.decodeString
+                          (JsonDec.field
+                              "buckets"
+                              (JsonDec.list (JsonDec.field "count" JsonDec.int)))
+                          reportJson))
+        , Test.test
+              "bucket totals round-trip"
+              (\_ ->
+                  Test.equal
+                      (Ok
+                          [ incomeTotalCents
+                          , expenseTotalCents
+                          , refundTotalCents
+                          , transferTotalCents
+                          , 0
+                          ])
+                      (JsonDec.decodeString
+                          (JsonDec.field
+                              "buckets"
+                              (JsonDec.list
+                                  (JsonDec.field "totalCents" JsonDec.int)))
+                          reportJson))
+        , Test.test
+              "bucket topAccounts round-trip"
+              (\_ ->
+                  Test.equal
+                      (Ok
+                          [ [ "eta", "zeta", "epsilon" ]
+                          , [ "eta", "zeta", "epsilon" ]
+                          , [ "epsilon", "beta" ]
+                          , [ "gamma" ]
+                          , []
+                          ])
+                      (JsonDec.decodeString
+                          (JsonDec.field
+                              "buckets"
+                              (JsonDec.list
+                                  (JsonDec.field
+                                      "topAccounts"
+                                      (JsonDec.list JsonDec.string))))
+                          reportJson))
+        , Test.test
+              "byAccount totals round-trip"
+              (\_ ->
+                  Test.equal
+                      (Ok [ -64944, 368450, 62825, 196460, 280000, 18090, 70771 ])
+                      (JsonDec.decodeString
+                          (JsonDec.field
+                              "byAccount"
+                              (JsonDec.list
+                                  (JsonDec.field "totalCents" JsonDec.int)))
+                          reportJson))
+        , Test.test
+              "byBucketId counts round-trip"
+              (\_ ->
+                  Test.equal
+                      (Ok [ 6, 11, 2, 1 ])
+                      (JsonDec.decodeString
+                          (JsonDec.field
+                              "byBucketId"
+                              (JsonDec.list (JsonDec.field "count" JsonDec.int)))
+                          reportJson))
+        ]
+
+
+reportJson : String
+reportJson =
+    Report.encodeReport report
+
+
+jsonInt : String -> Int
+jsonInt key =
+    Result.withDefault
+        (-1)
+        (JsonDec.decodeString (JsonDec.field key JsonDec.int) reportJson)
 
 
 encodingSuite : Test

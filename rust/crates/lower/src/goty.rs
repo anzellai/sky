@@ -269,8 +269,76 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
 ///
 /// A `Ty::Var` template slot is a WILDCARD (parametric alias — the concrete arg
 /// is recovered afterwards by `instantiate_structural`), so this never regresses
-/// the `Cfg msg` structural path. When there is a single candidate (the common
-/// case) or none matches, returns the first — preserving prior behaviour exactly.
+/// the `Cfg msg` structural path.
+///
+/// # Why a *guess* is not allowed here
+///
+/// This used to end in `.or_else(|| candidates.first())`, and short-circuited to
+/// `candidates.first()` whenever there was exactly one candidate — both without
+/// any type check. Either path could hand back a nominal the record's own field
+/// types CONTRADICT, and the lowerer then emitted a coercion into that nominal's
+/// field types. That is the `{ key, value }` defect:
+///
+/// ```elm
+/// type alias Kv = { key : String, value : String }
+/// mk : String -> String -> Kv
+/// mk k v = { key = k, value = v }        -- compiles; panics at runtime
+/// ```
+///
+/// `Std.Analytics.EventProp = { key : String, value : PropValue }` is in every
+/// compilation (no import needed), so it shares the `[key, value]` name key. The
+/// lowerer's typed table is deliberately NOT seeded from annotations
+/// (`Typer::body_types` vs `body_types_annotated` — codegen byte-stability), so
+/// a constructor's param-valued fields read back as unsolved `Ty::Var`s. Neither
+/// candidate then compared equal, the fallback picked the stdlib one by
+/// registration order, and `value` was coerced into an ADT slot:
+/// `rt.Coerce: expected rt.SkyADT, got string`.
+///
+/// The contract now: **resolve only to a nominal the field types actually
+/// support, and only when they single one out.** Three tiers per candidate —
+///
+/// * `Mismatch` — a field's concrete type definitely differs from the template's.
+///   The candidate is not viable at all; it can never be the right nominal.
+/// * `Unknown` — the field's concrete type carries no information (it erases to
+///   `any`, or is an unresolved `number`/`comparable` super). It neither
+///   confirms nor refutes.
+/// * otherwise the field matches (or the template slot is a parametric wildcard).
+///
+/// A candidate with any `Mismatch` is dropped. Among the survivors, one with no
+/// `Unknown` at all is a determined match and wins (ties there are Go-shape
+/// identical, so the first is taken — exactly the old `find` behaviour). If only
+/// `Unknown`-bearing survivors remain, a LONE one still resolves — that is the
+/// ordinary structural→nominal path every example depends on — but two or more
+/// are genuinely indistinguishable, and `None` is returned so the record keeps
+/// its structural form instead of being guessed onto one of them.
+/// Does `t` contain anything the checker has not pinned down — a free type var,
+/// an unresolved super (`number` / `comparable` / …), or an error node — at ANY
+/// depth?
+///
+/// A type carrying one of these cannot refute a candidate alias: `Maybe t0`
+/// against a declared `Maybe String` is under-determined, not contradictory. A
+/// var that the caller HAS bound (a parametric alias instantiation) is resolved
+/// and does not count.
+fn has_unresolved(t: &Ty, params: &HashMap<Name, GoTy>) -> bool {
+    match t {
+        Ty::Var(n) => !params.contains_key(n),
+        Ty::Error => true,
+        Ty::App(n, args) => {
+            matches!(
+                n.as_str(),
+                "number" | "comparable" | "appendable" | "compappend"
+            ) || args.iter().any(|a| has_unresolved(a, params))
+        }
+        Ty::Fun(a, b) => has_unresolved(a, params) || has_unresolved(b, params),
+        Ty::Tuple(xs) => xs.iter().any(|x| has_unresolved(x, params)),
+        // An OPEN row is itself missing information about the rest of the record.
+        Ty::Record(fs, ext) => {
+            ext.is_some() || fs.iter().any(|(_, ft)| has_unresolved(ft, params))
+        }
+        Ty::Unit => false,
+    }
+}
+
 fn select_record_candidate<'a>(
     candidates: &'a [String],
     fields: &[(Name, Ty)],
@@ -278,27 +346,70 @@ fn select_record_candidate<'a>(
     cur_mod: Option<&str>,
     params: &HashMap<Name, GoTy>,
 ) -> Option<&'a String> {
-    if candidates.len() <= 1 {
-        return candidates.first();
-    }
     let concrete: HashMap<&str, &Ty> = fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
-    let compatible = |go_name: &str| -> bool {
-        let Some(templates) = env.record_templates.get(go_name) else {
-            return false;
-        };
-        templates.iter().all(|(fname, tmpl)| match concrete.get(fname.as_str()) {
-            None => false,
-            // parametric slot → wildcard (resolved later by instantiate_structural)
-            Some(_) if matches!(tmpl, Ty::Var(_)) => true,
-            Some(ct) => {
-                go_ty(tmpl, env, cur_mod, params) == go_ty(ct, env, cur_mod, params)
-            }
-        })
+
+    // Does this concrete field type carry no usable information — anywhere?
+    //
+    // The check must be RECURSIVE, not just top-level. `Codec.auto { note =
+    // Nothing }` infers the field as `Maybe t0` where the alias declares
+    // `Maybe String`; `items = []` infers `List t0` against `List Int`. Those
+    // lower to different Go types, but they do not CONTRADICT the template —
+    // they are simply not resolved yet. Treating them as refutations refused the
+    // alias, erased the record, and `Codec.auto` then saw a bare `interface{}`.
+    let uninformative = |ct: &Ty| -> bool {
+        has_unresolved(ct, params) || go_ty(ct, env, cur_mod, params) == GoTy::Any
     };
-    candidates
+
+    // (viable, unknown_count) — `None` when the candidate is refuted outright.
+    let fit = |go_name: &str| -> Option<usize> {
+        // No registered template → nothing to compare against, so nothing can be
+        // refuted either. Count it as wholly undetermined rather than dropping
+        // it: a lone such candidate still resolves (the pre-existing behaviour),
+        // while two of them are correctly reported as indistinguishable.
+        let Some(templates) = env.record_templates.get(go_name) else {
+            return Some(1);
+        };
+        let mut unknown = 0usize;
+        for (fname, tmpl) in templates {
+            let Some(ct) = concrete.get(fname.as_str()) else {
+                return None; // template field absent from the record → not this alias
+            };
+            // parametric slot → wildcard (resolved later by instantiate_structural)
+            if matches!(tmpl, Ty::Var(_)) {
+                continue;
+            }
+            let tg = go_ty(tmpl, env, cur_mod, params);
+            // an `any`-typed template slot cannot refute anything
+            if tg == GoTy::Any {
+                continue;
+            }
+            if uninformative(ct) {
+                unknown += 1;
+                continue;
+            }
+            if go_ty(ct, env, cur_mod, params) != tg {
+                return None; // definite contradiction
+            }
+        }
+        Some(unknown)
+    };
+
+    let viable: Vec<(&String, usize)> = candidates
         .iter()
-        .find(|c| compatible(c))
-        .or_else(|| candidates.first())
+        .filter_map(|c| fit(c).map(|u| (c, u)))
+        .collect();
+
+    // A determined match — every field confirmed — wins outright.
+    if let Some((c, _)) = viable.iter().find(|(_, u)| *u == 0) {
+        return Some(c);
+    }
+    // Otherwise only partially-determined survivors remain. One is the ordinary
+    // structural→nominal case; several are indistinguishable and must not be
+    // guessed between.
+    match viable.as_slice() {
+        [(c, _)] => Some(c),
+        _ => None,
+    }
 }
 
 fn instantiate_structural(

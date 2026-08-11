@@ -1,0 +1,189 @@
+# Layer 2 corpus — the membership authority.
+#
+# CI/test-architecture v2 §6. Rationale and the decisions v2 leaves open are
+# recorded in docs/ci-layer2-members.md.
+#
+# THIS FILE IS THE ONLY MEMBERSHIP AUTHORITY. No gate calls `read_dir` on
+# `apps/` (v2 §3.1) — discovery-by-listing has already produced two live defects
+# in this repo: `39-hub-demo` invisible to all six gates, and the reject-face
+# discovery divergence. A member that is not declared here is not in the corpus.
+#
+# `gate` names a row in rust/crates/xtask/src/harness/registry.rs. `status`:
+#   gated   — the member exists and a registered gate asserts on it
+#   pending — specified by v2 §6 but not yet built; NOT counted as coverage
+
+[layer2]
+members = 8
+gated = 8
+# Gates registered for these members, in registry order:
+#   apps-ledger (T1) · apps-ledger-postgres (T3) · apps-dispatch (T1) ·
+#   apps-dispatch-destructive (T1) · apps-dispatch-postgres (T3) ·
+#   apps-fleet (T3) · apps-relay (T1) · apps-fieldbook (T2) ·
+#   apps-ffi-scale (T4) · apps-bundled (T1) · cli-verbs (T1)
+gates = 11
+
+# ---------------------------------------------------------------------------
+# A — Ledger. Sky.Live full-stack, the Postgres arm.
+# ---------------------------------------------------------------------------
+[[member]]
+id = "A"
+name = "ledger"
+path = "apps/ledger"
+kind = "live-fullstack"
+status = "gated"
+gate = "apps-ledger"
+gate_postgres = "apps-ledger-postgres"
+tier = "T1"
+tier_postgres = "T3"
+owns = [
+    "Sky.Live sessions / CSRF / SSE",
+    "Std.Auth password + session TTL",
+    "Std.Db.Store + Std.Codec",
+    "Std.Money / Std.Decimal allocation residue",
+    "committed migrations/",
+    "the Postgres arm — zero coverage before this member",
+]
+
+# ---------------------------------------------------------------------------
+# H — Dispatch. The five stdlib modules nothing imported.
+#
+# Added 2026-08-10 to close the largest measured coverage gap: `Std.Jobs`,
+# `Std.Db.Schema`, `Std.Db.Migrate`, `Std.Markdown` and `Std.Email` each had
+# ZERO importers anywhere in the repo, so no test had ever executed them — and
+# the consequence was that the file-based migration verbs (`sky db init`,
+# `migrate --gen`, `migrate`, `status`, `seed`) were exercised by no project.
+#
+# Sky.Live rather than Sky.Http.Server on purpose: Sky.Live's SIGTERM path is
+# the only one that calls `JobsShutdown()` (runtime-go/rt/live.go), so it is the
+# shape a jobs-bearing app should actually take today.
+# ---------------------------------------------------------------------------
+[[member]]
+id = "H"
+name = "dispatch"
+path = "apps/dispatch"
+kind = "jobs-and-migrations"
+status = "gated"
+gate = "apps-dispatch"
+gate_destructive = "apps-dispatch-destructive"
+gate_postgres = "apps-dispatch-postgres"
+tier = "T1"
+tier_postgres = "T3"
+owns = [
+    "Std.Jobs — define / enqueue / enqueueIn / cancel, a real worker, a real failure",
+    "Std.Db.Schema — typed dialect-safe DDL + the toProject bridge",
+    "Std.Db.Migrate — committed db/migrations/ applied by `sky db migrate`",
+    "the file-based migration verbs (init / --gen / migrate / status / seed)",
+    "destructive-diff quarantine (drop is never silently applied)",
+    "Std.Markdown — render, including escaping of untrusted input",
+    "Std.Email — the whole builder chain",
+]
+
+# ---------------------------------------------------------------------------
+# B — Relay. Headless HTTP/SSE/WebSocket gateway.
+# ---------------------------------------------------------------------------
+[[member]]
+id = "B"
+name = "relay"
+path = "apps/relay"
+kind = "headless-http"
+status = "gated"
+gate = "apps-relay"
+tier = "T1"
+owns = [
+    "Sky.Http.Middleware",
+    "Sky.Http.RateLimit",
+    "Sky.Http.Server.Stream (SSE)",
+    "Sky.Http.Server.WebSocket",
+    "both kernel-alias arity shapes (variadic + non-variadic)",
+]
+
+# ---------------------------------------------------------------------------
+# C — Fieldbook. One Std.Ui view, several backends.
+# ---------------------------------------------------------------------------
+[[member]]
+id = "C"
+name = "fieldbook"
+path = "apps/fieldbook"
+kind = "ui-multibackend"
+status = "gated"
+gate = "apps-fieldbook"
+tier = "T2"
+owns = [
+    "cross-backend Std.Ui structural parity (Live / Tui / Webview)",
+    "Std.Ui.Events",
+]
+
+# ---------------------------------------------------------------------------
+# D — Storefront. Go FFI at 76k-symbol scale.
+#
+# Not built as new source. `examples/13-skyshop` IS the 76k-symbol benchmark
+# this member is specified as the successor to, and it cannot build without a
+# network fetch (it declares an external Sky package and refuses until
+# `sky install` has run). That is the T4 assignment justifying itself.
+# ---------------------------------------------------------------------------
+[[member]]
+id = "D"
+name = "storefront"
+path = "examples/13-skyshop"
+kind = "ffi-at-scale"
+status = "gated"
+gate = "apps-ffi-scale"
+tier = "T4"
+owns = [
+    "76k-symbol Go FFI",
+    "sky install / .skydeps / external Sky package",
+    "the LSP real-codebase corpus",
+]
+
+# ---------------------------------------------------------------------------
+# E — Fleet. A SCENARIO over Ledger, deliberately not a directory: a scenario
+# over the real app cannot rot into a mock, which is what `39-hub-demo` did.
+# ---------------------------------------------------------------------------
+[[member]]
+id = "E"
+name = "fleet"
+path = "apps/ledger"
+kind = "topology-scenario"
+status = "gated"
+gate = "apps-fleet"
+tier = "T3"
+owns = [
+    "multi-replica over one shared session store",
+    "cross-instance pub/sub",
+    "sticky sessions",
+    "ENV=production gate",
+]
+
+# ---------------------------------------------------------------------------
+# F — The Sky applications shipped inside the compiler. Membership is by this
+# entry, not by location: they stay where they are built from.
+# ---------------------------------------------------------------------------
+[[member]]
+id = "F"
+name = "bundled"
+path = "sky-bundled"
+kind = "shipped-compiler-source"
+status = "gated"
+gate = "apps-bundled"
+tier = "T1"
+owns = [
+    "sky-bundled/console — 5,746 lines linked into every emitted binary",
+    "sky-bundled/doc — backs `sky doc --serve`",
+]
+
+# ---------------------------------------------------------------------------
+# G — The CLI verbs. Flow tests, not an app: making a project responsible for
+# `sky doctor` couples a verb's coverage to that app's build health (v2 §6).
+# ---------------------------------------------------------------------------
+[[member]]
+id = "G"
+name = "cli-verbs"
+path = "rust/crates/sky/tests"
+kind = "flow-tests"
+status = "gated"
+gate = "cli-verbs"
+tier = "T1"
+owns = [
+    "init", "clean", "watch", "db dispatch + init",
+    "install", "update", "upgrade", "unknown-verb dispatch",
+]

@@ -176,6 +176,162 @@ pub fn resolve(db: &dyn SkyDb, module: ModuleId) -> ResolveResult {
     r.result
 }
 
+// ---------------------------------------------------------------------------
+// Unqualified-name precedence (doc 05 §6b) — the ambiguity rule
+//
+// Before this existed, every binding of an unqualified name went into one flat
+// `vars` / `ctors` map with a plain `.insert()`, so a name bound by two imports
+// silently resolved to whichever import came LAST in the file. Two byte-identical
+// programs differing only in the ORDER of two import lines computed different
+// values, with no diagnostic either way (`corpus/repro/ambiguous-exposing-all/`).
+// Reordering imports is something a formatter, a merge, or an added import does
+// routinely, so "last wins" turns a difference that must not matter into a
+// different program — the #164 family.
+//
+// The fix is a PRECEDENCE LATTICE plus a use-site ambiguity error. Every binding
+// records which layer it entered scope through; a name bound in several layers
+// resolves to the highest one, deterministically and independently of import
+// order. Only when the WINNING layer holds two DIFFERENT definitions is the name
+// ambiguous — and that is reported at the USE SITE, never at the import.
+// ---------------------------------------------------------------------------
+
+/// Precedence layer of an unqualified binding. Higher wins outright, with no
+/// diagnostic; a tie inside the winning layer is the ambiguity error.
+///
+/// The layering is what makes the rule non-breaking. A naive "bound twice =
+/// error" rule rejects working programs today: `import Sky.Core.Prelude exposing
+/// (..)` together with `import Sky.Core.Math exposing (..)` already binds `abs` /
+/// `min` / `max` / `sqrt` twice, and real examples do exactly that. Prelude sits
+/// in [`Ambient`](BindLayer::Ambient), so an explicit import shadows it silently
+/// — which is both what happens today and what Elm does with its implicit
+/// `Basics`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum BindLayer {
+    /// Unconditional builtins (`BUILTIN_VARS` / `BUILTIN_CTORS`) and the
+    /// autoloaded Prelude ([`AMBIENT_IMPORTS`]). The user did not choose these:
+    /// `sky init`'s templates emit `import Sky.Core.Prelude exposing (..)`
+    /// unconditionally and AGENTS.md documents the module as autoloaded, so its
+    /// presence is not an authorial claim on the name and must never make an
+    /// explicit import ambiguous.
+    Ambient = 0,
+    /// `import M exposing (..)` — a BULK claim on whatever `M` happens to export
+    /// today. Two of these claiming one name is the defect this rule closes.
+    Open = 1,
+    /// `import M exposing (name)` — the author named this binding specifically.
+    /// A more precise claim than `(..)`, so it wins over one; two explicit lists
+    /// naming the same thing are equally deliberate and stay ambiguous.
+    Explicit = 2,
+    /// Defined in this module. Always wins — a local shadowing an import is
+    /// long-standing legal Sky (doc 05 C7) and stays legal, silently.
+    Local = 3,
+}
+
+/// Imports whose bindings enter at [`BindLayer::Ambient`] — see the enum.
+///
+/// Both spellings of the prelude are listed because `kernel::KERNEL_MODULES`
+/// maps them to the SAME pseudo-module (`Basics`). Keying ambient-ness on the
+/// path alone would otherwise make `import Sky.Core.Basics exposing (..)` +
+/// `import Sky.Core.Math exposing (..)` ambiguous on `abs` while the
+/// `Sky.Core.Prelude` spelling of the identical program compiled — the layer a
+/// binding lands in must not depend on which alias of one module was written.
+const AMBIENT_IMPORTS: &[&str] = &["Sky.Core.Prelude", "Sky.Core.Basics"];
+
+/// One binding of one unqualified name, with the provenance an ambiguity error
+/// needs: which layer it came in through, which module it came from, and the
+/// qualifier that would disambiguate it at a use site.
+#[derive(Clone)]
+struct Origin {
+    layer: BindLayer,
+    /// The import path as written (`Std.Html.Attributes`) — what the error names.
+    module: String,
+    /// The qualifier a use site can write to select THIS binding (`Attr`, `Html`
+    /// …). `None` when the import binds no qualifier (auto-qualifier suppressed
+    /// by explicit-alias-wins, doc 05 §6), in which case the error tells the user
+    /// to add an alias instead of offering a qualified form that would not
+    /// compile.
+    qualifier: Option<String>,
+    /// Identity of the thing bound. Two origins with EQUAL keys are the same
+    /// definition reached by two routes (a re-export, or a module imported twice)
+    /// and are NOT ambiguous — only genuinely different definitions are.
+    key: String,
+    /// What `vars` / `ctors` should map the name to if this origin wins.
+    res: Res,
+}
+
+/// Identity of a resolution, for the "same definition reached twice" test.
+fn res_key(r: &Res) -> String {
+    match r {
+        Res::Def(d) => format!("def:{}", d.0),
+        Res::Kernel { module, func } => format!("kernel:{}.{}", module.as_str(), func.as_str()),
+        Res::Foreign { package, name } => format!("ffi:{}.{}", package.as_str(), name.as_str()),
+        Res::Ctor(c) => format!("ctor:{}", c.def.0),
+        Res::Local(l) => format!("local:{}", l.0),
+        Res::Error => "error".to_string(),
+    }
+}
+
+/// The import currently being processed, so the `bind_*` helpers can stamp
+/// provenance without every one of them taking four more parameters.
+#[derive(Clone)]
+struct ImportCtx {
+    module: String,
+    qualifier: Option<String>,
+    layer: BindLayer,
+}
+
+/// Outcome of applying the precedence lattice to one name's origins.
+enum Settled {
+    /// One definition wins its layer outright — bind it, say nothing.
+    Winner(Res),
+    /// The winning layer holds several DIFFERENT definitions.
+    Ambiguous(Vec<Origin>),
+}
+
+/// Apply the lattice to one name. `None` when the name was bound once (the
+/// overwhelming majority — nothing to settle, and nothing to re-insert).
+fn settle_one(origins: &[Origin]) -> Option<Settled> {
+    if origins.len() < 2 {
+        return None;
+    }
+    let top = origins.iter().map(|o| o.layer).max()?;
+    // Distinct DEFINITIONS in the winning layer. The same definition reached
+    // twice — a re-export, a module imported under two forms, `exposing (..)`
+    // plus `exposing (name)` on one module — is one binding, not a conflict.
+    let mut distinct: Vec<&Origin> = Vec::new();
+    for o in origins.iter().filter(|o| o.layer == top) {
+        if !distinct.iter().any(|d| d.key == o.key) {
+            distinct.push(o);
+        }
+    }
+    match distinct.len() {
+        0 => None,
+        1 => Some(Settled::Winner(distinct[0].res.clone())),
+        _ => Some(Settled::Ambiguous(
+            distinct.into_iter().cloned().collect(),
+        )),
+    }
+}
+
+fn join_and(items: &[String]) -> String {
+    join_with(items, "and")
+}
+
+fn join_or(items: &[String]) -> String {
+    join_with(items, "or")
+}
+
+fn join_with(items: &[String], conj: &str) -> String {
+    match items {
+        [] => String::new(),
+        [a] => a.clone(),
+        [a, b] => format!("{a} {conj} {b}"),
+        _ => {
+            let (last, head) = items.split_last().unwrap();
+            format!("{}, {conj} {last}", head.join(", "))
+        }
+    }
+}
+
 struct Resolver<'a> {
     db: &'a dyn SkyDb,
     module: ModuleId,
@@ -195,6 +351,23 @@ struct Resolver<'a> {
     /// A Go FFI package imported with `exposing (..)` — bare unresolved names
     /// are attributed to it (class-b), not a resolver gap.
     foreign_open: Option<String>,
+
+    /// Provenance for every unqualified binding, parallel to `vars` / `ctors`
+    /// (doc 05 §6b). Written by `bind_var` / `bind_ctor`, consumed once by
+    /// `settle_precedence` at the end of `build_env`.
+    var_origins: HashMap<String, Vec<Origin>>,
+    ctor_origins: HashMap<String, Vec<Origin>>,
+    /// Names whose winning layer holds two or more DIFFERENT definitions. The
+    /// binding in `vars` / `ctors` is left alone (so resolution stays total);
+    /// the error is raised when a use site actually reads the name.
+    ambiguous_vars: HashMap<String, Vec<Origin>>,
+    ambiguous_ctors: HashMap<String, Vec<Origin>>,
+    /// The import being processed, for provenance stamping. `None` outside
+    /// `process_import` (builtins and local decls stamp their layer directly).
+    cur_import: Option<ImportCtx>,
+    /// `(name, span-start)` pairs already reported ambiguous, so one reference
+    /// visited twice (or a name read in a re-walked body) reports once.
+    reported_ambiguous: HashSet<(String, u32)>,
 
     // lexical scope
     scopes: Vec<HashMap<String, LocalId>>,
@@ -239,6 +412,12 @@ impl<'a> Resolver<'a> {
             import_aliases: HashMap::new(),
             kernel_open: Vec::new(),
             foreign_open: None,
+            var_origins: HashMap::new(),
+            ctor_origins: HashMap::new(),
+            ambiguous_vars: HashMap::new(),
+            ambiguous_ctors: HashMap::new(),
+            cur_import: None,
+            reported_ambiguous: HashSet::new(),
             scopes: Vec::new(),
             next_local: 0,
             reuse_binders: false,
@@ -301,17 +480,194 @@ impl<'a> Resolver<'a> {
         self.db.intern_def(module, &Name::new(name), kind)
     }
 
+    // ---- unqualified binding + precedence (doc 05 §6b) -------------------
+
+    /// Bind an unqualified VALUE name, recording which layer it entered through.
+    ///
+    /// The `vars.insert` is kept verbatim so that, for every name bound exactly
+    /// once, this is byte-for-byte the old behaviour. `settle_precedence` only
+    /// revisits names with more than one origin.
+    fn bind_var(&mut self, name: String, res: Res, layer: BindLayer) {
+        let origin = self.origin_of(layer, res_key(&res), res.clone());
+        self.var_origins.entry(name.clone()).or_default().push(origin);
+        self.vars.insert(name, res);
+    }
+
+    /// Stamp the current provenance (import in flight, or this module) onto a
+    /// binding at `layer`.
+    fn origin_of(&self, layer: BindLayer, key: String, res: Res) -> Origin {
+        match &self.cur_import {
+            Some(c) => Origin {
+                layer,
+                module: c.module.clone(),
+                qualifier: c.qualifier.clone(),
+                key,
+                res,
+            },
+            None => Origin {
+                layer,
+                module: self.self_module_name(),
+                qualifier: None,
+                key,
+                res,
+            },
+        }
+    }
+
+    /// Bind an unqualified VALUE name at the layer of the import being processed.
+    fn bind_var_imported(&mut self, name: String, res: Res) {
+        let layer = self
+            .cur_import
+            .as_ref()
+            .map(|c| c.layer)
+            .unwrap_or(BindLayer::Open);
+        self.bind_var(name, res, layer);
+    }
+
+    /// Bind an unqualified CONSTRUCTOR name. Same contract as [`bind_var`].
+    fn bind_ctor(&mut self, name: String, ctor: CtorRef, layer: BindLayer) {
+        let origin = self.origin_of(
+            layer,
+            format!("ctor:{}", ctor.def.0),
+            Res::Ctor(ctor.clone()),
+        );
+        self.ctor_origins
+            .entry(name.clone())
+            .or_default()
+            .push(origin);
+        self.ctors.insert(name, ctor);
+    }
+
+    fn bind_ctor_imported(&mut self, name: String, ctor: CtorRef) {
+        let layer = self
+            .cur_import
+            .as_ref()
+            .map(|c| c.layer)
+            .unwrap_or(BindLayer::Open);
+        self.bind_ctor(name, ctor, layer);
+    }
+
+    fn self_module_name(&self) -> String {
+        self.db.module_name(self.module).to_string()
+    }
+
+    /// Resolve every multiply-bound unqualified name by LAYER rather than by
+    /// import order, and record the ones that stay genuinely ambiguous.
+    ///
+    /// Called once, after builtins → imports → local decls have all bound. This
+    /// is what makes resolution order-independent: before it, `vars` holds
+    /// whatever the last `.insert()` put there; after it, every multiply-bound
+    /// name holds its highest-layer binding regardless of where the imports sat
+    /// in the file. A name whose top layer holds two different definitions is
+    /// left as-is in `vars` (resolution must stay total) and recorded in
+    /// `ambiguous_vars`, so the error fires only if a use site reads it.
+    fn settle_precedence(&mut self) {
+        let mut wins: Vec<(String, Res)> = Vec::new();
+        let mut ambiguous: Vec<(String, Vec<Origin>)> = Vec::new();
+        for (name, origins) in &self.var_origins {
+            if let Some(outcome) = settle_one(origins) {
+                match outcome {
+                    Settled::Winner(res) => wins.push((name.clone(), res)),
+                    Settled::Ambiguous(cands) => ambiguous.push((name.clone(), cands)),
+                }
+            }
+        }
+        for (name, res) in wins {
+            // Measured before landing (`SKY_AUDIT_PRECEDENCE` instrumentation,
+            // since removed): across all 56 examples and 6 real apps —
+            // skydeploy's control-plane, sky-lang.org, darraghstudio, sendcrafts,
+            // rfcflow, sky-urlshortener — the layer winner picked here was
+            // IDENTICAL to the old last-import-wins value in every case. The
+            // lattice therefore changes no working program's meaning; it only
+            // makes the choice independent of import order and rejects the ties.
+            //
+            // `IndexMap::insert` on an existing key replaces in place, so the
+            // iteration order `snapshot_scope_names` publishes is unchanged.
+            self.vars.insert(name, res);
+        }
+        self.ambiguous_vars = ambiguous.into_iter().collect();
+
+        let mut cwins: Vec<(String, CtorRef)> = Vec::new();
+        let mut cambig: Vec<(String, Vec<Origin>)> = Vec::new();
+        for (name, origins) in &self.ctor_origins {
+            if let Some(outcome) = settle_one(origins) {
+                match outcome {
+                    Settled::Winner(Res::Ctor(c)) => cwins.push((name.clone(), c)),
+                    Settled::Winner(_) => {}
+                    Settled::Ambiguous(cands) => cambig.push((name.clone(), cands)),
+                }
+            }
+        }
+        for (name, c) in cwins {
+            self.ctors.insert(name, c);
+        }
+        self.ambiguous_ctors = cambig.into_iter().collect();
+    }
+
+    /// Report an ambiguous unqualified reference at the site that reads it.
+    ///
+    /// At the USE site, not the import — importing two modules that both expose
+    /// a name you never mention is legal and extremely common (every Sky.Live
+    /// page does `import Std.Html exposing (..)` alongside `import
+    /// Std.Html.Attributes exposing (..)`, and those two overlap). Elm draws the
+    /// line in the same place. Reporting at the import would reject programs
+    /// whose meaning is not order-dependent at all.
+    fn report_ambiguous(&mut self, name: &str, cands: &[Origin], span: Option<Span>, what: &str) {
+        if self.quiet > 0 {
+            return;
+        }
+        if let Some(sp) = span {
+            if !self.reported_ambiguous.insert((name.to_string(), sp.range.0)) {
+                return;
+            }
+        } else if !self
+            .reported_ambiguous
+            .insert((name.to_string(), u32::MAX))
+        {
+            return;
+        }
+        let mods: Vec<String> = cands.iter().map(|o| format!("`{}`", o.module)).collect();
+        let quals: Vec<String> = cands
+            .iter()
+            .filter_map(|o| o.qualifier.as_ref().map(|q| format!("`{q}.{name}`")))
+            .collect();
+        let fix = if quals.len() == cands.len() && !quals.is_empty() {
+            format!("Qualify the reference — write {} — or narrow one import's `exposing (…)` list so only one of them binds `{name}`.", join_or(&quals))
+        } else {
+            format!(
+                "Qualify the reference (give the imports aliases with `import M as X` if they do \
+                 not already have one), or narrow one import's `exposing (…)` list so only one of \
+                 them binds `{name}`."
+            )
+        };
+        let mut diag = Diagnostic::error(
+            "E1012",
+            format!(
+                "Ambiguous {what} `{name}` — it is brought into scope by {}, and this reference \
+                 does not say which one it means. Sky rejects this instead of picking one, \
+                 because the winner would otherwise depend on the ORDER of your import lines: \
+                 swapping two imports would silently change what this program computes. {fix}",
+                join_and(&mods)
+            ),
+        );
+        if let Some(sp) = span {
+            diag = diag.with_label(sp, format!("bound by {} imports", cands.len()));
+        }
+        self.result.diagnostics.push(diag);
+    }
+
     // ---- environment building (doc 05 §5, §10) --------------------------
 
     fn build_env(&mut self) {
         // 1. unconditional builtins
         for (name, m, f) in BUILTIN_VARS {
-            self.vars.insert(
+            self.bind_var(
                 (*name).to_string(),
                 Res::Kernel {
                     module: Name::new(m),
                     func: Name::new(f),
                 },
+                BindLayer::Ambient,
             );
         }
         for (name, arity) in BUILTIN_TYPES {
@@ -322,7 +678,7 @@ impl<'a> Resolver<'a> {
         for (cn, ty, index, arity) in BUILTIN_CTORS {
             let type_ = self.def(BUILTIN_MOD, ty, DefKind::TypeCon);
             let d = self.def(BUILTIN_MOD, cn, DefKind::Ctor);
-            self.ctors.insert(
+            self.bind_ctor(
                 (*cn).to_string(),
                 CtorRef {
                     def: d,
@@ -330,6 +686,7 @@ impl<'a> Resolver<'a> {
                     index: *index,
                     arity: *arity,
                 },
+                BindLayer::Ambient,
             );
         }
         for (qual, funcs) in PRELUDE_QUALIFIERS {
@@ -355,6 +712,10 @@ impl<'a> Resolver<'a> {
 
         // 3. local declarations (after imports → local shadows import, C7)
         self.register_locals(&tree);
+        // 4. settle every multiply-bound unqualified name by LAYER instead of by
+        //    import order, and record what stays ambiguous (doc 05 §6b). Must run
+        //    after ALL three binding phases and before `snapshot_scope_names`.
+        self.settle_precedence();
         // LSP: publish import qualifiers so `M.` completion can enumerate the
         // target module's exports.
         self.result.qualifiers = self.import_aliases.clone();
@@ -412,6 +773,57 @@ impl<'a> Resolver<'a> {
         let source = self.db.classify_import(&path);
         let qual = effective_qualifier(claims, &path, &alias);
 
+        // ---- unknown Sky module (the `ImportSource::Foreign` fallback hole) ----
+        //
+        // `classify_import` resolves parsed dep > kernel pseudo > **Foreign**, and
+        // that last arm is a total fallback: ANY unrecognised import path becomes a
+        // Go-FFI package reference, which resolves leniently to `nil`. For a real
+        // Go package that leniency is the documented class-(b) contract. For a path
+        // in a RESERVED Sky namespace it is a soundness hole, because no Go-FFI
+        // package can ever live under `Std.` / `Sky.`.
+        //
+        // Measured, not reasoned: on this branch `import Std.NoSuchModule as Nope`
+        // followed by `Nope.answer` printed "Names resolved", "Types OK", emitted
+        // Go, passed `go build`, and panicked at run time with
+        // `rt.AsInt: expected numeric value, got <nil>`. `sky check ≡ sky build`
+        // and "no runtime panic from well-typed Sky" were both false for it.
+        //
+        // The *call* path already rejected this (lower.rs's "unknown Sky module"
+        // error), which is exactly why the hole was invisible: the one shape anyone
+        // had tried was the one that was covered. Three shapes reached the same
+        // `Foreign` fallback with no check at all — a bare value reference, a type
+        // reference (`Nope.Thing`), and an import that is never used. Anchoring the
+        // check at the IMPORT closes all four with one rule, before any of them can
+        // pick a different downstream path, and reports the import line the user
+        // must actually fix rather than a use site far below it.
+        if let ImportSource::Foreign(pkg) = &source {
+            if crate::kernel::is_reserved_sky_namespace(pkg) && self.quiet == 0 {
+                let span = imp
+                    .name()
+                    .map(|n| self.span_of(n.syntax().text_range()));
+                let mut diag = Diagnostic::error(
+                    "E1001",
+                    format!(
+                        "unknown Sky module `{pkg}` — no such module is in this \
+                         compilation. Check the spelling of the import: Sky stdlib \
+                         modules live under `Std.*` and `Sky.Core.*` / `Sky.Http.*` \
+                         (e.g. `Sky.Core.List`, `Std.Db`). This is not a Go-FFI \
+                         package; `sky install` cannot fetch it."
+                    ),
+                );
+                if let Some(sp) = span {
+                    diag = diag.with_label(sp, "no such module");
+                }
+                self.result.diagnostics.push(diag);
+                self.result.class_a.push(ClassA {
+                    qualifier: None,
+                    name: pkg.clone(),
+                    kind: RefKind::Value,
+                    reason: "unknown Sky module".to_string(),
+                });
+            }
+        }
+
         // ---- qualifier binding ----
         if let Some(q) = &qual {
             self.import_aliases.insert(q.clone(), source.clone());
@@ -433,6 +845,23 @@ impl<'a> Resolver<'a> {
             .exposing()
             .map(|e| self.span_of(e.syntax().text_range()))
             .or_else(|| imp.name().map(|n| self.span_of(n.syntax().text_range())));
+
+        // Provenance for everything this import is about to bind (doc 05 §6b).
+        // The layer is a property of the IMPORT, not of the individual name:
+        // `Sky.Core.Prelude` is ambient however it is written, `exposing (..)` is
+        // a bulk claim, and a named `exposing (…)` list is a specific one.
+        self.cur_import = Some(ImportCtx {
+            module: path.clone(),
+            qualifier: qual.clone(),
+            layer: if AMBIENT_IMPORTS.contains(&path.as_str()) {
+                BindLayer::Ambient
+            } else if clause.as_ref().map(|c| c.all).unwrap_or(false) {
+                BindLayer::Open
+            } else {
+                BindLayer::Explicit
+            },
+        });
+
         match (&source, clause) {
             (ImportSource::Dep(dep), Some(c)) => {
                 let exports = self.db.module_exports(*dep);
@@ -450,9 +879,10 @@ impl<'a> Resolver<'a> {
                     // through `resolve_var` to `Res::Error` + `[E1001]`.
                     match kernel_functions(pseudo) {
                         Some(funcs) => {
+                            let funcs: Vec<&'static str> = funcs.to_vec();
                             for f in funcs {
-                                self.vars.insert(
-                                    (*f).to_string(),
+                                self.bind_var_imported(
+                                    f.to_string(),
                                     Res::Kernel {
                                         module: Name::new(pseudo),
                                         func: Name::new(f),
@@ -478,6 +908,7 @@ impl<'a> Resolver<'a> {
             }
             (_, None) => {}
         }
+        self.cur_import = None;
     }
 
     fn bind_qual_from_exports(&mut self, q: &str, exports: &ModuleExports) {
@@ -520,10 +951,15 @@ impl<'a> Resolver<'a> {
         span: Option<Span>,
     ) {
         if c.all {
-            for (name, def) in &exports.values {
-                self.vars.insert(name.as_str().to_string(), Res::Def(*def));
+            let values: Vec<(String, DefId)> = exports
+                .values
+                .iter()
+                .map(|(n, d)| (n.as_str().to_string(), *d))
+                .collect();
+            for (name, def) in values {
+                self.bind_var_imported(name, Res::Def(def));
             }
-            for u in &exports.unions {
+            for u in &exports.unions.clone() {
                 self.types.insert(
                     u.name.as_str().to_string(),
                     TypeRes {
@@ -532,8 +968,7 @@ impl<'a> Resolver<'a> {
                     },
                 );
                 for ct in &u.ctors {
-                    self.ctors
-                        .insert(ct.name.as_str().to_string(), to_ctor_ref(ct));
+                    self.bind_ctor_imported(ct.name.as_str().to_string(), to_ctor_ref(ct));
                 }
             }
             for a in &exports.aliases {
@@ -571,7 +1006,7 @@ impl<'a> Resolver<'a> {
                             Res::Def(self.def(exports.module, v, DefKind::Value))
                         }
                     };
-                    self.vars.insert(v.clone(), res);
+                    self.bind_var_imported(v.clone(), res);
                 }
                 cst::ExposedItem::Type { name, ctors } => {
                     if let Some((def, arity)) = exports.type_(name) {
@@ -583,28 +1018,35 @@ impl<'a> Resolver<'a> {
                     }
                     // record-alias constructor value
                     if let Some(def) = exports.value(name) {
-                        self.vars.insert(name.clone(), Res::Def(def));
+                        self.bind_var_imported(name.clone(), Res::Def(def));
                     }
                     match ctors {
                         cst::CtorExposure::None => {}
-                        cst::CtorExposure::All => {
-                            if let Some(u) = exports.unions.iter().find(|u| u.name.as_str() == name)
-                            {
-                                for ct in &u.ctors {
-                                    self.ctors
-                                        .insert(ct.name.as_str().to_string(), to_ctor_ref(ct));
-                                }
-                            }
-                        }
-                        cst::CtorExposure::Some(list) => {
-                            if let Some(u) = exports.unions.iter().find(|u| u.name.as_str() == name)
-                            {
-                                for ct in &u.ctors {
-                                    if list.iter().any(|x| x == ct.name.as_str()) {
-                                        self.ctors
-                                            .insert(ct.name.as_str().to_string(), to_ctor_ref(ct));
-                                    }
-                                }
+                        // Collected before binding because `bind_ctor_imported`
+                        // takes `&mut self` while `exports` is borrowed here.
+                        cst::CtorExposure::All | cst::CtorExposure::Some(_) => {
+                            let wanted = match ctors {
+                                cst::CtorExposure::Some(list) => Some(list),
+                                _ => None,
+                            };
+                            let picked: Vec<(String, CtorRef)> = exports
+                                .unions
+                                .iter()
+                                .find(|u| u.name.as_str() == name)
+                                .map(|u| {
+                                    u.ctors
+                                        .iter()
+                                        .filter(|ct| {
+                                            wanted.is_none_or(|l| {
+                                                l.iter().any(|x| x == ct.name.as_str())
+                                            })
+                                        })
+                                        .map(|ct| (ct.name.as_str().to_string(), to_ctor_ref(ct)))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            for (n, c) in picked {
+                                self.bind_ctor_imported(n, c);
                             }
                         }
                     }
@@ -618,7 +1060,7 @@ impl<'a> Resolver<'a> {
         for it in &c.items {
             match it {
                 cst::ExposedItem::Value(v) => {
-                    self.vars.insert(
+                    self.bind_var_imported(
                         v.clone(),
                         Res::Kernel {
                             module: Name::new(pseudo),
@@ -639,7 +1081,7 @@ impl<'a> Resolver<'a> {
         for it in &c.items {
             match it {
                 cst::ExposedItem::Value(v) => {
-                    self.vars.insert(
+                    self.bind_var_imported(
                         v.clone(),
                         Res::Foreign {
                             package: Name::new(pkg),
@@ -688,7 +1130,7 @@ impl<'a> Resolver<'a> {
                                 );
                             }
                             let d = self.def(self.module, n.text(), DefKind::Value);
-                            self.vars.insert(n.text().to_string(), Res::Def(d));
+                            self.bind_var(n.text().to_string(), Res::Def(d), BindLayer::Local);
                             // LSP: a value's goto-def target is its name span. A
                             // `foo : T` annotation + `foo = …` value share one
                             // DefId; keep the first span seen (the annotation).
@@ -738,7 +1180,7 @@ impl<'a> Resolver<'a> {
                                 .def_spans
                                 .push((d, self.span_of(t.text_range())));
                         }
-                        self.ctors.insert(
+                        self.bind_ctor(
                             cn,
                             CtorRef {
                                 def: d,
@@ -746,6 +1188,7 @@ impl<'a> Resolver<'a> {
                                 index: i as u16,
                                 arity: cargs,
                             },
+                            BindLayer::Local,
                         );
                     }
                 }
@@ -798,7 +1241,7 @@ impl<'a> Resolver<'a> {
                             }
                         }
                         let d = self.def(self.module, &an, DefKind::Value);
-                        self.vars.insert(an, Res::Def(d));
+                        self.bind_var(an, Res::Def(d), BindLayer::Local);
                     }
                 }
                 ast::Decl::TypeAnno(_) | ast::Decl::Foreign(_) => {}
@@ -1644,6 +2087,15 @@ impl<'a> Resolver<'a> {
                     .collect();
                 // Unqualified unknown ctor pattern head: Elm degrades silently
                 // (doc 05 §12) — no diagnostic.
+                //
+                // An AMBIGUOUS one is a different matter: a pattern head that
+                // could be either module's constructor selects a different branch
+                // depending on import order, so it is reported here for the same
+                // reason the expression position is (doc 05 §6b).
+                if let Some(cands) = self.ambiguous_ctors.get(&name).cloned() {
+                    let sp = cst::first_upper_tok(c.syntax()).map(|t| self.span_of(t.text_range()));
+                    self.report_ambiguous(&name, &cands, sp, "constructor");
+                }
                 let ctor = self.ctors.get(&name).cloned();
                 // Record the ctor NAME token as a use-site so hover / goto-def /
                 // find-references / rename / semantic-tokens all treat a pattern
@@ -1876,8 +2328,18 @@ impl<'a> Resolver<'a> {
         if let Some(id) = self.lookup_local(name) {
             return Res::Local(id);
         }
+        // Ambiguity is reported HERE — at the reference that fails to say which
+        // module it means — not at the import (doc 05 §6b). The binding recorded
+        // in `ctors` / `vars` is still returned so the rest of resolution stays
+        // total; the build halts on the diagnostic before lowering ever runs.
+        if let Some(cands) = self.ambiguous_ctors.get(name).cloned() {
+            self.report_ambiguous(name, &cands, span, "constructor");
+        }
         if let Some(c) = self.ctors.get(name) {
             return Res::Ctor(c.clone());
+        }
+        if let Some(cands) = self.ambiguous_vars.get(name).cloned() {
+            self.report_ambiguous(name, &cands, span, "name");
         }
         if let Some(r) = self.vars.get(name).cloned() {
             if let Res::Foreign { package, .. } = &r {

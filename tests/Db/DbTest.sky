@@ -176,7 +176,7 @@ exec sql =
                 Ok r.rowsAffected
 
 
-query : String -> Result Error List Row
+query : String -> Result Error (List Row)
 query sql =
     let
         r = simulatedQuery sql
@@ -190,7 +190,7 @@ query sql =
                 Ok r.rows
 
 
-getById : String -> Result Error Maybe Row
+getById : String -> Result Error (Maybe Row)
 getById id =
     let
         sql = "SELECT * FROM users WHERE id = '" ++ id ++ "'"

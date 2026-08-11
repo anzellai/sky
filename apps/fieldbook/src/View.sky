@@ -1,0 +1,732 @@
+module View exposing (view, viewElement)
+
+-- Fieldbook — THE ONE VIEW.
+--
+-- `viewElement : Model -> Element Msg` is the single source of truth
+-- for what Fieldbook looks like. Sky.Tui consumes it directly (the Go
+-- TUI renderer walks the `Element` ADT). Sky.Live and Sky.Webview
+-- consume `view`, which is `Ui.layout [] (viewElement model)` — the
+-- Element tree lowered to `Std.Html` by `Std.Ui`.
+--
+-- There is no second view function, no per-backend branch, no
+-- `if isTui then ... else ...` anywhere in this file. That is the
+-- whole point of the corpus member: Structure.sky then dumps the
+-- structural shape of BOTH lowerings and diffs them.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Animation as Animation
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Chart as Chart
+import Std.Ui.Events as Events
+import Std.Ui.Font as Font
+import Std.Ui.Grid as Grid
+import Std.Ui.Input as Input
+import Std.Ui.Keyed as Keyed
+import Std.Ui.Lazy as Lazy
+import Std.Ui.Region as Region
+import Std.Ui.Responsive as Responsive
+import Std.Ui.Transform as Transform
+import Std.Ui.Transition as Transition
+import Model exposing (..)
+
+
+-- ─── Palette ────────────────────────────────────────────────────────
+ink : Ui.Color
+ink =
+    Ui.rgb 28 32 38
+
+
+inkSoft : Ui.Color
+inkSoft =
+    Ui.rgb 106 114 124
+
+
+moss : Ui.Color
+moss =
+    Ui.rgb 62 114 84
+
+
+mossDeep : Ui.Color
+mossDeep =
+    Ui.rgb 38 78 56
+
+
+paper : Ui.Color
+paper =
+    Ui.rgb 252 252 250
+
+
+card : Ui.Color
+card =
+    Ui.white
+
+
+hairline : Ui.Color
+hairline =
+    Ui.rgb 222 224 220
+
+
+amber : Ui.Color
+amber =
+    Ui.rgb 196 132 46
+
+
+ghost : Ui.Color
+ghost =
+    Ui.rgba 62 114 84 0.12
+
+
+-- ─── The one view ───────────────────────────────────────────────────
+viewElement : Model -> Element Msg
+viewElement model =
+    Ui.column
+        [ Region.mainContent
+        , Ui.width Ui.fill
+        , Ui.height Ui.fill
+        , Ui.spacing 16
+        , Ui.paddingXY 24 20
+        , Background.color paper
+        , Font.color ink
+        , Font.family Font.sansSerif
+        ]
+        [ masthead model
+        , searchBar model
+        , summaryGrid model
+        , Ui.wrappedRow
+              [ Ui.width Ui.fill, Ui.spacing 16 ]
+              [ noteList model, Lazy.lazy detailPane model ]
+        , Lazy.lazy2 chartsSection model.notes (allTags model.notes)
+        , tagCloud model
+        , colophon
+        , siteFooter model
+        ]
+
+
+-- HTML-shaped wrapper. Sky.Live and Sky.Webview both consume `Html`;
+-- Sky.Tui takes `viewElement` unwrapped.
+view : Model -> any
+view model =
+    Ui.layout [] (viewElement model)
+
+
+-- ─── Masthead (Region.navigation → <nav>) ───────────────────────────
+masthead : Model -> Element Msg
+masthead model =
+    Ui.row
+        [ Region.navigation
+        , Ui.width Ui.fill
+        , Ui.spacing 12
+        , Ui.paddingXY 18 14
+        , Background.color moss
+        , Background.hoverColor mossDeep
+        , Border.rounded 8
+        , Border.shadow
+              { offsetX = 0, offsetY = 2, blur = 6, spread = 0, color = ghost }
+        , Transition.attribute
+              [ Transition.property "background-color"
+              , Transition.duration 180
+              , Transition.easing Transition.easeOut
+              ]
+        ]
+        [ Ui.el
+              [ Region.heading 1
+              , Font.color Ui.white
+              , Font.bold
+              , Font.size 22
+              , Font.letterSpacing 0.4
+              ]
+              (Ui.text "Fieldbook")
+        , Ui.el
+              [ Font.color (Ui.rgb 216 232 222), Font.size 13, Ui.centerY ]
+              (Ui.text "field notes · one view · four backends")
+        , Ui.link
+              [ Ui.alignRight
+              , Font.color Ui.white
+              , Font.size 13
+              , Font.underline
+              , Ui.pointer
+              ]
+              { url = "/", label = Ui.text "home" }
+        ]
+
+
+-- ─── Search bar (Ui.form + Std.Ui.Events.onSubmit) ──────────────────
+searchBar : Model -> Element Msg
+searchBar model =
+    Ui.form
+        [ Events.onSubmit RunSearch
+        , Ui.width Ui.fill
+        , Ui.spacing 10
+        , Ui.paddingXY 14 12
+        , Background.color card
+        , Border.width 1
+        , Border.color hairline
+        , Border.rounded 8
+        , Border.solid
+        ]
+        [ Ui.row
+              [ Ui.width Ui.fill, Ui.spacing 10 ]
+              [ Input.search
+                    [ Ui.width (Ui.fillPortion 3), Ui.paddingXY 10 8 ]
+                    { onChange = SetQuery
+                    , text = model.query
+                    , placeholder =
+                        Just
+                            (Input.placeholder
+                                []
+                                (Ui.text "search title, body, site or tag"))
+                    , label = Input.labelHidden "Search field notes"
+                    }
+              , Ui.button
+                    [ Background.color moss
+                    , Background.hoverColor mossDeep
+                    , Font.color Ui.white
+                    , Font.semiBold
+                    , Font.size 13
+                    , Ui.paddingXY 16 10
+                    , Border.rounded 6
+                    , Border.hoverWidth 1
+                    , Ui.pointer
+                    ]
+                    { onPress = Just RunSearch, label = Ui.text "Search" }
+              , Ui.button
+                    [ Background.color (Ui.rgb 240 240 238)
+                    , Font.size 13
+                    , Ui.paddingXY 14 10
+                    , Border.rounded 6
+                    , Border.dashed
+                    , Ui.pointer
+                    ]
+                    { onPress = Just ClearQuery, label = Ui.text "Clear" }
+              , Ui.button
+                    [ Background.color amber
+                    , Font.color Ui.white
+                    , Font.semiBold
+                    , Font.size 13
+                    , Ui.paddingXY 14 10
+                    , Border.rounded 6
+                    , Ui.pointer
+                    ]
+                    { onPress = Just NewNote, label = Ui.text "New note" }
+              ]
+        , Ui.el
+              [ Region.announce, Font.size 12, Font.color inkSoft ]
+              (Ui.text ("status: " ++ model.status))
+        ]
+
+
+-- ─── Summary tiles (Std.Ui.Grid explicit tracks) ────────────────────
+summaryGrid : Model -> Element Msg
+summaryGrid model =
+    Ui.grid
+        [ Grid.columns
+              [ Grid.fr 1
+              , Grid.fr 1
+              , Grid.fr 1
+              , Grid.minmax Grid.auto (Grid.fr 1)
+              ]
+        , Grid.rows [ Grid.auto ]
+        , Ui.width Ui.fill
+        , Ui.spacing 12
+        ]
+        [ statTile "Notes" (String.fromInt (List.length model.notes))
+        , statTile
+              "Matching"
+              (String.fromInt (List.length (visibleNotes model)))
+        , statTile
+              "Sites"
+              (String.fromInt (List.length (siteCounts model.notes)))
+        , statTile "Mean temp" (formatReading (averageReading model.notes))
+        ]
+
+
+statTile : String -> String -> Element Msg
+statTile label value =
+    Ui.column
+        [ Ui.spacing 4
+        , Ui.paddingXY 14 12
+        , Ui.width Ui.fill
+        , Background.color card
+        , Background.focusVisibleColor ghost
+        , Border.width 1
+        , Border.color hairline
+        , Border.rounded 8
+        , Animation.attribute
+              (Animation.defaultSpec "fieldbookFadeIn"
+                  |> Animation.withDuration 240
+                  |> Animation.withEasing Animation.easeOut
+                  |> Animation.withIterations Animation.once
+                  |> Animation.withFillMode Animation.both
+                  |> Animation.withKeyframes
+                         [ ( 0
+                           , [ Transform.opacity 0.0, Transform.translateY 4 ]
+                           )
+                         , ( 100
+                           , [ Transform.opacity 1.0, Transform.translateY 0 ]
+                           )
+                         ])
+        ]
+        [ Ui.el
+              [ Font.size 11, Font.color inkSoft, Font.letterSpacing 0.6 ]
+              (Ui.text label)
+        , Ui.el [ Font.size 22, Font.bold, Font.color mossDeep ] (Ui.text value)
+        ]
+
+
+-- ─── Note list (Std.Ui.Keyed) ───────────────────────────────────────
+noteList : Model -> Element Msg
+noteList model =
+    Ui.column
+        [ Ui.width (Ui.minimum 320 (Ui.fillPortion 2))
+        , Ui.spacing 10
+        , Ui.alignTop
+        ]
+        [ Ui.el
+              [ Region.heading 2, Font.size 16, Font.semiBold ]
+              (Ui.text "Notes")
+        , listBody model
+        ]
+
+
+listBody : Model -> Element Msg
+listBody model =
+    case visibleNotes model of
+
+        [] ->
+            Ui.el
+                [ Ui.width Ui.fill
+                , Ui.paddingXY 14 14
+                , Background.color card
+                , Border.width 1
+                , Border.color hairline
+                , Border.dotted
+                , Border.rounded 8
+                , Font.color inkSoft
+                , Font.size 13
+                , Font.italic
+                ]
+                (Ui.text "No notes match that search.")
+
+        shown ->
+            Keyed.column
+                [ Ui.width Ui.fill, Ui.spacing 8, Ui.scrollbarY ]
+                (List.map (keyedRow model) shown)
+
+
+keyedRow : Model -> Note -> ( String, Element Msg )
+keyedRow model note =
+    ( "note-" ++ String.fromInt note.id, noteRow model note )
+
+
+noteRow : Model -> Note -> Element Msg
+noteRow model note =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.spacing 12
+        , Ui.paddingXY 14 10
+        , Background.color (rowBackground model note)
+        , Background.hoverColor ghost
+        , Border.width 1
+        , Border.color (rowBorder model note)
+        , Border.rounded 8
+        , Ui.pointer
+        , Events.onClick (SelectNote note.id)
+        , Transition.attribute
+              [ Transition.property "background-color"
+              , Transition.duration 140
+              , Transition.easing Transition.linear
+              ]
+        ]
+        [ Ui.column
+              [ Ui.width Ui.fill, Ui.spacing 3 ]
+              [ Ui.el [ Font.size 14, Font.semiBold ] (Ui.text note.title)
+              , Ui.el
+                    [ Font.size 12, Font.color inkSoft ]
+                    (Ui.text
+                        (note.site ++ " · " ++ dayLabel note.day ++ " · "
+                            ++ formatReading note.readingC))
+              ]
+        , Ui.el
+              [ Ui.alignRight
+              , Font.size 11
+              , Font.color inkSoft
+              , Font.family Font.monospace
+              ]
+              (Ui.text (tagLine note))
+        , Ui.button
+              [ Background.color (Ui.rgb 244 238 238)
+              , Background.hoverColor (Ui.rgb 214 118 108)
+              , Font.size 12
+              , Ui.paddingXY 10 6
+              , Border.rounded 6
+              , Ui.pointer
+              ]
+              { onPress = Just (DeleteNote note.id), label = Ui.text "Delete" }
+        ]
+
+
+rowBackground : Model -> Note -> Ui.Color
+rowBackground model note =
+    if model.selected == Just note.id then
+        ghost
+
+    else
+        card
+
+
+rowBorder : Model -> Note -> Ui.Color
+rowBorder model note =
+    if model.selected == Just note.id then
+        moss
+
+    else
+        hairline
+
+
+-- ─── Detail / edit pane ─────────────────────────────────────────────
+detailPane : Model -> Element Msg
+detailPane model =
+    Ui.column
+        [ Ui.width (Ui.minimum 300 (Ui.fillPortion 3))
+        , Ui.spacing 10
+        , Ui.alignTop
+        , Ui.paddingXY 16 14
+        , Background.color card
+        , Border.width 1
+        , Border.color hairline
+        , Border.rounded 8
+        , Border.glow 2 ghost
+        ]
+        [ Ui.el
+              [ Region.heading 2, Font.size 16, Font.semiBold ]
+              (Ui.text "Detail")
+        , detailBody model
+        ]
+
+
+detailBody : Model -> Element Msg
+detailBody model =
+    case selectedNote model of
+
+        Nothing ->
+            Ui.paragraph
+                [ Font.size 13, Font.color inkSoft ]
+                [ Ui.text "Select a note on the left to read it." ]
+
+        Just note ->
+            if model.editing then
+                editForm model note
+
+            else
+                readPane model note
+
+
+readPane : Model -> Note -> Element Msg
+readPane model note =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.spacing 10 ]
+        [ Ui.el
+              [ Region.heading 3, Font.size 15, Font.semiBold ]
+              (Ui.text note.title)
+        , Ui.textColumn
+              [ Ui.width Ui.fill, Ui.spacing 6 ]
+              [ Ui.paragraph [ Font.size 13 ] [ Ui.text note.body ]
+              , Ui.paragraph
+                    [ Font.size 12, Font.color inkSoft ]
+                    [ Ui.text
+                          (note.site ++ " — " ++ dayLabel note.day ++ " — "
+                              ++ formatReading note.readingC)
+                    ]
+              ]
+        , Ui.image
+              [ Ui.width (Ui.px 96)
+              , Ui.height (Ui.px 96)
+              , Border.rounded 8
+              , Ui.aspectRatio 1.0
+              ]
+              { src = "/static/site-" ++ String.fromInt note.day ++ ".png"
+              , description = "Site sketch for " ++ note.title
+              }
+        , Input.radioRow
+              [ Ui.spacing 12 ]
+              { onChange = \_ -> NoOp
+              , selected = note.site
+              , options =
+                  List.map
+                      (\pair -> Input.option (fst pair) (Ui.text (fst pair)))
+                      (siteCounts model.notes)
+              , label = Input.labelAbove [ Font.size 12 ] (Ui.text "Site")
+              }
+        , Input.slider
+              [ Ui.width Ui.fill ]
+              { onChange = \_ -> NoOp
+              , value = String.fromInt note.readingC
+              , min = "0"
+              , max = "300"
+              , step = "1"
+              , label = Input.labelAbove [ Font.size 12 ] (Ui.text "Reading")
+              }
+        , Input.checkbox
+              []
+              { onChange = \_ -> NoOp
+              , checked = List.member "water" note.tags
+              , icon = tickIcon
+              , label = Input.labelRight [ Font.size 12 ] (Ui.text "Waterside")
+              }
+        , Ui.row
+              [ Ui.width Ui.fill, Ui.spacing 8 ]
+              [ Ui.button
+                    [ Background.color moss
+                    , Font.color Ui.white
+                    , Font.size 13
+                    , Ui.paddingXY 14 8
+                    , Border.rounded 6
+                    , Ui.pointer
+                    ]
+                    { onPress = Just StartEdit, label = Ui.text "Edit" }
+              , Ui.button
+                    [ Background.color (Ui.rgb 240 240 238)
+                    , Font.size 13
+                    , Ui.paddingXY 14 8
+                    , Border.rounded 6
+                    , Ui.pointer
+                    ]
+                    { onPress = Just CloseNote, label = Ui.text "Close" }
+              ]
+        ]
+
+
+editForm : Model -> Note -> Element Msg
+editForm model note =
+    Ui.form
+        [ Events.onSubmit SaveEdit, Ui.width Ui.fill, Ui.spacing 10 ]
+        [ Input.text
+              [ Ui.width Ui.fill, Ui.paddingXY 10 8 ]
+              { onChange = SetDraftTitle
+              , text = model.draftTitle
+              , placeholder = Just (Input.placeholder [] (Ui.text "Note title"))
+              , label = Input.labelAbove [ Font.size 12 ] (Ui.text "Title")
+              }
+        , Input.multiline
+              [ Ui.width Ui.fill, Ui.height (Ui.px 140) ]
+              { onChange = SetDraftBody
+              , text = model.draftBody
+              , placeholder =
+                  Just (Input.placeholder [] (Ui.text "What did you see?"))
+              , label = Input.labelAbove [ Font.size 12 ] (Ui.text "Body")
+              , spellcheck = True
+              }
+        , Input.email
+              [ Ui.width Ui.fill, Ui.paddingXY 10 8 ]
+              { onChange = \_ -> NoOp
+              , text = "recorder@fieldbook.invalid"
+              , placeholder = Nothing
+              , label = Input.labelAbove [ Font.size 12 ] (Ui.text "Recorder")
+              }
+        , Ui.row
+              [ Ui.width Ui.fill, Ui.spacing 8 ]
+              [ Ui.button
+                    [ Background.color moss
+                    , Font.color Ui.white
+                    , Font.size 13
+                    , Ui.paddingXY 14 8
+                    , Border.rounded 6
+                    , Ui.pointer
+                    ]
+                    { onPress = Just SaveEdit
+                    , label = Ui.text ("Save #" ++ String.fromInt note.id)
+                    }
+              , Ui.button
+                    [ Background.color (Ui.rgb 240 240 238)
+                    , Font.size 13
+                    , Ui.paddingXY 14 8
+                    , Border.rounded 6
+                    , Ui.pointer
+                    ]
+                    { onPress = Just CancelEdit, label = Ui.text "Cancel" }
+              ]
+        ]
+
+
+tickIcon : Bool -> Element Msg
+tickIcon checked =
+    Ui.el
+        [ Ui.width (Ui.px 16)
+        , Ui.height (Ui.px 16)
+        , Border.width 1
+        , Border.color hairline
+        , Border.rounded 4
+        , Background.color
+              (if checked then
+                  moss
+
+              else
+                  Ui.rgb 240 240 238)
+        ]
+        Ui.none
+
+
+-- ─── Charts (Std.Ui.Chart — escapes to Std.Html, so `Raw`) ──────────
+chartsSection : List Note -> List String -> Element Msg
+chartsSection notes tags =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.spacing 10
+        , Ui.paddingXY 16 14
+        , Background.color card
+        , Border.width 1
+        , Border.color hairline
+        , Border.rounded 8
+        ]
+        [ Ui.el
+              [ Region.heading 2, Font.size 16, Font.semiBold ]
+              (Ui.text "Readings")
+        , Ui.el
+              [ Region.label
+                    ("series over " ++ String.fromInt (List.length notes)
+                        ++ " notes")
+              , Font.size 12
+              , Font.color inkSoft
+              ]
+              (Ui.text ("tags in play: " ++ String.join ", " tags))
+        , Ui.wrappedRow
+              [ Ui.width Ui.fill, Ui.spacing 12 ]
+              [ Chart.line
+                    (Chart.defaultCfg |> Chart.withWidth 420
+                        |> Chart.withHeight 160
+                        |> Chart.withTitle "Temperature by day"
+                        |> Chart.withGridLines True)
+                    [ Chart.series (readingPoints notes)
+                          |> Chart.withSeriesLabel "deg C"
+                          |> Chart.withSeriesColor moss
+                    ]
+              , Chart.bar
+                    (Chart.defaultCfg |> Chart.withWidth 300
+                        |> Chart.withHeight 160
+                        |> Chart.withTitle "Notes per site")
+                    [ Chart.series (siteBars notes)
+                          |> Chart.withSeriesLabel "notes"
+                          |> Chart.withSeriesColor amber
+                    ]
+              , Chart.area
+                    (Chart.defaultCfg |> Chart.withWidth 300
+                        |> Chart.withHeight 120)
+                    [ Chart.series (readingPoints notes) ]
+              , Chart.sparkline
+                    (Chart.defaultCfg |> Chart.withWidth 180
+                        |> Chart.withHeight 48)
+                    (List.map (\n -> intToFloat n.readingC) notes)
+              , Chart.heatmap
+                    (Chart.defaultCfg |> Chart.withWidth 200
+                        |> Chart.withHeight 120)
+                    [ List.map (\n -> intToFloat n.readingC) notes
+                    , List.map (\n -> intToFloat n.day) notes
+                    ]
+              ]
+        ]
+
+
+siteBars : List Note -> List ( Float, Float )
+siteBars notes =
+    List.indexedMap
+        (\i pair -> ( intToFloat i, intToFloat (snd pair) ))
+        (siteCounts notes)
+
+
+-- ─── Tag cloud (Std.Ui.Responsive + Ui.breakpoint) ──────────────────
+tagCloud : Model -> Element Msg
+tagCloud model =
+    Ui.breakpoint
+        Ui.mdAndUp
+        [ Ui.paddingXY 20 16 ]
+        (Ui.column
+            [ Ui.width Ui.fill
+            , Ui.spacing 8
+            , Ui.paddingXY 16 12
+            , Background.color card
+            , Border.width 1
+            , Border.color hairline
+            , Border.rounded 8
+            ]
+            [ Ui.el
+                  [ Region.heading 2, Font.size 16, Font.semiBold ]
+                  (Ui.text "Tags")
+            , Ui.el
+                  [ Font.size 12, Font.color inkSoft ]
+                  (Ui.text
+                      ("viewport class: "
+                          ++ Responsive.deviceClassToString
+                                 (Responsive.classifyDevice model.viewport)))
+            , Keyed.row
+                  [ Ui.width Ui.fill, Ui.spacing 8 ]
+                  (List.map keyedTag (allTags model.notes))
+            ])
+
+
+keyedTag : String -> ( String, Element Msg )
+keyedTag tag =
+    ( "tag-" ++ tag
+    , Ui.el
+          [ Ui.paddingXY 10 5
+          , Background.color ghost
+          , Border.rounded 12
+          , Font.size 12
+          , Font.color mossDeep
+          , Ui.pointer
+          , Events.onClick (SetQuery tag)
+          ]
+          (Ui.text tag)
+    )
+
+
+-- ─── Colophon (Region.aside → <aside>, textColumn → <section>) ──────
+colophon : Element Msg
+colophon =
+    Ui.column
+        [ Region.aside
+        , Ui.width Ui.fill
+        , Ui.spacing 6
+        , Ui.paddingXY 16 12
+        , Background.color (Ui.rgb 246 248 245)
+        , Border.rounded 8
+        , Ui.clipX
+        ]
+        [ Ui.el
+              [ Region.heading 3, Font.size 13, Font.semiBold ]
+              (Ui.text "About this corpus member")
+        , Ui.paragraph
+              [ Font.size 12, Font.color inkSoft, Font.alignLeft ]
+              [ Ui.text
+                    "Fieldbook renders one Std.Ui view under Sky.Live, Sky.Tui and Sky.Webview, and exports via Sky.Cli. Run --dump-view live and --dump-view tui and diff them."
+              ]
+        ]
+
+
+siteFooter : Model -> Element Msg
+siteFooter model =
+    Ui.row
+        [ Region.footer
+        , Ui.width Ui.fill
+        , Ui.spacing 12
+        , Ui.paddingXY 18 12
+        , Background.color (Ui.rgb 238 240 236)
+        , Border.rounded 8
+        ]
+        [ Ui.el
+              [ Font.size 12, Font.color inkSoft ]
+              (Ui.text
+                  ("fieldbook · " ++ String.fromInt (List.length model.notes)
+                      ++ " notes on file"))
+        , Ui.el
+              [ Ui.alignRight
+              , Font.size 12
+              , Font.color inkSoft
+              , Font.family (Font.typeface "Iosevka")
+              ]
+              (Ui.text "Live · Tui · Webview · Cli")
+        ]

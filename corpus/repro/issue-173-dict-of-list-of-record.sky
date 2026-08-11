@@ -1,0 +1,38 @@
+-- PINNED REPRO — anzellai/sky#173
+--
+-- `Dict k (List Record)` produced three defects. The aggregation came back
+-- zeroed, and `35-composite-generics`' golden FROZE the wrong answer rather
+-- than catching it — commit 7425fd00 blessed it because rust == oracle. "Both
+-- sides agree" is not evidence when both sides are wrong, which is why this
+-- repro asserts a value the AUTHOR chose (42) rather than a blessed capture.
+--
+-- coordinate: outer=dict inner=list elem=record
+-- expect: accept, stdout "42"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Rec =
+    { a : Int, b : String, c : Int }
+
+
+nested : Dict String (List Rec)
+nested =
+    Dict.insert "k" [ { a = 1, b = "x", c = 42 } ] Dict.empty
+
+
+main =
+    let
+        res =
+            case Dict.get "k" nested of
+                Just xs ->
+                    List.foldl (\e _ -> e.c) 0 xs
+
+                Nothing ->
+                    0
+    in
+    println (String.fromInt res)

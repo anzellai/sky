@@ -12,6 +12,30 @@ name: Rust CI
 #
 # Runs on every push/PR to main (no paths filter, so a required status check
 # never deadlocks on a docs-only PR) plus the in-flight rewrite branch.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB GRAPH (v2 §8.1). `setup` builds the workspace ONCE and primes the shared
+# cargo cache; the Rust-building jobs `needs: setup` and restore it instead of
+# each paying its own cold dependency build. `ci-green` is the fan-in.
+#
+# ROLLOUT — TWO STEPS, AND THE ORDER MATTERS (v2 §9.5):
+#   STEP 1 (THIS COMMIT): `ci-green` is an ADDITIONAL check. Every pre-existing
+#           job KEEPS ITS NAME and keeps reporting. Repo branch-protection
+#           settings live OUTSIDE this tree, so renaming or removing a job here
+#           would leave every open PR waiting forever on a required check that
+#           can never report again.
+#   STEP 2 (A LATER, SEPARATE CHANGE, once `ci-green` has reported green on
+#           real runs): add `ci-green` to the required checks in repo settings,
+#           THEN remove the individual jobs from the required list.
+#
+#   `ci-green` also asserts the T1 time budget (v2 §8.2). That assertion is
+#   EXPECTED TO FAIL until the remaining critical-path phases land — today's
+#   measured wall clock is 31-34 min against a 15 min T1 ceiling. That is the
+#   point: it publishes the real number every run. DO NOT promote `ci-green` to
+#   a required check until it reports green, and DO NOT raise the ceiling to
+#   make it pass — raising it is exactly the silent budget drift it exists to
+#   catch.
+# ─────────────────────────────────────────────────────────────────────────────
 
 on:
   push:
@@ -24,54 +48,177 @@ concurrency:
   group: rust-ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # T1 (per-push / PR) ceiling from docs/ci-test-architecture-v2.md §8.1, in
+  # seconds, plus the 10 % runner-variance grace §8.2 allows. Single source of
+  # truth: `ci-green` reads these, nothing hard-codes a number.
+  T1_CEILING_SECONDS: '900'
+  T1_GRACE_PERCENT: '10'
+  # Ceiling for the Go build + module caches, in MiB. The module cache reached
+  # 75 GB locally because example FFI deps float on `"latest"`; GitHub's cache
+  # is 10 GB for the WHOLE repo, so an unbounded Go cache does not just waste
+  # space, it evicts every other cache entry (including the cargo ones) and
+  # silently makes every job cache-cold.
+  GO_CACHE_BUDGET_MB: '2048'
+
 defaults:
   run:
     working-directory: rust
 
 jobs:
-  # ── ty crate tests (the heavy corpus tests — each recompiles the stdlib, so
-  #    this crate is the bulk of the old 30-min test step; on its own runner) ──
-  test-ty:
+  # ── setup: build ONCE, prime the shared cargo cache for every Linux job ─────
+  # Before this job existed, six jobs each ran their own `cargo build
+  # --workspace --locked` and the two test jobs each built their own dependency
+  # graph — the same dependency compile paid 8 times per push, because a cache
+  # written at the END of a job is not available to jobs that started
+  # CONCURRENTLY with it. Serialising one short build in front of the fan-out
+  # makes the restore a cache HIT for all of them.
+  #
+  # It builds the workspace AND `cargo test --no-run`, so the cache also covers
+  # dev-dependencies and the test harnesses that `test-ty` / `test-rest` need.
+  #
+  # HONEST ACCOUNTING: this trades wall clock for billed minutes. It removes the
+  # duplicate dependency builds (a large billing win) but adds `setup` to the
+  # critical path — v2 §8.1 budgets T1 as `setup + max(job)` for exactly this
+  # reason. The wall-clock reduction comes from `[profile.dev] opt-level = 2`
+  # (rust/Cargo.toml), which made the compute-bound gates ~6x faster; NOT from
+  # this job, and not from dropping any check.
+  #
+  # UNVERIFIED UNTIL THE FIRST REAL RUN: the whole argument rests on downstream
+  # jobs getting a cache HIT from what `setup` saved. Note that
+  # Swatinem/rust-cache deliberately prunes the workspace's OWN crates before
+  # saving, so dependencies are shared but the ~15 local crates are still
+  # rebuilt per job. Check the "Cache restored from key" lines on run 1.
+  setup:
     runs-on: ubuntu-latest
+    # v2 §8.1 budgets setup at <= 6 min (<= 3 cache-warm). 1.5x = 9; 12 leaves
+    # headroom for a fully cache-cold run after a lockfile bump.
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-          shared-key: sky-test-linux
+          shared-key: sky-linux
+          # ONLY this job writes the cache. Letting every job save produced
+          # concurrent writes of near-identical entries that raced and churned
+          # the 10 GB repo budget.
+          save-if: 'true'
+      - name: Build workspace (primes the shared cache for every dependent job)
+        run: cargo build --workspace --locked
+      - name: Build test binaries (primes dev-dependencies for test-ty/test-rest)
+        run: cargo test --workspace --locked --no-run
+
+  # ── ty crate tests (the heavy corpus tests — each recompiles the stdlib, so
+  #    this crate is the bulk of the old 30-min test step; on its own runner) ──
+  test-ty:
+    needs: setup
+    runs-on: ubuntu-latest
+    # The 1857 s (~31 min) figure this job was sized against is STALE. It was
+    # measured before the per-case cost was fixed, when every corpus case
+    # rebuilt the stdlib world from scratch: 1293 ms/case x ~1400 cases ~= 1810 s,
+    # which is essentially the whole 1857 s. After `perf(ty): incremental World`
+    # and `perf(hir): memoise SourceDb::resolve` the per-case cost is 1.02 ms —
+    # a ~1268x reduction — so the corpus RUN is now seconds, and what remains of
+    # this job is compilation, which is what `needs: setup` addresses.
+    #
+    # Measured locally at this commit (8-core M-series, warm target dir):
+    #   whole `cargo test -p ty --locked`   40 s   (68 tests, 0 filtered)
+    #   of which the reject test target     22 s
+    #
+    # WHY THE REJECT TEST FACE IS NOT SKIPPED HERE. The plan for this phase was
+    # to drop it from this job because it duplicates `xtask reject` in
+    # `parity-reject` and was believed to be ~60 % of 1857 s (~1114 s). At the
+    # measured cost that saving is ~22 s of RUN time — and skipping via a test
+    # filter would not even save the compile, since the test binary is still
+    # built. Removing an independent runner of a soundness corpus to save ~22 s
+    # would be trading a real check for a rounding error, so BOTH faces stay.
+    # The duplication was made cheap; it was not removed by deleting a face.
+    # (`ty/tests/reject.rs` and `xtask reject` both call
+    # `ty::reject_corpus::scan`, so they cannot drift.)
+    #
+    # Sizing: 50 min is retained deliberately rather than tightened on a local
+    # number — the real CI cost is unknown until this graph runs once. `ci-green`
+    # is what holds the TIER budget; this bound only catches a runaway job.
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
       - name: Tests — ty (corpus accept/reject/infer)
         run: cargo test -p ty --locked
 
   # ── Every other crate's tests + clippy + doctests ───────────────────────────
   test-rest:
+    needs: setup
     runs-on: ubuntu-latest
+    # Not separately measured. Reasoned: clippy --all-targets (~6 min debug) +
+    # workspace-minus-ty tests incl. `project`'s real `go build` integration
+    # tests (~10 min) + doctests (~2 min) ≈ 20 min. 1.5x = 30.
+    timeout-minutes: 30
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # PIN THE GO TOOLCHAIN. `cargo test --workspace --exclude ty` runs the
+      # `project` crate's integration tests, and those shell out to a REAL
+      # `go build` on emitted Go — they are the only gate on the #164 / #166
+      # codegen-regression class. This job had NO actions/setup-go, so that gate
+      # ran against whatever Go the runner image happened to ship, while every
+      # other Go-touching job pinned 1.26. A runner image bump could therefore
+      # change a codegen gate's verdict with no change in this repo.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-test-rest-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-test-rest-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-          shared-key: sky-test-linux
+          shared-key: sky-linux
+          save-if: 'false'
       - name: Clippy (report only)
         run: cargo clippy --workspace --all-targets || true
       - name: Tests — workspace except ty
         run: cargo test --workspace --exclude ty --locked
       - name: Doctests
         run: cargo test --workspace --locked --doc
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
 
   # ── Accept-side parity gates (infer dominates ~13m) ─────────────────────────
   parity-accept:
+    needs: setup
     runs-on: ubuntu-latest
+    # infer ~13 min (this file's own header) + debug `cargo build --workspace`
+    # ~4 min + roundtrip/resolve/divergences/s8 ~3 min ≈ 20 min. 1.5x = 30.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-          shared-key: sky-gates-linux
+          shared-key: sky-linux
+          save-if: 'false'
       - run: cargo build --workspace --locked
       - name: Gate — roundtrip (reprint == source, L8)
         run: cargo run -q -p xtask -- roundtrip
@@ -86,14 +233,20 @@ jobs:
 
   # ── Reject-side parity + fmt (reject dominates ~16m) ────────────────────────
   parity-reject:
+    needs: setup
     runs-on: ubuntu-latest
+    # reject measured 780 s DEBUG (74 s release — this job builds debug, so the
+    # debug number is the one that applies) + fmt gate + debug workspace build
+    # ≈ 20 min. 1.5x = 30. Drop this to ~12 if the gates ever build --release.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-          shared-key: sky-gates-linux
+          shared-key: sky-linux
+          save-if: 'false'
       - run: cargo build --workspace --locked
       - name: Gate — fmt (sky fmt never drops a comment; idempotent)
         run: cargo run -q -p xtask -- fmt
@@ -102,21 +255,32 @@ jobs:
 
   # ── Byte-stable codegen across fresh processes (~15.5m) ─────────────────────
   repro:
+    needs: setup
     runs-on: ubuntu-latest
+    # repro ~15.5 min (this file's own header) + debug workspace build ~4 min
+    # ≈ 20 min. 1.5x = 30.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-          shared-key: sky-gates-linux
+          shared-key: sky-linux
+          save-if: 'false'
       - run: cargo build --workspace --locked
       - name: Gate — repro (byte-stable Go across fresh processes, L4)
         run: cargo run -q -p xtask -- repro
 
   # ── Codegen emit + go build + runtime (needs Go; cached) ────────────────────
   codegen-build:
+    needs: setup
     runs-on: ubuntu-latest
+    # The widest step list (coerce-floor, go test rt, build-run --all + 4 --shape
+    # passes, an extra --release sky build, conformance, doc-examples). Not
+    # separately measured, but bounded above by the audit's finding that test-ty
+    # (31 min) is the SLOWEST job, so ≈ 30 min. 1.5x = 45.
+    timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -138,44 +302,162 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-          shared-key: sky-gates-linux
+          shared-key: sky-linux
+          save-if: 'false'
       - run: cargo build --workspace --locked
       - name: Gate — coerce-floor (runtime-coercion floor lock, FAIL-ON-INCREASE)
         run: cargo run -q -p xtask -- coerce-floor
       - name: Gate — runtime rt tests (go test)
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── Emit + go build every example (split out of codegen-build) ──────────────
+  #
+  # 544s of codegen-build's 941s, and the single largest step in the tier after
+  # two rounds of optimisation. Making it concurrent helped less here than
+  # locally — 3.2x on a 10-core dev box, ~1.35x on a 4-core runner, because
+  # `go build` already saturates those cores by itself. Splitting is the lever
+  # that still works when parallelism inside a step has run out: the tier is
+  # `setup + max(dependent)`, so this leaves the critical path rather than
+  # merely shrinking on it.
+  #
+  # Nothing is dropped — `ci-green` requires this job, so the fan-in cannot pass
+  # while every example is not building.
+  build-corpus:
+    # Deliberately NO `needs: setup`. This job consumes none of setup's output —
+    # it runs its own `cargo build --workspace --locked` and restores the shared
+    # cargo cache by `restore-keys`, exactly as the setup-dependent jobs do.
+    # Waiting 209s for a job whose artifacts it never reads was pure serial
+    # delay on the longest job in the graph, so the whole RUN now finishes that
+    # much earlier — this is a real wall-clock saving, not a formula trick.
+    # It is listed in `SETUP_INDEPENDENT_JOBS` so the budget assertion accounts
+    # for it correctly.
+    runs-on: ubuntu-latest
+    # ~76s workspace build + ~59s cache restore + ~544s build-run + the four
+    # runtime gates (~90s WARM, which is why they are here) ≈ 13 min. 1.5x = 20.
+    timeout-minutes: 18
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-linux-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - run: cargo build --workspace --locked
       - name: Gate — build-run (emit + go build every example; FFI skipped)
         run: cargo run -q -p xtask -- build-run --all
+      # The runtime gates live HERE, with `build-run --all`, and that placement
+      # is load-bearing rather than tidy. They re-run the SAME examples, so the
+      # `go build` cache the step above just filled is what makes them cheap.
+      # Splitting them from it measured, on a real run:
+      #     live 27s -> 425s · golden 33s -> 174s · http 9s -> 76s
+      # +613s of rebuilds to save 544s of step. Keep them together.
       - name: Gate — golden (runtime-correctness, CLI subset)
         run: cargo run -q -p xtask -- build-run --shape cli --run --golden
-      - name: Gate — stdlib behavioral conformance (sky test suites)
-        # The behavioral layer the corpus gates + oracle DON'T cover: asserts
-        # documented stdlib semantics with adversarial inputs (Store multi-col
-        # order, memoised-CAF stale reads, Log attrs, fromJson-ADT, stack safety).
-        run: |
-          cargo build --release -p sky --locked
-          SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh
-      - name: Gate — live docs (full-module doc examples still compile)
-        # Every `module Main …` Sky example in the live docs (docs/, excluding
-        # docs/history/) must `sky check` — so a doc example can't silently rot.
-        run: SKY_BIN="$PWD/target/release/sky" ../scripts/doc-examples.sh
       - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
         run: cargo run -q -p xtask -- build-run --shape live --run
       - name: Gate — http runtime (Sky.Http.Server examples start + serve)
         run: cargo run -q -p xtask -- build-run --shape http --run
       - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
         run: cargo run -q -p xtask -- build-run --shape tui --run
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── Behavioural stdlib + live docs (split out of codegen-build) ─────────────
+  #
+  # Both gates need a --release `sky` and neither needs anything else
+  # codegen-build produces, so they were pure serial tail on that job: measured
+  # 167s (conformance, incl. the release build) + 48s (doc-examples) inside a
+  # 1338s job whose length was what put the T1 tier over its ceiling.
+  #
+  # The tier formula is `setup + max(dependent job)`, so moving independent work
+  # into a SIBLING job removes it from the critical path entirely rather than
+  # merely making it faster. Nothing is dropped — both gates still run on every
+  # push, and `ci-green` requires this job like any other.
+  behaviour-docs:
+    needs: setup
+    runs-on: ubuntu-latest
+    # ~81s workspace build + ~167s conformance (incl. the release sky build) +
+    # ~48s doc-examples ≈ 5 min. 1.5x ≈ 8, rounded up for runner variance.
+    timeout-minutes: 12
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-linux-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Gate — stdlib behavioral conformance (sky test suites)
+        # The behavioral layer the corpus gates + oracle DON'T cover: asserts
+        # documented stdlib semantics with adversarial inputs (Store multi-col
+        # order, memoised-CAF stale reads, Log attrs, fromJson-ADT, stack safety).
+        working-directory: rust
+        run: |
+          cargo build --release -p sky --locked
+          SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh
+      - name: Gate — live docs (full-module doc examples still compile)
+        # Every `module Main …` Sky example in the live docs (docs/, excluding
+        # docs/history/) must `sky check` — so a doc example can't silently rot.
+        working-directory: rust
+        run: SKY_BIN="$PWD/target/release/sky" ../scripts/doc-examples.sh
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
 
   # ── Editor-parity (Neovim) + fuzzer (small; isolated setup) ─────────────────
   lsp-fuzz:
+    needs: setup
     runs-on: ubuntu-latest
+    # "small; isolated setup" per this file's header. Reasoned: nvim setup ~1 min
+    # + debug workspace build ~4 min + lsp 17 cases (debug `sky`) ~4 min + fuzz
+    # ~4 min ≈ 13 min. 1.5x ≈ 20.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-          shared-key: sky-gates-linux
+          shared-key: sky-linux
+          save-if: 'false'
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
@@ -192,6 +474,9 @@ jobs:
   # container + the `integration`-tagged tests close that gap.
   integration-postgres:
     runs-on: ubuntu-latest
+    # No Rust build at all: checkout + setup-go + postgres:16 service health-wait
+    # + one `go test -run Postgres` over the rt package ≈ 5 min. 1.5x ≈ 8.
+    timeout-minutes: 8
     services:
       postgres:
         image: postgres:16
@@ -224,6 +509,13 @@ jobs:
   # stay ubuntu-only above, so macOS carries just the determinism invariants.
   macos-determinism:
     runs-on: macos-latest
+    # THE 10x-BILLING JOB — a wedged `sky test` inside conformance.sh burned the
+    # full 6-hour default here on 2026-08-09. Content is repro + coerce-floor +
+    # rt tests + project integration + golden + a --release sky build +
+    # conformance; bounded above by the 31–34 min CI wall clock, so ≈ 30 min on
+    # this (slower, 3-core) runner. 1.5x = 45 — 45 macOS minutes billed at 10x
+    # instead of 360.
+    timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -267,3 +559,83 @@ jobs:
         run: |
           cargo build --release -p sky --locked
           SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── ci-green: the fan-in ────────────────────────────────────────────────────
+  # ONE check that is true iff every job above succeeded, plus the tier-budget
+  # assertion that per-job `timeout-minutes` structurally cannot make (§8.2).
+  #
+  # THIS IS AN *ADDITIONAL* CHECK. See the two-step rollout note in the file
+  # header: no job above was renamed or removed, because branch protection lives
+  # in repo settings outside this tree and a required check that stops reporting
+  # blocks every open PR forever. Promote this to required only AFTER it has
+  # reported green on real runs, and only then drop the others from the required
+  # list.
+  ci-green:
+    needs:
+      - setup
+      - test-ty
+      - test-rest
+      - parity-accept
+      - parity-reject
+      - repro
+      - codegen-build
+      - build-corpus
+      - behaviour-docs
+      - lsp-fuzz
+      - integration-postgres
+      - macos-determinism
+    # `always()` so a FAILED dependency still reaches the assertion below and is
+    # reported as a failure here. Without it this job would be SKIPPED when an
+    # upstream job failed, and a skipped required check is treated as neutral by
+    # branch protection — the exact false-green shape this fan-in exists to stop.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Needed to read this run's per-job timings via the REST API.
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Rendered from the `needs` graph, not from anything a job reported about
+      # itself, so a job cannot pass by not running: `skipped` and `cancelled`
+      # are failures here, not neutral.
+      - name: Assert every upstream job succeeded
+        working-directory: .
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "  \(.key)\t\(.value.result)"'
+          bad=$(echo "$NEEDS_JSON" | jq -r 'to_entries[] | select(.value.result != "success") | .key')
+          if [ -n "$bad" ]; then
+            echo "::error::ci-green: upstream job(s) did not succeed:" >&2
+            echo "$bad" >&2
+            exit 1
+          fi
+          echo "all upstream jobs succeeded"
+
+      - name: Assert the T1 tier budget
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # These do NOT `needs: setup` — `integration-postgres` builds no Rust
+          # at all, `macos-determinism` is a different OS with its own cache a
+          # Linux `setup` cannot prime, and `build-corpus` consumes none of
+          # setup's OUTPUT (it runs its own `cargo build --workspace`, restoring
+          # the shared cargo cache by `restore-keys` like every other job).
+          # They start alongside `setup`, so charging them its time would
+          # overstate the tier.
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism build-corpus'
+        run: |
+          set -euo pipefail
+          gh api \
+            --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+            > jobs.json
+          bash scripts/ci/assert-tier-budget.sh jobs.json

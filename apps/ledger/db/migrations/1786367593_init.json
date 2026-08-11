@@ -1,0 +1,311 @@
+{
+  "id": "1786367593_init",
+  "ops": [
+    {
+      "columns": [
+        {
+          "autoinc": true,
+          "name": "id",
+          "nullable": false,
+          "pk": true,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "name",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": true
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "now": true
+          },
+          "name": "created_at",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        }
+      ],
+      "kind": "createTable",
+      "table": "orgs"
+    },
+    {
+      "columns": [
+        {
+          "autoinc": true,
+          "name": "id",
+          "nullable": false,
+          "pk": true,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "org_id",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "email",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": true
+        },
+        {
+          "autoinc": false,
+          "name": "password_hash",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "text": "member"
+          },
+          "name": "role",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "now": true
+          },
+          "name": "created_at",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        }
+      ],
+      "kind": "createTable",
+      "table": "users"
+    },
+    {
+      "columns": [
+        {
+          "autoinc": true,
+          "name": "id",
+          "nullable": false,
+          "pk": true,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "org_id",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "code",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "name",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "text": "asset"
+          },
+          "name": "kind",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "now": true
+          },
+          "name": "created_at",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        }
+      ],
+      "kind": "createTable",
+      "table": "accounts"
+    },
+    {
+      "columns": [
+        {
+          "autoinc": true,
+          "name": "id",
+          "nullable": false,
+          "pk": true,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "org_id",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "entry_date",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "text": ""
+          },
+          "name": "memo",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "now": true
+          },
+          "name": "created_at",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        }
+      ],
+      "kind": "createTable",
+      "table": "journal_entries"
+    },
+    {
+      "columns": [
+        {
+          "autoinc": true,
+          "name": "id",
+          "nullable": false,
+          "pk": true,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "org_id",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "entry_id",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "account_id",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "int": 0
+          },
+          "name": "amount_minor",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        }
+      ],
+      "kind": "createTable",
+      "table": "journal_lines"
+    },
+    {
+      "columns": [
+        {
+          "autoinc": true,
+          "name": "id",
+          "nullable": false,
+          "pk": true,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "org_id",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "name": "period",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "int": 0
+          },
+          "name": "net_minor",
+          "nullable": false,
+          "pk": false,
+          "type": "int",
+          "unique": false
+        },
+        {
+          "autoinc": false,
+          "default": {
+            "now": true
+          },
+          "name": "closed_at",
+          "nullable": false,
+          "pk": false,
+          "type": "text",
+          "unique": false
+        }
+      ],
+      "kind": "createTable",
+      "table": "period_closes"
+    }
+  ]
+}

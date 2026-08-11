@@ -13,7 +13,8 @@ That gives you three tiers, and the type tells you which one you're looking at:
 
 ```elm
 -- pure          — bare value:   String.length, List.map, Crypto.sha256
--- fallible-pure — Result / Maybe: String.toInt : String -> Result Error Int
+-- fallible-pure — Maybe:  String.toInt : String -> Maybe Int
+--                 Result: Encoding.base64Decode : String -> Result Error String
 -- effect        — Task Error a: File.read, Http.get, Db.query, Time.now
 ```
 

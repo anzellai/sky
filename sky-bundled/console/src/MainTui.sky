@@ -65,6 +65,13 @@ init _ =
       , nowMs = 0
       , globalQuery = ""
       , analytics = emptyAnalytics
+
+      -- The TUI console is always standalone: a terminal UI has no
+      -- __Host-sky_console login cookie to clear, so there is no logout
+      -- route to point at. "" is the documented "render no Sign out"
+      -- value (View.sky renders Ui.none for it), the same value the
+      -- standalone hub uses.
+      , logoutUrl = ""
       }
     , Cmd.none
     )

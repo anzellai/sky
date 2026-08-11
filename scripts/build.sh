@@ -27,6 +27,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# shellcheck source=lib/cargo-target.sh
+source "$ROOT/scripts/lib/cargo-target.sh"
+
 RUN_SWEEP=0
 RUN_SELF_TESTS=0
 DO_CLEAN=0
@@ -69,10 +72,12 @@ mkdir -p sky-out bin
 # cabal-test spec (Sky.Build.EmbeddedRuntimeSpec) guards against drift.
 
 say "building sky compiler (cargo)"
+# Ask cargo where it put the binary rather than assuming `rust/target/release`.
+# See scripts/lib/cargo-target.sh for the incident: that assumption silently
+# installed a pre-fix compiler, because cargo was honouring CARGO_TARGET_DIR and
+# writing elsewhere while the `cp` kept succeeding on the older file.
 ( cd rust && cargo build --release --locked -p sky )
-mkdir -p sky-out && cp rust/target/release/sky sky-out/sky
-
-chmod +x sky-out/sky
+install_binary "$(cargo_bin_path "$ROOT/rust" sky --release)" "$ROOT/sky-out/sky" || exit 1
 ./sky-out/sky --version
 
 # ─── build sky-ffi-inspect ──────────────────────────────────────────

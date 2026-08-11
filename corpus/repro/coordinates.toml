@@ -1,0 +1,88 @@
+# Pinned historical repros — the coordinates the generator expands around.
+#
+# Every file listed here is HAND-WRITTEN and CHECKED IN. None of it is generator
+# output, and that is deliberate: a generator edit must never be able to
+# renumber, reword, or silently drop the reproduction of a shipped defect. The
+# generator reads these coordinates and produces their **distance-1
+# neighbourhood** — every assignment differing in exactly one axis — because, as
+# the mandate puts it, "the bug was never unique, only the combination was".
+#
+# `expect_stdout` is the value the AUTHOR chose, never a blessed capture. This is
+# the lesson of #173: `35-composite-generics`' golden froze the zeroed
+# aggregation and was blessed because rust == oracle (commit 7425fd00). Both
+# sides agreeing is not evidence when both sides are wrong.
+#
+# A repro whose `expect_stdout` stops matching is a REGRESSION, not a golden to
+# re-bless.
+
+[[repro]]
+file          = "issue-166-record-update-in-tuple.sky"
+issue         = "anzellai/sky#166"
+stratum       = "record_update"
+coordinate    = { position = "in_tuple", annotation = "annotated", row = "closed", carrier = "direct" }
+expect        = "accept"
+expect_stdout = "7/42"
+summary       = "record update inside a tuple dropped the un-updated fields"
+
+[[repro]]
+file          = "issue-171-row-poly-update-through-fold.sky"
+issue         = "anzellai/sky#171"
+stratum       = "record_update"
+coordinate    = { position = "bare", annotation = "annotated", row = "open_subset", carrier = "via_foldr" }
+expect        = "accept"
+expect_stdout = "7/42"
+summary       = "row-polymorphic record update through foldl/foldr dropped fields"
+
+[[repro]]
+file          = "issue-170-destructure-erased-subject.sky"
+issue         = "anzellai/sky#170"
+stratum       = "destructure"
+coordinate    = { erasure = "via_foldr", position = "in_let" }
+expect        = "accept"
+expect_stdout = "42"
+summary       = "tuple/record destructure on an erased subject"
+
+[[repro]]
+file          = "issue-173-dict-of-list-of-record.sky"
+issue         = "anzellai/sky#173"
+stratum       = "type_nesting"
+coordinate    = { outer = "dict", inner = "list", elem = "record" }
+expect        = "accept"
+expect_stdout = "42"
+summary       = "Dict k (List Record) — three defects; the golden froze the wrong answer"
+
+[[repro]]
+file          = "goty-fieldset-collision-erased.sky"
+issue         = "goty.rs record-fieldset collision (v0.19.1) + erased-any recurrence"
+stratum       = "fieldset_collision"
+coordinate    = { collision = "same_names_diff_types", erasure = "via_fst_snd" }
+expect        = "accept"
+expect_stdout = "42/s"
+summary       = "same field names, different field types; wrong struct selected under erasure"
+
+[[repro]]
+file          = "fieldset-ctor-stdlib-collision.sky"
+issue         = "sky/record-fieldset-collision-ctor (found by this corpus, 2026-08-10)"
+stratum       = "fieldset_ctor"
+coordinate    = { construction = "via_ctor_fn", collider = "stdlib_eventprop" }
+expect        = "accept"
+expect_stdout = "42"
+summary       = "FIXED: a user {key,value} record built through an annotated constructor collided with Std.Analytics.EventProp — compiled clean, panicked at runtime"
+
+[[repro]]
+file          = "issue-164-alias-not-last-segment.sky"
+issue         = "anzellai/sky#164"
+stratum       = "import_shape"
+coordinate    = { import_shape = "alias_not_last_segment", collision = "none" }
+expect        = "accept"
+expect_stdout = "HI/42"
+summary       = "import alias that is not the module's last path segment"
+
+[[repro]]
+file          = "ambiguous-exposing-all/"
+issue         = "sky/ambiguous-unqualified-name-across-exposing-all (found by Family S, 2026-08-11)"
+stratum       = "stdlib_import"
+coordinate    = { import_shape = "exposing_all", shadow = "ambiguous_exposing_all" }
+expect        = "reject"
+expect_stdout = ""
+summary       = "FIXED 2026-08-11: two modules both `exposing (..)` the same name used to resolve to the LAST import, silently — the program compiled clean and its value depended on import ORDER. Now rejected [E1012] at the use site via the unqualified-name precedence lattice (ambient < open < explicit < local), which keeps the autoloaded Prelude from colliding with explicit imports. A directory rather than one file, because the pair of import orderings IS the reproduction."

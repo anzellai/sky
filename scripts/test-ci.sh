@@ -41,6 +41,8 @@ cd "$ROOT"
 
 # shellcheck source=lib/concurrency.sh
 source "$ROOT/scripts/lib/concurrency.sh"
+# shellcheck source=lib/cargo-target.sh
+source "$ROOT/scripts/lib/cargo-target.sh"
 
 # Defaults that map "CI mode" semantically. Operators can override
 # anything by exporting before invoking the script.
@@ -64,8 +66,11 @@ phase_compiler_build() {
     echo "--- phase: compiler build ---"
     local t0; t0=$(date +%s)
     if [ ! -x "$ROOT/sky-out/sky" ] || [ -n "${SKY_REBUILD:-}" ]; then
+        # Not `cp "$ROOT/rust/target/release/sky"` — cargo honours
+        # CARGO_TARGET_DIR, so that path can name an older binary and this
+        # phase's whole purpose is freshness. See scripts/lib/cargo-target.sh.
         ( cd "$ROOT/rust" && timeout 900 cargo build --release --locked -p sky ) \
-            && cp "$ROOT/rust/target/release/sky" "$ROOT/sky-out/sky"
+            && install_binary "$(cargo_bin_path "$ROOT/rust" sky --release)" "$ROOT/sky-out/sky"
     else
         echo "  sky-out/sky exists (set SKY_REBUILD=1 to force rebuild)"
     fi

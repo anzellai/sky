@@ -6077,6 +6077,36 @@ func Task_parallel(tasks any) any {
 	}
 }
 
+// Task_lazy : (() -> a) -> Task e a
+//
+// Defers a PURE thunk into a Task, so expensive computation only runs when the
+// Task is run (inside `Cmd.perform` / `Task.run`) rather than where it is
+// written. `Sky/Core/Task.sky` has always declared this as
+// `Ffi.kernel "Task_lazy"` and `rust/crates/lower/src/kernel.rs` has always
+// lowered it to `rt.Task_lazy` — the Go symbol was simply missing, so the
+// function type-checked and then failed the ABI guard with [E4005].
+//
+// The thunk is invoked through the same reflect path as every other Sky
+// callback. `() -> a` reaches Go either as a zero-argument func or as a
+// one-argument func taking unit, depending on how the caller wrote it, so both
+// are forced. A non-func value is passed through — `Task.lazy` on an already
+// evaluated value is a `Task.succeed`.
+//
+// Deferral only: the thunk re-runs on every run of the Task. Memoisation is
+// the CAF story (a zero-arg top-level binding), deliberately not this.
+func Task_lazy(thunk any) any {
+	return func() any {
+		rv := reflect.ValueOf(thunk)
+		if rv.Kind() != reflect.Func {
+			return Ok[any, any](thunk)
+		}
+		if rv.Type().NumIn() == 0 {
+			return Ok[any, any](SkyCall(thunk))
+		}
+		return Ok[any, any](SkyCall(thunk, struct{}{}))
+	}
+}
+
 func Task_map(fn any, task any) any {
 	return func() any {
 		tag, okV, errV := anyResultView(SkyCall(task))
@@ -6337,6 +6367,10 @@ func System_setenv(name, value any) any {
 		if err := os.Setenv(k, v); err != nil {
 			return Err[any, any](ErrFfi("setenv " + k + ": " + err.Error()))
 		}
+		// An explicit write is by definition not a compiler-seeded default;
+		// drop any recorded seeding so precedence consumers (resolveLivePort)
+		// treat this value as deliberately chosen.
+		clearSeededDefault(k)
 		return Ok[any, any](nil)
 	}
 }
@@ -6355,6 +6389,8 @@ func System_unsetenv(name any) any {
 		if err := os.Unsetenv(k); err != nil {
 			return Err[any, any](ErrFfi("unsetenv " + k + ": " + err.Error()))
 		}
+		// The value is gone; so is any record that it was seeded.
+		clearSeededDefault(k)
 		return Ok[any, any](nil)
 	}
 }
@@ -10043,6 +10079,29 @@ func skyCallDirect(rv reflect.Value, args []any) any {
 					break
 				}
 			}
+			// FUNCTION-typed type variable crossing an `any` kernel boundary.
+			// A kernel whose signature is all-`any` (Std.Config's decoder
+			// combinators, and any other reflection-based higher-order kernel)
+			// hands on the runtime's own generic curried closure — shaped
+			// func(any) any. But HM DID infer the continuation's parameter, so
+			// codegen compiled it as a concrete, possibly multi-argument Go
+			// func. Both are correct; they just are not the same reflect.Type,
+			// and this used to be an outright panic on a well-typed program.
+			//
+			// Bridge them with an adapter that receives the concrete arguments
+			// and applies them through SkyCall, which already implements the
+			// currying the generic closure expects.
+			//
+			// This ONLY runs where the call previously panicked, so it cannot
+			// change the behaviour of any call that already worked. A non-func
+			// argument, or a result that does not fit the declared return
+			// type, still fails loudly.
+			if pt.Kind() == reflect.Func && av.Kind() == reflect.Func {
+				if adapted := adaptSkyFuncValue(av, pt); adapted.IsValid() {
+					vals[i] = adapted
+					break
+				}
+			}
 			// Audit P0-6: pre-fix this branch silently passed `av` into
 			// reflect.Call with a wrong type, which then panicked inside
 			// reflect with a cryptic "reflect: Call using X as Y" message.
@@ -10066,6 +10125,71 @@ func skyCallDirect(rv reflect.Value, args []any) any {
 		return nil
 	}
 	return out[0].Interface()
+}
+
+// adaptSkyFuncValue wraps a Sky-generic closure so it satisfies a concrete Go
+// function type.
+//
+// The generic closure is curried one argument at a time (func(any) any chains);
+// the target may take all its arguments at once. SkyCall already reconciles
+// those two calling conventions, so the adapter just forwards through it.
+//
+// Returns an invalid Value for shapes it will not fake — variadic targets and
+// multi-result targets — so the caller falls through to its normal diagnostic
+// instead of this producing a subtly wrong function.
+func adaptSkyFuncValue(fn reflect.Value, target reflect.Type) reflect.Value {
+	if target.IsVariadic() || target.NumOut() > 1 {
+		return reflect.Value{}
+	}
+	callee := fn.Interface()
+	return reflect.MakeFunc(target, func(args []reflect.Value) []reflect.Value {
+		callArgs := make([]any, len(args))
+		for i, a := range args {
+			callArgs[i] = a.Interface()
+		}
+		res := SkyCall(callee, callArgs...)
+		if target.NumOut() == 0 {
+			return nil
+		}
+		ot := target.Out(0)
+		out := skyValueAsType(res, ot)
+		if !out.IsValid() {
+			// The closure ran but produced something the declared return type
+			// cannot hold. Surface it rather than papering over it.
+			panic(fmt.Sprintf(
+				"rt.adaptSkyFuncValue: adapted function returned %T (%v), "+
+					"which does not fit the declared result type %v", res, res, ot))
+		}
+		return []reflect.Value{out}
+	})
+}
+
+// skyValueAsType converts an any-typed Sky value to a concrete reflect.Type
+// using the same rules as skyCallDirect's argument binding, including the
+// function-adaptation case so curried chains nest.
+//
+// Returns an invalid Value when no rule applies; callers decide the diagnostic.
+func skyValueAsType(v any, t reflect.Type) reflect.Value {
+	if v == nil {
+		return reflect.Zero(t)
+	}
+	rv := reflect.ValueOf(v)
+	switch {
+	case rv.Type() == t:
+		return rv
+	case t.Kind() == reflect.Interface && rv.Type().Implements(t):
+		return rv
+	case rv.Type().ConvertibleTo(t) && safeReflectConvert(rv.Kind(), t.Kind()):
+		return rv.Convert(t)
+	case rv.Kind() == reflect.Func && t.Kind() == reflect.Func:
+		return adaptSkyFuncValue(rv, t)
+	}
+	if isStructuralNarrowCandidate(rv.Kind(), t.Kind()) {
+		if narrowed := narrowReflectValue(rv, t); narrowed.IsValid() {
+			return narrowed
+		}
+	}
+	return reflect.Value{}
 }
 
 func skyCallOne(f any, arg any) any {

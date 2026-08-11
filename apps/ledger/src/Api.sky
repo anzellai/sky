@@ -1,0 +1,215 @@
+module Api exposing (driverName, health, selfcheck, journalJson, journalCsv, balancesJson)
+
+-- Api — machine-readable endpoints mounted alongside the Sky.Live pages via
+-- `Live.api`. These are what a CI harness asserts on: they expose the
+-- allocation residue, the journal ORDER, and which driver actually opened.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Encode as Enc exposing (Value)
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Std.Csv as Csv
+import Amounts
+import Books
+import Repo
+import State
+import Update
+
+
+orgParam : Request -> Int
+orgParam req =
+    case Server.queryParam "org" req of
+
+        Just raw ->
+            Maybe.withDefault 1 (String.toInt raw)
+
+        Nothing ->
+            1
+
+
+jsonBody : List ( String, Value ) -> Response
+jsonBody fields =
+    Server.json (Enc.encode 0 (Enc.object fields))
+
+
+-- | Which driver actually opened, derived the same way the runtime derives
+-- it — from the DSN shape (runtime-go/rt/db_auth.go:337 `detectDriver`), not
+-- from the decorative `[database] driver` key in sky.toml.
+driverName : a -> String
+driverName _ =
+    let
+        skyPath = System.getenvOr "SKY_DB_PATH" ""
+        dsn =
+            if skyPath /= "" then
+                skyPath
+
+            else
+                System.getenvOr "DATABASE_URL" ""
+        low = String.toLower dsn
+    in
+        if String.startsWith "postgres://" low then
+            "postgres"
+
+        else if String.startsWith "postgresql://" low then
+            "postgres"
+
+        else if String.contains "host=" low && String.contains "user=" low then
+            "postgres"
+
+        else
+            "sqlite"
+
+
+health : Request -> Task Error Response
+health _req =
+    Task.succeed
+        (jsonBody
+            [ ( "status", Enc.string "ok" )
+            , ( "app", Enc.string "ledger" )
+            , ( "driver", Enc.string (driverName ()) )
+            , ( "livePort", Enc.string (System.getenvOr "SKY_LIVE_PORT" "") )
+            ])
+
+
+-- | The Money.allocate residue gate: 100 minor units split three ways must
+-- come back as 34/33/33 and sum to exactly 100.
+selfcheck : Request -> Task Error Response
+selfcheck _req =
+    let
+        check = Amounts.invoiceSplitCheck ()
+    in
+        Task.succeed
+            (jsonBody
+                [ ( "whole", Enc.int check.whole )
+                , ( "parts", Enc.list Enc.int check.parts )
+                , ( "total", Enc.int check.total )
+                , ( "exact", Enc.bool check.exact )
+                , ( "driver", Enc.string (driverName ()) )
+                ])
+
+
+-- | The journal in its guaranteed (date, id) order.
+journalJson : Request -> Task Error Response
+journalJson req =
+    let
+        orgId = orgParam req
+        rows = rowsFor orgId
+    in
+        Task.succeed
+            (jsonBody
+                [ ( "org", Enc.int orgId )
+                , ( "orderedBy", Enc.string "entry_date ASC, id ASC" )
+                , ( "count", Enc.int (List.length rows) )
+                , ( "entries", Enc.list rowJson rows )
+                ])
+
+
+rowJson : State.JournalRow -> Value
+rowJson r =
+    Enc.object
+        [ ( "id", Enc.int r.id )
+        , ( "date", Enc.string r.day )
+        , ( "memo", Enc.string r.memo )
+        , ( "debit", Enc.string r.debit )
+        , ( "credit", Enc.string r.credit )
+        , ( "amount", Enc.string (Amounts.render r.amountMinor) )
+        , ( "amountMinor", Enc.int r.amountMinor )
+        ]
+
+
+rowsFor : Int -> List State.JournalRow
+rowsFor orgId =
+    let
+        accts =
+            case Repo.listAccounts orgId of
+
+                Ok a ->
+                    a
+
+                Err _ ->
+                    []
+        ents =
+            case Repo.listEntries orgId of
+
+                Ok e ->
+                    e
+
+                Err _ ->
+                    []
+        ls =
+            case Repo.listLines orgId of
+
+                Ok l ->
+                    l
+
+                Err _ ->
+                    []
+    in
+        Update.buildJournal accts ents ls
+
+
+journalCsv : Request -> Task Error Response
+journalCsv req =
+    let
+        rows = rowsFor (orgParam req)
+        doc =
+            Csv.withRows
+                (List.map csvCells rows)
+                (Csv.withHeader
+                    [ "id", "date", "memo", "debit", "credit", "amount" ]
+                    Csv.defaultCsv)
+    in
+        Task.succeed
+            (Server.text (Csv.encode doc)
+                |> Server.withHeader "Content-Type" "text/csv; charset=utf-8"
+                |> Server.withHeader
+                       "Content-Disposition"
+                       "attachment; filename=journal.csv")
+
+
+csvCells : State.JournalRow -> List String
+csvCells r =
+    [ String.fromInt r.id
+    , r.day
+    , r.memo
+    , r.debit
+    , r.credit
+    , Amounts.render r.amountMinor
+    ]
+
+
+balancesJson : Request -> Task Error Response
+balancesJson req =
+    let
+        orgId = orgParam req
+    in
+        case Repo.balances orgId of
+
+            Err e ->
+                Task.succeed
+                    (jsonBody [ ( "error", Enc.string (Error.toString e) ) ])
+
+            Ok rows ->
+                Task.succeed
+                    (jsonBody
+                        [ ( "org", Enc.int orgId )
+                        , ( "trialBalanceMinor"
+                          , Enc.int (Repo.trialBalance rows)
+                          )
+                        , ( "accounts", Enc.list balJson rows )
+                        ])
+
+
+balJson : Books.BalanceRow -> Value
+balJson r =
+    Enc.object
+        [ ( "accountId", Enc.int r.accountId )
+        , ( "totalMinor", Enc.int r.totalMinor )
+        , ( "total", Enc.string (Amounts.render r.totalMinor) )
+        ]

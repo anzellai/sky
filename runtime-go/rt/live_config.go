@@ -91,7 +91,9 @@ func Live_withStatic(dir, cfg any) any { return liveCfgSet(cfg, "Static", dir) }
 // Live_withStaticUrl — `staticUrl : String` mount path override.
 func Live_withStaticUrl(url, cfg any) any { return liveCfgSet(cfg, "StaticUrl", url) }
 
-// Live_withPort — `port : Int` listen port (env still wins).
+// Live_withPort — `port : Int` listen port. An OPERATOR-set
+// <PREFIX>_LIVE_PORT still wins; the sky.toml default that generated init()
+// seeds into that same variable does not. See resolveLivePort in live.go.
 func Live_withPort(port, cfg any) any { return liveCfgSet(cfg, "Port", port) }
 
 // Live_withStore — `store : String` session store kind (env still wins).

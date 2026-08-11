@@ -1,0 +1,215 @@
+//! `xtask corpus` — Layer 1, the combinatorial corpus (CI/test-architecture v2 §3).
+//!
+//! The mandate's layer 1: *"Not 'more examples': systematic VARIATION. Every
+//! shipped defect in this repo's history was ordinary usage in a combination
+//! nobody had tried."* The axes are mined from that history (`axes.rs`), the
+//! expected values are constructed by the generator rather than observed from
+//! the compiler (`gen.rs`), and membership is declared in a checked-in manifest
+//! rather than discovered by `read_dir` (`manifest.rs`).
+//!
+//! Subcommands:
+//!
+//! ```text
+//! xtask corpus --spike[=N]     the v2 §2.3 / §3.5 red-rate spike
+//! xtask corpus --run           run the whole corpus
+//! xtask corpus --isolation     the v2 §3.2 isolation gate (alone / batch / shuffled)
+//! xtask corpus --reject        family R — code-pinned rejection + accepted twin
+//! xtask corpus --emit-shape    family E — properties of the generated Go, no `go build`
+//! xtask corpus --emit-manifest regenerate corpus/manifest.toml
+//! ```
+//!
+//! # The three modes cost three different things
+//!
+//! `Mode::Behavioural` cases are BUILT AND RUN (`c_u` ≈ 0.70 s each) because
+//! their defect class compiles clean and behaves wrong. `Mode::Static` (family
+//! R) decides its verdict in-process from `ty::check_modules`; `Mode::EmitShape`
+//! (family E) stops at `project::emit_example_source`. Neither pays `go build`,
+//! which is why they can be dense where the behavioural families cannot — and
+//! why `runner::run_all` selects on the mode rather than running everything the
+//! manifest lists.
+
+pub mod axes;
+pub mod emit_shape;
+pub mod gen;
+pub mod isolation;
+pub mod manifest;
+pub mod reject_matrix;
+pub mod runner;
+pub mod stdlib;
+pub mod witness;
+
+use std::path::Path;
+
+/// A deterministic seed derived from the commit sha.
+///
+/// Sampled gates (isolation, witness) use this so their sample **rotates**
+/// across commits. A fixed sample would only ever prove the same handful of
+/// cases, and the ones it never picked would be permanently unverified while the
+/// gate reported green.
+pub fn commit_seed(root: &Path) -> usize {
+    std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| {
+            s.trim()
+                .bytes()
+                .fold(0usize, |a, b| a.wrapping_mul(31).wrapping_add(b as usize))
+        })
+        .unwrap_or(0)
+}
+
+/// Write every generated case's Sky source under `dir`, one project per case.
+///
+/// A debugging aid, not a gate: the corpus checks in a manifest rather than
+/// thousands of `.sky` files (see `manifest.rs`), which is right for review and
+/// unhelpful the moment a generator edit produces a syntax error. This turns
+/// "run 320 builds and read the tail" into "look at the file".
+fn dump_sources(root: &Path, dir: &Path) -> i32 {
+    let _ = root;
+    let cases = all_cases();
+    for c in &cases {
+        let base = dir.join(c.id.replace('/', "__")).join("src");
+        for (name, src) in &c.modules {
+            let p = base.join(name.replace('.', "/")).with_extension("sky");
+            if let Some(parent) = p.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!("corpus: mkdir {}: {e}", parent.display());
+                    return 1;
+                }
+            }
+            if let Err(e) = std::fs::write(&p, src) {
+                eprintln!("corpus: write {}: {e}", p.display());
+                return 1;
+            }
+        }
+    }
+    println!("wrote {} case project(s) under {}", cases.len(), dir.display());
+    0
+}
+
+pub fn run(args: &[String], root: &Path) -> i32 {
+    if let Some(a) = args.iter().find(|a| a.starts_with("--dump-sources=")) {
+        let dir = a.split_once('=').map(|(_, v)| v).unwrap_or_default();
+        return dump_sources(root, Path::new(dir));
+    }
+    if args.iter().any(|a| a == "--prove-isolation-needed") {
+        return isolation::prove_isolation_needed(root);
+    }
+    if args.iter().any(|a| a == "--stdlib-coverage") {
+        return stdlib::report(root);
+    }
+    if args.iter().any(|a| a == "--isolation") {
+        return isolation::run(root);
+    }
+    if args.iter().any(|a| a == "--witness") {
+        return witness::run(root);
+    }
+    if args.iter().any(|a| a == "--reject") {
+        return reject_matrix::run(root);
+    }
+    if args.iter().any(|a| a == "--emit-shape") {
+        return emit_shape::run(root);
+    }
+    if args.iter().any(|a| a == "--emit-manifest") {
+        return manifest::emit(root);
+    }
+    if args.iter().any(|a| a == "--check-manifest") {
+        return manifest::check(root);
+    }
+    if let Some(spike) = args.iter().find(|a| a.starts_with("--spike")) {
+        let n: usize = spike
+            .split_once('=')
+            .and_then(|(_, v)| v.parse().ok())
+            .unwrap_or(100);
+        return runner::spike(root, n);
+    }
+    if args.iter().any(|a| a == "--run") {
+        return runner::run_all(root);
+    }
+    eprintln!(
+        "usage: xtask corpus [--spike[=N] | --run | --isolation | --witness \
+         | --reject | --emit-shape | --emit-manifest | --check-manifest \
+         | --stdlib-coverage | --dump-sources=DIR]"
+    );
+    2
+}
+
+/// Every case the generator produces: for each stratum, the full cross of its
+/// axes.
+///
+/// v2 §2.1 computes `N_min` from the coverage guarantee rather than choosing it:
+/// the full-cross strata + the distance-1 neighbourhood of every pinned
+/// coordinate + the pinned coordinates themselves. Because each stratum here IS
+/// a full cross of the axes its defect moved along, the neighbourhood of its
+/// pinned coordinate is a subset of that cross — so the cross is the binding
+/// term and `N_min` is its total.
+pub fn all_cases() -> Vec<gen::GenCase> {
+    let mut out = Vec::new();
+    for s in axes::STRATA {
+        for a in axes::full_cross(s) {
+            out.push(gen::build(s, &a));
+        }
+    }
+    // Families R and E. Their strata live in their own modules rather than in
+    // `axes::STRATA`, because `STRATA` is the list of full-cross strata the
+    // VALUE-asserting families share and `witness.rs` requires an
+    // `axis_under_test` entry for every member. R's witness is its accepted twin
+    // and E's is the property itself, so neither belongs in that table — but both
+    // belong in the manifest, which is the single membership authority (v2 §3.1).
+    out.extend(reject_matrix::all());
+    out.extend(emit_shape::all());
+    out
+}
+
+/// The cases that are BUILT AND RUN. `runner` selects on this rather than on
+/// `all_cases()`: a family-R program is ill-typed by construction and a family-E
+/// case's verdict is a property of the emitted Go, so running either through the
+/// behavioural path would spend `c_u` to learn nothing.
+pub fn behavioural_cases() -> Vec<gen::GenCase> {
+    all_cases()
+        .into_iter()
+        .filter(|c| c.mode == gen::Mode::Behavioural)
+        .collect()
+}
+
+/// `N_min`, printed rather than chosen (v2 §2.1).
+pub fn n_min() -> usize {
+    all_cases().len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every pinned coordinate's distance-1 neighbourhood is inside the corpus.
+    /// This is the mandate's *"its NEIGHBOURS in the variation space become cases
+    /// too — because the bug was never unique, only the combination was"*, made
+    /// checkable.
+    #[test]
+    fn every_pinned_neighbourhood_is_covered() {
+        let ids: std::collections::BTreeSet<String> =
+            all_cases().into_iter().map(|c| c.id).collect();
+        for s in axes::STRATA {
+            let pin = axes::pinned_coordinate(s.name).unwrap();
+            let pin_id = format!("{}/{}", s.name, pin.slug());
+            assert!(ids.contains(&pin_id), "pinned coordinate {pin_id} is not in the corpus");
+            for n in pin.neighbourhood(s.axes) {
+                // An inadmissible neighbour is not a gap: it is a point where
+                // the generator has nothing it can independently predict, and
+                // `axes::admissible` says so by name. Requiring it here would
+                // force a vacuous case into existence to satisfy a count.
+                if !axes::admissible(s.name, &n) {
+                    continue;
+                }
+                let nid = format!("{}/{}", s.name, n.slug());
+                assert!(
+                    ids.contains(&nid),
+                    "distance-1 neighbour {nid} of {pin_id} is not in the corpus"
+                );
+            }
+        }
+    }
+}

@@ -28,6 +28,12 @@ main : Task Error ()
 main =
     Db.connect ()
         |> Task.andThen (\conn -> Store.create conn products |> Task.map (\_ -> conn))
+        -- Reset to a known seed row first. Without this the example is
+        -- single-shot: the second run's `Store.insert` hits the duplicate
+        -- primary key "p1", the Task chain short-circuits, and the program
+        -- prints NOTHING while still exiting 0. That is what the CI gate
+        -- captured into a 1-byte golden, which then matched itself green.
+        |> Task.andThen (\conn -> Store.delete conn products "id" "p1" |> Task.map (\_ -> conn))
         |> Task.andThen (\conn -> Store.insert conn products { id = "p1", name = "Mug", imageUrl = "mug.png", stock = 10 } |> Task.map (\_ -> conn))
         -- partial update: change name ONLY, must NOT touch imageUrl/stock
         |> Task.andThen (\conn -> Store.setFields conn products (SqlString "p1") [ ( "name", SqlString "Big Mug" ) ] |> Task.map (\_ -> conn))

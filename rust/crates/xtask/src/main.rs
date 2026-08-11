@@ -9,21 +9,96 @@
 //!   2. zero `ERROR` nodes (the parser structured every construct).
 
 mod build_run_gate;
+mod ci_scan;
 mod coerce_floor_gate;
+mod corpus;
+mod corpus_bench;
+mod coverage_ledger;
+mod denominators_gate;
 mod divergences_gate;
 mod fmt_gate;
 mod fuzz_gate;
+mod harness;
 mod infer_gate;
 mod lsp_gate;
 mod reject_gate;
 mod repro_gate;
 mod resolve_gate;
 mod s8_gate;
+mod shared_world_gate;
 mod welltyped_gate;
+
+#[cfg(test)]
+mod gate_manifest_test;
 
 use std::path::{Path, PathBuf};
 
 const VERSION: &str = "xtask (rust bring-up) v0.1.0-m1";
+
+/// A subcommand entry point: argv tail (everything after the gate name) → exit
+/// code.
+type GateFn = fn(&[String]) -> i32;
+
+/// The SINGLE source of truth for the xtask subcommand surface.
+///
+/// Both `main`'s dispatch and the `usage:` line are derived from this table, so
+/// the help text can never drift from what actually runs. `gate_manifest_test`
+/// additionally asserts that every gate name referenced from
+/// `.github/workflows/**` and `scripts/**` appears here — a typo'd or renamed
+/// gate in CI (`coerce_floor` for `coerce-floor`) fails `cargo test -p xtask`
+/// instead of silently becoming a no-op step.
+///
+/// `--version` / `version` are handled separately in `main` (they are flags,
+/// not gates, and must not appear in the gate usage list).
+const GATES: &[(&str, GateFn)] = &[
+    ("roundtrip", roundtrip),
+    ("resolve", |args| resolve_gate::run(args, &repo_root())),
+    ("infer", |args| infer_gate::run(args, &repo_root())),
+    ("reject", |args| reject_gate::run(args, &repo_root())),
+    ("build-run", |args| build_run_gate::run(args, &repo_root())),
+    ("coerce-floor", |args| {
+        coerce_floor_gate::run(args, &repo_root())
+    }),
+    ("divergences", |args| {
+        divergences_gate::run(args, &repo_root())
+    }),
+    ("fmt", |args| fmt_gate::run(args, &repo_root())),
+    ("fuzz", |args| fuzz_gate::run(args, &repo_root())),
+    ("welltyped", |args| welltyped_gate::run(args, &repo_root())),
+    ("repro", |args| repro_gate::run(args, &repo_root())),
+    ("s8", |args| s8_gate::run(args, &repo_root())),
+    ("lsp", |args| lsp_gate::run(args, &repo_root())),
+    ("shared-world", |args| {
+        shared_world_gate::run(args, &repo_root())
+    }),
+    ("corpus-bench", |args| {
+        corpus_bench::run(args, &repo_root())
+    }),
+    ("corpus", |args| corpus::run(args, &repo_root())),
+    ("denominators", |args| {
+        denominators_gate::run(args, &repo_root())
+    }),
+    ("coverage-ledger", |args| {
+        coverage_ledger::run(args, &repo_root())
+    }),
+    ("harness", |args| harness::run(args, &repo_root())),
+    ("errloc", errloc),
+    ("diff", diff_stub),
+];
+
+/// A stub must not report success. `xtask diff` is the differential gate's
+/// name; wiring it into CI while it does nothing would give a permanently green
+/// step that verifies nothing.
+fn diff_stub(_args: &[String]) -> i32 {
+    eprintln!("xtask diff: NOT IMPLEMENTED (stub) — would shell stage-0 + rust over the corpus");
+    2
+}
+
+/// The `usage:` line, derived from [`GATES`] so it cannot drift from dispatch.
+fn usage() -> String {
+    let names: Vec<&str> = GATES.iter().map(|(name, _)| *name).collect();
+    format!("usage: xtask <{}> [args]", names.join("|"))
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -32,31 +107,24 @@ fn main() {
             println!("{VERSION}");
             0
         }
-        Some("roundtrip") => roundtrip(&args[1..]),
-        Some("resolve") => resolve_gate::run(&args[1..], &repo_root()),
-        Some("infer") => infer_gate::run(&args[1..], &repo_root()),
-        Some("reject") => reject_gate::run(&args[1..], &repo_root()),
-        Some("build-run") => build_run_gate::run(&args[1..], &repo_root()),
-        Some("coerce-floor") => coerce_floor_gate::run(&args[1..], &repo_root()),
-        Some("divergences") => divergences_gate::run(&args[1..], &repo_root()),
-        Some("fmt") => fmt_gate::run(&args[1..], &repo_root()),
-        Some("fuzz") => fuzz_gate::run(&args[1..], &repo_root()),
-        Some("welltyped") => welltyped_gate::run(&args[1..], &repo_root()),
-        Some("errloc") => errloc(&args[1..]),
-        Some("diff") => {
-            println!("xtask diff: (stub) will shell stage-0 + rust over the corpus");
-            0
-        }
-        Some("repro") => repro_gate::run(&args[1..], &repo_root()),
-        Some("s8") => s8_gate::run(&args[1..], &repo_root()),
-        Some("lsp") => lsp_gate::run(&args[1..], &repo_root()),
-        _ => {
-            println!("{VERSION}");
-            println!(
-                "usage: xtask <roundtrip|resolve|infer|reject|build-run|coerce-floor|divergences|fmt|repro|s8|lsp|fuzz|welltyped> [args]"
-            );
-            0
-        }
+        // An unrecognised subcommand MUST NOT exit 0. Every CI gate is invoked
+        // as `cargo run -q -p xtask -- <name>`; while the fallback arm returned
+        // 0, a typo'd or renamed gate ("coerce_floor" for "coerce-floor")
+        // became a no-op that CI reported green — the gate silently stopped
+        // running and nothing said so. Verified: `xtask coerce_floor` printed
+        // usage and exited 0.
+        other => match other.and_then(|name| GATES.iter().find(|(n, _)| *n == name)) {
+            Some((_, run)) => run(&args[1..]),
+            None => {
+                eprintln!("{VERSION}");
+                match other {
+                    Some(name) => eprintln!("xtask: unknown subcommand `{name}`"),
+                    None => eprintln!("xtask: no subcommand given"),
+                }
+                eprintln!("{}", usage());
+                2
+            }
+        },
     };
     std::process::exit(code);
 }
@@ -106,11 +174,54 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-struct FileResult {
-    rel: String,
-    ok_roundtrip: bool,
-    error_nodes: usize,
-    diags: usize,
+pub(crate) struct FileResult {
+    pub(crate) rel: String,
+    pub(crate) ok_roundtrip: bool,
+    pub(crate) error_nodes: usize,
+    pub(crate) diags: usize,
+}
+
+impl FileResult {
+    /// The gate's per-file assertion: byte-exact reprint AND zero ERROR nodes.
+    pub(crate) fn ok(&self) -> bool {
+        self.ok_roundtrip && self.error_nodes == 0
+    }
+}
+
+/// Parse + reprint every corpus file and return one [`FileResult`] each.
+///
+/// Extracted from [`roundtrip`] so `xtask harness`'s `roundtrip` gate consults
+/// the SAME corpus discovery and the SAME two invariants as the CLI gate
+/// (v2 §10 — one `collect_sky`, never a second copy that can drift).
+pub(crate) fn roundtrip_scan(root: &Path) -> Vec<FileResult> {
+    let examples = root.join("examples");
+    let mut files = Vec::new();
+    collect_sky(&examples, &mut files);
+
+    let mut results = Vec::with_capacity(files.len());
+    for path in &files {
+        let src = match std::fs::read_to_string(path) {
+            Ok(_s) => _s,
+            Err(_) => {
+                results.push(FileResult {
+                    rel: rel(root, path),
+                    ok_roundtrip: false,
+                    error_nodes: usize::MAX,
+                    diags: 0,
+                });
+                continue;
+            }
+        };
+        let parse = syntax::parse(&src, base::FileId(0));
+        let reprint = parse.reprint();
+        results.push(FileResult {
+            rel: rel(root, path),
+            ok_roundtrip: reprint == src,
+            error_nodes: parse.error_node_count(),
+            diags: parse.errors().len(),
+        });
+    }
+    results
 }
 
 fn roundtrip(args: &[String]) -> i32 {
@@ -118,42 +229,13 @@ fn roundtrip(args: &[String]) -> i32 {
     let root = repo_root();
     let examples = root.join("examples");
 
-    let mut files = Vec::new();
-    collect_sky(&examples, &mut files);
-
-    if files.is_empty() {
+    let results = roundtrip_scan(&root);
+    if results.is_empty() {
         eprintln!(
             "xtask roundtrip: no .sky files found under {}",
             examples.display()
         );
         return 1;
-    }
-
-    let mut results = Vec::with_capacity(files.len());
-    for path in &files {
-        let src = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(e) => {
-                results.push(FileResult {
-                    rel: rel(&root, path),
-                    ok_roundtrip: false,
-                    error_nodes: usize::MAX,
-                    diags: 0,
-                });
-                if verbose {
-                    eprintln!("  read error {}: {e}", path.display());
-                }
-                continue;
-            }
-        };
-        let parse = syntax::parse(&src, base::FileId(0));
-        let reprint = parse.reprint();
-        results.push(FileResult {
-            rel: rel(&root, path),
-            ok_roundtrip: reprint == src,
-            error_nodes: parse.error_node_count(),
-            diags: parse.errors().len(),
-        });
     }
 
     // ---- report ----

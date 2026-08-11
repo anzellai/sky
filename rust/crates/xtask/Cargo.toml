@@ -22,3 +22,12 @@ ty = { path = "../ty" }
 lower = { path = "../lower" }
 project = { path = "../project" }
 diagnostics = { path = "../diagnostics" }
+serde_json.workspace = true
+
+# `xtask harness` runs every gate body in its own PROCESS GROUP and enforces the
+# gate's budget by `killpg` — a thread's children are unreachable as a group, so
+# a timeout that only kills the direct child leaks the `go build`, the server and
+# the PTY into the next gate (docs/ci-test-architecture-v2.md §7.3). `nix` gives
+# a safe `killpg`; the alternative is raw `libc` behind `unsafe`.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }

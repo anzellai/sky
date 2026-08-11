@@ -39,6 +39,8 @@ under [`archive/`](archive/) and the per-version directories below.
   (completion, hover, references, code actions, call-hierarchy).
 * [`tooling/testing.md`](tooling/testing.md) — `sky test`,
   `cargo test` + xtask gates, runtime verification.
+* [`tooling/gate-harness.md`](tooling/gate-harness.md) — `xtask harness`:
+  gate states, falsifying mutations, the canary, budget enforcement.
 
 ## Operations
 

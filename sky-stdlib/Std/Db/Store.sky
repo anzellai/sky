@@ -293,6 +293,17 @@ migrate conn (Store s) =
 
 -- | Insert a record. Columns marked `generated` (a `serial` PK, `defaultNow`) are
 -- OMITTED so the database assigns them.
+--
+-- Returns the PRIMARY KEY the database assigned when the PK is an Int (a
+-- `Store.serial` id) — that value is the whole point, since a `generated` PK is
+-- omitted from the INSERT and the caller has no other way to learn it. Wire
+-- child rows to this id:
+--
+--     Store.insert conn entries header
+--         |> Task.andThen (\entryId -> Store.insert conn lines { line | entryId = entryId })
+--
+-- For a caller-supplied PK (a String/UUID key) there is no DB-assigned integer,
+-- so the result is the affected-row count.
 insert : Db -> Store a -> a -> Task Error Int
 insert conn (Store s) record =
     dbExecObjectWith
@@ -301,6 +312,8 @@ insert conn (Store s) record =
         (colsExcluding s.generated s.cols)
         (Codec.toValue s.codec record)
         (List.map (\( col, gen ) -> ( col, gen () )) s.computed)
+        s.pk
+        (kindOf s.pk s.cols)
 
 
 -- | Bulk-insert many records in ONE multi-row INSERT — for time-series / batch
@@ -320,6 +333,9 @@ insertMany conn (Store s) records =
 -- (`INSERT ... ON CONFLICT(pk) DO UPDATE`). The idempotent write for config rows
 -- keyed by a natural/app id — `Store.upsert conn monitors monitor`. Requires a
 -- non-generated PK (a String/UUID key you provide, not `serial`).
+-- Returns the row's PK for an Int-keyed store (0 when an `ON CONFLICT DO
+-- NOTHING` wrote nothing), and the affected-row count otherwise — the same
+-- contract as `insert`.
 upsert : Db -> Store a -> a -> Task Error Int
 upsert conn (Store s) record =
     dbUpsertObject
@@ -328,6 +344,7 @@ upsert conn (Store s) record =
         (colsExcluding s.generated s.cols)
         s.pk
         (Codec.toValue s.codec record)
+        (kindOf s.pk s.cols)
 
 
 -- | Update the row identified by the record's PRIMARY KEY, setting every column
@@ -1214,7 +1231,7 @@ dbAutoMigrate =
     Ffi.kernel "Db_autoMigrate"
 
 
-dbExecObject : Db -> String -> List ( String, String ) -> Value -> Task Error Int
+dbExecObject : Db -> String -> List ( String, String ) -> Value -> String -> String -> Task Error Int
 dbExecObject =
     Ffi.kernel "Db_execObject"
 
@@ -1224,12 +1241,12 @@ dbExecObjectMany =
     Ffi.kernel "Db_execObjectMany"
 
 
-dbUpsertObject : Db -> String -> List ( String, String ) -> String -> Value -> Task Error Int
+dbUpsertObject : Db -> String -> List ( String, String ) -> String -> Value -> String -> Task Error Int
 dbUpsertObject =
     Ffi.kernel "Db_upsertObject"
 
 
-dbExecObjectWith : Db -> String -> List ( String, String ) -> Value -> List ( String, SqlValue ) -> Task Error Int
+dbExecObjectWith : Db -> String -> List ( String, String ) -> Value -> List ( String, SqlValue ) -> String -> String -> Task Error Int
 dbExecObjectWith =
     Ffi.kernel "Db_execObjectWith"
 

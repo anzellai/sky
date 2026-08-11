@@ -293,6 +293,13 @@ multiline attrs cfg =
 
 -- Checkbox. The icon is the visual checkmark element (use a simple
 -- unicode tick for now or a custom Element).
+--
+-- `cfg.checked` drives the native `checked` attribute as well as the
+-- icon, so the underlying `<input type="checkbox">` reflects the model
+-- and not just the decorative tick. The runtime treats `checked` as an
+-- authority-controlled attribute (like `value`/`selected`) and the
+-- browser driver syncs `el.checked` from it, so omitting it left the
+-- real control unchecked however the model was set.
 checkbox : List (Attribute msg) -> { onChange : Bool -> msg
 , icon : Bool -> Element msg
 , checked : Bool
@@ -303,15 +310,22 @@ checkbox attrs cfg =
         layoutAndControl = splitLayoutAttrs attrs
         layoutAttrs = fst layoutAndControl
         controlAttrs = snd layoutAndControl
+        checkedAttrs =
+            if cfg.checked then
+                [ Ui.htmlAttribute "checked" "checked" ]
+
+            else
+                []
         checkInput =
-            inputElement
+            inputElementWith
                 "checkbox"
                 (cfg.onChange (not cfg.checked))
                 (if cfg.checked then
                     "true"
 
-                else
+                 else
                     "false")
+                checkedAttrs
         iconEl = cfg.icon cfg.checked
         rowBaseAttrs =
             Ui.spacing 8 :: controlAttrs ++ implicitFillIfHoisted layoutAttrs
@@ -483,11 +497,21 @@ extractText el =
 -- because the user clicked rather than typed).
 inputElement : String -> msg -> String -> Element msg
 inputElement inputType msg val =
+    inputElementWith inputType msg val []
+
+
+-- Internal: `inputElement` plus caller-supplied state attributes, for
+-- controls whose DOM state is an attribute rather than a value —
+-- `checked` on a checkbox. Kept separate from the attrs a user passes
+-- to the public verb, which are layout/control attrs.
+inputElementWith : String -> msg -> String -> List (Attribute msg) -> Element msg
+inputElementWith inputType msg val stateAttrs =
     Ui.input
-        [ Ui.htmlAttribute "type" inputType
+        ([ Ui.htmlAttribute "type" inputType
         , Ui.htmlAttribute "value" val
         , Ui.onClick msg
         ]
+            ++ stateAttrs)
 
 
 -- Internal: partition user `attrs` into (layoutAttrs, controlAttrs).

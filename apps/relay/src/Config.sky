@@ -1,0 +1,326 @@
+module Config exposing
+    ( Config
+    , Features
+    , Limits
+    , load
+    , configDoc
+    , capacityDecoder
+    , regionDecoder
+    , sampleRateDecoder
+    , describe
+    )
+
+-- Relay configuration.
+--
+-- Two independent config sources, both exercised on every boot:
+--
+--   1. THE ENVIRONMENT — `Sky.Core.System.getenvOr`.  The listen port
+--      lives here and ONLY here (`RELAY_PORT`, then `PORT`).  There is
+--      deliberately no port literal in bind position anywhere in this
+--      project; the fallback below is a last-resort default that the
+--      environment always wins over.
+--
+--   2. A TOML/JSON/YAML DOCUMENT — `Std.Config` typed decoders.  Source
+--      order: `RELAY_CONFIG_FILE` (a path, decoded by extension via
+--      `Config.loadFromFile`) → `RELAY_CONFIG_TOML` (an inline document)
+--      → the built-in `defaultToml` below.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.File as File
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Std.Config as Cfg
+
+type alias Limits =
+    { capacity : Int
+    , refill : Int
+    }
+
+type alias Features =
+    { tracing : Bool
+    , sampleRate : Float
+    , region : Maybe String
+    }
+
+type alias Config =
+    { port : Int
+    , jwtSecret : String
+    , tokenTtlSeconds : Int
+    , limits : Limits
+    , features : Features
+    , corsOrigins : List String
+    , adminUser : String
+    , adminPassword : String
+    , upstreamPath : String
+    , sseTicks : Int
+    , cacheTtlMs : Int
+    , configSource : String
+    }
+
+
+-- ─── Environment ──────────────────────────────────────────────────
+envInt : String -> Int -> Int
+envInt name fallback =
+    case String.toInt (System.getenvOr name "") of
+
+        Just n ->
+            n
+
+        Nothing ->
+            fallback
+
+
+-- The bind port.  `RELAY_PORT` wins, then the platform-conventional
+-- `PORT` (Cloud Run / Heroku / Fly / SkyDeploy), then a dev default.
+listenPort : () -> Int
+listenPort _ =
+    envInt "RELAY_PORT" (envInt "PORT" 8090)
+
+
+-- ─── The config document ──────────────────────────────────────────
+defaultToml : String
+defaultToml =
+    """[limits]
+capacity = 5
+refill = 1
+
+[stream]
+ticks = 5
+
+[cache]
+ttlMs = 30000
+
+[cors]
+origins = ["*"]
+
+[features]
+tracing = true
+sampleRate = 0.25
+region = "local"
+"""
+
+
+-- Resolve the config document's TEXT.  `RELAY_CONFIG_FILE` names a
+-- file on disk; everything else comes from the environment or the
+-- built-in default.
+configDoc : () -> Task Error String
+configDoc _ =
+    let
+        path = System.getenvOr "RELAY_CONFIG_FILE" ""
+    in
+        if String.isEmpty path then
+            Task.succeed (envDoc ())
+
+        else
+            File.readFile path |> Task.onError (\_ -> Task.succeed (envDoc ()))
+
+
+envDoc : () -> String
+envDoc _ =
+    System.getenvOr "RELAY_CONFIG_TOML" defaultToml
+
+
+-- ─── Typed decoders (Std.Config) ──────────────────────────────────
+-- FIXED — the applicative record shape that `Std.Config`'s own module
+-- docstring documents:
+--
+--     Cfg.succeed (\c r -> { capacity = c, refill = r })
+--         |> Cfg.andThen (\f -> Cfg.map f (Cfg.field "limits" ...))
+--         |> Cfg.andThen (\f -> Cfg.map f (Cfg.at [...] Cfg.int))
+--
+-- used to compile clean, `go build` clean, and then panic the moment the
+-- document actually parsed:
+--
+--     Sky panic: TypeMismatch — rt.skyCallDirect: argument 0 type
+--     mismatch — function expects func(int) main.Config_Limits_R,
+--     got func(interface {}) interface {}
+--       rt.Config_andThen.func1  (rt/config_kernel.go:200)
+--       rt.Config_decodeToml     (rt/config_kernel.go:217)
+--
+-- The hole was in how a FUNCTION-typed type variable crossed the `any`
+-- boundary: the decoder kernels are all-`any`, so the partially applied
+-- record constructor arrived as the runtime's generic curried closure,
+-- while codegen had compiled the continuation with the concrete function
+-- type HM inferred. `rt.skyCallDirect` now bridges the two
+-- (`adaptSkyFuncValue`), so the documented shape runs.
+--
+-- The per-field decoders below are kept as-is: they are not a workaround
+-- any more, just the shape this app already had, and they exercise
+-- `Cfg.field` / `Cfg.at` / `Cfg.map` rather than duplicating the
+-- applicative coverage.
+capacityDecoder : Cfg.Decoder Int
+capacityDecoder =
+    Cfg.map atLeastOne (Cfg.field "limits" (Cfg.field "capacity" Cfg.int))
+
+
+atLeastOne : Int -> Int
+atLeastOne n =
+    if n < 1 then
+        1
+
+    else
+        n
+
+
+refillDecoder : Cfg.Decoder Int
+refillDecoder =
+    Cfg.at [ "limits", "refill" ] Cfg.int
+
+
+tracingDecoder : Cfg.Decoder Bool
+tracingDecoder =
+    Cfg.at [ "features", "tracing" ] Cfg.bool
+
+
+regionDecoder : Cfg.Decoder (Maybe String)
+regionDecoder =
+    Cfg.at [ "features", "region" ] (Cfg.nullable Cfg.string)
+
+
+-- A validating decoder — `andThen` into `fail` rejects an out-of-range
+-- sample rate instead of silently clamping it.
+sampleRateDecoder : Cfg.Decoder Float
+sampleRateDecoder =
+    Cfg.at [ "features", "sampleRate" ] Cfg.float
+        |> Cfg.andThen
+               (\r ->
+                   if r < 0.0 then
+                       Cfg.fail "features.sampleRate must be >= 0"
+
+                   else if r > 1.0 then
+                       Cfg.fail "features.sampleRate must be <= 1"
+
+                   else
+                       Cfg.succeed r)
+
+
+originsDecoder : Cfg.Decoder (List String)
+originsDecoder =
+    Cfg.at [ "cors", "origins" ] (Cfg.list Cfg.string)
+
+
+-- ─── Assembly ─────────────────────────────────────────────────────
+-- Boot-time config load.  The document text drives every decoder; when
+-- a real file is configured its `[features]` table is ALSO re-read
+-- through `Cfg.loadFromFile` (extension-detected format) so the
+-- file-backed path is live code, not a doc comment.
+load : () -> Task Error Config
+load _ =
+    configDoc () |> Task.andThen (\doc -> loadFeatures (fromDoc doc))
+
+
+loadFeatures : Config -> Task Error Config
+loadFeatures cfg =
+    let
+        path = System.getenvOr "RELAY_CONFIG_FILE" ""
+    in
+        if String.isEmpty path then
+            Task.succeed cfg
+
+        else
+            Cfg.loadFromFile path regionDecoder
+                |> Task.andThen
+                       (\region ->
+                           Task.succeed
+                               { cfg | features = withRegion cfg.features region
+                               })
+                |> Task.onError (\_ -> Task.succeed cfg)
+
+
+withRegion : Features -> Maybe String -> Features
+withRegion feats region =
+    { feats | region = region }
+
+
+fromDoc : String -> Config
+fromDoc doc =
+    { port = listenPort ()
+    , jwtSecret =
+        System.getenvOr
+            "SKY_AUTH_TOKEN_SECRET"
+            "relay-dev-secret-please-override-me-32b"
+    , tokenTtlSeconds = envInt "RELAY_TOKEN_TTL" 3600
+    , limits =
+        { capacity = decodeOr capacityDecoder doc 5
+        , refill = decodeOr refillDecoder doc 1
+        }
+    , features =
+        { tracing = decodeOr tracingDecoder doc True
+        , sampleRate = decodeOr sampleRateDecoder doc 0.25
+        , region = decodeOr regionDecoder doc (Just "local")
+        }
+    , corsOrigins = decodeOr originsDecoder doc [ "*" ]
+    , adminUser = System.getenvOr "RELAY_ADMIN_USER" "admin"
+    , adminPassword = System.getenvOr "RELAY_ADMIN_PASSWORD" "relay-admin-pw"
+    , upstreamPath = System.getenvOr "RELAY_UPSTREAM_PATH" "/upstream"
+    , sseTicks = decodeIntOr [ "stream", "ticks" ] doc 5
+    , cacheTtlMs = decodeIntOr [ "cache", "ttlMs" ] doc 30000
+    , configSource = sourceLabel ()
+    }
+
+
+sourceLabel : () -> String
+sourceLabel _ =
+    if not (String.isEmpty (System.getenvOr "RELAY_CONFIG_FILE" "")) then
+        "file"
+
+    else if not (String.isEmpty (System.getenvOr "RELAY_CONFIG_TOML" "")) then
+        "env"
+
+    else
+        "builtin"
+
+
+-- The document is TOML by default, but Relay accepts the same shape as
+-- JSON or YAML — whichever parses first wins.  This is what makes all
+-- three `Std.Config` entry points live code.
+decodeOr : Cfg.Decoder a -> String -> a -> a
+decodeOr dec doc fallback =
+    case Cfg.decodeToml doc dec of
+
+        Ok v ->
+            v
+
+        Err _ ->
+            case Cfg.decodeJson doc dec of
+
+                Ok v ->
+                    v
+
+                Err _ ->
+                    case Cfg.decodeYaml doc dec of
+
+                        Ok v ->
+                            v
+
+                        Err _ ->
+                            fallback
+
+
+decodeIntOr : List String -> String -> Int -> Int
+decodeIntOr path doc fallback =
+    decodeOr (Cfg.at path Cfg.int) doc fallback
+
+
+describe : Config -> String
+describe cfg =
+    String.join
+        " "
+        [ "source=" ++ cfg.configSource
+        , "port=" ++ String.fromInt cfg.port
+        , "capacity=" ++ String.fromInt cfg.limits.capacity
+        , "refill=" ++ String.fromInt cfg.limits.refill
+        , "ticks=" ++ String.fromInt cfg.sseTicks
+        , "tracing=" ++ boolLabel cfg.features.tracing
+        ]
+
+
+boolLabel : Bool -> String
+boolLabel b =
+    if b then
+        "true"
+
+    else
+        "false"

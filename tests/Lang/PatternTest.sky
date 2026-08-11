@@ -23,7 +23,7 @@ colourName c =
             "blue"
 
 
-classify : Result String Maybe Int -> String
+classify : Result String (Maybe Int) -> String
 classify r =
     case r of
 

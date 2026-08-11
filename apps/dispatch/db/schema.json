@@ -1,0 +1,107 @@
+{
+  "tables": [
+    {
+      "name": "subscribers",
+      "pk": "id",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "int",
+          "nullable": false,
+          "autoinc": true
+        },
+        {
+          "name": "email",
+          "kind": "text",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "name",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "text": "friend"
+          }
+        },
+        {
+          "name": "active",
+          "kind": "int",
+          "nullable": false,
+          "default": {
+            "int": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "notes",
+      "pk": "id",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "int",
+          "nullable": false,
+          "autoinc": true
+        },
+        {
+          "name": "slug",
+          "kind": "text",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "nullable": false
+        },
+        {
+          "name": "body_md",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "text": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "deliveries",
+      "pk": "id",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "int",
+          "nullable": false,
+          "autoinc": true
+        },
+        {
+          "name": "note_id",
+          "kind": "int",
+          "nullable": false
+        },
+        {
+          "name": "subscriber_id",
+          "kind": "int",
+          "nullable": false
+        },
+        {
+          "name": "status",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "text": "pending"
+          }
+        },
+        {
+          "name": "detail",
+          "kind": "text",
+          "nullable": false,
+          "default": {
+            "text": ""
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -11,10 +11,32 @@
 #
 # Fyne (11-fyne-stopwatch) is `gui-skip` — needs X11.
 
+#
+# Options:
+#   --json <path>  write a machine-readable per-entry result file
+#   --rebuild      rebuild every example before verifying it
+#
+# `--rebuild` matters more than it looks. Without it this script only builds an
+# example when `sky-out/app` is MISSING, so it certifies whatever binary an
+# earlier run happened to leave behind — a source change can be verified green
+# by a stale artefact. Any caller using this as a GATE must pass --rebuild, or
+# the gate cannot be falsified by a source mutation.
 set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ARTEFACT_DIR="$REPO_ROOT/.skycache/verify"
+
+JSON_OUT=""
+REBUILD=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --json)
+            [ $# -ge 2 ] || { echo "verify-cli: --json requires a path" >&2; exit 2; }
+            JSON_OUT="$2"; shift 2 ;;
+        --rebuild) REBUILD=1; shift ;;
+        *) echo "verify-cli: unknown option $1" >&2; exit 2 ;;
+    esac
+done
 
 # (example, mode, stdin-or-args, expected-stdout-substring)
 #   mode: cli | cli-stdin | tui-start | cli-args | skip-gui
@@ -50,6 +72,16 @@ fail=0
 skip=0
 FAILS=()
 SKIPS=()
+ENTRIES=""
+
+# Record one entry for the machine-readable report. `reason` is a fixed code,
+# never free text, so the file needs no JSON escaping and the caller can match
+# on it.
+record() { # record <name> <mode> <outcome> <reason>
+    [ -n "$JSON_OUT" ] || return 0
+    ENTRIES="$ENTRIES{\"name\":\"$1\",\"mode\":\"$2\",\"outcome\":\"$3\",\"reason\":\"$4\"},
+"
+}
 
 run_test() {
     local name="$1" mode="$2" input="$3" expect="$4"
@@ -66,7 +98,14 @@ run_test() {
     if [ "$mode" = "skip-gui" ]; then
         echo "⊘ $name — GUI app, skipped (needs a display; FFI surface needs cgo)"
         skip=$((skip+1)); SKIPS+=("$name")
+        record "$name" "$mode" "skip" "gui-needs-display"
         return
+    fi
+
+    # Force a rebuild so the verdict is about the tree under test, not about
+    # whatever binary a previous run left in place.
+    if [ "$REBUILD" -eq 1 ]; then
+        rm -f "$bin"
     fi
 
     # Build it if it isn't there, instead of failing.
@@ -80,15 +119,29 @@ run_test() {
     # reason having nothing to do with the release.
     if [ ! -f "$bin" ]; then
         echo "  … $name — binary missing, building it"
+        # `sky install` FIRST. An example with external Go FFI deps has no
+        # committed `sky-ffi/` surface — it is a generated build artefact — so
+        # `sky build` alone fails with "has no generated FFI surface". Under the
+        # old build-only-if-missing behaviour a stale binary hid this; forcing a
+        # rebuild exposed it on 03-tea-external (github.com/google/uuid +
+        # joho/godotenv). It is a no-op for examples whose deps are Go stdlib.
+        if ! ( cd "$REPO_ROOT/examples/$name" && timeout 900 "$REPO_ROOT/sky-out/sky" install >/dev/null 2>&1 ); then
+            echo "✗ $name — sky install failed (see: cd examples/$name && sky install)"
+            fail=$((fail+1)); FAILS+=("$name")
+            record "$name" "$mode" "fail" "install-failed"
+            return
+        fi
         if ! ( cd "$REPO_ROOT/examples/$name" && timeout 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky >/dev/null 2>&1 ); then
             echo "✗ $name — build failed (see: cd examples/$name && sky build src/Main.sky)"
             fail=$((fail+1)); FAILS+=("$name")
+            record "$name" "$mode" "fail" "build-failed"
             return
         fi
     fi
     if [ ! -f "$bin" ]; then
         echo "✗ $name — binary still missing after build at $bin"
         fail=$((fail+1)); FAILS+=("$name")
+        record "$name" "$mode" "fail" "binary-missing"
         return
     fi
     local out errfile artefact
@@ -113,11 +166,13 @@ run_test() {
         skip-gui)
             echo "⊘ $name — GUI app, skipped (needs X11)"
             skip=$((skip+1)); SKIPS+=("$name")
+            record "$name" "$mode" "skip" "gui-needs-x11"
             return
             ;;
         *)
             echo "✗ $name — unknown mode $mode"
             fail=$((fail+1)); FAILS+=("$name")
+            record "$name" "$mode" "fail" "unknown-mode"
             return
             ;;
     esac
@@ -129,6 +184,7 @@ run_test() {
         echo "✗ $name — runtime panic"
         echo "$out$err" | grep -E 'panic:|runtime error:|interface conversion:' | head -2 | sed 's/^/   /'
         fail=$((fail+1)); FAILS+=("$name")
+        record "$name" "$mode" "fail" "runtime-panic"
         return
     fi
 
@@ -137,14 +193,17 @@ run_test() {
         if echo "$out" | grep -qF "$expect"; then
             echo "✓ $name (output matched '$expect')"
             pass=$((pass+1))
+            record "$name" "$mode" "pass" "output-matched"
         else
             echo "✗ $name — output missing '$expect'"
             echo "$out" | head -3 | sed 's/^/   /'
             fail=$((fail+1)); FAILS+=("$name")
+            record "$name" "$mode" "fail" "output-missing"
         fi
     else
         echo "✓ $name (no panic)"
         pass=$((pass+1))
+        record "$name" "$mode" "pass" "no-panic"
     fi
 }
 
@@ -173,4 +232,19 @@ echo ""
 echo "VERIFY: $pass pass / $fail fail / $skip skip"
 [ ${#FAILS[@]} -eq 0 ] || echo "FAILED: ${FAILS[*]}"
 [ ${#SKIPS[@]} -eq 0 ] || echo "SKIPPED: ${SKIPS[*]}"
-exit $fail
+
+if [ -n "$JSON_OUT" ]; then
+    {
+        printf '{\n  "entries": [\n'
+        printf '%s' "$ENTRIES" | sed '$ s/,$//'
+        printf '  ],\n  "pass": %d,\n  "fail": %d,\n  "skip": %d\n}\n' \
+            "$pass" "$fail" "$skip"
+    } >| "$JSON_OUT"
+fi
+
+# `exit $fail` truncates modulo 256 — with 256 failures this script would exit
+# 0. There are 14 entries so it cannot happen today, but the gate reads the
+# JSON, not this status, and a status that CAN encode success on failure should
+# not be the thing anyone relies on.
+[ "$fail" -eq 0 ] || exit 1
+exit 0

@@ -1,0 +1,356 @@
+//! `corpus/manifest.toml` — the ONLY membership authority (v2 §3.1).
+//!
+//! No gate calls `read_dir` on the corpus. The discovery-by-listing model has
+//! already produced two live defects in this repository: `39-hub-demo` was
+//! invisible to all six gates, and the two reject faces diverged on discovery
+//! (`ty/tests/reject.rs` recursive vs `xtask/src/reject_gate.rs` flat) so a file
+//! in a subdirectory would be seen by one and not the other.
+//!
+//! # Why the manifest is checked in but the case SOURCES are not
+//!
+//! The generator is deterministic, so the sources are a pure function of the
+//! generator plus the axis space — checking in thousands of `.sky` files would
+//! add review noise without adding information. What must be reviewable is
+//! **membership and classification**: which cases exist, which axes each one
+//! varies, whether it carries an independently-derivable expected value
+//! (`class = V`) or is only a change-detector (`class = D`), and whether it is
+//! forbidden from batching. That is what the manifest records, and a gate
+//! (`--check-manifest`) fails when the generator and the manifest disagree — so
+//! a generator edit that silently adds, drops, or reclassifies a case is a
+//! failing build rather than a quiet change in what "100 % covered" means.
+//!
+//! **Pinned historical repros are the exception**: they are checked-in `.sky`
+//! files under `corpus/repro/`, never generator output, so a generator edit
+//! cannot silently renumber or reword them.
+
+use super::gen::{Class, Expect, Isolation, Mode};
+use std::fmt::Write as _;
+use std::path::Path;
+
+/// `N_iso`'s declared ceiling (v2 §3.3).
+///
+/// > `N_iso` is the term that can break the budget, and it is therefore capped by
+/// > the manifest: a gate fails if `N_iso` exceeds its declared ceiling. Growing
+/// > a forbidden family is a *budget decision*, made visibly, not a side effect
+/// > of adding cases.
+///
+/// Phase 3 measured `c_u` = 0.70 s/unit warm on this host, which makes
+/// `N_iso · c_u` the entire cost model — the static term is 1.02 ms/case and has
+/// stopped binding. Raising this number is a deliberate act that costs
+/// `Δ · 0.70 s` of every run, and it must be justified in the commit that raises
+/// it.
+/// History of this number, because v2 §3.3 makes raising it a decision that must
+/// be justified where it is made:
+///
+/// * `40` — the initial four isolated strata (`fieldset_collision` 4×5,
+///   `import_shape` 5×4).
+/// * `44` — **raised deliberately** to admit the `fieldset_ctor` stratum
+///   (2 `construction` × 2 `collider`). It costs `4 × 0.70 s ≈ 2.8 s` per run and
+///   it bought a **live runtime-panic defect** the corpus had otherwise missed
+///   (see `gen::blocked_reason`). That is the trade this cap exists to make
+///   visible, and it is the right side of it.
+/// * `58` — **raised deliberately** to admit Family S's `stdlib_import`
+///   stratum: 14 units (5 `import_shape` × 4 `shadow`, less the 2 points where
+///   a local shadow would compete with an explicitly-exposed import and the 4
+///   where there is no ambiguity to be had). It is `isolation = unit` under v2
+///   §3.2 family 3 — whole-program name resolution IS the subject.
+///
+///   What it buys is the repair of a weakness this repo had already written
+///   down and left open: `witness.rs::witness_exemption` records that the
+///   original `import_shape` stratum's `collision` axis is **inert** — its
+///   non-`none` values add a local binding that collides with nothing — and
+///   that the stratum therefore *"must NOT be claimed as covering the #164
+///   defect class"*. `stdlib_import` collides against REAL stdlib names
+///   (`Sky.Core.String.length` vs `Sky.Core.List.length`, and a local
+///   definition of the same bare name) exactly as v2 §3.1 requires, and its
+///   axis-under-test is witnessed rather than exempt.
+///
+///   The 14th unit is the one that paid for the rest: it is a LIVE defect the
+///   stratum found on its first run — two modules that both `exposing (..)` the
+///   same name resolve to the last import, silently, so the program's value
+///   depends on import order (`gen::blocked_reason`).
+pub const N_ISO_CEILING: usize = 58;
+
+/// **What the ceiling counts, and why it is not simply "unit cases".**
+///
+/// `N_ISO_CEILING` exists because of ONE cost: `N_iso · c_u`, where `c_u` = 0.70
+/// s is a `sky build` + run of one compilation unit. Families R and E are also
+/// `isolation = unit` — an ill-typed program must never be batched with a
+/// neighbour whose verdict it could contaminate, and `record_fieldsets` is a
+/// whole-compilation table so an emit-shape case cannot share a unit either —
+/// but **neither of them pays `c_u`**. R decides in-process from
+/// `ty::check_modules` (measured 50 ms/program against the loaded stdlib) and E
+/// stops at `emit_example_source` with no `go build` at all.
+///
+/// Counting them against a ceiling denominated in `c_u` would report a cost that
+/// is not incurred, and the honest response to a budget that says the wrong
+/// thing is to fix the accounting rather than to raise the number. So the
+/// ceiling counts **behavioural** units, and the static/emit-shape units are
+/// counted separately below at their own measured rate.
+///
+/// This is a change to shared accounting and it is stated here rather than
+/// buried: before this commit `n_iso` was every `Isolation::Unit` case.
+const _: () = ();
+
+/// Declared ceiling for `unit` cases that never `go build` — families R and E.
+///
+/// Measured on this host: R is ~50 ms/program × 2 programs (case + twin), E is
+/// ~40 ms/emit. 300 of them is well under 30 s, which is what lets both run at
+/// T1 where a behavioural family of the same size could not. Raising THIS number
+/// costs roughly `Δ · 0.1 s` per run rather than `Δ · 0.70 s`, and the split is
+/// the whole reason the two are tracked apart.
+pub const N_ISO_STATIC_CEILING: usize = 300;
+
+pub fn render() -> String {
+    let cases = super::all_cases();
+    let mut s = String::new();
+
+    s.push_str(
+        "# Layer 1 corpus — the membership authority (CI/test-architecture v2 §3.1).\n\
+         #\n\
+         # GENERATED by `xtask corpus --emit-manifest`. Checked in so that\n\
+         # membership and classification are reviewable in git; verified by\n\
+         # `xtask corpus --check-manifest`, which fails when the generator and\n\
+         # this file disagree.\n\
+         #\n\
+         # class = V  the generator CONSTRUCTED the expected value, so the case can\n\
+         #            establish correctness (v2 §4.4). Counted in coverage.\n\
+         # class = D  change-detector only. **Excluded from the coverage number**\n\
+         #            (v2 §5.5) — counting these would inflate the figure with\n\
+         #            cases that cannot establish correctness.\n\
+         #\n\
+         # isolation = unit  forbidden from batching (v2 §3.2): the case's verdict\n\
+         #            would otherwise depend on its neighbours, because\n\
+         #            `record_fieldsets` is built over the whole compilation\n\
+         #            (lower/src/lower.rs:246-266).\n\n",
+    );
+
+    let n_iso = count_iso_behavioural(&cases);
+    let n_iso_static = count_iso_static(&cases);
+    let n_v = cases.iter().filter(|c| c.class == Class::V).count();
+
+    let _ = writeln!(s, "[corpus]");
+    let _ = writeln!(s, "n_min = {}", cases.len());
+    let _ = writeln!(s, "n_iso = {n_iso}");
+    let _ = writeln!(s, "n_iso_ceiling = {N_ISO_CEILING}");
+    let _ = writeln!(s, "n_iso_static = {n_iso_static}");
+    let _ = writeln!(s, "n_iso_static_ceiling = {N_ISO_STATIC_CEILING}");
+    let _ = writeln!(s, "class_v = {n_v}");
+    let _ = writeln!(s, "class_d = {}", cases.len() - n_v);
+    for f in [
+        super::gen::Family::S,
+        super::gen::Family::L,
+        super::gen::Family::E,
+        super::gen::Family::R,
+        super::gen::Family::F,
+    ] {
+        let n = cases.iter().filter(|c| c.family == f).count();
+        let _ = writeln!(s, "family_{} = {n}", f.label());
+    }
+    s.push('\n');
+
+    for c in &cases {
+        let _ = writeln!(s, "[[case]]");
+        let _ = writeln!(s, "id         = \"{}\"", c.id);
+        let _ = writeln!(s, "family     = \"{}\"", c.family.label());
+        let _ = writeln!(s, "stratum    = \"{}\"", c.stratum);
+        let _ = writeln!(s, "mode       = \"{}\"", c.mode.label());
+        let _ = writeln!(s, "isolation  = \"{}\"", c.isolation.label());
+        let _ = writeln!(s, "class      = \"{}\"", c.class.label());
+        let _ = writeln!(s, "witness    = \"{}\"", c.witness.label());
+        let axes: Vec<String> = c
+            .axes
+            .0
+            .iter()
+            .map(|(k, v)| format!("{k} = \"{v}\""))
+            .collect();
+        let _ = writeln!(s, "axes       = {{ {} }}", axes.join(", "));
+        if let Some(co) = &c.coordinate {
+            let _ = writeln!(s, "coordinate = \"{co}\"");
+        }
+        match &c.expect {
+            Expect::Accept { stdout } => {
+                let _ = writeln!(s, "expect     = \"accept\"");
+                let _ = writeln!(s, "stdout     = \"{stdout}\"");
+            }
+            Expect::Reject { code } => {
+                let _ = writeln!(s, "expect     = \"reject\"");
+                let _ = writeln!(s, "code       = \"{code}\"");
+                // Recorded per case, because a reject row WITHOUT a twin is the
+                // unfalsifiable kind: it would pass against a checker that
+                // rejected every program. Reviewable in git, and asserted by
+                // `reject_matrix::tests::every_case_declares_a_code_and_carries_a_twin`.
+                let _ = writeln!(s, "twin       = {}", c.twin.is_some());
+            }
+        }
+        if !c.emit_properties.is_empty() {
+            let _ = writeln!(
+                s,
+                "properties = [{}]",
+                c.emit_properties
+                    .iter()
+                    .map(|p| format!("\"{p}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if let Some(b) = &c.blocked {
+            let _ = writeln!(s, "blocked    = \"{}\"", b.issue);
+            let _ = writeln!(s, "expires    = \"{}\"", b.expires);
+        }
+        s.push('\n');
+    }
+
+    s
+}
+
+/// `unit` cases that are BUILT AND RUN — the ones `N_ISO_CEILING` is denominated
+/// in (`N_iso · c_u`, `c_u` = 0.70 s).
+fn count_iso_behavioural(cases: &[super::gen::GenCase]) -> usize {
+    cases
+        .iter()
+        .filter(|c| c.isolation == Isolation::Unit && c.mode == Mode::Behavioural)
+        .count()
+}
+
+/// `unit` cases that never `go build` — families R and E.
+fn count_iso_static(cases: &[super::gen::GenCase]) -> usize {
+    cases
+        .iter()
+        .filter(|c| c.isolation == Isolation::Unit && c.mode != Mode::Behavioural)
+        .count()
+}
+
+fn path(root: &Path) -> std::path::PathBuf {
+    root.join("corpus/manifest.toml")
+}
+
+pub fn emit(root: &Path) -> i32 {
+    let p = path(root);
+    if let Some(parent) = p.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("corpus: mkdir {}: {e}", parent.display());
+            return 1;
+        }
+    }
+    let body = render();
+    if let Err(e) = std::fs::write(&p, &body) {
+        eprintln!("corpus: write {}: {e}", p.display());
+        return 1;
+    }
+    let cases = super::all_cases();
+    println!("wrote {} ({} cases)", p.display(), cases.len());
+    0
+}
+
+/// Fail when the generator and the checked-in manifest disagree.
+pub fn check(root: &Path) -> i32 {
+    let p = path(root);
+    let Ok(on_disk) = std::fs::read_to_string(&p) else {
+        eprintln!(
+            "corpus: no manifest at {} — run `xtask corpus --emit-manifest`. \
+             A corpus with no membership authority has not been reviewed.",
+            p.display()
+        );
+        return 1;
+    };
+    let expected = render();
+    if on_disk == expected {
+        let n = super::all_cases().len();
+        println!("CORPUS MANIFEST: PASS ({n} cases, generator and manifest agree)");
+        return 0;
+    }
+
+    // Report WHICH ids moved, not just "files differ" — a diff of 4,000 lines is
+    // not an actionable message.
+    let ids = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter_map(|l| l.strip_prefix("id         = \""))
+            .map(|l| l.trim_end_matches('"').to_string())
+            .collect()
+    };
+    let a: std::collections::BTreeSet<String> = ids(&on_disk).into_iter().collect();
+    let b: std::collections::BTreeSet<String> = ids(&expected).into_iter().collect();
+
+    println!("CORPUS MANIFEST: FAIL — the generator and corpus/manifest.toml disagree.");
+    let added: Vec<&String> = b.difference(&a).collect();
+    let removed: Vec<&String> = a.difference(&b).collect();
+    if !added.is_empty() {
+        println!("  {} case(s) the generator produces that the manifest lacks:", added.len());
+        for id in added.iter().take(20) {
+            println!("    + {id}");
+        }
+    }
+    if !removed.is_empty() {
+        println!("  {} case(s) the manifest declares that the generator no longer produces:", removed.len());
+        for id in removed.iter().take(20) {
+            println!("    - {id}");
+        }
+    }
+    if added.is_empty() && removed.is_empty() {
+        println!("  membership is identical; a case's CLASSIFICATION or expected value changed.");
+    }
+    println!("  Re-run `xtask corpus --emit-manifest` and review the diff before committing.");
+    1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `N_iso` must stay under its declared ceiling. Growing a
+    /// forbidden-from-batching family is a budget decision (v2 §3.3), and this is
+    /// where it becomes visible instead of silently costing `Δ · c_u` per run.
+    #[test]
+    fn n_iso_is_under_its_declared_ceiling() {
+        let cases = super::super::all_cases();
+        let n_iso = count_iso_behavioural(&cases);
+        assert!(
+            n_iso <= N_ISO_CEILING,
+            "N_iso = {n_iso} exceeds the declared ceiling {N_ISO_CEILING}. \
+             At the measured c_u = 0.70 s/unit this run just got {:.1}s slower. \
+             Raise the ceiling deliberately, in a commit that says why.",
+            (n_iso - N_ISO_CEILING) as f64 * 0.70,
+        );
+    }
+
+    /// The static/emit-shape units have their own ceiling at their own measured
+    /// rate. Folding them into `N_ISO_CEILING` would have charged them 0.70 s
+    /// each — a cost they do not incur — and the honest fix for a budget that
+    /// measures the wrong thing is to correct the accounting, never to raise the
+    /// number until the wrong measurement fits.
+    #[test]
+    fn n_iso_static_is_under_its_declared_ceiling() {
+        let cases = super::super::all_cases();
+        let n = count_iso_static(&cases);
+        assert!(
+            n <= N_ISO_STATIC_CEILING,
+            "{n} non-behavioural unit case(s) exceed the declared ceiling \
+             {N_ISO_STATIC_CEILING}. These never `go build`, but they are not \
+             free: raise the ceiling deliberately, in a commit that says why."
+        );
+    }
+
+    /// Every family-R case reaches the manifest carrying its twin. A reject row
+    /// without one is satisfied by a compiler that rejects everything.
+    #[test]
+    fn every_reject_row_declares_a_twin() {
+        for c in super::super::all_cases() {
+            if matches!(c.expect, Expect::Reject { .. }) {
+                assert!(
+                    c.twin.is_some(),
+                    "{}: a reject case with no accepted twin is unfalsifiable",
+                    c.id
+                );
+            }
+        }
+    }
+
+    /// The manifest render is deterministic — otherwise `--check-manifest` would
+    /// fail spuriously and be disabled, which is how a membership authority stops
+    /// being one.
+    #[test]
+    fn render_is_deterministic() {
+        assert_eq!(render(), render());
+    }
+}

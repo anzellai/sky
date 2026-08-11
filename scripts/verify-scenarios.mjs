@@ -55,7 +55,14 @@ async function expectSkyEventAfter(opts, fn, label) {
     const before = opts.skyEventPosts.length;
     await fn();
     // Give the SSE round-trip a moment to land.
-    await opts.pause ? opts.pause(500) : new Promise(r => setTimeout(r, 500));
+    //
+    // This was `await opts.pause ? opts.pause(500) : new Promise(...)`.
+    // `await` binds tighter than `?:`, so it awaited the FUNCTION VALUE
+    // (truthy, resolves immediately), then called `opts.pause(500)` and threw
+    // the returned promise away unawaited — no settle happened at all, and the
+    // /_sky/event POST count below was read before the round-trip landed.
+    // Parenthesise the conditional.
+    await (opts.pause ? opts.pause(500) : new Promise(r => setTimeout(r, 500)));
     const fired = opts.skyEventPosts.length - before;
     if (fired === 0) {
         throw new Error(`expected /_sky/event POST after "${label}" but none fired `

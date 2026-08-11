@@ -25,6 +25,9 @@
 //!   xtask repro --only=NAME[,NAME…]   # filter to named examples
 //!   xtask repro -v                    # print the diverging lines on a failure
 //!   xtask repro --no-build            # skip `go build`; gate every emitting example
+//!   xtask repro --jobs N              # examples checked concurrently
+//!                                     #   (default: cores, capped at 8;
+//!                                     #    also XTASK_REPRO_JOBS)
 //!   xtask repro --emit-worker=NAME    # (internal) single fresh emission → stdout
 
 use project::{build_example, emit_example_source, BuildOptions};
@@ -70,19 +73,111 @@ pub fn run(args: &[String], root: &Path) -> i32 {
 
     let worker = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("xtask"));
 
-    let mut rows = Vec::new();
-    for name in &names {
-        let dir = root.join("examples").join(name);
-        if !dir.is_dir() {
-            continue;
-        }
-        rows.push(check_one(
-            &worker, root, &dir, name, seeds, no_build, verbose,
-        ));
-    }
+    let present: Vec<&String> = names
+        .iter()
+        .filter(|n| root.join("examples").join(n).is_dir())
+        .collect();
+
+    let rows = check_all(&worker, root, &present, seeds, no_build, verbose, jobs(args));
 
     print_table(&rows, seeds);
     gate_result(&rows)
+}
+
+/// How many examples to check CONCURRENTLY. `--jobs N`, else
+/// `XTASK_REPRO_JOBS`, else the machine's parallelism capped at 8.
+///
+/// The cap is not arithmetic timidity: each worker drives a `go build`, which
+/// parallelises internally and is the memory-hungry part. Beyond ~8 the runner
+/// is oversubscribed and wall-clock stops improving.
+fn jobs(args: &[String]) -> usize {
+    args.iter()
+        .position(|a| a == "--jobs")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<usize>().ok())
+        .or_else(|| {
+            std::env::var("XTASK_REPRO_JOBS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+        })
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+                .min(8)
+        })
+        .max(1)
+}
+
+/// Check every example, up to `jobs` at a time.
+///
+/// # Why this is parallel, and why that is sound
+///
+/// The gate was a serial `for` over the corpus, and it was the single longest
+/// job in T1 — 690s of the 986s critical path, against a 990s ceiling. Four
+/// seconds of headroom is not a budget, it is a coin flip on runner variance.
+/// Raising the ceiling is the one fix explicitly forbidden (§8.2), so the work
+/// itself had to get smaller.
+///
+/// Each example is an independent (emit × N, then `go build`) over its OWN
+/// directory, so nothing is shared but `GOCACHE`, which Go makes safe for
+/// concurrent use. The property under test is unaffected: every emission still
+/// happens in a FRESH SUBPROCESS, which is what randomises the `HashMap` seed —
+/// running two examples' subprocesses at the same time does not make either
+/// one's seed less fresh.
+///
+/// The seeds WITHIN one example stay serial. They share a directory, and the
+/// point of this change is wall-clock, not maximum theoretical concurrency.
+///
+/// Results are written back into per-example slots, so the printed table keeps
+/// corpus order regardless of completion order. A gate whose output reorders
+/// run to run cannot be diffed, and this one is read by humans chasing
+/// non-determinism — the last place to introduce more of it.
+#[allow(clippy::too_many_arguments)]
+fn check_all(
+    worker: &Path,
+    root: &Path,
+    names: &[&String],
+    seeds: usize,
+    no_build: bool,
+    verbose: bool,
+    jobs: usize,
+) -> Vec<Row> {
+    let mut slots: Vec<Option<Row>> = (0..names.len()).map(|_| None).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..jobs.min(names.len().max(1)) {
+            handles.push(scope.spawn(|| {
+                let mut done: Vec<(usize, Row)> = Vec::new();
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(name) = names.get(i) else { break };
+                    let dir = root.join("examples").join(name.as_str());
+                    done.push((
+                        i,
+                        check_one(worker, root, &dir, name, seeds, no_build, verbose),
+                    ));
+                }
+                done
+            }));
+        }
+        for h in handles {
+            // A panicking worker must not be silently dropped — that would lose
+            // its examples from the table and shrink the denominator, which is
+            // how a gate reports PASS over a corpus it never finished.
+            for (i, row) in h.join().expect("repro worker thread panicked") {
+                slots[i] = Some(row);
+            }
+        }
+    });
+
+    slots
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| r.unwrap_or_else(|| panic!("repro: example {i} produced no row")))
+        .collect()
 }
 
 /// One fresh emission of an example's Go source, written raw to stdout. Runs in

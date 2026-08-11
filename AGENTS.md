@@ -76,7 +76,8 @@ error type — always `Result Error a` / `Task Error a`.
 
 ```elm
 -- pure          : String.length, List.map, Crypto.sha256
--- fallible-pure : String.toInt : String -> Result Error Int
+-- fallible-pure : String.toInt : String -> Maybe Int
+--                 Encoding.base64Decode : String -> Result Error String
 -- effect        : File.read, Http.get, Db.query, Time.now  → Task Error a
 ```
 
@@ -197,7 +198,7 @@ sky check src/Main.sky           # type-check + go build  (≡ sky build)
 sky watch src/Main.sky           # file-watch rebuild + restart
 sky verify                       # project pre-release gate: fmt + check + build + tests
 sky fmt src/Main.sky             # opinionated formatter (idempotent)
-sky test tests/MyTest.sky        # Sky.Test runner
+sky test tests/MyTest.sky        # Sky.Test runner (SKY_TEST_JSON=<path> → per-case JSON report)
 sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
 sky add <go/module> | remove | install | update                # Go FFI deps
@@ -216,6 +217,14 @@ build-run / coerce-floor / repro / golden / fuzz) + the example sweep
 are necessary but **not sufficient**: a change is not verified until it also
 passes the full example sweep + a real app (see
 `docs/rust-rewrite/13-change-verification-and-edge-cases.md`).
+
+`cargo run --release -p xtask -- harness` runs the registered gates through the
+gate harness, which enforces each gate's budget by `killpg`, requires an exact
+assertion count, and refuses to report PASS when it cannot establish a verdict
+(`NOT RUN` / `UNPROVEN` → `UNKNOWN`, exit non-zero). Every registered gate
+declares a falsifying mutation — an empty set fails the build — and
+`--verify-falsifiers` proves the mutation makes the gate red. See
+`docs/tooling/gate-harness.md`.
 
 ## Non-negotiable code rules (enforced by `cargo test`)
 
@@ -301,13 +310,57 @@ before assuming a limitation still holds.
 | Observability / console | `docs/observability.md` |
 | Getting started | `docs/getting-started.md`, `README.md` |
 
-## Examples
+## The test corpus — two layers, and where `examples/` now sits
 
-`examples/00`–`examples/55`. Each builds clean from a wiped slate
-(`rm -rf sky-out .skycache .skydeps && sky build`). `00-standard-libs` is the
-stdlib smoke test; `13-skyshop` the Stripe-SDK-scale FFI benchmark (76k symbols);
-`19-skyforum` the canonical multi-module Sky.Live form; `26-ui-showcase` every
-`Std.Ui` primitive. Read the example closest to what you're building first.
+Three bodies of code carry regression duty, and they are not interchangeable.
+Which one a change belongs in is decided by what the change can break.
+
+| Layer | Where | What it is for |
+|---|---|---|
+| **Layer 1** — the combinatorial corpus | `corpus/manifest.toml` + `xtask corpus` | Systematic VARIATION of language + type shapes, generated, expected values *constructed* by the generator. Membership is the manifest; no gate calls `read_dir`. Every historical defect is a pinned coordinate whose distance-1 neighbourhood is expanded automatically. |
+| **Layer 2** — real-world projects | `apps/manifest.toml` (`apps/ledger`, `apps/relay`, `apps/fieldbook`, `sky-bundled/`, `examples/13-skyshop`, `rust/crates/sky/tests/*_flow.rs`) | Surfaces exercised IN COMBINATION as a user would build them: session/SSE/CSRF lifecycle, a real SQL engine (**the only Postgres coverage in the repo**), multi-replica topology, cross-backend `Std.Ui`, the CLI verbs. The class Layer 1 is structurally blind to. |
+| **`examples/`** | `examples/00`–`examples/55` | **Documentation samples** — and the standing corpus for the *compiler-facing* ratchets that key on them. |
+
+### The `examples/` contract
+
+`examples/` **keeps its path** (renaming would break every doc link for no gain)
+and changes its **contract**:
+
+- **Primary role: documentation.** An example exists to be *read*. It shows one
+  coherent thing a user would build, and it is referenced from `docs/`.
+- **Retained regression role: the compiler-facing ratchets only.** `roundtrip`,
+  `infer`, `shared-world`, `coerce-floor` and the stdout goldens key on
+  `examples/`, and those keys are load-bearing — `coerce-floor` locks a
+  runtime-narrowing floor per project and the goldens pin whole-program stdout.
+- **Product-facing regression duty moved to Layer 2.** "Does the session survive
+  an idle SSE hold", "does `liveInto` actually deliver on Postgres", "does the
+  app refuse to start when its shared store is unreachable" are asserted by
+  `apps/*` gates, not by an example that happens to use the feature.
+- **An example is not deleted to make CI faster.** It is deleted only when the
+  coverage ledger shows every surface it owns is owned elsewhere. Several
+  examples are the *sole* owner of a stdlib module or a `sky.toml` surface;
+  `xtask coverage-ledger` generates that table and `--check` fails if a surface
+  gets weaker without an accounted `[[weakening]]`.
+
+`00-standard-libs` is the stdlib smoke test; `13-skyshop` the Stripe-SDK-scale
+FFI benchmark (76k symbols) and Layer-2 member D; `19-skyforum` the canonical
+multi-module Sky.Live form; `26-ui-showcase` every `Std.Ui` primitive. Each
+builds clean from a wiped slate (`rm -rf sky-out .skycache .skydeps && sky
+build`). Read the example closest to what you're building first.
+
+### Coverage ledgers — three files, all generated
+
+`docs/coverage/` is the accounting, and **no document, ledger or verdict may
+quote a number a script did not produce**:
+
+- `denominators.json` — `xtask denominators`. How much surface exists. A
+  DECREASE fails unless `removals.toml` accounts for it with a `[[removal]]`.
+- `ledger.json` / `ledger.md` — `xtask coverage-ledger`. How strongly each
+  surface is covered, today versus under the new architecture, plus the
+  mechanically generated sole-ownership table. A surface getting **weaker**
+  fails unless `removals.toml` accounts for it with a `[[weakening]]`.
+- `falsifier-proofs.json` — `xtask harness --verify-falsifiers`. Which gates
+  have been proven able to fail, and when.
 
 ## Project layout
 

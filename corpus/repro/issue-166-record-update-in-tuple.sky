@@ -1,0 +1,37 @@
+-- PINNED REPRO — anzellai/sky#166
+--
+-- Record update inside a tuple dropped the un-updated fields. `{ r | a = 7 }`
+-- was correct in bare position and, wrapped in a tuple, came back with `c`
+-- zeroed. The ADT field then hit an Unreachable panic downstream.
+--
+-- coordinate: position=in_tuple annotation=annotated row=closed carrier=direct
+-- expect: accept, stdout "7/42"
+--
+-- This file is CHECKED IN and hand-written. It is NOT generator output: a
+-- generator edit must never be able to renumber, reword, or silently drop a
+-- historical repro. The generator expands its distance-1 NEIGHBOURHOOD; the
+-- coordinate itself lives here.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Rec =
+    { a : Int, b : String, c : Int }
+
+
+bump : Rec -> ( Rec, Int )
+bump r =
+    ( { r | a = 7 }, 0 )
+
+
+main =
+    let
+        base =
+            { a = 1, b = "x", c = 42 }
+
+        res =
+            fst (bump base)
+    in
+    println (String.fromInt res.a ++ "/" ++ String.fromInt res.c)

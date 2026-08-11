@@ -3526,6 +3526,57 @@ func coerceRouteParam(fn any, p string) (any, error) {
 	}
 }
 
+// resolveLivePort decides the listen port, in strict precedence order:
+//
+//  1. <PREFIX>_LIVE_PORT set by the OPERATOR (shell or .env)
+//  2. an explicit `Live.withPort` on the config
+//  3. <PREFIX>_LIVE_PORT seeded by generated init() from sky.toml
+//  4. 8080
+//
+// Steps 1 and 3 are the same environment variable, which is why this used to
+// be wrong. Every emitted init() calls `rt.SetPortDefault(<sky.toml port>)`,
+// and sky.toml's port always has a value (8000 when unset), so the variable is
+// effectively ALWAYS set by the time this runs. The old code took cfg.Port and
+// then let any non-empty value of that variable overwrite it, so the
+// compiler-injected default beat the user's explicit `withPort` every time —
+// `Live.withPort` was dead, and the behaviour inverted the precedence the
+// comment right here used to claim ("cfg.Port wins over env").
+//
+// `SetEnvDefault` now records what it seeded, so "the operator chose this port"
+// and "the compiler filled in a default" are distinguishable. Both documented
+// contracts hold: sky.toml's port stays a DEFAULT that shell and .env override
+// (dotenv.go), and an explicit builder call beats that default.
+//
+// An unparseable or non-positive env value is ignored rather than collapsing
+// the port to 0, which would bind an arbitrary ephemeral port that nothing can
+// discover.
+func resolveLivePort(cfg any) int {
+	envName := skyEnvName("LIVE_PORT")
+	envPort := 0
+	if v, ok := lookupEnvRaw(envName); ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			envPort = n
+		}
+	}
+	// 1. operator-set env.
+	if envPort > 0 && !isSeededDefault(envName) {
+		return envPort
+	}
+	// 2. explicit Live.withPort. An unset optional is ABSENT from the config
+	//    map (see live_config.go), so a non-nil field means it was called.
+	if p := Field(cfg, "Port"); p != nil {
+		if n := AsInt(p); n > 0 {
+			return n
+		}
+	}
+	// 3. the sky.toml default generated init() seeded.
+	if envPort > 0 {
+		return envPort
+	}
+	// 4. floor.
+	return 8080
+}
+
 // Live.app — reads a record-shaped config and starts the HTTP server.
 // Blocks until the server exits.
 // Live_app: Task-shaped per Task-everywhere (2026-04-24+). The
@@ -3653,20 +3704,11 @@ func liveAppRun(cfg any) any {
 	// *liveApp without an update-tuple context.
 	registerProcessBroker(app)
 
-	// Resolve listen port early. cfg.Port wins over env; both fall
-	// back to 8080. (Pre-v0.16.0 this was needed to seed
+	// Resolve listen port early. (Pre-v0.16.0 this was needed to seed
 	// SKY_PARENT_URL on subprocess-spawned console children; the
 	// inline console doesn't run as a child process so the port is
 	// just for the listener.)
-	port := 8080
-	if p := Field(cfg, "Port"); p != nil {
-		port = AsInt(p)
-	}
-	if v := skyGetenv("LIVE_PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			port = n
-		}
-	}
+	port := resolveLivePort(cfg)
 	_ = port // referenced again below; keep the name in scope
 
 	mux := http.NewServeMux()
@@ -4335,9 +4377,38 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 func (app *liveApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"inputMode":    "debounce", // or "blur"
-		"pollInterval": 0,          // 0 = SSE only
+		"inputMode":    liveInputMode(),
+		"pollInterval": 0, // 0 = SSE only
 	})
+}
+
+// liveInputMode is when the JS driver reports an input's value: after a typing
+// pause ("debounce", the default) or only when the field loses focus ("blur").
+// Set via `sky.toml [live] input` or SKY_LIVE_INPUT_MODE.
+//
+// This was a hardcoded "debounce" carrying the comment `// or "blur"` — a
+// choice the code named and offered no way to make. Meanwhile
+// `examples/19-skyforum` and `examples/37-composite-live-shop` both shipped
+// `[live] input = "debounce"`, the key that was evidently meant to drive it;
+// the compiler parsed no such key, so it did nothing. Same root cause as the
+// `[jobs]` section and the `[auth] session_ttl` spelling: config that reads as
+// set and is wired to nothing.
+//
+// An unrecognised value falls back to the default with a warning rather than
+// serving a mode the client cannot honour — the client would silently ignore it
+// and the operator would be left believing the setting took.
+func liveInputMode() string {
+	switch mode := skyGetenv("LIVE_INPUT_MODE"); mode {
+	case "":
+		return "debounce"
+	case "debounce", "blur":
+		return mode
+	default:
+		fmt.Printf("[sky.live] WARNING: input mode %q is not recognised "+
+			"(valid: debounce, blur) — using \"debounce\". "+
+			"Set sky.toml [live] input or SKY_LIVE_INPUT_MODE.\n", mode)
+		return "debounce"
+	}
 }
 
 func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {

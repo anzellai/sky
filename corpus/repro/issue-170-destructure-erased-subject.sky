@@ -1,0 +1,36 @@
+-- PINNED REPRO — anzellai/sky#170 / #172
+--
+-- A tuple/record pattern destructure on an ERASED subject — reached through
+-- `List.foldr`, a `let`, or an `any`-typed value. The identical destructure was
+-- correct on a directly-typed subject; erasing the subject's type broke it.
+--
+-- coordinate: erasure=via_foldr position=in_let
+-- expect: accept, stdout "42"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Rec =
+    { a : Int, b : String, c : Int }
+
+
+main =
+    let
+        base =
+            { a = 1, b = "x", c = 42 }
+
+        p =
+            List.foldr (\x _ -> x) ( base, 1 ) [ ( base, 1 ) ]
+
+        res =
+            let
+                ( rr, _ ) =
+                    p
+            in
+            rr.c
+    in
+    println (String.fromInt res)

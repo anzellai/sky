@@ -1,0 +1,175 @@
+module Update exposing (update)
+
+-- Fieldbook — the shared TEA update. One update function drives
+-- Sky.Live, Sky.Tui and Sky.Webview alike.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Std.Cmd as Cmd
+import Model exposing (..)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        SetQuery text ->
+            ( { model | query = text, status = searchStatus text model }
+            , Cmd.none
+            )
+
+        ClearQuery ->
+            ( { model | query = "", status = "cleared search" }, Cmd.none )
+
+        RunSearch ->
+            ( { model | status = searchStatus model.query model }, Cmd.none )
+
+        SelectNote noteId ->
+            ( { model | selected = Just noteId
+              , editing = False
+              , status = "opened note " ++ String.fromInt noteId
+              }
+            , Cmd.none
+            )
+
+        CloseNote ->
+            ( { model | selected = Nothing
+              , editing = False
+              , status = "closed note"
+              }
+            , Cmd.none
+            )
+
+        StartEdit ->
+            case selectedNote model of
+
+                Nothing ->
+                    ( { model | status = "nothing selected" }, Cmd.none )
+
+                Just note ->
+                    ( { model | editing = True
+                      , draftTitle = note.title
+                      , draftBody = note.body
+                      , status = "editing note " ++ String.fromInt note.id
+                      }
+                    , Cmd.none
+                    )
+
+        SetDraftTitle text ->
+            ( { model | draftTitle = text }, Cmd.none )
+
+        SetDraftBody text ->
+            ( { model | draftBody = text }, Cmd.none )
+
+        SaveEdit ->
+            case model.selected of
+
+                Nothing ->
+                    ( { model | editing = False }, Cmd.none )
+
+                Just wanted ->
+                    ( { model | notes = List.map (applyEdit wanted model) model.notes
+                      , editing = False
+                      , status = "saved note " ++ String.fromInt wanted
+                      }
+                    , Cmd.none
+                    )
+
+        CancelEdit ->
+            ( { model | editing = False
+              , draftTitle = ""
+              , draftBody = ""
+              , status = "edit cancelled"
+              }
+            , Cmd.none
+            )
+
+        NewNote ->
+            let
+                fresh =
+                    { id = model.nextId
+                    , title = "Untitled note"
+                    , body = ""
+                    , site = "Unfiled"
+                    , tags = [ "draft" ]
+                    , readingC = 0
+                    , day = model.nextId
+                    }
+            in
+                ( { model | notes = model.notes ++ [ fresh ]
+                  , nextId = model.nextId + 1
+                  , selected = Just fresh.id
+                  , editing = True
+                  , draftTitle = fresh.title
+                  , draftBody = fresh.body
+                  , status = "new note " ++ String.fromInt fresh.id
+                  }
+                , Cmd.none
+                )
+
+        DeleteNote noteId ->
+            ( { model | notes = List.filter (\n -> n.id /= noteId) model.notes
+              , selected = clearIfDeleted noteId model.selected
+              , editing = False
+              , status = "deleted note " ++ String.fromInt noteId
+              }
+            , Cmd.none
+            )
+
+        QuitApp ->
+            -- Tui-only path. The runtime's signal-trap shutdown restores
+            -- the TTY before the process leaves.
+            ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+
+applyEdit : Int -> Model -> Note -> Note
+applyEdit wanted model note =
+    if note.id == wanted then
+        { note | title = titleOrFallback model.draftTitle note.title
+        , body = model.draftBody
+        }
+
+    else
+        note
+
+
+titleOrFallback : String -> String -> String
+titleOrFallback draft current =
+    if String.isEmpty (String.trim draft) then
+        current
+
+    else
+        String.trim draft
+
+
+clearIfDeleted : Int -> Maybe Int -> Maybe Int
+clearIfDeleted deleted selected =
+    case selected of
+
+        Just current ->
+            if current == deleted then
+                Nothing
+
+            else
+                Just current
+
+        Nothing ->
+            Nothing
+
+
+searchStatus : String -> Model -> String
+searchStatus text model =
+    let
+        hits = List.length (List.filter (matchesQuery text) model.notes)
+    in
+        if String.isEmpty (String.trim text) then
+            "showing all notes"
+
+        else
+            String.fromInt hits ++ " match(es) for \"" ++ String.trim text
+                ++ "\""

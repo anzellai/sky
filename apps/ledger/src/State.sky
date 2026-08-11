@@ -1,0 +1,162 @@
+module State exposing (..)
+
+-- State — TEA types for the Sky.Live app. No Std.Ui imports here so the
+-- per-module type-check stays cheap; the heavy unification lives in View.*.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.Error exposing (Error)
+import Books
+
+type Page
+    = DashboardPage
+    | AccountsPage
+    | JournalPage
+    | ClosePage
+    | SignInPage
+
+-- | The signed-in identity. Lives in the server-side session blob that
+-- Sky.Live keys on the `sky_sid` cookie — the password never enters it.
+type alias Session =
+    { userId : Int
+    , orgId : Int
+    , orgName : String
+    , email : String
+    , role : String
+    }
+
+-- ─── Wire forms (field names must match the `Ui.name` attributes) ─
+type alias SignInForm =
+    { email : String
+    , password : String
+    }
+
+type alias SignUpForm =
+    { org : String
+    , email : String
+    , password : String
+    }
+
+type alias AccountForm =
+    { code : String
+    , name : String
+    , kind : String
+    }
+
+type alias EntryForm =
+    { day : String
+    , memo : String
+    , debit : String
+    , credit : String
+    , amount : String
+    }
+
+-- | A posted journal row flattened for display / export. Kept separate from
+-- `Books.Entry` so the view never has to re-query per row.
+type alias JournalRow =
+    { id : Int
+    , day : String
+    , memo : String
+    , debit : String
+    , credit : String
+    , amountMinor : Int
+    }
+
+type alias AccountBalance =
+    { code : String
+    , name : String
+    , kind : String
+    , balanceMinor : Int
+    }
+
+-- | Model deliberately carries BOTH a `Dict String String` and a parametric
+-- ADT field (`session : Maybe Session`, `lastClose : Result Error Int`) —
+-- the exact shape that once lost fields through a record update.
+type alias Model =
+    { page : Page
+    , session : Maybe Session
+    , fieldErrors : Dict String String
+    , flash : String
+    , accounts : List AccountBalance
+    , journal : List JournalRow
+    , trialBalanceMinor : Int
+    , closes : List Books.Close
+    , lastClose : Result Error Int
+    , period : String
+    , entryDraft : EntryForm
+    }
+
+type Msg
+    = Navigate Page
+    | DoSignIn SignInForm
+    | DoSignUp SignUpForm
+    | SignOut
+    | DoAddAccount AccountForm
+    | DoPostEntry EntryForm
+    | CancelEntry
+    | RunClose
+    | CloseFinished (Result Error Int)
+    | DismissFlash
+
+
+emptyEntryForm : a -> EntryForm
+emptyEntryForm _ =
+    { day = "", memo = "", debit = "", credit = "", amount = "" }
+
+
+noErrors : a -> Dict String String
+noErrors _ =
+    Dict.empty
+
+
+errorFor : String -> Model -> String
+errorFor key model =
+    case Dict.get key model.fieldErrors of
+
+        Just v ->
+            v
+
+        Nothing ->
+            ""
+
+
+isSignInPage : Page -> Bool
+isSignInPage page =
+    case page of
+
+        SignInPage ->
+            True
+
+        _ ->
+            False
+
+
+isSignedIn : Model -> Bool
+isSignedIn model =
+    case model.session of
+
+        Just _ ->
+            True
+
+        Nothing ->
+            False
+
+
+pageTitle : Page -> String
+pageTitle page =
+    case page of
+
+        DashboardPage ->
+            "Balances"
+
+        AccountsPage ->
+            "Chart of accounts"
+
+        JournalPage ->
+            "Journal"
+
+        ClosePage ->
+            "Period close"
+
+        SignInPage ->
+            "Sign in"

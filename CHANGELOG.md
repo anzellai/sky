@@ -11,6 +11,132 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.20.0 — the tests that find bugs, and the 30 they found (2026-08-11)
+
+> **Upgrade note.** Two classes of program that used to compile are now
+> rejected, and both were accepting genuinely broken code — see
+> ⚠ Breaking changes below. Everything else is additive.
+
+This release is mostly about the test suite, which sounds like an internal
+matter and is not: overhauling it surfaced **~30 defects in the compiler,
+runtime, stdlib and tooling**, several of which produced wrong answers or
+runtime panics from code that compiled clean.
+
+### ⚠ Breaking changes
+
+- **An ambiguous unqualified name is now an error `[E1012]`.** Two modules that
+  both `exposing (..)` the same name, referenced without a qualifier, used to
+  compile and silently resolve to whichever module was imported LAST — so
+  reordering two import lines changed what your program computed. Sky now
+  refuses to pick.
+
+  *Migration:* qualify the reference (`Alpha.label`), or narrow one import's
+  `exposing (…)` list. The compiler names both modules and both qualified forms.
+
+  The implicit prelude is deliberately exempt: `Sky.Core.Prelude exposing (..)`
+  alongside `Sky.Core.Math exposing (..)` still compiles, because `sky init`
+  emits the prelude import unconditionally and its presence is not a choice you
+  made. Verified across every example and six real applications: **no working
+  program changes meaning.**
+
+- **An over-applied kernel-qualifier call is now an error `[E2007]`.**
+  `Path.join "a" "b"` type-checked and then failed `go build` with a raw Go
+  message (`too many arguments in call to rt.Path_join`). It now reports
+  `join is declared as 1-arg, called with 2 arg(s)` with source context.
+
+  *Migration:* `Path.join [ "a", "b" ]` — it takes a list of segments.
+
+- **A failing `main : Task Error ()` now exits non-zero.** It previously exited
+  0 and printed nothing, so a failed job looked like a successful one. Scripts
+  that relied on the old exit status will now correctly see a failure.
+
+- **Emitted Go changed.** Record field reads and tuple projections on named
+  aliases no longer round-trip through runtime coercion. This is a
+  correctness/performance improvement with no source change required; it is
+  listed here because generated output is not byte-identical to v0.19.
+
+### Fixed — correctness
+
+- **A misspelled import could panic at run time.** `import Std.NoSuchModule as
+  Nope` type-checked, emitted Go, passed `go build`, and panicked with
+  `rt.AsInt: expected numeric value, got <nil>`. Unrecognised paths fell through
+  to the Go-FFI classification, whose references resolve leniently to `nil` — but
+  a `Std.*` / `Sky.*` path can never be a Go package. Now rejected `[E1001]` at
+  the import, for all four shapes (call, value reference, type reference, and an
+  import that is never used). The un-aliased spelling was always rejected; only
+  the alias path was open.
+
+- **`Std.Jobs` silently degraded to an in-process memory queue** on all four
+  store-failure paths — enqueued jobs lost on restart, never shared between
+  replicas, no error. Now a hard startup failure under `ENV=production`, with
+  `memory` still available as a deliberate opt-in.
+
+- **A failed job's `last_error` was a Go struct dump** (`{0 Error [7 {msg
+  <nil>}]}`) — the operator's only record of why a job dead-lettered.
+
+- **`Store.insert` returned rows-affected instead of the assigned id.**
+
+- **Postgres was broken in three field-builder kernels** which never rebound
+  `?` to `$n`.
+
+- **`Input.checkbox` never emitted the `checked` attribute**, and
+  `Std.Ui.Events.onInput` had the wrong signature.
+
+- **`Live.withPort` lost to the compiler-injected `sky.toml` port default.**
+
+### Fixed — configuration that was honoured by nothing
+
+Each of these read as configured and was wired to nothing:
+
+- **`[jobs]` was parsed by no one**, while the runtime's own error told
+  operators to "set sky.toml `[jobs]` store_path" and, under `ENV=production`,
+  refused to start. Now parsed (`store`, `storePath`) and documented.
+- **`[live] input`** — the runtime hardcoded `"debounce"` behind an `// or
+  "blur"` comment. Now selectable, with an unrecognised value falling back
+  loudly rather than being served to a client that would ignore it.
+- **`[auth] session_ttl`** and three siblings, shipped in two examples: three
+  are not keys at all and `session_ttl` is `tokenTtl` misspelled, so both
+  examples advertised a 24-hour session and got the default.
+
+**Any unrecognised key in a runtime config section now produces a build
+warning** naming the accepted keys — the parser used to drop them in silence.
+
+### Fixed — tooling
+
+- **`sky test` reported `0 passed`, exit 0, on a file full of tests.**
+- **`sky db` verbs destroyed the project's built binary.**
+- **`sky check ≡ sky build`** is restored for the kernel-qualifier surface: 94
+  advertised members across 15 pseudo-modules had no Sky signature, so the arity
+  gate self-disabled and a raw Go error could reach the user. A ratcheting
+  census freezes the remaining 93, and a lowering backstop guarantees none of
+  them reaches `go build` unchecked.
+- **`[database] driver` in `sky.toml` was decorative.**
+- The bundled Sky Console had not compiled for ten days.
+
+### Fixed — install
+
+- `install.sh` accepts **`INSTALL_DIR`** (alongside `SKY_INSTALL_DIR`), creates
+  the target directory when it does not exist, falls back to `~/.local/bin`
+  when `/usr/local/bin` is not writable, and warns when the chosen directory is
+  not on `PATH`.
+
+### Internal — the test suite that found all of the above
+
+Not user-visible, but it is why this release exists:
+
+- **~23 gates that could not fail** were found and fixed. `xtask` exited 0 on an
+  unknown subcommand; `grep "0 fail"` matched inside `"10 fail"`; SKIP counted
+  as PASS; a golden encoded the output of an example whose database call was
+  dead code. Every gate now declares a mutation that must turn it red, and an
+  empty mutation list fails the **build**.
+- **A combinatorial corpus** of 432 cases across five families — stdlib
+  behaviour at empty/boundary/unicode/failure edges, rejection by diagnostic
+  code with a paired accepted twin, and properties of the emitted Go.
+- **A coverage ledger** that is generated, ratcheted, and names what is still
+  uncovered: 127 of 141 surfaces at "asserted or better".
+- **CI wall-clock** cut from ~2200s to under the 15-minute tier budget by
+  parallelising and splitting, never by raising the ceiling.
+
 ## v0.19.13 — SECURITY: Sky.Live session binding (2026-08-09)
 
 > **Security release. Upgrade and redeploy every Sky.Live app.** A session-fixation

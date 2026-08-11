@@ -1,0 +1,162 @@
+{
+  "gates": {
+    "apps-bundled": {
+      "mutation": "apps-bundled.reintroduce-missing-field",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786370152
+    },
+    "apps-dispatch": {
+      "mutation": "apps-dispatch.swallow-the-job-failure",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786401903
+    },
+    "apps-dispatch-destructive": {
+      "mutation": "apps-dispatch-destructive.rename-the-quarantine-target",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786401903
+    },
+    "apps-dispatch-postgres": {
+      "mutation": "apps-dispatch-postgres.break-health-driver",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786401903
+    },
+    "apps-ffi-scale": {
+      "mutation": "apps-ffi-scale.break-an-ffi-symbol",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786367992
+    },
+    "apps-fieldbook": {
+      "mutation": "apps-fieldbook.diverge-one-backend",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786369049
+    },
+    "apps-fleet": {
+      "mutation": "apps-fleet.drop-the-production-gate",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786369944
+    },
+    "apps-ledger": {
+      "mutation": "apps-ledger.drop-the-ordering",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786370152
+    },
+    "apps-ledger-postgres": {
+      "mutation": "apps-ledger-postgres.break-health-driver",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786369355
+    },
+    "apps-relay": {
+      "mutation": "apps-relay.disable-rate-limiting",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786370152
+    },
+    "canary": {
+      "mutation": "canary.noop",
+      "observed": "VACUOUS",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786440617
+    },
+    "cli-verbs": {
+      "mutation": "cli-verbs.break-an-expectation",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786370152
+    },
+    "conformance": {
+      "mutation": "conformance.break-expectation",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786349758
+    },
+    "corpus": {
+      "mutation": "corpus.wrong-expected-value",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786349758
+    },
+    "corpus-emit-shape": {
+      "mutation": "corpus-emit-shape.delete-the-probe-use",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786406579
+    },
+    "corpus-isolation": {
+      "mutation": "corpus-isolation.perturb-batch",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786349758
+    },
+    "corpus-manifest": {
+      "mutation": "corpus-manifest.drift",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786349758
+    },
+    "corpus-reject": {
+      "mutation": "corpus-reject.break-the-twin",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786406810
+    },
+    "corpus-witness": {
+      "mutation": "corpus-witness.compare-against-itself",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786350806
+    },
+    "coverage-ledger": {
+      "mutation": "coverage-ledger.drop-a-sole-owner-import",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786442352
+    },
+    "reject": {
+      "mutation": "reject.neutralise-axis",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786349758
+    },
+    "roundtrip": {
+      "mutation": "roundtrip.error-node",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786349758
+    },
+    "shared-world": {
+      "mutation": "shared-world.inject-divergence",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786349758
+    },
+    "sky-suites": {
+      "mutation": "sky-suites.break-expectation",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786442301
+    },
+    "sky-verify": {
+      "mutation": "sky-verify.break-a-suite",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786442086
+    },
+    "verify-cli": {
+      "mutation": "verify-cli.drop-expected-output",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786442086
+    }
+  },
+  "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, or older than the declared window, renders UNPROVEN under `--require-proofs`.",
+  "window_days": 30
+}

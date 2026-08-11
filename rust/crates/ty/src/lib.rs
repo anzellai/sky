@@ -17,10 +17,14 @@ mod check;
 mod db;
 mod exhaustive;
 mod infer;
+pub mod reject_corpus;
+pub mod shared;
 mod sig;
 mod unify;
 
-pub use check::{check_modules, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer};
+pub use check::{
+    check_modules, check_modules_with_world, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
+};
 pub use db::{compute_body_types, TyDb};
 pub use sig::{
     body_updates_a_param, callsite_param_records_for, record_alias_fields, update_base_defs,

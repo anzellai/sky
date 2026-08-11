@@ -1,0 +1,27 @@
+# Relay — file-backed configuration.
+#
+# Loaded through `Std.Config.loadFromFile` when RELAY_CONFIG_FILE points
+# at this file; otherwise Relay falls back to the RELAY_CONFIG_TOML env
+# document, then to the built-in defaults in src/Config.sky.
+#
+# NOTE: the listen port is deliberately NOT in this file.  The port is an
+# environment concern (RELAY_PORT / PORT) so the same artefact binds
+# whatever the platform hands it.
+
+[limits]
+capacity = 3
+refill = 1
+
+[stream]
+ticks = 4
+
+[cache]
+ttlMs = 15000
+
+[cors]
+origins = ["*"]
+
+[features]
+tracing = true
+sampleRate = 0.5
+region = "eu-west-1"

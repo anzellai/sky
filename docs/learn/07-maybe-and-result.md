@@ -39,13 +39,13 @@ name =
 carries information — a parse error, a validation failure:
 
 ```elm
--- String.toInt : String -> Result Error Int
+-- Encoding.base64Decode : String -> Result Error String
 
-parseAge : String -> Int
-parseAge text =
-    case String.toInt text of
-        Ok n  -> n
-        Err _ -> 0
+decodeName : String -> String
+decodeName raw =
+    case Encoding.base64Decode raw of
+        Ok name -> name
+        Err _   -> "anonymous"
 ```
 
 **The error type is always `Error`, never `String`.** `Result Error a` and
@@ -59,8 +59,12 @@ the first `Err` short-circuits the rest:
 
 ```elm
 -- map: apply a function to the Ok value, leave Err alone
+decoded =
+    Result.map String.toUpper (Encoding.base64Decode "aGk=")   -- Ok "HI"
+
+-- `Maybe` maps the same way: String.toInt is Maybe-valued, so it takes Maybe.map
 doubled =
-    Result.map (\n -> n * 2) (String.toInt "21")     -- Ok 42
+    Maybe.map (\n -> n * 2) (String.toInt "21")      -- Just 42
 
 -- andThen: feed the Ok value into another fallible step
 -- (Result.andThen : (a -> Result e b) -> Result e a -> Result e b)

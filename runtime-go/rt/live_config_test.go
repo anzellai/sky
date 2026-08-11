@@ -77,3 +77,33 @@ func TestLiveWithAnalyticsSubRecordReadable(t *testing.T) {
 		t.Fatalf("Analytics.PageViews must read back true, got %#v", pv)
 	}
 }
+
+// `[live] input` must actually reach the JS driver.
+//
+// It did not. handleConfig served a hardcoded `"inputMode": "debounce"` with
+// the comment `// or "blur"` — naming an alternative the code gave no way to
+// select — while `examples/19-skyforum` and `examples/37-composite-live-shop`
+// both carried `[live] input = "debounce"` in their sky.toml. The compiler
+// parsed no such key, so the setting existed on both sides of the seam and was
+// connected at neither.
+func TestLiveInputModeIsConfigurable(t *testing.T) {
+	t.Setenv("SKY_LIVE_INPUT_MODE", "")
+	if got := liveInputMode(); got != "debounce" {
+		t.Fatalf("unset must default to debounce, got %q", got)
+	}
+
+	// The alternative the runtime named but could not serve.
+	t.Setenv("SKY_LIVE_INPUT_MODE", "blur")
+	if got := liveInputMode(); got != "blur" {
+		t.Fatalf(`SKY_LIVE_INPUT_MODE=blur must select blur, got %q — if this `+
+			`reads "debounce" the key is inert again`, got)
+	}
+
+	// A value the client cannot honour falls back rather than being served
+	// through: the driver would ignore it and the operator would believe the
+	// setting had taken.
+	t.Setenv("SKY_LIVE_INPUT_MODE", "onKeystroke")
+	if got := liveInputMode(); got != "debounce" {
+		t.Fatalf("unrecognised mode must fall back to debounce, got %q", got)
+	}
+}
