@@ -412,6 +412,57 @@ impl<'a> Resolver<'a> {
         let source = self.db.classify_import(&path);
         let qual = effective_qualifier(claims, &path, &alias);
 
+        // ---- unknown Sky module (the `ImportSource::Foreign` fallback hole) ----
+        //
+        // `classify_import` resolves parsed dep > kernel pseudo > **Foreign**, and
+        // that last arm is a total fallback: ANY unrecognised import path becomes a
+        // Go-FFI package reference, which resolves leniently to `nil`. For a real
+        // Go package that leniency is the documented class-(b) contract. For a path
+        // in a RESERVED Sky namespace it is a soundness hole, because no Go-FFI
+        // package can ever live under `Std.` / `Sky.`.
+        //
+        // Measured, not reasoned: on this branch `import Std.NoSuchModule as Nope`
+        // followed by `Nope.answer` printed "Names resolved", "Types OK", emitted
+        // Go, passed `go build`, and panicked at run time with
+        // `rt.AsInt: expected numeric value, got <nil>`. `sky check ≡ sky build`
+        // and "no runtime panic from well-typed Sky" were both false for it.
+        //
+        // The *call* path already rejected this (lower.rs's "unknown Sky module"
+        // error), which is exactly why the hole was invisible: the one shape anyone
+        // had tried was the one that was covered. Three shapes reached the same
+        // `Foreign` fallback with no check at all — a bare value reference, a type
+        // reference (`Nope.Thing`), and an import that is never used. Anchoring the
+        // check at the IMPORT closes all four with one rule, before any of them can
+        // pick a different downstream path, and reports the import line the user
+        // must actually fix rather than a use site far below it.
+        if let ImportSource::Foreign(pkg) = &source {
+            if crate::kernel::is_reserved_sky_namespace(pkg) && self.quiet == 0 {
+                let span = imp
+                    .name()
+                    .map(|n| self.span_of(n.syntax().text_range()));
+                let mut diag = Diagnostic::error(
+                    "E1001",
+                    format!(
+                        "unknown Sky module `{pkg}` — no such module is in this \
+                         compilation. Check the spelling of the import: Sky stdlib \
+                         modules live under `Std.*` and `Sky.Core.*` / `Sky.Http.*` \
+                         (e.g. `Sky.Core.List`, `Std.Db`). This is not a Go-FFI \
+                         package; `sky install` cannot fetch it."
+                    ),
+                );
+                if let Some(sp) = span {
+                    diag = diag.with_label(sp, "no such module");
+                }
+                self.result.diagnostics.push(diag);
+                self.result.class_a.push(ClassA {
+                    qualifier: None,
+                    name: pkg.clone(),
+                    kind: RefKind::Value,
+                    reason: "unknown Sky module".to_string(),
+                });
+            }
+        }
+
         // ---- qualifier binding ----
         if let Some(q) = &qual {
             self.import_aliases.insert(q.clone(), source.clone());

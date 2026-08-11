@@ -94,6 +94,18 @@ const TRACKED: &[&str] = &[
     "SkyCall", // TEA
 ];
 
+/// The tracked set, for the ONE other gate that must agree with it.
+///
+/// `corpus::emit_shape`'s `no-narrowing` property asserts that a fully-typed
+/// emitted function contains none of these. If the two lists drifted, one gate
+/// would certify a token the other forbids and the pair would silently stop
+/// describing the same surface — so `emit_shape`'s
+/// `narrowing_set_matches_coerce_floor` test reads this accessor instead of
+/// keeping a copy.
+pub fn tracked_tokens() -> &'static [&'static str] {
+    TRACKED
+}
+
 /// Location of the committed golden (repo-root relative). One line per example:
 /// `<example-name>\t<total-count>`, sorted by name. Kept minimal + deterministic.
 const GOLDEN_REL: &str = "rust/crates/xtask/coerce_floor.golden";

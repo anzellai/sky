@@ -2,6 +2,27 @@
 //! `Sky.Canonicalise.Environment` (doc 05 §9, §10). These change rarely; a diff
 //! against the Haskell lists is the compat check. Data only, no logic.
 
+/// Is `path` inside a **reserved Sky namespace** — `Std.*` or `Sky.*`?
+///
+/// A real Go-FFI package is an import path (`github.com/…` → `Github.Com.…`) or
+/// a Go std package (`fmt`, `strings`); the FFI generator derives the Sky
+/// qualifier from the Go module path, so it can never mint one under `Std.` or
+/// `Sky.`. A path in those namespaces that resolves to neither a parsed Sky
+/// module nor a kernel pseudo-module is therefore an **unknown / misspelled Sky
+/// module** — never a package `sky install` could fetch.
+///
+/// This is the ONE definition of that predicate. It had a private copy at the
+/// Go-FFI *call* site (`lower.rs`, the "unknown Sky module" message) and no copy
+/// at all at the other three sites that reach the same `ImportSource::Foreign`
+/// fallback — a value reference, a type reference, and an unused import — which
+/// is why `import Std.NoSuchModule as Nope` + `Nope.answer` type-checked, built,
+/// and panicked at runtime with `rt.AsInt: expected numeric value, got <nil>`.
+/// Both call sites now read this function; a second copy is how the two would
+/// drift apart again.
+pub fn is_reserved_sky_namespace(path: &str) -> bool {
+    path.starts_with("Std.") || path.starts_with("Sky.") || path == "Std" || path == "Sky"
+}
+
 /// `staticKernelModules` (Environment.hs:348-503): Sky import path (and bare
 /// alias) → kernel pseudo-module. Drives the `Res::Kernel` qualifier fallback
 /// (doc 05 §9) so `Crypto.sha256` resolves with no `import`.

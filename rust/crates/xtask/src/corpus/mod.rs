@@ -13,13 +13,27 @@
 //! xtask corpus --spike[=N]     the v2 §2.3 / §3.5 red-rate spike
 //! xtask corpus --run           run the whole corpus
 //! xtask corpus --isolation     the v2 §3.2 isolation gate (alone / batch / shuffled)
+//! xtask corpus --reject        family R — code-pinned rejection + accepted twin
+//! xtask corpus --emit-shape    family E — properties of the generated Go, no `go build`
 //! xtask corpus --emit-manifest regenerate corpus/manifest.toml
 //! ```
+//!
+//! # The three modes cost three different things
+//!
+//! `Mode::Behavioural` cases are BUILT AND RUN (`c_u` ≈ 0.70 s each) because
+//! their defect class compiles clean and behaves wrong. `Mode::Static` (family
+//! R) decides its verdict in-process from `ty::check_modules`; `Mode::EmitShape`
+//! (family E) stops at `project::emit_example_source`. Neither pays `go build`,
+//! which is why they can be dense where the behavioural families cannot — and
+//! why `runner::run_all` selects on the mode rather than running everything the
+//! manifest lists.
 
 pub mod axes;
+pub mod emit_shape;
 pub mod gen;
 pub mod isolation;
 pub mod manifest;
+pub mod reject_matrix;
 pub mod runner;
 pub mod witness;
 
@@ -56,6 +70,12 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     if args.iter().any(|a| a == "--witness") {
         return witness::run(root);
     }
+    if args.iter().any(|a| a == "--reject") {
+        return reject_matrix::run(root);
+    }
+    if args.iter().any(|a| a == "--emit-shape") {
+        return emit_shape::run(root);
+    }
     if args.iter().any(|a| a == "--emit-manifest") {
         return manifest::emit(root);
     }
@@ -74,7 +94,7 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     }
     eprintln!(
         "usage: xtask corpus [--spike[=N] | --run | --isolation | --witness \
-         | --emit-manifest | --check-manifest]"
+         | --reject | --emit-shape | --emit-manifest | --check-manifest]"
     );
     2
 }
@@ -95,7 +115,26 @@ pub fn all_cases() -> Vec<gen::GenCase> {
             out.push(gen::build(s, &a));
         }
     }
+    // Families R and E. Their strata live in their own modules rather than in
+    // `axes::STRATA`, because `STRATA` is the list of full-cross strata the
+    // VALUE-asserting families share and `witness.rs` requires an
+    // `axis_under_test` entry for every member. R's witness is its accepted twin
+    // and E's is the property itself, so neither belongs in that table — but both
+    // belong in the manifest, which is the single membership authority (v2 §3.1).
+    out.extend(reject_matrix::all());
+    out.extend(emit_shape::all());
     out
+}
+
+/// The cases that are BUILT AND RUN. `runner` selects on this rather than on
+/// `all_cases()`: a family-R program is ill-typed by construction and a family-E
+/// case's verdict is a property of the emitted Go, so running either through the
+/// behavioural path would spend `c_u` to learn nothing.
+pub fn behavioural_cases() -> Vec<gen::GenCase> {
+    all_cases()
+        .into_iter()
+        .filter(|c| c.mode == gen::Mode::Behavioural)
+        .collect()
 }
 
 /// `N_min`, printed rather than chosen (v2 §2.1).

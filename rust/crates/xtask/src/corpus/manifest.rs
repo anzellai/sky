@@ -23,7 +23,7 @@
 //! files under `corpus/repro/`, never generator output, so a generator edit
 //! cannot silently renumber or reword them.
 
-use super::gen::{Class, Expect, Isolation};
+use super::gen::{Class, Expect, Isolation, Mode};
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -51,6 +51,36 @@ use std::path::Path;
 ///   visible, and it is the right side of it.
 pub const N_ISO_CEILING: usize = 44;
 
+/// **What the ceiling counts, and why it is not simply "unit cases".**
+///
+/// `N_ISO_CEILING` exists because of ONE cost: `N_iso · c_u`, where `c_u` = 0.70
+/// s is a `sky build` + run of one compilation unit. Families R and E are also
+/// `isolation = unit` — an ill-typed program must never be batched with a
+/// neighbour whose verdict it could contaminate, and `record_fieldsets` is a
+/// whole-compilation table so an emit-shape case cannot share a unit either —
+/// but **neither of them pays `c_u`**. R decides in-process from
+/// `ty::check_modules` (measured 50 ms/program against the loaded stdlib) and E
+/// stops at `emit_example_source` with no `go build` at all.
+///
+/// Counting them against a ceiling denominated in `c_u` would report a cost that
+/// is not incurred, and the honest response to a budget that says the wrong
+/// thing is to fix the accounting rather than to raise the number. So the
+/// ceiling counts **behavioural** units, and the static/emit-shape units are
+/// counted separately below at their own measured rate.
+///
+/// This is a change to shared accounting and it is stated here rather than
+/// buried: before this commit `n_iso` was every `Isolation::Unit` case.
+const _: () = ();
+
+/// Declared ceiling for `unit` cases that never `go build` — families R and E.
+///
+/// Measured on this host: R is ~50 ms/program × 2 programs (case + twin), E is
+/// ~40 ms/emit. 300 of them is well under 30 s, which is what lets both run at
+/// T1 where a behavioural family of the same size could not. Raising THIS number
+/// costs roughly `Δ · 0.1 s` per run rather than `Δ · 0.70 s`, and the split is
+/// the whole reason the two are tracked apart.
+pub const N_ISO_STATIC_CEILING: usize = 300;
+
 pub fn render() -> String {
     let cases = super::all_cases();
     let mut s = String::new();
@@ -75,18 +105,28 @@ pub fn render() -> String {
          #            (lower/src/lower.rs:246-266).\n\n",
     );
 
-    let n_iso = cases
-        .iter()
-        .filter(|c| c.isolation == Isolation::Unit)
-        .count();
+    let n_iso = count_iso_behavioural(&cases);
+    let n_iso_static = count_iso_static(&cases);
     let n_v = cases.iter().filter(|c| c.class == Class::V).count();
 
     let _ = writeln!(s, "[corpus]");
     let _ = writeln!(s, "n_min = {}", cases.len());
     let _ = writeln!(s, "n_iso = {n_iso}");
     let _ = writeln!(s, "n_iso_ceiling = {N_ISO_CEILING}");
+    let _ = writeln!(s, "n_iso_static = {n_iso_static}");
+    let _ = writeln!(s, "n_iso_static_ceiling = {N_ISO_STATIC_CEILING}");
     let _ = writeln!(s, "class_v = {n_v}");
     let _ = writeln!(s, "class_d = {}", cases.len() - n_v);
+    for f in [
+        super::gen::Family::S,
+        super::gen::Family::L,
+        super::gen::Family::E,
+        super::gen::Family::R,
+        super::gen::Family::F,
+    ] {
+        let n = cases.iter().filter(|c| c.family == f).count();
+        let _ = writeln!(s, "family_{} = {n}", f.label());
+    }
     s.push('\n');
 
     for c in &cases {
@@ -116,12 +156,49 @@ pub fn render() -> String {
             Expect::Reject { code } => {
                 let _ = writeln!(s, "expect     = \"reject\"");
                 let _ = writeln!(s, "code       = \"{code}\"");
+                // Recorded per case, because a reject row WITHOUT a twin is the
+                // unfalsifiable kind: it would pass against a checker that
+                // rejected every program. Reviewable in git, and asserted by
+                // `reject_matrix::tests::every_case_declares_a_code_and_carries_a_twin`.
+                let _ = writeln!(s, "twin       = {}", c.twin.is_some());
             }
+        }
+        if !c.emit_properties.is_empty() {
+            let _ = writeln!(
+                s,
+                "properties = [{}]",
+                c.emit_properties
+                    .iter()
+                    .map(|p| format!("\"{p}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if let Some(b) = &c.blocked {
+            let _ = writeln!(s, "blocked    = \"{}\"", b.issue);
+            let _ = writeln!(s, "expires    = \"{}\"", b.expires);
         }
         s.push('\n');
     }
 
     s
+}
+
+/// `unit` cases that are BUILT AND RUN — the ones `N_ISO_CEILING` is denominated
+/// in (`N_iso · c_u`, `c_u` = 0.70 s).
+fn count_iso_behavioural(cases: &[super::gen::GenCase]) -> usize {
+    cases
+        .iter()
+        .filter(|c| c.isolation == Isolation::Unit && c.mode == Mode::Behavioural)
+        .count()
+}
+
+/// `unit` cases that never `go build` — families R and E.
+fn count_iso_static(cases: &[super::gen::GenCase]) -> usize {
+    cases
+        .iter()
+        .filter(|c| c.isolation == Isolation::Unit && c.mode != Mode::Behavioural)
+        .count()
 }
 
 fn path(root: &Path) -> std::path::PathBuf {
@@ -206,10 +283,8 @@ mod tests {
     /// where it becomes visible instead of silently costing `Δ · c_u` per run.
     #[test]
     fn n_iso_is_under_its_declared_ceiling() {
-        let n_iso = super::super::all_cases()
-            .iter()
-            .filter(|c| c.isolation == Isolation::Unit)
-            .count();
+        let cases = super::super::all_cases();
+        let n_iso = count_iso_behavioural(&cases);
         assert!(
             n_iso <= N_ISO_CEILING,
             "N_iso = {n_iso} exceeds the declared ceiling {N_ISO_CEILING}. \
@@ -217,6 +292,38 @@ mod tests {
              Raise the ceiling deliberately, in a commit that says why.",
             (n_iso - N_ISO_CEILING) as f64 * 0.70,
         );
+    }
+
+    /// The static/emit-shape units have their own ceiling at their own measured
+    /// rate. Folding them into `N_ISO_CEILING` would have charged them 0.70 s
+    /// each — a cost they do not incur — and the honest fix for a budget that
+    /// measures the wrong thing is to correct the accounting, never to raise the
+    /// number until the wrong measurement fits.
+    #[test]
+    fn n_iso_static_is_under_its_declared_ceiling() {
+        let cases = super::super::all_cases();
+        let n = count_iso_static(&cases);
+        assert!(
+            n <= N_ISO_STATIC_CEILING,
+            "{n} non-behavioural unit case(s) exceed the declared ceiling \
+             {N_ISO_STATIC_CEILING}. These never `go build`, but they are not \
+             free: raise the ceiling deliberately, in a commit that says why."
+        );
+    }
+
+    /// Every family-R case reaches the manifest carrying its twin. A reject row
+    /// without one is satisfied by a compiler that rejects everything.
+    #[test]
+    fn every_reject_row_declares_a_twin() {
+        for c in super::super::all_cases() {
+            if matches!(c.expect, Expect::Reject { .. }) {
+                assert!(
+                    c.twin.is_some(),
+                    "{}: a reject case with no accepted twin is unfalsifiable",
+                    c.id
+                );
+            }
+        }
     }
 
     /// The manifest render is deterministic — otherwise `--check-manifest` would

@@ -64,7 +64,7 @@
       "mutation": "canary.noop",
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1786402612
+      "proven_at_unix": 1786405459
     },
     "cli-verbs": {
       "mutation": "cli-verbs.break-an-expectation",
@@ -84,6 +84,12 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786349758
     },
+    "corpus-emit-shape": {
+      "mutation": "corpus-emit-shape.delete-the-probe-use",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786406579
+    },
     "corpus-isolation": {
       "mutation": "corpus-isolation.perturb-batch",
       "observed": "PROVEN",
@@ -95,6 +101,12 @@
       "observed": "PROVEN",
       "outcome": "as-declared",
       "proven_at_unix": 1786349758
+    },
+    "corpus-reject": {
+      "mutation": "corpus-reject.break-the-twin",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786406810
     },
     "corpus-witness": {
       "mutation": "corpus-witness.compare-against-itself",

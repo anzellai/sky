@@ -3409,7 +3409,12 @@ impl<'a> Ctx<'a> {
             // (`Std.Lst` for `Std.List`), not a missing Go module. Pointing the
             // dev at `sky install` there is actively misleading — it can never
             // fetch a Sky stdlib module.
-            let sky_namespaced = pkg.starts_with("Std.") || pkg.starts_with("Sky.");
+            // ONE definition of the predicate, shared with `hir::resolve`'s
+            // import-level check (see `hir::is_reserved_sky_namespace`). This site
+            // used to own a private copy, and the copy was the whole reason the
+            // hole stayed open: only the CALL shape carried the rule, so a value
+            // reference through the same unknown module resolved to `nil`.
+            let sky_namespaced = hir::is_reserved_sky_namespace(pkg);
             let msg = if sky_namespaced {
                 format!(
                     "unknown Sky module `{pkg}`, so `{pkg}.{fun}` cannot be resolved. \

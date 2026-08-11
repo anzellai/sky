@@ -163,6 +163,23 @@ pub struct GenCase {
     pub body: Option<Body>,
     /// A known product defect this case exhibits (v2 §7.2's `BLOCKED`).
     pub blocked: Option<Blocked>,
+    /// **Family R only** — the paired ACCEPTED twin (v2 §4.4, reject-case
+    /// witness): the same program with the defect, and only the defect,
+    /// repaired.
+    ///
+    /// Without it a reject case is nearly worthless. "It failed" passes when the
+    /// compiler rejected for an entirely unrelated reason, and it passes when
+    /// the compiler is broken badly enough to reject everything — a checker
+    /// that returned `Err` unconditionally would score 100 %. The twin is what
+    /// makes the pair falsifiable: the rejection must be caused by the axis
+    /// under test, because neutralising exactly that axis must be ACCEPTED.
+    ///
+    /// `(module name, source)`, entry last, exactly like [`GenCase::modules`].
+    pub twin: Option<Vec<(String, String)>>,
+    /// **Family E only** — the emit-shape properties this case asserts, by id
+    /// (see `emit_shape::PROPERTIES`). Recorded in the manifest so a case's
+    /// claim is reviewable in git rather than buried in a gate body.
+    pub emit_properties: Vec<&'static str>,
 }
 
 /// A case that is red because the PRODUCT is broken, not because the case is.
@@ -763,6 +780,8 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
         expect: Expect::Accept { stdout },
         body,
         blocked: blocked_reason(stratum.name, assignment),
+        twin: None,
+        emit_properties: Vec::new(),
     }
 }
 

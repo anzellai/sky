@@ -529,15 +529,37 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 // Layer 1 — the combinatorial corpus (v2 §3) and the shared-world differential
 // ---------------------------------------------------------------------------
 
-/// Cases the generator produces. Read from the generator, not hand-copied, so
-/// the harness cannot pin a different corpus size than the manifest declares.
-pub const CORPUS_EXPECTED: u64 = 206;
+/// Cases the generator produces — EVERY family, which is what the manifest
+/// declares membership over. Read from the generator, not hand-copied, so the
+/// harness cannot pin a different corpus size than the manifest declares.
+///
+/// **342 since 2026-08-11** (was 206): families R (126 code-pinned reject pairs)
+/// and E (10 emit-shape property cases) joined the manifest.
+pub const CORPUS_EXPECTED: u64 = 342;
+/// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
+/// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
+/// family-R program has no binary to run, and a family-E verdict is a property of
+/// the emitted Go), so pinning the full count there would have made the gate's
+/// declared assertion count a number it never reaches.
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 206;
+/// Family R: 126 cases × 2 checks (the rejection carries its declared code; the
+/// twin compiles). Both are counted because both can fail independently — a
+/// rejection for the wrong reason and a broken twin are different defects.
+pub const CORPUS_REJECT_EXPECTED: u64 = 252;
+/// Family E: one assertion per asserted property across the 10 cases. Measured:
+/// **46** (the two struct-shape properties only apply to the named-alias arm).
+pub const CORPUS_EMIT_SHAPE_EXPECTED: u64 = 46;
 /// The isolation gate's sample size (v2 §3.2).
 pub const CORPUS_ISOLATION_EXPECTED: u64 = 24;
 /// The witness gate's shard size (v2 §4.4).
 pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// Items the shared-world differential compares: the reject + infer corpora.
-pub const SHARED_WORLD_EXPECTED: u64 = 121;
+///
+/// **122 since 2026-08-11** (was 121): `unknown_module_aliased_import.sky` joined
+/// the reject corpus as the checked-in regression for the aliased-unknown-module
+/// soundness hole (see its header). The count is the two corpora summed, so a
+/// reject-corpus addition moves it.
+pub const SHARED_WORLD_EXPECTED: u64 = 122;
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -568,11 +590,69 @@ pub fn corpus_manifest(ctx: &GateCtx) -> GateOutcome {
 /// expiry passes.
 pub fn corpus(ctx: &GateCtx) -> GateOutcome {
     let code = crate::corpus::runner::run_all(&ctx.repo_root);
-    let n = crate::corpus::all_cases().len() as u64;
+    let n = crate::corpus::behavioural_cases().len() as u64;
     GateOutcome::new(
         code == 0,
         n,
         format!("{n} generated cases built and run; values compared against the generator's own"),
+    )
+}
+
+/// v2 §3.1 family R — the reject matrix.
+///
+/// Two assertions per case and BOTH are counted: the rejection must carry the
+/// generator's declared diagnostic code, and the paired twin must compile. A
+/// gate that counted only the first would go green against a checker that
+/// rejects every program, which is the precise state the twin exists to exclude.
+///
+/// In-process (`ty::check_modules`) — no `sky` binary, no `go build`.
+pub fn corpus_reject(ctx: &GateCtx) -> GateOutcome {
+    let rows = match crate::corpus::reject_matrix::evaluate(&ctx.repo_root) {
+        Ok(r) => r,
+        Err(msg) => return GateOutcome::new(false, 0, msg),
+    };
+    let assertions = rows.len() as u64 * 2;
+    let bad: Vec<&str> = rows
+        .iter()
+        .filter(|r| !r.ok())
+        .map(|r| r.id.as_str())
+        .collect();
+    if bad.is_empty() {
+        GateOutcome::new(
+            true,
+            assertions,
+            format!(
+                "{} reject case(s): each rejected by its declared diagnostic code, \
+                 each paired twin accepted",
+                rows.len()
+            ),
+        )
+    } else {
+        GateOutcome::new(
+            false,
+            assertions,
+            format!(
+                "{} of {} reject pair(s) failed (accepted-when-it-should-reject, wrong \
+                 diagnostic code, or a rejected twin): {}",
+                bad.len(),
+                rows.len(),
+                preview(&bad)
+            ),
+        )
+    }
+}
+
+/// v2 §3.1 family E — emit-shape properties of the generated Go, no `go build`.
+pub fn corpus_emit_shape(ctx: &GateCtx) -> GateOutcome {
+    let code = crate::corpus::emit_shape::run(&ctx.repo_root);
+    let n: u64 = crate::corpus::emit_shape::all()
+        .iter()
+        .map(|c| c.emit_properties.len() as u64)
+        .sum();
+    GateOutcome::new(
+        code == 0,
+        n,
+        format!("{n} emit-shape properties asserted over the generated Go"),
     )
 }
 
