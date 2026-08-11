@@ -66,6 +66,34 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
    cookie). For multi-tenant deployments use separate cookie names
    per sub-app via the `[live]` cfg.
 
+## Stdlib
+
+8. **`Dict` keys must be a primitive to survive iteration.** A `Dict k v`
+   is a Go `map[string]V` at runtime: every key is stringified on the
+   way in. Lookup (`get` / `member` / `insert` / `remove`) stringifies
+   the probe the same way and therefore works for ANY key type, but the
+   operations that let the key back OUT — `toList`, `keys`, `values`,
+   `foldl`, `map` — have to decode it, and `String`, `Int`, `Float`,
+   `Char` and `Bool` are the key types that decode. Two cases do not:
+
+   - **Composite keys** (tuple, list, record, custom type). Their
+     stringification is not injective — `("a b", "c")` and
+     `("a", "b c")` both render `{a b c}` — so no decoder could be
+     correct. `Dict.foldl` / `Dict.map` on such a Dict fails with an
+     `UnsupportedDictKey` panic naming the key type rather than
+     silently handing back a string. **Workaround**: key by a primitive
+     rendering of the composite (e.g. `String.fromInt a ++ ":" ++ String.fromInt b`)
+     and keep the structured form in the value.
+
+   - **Key-polymorphic helpers** (`f : Dict k v -> …`). The lowering
+     erases `k` to `any`, so neither the compiler nor the callback says
+     what to decode to, and iteration yields the string form. Elm-style
+     code rarely writes these; **workaround**: annotate the helper with
+     the concrete key type (`f : Dict Int v -> …`).
+
+   Closing either properly means changing what a Dict key is *encoded*
+   as, not how it is decoded — a wider change than the decode side.
+
 ## Roadmap (not active bugs, just deferred)
 
 * **Install-time Go-binding generation deferral.** `sky install`

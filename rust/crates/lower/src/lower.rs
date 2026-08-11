@@ -1953,35 +1953,63 @@ impl<'a> Ctx<'a> {
         None
     }
 
-    /// A `Dict.toList` / `Dict.keys` on a `Dict Int v` / `Dict Float v` must lower
-    /// to the typed-key kernel entry point (`rt.Dict_toListIntKey` /
-    /// `rt.Dict_keysIntKey` / `…FloatKey`) — the underlying runtime map is
-    /// `map[string]V`, so the default `rt.Dict_toList` / `rt.Dict_keys` leaks
-    /// stringified keys and any downstream `rt.AsInt` on a key yields 0
-    /// (`Dict.keys` on an annotated `Dict Int v` came back `[0, 0, …]`). The key
-    /// type is read from the argument's HM-inferred `Dict k v` shape at the call
-    /// site (oracle: `rt.Dict_toListIntKey(byCounts)` vs
-    /// `rt.Dict_toList(rt.AsMapAny(totals))`).
-    fn dict_tolist_specialised(&self, base: &str, args: &[ExprId]) -> Option<&'static str> {
-        if args.len() != 1 {
-            return None;
-        }
-        // (default-kernel, IntKey-variant, FloatKey-variant) per key-producing op.
-        let (int_variant, float_variant) = match base {
-            "rt.Dict_toList" => ("rt.Dict_toListIntKey", "rt.Dict_toListFloatKey"),
-            "rt.Dict_keys" => ("rt.Dict_keysIntKey", "rt.Dict_keysFloatKey"),
+    /// Route a Dict operation that lets the KEY out to the typed-key kernel
+    /// entry point for the key's Sky type (`rt.Dict_toListIntKey`,
+    /// `rt.Dict_foldlCharKey`, …).
+    ///
+    /// The runtime map is `map[string]V` (see the `("Dict", 2)` arm in
+    /// `goty.rs`), so every key is stringified on the way in. Lookup-shaped
+    /// operations stringify the probe too and therefore agree; the five
+    /// operations below are the ones that let the key back OUT, and the string
+    /// does not say what to decode it to — 97 is a `Dict Int v` key and 'a' is
+    /// a `Dict Char v` key with the same stringification. So the key type comes
+    /// from the argument's HM-inferred `Dict k v` shape at the call site:
+    ///
+    /// * `toList` / `keys` hand the key to the caller — undecoded, the caller's
+    ///   `rt.AsListT[rune]` turned "97" into char code 0 (issue #174).
+    /// * `foldl` / `map` hand the key to a user function whose first parameter
+    ///   the lowering already typed `int` / `rune` — undecoded, that is a
+    ///   `skyCallDirect` panic from well-typed Sky (issue #174).
+    /// * `values` returns no key, but its ORDER is the key order, and "10"
+    ///   sorts before "9".
+    ///
+    /// `Dict_foldl` / `Dict_map` have a second line of defence in the runtime
+    /// (they read the key type off the callback), so a call site this cannot
+    /// type still behaves. `toList` / `keys` / `values` have no such channel:
+    /// unrouted, they stay on the string key exactly as before.
+    fn dict_typed_key_specialised(&self, base: &str, args: &[ExprId]) -> Option<String> {
+        // (kernel arity, position of the Dict argument). The arity check keeps
+        // a partial application — where the Dict argument is not present and
+        // some other argument sits at that index — off this path.
+        let (arity, dict_arg) = match base {
+            "rt.Dict_toList" | "rt.Dict_keys" | "rt.Dict_values" => (1, 0),
+            "rt.Dict_map" => (2, 1),
+            "rt.Dict_foldl" => (3, 2),
             _ => return None,
         };
-        match self.sky_ty_of(args[0])? {
-            Ty::App(dict, dargs) if dict.as_str() == "Dict" && dargs.len() == 2 => {
-                match &dargs[0] {
-                    Ty::App(k, ka) if ka.is_empty() && k.as_str() == "Int" => Some(int_variant),
-                    Ty::App(k, ka) if ka.is_empty() && k.as_str() == "Float" => Some(float_variant),
-                    _ => None,
-                }
-            }
-            _ => None,
+        if args.len() != arity {
+            return None;
         }
+        let key_ty = match self.sky_ty_of(args[dict_arg])? {
+            Ty::App(dict, dargs) if dict.as_str() == "Dict" && dargs.len() == 2 => {
+                dargs[0].clone()
+            }
+            _ => return None,
+        };
+        let suffix = match &key_ty {
+            Ty::App(k, ka) if ka.is_empty() => match k.as_str() {
+                "Int" => "Int",
+                "Float" => "Float",
+                "Char" => "Char",
+                "Bool" => "Bool",
+                // `String` needs no decode, and a key type this does not know
+                // how to invert (a tuple, a record, an ADT, a type variable)
+                // must stay on the default kernel.
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some(format!("{base}{suffix}Key"))
     }
 
     /// Is `e` a Task-typed expression? Checks the recorded type first, then —
@@ -4087,10 +4115,12 @@ impl<'a> Ctx<'a> {
     }
 
     fn kernel_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
-        // `Dict.toList` on a typed-key Dict routes to the typed-key entry point
-        // (`rt.Dict_toListIntKey` / `…FloatKey`) so keys re-parse to their Sky
-        // type instead of leaking the runtime `map[string]V` string keys.
-        let go = self.dict_tolist_specialised(go, args).unwrap_or(go);
+        // A Dict operation that lets the KEY out routes to the typed-key entry
+        // point for that key type (`rt.Dict_toListIntKey` / `rt.Dict_foldlCharKey`
+        // / …) so the key decodes back to its Sky type instead of leaking the
+        // runtime `map[string]V` string key.
+        let specialised = self.dict_typed_key_specialised(go, args);
+        let go = specialised.as_deref().unwrap_or(go);
         let largs: Vec<GoExpr> = args
             .iter()
             .map(|a| {

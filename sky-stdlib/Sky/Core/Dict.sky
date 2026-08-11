@@ -1,4 +1,4 @@
--- | Sky.Core.Dict — string-keyed associative map (Layer 3 Sky source).
+-- | Sky.Core.Dict — associative map, ordered by key (Layer 3 Sky source).
 --
 -- Every function in this module is declared as a Sky-source binding
 -- aliased to a kernel via `Ffi.kernel "Dict_<name>"`.  The Stage-4
@@ -12,15 +12,23 @@
 -- every entry.  The runtime bodies live in `runtime-go/rt/rt.go`
 -- (`Dict_*` helpers; the typed `Dict_*T[V]` variants live alongside).
 --
--- Key-type note: at runtime the underlying map is `map[string]V`,
--- so non-String keys are stringified on `fromList` and re-parsed on
--- `toList`. For `Dict Int v` the round-trip is faithful (Int → "1" →
--- 1); for floating-point keys the round-trip carries decimal-string
--- precision (Float 1.5 → "1.5" → 1.5). When Sky's HM solver infers
--- a typed key like `Dict Int v`, the compiler routes `Dict.toList`
--- through the `Dict_toListIntKey` variant so the returned tuple's
--- first slot is a real Int — closing the long-standing Limitation
--- #10 soundness hole.
+-- Key-type note: at runtime the underlying map is `map[string]V`, so
+-- every key is stringified on the way in. Lookup-shaped operations
+-- (`get`, `member`, `insert`, `remove`) stringify the probe the same
+-- way and so agree for any key type. The operations that let the key
+-- back OUT — `toList`, `keys`, `values`, `foldl`, `map` — decode it
+-- back to the Sky type: the compiler routes them to a typed-key
+-- entry point (`Dict_toListIntKey`, `Dict_foldlCharKey`, …) from the
+-- HM-inferred `Dict k v` at the call site, and `foldl` / `map` also
+-- recover it from the callback's own key parameter. `String`, `Int`,
+-- `Float`, `Char` and `Bool` keys round-trip; enumeration is ordered
+-- by the DECODED key, so a `Dict Int v` visits 9 before 10 rather
+-- than in the lexical order of "9" and "10".
+--
+-- Composite keys (tuple, list, record, custom type) do NOT round-trip
+-- — their stringification is not injective — and a key-polymorphic
+-- helper (`f : Dict k v -> …`) erases the key type, so iteration
+-- inside it sees the string form. See `docs/KNOWN_LIMITATIONS.md`.
 module Sky.Core.Dict exposing
     ( empty
     , isEmpty
@@ -87,24 +95,26 @@ remove =
 
 
 -- ─── Conversion ────────────────────────────────────────────────────
--- | All keys in the dictionary (unsorted).
+-- | All keys in the dictionary, in ascending key order.
 keys : Dict k v -> List k
 keys =
     Ffi.kernel "Dict_keys"
 
 
--- | All values in the dictionary (unsorted).
+-- | All values in the dictionary, in ascending order of their KEY.
 values : Dict k v -> List v
 values =
     Ffi.kernel "Dict_values"
 
 
--- | `toList d` — every (key, value) pair as a list of tuples.
+-- | `toList d` — every (key, value) pair as a list of tuples, in
+-- ascending key order.
 --
--- Key-type fidelity: when the inferred Sky type is `Dict Int v`,
--- the compiler routes through a typed kernel variant whose first
--- tuple slot is `Int` (not `String`). Arithmetic on the returned
--- keys works correctly — closes Limitation #10.
+-- Key-type fidelity: the key comes back as its Sky type, not as the
+-- runtime map's stringified form — arithmetic on the keys of a
+-- `Dict Int v`, and `Char.toCode` on the keys of a `Dict Char v`,
+-- both work. See the key-type note at the top of this module for the
+-- two shapes that do not round-trip.
 toList : Dict k v -> List ( k, v )
 toList =
     Ffi.kernel "Dict_toList"
@@ -119,13 +129,15 @@ fromList =
 
 -- ─── Higher-order combinators ──────────────────────────────────────
 -- | `map fn d` — apply `fn k v` to every entry, building a new
--- dictionary with the transformed values.
+-- dictionary with the transformed values. The keys are unchanged;
+-- `fn` receives each one as its Sky type.
 map : (k -> v -> w) -> Dict k v -> Dict k w
 map =
     Ffi.kernel "Dict_map"
 
 
--- | `foldl fn acc d` — accumulate over every entry.
+-- | `foldl fn acc d` — accumulate over every entry, in ascending key
+-- order. `fn` receives each key as its Sky type.
 foldl : (k -> v -> a -> a) -> a -> Dict k v -> a
 foldl =
     Ffi.kernel "Dict_foldl"

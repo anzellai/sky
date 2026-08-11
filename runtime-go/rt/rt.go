@@ -4904,25 +4904,9 @@ func sortedDictKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func Dict_keys(dict any) any {
-	m := AsDict(unwrapAny(dict))
-	keys := sortedDictKeys(m)
-	result := make([]any, 0, len(m))
-	for _, k := range keys {
-		result = append(result, k)
-	}
-	return result
-}
+func Dict_keys(dict any) any { return dictKeysKeyed(dict, dictKeyString) }
 
-func Dict_values(dict any) any {
-	m := AsDict(unwrapAny(dict))
-	keys := sortedDictKeys(m)
-	result := make([]any, 0, len(m))
-	for _, k := range keys {
-		result = append(result, m[k])
-	}
-	return result
-}
+func Dict_values(dict any) any { return dictValuesKeyed(dict, dictKeyString) }
 
 // AsDict coerces a Sky-side any to map[string]any. Sky Dict is
 // always map[string]any at runtime; auto-unwraps SkyResult/SkyMaybe.
@@ -4948,15 +4932,7 @@ func AsDict(v any) map[string]any {
 	return map[string]any{}
 }
 
-func Dict_toList(dict any) any {
-	m := AsDict(unwrapAny(dict))
-	keys := sortedDictKeys(m)
-	result := make([]any, 0, len(m))
-	for _, k := range keys {
-		result = append(result, SkyTuple2{V0: k, V1: m[k]})
-	}
-	return result
-}
+func Dict_toList(dict any) any { return dictToListKeyed(dict, dictKeyString) }
 
 func Dict_fromList(list any) any {
 	items := asList(list)
@@ -4973,14 +4949,15 @@ func Dict_fromList(list any) any {
 	return result
 }
 
+// Dict_map — the un-routed entry point. The key type is recovered from the
+// mapping function's DECLARED first parameter (see dictKeyKindForFn): a
+// `Dict Int v` lowers its `\k v -> …` to `func(int, V) W`, so handing that
+// function the runtime map's `string` key panicked in skyCallDirect (issue
+// #174). When the call site's key type is statically known the compiler routes
+// to `Dict_mapIntKey` / `…FloatKey` / `…CharKey` / `…BoolKey` instead; this
+// path covers the rest (point-free use, key-polymorphic helpers).
 func Dict_map(fn any, dict any) any {
-	m := AsDict(unwrapAny(dict))
-	result := make(map[string]any, len(m))
-	for k, v := range m {
-		step := SkyCall(fn, k)
-		result[k] = SkyCall(step, v)
-	}
-	return result
+	return dictMapKeyed(fn, dict, dictKeyKindForFn(fn))
 }
 
 // P8/Dict typed companions — generic over value type V.
@@ -5124,143 +5101,304 @@ func Dict_fromListTA(list []any) any {
 	return out
 }
 
-// ── Typed-key Dict variants (v0.15.45) ─────────────────────────────
+// ── Typed-key Dict variants ────────────────────────────────────────
 //
-// Closes Limitation #10 — `Dict.toList` on a `Dict Int v` was returning
-// `(String, v)` tuples (the underlying Go map's string keys leaking
-// through), so arithmetic on the keys silently produced 0 / NaN /
-// junk.  The fix is approach (B): keep the runtime as `map[string]V`
-// for backwards compatibility, but emit typed-key entry points that
-// re-parse the string back to the original key type before building
-// the tuple list / new map.  The compiler picks the right entry
-// point from the HM-inferred key type at the call site.
+// A Sky `Dict k v` is a Go `map[string]V` at runtime: `Dict_fromList` /
+// `Dict_insert` stringify every key through `fmt.Sprintf("%v", key)`, and
+// `goty.rs` pins the emitted Go type to `map[string]V` so the shape matches the
+// oracle everywhere (`rt.AsMapT[V]` narrows to `map[string]V`). Lookup-shaped
+// operations (`get`, `member`, `remove`) stringify the probe the same way, so
+// they agree with insertion for ANY key type.
 //
-// Float64 parse uses strconv.ParseFloat — round-trip on the canonical
-// `fmt.Sprintf("%v", float64)` representation is faithful to the
-// nearest IEEE 754 double.  Int uses strconv.Atoi (with a Float
-// fallback truncation) so callers can round-trip a `Dict Int v` even
-// if a key was inserted via `Dict.fromList` with a Float-shaped Sky
-// value mis-tagged as Int (e.g. through `Dict.fromList [(toFloat 1,
-// "a")]` typed as Dict Int).
+// The ITERATION-shaped operations are where the key leaves the runtime again —
+// `toList` and `keys` hand it to the caller, `foldl` and `map` hand it to a
+// user function, and `values` is ordered by it. Those five must UNDO the
+// stringification, and the string alone does not say what to undo it to: "97"
+// is a `Dict Int v` key 97 and a `Dict Char v` key 'a'. So the key type comes
+// from outside the string —
+//
+//   * from the COMPILER, which knows the HM-inferred `Dict k v` at the call
+//     site and routes to the `…IntKey` / `…FloatKey` / `…CharKey` / `…BoolKey`
+//     entry point below (see `dict_typed_key_specialised` in lower.rs); or
+//   * from the CALLBACK, for `foldl` / `map`, whose declared first parameter is
+//     the key type the lowering already committed to (`func(int, string, …)`
+//     for a `Dict Int String`). This is what makes the un-routed path safe:
+//     handing that function a `string` is what panicked in issue #174.
+//
+// Neither channel exists for a key-POLYMORPHIC helper (`f : Dict k v -> …`),
+// where the lowering erases the key to `any` — there the string form is still
+// what the caller sees, exactly as before. Tuple, list, record and ADT keys are
+// likewise still one-way: they stringify but do not decode.
 
-// Dict_toListIntKey: like Dict_toList but returns [](Int, V) tuples.
-// Parses each string key back through strconv; un-parsable keys
-// (shouldn't happen for a well-typed Dict Int v but defended against
-// for runtime FFI shapes) fall back to 0 so the call still returns
-// rather than panicking.  Matches Dict_toList's "always returns a
-// list" contract.
-func Dict_toListIntKey(dict any) any {
-	m := AsDict(unwrapAny(dict))
-	// Parse each key to its Int form, then sort NUMERICALLY (Elm's Dict Int is
-	// ordered by the integer key, not its stringified form — "10" < "2"
-	// lexically but 2 < 10 numerically). Deterministic + Elm-faithful.
-	type ent struct {
-		k int
-		v any
-	}
-	ents := make([]ent, 0, len(m))
-	for k, v := range m {
-		// strconv.Atoi handles signed decimals; ParseFloat fallback
-		// covers the Float-rounded-to-Int corner case.
-		if n, err := strconv.Atoi(k); err == nil {
-			ents = append(ents, ent{n, v})
-		} else if f, err := strconv.ParseFloat(k, 64); err == nil {
-			ents = append(ents, ent{int(f), v})
-		} else {
-			ents = append(ents, ent{0, v})
+// dictKeyKind is the Sky type a stringified runtime key decodes back to.
+type dictKeyKind uint8
+
+const (
+	// dictKeyString — no decode. Also the fallback whenever the key type is
+	// unknown, which keeps the historical (string-key) behaviour.
+	dictKeyString dictKeyKind = iota
+	dictKeyInt
+	dictKeyFloat
+	dictKeyChar
+	dictKeyBool
+)
+
+// decodeDictKey inverts the `fmt.Sprintf("%v", key)` that put the key into the
+// map. Every branch has a total fallback: a malformed key (an FFI-supplied
+// `map[string]any` whose keys were never Sky keys) yields the zero value rather
+// than panicking, matching the "these operations always return a list"
+// contract the un-decoded versions had.
+func decodeDictKey(kind dictKeyKind, s string) any {
+	switch kind {
+	case dictKeyInt:
+		if n, err := strconv.Atoi(s); err == nil {
+			return n
 		}
+		// A `Dict Int v` key can have been written through a Float-shaped
+		// Sky value ("1.0"); truncate rather than lose the entry.
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return int(f)
+		}
+		return 0
+	case dictKeyFloat:
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return f
+		}
+		return 0.0
+	case dictKeyChar:
+		// Sky's Char is a Go `rune` (int32), so `%v` prints its DECIMAL CODE
+		// POINT: 'a' is stored as "97", not as "a". Decode that first, and
+		// fall back to the first rune for a key that was stringified from a
+		// one-character string instead.
+		if n, err := strconv.Atoi(s); err == nil {
+			return rune(n)
+		}
+		for _, r := range s {
+			return r
+		}
+		return rune(0)
+	case dictKeyBool:
+		if b, err := strconv.ParseBool(s); err == nil {
+			return b
+		}
+		return false
 	}
-	sort.SliceStable(ents, func(i, j int) bool { return ents[i].k < ents[j].k })
+	return s
+}
+
+// dictEntry is one map entry with its key decoded back to the Sky type.
+type dictEntry struct {
+	raw string // the runtime map key, i.e. the stringified form
+	key any    // decoded to `kind`
+	val any
+}
+
+// dictEntries decodes every entry and sorts them by the DECODED key.
+//
+// Sorting the decoded key is the whole point: Sky's Dict is Elm-shaped, so
+// enumeration is defined to visit entries in ascending key order, and the
+// stringified form does not sort the same way ("10" < "9" lexically, 9 < 10
+// numerically). Sorting also makes enumeration deterministic despite Go's
+// randomised map iteration.
+func dictEntries(dict any, kind dictKeyKind) []dictEntry {
+	m := AsDict(unwrapAny(dict))
+	ents := make([]dictEntry, 0, len(m))
+	for k, v := range m {
+		ents = append(ents, dictEntry{raw: k, key: decodeDictKey(kind, k), val: v})
+	}
+	switch kind {
+	case dictKeyInt:
+		sort.SliceStable(ents, func(i, j int) bool {
+			return ents[i].key.(int) < ents[j].key.(int)
+		})
+	case dictKeyFloat:
+		sort.SliceStable(ents, func(i, j int) bool {
+			return ents[i].key.(float64) < ents[j].key.(float64)
+		})
+	case dictKeyChar:
+		sort.SliceStable(ents, func(i, j int) bool {
+			return ents[i].key.(rune) < ents[j].key.(rune)
+		})
+	case dictKeyBool:
+		sort.SliceStable(ents, func(i, j int) bool {
+			return !ents[i].key.(bool) && ents[j].key.(bool)
+		})
+	default:
+		sort.SliceStable(ents, func(i, j int) bool { return ents[i].raw < ents[j].raw })
+	}
+	return ents
+}
+
+// dictKeyKindForFn reads the key type off a Dict callback's DECLARED first
+// parameter. `Dict.foldl : (k -> v -> a -> a) -> a -> Dict k v -> a` and
+// `Dict.map : (k -> v -> w) -> Dict k v -> Dict k w` both take the key first,
+// and the lowering gives that parameter the key's concrete Go type whenever it
+// knows it — so the function itself carries the answer even at a call site the
+// compiler did not route.
+//
+// `any`-typed (key-polymorphic) callbacks fall back to the string key, which is
+// what they were already receiving.
+func dictKeyKindForFn(fn any) dictKeyKind {
+	if fn == nil {
+		return dictKeyString
+	}
+	t := reflect.TypeOf(fn)
+	if t == nil || t.Kind() != reflect.Func || t.NumIn() == 0 {
+		return dictKeyString
+	}
+	switch t.In(0).Kind() {
+	case reflect.Int32:
+		// Go's `rune` IS int32, and Sky's Int is `int` — so an int32
+		// parameter is a Char.
+		return dictKeyChar
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return dictKeyInt
+	case reflect.Float32, reflect.Float64:
+		return dictKeyFloat
+	case reflect.Bool:
+		return dictKeyBool
+	}
+	return dictKeyString
+}
+
+// A decoded key still has to MATCH the callback's parameter type exactly —
+// `skyCallDirect` type-checks arguments — but it already widens numerics
+// (`int` → `int64`) through its `safeReflectConvert` arm, so decoding to the
+// key's own Go type is enough and no fitting step belongs here.
+
+// ── The five iteration-shaped operations, over decoded keys ────────
+
+func dictToListKeyed(dict any, kind dictKeyKind) any {
+	ents := dictEntries(dict, kind)
 	result := make([]any, 0, len(ents))
 	for _, e := range ents {
-		result = append(result, SkyTuple2{V0: e.k, V1: e.v})
+		result = append(result, SkyTuple2{V0: e.key, V1: e.val})
 	}
 	return result
 }
 
-// Dict_toListFloatKey: like Dict_toList but returns [](Float, V)
-// tuples.  Parses each string key through strconv.ParseFloat; on
-// failure falls back to 0.0.
-func Dict_toListFloatKey(dict any) any {
-	m := AsDict(unwrapAny(dict))
-	type ent struct {
-		k float64
-		v any
-	}
-	ents := make([]ent, 0, len(m))
-	for k, v := range m {
-		if f, err := strconv.ParseFloat(k, 64); err == nil {
-			ents = append(ents, ent{f, v})
-		} else {
-			ents = append(ents, ent{0.0, v})
-		}
-	}
-	sort.SliceStable(ents, func(i, j int) bool { return ents[i].k < ents[j].k })
+func dictKeysKeyed(dict any, kind dictKeyKind) any {
+	ents := dictEntries(dict, kind)
 	result := make([]any, 0, len(ents))
 	for _, e := range ents {
-		result = append(result, SkyTuple2{V0: e.k, V1: e.v})
+		result = append(result, e.key)
 	}
 	return result
 }
 
-// Dict_keysIntKey: like Dict_keys but returns []Int with each string key
-// parsed back to its Int form and sorted NUMERICALLY (Elm's Dict Int is ordered
-// by the integer key, not its stringified form). The underlying runtime map is
-// `map[string]V`, so the default Dict_keys leaks stringified keys — and a
-// downstream `rt.AsInt` on a string key yields 0 (`Dict.keys` on an annotated
-// `Dict Int v` came back `[0, 0, …]`). Mirrors Dict_toListIntKey's key parse +
-// numeric sort; un-parsable keys fall back to 0 so the call still returns.
-func Dict_keysIntKey(dict any) any {
-	m := AsDict(unwrapAny(dict))
-	ks := make([]int, 0, len(m))
-	for k := range m {
-		if n, err := strconv.Atoi(k); err == nil {
-			ks = append(ks, n)
-		} else if f, err := strconv.ParseFloat(k, 64); err == nil {
-			ks = append(ks, int(f))
-		} else {
-			ks = append(ks, 0)
-		}
-	}
-	sort.SliceStable(ks, func(i, j int) bool { return ks[i] < ks[j] })
-	result := make([]any, 0, len(ks))
-	for _, k := range ks {
-		result = append(result, k)
+// dictValuesKeyed returns no key at all — but the ORDER it returns values in is
+// the key order, so it needs the decoded key just as much (`Dict.values` on a
+// `Dict Int v` with keys 1, 2, 9, 10 came back in lexical key order).
+func dictValuesKeyed(dict any, kind dictKeyKind) any {
+	ents := dictEntries(dict, kind)
+	result := make([]any, 0, len(ents))
+	for _, e := range ents {
+		result = append(result, e.val)
 	}
 	return result
 }
 
-// Dict_keysFloatKey: like Dict_keys but returns []Float with each string key
-// parsed through strconv.ParseFloat and sorted numerically; on failure 0.0.
-func Dict_keysFloatKey(dict any) any {
-	m := AsDict(unwrapAny(dict))
-	ks := make([]float64, 0, len(m))
-	for k := range m {
-		if f, err := strconv.ParseFloat(k, 64); err == nil {
-			ks = append(ks, f)
-		} else {
-			ks = append(ks, 0.0)
-		}
+// requireDecodableDictKey reports the ONE key shape that cannot be handed to a
+// callback: a composite key (a tuple, list, record or custom type).
+//
+// `fmt.Sprintf("%v", key)` is not injective for those — `("a b", "c")` and
+// `("a", "b c")` both stringify to `{a b c}` — so no decoder can be correct,
+// and the key genuinely does not survive the round trip. Supporting them means
+// changing what a Dict key is encoded AS, which is a wider change than
+// decoding one.
+//
+// Without this the call falls through to `skyCallDirect` and panics with
+// "argument 0 type mismatch — function expects rt.T2[int,int], got string",
+// which reads as a compiler bug. It is a documented limitation, so say so. The
+// guard fires only where the call was going to panic regardless: a `string`
+// bound for a struct/slice/map parameter has no other outcome.
+func requireDecodableDictKey(op string, fn any, key any) {
+	if _, isStr := key.(string); !isStr {
+		return
 	}
-	sort.SliceStable(ks, func(i, j int) bool { return ks[i] < ks[j] })
-	result := make([]any, 0, len(ks))
-	for _, k := range ks {
-		result = append(result, k)
+	t := reflect.TypeOf(fn)
+	if t == nil || t.Kind() != reflect.Func || t.NumIn() == 0 {
+		return
 	}
-	return result
+	switch t.In(0).Kind() {
+	case reflect.Struct, reflect.Slice, reflect.Array, reflect.Map, reflect.Pointer:
+		panic(fmt.Sprintf(
+			"rt.Dict: unsupported key type %v in %s — Dict keys are stringified at runtime and only String, Int, Float, Char and Bool keys decode back",
+			t.In(0), op))
+	}
 }
 
-func Dict_foldl(fn any, acc any, dict any) any {
-	m := AsDict(unwrapAny(dict))
+func dictFoldlKeyed(fn any, acc any, dict any, kind dictKeyKind) any {
 	result := acc
-	// Elm's Dict.foldl visits entries in ascending key order (also makes the
-	// fold deterministic despite Go's randomised map iteration).
-	for _, k := range sortedDictKeys(m) {
-		step := SkyCall(fn, k)
-		step2 := SkyCall(step, m[k])
+	for _, e := range dictEntries(dict, kind) {
+		requireDecodableDictKey("Dict.foldl", fn, e.key)
+		step := SkyCall(fn, e.key)
+		step2 := SkyCall(step, e.val)
 		result = SkyCall(step2, result)
 	}
 	return result
+}
+
+// dictMapKeyed rebuilds the map under the ORIGINAL (stringified) keys — only
+// the values change, so the result is keyed exactly as the input was.
+func dictMapKeyed(fn any, dict any, kind dictKeyKind) any {
+	ents := dictEntries(dict, kind)
+	result := make(map[string]any, len(ents))
+	for _, e := range ents {
+		requireDecodableDictKey("Dict.map", fn, e.key)
+		step := SkyCall(fn, e.key)
+		result[e.raw] = SkyCall(step, e.val)
+	}
+	return result
+}
+
+// ── Compiler-routed entry points ───────────────────────────────────
+//
+// One per (operation, key type). The compiler emits these in place of the
+// default kernel when it can see the key type at the call site; each is a
+// one-liner over the shared implementation above.
+
+func Dict_toListIntKey(dict any) any   { return dictToListKeyed(dict, dictKeyInt) }
+func Dict_toListFloatKey(dict any) any { return dictToListKeyed(dict, dictKeyFloat) }
+func Dict_toListCharKey(dict any) any  { return dictToListKeyed(dict, dictKeyChar) }
+func Dict_toListBoolKey(dict any) any  { return dictToListKeyed(dict, dictKeyBool) }
+
+func Dict_keysIntKey(dict any) any   { return dictKeysKeyed(dict, dictKeyInt) }
+func Dict_keysFloatKey(dict any) any { return dictKeysKeyed(dict, dictKeyFloat) }
+func Dict_keysCharKey(dict any) any  { return dictKeysKeyed(dict, dictKeyChar) }
+func Dict_keysBoolKey(dict any) any  { return dictKeysKeyed(dict, dictKeyBool) }
+
+func Dict_valuesIntKey(dict any) any   { return dictValuesKeyed(dict, dictKeyInt) }
+func Dict_valuesFloatKey(dict any) any { return dictValuesKeyed(dict, dictKeyFloat) }
+func Dict_valuesCharKey(dict any) any  { return dictValuesKeyed(dict, dictKeyChar) }
+func Dict_valuesBoolKey(dict any) any  { return dictValuesKeyed(dict, dictKeyBool) }
+
+func Dict_foldlIntKey(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyInt)
+}
+
+func Dict_foldlFloatKey(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyFloat)
+}
+
+func Dict_foldlCharKey(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyChar)
+}
+
+func Dict_foldlBoolKey(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyBool)
+}
+
+func Dict_mapIntKey(fn any, dict any) any   { return dictMapKeyed(fn, dict, dictKeyInt) }
+func Dict_mapFloatKey(fn any, dict any) any { return dictMapKeyed(fn, dict, dictKeyFloat) }
+func Dict_mapCharKey(fn any, dict any) any  { return dictMapKeyed(fn, dict, dictKeyChar) }
+func Dict_mapBoolKey(fn any, dict any) any  { return dictMapKeyed(fn, dict, dictKeyBool) }
+
+// Dict_foldl — the un-routed entry point; see Dict_map for why the key type
+// comes off the callback.
+func Dict_foldl(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyKindForFn(fn))
 }
 
 func Dict_union(a any, b any) any {
