@@ -12,7 +12,8 @@ mod driver;
 mod ffi_ops;
 pub use build::{
     build_example, build_project, configured_bin_name, configured_source_root, db_driver_conflict,
-    driver_for_dsn, emit_example_source, enumerate_skydep_files, load_ffi_surface, BuildOptions,
+    driver_for_dsn, emit_example_source, emit_example_warnings, enumerate_skydep_files,
+    load_ffi_surface, BuildOptions,
     BuildReport,
 };
 pub use doc::{

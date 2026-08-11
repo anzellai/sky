@@ -92,6 +92,25 @@ Sky warns you when a memoised binding forces a fresh-value effect like `Uuid.v4`
 `Random.*`, or `Time.now`, so this never bites silently — but it's worth
 understanding *why* the warning fires.
 
+The same warning covers a frozen **read**: a top-level
+`posts = Task.run (Store.all db postStore)` caches that row set for the life of
+the process, so a post written later never appears. It fires when evaluating the
+binding actually performs the read — directly, or one hop behind a helper.
+
+It does **not** fire on a table that merely *references* handlers:
+
+```elm
+-- ✓ a registration table: nothing is read while it is built
+apiRoutes =
+    [ Live.api "GET /healthz" handleHealthz
+    , Live.api "GET /admin/login" handleLogin
+    ]
+```
+
+Passing `handleLogin` as a value stores a computation for the framework to run
+per request. Its `Db.query` fires then, against the shared pool — not now, and
+nothing about the list is a snapshot.
+
 That's the whole effect story. With pure values, `Result`/`Maybe`, and `Task`, you
 can express any program — and the types keep effects honest.
 

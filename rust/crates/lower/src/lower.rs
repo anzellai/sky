@@ -555,7 +555,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         }
     }
     // ---- freeze-unsafe effect reachability (memoised-CAF stale-read lint) ----
-    let def_effect = compute_def_effect(&defs, &kernel_alias);
+    let def_effect = compute_def_effect(&defs, &kernel_alias, &def_result_tys);
     // ---- kernel-alias arity override for VARIADIC runtime symbols ----
     // A bare kernel alias (`request = Ffi.kernel "Http_request"`) carries its
     // arity entirely in the declared signature — the body has no value params.
@@ -992,19 +992,77 @@ fn merge_effect(a: Option<EffectKind>, b: Option<EffectKind>) -> Option<EffectKi
     }
 }
 
+/// Does referencing `d` HERE force `d`'s effect during the referencing body's
+/// own evaluation? Only a forced reference may propagate a freeze-unsafe effect
+/// (see [`compute_def_effect`]).
+///
+/// * `applied_here` — the reference sits in an APPLICATION position (callee of a
+///   `Call`, the function side of `|>` / `<|`, an operand of `>>` / `<<`).
+///   Applying a def runs its body, so the effect fires. Deliberately includes
+///   PARTIAL application (`Db.query conn`), which does not actually run the
+///   read: over-approximating here only preserves warnings.
+/// * a bare reference to a def WITH parameters is a first-class FUNCTION VALUE.
+///   Handing `handleLogin` to `Live.api` stores a computation for the callee to
+///   run later (per request, per element, never) — nothing is read now. This is
+///   the false positive this predicate exists to kill: a top-level route table
+///   `apiRoutes = [ Live.api "GET /admin/login" GhAuth.handleLogin, … ]` is a
+///   registration list, yet every handler's per-request `Db.query` used to
+///   propagate into it and warn about a "frozen" read that never happens.
+/// * a bare reference to a zero-parameter def (a CAF) IS forced — mentioning it
+///   evaluates it (`posts` in `count = List.length posts` really does read) —
+///   UNLESS its value is a FUNCTION (`handleLogin = withSession handler`,
+///   point-free). Forcing that CAF only builds a closure; its body's effect
+///   still waits for a caller, exactly like the parameterised case above.
+///
+/// Under-approximation, accepted deliberately: a bare function reference handed
+/// to a higher-order helper that DOES apply it while the CAF evaluates
+/// (`rows = List.map fetchOne ids`, where `fetchOne` internally `Task.run`s a
+/// read) no longer warns. Distinguishing "stored for later" from "applied by the
+/// callee" needs higher-order flow analysis through kernels (`List.map` is
+/// `Ffi.kernel "List_map"` — no Sky body to inspect). A lint that fires on the
+/// documented `Live.api` idiom teaches users to ignore it, which costs more than
+/// this residual miss; the shapes the lint exists for (a read run directly, or
+/// one hop behind a helper) are all APPLICATIONS and still warn.
+fn def_reference_is_forced(
+    d: DefId,
+    applied_here: bool,
+    defs: &BTreeMap<DefId, DefEntry>,
+    def_result_tys: &HashMap<DefId, Ty>,
+) -> bool {
+    if applied_here {
+        return true;
+    }
+    let Some(e) = defs.get(&d) else {
+        // No body (foreign / aliased): it carries no effect of its own, so the
+        // answer only matters for edge bookkeeping. Not forced.
+        return false;
+    };
+    if !e.body.params.is_empty() {
+        return false;
+    }
+    // Zero-arity: forced, unless the memoised value is itself a function.
+    !matches!(def_result_tys.get(&d), Some(Ty::Fun(_, _)))
+}
+
 /// Whole-program pre-pass: per def, the freeze-unsafe effect kernel (fresh-value
-/// clock/entropy OR mutable-store read) syntactically REACHABLE from its body —
-/// transitively through called defs AND into lambda bodies (the expr arena holds
-/// every sub-expression, so a single `.iter()` sees inside lambdas). This is how
-/// the memoised-CAF lint catches a LAUNDERED effect the existing direct-kernel
+/// clock/entropy OR mutable-store read) that evaluating its body FORCES —
+/// transitively through applied defs AND into lambda bodies (the expr arena
+/// holds every sub-expression, so a single `.iter()` sees inside lambdas). This
+/// is how the memoised-CAF lint catches a LAUNDERED effect the direct-kernel
 /// scan misses: `listActive = withConnList (\c -> Store.query …)` (read hidden
 /// in the lambda arg) and `errRef = … (Data.nowMs ())` (clock hidden one hop
 /// through the user wrapper `nowMs`). Over-approximates "forced when evaluated";
 /// the lint gates on a DATA (non-handle, non-function) result type, so a lambda
 /// merely CONSUMED to produce that data is exactly the intended frozen reading.
+///
+/// A reference only propagates when it is FORCED — see
+/// [`def_reference_is_forced`]. Passing a handler as a VALUE (`Live.api "GET /x"
+/// handleLogin`) is a registration, not a read, and must not make the enclosing
+/// table look like a frozen snapshot.
 fn compute_def_effect(
     defs: &BTreeMap<DefId, DefEntry>,
     kernel_alias: &HashMap<DefId, String>,
+    def_result_tys: &HashMap<DefId, Ty>,
 ) -> HashMap<DefId, EffectKind> {
     // Per-def direct kernel effect + outgoing def references (call-graph edges,
     // including references that appear inside lambda bodies).
@@ -1013,18 +1071,51 @@ fn compute_def_effect(
     for (d, e) in defs {
         let mut eff: Option<EffectKind> = None;
         let mut es: Vec<DefId> = Vec::new();
+        // Expr ids in APPLICATION position. `Call` keeps its callee here even
+        // when the spine is nested (`Call(Call(f,[x]),[y])` — the inner `Call`
+        // is the outer callee, and `f`'s `Var` is the inner one). The pipes and
+        // the composition operators stay `Binop`s all the way to emission
+        // (`lower_pipe`), so their function side would otherwise read as a bare
+        // value: `Store.all db todos |> Task.run` must keep warning.
+        let mut applied: HashSet<ExprId> = HashSet::new();
+        for (_id, expr) in e.body.exprs.iter() {
+            match expr {
+                Expr::Call(callee, _) => {
+                    applied.insert(*callee);
+                }
+                Expr::Binop { op, lhs, rhs, .. } => match op.as_str() {
+                    "|>" => {
+                        applied.insert(*rhs);
+                    }
+                    "<|" => {
+                        applied.insert(*lhs);
+                    }
+                    ">>" | "<<" => {
+                        applied.insert(*lhs);
+                        applied.insert(*rhs);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
         let note_def = |d2: &DefId, eff: &mut Option<EffectKind>, es: &mut Vec<DefId>| {
             if let Some(sym) = kernel_alias.get(d2) {
                 *eff = merge_effect(*eff, effect_symbol_parts(sym));
             }
             es.push(*d2);
         };
-        for (_id, expr) in e.body.exprs.iter() {
+        for (id, expr) in e.body.exprs.iter() {
             match expr {
                 Expr::Var(Res::Kernel { module, func }) => {
                     eff = merge_effect(eff, kernel_effect(module.as_str(), func.as_str()));
                 }
-                Expr::Var(Res::Def(d2)) => note_def(d2, &mut eff, &mut es),
+                Expr::Var(Res::Def(d2)) => {
+                    if def_reference_is_forced(*d2, applied.contains(&id), defs, def_result_tys) {
+                        note_def(d2, &mut eff, &mut es);
+                    }
+                }
+                // An operator's resolved callee is applied by construction.
                 Expr::Binop { res, .. } => match res {
                     Res::Kernel { module, func } => {
                         eff = merge_effect(eff, kernel_effect(module.as_str(), func.as_str()));

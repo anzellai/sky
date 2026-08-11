@@ -451,6 +451,15 @@ pub fn emit_example_source(repo_root: &Path, example_dir: &Path) -> Result<Strin
     assemble_and_emit(repo_root, example_dir).map(|e| e.source)
 }
 
+/// The lowering WARNINGS for an example, without writing anything or running
+/// `go build` — the same list [`build_example`] surfaces on `BuildReport`.
+/// Lets a regression test pin a lint's exact firing surface (both that it does
+/// fire on the shape it exists for, and that it does NOT on a shape it used to
+/// cry wolf on) in seconds, without a Go toolchain.
+pub fn emit_example_warnings(repo_root: &Path, example_dir: &Path) -> Result<Vec<String>, String> {
+    assemble_and_emit(repo_root, example_dir).map(|e| e.warnings)
+}
+
 /// Build one example directory, returning a structured report (never panics).
 pub fn build_example(opts: &BuildOptions) -> BuildReport {
     build_inner(opts, &[], opts.entry_module.as_deref())
