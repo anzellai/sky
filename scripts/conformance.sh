@@ -93,38 +93,99 @@ if [ -n "$JSON_OUT" ]; then
     : >| "$JSON_OUT.entries"
 fi
 
+# How many suites to run CONCURRENTLY. `CONF_JOBS`, else cores capped at 8.
+#
+# This loop was serial, and it was the single most expensive step in CI: 1315s
+# of the macos-determinism job's 2244s — a job that is setup-INDEPENDENT, so it
+# enters the T1 budget formula directly as `indep_max` and was on its own the
+# reason the tier blew its 990s ceiling.
+#
+# Nothing about a suite depends on its neighbours. Each already had a unique
+# out dir (the comment below has said "so parallel/repeat runs don't clobber"
+# since the day it was written), its own JSON report path and its own log. The
+# isolation was designed for this and simply never used.
+if [ -z "${CONF_JOBS:-}" ]; then
+    CONF_JOBS="$( (sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2) )"
+    [ "$CONF_JOBS" -gt 8 ] 2>/dev/null && CONF_JOBS=8
+fi
+[ "$CONF_JOBS" -ge 1 ] 2>/dev/null || CONF_JOBS=1
+
+# `wait -n` is bash 4.3+; macOS runners ship bash 3.2, where it does not exist.
+# Throttle by polling the running-job count instead — portable to both.
+throttle() { # throttle <max>
+    while [ "$(jobs -r | wc -l | tr -d ' ')" -ge "$1" ]; do
+        sleep 0.2
+    done
+}
+
+# One suite, start to finish, in its own process. Writes its exit code to a
+# file because a background subshell cannot assign to the parent's variables —
+# and a lost failure here would be a suite that silently stops counting.
+run_one() { # run_one <suite> <base> <report>
+    local suite="$1" base="$2" report="$3"
+    export SKY_TEST_JSON="$report"
+    run_suite 180 "$SKY" test "$suite" --out "sky-out-conf-$base" \
+        > "$WORK/$base.log" 2>&1
+    echo $? >| "$WORK/$base.rc"
+}
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/conf-XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+# Collect the suite list FIRST, so output and the manifest can be emitted in
+# corpus order no matter what order the runs finish in. A report whose rows
+# reorder run to run cannot be diffed, and this one exists to be compared.
+suites=()
 for suite in tests/*Test.sky; do
     [ -e "$suite" ] || continue
     base="$(basename "$suite" .sky)"
     if [ -n "$FILTER" ] && [[ "$base" != *"$FILTER"* ]]; then
         continue
     fi
-    ran=$((ran + 1))
-    echo "── $base ──────────────────────────────────────────"
-    # unique out dir per suite so parallel/repeat runs don't clobber
-    out="sky-out-conf-$base"
+    suites+=("$suite")
+done
+
+echo "conformance: ${#suites[@]} suite(s), $CONF_JOBS at a time"
+
+for suite in "${suites[@]}"; do
+    base="$(basename "$suite" .sky)"
     report=""
     if [ -n "$JSON_OUT" ]; then
         report="$REPORT_DIR/$base.json"
         rm -f "$report"
     fi
-    rc=0
-    # Exported explicitly rather than as an assignment prefix: the prefix form
-    # in front of a shell FUNCTION has shell-dependent export semantics, and a
-    # silently-unset SKY_TEST_JSON would produce an empty manifest that the
-    # caller would have to treat as a failure.
-    export SKY_TEST_JSON="$report"
-    run_suite 180 "$SKY" test "$suite" --out "$out" 2>&1 \
-        | tee "/tmp/conf-$base.log" | tail -30
-    rc=${PIPESTATUS[0]}
-    unset SKY_TEST_JSON
+    throttle "$CONF_JOBS"
+    run_one "$suite" "$base" "$report" &
+done
+wait
+
+for suite in "${suites[@]}"; do
+    base="$(basename "$suite" .sky)"
+    ran=$((ran + 1))
+    echo "── $base ──────────────────────────────────────────"
+    tail -30 "$WORK/$base.log" 2>/dev/null
+    # Keep the per-suite log where it has always been, for anyone following the
+    # old path from CI output or a runbook.
+    cp -f "$WORK/$base.log" "/tmp/conf-$base.log" 2>/dev/null || true
+
+    # A MISSING rc file is a failure, never a pass. The run was launched; if it
+    # left no exit code it died in a way that bypassed `run_one`'s last line
+    # (killed by the timeout racer, OOM, the runner reclaiming the process).
+    # Defaulting that to success is exactly how a gate comes to certify a suite
+    # that never ran.
+    if [ -f "$WORK/$base.rc" ]; then
+        rc="$(cat "$WORK/$base.rc")"
+    else
+        rc=1
+        echo "!! $base: no exit code recorded — the run did not complete" >&2
+    fi
     if [ "$rc" -ne 0 ]; then
         echo "!! $base: sky test exited non-zero (rc=$rc)" >&2
         fail=$((fail + 1))
     fi
     if [ -n "$JSON_OUT" ]; then
         printf '{"name":"%s","exit_code":%d,"report":"%s"},\n' \
-            "$base" "$rc" "$report" >> "$JSON_OUT.entries"
+            "$base" "$rc" "$REPORT_DIR/$base.json" >> "$JSON_OUT.entries"
     fi
     echo ""
 done
