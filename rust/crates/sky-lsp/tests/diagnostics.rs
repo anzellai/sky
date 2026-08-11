@@ -292,6 +292,136 @@ main =
     );
 }
 
+// ---------------------------------------------------------------------------
+// 5. `[E2008]` — an unsupported `Dict` key surfaces IN THE EDITOR.
+//
+// The point of moving this defect from a runtime panic to a type error is that
+// the user finds out while typing, not while running. `Analysis::diagnostics`
+// forwards everything `ty::check_modules` produces without a code filter, so
+// this SHOULD hold by construction — but "should, by construction" is exactly
+// how the CLI's `E2001 || E2007` allowlist swallowed this same diagnostic and
+// made `sky check` exit 1 with an empty message. Verified, not assumed.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unsupported_dict_key_publishes_e2008_at_the_annotation() {
+    let root = build_fixture(true);
+    let mut a = analysis_for(&root);
+
+    let buf = "\
+module Main exposing (main)
+
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+grid : Dict ( Int, Int ) String
+grid =
+    Dict.insert ( 1, 2 ) \"wall\" Dict.empty
+
+main =
+    println (String.fromInt (Dict.size grid))
+";
+    a.set_document(main_url(&root), buf.to_string());
+
+    let diags = a.diagnostics(&main_url(&root));
+    let errs = errors(&diags);
+    assert_eq!(
+        errs.len(),
+        1,
+        "one unsupported Dict key must publish EXACTLY ONE error diagnostic; \
+         got: {errs:#?}"
+    );
+    let d = errs[0];
+    assert_eq!(
+        d.code,
+        Some(tower_lsp::lsp_types::NumberOrString::String(
+            "E2008".to_string()
+        )),
+        "the editor must see the [E2008] code, got {:?}",
+        d.code
+    );
+    assert!(
+        d.message.contains("( Int, Int )") && d.message.contains("`Int`"),
+        "the published message must name the offending key type AND the \
+         supported set; got: {}",
+        d.message
+    );
+
+    // Anchored on the written annotation type — the text the user edits — and
+    // NOT at the `0:0` fallback a label-less diagnostic would land on.
+    let anno = pos_in(buf, "Dict ( Int, Int ) String", 0);
+    assert_eq!(
+        d.range.start, anno,
+        "the [E2008] range must start at the annotation's type, got {:?}",
+        d.range
+    );
+    assert!(d.range.end.character > d.range.start.character);
+}
+
+/// The accept twin, in the editor: the five supported key types and a
+/// key-polymorphic helper publish NOTHING. An LSP that red-squiggles ordinary
+/// `Dict k v` code would be worse than the runtime panic this check replaces.
+#[test]
+fn supported_and_polymorphic_dict_keys_publish_nothing() {
+    let root = build_fixture(true);
+    let mut a = analysis_for(&root);
+
+    let buf = "\
+module Main exposing (main)
+
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.List as List
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+keysOf : Dict k v -> List k
+keysOf d =
+    Dict.keys d
+
+byString : Dict String Int
+byString =
+    Dict.insert \"a\" 1 Dict.empty
+
+byInt : Dict Int String
+byInt =
+    Dict.insert 1 \"a\" Dict.empty
+
+byFloat : Dict Float String
+byFloat =
+    Dict.insert 1.5 \"a\" Dict.empty
+
+byChar : Dict Char String
+byChar =
+    Dict.insert 'a' \"a\" Dict.empty
+
+byBool : Dict Bool String
+byBool =
+    Dict.insert True \"a\" Dict.empty
+
+main =
+    println
+        (String.fromInt
+            (List.length (keysOf byInt)
+                + Dict.size byString
+                + Dict.size byFloat
+                + Dict.size byChar
+                + Dict.size byBool
+            )
+        )
+";
+    a.set_document(main_url(&root), buf.to_string());
+
+    let diags = a.diagnostics(&main_url(&root));
+    let errs = errors(&diags);
+    assert!(
+        errs.is_empty(),
+        "the five supported Dict key types and a key-polymorphic `Dict k v` \
+         helper are ordinary valid Sky and must publish NO diagnostic; got: \
+         {errs:#?}"
+    );
+}
+
 // A tiny compile-time nudge that `Position` is used (keeps imports honest if a
 // future edit drops the range assertions).
 const _: fn() -> Position = || Position {

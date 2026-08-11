@@ -533,19 +533,25 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// declares membership over. Read from the generator, not hand-copied, so the
 /// harness cannot pin a different corpus size than the manifest declares.
 ///
-/// **342 since 2026-08-11** (was 206): families R (126 code-pinned reject pairs)
-/// and E (10 emit-shape property cases) joined the manifest.
-pub const CORPUS_EXPECTED: u64 = 432;
+/// **342 since 2026-08-11** (was 206): families R (code-pinned reject pairs) and
+/// E (10 emit-shape property cases) joined the manifest. **441 since the
+/// `dict_composite_key` defect** (+9 = 1 defect × 3 positions × 3 import shapes),
+/// the `[E2008]` unsupported-`Dict`-key rejection.
+pub const CORPUS_EXPECTED: u64 = 441;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
 /// the emitted Go), so pinning the full count there would have made the gate's
 /// declared assertion count a number it never reaches.
 pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 296;
-/// Family R: 126 cases × 2 checks (the rejection carries its declared code; the
+/// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
-pub const CORPUS_REJECT_EXPECTED: u64 = 252;
+///
+/// **270 since the `dict_composite_key` defect** (was 252 / 126 cases): the
+/// `[E2008]` unsupported-`Dict`-key rejection, crossed with the position and
+/// import axes.
+pub const CORPUS_REJECT_EXPECTED: u64 = 270;
 /// Family E: one assertion per asserted property across the 10 cases. Measured:
 /// **46** (the two struct-shape properties only apply to the named-alias arm).
 pub const CORPUS_EMIT_SHAPE_EXPECTED: u64 = 46;
@@ -558,8 +564,9 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// **122 since 2026-08-11** (was 121): `unknown_module_aliased_import.sky` joined
 /// the reject corpus as the checked-in regression for the aliased-unknown-module
 /// soundness hole (see its header). The count is the two corpora summed, so a
-/// reject-corpus addition moves it.
-pub const SHARED_WORLD_EXPECTED: u64 = 124;
+/// reject-corpus addition moves it — as `dict_composite_key.sky` (the `[E2008]`
+/// unsupported-`Dict`-key rejection) does here: **125**.
+pub const SHARED_WORLD_EXPECTED: u64 = 125;
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator

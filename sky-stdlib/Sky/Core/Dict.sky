@@ -29,8 +29,14 @@
 -- keeps exactly the keys you gave it.
 --
 -- Composite keys (tuple, list, record, custom type) do NOT round-trip
--- — their stringification is not injective. See
--- `docs/KNOWN_LIMITATIONS.md`.
+-- — their stringification is not injective — and are REJECTED AT
+-- CHECK TIME with `[E2008]`, naming the offending key type and the
+-- five that work. The check resolves through type aliases, so
+-- `type alias Coord = ( Int, Int )` is no bypass, and it fires only on
+-- a CONCRETE key: a key-polymorphic `Dict k v` is ordinary Sky and
+-- stays accepted (it now also decodes correctly — see the kind tag
+-- above), while a call site that instantiates its `k` to a composite
+-- is rejected at that call site. See `docs/KNOWN_LIMITATIONS.md`.
 module Sky.Core.Dict exposing
     ( empty
     , isEmpty

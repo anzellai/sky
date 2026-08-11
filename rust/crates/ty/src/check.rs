@@ -3,11 +3,12 @@
 //! type map output (name → inferred type)" the lowerer will consume).
 
 use crate::db::TyDb;
+use crate::dictkey;
 use crate::exhaustive;
 use crate::infer::Infer;
 use crate::sig::World;
 use crate::{Scheme, Ty};
-use base::{DefId, ModuleId};
+use base::{DefId, ModuleId, Span};
 use diagnostics::{Code, Diagnostic, Severity};
 use hir::{Body, ExprId, LocalId};
 use std::collections::HashMap;
@@ -188,6 +189,124 @@ fn trim_leading_ws(src: &str, span: base::Span) -> base::Span {
     base::Span::new(span.file, ns as u32, span.range.1)
 }
 
+/// One accumulated `[E2008]` finding: the offending key type, the def it is
+/// attributed to, and the span it is best reported at.
+struct DictKeyFinding {
+    /// `Ty::render_pretty()` of the key — the dedup identity.
+    rendered: String,
+    key: Ty,
+    /// The def whose name tags the message (`[grid] …`).
+    def_name: String,
+    span: Option<Span>,
+    /// The span came from a WRITTEN type annotation rather than an inferred
+    /// expression type.
+    from_annotation: bool,
+}
+
+/// Accumulates the `[E2008]` findings for ONE MODULE and picks the span each is
+/// best reported at.
+///
+/// **Deduplication is by the KEY TYPE's rendering, per module — not per def, and
+/// not per occurrence.** This is a UX decision with teeth. A single
+/// `Dict ( Int, Int ) v` field on a Sky.Live `Model` flows into the inferred
+/// type of EVERY def that touches the model — `init`, `update`, `view`, every
+/// helper — and each of those defs mentions it in most of its expressions.
+/// Reporting per occurrence would bury the user under dozens of copies of one
+/// message; reporting per def would still emit one per handler. There is exactly
+/// ONE defect (the key type) and exactly ONE fix (change how the key is
+/// encoded), so there is one diagnostic. A second, genuinely DIFFERENT offending
+/// key type in the same module still gets its own.
+///
+/// **Span preference** (best caret first):
+///   1. the def's own WRITTEN annotation type — the text the user must edit;
+///   2. otherwise the EARLIEST-STARTING inferred-expression span carrying the
+///      type — the first place in the file the offending dictionary appears,
+///      which is where it gets built (`Dict.insert ( 1, 2 ) "a" Dict.empty`)
+///      rather than some later read of it. Shortest span breaks a start tie, so
+///      the caret lands on the callee rather than spanning the whole call, and
+///      the choice is deterministic (L4).
+#[derive(Default)]
+struct DictKeyScan {
+    found: Vec<DictKeyFinding>,
+}
+
+impl DictKeyScan {
+    /// Fold one type — a declared signature, or one expression's inferred type —
+    /// into the scan.
+    fn add(&mut self, t: &Ty, def_name: &str, span: Option<Span>, from_annotation: bool) {
+        for key in dictkey::unsupported_keys(t) {
+            let rendered = key.render_pretty();
+            match self.found.iter_mut().find(|f| f.rendered == rendered) {
+                Some(slot) => {
+                    if better_dict_key_span(span, from_annotation, slot.span, slot.from_annotation)
+                    {
+                        slot.span = span;
+                        slot.from_annotation = from_annotation;
+                        slot.def_name = def_name.to_string();
+                    }
+                }
+                None => self.found.push(DictKeyFinding {
+                    rendered,
+                    key,
+                    def_name: def_name.to_string(),
+                    span,
+                    from_annotation,
+                }),
+            }
+        }
+    }
+}
+
+/// Is `(cand, cand_anno)` a better anchor than the incumbent? See the span
+/// preference documented on [`DictKeyScan`].
+fn better_dict_key_span(
+    cand: Option<Span>,
+    cand_anno: bool,
+    cur: Option<Span>,
+    cur_anno: bool,
+) -> bool {
+    match (cand, cur) {
+        (None, _) => false,
+        (Some(_), None) => true,
+        (Some(c), Some(k)) => {
+            if cand_anno != cur_anno {
+                return cand_anno;
+            }
+            let (cl, kl) = (c.range.1 - c.range.0, k.range.1 - k.range.0);
+            (c.range.0, cl) < (k.range.0, kl)
+        }
+    }
+}
+
+/// `def name → span of the TYPE in its `name : Type` annotation`, read straight
+/// off the CST.
+///
+/// `hir`'s `def_spans` records only a `Decl::Value`'s NAME token (it exists for
+/// goto-definition), so an `[E2008]` anchored from it lands on `grid` in
+/// `grid = …` — one line below the `grid : Dict Coord String` the user actually
+/// has to edit. The annotation's type node is the honest caret for a defect that
+/// IS the written type, and the CST already carries its range, so nothing in
+/// `hir` or `ty::Ty` needs a new span channel to reach it.
+///
+/// `file` supplies the `FileId` (a `base::Span` carries one; a `text_range` does
+/// not).
+fn annotation_type_spans(parse: &syntax::Parse, file: base::FileId) -> HashMap<String, Span> {
+    use syntax::ast::AstNode;
+    let mut out = HashMap::new();
+    for decl in parse.tree().decls() {
+        let syntax::ast::Decl::TypeAnno(a) = decl else {
+            continue;
+        };
+        let (Some(name), Some(ty)) = (a.name(), a.ty()) else {
+            continue;
+        };
+        let r = ty.syntax().text_range();
+        out.entry(name.text().to_string())
+            .or_insert_with(|| Span::new(file, u32::from(r.start()), u32::from(r.end())));
+    }
+    out
+}
+
 /// Typecheck `to_check` module ids against the world built from every module in
 /// `db` (stdlib + deps + entry). Never panics; partial results + diagnostics (L7).
 pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
@@ -281,9 +400,26 @@ pub fn check_modules_with_world(
             .map(|td| (td.def, td.name.as_str().to_string()))
             .collect();
 
+        // `[E2008]` state, accumulated across the WHOLE module (see
+        // `DictKeyScan` for why the dedup is per module, not per def).
+        let anno_spans = resolved
+            .def_spans
+            .first()
+            .map(|(_, s)| annotation_type_spans(&sky.module_parse(mid), s.file))
+            .unwrap_or_default();
+        let mut dict_keys = DictKeyScan::default();
+
         for (def, body) in &resolved.bodies {
             let dname = names.get(def).cloned().unwrap_or_default();
-            let mut infer = Infer::new(&world, sky).with_self_def(Some(*def));
+            // `with_record_exprs` makes the solved per-expression types readable
+            // after inference WITHOUT changing inference (see its doc comment).
+            // The `[E2008]` scan below needs them to catch a composite key that
+            // exists only in an INFERRED type — `Dict.insert ( 1, 2 ) "a"
+            // Dict.empty` in an unannotated binding writes no `Dict` type
+            // anywhere, so an annotation-only check would miss it entirely.
+            let mut infer = Infer::new(&world, sky)
+                .with_self_def(Some(*def))
+                .with_record_exprs(true);
             // Annotation gate (M3 residual): a def with a DECLARED signature is
             // checked against it (params seeded + body result unified with the
             // declared type), so a body that contradicts its own annotation is
@@ -320,6 +456,29 @@ pub fn check_modules_with_world(
                 });
             }
 
+            // ---- [E2008] unsupported `Dict` key -------------------------
+            //
+            // A `Dict k v` is a Go `map[string]v`; only String/Int/Float/Char/
+            // Bool decode back out. A COMPOSITE key can NEVER work — `%v` is not
+            // injective on composites, so two distinct keys collide and one
+            // entry is silently lost — and it used to surface as the runtime
+            // panic `rt.Dict: unsupported key type` from a program `sky check`
+            // had passed. A panic out of well-typed Sky is exactly what this
+            // language promises not to do, so it is a type error instead.
+            //
+            // Both faces are scanned: the DECLARED annotation (best caret, and
+            // the case a user can read off their own source) and every INFERRED
+            // expression type (the unannotated case an annotation-only check
+            // would miss). `dictkey::classify` is SILENT on anything not pinned
+            // to a concrete type, so a key-polymorphic `Dict k v` — ordinary,
+            // valid Sky — never fires. See `dictkey.rs` for that rule.
+            if let Some(scheme) = world.value_sigs.get(def) {
+                dict_keys.add(&scheme.ty, &dname, anno_spans.get(&dname).copied(), true);
+            }
+            for (e, ty) in infer.recorded_expr_types() {
+                dict_keys.add(&ty, &dname, body.expr_span(e), false);
+            }
+
             // exhaustiveness (warnings, not type errors)
             let warns = exhaustive::check_body(body, &world);
             out.exhaustiveness_warnings += warns.len();
@@ -339,6 +498,26 @@ pub fn check_modules_with_world(
                 name,
                 ty,
                 declared,
+            });
+        }
+
+        // One `[E2008]` per distinct offending key type in this module.
+        for f in &dict_keys.found {
+            out.type_errors += 1;
+            out.diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                code: Code("E2008".to_string()),
+                message: format!("[{}] {}", f.def_name, dictkey::message(&f.key)),
+                labels: f
+                    .span
+                    .map(|s| {
+                        vec![diagnostics::Label {
+                            span: trim_leading_ws(&module_src, s),
+                            message: "this dictionary's key type".into(),
+                        }]
+                    })
+                    .unwrap_or_default(),
+                suggestion: Some(dictkey::suggestion()),
             });
         }
     }

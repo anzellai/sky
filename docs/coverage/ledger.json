@@ -248,7 +248,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 432,
+      "expected_assertions": 441,
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
       "surfaces": [
@@ -257,7 +257,7 @@
       "tier": "T1"
     },
     "corpus-reject": {
-      "expected_assertions": 252,
+      "expected_assertions": 270,
       "falsifier_proven": true,
       "summary": "reject matrix: rejection by DIAGNOSTIC CODE, each with an accepted twin",
       "surfaces": [
@@ -287,7 +287,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 66,
+      "expected_assertions": 67,
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
       "surfaces": [
@@ -307,7 +307,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 124,
+      "expected_assertions": 125,
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
       "surfaces": [
@@ -2359,6 +2359,11 @@
           },
           {
             "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "corpus:layer1 (gate `corpus`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -12708,7 +12713,7 @@
       "db_drivers": [],
       "gate": "corpus",
       "id": "corpus:layer1",
-      "modules_imported": 3,
+      "modules_imported": 4,
       "path": "corpus:layer1",
       "refs_generous": 11,
       "refs_qualified": 2,

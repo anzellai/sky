@@ -125,7 +125,7 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// **Adding or removing a corpus file is a deliberate act: update this constant
 /// in the SAME commit.** Both faces fail with an actionable message naming the
 /// expected and actual counts, so the ratchet cannot be satisfied by accident.
-pub const EXPECTED_CORPUS_FILES: usize = 66;
+pub const EXPECTED_CORPUS_FILES: usize = 67;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -145,7 +145,7 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// [`EXPECTED_FILES_WITH_ORACLE_CODE`] or
 /// [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`] and updates BOTH constants in the
 /// same commit.
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 5;
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 6;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

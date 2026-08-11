@@ -139,6 +139,10 @@ fn code_title(code: &str) -> &'static str {
         "E1012" => "AMBIGUOUS NAME",
         "E2001" => "TYPE ERROR",
         "E2007" => "ARITY MISMATCH",
+        // E2001-E2007 are allocated by the Haskell oracle
+        // (`legacy-haskell-compiler/src/Sky/Reporting/Diagnostic.hs:183-206`);
+        // E2008 is the first free code in the type-error band.
+        "E2008" => "UNSUPPORTED DICT KEY",
         "E3001" => "MISSING PATTERNS",
         "E4005" => "CODEGEN ERROR",
         _ => "ERROR",

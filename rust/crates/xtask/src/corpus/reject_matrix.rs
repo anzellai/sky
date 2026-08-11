@@ -28,17 +28,18 @@
 //! # This is not a second reject gate
 //!
 //! `xtask reject` runs a **checked-in corpus of hand-written defects**
-//! (`rust/crates/ty/tests/reject/corpus/*.sky`, 63 files), each pinned to the
-//! Haskell oracle's verdict. It is the *provenance* face: every file is a real
-//! defect somebody hit, with a header recording what the oracle does.
+//! (`rust/crates/ty/tests/reject/corpus/*.sky`; the exact count is the ratchet
+//! `ty::reject_corpus::EXPECTED_CORPUS_FILES`), each pinned to the Haskell
+//! oracle's verdict. It is the *provenance* face: every file is a real defect
+//! somebody hit, with a header recording what the oracle does.
 //!
 //! Family R is the **combinatorial** face of the same question: it takes a small
 //! set of defect CLASSES and crosses each one against the axes this repository's
 //! bugs actually moved along — how the expression is positioned, and how the
 //! names around it entered scope. #164 (import-alias resolution) and the
 //! stdlib-name collision class both came from that second dimension, and a
-//! corpus of one-file-per-defect cannot reach it: 14 defects × 3 positions × 3
-//! import shapes is 126 programs nobody is going to hand-write.
+//! corpus of one-file-per-defect cannot reach it: 15 defects × 3 positions × 3
+//! import shapes is 135 programs nobody is going to hand-write.
 //!
 //! Neither replaces the other, and neither is allowed a private copy of "what
 //! counts as rejected": both call [`ty::reject_corpus`]'s single declaration
@@ -90,6 +91,7 @@ pub const DEFECT: Axis = Axis::new(
         "unexposed_name",
         "result_vs_maybe",
         "task_vs_pure",
+        "dict_composite_key",
     ],
 );
 
@@ -393,6 +395,34 @@ fn defect(defect: &str, rimport: &str) -> (Side, Side, &'static str) {
             Side::new("n : Int\nn =\n    knownName\n", "String.fromInt n"),
             "E2001",
         ),
+
+        // ---- Dict keys ----------------------------------------------------
+        // A `Dict` keyed by a COMPOSITE. A Sky `Dict k v` is a Go
+        // `map[string]v`, and `fmt.Sprintf("%v", key)` is NOT injective on a
+        // tuple — ( "a b", "c" ) and ( "a", "b c" ) both render `{a b c}` — so
+        // two distinct keys collide and no decoder can recover the original.
+        // That used to be a RUNTIME panic (`rt.Dict: unsupported key type`) out
+        // of a program `sky check` had passed; it is now `[E2008]` at check
+        // time.
+        //
+        // The twin swaps the key type for `Int` — one of the five that round
+        // trip — and changes nothing else, so this row asserts the check keys on
+        // the KEY TYPE and not on "the program mentions Dict". Crossing it with
+        // `rposition` earns its budget here specifically: the ill type is found
+        // by scanning INFERRED per-expression types, and `in_let` / `in_lambda`
+        // are the binding shapes where that recording could plausibly differ.
+        "dict_composite_key" => {
+            let dict_import = "import Sky.Core.Dict as Dict exposing (Dict)".to_string();
+            let probe = "String.fromInt (Dict.size grid + knownName)";
+            let ill_decls =
+                "grid : Dict ( Int, Int ) String\ngrid =\n    Dict.insert ( 1, 2 ) \"w\" Dict.empty\n";
+            let well_decls = "grid : Dict Int String\ngrid =\n    Dict.insert 1 \"w\" Dict.empty\n";
+            let mut ill = Side::new(ill_decls, probe);
+            ill.extra_imports.push(dict_import.clone());
+            let mut well = Side::new(well_decls, probe);
+            well.extra_imports.push(dict_import);
+            (ill, well, "E2008")
+        }
 
         other => panic!("reject_matrix: unknown defect {other:?}"),
     }
