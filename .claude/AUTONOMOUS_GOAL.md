@@ -270,3 +270,78 @@ release** → rebase `feat/bluedb-v2` → continue BlueDB e2e.
 Release discipline carried in: run `scripts/preflight-tag.sh` (it now gates far
 more than before), CHANGELOG entry with a ⚠ Breaking-changes section so
 `sky upgrade` surfaces the banner, then tag + `gh release`.
+
+---
+
+## STATE @ d20fddac (2026-08-11) — read this first after any context break
+
+Branch `feat/ci-test-overhaul`, PR **#175** open against `main`. CI only runs on
+pushes to `main` and PRs targeting `main`, which is why this branch showed no
+runs at all until the PR existed.
+
+### The budget, closed — and closed the right way
+
+`ci-green` was RED on the T1 budget. It is not red because the ceiling moved.
+Measured on run 31440657449:
+
+```
+setup                          202s
++ slowest setup-dependent       784s   (repro)
+= dependent chain               986s   against 990s allowed
+```
+
+Four seconds of headroom is a coin flip, not a budget. The `repro` GATE itself
+was 690s of that (the workspace build is only 80s — the shared cache works), and
+it was a serial `for` over a corpus of independent per-directory work. Now
+parallel across examples: **551.8s → 245.5s (2.25x)** on the full corpus, with
+BYTE-IDENTICAL tables (202 rows) and the same verdict, and proven still able to
+fail (inject the pid into each emission → red on every probe example). Expected
+chain on a 4-core runner: ~202 + ~345 = ~550s against 990s.
+
+### What is green, and what is honestly not
+
+* CI run 31442455250: `codegen-build` now PASSES (the coerce-floor golden needed
+  `apps/dispatch` blessed — the gate was correct to fail). `macos-determinism`
+  was still running at the time of writing; everything else green.
+* `sky-suites` PASSES at **320/320**, with `Sky_Core_PointFreePolyTest` and
+  `Sky_Core_PureTest` declared BLOCKED and contributing **ZERO** cases.
+
+**Do not bump `SKY_SUITES_EXPECTED` to 330 until the suites actually pass.** I
+did, on an agent's report that the two lower.rs defects were fixed, and the gate
+correctly answered 320/330. The agent verified them in its own worktree at a base
+54 commits older; on this tree both still fail:
+
+```
+joinStr : String -> String -> String / joinStr = String.append
+  → rt.String_append (func(any,any) any) in a func(string,string) string slot
+Task.perform (Pure.uuidV7 ())
+  → rt.Uuid_v7() (any) bare in an rt.SkyTask[...] slot
+```
+
+The kernel-value fix (merged, e5b32e46, 7/7 contract tests, coerce-floor delta
+zero) does NOT cover the `sky test` path. Sent back to the same agent with two
+leads: arity ≥ 2 (curried HM type vs Go's flattened signature), and the test
+runner emitting its own `main.go` so `expected` never reaches `lower_var`.
+
+### Also fixed this session
+
+Three sky.toml keys honoured by nothing, one root cause (`_ => {}` dropped
+unrecognised keys silently): `[jobs]` (parsed by no one while the runtime's error
+told operators to set it), `[live] input` (hardcoded `inputMode` behind a
+`// or "blur"` comment), and `[auth] session_ttl` (i.e. `tokenTtl` misspelled, in
+two examples). Unknown keys in runtime config sections now warn. CLAUDE.md's
+end-of-mission `pkill` is scoped to the agent's own worktree — the unscoped form
+kills sibling agents' in-flight gates.
+
+### Still open
+
+* Layer-1 families S and R/E — two agents in flight; only `Family::L` is
+  generated today (`gen.rs:746` is the sole construction site).
+* The LSP corpus is still one synthetic fixture (`scripts/lsp-test-nvim.lua`).
+  The GATE is genuinely enforced in CI (nvim is installed, `lsp-fuzz` runs it) —
+  it is the CORPUS that is thin, not the gate that is fake.
+* Then: merge → CI green on `main` → **tag (version is the user's call)** →
+  rebase `feat/bluedb-v2`.
+
+Claims in this file that name a file:line or a number were run, not recalled.
+Anything I did not verify says so.
