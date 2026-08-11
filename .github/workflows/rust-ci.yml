@@ -543,18 +543,74 @@ jobs:
         run: cargo run -q -p xtask -- repro
       - name: Gate — coerce-floor (2nd platform)
         run: cargo run -q -p xtask -- coerce-floor
-      - name: Gate — runtime rt tests (go test, 2nd platform)
-        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
       # Platform parity for the emit + go-build regression class. The #164/#166
       # alias-collision / record-update-field-drop bugs are gated only by these
       # `project` integration tests (they run real `go build` on emitted Go), and
       # the CLI golden set is the only runtime-output-correctness gate — both were
       # Linux-only, so a macOS-specific codegen/runtime divergence (the very class
       # the int64 bug belonged to) could ship green. Run them on the 2nd platform.
-      - name: Gate — project integration tests (go build regressions, 2nd platform)
-        run: cargo test -p project --locked
       - name: Gate — golden (runtime-correctness CLI subset, 2nd platform)
         run: cargo run -q -p xtask -- build-run --shape cli --run --golden
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── ci-green: the fan-in ────────────────────────────────────────────────────
+  # ── macOS behaviour half (split out of macos-determinism) ──────────────────
+  #
+  # `macos-determinism` reached 1092s against a 990s allowance and had been
+  # running without headroom for a while — measured 766 / 854 / 904 / 1090 /
+  # 1092 across recent pushes, so the green runs were luck rather than margin.
+  # What tipped it was attributable, not mystery: `cargo test -p project` went
+  # 112s -> 191s when the CAF-lint fix added 7 tests to that crate. Correct
+  # tests, landing on the one job with nothing spare.
+  #
+  # The split follows the grouping the Linux jobs had to learn the hard way: a
+  # job boundary is also a CACHE boundary. Everything that emits and `go build`s
+  # the EXAMPLES stays together in `macos-determinism` (repro warms the Go cache
+  # that `golden` then reuses); this job takes the three steps that build their
+  # own things — the runtime's own Go tests, the `project` crate's tests, and
+  # conformance, which builds a release `sky` and its own suite projects.
+  #
+  # Expected ~500s here and ~630s there, both setup-independent, against 990s.
+  # Predicted from this run's per-step numbers — the next run is the measurement.
+  macos-behaviour:
+    runs-on: macos-latest
+    # ~115s workspace build + ~61s rt tests + ~191s project tests + ~129s
+    # conformance (incl. its release sky build) ~= 8 min. 1.5x = 12; 20 leaves
+    # room for the colder Go cache this job now has, since `repro` no longer
+    # runs ahead of it. macOS minutes bill at 10x, so this bound is deliberately
+    # not generous.
+    timeout-minutes: 20
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-macos-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-macos
+          save-if: 'false'
+      - run: cargo build --workspace --locked
+      - name: Gate — runtime rt tests (go test, 2nd platform)
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
+      - name: Gate — project integration tests (go build regressions, 2nd platform)
+        run: cargo test -p project --locked
       - name: Gate — stdlib behavioral conformance (2nd platform)
         run: |
           cargo build --release -p sky --locked
@@ -564,7 +620,6 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # ── ci-green: the fan-in ────────────────────────────────────────────────────
   # ONE check that is true iff every job above succeeded, plus the tier-budget
   # assertion that per-job `timeout-minutes` structurally cannot make (§8.2).
   #
@@ -588,6 +643,7 @@ jobs:
       - lsp-fuzz
       - integration-postgres
       - macos-determinism
+      - macos-behaviour
     # `always()` so a FAILED dependency still reaches the assertion below and is
     # reported as a failure here. Without it this job would be SKIPPED when an
     # upstream job failed, and a skipped required check is treated as neutral by
@@ -631,7 +687,7 @@ jobs:
           # the shared cargo cache by `restore-keys` like every other job).
           # They start alongside `setup`, so charging them its time would
           # overstate the tier.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism build-corpus'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-behaviour build-corpus'
         run: |
           set -euo pipefail
           gh api \
