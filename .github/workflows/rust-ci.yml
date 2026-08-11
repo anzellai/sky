@@ -309,14 +309,6 @@ jobs:
         run: cargo run -q -p xtask -- coerce-floor
       - name: Gate — runtime rt tests (go test)
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
-      - name: Gate — golden (runtime-correctness, CLI subset)
-        run: cargo run -q -p xtask -- build-run --shape cli --run --golden
-      - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
-        run: cargo run -q -p xtask -- build-run --shape live --run
-      - name: Gate — http runtime (Sky.Http.Server examples start + serve)
-        run: cargo run -q -p xtask -- build-run --shape http --run
-      - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
-        run: cargo run -q -p xtask -- build-run --shape tui --run
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -337,8 +329,8 @@ jobs:
   build-corpus:
     needs: setup
     runs-on: ubuntu-latest
-    # ~76s workspace build + ~59s cache restore + ~544s build-run ≈ 12 min.
-    # 1.5x = 18.
+    # ~76s workspace build + ~59s cache restore + ~544s build-run + the four
+    # runtime gates (~90s WARM, which is why they are here) ≈ 13 min. 1.5x = 20.
     timeout-minutes: 18
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -366,6 +358,20 @@ jobs:
       - run: cargo build --workspace --locked
       - name: Gate — build-run (emit + go build every example; FFI skipped)
         run: cargo run -q -p xtask -- build-run --all
+      # The runtime gates live HERE, with `build-run --all`, and that placement
+      # is load-bearing rather than tidy. They re-run the SAME examples, so the
+      # `go build` cache the step above just filled is what makes them cheap.
+      # Splitting them from it measured, on a real run:
+      #     live 27s -> 425s · golden 33s -> 174s · http 9s -> 76s
+      # +613s of rebuilds to save 544s of step. Keep them together.
+      - name: Gate — golden (runtime-correctness, CLI subset)
+        run: cargo run -q -p xtask -- build-run --shape cli --run --golden
+      - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
+        run: cargo run -q -p xtask -- build-run --shape live --run
+      - name: Gate — http runtime (Sky.Http.Server examples start + serve)
+        run: cargo run -q -p xtask -- build-run --shape http --run
+      - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
+        run: cargo run -q -p xtask -- build-run --shape tui --run
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
