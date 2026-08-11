@@ -125,7 +125,7 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// **Adding or removing a corpus file is a deliberate act: update this constant
 /// in the SAME commit.** Both faces fail with an actionable message naming the
 /// expected and actual counts, so the ratchet cannot be satisfied by accident.
-pub const EXPECTED_CORPUS_FILES: usize = 63;
+pub const EXPECTED_CORPUS_FILES: usize = 64;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -145,7 +145,7 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// [`EXPECTED_FILES_WITH_ORACLE_CODE`] or
 /// [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`] and updates BOTH constants in the
 /// same commit.
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 3;
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 4;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the
@@ -436,27 +436,73 @@ pub fn evaluate(file: &Path, stdlib: &[(String, syntax::Parse)]) -> Verdict {
         .any(|l| l.contains("gate: known-leniency"));
     let (declared, code_source) = declared_codes(&src);
 
+    let v = evaluate_modules(&name, &[(String::new(), src)], stdlib);
+    Verdict {
+        known_leniency,
+        declared_codes: declared,
+        code_source,
+        ..v
+    }
+}
+
+/// Apply THE declared criterion to modules held **in memory**.
+///
+/// The generated reject matrix (`xtask corpus --reject`, v2 §3.1 family R) has
+/// no files on disk: its programs are a pure function of the generator and its
+/// axis space. It must nonetheless decide "rejected" by exactly the rule the
+/// checked-in corpus uses, so this is the shared core and [`evaluate`] is a thin
+/// file-reading wrapper over it. A private copy in `xtask` is precisely the
+/// divergence v2 §1.5 catalogues — the two reject faces once disagreed on the
+/// parse criterion and on discovery, and neither knew.
+///
+/// `modules` is `(dotted module name, source)`. An EMPTY name means "take the
+/// name from the module header, defaulting to `Main`" (what a single corpus file
+/// does). Every listed module is added to the db AND checked, so a defect in a
+/// helper module counts exactly as it would in a real build — which is the whole
+/// point of varying the import shape.
+///
+/// The returned verdict carries **no** declared codes and `known_leniency =
+/// false`: those come from a file header, and a generated case declares its
+/// expectation in the generator instead. The caller overlays them.
+pub fn evaluate_modules(
+    label: &str,
+    modules: &[(String, String)],
+    stdlib: &[(String, syntax::Parse)],
+) -> Verdict {
     let mut db = SourceDb::new();
     for (n, parse) in stdlib {
         db.add_module(n, parse.clone());
     }
 
-    let parse = syntax::parse(&src, base::FileId(0));
-    // Criterion clause 1 — mirrors `crates/project/src/build.rs:194`. Read
-    // BEFORE the parse is moved into the db.
-    let parse_errors = parse.errors().len().max(parse.error_node_count().min(1));
-    let mut observed: Vec<String> = parse.errors().iter().map(|d| d.code.0.clone()).collect();
-    let parse_first: Option<String> = parse.errors().first().map(fmt_diag);
+    let mut parse_errors = 0usize;
+    let mut observed: Vec<String> = Vec::new();
+    let mut parse_first: Option<String> = None;
+    let mut ids = Vec::new();
 
-    let mname = parse
-        .tree()
-        .module_header()
-        .and_then(|h| h.name())
-        .map(|n| n.text())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "Main".to_string());
-    let mid = db.add_module(&mname, parse);
-    let out = crate::check_modules(&db, &[mid]);
+    for (name, src) in modules {
+        let parse = syntax::parse(src, base::FileId(0));
+        // Criterion clause 1 — mirrors `crates/project/src/build.rs:194`. Read
+        // BEFORE the parse is moved into the db.
+        parse_errors += parse.errors().len().max(parse.error_node_count().min(1));
+        observed.extend(parse.errors().iter().map(|d| d.code.0.clone()));
+        if parse_first.is_none() {
+            parse_first = parse.errors().first().map(fmt_diag);
+        }
+        let mname = if name.is_empty() {
+            parse
+                .tree()
+                .module_header()
+                .and_then(|h| h.name())
+                .map(|n| n.text())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "Main".to_string())
+        } else {
+            name.clone()
+        };
+        ids.push(db.add_module(&mname, parse));
+    }
+
+    let out = crate::check_modules(&db, &ids);
 
     // Observed codes = the codes of the diagnostics that CONTRIBUTE to the
     // verdict: errors, plus the exhaustiveness warnings the criterion promotes
@@ -480,14 +526,14 @@ pub fn evaluate(file: &Path, stdlib: &[(String, syntax::Parse)]) -> Verdict {
         .unwrap_or_default();
 
     Verdict {
-        name,
+        name: label.to_string(),
         type_errors: out.type_errors,
         name_errors: out.name_errors,
         exhaustiveness: out.exhaustiveness_warnings,
         parse_errors,
-        known_leniency,
-        declared_codes: declared,
-        code_source,
+        known_leniency: false,
+        declared_codes: Vec::new(),
+        code_source: CodeSource::None,
         observed_codes: observed,
         first_msg,
     }

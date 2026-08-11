@@ -415,6 +415,25 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("shared-world", &["compiler.shared-world", "compiler.resolve"]),
     ("coverage-ledger", &["meta.coverage-accounting"]),
     ("corpus-manifest", &["lang.constructs"]),
+    // Family R is the combinatorial face of `compiler.reject`. The standalone
+    // `reject` gate covers 63 hand-written defects, one file each; this one
+    // crosses 14 defect CLASSES against the positions and import shapes the
+    // repository's own bugs moved along, and asserts the diagnostic CODE rather
+    // than a boolean. It also carries `compiler.resolve`, because every case
+    // routes a value it needs through an imported helper module — a broken
+    // resolver takes the twin down with it.
+    (
+        "corpus-reject",
+        &["compiler.reject", "compiler.resolve", "lang.constructs"],
+    ),
+    // Family E asserts properties of the emitted Go without a `go build`, which
+    // is the cheap face of the same surface `coerce-floor` ratchets and the only
+    // one that can state a per-function invariant rather than a per-example
+    // count.
+    (
+        "corpus-emit-shape",
+        &["compiler.lower-emit-shape", "compiler.codegen-determinism"],
+    ),
     (
         "corpus",
         &["lang.constructs", "compiler.infer", "compiler.lower-emit-shape"],

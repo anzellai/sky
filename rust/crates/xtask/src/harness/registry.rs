@@ -378,18 +378,133 @@ pub static GATES: &[Gate] = &[
             // the comparison itself rather than crashing the generator.
             kind: MutationKind::ReplaceOnce {
                 path: "corpus/manifest.toml",
-                from: "n_min = 206",
-                to: "n_min = 207",
+                from: "n_min = 342",
+                to: "n_min = 343",
             },
         }]),
         body: bodies::corpus_manifest,
+    },
+    // ---- Layer 1 families R and E ------------------------------------------
+    //
+    // BOTH are T1, and both can be, for the same reason: neither pays a
+    // `go build`. Family R decides its verdict from `ty::check_modules`
+    // in-process; family E stops at `emit_example_source` with the Go text in
+    // hand. Measured on the dev host: R ≈ 13 s for 126 pairs, E ≈ 2 s for 10
+    // emits. The `corpus` behavioural gate stays at T2 because it does pay
+    // `c_u` = 0.70 s per case and cannot fit the T1 ceiling.
+    Gate {
+        name: "corpus-reject",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // In-process; the ceiling is sized for a cold CI runner parsing the
+        // whole stdlib once and checking 252 programs against it.
+        budget_s: 600,
+        expected: bodies::CORPUS_REJECT_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "reject matrix: rejection by DIAGNOSTIC CODE, each with an accepted twin",
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "corpus-reject.repair-the-defect",
+                description: "repair the ill-typed side of the arity_over class so the \
+                              program type-checks; the case is then ACCEPTED where it \
+                              declared a rejection and the gate must go red. This is \
+                              the falsifier that a boolean 'it failed' assertion would \
+                              also catch",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/reject_matrix.rs",
+                    from: "Side::new(ADD, \"String.fromInt (add knownName 2 3)\"),",
+                    to: "Side::new(ADD, \"String.fromInt (add knownName 2)\"),",
+                },
+            },
+            Mutation {
+                id: "corpus-reject.declare-the-wrong-code",
+                description: "declare `[E1001]` for the over-application class, which \
+                              Rust rejects with the dedicated `[E2007]`. The program is \
+                              STILL rejected, so a gate that only asserted \"it failed\" \
+                              stays green — this mutation is red only because the code \
+                              itself is asserted, which is the whole claim of family R",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/reject_matrix.rs",
+                    from: "            \"E2007\",\n        ),",
+                    to: "            \"E1001\",\n        ),",
+                },
+            },
+            Mutation {
+                id: "corpus-reject.break-the-twin",
+                description: "leave the twin ill-typed for the arity_over class. The \
+                              rejection half still passes; only the twin assertion \
+                              fails. Without the twin the pair could not distinguish a \
+                              discriminating checker from one that rejects everything",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/reject_matrix.rs",
+                    from: "Side::new(ADD, \"String.fromInt (add knownName 2)\"),\n            \"E2007\",",
+                    to: "Side::new(ADD, \"String.fromInt (add knownName 2 3 4)\"),\n            \"E2007\",",
+                },
+            },
+        ]),
+        body: bodies::corpus_reject,
+    },
+    Gate {
+        name: "corpus-emit-shape",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::CORPUS_EMIT_SHAPE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "properties of the generated Go (no `go build`): no erasure, no `any` \
+                  in a concrete signature, no raw `.(T)`, declared field order, \
+                  fieldset selected by TYPE",
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "corpus-emit-shape.erase-the-signature",
+                description: "give the record-update probe a ROW-POLYMORPHIC signature \
+                              (`{ r | alpha : Int } -> { r | alpha : Int }`). Row \
+                              polymorphism erases: the emitted Go becomes \
+                              `func Main_bump(v_0 any) any`, so the \
+                              `no-any-in-signature` property must go red. Verified by \
+                              hand first — dropping the annotation entirely does NOT \
+                              work, because inference recovers the concrete struct and \
+                              the mutation reports VACUOUS",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/emit_shape.rs",
+                    from: "format!(\"bump : {ty} -> {ty}\\nbump r =\\n    {{ r | alpha = 7 }}\\n\"),",
+                    to: "format!(\"bump : {{ r | alpha : Int }} -> {{ r | alpha : Int }}\\nbump r =\\n    {{ r | alpha = 7 }}\\n\"),",
+                },
+            },
+            Mutation {
+                id: "corpus-emit-shape.assert-the-wrong-field-order",
+                description: "assert the record's fields emit in a permuted order. The \
+                              program is unchanged and still compiles; only the \
+                              declared-order property is falsified — which is what \
+                              proves the property is read from the emitted struct \
+                              rather than assumed",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/emit_shape.rs",
+                    from: ".map(|fs| fs == vec![\"Alpha\", \"Beta\", \"Gamma\"])",
+                    to: ".map(|fs| fs == vec![\"Gamma\", \"Beta\", \"Alpha\"])",
+                },
+            },
+            Mutation {
+                id: "corpus-emit-shape.delete-the-probe-use",
+                description: "stop `main` consuming the probe. Dead-code elimination \
+                              then removes the function entirely and every property \
+                              over it would be VACUOUSLY true — the presence probe must \
+                              turn that into a FAIL rather than a pass",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/emit_shape.rs",
+                    from: "main =\\n    println (String.fromInt ({call}){collider_use})\\n\"",
+                    to: "main =\\n    println (String.fromInt (0){collider_use})\\n\"",
+                },
+            },
+        ]),
+        body: bodies::corpus_emit_shape,
     },
     Gate {
         name: "corpus",
         tier: Tier::T2,
         platforms: UNIX,
         budget_s: 1800,
-        expected: bodies::CORPUS_EXPECTED,
+        expected: bodies::CORPUS_BEHAVIOURAL_EXPECTED,
         expect: Expect::Falsifiable,
         summary: "every generated case built + run; values compared against the generator's own",
         mutations: Mutations::new(&[Mutation {

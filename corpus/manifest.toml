@@ -17,11 +17,18 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 206
+n_min = 342
 n_iso = 44
 n_iso_ceiling = 44
-class_v = 206
+n_iso_static = 136
+n_iso_static_ceiling = 300
+class_v = 342
 class_d = 0
+family_S = 0
+family_L = 206
+family_E = 10
+family_R = 126
+family_F = 0
 
 [[case]]
 id         = "record_update/annotated-direct-bare-closed"
@@ -2700,4 +2707,1912 @@ axes       = { collider = "stdlib_eventprop", construction = "via_ctor_fn" }
 coordinate = "goty.rs fieldset collision — construction site"
 expect     = "accept"
 stdout     = "42"
+
+[[case]]
+id         = "reject_matrix/arity_over-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_over", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2007"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_over-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_over", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2007"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_over-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_over", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2007"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_over-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_over", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2007"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_over-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_over", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2007"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_over-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_over", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2007"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_over-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_over", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2007"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_over-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_over", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2007"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_over-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_over", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2007"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_under_as_value-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_under_as_value", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_under_as_value-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_under_as_value", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_under_as_value-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_under_as_value", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_under_as_value-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_under_as_value", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_under_as_value-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_under_as_value", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_under_as_value-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_under_as_value", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_under_as_value-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_under_as_value", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_under_as_value-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_under_as_value", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/arity_under_as_value-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "arity_under_as_value", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_field-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_field", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_field-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_field", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_field-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_field", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_field-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_field", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_field-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_field", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_field-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_field", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_field-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_field", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_field-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_field", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_field-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_field", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/wrong_field_type-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "wrong_field_type", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/wrong_field_type-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "wrong_field_type", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/wrong_field_type-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "wrong_field_type", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/wrong_field_type-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "wrong_field_type", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/wrong_field_type-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "wrong_field_type", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/wrong_field_type-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "wrong_field_type", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/wrong_field_type-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "wrong_field_type", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/wrong_field_type-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "wrong_field_type", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/wrong_field_type-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "wrong_field_type", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/missing_field-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "missing_field", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/missing_field-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "missing_field", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/missing_field-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "missing_field", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/missing_field-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "missing_field", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/missing_field-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "missing_field", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/missing_field-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "missing_field", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/missing_field-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "missing_field", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/missing_field-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "missing_field", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/missing_field-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "missing_field", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_unknown_field-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_unknown_field", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_unknown_field-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_unknown_field", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_unknown_field-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_unknown_field", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_unknown_field-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_unknown_field", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_unknown_field-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_unknown_field", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_unknown_field-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_unknown_field", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_unknown_field-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_unknown_field", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_unknown_field-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_unknown_field", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_unknown_field-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_unknown_field", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_wrong_type-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_wrong_type", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_wrong_type-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_wrong_type", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_wrong_type-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_wrong_type", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_wrong_type-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_wrong_type", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_wrong_type-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_wrong_type", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_wrong_type-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_wrong_type", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_wrong_type-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_wrong_type", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_wrong_type-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_wrong_type", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/record_update_wrong_type-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "record_update_wrong_type", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/row_subset_missing-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "row_subset_missing", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/row_subset_missing-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "row_subset_missing", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/row_subset_missing-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "row_subset_missing", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/row_subset_missing-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "row_subset_missing", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/row_subset_missing-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "row_subset_missing", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/row_subset_missing-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "row_subset_missing", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/row_subset_missing-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "row_subset_missing", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/row_subset_missing-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "row_subset_missing", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/row_subset_missing-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "row_subset_missing", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/nonexhaustive_case-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "nonexhaustive_case", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/nonexhaustive_case-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "nonexhaustive_case", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/nonexhaustive_case-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "nonexhaustive_case", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/nonexhaustive_case-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "nonexhaustive_case", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/nonexhaustive_case-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "nonexhaustive_case", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/nonexhaustive_case-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "nonexhaustive_case", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/nonexhaustive_case-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "nonexhaustive_case", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/nonexhaustive_case-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "nonexhaustive_case", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/nonexhaustive_case-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "nonexhaustive_case", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E3001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_name-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_name", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_name-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_name", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_name-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_name", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_name-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_name", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_name-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_name", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_name-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_name", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_name-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_name", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_name-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_name", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_name-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_name", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_module-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_module", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_module-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_module", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_module-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_module", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_module-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_module", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_module-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_module", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_module-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_module", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_module-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_module", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_module-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_module", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unknown_module-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unknown_module", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unexposed_name-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unexposed_name", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unexposed_name-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unexposed_name", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unexposed_name-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unexposed_name", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1011"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unexposed_name-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unexposed_name", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unexposed_name-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unexposed_name", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unexposed_name-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unexposed_name", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1011"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unexposed_name-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unexposed_name", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unexposed_name-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unexposed_name", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/unexposed_name-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "unexposed_name", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E1011"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/result_vs_maybe-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "result_vs_maybe", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/result_vs_maybe-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "result_vs_maybe", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/result_vs_maybe-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "result_vs_maybe", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/result_vs_maybe-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "result_vs_maybe", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/result_vs_maybe-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "result_vs_maybe", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/result_vs_maybe-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "result_vs_maybe", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/result_vs_maybe-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "result_vs_maybe", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/result_vs_maybe-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "result_vs_maybe", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/result_vs_maybe-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "result_vs_maybe", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/task_vs_pure-plain-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "task_vs_pure", rimport = "plain", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/task_vs_pure-alias_not_last_segment-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "task_vs_pure", rimport = "alias_not_last_segment", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/task_vs_pure-exposing_list-bare"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "task_vs_pure", rimport = "exposing_list", rposition = "bare" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/task_vs_pure-plain-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "task_vs_pure", rimport = "plain", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/task_vs_pure-alias_not_last_segment-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "task_vs_pure", rimport = "alias_not_last_segment", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/task_vs_pure-exposing_list-in_let"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "task_vs_pure", rimport = "exposing_list", rposition = "in_let" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/task_vs_pure-plain-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "task_vs_pure", rimport = "plain", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/task_vs_pure-alias_not_last_segment-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "task_vs_pure", rimport = "alias_not_last_segment", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "reject_matrix/task_vs_pure-exposing_list-in_lambda"
+family     = "R"
+stratum    = "reject_matrix"
+mode       = "static"
+isolation  = "unit"
+class      = "V"
+witness    = "diagnostic"
+axes       = { defect = "task_vs_pure", rimport = "exposing_list", rposition = "in_lambda" }
+coordinate = "anzellai/sky#164 + the reject corpus' unpinned classes"
+expect     = "reject"
+code       = "E2001"
+twin       = true
+
+[[case]]
+id         = "emit_shape/record_update-alias"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "record_update", etype = "alias" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert", "field-order-declared", "fieldset-by-type"]
+
+[[case]]
+id         = "emit_shape/record_update-inline"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "record_update", etype = "inline" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert"]
+
+[[case]]
+id         = "emit_shape/field_read-alias"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "field_read", etype = "alias" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert", "field-order-declared", "fieldset-by-type"]
+blocked    = "redundant rt.AsInt on a statically-typed record field read (lower/src/lower.rs Expr::Access — selector typed from `actual`)"
+expires    = "2026-11-30"
+
+[[case]]
+id         = "emit_shape/field_read-inline"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "field_read", etype = "inline" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert"]
+
+[[case]]
+id         = "emit_shape/field_read_in_binop-alias"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "field_read_in_binop", etype = "alias" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert", "field-order-declared", "fieldset-by-type"]
+
+[[case]]
+id         = "emit_shape/field_read_in_binop-inline"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "field_read_in_binop", etype = "inline" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert"]
+
+[[case]]
+id         = "emit_shape/tuple_projection-alias"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "tuple_projection", etype = "alias" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-any-in-signature", "no-raw-type-assert", "field-order-declared", "fieldset-by-type"]
+blocked    = "typed tuple widened to `any` for `rt.Basics_fst`, then read back with `rt.Field` (lower/src/lower.rs kernel-call path)"
+expires    = "2026-11-30"
+
+[[case]]
+id         = "emit_shape/tuple_projection-inline"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "tuple_projection", etype = "inline" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-any-in-signature", "no-raw-type-assert"]
+
+[[case]]
+id         = "emit_shape/nested_record-alias"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "nested_record", etype = "alias" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-any-in-signature", "no-raw-type-assert", "field-order-declared", "fieldset-by-type"]
+
+[[case]]
+id         = "emit_shape/nested_record-inline"
+family     = "E"
+stratum    = "emit_shape"
+mode       = "emit_shape"
+isolation  = "unit"
+class      = "V"
+witness    = "shape"
+axes       = { eshape = "nested_record", etype = "inline" }
+coordinate = "v0.17 typed-emit contract + goty.rs fieldset collision"
+expect     = "accept"
+stdout     = "42"
+properties = ["no-erasure", "no-any-in-signature", "no-raw-type-assert"]
 

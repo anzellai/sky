@@ -398,7 +398,7 @@ pub fn run_cases(root: &Path, cases: &[GenCase], scratch: &Path) -> Vec<CaseResu
 /// full case list, so the sample spans the axis space rather than clustering in
 /// whichever stratum sorts first.
 pub fn spike(root: &Path, n: usize) -> i32 {
-    let all = super::all_cases();
+    let all = super::behavioural_cases();
     let total = all.len();
     let stride = (total / n.max(1)).max(1);
     let sample: Vec<GenCase> = all.iter().step_by(stride).take(n).cloned().collect();
@@ -434,11 +434,23 @@ pub fn spike(root: &Path, n: usize) -> i32 {
     0
 }
 
-/// Run the whole corpus.
+/// Run the corpus's BUILT-AND-RUN cases.
+///
+/// Deliberately `behavioural_cases()`, not `all_cases()`. Families R and E are
+/// in the manifest — the single membership authority lists every case — but
+/// their verdicts do not come from running a binary: an R program is ill-typed
+/// by construction, and an E case's claim is a property of the emitted Go.
+/// Building them here would spend `c_u` each to learn nothing, and would report
+/// a family-R case's correct rejection as a `BUILD-FAILED` red.
 pub fn run_all(root: &Path) -> i32 {
-    let all = super::all_cases();
+    let all = super::behavioural_cases();
     println!("CORPUS — Layer 1 (v2 §3)");
-    println!("  N_min : {}", all.len());
+    println!(
+        "  N_min : {} ({} behavioural, built + run here; the rest are family R \
+         (`--reject`) and family E (`--emit-shape`), which never `go build`)",
+        super::n_min(),
+        all.len()
+    );
     println!();
     let scratch = scratch_root("run");
     let t = Instant::now();
@@ -540,8 +552,9 @@ pub fn run_all(root: &Path) -> i32 {
     }
 }
 
-/// Today as `YYYY-MM-DD`, for blocked-case expiry.
-fn today_iso() -> String {
+/// Today as `YYYY-MM-DD`, for blocked-case expiry. Shared with
+/// `emit_shape`, which applies the same BLOCKED contract per property.
+pub fn today_iso() -> String {
     // Days since the Unix epoch → civil date (Howard Hinnant's algorithm).
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
