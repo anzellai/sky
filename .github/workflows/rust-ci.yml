@@ -327,7 +327,14 @@ jobs:
   # Nothing is dropped — `ci-green` requires this job, so the fan-in cannot pass
   # while every example is not building.
   build-corpus:
-    needs: setup
+    # Deliberately NO `needs: setup`. This job consumes none of setup's output —
+    # it runs its own `cargo build --workspace --locked` and restores the shared
+    # cargo cache by `restore-keys`, exactly as the setup-dependent jobs do.
+    # Waiting 209s for a job whose artifacts it never reads was pure serial
+    # delay on the longest job in the graph, so the whole RUN now finishes that
+    # much earlier — this is a real wall-clock saving, not a formula trick.
+    # It is listed in `SETUP_INDEPENDENT_JOBS` so the budget assertion accounts
+    # for it correctly.
     runs-on: ubuntu-latest
     # ~76s workspace build + ~59s cache restore + ~544s build-run + the four
     # runtime gates (~90s WARM, which is why they are here) ≈ 13 min. 1.5x = 20.
@@ -617,11 +624,14 @@ jobs:
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
-          # These two do NOT `needs: setup` — `integration-postgres` builds no
-          # Rust at all, and `macos-determinism` is a different OS with its own
-          # cache that a Linux `setup` cannot prime. They start alongside
-          # `setup`, so charging them its time would overstate the tier.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism'
+          # These do NOT `needs: setup` — `integration-postgres` builds no Rust
+          # at all, `macos-determinism` is a different OS with its own cache a
+          # Linux `setup` cannot prime, and `build-corpus` consumes none of
+          # setup's OUTPUT (it runs its own `cargo build --workspace`, restoring
+          # the shared cargo cache by `restore-keys` like every other job).
+          # They start alongside `setup`, so charging them its time would
+          # overstate the tier.
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism build-corpus'
         run: |
           set -euo pipefail
           gh api \
