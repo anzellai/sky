@@ -2340,13 +2340,13 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Cases that actually RUN and pass across the root `tests/` suites. Measured:
-/// **320**, across the 20 suites that build today.
+/// **330**, across all 22 suites — every discovered suite now builds.
 ///
 /// How the number was obtained: `scripts/sky-suites.sh --json <p>` writes one
 /// `Sky.Test` report per suite; each report's `total` is that suite's case
 /// count, and `Sky/Test.sky:385` emits `"assertions": 1` per case, so cases and
 /// assertions are the same number by construction. Summing `total` over the
-/// green suites gives 320:
+/// green suites gives 330:
 ///
 /// ```text
 ///   Auth/AuthTest                 28    Live/PubsubTest                3
@@ -2359,13 +2359,16 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///   Live/CounterTest              19    Std/UiInputCheckboxTest        3
 ///   Live/FormTest                 20    Std/UiMediaQueryTest          17
 ///   Std/UiPseudoClassTest         21    Std/UiTransitionAnimationTest 24
+///   Sky/Core/PointFreePolyTest     4    Sky/Core/PureTest              6
 /// ```
 ///
-/// 320 is the count on a tree where [`SKY_SUITES_BLOCKED`] is non-empty. The
-/// 10 cases in the two blocked suites are **NOT** in this number and are a
-/// declared coverage LOSS, not a rounding. When a block is lifted, this
-/// constant rises by that suite's cases in the same commit.
-pub const SKY_SUITES_EXPECTED: u64 = 320;
+/// 330 is the count on a tree where [`SKY_SUITES_BLOCKED`] is EMPTY: the two
+/// compiler defects that blocked `Sky/Core/PointFreePolyTest` (4 cases) and
+/// `Sky/Core/PureTest` (6 cases) are fixed, so their 10 cases are no longer a
+/// declared coverage loss and are counted here. When a block is lifted, this
+/// constant rises by that suite's cases in the same commit — that is this
+/// change: 320 + 4 + 6 = 330.
+pub const SKY_SUITES_EXPECTED: u64 = 330;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -2389,36 +2392,17 @@ pub const SKY_SUITES_EXPECTED: u64 = 320;
 /// An entry here is a coverage loss that must be declared in the ledger.
 ///
 /// Format: `(suite, reason, expires YYYY-MM-DD)`.
-pub const SKY_SUITES_BLOCKED: &[(&str, &str, &str)] = &[
-    (
-        "Sky_Core_PointFreePolyTest",
-        "compiler codegen defect: a point-free top-level alias of a KERNEL \
-         function type-checks and then fails `go build`. Repro: \
-         `tickle : String -> String` / `tickle = String.toUpper` emits \
-         `return rt.String_toUpper` into a `func(string) string` slot, but \
-         `rt.String_toUpper` is `func(s any) any`. Origin: lower.rs:2721 \
-         (kernel-alias `Res::Def` value ref) and lower.rs:2798 \
-         (`Res::Kernel` value ref) stamp the caller's expected type onto a \
-         bare `Ident` without routing through `kernel_partial` \
-         (lower.rs:3925), which is the eta-expansion the CALL path already \
-         uses. This suite is the regression fence for #398; it must NOT be \
-         rewritten to a lambda, because that would delete the fence",
-        "2026-11-08",
-    ),
-    (
-        "Sky_Core_PureTest",
-        "compiler codegen defect: a zero-arity `Task` binding aliasing a \
-         nullary kernel type-checks and then fails `go build`. Repro: \
-         `Task.perform (Pure.uuidV7 ())` emits `return rt.Uuid_v7()` into an \
-         `rt.SkyTask[Sky_Core_Error_Error, string]` slot, but \
-         `rt.Uuid_v7()` returns `any` (runtime-go/rt/validate.go:163). \
-         Origin: `nullary_kernel_value` (lower.rs:2828) coerces only when the \
-         slot is a concrete-key map (lower.rs:2829), so the `rt.SkyTask` slot \
-         never gets the `rt.TaskCoerceT` wrap codegen already knows how to \
-         render (codegen/src/lib.rs:407)",
-        "2026-11-08",
-    ),
-];
+/// EMPTY as of the fix for the two compiler codegen defects these entries
+/// named. Both were ONE root cause: `lower_var` stamped the caller's expected
+/// type onto a bare `Ident` for a kernel referenced as a VALUE, so
+/// `coerce_if_needed` saw `x.ty == expected`, inserted nothing, and the raw
+/// `any`-based runtime symbol reached a typed Go slot. `kernel_value_eta`
+/// (eta-expansion via `kernel_partial`, arity >= 1) and `nullary_kernel_value`
+/// (`any`-typed call + coercion, arity 0) close it; both key on the SLOT, so
+/// the `coerce-floor` delta is zero. `Sky/Core/PointFreePolyTest` (4 cases) and
+/// `Sky/Core/PureTest` (6 cases) now pass and are counted in
+/// [`SKY_SUITES_EXPECTED`], which rose 320 -> 330 in the same commit.
+pub const SKY_SUITES_BLOCKED: &[(&str, &str, &str)] = &[];
 
 /// The root `tests/` Sky.Test suites — 22 suites in subdirectories of ONE Sky
 /// project (`tests/sky.toml`).
