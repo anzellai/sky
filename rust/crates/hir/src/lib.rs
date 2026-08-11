@@ -179,6 +179,319 @@ mod tests {
         assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
     }
 
+    // ---- ambiguous unqualified names (doc 05 §6b) ------------------------
+    //
+    // Every rejection below is paired with an ACCEPTED twin that differs only in
+    // the defect. A rejection assertion on its own passes just as well against a
+    // compiler that rejects everything; the twin is what makes the pair
+    // falsifiable (Family R convention, `xtask/src/corpus/reject_matrix.rs`).
+
+    /// The two modules the ambiguity cases import — same name, same type, two
+    /// different definitions.
+    fn ambig_deps() -> [(&'static str, &'static str); 2] {
+        [
+            (
+                "Ambig.Alpha",
+                "module Ambig.Alpha exposing (..)\nlabel = \"ALPHA\"\n",
+            ),
+            (
+                "Ambig.Beta",
+                "module Ambig.Beta exposing (..)\nlabel = \"BETA\"\n",
+            ),
+        ]
+    }
+
+    fn ambiguity_codes(r: &resolve::ResolveResult) -> Vec<String> {
+        r.diagnostics
+            .iter()
+            .filter(|d| d.code.0 == "E1012")
+            .map(|d| d.message.clone())
+            .collect()
+    }
+
+    #[test]
+    fn ambiguous_unqualified_name_is_rejected() {
+        // THE defect: two `exposing (..)` imports binding one name, referenced
+        // bare. Before the precedence lattice this compiled clean and printed
+        // whichever module was imported LAST
+        // (`corpus/repro/ambiguous-exposing-all/`).
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    main =\n    println label\n";
+        let [a, b] = ambig_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        let msgs = ambiguity_codes(&r);
+        assert_eq!(msgs.len(), 1, "expected one [E1012], got {:?}", r.diagnostics);
+        // The message must name BOTH modules and offer both qualified forms —
+        // an ambiguity error that does not say what the alternatives are leaves
+        // the user to guess which import to change.
+        assert!(msgs[0].contains("Ambig.Alpha"), "{}", msgs[0]);
+        assert!(msgs[0].contains("Ambig.Beta"), "{}", msgs[0]);
+        assert!(msgs[0].contains("Alpha.label"), "{}", msgs[0]);
+        assert!(msgs[0].contains("Beta.label"), "{}", msgs[0]);
+    }
+
+    #[test]
+    fn ambiguous_unqualified_name_is_rejected_either_import_order() {
+        // The pair IS the defect: the same program with the two import lines
+        // swapped used to print the other module's answer. Both orders must now
+        // reject, or the rule has merely moved the order-dependence.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Beta exposing (..)\n\
+                    import Ambig.Alpha exposing (..)\n\n\
+                    main =\n    println label\n";
+        let [a, b] = ambig_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert_eq!(ambiguity_codes(&r).len(), 1, "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_unambiguous_name_is_accepted() {
+        // The ACCEPTED twin: byte-identical but for `Ambig.Beta` no longer
+        // exposing `label`, so exactly one binding is in scope. A twin failure
+        // means the graph shape broke, not that ambiguity was detected.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    main =\n    println label\n";
+        let db = db_with(&[
+            (
+                "Ambig.Alpha",
+                "module Ambig.Alpha exposing (..)\nlabel = \"ALPHA\"\n",
+            ),
+            (
+                "Ambig.Beta",
+                "module Ambig.Beta exposing (other)\nother = \"BETA\"\n",
+            ),
+            ("Main", main),
+        ]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+    }
+
+    #[test]
+    fn twin_ambiguous_name_never_referenced_is_accepted() {
+        // Reported at the USE SITE, not the import. Importing two modules that
+        // both expose a name you never mention is legal and extremely common —
+        // every Sky.Live page does `import Std.Html exposing (..)` alongside
+        // `import Std.Html.Attributes exposing (..)`. Reporting at the import
+        // would reject programs whose meaning is not order-dependent at all.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    main =\n    println \"neither\"\n";
+        let [a, b] = ambig_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_qualified_reference_is_accepted() {
+        // The fix the diagnostic tells the user to apply must actually work.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    main =\n    println Alpha.label\n";
+        let [a, b] = ambig_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+        assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
+    }
+
+    #[test]
+    fn twin_local_definition_shadows_both_imports() {
+        // A locally-defined name shadowing an import is long-standing legal Sky
+        // (doc 05 C7) and stays legal, silently: `Local` is the top layer, so it
+        // wins outright and the two imported bindings never compete.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    label = \"MINE\"\n\n\
+                    main =\n    println label\n";
+        let [a, b] = ambig_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_explicit_exposing_list_beats_exposing_all() {
+        // `exposing (label)` names THIS binding specifically; `exposing (..)` is
+        // a bulk claim on whatever the module happens to export. The specific
+        // claim wins, in either import order — which is the whole point: the
+        // answer must not depend on where the lines sit.
+        for main in [
+            "module Main exposing (main)\n\
+             import Std.Log exposing (println)\n\
+             import Ambig.Alpha exposing (label)\n\
+             import Ambig.Beta exposing (..)\n\n\
+             main =\n    println label\n",
+            "module Main exposing (main)\n\
+             import Std.Log exposing (println)\n\
+             import Ambig.Beta exposing (..)\n\
+             import Ambig.Alpha exposing (label)\n\n\
+             main =\n    println label\n",
+        ] {
+            let [a, b] = ambig_deps();
+            let db = db_with(&[a, b, ("Main", main)]);
+            let m = db.module_by_name("Main").unwrap();
+            let r = resolve(&db, m);
+            assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+        }
+    }
+
+    #[test]
+    fn two_explicit_exposing_lists_are_still_ambiguous() {
+        // Both claims are equally deliberate and equally specific, so neither
+        // outranks the other. This is the case the `Explicit > Open` refinement
+        // must NOT swallow.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (label)\n\
+                    import Ambig.Beta exposing (label)\n\n\
+                    main =\n    println label\n";
+        let [a, b] = ambig_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert_eq!(ambiguity_codes(&r).len(), 1, "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_prelude_is_ambient_and_never_makes_an_import_ambiguous() {
+        // The case that blocked this fix for months. `Sky.Core.Prelude exposing
+        // (..)` and `Sky.Core.Math exposing (..)` both bind `abs`/`min`/`max`/
+        // `sqrt`, and real examples import exactly that pair. Prelude is
+        // autoloaded — `sky init`'s templates emit the line unconditionally — so
+        // it sits in the AMBIENT layer and an explicit import shadows it with no
+        // diagnostic. A naive "bound twice = error" rule rejects this program.
+        let src = "module Main exposing (main)\n\
+                   import Sky.Core.Prelude exposing (..)\n\
+                   import Sky.Core.Math exposing (..)\n\
+                   import Std.Log exposing (println)\n\n\
+                   main =\n    println (String.fromInt (abs 3))\n";
+        let db = db_with(&[("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_both_prelude_spellings_are_ambient() {
+        // `Sky.Core.Prelude` and `Sky.Core.Basics` are the SAME kernel pseudo
+        // (`KERNEL_MODULES` maps both to `Basics`). The layer a binding lands in
+        // must not depend on which alias of one module the user wrote, or the
+        // `Basics` spelling of this program would be ambiguous on `abs` while
+        // the `Prelude` spelling compiled.
+        for prelude in ["Sky.Core.Prelude", "Sky.Core.Basics"] {
+            let src = format!(
+                "module Main exposing (main)\n\
+                 import {prelude} exposing (..)\n\
+                 import Sky.Core.Math exposing (..)\n\
+                 import Std.Log exposing (println)\n\n\
+                 main =\n    println (String.fromInt (abs 3))\n"
+            );
+            let db = db_with(&[("Main", &src)]);
+            let m = db.module_by_name("Main").unwrap();
+            let r = resolve(&db, m);
+            assert!(
+                ambiguity_codes(&r).is_empty(),
+                "{prelude}: {:?}",
+                r.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn twin_same_definition_reached_twice_is_not_ambiguous() {
+        // One module imported under two forms binds ONE definition by two
+        // routes. Keying ambiguity on the definition's identity rather than on
+        // "was it bound more than once" is what keeps re-exports and
+        // belt-and-braces import styles compiling.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Alpha exposing (label)\n\n\
+                    main =\n    println label\n";
+        let [a, _] = ambig_deps();
+        let db = db_with(&[a, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn ambiguous_constructor_is_rejected_in_expression_and_pattern() {
+        // A constructor picks a VARIANT, so an ambiguous ctor selects a
+        // different branch depending on import order — the same defect one
+        // namespace over, in both expression and pattern position.
+        let alpha = "module Ambig.Alpha exposing (Flag(..))\ntype Flag = On | Off\n";
+        let beta = "module Ambig.Beta exposing (Flag(..))\ntype Flag = On | Off\n";
+        let expr = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    main =\n    println (toString On)\n";
+        let db = db_with(&[("Ambig.Alpha", alpha), ("Ambig.Beta", beta), ("Main", expr)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert_eq!(
+            ambiguity_codes(&r).len(),
+            1,
+            "expression position: {:?}",
+            r.diagnostics
+        );
+
+        let pat = "module Main exposing (main)\n\
+                   import Std.Log exposing (println)\n\
+                   import Ambig.Alpha exposing (..)\n\
+                   import Ambig.Beta exposing (..)\n\n\
+                   pick f =\n    case f of\n        On -> 1\n        _ -> 2\n\n\
+                   main =\n    println \"x\"\n";
+        let db = db_with(&[("Ambig.Alpha", alpha), ("Ambig.Beta", beta), ("Main", pat)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert_eq!(
+            ambiguity_codes(&r).len(),
+            1,
+            "pattern position: {:?}",
+            r.diagnostics
+        );
+    }
+
+    #[test]
+    fn twin_one_constructor_source_is_accepted() {
+        let alpha = "module Ambig.Alpha exposing (Flag(..))\ntype Flag = On | Off\n";
+        let beta = "module Ambig.Beta exposing (other)\nother = 1\n";
+        let src = "module Main exposing (main)\n\
+                   import Std.Log exposing (println)\n\
+                   import Ambig.Alpha exposing (..)\n\
+                   import Ambig.Beta exposing (..)\n\n\
+                   main =\n    println (toString On)\n";
+        let db = db_with(&[("Ambig.Alpha", alpha), ("Ambig.Beta", beta), ("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
     #[test]
     fn resolve_records_expr_span() {
         // Phase 1 gate: the resolver's span side-table stamps every expression

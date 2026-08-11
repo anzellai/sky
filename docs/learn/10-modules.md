@@ -43,6 +43,43 @@ If you try to import a name a module doesn't expose, that's a hard error:
 
 This holds for the standard library too — the export list means what it says.
 
+## Two imports, one name
+
+If two imports bring in the *same* unqualified name and you use it bare, Sky
+refuses to guess:
+
+```elm
+-- both modules export `label`
+-- import Ambig.Alpha exposing (..)
+-- import Ambig.Beta exposing (..)
+-- main = println label
+-- ✗ [E1012] AMBIGUOUS NAME: `label` is brought into scope by `Ambig.Alpha` and
+--   `Ambig.Beta` — write `Alpha.label` or `Beta.label`
+```
+
+The reason is that the alternative is worse: picking one silently would make the
+answer depend on the *order of your import lines*, so reordering imports — which
+a formatter, a merge, or an added import does routinely — could change what your
+program computes without a word of warning.
+
+Three things keep this from getting in your way:
+
+- **It only fires where you actually use the name.** Importing two modules that
+  both export `title` is fine as long as you never write a bare `title`. That is
+  why `import Std.Html exposing (..)` alongside `import Std.Html.Attributes
+  exposing (..)` keeps working.
+- **A more specific import wins.** `exposing (label)` names that one binding, so
+  it beats a bulk `exposing (..)` from another module — no error, and the same
+  result whichever order the two lines are in.
+- **Your own definitions win, and the Prelude never competes.** A `label` you
+  define in the module shadows every import, silently; and because
+  `Sky.Core.Prelude` is loaded for you rather than chosen by you, an explicit
+  import of your own always takes precedence over it. That is what lets
+  `import Sky.Core.Math exposing (..)` redefine `abs` without complaint.
+
+The fixes are the ones the message suggests: qualify the reference, or narrow one
+import's `exposing (…)` list.
+
 ## Splitting a project
 
 A typical web app grows into a few focused modules rather than one giant file — a

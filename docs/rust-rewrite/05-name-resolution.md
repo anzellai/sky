@@ -444,6 +444,126 @@ fn detect_qualifier_collisions(&self, imports: &[Import]) -> Vec<Diagnostic> {
 
 ---
 
+## 6b. Unqualified-name precedence & the ambiguity rule
+
+§6 above resolves a collision between two *qualifiers*. This section resolves a
+collision between two *bindings of one bare name* — a different question, and
+until 2026-08-11 an unanswered one.
+
+### The defect
+
+Every binding of an unqualified name went into one flat `vars` / `ctors` map with
+a plain `.insert()`, so a name bound by two imports silently resolved to
+whichever import came **last** in the file:
+
+```elm
+import Ambig.Alpha exposing (..)   -- label = "ALPHA"
+import Ambig.Beta exposing (..)    -- label = "BETA"
+main = println label               -- prints BETA
+
+import Ambig.Beta exposing (..)    -- the SAME program, two lines swapped
+import Ambig.Alpha exposing (..)
+main = println label               -- prints ALPHA
+```
+
+Both compiled clean, with no diagnostic either way. Reordering imports is
+something a formatter, a merge, or an added import does routinely, so "last wins"
+turned a difference that must not matter into a different program — the #164
+family. Elm rejects it. The pinned reproduction is
+`corpus/repro/ambiguous-exposing-all/`.
+
+### Why the naive rule is wrong
+
+"A name bound by two imports is an error" **rejects working programs**. `import
+Sky.Core.Prelude exposing (..)` together with `import Sky.Core.Math exposing
+(..)` already double-binds `abs` / `min` / `max` / `sqrt`, and real examples do
+exactly that. The rule has to privilege the implicit prelude the way Elm does.
+
+### The precedence lattice
+
+`hir::resolve::BindLayer` — higher wins **outright and silently**; only a tie
+*inside* the winning layer is ambiguous:
+
+| Layer | What enters here | Why it ranks there |
+|---|---|---|
+| `Local` (3) | this module's own top-level defs | a local shadowing an import is long-standing legal Sky (C7) and stays legal |
+| `Explicit` (2) | `import M exposing (name)` | the author named THIS binding; a specific claim outranks a bulk one |
+| `Open` (1) | `import M exposing (..)` | a bulk claim on whatever `M` happens to export today |
+| `Ambient` (0) | `BUILTIN_VARS` / `BUILTIN_CTORS`, and any import in `AMBIENT_IMPORTS` (`Sky.Core.Prelude`) | autoloaded — `sky init`'s templates emit the Prelude import unconditionally and AGENTS.md documents it as autoloaded, so its presence is not an authorial claim on the name |
+
+Two consequences worth stating explicitly:
+
+- **Resolution is now order-independent.** `settle_precedence` re-picks every
+  multiply-bound name by layer after all three binding phases, so moving an
+  import line can no longer change which definition a reference means. It either
+  means the same thing or the program is rejected.
+- **Identity, not count, decides.** Origins carry a `key` naming the definition
+  (`def:<DefId>` / `kernel:<mod>.<fn>` / …). One definition reached by two routes
+  — a re-export, or `exposing (..)` plus `exposing (name)` on the same module —
+  is one binding, not a conflict.
+
+### Reported at the USE SITE, never at the import
+
+Importing two modules that both expose a name you never reference is legal and
+extremely common: every Sky.Live page imports `Std.Html exposing (..)` alongside
+`Std.Html.Attributes exposing (..)`, and those overlap. Reporting at the import
+would reject programs whose meaning is not order-dependent at all. Elm draws the
+line in the same place. So `resolve_var` (and the ctor pattern head) raises
+`[E1012]` only when a reference actually reads an ambiguous name.
+
+### `[E1012] AMBIGUOUS NAME`
+
+The message names **both** modules and shows the qualified forms that fix it:
+
+```
+-- AMBIGUOUS NAME ------------------------------- src/Main.sky:21:13 [E1012]
+
+21 |     println label
+   |             ^^^^^
+
+Ambiguous name `label` — it is brought into scope by `Ambig.Alpha` and
+`Ambig.Beta`, and this reference does not say which one it means. Sky rejects
+this instead of picking one, because the winner would otherwise depend on the
+ORDER of your import lines: swapping two imports would silently change what this
+program computes. Qualify the reference — write `Alpha.label` or `Beta.label` —
+or narrow one import's `exposing (…)` list so only one of them binds `label`.
+```
+
+When an import binds no qualifier (auto-qualifier suppressed by
+explicit-alias-wins, §6), the message tells the user to add an alias rather than
+offering a qualified form that would not compile.
+
+`[E1012]` is gated in `project::build` **before** the type-error gate. Ambiguity
+is the cause and a type clash under it is the consequence: the resolver still has
+to hand lowering one of the two bindings so resolution stays total, and whichever
+it picks the use site may then fail to unify. Measured, not reasoned — `import
+Sky.Core.String exposing (..)` + `import Sky.Core.List exposing (..)` with a bare
+`length` reported `[E2001] type mismatch: List _ vs String` and never mentioned
+the ambiguity.
+
+### Scope
+
+Values and constructors. The **type** namespace is deliberately excluded: several
+type-binding paths synthesise a `DefId` leniently when a module does not really
+export the name (kernel-implicit types such as `Decoder` / `Value` / `Error`,
+re-exported types, `exposing (T)` on a kernel pseudo-module), so two modules can
+produce two distinct `DefId`s for one conceptual type. Keying ambiguity on those
+would manufacture false rejections — which is precisely the #164 failure mode
+this doc's companion (`13-change-verification-and-edge-cases.md` D1) exists to
+prevent. Closing the type namespace needs the lenient synthesis to be
+distinguishable from a real export first.
+
+### Tests
+
+`hir/src/lib.rs`'s test module carries the rejection cases and an **accepted twin
+for each** (Family R convention): unambiguous twin, never-referenced twin,
+qualified-reference twin, local-shadow twin, `Explicit`-beats-`Open` twin in both
+import orders, the Prelude/Math ambient twin, and the same-definition-twice twin.
+`rust/crates/ty/tests/reject/corpus/ambiguous_unqualified_name.sky` pins the
+single-file stdlib form with `-- rust: reject [E1012]`.
+
+---
+
 ## 7. Exposing, re-export, and import-hiding
 
 `module_exports(ModuleId)` is the successor to `DepInfo` (`Module.hs:32`) and to

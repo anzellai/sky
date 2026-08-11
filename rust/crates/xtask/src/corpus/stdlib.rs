@@ -2282,10 +2282,9 @@ pub fn stdlib_import(a: &Assignment) -> ImportCase {
             ],
             entry: "Main".to_string(),
             // The runner's verdict is rejection-vs-acceptance; the code names
-            // the diagnostic FAMILY the ambiguity belongs to (Sky's naming
-            // errors), which is where such a diagnostic would be issued.
+            // the diagnostic the ambiguity is now reported under.
             expect: Expect::Reject {
-                code: "E1001".to_string(),
+                code: "E1012".to_string(),
             },
         };
     }
@@ -2365,13 +2364,12 @@ pub fn stdlib_import(a: &Assignment) -> ImportCase {
             //
             // That is not a convenience. With `Sky.Core.String exposing (..)`
             // and `Sky.Core.List exposing (..)` both in scope, the bare name
-            // `length` is exported by both modules, and the compiler resolves
-            // it to whichever import came LAST rather than reporting the
-            // ambiguity (see `corpus/repro/ambiguous_exposing_all.sky`). Until
-            // that is decided, this generator has no independently-known answer
-            // for the bare form and does not assert one — a case whose expected
-            // value depends on undecided resolution policy is exactly the
-            // change-detector the honesty constraint forbids.
+            // `length` is exported by both modules, so it is AMBIGUOUS and the
+            // compiler now rejects it with `[E1012]` (doc 05 §6b). These cases
+            // assert a VALUE, so they must not be written in a form the language
+            // rejects; the ambiguity itself is asserted by the
+            // `ambiguous_exposing_all` case above and by
+            // `rust/crates/ty/tests/reject/corpus/ambiguous_unqualified_name.sky`.
             let string_len = match shape {
                 "aliased" => "Str.length",
                 "alias_not_last_segment" => "Core.length",
