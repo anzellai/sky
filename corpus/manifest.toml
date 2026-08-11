@@ -3876,10 +3876,8 @@ witness    = "diagnostic"
 axes       = { import_shape = "exposing_all", shadow = "ambiguous_exposing_all" }
 coordinate = "anzellai/sky#164 — against real stdlib names"
 expect     = "reject"
-code       = "E1001"
+code       = "E1012"
 twin       = true
-blocked    = "sky/ambiguous-unqualified-name-across-exposing-all (found by Family S, 2026-08-11)"
-expires    = "2026-09-30"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"

@@ -559,7 +559,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// the reject corpus as the checked-in regression for the aliased-unknown-module
 /// soundness hole (see its header). The count is the two corpora summed, so a
 /// reject-corpus addition moves it.
-pub const SHARED_WORLD_EXPECTED: u64 = 122;
+pub const SHARED_WORLD_EXPECTED: u64 = 124;
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator

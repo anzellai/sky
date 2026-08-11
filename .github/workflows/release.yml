@@ -237,6 +237,19 @@ jobs:
       # whose falsifying mutation has not been verified inside its declared
       # window to UNPROVEN, which is also non-zero. A release should not ship
       # behind a gate nobody has proven can fail.
+      # The harness gates that drive real projects (`apps-*`, `sky-suites`)
+      # invoke the INSTALLED compiler at `sky-out/sky`. Without it they report
+      # VACUOUS — "the gate reported zero assertions … A gate that cannot run
+      # has not passed" — and the harness fails, which is exactly what it should
+      # do and exactly what it did on the first v0.20.0 tag: eight gates
+      # VACUOUS, publication blocked, four platform binaries built for nothing.
+      #
+      # The gates were right; this job was incomplete. `scripts/build.sh` is
+      # what puts a compiler where they look.
+      - name: Install the compiler the app gates drive
+        working-directory: .
+        run: bash scripts/build.sh
+
       - name: Gate harness (T1) with proof requirement
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs

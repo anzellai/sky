@@ -307,7 +307,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 122,
+      "expected_assertions": 124,
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
       "surfaces": [
