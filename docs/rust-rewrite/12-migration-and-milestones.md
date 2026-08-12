@@ -31,7 +31,7 @@ compiler actually stands, verified via the gate (`cargo run -p xtask -- build-ru
 --run`, `cargo test -p sky-lsp`, the determinism + reject gates). **Functionally
 the compiler is well advanced** — the non-FFI corpus builds+runs+matches the
 Haskell oracle, FFI scales to skyshop (76k symbols), `sky` is a standalone binary,
-and the LSP passes 17/17. What remains is largely two *architectural refinements*
+and the LSP passes 49/49. What remains is largely two *architectural refinements*
 that the functional results do not depend on, plus a handful of narrow items.
 
 ### Milestones
@@ -44,7 +44,7 @@ that the functional results do not depend on, plus a handful of narrow items.
 | **M3** inference | **Built** (accept + reject) | HM + union-find + exhaustiveness; 39/39 non-FFI typecheck-match; reject-parity/rejection corpus added (v0.7 unifier killer closed). |
 | **M4** lower + emit Go | **Built (interim representation)** | Typed `GoTy`-carrying IR emits deterministic Go that builds+runs+matches — but via an **erase-based** runtime representation (`rt.SkyADT` bags, `rt.T2[any,any]`, a `Widen`→`any` node), **not** the structural-generic / sealed-interface / coercion-is-the-exception target of [`07`](07-lowering-and-ir.md)/[`08`](08-go-codegen.md). |
 | **M5** full corpus build+run | **Built** | Whole corpus builds; run+match vs a freshly-rebuilt oracle across the non-FFI set + skyshop; `11-fyne` GUI is build-only (headless-unverifiable); `36-composite-server`'s only non-match is a genuine **oracle-side** Haskell bug (Rust serves correctly). |
-| **M6** LSP | **Built (minus 3 endpoints)** | Hover/goto/completion/references/rename/semantic-tokens/document-symbol; 17/17 nvim + broader suite. Runs on `hir::db::SourceDb`, not salsa. `inlayHint`/`signatureHelp`/`formatting` **not implemented** ([`10`](10-lsp-and-tooling.md) status). |
+| **M6** LSP | **Built (minus 3 endpoints)** | Hover/goto/completion/references/rename/semantic-tokens/document-symbol; 49/49 nvim + broader suite. Runs on `hir::db::SourceDb`, not salsa. `inlayHint`/`signatureHelp`/`formatting` **not implemented** ([`10`](10-lsp-and-tooling.md) status). |
 | **M7** reproducibility gate | **Built** | Byte-stable emission across seeds (37/37); deterministic FFI inspector runs only at `add`/`install`/`update`, never mid-build (L4). |
 | **M8** cutover (Rust default) | **Landed (refinements ongoing)** | Rust is the primary Sky compiler; the Haskell tree is preserved under `legacy-haskell-compiler/` as oracle + rollback path. The remaining architectural refinements (salsa DAG, structural Go-IR) are tracked above and do not block primacy. |
 
@@ -57,7 +57,7 @@ that the functional results do not depend on, plus a handful of narrow items.
 | Name resolution, HM inference, exhaustiveness | **Built** | Matches [`05`](05-name-resolution.md)/[`06`](06-type-system.md) in behaviour; runs value-threaded, not salsa-memoised. |
 | Deterministic committed-surface FFI (inspector + `sky add/install/update`) | **Built** | Matches [`09`](09-runtime-and-ffi.md) (correct the Part G API names). |
 | CLI verbs (build/run/check/fmt/test/init/doc/watch/db/add/install), `sky fmt` | **Built** | Opinionated formatter with lossless safety net. |
-| LSP (hover/goto/completion/references/rename/semantic-tokens/document-symbol) | **Built** | 17/17 + broader. |
+| LSP (hover/goto/completion/references/rename/semantic-tokens/document-symbol) | **Built** | 49/49 + broader. |
 | **Salsa query DAG** | **Interim → target** | Spike wired; running pipeline is `hir::db::SourceDb` (batch RefCell walk). [`01`](01-architecture-overview.md). |
 | **Structural typed Go-IR (coercion-is-the-exception, no `any` widen, Go-generic aliases, sealed ifaces)** | **Interim → target** | IR carries `GoTy`, but Go rep erases to `any`-backed shapes + `Widen`. [`07`](07-lowering-and-ir.md)/[`08`](08-go-codegen.md). |
 | LSP `inlayHint` / `signatureHelp` / `formatting` endpoints | **Target** | Advertised in the target capability set; not yet implemented. [`10`](10-lsp-and-tooling.md). |
@@ -207,13 +207,13 @@ stop, re-classify against the architecture docs, escalate — do not attempt a 4
 | **Oracle** | Emitted-Go semantic parity across all 42; runtime scripts are the authoritative gate (they need no oracle — the program either runs correctly or it doesn't). |
 | **Rejection corpus** | Full type + resolution + syntax reject-parity 100% (the complete [`11`](11-testing-and-verification.md) §2b table). |
 
-### M6 — LSP 17/17
+### M6 — LSP 49/49
 
 | | |
 |---|---|
 | **Goal** | `sky-lsp` over the same `skydb` (L2 — the LSP is a driver, not a special case). Hover / completion / goto-def / diagnostics / rename. |
 | **Entry** | M5 exit (needs resolve + infer). |
-| **Exit** | `scripts/lsp-test-nvim.sh` → 17/17 through a real Neovim client; incremental-invalidation unit tests green. |
+| **Exit** | `scripts/lsp-test-nvim.sh` → 49/49 through a real Neovim client; incremental-invalidation unit tests green. |
 | **Proves** | L2 (incremental for free — no bolted-on fixpoint + threads, the scar that motivated salsa), tooling parity + improvement. |
 | **Oracle** | The 17-test suite is the gate (behaviour-level, backend-agnostic). |
 
@@ -315,7 +315,7 @@ must not be undersold:
   the rewrite is worth doing — and the reason it is not a weekend.
 - **The migration de-risks the estimate by making progress measurable.** Each
   milestone's gate is a hard, external checkpoint (parity %, examples passing,
-  17/17, repro-green) — so "how far are we" has a number, not a vibe. That is the
+  49/49, repro-green) — so "how far are we" has a number, not a vibe. That is the
   concrete answer to the estimate risk: not a smaller number, an *honest,
   observable* one.
 
@@ -327,7 +327,7 @@ The migration is complete when, on the CI matrix, **all of**:
 
 1. M1–M7 gates green simultaneously (§2).
 2. The verification bar [`11`](11-testing-and-verification.md) §10 met — accept
-   AND reject parity 100%, all 42 build-and-run, repro-green, LSP 17/17, fuzzers
+   AND reject parity 100%, all 42 build-and-run, repro-green, LSP 49/49, fuzzers
    clean.
 3. `known-divergences.toml` contains only *documented improvements*, no compat
    breaks (`00` compat-first non-negotiable).

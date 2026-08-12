@@ -41,7 +41,7 @@ flowchart TD
     subgraph T4["End-to-end runtime (reused as-is)"]
       WEB["verify-all-web.sh (Playwright)"]
       CLI["verify-cli.sh + example-e2e.sh"]
-      LSP["lsp-test-nvim.sh (17/17)"]
+      LSP["lsp-test-nvim.sh (49/49)"]
     end
     SNAP --> WTF --> GO --> REPRO --> WEB
     UNIT --> PF --> AR --> REPRO --> CLI
@@ -353,7 +353,7 @@ tests miss.
 
 Because the LSP is a *front-end over the same query database* ([`01`](01-architecture-overview.md),
 L2) rather than a bolted-on fixpoint, the Rust `sky-lsp` is exercised by the
-identical 17-test suite over stdio JSON-RPC. **17/17 green is a release gate**,
+identical nvim suite over stdio JSON-RPC. **49/49 green is a release gate**,
 same as today. The salsa core means the LSP is not a special case to
 independently re-verify — the same `resolve`/`infer` queries the batch build
 proves are the ones the LSP answers hover from — but the editor-level suite
@@ -380,7 +380,7 @@ it — **both** compilers build in CI (the oracle stays live under
 | Example sweep (build + run) | `scripts/example-sweep.sh` (SKY_BIN=rust) | yes | §1 tier-1 |
 | Runtime web | `scripts/verify-all-web.sh` (macOS: Playwright) | yes | §1 tier-2/3 |
 | Runtime CLI/TUI | `scripts/verify-cli.sh` + `scripts/example-e2e.sh` | yes | §1 |
-| LSP | `scripts/lsp-test-nvim.sh` | yes | §7, 17/17 |
+| LSP | `scripts/lsp-test-nvim.sh` | yes | §7, 49/49 (17 symbol-class + 32 corpus) |
 | Fuzz (robustness + determinism) | `cargo run -p xtask -- fuzz` | yes | §5 — mutated-corpus no-panic + L4 determinism |
 | Well-typed differential (local/release) | `cargo run -p xtask -- welltyped` | no (oracle absent in CI) | §5a Tier-A′ — generated-valid-program accept/reject parity vs oracle |
 | Fuzz (nightly) | `fuzz-well-typed.sh --iters 10000` + `cargo-fuzz` parser | nightly | §5 milestone grade |
@@ -441,7 +441,7 @@ The Rust compiler is *verified-compatible* when, on the CI matrix:
 3. **All 42 examples build AND run** through the three runtime tiers (§1) — zero
    panics, zero dead-click regressions.
 4. **The reproducibility gate is green** across N seeds × ≥2 platforms (§3).
-5. **LSP 17/17** (§7).
+5. **LSP 49/49** (§7).
 6. **Fuzzers clean** at milestone grade (§5).
 
 No "but / except / mostly / for the scope of." Compat-or-better means the whole

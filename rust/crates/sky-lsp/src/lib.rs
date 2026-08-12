@@ -672,7 +672,22 @@ impl Analysis {
         let checked = ty::check_modules(db, &[module]);
         out.extend(checked.diagnostics);
         out.extend(self.unfetched_dep_hints(db, module, url));
-        out.into_iter()
+        // `ty::check_modules` re-publishes every ERROR-severity resolve
+        // diagnostic (`check.rs`'s `name_errors` loop) on top of the copy this
+        // function already took from `db.resolve(module)`. Without this dedupe
+        // the editor draws EVERY naming error twice — two identical squiggles,
+        // two quickfix rows — for `[E1001]` undefined names and every `[E1012]`
+        // ambiguity (value, constructor AND type). The CLI shows one, so the
+        // editor disagreeing with `sky check` is the bug. Compare the whole
+        // diagnostic (severity + code + message + labels + suggestion), so two
+        // genuinely distinct errors that merely share a code both survive.
+        let mut seen: Vec<diagnostics::Diagnostic> = Vec::with_capacity(out.len());
+        for d in out {
+            if !seen.contains(&d) {
+                seen.push(d);
+            }
+        }
+        seen.into_iter()
             .map(|d| to_lsp_diag(&self.docs, text, &d))
             .collect()
     }

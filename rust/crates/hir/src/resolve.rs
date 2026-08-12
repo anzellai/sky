@@ -2454,8 +2454,9 @@ impl<'a> Resolver<'a> {
             }
             ast::Type::Con(c) => {
                 let name = cst::first_upper(c.syntax()).unwrap_or_default();
-                self.record_type_occ(c.syntax().text_range(), &name);
-                self.type_con_at(&name, Vec::new(), Some(self.span_of(c.syntax().text_range())))
+                let range = type_con_range(c.syntax());
+                self.record_type_occ(range, &name);
+                self.type_con_at(&name, Vec::new(), Some(self.span_of(range)))
             }
             ast::Type::Qual(q) => {
                 let (qual, name) = cst::dotted_parts(q.syntax());
@@ -2470,8 +2471,9 @@ impl<'a> Resolver<'a> {
                 match head {
                     ast::Type::Con(c) => {
                         let name = cst::first_upper(c.syntax()).unwrap_or_default();
-                        self.record_type_occ(c.syntax().text_range(), &name);
-                        self.type_con_at(&name, args, Some(self.span_of(c.syntax().text_range())))
+                        let range = type_con_range(c.syntax());
+                        self.record_type_occ(range, &name);
+                        self.type_con_at(&name, args, Some(self.span_of(range)))
                     }
                     ast::Type::Qual(q) => {
                         let (qual, name) = cst::dotted_parts(q.syntax());
@@ -2943,6 +2945,22 @@ fn to_ctor_ref(ct: &crate::exports::ExportedCtor) -> CtorRef {
         index: ct.index,
         arity: ct.arity,
     }
+}
+
+/// The source range of a `TypeCon`'s NAME — the `UpperIdent` token, not the
+/// enclosing node.
+///
+/// A `TypeCon` node's `text_range()` starts at the node's first token, which
+/// includes the leading whitespace trivia the parser attached to it. Using the
+/// node range makes `Shape` in `pick : Shape` span `" Shape"`, one column too
+/// far left, which the editor then renders as a squiggle sitting under the
+/// space — visible on `[E1012]`'s type-namespace arm, and on every hover /
+/// goto-def / rename hit-range recorded by `record_type_occ` (hovering the
+/// space before a type name resolved the type). Falls back to the node range
+/// only when the node carries no `UpperIdent` at all, which the callers'
+/// `first_upper` already treats as a malformed-parse case.
+fn type_con_range(n: &syntax::SyntaxNode) -> syntax::TextRange {
+    cst::first_upper_tok(n).map_or_else(|| n.text_range(), |t| t.text_range())
 }
 
 fn decl_name(d: &ast::Decl) -> Option<String> {

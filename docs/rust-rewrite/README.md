@@ -75,7 +75,7 @@ docs (03–12) authored against the spine. The docs describe the target architec
 Cargo workspace (all crates in [`02`](02-workspace-and-crates.md)) is well past a
 skeleton: the non-FFI corpus builds+runs and matches the Haskell differential
 oracle, the FFI subsystem scales to the 76k-symbol Stripe SDK, `sky` is a
-standalone binary, the LSP passes its 17/17 Neovim gate (plus broader
+standalone binary, the LSP passes its 49/49 Neovim gate (plus broader
 references/rename/semantic-token coverage), and a determinism gate holds. Two
 target mechanisms are **still in progress** and are called out inline where the docs
 present them in the present tense:

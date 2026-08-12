@@ -187,7 +187,16 @@ end
 -- either `result.range.start.line` or `result.targetRange.start.line`
 -- (LSP allows both shapes). Returns false with a debug message if
 -- the resolved line differs or the response is empty.
-local function test_goto_def(bufnr, line, col, expected_line)
+--
+-- `expected_col` (optional) additionally pins the COLUMN. It exists because a
+-- line-only assertion is vacuous whenever the definition lives on the SAME line
+-- as the reference: `goto-def-lambda-param` asks at 29:17 and expects line 29,
+-- so it passed even against a stub that echoed the cursor's own position back
+-- (verified by mutation — it was the only one of the six goto-def cases that
+-- survived replacing the resolved line with the requested one). Callers whose
+-- target is on a different line than the cursor are already falsifiable by the
+-- line alone and pass no column, keeping their assertions exactly as they were.
+local function test_goto_def(bufnr, line, col, expected_line, expected_col)
     local result = nil
     vim.lsp.buf_request(bufnr, "textDocument/definition",
         {
@@ -199,15 +208,23 @@ local function test_goto_def(bufnr, line, col, expected_line)
     if not result then return false, "no definition response" end
     local first = result[1] or result
     if not first then return false, "empty definition response" end
-    local target_line = nil
+    local target_line, target_col = nil, nil
     if first.range and first.range.start then
         target_line = first.range.start.line
+        target_col  = first.range.start.character
     elseif first.targetRange and first.targetRange.start then
         target_line = first.targetRange.start.line
+        target_col  = first.targetRange.start.character
     end
     if target_line ~= expected_line then
         return false, string.format("definition went to line %s (expected %d)",
             tostring(target_line), expected_line)
+    end
+    if expected_col ~= nil and target_col ~= expected_col then
+        return false, string.format(
+            "definition landed on line %d col %s (expected col %d — the binder, "
+            .. "not the reference the cursor was already on)",
+            target_line, tostring(target_col), expected_col)
     end
     return true, string.format("jumped to line %d", target_line)
 end
@@ -524,10 +541,12 @@ local tests = {
 
     -- Goto-def on `x` (lambda param) at its USE site in
     -- `\x -> x * 2` (line 29 col 17 — the right-hand `x`).
-    -- Expect to land on the binder (line 29 col 12).
+    -- Expect to land on the binder (line 29 col 12). The COLUMN is
+    -- load-bearing: binder and reference share a line, so line 29 alone
+    -- is also true of "no jump happened at all".
     ["goto-def-lambda-param"] = function()
         local bufnr = start_lsp(project_dir .. "/src/Main.sky")
-        return test_goto_def(bufnr, 29, 17, 29)
+        return test_goto_def(bufnr, 29, 17, 29, 12)
     end,
 
     -- Goto-def on a record-field access. `model.count` (line 12

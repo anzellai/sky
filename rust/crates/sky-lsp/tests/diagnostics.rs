@@ -428,3 +428,263 @@ const _: fn() -> Position = || Position {
     line: 0,
     character: 0,
 };
+
+// ---------------------------------------------------------------------------
+// 7. A resolve error is published EXACTLY ONCE.
+//
+// `Analysis::diagnostics` takes its own copy of `db.resolve(module).diagnostics`
+// AND appends `ty::check_modules`, whose `name_errors` loop re-publishes every
+// ERROR-severity resolve diagnostic. Before the dedupe, that made the editor
+// draw every naming error twice while `sky check` printed it once — two
+// identical squiggles and two quickfix rows for one mistake.
+//
+// The existing `genuine_undefined_name_still_reported` above cannot catch this:
+// it asserts `!errs.is_empty()` and then `find`s a match, so N copies pass just
+// as well as one. This test is the counting one.
+//
+// Falsifiability twin: the same buffer with the name DEFINED publishes zero, so
+// the assertion is not satisfied by a build that reports nothing.
+// ---------------------------------------------------------------------------
+
+/// Every distinct (code, message, range) triple, with how many times it was
+/// published. Anything above 1 is a duplicate the user sees twice.
+fn publish_counts(diags: &[Diagnostic]) -> Vec<(String, u32)> {
+    let mut counts: Vec<(String, u32)> = Vec::new();
+    for d in diags {
+        let key = format!(
+            "{:?}|{}|{:?}",
+            d.code,
+            d.message.lines().next().unwrap_or(""),
+            d.range
+        );
+        match counts.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((key, 1)),
+        }
+    }
+    counts
+}
+
+#[test]
+fn undefined_name_is_published_exactly_once() {
+    let root = build_fixture(true);
+    let mut a = analysis_for(&root);
+
+    let buf = "\
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+main =
+    println thisNameDoesNotExist
+";
+    a.set_document(main_url(&root), buf.to_string());
+
+    let diags = a.diagnostics(&main_url(&root));
+    let dupes: Vec<_> = publish_counts(&diags)
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .collect();
+    assert!(
+        dupes.is_empty(),
+        "each diagnostic must reach the editor ONCE — `sky check` prints one \
+         line per naming error and the editor must agree. Duplicated: {dupes:#?}\n\
+         all diags: {diags:#?}"
+    );
+    assert_eq!(
+        errors(&diags).len(),
+        1,
+        "one undefined name is one error; got: {:#?}",
+        errors(&diags)
+    );
+}
+
+#[test]
+fn ambiguous_name_is_published_exactly_once_in_every_namespace() {
+    // `[E1012]` fires in three namespaces. Each is produced by `hir::resolve`,
+    // so each was doubled by the same path; each is asserted here so a partial
+    // regression (say, types only) still goes red.
+    for (label, deps, buf) in [
+        (
+            "value",
+            [
+                ("Alpha.sky", "module Alpha exposing (..)\n\nlabel : String\nlabel =\n    \"A\"\n"),
+                ("Beta.sky", "module Beta exposing (..)\n\nlabel : String\nlabel =\n    \"B\"\n"),
+            ],
+            "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Std.Log exposing (println)\nimport Alpha exposing (..)\nimport Beta exposing (..)\n\nmain =\n    println label\n",
+        ),
+        (
+            "constructor",
+            [
+                ("Alpha.sky", "module Alpha exposing (..)\n\ntype One\n    = Same\n"),
+                ("Beta.sky", "module Beta exposing (..)\n\ntype Two\n    = Same\n"),
+            ],
+            "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Alpha exposing (..)\nimport Beta exposing (..)\n\nmain =\n    Same\n",
+        ),
+        (
+            "type",
+            [
+                ("Alpha.sky", "module Alpha exposing (..)\n\ntype Shape\n    = Circle\n"),
+                ("Beta.sky", "module Beta exposing (..)\n\ntype Shape\n    = Square\n"),
+            ],
+            "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Alpha exposing (..)\nimport Beta exposing (..)\n\nmain : Shape\nmain =\n    Circle\n",
+        ),
+    ] {
+        let root = build_fixture(true);
+        let mut a = analysis_for(&root);
+        for (file, src) in deps {
+            a.set_document(sibling_url(&root, file), src.to_string());
+        }
+        a.set_document(main_url(&root), buf.to_string());
+
+        let diags = a.diagnostics(&main_url(&root));
+        let e1012: Vec<_> = diags
+            .iter()
+            .filter(|d| {
+                d.code
+                    == Some(tower_lsp::lsp_types::NumberOrString::String(
+                        "E1012".to_string(),
+                    ))
+            })
+            .collect();
+        assert_eq!(
+            e1012.len(),
+            1,
+            "the {label}-namespace ambiguity must publish EXACTLY ONE [E1012] \
+             (it was published twice before the dedupe); got: {e1012:#?}"
+        );
+    }
+}
+
+#[test]
+fn unambiguous_qualified_reference_publishes_no_e1012() {
+    // The twin for the three cases above: qualifying the reference removes the
+    // defect, so a compiler that flagged everything would fail here.
+    let root = build_fixture(true);
+    let mut a = analysis_for(&root);
+    a.set_document(
+        sibling_url(&root, "Alpha.sky"),
+        "module Alpha exposing (..)\n\nlabel : String\nlabel =\n    \"A\"\n".to_string(),
+    );
+    a.set_document(
+        sibling_url(&root, "Beta.sky"),
+        "module Beta exposing (..)\n\nlabel : String\nlabel =\n    \"B\"\n".to_string(),
+    );
+    let buf = "\
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Alpha exposing (..)
+import Beta exposing (..)
+
+main =
+    println Alpha.label
+";
+    a.set_document(main_url(&root), buf.to_string());
+
+    let diags = a.diagnostics(&main_url(&root));
+    let errs = errors(&diags);
+    assert!(
+        errs.is_empty(),
+        "a QUALIFIED reference resolves the ambiguity and must publish nothing \
+         — otherwise the [E1012] assertions above would pass against a build \
+         that rejects every program; got: {errs:#?}"
+    );
+}
+
+#[test]
+fn over_application_publishes_e2007_at_the_call() {
+    // `[E2007]` had no LSP-level coverage at all: `ty/src/infer.rs`'s arity gate
+    // was asserted only through the reject corpus, which reads exit codes, not
+    // what an editor renders. Over-application is a top-3 typo class, so the
+    // range matters — it must underline the CALL, not the enclosing def.
+    let root = build_fixture(true);
+    let mut a = analysis_for(&root);
+
+    let buf = "\
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+twice : Int -> Int
+twice n =
+    n * 2
+
+
+main =
+    println (String.fromInt (twice 1 2))
+";
+    a.set_document(main_url(&root), buf.to_string());
+
+    let diags = a.diagnostics(&main_url(&root));
+    let e2007: Vec<_> = diags
+        .iter()
+        .filter(|d| {
+            d.code
+                == Some(tower_lsp::lsp_types::NumberOrString::String(
+                    "E2007".to_string(),
+                ))
+        })
+        .collect();
+    assert_eq!(
+        e2007.len(),
+        1,
+        "over-applying a 1-arg function must publish exactly one [E2007]; \
+         got: {diags:#?}"
+    );
+    let d = e2007[0];
+    assert!(
+        d.message.contains("twice") && d.message.contains("1-arg"),
+        "the message must name the callee and its declared arity; got: {}",
+        d.message
+    );
+    // The span is the call EXPRESSION — `(twice 1 2)`, parens included — on the
+    // body line, not the `main =` header the def-level fallback would pick.
+    let call = pos_in(buf, "(twice 1 2)", 0);
+    assert_eq!(
+        d.range.start, call,
+        "the [E2007] range must underline the over-applied CALL, not the \
+         enclosing def; got: {:?}",
+        d.range
+    );
+    assert_eq!(
+        d.range.end.line, call.line,
+        "the [E2007] range must not spill past the call's own line; got: {:?}",
+        d.range
+    );
+}
+
+#[test]
+fn correct_arity_call_publishes_no_e2007() {
+    // Twin for `over_application_publishes_e2007_at_the_call`.
+    let root = build_fixture(true);
+    let mut a = analysis_for(&root);
+
+    let buf = "\
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+twice : Int -> Int
+twice n =
+    n * 2
+
+
+main =
+    println (String.fromInt (twice 1))
+";
+    a.set_document(main_url(&root), buf.to_string());
+
+    let diags = a.diagnostics(&main_url(&root));
+    let errs = errors(&diags);
+    assert!(
+        errs.is_empty(),
+        "the correctly-applied twin must publish nothing; got: {errs:#?}"
+    );
+}

@@ -45,10 +45,26 @@ TESTS=(
     goto-def-field
 )
 
+# The CORPUS groups (scripts/lsp-corpus-nvim.lua). Each runs many cases against
+# ONE LSP session and prints one PASS/FAIL line per case — the single-fixture
+# suite above cannot express cross-module resolution, the import shapes, a
+# diagnostic's editor-visible code+range, or a real app.
+CORPUS_GROUPS=(
+    multimodule
+    diagnostics
+    realapp
+)
+
+CORPUS_DIR="${LSP_NVIM_CORPUS:-/tmp/lsp-corpus-work}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 failures=()
+total=0
+
 for t in "${TESTS[@]}"; do
     out=$(nvim --headless -u NONE -l scripts/lsp-test-nvim.lua "$PROJECT_DIR" "$t" 2>&1)
     result=$(printf '%s' "$out" | grep -oE '(PASS|FAIL): [^"]*' | head -1)
+    total=$((total + 1))
     if [ -z "$result" ]; then
         result="??: $t (no PASS/FAIL marker — check raw output)"
         failures+=("$t")
@@ -58,11 +74,46 @@ for t in "${TESTS[@]}"; do
     echo "$result"
 done
 
+for g in "${CORPUS_GROUPS[@]}"; do
+    out=$(nvim --headless -u NONE -l scripts/lsp-corpus-nvim.lua \
+              "$CORPUS_DIR" "$g" "$REPO_ROOT" 2>&1)
+    # Per-case lines. `-a` because nvim can emit non-UTF8 bytes on its message
+    # stream, which would make grep treat the whole stream as binary and print
+    # nothing — a silent zero-case group.
+    lines=$(printf '%s' "$out" | grep -aoE '(PASS|FAIL): [A-Za-z0-9_-]+' || true)
+    parsed=$(printf '%s' "$lines" | grep -ac . || true)
+    # The driver states how many cases it ran. If we parsed a different number,
+    # a result line was swallowed — treat that as a failure of the GROUP rather
+    # than quietly reporting fewer cases than actually ran.
+    declared=$(printf '%s' "$out" | grep -aoE "CASES: $g [0-9]+" | grep -oE '[0-9]+$' || true)
+
+    if [ -n "$lines" ]; then
+        printf '%s\n' "$lines"
+    fi
+
+    if [ -z "$declared" ]; then
+        echo "FAIL: corpus/$g: the group printed no CASES: line (it crashed, or nvim is broken)"
+        failures+=("corpus/$g")
+        total=$((total + parsed))
+        continue
+    fi
+    if [ "$parsed" -ne "$declared" ]; then
+        echo "FAIL: corpus/$g: parsed $parsed result lines but the group ran $declared cases"
+        failures+=("corpus/$g")
+    fi
+    total=$((total + declared))
+    while IFS= read -r l; do
+        case "$l" in
+            FAIL:*) failures+=("${l#FAIL: }") ;;
+        esac
+    done <<< "$lines"
+done
+
 echo ""
 if [ ${#failures[@]} -eq 0 ]; then
-    echo "All ${#TESTS[@]} tests passed."
+    echo "All $total tests passed."
     exit 0
 else
-    echo "FAILED (${#failures[@]} of ${#TESTS[@]}): ${failures[*]}"
+    echo "FAILED (${#failures[@]} of $total): ${failures[*]}"
     exit 1
 fi

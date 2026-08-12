@@ -249,9 +249,10 @@ are the topology examples; `39-hub-demo` is **built by nothing at all**.
 
 Better covered than expected: **88 test fns across 13 files**, including 7 that
 drive the real server binary over JSON-RPC stdio. `xtask lsp` additionally
-shells `scripts/lsp-test-nvim.sh` (17 Neovim editor-parity tests) — but
-**unbounded** (`lsp_gate.rs:46-50`) and **exit 0 when `nvim` is absent**
-(`lsp_gate.rs:20-27`).
+shells `scripts/lsp-test-nvim.sh` (49 Neovim editor-parity cases: 17 symbol-class
++ 32 corpus covering cross-module resolution, the import shapes, editor-visible
+diagnostic codes+ranges, and a real `examples/` app) — but **unbounded**
+(`lsp_gate.rs:46-50`) and **exit 0 when `nvim` is absent** (`lsp_gate.rs:20-27`).
 
 Genuine gaps: `prepareRename`'s *success* path (only the decline path is
 tested, `scenarios.rs:331`), `completionItem/resolve`, `semanticTokens/range`

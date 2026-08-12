@@ -1,10 +1,22 @@
 //! `xtask lsp` — the Neovim editor-parity gate (doc 10's non-negotiable floor).
 //!
-//! Drives the REAL Neovim LSP client (`scripts/lsp-test-nvim.sh`, 17 tests:
-//! hover / completion / goto-def across every user-visible symbol class) against
-//! the Rust `sky lsp`. This catches editor-level bugs — label-vs-insertText,
+//! Drives the REAL Neovim LSP client (`scripts/lsp-test-nvim.sh`) against the
+//! Rust `sky lsp`. This catches editor-level bugs — label-vs-insertText,
 //! filterText, scope handling — that the in-process JSON-RPC tests
 //! (`sky-lsp/tests/*.rs`) miss.
+//!
+//! Two suites run under that one script:
+//!   * the original 17 single-fixture cases (`lsp-test-nvim.lua`), one symbol
+//!     class each; and
+//!   * the corpus (`lsp-corpus-nvim.lua`) — cross-module resolution through
+//!     every import shape, goto-def into `sky-stdlib`, `[E1012]`/`[E2008]`/
+//!     `[E2007]` as an editor renders them, the broken-file usability cases,
+//!     and the server driven over a REAL `examples/` project.
+//!
+//! The case count is NOT asserted here: the script owns it, prints one line per
+//! case, and cross-checks each corpus group's parsed line count against the
+//! count that group declares. Hardcoding a total in this file would only add a
+//! second place to forget to update.
 //!
 //! The gate builds/locates the `sky` binary, puts it on `PATH` (the harness
 //! launches `cmd = { "sky", "lsp" }`), and shells the script. If Neovim is not
@@ -19,7 +31,7 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
     // nvim present? A missing nvim is a loud skip locally; CI installs it.
     if !tool_available("nvim") {
         println!(
-            "LSP GATE: SKIP — `nvim` is not installed. The 17-test editor-parity \
+            "LSP GATE: SKIP — `nvim` is not installed. The editor-parity \
              suite did NOT run. CI installs Neovim and enforces it; install nvim \
              locally to run this gate (`brew install neovim` / `apt install neovim`)."
         );
@@ -42,7 +54,7 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
         Err(_) => sky_dir.display().to_string(),
     };
 
-    println!("LSP GATE: running 17-test Neovim editor-parity suite against `sky lsp`…");
+    println!("LSP GATE: running the Neovim editor-parity suite against `sky lsp`…");
     let status = Command::new("bash")
         .arg("scripts/lsp-test-nvim.sh")
         .current_dir(repo_root)
@@ -51,7 +63,7 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
 
     match status {
         Ok(s) if s.success() => {
-            println!("LSP GATE: PASS  (17/17 Neovim editor-parity tests)");
+            println!("LSP GATE: PASS  (all Neovim editor-parity cases; see the per-case lines above)");
             0
         }
         Ok(s) => {

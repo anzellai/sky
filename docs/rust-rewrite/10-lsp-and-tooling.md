@@ -23,7 +23,7 @@ the lossless CST, so hover/goto/completion work on broken code).
 > fields, type names, kernel calls, ctors, lambda params, case patterns),
 > `goto`/definition, `completion` (qualified / field / let-binding), `references`,
 > `prepare_rename` + `rename`, `semantic_tokens` (a frozen 12-type legend), and
-> document-symbols. It passes the 17/17 Neovim gate (`scripts/lsp-test-nvim.sh`)
+> document-symbols. It passes the 49/49 Neovim gate (`scripts/lsp-test-nvim.sh`)
 > plus a broader in-process + JSON-RPC suite. It owns no IORef pile — the 8-IORef +
 > 5-round-fixpoint + background-`sky check` scars are genuinely gone. **Two gaps
 > vs the present-tense text below:**
@@ -311,7 +311,7 @@ frozen, this is a pure compat surface.
 
 ---
 
-## The 17-test compat gate (acceptance criteria)
+## The Neovim editor-parity gate (acceptance criteria)
 
 `scripts/lsp-test-nvim.sh` drives the LSP through a **real Neovim LSP client** —
 so it catches editor-level bugs (label-vs-insertText, filterText, scope) that
@@ -346,12 +346,40 @@ patterns), **completion** (3: qualified insert-text, field, let-binding), and
 params, fields). Every one is `resolve_at` returning a `Resolution`, then either
 `infer_type_of` (hover), `def_span` (goto), or a scope/exports enumeration
 (completion). The gate is met when the same `.lua` runner reports `PASS` for all
-17 (`lsp-test-nvim.sh:49–67`). `xtask` runs it in CI; see
+17, and the corpus below reports PASS for its 32 (`lsp-test-nvim.sh`). `xtask`
+runs both in CI; see
 [`11`](11-testing-and-verification.md).
 
 > Beyond the 17, the semantic-tokens, references, rename, signature-help,
 > inlay-hint, and diagnostics surfaces carry their own snapshot tests (`insta`),
-> but the 17-nvim suite is the *non-negotiable editor-parity floor*.
+> but the nvim suite is the *non-negotiable editor-parity floor*.
+
+### The corpus (`scripts/lsp-corpus-nvim.lua`) — 32 further cases
+
+The 17 above all run against ONE synthetic single-module fixture (a record
+alias, one ADT, two functions, a `let`, a lambda). That fixture cannot express
+the shapes real Sky code has, so the corpus adds 32 cases in three groups. The
+script runs both suites; `xtask lsp` reports the combined 49.
+
+| Group | Cases | Shapes covered |
+|---|---|---|
+| `multimodule` | 16 | goto-def ACROSS a module boundary through every import form — `import X` (qualifier is the LAST segment), `import X as Y`, **`import X as Y` where `Y` is not the last segment** (the #164 shape), `exposing (Type, Ctor(..))`, `exposing (..)` — plus goto-def into `sky-stdlib`, hover on a pipeline ref / record-update target / imported-ctor case pattern, and qualified completion through each qualifier with a bare `insertText`. |
+| `diagnostics` | 9 | `[E1012]` in all three namespaces (value / constructor / type), `[E2008]` unsupported `Dict` key and `[E2007]` over-application — each asserted with its CODE and its RANGE as the editor renders it; a valid module in the same project publishing nothing (the falsifiability twin); and the broken-file usability cases — hover and completion must still work in a file that has a type error, and hover on an unresolvable name must not invent a signature or kill the session. |
+| `realapp` | 7 | The server driven over `examples/19-skyforum` IN PLACE — a real multi-module Sky.Live `Model`/`Msg`/`update`/`view` app. Cross-module goto-def into sibling `Update`/`View.Posts`/`State` modules, hover resolving a signature whose types live in three other modules, and **zero error diagnostics**: the editor must not red-squiggle a shipping example. |
+
+Two properties are deliberate:
+
+* **A group shares ONE LSP session.** Startup dominates (~10 s per nvim + server),
+  so a case-per-session design would cost ~5.5 min for these 32; sharing brings
+  the corpus in at ~20 s. Every case is read-only with respect to the positions
+  other cases use — the completion cases append at the END of the buffer, after
+  all position-based cases in their group have run. A long-lived session is also
+  the more faithful editor simulation.
+* **Every case is falsifiable, proven by mutation.** Cross-module goto-def
+  asserts the target FILE, not just a line (a line-only assertion cannot tell a
+  cross-module jump from a same-file one). Positions are searched at run time,
+  never hardcoded, so the `realapp` group survives edits to an example it does
+  not own.
 
 ---
 
@@ -563,7 +591,7 @@ query output, so they *cannot* diverge (the LSP-vs-CLI asymmetry that forced the
 
 ## Acceptance gates (this doc)
 
-1. **17/17 nvim LSP tests pass** against `scripts/lsp-test-nvim.sh` unmodified —
+1. **49/49 nvim LSP cases pass** against `scripts/lsp-test-nvim.sh` unmodified —
    the editor-parity floor.
 2. **LSP capability parity** with `Server.hs:1108–1148` (hover, goto, declaration,
    completion, references, rename+prepare, document-symbol, formatting,
