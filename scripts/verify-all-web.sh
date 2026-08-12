@@ -125,7 +125,13 @@ for entry in "${TESTS[@]}"; do
             fi
             echo "--- sky build ---"
             bounded 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky 2>&1
-        ) >"$buildlog" 2>&1 || true
+        ) >"$buildlog" 2>&1
+        # Deliberately NOT `|| exit`: a build failure is not the verdict here.
+        # The verdict is the browser run below, which reports "binary missing"
+        # and counts a failure — so a broken build is caught by the check that
+        # was going to run anyway, and its exit status is recorded rather than
+        # acted on twice.
+        echo "(exit $?)" >>"$buildlog"
     fi
     # Kill any process on this port pre-flight
     pid=$(lsof -ti ":$port" 2>/dev/null || true)
