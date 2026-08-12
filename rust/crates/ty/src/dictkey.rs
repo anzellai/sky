@@ -56,6 +56,33 @@
 //! * **An unknown / FFI-opaque name** the world could not resolve. The `ty`
 //!   leniency contract already turns those into fresh flexible vars.
 //!
+//! # There is deliberately NO `Set` analogue of this check
+//!
+//! `Sky.Core.Set` had the same defect from the same cause — `SkySet` keyed its
+//! backing map on `fmt.Sprintf("%v", element)`, so
+//! `Set.fromList [ ( "a b", "c" ), ( "a", "b c" ) ]` returned a set of size ONE
+//! and one element was silently gone. The obvious move is to copy this file for
+//! `Set`. **Do not.** The two containers need DIFFERENT things from the key:
+//!
+//! * A `Dict k v` must DECODE the key back out — `toList` / `keys` / `foldl` /
+//!   `map` all hand the user a `k` again. Decode is definable for exactly the
+//!   five types above, so restricting the key costs nothing that could have
+//!   worked, and the check is the only place the restriction can be stated.
+//! * A `Set a` never reproduces its key. `SkySet` stores the ORIGINAL element
+//!   beside the key and `Set.toList` returns THAT. It needs INJECTIVITY ONLY.
+//!
+//! Measured on `main` before the fix, `Set ( Int, Int )`, `Set Color`,
+//! `Set (Maybe Int)`, `Set { x : Int, y : Int }` and `Set (List Int)` all
+//! behaved correctly; `%v` fails only on composites whose rendering is not
+//! self-delimiting, which in practice means composites containing STRINGS.
+//! Transplanting [`SUPPORTED_DICT_KEYS`] onto `Set` would have rejected every
+//! one of those working programs — precisely what the FAIL-OPEN RULE above
+//! forbids. So `Set` is fixed at RUNTIME instead, by an injective key
+//! (`runtime-go/rt/identity_key.go`), which additionally fixes the composites
+//! rather than merely refusing them. `Std.Cache`'s raw key and `Std.Ui.Lazy`'s
+//! memoisation fingerprint had the same non-injective identity and are closed
+//! the same way, for the same reason: neither is ever read back.
+//!
 //! # Aliases
 //!
 //! No alias handling lives here, deliberately. `sig::World` expands aliases
