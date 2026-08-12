@@ -244,26 +244,31 @@ isHrLine t =
     in
         String.length t >= 3
             && (first == "-" || first == "*" || first == "_")
-            && allChars first t
+            && restIsAll first t 1
 
 
--- Is every character of `s` the single character `c`?
+-- Is every character of `s` from index `i` onward the single
+-- character `c`? Index 0 is skipped by the only caller, which has
+-- already established it — `first` IS `String.slice 0 1 t`.
 --
--- The first-character test above guards this so the character list
--- is only ever built for a line that could still BE a rule.
--- `isHrLine` runs on every line of the document (twice, via
--- `isBlockStarter`), so an unguarded scan would allocate a list
--- per line of ordinary prose.
-allChars : String -> String -> Bool
-allChars c s =
-    List.all (\ch -> ch == c) (stringChars s)
+-- An index scan rather than `List.all (\ch -> ch == c)` over a
+-- materialised character list: `isHrLine` runs on every line of
+-- the document (twice, via `isBlockStarter`), and the list form
+-- allocated a `List String` — one single-character string per
+-- character — for every line that got past the first-character
+-- guard. This walks the string in place and stops at the first
+-- character that does not match, so a long `----------------…`
+-- rule costs no allocation and a near-miss exits early.
+restIsAll : String -> String -> Int -> Bool
+restIsAll c s i =
+    if i >= String.length s then
+        True
 
+    else if String.slice i (i + 1) s == c then
+        restIsAll c s (i + 1)
 
--- The characters of `s`, as single-character strings.
-stringChars : String -> List String
-stringChars s =
-    List.map (\i -> String.slice i (i + 1) s)
-        (List.range 0 (String.length s - 1))
+    else
+        False
 
 
 -- A blockquote line: `> text`, or a bare `>` for a blank quoted

@@ -62,7 +62,7 @@
 53-record-update-map	28
 54-record-fieldset-collision	5
 55-store-partial-update	99
-apps/dispatch	577
+apps/dispatch	607
 apps/fieldbook	756
 apps/ledger	560
 apps/relay	187
