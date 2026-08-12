@@ -1,0 +1,160 @@
+module Core.KernelQualifierSigsTest exposing (tests)
+
+-- The RUNTIME leg for the kernel-qualifier members that gained a Sky
+-- signature.  `rust/crates/ty/tests/kernel_qualifier_sigs.rs` proves the
+-- checker now rejects their misuse; nothing there proves the emitted Go still
+-- computes the right answer, and a signature changes emission.  It already
+-- broke one member: with `toBytes : String -> List Int` declared, typed
+-- codegen hands the kernel a Go `[]int`, `rt.String_fromBytes` asserted
+-- `.([]any)`, and `String.fromBytes (String.toBytes s)` silently became `""`
+-- for every input.  It built clean.  Only running it showed the defect.
+--
+-- The `map5` case is the exact shape of `skydeploy/control-plane`'s
+-- `reportDecoder` — the ONE place in three real apps where this change altered
+-- emission.  Declaring `JsonDec.map5` concretised the lambda's parameters
+-- (`func(v_0 int, v_1 string, …)` instead of five `any`s) and removed five
+-- `rt.AsInt`/`rt.AsString` narrowings, which means `apply5` now reflect-calls
+-- a typed-parameter Go func.  That is a runtime contract, not a type-level
+-- one, so it is asserted here.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Json.Decode as Decode
+import Sky.Test as Test exposing (Test)
+
+type alias Report =
+    { deploymentId : Int
+    , status : String
+    , url : String
+    , image : String
+    , buildLog : String
+    }
+
+
+reportDecoder : Decode.Decoder Report
+reportDecoder =
+    Decode.map5
+        (\d s u i l ->
+            { deploymentId = d, status = s, url = u, image = i, buildLog = l })
+        (Decode.field "deploymentId" Decode.int)
+        (Decode.field "status" Decode.string)
+        (Decode.field "url" Decode.string)
+        (Decode.oneOf [ Decode.field "image" Decode.string, Decode.succeed "" ])
+        (Decode.field "buildLog" Decode.string)
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "kernel-qualifier signatures — runtime behaviour"
+          [ Test.test
+                "String.left / right / truncate / ellipsize take the COUNT first"
+                (\_ ->
+                    Test.equal
+                        "abc|ef|abc|ab…"
+                        (String.left 3 "abcdef" ++ "|" ++ String.right 2 "abcdef"
+                            ++ "|"
+                            ++ String.truncate 3 "abcdef"
+                            ++ "|"
+                            ++ String.ellipsize 2 "abcdef"))
+          , Test.test
+                "String.slugify / htmlEscape return strings, isValid a Bool"
+                (\_ ->
+                    -- `toString` on a Bool is Go-spelled (`true`).
+                    Test.equal
+                        "hello-world|&lt;b&gt;|true"
+                        (String.slugify "Hello, World!" ++ "|"
+                            ++ String.htmlEscape "<b>"
+                            ++ "|"
+                            ++ toString (String.isValid "ok")))
+          , Test.test
+                "String.graphemes counts CLUSTERS, not runes — and returns an Int"
+                (\_ ->
+                    -- `String.length` counts runes, so the two disagree on a ZWJ
+                    -- sequence. If `graphemes` ever returned a list, the `+` here
+                    -- would not type-check.
+                    Test.equal 4 (String.graphemes "ab👨‍👩‍👧c"))
+          , Test.test
+                "String.toBytes / fromBytes round-trip through a TYPED slice"
+                (\_ ->
+                    Test.equal
+                        "hey|héllo ☃|"
+                        (String.fromBytes (String.toBytes "hey") ++ "|"
+                            ++ String.fromBytes (String.toBytes "héllo ☃")
+                            ++ "|"
+                            ++ String.fromBytes (String.toBytes "")))
+          , Test.test
+                "String.toChar yields a Char that fromChar accepts"
+                (\_ -> Test.equal "a" (String.fromChar (String.toChar "abc")))
+          , Test.test
+                "Time.parse / parseISO8601 are PURE + fallible (Result, not Task)"
+                (\_ ->
+                    Test.equal
+                        ( 1735689600000, 1735689600000, 0 )
+                        ( Result.withDefault
+                              0
+                              (Time.parse "2006-01-02" "2025-01-01")
+                        , Result.withDefault
+                              0
+                              (Time.parseISO8601 "2025-01-01T00:00:00Z")
+                        , Result.withDefault
+                              0
+                              (Time.parseISO8601 "not a timestamp")
+                        ))
+          , Test.test
+                "Task.map2 / map3 combine left-to-right"
+                (\_ ->
+                    Test.equal
+                        ( 3, "xyz" )
+                        ( Result.withDefault
+                              0
+                              (Task.run
+                                  (Task.map2
+                                      (\a b -> a + b)
+                                      (Task.succeed 1)
+                                      (Task.succeed 2)))
+                        , Result.withDefault
+                              ""
+                              (Task.run
+                                  (Task.map3
+                                      (\a b c -> a ++ b ++ c)
+                                      (Task.succeed "x")
+                                      (Task.succeed "y")
+                                      (Task.succeed "z")))
+                        ))
+          , Test.test
+                "Task.andMap takes the VALUE first and the FUNCTION second"
+                (\_ ->
+                    -- The swapped order type-checks under the old flex-var
+                    -- inference and yields the wrong answer, so the VALUE is the
+                    -- only witness. 7 * 3 = 21.
+                    Test.equal
+                        21
+                        (Result.withDefault
+                            0
+                            (Task.run
+                                (Task.andMap
+                                    (Task.succeed 7)
+                                    (Task.succeed (\n -> n * 3))))))
+          , Test.test
+                "JsonDec.map5 builds a typed record through a typed-param lambda"
+                (\_ ->
+                    case Decode.decodeString
+                             reportDecoder
+                             "{\"deploymentId\":42,\"status\":\"ok\",\"url\":\"https://x\",\"buildLog\":\"log\"}" of
+
+                        Ok r ->
+                            Test.equal
+                                "42|ok|https://x||log"
+                                (String.fromInt r.deploymentId ++ "|" ++ r.status
+                                    ++ "|"
+                                    ++ r.url
+                                    ++ "|"
+                                    ++ r.image
+                                    ++ "|"
+                                    ++ r.buildLog)
+
+                        Err _ ->
+                            Test.isTrue False)
+          ]
+    ]

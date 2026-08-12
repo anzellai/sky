@@ -454,7 +454,8 @@ main =
 | `Task.withRetryOn` | `(e -> Bool) -> RetryPolicy e -> RetryPolicy e` | Builder alias for `retryOn` — wraps predicate in `RetryWhen` |
 | `Task.retryOn` | `(e -> Bool) -> RetryPolicy e -> RetryPolicy e` | Predicate-gate retry (e.g. transient-vs-validation) — sets `shouldRetry = RetryWhen predicate` |
 | `Task.retryWith` | `RetryPolicy e -> Task e a -> Task e a` | Drive task up to maxAttempts; first Ok wins, last Err otherwise |
-| `Task.map2`...`Task.map5`, `Task.andMap` | combinators | NOT YET IMPLEMENTED — use `Task.parallel [...] \|> Task.map ...` or `Result.map2..5` for the Result counterparts |
+| `Task.map2` … `Task.map5` | `(a -> b -> c) -> Task e a -> Task e b -> Task e c` (…up to 5) | Combine N tasks with an N-ary function. Forces left to right, each task exactly once; a failure short-circuits the tasks to its right |
+| `Task.andMap` | `Task e a -> Task e (a -> b) -> Task e b` | Applicative application — VALUE first, FUNCTION second, matching `Maybe.andMap` / `Result.andMap`. Forces the function task first |
 
 ### `Cmd` / `Sub` — Sky.Live commands and subscriptions
 

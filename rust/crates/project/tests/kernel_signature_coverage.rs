@@ -46,27 +46,72 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Advertised kernel-qualifier members with NO Sky-level signature, as of the
-/// commit that added this gate. Each row is a program the checker cannot arity-
-/// check. **Ratchets DOWNWARD only.**
+/// Advertised kernel-qualifier members with NO Sky-level signature. Each row is
+/// a program the checker cannot arity-check. **Ratchets DOWNWARD only.**
 ///
-/// Four kinds of row, and they want different fixes:
+/// 94 rows when this gate was added; 68 now. The 26 that left were declared in
+/// `sky-stdlib/` against the RUNTIME's real shape (verified by
+/// `kernel_signature_runtime_arity.rs`, which compares every declaration's
+/// arrow count with its `runtime-go/rt` parameter count): all 13 unsigned
+/// `String` members, `Time.parse`/`parseISO8601`, `JsonDec.map5`,
+/// `Db.findWhere`, `Server.body`/`method`/`path`/`formValue`, and the five
+/// `Task` applicatives — which additionally needed `rt.Task_map2` … `rt.Task_-
+/// andMap` to exist at all (they were advertised with no runtime symbol, so
+/// every call was `[E4005]` at codegen).
 ///
-///   * **`Basics` / `List` / `Maybe` / `Result` combinators** — typed on the
-///     CHECK path only, via `ty::sig`'s hardcoded `check_kernel_sigs` seeds.
-///     `sky check` DOES arity-check these; the lowerer deliberately does not see
-///     them (`use_inferred`), because pinning a concrete element type there
-///     regressed the stdlib smoke test. Listed for completeness — they are the
-///     least urgent.
-///   * **No backing `.sky` module at all** (`Context`, `Ffi`, `Fmt`) — the
-///     pseudo-module has no Layer-3 source, so there is nowhere for a signature
-///     to live yet.
-///   * **A module that exists but omits the member** (`Db.findWhere`,
-///     `Io.writeString`, `Log.with`, `String.left`, `Time.parse`, …) — the
-///     `Path.join` shape exactly. These are the ones to close: add the
-///     annotation, delete the row.
-///   * **`Server`** — kernel-only verbs whose types involve builder shapes the
-///     `.sky` surface does not yet spell.
+/// What is LEFT is left for a reason, and the reason is per-category. None of
+/// these is "not got to yet":
+///
+///   * **`Basics` / `List` / `Maybe` / `Result` (47 rows)** — 29 of these are
+///     ALREADY arity-checked at the TYPE layer, with a source span, through
+///     `ty::sig`'s `check_kernel_sigs` seeds and its pass-3 `Result` inference.
+///     A `.sky` annotation would move them out of that CHECK-ONLY channel and
+///     into `kernel_sigs`, which the LOWERER reads (`use_inferred = true`) —
+///     the exact channel whose concrete pinning regressed the stdlib smoke test
+///     with a runtime `CoerceFailure` (see `infer_unannotated_kernel`'s
+///     `pseudo != "Result"` guard). High blast radius, no diagnostic gain.
+///     `Basics.abs`/`min`/`max`/`negate`/`sqrt`/`compare` additionally MUST NOT
+///     be pinned: the oracle accepts `abs "x"` / `min "a" 2`, so a signature
+///     would make Rust stricter than the oracle — a divergence, not a fix
+///     (verified against the absolute-path differential, 2026-07-20).
+///   * **`Fmt.sprint`/`sprintf`/`sprintln`/`errorf` (4)** — Go-VARIADIC
+///     (`args ...any`). HM has no variadic arrow, so no signature is both
+///     truthful and useful. `Fmt` also has no Layer-3 `.sky` module, and one
+///     under the bare name `Fmt` would mint a new public stdlib module.
+///   * **`Io.writeString` (1)** — arity-OVERLOADED at runtime with DIFFERENT
+///     return shapes: one argument yields a thunk (`Task`), two yield a bare
+///     `Ok` (`Result`). No single HM type covers both.
+///   * **`Context.background`/`todo`/`withCancel`/`withValue` (4)** — the value
+///     is a Go `context.Context`; Sky has no type that names it, and the
+///     pseudo-module has no Layer-3 source.
+///   * **`Ffi.*` (7)** — `Sky.Ffi` has no `.sky` module BY CONSTRUCTION: every
+///     stdlib module opens with `import Sky.Ffi as Ffi`, and `Ffi.kernel` is
+///     the compiler primitive that makes the alias those modules are built from.
+///   * **`Io.readBytes`, `List.parallelMap` (2)** — PHANTOM: advertised, no
+///     runtime symbol, no Sky body. Both already produce the identical
+///     `[E4005]` an unadvertised member produces, so deleting the row changes
+///     nothing a user sees while shrinking the stdlib-coverage denominator
+///     (`xtask::corpus::stdlib::kernel_inventory`). The honest repair is a
+///     runtime implementation whose semantics nobody has specified.
+///   * **`Log.with` (1)** — `rt.logAttrsToMap` accepts a Go map OR a flat
+///     alternating slice, so the runtime is WIDER than any single HM type. The
+///     `List a` its `infoWith` sibling carries is already narrower than the
+///     runtime and would false-reject `Log.with "msg" someDict`, which
+///     `test-files/log-test.sky` does today. The `*With` family shares the
+///     defect and should be re-derived from `logAttrsToMap` together.
+///   * **`Server.group`, `Server.use` (2)** — `rt.Server_use` is
+///     `func(_ any, routes any) any { return routes }`: it DISCARDS its
+///     middleware argument. Typing a no-op would stamp "checked" on a broken
+///     API. `group` mutates `SkyRoute.Path` inside a `[]any` and moves with it.
+///   * **`Db.getFieldOr` (1)** — the runtime accepts only `map[string]any`
+///     (`db_auth.go`), while typed codegen hands row accessors
+///     `map[string]string` once `query`/`findWhere` are declared
+///     `List (Dict String String)`; its five sibling accessors all handle both.
+///     So it silently returns the default for every field on the typed path.
+///     Its return is also the stored value verbatim, so `a -> row -> String ->
+///     a` would let `Db.getFieldOr 0 row "name"` type-check over a TEXT column
+///     and panic in `AsInt`. Both are runtime defects; the signature waits on
+///     the fix.
 const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
     (
         "Basics",
@@ -76,14 +121,13 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Context", &["background", "todo", "withCancel", "withValue"]),
-    ("Db", &["findWhere", "getFieldOr"]),
+    ("Db", &["getFieldOr"]),
     (
         "Ffi",
         &["call", "callPure", "callTask", "has", "isPure", "kernel", "toAny"],
     ),
     ("Fmt", &["errorf", "sprint", "sprintf", "sprintln"]),
     ("Io", &["readBytes", "writeString"]),
-    ("JsonDec", &["map5"]),
     (
         "List",
         &[
@@ -133,30 +177,7 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
             "withDefault",
         ],
     ),
-    (
-        "Server",
-        &["body", "formValue", "group", "method", "path", "use"],
-    ),
-    (
-        "String",
-        &[
-            "ellipsize",
-            "fromBytes",
-            "graphemes",
-            "htmlEscape",
-            "isValid",
-            "left",
-            "normalize",
-            "normalizeNFD",
-            "right",
-            "slugify",
-            "toBytes",
-            "toChar",
-            "truncate",
-        ],
-    ),
-    ("Task", &["andMap", "map2", "map3", "map4", "map5"]),
-    ("Time", &["parse", "parseISO8601"]),
+    ("Server", &["group", "use"]),
 ];
 
 /// Top-level `name : Type` annotations in a `.sky` source — exactly the decls

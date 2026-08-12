@@ -22,6 +22,7 @@ module Std.Db exposing
     , findOneByField
     , findManyByField
     , findByConditions
+    , findWhere
     , unsafeFindWhere
     , queryDecode
     , getByIdDecode
@@ -177,6 +178,20 @@ findManyByField =
 findByConditions : Db -> String -> Dict String String -> Task Error (List (Dict String String))
 findByConditions =
     Ffi.kernel "Db_findByConditions"
+
+
+-- | `findWhere db table whereClause params` — SELECT every row of
+-- `table` matching `whereClause`, with `params` bound to its `?`
+-- placeholders.
+--
+--     Db.findWhere db "post" "author_id = ?" [ authorId ]
+--
+-- `rt.Db_findWhere` delegates verbatim to `rt.Db_unsafeFindWhere`,
+-- so this carries that binding's type exactly.  Prefer
+-- `findByConditions` when the clause is built from user input.
+findWhere : Db -> String -> String -> List a -> Task Error (List (Dict String String))
+findWhere =
+    Ffi.kernel "Db_findWhere"
 
 
 -- | `unsafeFindWhere db table whereClause params` — raw `WHERE`

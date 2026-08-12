@@ -322,7 +322,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 384,
+      "expected_assertions": 393,
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
       "surfaces": [
@@ -491,7 +491,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1748,
+    "stdlib_entries": 1774,
     "stdlib_modules": 87,
     "surfaces_covered": 127,
     "surfaces_covered_pct": 90.1,
@@ -3001,6 +3001,11 @@
             "strength": 3
           },
           {
+            "by": "tests/Core (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "tests/Json (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -3040,6 +3045,11 @@
             "by": "examples/36-composite-server (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
           },
           {
             "by": "tests/Json — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
@@ -10637,15 +10647,16 @@
           ]
         },
         "Sky.Core.String": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "casefold",
             "concat",
             "equalFold",
-            "fromChar",
             "fromList",
             "isEmail",
             "isUrl",
+            "normalize",
+            "normalizeNFD",
             "toList"
           ]
         },
@@ -10664,19 +10675,26 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 5,
+          "count": 10,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
+            "andMap",
             "lazy",
+            "map2",
+            "map3",
+            "map4",
+            "map5",
             "mapError",
             "retryAlways"
           ]
         },
         "Sky.Core.Time": {
-          "count": 1,
+          "count": 3,
           "symbols": [
-            "every"
+            "every",
+            "parse",
+            "parseISO8601"
           ]
         },
         "Sky.Core.ToString": {
@@ -10706,11 +10724,12 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 6,
+          "count": 7,
           "symbols": [
             "Cookie",
             "Route",
             "Server",
+            "body",
             "delete",
             "put",
             "static"
@@ -10899,13 +10918,14 @@
           ]
         },
         "Std.Db": {
-          "count": 25,
+          "count": 26,
           "symbols": [
             "SqlField",
             "defaultMigration",
             "deleteById",
             "findByConditions",
             "findManyByField",
+            "findWhere",
             "fromMaybeBool",
             "fromMaybeBytes",
             "fromMaybeDecimal",
@@ -11498,7 +11518,7 @@
           ]
         }
       },
-      "count": 687,
+      "count": 697,
       "pct_of_denominator": 39.3
     },
     "symbols_unreferenced_strict": {
@@ -11674,15 +11694,16 @@
           ]
         },
         "Sky.Core.String": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "casefold",
             "concat",
             "equalFold",
-            "fromChar",
             "fromList",
             "isEmail",
             "isUrl",
+            "normalize",
+            "normalizeNFD",
             "toList"
           ]
         },
@@ -11701,19 +11722,26 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 5,
+          "count": 10,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
+            "andMap",
             "lazy",
+            "map2",
+            "map3",
+            "map4",
+            "map5",
             "mapError",
             "retryAlways"
           ]
         },
         "Sky.Core.Time": {
-          "count": 1,
+          "count": 3,
           "symbols": [
-            "every"
+            "every",
+            "parse",
+            "parseISO8601"
           ]
         },
         "Sky.Core.ToString": {
@@ -11744,7 +11772,7 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 9,
+          "count": 10,
           "symbols": [
             "Cookie",
             "Handler",
@@ -11752,6 +11780,7 @@
             "Response",
             "Route",
             "Server",
+            "body",
             "delete",
             "put",
             "static"
@@ -11951,7 +11980,7 @@
           ]
         },
         "Std.Db": {
-          "count": 26,
+          "count": 27,
           "symbols": [
             "SqlField",
             "SqlValue",
@@ -11959,6 +11988,7 @@
             "deleteById",
             "findByConditions",
             "findManyByField",
+            "findWhere",
             "fromMaybeBool",
             "fromMaybeBytes",
             "fromMaybeDecimal",
@@ -12610,8 +12640,8 @@
           ]
         }
       },
-      "count": 766,
-      "pct_of_denominator": 43.8
+      "count": 776,
+      "pct_of_denominator": 43.7
     }
   },
   "units": [
@@ -12621,8 +12651,8 @@
       "id": "apps:bundled",
       "modules_imported": 24,
       "path": "sky-bundled",
-      "refs_generous": 119,
-      "refs_qualified": 111,
+      "refs_generous": 121,
+      "refs_qualified": 113,
       "role": "Layer2",
       "sky_files": 13,
       "sky_toml_sections": []
@@ -12875,8 +12905,8 @@
       "id": "examples/08-notes-app",
       "modules_imported": 18,
       "path": "examples/08-notes-app",
-      "refs_generous": 173,
-      "refs_qualified": 139,
+      "refs_generous": 176,
+      "refs_qualified": 142,
       "role": "Example",
       "sky_files": 5,
       "sky_toml_sections": [
@@ -13601,12 +13631,12 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Core",
-      "modules_imported": 10,
+      "modules_imported": 11,
       "path": "tests/Core",
-      "refs_generous": 50,
-      "refs_qualified": 48,
+      "refs_generous": 69,
+      "refs_qualified": 67,
       "role": "SkySuite",
-      "sky_files": 5,
+      "sky_files": 6,
       "sky_toml_sections": []
     },
     {
