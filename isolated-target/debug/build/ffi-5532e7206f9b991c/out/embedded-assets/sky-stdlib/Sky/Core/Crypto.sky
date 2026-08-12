@@ -1,0 +1,173 @@
+-- | Sky.Core.Crypto — hash + MAC + signature + symmetric-cipher +
+-- entropy helpers (Layer 3 Sky source).
+--
+-- Pure hash + MAC functions (`sha256` / `sha512` / `sha1` / `md5` /
+-- `hmacSha256` / `hmacSha512`) return the hex-encoded digest as a
+-- plain `String`. `rsaSha256Sign` / `rsaSha256Verify` cover
+-- RSASSA-PKCS1-v1_5 (the `RS256` of JWT and signed-request APIs).
+-- v0.15.44 adds **AES-256-GCM** and **ChaCha20-Poly1305** symmetric
+-- encryption — both are AEAD (authenticated + integrity-checked)
+-- and use a per-call random nonce (output format:
+-- `base64(nonce || ciphertext || tag)`).
+-- Random helpers return `Task Error a` because they consume
+-- entropy from the OS RNG (a real side effect).
+module Sky.Core.Crypto exposing
+    ( sha256
+    , sha512
+    , sha1
+    , md5
+    , hmacSha256
+    , hmacSha512
+    , rsaSha256Sign
+    , rsaSha256Verify
+    , constantTimeEqual
+    , aesGcmEncrypt
+    , aesGcmDecrypt
+    , chacha20Encrypt
+    , chacha20Decrypt
+    , aesKeyFromPassword
+    , chachaKeyFromPassword
+    , randomBytes
+    , randomToken
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Result exposing (Result(..))
+
+
+-- ─── Hashes ────────────────────────────────────────────────────────
+sha256 : String -> String
+sha256 =
+    Ffi.kernel "Crypto_sha256"
+
+
+sha512 : String -> String
+sha512 =
+    Ffi.kernel "Crypto_sha512"
+
+
+-- SHA-1 — for interop only (git object ids, legacy webhook
+-- signatures). Not collision-resistant; never use for new security
+-- hashing — reach for `sha256` / `sha512`.
+sha1 : String -> String
+sha1 =
+    Ffi.kernel "Crypto_sha1"
+
+
+-- MD5 — retained for legacy interoperability only. Not secure.
+md5 : String -> String
+md5 =
+    Ffi.kernel "Crypto_md5"
+
+
+-- ─── MAC ───────────────────────────────────────────────────────────
+-- `hmacSha256 key message` → hex HMAC-SHA256.
+hmacSha256 : String -> String -> String
+hmacSha256 =
+    Ffi.kernel "Crypto_hmacSha256"
+
+
+-- `hmacSha512 key message` → hex HMAC-SHA512.
+hmacSha512 : String -> String -> String
+hmacSha512 =
+    Ffi.kernel "Crypto_hmacSha512"
+
+
+-- Constant-time string compare — use when comparing secrets (tokens,
+-- MACs, password hashes) so an attacker can't leak bytes via timing.
+constantTimeEqual : String -> String -> Bool
+constantTimeEqual =
+    Ffi.kernel "Crypto_constantTimeEqual"
+
+
+-- ─── RSA signatures (RSASSA-PKCS1-v1_5 over SHA-256 — "RS256") ──────
+-- `rsaSha256Sign pemPrivateKey message` → a standard-base64
+-- signature. The PEM may be PKCS#1 or PKCS#8. `Err` on an
+-- unparseable key.
+rsaSha256Sign : String -> String -> Result Error String
+rsaSha256Sign =
+    Ffi.kernel "Crypto_rsaSha256Sign"
+
+
+-- `rsaSha256Verify pemPublicKey message base64Signature` → is the
+-- signature valid? `False` on any parse / verification failure.
+rsaSha256Verify : String -> String -> String -> Bool
+rsaSha256Verify =
+    Ffi.kernel "Crypto_rsaSha256Verify"
+
+
+-- ─── Symmetric encryption (AEAD) ───────────────────────────────────
+-- | `aesGcmEncrypt key plaintext` — encrypt under AES-256-GCM.
+-- `key` must be exactly 32 bytes (use `aesKeyFromPassword` for a
+-- password-derived key).  `plaintext` is the raw byte payload (a
+-- Sky `String` whose bytes are not constrained to UTF-8 — use the
+-- Sky.Core.Bytes helpers when in doubt).  Returns
+-- `base64(nonce || ciphertext || tag)` — a single opaque string
+-- safe to store / transmit.  A new random nonce is drawn for
+-- every call (so encrypting the same message twice yields
+-- different ciphertexts).
+aesGcmEncrypt : String -> String -> Result Error String
+aesGcmEncrypt =
+    Ffi.kernel "Crypto_aesGcmEncrypt"
+
+
+-- | `aesGcmDecrypt key encoded` — decrypt the output of
+-- `aesGcmEncrypt`.  Returns `Err` on any tag-validation failure
+-- (so a tampered ciphertext NEVER decrypts to garbage).  Same
+-- key length rules as `aesGcmEncrypt`.
+aesGcmDecrypt : String -> String -> Result Error String
+aesGcmDecrypt =
+    Ffi.kernel "Crypto_aesGcmDecrypt"
+
+
+-- | `chacha20Encrypt key plaintext` — encrypt under
+-- ChaCha20-Poly1305 (RFC 8439).  Same key length (32 bytes) and
+-- output format as `aesGcmEncrypt`.  ChaCha20 is preferred on
+-- platforms without AES hardware acceleration — typically smaller
+-- mobile / embedded CPUs.
+chacha20Encrypt : String -> String -> Result Error String
+chacha20Encrypt =
+    Ffi.kernel "Crypto_chacha20Encrypt"
+
+
+-- | `chacha20Decrypt key encoded` — decrypt the output of
+-- `chacha20Encrypt`.  Same Err-on-tampering guarantee as
+-- `aesGcmDecrypt`.
+chacha20Decrypt : String -> String -> Result Error String
+chacha20Decrypt =
+    Ffi.kernel "Crypto_chacha20Decrypt"
+
+
+-- | `aesKeyFromPassword password salt` — derive a 32-byte
+-- AES-256 key from a password + salt via PBKDF2-HMAC-SHA256
+-- (100 000 iterations — OWASP recommended floor as of 2026).
+-- The returned `String` is the raw 32 bytes; pass it straight
+-- to `aesGcmEncrypt`.  `salt` MUST be unique per user / record
+-- (16 random bytes from `randomBytes 16` is the standard
+-- shape).  NOT for password storage — use `Std.Auth.hashPassword`
+-- (bcrypt) for that.
+aesKeyFromPassword : String -> String -> String
+aesKeyFromPassword =
+    Ffi.kernel "Crypto_aesKeyFromPassword"
+
+
+-- | `chachaKeyFromPassword password salt` — same as
+-- `aesKeyFromPassword` but the derived key is intended for use
+-- with `chacha20Encrypt`.  Both ciphers use 32-byte keys, so this
+-- is a thin alias for documentation; you can interchange the two
+-- safely.
+chachaKeyFromPassword : String -> String -> String
+chachaKeyFromPassword =
+    Ffi.kernel "Crypto_chachaKeyFromPassword"
+
+
+-- ─── Entropy (Task — touches the OS RNG) ───────────────────────────
+randomBytes : Int -> Task Error String
+randomBytes =
+    Ffi.kernel "Crypto_randomBytes"
+
+
+randomToken : Int -> Task Error String
+randomToken =
+    Ffi.kernel "Crypto_randomToken"

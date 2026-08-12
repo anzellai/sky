@@ -1,0 +1,137 @@
+module HubStore exposing (hubStore, hubCurrentIdentity)
+
+-- HubStore — the bundled console's data plane when it runs in-process
+-- with the `sky console-serve` hub daemon. Same typed shape as
+-- Main.sky's `httpStore` — one source ↔ three deployment shapes
+-- (embedded via httpStore / hub-single via hubStore / hub-multi via
+-- future B5 expansion).
+--
+-- Plumbing: each field is a thin Ffi.kernel wrapper that the
+-- compiler rewrites to a direct call into runtime-go/rt/hub_bridge.go.
+-- The runtime kernel looks up the globally-registered HubStoreReader
+-- (set by the hub at Run() startup) and forwards the query.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Ffi as Ffi
+import State exposing
+    ( Store
+    , Overview
+    , LogEntry
+    , MetricRow
+    , TraceRow
+    , ErrorRow
+    , LogFilter
+    , ServiceStat
+    , Identity
+    , Analytics
+    , emptyAnalytics
+    )
+
+
+-- | Build a Store backed by direct SQLite reads against the hub's
+-- console-hot.db. Drop-in replacement for Main.sky's `httpStore`.
+-- The `dbPath` argument is reserved for the multi-store future
+-- (one hub serving multiple databases — not in v0.16.4); the
+-- current runtime ignores it and reads the process-global
+-- HubStoreReader.
+hubStore : String -> Store
+hubStore dbPath =
+    { readOverview = \_ -> hubReadOverview dbPath
+    , readLogs = \filter -> hubReadLogs dbPath filter
+    , readMetrics = \_ -> hubReadMetrics dbPath
+    , readTraces = \_ -> hubReadTraces dbPath
+    , readErrors = \_ -> hubReadErrors dbPath
+    , listServices = \_ -> hubListServices dbPath
+    , readServiceStats = \_ -> hubReadServiceStats dbPath
+    -- v0.16.4 B6: per-service drill-down readers.  Each takes the
+    -- service name as the first arg; an empty name means "all
+    -- services" which the runtime treats as no filter (falls back
+    -- to the un-filtered query).  Same JSON-encoded payload as
+    -- the single-service readers; rt.Coerce narrows into the
+    -- typed records at the call site.
+    , readFilteredLogs = \svc filter -> hubReadFilteredLogs dbPath svc filter
+    , readFilteredMetrics = \svc -> hubReadFilteredMetrics dbPath svc
+    , readFilteredTraces = \svc -> hubReadFilteredTraces dbPath svc
+    , readFilteredErrors = \svc -> hubReadFilteredErrors dbPath svc
+    -- Product analytics is per-host-app (the app's own Std.Analytics
+    -- event store), not aggregated into the hub's console-hot.db, so
+    -- the hub Store surfaces an empty payload. The embedded console
+    -- (httpStore) is where the Analytics tab renders real data.
+    , readAnalytics = \_ -> Task.succeed emptyAnalytics
+    }
+
+
+hubReadOverview : String -> Task Error Overview
+hubReadOverview =
+    Ffi.kernel "Hub_readOverview"
+
+
+hubReadLogs : String -> LogFilter -> Task Error (List LogEntry)
+hubReadLogs =
+    Ffi.kernel "Hub_readLogs"
+
+
+hubReadMetrics : String -> Task Error (List MetricRow)
+hubReadMetrics =
+    Ffi.kernel "Hub_readMetrics"
+
+
+hubReadTraces : String -> Task Error (List TraceRow)
+hubReadTraces =
+    Ffi.kernel "Hub_readTraces"
+
+
+hubReadErrors : String -> Task Error (List ErrorRow)
+hubReadErrors =
+    Ffi.kernel "Hub_readErrors"
+
+
+hubListServices : String -> Task Error (List String)
+hubListServices =
+    Ffi.kernel "Hub_listServices"
+
+
+hubReadServiceStats : String -> Task Error (List ServiceStat)
+hubReadServiceStats =
+    Ffi.kernel "Hub_readServiceStats"
+
+
+-- v0.16.4 B6: per-service drill-down kernels. Same shape as the
+-- single-service readers above, plus a leading `String` arg
+-- carrying the service name to filter by (empty = no filter).
+-- Wire payload matches the existing single-service shape so the
+-- typed Sky-side record narrowing path (rt.Coerce →
+-- narrowMapToStruct) is reused verbatim.
+hubReadFilteredLogs : String -> String -> LogFilter -> Task Error (List LogEntry)
+hubReadFilteredLogs =
+    Ffi.kernel "Hub_readFilteredLogs"
+
+
+hubReadFilteredMetrics : String -> String -> Task Error (List MetricRow)
+hubReadFilteredMetrics =
+    Ffi.kernel "Hub_readFilteredMetrics"
+
+
+hubReadFilteredTraces : String -> String -> Task Error (List TraceRow)
+hubReadFilteredTraces =
+    Ffi.kernel "Hub_readFilteredTraces"
+
+
+hubReadFilteredErrors : String -> String -> Task Error (List ErrorRow)
+hubReadFilteredErrors =
+    Ffi.kernel "Hub_readFilteredErrors"
+
+
+-- v0.16.6 #493 part 2c: read the signed-in identity carried on
+-- the current Sky.Live session.  The hub's auth-app gate populates
+-- `r.Context()` with `rt.IdentityContextKey` before forwarding;
+-- the runtime mints the live session with that identity attached.
+-- `Hub_currentIdentity` returns it as a Sky-shaped record (subject,
+-- email, claims).  Empty `dbPath` is the standalone-no-hub case;
+-- the kernel returns `Err` so the bundled console falls back to
+-- "no tenant filter".  Same dbPath-as-token shape as every other
+-- Hub_* kernel so the call sites stay uniform.
+hubCurrentIdentity : String -> Task Error Identity
+hubCurrentIdentity =
+    Ffi.kernel "Hub_currentIdentity"

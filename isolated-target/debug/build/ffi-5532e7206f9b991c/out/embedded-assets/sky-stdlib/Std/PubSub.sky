@@ -1,0 +1,82 @@
+-- | Std.PubSub — Task-shaped publish, callable from ANY context.
+--
+-- A complement to `Std.Cmd.publish` (which only fires from a
+-- Sky.Live `update` return). `Std.PubSub.publish` returns a
+-- `Task Error Int` you can run from raw `Sky.Http.Server` `api`
+-- handlers, post-init goroutines, scheduled jobs, callbacks from
+-- external systems — anywhere you'd otherwise have no `Cmd msg`
+-- channel to use.
+--
+-- The Task resolves with the count of subscribers that received
+-- the broadcast (the same `Int` `app.Publish` returns inside the
+-- update-loop path), or `Err Unavailable` when no `Live.app` is
+-- running in this process (a CLI tool, an isolated unit test, a
+-- pure `Sky.Http.Server` process).
+--
+-- Scope (matches `Std.Cmd.publish`): the same broker backs both
+-- APIs, so a publish from a raw handler reaches every subscribed
+-- Sky.Live session, with identical ordering + echo semantics.
+-- Single-instance uses the in-process registry; a multi-instance
+-- deploy (session store = redis, or `SKY_LIVE_BROKER_URL` set)
+-- automatically fans out ACROSS instances via the Redis broker —
+-- no call-site change. See `docs/skylive/architecture.md`
+-- §"Horizontal scale".
+--
+-- See `docs/skylive/pubsub.md` for the decision matrix and
+-- `examples/29-task-publish` for the canonical pattern.
+--
+-- The pub/sub fan-out comes in two flavours:
+--   * `publish`        — echo-by-default. Server-side publishes
+--                        carry an empty `Origin`, so echo-by-
+--                        default has no visible effect for
+--                        Task-shaped callers (no subscriber's
+--                        ownSid matches "").
+--   * `publishNoEcho`  — sets the broker's SkipOrigin bit so the
+--                        publisher's own session is skipped. With
+--                        the cross-instance Redis broker the bit
+--                        rides the wire envelope so a receiving
+--                        instance self-suppresses without a
+--                        local-registry roundtrip.
+module Std.PubSub exposing (publish, publishNoEcho)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+
+
+-- | `publish topic payload` — broadcast `payload` on `topic` to
+-- every Sky.Live session in this process whose `subscriptions`
+-- includes `Sub.subscribeTopic topic _`.
+--
+-- Returns the count of subscribers that received the broadcast.
+-- A topic with no live subscribers returns 0 (not an error).
+--
+-- Fire-and-forget by design — no acknowledgement loop, no
+-- delivery guarantee beyond the in-process broker's invariant
+-- (one bump per publish, before fan-out). Pair with a durable
+-- write (DB row, append-only log) when persistence matters.
+--
+-- Errors with `Unavailable` when no `Live.app` is registered in
+-- this process. CLI tools / pure HTTP servers / unit tests that
+-- never start a `Live.app` see this; production deploys never
+-- should.
+publish : String -> any -> Task Error Int
+publish =
+    Ffi.kernel "PubSub_publish"
+
+
+-- | `publishNoEcho topic payload` — Task-shaped publish that sets
+-- the broker's SkipOrigin bit on the outgoing event.
+--
+-- For the v0.15.x in-process broker the difference is cosmetic when
+-- called server-side (Origin is "", no subscriber's ownSid matches
+-- ""). For v0.16+ cross-process broker tiers — Redis Pub/Sub, Cloud
+-- Pub/Sub, NATS, Postgres LISTEN/NOTIFY — the no-echo bit is part
+-- of the wire protocol so the broker can self-suppress at the
+-- network edge, saving the receiving node a local-registry hop.
+--
+-- Same Err(Unavailable) semantics as `publish` when no `Live.app` is
+-- registered in this process.
+publishNoEcho : String -> any -> Task Error Int
+publishNoEcho =
+    Ffi.kernel "PubSub_publishNoEcho"

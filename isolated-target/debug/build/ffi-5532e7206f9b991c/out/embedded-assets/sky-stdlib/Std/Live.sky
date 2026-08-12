@@ -1,0 +1,223 @@
+-- | Std.Live — server-driven web UI backend (Layer 3 Sky source).
+--
+-- `Live.app` takes a typed builder config: `Live.config { init, update,
+-- view, subscriptions, routes, notFound }` produces an opaque `AppConfig`,
+-- and optional fields (head / guard / static / analytics / …) are attached
+-- with the `withX` builders. Every binding is an `Ffi.kernel` alias carrying
+-- its real HM signature, so the type-checker, LSP hover, and `sky doc` all
+-- read this ONE file.
+--
+-- ```elm
+-- main =
+--     Live.app
+--         (Live.config
+--             { init = init, update = update, view = view
+--             , subscriptions = subscriptions
+--             , routes = [ Live.route "/" Home ], notFound = Home
+--             }
+--             |> Live.withHead headFor
+--         )
+-- ```
+module Std.Live exposing
+    ( AppConfig
+    , app
+    , config
+    , route
+    , api
+    , lifecycle
+    , withHead
+    , withConsoleAuth
+    , withOnNavigate
+    , withGuard
+    , withStatic
+    , withStaticUrl
+    , withPort
+    , withStore
+    , withStorePath
+    , withTtl
+    , withIdleEvict
+    , withAnalytics
+    , withAnalyticsIdentify
+    , withStatus
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Std.Html exposing (Html)
+
+-- | The built Sky.Live app configuration. Opaque — produced by `config`,
+-- refined by the `withX` builders, consumed by `app`. Phantom `model` /
+-- `msg` thread the TEA types through the builder chain.
+type AppConfig model msg
+    = AppConfig_OPAQUE
+
+
+-- | Build the app config from the six required fields. Attach optional
+-- fields (head, guard, static, analytics, …) with the `withX` builders.
+--
+--     main =
+--         Live.app
+--             (Live.config
+--                 { init = init, update = update, view = view
+--                 , subscriptions = subscriptions
+--                 , routes = [ Live.route "/" Home ], notFound = Home
+--                 }
+--                 |> Live.withHead headFor
+--             )
+config : { init : a -> ( model, Cmd msg )
+, update : msg -> model -> ( model, Cmd msg )
+, view : model -> Html msg
+, subscriptions : model -> Sub msg
+, routes : List Route
+, notFound : page
+} -> AppConfig model msg
+config =
+    Ffi.kernel "Live_config"
+
+
+-- | Open the HTTP listener and run the TEA loop. Sits at the top of `main`.
+app : AppConfig model msg -> Task Error ()
+app =
+    Ffi.kernel "Live_app"
+
+
+-- | `route path page` — register a page route. Put literals before
+-- `:param` patterns (declaration order matters).
+route : String -> page -> Route
+route =
+    Ffi.kernel "Live_route"
+
+
+-- | `api path handler` — register a raw JSON/HTTP endpoint alongside the
+-- page routes; the handler returns a `Response`.
+api : String -> (Request -> Task Error Response) -> Route
+api =
+    Ffi.kernel "Live_api"
+
+
+-- | Tag a message as a lifecycle message (identity at the type level; the
+-- runtime routes it through the lifecycle dispatch).
+lifecycle : msg -> msg
+lifecycle =
+    Ffi.kernel "Live_lifecycle"
+
+
+-- | Per-page `<head>` injection — `head model` returns the extra `<head>`
+-- nodes for the current page (title / meta / canonical / OG …).
+withHead : (model -> List (Html msg)) -> AppConfig model msg -> AppConfig model msg
+withHead =
+    Ffi.kernel "Live_withHead"
+
+
+-- | Gate the `/_sky/console` mount — `consoleAuth req` returns the
+-- authenticated identity (or `Nothing` to deny).
+withConsoleAuth : (Request -> Task Error (Maybe a)) -> AppConfig model msg -> AppConfig model msg
+withConsoleAuth =
+    Ffi.kernel "Live_withConsoleAuth"
+
+
+-- | Hook fired on in-app navigation (initial mount, `sky-nav` fetch,
+-- popstate) AFTER the route is applied — the runtime passes the new
+-- `Page` value and dispatches the resulting `msg` through `update`.
+-- Ignore the page (`\_ -> ResetBanner`) to run one effect on every
+-- navigation, or pattern-match it (`\page -> case page of …`) to react
+-- per-destination. The argument is the model's page type, so a bare
+-- `\_ ->` leaves it fully polymorphic.
+withOnNavigate : (page -> msg) -> AppConfig model msg -> AppConfig model msg
+withOnNavigate =
+    Ffi.kernel "Live_withOnNavigate"
+
+
+-- | Per-Msg guard — `guard msg model` returns `Err` to reject the message
+-- before `update` runs.
+withGuard : (msg -> model -> Result Error ()) -> AppConfig model msg -> AppConfig model msg
+withGuard =
+    Ffi.kernel "Live_withGuard"
+
+
+-- | Serve a static directory at `/static` (override the mount with
+-- `withStaticUrl`).
+withStatic : String -> AppConfig model msg -> AppConfig model msg
+withStatic =
+    Ffi.kernel "Live_withStatic"
+
+
+-- | Override the static mount path (default `/static`).
+withStaticUrl : String -> AppConfig model msg -> AppConfig model msg
+withStaticUrl =
+    Ffi.kernel "Live_withStaticUrl"
+
+
+-- | Set the listen port.
+--
+-- Precedence, highest first:
+--
+--   1. `SKY_LIVE_PORT` set by the operator (shell or `.env`)
+--   2. this `withPort` call
+--   3. `[live] port` in `sky.toml`
+--   4. 8080
+--
+-- So an operator can always override the binary, and `withPort` always beats
+-- the `sky.toml` default. (2 and 3 used to be inverted: `sky.toml`'s port is
+-- injected into `SKY_LIVE_PORT` at init, which made this call dead.)
+withPort : Int -> AppConfig model msg -> AppConfig model msg
+withPort =
+    Ffi.kernel "Live_withPort"
+
+
+-- | Select the session store kind ("memory" / "sqlite" / "redis" /
+-- "postgres"). Env `SKY_LIVE_STORE` wins.
+withStore : String -> AppConfig model msg -> AppConfig model msg
+withStore =
+    Ffi.kernel "Live_withStore"
+
+
+-- | Session store path / URL (env `SKY_LIVE_STORE_PATH` wins).
+withStorePath : String -> AppConfig model msg -> AppConfig model msg
+withStorePath =
+    Ffi.kernel "Live_withStorePath"
+
+
+-- | Session TTL ("30m" / "24h" / bare seconds; env `SKY_LIVE_TTL` wins).
+withTtl : String -> AppConfig model msg -> AppConfig model msg
+withTtl =
+    Ffi.kernel "Live_withTtl"
+
+
+-- | Tiered-session-cache idle-evict window ("5m" / "0"/"off" to disable; env
+-- `SKY_LIVE_IDLE_EVICT` wins). On a durable store (sqlite / postgres / redis)
+-- a session with no active SSE that's been idle this long drops its live
+-- pointer from RAM while its blob stays on disk to the full TTL, resurrecting
+-- on next access — bounding RAM to the ACTIVE working set. Ignored by the
+-- memory store. See docs/skylive/tiered-session-cache.md.
+withIdleEvict : String -> AppConfig model msg -> AppConfig model msg
+withIdleEvict =
+    Ffi.kernel "Live_withIdleEvict"
+
+
+-- | Opt into Sky.Live auto page-view analytics —
+-- `withAnalytics { pageViews = True }`.
+withAnalytics : { pageViews : Bool } -> AppConfig model msg -> AppConfig model msg
+withAnalytics =
+    Ffi.kernel "Live_withAnalytics"
+
+
+-- | Attribute auto page-views to an already-authenticated session: a resolver
+-- run against the current model on each page-view (incl. the first render), so a
+-- returning signed-in user is captured without a manual `Analytics.identify`.
+-- `Just id` stamps the session user id; `Nothing` leaves it anonymous.
+--
+--     |> Live.withAnalytics { pageViews = True }
+--     |> Live.withAnalyticsIdentify (\model -> Maybe.map .userId model.session)
+withAnalyticsIdentify : (model -> Maybe String) -> AppConfig model msg -> AppConfig model msg
+withAnalyticsIdentify =
+    Ffi.kernel "Live_withAnalyticsIdentify"
+
+
+-- | Override the connection-status banner strings —
+-- `withStatus { reconnecting = "…", offline = "…" }`.
+withStatus : { reconnecting : String
+, offline : String
+} -> AppConfig model msg -> AppConfig model msg
+withStatus =
+    Ffi.kernel "Live_withStatus"

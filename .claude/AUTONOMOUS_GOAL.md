@@ -99,10 +99,10 @@ names the gate and the CI job that runs it, because "closed" here means
 | 1 | **RE-DECLARED**, review by **2027-02-12** | `kernel_signature_coverage.rs` — exact-set ratchet + dated review test + a test asserting the declared count matches the list | `test-rest`, `macos-behaviour` |
 | 2 | **CLOSED** | lenient synthesis narrowed first, `[E1012]` pinned by `ty/tests/reject/corpus/ambiguous_type_name.sky` + census | `test-ty`, `parity-reject` |
 | 3 | **PARTIAL — five named gaps CLOSED, residual RE-DECLARED, review by 2027-02-12** | `DARK_MODULE_CEILING = 62` fail-on-increase + `ASSERTED_MODULES` exact pin | `test-rest` (structural), `behaviour-corpus` (behavioural) |
-| 4 | **PARTIAL — structural half per-push, behavioural half NIGHTLY** | 5×3 `Dict` key×operation crossing, 15 manifest rows; the behavioural half now executes at all, which it previously did not anywhere | structural: `test-rest`; behavioural: `nightly-sweep.yml` `behaviour-corpus` (NEW) |
+| 4 | **PARTIAL — structural half per-push, behavioural half NIGHTLY** | 5x3 `Dict` key-type x ACCESS-SHAPE crossing (operations are crossed inside each cell), 15 manifest rows; the behavioural half now executes at all, which it previously did not anywhere | structural: `test-rest`; behavioural: `nightly-sweep.yml` `behaviour-corpus` (NEW) |
 | 5 | **CLOSED** | `EXPECTED_FILES_WITHOUT_DECLARED_CODE = 0`, three-way census, empty-corpus guard | `test-ty`, `parity-reject` |
 | 6 | **CLOSED for the corpus; count ratchet remains release-only** | 49 cases; the skip-to-green path now FAILS when `CI` is set | `lsp-fuzz` |
-| 7 | **CLOSED** (`Std.Email`) / **RE-DECLARED to 2027-02-12** (`Std.Markdown`) | 10 wire-level Go tests; `declared_stdlib_gaps.rs` with expiry | `behaviour-docs`, `macos-behaviour`, `test-rest` |
+| 7 | **CLOSED** (`Std.Email`) / **RE-DECLARED to 2027-02-12** (`Std.Markdown`) | 10 wire-level Go tests; `declared_stdlib_gaps.rs` with expiry | Go wire-level tests: `codegen-build` + `macos-behaviour`; gaps test: `test-rest`; Sky-level suite: `behaviour-docs` |
 | 8 | **CLOSED** | `the_four_uncountable_basics_are_now_counted` asserts both ends | `test-rest` |
 | 9 | **PARTIAL — CI-reachable, not merge-blocking** | `nightly-sweep.yml` `web-runtime`, verdict from exit status | nightly only |
 
@@ -150,3 +150,37 @@ merge-blocking, it was hand-maintained, and nothing checked it.
 **A tier nobody runs is indistinguishable from a tier that does not exist.**
 Before declaring any future item closed, name the workflow job that runs its
 gate, and confirm that job is in `ci-green.needs`.
+
+### Second Judge pass — 2026-08-13, and what it corrected
+
+A fresh Judge reviewed the table above and returned NOT ACHIEVED. It was right
+on every count below; each is now fixed or restated.
+
+* **The same defect, two tiers over.** T2 was wired in and T3/T4 were still
+  invoked by NOTHING — `apps-ledger-postgres`, `apps-dispatch-postgres`,
+  `apps-fleet` (T3) and `apps-ffi-scale` (T4, the PRE-RELEASE tier, whose whole
+  purpose is to run at release). T3 now runs nightly with a Postgres service;
+  T4 runs in `release.yml`. `every_harness_tier_with_gates_is_invoked_somewhere`
+  now fails if any tier with registered gates is invoked by no workflow and no
+  script — mutation-proven.
+* **Dates that nothing enforced.** Items 3 and 9, and the T2-is-nightly
+  declaration, carried review dates in PROSE only, while items 1 and 7 got real
+  dated gates in the same session. They are now tests in
+  `rust/crates/xtask/tests/mandate_declarations.rs` that go red on their date.
+* **`main` has NO required status checks.** `required_status_checks: null` —
+  PR review is required, green CI is not. So "in `ci-green.needs` ⇒
+  merge-blocking" was false, and the docstring asserting it has been corrected.
+  Enabling required checks is a repo SETTING, outside this tree; until it
+  happens, every gate in this cycle is advisory at merge time.
+* **Row inaccuracies**: item 2's non-vacuity census runs in `test-rest` (not the
+  two jobs named); item 7's 10 wire-level Go tests run in `codegen-build` +
+  `macos-behaviour` (not `behaviour-docs`); item 4's second axis is ACCESS SHAPE,
+  not operation.
+* **Item 9's gate is currently RED on `main`** — the last scheduled nightly
+  reported 5 failures including `resilience-idle`, the exact class item 9 exists
+  for. Fixes have landed on branches since; whether `main` is green is unknown
+  until a nightly runs against it.
+
+**The rule this pass adds:** a claim about WHERE a gate runs is itself a claim
+that needs checking. Three rows named the wrong job, and one named a property of
+branch protection that was not true. Verify the job, not the intention.

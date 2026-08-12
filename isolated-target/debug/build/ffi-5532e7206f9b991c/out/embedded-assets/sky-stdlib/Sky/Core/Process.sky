@@ -1,0 +1,15 @@
+-- | Sky.Core.Process — subprocess execution (Layer 3 Sky source).
+--
+-- v0.10.0 shrunk the Process surface to just subprocess execution —
+-- env / cwd / args / exit moved to `Sky.Core.System`.
+module Sky.Core.Process exposing (run)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- | `run command args` — execute a subprocess, return its stdout.
+-- Stderr is folded into the error message on a non-zero exit code.
+run : String -> List String -> Task Error String
+run =
+    Ffi.kernel "Process_run"

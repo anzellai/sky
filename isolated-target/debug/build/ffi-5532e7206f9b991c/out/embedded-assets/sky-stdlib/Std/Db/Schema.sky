@@ -1,0 +1,401 @@
+-- | Std.Db.Schema — a typed, dialect-aware schema builder (Layer 3 Sky source).
+--
+-- Define tables + columns as typed values; `Schema.createTable` emits the
+-- DIALECT-CORRECT DDL for the connection's backend (SQLite or Postgres). The
+-- SAME definition works on both — no hand-written CREATE TABLE, no
+-- `INTEGER`-vs-`BIGINT` / `AUTOINCREMENT`-vs-`BIGSERIAL` / `datetime()`-vs-`now()`
+-- surprises when you move from a SQLite dev box to a Postgres deployment.
+--
+-- In the Ecto / Diesel spirit: explicit, composable, no magic ORM.
+--
+-- ```elm
+-- import Std.Db.Schema as Schema exposing (text, bigInt, int, bool)
+--
+-- products : Schema.Table
+-- products =
+--     Schema.table "products"
+--         [ Schema.id "id"                       -- TEXT primary key
+--         , text "slug" |> Schema.notNull |> Schema.unique
+--         , text "name" |> Schema.notNull
+--         , int "price_minor" |> Schema.notNull |> Schema.defaultInt 0
+--         , bool "active" |> Schema.notNull |> Schema.defaultBool True
+--         , bigInt "created_at" |> Schema.notNull |> Schema.defaultInt 0
+--         ]
+--         |> Schema.withIndex "idx_products_slug" [ "slug" ]
+--
+-- setup : Db -> Task Error ()
+-- setup conn =
+--     Schema.createTable conn products
+-- ```
+module Std.Db.Schema exposing
+    ( Table
+    , Column
+    , table
+    , withIndex
+    , withUniqueIndex
+    , text
+    , int
+    , bigInt
+    , real
+    , bool
+    , timestamp
+    , blob
+    , json
+    , id
+    , serial
+    , primaryKey
+    , notNull
+    , unique
+    , autoIncrement
+    , defaultInt
+    , defaultText
+    , defaultBool
+    , defaultNow
+    , references
+    , createTable
+    , createSchema
+    , toProject
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Db.Store as Store
+
+-- | A column definition. Build with the typed constructors + pipe the
+-- modifiers; don't construct the record by hand.
+type alias Column =
+    { name : String
+    , kind : String
+    , isPk : Bool
+    , isNotNull : Bool
+    , isUnique : Bool
+    , isAutoInc : Bool
+    , defaultKind : String
+    , defaultVal : String
+    , foreignKey : String
+    }
+
+-- | A secondary index over one or more columns.
+type alias Index =
+    { name : String
+    , columns : List String
+    , isUniqueIndex : Bool
+    }
+
+-- | A table definition (name + columns + indexes).
+type alias Table =
+    { name : String
+    , columns : List Column
+    , indexes : List Index
+    }
+
+
+newColumn : String -> String -> Column
+newColumn n k =
+    { name = n
+    , kind = k
+    , isPk = False
+    , isNotNull = False
+    , isUnique = False
+    , isAutoInc = False
+    , defaultKind = "none"
+    , defaultVal = ""
+    , foreignKey = ""
+    }
+
+
+-- ── Column type constructors — the portable type is chosen per dialect at
+--    create time (see the mapping in the runtime). ─────────────────────────
+-- | TEXT on both backends.
+text : String -> Column
+text n =
+    newColumn n "text"
+
+
+-- | 32-bit integer (INTEGER on both). Use `bigInt` for large / millisecond values.
+int : String -> Column
+int n =
+    newColumn n "int"
+
+
+-- | 64-bit integer — INTEGER on SQLite, BIGINT on Postgres. Use this for
+-- millisecond timestamps (Postgres INTEGER overflows at ~2.1s of millis).
+bigInt : String -> Column
+bigInt n =
+    newColumn n "bigint"
+
+
+-- | Floating point — REAL on SQLite, DOUBLE PRECISION on Postgres.
+real : String -> Column
+real n =
+    newColumn n "real"
+
+
+-- | Boolean — rendered as **BOOLEAN on Postgres** and **INTEGER 0/1 on SQLite**
+-- by the dialect-safe renderer (a table created by Sky gets the right column
+-- type per backend). A `SqlBool` param (a native Go bool) binds cleanly to both,
+-- and the codec / `Decode.bool` reads either representation back, so a value
+-- round-trips the same shape whether you develop on SQLite or deploy on Postgres.
+-- (Legacy note: a table whose bool column was hand-created as INTEGER on Postgres
+-- pre-dates this mapping — `ALTER … TYPE boolean USING (col <> 0)` migrates it,
+-- since Sky's additive migrations never retype an existing column.)
+bool : String -> Column
+bool n =
+    newColumn n "bool"
+
+
+-- | A millisecond-epoch timestamp — INTEGER on SQLite, BIGINT on Postgres.
+timestamp : String -> Column
+timestamp n =
+    newColumn n "timestamp"
+
+
+-- | Binary — BLOB on SQLite, BYTEA on Postgres.
+blob : String -> Column
+blob n =
+    newColumn n "blob"
+
+
+-- | JSON, stored as TEXT on BOTH backends (read consistency; native JSONB is a
+-- future opt-in).
+json : String -> Column
+json n =
+    newColumn n "json"
+
+
+-- | A TEXT primary key — the common Sky pattern (app-generated ids / UUIDs).
+id : String -> Column
+id n =
+    primaryKey (newColumn n "text")
+
+
+-- | An auto-incrementing integer primary key — INTEGER PRIMARY KEY AUTOINCREMENT
+-- on SQLite, BIGSERIAL PRIMARY KEY on Postgres.
+serial : String -> Column
+serial n =
+    autoIncrement (primaryKey (newColumn n "bigint"))
+
+
+-- ── Modifiers (pipe-friendly) ─────────────────────────────────────────────
+-- | Mark this column the table's PRIMARY KEY: `text "id" |> primaryKey`.
+primaryKey : Column -> Column
+primaryKey c =
+    { c | isPk = True }
+
+
+-- | Mark this column NOT NULL: `text "email" |> notNull`.
+notNull : Column -> Column
+notNull c =
+    { c | isNotNull = True }
+
+
+-- | Add a UNIQUE constraint on this column: `text "slug" |> notNull |> unique`.
+unique : Column -> Column
+unique c =
+    { c | isUnique = True }
+
+
+-- | Auto-increment this integer key (AUTOINCREMENT on SQLite / SERIAL on
+-- Postgres): `int "id" |> primaryKey |> autoIncrement`. Prefer `serial` for a
+-- plain auto PK.
+autoIncrement : Column -> Column
+autoIncrement c =
+    { c | isAutoInc = True }
+
+
+-- | Integer/real default: `int "n" |> defaultInt 0`.
+defaultInt : Int -> Column -> Column
+defaultInt n c =
+    { c | defaultKind = "int", defaultVal = String.fromInt n }
+
+
+-- | Text default (quoted + escaped per dialect): `text "role" |> defaultText "customer"`.
+defaultText : String -> Column -> Column
+defaultText s c =
+    { c | defaultKind = "text", defaultVal = s }
+
+
+-- | Boolean default: `bool "active" |> defaultBool True`.
+defaultBool : Bool -> Column -> Column
+defaultBool b c =
+    { c | defaultKind = "bool"
+    , defaultVal =
+        if b then
+            "true"
+
+        else
+            "false"
+    }
+
+
+-- | Current-timestamp default — `datetime('now')` on SQLite, `now()` on Postgres.
+defaultNow : Column -> Column
+defaultNow c =
+    { c | defaultKind = "now", defaultVal = "" }
+
+
+-- | Foreign key: `text "order_id" |> references "orders" "id"`.
+references : String -> String -> Column -> Column
+references tbl col c =
+    { c | foreignKey = tbl ++ "(" ++ col ++ ")" }
+
+
+-- ── Table builders ────────────────────────────────────────────────────────
+-- | Define a table from a name and its columns: `table "users" [ id "id", ... ]`.
+-- Attach indexes with `withIndex` / `withUniqueIndex`.
+table : String -> List Column -> Table
+table n cols =
+    { name = n, columns = cols, indexes = [] }
+
+
+-- | Add a (non-unique) index over one or more columns:
+-- `table "orders" [...] |> withIndex "idx_orders_user" [ "user_id" ]`.
+withIndex : String -> List String -> Table -> Table
+withIndex nm cols t =
+    { t | indexes =
+        t.indexes ++ [ { name = nm, columns = cols, isUniqueIndex = False } ]
+    }
+
+
+-- | Add a UNIQUE index over one or more columns: `... |> withUniqueIndex
+-- "idx_users_email" [ "email" ]`.
+withUniqueIndex : String -> List String -> Table -> Table
+withUniqueIndex nm cols t =
+    { t | indexes =
+        t.indexes ++ [ { name = nm, columns = cols, isUniqueIndex = True } ]
+    }
+
+
+-- ── Run ────────────────────────────────────────────────────────────────────
+-- | Create the table (+ its indexes) using the DIALECT-CORRECT DDL for the
+-- connection's backend. Idempotent (CREATE TABLE / INDEX IF NOT EXISTS).
+createTable : Db -> Table -> Task Error ()
+createTable =
+    Ffi.kernel "Schema_createTable"
+
+
+-- | Create a whole schema (a list of tables, in order).
+createSchema : Db -> List Table -> Task Error ()
+createSchema =
+    Ffi.kernel "Schema_createSchema"
+
+
+-- ── Bridge to the migration tooling ────────────────────────────────────────
+-- | Bridge these explicit `Schema.Table` definitions into a `Store.Project`, so
+-- the migration tooling (`sky db push`, `sky db migrate --gen`) can read them.
+-- Expose the result as `db : Store.Project` from your entry module:
+--
+-- ```elm
+-- db : Store.Project
+-- db = Schema.toProject allTables
+-- ```
+--
+-- Table name, primary key, `UNIQUE`, `NOT NULL`, `DEFAULT` and autoincrement all
+-- carry through. INDEXES do NOT — the `Store.Project` schema-dump models tables +
+-- columns only; keep creating indexes via `createSchema`/`createTable` (which
+-- render `withIndex`) at app boot, or as raw `CREATE INDEX IF NOT EXISTS`. Ints
+-- widen to BIGINT under the codec pipeline (safe; no millis overflow).
+toProject : List Table -> Store.Project
+toProject tables =
+    Store.project (List.map toStoreTable tables)
+
+
+toStoreTable : Table -> Store.Table
+toStoreTable t =
+    { name = t.name, pk = pkOf t.columns, cols = List.map storeColOf t.columns }
+
+
+pkOf : List Column -> String
+pkOf cols =
+    case List.find .isPk cols of
+
+        Just c ->
+            c.name
+
+        Nothing ->
+            ""
+
+
+storeColOf : Column -> ( String, String )
+storeColOf c =
+    ( c.name, storeKindBase c ++ storeKindFlags c )
+
+
+storeKindBase : Column -> String
+storeKindBase c =
+    let
+        base =
+            case c.kind of
+
+                "text" ->
+                    "text"
+
+                "int" ->
+                    "int"
+
+                "bigint" ->
+                    "int"
+
+                "bool" ->
+                    "bool"
+
+                "real" ->
+                    "real"
+
+                "timestamp" ->
+                    "int"
+
+                "json" ->
+                    "blob"
+
+                "blob" ->
+                    "blob"
+
+                _ ->
+                    "text"
+        nullable =
+            if c.isNotNull || c.isPk then
+                ""
+
+            else
+                "?"
+        autoInc =
+            if c.isAutoInc then
+                "!"
+
+            else
+                ""
+    in
+        base ++ nullable ++ autoInc
+
+
+storeKindFlags : Column -> String
+storeKindFlags c =
+    let
+        uniq =
+            if c.isUnique then
+                "|u"
+
+            else
+                ""
+        def =
+            case c.defaultKind of
+
+                "text" ->
+                    "|dtext=" ++ c.defaultVal
+
+                "int" ->
+                    "|dint=" ++ c.defaultVal
+
+                "bool" ->
+                    "|dbool=" ++ c.defaultVal
+
+                "now" ->
+                    "|dnow"
+
+                _ ->
+                    ""
+    in
+        uniq ++ def

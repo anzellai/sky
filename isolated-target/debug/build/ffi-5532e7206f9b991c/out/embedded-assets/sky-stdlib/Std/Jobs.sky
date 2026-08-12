@@ -1,0 +1,56 @@
+-- | Std.Jobs — durable background jobs (Layer 3 Sky source).
+--
+-- Define a typed handler once, enqueue payloads to run it (optionally
+-- after a delay), and cancel a pending job by id.  Every binding is an
+-- `Ffi.kernel` alias carrying its real HM signature, so the
+-- type-checker, LSP hover, and `sky doc` all read this ONE file — no
+-- separate kernel-doc registry to drift against.
+module Std.Jobs exposing (Job, JobId, define, enqueue, enqueueIn, cancel)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | A registered job handler over a typed payload `a`.  Opaque —
+-- produced by `define`, consumed by `enqueue` / `enqueueIn`.  The
+-- phantom `a` threads the payload type from `define` through to
+-- `enqueue` so a handler can only be enqueued with the payload it
+-- was defined for.
+type Job a
+    = Job_OPAQUE
+
+-- | The id of an enqueued job.  Opaque — returned by `enqueue` /
+-- `enqueueIn`, consumed by `cancel`.
+type JobId
+    = JobId_OPAQUE
+
+
+-- | Register a named job handler over a typed payload `a`.
+--
+--     sendEmail : Job EmailPayload
+--     sendEmail =
+--         Jobs.define "send-email" (\payload -> Email.send provider payload)
+define : String -> (a -> Task Error ()) -> Job a
+define =
+    Ffi.kernel "Jobs_define"
+
+
+-- | Enqueue a payload to run its job as soon as a worker is free.
+--
+--     enqueueWelcome : EmailPayload -> Task Error JobId
+--     enqueueWelcome payload =
+--         Jobs.enqueue sendEmail payload
+enqueue : Job a -> a -> Task Error JobId
+enqueue =
+    Ffi.kernel "Jobs_enqueue"
+
+
+-- | Enqueue a payload to run after a delay (milliseconds).
+enqueueIn : Int -> Job a -> a -> Task Error JobId
+enqueueIn =
+    Ffi.kernel "Jobs_enqueueIn"
+
+
+-- | Cancel a pending job by its id (no-op if already run).
+cancel : JobId -> Task Error ()
+cancel =
+    Ffi.kernel "Jobs_cancel"

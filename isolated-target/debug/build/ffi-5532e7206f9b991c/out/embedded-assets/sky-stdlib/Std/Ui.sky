@@ -1,0 +1,3288 @@
+-- | Std.Ui — typed, no-CSS layout DSL for Sky.Live / Sky.Tui / Sky.Webview.
+--
+-- Build UIs from typed primitives (`el / row / column / wrappedRow
+-- / grid / paragraph / textColumn / text / button / input / form /
+-- link / image`) and typed attributes (Background / Border / Font /
+-- Region / Input sub-modules).  Renders to inline-styled HTML on
+-- the server side; the same view function works unchanged across
+-- web (Sky.Live), terminal (Sky.Tui), and desktop (Sky.Webview)
+-- backends.
+--
+-- **No CSS files**, no template language, no client framework.
+-- HTML-escaping is automatic; `data-sky-eval` is forbidden.  Forms
+-- with sensitive inputs (passwords, API keys) MUST use `Ui.form`
+-- with `onSubmit DoSignIn`, not `onInput` per keystroke — see the
+-- password-pattern docs in the Sky.Live overview.
+module Std.Ui exposing (..)
+
+-- Std.Ui — typed, no-CSS layout DSL for Sky.Live.
+--
+-- Build a UI from typed layout primitives (`el`, `row`, `column`,
+-- `text`) plus typed attributes (`width`, `padding`, `spacing`,
+-- `centerX`, ...) then call `layout` to render to plain Sky.Html.
+--
+-- Why not use Std.Html directly? Std.Ui replaces "make a div, write
+-- CSS, hope alignment works" with "say what you mean, get the
+-- alignment right by construction." `centerX` always centres
+-- horizontally; `width fill` always fills available space; spacing
+-- between siblings is a property of the parent, not a per-child
+-- margin.
+--
+-- The MVP uses inline styles per element. Same public API; simpler
+-- internals; can swap to a static-stylesheet + class emit later as
+-- an internal optimisation without breaking user code.
+--
+-- Prior-art attribution for the API conventions adopted here lives
+-- in NOTICE.md at the repo root.
+--
+-- Implementation note — single file: Sky's canonicaliser doesn't
+-- propagate type parameters for cross-module ADT constructors today
+-- (parameterised constructors arrive at the import site stripped of
+-- their type variable). Until that's fixed in the compiler, all the
+-- parameterised types (`Element msg`, `Attribute msg`) and their
+-- constructors live in this single module rather than splitting them
+-- into Std.Ui.Internal.Model.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Math as Math
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+import Std.Html.Events as Event
+
+-- ─── Core types ──────────────────────────────────────────────────
+type Element msg
+    = Empty
+    | Text String
+    | Node Description (List (Attribute msg)) (List (Element msg))
+    | TaggedNode String Description (List (Attribute msg)) (List (Element msg))
+    | Raw any
+    -- TaggedNode carries an explicit HTML tag override so `link`
+    -- → <a>, `image` → <img>, `paragraph` → <p>, `heading 1` → <h1>
+    -- dispatch to semantically-correct tags. Plain Node still
+    -- defaults to <div>.
+    -- Raw escape hatch — wrap an arbitrary Std.Html node so user
+    -- code can drop into native HTML (<video>, <canvas>, <table>,
+    -- third-party widgets) without leaving the Std.Ui tree. The
+    -- `any` payload is the Std.Html VNode (kernel type opaque to
+    -- Sky's HM); the renderer passes it through unchanged.
+
+type Attribute msg
+    = NoAttribute
+    | AttrWidth Length
+    | AttrHeight Length
+    | AttrAlignX HAlign
+    | AttrAlignY VAlign
+    | AttrNearby Location (Element msg)
+    | AttrPadding Int Int Int Int
+    | AttrSpacing Int
+    | AttrStyle String String
+    | AttrDescribe Description
+    | AttrClass String
+    | AttrEvent any
+    | AttrAttribute String String
+    | AttrFontSize Int
+    | AttrFontColor Color
+    | AttrFontFamily String
+    | AttrFontWeight Int
+    | AttrFontItalic
+    | AttrFontUnderline
+    | AttrFontDecoration String
+    | AttrFontLetterSpacing Float
+    | AttrFontWordSpacing Float
+    | AttrFontAlign String
+    | AttrBgColor Color
+    | AttrBgImage String
+    | AttrBgGradient String
+    | AttrBorderWidth Int
+    | AttrBorderWidthEach Int Int Int Int
+    | AttrBorderColor Color
+    | AttrBorderRounded Int
+    | AttrBorderStyle String
+    | AttrBorderShadow Int Int Int Int Color
+    | AttrBorderInsetShadow Int Int Int Int Color
+    | AttrPointer
+    | AttrOverflow String String
+    | AttrPseudoRule PseudoClass String
+    | AttrTransition String Bool
+    | AttrAnimation String String String Bool
+    -- Pseudo-class rule marker (issue #377). Carries the pre-
+    -- rendered CSS rules-string for ONE pseudo-class. The renderer
+    -- collects all `AttrPseudoRule` entries on an element, joins
+    -- them into a `data-sky-pc-rules` data-attr, and the runtime
+    -- (`injectPseudoClassStyles` in runtime-go/rt/live.go) walks
+    -- the tree after assignSkyIDs, generates a `<style>` block
+    -- scoped by `[sky-id="<sid>"]:<pseudo>`, and prepends it.
+    -- `:hover` rules are auto-gated behind `@media (hover: hover)`
+    -- so they don't fire as sticky-hover on touch devices.
+    -- Transition rule marker (issue #378). Carries the pre-built
+    -- CSS `transition` shorthand value (e.g. "background-color
+    -- 200ms ease-out"). The renderer harvests every AttrTransition
+    -- on an element into a single `data-sky-tr-rules` data-attr +
+    -- `data-sky-tr-respect` flag. The runtime's
+    -- `injectTransitionStyles` pass scopes the rule by sky-id and
+    -- wraps it in `@media (prefers-reduced-motion: no-preference)`
+    -- when `respectReducedMotion = True` (the default).
+    -- Animation marker (issue #378). Payload:
+    --   1. effective-name (auto-suffixed with sky-id-disambiguator
+    --      by the renderer so two `name = "fadeIn"` elements with
+    --      different keyframes don't collide globally; this carries
+    --      the user-visible name unmodified, the runtime
+    --      disambiguates).
+    --   2. animation shorthand WITHOUT name prefix
+    --      ("<dur>ms <easing> <delay>ms <iter> <fill>") — the
+    --      runtime composes "<final-name> <shorthand>".
+    --   3. keyframe body — concatenated `<pct>% { <props> }` blocks.
+    --   4. respectReducedMotion flag — when True (default) the
+    --      animation rule is wrapped in
+    --      `@media (prefers-reduced-motion: no-preference)`.
+
+-- Pseudo-class selector tag. `FocusVisible` (the safer default —
+-- only fires on keyboard nav, not on click-induced focus rings)
+-- is the recommended `focusColor` target; use `Focus` only when
+-- you explicitly want the sticky-focus behaviour.
+type PseudoClass
+    = Hover
+    | Focus
+    | FocusVisible
+    | Active
+    | Disabled
+
+type Length
+    = Px Int
+    | Content
+    | Fill Int
+    | Min Int Length
+    | Max Int Length
+    | Vh Int
+    | Vw Int
+
+type HAlign
+    = AlignLeft
+    | CenterX
+    | AlignRight
+
+type VAlign
+    = AlignTop
+    | CenterY
+    | AlignBottom
+
+type Location
+    = Above
+    | Below
+    | OnRight
+    | OnLeft
+    | InFront
+    | Behind
+
+type Color
+    = Rgba Int Int Int Float
+      -- R G B as 0-255 ints. Alpha stays Float in [0,1]. Storing
+      -- ints sidesteps Sky's HM friction with Float arithmetic
+      -- during CSS rendering.
+
+type Description
+    = NoDescription
+    | DescMain
+    | DescNavigation
+    | DescContentInfo
+    | DescComplementary
+    | DescHeading Int
+    | DescLabel String
+    | DescLivePolite
+    | DescLiveAssertive
+    | DescButton
+    | DescParagraph
+
+-- Layout direction the parent imposes on its children. Used to
+-- inject extra wrapper divs when alignment requirements conflict
+-- with the parent's flex-direction.
+type LayoutContext
+    = AsRow
+    | AsColumn
+    | AsEl
+    | AsParagraph
+    | AsTextColumn
+
+
+-- ─── Building elements ───────────────────────────────────────────
+none : Element msg
+none =
+    Empty
+
+
+text : String -> Element msg
+text s =
+    Text s
+
+
+el : List (Attribute msg) -> Element msg -> Element msg
+el attrs child =
+    Node NoDescription attrs [ child ]
+
+
+row : List (Attribute msg) -> List (Element msg) -> Element msg
+row attrs children =
+    Node NoDescription (rowMarker :: attrs) children
+
+
+column : List (Attribute msg) -> List (Element msg) -> Element msg
+column attrs children =
+    Node NoDescription (colMarker :: attrs) children
+
+
+-- Like `row`, but children that overflow the parent's width wrap to
+-- a new line instead of overflowing or shrinking. Compiles to
+-- `display: flex; flex-direction: row; flex-wrap: wrap`. Use this
+-- for product grids, tag clouds, dashboards, and anything where the
+-- child count is data-driven and the column count should adapt to
+-- available width.
+--
+-- Children keep their own intrinsic widths (e.g. `Ui.width (Ui.px
+-- 240)` cards), so combine with `Ui.spacing` for the gutter:
+--
+--     wrappedRow [ Ui.spacing 16 ]
+--         (List.map productCard products)
+--
+-- For true CSS-Grid `repeat(auto-fill, minmax(...))` behaviour
+-- (where children stretch to fill available width per row) — that's
+-- the `Ui.grid` primitive below.
+wrappedRow : List (Attribute msg) -> List (Element msg) -> Element msg
+wrappedRow attrs children =
+    Node NoDescription (rowMarker :: wrapMarker :: attrs) children
+
+
+-- Auto-fit grid container — the right primitive for product cards,
+-- dashboards, image galleries, anything where:
+--   * the child count is data-driven
+--   * each child should claim a fixed minimum width
+--   * available width should distribute evenly
+--   * children should NOT collapse to single-column on narrow viewports
+--
+-- Compiles to CSS Grid `display: grid; grid-template-columns:
+-- repeat(auto-fill, minmax(<col>px, 1fr))`. Use `Ui.gridColumns N`
+-- to set the minimum column width (mandatory for non-trivial use —
+-- without it the grid is a single column).
+--
+-- Unlike `wrappedRow`'s flex-wrap approach, `grid` does NOT suffer
+-- the "intrinsic-sized child collapses to 100% width" CSS quirk
+-- (flex-basis: auto with `<img width:100%>` etc.). Children fill
+-- their grid cell automatically — drop `Ui.width` from card-style
+-- children and let the grid handle sizing.
+--
+-- Example:
+--
+--     Ui.grid
+--         [ Ui.gridColumns 240   -- minmax(240px, 1fr)
+--         , Ui.spacing 16        -- gap: 16px
+--         , Ui.padding 24
+--         ]
+--         (List.map productCard products)
+grid : List (Attribute msg) -> List (Element msg) -> Element msg
+grid attrs children =
+    Node NoDescription (gridMarker :: attrs) children
+
+
+-- Set the minimum column width for a `Ui.grid` container. Compiles
+-- to the `<col>px` argument of `repeat(auto-fill, minmax(<col>px,
+-- 1fr))`. Has no effect outside a `Ui.grid` (silently ignored).
+gridColumns : Int -> Attribute msg
+gridColumns minWidthPx =
+    AttrStyle "__gridMin" (String.fromInt minWidthPx)
+
+
+-- Explicit grid track lists (issue #379). Pre-built CSS strings —
+-- typed Sky helpers live in `Std.Ui.Grid` (`Track` ADT +
+-- `Grid.tracks` / `Grid.columns` / `Grid.rows`). Bypasses the
+-- default `repeat(auto-fill, minmax(<gridColumns>px, 1fr))` and
+-- emits the supplied `grid-template-columns` / `grid-template-rows`
+-- declarations verbatim. Pass an empty string to skip an axis (the
+-- default `auto` fallback then applies). Like `gridColumns`, no
+-- effect outside `Ui.grid` (the `__grid` marker still has to be
+-- present, which the user gets by calling `Ui.grid [...] [...]`).
+gridTracksRaw : String -> String -> Attribute msg
+gridTracksRaw cols rows =
+    AttrStyle "__gridTracks" (cols ++ "|" ++ rows)
+
+
+-- ─── Aspect ratio (issue #379) ───────────────────────────────────
+-- Lock an element to a fixed width/height ratio. Compiles to inline
+-- `aspect-ratio: <r>`. Pair with `Ui.width Ui.fill` (or a specific
+-- pixel width) so height auto-scales — `aspect-ratio` is a ONE-axis
+-- declaration: the browser solves for the unset dimension from the
+-- set one.
+--
+-- Common values:
+--
+--     Ui.aspectRatio 1.0        -- 1:1 square
+--     Ui.aspectRatio 1.777      -- 16:9 widescreen / Full-HD
+--     Ui.aspectRatio 1.5        -- 3:2 photo print
+--     Ui.aspectRatio 1.333      -- 4:3 SD video / iPad
+--     Ui.aspectRatio 0.667      -- 2:3 portrait
+--     Ui.aspectRatio 2.35       -- cinemascope
+--
+-- For integer-pair ratios prefer `aspectRatioWH` — same final CSS
+-- but easier to read.
+aspectRatio : Float -> Attribute msg
+aspectRatio r =
+    AttrStyle "aspect-ratio" (String.fromFloat r)
+
+
+-- Lock an element to a width:height ratio expressed as two integers.
+-- Compiles to inline `aspect-ratio: <w> / <h>` — the browser handles
+-- the division. More readable for standard ratios:
+--
+--     Ui.aspectRatioWH 16 9     -- widescreen
+--     Ui.aspectRatioWH 4 3      -- SD / iPad
+--     Ui.aspectRatioWH 1 1      -- square
+--     Ui.aspectRatioWH 2 3      -- portrait poster
+aspectRatioWH : Int -> Int -> Attribute msg
+aspectRatioWH w h =
+    AttrStyle "aspect-ratio" (String.fromInt w ++ " / " ++ String.fromInt h)
+
+
+-- 1:1 square — alias for `aspectRatio 1.0` / `aspectRatioWH 1 1`.
+square : Attribute msg
+square =
+    aspectRatioWH 1 1
+
+
+-- 16:9 widescreen — alias for `aspectRatioWH 16 9`. Matches HDTV /
+-- YouTube / most monitors.
+widescreen : Attribute msg
+widescreen =
+    aspectRatioWH 16 9
+
+
+-- 16:9 — alias for `widescreen` (full-HD is 1920×1080, same ratio).
+fullHd : Attribute msg
+fullHd =
+    aspectRatioWH 16 9
+
+
+-- 21:9 ultra-wide (cinemascope) — common for hero banners + cinema
+-- presentation. CSS doesn't accept 21/9 directly because it isn't
+-- the true cinematic ratio (which is 2.35:1 ≈ 47:20). We emit the
+-- decimal form so the browser computes the canonical 2.35.
+cinemascope : Attribute msg
+cinemascope =
+    aspectRatio 2.35
+
+
+-- Internal markers — encoded as inline AttrStyle entries at the
+-- start of the attribute list so user attrs can override.
+rowMarker : Attribute msg
+rowMarker =
+    AttrStyle "__row" "true"
+
+
+colMarker : Attribute msg
+colMarker =
+    AttrStyle "__col" "true"
+
+
+-- Wrap-flag marker. Renderer adds `flex-wrap: wrap` when present;
+-- stripped from the emitted style string just like the row/col
+-- markers. Currently only emitted by `wrappedRow`, but the marker
+-- is reusable if `wrappedColumn` ever lands.
+wrapMarker : Attribute msg
+wrapMarker =
+    AttrStyle "__wrap" "true"
+
+
+-- Grid-flag marker. Renderer switches to `display: grid` and reads
+-- the `__gridMin` value (set by `gridColumns`) to emit the
+-- `grid-template-columns: repeat(auto-fill, minmax(<min>px, 1fr))`
+-- declaration.
+gridMarker : Attribute msg
+gridMarker =
+    AttrStyle "__grid" "true"
+
+
+-- ─── Length constructors ─────────────────────────────────────────
+px : Int -> Length
+px n =
+    Px n
+
+
+shrink : Length
+shrink =
+    Content
+
+
+fill : Length
+fill =
+    Fill 1
+
+
+fillPortion : Int -> Length
+fillPortion n =
+    Fill n
+
+
+minimum : Int -> Length -> Length
+minimum n l =
+    Min n l
+
+
+maximum : Int -> Length -> Length
+maximum n l =
+    Max n l
+
+
+-- Viewport-relative length: `vh n` = `n%` of the viewport height,
+-- `vw n` = `n%` of the viewport width. Useful for full-page shells
+-- (`Ui.height (Ui.vh 100)` = `min-height: 100vh`-style behaviour),
+-- hero sections, and modals that want to fill the visible area
+-- regardless of parent size. Pair with `Ui.minimum` / `Ui.maximum`
+-- if you need bounded viewport sizing
+-- (e.g. `Ui.maximum 800 (Ui.vh 80)`).
+vh : Int -> Length
+vh n =
+    Vh n
+
+
+vw : Int -> Length
+vw n =
+    Vw n
+
+
+-- ─── Attribute constructors ─────────────────────────────────────
+width : Length -> Attribute msg
+width l =
+    AttrWidth l
+
+
+height : Length -> Attribute msg
+height l =
+    AttrHeight l
+
+
+-- Uniform padding on all four sides.
+padding : Int -> Attribute msg
+padding n =
+    AttrPadding n n n n
+
+
+-- (horizontal, vertical) padding — elm-ui order (X first, Y second).
+-- `paddingXY 24 16` = 24px left/right, 16px top/bottom.
+--
+-- BREAKING (v0.11.x post-release): the previous signature was
+-- `paddingXY vertical horizontal` (Y first), which conflicted with
+-- elm-ui and the wider `*XY` convention (X is the horizontal axis).
+-- Migration: swap the two args at every call site —
+-- `paddingXY 16 24` becomes `paddingXY 24 16`. There is no compat
+-- shim, by design — both shapes type-check identically as
+-- `Int -> Int -> Attribute msg` so a quiet runtime swap of which
+-- axis got which value would have been worse than the loud break.
+paddingXY : Int -> Int -> Attribute msg
+paddingXY x y =
+    AttrPadding y x y x
+
+
+-- Per-side padding. Record-shaped to match `Std.Ui.Border.widthEach`
+-- (consistency within the `*Each` family) and elm-ui's
+-- `Element.paddingEach`. Use `Ui.padding` for uniform padding and
+-- `Ui.paddingXY` for `(horizontal, vertical)` pairs; reach for
+-- `paddingEach` only when you need all four sides distinct.
+--
+-- BREAKING (v0.11.x post-release): the previous signature
+-- `paddingEach : Int -> Int -> Int -> Int -> Attribute msg` is gone.
+-- Migration: `paddingEach t r b l` → `paddingEach { top = t, right = r,
+-- bottom = b, left = l }`.
+paddingEach : { top : Int
+, right : Int
+, bottom : Int
+, left : Int
+} -> Attribute msg
+paddingEach r =
+    AttrPadding r.top r.right r.bottom r.left
+
+
+-- Gap between children of a row / column container.
+spacing : Int -> Attribute msg
+spacing n =
+    AttrSpacing n
+
+
+centerX : Attribute msg
+centerX =
+    AttrAlignX CenterX
+
+
+centerY : Attribute msg
+centerY =
+    AttrAlignY CenterY
+
+
+alignLeft : Attribute msg
+alignLeft =
+    AttrAlignX AlignLeft
+
+
+alignRight : Attribute msg
+alignRight =
+    AttrAlignX AlignRight
+
+
+alignTop : Attribute msg
+alignTop =
+    AttrAlignY AlignTop
+
+
+alignBottom : Attribute msg
+alignBottom =
+    AttrAlignY AlignBottom
+
+
+-- Raw inline-style escape hatch. Prefer the typed attrs above.
+style : String -> String -> Attribute msg
+style k v =
+    AttrStyle k v
+
+
+-- Add an arbitrary HTML attribute to the element (href, src, name,
+-- target, etc.). Use sparingly — Std.Ui's typed attrs (link, image,
+-- etc.) are preferred when they cover the case.
+htmlAttribute : String -> String -> Attribute msg
+htmlAttribute k v =
+    AttrAttribute k v
+
+
+-- Add a CSS class to the rendered element. Doesn't replace existing
+-- classes — appends.
+class : String -> Attribute msg
+class c =
+    AttrClass c
+
+
+-- Cursor: pointer. Marks an element as clickable.
+pointer : Attribute msg
+pointer =
+    AttrPointer
+
+
+-- ─── Typed-helper wrappers around the AttrXxx constructors ──────
+--
+-- Sky's canonicaliser doesn't propagate type parameters when ADT
+-- constructors are referenced cross-module — `AttrBgColor` arrives
+-- at the import site as `Attribute` (no msg parameter) instead of
+-- `Attribute msg`. The typed-helper functions here anchor the
+-- generalisation locally so sibling modules (Std.Ui.Background,
+-- Std.Ui.Border, Std.Ui.Font, Std.Ui.Region) can call these
+-- functions instead of touching the constructors directly.
+bgColor : Color -> Attribute msg
+bgColor c =
+    AttrBgColor c
+
+
+borderColor : Color -> Attribute msg
+borderColor c =
+    AttrBorderColor c
+
+
+borderWidth : Int -> Attribute msg
+borderWidth n =
+    AttrBorderWidth n
+
+
+borderRounded : Int -> Attribute msg
+borderRounded n =
+    AttrBorderRounded n
+
+
+fontColor : Color -> Attribute msg
+fontColor c =
+    AttrFontColor c
+
+
+fontSize : Int -> Attribute msg
+fontSize n =
+    AttrFontSize n
+
+
+-- Pre-join with `, ` for the CSS family stack. Tier-1 sidestep:
+-- Sky's typed codegen routes `String.join` over `[String]` via the
+-- any-typed runtime helper which panics on a typed slice. Future
+-- work: pick `String_joinT` when both args are typed. For now
+-- callers pass the joined string directly via `Font.familyRaw`.
+fontFamily : String -> Attribute msg
+fontFamily joined =
+    AttrFontFamily joined
+
+
+fontWeight : Int -> Attribute msg
+fontWeight n =
+    AttrFontWeight n
+
+
+fontItalic : Attribute msg
+fontItalic =
+    AttrFontItalic
+
+
+fontUnderline : Attribute msg
+fontUnderline =
+    AttrFontUnderline
+
+
+-- Generic text-decoration kernel — `value` is the raw CSS keyword
+-- (e.g. "none", "line-through", "overline"). Std.Ui.Font wraps the
+-- common cases (`noDecoration` / `underline` / etc.) so user code
+-- doesn't type the string.
+fontDecoration : String -> Attribute msg
+fontDecoration value =
+    AttrFontDecoration value
+
+
+-- text-align kernel — `value` is the raw CSS keyword
+-- ("left" / "right" / "center" / "justify"). Std.Ui.Font wraps each
+-- keyword in a typed helper so user code never types the string.
+fontAlign : String -> Attribute msg
+fontAlign value =
+    AttrFontAlign value
+
+
+fontLetterSpacing : Float -> Attribute msg
+fontLetterSpacing em =
+    AttrFontLetterSpacing em
+
+
+fontWordSpacing : Float -> Attribute msg
+fontWordSpacing em =
+    AttrFontWordSpacing em
+
+
+bgImage : String -> Attribute msg
+bgImage url =
+    AttrBgImage url
+
+
+bgGradient : String -> Attribute msg
+bgGradient css =
+    AttrBgGradient css
+
+
+borderWidthEach : Int -> Int -> Int -> Int -> Attribute msg
+borderWidthEach t r b l =
+    AttrBorderWidthEach t r b l
+
+
+borderStyle : String -> Attribute msg
+borderStyle s =
+    AttrBorderStyle s
+
+
+borderShadow : Int -> Int -> Int -> Int -> Color -> Attribute msg
+borderShadow ox oy blur spread c =
+    AttrBorderShadow ox oy blur spread c
+
+
+borderInsetShadow : Int -> Int -> Int -> Int -> Color -> Attribute msg
+borderInsetShadow ox oy blur spread c =
+    AttrBorderInsetShadow ox oy blur spread c
+
+
+overflow : String -> String -> Attribute msg
+overflow x y =
+    AttrOverflow x y
+
+
+-- ─── Nearby positioning helpers ──────────────────────────────────
+--
+-- Attach an Element as an absolutely-positioned overlay relative to
+-- its parent. The parent gets `position: relative` automatically;
+-- the child gets `position: absolute` plus the matching offset.
+-- Use for tooltips, popovers, dropdown menus, badges, etc.
+above : Element msg -> Attribute msg
+above el =
+    AttrNearby Above el
+
+
+below : Element msg -> Attribute msg
+below el =
+    AttrNearby Below el
+
+
+onLeft : Element msg -> Attribute msg
+onLeft el =
+    AttrNearby OnLeft el
+
+
+onRight : Element msg -> Attribute msg
+onRight el =
+    AttrNearby OnRight el
+
+
+inFront : Element msg -> Attribute msg
+inFront el =
+    AttrNearby InFront el
+
+
+behind : Element msg -> Attribute msg
+behind el =
+    AttrNearby Behind el
+
+
+describe : Description -> Attribute msg
+describe d =
+    AttrDescribe d
+
+
+-- Description-value helpers. Description is a non-parameterised ADT
+-- so it crosses module boundaries cleanly, but the helpers also
+-- give a stable surface name in case the underlying constructor
+-- names change.
+descMain : Description
+descMain =
+    DescMain
+
+
+descNavigation : Description
+descNavigation =
+    DescNavigation
+
+
+descContentInfo : Description
+descContentInfo =
+    DescContentInfo
+
+
+descHeading : Int -> Description
+descHeading n =
+    DescHeading n
+
+
+descLabel : String -> Description
+descLabel s =
+    DescLabel s
+
+
+descComplementary : Description
+descComplementary =
+    DescComplementary
+
+
+descLivePolite : Description
+descLivePolite =
+    DescLivePolite
+
+
+descLiveAssertive : Description
+descLiveAssertive =
+    DescLiveAssertive
+
+
+-- ─── Events ──────────────────────────────────────────────────────
+-- Bind a click handler. The msg is dispatched on the wire when the
+-- user clicks the element. Inside Sky.Live, this becomes an SSE
+-- round-trip + Msg dispatch through update. The Std.Html.Events
+-- helper is invoked here at construction time so msg's concrete
+-- type is preserved through the AttrEvent carrier (any-typed).
+onClick : msg -> Attribute msg
+onClick msg =
+    AttrEvent (Event.onClick msg)
+
+
+-- Form-submit handler — fires when the form is submitted (Enter
+-- in any field, or click on a submit button inside the form).
+-- The argument can be either:
+--   * a plain Msg constructor (no formData decode) — e.g.
+--     `Ui.onSubmit DoSignOut`
+--   * a typed-record-arg constructor — e.g.
+--     `Ui.onSubmit DoSignIn` where `DoSignIn : LoginForm -> Msg`.
+--     Sky.Live decodes the wire formData (`{name: value, ...}`)
+--     into the typed record at dispatch time via case-insensitive
+--     `json.Unmarshal` — input `name` attributes map to record
+--     fields by name.
+--
+-- The signature `(a -> Attribute b)` is intentionally permissive
+-- in `a` (the runtime accepts both plain Msg values and Msg
+-- constructors that take a record arg) and independent in `b` (the
+-- surrounding context picks the Attribute's msg type). A stricter
+-- `(msg -> Attribute msg)` shape would block the in-module case
+-- where the Msg constructor takes a record param — sky check
+-- otherwise rejects the type-equation `msg = (record -> msg)`.
+onSubmit : a -> Attribute b
+onSubmit msg =
+    AttrEvent (Event.onSubmit msg)
+
+
+-- Input change handler — fires per keystroke for text inputs.
+-- The callback receives the input's current value as a String;
+-- the typed signature lets Sky's HM verify the wrapper at the
+-- call site.
+onInput : (String -> msg) -> Attribute msg
+onInput cb =
+    AttrEvent (Event.onInput cb)
+
+
+onChange : (String -> msg) -> Attribute msg
+onChange cb =
+    AttrEvent (Event.onChange cb)
+
+
+onFocus : msg -> Attribute msg
+onFocus msg =
+    AttrEvent (Event.onFocus msg)
+
+
+onMouseOver : msg -> Attribute msg
+onMouseOver msg =
+    AttrEvent (Event.onMouseOver msg)
+
+
+onMouseOut : msg -> Attribute msg
+onMouseOut msg =
+    AttrEvent (Event.onMouseOut msg)
+
+
+onKeyDown : msg -> Attribute msg
+onKeyDown msg =
+    AttrEvent (Event.onKeyDown msg)
+
+
+-- File-input change handler. Wire this on `<input type="file">`
+-- (use `Ui.input [ Ui.htmlAttribute "type" "file", Ui.onFile FileSelected ]`).
+-- The browser-side driver reads the chosen file, base64-encodes it as
+-- a data URL, and dispatches `[dataUrl]` as the args. The Sky-side
+-- callback receives the data URL as a single String — store it in
+-- Model and decode/upload as needed (the Std.Encoding module's
+-- base64Decode helps here).
+--
+-- For images, prefer `onImage` instead — it auto-resizes to the
+-- `fileMaxWidth` / `fileMaxHeight` hints before sending, saving
+-- bandwidth on large camera-roll uploads.
+onFile : (String -> msg) -> Attribute msg
+onFile cb =
+    AttrEvent (Event.onFile cb)
+
+
+-- Image-input change handler — same as onFile but the browser-side
+-- driver scales the image to `Ui.fileMaxWidth` / `fileMaxHeight`
+-- (default 1200×1200) and re-encodes as JPEG @ 0.85 quality before
+-- sending. Output is still a `data:image/jpeg;base64,...` URL.
+onImage : (String -> msg) -> Attribute msg
+onImage cb =
+    AttrEvent (Event.onImage cb)
+
+
+-- Client-side file-size cap in bytes. Files exceeding this are
+-- dropped on the browser side with a console.warn before any data is
+-- sent. UX guard, not a security boundary — server-side validation
+-- still required (Sky.Live also caps the POST body via the
+-- sky.toml [live] maxBodyBytes setting, default 5 MiB).
+fileMaxSize : Int -> Attribute msg
+fileMaxSize bytes =
+    AttrAttribute "data-sky-ev-sky-file-max-size" (String.fromInt bytes)
+
+
+-- Image resize hint — width in pixels. The image is scaled to fit
+-- `fileMaxWidth` × `fileMaxHeight` (default 1200×1200) on the
+-- browser side before being sent. Only applies to `Ui.onImage`.
+fileMaxWidth : Int -> Attribute msg
+fileMaxWidth px =
+    AttrAttribute "data-sky-ev-sky-file-max-width" (String.fromInt px)
+
+
+-- Image resize hint — height in pixels. Pair with `fileMaxWidth`.
+fileMaxHeight : Int -> Attribute msg
+fileMaxHeight px =
+    AttrAttribute "data-sky-ev-sky-file-max-height" (String.fromInt px)
+
+
+-- ─── Common element shortcuts ────────────────────────────────────
+-- Hyperlink. Renders as `<a href=…>…</a>`. The href is set as an
+-- HTML attribute; click navigation happens through standard browser
+-- behaviour (Sky.Live intercepts same-origin navigation if you've
+-- routed it).
+link : List (Attribute msg) -> { url : String
+, label : Element msg
+} -> Element msg
+link attrs cfg =
+    let
+        -- `Ui.grid` carries a `__grid` marker that switches the
+        -- container to CSS Grid auto-fit. When present, we OVERRIDE
+        -- `displayFor`'s default flex output entirely (grid is not
+        -- compatible with `display: flex`). Otherwise we use the
+        -- ctx-driven display + the optional flex-wrap continuation.
+        nodeAttrs = AttrAttribute "href" cfg.url :: attrs
+    in
+        TaggedNode "a" NoDescription nodeAttrs [ cfg.label ]
+
+
+-- Inline image with required src + alt for accessibility. Renders
+-- as `<img src=… alt=…>` (a void element — no children).
+image : List (Attribute msg) -> { src : String
+, description : String
+} -> Element msg
+image attrs cfg =
+    let
+        nodeAttrs =
+            AttrAttribute "src" cfg.src :: AttrAttribute "alt" cfg.description
+                :: attrs
+    in
+        TaggedNode "img" NoDescription nodeAttrs []
+
+
+-- A `<p>` block. Children flow as inline text (no flex layout); use
+-- `el` inside paragraph to highlight a word/phrase. Tier 2 ships the
+-- basic block-level shape; richer child-rewriting (coordinating
+-- margins inside the wrap) lands in a follow-up.
+paragraph : List (Attribute msg) -> List (Element msg) -> Element msg
+paragraph attrs children =
+    TaggedNode "p" DescParagraph (paragraphMarker :: attrs) children
+
+
+paragraphMarker : Attribute msg
+paragraphMarker =
+    AttrStyle "__paragraph" "true"
+
+
+-- Stack of paragraph-style children. Renders as a block-level
+-- container (`<section>`) so each paragraph stays on its own line
+-- with normal text flow.
+textColumn : List (Attribute msg) -> List (Element msg) -> Element msg
+textColumn attrs children =
+    TaggedNode "section" NoDescription (textColumnMarker :: attrs) children
+
+
+textColumnMarker : Attribute msg
+textColumnMarker =
+    AttrStyle "__textcolumn" "true"
+
+
+-- A `<button>`. Use `Ui.onClick` to attach a handler. The default
+-- styling is sparse; users layer Background/Border/Font/Padding to
+-- match their design.
+button : List (Attribute msg) -> { onPress : Maybe msg
+, label : Element msg
+} -> Element msg
+button attrs cfg =
+    let
+        clickAttr =
+            case cfg.onPress of
+
+                Just msg ->
+                    [ onClick msg ]
+
+                Nothing ->
+                    [ AttrAttribute "disabled" "true" ]
+        -- Default `type="button"` so a `Ui.button` placed inside a
+        -- `Ui.form` does NOT implicitly submit it (an HTML `<button>`
+        -- defaults to `type="submit"`). Without this, an in-form action
+        -- button — e.g. a "Cancel" that dispatches its own `onPress`
+        -- Msg — ALSO triggers the form's `onSubmit`, firing two Msgs
+        -- (or the wrong one). Prepended so a caller who genuinely wants
+        -- a submit button can still override with
+        -- `Ui.htmlAttribute "type" "submit"` (later attrs win at render).
+        allAttrs =
+            AttrAttribute "type" "button" :: clickAttr ++ pointer :: attrs
+    in
+        TaggedNode "button" NoDescription allAttrs [ cfg.label ]
+
+
+-- A `<input>`. The browser fires `input` and `change` events
+-- natively, so wire `Ui.onInput`/`Ui.onChange` for keystroke /
+-- commit semantics. Set `type` (text / password / email / number /
+-- checkbox / radio / ...) and other native attrs via
+-- `Ui.htmlAttribute "type" "..."` / `htmlAttribute "value" "..."`.
+-- Renders to a void `<input>` element (no children) — Std.Ui's
+-- renderNodeAs special-cases the `input` tag for void emission.
+input : List (Attribute msg) -> Element msg
+input attrs =
+    TaggedNode "input" NoDescription attrs []
+
+
+-- A `<form>`. Wrap inputs to use the `<form onSubmit=...>` pattern
+-- — recommended for sensitive inputs (password, API key, credit
+-- card) per Sky.Live's "Forms with passwords" doctrine in CLAUDE.md.
+-- Three reasons to prefer form-submit over per-keystroke onInput
+-- on password fields: (1) password manager extensions stop seeing
+-- DOM mutation re-prompts on every render, (2) the secret never
+-- lives in Model so it never gets serialised into Redis/Postgres
+-- session stores, (3) race-free submit reads the live DOM value
+-- not a debounced keystroke.
+--
+-- Use with `Ui.onSubmit DoSignIn` where `DoSignIn` takes a typed
+-- record matching the form's named inputs (e.g.
+-- `type alias Creds = { username : String, password : String }`).
+-- Sky.Live's typed Msg dispatch decodes the wire form data into
+-- the record via case-insensitive json.Unmarshal — Sky's
+-- lowercase field names land in the matching Go fields without
+-- per-Msg decoder boilerplate.
+form : List (Attribute msg) -> List (Element msg) -> Element msg
+form attrs children =
+    TaggedNode "form" NoDescription attrs children
+
+
+-- Convenience for the `name` attribute on form inputs. Sky.Live's
+-- form-submit dispatch uses each input's `name` as the key in the
+-- record decoded into the Msg constructor's typed-record param.
+-- Equivalent to `Ui.htmlAttribute "name" value` — the typed wrapper
+-- just reads better in form definitions.
+name : String -> Attribute msg
+name value =
+    AttrAttribute "name" value
+
+
+-- Escape hatch — wrap an arbitrary Std.Html node as an Element.
+-- Useful when you need a tag Std.Ui doesn't model directly
+-- (`<video>`, `<canvas>`, `<table>`, third-party widgets) without
+-- dropping the rest of your layout. The wrapped node is rendered
+-- in place — Std.Ui adds no inline-style wrapper around it.
+html : any -> Element msg
+html node =
+    Raw node
+
+-- ─── Media queries + responsive breakpoints (issue #376) ─────────
+--
+-- Express viewport-conditional styling in pure typed Sky. Layout
+-- reacts via the browser's CSS engine — instant, no JS round-trip,
+-- no model field, no re-render.
+--
+-- `Ui.breakpoint`: typed-constant ADT covering 95 % of cases (mobile
+-- / tablet / desktop / dark-mode / reduced-motion / etc.).
+-- `Ui.mediaQuery`: low-level escape hatch — any raw CSS media-query
+-- string (e.g. "(orientation: portrait)", "(min-resolution: 2dppx)").
+--
+--     -- Stack vertically on mobile, side-by-side on desktop.
+--     Ui.row
+--         [ Ui.spacing 16 ]
+--         [ Ui.breakpoint Ui.mobile
+--             [ Ui.htmlAttribute "style" "flex-direction: column;" ]
+--             sidebar
+--         , main
+--         ]
+--
+-- See docs/skyui/overview.md §"Media queries + breakpoints" for the
+-- full reference + design notes. Composes via nesting:
+-- `breakpoint Mobile [a] (breakpoint DarkMode [b] child)` produces
+-- two scoped <style> blocks; CSS rules independently match.
+type Breakpoint
+    = SmAndUp
+    | MdAndUp
+    | LgAndUp
+    | XlAndUp
+    | Mobile
+    | Tablet
+    | Desktop
+    | DarkMode
+    | LightMode
+    | ReducedMotion
+    | TouchDevice
+    | Portrait
+    | Landscape
+    | Custom Int Int
+        -- `Custom minPx maxPx`. 0 = unset (no min / no max).
+        -- `Custom 600 0`   → `(min-width: 600px)`
+        -- `Custom 0 800`   → `(max-width: 800px)`
+        -- `Custom 600 800` → `(min-width: 600px) and (max-width: 800px)`
+
+
+-- Typed-constant shortcuts so user code can write `Ui.mobile` /
+-- `Ui.darkMode` without `Ui.Breakpoint.Mobile`. Bare-value pattern
+-- mirrors `Std.Ui.Responsive.mobile`.
+mobile : Breakpoint
+mobile =
+    Mobile
+
+
+tablet : Breakpoint
+tablet =
+    Tablet
+
+
+desktop : Breakpoint
+desktop =
+    Desktop
+
+
+smAndUp : Breakpoint
+smAndUp =
+    SmAndUp
+
+
+mdAndUp : Breakpoint
+mdAndUp =
+    MdAndUp
+
+
+lgAndUp : Breakpoint
+lgAndUp =
+    LgAndUp
+
+
+xlAndUp : Breakpoint
+xlAndUp =
+    XlAndUp
+
+
+darkMode : Breakpoint
+darkMode =
+    DarkMode
+
+
+lightMode : Breakpoint
+lightMode =
+    LightMode
+
+
+reducedMotion : Breakpoint
+reducedMotion =
+    ReducedMotion
+
+
+touchDevice : Breakpoint
+touchDevice =
+    TouchDevice
+
+
+portrait : Breakpoint
+portrait =
+    Portrait
+
+
+landscape : Breakpoint
+landscape =
+    Landscape
+
+
+-- Map a Breakpoint to its CSS media-query expression. Defaults
+-- follow Tailwind-style cuts (sm 640, md 768, lg 1024, xl 1280) so
+-- AI-generated Sky lines up with the most-common web mental model.
+breakpointToQuery : Breakpoint -> String
+breakpointToQuery bp =
+    case bp of
+
+        SmAndUp ->
+            "(min-width: 640px)"
+
+        MdAndUp ->
+            "(min-width: 768px)"
+
+        LgAndUp ->
+            "(min-width: 1024px)"
+
+        XlAndUp ->
+            "(min-width: 1280px)"
+
+        Mobile ->
+            "(max-width: 767px)"
+
+        Tablet ->
+            "(min-width: 768px) and (max-width: 1023px)"
+
+        Desktop ->
+            "(min-width: 1024px)"
+
+        DarkMode ->
+            "(prefers-color-scheme: dark)"
+
+        LightMode ->
+            "(prefers-color-scheme: light)"
+
+        ReducedMotion ->
+            "(prefers-reduced-motion: reduce)"
+
+        TouchDevice ->
+            "(hover: none) and (pointer: coarse)"
+
+        Portrait ->
+            "(orientation: portrait)"
+
+        Landscape ->
+            "(orientation: landscape)"
+
+        Custom minPx maxPx ->
+            customRangeQuery minPx maxPx
+
+
+-- 0 means "unset". Both 0 → fallback `all` matches everything (the
+-- attrs always apply); pick one to control properly.
+customRangeQuery : Int -> Int -> String
+customRangeQuery minPx maxPx =
+    if minPx > 0 && maxPx > 0 then
+        "(min-width: " ++ String.fromInt minPx ++ "px) and (max-width: "
+            ++ String.fromInt maxPx
+            ++ "px)"
+
+    else if minPx > 0 then
+        "(min-width: " ++ String.fromInt minPx ++ "px)"
+
+    else if maxPx > 0 then
+        "(max-width: " ++ String.fromInt maxPx ++ "px)"
+
+    else
+        "all"
+            -- Generic fallback for arbitrary attribute names (sky-key,
+            -- aria-*, custom data-*, etc.).
+
+
+-- `breakpoint bp attrs child` — wrap `child` so the attrs apply only
+-- when the breakpoint matches. Renders to a `<div>` wrapper carrying
+-- `child` plus a sky-id-scoped `<style>` block injected by the
+-- runtime. Sky.Tui silently ignores the `<style>` (terminal renders
+-- the base layer only); Sky.Webview honours media queries identically
+-- to Sky.Live because they share the runtime VNode pipeline.
+breakpoint : Breakpoint -> List (Attribute msg) -> Element msg -> Element msg
+breakpoint bp attrs child =
+    mediaQuery (breakpointToQuery bp) attrs child
+
+
+-- Escape hatch — any raw CSS media-query string. The string is
+-- emitted verbatim inside `@media <q> { ... }`; the caller owns
+-- correctness. Examples: "(orientation: portrait)",
+-- "(min-resolution: 2dppx)", "(min-width: 600px) and (hover: hover)".
+mediaQuery : String -> List (Attribute msg) -> Element msg -> Element msg
+mediaQuery query attrs child =
+    let
+        rulesCss = mediaQueryRulesCss attrs
+        -- Marker attrs carried on the wrapper. The runtime
+        -- (`injectMediaQueryStyles` in runtime-go/rt/live.go) walks
+        -- the tree after assignSkyIDs, finds these data attrs,
+        -- generates a `<style>` block scoped by `[sky-id="<sid>"]`,
+        -- prepends it as a child, and strips the markers from the
+        -- emitted HTML attribute set so the wire stays clean.
+        markerQuery = AttrAttribute "data-sky-mq-q" query
+        markerRules = AttrAttribute "data-sky-mq-rules" rulesCss
+    in
+        Node NoDescription [ markerQuery, markerRules ] [ child ]
+
+
+-- Lower a media-query attribute list into a CSS-rules string with
+-- the same per-attribute emission as the base inline-style path —
+-- so `Background.color`, `Border.width`, `Font.size`, `padding`,
+-- `spacing`, `width`, `height`, `htmlAttribute "style" "..."` etc.
+-- all work identically inside `Ui.breakpoint` / `Ui.mediaQuery`.
+-- Parent + my context default to AsColumn (the safe layout
+-- assumption for an overridable container); the user can still
+-- override via explicit CSS in a `style` attr if needed.
+mediaQueryRulesCss : List (Attribute msg) -> String
+mediaQueryRulesCss attrs =
+    List.foldl (collectStyle AsColumn AsColumn) "" attrs
+
+
+-- ─── Pseudo-classes (issue #377) ─────────────────────────────────
+--
+-- `:hover`, `:focus`, `:focus-visible`, `:active`, `:disabled` —
+-- declared inline on an element via `Background.hoverColor` /
+-- `Font.hoverColor` / `Border.hoverColor` etc., or via the generic
+-- `Ui.onPseudo Ui.hover [...]` escape hatch for selector
+-- combinations no sub-module helper covers.
+--
+--     Ui.button
+--         [ Background.color (Ui.rgb 0 122 255)
+--         , Background.hoverColor (Ui.rgb 0 92 215)
+--         , Background.activeColor (Ui.rgb 0 62 175)
+--         , Font.color Ui.white
+--         , Ui.padding 12
+--         ]
+--         { onPress = Just Submit, label = Ui.text "Save" }
+--
+-- The CSS rules-string is computed at render time and attached to
+-- the element via a `data-sky-pc-rules` marker; the runtime
+-- (`injectPseudoClassStyles` in runtime-go/rt/live.go) generates
+-- a sky-id-scoped `<style>` child with the per-pseudo rule. Hover
+-- rules are auto-wrapped in `@media (hover: hover)` so they don't
+-- fire as sticky-hover on touch devices (no tap-and-stay button).
+--
+-- `focusColor` targets `:focus-visible` by default — only fires on
+-- keyboard navigation, not on click-induced focus rings. Use
+-- `Ui.onPseudo Ui.focus [...]` (or the `focusActiveColor` helpers
+-- per sub-module) when you want the sticky-focus behaviour.
+--
+-- Composition with `Ui.breakpoint`: `Background.hoverColor red`
+-- inside `Ui.breakpoint Ui.mobile [...]` emits its `:hover` rule
+-- under the breakpoint's `@media` block — both layers stack
+-- naturally because the breakpoint wraps the element and the
+-- pseudo-class rule attaches to the same sky-id inside the
+-- breakpoint wrapper's tree.
+-- Typed-constant shortcuts so user code can write `Ui.hover` /
+-- `Ui.focus` without `Ui.PseudoClass.Hover`. Bare-value pattern
+-- mirrors `Ui.mobile` / `Ui.darkMode`.
+hover : PseudoClass
+hover =
+    Hover
+
+
+focus : PseudoClass
+focus =
+    Focus
+
+
+focusVisible : PseudoClass
+focusVisible =
+    FocusVisible
+
+
+active : PseudoClass
+active =
+    Active
+
+
+disabled : PseudoClass
+disabled =
+    Disabled
+
+
+-- Map a PseudoClass to its CSS selector suffix (`:hover`,
+-- `:focus-visible`, etc.). Used by the runtime's
+-- injectPseudoClassStyles to assemble per-pseudo rules. Kept here
+-- (Sky-side, exposed) so the wire shape stays in sync with the
+-- runtime parser (round-trip pin via UiPseudoClassSpec).
+pseudoClassSelector : PseudoClass -> String
+pseudoClassSelector pc =
+    case pc of
+
+        Hover ->
+            ":hover"
+
+        Focus ->
+            ":focus"
+
+        FocusVisible ->
+            ":focus-visible"
+
+        Active ->
+            ":active"
+
+        Disabled ->
+            ":disabled"
+
+
+-- Stable wire tag for a PseudoClass — the runtime parser keys off
+-- this string. Order: shortest tag first to keep parsing cheap
+-- (single-char prefix lookup).
+pseudoClassTag : PseudoClass -> String
+pseudoClassTag pc =
+    case pc of
+
+        Hover ->
+            "h"
+
+        Focus ->
+            "f"
+
+        FocusVisible ->
+            "v"
+
+        Active ->
+            "a"
+
+        Disabled ->
+            "d"
+
+
+-- Generic escape hatch — attach a set of attrs that apply only
+-- when the element matches the given pseudo-class selector.
+-- Returns a single Attribute, so user code stays linear:
+--
+--     Ui.button
+--         [ Ui.onPseudo Ui.hover [ Background.color red, Font.size 18 ]
+--         , Ui.onPseudo Ui.focusVisible [ Border.color blue ]
+--         ]
+--         { onPress = Just Save, label = text "Save" }
+--
+-- Sub-module helpers (`Background.hoverColor`, `Font.hoverColor`,
+-- etc.) all reduce to this — they're sugar for `onPseudo Hover
+-- [<single helper>]`. Use this when you need to compose multiple
+-- properties under one pseudo-state.
+onPseudo : PseudoClass -> List (Attribute msg) -> Attribute msg
+onPseudo pc attrs =
+    AttrPseudoRule pc (mediaQueryRulesCss attrs)
+
+
+-- ─── Transitions + animations (issue #378) ────────────────────────
+--
+-- `Ui.transitionRaw shorthand respect` — low-level escape hatch
+-- for users who already have a CSS `transition` shorthand string
+-- (e.g. interop with a design token system). Most user code calls
+-- `Transition.attribute [...]` instead, which builds the shorthand
+-- from typed `Step` values.
+--
+-- `respect` = True (the default for the typed-Step path) wraps the
+-- rule in `@media (prefers-reduced-motion: no-preference) { ... }`
+-- so users who've opted out of motion in their OS get a static UI.
+-- Pass `False` only for animations that are semantically required
+-- (loading spinner, progress indicator).
+--
+--     Ui.button
+--         [ Background.color blue
+--         , Background.hoverColor lightBlue
+--         , Ui.transitionRaw "background-color 200ms ease-out" True
+--         ]
+--         cfg
+--
+-- The renderer harvests every AttrTransition on an element into ONE
+-- `data-sky-tr-rules` data-attr (comma-joined); the runtime's
+-- `injectTransitionStyles` pass generates a sky-id-scoped <style>
+-- with the per-element `transition: ...` rule.
+transitionRaw : String -> Bool -> Attribute msg
+transitionRaw shorthand respect =
+    AttrTransition shorthand respect
+
+
+-- `Ui.animateRaw name shorthand keyframesBody respect` — low-level
+-- escape hatch for users with raw CSS in hand. Most user code calls
+-- `Animation.attribute spec`. The shorthand is the animation
+-- shorthand WITHOUT the leading name token: "<dur>ms <easing>
+-- <delay>ms <iter> <fill>". The keyframes body is the concatenated
+-- "<pct>% { <props> } ..." string with NO surrounding `@keyframes
+-- name { }` wrapper (the runtime adds that with an auto-suffixed
+-- effective name).
+animateRaw : String -> String -> String -> Bool -> Attribute msg
+animateRaw name shorthandTail keyframesBody respect =
+    AttrAnimation name shorthandTail keyframesBody respect
+
+
+-- Extract transition rules from the attribute list. Returns the
+-- joined CSS shorthand string + a flag whose meaning is "any
+-- transition on this element opts out of the reduced-motion gate
+-- (`respect = False`)". If ANY transition wants the unsafe path,
+-- the whole element's transition block ships unwrapped — mixing
+-- gated + ungated within one element would otherwise need two
+-- style blocks for a tiny gain.
+collectTransitions : List (Attribute msg) -> ( String, Bool )
+collectTransitions attrs =
+    let
+        rules = List.filterMap pickTransitionShorthand attrs
+        anyOptOut = List.any isTransitionOptOut attrs
+    in
+        ( String.join ", " rules, anyOptOut )
+
+
+pickTransitionShorthand : Attribute msg -> Maybe String
+pickTransitionShorthand a =
+    case a of
+
+        AttrTransition s _ ->
+            if String.length s == 0 then
+                Nothing
+
+            else
+                Just s
+
+        _ ->
+            Nothing
+
+
+isTransitionOptOut : Attribute msg -> Bool
+isTransitionOptOut a =
+    case a of
+
+        AttrTransition _ respect ->
+            not respect
+
+        _ ->
+            False
+
+-- An animation entry as collected from an element's attributes.
+-- A small custom ADT instead of a 4-tuple — Sky's runtime tuple
+-- destructuring for arity ≥ 3 currently routes through
+-- rt.SkyTupleN, which collides with the rt.T3/T4 generic shapes
+-- some lowering paths emit. The ADT route is panic-proof.
+type AnimationEntry
+    = AnimationEntry String String String Bool
+
+
+-- Extract animation specs from the attribute list. Returns a list
+-- of (name, shorthandTail, keyframesBody, respect) entries — one
+-- per animation declared on the element. The renderer serialises
+-- them into the `data-sky-anim-rules` marker.
+collectAnimations : List (Attribute msg) -> List AnimationEntry
+collectAnimations attrs =
+    List.filterMap pickAnimation attrs
+
+
+pickAnimation : Attribute msg -> Maybe AnimationEntry
+pickAnimation a =
+    case a of
+
+        AttrAnimation name tail body respect ->
+            if String.length name == 0 || String.length body == 0 then
+                Nothing
+
+            else
+                Just (AnimationEntry name tail body respect)
+
+        _ ->
+            Nothing
+
+
+-- Serialise animation entries into the wire-format marker the
+-- runtime parses. Format:
+--   "name||tail||kfBody||respect" per entry; entries separated by
+--   "@@" (forbidden inside CSS property values). `respect` is the
+--   literal "1" or "0".
+encodeAnimations : List AnimationEntry -> String
+encodeAnimations entries =
+    String.join "@@" (List.map encodeAnimationEntry entries)
+
+
+encodeAnimationEntry : AnimationEntry -> String
+encodeAnimationEntry entry =
+    case entry of
+
+        AnimationEntry name tail body respect ->
+            name ++ "||" ++ tail ++ "||" ++ body ++ "||"
+                ++ (if respect then
+                       "1"
+
+                   else
+                       "0")
+
+
+-- Extract the name of an AnimationEntry. Helper for users /
+-- testing — case-destructure is fine but the helper avoids the
+-- ADT-ctor name leaking into call sites.
+animationEntryName : AnimationEntry -> String
+animationEntryName entry =
+    case entry of
+
+        AnimationEntry name _ _ _ ->
+            name
+
+
+-- Extract pseudo-class rules from the attribute list. Returned
+-- as a list of (tag, css) pairs — the renderer serialises them
+-- into the `data-sky-pc-rules` data-attr that the runtime parses.
+-- Empty-rules entries are dropped so we don't pollute the wire.
+collectPseudoRules : List (Attribute msg) -> List ( String, String )
+collectPseudoRules attrs =
+    List.filterMap pseudoRuleEntry attrs
+
+
+pseudoRuleEntry : Attribute msg -> Maybe ( String, String )
+pseudoRuleEntry a =
+    case a of
+
+        AttrPseudoRule pc css ->
+            if String.length css == 0 then
+                Nothing
+
+            else
+                Just ( pseudoClassTag pc, css )
+
+        _ ->
+            Nothing
+
+
+-- Serialise the collected pseudo rules into the on-the-wire
+-- marker string. Format: `tag1|rules1||tag2|rules2` — `|` separates
+-- the tag from its rules within one entry; `||` separates entries.
+-- Both characters are forbidden inside CSS property values
+-- (selectors only), so they're a safe in-band delimiter.
+encodePseudoRules : List ( String, String ) -> String
+encodePseudoRules entries =
+    String.join "||" (List.map encodeOneEntry entries)
+
+
+encodeOneEntry : ( String, String ) -> String
+encodeOneEntry pair =
+    case pair of
+
+        ( tag, css ) ->
+            tag ++ "|" ++ css
+
+
+-- Extract a plain string from a `Text s` element, or "" for any
+-- other shape. Used by Std.Ui.Input.placeholder rendering to pull
+-- the placeholder text out of the user-supplied Element wrapper.
+-- Lives here (not in Std.Ui.Input) because the Element ctors aren't
+-- conveniently destructurable cross-module today.
+elementText : Element msg -> String
+elementText el =
+    case el of
+
+        Text s ->
+            s
+
+        _ ->
+            ""
+
+
+-- ─── Overflow / clip / scrollbars ────────────────────────────────
+-- Clip overflow on both axes (overflow: hidden). Use when an
+-- element's content might overflow and you want it cut off rather
+-- than wrapped.
+clip : Attribute msg
+clip =
+    AttrOverflow "hidden" "hidden"
+
+
+-- Single-axis clip uses the `clip` keyword, not `hidden`. CSS
+-- promotes a `visible` axis to `auto` (scrollbar!) when the other
+-- axis is `hidden`/`auto`/`scroll` — but NOT when it is `clip`.
+-- So `overflow-x:clip; overflow-y:visible` truly leaves Y visible.
+clipX : Attribute msg
+clipX =
+    AttrOverflow "clip" "visible"
+
+
+clipY : Attribute msg
+clipY =
+    AttrOverflow "visible" "clip"
+
+
+-- Show scrollbars on overflow on both axes.
+scrollbars : Attribute msg
+scrollbars =
+    AttrOverflow "auto" "auto"
+
+
+-- The off-axis is `hidden`, not `visible`: a `visible` off-axis
+-- gets promoted to `auto` by CSS (an unwanted second scrollbar).
+-- A single-axis scroller clips the other axis.
+scrollbarX : Attribute msg
+scrollbarX =
+    AttrOverflow "auto" "hidden"
+
+
+scrollbarY : Attribute msg
+scrollbarY =
+    AttrOverflow "hidden" "auto"
+
+
+-- ─── Color ───────────────────────────────────────────────────────
+-- 0-255 integer channels. Recommended for predictable colours.
+-- (Sky's HM doesn't currently round-trip [0,1] floats through the
+-- CSS render path correctly, so for now `rgb` only models the
+-- 0-255 int range.)
+rgb : Int -> Int -> Int -> Color
+rgb r g b =
+    Rgba r g b 1.0
+
+
+rgb255 : Int -> Int -> Int -> Color
+rgb255 r g b =
+    Rgba r g b 1.0
+
+
+-- 0-255 RGB + 0-1 alpha. Alpha stays Float for transparency
+-- precision; the RGB channels are integer 0-255 for a clean CSS
+-- render.
+rgba : Int -> Int -> Int -> Float -> Color
+rgba r g b a =
+    Rgba r g b a
+
+
+white : Color
+white =
+    Rgba 255 255 255 1.0
+
+
+black : Color
+black =
+    Rgba 0 0 0 1.0
+
+
+transparent : Color
+transparent =
+    Rgba 0 0 0 0.0
+
+
+-- ─── Render ──────────────────────────────────────────────────────
+-- Render an Element tree to plain Html. Wrap your top-level view
+-- function with `layout [] view` to produce a Sky.Live or
+-- Sky.Http.Server view value.
+--
+-- `rootAttrs` apply to the root element (the user's `Ui.column` /
+-- `Ui.row`). For attrs that should reach the OUTER page-tall
+-- wrapper (page-wide `Background.color` for dark mode,
+-- `Font.family` for a document-wide font stack, etc.), use
+-- `Ui.layoutWith { wrapperAttrs = [...], rootAttrs = [...] }`.
+layout : List (Attribute msg) -> Element msg -> any
+layout rootAttrs root =
+    layoutWith { wrapperAttrs = [], rootAttrs = rootAttrs } root
+
+
+-- `Ui.layoutWith` — additive entry point that lets callers reach
+-- the page-tall wrapper. `wrapperAttrs` carry styles + html attrs
+-- onto the outer `<div>` (the 100 vh flex floor); `rootAttrs`
+-- behave exactly like `Ui.layout`'s argument and apply to the
+-- root element rendered under that wrapper.
+--
+-- Use cases:
+--   * page-wide dark mode: `wrapperAttrs = [Background.color dark]`
+--     paints the whole viewport, not just the root child
+--   * document-level typography: `wrapperAttrs = [Font.color text,
+--     Font.family [Font.sansSerif]]` cascades to every descendant
+--   * background image at the page level
+--   * border / class / aria-* / data-* attrs that need to sit on
+--     the page wrapper for analytics / CSS selectors / a11y
+--     landmark routing
+--
+-- For row-direction page layouts, wrap your root in a `Ui.row`
+-- — the wrapper stays `flex-direction: column` (its single child
+-- is your row, which renders flex-row internally). The default
+-- column wrapper is load-bearing for the standard "vertical
+-- scroll" page model.
+--
+-- `Ui.layout attrs el` is exactly `Ui.layoutWith { wrapperAttrs =
+-- [], rootAttrs = attrs } el` — call-site byte-identical for
+-- existing apps.
+layoutWith : { wrapperAttrs : List (Attribute msg)
+, rootAttrs : List (Attribute msg)
+} -> Element msg -> any
+layoutWith cfg root =
+    let
+        defaultWrapperStyle =
+            "min-height: 100vh; display: flex; flex-direction: column;"
+        wrapperExtraStyle =
+            buildStyleString False AsColumn AsColumn cfg.wrapperAttrs
+        wrapperStyle =
+            if String.isEmpty (String.trim wrapperExtraStyle) then
+                defaultWrapperStyle
+
+            else
+                defaultWrapperStyle ++ wrapperExtraStyle
+        wrapperHtmlAttrs = collectHtmlAttrs cfg.wrapperAttrs
+    in
+        Html.div
+            ((Attr.style wrapperStyle) :: wrapperHtmlAttrs)
+            [ Html.node
+                  "style"
+                  []
+                  [ Html.text "html,body{min-height:100%;margin:0;padding:0}" ]
+            , renderElement AsColumn cfg.rootAttrs root
+            ]
+        -- Animations (issue #378) — collect into
+        -- `data-sky-anim-rules` data-attr; the runtime's
+        -- `injectAnimationStyles` pass auto-suffixes the
+        -- @keyframes name with the sky-id to avoid global
+        -- collisions across elements.
+
+
+-- Wrap the tree in a viewport-tall flex column. The page <body>
+-- is content-height by default, so a root with `height fill`
+-- rendered as a bare `height: 100%` (what the old AsEl path
+-- emitted) collapsed to its content — issue #63. The outer div
+-- gives a real 100vh floor to fill; rendering the root under
+-- AsColumn makes its `height fill` resolve to `flex-grow`, so it
+-- (and the fill chain beneath it) stretches to the viewport.
+--
+-- min-height (not height) at every level — the wrapper must
+-- expand beyond 100vh when content overflows, otherwise the
+-- theme background stays locked at viewport height and the
+-- scrolled-past region exposes bare <body>. Same goes for the
+-- injected html,body style.
+--
+-- `wrapperAttrs` are CSS-folded via `buildStyleString` and the
+-- result is APPENDED after the default style, so later (= user)
+-- rules win on the cascade. HTML attrs in `wrapperAttrs` (class,
+-- data-*, aria-*, etc.) attach to the wrapper alongside the style.
+renderElement : LayoutContext -> List (Attribute msg) -> Element msg -> any
+renderElement ctx extraAttrs elem =
+    case elem of
+
+        Empty ->
+            Html.text ""
+
+        Text s ->
+            Html.text s
+
+        Node desc attrs children ->
+            -- Pick a semantic HTML tag from the Description (see
+            -- `tagForDescription`) — falls back to <div> when the
+            -- element has no Description attached, or <span> when the
+            -- parent is a paragraph (see `defaultTagIn`). Region.*
+            -- helpers attach AttrDescribe to control this; we honour
+            -- the *first* AttrDescribe encountered.
+            let
+                chosenTag = pickSemanticTag (defaultTagIn ctx) attrs
+            in
+                renderNodeAs chosenTag ctx extraAttrs attrs children
+
+        TaggedNode tag desc attrs children ->
+            renderNodeAs tag ctx extraAttrs attrs children
+
+        Raw node ->
+            -- Pass the wrapped Std.Html VNode through unchanged.
+            -- `extraAttrs` from the parent are dropped — Raw is an
+            -- escape hatch and the user is responsible for whatever
+            -- attributes they want on the wrapped node.
+            node
+
+
+-- Resolve the HTML tag for a generic Node by inspecting its attribute
+-- list for an AttrDescribe entry. The first one wins; if none, the
+-- default tag passed in is returned.
+pickSemanticTag : String -> List (Attribute msg) -> String
+pickSemanticTag defaultTag attrs =
+    case attrs of
+
+        [] ->
+            defaultTag
+
+        (AttrDescribe d) :: _ ->
+            tagForDescription defaultTag d
+
+        _ :: rest ->
+            pickSemanticTag defaultTag rest
+
+
+-- The fallback tag for a generic `Node` (`Ui.el`) given the context it
+-- is being rendered INTO.
+--
+-- Inside a paragraph the fallback must be `<span>`, not `<div>`: `<div>`
+-- is flow content and the HTML parser auto-closes an open `<p>` when it
+-- meets one. `Ui.paragraph [] [ Ui.el [ Font.bold ] (Ui.text "Sky.Live")
+-- , Ui.text " — web UI" ]` — the highlight-a-phrase pattern this
+-- module's `paragraph` docstring recommends — therefore parsed as a
+-- paragraph, then a sibling block, then a bare text run: the label broke
+-- onto its own line and the trailing text lost the paragraph's
+-- formatting entirely. `<span>` is phrasing content and nests legally.
+defaultTagIn : LayoutContext -> String
+defaultTagIn ctx =
+    case ctx of
+
+        AsParagraph ->
+            "span"
+
+        _ ->
+            "div"
+
+
+-- Map a Description to the semantically-correct HTML element name.
+-- Any Description not associated with a tag (DescLabel, the live-region
+-- ones, NoDescription) returns the default unchanged.
+tagForDescription : String -> Description -> String
+tagForDescription defaultTag d =
+    case d of
+
+        NoDescription ->
+            defaultTag
+
+        DescMain ->
+            "main"
+
+        DescNavigation ->
+            "nav"
+
+        DescContentInfo ->
+            "footer"
+
+        DescComplementary ->
+            "aside"
+
+        DescHeading 1 ->
+            "h1"
+
+        DescHeading 2 ->
+            "h2"
+
+        DescHeading 3 ->
+            "h3"
+
+        DescHeading 4 ->
+            "h4"
+
+        DescHeading 5 ->
+            "h5"
+
+        DescHeading _ ->
+            "h6"
+
+        DescLabel _ ->
+            defaultTag
+
+        DescLivePolite ->
+            defaultTag
+
+        DescLiveAssertive ->
+            defaultTag
+
+        DescButton ->
+            "button"
+
+        DescParagraph ->
+            "p"
+
+
+-- Render a Node-shaped element under a given parent context with an
+-- explicit HTML tag. Used both for the default <div> path and for
+-- TaggedNode dispatch.
+--
+-- Flex-chain propagation (issue #63). When this node renders as a
+-- flex container whose main axis matches a child's `Ui.{width,
+-- height} Ui.fill`, the container's own box must grow in its
+-- parent — otherwise the child's `flex-grow: 1` has no resolvable
+-- parent dimension and collapses to content. Concrete example
+-- before the fix:
+--
+--   Ui.layout [] (Ui.el [ Ui.height Ui.fill, Ui.padding 16 ]
+--       (Input.multiline [ Ui.height Ui.fill ] cfg))
+--
+-- `Input.multiline` wraps the <textarea> in a `wrapWithLabel`-
+-- introduced `Ui.el` whose own attribute list is empty. Without
+-- propagation, that wrapper has no height set, so the textarea's
+-- `flex-grow: 1` resolves against content (~50 px line height)
+-- instead of the outer 100 vh viewport.
+--
+-- `propagateFillToContainer` looks at the immediate children for
+-- a Fill attribute on the container's main axis. If any child is
+-- a main-axis filler AND the container does not already carry an
+-- explicit size on that axis, the synthetic `AttrHeight (Fill 1)`
+-- (column-direction) / `AttrWidth (Fill 1)` (row-direction) is
+-- injected. The synthetic attribute flows through the same
+-- `widthCssIn` / `heightCssIn` pipeline as user-written ones, so
+-- the propagated CSS (`flex-grow: 1; min-{height,width}: 0` in a
+-- flex parent / `align-self: stretch + 100 %` in the cross-axis
+-- case) matches whatever the grandparent expects.
+renderNodeAs : String -> LayoutContext -> List (Attribute msg) -> List (Attribute msg) -> List (Element msg) -> any
+renderNodeAs tag ctx extraAttrs attrs children =
+    let
+        allAttrs = extraAttrs ++ attrs
+        renderCtx = layoutContextFor allAttrs
+        propagatedAttrs =
+            propagateFillToContainer renderCtx allAttrs children
+        nearbyChildren = collectNearby propagatedAttrs
+        positionPrefix =
+            if List.isEmpty nearbyChildren then
+                ""
+
+            else
+                "position: relative; "
+        isReplaced = tag == "img" || tag == "input"
+        styleStr =
+            positionPrefix
+                ++ buildStyleString
+                       (not isReplaced)
+                       ctx
+                       renderCtx
+                       propagatedAttrs
+        htmlAttrs = collectHtmlAttrs propagatedAttrs
+        -- Pseudo-class rules (issue #377) — harvested into a
+        -- `data-sky-pc-rules` marker on this element; the runtime's
+        -- `injectPseudoClassStyles` pass then generates a sky-id-
+        -- scoped `<style>` child with the per-pseudo rules.
+        pseudoEntries = collectPseudoRules propagatedAttrs
+        pseudoAttrs =
+            if List.isEmpty pseudoEntries then
+                []
+
+            else
+                [ Attr.attribute
+                      "data-sky-pc-rules"
+                      (encodePseudoRules pseudoEntries)
+                ]
+        -- Transitions (issue #378) — collect into a single
+        -- `data-sky-tr-rules` data-attr; the runtime's
+        -- `injectTransitionStyles` pass scopes it by sky-id and
+        -- wraps it in `@media (prefers-reduced-motion: no-preference)`
+        -- unless the user opted out via `respect = False`.
+        transitionPair = collectTransitions propagatedAttrs
+        transitionAttrs =
+            case transitionPair of
+
+                ( "", _ ) ->
+                    []
+
+                ( joined, optOut ) ->
+                    [ Attr.attribute "data-sky-tr-rules" joined
+                    , Attr.attribute
+                          "data-sky-tr-respect"
+                          (if optOut then
+                              "0"
+
+                          else
+                              "1")
+                    ]
+        animationEntries = collectAnimations propagatedAttrs
+        animationAttrs =
+            if List.isEmpty animationEntries then
+                []
+
+            else
+                [ Attr.attribute
+                      "data-sky-anim-rules"
+                      (encodeAnimations animationEntries)
+                ]
+        renderedMain = List.map (renderElement renderCtx []) children
+        renderedNearby = List.map renderNearby nearbyChildren
+        renderedChildren = renderedMain ++ renderedNearby
+        attrList =
+            Attr.style styleStr
+                :: (pseudoAttrs ++ transitionAttrs ++ animationAttrs ++ htmlAttrs)
+    in
+        dispatchTag tag attrList renderedChildren
+
+
+-- ─── Flex-chain propagation (issue #63) ─────────────────────────
+--
+-- Why bottom-up structural inspection? Sky.Ui renders a tree of
+-- pure values — we have full attribute access from the parent.
+-- The alternative (post-render DOM patching, CSS variable hand-
+-- off) requires runtime JS and a second pass; this stays
+-- compile-time / render-time and idempotent.
+--
+-- The propagation is *exactly* one level: each container looks at
+-- its own immediate children and decides whether to set its own
+-- box size. When the wrapping is itself wrapped by another
+-- container that needs to grow, *that* container repeats the same
+-- check at its level. Recursion isn't needed because the bottom
+-- container ultimately propagates a real `AttrHeight (Fill 1)` /
+-- `AttrWidth (Fill 1)` on itself — which then satisfies its own
+-- parent's check on the level above. (E.g.: textarea has fill →
+-- wrapWithLabel Ui.el gets injected fill → user's outer Ui.el
+-- with explicit fill renders normally → top of chain.)
+--
+-- Skips: AsParagraph (paragraphs are `display: block`, not flex;
+-- their height comes from text content + line-box rules, not from
+-- a child's flex-grow). The replaced tags (img/input) suppress
+-- the display attribute via `emitDisplay = False` upstream; they
+-- are leaf elements with no Std.Ui children anyway, so the
+-- "any child has fill" check is always False.
+propagateFillToContainer : LayoutContext -> List (Attribute msg) -> List (Element msg) -> List (Attribute msg)
+propagateFillToContainer renderCtx attrs children =
+    case renderCtx of
+
+        AsParagraph ->
+            attrs
+
+        AsRow ->
+            if anyChildMainAxisFill AsRow children && not (hasExplicitWidth attrs) then
+                AttrWidth (Fill 1) :: attrs
+
+            else
+                attrs
+
+        AsColumn ->
+            if anyChildMainAxisFill AsColumn children
+                && not (hasExplicitHeight attrs) then
+                AttrHeight (Fill 1) :: attrs
+
+            else
+                attrs
+
+        AsEl ->
+            if anyChildMainAxisFill AsEl children && not (hasExplicitHeight attrs) then
+                AttrHeight (Fill 1) :: attrs
+
+            else
+                attrs
+
+        AsTextColumn ->
+            if anyChildMainAxisFill AsTextColumn children
+                && not (hasExplicitHeight attrs) then
+                AttrHeight (Fill 1) :: attrs
+
+            else
+                attrs
+
+
+-- True when the container's flex-direction main axis is the
+-- direction the child is asking to grow along. Rows main-axis =
+-- width; column-shaped containers (AsColumn / AsEl /
+-- AsTextColumn) main-axis = height.
+anyChildMainAxisFill : LayoutContext -> List (Element msg) -> Bool
+anyChildMainAxisFill renderCtx kids =
+    List.any (elementHasMainAxisFill renderCtx) kids
+
+
+elementHasMainAxisFill : LayoutContext -> Element msg -> Bool
+elementHasMainAxisFill renderCtx elem =
+    case elem of
+
+        Empty ->
+            False
+
+        Text _ ->
+            False
+
+        Node _ attrs _ ->
+            attrsHaveMainAxisFill renderCtx attrs
+
+        TaggedNode _ _ attrs _ ->
+            attrsHaveMainAxisFill renderCtx attrs
+
+        Raw _ ->
+            False
+
+
+attrsHaveMainAxisFill : LayoutContext -> List (Attribute msg) -> Bool
+attrsHaveMainAxisFill renderCtx attrs =
+    case renderCtx of
+
+        AsRow ->
+            List.any isWidthFillAttr attrs
+
+        AsColumn ->
+            List.any isHeightFillAttr attrs
+
+        AsEl ->
+            List.any isHeightFillAttr attrs
+
+        AsTextColumn ->
+            List.any isHeightFillAttr attrs
+
+        AsParagraph ->
+            False
+
+
+-- `Fill 0` is treated as "no fill" intentionally (matches the
+-- `widthFillFor` / `heightFillFor` CSS: a zero portion contributes
+-- nothing to the flex split). `Min`/`Max` wrappers around a Fill
+-- still count — the user wrote `minimum N fill` because they
+-- want fill, just with a floor.
+isHeightFillAttr : Attribute msg -> Bool
+isHeightFillAttr a =
+    case a of
+
+        AttrHeight lng ->
+            isFillLength lng
+
+        _ ->
+            False
+
+
+isWidthFillAttr : Attribute msg -> Bool
+isWidthFillAttr a =
+    case a of
+
+        AttrWidth lng ->
+            isFillLength lng
+
+        _ ->
+            False
+
+
+isFillLength : Length -> Bool
+isFillLength lng =
+    case lng of
+
+        Fill n ->
+            n > 0
+
+        Min _ inner ->
+            isFillLength inner
+
+        Max _ inner ->
+            isFillLength inner
+
+        _ ->
+            False
+
+
+-- Explicit-size guards. The user-written attribute wins — if they
+-- chose Px / Content / Vh / Vw on the container, that's their
+-- intent. Only propagate when the container left the axis open.
+hasExplicitWidth : List (Attribute msg) -> Bool
+hasExplicitWidth attrs =
+    List.any isWidthAttr attrs
+
+
+hasExplicitHeight : List (Attribute msg) -> Bool
+hasExplicitHeight attrs =
+    List.any isHeightAttr attrs
+
+
+isWidthAttr : Attribute msg -> Bool
+isWidthAttr a =
+    case a of
+
+        AttrWidth _ ->
+            True
+
+        _ ->
+            False
+
+
+isHeightAttr : Attribute msg -> Bool
+isHeightAttr a =
+    case a of
+
+        AttrHeight _ ->
+            True
+
+        _ ->
+            False
+
+
+-- Pull each (Location, Element) pair out of an AttrNearby attribute
+-- so the renderer can wrap them with absolute-positioning styles.
+collectNearby : List (Attribute msg) -> List ( Location, Element msg )
+collectNearby attrs =
+    List.filterMap toNearbyPair attrs
+
+
+toNearbyPair : Attribute msg -> Maybe ( Location, Element msg )
+toNearbyPair a =
+    case a of
+
+        AttrNearby loc el ->
+            Just ( loc, el )
+
+        _ ->
+            Nothing
+
+
+-- Render a single nearby element with the position styles for its
+-- Location. The child is rendered first, then wrapped in a thin div
+-- carrying the absolute-positioning styles.
+renderNearby : ( Location, Element msg ) -> any
+renderNearby ( loc, el ) =
+    let
+        positionStyle =
+            "position: absolute; display: flex; " ++ locationCss loc
+        rendered = renderElement AsEl [] el
+    in
+        Html.div [ Attr.style positionStyle ] [ rendered ]
+
+
+-- Map a Location to the CSS offsets that pin the absolute child to
+-- the matching side of its position-relative parent. `inFront` and
+-- `behind` use z-index (positive vs negative) to stack above /
+-- below the main content.
+locationCss : Location -> String
+locationCss loc =
+    case loc of
+
+        Above ->
+            "left: 0; right: 0; bottom: 100%; height: max-content;"
+
+        Below ->
+            "left: 0; right: 0; top: 100%; height: max-content;"
+
+        OnLeft ->
+            "top: 0; bottom: 0; right: 100%; width: max-content;"
+
+        OnRight ->
+            "top: 0; bottom: 0; left: 100%; width: max-content;"
+
+        InFront ->
+            "left: 0; right: 0; top: 0; bottom: 0; z-index: 1;"
+
+        Behind ->
+            "left: 0; right: 0; top: 0; bottom: 0; z-index: -1;"
+
+
+-- Dispatch to the right Std.Html constructor by tag name. <img>
+-- is void (no children); other tags take children unchanged.
+-- Unknown tags fall back to <div>.
+dispatchTag : String -> List (Attr.Attribute msg) -> List (Html.Html msg) -> Html.Html msg
+dispatchTag tag attrs children =
+    if tag == "a" then
+        Html.a attrs children
+
+    else if tag == "p" then
+        Html.p attrs children
+
+    else if tag == "h1" then
+        Html.h1 attrs children
+
+    else if tag == "h2" then
+        Html.h2 attrs children
+
+    else if tag == "h3" then
+        Html.h3 attrs children
+
+    else if tag == "h4" then
+        Html.h4 attrs children
+
+    else if tag == "h5" then
+        Html.h5 attrs children
+
+    else if tag == "h6" then
+        Html.h6 attrs children
+
+    else if tag == "button" then
+        Html.button attrs children
+
+    else if tag == "form" then
+        Html.form attrs children
+
+    else if tag == "label" then
+        Html.label attrs children
+
+    else if tag == "section" then
+        Html.section attrs children
+
+    else if tag == "span" then
+        -- Reached via `defaultTagIn AsParagraph`. Without this branch
+        -- the fallback below silently returns a <div>, which is the
+        -- one tag that must never appear inside a <p> — so the
+        -- paragraph-inline fix would look applied (the style says
+        -- `display: inline`) while the markup stayed invalid.
+        Html.span attrs children
+
+    else if tag == "nav" then
+        Html.nav attrs children
+
+    else if tag == "footer" then
+        Html.footer attrs children
+
+    else if tag == "header" then
+        Html.header attrs children
+
+    else if tag == "main" then
+        Html.mainNode attrs children
+
+    else if tag == "aside" then
+        Html.aside attrs children
+
+    else if tag == "img" then
+        let
+            _ = children
+        in
+            Html.img attrs
+
+    else if tag == "input" then
+        let
+            _ = children
+        in
+            Html.input attrs
+
+    else if tag == "textarea" then
+        Html.textarea attrs children
+
+    else
+        Html.div attrs children
+    -- <img> is void in HTML; Sky's Html.img takes attrs only.
+    -- <textarea> is NOT a void element — its value lives between
+    -- the tags as text content. The `Std.Ui.Input.multiline` path
+    -- builds `TaggedNode "textarea"` directly; pre-fix it routed
+    -- through `inputBase "textarea"` which produced
+    -- `<input type="textarea">` — browsers fell back to a
+    -- single-line text input, so multiline was broken in the
+    -- browser regardless of what the Sky source said. Sky.Live's
+    -- VNode renderer already understands textarea (strips the
+    -- `value` attr and splices it in as text content); routing
+    -- through Html.textarea here is the missing link.
+
+
+-- Pull every AttrAttribute into a flat list of Attr.attribute values.
+collectHtmlAttrs : List (Attribute msg) -> List any
+collectHtmlAttrs attrs =
+    List.filterMap toAttrAttribute attrs
+
+
+toAttrAttribute : Attribute msg -> Maybe any
+toAttrAttribute a =
+    case a of
+
+        AttrAttribute k v ->
+            Just (kernelAttr k v)
+
+        AttrClass c ->
+            Just (Attr.class c)
+
+        AttrEvent ev ->
+            Just ev
+
+        AttrDescribe d ->
+            ariaForDescription d
+
+        _ ->
+            Nothing
+
+
+-- Map a Description that requires an aria-* attribute to the
+-- attribute-emitting form. Returns Nothing for descriptions whose
+-- semantics are encoded purely in the chosen HTML tag (no extra
+-- aria-* attribute needed).
+ariaForDescription : Description -> Maybe any
+ariaForDescription d =
+    case d of
+
+        DescLabel s ->
+            Just (kernelAttr "aria-label" s)
+
+        DescLivePolite ->
+            Just (kernelAttr "aria-live" "polite")
+
+        DescLiveAssertive ->
+            Just (kernelAttr "aria-live" "assertive")
+
+        _ ->
+            Nothing
+
+
+-- Dispatch by key name for the common HTML attrs Std.Ui needs, so
+-- each maps to its dedicated typed Attr.* builder. Any other key
+-- (sky-key, aria-*, custom data-*, …) falls through to the generic
+-- `Attr.attribute key value`, which Std.Html.Attributes exposes as
+-- Sky source.
+kernelAttr : String -> String -> any
+kernelAttr key value =
+    if key == "href" then
+        Attr.href value
+
+    else if key == "src" then
+        Attr.src value
+
+    else if key == "alt" then
+        Attr.alt value
+
+    else if key == "name" then
+        Attr.name value
+
+    else if key == "value" then
+        Attr.value value
+
+    else if key == "id" then
+        Attr.id value
+
+    else if key == "type" then
+        Attr.type_ value
+
+    else if key == "placeholder" then
+        Attr.placeholder value
+
+    else if key == "title" then
+        Attr.title value
+
+    else if key == "for" then
+        Attr.for value
+
+    else if key == "rel" then
+        Attr.rel value
+
+    else if key == "target" then
+        Attr.target value
+
+    else if key == "method" then
+        Attr.method value
+
+    else if key == "action" then
+        Attr.action value
+
+    else
+        Attr.attribute key value
+
+
+-- Tier 1 stops at static rendering. Std.Html.Events binding for
+-- AttrEvent → Sky.Live wire events lives in Tier 2 once we wire
+-- the Sky.Live integration. The constructor stays in the ADT so
+-- user code can already use `Ui.onClick MyMsg` even though it
+-- currently no-ops at the static layer.
+layoutContextFor : List (Attribute msg) -> LayoutContext
+layoutContextFor attrs =
+    if hasMarker "__row" attrs then
+        AsRow
+
+    else if hasMarker "__col" attrs then
+        AsColumn
+
+    else if hasMarker "__paragraph" attrs then
+        AsParagraph
+
+    else if hasMarker "__textcolumn" attrs then
+        AsTextColumn
+
+    else
+        AsEl
+
+
+hasMarker : String -> List (Attribute msg) -> Bool
+hasMarker name attrs =
+    List.any (\a -> isMarker name a) attrs
+
+
+isMarker : String -> Attribute msg -> Bool
+isMarker name a =
+    case a of
+
+        AttrStyle k _ ->
+            k == name
+
+        _ ->
+            False
+
+
+-- `emitDisplay` is False for replaced/form tags (<img>, <input>):
+-- forcing `display:flex` on a replaced element breaks intrinsic
+-- sizing + object-fit, so they keep their native display.
+buildStyleString : Bool -> LayoutContext -> LayoutContext -> List (Attribute msg) -> String
+buildStyleString emitDisplay parentCtx myCtx attrs =
+    let
+        gridOn = hasMarker "__grid" attrs
+        baseDisplay =
+            if not emitDisplay then
+                ""
+
+            else if gridOn then
+                gridDisplayIn parentCtx ++ findGridTemplate attrs
+
+            else
+                displayIn parentCtx myCtx
+        wrapPart =
+            if not gridOn && hasMarker "__wrap" attrs then
+                " flex-wrap: wrap;"
+
+            else
+                -- `wrappedRow` carries a `__wrap` marker that asks for
+                -- `flex-wrap: wrap`. The marker itself is stripped by the
+                -- AttrStyle case in `collectStyle`; we just check for its
+                -- presence here and append the corresponding CSS. No-op when
+                -- `__grid` is on (grid wraps natively via auto-fill).
+                ""
+        attrParts = List.foldl (collectStyle parentCtx myCtx) "" attrs
+        -- A border needs a style to render. `border-width` no longer
+        -- emits `border-style` itself (that clobbered an explicit
+        -- Border.dashed / .dotted depending on attribute order), so
+        -- default to solid here — only when a width is set and no
+        -- explicit style is.
+        borderStyleDefault =
+            if String.contains "border-width" attrParts
+                && not (String.contains "border-style" attrParts) then
+                " border-style: solid;"
+
+            else
+                ""
+    in
+        baseDisplay ++ wrapPart ++ attrParts ++ borderStyleDefault
+
+
+-- Pull the `__gridMin` value (set by `Ui.gridColumns`) out of the
+-- attribute list. Defaults to `240` when the user forgot to set it
+-- — sensible product-card width that prevents a totally-broken
+-- single-column fallback if the user wrote `Ui.grid [] [...]`.
+findGridMin : List (Attribute msg) -> String
+findGridMin attrs =
+    case attrs of
+
+        [] ->
+            "240"
+
+        a :: rest ->
+            case a of
+
+                AttrStyle k v ->
+                    if k == "__gridMin" then
+                        v
+
+                    else
+                        findGridMin rest
+
+                _ ->
+                    findGridMin rest
+
+
+-- Pull the `__gridTracks` value (set by `Ui.gridTracksRaw` /
+-- `Std.Ui.Grid.tracks`) out of the attribute list. Encoded as
+-- `"<cols>|<rows>"` — empty halves are skipped. Returns the
+-- composed `grid-template-columns:…; grid-template-rows:…;` CSS.
+-- Falls back to `__gridMin`'s `repeat(auto-fill, minmax(<px>px,
+-- 1fr))` shape (the legacy auto-fit default) when no explicit
+-- tracks attr is present.
+findGridTemplate : List (Attribute msg) -> String
+findGridTemplate attrs =
+    let
+        raw = findGridTracksRaw attrs
+    in
+        if raw == "" then
+            " grid-template-columns: repeat(auto-fill, minmax("
+                ++ findGridMin attrs
+                ++ "px, 1fr));"
+
+        else
+            let
+                cols = takeBeforePipe raw
+                rows = takeAfterPipe raw
+                colsCss =
+                    if cols == "" then
+                        ""
+
+                    else
+                        " grid-template-columns: " ++ cols ++ ";"
+                rowsCss =
+                    if rows == "" then
+                        ""
+
+                    else
+                        " grid-template-rows: " ++ rows ++ ";"
+            in
+                colsCss ++ rowsCss
+
+
+-- Returns the raw "<cols>|<rows>" payload, or "" when the marker
+-- isn't present (using empty-string as the absent sentinel avoids
+-- pulling the Maybe import into this module — same idiom used by
+-- `findGridMin`'s `"240"` default).
+findGridTracksRaw : List (Attribute msg) -> String
+findGridTracksRaw attrs =
+    case attrs of
+
+        [] ->
+            ""
+
+        a :: rest ->
+            case a of
+
+                AttrStyle k v ->
+                    if k == "__gridTracks" then
+                        v
+
+                    else
+                        findGridTracksRaw rest
+
+                _ ->
+                    findGridTracksRaw rest
+
+
+-- Split a "<cols>|<rows>" payload at the single `|`. The Track
+-- ADT lowering in `Std.Ui.Grid` never emits a literal `|` in track
+-- CSS (every CSS function — minmax(), repeat() — uses commas), so
+-- a naïve split is safe.
+takeBeforePipe : String -> String
+takeBeforePipe s =
+    case String.split "|" s of
+
+        first :: _ ->
+            first
+
+        [] ->
+            ""
+
+
+takeAfterPipe : String -> String
+takeAfterPipe s =
+    case String.split "|" s of
+
+        _ :: rest ->
+            joinWithPipe rest
+
+        [] ->
+            ""
+
+
+-- Re-joins the post-first segments (defensive: never expected to
+-- carry data because emitters use one pipe, but keeps the helper
+-- total).
+joinWithPipe : List String -> String
+joinWithPipe parts =
+    case parts of
+
+        [] ->
+            ""
+
+        x :: [] ->
+            x
+
+        x :: rest ->
+            x ++ "|" ++ joinWithPipe rest
+
+
+-- `displayFor` picks the box type from the element's OWN context. That
+-- is right everywhere except inside a paragraph, where a block-level box
+-- would interrupt the text run it is supposed to sit in. `displayIn`
+-- adds the parent to the decision: within a paragraph every child
+-- becomes an inline-level box, so a highlighted phrase wraps with the
+-- sentence instead of splitting it. Pairs with `defaultTagIn`, which
+-- keeps the TAG legal inside `<p>`; both halves are needed, since an
+-- inline `<div>` is still auto-closed by the parser and a `<span>` with
+-- `display: flex` still breaks the flow.
+displayIn : LayoutContext -> LayoutContext -> String
+displayIn parentCtx myCtx =
+    case parentCtx of
+
+        AsParagraph ->
+            case myCtx of
+
+                AsRow ->
+                    "display: inline-flex; flex-direction: row;"
+
+                AsColumn ->
+                    "display: inline-flex; flex-direction: column;"
+
+                AsTextColumn ->
+                    "display: inline-flex; flex-direction: column;"
+
+                AsEl ->
+                    -- A plain `el` carries no layout of its own, so
+                    -- `inline` (not `inline-block`) lets a long
+                    -- highlighted phrase wrap across lines like text.
+                    "display: inline;"
+
+                AsParagraph ->
+                    -- A nested paragraph is not expressible in HTML;
+                    -- leave it block so the mistake stays visible
+                    -- rather than silently rendering as a text run.
+                    "display: block;"
+
+        _ ->
+            displayFor myCtx
+
+
+-- `display: grid` is block-level; its inline-level counterpart is
+-- `inline-grid`. Same reasoning as `displayIn`.
+gridDisplayIn : LayoutContext -> String
+gridDisplayIn parentCtx =
+    case parentCtx of
+
+        AsParagraph ->
+            "display: inline-grid;"
+
+        _ ->
+            "display: grid;"
+
+
+displayFor : LayoutContext -> String
+displayFor ctx =
+    case ctx of
+
+        AsRow ->
+            "display: flex; flex-direction: row;"
+
+        AsColumn ->
+            "display: flex; flex-direction: column;"
+
+        AsEl ->
+            "display: flex; flex-direction: column;"
+
+        AsParagraph ->
+            "display: block;"
+
+        AsTextColumn ->
+            "display: flex; flex-direction: column;"
+
+
+collectStyle : LayoutContext -> LayoutContext -> Attribute msg -> String -> String
+collectStyle parentCtx myCtx attr acc =
+    case attr of
+
+        NoAttribute ->
+            acc
+
+        AttrWidth lng ->
+            acc ++ " " ++ widthCssIn parentCtx lng
+
+        AttrHeight lng ->
+            acc ++ " " ++ heightCssIn parentCtx lng
+
+        AttrPadding t r b l ->
+            acc ++ " padding: " ++ String.fromInt t ++ "px " ++ String.fromInt r
+                ++ "px "
+                ++ String.fromInt b
+                ++ "px "
+                ++ String.fromInt l
+                ++ "px;"
+
+        AttrSpacing n ->
+            acc ++ " gap: " ++ String.fromInt n ++ "px;"
+
+        AttrAlignX h ->
+            acc ++ " " ++ alignXCss myCtx h ++ " " ++ alignSelfX parentCtx h
+
+        AttrAlignY v ->
+            acc ++ " " ++ alignYCss myCtx v ++ " " ++ alignSelfY parentCtx v
+
+        AttrStyle k v ->
+            if k == "__row" then
+                acc
+
+            else if k == "__col" then
+                acc
+
+            else if k == "__paragraph" then
+                acc
+
+            else if k == "__textcolumn" then
+                acc
+
+            else if k == "__wrap" then
+                acc
+
+            else if k == "__grid" then
+                acc
+
+            else if k == "__gridMin" then
+                acc
+
+            else if k == "__gridTracks" then
+                acc
+
+            else
+                acc ++ " " ++ k ++ ": " ++ v ++ ";"
+
+        AttrDescribe _ ->
+            acc
+
+        AttrClass _ ->
+            acc
+
+        AttrNearby _ _ ->
+            -- Nearby positioning is rendered as an absolute-positioned
+            -- child by renderNodeAs, not as an inline style on the
+            -- parent. Skip here.
+            acc
+
+        AttrEvent _ ->
+            -- Events are attached as separate VNode event entries,
+            -- not inline style — handled in renderElement.
+            acc
+
+        AttrAttribute _ _ ->
+            -- HTML attributes (href, src, name, ...) are attached to
+            -- the VNode separately, not inline style.
+            acc
+
+        AttrFontSize n ->
+            acc ++ " font-size: " ++ String.fromInt n ++ "px;"
+
+        AttrFontColor c ->
+            acc ++ " color: " ++ colorCss c ++ ";"
+
+        AttrFontFamily joined ->
+            acc ++ " font-family: " ++ joined ++ ";"
+
+        AttrFontWeight n ->
+            acc ++ " font-weight: " ++ String.fromInt n ++ ";"
+
+        AttrFontItalic ->
+            acc ++ " font-style: italic;"
+
+        AttrFontUnderline ->
+            acc ++ " text-decoration: underline;"
+
+        AttrFontDecoration value ->
+            acc ++ " text-decoration: " ++ value ++ ";"
+
+        AttrFontAlign value ->
+            acc ++ " text-align: " ++ value ++ ";"
+
+        AttrFontLetterSpacing em ->
+            acc ++ " letter-spacing: " ++ String.fromFloat em ++ "em;"
+
+        AttrFontWordSpacing em ->
+            acc ++ " word-spacing: " ++ String.fromFloat em ++ "em;"
+
+        AttrBgColor c ->
+            acc ++ " background-color: " ++ colorCss c ++ ";"
+
+        AttrBgImage url ->
+            acc ++ " background-image: url('" ++ url ++ "');"
+
+        AttrBgGradient css ->
+            acc ++ " background-image: " ++ css ++ ";"
+
+        AttrBorderWidth n ->
+            acc ++ " border-width: " ++ String.fromInt n ++ "px;"
+
+        AttrBorderWidthEach t r b l ->
+            acc ++ " border-width: " ++ String.fromInt t ++ "px "
+                ++ String.fromInt r
+                ++ "px "
+                ++ String.fromInt b
+                ++ "px "
+                ++ String.fromInt l
+                ++ "px;"
+
+        AttrBorderColor c ->
+            acc ++ " border-color: " ++ colorCss c ++ ";"
+
+        AttrBorderRounded n ->
+            acc ++ " border-radius: " ++ String.fromInt n ++ "px;"
+
+        AttrBorderStyle s ->
+            acc ++ " border-style: " ++ s ++ ";"
+
+        AttrBorderShadow ox oy blur spread c ->
+            acc ++ " box-shadow: " ++ String.fromInt ox ++ "px "
+                ++ String.fromInt oy
+                ++ "px "
+                ++ String.fromInt blur
+                ++ "px "
+                ++ String.fromInt spread
+                ++ "px "
+                ++ colorCss c
+                ++ ";"
+
+        AttrBorderInsetShadow ox oy blur spread c ->
+            acc ++ " box-shadow: inset " ++ String.fromInt ox ++ "px "
+                ++ String.fromInt oy
+                ++ "px "
+                ++ String.fromInt blur
+                ++ "px "
+                ++ String.fromInt spread
+                ++ "px "
+                ++ colorCss c
+                ++ ";"
+
+        AttrPointer ->
+            acc ++ " cursor: pointer;"
+
+        AttrOverflow x y ->
+            acc ++ " overflow-x: " ++ x ++ "; overflow-y: " ++ y ++ ";"
+
+        AttrPseudoRule _ _ ->
+            -- Pseudo-class rules don't emit inline CSS — they're
+            -- harvested by `renderNodeAs` into the
+            -- `data-sky-pc-rules` marker, then turned into a scoped
+            -- <style> child by the runtime's
+            -- `injectPseudoClassStyles` pass. Skip here.
+            acc
+
+        AttrTransition _ _ ->
+            -- Transitions don't emit inline CSS — they're harvested
+            -- by `renderNodeAs` into the `data-sky-tr-rules` marker,
+            -- then turned into a scoped <style> child by the runtime's
+            -- `injectTransitionStyles` pass (issue #378).
+            acc
+
+        AttrAnimation _ _ _ _ ->
+            -- Animations are harvested by `renderNodeAs` into the
+            -- `data-sky-anim-rules` marker; the runtime's
+            -- `injectAnimationStyles` pass emits a sky-id-scoped
+            -- <style> child containing the `@keyframes` block + the
+            -- `animation: ...` rule (issue #378).
+            acc
+            -- Wrap marker is consumed by `displayFor` (which
+            -- appends `flex-wrap: wrap` to the row's display
+            -- block); stripped here so it doesn't leak as a
+            -- literal CSS property.
+            -- Grid marker is consumed by `buildStyleString`
+            -- (overrides displayFor with `display: grid; ...`);
+            -- stripped here so it doesn't leak.
+            -- Grid-minmax-floor value, read out by `findGridMin`
+            -- to build the `repeat(auto-fill, minmax(<v>px,
+            -- 1fr))` declaration. Stripped here.
+            -- Explicit `grid-template-columns|grid-template-rows`
+            -- value, read out by `findGridTemplate` (overrides the
+            -- legacy `__gridMin` shape). Stripped here.
+
+
+-- Render a Color as a CSS rgba(...) string using percentage
+-- channels. The legacy comma-separated rgba() form requires
+-- 0–255 integer channels — passing floats like rgba(0.97, …)
+-- silently parses as black in every browser. Percentages
+-- (rgba(97%, …, 1)) are universally accepted and let us keep
+-- the float channel representation Sky users wrote.
+-- Render a Color as a CSS rgba(...) string. Channels are already
+-- 0-255 integers (Sky's HM doesn't currently round-trip [0,1]
+-- floats through Float arithmetic in destructured contexts), so
+-- we just stringify and emit.
+colorCss : Color -> String
+colorCss c =
+    case c of
+
+        Rgba r g b a ->
+            "rgba(" ++ String.fromInt r ++ ", " ++ String.fromInt g ++ ", "
+                ++ String.fromInt b
+                ++ ", "
+                ++ String.fromFloat a
+                ++ ")"
+
+
+-- `len` would shadow Go's built-in `len` in the emitted code (Sky's
+-- name-mangler renames the parameter but doesn't rewrite uses inside
+-- the function body), so we use `lng` as the param name throughout.
+--
+-- Fill is parent-direction-aware. CSS flexbox interprets
+-- `flex-grow: 1` along the parent's main axis and `align-self:
+-- stretch` along the cross axis — applying both unconditionally
+-- (the pre-fix behaviour) caused `Ui.width Ui.fill` on every child
+-- of a column parent to fight for vertical space, collapsing
+-- header/main/footer into 1/3 viewport each instead of growing
+-- only the main region. Same class of bug for `Ui.height Ui.fill`
+-- inside a row.
+--
+-- The mapping (rendered by `widthCssIn parentCtx` /
+-- `heightCssIn parentCtx`):
+--   * Column-like parent (`AsColumn` / `AsEl` / `AsTextColumn` — all
+--     render `flex-direction: column`): width = cross, so
+--     `width fill` = `align-self: stretch`; height = main, so
+--     `height fill` = `flex-grow`.
+--   * Row parent (`AsRow`): the inverse.
+--   * Paragraph: a `<p>`, not flex — `fill` stays `width/height:100%`.
+widthCssIn : LayoutContext -> Length -> String
+widthCssIn parentCtx lng =
+    case lng of
+
+        Px n ->
+            "width: " ++ String.fromInt n ++ "px;"
+
+        Content ->
+            "width: max-content;"
+
+        Fill n ->
+            widthFillFor parentCtx n
+
+        Min n inner ->
+            widthCssIn parentCtx inner ++ " min-width: " ++ String.fromInt n
+                ++ "px;"
+
+        Max n inner ->
+            widthCssIn parentCtx inner ++ " max-width: " ++ String.fromInt n
+                ++ "px;"
+
+        Vh n ->
+            "width: " ++ String.fromInt n ++ "vh;"
+
+        Vw n ->
+            "width: " ++ String.fromInt n ++ "vw;"
+
+
+-- `n` is the fill portion (`fill` = 1, `fillPortion 3` = 3). It
+-- maps to flex-grow on the parent's MAIN axis, where portions
+-- actually divide the free space. On the cross axis a portion is
+-- meaningless — the child simply stretches.
+--
+-- F1 + F4 asymmetry note.
+--
+-- The cross-axis WIDTH fill keeps the explicit `width: 100%`
+-- because column / el / textColumn parents have DEFINITE block
+-- widths (inherited from <body>/viewport) in 99% of real pages —
+-- the `100%` resolves cleanly AND protects against the F4
+-- interaction `[Ui.width Ui.fill, Ui.centerX]` where
+-- `align-self: center` (from `centerX`) cascades over the implicit
+-- `align-items: stretch` default. Without `width: 100%`, a
+-- centred column collapses to content-width even though the user
+-- asked for fill (see the showcase outer column —
+-- `examples/26-ui-showcase/src/Main.sky` — `[Ui.width (Ui.maximum
+-- 760 Ui.fill), Ui.centerX]`: must hit the 760 px cap, not
+-- shrink to content).
+--
+-- The cross-axis HEIGHT fill (heightFillFor below) DOES strip
+-- `height: 100%` because row parents commonly have indefinite
+-- heights (flex-grow-derived or content-derived) and the `100%`
+-- collapses harmfully — that's the documented #63 + Z2/Z3 bug
+-- class. The asymmetry is principled, NOT an oversight.
+--
+-- F4 contract: the cross-axis branches DO NOT emit
+-- `align-self: stretch` — `stretch` is the default flex
+-- `align-items` value already, so emitting it explicitly was
+-- redundant. With F4 in place, `align-self` is emitted from
+-- ONE place only: `alignSelfX` / `alignSelfY` when the user
+-- attaches an explicit `Ui.centerX/Y` / `Ui.alignLeft/Right/
+-- Top/Bottom` attr. No double declaration; no cascade-order-
+-- dependent rendering. Pre-F4, `[Ui.width Ui.fill, Ui.centerX]`
+-- emitted BOTH `align-self: stretch;` AND `align-self: center;`
+-- and relied on cascade-last for `center` to win — fragile
+-- against attr re-ordering. Post-F4, only `align-self: center;`
+-- emits.
+widthFillFor : LayoutContext -> Int -> String
+widthFillFor parentCtx n =
+    case parentCtx of
+
+        AsRow ->
+            "flex-grow: " ++ String.fromInt n ++ "; min-width: 0;"
+
+        AsColumn ->
+            "width: 100%;"
+
+        AsEl ->
+            "width: 100%;"
+
+        AsParagraph ->
+            "width: 100%;"
+
+        AsTextColumn ->
+            "width: 100%;"
+
+
+heightCssIn : LayoutContext -> Length -> String
+heightCssIn parentCtx lng =
+    case lng of
+
+        Px n ->
+            "height: " ++ String.fromInt n ++ "px;"
+
+        Content ->
+            "height: max-content;"
+
+        Fill n ->
+            heightFillFor parentCtx n
+
+        Min n inner ->
+            heightCssIn parentCtx inner ++ " min-height: " ++ String.fromInt n
+                ++ "px;"
+
+        Max n inner ->
+            heightCssIn parentCtx inner ++ " max-height: " ++ String.fromInt n
+                ++ "px;"
+
+        Vh n ->
+            "height: " ++ String.fromInt n ++ "vh;"
+
+        Vw n ->
+            "height: " ++ String.fromInt n ++ "vw;"
+
+
+-- See F1+F4 note on widthFillFor — cross-axis emits NOTHING
+-- (the implicit `align-items: stretch` default makes the child
+-- fill the cross axis without any explicit declaration). Pre-
+-- v0.15.55 emitted `align-self: stretch; height: 100%;` for
+-- cross-axis HEIGHT fill (row parents); the `100%` collapsed
+-- against indefinite-height row parents (Z2/Z3 bug class).
+-- v0.15.55 stripped `height: 100%`. v0.15.56 (F4) strips the
+-- redundant `align-self: stretch` as well, so `align-self` is
+-- emitted from ONE place only: `alignSelfX/Y` for explicit
+-- alignment attrs.
+heightFillFor : LayoutContext -> Int -> String
+heightFillFor parentCtx n =
+    case parentCtx of
+
+        AsRow ->
+            ""
+
+        AsColumn ->
+            "flex-grow: " ++ String.fromInt n ++ "; min-height: 0;"
+
+        AsEl ->
+            "flex-grow: " ++ String.fromInt n ++ "; min-height: 0;"
+
+        AsParagraph ->
+            "height: 100%;"
+
+        AsTextColumn ->
+            "flex-grow: " ++ String.fromInt n ++ "; min-height: 0;"
+
+
+-- Back-compat shims so any caller / fixture importing the old names
+-- keeps compiling.  Both default to AsColumn (matches the
+-- pre-fix CSS for `width fill` in column parents — the most common
+-- case in real apps).
+widthCss : Length -> String
+widthCss lng =
+    widthCssIn AsColumn lng
+
+
+heightCss : Length -> String
+heightCss lng =
+    heightCssIn AsColumn lng
+
+
+-- alignXCss / alignYCss render an element's alignment attributes
+-- as CONTENT alignment on the flex container: `centerX` on a
+-- container centres its children horizontally, `centerY` centres
+-- them vertically (so `el [ centerX, centerY ] (text "x")` centres
+-- the text, and `column [ centerX ] [...]` centres each child).
+--
+-- Which flex property does the centring depends on the
+-- container's own direction (`ctx` = the element's own
+-- LayoutContext): the main axis uses justify-content, the cross
+-- axis align-items.
+--   * row                     → X is main,  Y is cross
+--   * column / el / paragraph  → X is cross, Y is main
+--
+-- Previously these emitted `align-self` / `margin:auto` (which
+-- position the element in its *parent*, not its content) and were
+-- fed the element's own context — so `centerX` and `centerY` both
+-- collapsed to a duplicated `align-self: center` and never centred
+-- anything (issue #63).
+alignXCss : LayoutContext -> HAlign -> String
+alignXCss ctx h =
+    case ctx of
+
+        AsRow ->
+            case h of
+
+                AlignLeft ->
+                    "justify-content: flex-start;"
+
+                CenterX ->
+                    "justify-content: center;"
+
+                AlignRight ->
+                    "justify-content: flex-end;"
+
+        _ ->
+            case h of
+
+                AlignLeft ->
+                    "align-items: flex-start;"
+
+                CenterX ->
+                    "align-items: center;"
+
+                AlignRight ->
+                    "align-items: flex-end;"
+
+
+alignYCss : LayoutContext -> VAlign -> String
+alignYCss ctx v =
+    case ctx of
+
+        AsRow ->
+            case v of
+
+                AlignTop ->
+                    "align-items: flex-start;"
+
+                CenterY ->
+                    "align-items: center;"
+
+                AlignBottom ->
+                    "align-items: flex-end;"
+
+        _ ->
+            case v of
+
+                AlignTop ->
+                    "justify-content: flex-start;"
+
+                CenterY ->
+                    "justify-content: center;"
+
+                AlignBottom ->
+                    "justify-content: flex-end;"
+
+
+-- alignSelfX / alignSelfY position the element WITHIN ITS PARENT
+-- — the complement of alignXCss/alignYCss (which align the
+-- element's own content). `centerX` does both: centres the
+-- element in its parent AND centres its content. They touch
+-- different CSS properties (align-self/margin vs align-items/
+-- justify-content) so there is no conflict. Self-positioning
+-- depends on the PARENT's axis: the parent's cross axis uses
+-- align-self, its main axis uses auto margins.
+alignSelfX : LayoutContext -> HAlign -> String
+alignSelfX parentCtx h =
+    case parentCtx of
+
+        AsRow ->
+            case h of
+
+                AlignLeft ->
+                    "margin-right: auto;"
+
+                CenterX ->
+                    "margin-left: auto; margin-right: auto;"
+
+                AlignRight ->
+                    "margin-left: auto;"
+
+        _ ->
+            case h of
+
+                AlignLeft ->
+                    "align-self: flex-start;"
+
+                CenterX ->
+                    "align-self: center;"
+
+                AlignRight ->
+                    "align-self: flex-end;"
+
+
+alignSelfY : LayoutContext -> VAlign -> String
+alignSelfY parentCtx v =
+    case parentCtx of
+
+        AsColumn ->
+            case v of
+
+                AlignTop ->
+                    "margin-bottom: auto;"
+
+                CenterY ->
+                    "margin-top: auto; margin-bottom: auto;"
+
+                AlignBottom ->
+                    "margin-top: auto;"
+
+        _ ->
+            case v of
+
+                AlignTop ->
+                    "align-self: flex-start;"
+
+                CenterY ->
+                    "align-self: center;"
+
+                AlignBottom ->
+                    "align-self: flex-end;"

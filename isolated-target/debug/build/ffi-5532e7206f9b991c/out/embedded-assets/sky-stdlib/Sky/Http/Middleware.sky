@@ -1,0 +1,87 @@
+-- | Sky.Http.Middleware — request/response middleware composers
+-- (Layer 3 Sky source).
+--
+-- Each `with*` helper takes a `Handler` and returns a new
+-- decorated `Handler`.  Compose by chaining with `|>`.
+--
+-- `Handler` itself lives in `Sky.Http.Server` (v0.16.4 — canonical
+-- home alongside `Request` / `Response`).  Import it from there to
+-- annotate your own middleware:
+--
+--     import Sky.Http.Server exposing (Handler)
+--     import Sky.Http.Middleware as Mw
+--
+--     myAuthed : Handler -> Handler
+--     myAuthed = Mw.withBasicAuth "user" "pass"
+module Sky.Http.Middleware exposing (withCors, withLogging, withBasicAuth, withRateLimit, withCsrf)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task exposing (Task)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Http.Server exposing (Request, Response, Handler)
+
+
+-- | `withCors allowedOrigins handler` — add CORS headers for the
+-- given origin allow-list.
+withCors : List String -> Handler -> Handler
+withCors =
+    Ffi.kernel "Middleware_withCors"
+
+
+-- | `withLogging handler` — log each request as `method path
+-- status duration` on stdout.
+withLogging : Handler -> Handler
+withLogging =
+    Ffi.kernel "Middleware_withLogging"
+
+
+-- | `withBasicAuth username password handler` — require HTTP
+-- Basic auth with the given credentials.
+withBasicAuth : String -> String -> Handler -> Handler
+withBasicAuth =
+    Ffi.kernel "Middleware_withBasicAuth"
+
+
+-- | `withRateLimit key requestsPerWindow windowSeconds handler`
+-- — per-IP fixed-window rate limit.  `key` is a label for the
+-- limiter (so multiple middlewares can share or partition).
+withRateLimit : String -> Int -> Int -> Handler -> Handler
+withRateLimit =
+    Ffi.kernel "Middleware_withRateLimit"
+
+
+-- | `withCsrf handler` — CSRF protection via the double-submit
+-- cookie pattern (OWASP-recommended for stateless protection;
+-- integrates cleanly with Sky.Live's cookie+session model).
+--
+-- Behaviour:
+--
+-- 1. **Safe methods** (GET / HEAD / OPTIONS) pass through.  If
+--    the `__Host-sky_csrf` cookie is absent, the middleware sets
+--    it with a freshly-generated 32-byte URL-safe token before
+--    returning the response.
+-- 2. **Unsafe methods** (POST / PUT / DELETE / PATCH) require BOTH:
+--    - The `__Host-sky_csrf` cookie set on a prior safe request, AND
+--    - A matching token in either the `X-Csrf-Token` request header
+--      OR a `_csrf` form field in an `application/x-www-form-urlencoded`
+--      body.
+--    Mismatch / absence → 403 with a clear diagnostic body.
+-- 3. **Token comparison** uses constant-time compare to avoid timing
+--    side channels.
+--
+-- For Sky.Live apps: pair this middleware with `Ui.form` + a hidden
+-- `_csrf` input rendered from `getCookie req "__Host-sky_csrf"`.
+-- The `/_sky/event` endpoint is exempt (Sky.Live runtime has its
+-- own session+sky-id binding that supersedes CSRF).
+--
+-- Example:
+--
+--     main =
+--         Server.listen 8000
+--             [ Server.post "/api/transfer" (Mw.withCsrf transfer)
+--             , Server.get "/dashboard" dashboard
+--             ]
+withCsrf : Handler -> Handler
+withCsrf =
+    Ffi.kernel "Middleware_withCsrf"

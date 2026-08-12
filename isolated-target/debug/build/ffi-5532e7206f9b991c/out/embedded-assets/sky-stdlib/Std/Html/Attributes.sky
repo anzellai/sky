@@ -1,0 +1,362 @@
+-- | Std.Html.Attributes — the typed attribute surface for Std.Html (Layer 3 Sky source).
+module Std.Html.Attributes exposing (..)
+
+-- | Std.Html.Attributes — the typed attribute surface for Std.Html.
+--
+-- v0.13 Layer 3: rewritten from Go runtime kernels to Sky source.
+-- Every builder returns a fully-typed `Attribute msg`, so the
+-- compiler and LSP flag a mismatch (`disabled "yes"`,
+-- `href True`) at the call site — even though the underlying wire
+-- form a renderer sees is still a `(key, value)` string pair.
+--
+-- The `Attribute` and `Event` ADTs both live here so there is no
+-- import cycle: `Std.Html.Events` imports THIS module for the
+-- constructors and only adds the builder functions on top.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+
+-- ─── Core types ─────────────────────────────────────────────────
+-- A single attribute on an HTML element.  The htmlToVNode FFI
+-- converter pattern-matches these constructors when building the
+-- runtime VNode:
+--   * `Attr k v`      → node.Attrs[k] = v
+--   * `BoolAttr k b`  → node.Attrs[k] = k  (only when b is True)
+--   * `EventAttr e`   → node.Events[name] = payload
+--   * `NoAttr`        → skipped
+type Attribute msg
+    = Attr String String
+    | BoolAttr String Bool
+    | EventAttr (Event msg)
+    | NoAttr
+
+-- An event handler.  Four shapes cover every DOM event Sky.Live
+-- and Sky.Tui dispatch:
+--   * `OnMsg name msg`           — zero wire args (click, focus …)
+--   * `OnString name handler`    — value-carrying (input, change …)
+--   * `OnBool name handler`      — checkbox check state
+--   * `OnRaw name payload`       — heterogeneous payload whose type
+--     is DECOUPLED from `Event`'s `msg` param.  Used by `onSubmit`
+--     and the generic `on`: a form's `onSubmit DoSignIn` where
+--     `DoSignIn : LoginForm -> Msg` must NOT leak `LoginForm -> Msg`
+--     into the surrounding `Html msg` — the wire driver decodes the
+--     form data into the handler's typed record at dispatch time.
+type Event msg
+    = OnMsg String msg
+    | OnString String (String -> msg)
+    | OnBool String (Bool -> msg)
+    | OnRaw String any
+
+
+-- ─── String-valued attributes ───────────────────────────────────
+class : String -> Attribute msg
+class v =
+    Attr "class" v
+
+
+id : String -> Attribute msg
+id v =
+    Attr "id" v
+
+
+-- `type` is a Sky keyword, so the dedicated builder is `type_`.
+-- `attribute "type" v` works too for direct use.
+type_ : String -> Attribute msg
+type_ v =
+    Attr "type" v
+
+
+value : String -> Attribute msg
+value v =
+    Attr "value" v
+
+
+href : String -> Attribute msg
+href v =
+    Attr "href" v
+
+
+src : String -> Attribute msg
+src v =
+    Attr "src" v
+
+
+alt : String -> Attribute msg
+alt v =
+    Attr "alt" v
+
+
+name : String -> Attribute msg
+name v =
+    Attr "name" v
+
+
+placeholder : String -> Attribute msg
+placeholder v =
+    Attr "placeholder" v
+
+
+title : String -> Attribute msg
+title v =
+    Attr "title" v
+
+
+for : String -> Attribute msg
+for v =
+    Attr "for" v
+
+
+rel : String -> Attribute msg
+rel v =
+    Attr "rel" v
+
+
+target : String -> Attribute msg
+target v =
+    Attr "target" v
+
+
+method : String -> Attribute msg
+method v =
+    Attr "method" v
+
+
+action : String -> Attribute msg
+action v =
+    Attr "action" v
+
+
+charset : String -> Attribute msg
+charset v =
+    Attr "charset" v
+
+
+content : String -> Attribute msg
+content v =
+    Attr "content" v
+
+
+httpEquiv : String -> Attribute msg
+httpEquiv v =
+    Attr "http-equiv" v
+
+
+pattern : String -> Attribute msg
+pattern v =
+    Attr "pattern" v
+
+
+accept : String -> Attribute msg
+accept v =
+    Attr "accept" v
+
+
+role : String -> Attribute msg
+role v =
+    Attr "role" v
+
+
+dir : String -> Attribute msg
+dir v =
+    Attr "dir" v
+
+
+lang : String -> Attribute msg
+lang v =
+    Attr "lang" v
+
+
+scope : String -> Attribute msg
+scope v =
+    Attr "scope" v
+
+
+download : String -> Attribute msg
+download v =
+    Attr "download" v
+
+
+enctype : String -> Attribute msg
+enctype v =
+    Attr "enctype" v
+
+
+autocomplete : String -> Attribute msg
+autocomplete v =
+    Attr "autocomplete" v
+
+
+ariaLabel : String -> Attribute msg
+ariaLabel v =
+    Attr "aria-label" v
+
+
+ariaHidden : String -> Attribute msg
+ariaHidden v =
+    Attr "aria-hidden" v
+
+
+ariaDescribedby : String -> Attribute msg
+ariaDescribedby v =
+    Attr "aria-describedby" v
+
+
+ariaExpanded : String -> Attribute msg
+ariaExpanded v =
+    Attr "aria-expanded" v
+
+
+-- Inline style string.  Routed through the same `Attr` constructor
+-- (`style="…"`); the renderer treats it as a normal attribute.
+style : String -> Attribute msg
+style v =
+    Attr "style" v
+
+
+-- ─── Integer-valued attributes ──────────────────────────────────
+-- These are genuinely numeric in HTML; typing them as `Int` lets
+-- the compiler reject `rows "five"`.  The converter stringifies.
+rows : Int -> Attribute msg
+rows n =
+    Attr "rows" (String.fromInt n)
+
+
+cols : Int -> Attribute msg
+cols n =
+    Attr "cols" (String.fromInt n)
+
+
+width : Int -> Attribute msg
+width n =
+    Attr "width" (String.fromInt n)
+
+
+height : Int -> Attribute msg
+height n =
+    Attr "height" (String.fromInt n)
+
+
+minlength : Int -> Attribute msg
+minlength n =
+    Attr "minlength" (String.fromInt n)
+
+
+maxlength : Int -> Attribute msg
+maxlength n =
+    Attr "maxlength" (String.fromInt n)
+
+
+size : Int -> Attribute msg
+size n =
+    Attr "size" (String.fromInt n)
+
+
+tabindex : Int -> Attribute msg
+tabindex n =
+    Attr "tabindex" (String.fromInt n)
+
+
+colspan : Int -> Attribute msg
+colspan n =
+    Attr "colspan" (String.fromInt n)
+
+
+rowspan : Int -> Attribute msg
+rowspan n =
+    Attr "rowspan" (String.fromInt n)
+
+
+-- `min` / `max` / `step` accept both numeric and keyword values in
+-- HTML (`min="0"`, `step="any"`), so they stay String-valued.
+min : String -> Attribute msg
+min v =
+    Attr "min" v
+
+
+max : String -> Attribute msg
+max v =
+    Attr "max" v
+
+
+step : String -> Attribute msg
+step v =
+    Attr "step" v
+
+
+-- ─── Boolean presence attributes ────────────────────────────────
+-- Render as the bare attribute name when True, omitted when False.
+checked : Bool -> Attribute msg
+checked b =
+    BoolAttr "checked" b
+
+
+disabled : Bool -> Attribute msg
+disabled b =
+    BoolAttr "disabled" b
+
+
+readonly : Bool -> Attribute msg
+readonly b =
+    BoolAttr "readonly" b
+
+
+required : Bool -> Attribute msg
+required b =
+    BoolAttr "required" b
+
+
+autofocus : Bool -> Attribute msg
+autofocus b =
+    BoolAttr "autofocus" b
+
+
+novalidate : Bool -> Attribute msg
+novalidate b =
+    BoolAttr "novalidate" b
+
+
+selected : Bool -> Attribute msg
+selected b =
+    BoolAttr "selected" b
+
+
+multiple : Bool -> Attribute msg
+multiple b =
+    BoolAttr "multiple" b
+
+
+hidden : Bool -> Attribute msg
+hidden b =
+    BoolAttr "hidden" b
+
+
+spellcheck : Bool -> Attribute msg
+spellcheck b =
+    BoolAttr "spellcheck" b
+
+
+-- ─── Generic escape hatches ─────────────────────────────────────
+-- Raw `key="value"` attribute for anything without a dedicated
+-- builder (custom elements, SVG attrs, …).
+attribute : String -> String -> Attribute msg
+attribute k v =
+    Attr k v
+
+
+-- `data-<key>="value"`.
+dataAttribute : String -> String -> Attribute msg
+dataAttribute k v =
+    Attr (String.append "data-" k) v
+
+
+-- Presence attribute under an arbitrary key.
+boolAttribute : String -> Bool -> Attribute msg
+boolAttribute k b =
+    BoolAttr k b
+
+
+-- The no-op attribute — useful as the False branch of a conditional
+-- (`if active then class "on" else none`).
+none : Attribute msg
+none =
+    NoAttr

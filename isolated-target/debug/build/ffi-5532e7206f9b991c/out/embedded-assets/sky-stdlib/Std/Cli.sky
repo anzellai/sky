@@ -1,0 +1,58 @@
+-- | Std.Cli — one-shot / interactive CLI backend (Layer 3 Sky source).
+--
+-- A TEA loop for command-line tools: `Cli.config { init, update, view,
+-- subscriptions }` produces an opaque `AppConfig`; attach an stdin-line
+-- handler with `Cli.withOnLine`. `view` renders a plain `String`. Every
+-- binding is an `Ffi.kernel` alias carrying its real HM signature, so the
+-- type-checker, LSP hover, and `sky doc` all read this ONE file.
+--
+-- ```elm
+-- main =
+--     Cli.program
+--         (Cli.config
+--             { init = init, update = update, view = view
+--             , subscriptions = subscriptions
+--             }
+--             |> Cli.withOnLine onLine
+--         )
+--         |> Task.run
+-- ```
+module Std.Cli exposing (AppConfig, program, config, withOnLine, readPassword)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | The built Sky.Cli app configuration. Opaque — produced by `config`,
+-- refined by `withOnLine`, consumed by `program`.
+type AppConfig model msg
+    = AppConfig_OPAQUE
+
+
+-- | Build the app config from the four required fields. `view` renders a
+-- plain `String` (polymorphic here so future render backends fit).
+config : { init : a -> ( model, Cmd msg )
+, update : msg -> model -> ( model, Cmd msg )
+, view : model -> render
+, subscriptions : model -> Sub msg
+} -> AppConfig model msg
+config =
+    Ffi.kernel "Cli_config"
+
+
+-- | Run the CLI TEA loop until it exits.
+program : AppConfig model msg -> Task Error ()
+program =
+    Ffi.kernel "Cli_program"
+
+
+-- | Attach a stdin-line handler — `onLine line` yields a `msg` per line read.
+withOnLine : (String -> msg) -> AppConfig model msg -> AppConfig model msg
+withOnLine =
+    Ffi.kernel "Cli_withOnLine"
+
+
+-- | Read one line from stdin with terminal echo disabled (passwords never
+-- land in scrollback). `readPassword ()`.
+readPassword : () -> Task Error String
+readPassword =
+    Ffi.kernel "Cli_readPassword"

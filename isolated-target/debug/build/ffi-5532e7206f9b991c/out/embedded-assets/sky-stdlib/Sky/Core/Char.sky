@@ -1,0 +1,69 @@
+-- | Sky.Core.Char — single-character helpers (Layer 3 Sky source).
+--
+-- `Char` is a single Unicode code point.  At runtime the value is
+-- the integer rune (`int32`); functions are aliased to the runtime
+-- kernel via Stage 4 `Ffi.kernel`.
+module Sky.Core.Char exposing
+    ( isAlpha
+    , isDigit
+    , isLower
+    , isUpper
+    , toLower
+    , toUpper
+    , toCode
+    , fromCode
+    )
+
+import Sky.Ffi as Ffi
+
+
+isAlpha : Char -> Bool
+isAlpha =
+    Ffi.kernel "Char_isAlpha"
+
+
+isDigit : Char -> Bool
+isDigit =
+    Ffi.kernel "Char_isDigit"
+
+
+isLower : Char -> Bool
+isLower =
+    Ffi.kernel "Char_isLower"
+
+
+isUpper : Char -> Bool
+isUpper =
+    Ffi.kernel "Char_isUpper"
+
+
+-- Note: `toLower` / `toUpper` return a single-rune String (the
+-- result of `unicode.ToLower(r)` wrapped in `string(_)`), matching
+-- the kernel registry's `Char -> String` shape.
+toLower : Char -> String
+toLower =
+    Ffi.kernel "Char_toLower"
+
+
+toUpper : Char -> String
+toUpper =
+    Ffi.kernel "Char_toUpper"
+
+
+-- | v0.16.7 #419 — Unicode code-point conversion.
+--
+-- `toCode 'A'  → 65`
+-- `fromCode 65 → 'A'`
+--
+-- Round-trip on a single Unicode code point.  Use these to bridge
+-- between `Char` and integer arithmetic — index tables, parse ASCII
+-- ranges, etc.  Out-of-range `fromCode` (negative or above
+-- 0x10FFFF) yields the Unicode replacement character `'�'`.
+toCode : Char -> Int
+toCode =
+    Ffi.kernel "Char_toCode"
+
+
+fromCode : Int -> Char
+fromCode =
+    Ffi.kernel "Char_fromCode"

@@ -272,6 +272,21 @@ jobs:
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs
 
+      # T4 is the PRE-RELEASE tier — the one whose whole purpose is to run
+      # exactly here — and it was invoked by nothing at all. Gate selection is
+      # exact tier equality (`harness/mod.rs`, `g.tier == o.tier`), so the
+      # `--tier t1` line above cannot reach it, and no other harness call
+      # existed in the repo. `apps-ffi-scale` (the 76k-symbol FFI benchmark)
+      # was therefore registered, budgeted, and never executed.
+      #
+      # Found by the Judge reviewing the fix for the SAME defect at T2, which
+      # is the argument for running whole tiers rather than named gates: a gate
+      # added at T4 later is picked up here instead of silently joining the set
+      # nothing runs.
+      - name: Gate harness (T4 — pre-release tier)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --tier t4
+
       # Denominator + ledger ratchets. These do not test the compiler; they
       # assert that the coverage claims shipped alongside it are still true and
       # still current. A release is exactly when a stale ledger does the most

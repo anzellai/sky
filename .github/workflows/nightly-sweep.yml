@@ -268,3 +268,78 @@ jobs:
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
+
+  # ── Layer-2 app gates at tier T3 ────────────────────────────────────────────
+  #
+  # Same defect as `behaviour-corpus` above, found one tier over by the Judge
+  # that reviewed that fix: `harness --tier t3` was invoked by NOTHING. Gate
+  # selection is exact tier equality, and the repo's only harness calls were
+  # `release.yml`'s `--tier t1` and (as of this cycle) nightly's `--tier t2`.
+  #
+  # Registered and unreachable until now: `apps-ledger-postgres`,
+  # `apps-dispatch-postgres`, `apps-fleet`. Two of the three need a real
+  # PostgreSQL — which is why they were parked at T3 in the first place, and why
+  # wiring them needs a service container rather than just another `run:` line.
+  #
+  # The service mirrors `rust-ci.yml`'s `integration-postgres` exactly (same
+  # image, credentials and health-check) so the DSN the gates read is the one
+  # that job already proves works.
+  harness-t3:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "harness-t3"]'), inputs.only) }}
+    runs-on: ubuntu-latest
+    # T3's ceiling is 90 min; these are app builds plus Postgres round-trips.
+    timeout-minutes: 60
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      GO_CACHE_BUDGET_MB: '6144'
+      SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+      DATABASE_URL: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sky
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: sky
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-t3-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-t3-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+          save-if: 'false'
+      - name: Build sky binary
+        # Layer-2 gates resolve the compiler under test at `<repo>/sky-out/sky`
+        # and treat a missing one as a hard error, never a skip. Omitting this
+        # is what made `behaviour-corpus`'s first run report `0/8 VACUOUS`.
+        run: |
+          source scripts/lib/cargo-target.sh
+          cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
+          install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
+          sky-out/sky --version
+      - name: 'Gate — Layer-2 app tier (harness tier T3)'
+        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t3
+      - name: Bound the Go caches before save
+        if: always()
+        run: bash scripts/ci/bound-go-cache.sh

@@ -1,0 +1,41 @@
+-- | Sky.Core.Regex — RE2 regex helpers (Layer 3 Sky source).
+--
+-- Patterns use Go's RE2 syntax (no backreferences, linear-time
+-- matching).  Pre-Layer-3 these helpers had no kernel-registry HM
+-- signatures, so call sites were any-typed; the Sky-source layer
+-- adds proper typing on top of the existing runtime kernels.
+module Sky.Core.Regex exposing (match, find, findAll, replace, split)
+
+import Sky.Ffi as Ffi
+
+
+-- | `match pattern s` — does the pattern match anywhere in `s`?
+match : String -> String -> Bool
+match =
+    Ffi.kernel "Regex_match"
+
+
+-- | `find pattern s` — first match (Nothing if no match).
+find : String -> String -> Maybe String
+find =
+    Ffi.kernel "Regex_find"
+
+
+-- | `findAll pattern s` — every non-overlapping match in order.
+findAll : String -> String -> List String
+findAll =
+    Ffi.kernel "Regex_findAll"
+
+
+-- | `replace pattern replacement s` — replace every match with
+-- `replacement`.  `replacement` may reference capture groups via
+-- `$1`, `$2`, etc. (RE2 substitution syntax).
+replace : String -> String -> String -> String
+replace =
+    Ffi.kernel "Regex_replace"
+
+
+-- | `split pattern s` — split on every match.
+split : String -> String -> List String
+split =
+    Ffi.kernel "Regex_split"

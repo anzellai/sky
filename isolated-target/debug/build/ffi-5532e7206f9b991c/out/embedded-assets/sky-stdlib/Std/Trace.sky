@@ -1,0 +1,53 @@
+-- | Std.Trace — opt-in distributed-tracing spans (Layer 3 Sky source).
+--
+-- Tier-1 spans (HTTP request, session load/save, Msg dispatch, DB /
+-- Auth / Http / File operations) are emitted AUTOMATICALLY by the
+-- runtime — you do not need this module to get a useful trace tree
+-- in `/_sky/console`.
+--
+-- Reach for `Std.Trace` only when you want an APPLICATION-level span
+-- — a named, logical unit of work that groups the auto-spans
+-- underneath it:
+--
+--     import Std.Trace as Trace
+--
+--     checkout : Cart -> Task Error Receipt
+--     checkout cart =
+--         Trace.span "checkout"
+--             (reserveStock cart
+--                 |> Task.andThen chargeCard
+--                 |> Task.andThen issueReceipt)
+--
+-- The `db.*` / `http.*` spans opened inside `reserveStock` /
+-- `chargeCard` / `issueReceipt` nest under "checkout" in the trace.
+--
+-- See docs/observability-design.md for the full model.
+module Std.Trace exposing (span, event, attr)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- | Wrap a Task in a named child span.  The Task's value flows
+-- through untouched — `Trace.span name task` has exactly the same
+-- result as `task`, plus a span in the trace.  Parametric in the
+-- error type so it wraps any Task.
+span : String -> Task e a -> Task e a
+span =
+    Ffi.kernel "Trace_span"
+
+
+-- | Record an instantaneous, named event on the current span
+-- (whatever span is active on the running Task).  Use for marking
+-- a point in time — "cache miss", "retry", "fallback taken".
+event : String -> Task Error ()
+event =
+    Ffi.kernel "Trace_event"
+
+
+-- | Annotate the current span with a `key = value` string
+-- attribute.  Keys are namespaced under `sky.trace.` so they never
+-- collide with the runtime's structural attributes.
+attr : String -> String -> Task Error ()
+attr =
+    Ffi.kernel "Trace_attr"

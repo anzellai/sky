@@ -1,0 +1,10801 @@
+// rt.go — Sky runtime core: Result/Maybe/Task ADTs, reflect-based
+// FFI dispatch, panic recovery, numeric coercion, stdlib kernels.
+//
+// Audit P3-4: this file has ~140 `fmt.Sprintf("%v", x)` call sites.
+// They fall into three justified categories:
+//
+//	(1) panic messages — rt.Coerce/AsInt/AsBool/AsFloat failures
+//	    stringify the offending value to help the user debug the
+//	    boundary bug. Never secret material (Auth secrets go through
+//	    coerceAuthSecret in db_auth.go).
+//	(2) display-only toString kernels — rt.toString, stdlib Int→String,
+//	    debug prints. These are explicitly for user output.
+//	(3) error-message composition — ErrInvalidInput / ErrIo wrap the
+//	    offending value in a descriptive message. Cryptographic
+//	    tokens (CSRF, HMAC signatures) use crypto/subtle compares
+//	    and never pass through %v.
+//
+// No password, session id, auth token, cookie value, or SQL query
+// reaches a %v site in this file. Secret-bearing code paths live in
+// db_auth.go (covered by p3_4_typed_strings_test.go) and live.go
+// (file-header justification).
+package rt
+
+import (
+	"bufio"
+	"context"
+	"crypto"
+	"crypto/hmac"
+	"crypto/md5"
+	cryptorand "crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
+	"crypto/subtle"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"log"
+	"math"
+	mrand "math/rand"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"os/signal"
+	"reflect"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"sky-app/rt/telemetry"
+)
+
+// ═══════════════════════════════════════════════════════════
+// Result
+// ═══════════════════════════════════════════════════════════
+
+type SkyResult[E any, A any] struct {
+	Tag      int
+	OkValue  A
+	ErrValue E
+}
+
+func Ok[E any, A any](v A) SkyResult[E, A] {
+	return SkyResult[E, A]{Tag: 0, OkValue: v}
+}
+
+func Err[E any, A any](e E) SkyResult[E, A] {
+	return SkyResult[E, A]{Tag: 1, ErrValue: e}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Maybe
+// ═══════════════════════════════════════════════════════════
+
+type SkyMaybe[A any] struct {
+	Tag       int
+	JustValue A
+}
+
+func Just[A any](v A) SkyMaybe[A] {
+	return SkyMaybe[A]{Tag: 0, JustValue: v}
+}
+
+func Nothing[A any]() SkyMaybe[A] {
+	return SkyMaybe[A]{Tag: 1}
+}
+
+// makeFuncAdapter wraps a Sky-side `func(any, ..., any) any`-shaped
+// callable so it satisfies a Go-typed function signature expected
+// by the FFI boundary. The returned reflect.Value's Interface() is
+// the new function value of the target type.
+//
+// At call time: incoming Go-typed args are boxed to `any` and passed
+// to the original Sky func; the Sky func's return is unwrapped/
+// coerced into the target signature's return slot(s). Skips when
+// the original return type doesn't match — Sky `func(...) any`
+// returning a value the target type expects.
+//
+// Used inside Coerce to bridge the Sky-handler → Go-typed-callback
+// gap (mux.HandleFunc, http.Handle, fyne callbacks, etc.).
+// adaptFuncValue is the non-generic worker behind makeFuncAdapter. It
+// returns a reflect.Value of type targetTy that, when called, boxes its
+// args to `any`, calls skyFn, and unwraps/adapts the return. Recursive
+// for curried lambdas: if the target's return type is another func type
+// and the Sky return is an `any`-shaped func, wrap again at call time.
+//
+// Uncurried-to-curried adaptation: when skyFn is an uncurried Go func
+// (e.g. an auto-generated record constructor `func(name string, age
+// int, active bool) Foo_R`) and the target is a Sky-style curried
+// signature `func(string) func(int) func(bool) any`, we capture the
+// outer arg and return a reflect-built closure for the remaining
+// shape.  Without this branch, the adapter zero-padded skyFn's
+// missing args and called the uncurried func too early — producing
+// `func(name, 0, false)` then trying to extract a function value
+// from a Foo_R record (panic: call of nil function).
+func adaptFuncValue(skyFn reflect.Value, targetTy reflect.Type) reflect.Value {
+	return adaptFuncValueWithCapture(skyFn, targetTy, nil)
+}
+
+func adaptFuncValueWithCapture(skyFn reflect.Value, targetTy reflect.Type, captured []reflect.Value) reflect.Value {
+	return reflect.MakeFunc(targetTy, func(inArgs []reflect.Value) []reflect.Value {
+		boxedArgs := make([]reflect.Value, len(inArgs))
+		for i, a := range inArgs {
+			boxedArgs[i] = reflect.ValueOf(a.Interface())
+		}
+		// Accumulate captured args from outer curry levels.
+		allArgs := append(append([]reflect.Value{}, captured...), boxedArgs...)
+		skyTy := skyFn.Type()
+		nin := skyTy.NumIn()
+		// Uncurried-to-curried: we have fewer args than skyFn wants
+		// AND the target's return is another func — wrap and keep
+		// accumulating.
+		if !skyTy.IsVariadic() && nin > len(allArgs) && targetTy.NumOut() == 1 {
+			outTy := targetTy.Out(0)
+			if outTy.Kind() == reflect.Func {
+				return []reflect.Value{adaptFuncValueWithCapture(skyFn, outTy, allArgs)}
+			}
+			// Bug #372: when the target's return is `any` (or any
+			// other interface) instead of another func, currying still
+			// applies — Sky semantics say all functions are curried,
+			// so a multi-arg Go function flowing into a Sky-typed
+			// `func(any) any` slot must partial-apply and return a
+			// closure waiting for the rest. The previous zero-padding
+			// branch below silently called skyFn with a Zero-valued
+			// remaining arg, producing wrong values (e.g. a 2-arg
+			// record ctor handed one String got `Ctor("x", "")`
+			// instead of a closure waiting for the second String).
+			// That collapsed accumulator types down a Decode.andThen
+			// chain, leaving a record where a function should be at
+			// the next stage — panic in the next Coerce[func(any) any].
+			//
+			// Mirrors curryRemainingArgs in skyCallOne; the boxed
+			// `func(any) any` closure dispatches through SkyCall on
+			// the next invocation and either calls skyFn (when all
+			// args supplied) or recurses.
+			if outTy.Kind() == reflect.Interface {
+				capturedAny := make([]any, len(allArgs))
+				for i, av := range allArgs {
+					if av.IsValid() {
+						capturedAny[i] = av.Interface()
+					}
+				}
+				closure := curryRemainingArgs(skyFn, capturedAny)
+				return []reflect.Value{reflect.ValueOf(closure)}
+			}
+		}
+		// Default behaviour: align argument count and invoke skyFn.
+		if nin != len(allArgs) && !skyTy.IsVariadic() {
+			if nin > len(allArgs) {
+				for i := len(allArgs); i < nin; i++ {
+					allArgs = append(allArgs, reflect.Zero(skyTy.In(i)))
+				}
+			} else {
+				allArgs = allArgs[:nin]
+			}
+		}
+		// v0.13 follow-up: narrow each arg to skyFn's declared param
+		// type BEFORE reflect.Call. Typed-codegen routes things like
+		// `formatTodo : map[string]string -> ...` through
+		// `rt.Coerce[func(any) any](formatTodo)`. When that adapter
+		// fires from `Sky_Core_List_map_` over a list whose runtime
+		// shape is `[]map[string]any` (e.g. DB rows), the arg passed
+		// here is the raw `map[string]any` — reflect.Call panics with
+		// `Call using map[string]interface{} as type map[string]string`.
+		// `narrowReflectValue` already handles the dict/list element
+		// recursion, so a one-line pre-call narrow makes the adapter
+		// boundary-typed.
+		callMax := nin
+		if skyTy.IsVariadic() {
+			if callMax > 0 {
+				callMax--
+			}
+		}
+		for i := 0; i < callMax && i < len(allArgs); i++ {
+			wantTy := skyTy.In(i)
+			av := allArgs[i]
+			if !av.IsValid() {
+				continue
+			}
+			if av.Type().AssignableTo(wantTy) {
+				continue
+			}
+			narrowed := narrowReflectValue(av, wantTy)
+			if narrowed.IsValid() && narrowed.Type().AssignableTo(wantTy) {
+				allArgs[i] = narrowed
+			}
+		}
+		out := skyFn.Call(allArgs)
+		nOut := targetTy.NumOut()
+		results := make([]reflect.Value, nOut)
+		for i := 0; i < nOut; i++ {
+			outTy := targetTy.Out(i)
+			if i >= len(out) {
+				results[i] = reflect.Zero(outTy)
+				continue
+			}
+			v := out[i]
+			if v.IsValid() && v.Type().AssignableTo(outTy) {
+				results[i] = v
+				continue
+			}
+			// Unwrap a boxing interface, then narrow through the
+			// canonical narrower. The previous hand-rolled cascade
+			// only knew assignable / interface-unwrap / func→func and
+			// zero-valued everything else — notably a struct return
+			// like SkyResult[E,A] / SkyMaybe[T] / a tuple handed back
+			// where the any-instantiation was expected (a Sky func
+			// returning Task/Result/Maybe routed through a func→func
+			// rt.Coerce). That silently dropped the Ok payload to a
+			// zero value. narrowReflectValue covers struct→struct,
+			// func→func, slices, maps and map→struct uniformly.
+			src := v
+			if v.IsValid() && v.Kind() == reflect.Interface && !v.IsNil() {
+				src = v.Elem()
+			}
+			if src.IsValid() {
+				if narrowed := narrowReflectValue(src, outTy); narrowed.IsValid() &&
+					narrowed.Type().AssignableTo(outTy) {
+					results[i] = narrowed
+					continue
+				}
+			}
+			results[i] = reflect.Zero(outTy)
+		}
+		return results
+	})
+}
+
+func makeFuncAdapter[T any](skyFn reflect.Value, targetTy reflect.Type) any {
+	return adaptFuncValue(skyFn, targetTy).Interface()
+}
+
+// CommaOkToMaybe converts Go's `(T, bool)` comma-ok pattern into
+// a Sky Maybe. Used by typed FFI wrappers for functions like
+// map[K]V lookups, sync.Map.Load, type assertions, etc.
+func CommaOkToMaybe[T any](v T, ok bool) SkyMaybe[T] {
+	if ok {
+		return Just[T](v)
+	}
+	return Nothing[T]()
+}
+
+// NilToMaybe wraps a Go pointer return in a Sky Maybe. Nil becomes
+// Nothing; non-nil becomes Just. Used by typed FFI wrappers for
+// functions returning *T without an error companion.
+func NilToMaybe[T any](v *T) SkyMaybe[*T] {
+	if v == nil {
+		return Nothing[*T]()
+	}
+	return Just[*T](v)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Generic-coercion helpers (T4)
+//
+// When Sky codegen needs to return a value whose declared type uses
+// specific generic type parameters (e.g. `SkyResult[IoError, string]`)
+// but the body constructs via the default `rt.Ok[any, any]`, a plain
+// Go `any.(SkyResult[IoError, string])` fails at runtime because
+// `SkyResult[any, any]` and `SkyResult[IoError, string]` are distinct
+// nominal generic instantiations.
+//
+// These helpers reconstruct the value with the target type parameters,
+// coercing inner values via `any.(T)` on the way. The inner coercions
+// do fail if the runtime value doesn't match the target — which is
+// the behaviour we want (type safety at the return boundary).
+// ═══════════════════════════════════════════════════════════
+
+// ResultAsAny is the typed-FFI shortcut used by call-site codegen to
+// convert SkyResult[string, A] (or any concrete Result) to the
+// SkyResult[any, any] shape the case-subject path expects, without
+// the reflect dance inside ResultCoerce. Separate symbol so the P7
+// progress metric (ResultCoerce call count) stays meaningful — this
+// one is a cheaper companion, not a generic reconstructor.
+func ResultAsAny[E any, A any](r SkyResult[E, A]) SkyResult[any, any] {
+	if r.Tag == 0 {
+		return Ok[any, any](any(r.OkValue))
+	}
+	return Err[any, any](any(r.ErrValue))
+}
+
+// MaybeAsAny is the Maybe counterpart of ResultAsAny. Same contract:
+// cheap tag-switch, no reflect, preferred at case-subjects whose
+// source is a known typed FFI call.
+func MaybeAsAny[A any](m SkyMaybe[A]) SkyMaybe[any] {
+	if m.Tag == 0 {
+		return Just[any](any(m.JustValue))
+	}
+	return Nothing[any]()
+}
+
+// ResultCoerce reconstructs a SkyResult with target generic params.
+// Works for any source SkyResult[X, Y] via reflection — Go's generic
+// instantiations are distinct types, so a plain type switch can't
+// cover them all. We read Tag/OkValue/ErrValue from the source via
+// reflect and rebuild with the target E, A.
+func ResultCoerce[E any, A any](src any) SkyResult[E, A] {
+	// Fast paths for the two most common sources.
+	if r, ok := src.(SkyResult[any, any]); ok {
+		if r.Tag == 0 {
+			return Ok[E, A](coerceInner[A](r.OkValue))
+		}
+		return Err[E, A](coerceInner[E](r.ErrValue))
+	}
+	if r, ok := src.(SkyResult[E, A]); ok {
+		return r
+	}
+	// Generic fallback via reflect: any SkyResult[X, Y] shape.
+	rv := reflect.ValueOf(src)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		okField := rv.FieldByName("OkValue")
+		errField := rv.FieldByName("ErrValue")
+		if tagField.IsValid() && okField.IsValid() && errField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
+			if tagField.Int() == 0 {
+				return Ok[E, A](coerceInner[A](okField.Interface()))
+			}
+			return Err[E, A](coerceInner[E](errField.Interface()))
+		}
+	}
+	// Non-SkyResult source: treat as a bare Ok value.
+	return Ok[E, A](coerceInner[A](src))
+}
+
+// MaybeCoerce reconstructs a SkyMaybe with a target generic param.
+func MaybeCoerce[A any](src any) SkyMaybe[A] {
+	if m, ok := src.(SkyMaybe[any]); ok {
+		if m.Tag == 0 {
+			return Just[A](coerceInner[A](m.JustValue))
+		}
+		return Nothing[A]()
+	}
+	if m, ok := src.(SkyMaybe[A]); ok {
+		return m
+	}
+	rv := reflect.ValueOf(src)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		justField := rv.FieldByName("JustValue")
+		if tagField.IsValid() && justField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
+			if tagField.Int() == 0 {
+				return Just[A](coerceInner[A](justField.Interface()))
+			}
+			return Nothing[A]()
+		}
+	}
+	return Nothing[A]()
+}
+
+// coerceInner type-asserts `v` to T, with a `T`-typed zero fallback
+// when the value is nil (e.g. `Nothing`'s zero-value JustValue field).
+func coerceInner[T any](v any) T {
+	if v == nil {
+		var zero T
+		return zero
+	}
+	if cast, ok := v.(T); ok {
+		return cast
+	}
+	// Belt-and-suspenders (conformance finding C1): a bare string can
+	// never soundly narrow to an ADT. This arises when a decode path
+	// yields an Err carrying a raw string (rather than a proper Error
+	// ADT) that then flows into a Result's typed E-slot via
+	// ResultCoerce[Error, _] → coerceInner[Error](rawString). Rather
+	// than aborting the whole process with a CoerceFailure panic, wrap
+	// it as an Unexpected Error (target E is the Error SkyADT). The
+	// primary fix (JsonDec_fail → ErrDecode) means real decode failures
+	// never reach here; this only catches anomalous raw-string→ADT
+	// coercions so a decode path can never panic the runtime.
+	if s, ok := v.(string); ok {
+		var zero T
+		if zt := reflect.TypeOf(zero); zt != nil && zt == reflect.TypeOf(SkyADT{}) {
+			if e, ok := makeError(10, "Unexpected", s).(T); ok {
+				return e
+			}
+		}
+	}
+	// Generic fallback: when T is itself a parametric Sky container
+	// (SkyMaybe[X] / SkyResult[E, X] / SkyTask[E, X]) and v is the
+	// any-parameter instantiation of the same container, reconstruct
+	// via reflect rather than panicking. This is the cross-boundary
+	// case between a function body (which produces any-boxed Sky
+	// values) and a function signature (which declares a concrete
+	// inner type).
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		if tagField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
+			var zero T
+			zt := reflect.TypeOf(zero)
+			if zt != nil && zt.Kind() == reflect.Struct {
+				// SkyMaybe[T]: fields Tag + JustValue
+				justField := rv.FieldByName("JustValue")
+				if justField.IsValid() && zt.NumField() >= 2 && zt.Field(0).Name == "Tag" {
+					out := reflect.New(zt).Elem()
+					out.FieldByName("Tag").SetInt(tagField.Int())
+					if tagField.Int() == 0 {
+						innerField := out.FieldByName("JustValue")
+						if innerField.IsValid() {
+							innerVal := justField.Interface()
+							if innerField.Type().Kind() == reflect.Interface {
+								innerField.Set(reflect.ValueOf(innerVal))
+							} else if reflect.TypeOf(innerVal) != nil && reflect.TypeOf(innerVal).AssignableTo(innerField.Type()) {
+								innerField.Set(reflect.ValueOf(innerVal))
+							} else if innerVal != nil {
+								// v0.13 Stage 1 — recursive narrowing
+								// for nested containers + func types.
+								// Closes `Maybe (Maybe (Int -> Int))`
+								// + `Dict K (Int -> Int)` etc.
+								// where the inner generic instantiation
+								// doesn't directly assign across.
+								narrowed := narrowReflectValue(
+									reflect.ValueOf(innerVal),
+									innerField.Type())
+								if narrowed.IsValid() {
+									innerField.Set(narrowed)
+								}
+							}
+						}
+					}
+					return out.Interface().(T)
+				}
+				// SkyResult[E, A]: fields Tag + OkValue + ErrValue
+				okField := rv.FieldByName("OkValue")
+				errField := rv.FieldByName("ErrValue")
+				if okField.IsValid() && errField.IsValid() {
+					out := reflect.New(zt).Elem()
+					out.FieldByName("Tag").SetInt(tagField.Int())
+					if tagField.Int() == 0 {
+						inner := out.FieldByName("OkValue")
+						if inner.IsValid() {
+							innerVal := okField.Interface()
+							if inner.Type().Kind() == reflect.Interface {
+								inner.Set(reflect.ValueOf(innerVal))
+							} else if reflect.TypeOf(innerVal) != nil && reflect.TypeOf(innerVal).AssignableTo(inner.Type()) {
+								inner.Set(reflect.ValueOf(innerVal))
+							} else if innerVal != nil {
+								// v0.16.17 — symmetrise with the SkyMaybe
+								// branch above.  Closes the
+								// `Result a (Result a Box)` soundness bug
+								// where the inner OkValue is a concrete
+								// `Box_R` struct (non-interface) inside a
+								// `SkyResult[any, any]` source — pre-fix
+								// the assignment was silently skipped and
+								// the output kept its zero-value Box_R.
+								narrowed := narrowReflectValue(
+									reflect.ValueOf(innerVal),
+									inner.Type())
+								if narrowed.IsValid() {
+									inner.Set(narrowed)
+								}
+							}
+						}
+					} else {
+						inner := out.FieldByName("ErrValue")
+						if inner.IsValid() {
+							innerVal := errField.Interface()
+							if inner.Type().Kind() == reflect.Interface {
+								inner.Set(reflect.ValueOf(innerVal))
+							} else if reflect.TypeOf(innerVal) != nil && reflect.TypeOf(innerVal).AssignableTo(inner.Type()) {
+								inner.Set(reflect.ValueOf(innerVal))
+							} else if innerVal != nil {
+								narrowed := narrowReflectValue(
+									reflect.ValueOf(innerVal),
+									inner.Type())
+								if narrowed.IsValid() {
+									inner.Set(narrowed)
+								}
+							}
+						}
+					}
+					return out.Interface().(T)
+				}
+			}
+		}
+	}
+	// Slice convert: []any source, []X target — rebuild slice element-wise.
+	if rv.Kind() == reflect.Slice {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Slice {
+			elemT := zt.Elem()
+			n := rv.Len()
+			out := reflect.MakeSlice(zt, n, n)
+			for i := 0; i < n; i++ {
+				src := rv.Index(i).Interface()
+				if src == nil {
+					continue
+				}
+				srcVal := reflect.ValueOf(src)
+				narrowed := narrowReflectValue(srcVal, elemT)
+				if narrowed.IsValid() {
+					out.Index(i).Set(narrowed)
+				}
+			}
+			return out.Interface().(T)
+		}
+	}
+	// Map convert: map[K]any source, map[K]X target.
+	if rv.Kind() == reflect.Map {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Map {
+			out := coerceMapValue(rv, zt)
+			return out.Interface().(T)
+		}
+		// v0.15.47 — map[string]any source, record-struct target.
+		// New kernels (Csv_parse, Cache_stats) return map[string]any
+		// for record-shaped values; narrow to the user's declared
+		// `Foo_R` struct via field-by-field rebuild (same path
+		// narrowReflectValue already uses).
+		if zt != nil && zt.Kind() == reflect.Struct &&
+			rv.Type().Key().Kind() == reflect.String {
+			narrowed := narrowMapToStruct(rv, zt)
+			if narrowed.IsValid() {
+				return narrowed.Interface().(T)
+			}
+		}
+	}
+	// v0.13 Stage 1 — function-type conversion via makeFuncAdapter.
+	// When source is a Sky `func(any) any` lambda and target is a
+	// concrete `func(T1) T2`, build a reflect-based adapter that
+	// boxes typed args to any, calls the Sky lambda, and narrows
+	// the return. Closes the `Maybe (Int -> Int)` class — without
+	// this, `Just (\x -> x * 2)` panics at the SkyMaybe[func(int)
+	// int] boundary because the inner func(any) any can't be type-
+	// asserted to func(int) int.
+	if rv.Kind() == reflect.Func {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Func {
+			adapted := makeFuncAdapter[T](rv, zt)
+			return adapted.(T)
+		}
+	}
+	// Numeric convert: a kernel can hand back int64 where typed
+	// codegen routed a plain int (Time.unixMillis and friends) —
+	// same value, different Go width. reflect.Convert bridges them
+	// rather than panicking on the strict assertion below.
+	if isNumericKind(rv.Kind()) {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && isNumericKind(zt.Kind()) {
+			return rv.Convert(zt).Interface().(T)
+		}
+	}
+	// v0.17 Cause H Step 4 — typed-tuple narrowing for coerceInner.
+	// Mirror of the rt.Coerce branch (sibling fix at line 5094): Sky's
+	// codegen emits `rt.SkyTuple2 = T2[any, any]` (and SkyTuple3) for
+	// untyped tuple literals in slots that the slot-shape inference
+	// can't reach. Go's nominal generics reject the raw `.(T2[A, B])`
+	// type assertion when the dynamic type is `T2[any, any]`. Walk
+	// V0/V1 (and V2) fields and Coerce each into the target element
+	// type so a `Just (k, v)` flowing into a `Maybe (T2[string,
+	// string])` slot via MaybeCoerce[T2[string, string]] survives.
+	// MUST come BEFORE narrowStructToStruct (which skips T2/T3 by
+	// design — it's meant for record aliases).
+	if rv.Kind() == reflect.Struct {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Struct {
+			ztStr := zt.String()
+			if strings.HasPrefix(ztStr, "rt.T2[") && rv.NumField() >= 2 && zt.NumField() >= 2 {
+				v0Ty := zt.Field(0).Type
+				v1Ty := zt.Field(1).Type
+				out := reflect.New(zt).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+			if strings.HasPrefix(ztStr, "rt.T3[") && rv.NumField() >= 3 && zt.NumField() >= 3 {
+				v0Ty := zt.Field(0).Type
+				v1Ty := zt.Field(1).Type
+				v2Ty := zt.Field(2).Type
+				out := reflect.New(zt).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(2).Interface()), v2Ty); narrowed.IsValid() {
+					out.Field(2).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+		}
+	}
+	// v0.15.44 — struct→struct cross-shape narrowing.  Sky-declared
+	// `type alias`es emit as `main.Foo_R` Go structs; runtime FFI
+	// often returns a parallel struct (`rt.HttpResponse`,
+	// `rt.SkyRequest`, etc.).  Field-by-field copy bridges the gap
+	// when their PascalCase field names line up.  The non-trivial
+	// guards live in narrowStructToStruct (skip Tag/V0-shaped ADT
+	// and tuple containers).
+	if rv.Kind() == reflect.Struct {
+		var zero T
+		zt := reflect.TypeOf(zero)
+		if zt != nil && zt.Kind() == reflect.Struct {
+			if narrowed, ok := narrowStructToStruct(rv, zt); ok {
+				return narrowed.Interface().(T)
+			}
+		}
+	}
+	// Final fallback: strict type assertion. If this panics, it
+	// means typed-codegen emitted a CALL with a wrong element type —
+	// a compiler bug, NOT a runtime input bug. Surfacing the panic
+	// loudly (rather than silently returning zero T) makes such
+	// bugs visible at the earliest test cycle, where they can be
+	// fixed at the source. The conflict-detection merge in
+	// typesWithDeps and sanitiseTypedElem should prevent wrong-
+	// typed routes from being emitted in the first place; if a
+	// panic fires here, that's a soundness gap to investigate.
+	if cast, ok := v.(T); ok {
+		return cast
+	}
+	// Construct a descriptive panic so the bug is easy to track
+	// down. Includes both source kind (rv) and target type (zt)
+	// when reflect can determine them.
+	var zero T
+	srcDesc := "<nil>"
+	if v != nil {
+		srcDesc = reflect.TypeOf(v).String()
+	}
+	targetDesc := reflect.TypeOf(zero).String()
+	if targetDesc == "" {
+		targetDesc = "<unknown>"
+	}
+	// COMPILER-BUG-CONTRACT: reaching this point means typed-codegen
+	// emitted a Coerce[T] over a value the source-level Sky type
+	// system never narrowed to T. Top-level recover catches this as
+	// `CompilerBug` per classifyPanic; the message stays detailed
+	// so users can file an actionable report.
+	panic(fmt.Sprintf("rt.coerceInner: type mismatch — source %s cannot be cast to target %s. This is a compiler bug in typed-codegen routing. Reproduce, then investigate kernelTypedCall (Compile.hs) and the relevant inferXType helper.", srcDesc, targetDesc))
+}
+
+// isNumericKind reports whether k is an integer or float reflect.Kind —
+// the kinds reflect.Value.Convert can bridge without loss of meaning.
+func isNumericKind(k reflect.Kind) bool {
+	switch k {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
+}
+
+// narrowReflectValue converts `src` to a value of type `target`, handling:
+//   - identity / interface target
+//   - assignable / numerically-convertible types
+//   - map[K]any → map[K]X (recurses into coerceMapValue)
+//   - []any → []X (recurses via the same rules)
+//   - any → string (via fmt.Sprintf "%v")
+//
+// Returns an invalid reflect.Value when the conversion isn't supported;
+// the caller decides whether to skip the entry or panic.
+// narrowMapToStruct rebuilds a record struct from a string-keyed map
+// (a JSON-decoded object, a Db.query row, a Firestore snapshot).
+// Each field is probed under three key forms — PascalCase exact,
+// lower-first (Sky's record-field emission), all-lower (FFI acronyms
+// / Db.getField) — and narrowed recursively, so nested typed maps,
+// slices and record-lists round-trip. Shared by rt.Coerce and
+// narrowReflectValue so the two narrowers never diverge.
+func narrowMapToStruct(src reflect.Value, targetTy reflect.Type) reflect.Value {
+	out := reflect.New(targetTy).Elem()
+	n := targetTy.NumField()
+	for i := 0; i < n; i++ {
+		fld := targetTy.Field(i)
+		if !fld.IsExported() {
+			continue
+		}
+		mv := src.MapIndex(reflect.ValueOf(fld.Name))
+		if !mv.IsValid() && len(fld.Name) > 0 {
+			lowered := string(fld.Name[0]|0x20) + fld.Name[1:]
+			mv = src.MapIndex(reflect.ValueOf(lowered))
+			if !mv.IsValid() {
+				buf := make([]byte, len(fld.Name))
+				for j := 0; j < len(fld.Name); j++ {
+					c := fld.Name[j]
+					if c >= 'A' && c <= 'Z' {
+						c |= 0x20
+					}
+					buf[j] = c
+				}
+				mv = src.MapIndex(reflect.ValueOf(string(buf)))
+			}
+		}
+		if !mv.IsValid() {
+			continue
+		}
+		inner := mv.Interface()
+		if inner == nil {
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(inner), fld.Type)
+		if narrowed.IsValid() && narrowed.Type().AssignableTo(fld.Type) {
+			out.Field(i).Set(narrowed)
+		}
+	}
+	return out
+}
+
+func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
+	if target.Kind() == reflect.Interface {
+		return src
+	}
+	if src.Type().AssignableTo(target) {
+		return src
+	}
+	if src.Type().ConvertibleTo(target) && safeReflectConvert(src.Kind(), target.Kind()) {
+		return src.Convert(target)
+	}
+	if target.Kind() == reflect.Map && src.Kind() == reflect.Map {
+		return coerceMapValue(src, target)
+	}
+	if target.Kind() == reflect.Slice && src.Kind() == reflect.Slice {
+		return coerceSliceValue(src, target)
+	}
+	// map[string]any → a record struct. JSON-decoded objects, Db
+	// rows and Firestore snapshots arrive string-keyed; a record
+	// field or constructor parameter typed `Foo_R` needs the
+	// field-by-field rebuild. Without this case, narrowing a nested
+	// record (and so any record-list element) silently failed.
+	if target.Kind() == reflect.Struct && src.Kind() == reflect.Map &&
+		src.Type().Key().Kind() == reflect.String {
+		return narrowMapToStruct(src, target)
+	}
+	// v0.13 Stage 1 — function type conversion via reflect-based
+	// adapter. When src is a Sky `func(any) any` lambda and target
+	// is a concrete `func(T1) T2`, build an adapter that boxes
+	// typed args + narrows the return. Closes the "list of typed
+	// functions" panic class: storing `[\x -> x+1, ...]` (each
+	// Sky lambda emits as func(any) any) into a typed slice
+	// `[]func(int) int` previously zero'd each element (nil func)
+	// because narrowReflectValue had no Func case. Reuses the
+	// `adaptFuncValue` helper already used by makeFuncAdapter.
+	if target.Kind() == reflect.Func && src.Kind() == reflect.Func {
+		return adaptFuncValue(src, target)
+	}
+	// Pointer → value dereference: FFI constructors return `*T` (via
+	// `new(pkg.T)`) for builder-pattern chaining, but the consuming
+	// setter often takes `T` (e.g. `[]ChatCompletionMessage` not
+	// `[]*ChatCompletionMessage`). Auto-dereference so the pipeline
+	// flows without the user having to synthesise a deref in Sky.
+	if src.Kind() == reflect.Ptr && !src.IsNil() {
+		elem := src.Elem()
+		if elem.Type().AssignableTo(target) {
+			return elem
+		}
+		if narrowed := narrowReflectValue(elem, target); narrowed.IsValid() {
+			return narrowed
+		}
+	}
+	// Value → pointer wrap: the inverse case, also a common FFI shape
+	// mismatch when a method expects `*T` but we have a `T` value.
+	if target.Kind() == reflect.Ptr && src.Type().AssignableTo(target.Elem()) {
+		p := reflect.New(target.Elem())
+		p.Elem().Set(src)
+		return p
+	}
+	// Sky generic containers: SkyMaybe[any]/SkyResult[any,any]/SkyTask[any,any]
+	// → SkyMaybe[T]/SkyResult[E,A]/SkyTask[E,A]. Go treats these distinct
+	// generic instantiations as unrelated nominal types, so a record field
+	// typed `SkyMaybe[User_R]` can't receive a `SkyMaybe[any]` value without
+	// narrow reconstruction. This is the path sky-chat / sky-vote hit when
+	// `RecordUpdate model { currentUser = Just user }` quietly dropped the
+	// update because `rt.Just[any](user)` didn't match the struct field type.
+	if target.Kind() == reflect.Struct && src.Kind() == reflect.Struct {
+		if narrowed, ok := narrowSkyContainer(src, target); ok {
+			return narrowed
+		}
+		// Tuple cross-instantiation (T2[any,any] → T2[string,string],
+		// or any other element-type permutation across T2/T3/T4/T5).
+		// Detection: source and target are both structs with the same
+		// V0..Vn field set. Reconstruct field-by-field with element
+		// narrowing.
+		if narrowed, ok := narrowTupleStruct(src, target); ok {
+			return narrowed
+		}
+		// v0.15.44 — record-shape struct → record-shape struct.
+		// rt.HttpResponse (runtime FFI struct) → main.Sky_Core_Http_HttpResponse_R
+		// (user-side declared record alias). The Sky `type alias` declares
+		// PascalCase Go field names (`Status`, `Body`, `Headers`) that match
+		// the runtime struct 1:1; field-by-field copy bridges them. Same
+		// approach as narrowMapToStruct but iterates source FIELDS instead
+		// of map keys. Falls back to map-shape on absent fields.
+		if narrowed, ok := narrowStructToStruct(src, target); ok {
+			return narrowed
+		}
+	}
+	// #461 — SkySet (struct) → map[any]V (Sky's typed Go form for
+	// `Set a`). Reached when a Set flows through a nested narrowing
+	// path: record field of type `Set a`, slice element of type
+	// `Set a`, etc. Top-level Coerce[map[any]V] also delegates to
+	// skySetToMap explicitly; this branch covers everything else.
+	if src.Kind() == reflect.Struct && target.Kind() == reflect.Map {
+		if narrowed, ok := skySetToMap(src.Interface(), target); ok {
+			return narrowed
+		}
+	}
+	if target.Kind() == reflect.String {
+		return reflect.ValueOf(fmt.Sprintf("%v", src.Interface()))
+	}
+	return reflect.Value{}
+}
+
+// narrowStructToStruct field-copies a record-shaped struct into another
+// record-shaped struct with the same Sky-level shape. Used when a Sky-
+// declared `type alias` (compiled to `main.Foo_R`) needs to receive a
+// runtime FFI struct (`rt.HttpResponse`, `rt.SkyRequest`, etc.) that
+// the runtime returns. Targets are guarded:
+//
+//  1. Target must have NO Tag field (i.e. NOT an ADT — those route via
+//     narrowSkyContainer).
+//  2. Target must have NO V0/V1 fields (NOT a tuple — narrowTupleStruct).
+//  3. At least one source field name must match a target field name
+//     (so completely unrelated structs don't accidentally narrow).
+//
+// Per-field narrowing recurses via narrowReflectValue, so nested record
+// or container mismatches still get the right treatment.
+func narrowStructToStruct(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	if target.NumField() == 0 {
+		return reflect.Value{}, false
+	}
+	if f, ok := target.FieldByName("Tag"); ok && (f.Type.Kind() == reflect.Int || f.Type.Kind() == reflect.Int64) {
+		return reflect.Value{}, false
+	}
+	if _, ok := target.FieldByName("V0"); ok {
+		return reflect.Value{}, false
+	}
+	srcTy := src.Type()
+	out := reflect.New(target).Elem()
+	matched := 0
+	for i := 0; i < target.NumField(); i++ {
+		fld := target.Field(i)
+		if !fld.IsExported() {
+			continue
+		}
+		srcF, found := srcTy.FieldByName(fld.Name)
+		if !found {
+			continue
+		}
+		srcVal := src.FieldByIndex(srcF.Index)
+		if !srcVal.IsValid() {
+			continue
+		}
+		// Take the interface and re-narrow against the target field
+		// type — covers the case where the source field is `any` and
+		// the target field is a concrete type (or vice versa).
+		var iv any
+		if srcVal.Kind() == reflect.Interface && srcVal.IsNil() {
+			matched++
+			continue
+		}
+		iv = srcVal.Interface()
+		if iv == nil {
+			matched++
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(iv), fld.Type)
+		if narrowed.IsValid() && narrowed.Type().AssignableTo(fld.Type) {
+			out.Field(i).Set(narrowed)
+			matched++
+		} else if srcVal.Type().AssignableTo(fld.Type) {
+			out.Field(i).Set(srcVal)
+			matched++
+		}
+	}
+	if matched == 0 {
+		return reflect.Value{}, false
+	}
+	return out, true
+}
+
+// narrowTupleStruct reconstructs an rt.T2/T3/T4/T5 across generic
+// instantiations. Sky's tuple structs use `V0..Vn` field names with
+// no Tag — distinguishes from ADT-shaped containers that
+// narrowSkyContainer handles. Each field is narrowed via
+// narrowReflectValue so nested mismatches (e.g. T2[any,any] holding
+// a SkyTuple2 inside a typed T2[string, SomeRecord]) round-trip.
+func narrowTupleStruct(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	if src.FieldByName("Tag").IsValid() {
+		return reflect.Value{}, false // ADT shape — let narrowSkyContainer handle
+	}
+	if !src.FieldByName("V0").IsValid() || !src.FieldByName("V1").IsValid() {
+		return reflect.Value{}, false
+	}
+	out := reflect.New(target).Elem()
+	for i := 0; ; i++ {
+		fname := "V" + strconv.Itoa(i)
+		srcF := src.FieldByName(fname)
+		dstF := out.FieldByName(fname)
+		if !srcF.IsValid() || !dstF.IsValid() {
+			if i == 0 {
+				return reflect.Value{}, false
+			}
+			break // Reached end of common V-fields.
+		}
+		if !dstF.CanSet() {
+			return reflect.Value{}, false
+		}
+		// Element narrow: handle T2[any,any] → T2[string,string] by
+		// converting each V_i. If src field is already assignable to
+		// the target field, skip the reflect dance.
+		if srcF.Type().AssignableTo(dstF.Type()) {
+			dstF.Set(srcF)
+			continue
+		}
+		// Source V_i is `any` — unwrap to its concrete value first.
+		var sub reflect.Value
+		if srcF.Kind() == reflect.Interface {
+			sub = srcF.Elem()
+		} else {
+			sub = srcF
+		}
+		if !sub.IsValid() {
+			continue // leave the destination at its zero value
+		}
+		if sub.Type().AssignableTo(dstF.Type()) {
+			dstF.Set(sub)
+			continue
+		}
+		narrowed := narrowReflectValue(sub, dstF.Type())
+		if narrowed.IsValid() {
+			dstF.Set(narrowed)
+		}
+	}
+	return out, true
+}
+
+// narrowSkyContainer reconstructs a Sky-generic container (SkyMaybe,
+// SkyResult, SkyTask, Tuples) across generic instantiations. Works by
+// walking the source's Tag/OkValue/ErrValue/JustValue/V0/V1 fields via
+// reflect and setting them on a freshly-allocated target-typed value
+// (narrowing each inner field per narrowReflectValue rules).
+//
+// Detection: any struct whose first field is named "Tag" and whose
+// remaining fields match a known Sky container shape. Non-Sky structs
+// fall through to the generic fail path.
+func narrowSkyContainer(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	tagF := src.FieldByName("Tag")
+	if !tagF.IsValid() {
+		return reflect.Value{}, false
+	}
+	// Sky containers (SkyMaybe / SkyResult / SkyTask / Tuples / ADTs)
+	// always carry an INT Tag. Some non-Sky Go structs (rt.VNode has
+	// `Tag string`) also have a "Tag" field — we MUST exclude those
+	// here, otherwise outTag.SetInt(tagF.Int()) panics with
+	// "SetInt on string Value". The bug surfaces when typed routing
+	// (e.g. AsListT[rt.VNode]) reaches a heterogeneous any-typed slice
+	// where the element value isn't actually a VNode.
+	if tagF.Kind() != reflect.Int && tagF.Kind() != reflect.Int64 {
+		return reflect.Value{}, false
+	}
+	out := reflect.New(target).Elem()
+	outTag := out.FieldByName("Tag")
+	if !outTag.IsValid() || !outTag.CanSet() {
+		return reflect.Value{}, false
+	}
+	if outTag.Kind() != reflect.Int && outTag.Kind() != reflect.Int64 {
+		return reflect.Value{}, false
+	}
+	outTag.SetInt(tagF.Int())
+
+	// Propagate per-field values, narrowing each. We iterate over the
+	// TARGET's fields so extra source fields (e.g. SkyName) are copied
+	// only when the target has a matching slot.
+	for i := 0; i < target.NumField(); i++ {
+		fName := target.Field(i).Name
+		if fName == "Tag" {
+			continue
+		}
+		srcF := src.FieldByName(fName)
+		if !srcF.IsValid() {
+			continue
+		}
+		outF := out.Field(i)
+		if !outF.CanSet() {
+			continue
+		}
+		// Source field is typed `any` for the polymorphic container;
+		// unwrap the interface then narrow to the target's concrete
+		// field type.
+		if srcF.Kind() == reflect.Interface {
+			if srcF.IsNil() {
+				// Leave the output field at its zero value.
+				continue
+			}
+			inner := srcF.Elem()
+			narrowed := narrowReflectValue(inner, outF.Type())
+			if narrowed.IsValid() {
+				outF.Set(narrowed)
+			}
+			continue
+		}
+		// Same kind on both sides (e.g. both concrete) — recurse.
+		narrowed := narrowReflectValue(srcF, outF.Type())
+		if narrowed.IsValid() {
+			outF.Set(narrowed)
+		}
+	}
+	return out, true
+}
+
+// coerceMapValue rebuilds a map[K]V → map[K2]V2 via reflect. Uses
+// narrowReflectValue per entry so deeply-nested Sky lists/dicts from
+// SQL rows, Firestore snapshots and Sky.Live sessions narrow
+// correctly.
+func coerceMapValue(src reflect.Value, target reflect.Type) reflect.Value {
+	keyT := target.Key()
+	valT := target.Elem()
+	out := reflect.MakeMapWithSize(target, src.Len())
+	iter := src.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		if !k.Type().AssignableTo(keyT) {
+			if k.Type().ConvertibleTo(keyT) && safeReflectConvert(k.Kind(), keyT.Kind()) {
+				k = k.Convert(keyT)
+			} else {
+				continue
+			}
+		}
+		v := iter.Value()
+		vi := v.Interface()
+		if vi == nil {
+			out.SetMapIndex(k, reflect.Zero(valT))
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(vi), valT)
+		if narrowed.IsValid() {
+			out.SetMapIndex(k, narrowed)
+		}
+	}
+	return out
+}
+
+// coerceSliceValue rebuilds a []V → []V2 via reflect, using
+// narrowReflectValue per element.
+func coerceSliceValue(src reflect.Value, target reflect.Type) reflect.Value {
+	elemT := target.Elem()
+	n := src.Len()
+	out := reflect.MakeSlice(target, n, n)
+	for i := 0; i < n; i++ {
+		v := src.Index(i)
+		vi := v.Interface()
+		if vi == nil {
+			continue
+		}
+		narrowed := narrowReflectValue(reflect.ValueOf(vi), elemT)
+		if narrowed.IsValid() {
+			out.Index(i).Set(narrowed)
+		}
+	}
+	return out
+}
+
+// ═══════════════════════════════════════════════════════════
+// Task
+// ═══════════════════════════════════════════════════════════
+
+type SkyTask[E any, A any] func() SkyResult[E, A]
+
+func Task_succeed[E any, A any](v A) SkyTask[E, A] {
+	return func() SkyResult[E, A] { return Ok[E, A](v) }
+}
+
+func Task_fail[E any, A any](e E) SkyTask[E, A] {
+	return func() SkyResult[E, A] { return Err[E, A](e) }
+}
+
+func Task_andThen[E any, A any, B any](fn func(A) SkyTask[E, B], task SkyTask[E, A]) SkyTask[E, B] {
+	return func() SkyResult[E, B] {
+		r := task()
+		if r.Tag == 0 {
+			return fn(r.OkValue)()
+		}
+		return Err[E, B](r.ErrValue)
+	}
+}
+
+func Task_run[E any, A any](task SkyTask[E, A]) SkyResult[E, A] {
+	return task()
+}
+
+func RunMainTask[E any, A any](task SkyTask[E, A]) {
+	r := task()
+	if r.Tag == 1 {
+		fmt.Println("Error:", r.ErrValue)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Composition
+// ═══════════════════════════════════════════════════════════
+
+func ComposeL[A any, B any, C any](f func(A) B, g func(B) C) func(A) C {
+	return func(a A) C { return g(f(a)) }
+}
+
+func ComposeR[A any, B any, C any](g func(B) C, f func(A) B) func(A) C {
+	return func(a A) C { return g(f(a)) }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Log
+// ═══════════════════════════════════════════════════════════
+
+// Debug_toString: universal stringify for any Sky value. Used by the
+// multiline-string interpolation desugarer at canonicalise time.
+// Debug_toString backs `Debug.toString`, `Basics.toString` and multiline-string
+// interpolation (kernel.rs:118 / :422) — the compiler's one stringifier of a
+// whole Sky value, and therefore the one place a Dict is rendered for a human.
+// `toStringForDisplay` is `%v` plus the Dict-key decode: the runtime map key of
+// a `Dict Int v` carries a kind tag (see `encodeDictKey`) and the user must see
+// `map[10:j 9:i]`, not the encoded form.
+func Debug_toString(v any) any {
+	v = derefPointer(unwrapAny(v))
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return toStringForDisplay(v)
+}
+
+// Log_println / Log_printlnT match the Task-everywhere kernel sig
+// `String -> Task Error ()` (2026-04-24+). The body is wrapped in
+// a `func() any` thunk so the auto-force discard
+// (lowerer emits `_ = rt.AnyTaskRun(rt.Log_println(x))`) actually
+// fires the side effect when used as `let _ = println "step"`.
+//
+// Pre-migration these were eager — the doctrine had two-tiered
+// println as a sync convenience effect specifically because the
+// `let _ = println …` pattern silently dropped Task thunks. The
+// auto-force in defToStmts (Sky.Build.Compile) now closes that
+// footgun, freeing println to be Task-shaped like every other
+// observable side effect in the kernel.
+func Log_println(args ...any) any {
+	captured := append([]any(nil), args...)
+	return func() any {
+		fmt.Println(captured...)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func Log_printlnT(arg any) any {
+	return func() any {
+		fmt.Println(arg)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Structured logging — severity levels + optional JSON output.
+// Set SKY_LOG_FORMAT=json for one-line JSON records suitable for log
+// aggregators (Loki, Datadog, CloudWatch). Otherwise human-readable.
+// Set SKY_LOG_LEVEL=debug|info|warn|error to gate output.
+// ═══════════════════════════════════════════════════════════
+
+const (
+	logLevelDebug = 0
+	logLevelInfo  = 1
+	logLevelWarn  = 2
+	logLevelError = 3
+)
+
+var (
+	logThreshold = logLevelFromEnv()
+	logJSON      = skyGetenv("LOG_FORMAT") == "json"
+)
+
+// Re-read log config when the env prefix changes (compiler-emitted
+// rt.SetEnvPrefix runs in main.init(), AFTER these package-level
+// vars were first evaluated against the default "SKY" prefix).
+func init() {
+	onEnvPrefixChange(func() {
+		logThreshold = logLevelFromEnv()
+		logJSON = skyGetenv("LOG_FORMAT") == "json"
+	})
+}
+
+func logLevelFromEnv() int {
+	switch strings.ToLower(skyGetenv("LOG_LEVEL")) {
+	case "debug":
+		return logLevelDebug
+	case "warn", "warning":
+		return logLevelWarn
+	case "error":
+		return logLevelError
+	default:
+		return logLevelInfo
+	}
+}
+
+func logEmit(level int, levelName string, msg string, ctx any) {
+	if level < logThreshold {
+		return
+	}
+	now := time.Now()
+	ts := now.UTC().Format(time.RFC3339Nano)
+	// Stringify ctx for the stdout / stderr writers + the telemetry
+	// ring's Fields map (rings are typed map[string]string).
+	var fields map[string]string
+	if m, ok := ctx.(map[string]any); ok && len(m) > 0 {
+		fields = make(map[string]string, len(m))
+		for k, v := range m {
+			if k == "time" || k == "level" || k == "msg" {
+				continue
+			}
+			fields[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	// Always write to the in-process telemetry ring so the console
+	// Logs tab + /_sky/console/api/logs surface Sky-side Log.* calls
+	// the same as Go-side AppendLog writes. Pre-2026-05-18 gap:
+	// logEmit only wrote stdout/stderr, leaving the ring empty for
+	// Sky-user logs. Fixed here so the new sub-app push exporter
+	// has consistent data to push.
+	entry := telemetry.LogEntry{
+		TS:      now,
+		Level:   levelName,
+		Message: msg,
+		Fields:  fields,
+	}
+	telemetry.Default().AppendLog(entry)
+	// Dual-write to the parent's telemetry store via the push
+	// exporter when this process is a sub-app. Drop on overflow,
+	// rate-limited warning; never blocks the caller.
+	if exp := ActivePushExporter(); exp != nil {
+		exp.PushLog(entry)
+	}
+	if logJSON {
+		entryMap := map[string]any{
+			"time":  ts,
+			"level": levelName,
+			"msg":   msg,
+		}
+		if m, ok := ctx.(map[string]any); ok {
+			for k, v := range m {
+				if k != "time" && k != "level" && k != "msg" {
+					entryMap[k] = v
+				}
+			}
+		}
+		b, _ := json.Marshal(entryMap)
+		if level >= logLevelWarn {
+			fmt.Fprintln(os.Stderr, string(b))
+		} else {
+			fmt.Fprintln(os.Stdout, string(b))
+		}
+		return
+	}
+	line := ts + " " + strings.ToUpper(levelName) + " " + msg
+	if len(fields) > 0 {
+		var b strings.Builder
+		for k, v := range fields {
+			b.WriteString(" ")
+			b.WriteString(k)
+			b.WriteString("=")
+			b.WriteString(v)
+		}
+		line += b.String()
+	}
+	if level >= logLevelWarn {
+		fmt.Fprintln(os.Stderr, line)
+	} else {
+		fmt.Fprintln(os.Stdout, line)
+	}
+}
+
+// Log.{debug,info,warn,error,with,errorWith}: per Task-everywhere
+// (2026-04-24+) all observable side effects return Task Error ().
+// Bodies wrapped in `func() any` thunks so the lowerer's
+// auto-force discard fires the side effect at the call site.
+
+// Log.debug : String -> Task Error ()
+// Log.{debug,info,warn,error} : String -> Task Error ()
+// Plain single-arg level-tagged log. The (msg, attrs) structured
+// shape lives on the With variants below — that's where Slog's
+// (msg, [k1,v1,k2,v2…]) callers land in the v0.10.0 migration.
+func Log_debug(msg any) any {
+	captured := msg
+	return func() any {
+		logEmit(logLevelDebug, "debug", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func Log_info(msg any) any {
+	captured := msg
+	return func() any {
+		logEmit(logLevelInfo, "info", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func Log_warn(msg any) any {
+	captured := msg
+	return func() any {
+		logEmit(logLevelWarn, "warn", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func Log_error(msg any) any {
+	captured := msg
+	return func() any {
+		logEmit(logLevelError, "error", fmt.Sprintf("%v", captured), nil)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// Log.{debugWith,infoWith,warnWith,errorWith}
+//
+//	: String -> List a -> Task Error ()
+//
+// Structured variants — second arg is a `List a` of alternating
+// key/value pairs (the Slog convention). Flattened into the
+// message string for the plain driver; JSON driver wraps as
+// {msg, key=value, …}. Empty attrs (`[]`) is allowed but the
+// non-With variants are the more natural call shape there.
+func Log_debugWith(msg any, attrs any) any {
+	capturedMsg, capturedAttrs := msg, attrs
+	return func() any {
+		logEmit(logLevelDebug, "debug",
+			fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedAttrs))
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func Log_infoWith(msg any, attrs any) any {
+	capturedMsg, capturedAttrs := msg, attrs
+	return func() any {
+		logEmit(logLevelInfo, "info",
+			fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedAttrs))
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func Log_warnWith(msg any, attrs any) any {
+	capturedMsg, capturedAttrs := msg, attrs
+	return func() any {
+		logEmit(logLevelWarn, "warn",
+			fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedAttrs))
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// logAttrsToMap turns a Sky structured-log `attrs` argument into the
+// `map[string]any` field bag `logEmit` renders (as a JSON object under
+// SKY_LOG_FORMAT=json, or as ` k=v` suffixes in plain text). It accepts
+// BOTH shapes Sky code produces:
+//
+//   - the `*With` list form `[ "k1", v1, "k2", v2, … ]` — paired into a
+//     map. A homogeneous list (all strings) lowers to Go `[]string`, a
+//     mixed list to `[]any`; reflection handles either, so attrs are no
+//     longer silently dropped when the assertion `attrs.([]any)` fails
+//     (the pre-fix bug — every structured field vanished for the common
+//     all-string case).
+//   - the `Log.with` `Dict String any` form — already a Go map.
+//
+// A trailing odd key (no value) maps to "". Returns nil for empty/unknown
+// shapes so logEmit emits just the message.
+func logAttrsToMap(attrs any) map[string]any {
+	if attrs == nil {
+		return nil
+	}
+	if m, ok := attrs.(map[string]any); ok {
+		return m
+	}
+	rv := reflect.ValueOf(attrs)
+	switch rv.Kind() {
+	case reflect.Map:
+		if rv.Len() == 0 {
+			return nil
+		}
+		m := make(map[string]any, rv.Len())
+		iter := rv.MapRange()
+		for iter.Next() {
+			m[fmt.Sprintf("%v", iter.Key().Interface())] = iter.Value().Interface()
+		}
+		return m
+	case reflect.Slice, reflect.Array:
+		n := rv.Len()
+		if n == 0 {
+			return nil
+		}
+		m := make(map[string]any, (n+1)/2)
+		for i := 0; i+1 < n; i += 2 {
+			m[fmt.Sprintf("%v", rv.Index(i).Interface())] = rv.Index(i + 1).Interface()
+		}
+		if n%2 == 1 {
+			m[fmt.Sprintf("%v", rv.Index(n-1).Interface())] = ""
+		}
+		return m
+	default:
+		return nil
+	}
+}
+
+// Log.with : String -> Dict String any -> Task Error ()
+// Structured log with additional context fields. E.g.
+//
+//	Log.with "request completed" (Dict.fromList [("method","GET"), ("status",200)])
+func Log_with(msg any, ctx any) any {
+	capturedMsg, capturedCtx := msg, ctx
+	return func() any {
+		logEmit(logLevelInfo, "info", fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedCtx))
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// Log.errorWith : String -> Dict String any -> Task Error ()
+func Log_errorWith(msg any, ctx any) any {
+	capturedMsg, capturedCtx := msg, ctx
+	return func() any {
+		logEmit(logLevelError, "error", fmt.Sprintf("%v", capturedMsg), logAttrsToMap(capturedCtx))
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// String
+// ═══════════════════════════════════════════════════════════
+
+func String_append(a any, b any) any {
+	return fmt.Sprintf("%v", a) + fmt.Sprintf("%v", b)
+}
+
+func String_fromInt(n any) any {
+	return strconv.Itoa(AsInt(n))
+}
+
+func String_fromFloat(f any) any {
+	return strconv.FormatFloat(AsFloat(f), 'f', -1, 64)
+}
+
+// String.length returns the number of Unicode *code points* (runes), not bytes.
+// So "世界" has length 2, not 6.
+func String_length(s any) any {
+	str := fmt.Sprintf("%v", s)
+	n := 0
+	for range str {
+		n++
+	}
+	return n
+}
+
+func String_isEmpty(s any) any {
+	return fmt.Sprintf("%v", s) == ""
+}
+
+// ═══════════════════════════════════════════════════════════
+// Basics
+// ═══════════════════════════════════════════════════════════
+
+func Basics_identity[A any](a A) A {
+	return a
+}
+
+func Basics_always[A any, B any](a A, _ B) A {
+	return a
+}
+
+// P8/Basics typed companions — minimal but commonly exercised.
+func Basics_notT(b bool) bool { return !b }
+
+// Basics_identityT reuses the existing generic Basics_identity
+// implementation but exposes the conventional T suffix for consistent
+// kernel lookups.
+func Basics_identityT[A any](a A) A { return a }
+
+// Basics_alwaysT mirrors Basics_always but keeps the T-suffix naming.
+func Basics_alwaysT[A, B any](a A, _ B) A { return a }
+
+// Basics_eqT — strict equality for any comparable type (no reflect).
+// Separate symbol so the typed-dispatch path never needs to decide
+// whether the runtime Eq helper's shape-based comparison is safe.
+func Basics_eqT[A comparable](a, b A) bool { return a == b }
+
+// Basics_fstT / sndT — tuple accessors generic in both element types.
+func Basics_fstT[A, B any](t SkyTuple2) A { return t.V0.(A) }
+func Basics_sndT[A, B any](t SkyTuple2) B { return t.V1.(B) }
+
+// AsTuple2 coerces Sky-side any to SkyTuple2. All Sky tuple values
+// are boxed as SkyTuple2 at runtime; the Sky checker enforces tuple
+// arity. Used by the typed kernel dispatch for Basics.fst/snd.
+// AsTuple2 narrows any typed tuple-shape (T2[X, Y] for any X, Y) to
+// the value-erased SkyTuple2 = T2[any, any].  Sky lambda bodies that
+// destructure tuple args via `pat.V0` / `pat.V1` assume SkyTuple2's
+// `any`-typed fields; without this widener, a call site passing a
+// typed `T2[string, TestResult]` would fail the `.(SkyTuple2)`
+// assertion (Go's generic instantiations are distinct nominal types).
+// Reflect over the V0/V1 fields and rebox into SkyTuple2.
+func AsTuple2(v any) SkyTuple2 {
+	if t, ok := v.(SkyTuple2); ok {
+		return t
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return SkyTuple2{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Struct && rv.NumField() >= 2 {
+		return SkyTuple2{V0: rv.Field(0).Interface(), V1: rv.Field(1).Interface()}
+	}
+	return SkyTuple2{}
+}
+
+// AsTuple3 — same shape-erasure for arity-3 tuples.
+func AsTuple3(v any) SkyTuple3 {
+	if t, ok := v.(SkyTuple3); ok {
+		return t
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return SkyTuple3{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Struct && rv.NumField() >= 3 {
+		return SkyTuple3{V0: rv.Field(0).Interface(), V1: rv.Field(1).Interface(), V2: rv.Field(2).Interface()}
+	}
+	return SkyTuple3{}
+}
+
+// AnyT shape tuple accessors: preserve Sky's `any`-valued element
+// convention so callers don't need HM element types to use them.
+// Go infers A=any and B=any when invoked as `Basics_fstT[any, any]`.
+func Basics_fstAnyT(t SkyTuple2) any { return t.V0 }
+func Basics_sndAnyT(t SkyTuple2) any { return t.V1 }
+
+// AsTuple2T — narrow `v` (typically `any` or `SkyTuple2 = T2[any,any]`)
+// to a typed `T2[A, B]` instantiation.  Field-wise coerces V0 → A and
+// V1 → B via `Coerce[A]` / `Coerce[B]`.  Closes the boundary gap that
+// Go's nominal generics open: a value of static type `T2[any, any]`
+// CANNOT be type-asserted to `T2[float64, float64]` (`.(T2[float64,
+// float64])` panics).  This helper is the analogue of `AsListT[T]` /
+// `AsMapT[V]` for tuples.
+//
+// v0.17 Cause H Step 4 — emitted by `coerceToFieldType` when the slot
+// is a typed `T2[A, B]` and the source has boundary-untyped shape
+// (e.g., a `SkyTuple2` literal from a code path the Sky.Type slot-
+// inference can't reach yet).  Long-term, when every tuple literal
+// is statically typed at construction, this widener becomes a no-op
+// fast-path.
+func AsTuple2T[A any, B any](v any) T2[A, B] {
+	if t, ok := v.(T2[A, B]); ok {
+		return t
+	}
+	if t, ok := v.(SkyTuple2); ok {
+		return T2[A, B]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1)}
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return T2[A, B]{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Struct && rv.NumField() >= 2 {
+		return T2[A, B]{
+			V0: Coerce[A](rv.Field(0).Interface()),
+			V1: Coerce[B](rv.Field(1).Interface()),
+		}
+	}
+	return T2[A, B]{}
+}
+
+// AsTuple3T — arity-3 sibling of `AsTuple2T`.
+func AsTuple3T[A any, B any, C any](v any) T3[A, B, C] {
+	if t, ok := v.(T3[A, B, C]); ok {
+		return t
+	}
+	if t, ok := v.(SkyTuple3); ok {
+		return T3[A, B, C]{V0: Coerce[A](t.V0), V1: Coerce[B](t.V1), V2: Coerce[C](t.V2)}
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return T3[A, B, C]{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Struct && rv.NumField() >= 3 {
+		return T3[A, B, C]{
+			V0: Coerce[A](rv.Field(0).Interface()),
+			V1: Coerce[B](rv.Field(1).Interface()),
+			V2: Coerce[C](rv.Field(2).Interface()),
+		}
+	}
+	return T3[A, B, C]{}
+}
+
+// Basics_clampT — common enough to deserve a typed shortcut. Integer
+// version only; Sky's Float clamp is rarely called with literal args.
+func Basics_clampT(lo, hi, n int) int {
+	if n < lo {
+		return lo
+	}
+	if n > hi {
+		return hi
+	}
+	return n
+}
+
+// Basics_modByT — integer modulo with Sky's divisor-first convention.
+func Basics_modByT(divisor, n int) int {
+	if divisor == 0 {
+		return 0
+	}
+	r := n % divisor
+	if r < 0 {
+		r += divisor
+	}
+	return r
+}
+
+// Basics_ordT — generic ordering comparison. Sky's compare kernel has
+// a polymorphic shape; the typed companion specialises to primitives.
+func Basics_ordT[A interface{ ~int | ~float64 | ~string }](a, b A) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func Basics_not(b any) any {
+	return !AsBool(b)
+}
+
+func Basics_toString(v any) string {
+	if s, ok := renderSkyError(v); ok {
+		return s
+	}
+	return toStringForDisplay(derefPointer(unwrapAny(v)))
+}
+
+// errorKindLabels mirrors Sky.Core.Error.kindLabel, indexed by the
+// ErrorKind constructor tag (0=Io … 10=Unexpected). Keep in sync with
+// Error.sky's kindLabel.
+var errorKindLabels = []string{
+	"IO", "Network", "FFI", "Decode", "Timeout", "NotFound",
+	"PermissionDenied", "InvalidInput", "Conflict", "Unavailable",
+	"Unexpected",
+}
+
+// renderSkyError renders a Sky.Core.Error value — SkyADT{SkyName:"Error",
+// Fields:[kind, info]} — exactly as Sky.Core.Error.toString does:
+// "<KindLabel>: <message>". Returns ok=false for anything that isn't an
+// Error ADT so the generic toString / errorToString fallbacks can defer to
+// their `%v` path. Without this, an Error flowing through errorToString /
+// toString dumped its raw Go struct (`{0 Error [10 {boom <nil>}]}`) into
+// logs and user-facing messages.
+func renderSkyError(v any) (string, bool) {
+	rv := reflect.ValueOf(derefPointer(unwrapAny(v)))
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return "", false
+	}
+	nameF := rv.FieldByName("SkyName")
+	fieldsF := rv.FieldByName("Fields")
+	if !nameF.IsValid() || nameF.Kind() != reflect.String || nameF.String() != "Error" {
+		return "", false
+	}
+	if !fieldsF.IsValid() || fieldsF.Kind() != reflect.Slice || fieldsF.Len() != 2 {
+		return "", false
+	}
+	// Fields[0] — ErrorKind tag (int). Unknown/future tags keep a sane
+	// "Error" label rather than an out-of-range panic.
+	label := "Error"
+	if kindV := reflect.ValueOf(fieldsF.Index(0).Interface()); kindV.IsValid() && kindV.CanInt() {
+		if t := int(kindV.Int()); t >= 0 && t < len(errorKindLabels) {
+			label = errorKindLabels[t]
+		}
+	}
+	// Fields[1] — ErrorInfo{Message, Details}. Read Message.
+	msg := ""
+	if infoV := reflect.ValueOf(fieldsF.Index(1).Interface()); infoV.IsValid() && infoV.Kind() == reflect.Struct {
+		if mF := infoV.FieldByName("Message"); mF.IsValid() && mF.Kind() == reflect.String {
+			msg = mF.String()
+		}
+	}
+	return label + ": " + msg, true
+}
+
+// Basics_errorToString — Prelude extractor for Result errors (the
+// Elm Prelude exposes a function with the same name and shape). Preserves
+// String/error values verbatim, stringifies anything else. Registered as a
+// Prelude builtin (`errorToString`) so Sky programs can write:
+//
+//	Result.mapError errorToString someResult
+func Basics_errorToString(v any) any {
+	switch x := v.(type) {
+	case string:
+		return x
+	case error:
+		return x.Error()
+	}
+	if s, ok := renderSkyError(v); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+func Basics_errorToStringT(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case error:
+		return x.Error()
+	}
+	if s, ok := renderSkyError(v); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// Basics_js — legacy FFI pass-through. Legacy Sky code used `js "nil"` to
+// inject a raw Go nil into an FFI call; here we mirror that so ex13 and
+// similar programs compile without a user-visible change.
+// Everything else flows through identity-style.
+func Basics_js(v any) any {
+	if s, ok := v.(string); ok && s == "nil" {
+		return nil
+	}
+	return v
+}
+
+// ═══════════════════════════════════════════════════════════
+// Context — Go's context pkg, surfaced for FFI boundary
+// ═══════════════════════════════════════════════════════════
+
+// Context_background : () -> context.Context — opaque, flows through FFI.
+func Context_background(_ any) any { return context.Background() }
+func Context_todo(_ any) any       { return context.TODO() }
+
+func Context_withValue(parent any, key any, val any) any {
+	ctx, _ := parent.(context.Context)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, key, val)
+}
+
+func Context_withCancel(parent any) any {
+	ctx, _ := parent.(context.Context)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c, cancel := context.WithCancel(ctx)
+	_ = cancel // Sky can't easily thread the cancel fn; discard for now.
+	return c
+}
+
+// ═══════════════════════════════════════════════════════════
+// Fmt — subset of Go's fmt pkg for string-building interop
+// ═══════════════════════════════════════════════════════════
+
+func derefPointer(v any) any {
+	if v == nil {
+		return v
+	}
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	return rv.Interface()
+}
+
+func Fmt_sprint(args ...any) any {
+	derefed := make([]any, len(args))
+	for i, a := range args {
+		derefed[i] = derefPointer(a)
+	}
+	return fmt.Sprint(derefed...)
+}
+func Fmt_sprintf(format any, args ...any) any {
+	return fmt.Sprintf(fmt.Sprintf("%v", format), args...)
+}
+func Fmt_sprintln(args ...any) any { return fmt.Sprintln(args...) }
+func Fmt_errorf(format any, args ...any) any {
+	return fmt.Errorf(fmt.Sprintf("%v", format), args...)
+}
+
+// Basics_modBy, Basics_fst, Basics_snd — any-typed to match the codegen's
+// default calling convention. modBy is (divisor, dividend) — divisor first
+// to match the Elm/Sky argument order for pipeline use.
+func Basics_modBy(divisor, n any) any {
+	// Delegate to the typed companion so the any-dispatch path shares its
+	// Elm FLOORED-modulo semantics (result sign follows the divisor):
+	// `modBy 3 -1 == 2`, not Go's truncated `-1`.
+	return Basics_modByT(AsInt(divisor), AsInt(n))
+}
+
+// Basics_clamp — any-typed wrapper around Basics_clampT to match the
+// codegen's default `rt.Basics_clamp` call shape. Without this, every
+// `clamp lo hi n` reference where ANY of the args isn't a primitive
+// literal lowered to `rt.Basics_clamp(...)` and Go-build rejected
+// with `undefined: rt.Basics_clamp`. Issue #56.
+//
+// Sky sig: `clamp : comparable -> comparable -> comparable -> comparable`.
+// We narrow to Int here (Sky stdlib documents this as "integer clamp"
+// in 99% of use; float-clamp users can call Basics_clampT directly via
+// the typed-literal path).
+func Basics_clamp(lo, hi, n any) any {
+	loI := AsInt(lo)
+	hiI := AsInt(hi)
+	nI := AsInt(n)
+	if nI < loI {
+		return loI
+	}
+	if nI > hiI {
+		return hiI
+	}
+	return nI
+}
+
+func Basics_fst(t any) any {
+	switch v := t.(type) {
+	case SkyTuple2:
+		return v.V0
+	case SkyTuple3:
+		return v.V0
+	}
+	// Typed-tuple codegen (v0.17+) emits distinct nominal generic
+	// instantiations (`T2[string, int]`, `T3[…]`) that miss both cases
+	// above. Route through AsTuple2, which fast-paths SkyTuple2 and
+	// otherwise reflect-reboxes any tuple-shaped struct's first field
+	// (a genuine non-tuple yields a zero SkyTuple2 → nil, same as the
+	// prior `return nil`).
+	return AsTuple2(t).V0
+}
+
+func Basics_snd(t any) any {
+	switch v := t.(type) {
+	case SkyTuple2:
+		return v.V1
+	case SkyTuple3:
+		return v.V1
+	}
+	// See Basics_fst — typed T2/T3 instantiations reflect-rebox here.
+	return AsTuple2(t).V1
+}
+
+// TupleField reflectively reads the i-th element of a Sky tuple value, boxed as
+// `any`. It is shape-erased across EVERY tuple instantiation — SkyTuple2/3, the
+// typed generic structs T2..T9 (`rt.T2[string, int]`, …), and the slice-backed
+// SkyTupleN — the same robustness Basics_fst/snd and the Cons/List reflective
+// pattern accessors already rely on. The tuple pattern arm uses it when the
+// subject arrives as `any` (a HOF-erased callback param such as foldr's
+// `func(any,any)any`, or a let/case-bound erased value): `subj.V{i}` is invalid
+// Go on an `any`, and coercing the whole subject to a reconstructed generic
+// instantiation is fragile (Go generics are invariant — `rt.T2[[]int, any]` is
+// not `rt.T2[[]int, []int]`), so the element is read reflectively instead. A
+// non-tuple / out-of-range read yields nil (the zero-ish default the sibling
+// reflective accessors return).
+func TupleField(v any, i int) any {
+	if v == nil {
+		return nil
+	}
+	// Fast paths for the canonical erased tuple structs.
+	switch t := v.(type) {
+	case SkyTuple2:
+		switch i {
+		case 0:
+			return t.V0
+		case 1:
+			return t.V1
+		}
+		return nil
+	case SkyTuple3:
+		switch i {
+		case 0:
+			return t.V0
+		case 1:
+			return t.V1
+		case 2:
+			return t.V2
+		}
+		return nil
+	case SkyTupleN:
+		if i >= 0 && i < len(t.Vs) {
+			return t.Vs[i]
+		}
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return nil
+	}
+	// Slice-backed SkyTupleN reached via reflection (e.g. a pointer wrapper).
+	if vs := rv.FieldByName("Vs"); vs.IsValid() && vs.Kind() == reflect.Slice {
+		if i >= 0 && i < vs.Len() {
+			return vs.Index(i).Interface()
+		}
+		return nil
+	}
+	// Typed T2..T9 generic instantiations: fields V0..Vn.
+	if f := rv.FieldByName("V" + strconv.Itoa(i)); f.IsValid() {
+		return f.Interface()
+	}
+	return nil
+}
+
+// List_cons: Sky's `::` at runtime. Prepends head to tail. Tail can
+// arrive as either `[]any` (legacy any-kernel) or a typed slice
+// (`[]int`, `[]Piece_R`, …) under typed codegen. Previously the typed-
+// slice case fell through the type switch and dropped the entire tail
+// — so `target :: filterLegalMoves ... rest` returned `[target]`
+// instead of `[target, rest...]`. Same silent-drop class as the
+// already-fixed `rt.Concat` / `rt.AsList` — route through `AsList`
+// so typed slices are widened element-wise.
+func List_cons(head, tail any) any {
+	if tail == nil {
+		return []any{head}
+	}
+	if xs, ok := tail.([]any); ok {
+		out := make([]any, 0, len(xs)+1)
+		out = append(out, head)
+		out = append(out, xs...)
+		return out
+	}
+	// Typed-slice fallback: widen via AsList (handles any Go slice
+	// kind via reflect) and then prepend.
+	xs := AsList(tail)
+	out := make([]any, 0, len(xs)+1)
+	out = append(out, head)
+	out = append(out, xs...)
+	return out
+}
+
+// ═══════════════════════════════════════════════════════════
+// Concat (temporary — will use + when types are known)
+// ═══════════════════════════════════════════════════════════
+
+// Concat is Sky's `++` at runtime. Sky's `++` works on Strings AND Lists, so
+// we dispatch on operand types: two slices → list concat; otherwise stringify
+// and concat. Before the typed-slice branch was added, `history ++ [newMsg]`
+// in user code panicked once typed codegen started emitting `history` as
+// `[]Lib_Ai_ChatMessage_R` — Concat fell through to AsString and produced
+// a concatenated `fmt.Sprintf("%v")` of both slices, which the caller then
+// tried to coerce back to `[]ChatMessage_R` and crashed.
+func Concat(a, b any) any {
+	// Fast path: both already `[]any`.
+	if la, ok := a.([]any); ok {
+		if lb, ok := b.([]any); ok {
+			out := make([]any, 0, len(la)+len(lb))
+			out = append(out, la...)
+			out = append(out, lb...)
+			return out
+		}
+	}
+	// Typed-slice path: widen either side via rt.AsList (which handles
+	// both `[]any` and typed slices via reflect) and concat as `[]any`.
+	// Downstream `rt.Coerce[[]T]` at the call site re-narrows element-
+	// wise, so the result is compatible with both Sky list operations
+	// and typed struct assignment.
+	aIsSlice := isSlice(a)
+	bIsSlice := isSlice(b)
+	if aIsSlice && bIsSlice {
+		la := AsList(a)
+		lb := AsList(b)
+		out := make([]any, 0, len(la)+len(lb))
+		out = append(out, la...)
+		out = append(out, lb...)
+		return out
+	}
+	return AsString(a) + AsString(b)
+}
+
+// isSlice: reports whether v is a Go slice (typed or []any). Used by
+// Concat to distinguish list-concat from string-concat without forcing
+// every caller to pre-box its typed list into []any.
+func isSlice(v any) bool {
+	if v == nil {
+		return false
+	}
+	if _, ok := v.([]any); ok {
+		return true
+	}
+	return reflect.ValueOf(v).Kind() == reflect.Slice
+}
+
+// ═══════════════════════════════════════════════════════════
+// Arithmetic and comparison (any-typed, until type checker)
+// ═══════════════════════════════════════════════════════════
+
+// AsString coerces a Sky-side any to a Go string. Mirrors the existing
+// SkyFfiArg_string / fmt.Sprintf("%v", v) idiom but exposed as the
+// canonical name the typed-kernel dispatch emits.
+func AsString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if vn, ok := v.(VNode); ok {
+		return renderVNode(vn, map[string]any{})
+	}
+	if bs, ok := v.([]byte); ok {
+		return string(bs)
+	}
+	v = derefPointer(unwrapAny(v))
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if bs, ok := v.([]byte); ok {
+		return string(bs)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// ResultTag reads the Tag field from any SkyResult[E, A] instantiation.
+// Used by case-pattern codegen to check nested ctor patterns without
+// hitting the 'SkyResult[string, X] not SkyResult[any, any]' class of
+// type-assertion panics. Returns -1 for non-SkyResult inputs so the
+// comparison falls through to the default case.
+func ResultTag(v any) int {
+	if v == nil {
+		return -1
+	}
+	if r, ok := v.(SkyResult[any, any]); ok {
+		return r.Tag
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("Tag")
+		if f.IsValid() {
+			return int(f.Int())
+		}
+	}
+	return -1
+}
+
+// MaybeTag mirrors ResultTag for SkyMaybe[A].
+func MaybeTag(v any) int {
+	if v == nil {
+		return -1
+	}
+	if m, ok := v.(SkyMaybe[any]); ok {
+		return m.Tag
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("Tag")
+		if f.IsValid() {
+			return int(f.Int())
+		}
+	}
+	return -1
+}
+
+// ResultOk / ResultErr / MaybeJust return the inner value of any
+// SkyResult[E, A] / SkyMaybe[A] instantiation. Accept any-typed
+// sources that could be SkyResult[_, _] / SkyMaybe[_] for distinct
+// generic instantiations, avoiding the type-assertion panic class.
+func ResultOk(v any) any {
+	if v == nil {
+		return nil
+	}
+	if r, ok := v.(SkyResult[any, any]); ok {
+		return r.OkValue
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("OkValue")
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	return nil
+}
+
+func ResultErr(v any) any {
+	if v == nil {
+		return nil
+	}
+	if r, ok := v.(SkyResult[any, any]); ok {
+		return r.ErrValue
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("ErrValue")
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	return nil
+}
+
+func MaybeJust(v any) any {
+	if v == nil {
+		return nil
+	}
+	if m, ok := v.(SkyMaybe[any]); ok {
+		return m.JustValue
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("JustValue")
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	return nil
+}
+
+// AdtTag mirrors ResultTag/MaybeTag for SkyADT (every Sky-emitted ADT
+// is a SkyADT alias). Used by user-defined nested ctor patterns.
+func AdtTag(v any) int {
+	if v == nil {
+		return -1
+	}
+	if sv, ok := v.(SkyVariant); ok {
+		return sv.SkyVariantTag()
+	}
+	if a, ok := v.(SkyADT); ok {
+		return a.Tag
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("Tag")
+		if f.IsValid() {
+			return int(f.Int())
+		}
+	}
+	return -1
+}
+
+// AdtField returns the idx-th field of any SkyADT-shaped value. Used
+// by user-defined ctor pattern binding paths where the subject is
+// any-typed (came from rt.ResultOk / rt.ResultErr / rt.MaybeJust).
+func AdtField(v any, idx int) any {
+	if v == nil {
+		return nil
+	}
+	if _, ok := v.(SkyVariant); ok {
+		// Variant structs have NAMED typed fields in declaration order
+		// (V0, V1, ...). Reflect.Field(idx) returns the idx-th field.
+		// No SkyName / Tag / Fields wrapper — variant payload IS the
+		// struct's fields directly.
+		rv := reflect.ValueOf(v)
+		if rv.Kind() == reflect.Struct && idx >= 0 && idx < rv.NumField() {
+			return rv.Field(idx).Interface()
+		}
+		return nil
+	}
+	if a, ok := v.(SkyADT); ok {
+		if idx < 0 || idx >= len(a.Fields) {
+			return nil
+		}
+		return a.Fields[idx]
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("Fields")
+		if f.IsValid() && f.Kind() == reflect.Slice && idx >= 0 && idx < f.Len() {
+			return f.Index(idx).Interface()
+		}
+	}
+	return nil
+}
+
+// AsList coerces a Sky-side any to []any. Sky lists are always
+// []any at runtime (element type erased); typed List kernel
+// companions take []A and Go infers A = any at the call site.
+// A typed flow-analysis pass will later substitute the element
+// type when the HM checker has it, enabling `List_lengthT[int]`
+// and friends without reflection.
+func AsList(v any) []any {
+	if xs, ok := v.([]any); ok {
+		return xs
+	}
+	// Typed codegen widens lists to `[]any` at runtime-kernel
+	// boundaries via AsList. Accept any Go slice (including []T from
+	// typed FFI results like []map[string]string) by boxing element-
+	// wise. Without this, List.isEmpty / List.length / List.map on a
+	// typed slice wrongly report empty and downstream rendering shows
+	// empty-state where data exists.
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice {
+		n := rv.Len()
+		out := make([]any, n)
+		for i := 0; i < n; i++ {
+			out[i] = rv.Index(i).Interface()
+		}
+		return out
+	}
+	// Result/Maybe unwrap — mirrors AsString/AsInt. Needed for
+	// Sky-source modules that route list returns through
+	// Ffi.callPure (Money.allocate, …) where runWithRecover's
+	// auto-Ok-wrap parks the slice inside a SkyResult.
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsList(u)
+		}
+	}
+	return nil
+}
+
+// AsListAny widens an arbitrary slice (`[]T` or `[]any`) into `[]any`.
+// Called at call-site boundaries where the callee expects `[]any` but
+// the caller has a typed slice (e.g. a record-field access whose
+// field type is `[]State_Monitor_R` flowing into an `any`-typed
+// helper). Uses reflect for unknown element types; fast-paths
+// `[]any` by returning it verbatim.
+func AsListAny(v any) []any {
+	if already, ok := v.([]any); ok {
+		return already
+	}
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice {
+		// Result/Maybe unwrap, then retry.
+		if isSkyContainer(v) {
+			if u := unwrapAny(v); u != nil {
+				return AsListAny(u)
+			}
+		}
+		return nil
+	}
+	n := rv.Len()
+	out := make([]any, n)
+	for i := 0; i < n; i++ {
+		out[i] = rv.Index(i).Interface()
+	}
+	return out
+}
+
+// AsMapAny widens a typed map[string]T to map[string]any. Sky's
+// runtime stores Dict values as map[string]any, but typed-codegen
+// can narrow downstream callees to map[string]string / map[string]int.
+// When such a typed map then flows BACK to a polymorphic-value Dict
+// helper (e.g. Lib_Auth_claimString[T1 any](k, claims map[string]T1)
+// being called with claims widened to map[string]any), the direct
+// type assertion `any(m).(map[string]any)` panics because the two
+// generic instantiations are distinct nominal types. AsMapAny rebuilds
+// the map by value-erasing each entry, mirroring AsListAny.
+func AsMapAny(v any) map[string]any {
+	if already, ok := v.(map[string]any); ok {
+		return already
+	}
+	if v == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
+		return nil
+	}
+	out := make(map[string]any, rv.Len())
+	for _, k := range rv.MapKeys() {
+		out[k.String()] = rv.MapIndex(k).Interface()
+	}
+	return out
+}
+
+// AsListT coerces a Sky-side any value to a typed Go slice. Sky
+// lists are []any at runtime; this walks the list and type-asserts
+// each element to T with a nil-safe fallback. Called by typed
+// codegen at record-constructor and call-site boundaries when a
+// concrete `[]T` is required (the plain `any(v).([]T)` assertion
+// fails because []any and []T are distinct Go types even when T
+// is `any`'s dynamic value).
+func AsListT[T any](v any) []T {
+	if already, ok := v.([]T); ok {
+		return already
+	}
+	if xs, ok := v.([]any); ok {
+		out := make([]T, len(xs))
+		var zero T
+		targetTy := reflect.TypeOf(zero)
+		for i, x := range xs {
+			if cast, ok := x.(T); ok {
+				out[i] = cast
+				continue
+			}
+			// Narrow heterogeneous element (e.g. map[string]any when
+			// target is []map[string]string). Walk via reflect with the
+			// same recursion that rt.Coerce uses so nested dicts/lists
+			// round-trip correctly.
+			if targetTy != nil && x != nil {
+				sv := reflect.ValueOf(x)
+				narrowed := narrowReflectValue(sv, targetTy)
+				if narrowed.IsValid() {
+					out[i] = narrowed.Interface().(T)
+				}
+			}
+		}
+		return out
+	}
+	// Typed-slice cross-instantiation: source is `[]SourceT` where
+	// SourceT != T. Common case: `[]SkyTuple2` → `[]T2[string,string]`
+	// when the typed-codegen monomorphises a lambda's tuple param to
+	// a typed instantiation but the runtime values are the legacy
+	// any-typed tuple. Walks each element through narrowReflectValue
+	// so the same struct/dict/list recursion applies element-by-
+	// element.
+	//
+	// Skip when T is itself `any` — `reflect.TypeOf(zero)` returns nil
+	// and AssignableTo(nil) panics. The any-typed source case is
+	// already handled by the `[]any` fast-path above.
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice {
+		var zero T
+		targetTy := reflect.TypeOf(zero)
+		n := rv.Len()
+		out := make([]T, n)
+		if targetTy == nil {
+			// T is `any` (or another interface type whose dynamic type
+			// is unknown at runtime).  Widen each element to `any` via
+			// reflect — every value is assignable to `any`, so this is
+			// always safe.  Pre-fix bug: this branch returned `nil`,
+			// silently dropping every attribute when Std.Ui's typed
+			// `[]Std_Ui_Attribute` (a `[]SkyADT` alias) was coerced to
+			// `[]rt.SkyAttribute` (`= []any`).  The button/event attrs
+			// vanished from rendered HTML — observable as Sky.Live
+			// `sky-click=` markers missing entirely on Std.Ui apps
+			// (mini-notion, skyforum) post-v0.13.0.
+			for i := 0; i < n; i++ {
+				out[i] = rv.Index(i).Interface().(T)
+			}
+			return out
+		}
+		for i := 0; i < n; i++ {
+			elem := rv.Index(i)
+			if elem.Type().AssignableTo(targetTy) {
+				out[i] = elem.Interface().(T)
+				continue
+			}
+			narrowed := narrowReflectValue(elem, targetTy)
+			if narrowed.IsValid() {
+				out[i] = narrowed.Interface().(T)
+			}
+		}
+		return out
+	}
+	// Result/Maybe unwrap — mirrors `AsList`. A Sky-source list op (the
+	// CPS `List.map`/`filter`/… helpers) can receive a list routed through
+	// `Ffi.callPure` (`Money.allocate`, …) where `runWithRecover`'s
+	// auto-`Ok`-wrap parks the slice inside a `SkyResult`. Without this,
+	// `AsListT[any](Ok([...]))` returned empty and the map produced `[]`.
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsListT[T](u)
+		}
+	}
+	return nil
+}
+
+// AsMapT: typed counterpart to AsMapString. Converts map[string]any
+// to map[string]V, element-by-element. Used where a record's field
+// type is `map[string]V` but the source value is `map[string]any`.
+func AsMapT[V any](v any) map[string]V {
+	if already, ok := v.(map[string]V); ok {
+		return already
+	}
+	if m, ok := v.(map[string]any); ok {
+		out := make(map[string]V, len(m))
+		var zero V
+		zeroTy := reflect.TypeOf(zero)
+		isString := zeroTy != nil && zeroTy.Kind() == reflect.String
+		for k, x := range m {
+			if cast, ok := x.(V); ok {
+				out[k] = cast
+				continue
+			}
+			// Widen for string-valued targets so mixed-type SQL/Firestore
+			// rows (int verified, int64 id, []byte hash) become a
+			// homogeneous map[string]string. Without this, non-string
+			// columns are silently dropped and getField looks like it
+			// returned "".
+			if isString {
+				out[k] = reflect.ValueOf(fmt.Sprintf("%v", x)).Interface().(V)
+				continue
+			}
+			// v0.13 Stage 1 — narrow via reflect for typed targets
+			// (func / SkyMaybe[T] / SkyResult[E, A] / typed structs).
+			// Without this, `Dict.fromList [("k", \x -> ...)]` typed
+			// as `Dict String (Int -> Int)` silently drops every
+			// function value (target V doesn't directly assign from
+			// the any-boxed `func(any) any` source).
+			if zeroTy != nil && x != nil {
+				sv := reflect.ValueOf(x)
+				narrowed := narrowReflectValue(sv, zeroTy)
+				if narrowed.IsValid() {
+					out[k] = narrowed.Interface().(V)
+				}
+			}
+		}
+		return out
+	}
+	// Reflect fallback for other typed maps (map[string]Foo_R, …):
+	// walk via reflect and narrow each value to V where assignable.
+	rv := reflect.ValueOf(v)
+	if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+		out := make(map[string]V, rv.Len())
+		var zero V
+		valTy := reflect.TypeOf(zero)
+		for _, k := range rv.MapKeys() {
+			ev := rv.MapIndex(k)
+			iv := ev.Interface()
+			if cast, ok := iv.(V); ok {
+				out[k.String()] = cast
+				continue
+			}
+			if valTy != nil && valTy.Kind() == reflect.String {
+				out[k.String()] = reflect.ValueOf(fmt.Sprintf("%v", iv)).Interface().(V)
+				continue
+			}
+			// Narrow via reflect for typed targets (typed slices / structs /
+			// SkyMaybe[T] / …) — mirrors the `map[string]any` branch above.
+			// Without this, a source map whose VALUES need a reflect narrow
+			// (`map[string][]struct{…}` → `map[string][]Record`, or
+			// `map[string][]any` → `map[string][]Record`) silently DROPPED
+			// every entry, so an annotated `Dict k (List Record)` return came
+			// back as an EMPTY Dict while the identical unannotated body (which
+			// returns the raw `any` dict, no AsMapT) worked (#173).
+			if valTy != nil && iv != nil {
+				sv := reflect.ValueOf(iv)
+				narrowed := narrowReflectValue(sv, valTy)
+				if narrowed.IsValid() {
+					out[k.String()] = narrowed.Interface().(V)
+				}
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// AsInt coerces an any-typed value to int. Panics on non-numeric
+// input with a descriptive message. The panic is caught by the Sky
+// runtime panic-recovery layer (SkyFfiRecover, Server_listen,
+// Live_app) and surfaces as Err(InvalidInput "…") at the nearest
+// Task boundary — no more silent `0` for a type mismatch.
+//
+// Audit P0-2: the pre-fix version returned 0 on any non-numeric
+// input, letting `rt.Add("x", 1)` evaluate to 1. That turned type
+// errors into wrong answers. Callers that genuinely want a 0
+// default on miss must use AsIntOrZero explicitly so the laxity is
+// visible at the call site.
+func AsInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	case int16:
+		return int(n)
+	case int8:
+		return int(n)
+	case uint:
+		return int(n)
+	case uint64:
+		return int(n)
+	case uint32:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	}
+	// Result/Maybe unwrap fallback (mirrors AsString). Only attempt
+	// on Sky container structs to avoid panicking on uncomparable
+	// types (e.g. slices, maps, funcs).
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsInt(u)
+		}
+	}
+	// REACHABLE-FROM-SKY (heterogeneous slice / untyped FFI return):
+	// a non-numeric value flowed into a numeric position. Top-level
+	// recover (Cycle 6 PC) classifies as `TypeMismatch`. The display
+	// variant `AsIntOrZero` is the lenient counterpart for UI-only
+	// paths where a missing value should render as 0.
+	panic(fmt.Sprintf("rt.AsInt: expected numeric value, got %T (%v)", v, v))
+}
+
+// AsIntOrZero is the display-only fallback: returns 0 on non-numeric
+// input without panicking. Only use this where a missing / wrongly-
+// typed value legitimately means "no value shown" (e.g. HTML output).
+func AsIntOrZero(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	case int16:
+		return int(n)
+	case int8:
+		return int(n)
+	case uint:
+		return int(n)
+	case uint64:
+		return int(n)
+	case uint32:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	}
+	return 0
+}
+
+// AsFloat panics on non-numeric input. Accepts any int / float.
+func AsFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case int32:
+		return float64(n)
+	}
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsFloat(u)
+		}
+	}
+	// REACHABLE-FROM-SKY: same shape as AsInt — classified `TypeMismatch`
+	// at the top-level recover.
+	panic(fmt.Sprintf("rt.AsFloat: expected numeric value, got %T (%v)", v, v))
+}
+
+// AsFloatOrZero is the display-only lenient variant. See AsIntOrZero.
+func AsFloatOrZero(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case int32:
+		return float64(n)
+	}
+	return 0
+}
+
+// AsRune coerces to a Go rune. Sky's Char type lowers to `rune`
+// in the typed path but flows through `any` in untyped contexts —
+// e.g. a lambda parameter binding a `Char` peeled out of
+// `String.toList` arrives as `any` at the typed-kernel call site.
+// AsRune is the analogue of AsInt for the rune-typed kernel slot
+// (Char_isAlphaT, Char_isDigitT, …) so the typed-codegen path can
+// emit `rt.AsRune(c)` without falling back to AsInt (which would
+// produce a Go `int`, mismatching the `rune` parameter).
+func AsRune(v any) rune {
+	if r, ok := v.(rune); ok {
+		return r
+	}
+	switch n := v.(type) {
+	case int:
+		return rune(n)
+	case int64:
+		return rune(n)
+	case int32:
+		return rune(n)
+	case int16:
+		return rune(n)
+	case int8:
+		return rune(n)
+	case string:
+		for _, r := range n {
+			return r
+		}
+		return 0
+	}
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsRune(u)
+		}
+	}
+	return 0
+}
+
+// AsBool panics on non-bool input.
+func AsBool(v any) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return AsBool(u)
+		}
+	}
+	// REACHABLE-FROM-SKY: heterogeneous slice / untyped FFI return.
+	// Classified `TypeMismatch` at the top-level recover.
+	panic(fmt.Sprintf("rt.AsBool: expected bool, got %T (%v)", v, v))
+}
+
+// AsBoolOrFalse is the display-only lenient variant.
+func AsBoolOrFalse(v any) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return false
+}
+
+// isFloatish reports whether v is a float type (vs an int). Used by
+// arithmetic / comparison to pick the right op and preserve precision.
+func isFloatish(v any) bool {
+	switch v.(type) {
+	case float64, float32:
+		return true
+	}
+	return false
+}
+
+func Add(a, b any) any {
+	if isFloatish(a) || isFloatish(b) {
+		return AsFloat(a) + AsFloat(b)
+	}
+	return AsInt(a) + AsInt(b)
+}
+
+func Sub(a, b any) any {
+	if isFloatish(a) || isFloatish(b) {
+		return AsFloat(a) - AsFloat(b)
+	}
+	return AsInt(a) - AsInt(b)
+}
+
+func Mul(a, b any) any {
+	if isFloatish(a) || isFloatish(b) {
+		return AsFloat(a) * AsFloat(b)
+	}
+	return AsInt(a) * AsInt(b)
+}
+
+// Pow computes exponentiation `a ^ b`. Sky's `^` is power (Elm semantics), not
+// Go's bitwise XOR. Int^Int with a non-negative exponent stays Int; any Float
+// operand (or a negative Int exponent) promotes to Float via math.Pow.
+func Pow(a, b any) any {
+	if !isFloatish(a) && !isFloatish(b) {
+		base, exp := AsInt(a), AsInt(b)
+		if exp >= 0 {
+			result := 1
+			for i := 0; i < exp; i++ {
+				result *= base
+			}
+			return result
+		}
+	}
+	return math.Pow(AsFloat(a), AsFloat(b))
+}
+
+func Div(a, b any) any {
+	// REACHABLE-FROM-SKY: `x / 0.0` triggers this. Caught by top-level
+	// recover as `DivisionByZero` (Cycle 6 PC, v0.15.43). Sky exposes
+	// no NaN/Inf shape today, so the safe behaviour is to fail rather
+	// than silently produce `+Inf`.
+	db := AsFloat(b)
+	if db == 0 {
+		panic("rt.Div: division by zero")
+	}
+	return AsFloat(a) / db
+}
+
+func IntDiv(a, b any) any {
+	// REACHABLE-FROM-SKY: `n // 0` from valid Sky source triggers
+	// this panic. The top-level recover in func main() (Cycle 6 PC,
+	// v0.15.43) catches it as `DivisionByZero` and emits a structured
+	// Error log + exit 1 — instead of dumping a Go stack. See
+	// runtime-go/rt/panic_recover.go + docs/v0.15.x-hardening/
+	// CYCLE-06-PC-panic-site-audit.md.
+	db := AsInt(b)
+	if db == 0 {
+		panic("rt.IntDiv: integer division by zero")
+	}
+	return AsInt(a) / db
+}
+
+func Rem(a, b any) any {
+	// REACHABLE-FROM-SKY: `n % 0` — same recover contract as IntDiv.
+	db := AsInt(b)
+	if db == 0 {
+		panic("rt.Rem: modulo by zero")
+	}
+	return AsInt(a) % db
+}
+
+// Eq — structural equality tolerant of Sky's any-boxed values.
+// Primitives compare via Go's `==`. Slices compare element-wise,
+// maps key-wise, structs (ADTs / records) field-wise. This replaces
+// the old direct `a == b` which panicked on uncomparable types
+// (`[]any`, `map[string]any`, etc.) the moment user code wrote
+// `List.map id [1,2] == [1,2]`.
+func Eq(a, b any) any {
+	return deepEq(a, b)
+}
+
+// NotEq is the runtime helper for Sky's `/=` operator. Mirrors `Eq`
+// shape so the lowerer can route both `==` and `/=` through runtime
+// helpers — Go's native `!=` doesn't work on `any`-typed values
+// (Go generics with `T any` don't satisfy `comparable`).
+func NotEq(a, b any) any {
+	return !deepEq(a, b)
+}
+
+// isSkyADT reports whether v is a Sky-canonical ADT struct
+// (SkyMaybe[T], SkyResult[E, A], SkyTuple2/3[…]). Detected by the
+// presence of an int Tag field plus at least one of the named
+// payload fields. Used by deepEq to short-circuit equality on the
+// active tag rather than comparing zero-valued payload fields of
+// different generic instantiations.
+func isSkyADT(v reflect.Value) bool {
+	if v.Kind() != reflect.Struct {
+		return false
+	}
+	tag := v.FieldByName("Tag")
+	if !tag.IsValid() || tag.Kind() != reflect.Int {
+		return false
+	}
+	for _, name := range []string{"JustValue", "OkValue", "ErrValue"} {
+		if v.FieldByName(name).IsValid() {
+			return true
+		}
+	}
+	return false
+}
+
+// skyADTActiveFields returns the list of payload field names that
+// matter for the given tag in a Sky ADT struct. For SkyMaybe Tag=0
+// → ["JustValue"], Tag=1 → []. For SkyResult Tag=0 → ["OkValue"],
+// Tag=1 → ["ErrValue"]. The struct layout determines which family.
+func skyADTActiveFields(v reflect.Value, tag int) []string {
+	hasJust := v.FieldByName("JustValue").IsValid()
+	hasOk := v.FieldByName("OkValue").IsValid()
+	if hasJust && !hasOk {
+		// SkyMaybe-shaped.
+		if tag == 0 {
+			return []string{"JustValue"}
+		}
+		return nil
+	}
+	if hasOk {
+		// SkyResult-shaped.
+		if tag == 0 {
+			return []string{"OkValue"}
+		}
+		return []string{"ErrValue"}
+	}
+	return nil
+}
+
+func deepEq(a, b any) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		// Cross-kind: when one side is a string and the other is a
+		// numeric/bool, stringify the non-string side. DB drivers
+		// return int64 for SQLite integers but Sky code compares
+		// with string literals like `verified == "1"`.
+		if ra.Kind() == reflect.String || rb.Kind() == reflect.String {
+			return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+		}
+		if ra.Type().Comparable() && rb.Type().Comparable() {
+			return ra.Interface() == rb.Interface()
+		}
+		return false
+	}
+	switch ra.Kind() {
+	case reflect.Bool:
+		return ra.Bool() == rb.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return ra.Int() == rb.Int()
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return ra.Uint() == rb.Uint()
+	case reflect.Float32, reflect.Float64:
+		return ra.Float() == rb.Float()
+	case reflect.String:
+		return ra.String() == rb.String()
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		for i := 0; i < ra.Len(); i++ {
+			if !deepEq(ra.Index(i).Interface(), rb.Index(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		iter := ra.MapRange()
+		for iter.Next() {
+			bv := rb.MapIndex(iter.Key())
+			if !bv.IsValid() {
+				return false
+			}
+			if !deepEq(iter.Value().Interface(), bv.Interface()) {
+				return false
+			}
+		}
+		return true
+	case reflect.Struct:
+		// Audit P0-7: Sky's canonical ADT structs (SkyMaybe[T],
+		// SkyResult[E, A], SkyTuple2/3) carry the active discriminator
+		// in `Tag` plus payloads in named fields. Comparing
+		// `SkyMaybe[any]{Tag:1}` (Nothing) to `SkyMaybe[string]{Tag:1}`
+		// (Nothing) used to fall through the fields-by-name path and
+		// compare zero-value JustValue payloads of different Go types
+		// (`nil` any vs `""` string), returning false. The fix is to
+		// short-circuit on Tag for Sky ADTs: only the active payload
+		// matters.
+		if isSkyADT(ra) && isSkyADT(rb) {
+			tA := ra.FieldByName("Tag").Int()
+			tB := rb.FieldByName("Tag").Int()
+			if tA != tB {
+				return false
+			}
+			// Compare only the field corresponding to the active tag.
+			// For SkyMaybe: Tag=0 → JustValue, Tag=1 → no payload.
+			// For SkyResult: Tag=0 → OkValue, Tag=1 → ErrValue.
+			activeFields := skyADTActiveFields(ra, int(tA))
+			for _, f := range activeFields {
+				fa := ra.FieldByName(f)
+				fb := rb.FieldByName(f)
+				if !fa.IsValid() || !fb.IsValid() {
+					continue
+				}
+				if !deepEq(fa.Interface(), fb.Interface()) {
+					return false
+				}
+			}
+			return true
+		}
+		if ra.Type() != rb.Type() {
+			// Fields-by-name fallback for aliased Sky ADTs that
+			// share layout but not type identity.
+			if ra.NumField() != rb.NumField() {
+				return false
+			}
+			for i := 0; i < ra.NumField(); i++ {
+				fa := ra.Type().Field(i).Name
+				fb := rb.FieldByName(fa)
+				if !fb.IsValid() {
+					return false
+				}
+				if !deepEq(ra.Field(i).Interface(), fb.Interface()) {
+					return false
+				}
+			}
+			return true
+		}
+		for i := 0; i < ra.NumField(); i++ {
+			if !deepEq(ra.Field(i).Interface(), rb.Field(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	case reflect.Interface, reflect.Pointer:
+		return deepEq(ra.Elem().Interface(), rb.Elem().Interface())
+	}
+	if ra.Type().Comparable() && rb.Type().Comparable() {
+		return ra.Interface() == rb.Interface()
+	}
+	return false
+}
+
+// Comparison operators. Dispatch on the left operand's concrete type
+// so `3.14 < 4.0`, `"apple" < "banana"`, and `true && false` all do
+// the right thing. Prior to P0-2 these silently routed through AsInt,
+// so strings compared as `0 < 0 = false` and float comparisons
+// truncated to int — a wrong-answer class that passed the type
+// checker.
+func Gt(a, b any) any  { return cmp(a, b) > 0 }
+func Lt(a, b any) any  { return cmp(a, b) < 0 }
+func Gte(a, b any) any { return cmp(a, b) >= 0 }
+func Lte(a, b any) any { return cmp(a, b) <= 0 }
+
+// cmp returns -1/0/+1 with a type-aware compare. Panics on type
+// mismatch between a and b so the error surfaces via rt panic-recovery
+// as Err at the Task boundary.
+//
+// REACHABLE-FROM-SKY: `(1 :: Int) < ("a" :: String)` after a typed
+// FFI call returned `any` of either side; the HM checker would
+// normally reject this in pure Sky source. Classified `Comparison-
+// Mismatch` at the top-level recover (Cycle 6 PC).
+// Basics_compare — Sky's Prelude `compare : a -> a -> Int` (LT=-1, EQ=0, GT=1).
+// The any-dispatch shim the emitter targets (`rt.Basics_compare`); reuses the
+// shared `cmp` (numbers / strings / chars / tuples / lists lexicographic).
+func Basics_compare(a, b any) any { return cmp(a, b) }
+
+// cmp is the ordering `<` / `>` / `compare` use: it PANICS on a pair it cannot
+// order, because a mis-typed comparison reaching here in well-typed Sky is a
+// bug worth reporting rather than a silent arbitrary answer.
+//
+// The dispatch itself lives in [cmpSafe], which `List.sort` / `List.sortBy`
+// share under a different policy — see the note there.
+func cmp(a, b any) int {
+	c, ok := cmpSafe(a, b)
+	if !ok {
+		panic(fmt.Sprintf("rt.cmp: type mismatch (left %T, right %T)", a, b))
+	}
+	return c
+}
+
+// cmpSafe is THE ordering dispatch. It returns `(order, false)` — never panics —
+// for a pair it cannot order, so its two callers can apply two different
+// policies to that case:
+//
+//   - [cmp] panics, which is right for `<` / `>` / `compare`, where the checker
+//     has already established the operands are comparable.
+//   - [skyLessThan] falls back to a rendered compare, which is right for
+//     `List.sort` / `List.sortBy`: neither has a `.sky` signature (both are on
+//     `UNTYPED_KERNEL_MEMBERS`) so the checker does NOT constrain the element to
+//     `comparable`, and turning a program that used to sort into one that panics
+//     would trade a wrong answer for a crash.
+//
+// ONE dispatch, two policies. Before this there were THREE implementations of
+// "which of these comes first" — this one, `skyLessThan`'s type switch, and an
+// inline `fmt.Sprintf("%v", …) < fmt.Sprintf("%v", …)` in `List_sort` — and the
+// two that were not this one ordered `[10, 9, 2]` as `10, 2, 9`, `[-1, -20, 3]`
+// as `-1, -20, 3`, and `['a', '~', 'B']` by the DECIMAL CODE POINT'S SPELLING
+// (`"126" < "66" < "97"`). See `list_sort_order_test.go`.
+func cmpSafe(a, b any) (int, bool) {
+	// String vs string.
+	if sa, ok := a.(string); ok {
+		sb, bok := b.(string)
+		if !bok {
+			return 0, false
+		}
+		switch {
+		case sa < sb:
+			return -1, true
+		case sa > sb:
+			return 1, true
+		}
+		return 0, true
+	}
+	if _, ok := b.(string); ok {
+		return 0, false
+	}
+	// Numeric (int or float). Promote to float if either side is float,
+	// preserving sub-integer precision.
+	if isFloatish(a) || isFloatish(b) {
+		if !isNumeric(a) || !isNumeric(b) {
+			return 0, false
+		}
+		fa, fb := AsFloat(a), AsFloat(b)
+		switch {
+		case fa < fb:
+			return -1, true
+		case fa > fb:
+			return 1, true
+		}
+		return 0, true
+	}
+	// Composite comparables: Elm's `comparable` includes tuples and lists OF
+	// comparables, ordered lexicographically. The checker only admits `<`/`>` on
+	// such types, so a tuple (rt.T2/T3/… struct) or list (slice) reaching here is
+	// well-typed — compare it recursively rather than falling through to AsInt
+	// (which panics on a struct/slice: the class this closes).
+	if c, ok := cmpComposite(a, b); ok {
+		return c, true
+	}
+	// Every remaining integer width, INCLUDING `int32` — which is what a Sky
+	// `Char` is. `Char` had no arm anywhere before this, which is why
+	// `List.sort [ 'a', '~', 'B' ]` came back `~ B a`.
+	if !isNumeric(a) || !isNumeric(b) {
+		return 0, false
+	}
+	ia, ib := AsInt(a), AsInt(b)
+	switch {
+	case ia < ib:
+		return -1, true
+	case ia > ib:
+		return 1, true
+	}
+	return 0, true
+}
+
+// isNumeric reports whether `AsInt` / `AsFloat` can read the value without
+// panicking. Kept next to [cmpSafe] because its whole purpose is to let that
+// function answer "no" instead of taking the process down.
+func isNumeric(v any) bool {
+	switch v.(type) {
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
+		return true
+	}
+	// `AsInt` / `AsFloat` unwrap a Result/Maybe container before giving up, so
+	// this must too — otherwise `cmpSafe` would answer "cannot order" for a pair
+	// the old code ordered fine.
+	if isSkyContainer(v) {
+		if u := unwrapAny(v); u != nil {
+			return isNumeric(u)
+		}
+	}
+	return false
+}
+
+// cmpComposite compares two tuple (struct) or list (slice/array) values
+// lexicographically, returning (result, true) when both are the same composite
+// kind. Lists compare element-wise then shorter-is-less on a common prefix
+// (Elm ordering); tuples compare field-by-field in declaration order (V0, V1,
+// …). Returns (0, false) for non-composites or a kind mismatch, so the caller
+// falls back to the scalar path.
+func cmpComposite(a, b any) (int, bool) {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	switch va.Kind() {
+	case reflect.Slice, reflect.Array:
+		if k := vb.Kind(); k != reflect.Slice && k != reflect.Array {
+			return 0, false
+		}
+		n := va.Len()
+		if vb.Len() < n {
+			n = vb.Len()
+		}
+		for i := 0; i < n; i++ {
+			// cmpSafe, not cmp: an element the dispatch cannot order must make
+			// the WHOLE composite unorderable, so `skyLessThan` can fall back
+			// rather than have a nested panic escape past it.
+			c, ok := cmpSafe(va.Index(i).Interface(), vb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			if c != 0 {
+				return c, true
+			}
+		}
+		switch {
+		case va.Len() < vb.Len():
+			return -1, true
+		case va.Len() > vb.Len():
+			return 1, true
+		}
+		return 0, true
+	case reflect.Struct:
+		if vb.Kind() != reflect.Struct {
+			return 0, false
+		}
+		n := va.NumField()
+		if vb.NumField() < n {
+			n = vb.NumField()
+		}
+		for i := 0; i < n; i++ {
+			fa, fb := va.Field(i), vb.Field(i)
+			if !fa.CanInterface() || !fb.CanInterface() {
+				return 0, false // unexported field — not a tuple; let the caller decide
+			}
+			c, ok := cmpSafe(fa.Interface(), fb.Interface())
+			if !ok {
+				return 0, false
+			}
+			if c != 0 {
+				return c, true
+			}
+		}
+		return 0, true
+	}
+	return 0, false
+}
+
+func And(a, b any) any { return AsBool(a) && AsBool(b) }
+func Or(a, b any) any  { return AsBool(a) || AsBool(b) }
+
+func Negate(a any) any {
+	if isFloatish(a) {
+		return -AsFloat(a)
+	}
+	return -AsInt(a)
+}
+
+// ═══════════════════════════════════════════════════════════
+// List operations
+// ═══════════════════════════════════════════════════════════
+
+// List any-variants now route through `AsList` + `SkyCall` so typed
+// codegen can hand us `[]T_R` / `func(A) B` and we still work. Before
+// this, `List_map (\u -> u.email) users` compiled fine but panicked at
+// runtime with `interface conversion: []main.User_R, not []interface {}`
+// because the `.([]any)` assertion was hard. Same class as the
+// already-fixed `rt.Concat`.
+//
+// `AsList(list)` widens typed slices via reflect (already cyclic-safe).
+// `SkyCall(fn, args...)` handles Sky's `func(any) any` AND Go's typed
+// `func(A) B` via reflect; the extra reflect dispatch per element is
+// the price of compatibility — kernels called from typed codegen
+// bypass this path entirely via the `List_mapT[A,B]` family below.
+func List_map(fn any, list any) any {
+	items := AsList(list)
+	result := make([]any, len(items))
+	for i, item := range items {
+		result[i] = SkyCall(fn, item)
+	}
+	return result
+}
+
+func List_filter(fn any, list any) any {
+	items := AsList(list)
+	var result []any
+	for _, item := range items {
+		if AsBool(SkyCall(fn, item)) {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func List_foldl(fn any, acc any, list any) any {
+	items := AsList(list)
+	result := acc
+	for _, item := range items {
+		result = SkyCall(fn, item, result)
+	}
+	return result
+}
+
+func List_length(list any) any {
+	return len(AsList(list))
+}
+
+func List_head(list any) any {
+	items := AsList(list)
+	if len(items) == 0 {
+		return Nothing[any]()
+	}
+	return Just[any](items[0])
+}
+
+func List_reverse(list any) any {
+	items := AsList(list)
+	result := make([]any, len(items))
+	for i, item := range items {
+		result[len(items)-1-i] = item
+	}
+	return result
+}
+
+func List_take(n any, list any) any {
+	count := AsInt(n)
+	items := AsList(list)
+	// Parity with the Sky-source `take` (n <= 0 -> []): clamp a negative
+	// count to 0 so `items[:count]` never slices with a negative bound.
+	if count < 0 {
+		count = 0
+	}
+	if count > len(items) {
+		count = len(items)
+	}
+	return items[:count]
+}
+
+func List_drop(n any, list any) any {
+	count := AsInt(n)
+	items := AsList(list)
+	// Parity with the Sky-source `drop` (n <= 0 -> whole list): clamp a
+	// negative count to 0 so `items[count:]` never slices with a negative
+	// bound.
+	if count < 0 {
+		count = 0
+	}
+	if count > len(items) {
+		count = len(items)
+	}
+	return items[count:]
+}
+
+func List_append(a any, b any) any {
+	// Both sides widened to `[]any`; downstream call-site `rt.Coerce[[]T]`
+	// re-narrows element-wise when a typed slice is expected. Same
+	// shape as the fix in `rt.Concat`.
+	la := AsList(a)
+	lb := AsList(b)
+	out := make([]any, 0, len(la)+len(lb))
+	out = append(out, la...)
+	out = append(out, lb...)
+	return out
+}
+
+// P8/List typed companions — Go generics for the polymorphic ops.
+// The non-typed `List_*` family stays put; call sites with HM-inferred
+// element types can dispatch to these for zero-boxing iteration.
+
+func List_mapT[A, B any](fn func(A) B, xs []A) []B {
+	out := make([]B, len(xs))
+	for i, x := range xs {
+		out[i] = fn(x)
+	}
+	return out
+}
+
+// List_mapAnyT: call-site dispatch target for List.map when the Sky
+// function value is an `any`-boxed closure (the normal case without HM
+// element flow). Uses SkyCall to invoke the function — same shape as
+// the any/any List_map kernel, but with a typed slice contract.
+func List_mapAnyT(fn any, xs []any) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs {
+		out[i] = SkyCall(fn, x)
+	}
+	return out
+}
+
+// List_mapTA: typed input slice, any-typed Sky function, any-typed
+// output. v0.12.x typed-codegen routing target — call site has
+// `xs : List A` (concrete A) but the lambda still flows as
+// `func(any) any` (Gap 4 territory, lambda lowering not yet
+// type-preserving). Win: typed input slice means no AsListT
+// coercion at the call boundary; the iteration reads `xs[i]` of
+// type A directly. Per-element call still goes through SkyCall
+// (the lambda's runtime shape is preserved).
+//
+// Naming: `T` = typed slice, `A` = any-typed function. Distinct
+// from List_mapT[A, B] (typed slice + typed function, when both
+// HM types are known).
+func List_mapTA[A any](fn any, xs []A) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs {
+		out[i] = SkyCall(fn, x)
+	}
+	return out
+}
+
+// List_filterTA: typed input slice + any-typed predicate. Returns
+// the input slice's typed shape (filter preserves element type).
+func List_filterTA[A any](fn any, xs []A) []A {
+	out := make([]A, 0, len(xs))
+	for _, x := range xs {
+		if AsBool(SkyCall(fn, x)) {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// List_foldlTA: typed input slice + any-typed reducer + any seed +
+// any output. The reducer receives one typed-A arg per element but
+// accumulates through any.
+func List_foldlTA[A any](fn any, seed any, xs []A) any {
+	acc := seed
+	for _, x := range xs {
+		acc = SkyCall(SkyCall(fn, x), acc)
+	}
+	return acc
+}
+
+// List_memberT: typed slice membership check. Returns true if item
+// equals any element. Comparable[A] would be tighter but generics
+// over `any` keeps the surface uniform with the rest of the *T
+// family. Internal eq uses sky_equal which handles deep equality
+// for ADTs / records / primitives uniformly.
+func List_memberT[A any](item any, xs []A) bool {
+	for _, x := range xs {
+		if AsBool(Eq(item, x)) {
+			return true
+		}
+	}
+	return false
+}
+
+// List_concatTA: flatten a typed slice of slices to a flat typed
+// slice. Used by List.concat when the outer list's element type is
+// itself a known list type.
+func List_concatTA[A any](xss []A) []any {
+	// xss is []A where A is itself meant to be a list — but Go's
+	// type system doesn't let us express that without HKT. Iterate
+	// reflectively via AsList per item; same as List_concat.
+	var out []any
+	for _, xs := range xss {
+		out = append(out, AsList(xs)...)
+	}
+	return out
+}
+
+// List_indexedMapTA: typed input slice + any-typed (Int -> A -> B)
+// callback + any output. Used by List.indexedMap which carries the
+// element index as an extra arg.
+func List_indexedMapTA[A any](fn any, xs []A) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs {
+		out[i] = SkyCall(SkyCall(fn, i), x)
+	}
+	return out
+}
+
+// List_findTA: typed slice + any-typed predicate. Returns the typed
+// Maybe[A] for the first matching element, Nothing if none match.
+func List_findTA[A any](fn any, xs []A) SkyMaybe[A] {
+	for _, x := range xs {
+		if AsBool(SkyCall(fn, x)) {
+			return Just[A](x)
+		}
+	}
+	return Nothing[A]()
+}
+
+func List_filterAnyT(fn any, xs []any) []any {
+	out := make([]any, 0, len(xs))
+	for _, x := range xs {
+		if b, ok := SkyCall(fn, x).(bool); ok && b {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// List_mapAny: universal map that handles any slice type.
+func List_mapAny(fn any, xs any) any {
+	items := asList(xs)
+	out := make([]any, len(items))
+	for i, x := range items {
+		out[i] = SkyCall(fn, x)
+	}
+	return out
+}
+
+// List_filterAny: universal filter that handles any slice type.
+func List_filterAny(fn any, xs any) any {
+	items := asList(xs)
+	out := make([]any, 0, len(items))
+	for _, x := range items {
+		if AsBool(SkyCall(fn, x)) {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func List_takeAnyT(n int, xs []any) []any {
+	if n < 0 {
+		n = 0
+	}
+	if n > len(xs) {
+		n = len(xs)
+	}
+	return xs[:n]
+}
+
+func List_consAnyT(x any, xs []any) []any {
+	return append([]any{x}, xs...)
+}
+
+func List_foldlAnyT(fn any, seed any, xs []any) any {
+	// Sky follows Elm's foldl convention:
+	//   List.foldl : (a -> b -> b) -> b -> List a -> b
+	// i.e. fn takes ELEMENT then accumulator. Pre-fix this passed
+	// (acc, x), silently corrupting any foldl over a non-trivial
+	// reducer — e.g. skychess's Eval.evaluate walked 64 squares
+	// but the accumulator got overwritten by each list element on
+	// every iteration, so eval always returned the last element
+	// (63) regardless of actual board material.
+	acc := seed
+	for _, x := range xs {
+		acc = SkyCall(fn, x, acc)
+	}
+	return acc
+}
+
+func List_foldrAnyT(fn any, seed any, xs []any) any {
+	acc := seed
+	for i := len(xs) - 1; i >= 0; i-- {
+		acc = SkyCall(fn, xs[i], acc)
+	}
+	return acc
+}
+
+func List_filterMapAnyT(fn any, xs []any) []any {
+	out := make([]any, 0, len(xs))
+	for _, x := range xs {
+		r := SkyCall(fn, x)
+		if m, ok := r.(SkyMaybe[any]); ok {
+			if m.Tag == 0 {
+				out = append(out, m.JustValue)
+			}
+			continue
+		}
+		// reflect fallback for typed SkyMaybe[T]
+		rv := reflect.ValueOf(r)
+		if rv.Kind() == reflect.Struct {
+			tag := rv.FieldByName("Tag")
+			val := rv.FieldByName("JustValue")
+			if tag.IsValid() && val.IsValid() &&
+				(tag.Kind() == reflect.Int || tag.Kind() == reflect.Int64) &&
+				tag.Int() == 0 {
+				out = append(out, val.Interface())
+			}
+		}
+	}
+	return out
+}
+
+// concatMap's callback may return ANY slice kind — `[]any` under the
+// legacy any-kernel path, `[]int`/`[]T_R` under typed codegen. The
+// strict `.([]any)` assertion dropped typed results silently, which
+// meant slider piece move generation (bishop/rook/queen in skychess)
+// silently returned zero moves because `List.concatMap (\d ->
+// slideMoves …)` produced `[]int` per direction. Widen via AsList
+// which walks any Go slice via reflect.
+func List_concatMapAnyT(fn any, xs []any) []any {
+	out := []any{}
+	for _, x := range xs {
+		r := SkyCall(fn, x)
+		sub := AsList(r)
+		if sub != nil {
+			out = append(out, sub...)
+		}
+	}
+	return out
+}
+
+func List_anyAnyT(fn any, xs []any) bool {
+	for _, x := range xs {
+		if b, ok := SkyCall(fn, x).(bool); ok && b {
+			return true
+		}
+	}
+	return false
+}
+
+func List_allAnyT(fn any, xs []any) bool {
+	for _, x := range xs {
+		if b, ok := SkyCall(fn, x).(bool); ok && !b {
+			return false
+		}
+	}
+	return true
+}
+
+func List_dropAnyT(n int, xs []any) []any {
+	if n < 0 {
+		n = 0
+	}
+	if n > len(xs) {
+		return []any{}
+	}
+	return xs[n:]
+}
+
+func List_filterT[A any](fn func(A) bool, xs []A) []A {
+	out := make([]A, 0, len(xs))
+	for _, x := range xs {
+		if fn(x) {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func List_foldlT[A, B any](fn func(B, A) B, seed B, xs []A) B {
+	acc := seed
+	for _, x := range xs {
+		acc = fn(acc, x)
+	}
+	return acc
+}
+
+func List_lengthT[A any](xs []A) int { return len(xs) }
+
+func List_headT[A any](xs []A) SkyMaybe[A] {
+	if len(xs) == 0 {
+		// Fallback: xs might be nil because the caller passed a
+		// differently-typed slice ([]string vs []any). Try asList.
+		return Nothing[A]()
+	}
+	return Just[A](xs[0])
+}
+
+// List_headAny: universal head that handles any slice type via asList.
+// The codegen routes here when the input might be a typed slice.
+func List_headAny(xs any) any {
+	items := asList(xs)
+	if len(items) == 0 {
+		return Nothing[any]()
+	}
+	return Just[any](items[0])
+}
+
+func List_reverseT[A any](xs []A) []A {
+	n := len(xs)
+	out := make([]A, n)
+	for i, x := range xs {
+		out[n-1-i] = x
+	}
+	return out
+}
+
+// List_reverseAny: universal reverse via asList.
+func List_reverseAny(xs any) any {
+	items := asList(xs)
+	n := len(items)
+	out := make([]any, n)
+	for i, x := range items {
+		out[n-1-i] = x
+	}
+	return out
+}
+
+func List_takeT[A any](n int, xs []A) []A {
+	if n > len(xs) {
+		n = len(xs)
+	}
+	if n < 0 {
+		n = 0
+	}
+	return xs[:n]
+}
+
+func List_isEmptyT[A any](xs []A) bool { return len(xs) == 0 }
+
+func List_dropT[A any](n int, xs []A) []A {
+	if n > len(xs) {
+		n = len(xs)
+	}
+	if n < 0 {
+		n = 0
+	}
+	return xs[n:]
+}
+
+func List_appendT[A any](a, b []A) []A { return append(a, b...) }
+
+func List_range(lo any, hi any) any {
+	l, h := AsInt(lo), AsInt(hi)
+	// Parity with the Sky-source `range` (lo > hi -> []): return an empty
+	// list rather than `make` with a negative capacity (which panics).
+	if h < l {
+		return []any{}
+	}
+	result := make([]any, 0, h-l+1)
+	for i := l; i <= h; i++ {
+		result = append(result, i)
+	}
+	return result
+}
+
+// ═══════════════════════════════════════════════════════════
+// More String operations
+// ═══════════════════════════════════════════════════════════
+
+func String_join(sep any, list any) any {
+	s := fmt.Sprintf("%v", sep)
+	// AsList — not a hard `.([]any)` assertion: v0.13 typed codegen
+	// can hand this kernel a typed `[]string` (e.g. from a typed
+	// `List.map renderProp props` in Sky-source Std.Css). A hard
+	// assertion panics on those; AsList boxes any Go slice.
+	items := AsList(list)
+	parts := make([]string, len(items))
+	for i, item := range items {
+		parts[i] = fmt.Sprintf("%v", item)
+	}
+	return strings.Join(parts, s)
+}
+
+func String_split(sep any, s any) any {
+	parts := strings.Split(fmt.Sprintf("%v", s), fmt.Sprintf("%v", sep))
+	result := make([]any, len(parts))
+	for i, p := range parts {
+		result[i] = p
+	}
+	return result
+}
+
+func String_toInt(s any) any {
+	// TrimSpace for consistency with String.toFloat and the typed String_toIntT
+	// companion (both trim). Without this, `String.toInt "  42  "` returned
+	// Nothing while `String.toFloat "  2.5  "` returned Just — trimming silently
+	// depended on which codegen path was chosen. (Conformance finding L2.)
+	n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", s)))
+	if err != nil {
+		return Nothing[any]()
+	}
+	return Just[any](n)
+}
+
+func String_toUpper(s any) any { return strings.ToUpper(fmt.Sprintf("%v", s)) }
+func String_toLower(s any) any { return strings.ToLower(fmt.Sprintf("%v", s)) }
+func String_trim(s any) any    { return strings.TrimSpace(fmt.Sprintf("%v", s)) }
+func String_contains(sub any, s any) any {
+	return strings.Contains(fmt.Sprintf("%v", s), fmt.Sprintf("%v", sub))
+}
+func String_startsWith(prefix any, s any) any {
+	return strings.HasPrefix(fmt.Sprintf("%v", s), fmt.Sprintf("%v", prefix))
+}
+func String_endsWith(suffix any, s any) any {
+	return strings.HasSuffix(fmt.Sprintf("%v", s), fmt.Sprintf("%v", suffix))
+}
+func String_reverse(s any) any {
+	runes := []rune(fmt.Sprintf("%v", s))
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
+
+// P8/String typed companions — direct string in/out, no fmt.Sprintf
+// boxing. Length is rune-count (matches the any/any behaviour via
+// utf8.RuneCountInString).
+func String_toUpperT(s string) string          { return strings.ToUpper(s) }
+func String_toLowerT(s string) string          { return strings.ToLower(s) }
+func String_trimT(s string) string             { return strings.TrimSpace(s) }
+func String_containsT(sub, s string) bool      { return strings.Contains(s, sub) }
+func String_startsWithT(prefix, s string) bool { return strings.HasPrefix(s, prefix) }
+func String_endsWithT(suffix, s string) bool   { return strings.HasSuffix(s, suffix) }
+func String_reverseT(s string) string {
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
+func String_lengthT(s string) int                    { return utf8.RuneCountInString(s) }
+func String_isEmptyT(s string) bool                  { return s == "" }
+func String_appendT(a, b string) string              { return a + b }
+func String_splitT(sep, s string) []string           { return strings.Split(s, sep) }
+func String_joinT(sep string, parts []string) string { return strings.Join(parts, sep) }
+func String_replaceT(old, new_, s string) string     { return strings.ReplaceAll(s, old, new_) }
+func String_sliceT(start, end int, s string) string {
+	runes := []rune(s)
+	total := len(runes)
+	if start < 0 {
+		start += total
+	}
+	if end < 0 {
+		end += total
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end > total {
+		end = total
+	}
+	if start > end {
+		return ""
+	}
+	return string(runes[start:end])
+}
+func String_fromIntT(n int) string       { return strconv.Itoa(n) }
+func String_fromFloatT(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) }
+
+// String_toIntT / String_toFloatT — typed companions for the typed-
+// codegen path. Return SkyMaybe to match the kernel's declared type
+// `String -> Maybe Int` / `String -> Maybe Float` (see lookupKernelType
+// in src/Sky/Type/Constrain/Expression.hs). Previously these returned
+// SkyResult, so user code patterns like
+//
+//	case String.toInt s of
+//	    Nothing -> _
+//	    Just n  -> _
+//
+// failed at runtime when the typed-codegen path dispatched here —
+// the SkyResult{Tag:1, ErrValue:"…"} value couldn't pattern-match
+// against Nothing. The any-typed String_toInt above was always
+// SkyMaybe; the two paths now agree.
+func String_toIntT(s string) SkyMaybe[int] {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return Nothing[int]()
+	}
+	return Just[int](n)
+}
+func String_toFloatT(s string) SkyMaybe[float64] {
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return Nothing[float64]()
+	}
+	return Just[float64](f)
+}
+
+// String_toFloat: any-typed counterpart used by the legacy call path.
+// Parses any stringish value and returns Maybe Float at runtime —
+// mirrors String_toInt which also returns Maybe.
+func String_toFloat(s any) any {
+	f, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprintf("%v", s)), 64)
+	if err != nil {
+		return Nothing[any]()
+	}
+	return Just[any](f)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Record operations
+// ═══════════════════════════════════════════════════════════
+
+func RecordGet(record any, field string) any {
+	if m, ok := record.(map[string]any); ok {
+		return m[field]
+	}
+	return nil
+}
+
+// RecordUpdate copies a record (map or struct) and applies field overrides.
+// Works on both map[string]any and typed Go structs via reflect.
+func RecordUpdate(base any, updates map[string]any) any {
+	base = unwrapAny(base)
+	// Fast path: map-based record
+	if m, ok := base.(map[string]any); ok {
+		result := make(map[string]any, len(m)+len(updates))
+		for k, v := range m {
+			result[k] = v
+		}
+		for k, v := range updates {
+			result[k] = v
+		}
+		return result
+	}
+	// Reflect path: struct-based record
+	v := reflect.ValueOf(base)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return base
+	}
+	// Build a new struct value (copy) and set fields
+	copyVal := reflect.New(v.Type()).Elem()
+	copyVal.Set(v)
+	for k, newVal := range updates {
+		f := copyVal.FieldByName(k)
+		if !f.IsValid() || !f.CanSet() {
+			continue
+		}
+		nv := reflect.ValueOf(newVal)
+		if !nv.IsValid() {
+			f.Set(reflect.Zero(f.Type()))
+			continue
+		}
+		if nv.Type().AssignableTo(f.Type()) {
+			f.Set(nv)
+		} else if nv.Type().ConvertibleTo(f.Type()) {
+			f.Set(nv.Convert(f.Type()))
+		} else {
+			// Narrow via the same recursive coercion helpers `rt.Coerce`
+			// uses, so a `{ record | endpoints = loaded }` update where
+			// the field is typed `[]Endpoint_R` but the replacement is
+			// `[]any` (from `List.map`) still lands in the struct. Before
+			// this, the silently-dropped assignment made Sky.Live `update`
+			// return the "new" model with the OLD collection — so added
+			// rows never appeared on the page.
+			narrowed := narrowReflectValue(nv, f.Type())
+			if narrowed.IsValid() {
+				f.Set(narrowed)
+			}
+		}
+	}
+	return copyVal.Interface()
+}
+
+// ═══════════════════════════════════════════════════════════
+// Tuple types
+// ═══════════════════════════════════════════════════════════
+//
+// P5: typed tuples. The generic T2..T5 types are the primary shape.
+// SkyTuple2/3 remain as type aliases to the any-parameterised T2/T3 so
+// existing literal-site and pattern-destructure codegen continues to
+// work without refactor. Annotated call sites (via solvedTypeToGo)
+// emit the parameterised form `rt.T2[int, string]` directly, and Go's
+// compiler validates element shape from there.
+//
+// Arity >5 routes to SkyTupleN (slice-backed, heterogeneous) since a
+// 6-wide tuple is a code-smell per the plan — users should use a
+// record alias instead.
+
+type T2[A, B any] struct {
+	V0 A
+	V1 B
+}
+type T3[A, B, C any] struct {
+	V0 A
+	V1 B
+	V2 C
+}
+type T4[A, B, C, D any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+}
+type T5[A, B, C, D, E any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+}
+
+// v0.17 PR-17 SHIP POINT B — extend typed tuple aliases to arity 9.
+// Sky's parser accepts arbitrary-arity tuple literals; the master plan
+// caps the typed-instantiation at arity 9 (consistent with what
+// real-world Sky idioms produce — beyond ~6, a record alias is
+// idiomatic anyway).  Arity >9 stays on the slice-backed `SkyTupleN`
+// fallback below.
+type T6[A, B, C, D, E, F any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+}
+type T7[A, B, C, D, E, F, G any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+}
+type T8[A, B, C, D, E, F, G, H any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+	V7 H
+}
+type T9[A, B, C, D, E, F, G, H, I any] struct {
+	V0 A
+	V1 B
+	V2 C
+	V3 D
+	V4 E
+	V5 F
+	V6 G
+	V7 H
+	V8 I
+}
+
+// Back-compat aliases. Literal codegen (`Can.Tuple`) still produces
+// `SkyTuple2{V0:..., V1:...}` — with these aliases the same value also
+// types as `rt.T2[any, any]`, so solvedTypeToGo's typed emission and
+// literal emission interop without churn.
+type SkyTuple2 = T2[any, any]
+type SkyTuple3 = T3[any, any, any]
+type SkyTuple4 = T4[any, any, any, any]
+type SkyTuple5 = T5[any, any, any, any, any]
+type SkyTuple6 = T6[any, any, any, any, any, any]
+type SkyTuple7 = T7[any, any, any, any, any, any, any]
+type SkyTuple8 = T8[any, any, any, any, any, any, any, any]
+type SkyTuple9 = T9[any, any, any, any, any, any, any, any, any]
+
+// SkyTupleN: arity ≥ 6 tuples use a uniform slice-backed struct. Element
+// access in generated code is `t.Vs[i]`.
+type SkyTupleN struct{ Vs []any }
+
+// Opaque Sky-side types with no concrete Go representation. They exist
+// solely so emitted function signatures name the abstraction (e.g.
+// `rt.SkyDecoder`) rather than leak `any`. Aliased — not new types —
+// so legacy any-typed values interop without coercion.
+// SkyRoute is intentionally excluded (defined as a real struct further
+// down); codegen maps Sky's `Route` to that struct directly.
+// SkyDb is likewise a real struct (db_auth.go); Conn/Stmt/Row are
+// aliases for any.
+type SkyDecoder = any
+type SkyValue = any
+type SkyAttribute = any
+type SkyHandler = any
+type SkyMiddleware = any
+type SkySession = any
+type SkyStore = any
+type SkyStmt = any
+type SkyRow = any
+type SkyConn = any
+
+// ═══════════════════════════════════════════════════════════
+// FFI — name-based dispatch for user-supplied Go bindings
+// ═══════════════════════════════════════════════════════════
+//
+// Two registries, reflecting Sky's effect boundary:
+//
+//   ffiRegistry     — effect-unknown (DEFAULT). Any Go code we can't
+//                     personally audit lives here. Callable only via
+//                     Ffi.callTask so the effect is deferred through
+//                     Sky's Task mechanism, preserving referential
+//                     transparency. Ffi.callPure on these names
+//                     returns Err directing the caller to callTask.
+//
+//   ffiPureRegistry — hand-verified pure. For opaque-type getters,
+//                     setters-that-copy, zero-value constructors, and
+//                     pure data transforms where the Go source has been
+//                     audited to have no I/O, no shared mutable state
+//                     access, and no panic path other than explicit
+//                     type-assertion failures (which our panic-recover
+//                     will turn into Err anyway). Callable via either
+//                     Ffi.callPure or Ffi.callTask.
+//
+// The auto-generated binding generator (sky add <pkg>) ALWAYS uses
+// Register, never RegisterPure. Hand-written ffi/*.go files can use
+// RegisterPure when the user vouches for a specific Go function.
+//
+// Every invocation is wrapped in panic-recover; a panic in Go code
+// becomes an Err, never a process crash.
+
+var (
+	ffiRegistryMu   sync.RWMutex
+	ffiRegistry     = map[string]func([]any) any{} // effect-unknown
+	ffiPureRegistry = map[string]func([]any) any{} // hand-verified pure
+)
+
+// Register exposes a Go function with no purity claim.
+// Auto-generated bindings use this. Callable only via Ffi.callTask.
+// reflectValueOfAny / reflectNewOf: thin aliases over reflect package
+// primitives, exported so auto-generated binding files (in package rt) don't
+// need to import "reflect" themselves. Used by the identity-pointer
+// generic fallback (Stripe's String[T any](v T) *T and friends).
+func reflectValueOfAny(v any) reflect.Value     { return reflect.ValueOf(v) }
+func reflectNewOf(t reflect.Type) reflect.Value { return reflect.New(t) }
+
+func Register(name string, fn func([]any) any) {
+	ffiRegistryMu.Lock()
+	defer ffiRegistryMu.Unlock()
+	ffiRegistry[name] = fn
+}
+
+// RegisterPure exposes a Go function that the caller has audited to be pure.
+// Safe for Ffi.callPure. Suitable for:
+//   - opaque-type getters (struct field read via copy)
+//   - opaque-type setters (struct field write on a copy)
+//   - zero-value constructors (no args, deterministic output)
+//   - pure data transforms (crypto hash, text slugification, …)
+//
+// NOT suitable for anything that reads time, env, args, files, network,
+// random, a database, global state, or spawns goroutines.
+func RegisterPure(name string, fn func([]any) any) {
+	ffiRegistryMu.Lock()
+	defer ffiRegistryMu.Unlock()
+	ffiPureRegistry[name] = fn
+}
+
+// invokeFfi resolves and runs a registered function with panic recovery.
+// When pureOnly is true we refuse effect-unknown bindings and direct the
+// caller to use Ffi.callTask instead — this keeps the effect boundary
+// enforced in the runtime, not merely by convention.
+func invokeFfi(name string, args []any, pureOnly bool) any {
+	ffiRegistryMu.RLock()
+	if fn, ok := ffiPureRegistry[name]; ok {
+		ffiRegistryMu.RUnlock()
+		return runWithRecover(name, args, fn)
+	}
+	if fn, ok := ffiRegistry[name]; ok {
+		ffiRegistryMu.RUnlock()
+		if pureOnly {
+			return Err[any, any](
+				"Ffi.callPure: " + name +
+					" is registered as effect-unknown — use Ffi.callTask. " +
+					"Auto-generated FFI bindings default to effect-unknown. " +
+					"Use rt.RegisterPure from a hand-written ffi/*.go file " +
+					"only if you have audited the underlying Go function.")
+		}
+		return runWithRecover(name, args, fn)
+	}
+	ffiRegistryMu.RUnlock()
+	return Err[any, any](ErrFfi("Ffi: not registered: " + name))
+}
+
+func runWithRecover(name string, args []any, fn func([]any) any) (result any) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = Err[any, any](ErrFfi(fmt.Sprintf("Ffi %q panicked: %v", name, r)))
+		}
+	}()
+	raw := fn(args)
+	// Handlers that already return a Sky Result (Decimal.fromString,
+	// Money.setRate, Time.inZone, …) shouldn't get double-wrapped —
+	// detect via SkyResult type-assertion and pass through. Plain
+	// return values (htmlRender → String) get the existing Ok-wrap.
+	if _, ok := raw.(SkyResult[any, any]); ok {
+		return raw
+	}
+	return Ok[any, any](raw)
+}
+
+// Ffi.callPure : String -> List any -> Result String a
+// Works ONLY on RegisterPure'd bindings. For effect-unknown bindings
+// (the default for auto-generated Go FFI) this returns Err directing
+// the caller to use Ffi.callTask. This enforces Sky's pure-functional
+// effect boundary in the runtime, not just by convention.
+func Ffi_callPure(name any, args any) any {
+	return invokeFfi(fmt.Sprintf("%v", name), asList(args), true)
+}
+
+// Ffi.callTask : String -> List any -> Task String a
+// Works on any registered binding. Returns a deferred thunk (Sky Task)
+// that runs only when sequenced via Task.perform / Task.andThen. This
+// is the ONLY correct way to call auto-generated / untrusted Go bindings.
+func Ffi_callTask(name any, args any) any {
+	n := fmt.Sprintf("%v", name)
+	argList := asList(args)
+	return func() any {
+		return invokeFfi(n, argList, false)
+	}
+}
+
+// Ffi.call : deprecated alias for callPure.
+func Ffi_call(name any, args any) any {
+	return Ffi_callPure(name, args)
+}
+
+// Ffi.has : String -> Bool — True if registered in either registry.
+func Ffi_has(name any) any {
+	n := fmt.Sprintf("%v", name)
+	ffiRegistryMu.RLock()
+	_, okE := ffiRegistry[n]
+	_, okP := ffiPureRegistry[n]
+	ffiRegistryMu.RUnlock()
+	return okE || okP
+}
+
+// Ffi.isPure : String -> Bool — True if the binding was registered as pure.
+func Ffi_isPure(name any) any {
+	n := fmt.Sprintf("%v", name)
+	ffiRegistryMu.RLock()
+	_, ok := ffiPureRegistry[n]
+	ffiRegistryMu.RUnlock()
+	return ok
+}
+
+// Ffi.toAny : a -> any — runtime identity; the type-level wrap
+// for building heterogeneous Ffi.callPure arg lists from Sky source.
+// See lookupKernelType "Ffi.toAny" for the type rationale.
+func Ffi_toAny(v any) any { return v }
+
+// Ffi.kernel : String -> a — Layer 3 declaration sentinel.
+//
+// This function should NEVER be invoked at runtime. Sky-source stdlib
+// modules use `Ffi.kernel "KernelName"` as the body of thin wrappers
+// (`length s = Ffi.kernel "String_length" |> (\f -> f s)` etc.) and
+// the compiler rewrites every `Can.Call` of such a wrapper to a
+// direct `Can.VarKernel` of the named kernel binding at build time.
+// If we ever see this panic, the call-site rewrite failed — file
+// a bug.
+func Ffi_kernel(name any) any {
+	// COMPILER-BUG-CONTRACT: the Stage-4 call-site rewrite is supposed
+	// to substitute every `Ffi.kernel "Name"` in Sky source with a
+	// direct VarKernel reference. If we get here at runtime, the
+	// rewrite missed a site — likely a new wrapper shape the
+	// pattern-matcher doesn't recognise. Top-level recover classifies
+	// as `CompilerBug`.
+	panic(fmt.Sprintf(
+		"Ffi.kernel %q reached the runtime — the build-time call-site "+
+			"rewrite did not fire. This is a compiler bug.",
+		fmt.Sprintf("%v", name)))
+}
+
+// SkyADT: runtime type for ADT case-match dispatch.
+// ═══════════════════════════════════════════════════════════
+// SkyVariant — sealed-interface ADT marker (v0.17 close)
+// ═══════════════════════════════════════════════════════════
+//
+// v0.17 architectural close: Sky ADTs migrate from the universal
+// `type X = rt.SkyADT` alias (`Fields []any` shape) to per-variant
+// concrete Go structs satisfying a sealed interface — closes the
+// rt.Coerce surface on Element / Attribute / Html / user-defined
+// ADTs by making producer + consumer types match natively via Go
+// structural subtyping.
+//
+// Each codegen-emitted variant struct implements SkyVariant:
+//
+//	type Mod_X_Foo_V struct { V0 int; V1 string }
+//	func (Mod_X_Foo_V) SkyVariantTag() int     { return 0 }
+//	func (Mod_X_Foo_V) SkyVariantName() string { return "Foo" }
+//
+// rt-side dispatch helpers (AdtTag / AdtField / EnumTagIs) check
+// SkyVariant FIRST, then legacy SkyADT, then reflect — so variant-
+// emitted code paths are typed end-to-end while existing rt-side
+// builders (Sky.Core.Error / wire-decoded __sky_send / FFI shims)
+// keep working unchanged until they migrate in later phases.
+//
+// Methods are EXPORTED (capital S) because codegen emits them
+// from the user's main package — interface methods with unexported
+// names are unimplementable from outside the rt package.
+type SkyVariant interface {
+	SkyVariantTag() int
+	SkyVariantName() string
+}
+
+// Codegen emits `msg.(rt.SkyADT)` so any local ADT type (with matching Tag/Fields)
+// can be pattern-matched via integer Tag comparison.
+// SkyADT is the canonical runtime shape for every Sky-side ADT. Field
+// ordering matches what Sky's codegen emits for user-defined ADTs
+// (`type X = ...` → `type X struct { Tag int; SkyName string; Fields []any }`)
+// so rt-side constructors (e.g. ErrIo / ErrNetwork) produce values that
+// are assignment-compatible with the user-visible struct types.
+type SkyADT struct {
+	Tag     int
+	SkyName string
+	Fields  []any
+}
+
+// adtTagRegistry maps constructor SkyName → Tag for runtime-constructed
+// ADTs (e.g. __sky_send events). Populated by RegisterAdtTag which the
+// codegen's init() block calls for each Msg constructor.
+var adtTagRegistry = make(map[string]int)
+var adtTagRegistryMu sync.Mutex
+
+func RegisterGobType(v any) {
+	gobRegisterAll(v)
+}
+
+func RegisterAdtTag(skyName string, tag int) {
+	adtTagRegistryMu.Lock()
+	adtTagRegistry[skyName] = tag
+	adtTagRegistryMu.Unlock()
+}
+
+func LookupAdtTag(skyName string) (int, bool) {
+	adtTagRegistryMu.Lock()
+	tag, ok := adtTagRegistry[skyName]
+	adtTagRegistryMu.Unlock()
+	return tag, ok
+}
+
+// ── Sky.Core.Error builders ────────────────────────────────────────
+//
+// These produce values structurally compatible with the Sky-side
+// `Sky_Core_Error_Error` ADT so FFI / kernel code can yield typed
+// errors without going through the Sky source layer. Pattern matches
+// in user code (case e of Error PermissionDenied info -> ...) work
+// because the Sky lowerer compares `.Tag` integers and reads
+// `.Fields` by index — both shapes match.
+//
+// Field order for ADT structs Sky emits today: { Tag int; SkyName
+// string; Fields []any }. Records (TypeAlias = {field : T}) are
+// emitted as named structs with capitalised field names, e.g.
+// `Sky_Core_Error_ErrorInfo_R{Message: "...", Details: ...}`.
+
+// Alias rt-side ADT shapes to SkyADT so Sky-emitted Error / Maybe types
+// (type Sky_Core_Error_Error = rt.SkyADT via codegen alias, or direct
+// struct literal with matching layout) are assignment-compatible with
+// values produced by rt's Err*/Maybe* builders.
+type skyErrorAdt = SkyADT
+
+// EnumTagIs compares an any-boxed zero-arg ADT value against an
+// integer constructor tag. The value may arrive in either of two
+// representations:
+//
+//  1. Typed int constant (`Sky_Core_Error_ErrorKind_Io`) — the
+//     form codegen emits when every constructor of an ADT has
+//     zero arguments (the Can.Enum optimisation).
+//  2. `SkyADT{Tag: N, SkyName: "Io"}` — the form rt builders
+//     produce (`makeError` / `errorKindAdt`) because rt doesn't
+//     know about per-ADT Can.Enum lowering in user code.
+//
+// Without a tolerant compare, every `case kind of Io -> ...`
+// downstream of a rt-built error hit `rt.Unreachable` — the
+// typed-int constant and the SkyADT struct are distinct Go
+// types under `any == any`, so the `==` always returned false.
+// Codegen emits `rt.EnumTagIs(__subject, N)` for Can.Enum case
+// branches so both representations flow cleanly through user
+// pattern matches.
+func EnumTagIs(subject any, tag int) bool {
+	if sv, ok := subject.(SkyVariant); ok {
+		return sv.SkyVariantTag() == tag
+	}
+	if adt, ok := subject.(SkyADT); ok {
+		return adt.Tag == tag
+	}
+	rv := reflect.ValueOf(subject)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return int(rv.Int()) == tag
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int(rv.Uint()) == tag
+	}
+	return false
+}
+
+// skyErrorInfo mirrors the field names Sky codegen uses when it emits
+// `Sky.Core.Error.ErrorInfo`. Exposed as the exported SkyErrorInfo type
+// so user code's Sky_Core_Error_ErrorInfo_R (which has the same
+// `{ Message string; Details any }` layout) type-aliases to this.
+type SkyErrorInfo struct {
+	Message string
+	Details any
+}
+
+type skyErrorInfo = SkyErrorInfo
+
+// skyMaybeNothing returns the canonical SkyMaybe representation for
+// Nothing, matching what codegen emits (`rt.Nothing[any]()`). The
+// previous version returned a SkyADT struct — a different Go type
+// under `any`-boxing — so code that type-asserted the Details field
+// as `SkyMaybe[any]` (the codegen path for `case details of Just d
+// -> ... Nothing -> ...`) would panic with a type-identity
+// mismatch, the same class of bug as the ErrorKind enum gap.
+func skyMaybeNothing() any {
+	return Nothing[any]()
+}
+
+// errorKindAdt builds an `Sky.Core.Error.ErrorKind` value with the
+// integer tag matching the constructor order in Error.sky:
+//
+//	0=Io, 1=Network, 2=Ffi, 3=Decode, 4=Timeout, 5=NotFound,
+//	6=PermissionDenied, 7=InvalidInput, 8=Conflict, 9=Unavailable,
+//	10=Unexpected
+func errorKindAdt(tag int, name string) any {
+	// Typed codegen maps Sky's pure-enum `ErrorKind` to a Go `int`
+	// (via iota). We return the raw tag so `AdtField(err, 0)` yields
+	// an int that type-asserts to `Sky_Core_Error_ErrorKind` without
+	// panicking. Name is retained in telemetry via skyErrorAdt.Fields
+	// reconstruction where needed.
+	_ = name
+	return tag
+}
+
+func makeError(kindTag int, kindName, msg string) any {
+	info := skyErrorInfo{Message: msg, Details: skyMaybeNothing()}
+	return skyErrorAdt{
+		Tag:     0,
+		SkyName: "Error",
+		Fields:  []any{errorKindAdt(kindTag, kindName), info},
+	}
+}
+
+// Public Sky-shaped error builders. Used by the FFI runtime to
+// produce structured Error values instead of raw strings.
+func ErrIo(msg string) any      { return makeError(0, "Io", msg) }
+func ErrNetwork(msg string) any { return makeError(1, "Network", msg) }
+func ErrFfi(msg string) any     { return makeError(2, "Ffi", msg) }
+func ErrDecode(msg string) any  { return makeError(3, "Decode", msg) }
+func ErrTimeout() any           { return makeError(4, "Timeout", "operation timed out") }
+func ErrNotFound() any          { return makeError(5, "NotFound", "not found") }
+func ErrPermissionDenied(msg string) any {
+	if msg == "" {
+		msg = "permission denied"
+	}
+	return makeError(6, "PermissionDenied", msg)
+}
+func ErrInvalidInput(msg string) any { return makeError(7, "InvalidInput", msg) }
+func ErrConflict(msg string) any     { return makeError(8, "Conflict", msg) }
+func ErrUnavailable(msg string) any  { return makeError(9, "Unavailable", msg) }
+func ErrUnexpected(msg string) any   { return makeError(10, "Unexpected", msg) }
+
+// ═══════════════════════════════════════════════════════════
+// Result operations
+// ═══════════════════════════════════════════════════════════
+
+func Result_map(fn any, result any) any {
+	tag, ok, err := anyResultView(result)
+	if tag < 0 {
+		return Ok[any, any](SkyCall(fn, result))
+	}
+	if tag == 0 {
+		return Ok[any, any](SkyCall(fn, ok))
+	}
+	return Err[any, any](err)
+}
+
+func Result_andThen(fn any, result any) any {
+	tag, ok, err := anyResultView(result)
+	if tag < 0 {
+		// Should not happen now that every FFI call returns a typed
+		// Result per the Sky trust-boundary rule — but tolerate it
+		// defensively: treat the bare value as an already-unwrapped Ok
+		// and trust fn to return the next Result. Raising Err here
+		// would turn an FFI-wrapper regression into a user-visible
+		// runtime error with no useful stack; better to keep the
+		// pipeline flowing and let the coercion at the Task boundary
+		// surface a cleaner message if the shape is genuinely wrong.
+		return SkyCall(fn, result)
+	}
+	if tag == 0 {
+		return SkyCall(fn, ok)
+	}
+	return Err[any, any](err)
+}
+
+// Result/Maybe AnyT combinators: call-site dispatch targets that
+// preserve the any-boxed shape but skip the interface function-value
+// cast (use SkyCall instead, which handles both curried Sky closures
+// and uncurried multi-arg functions).
+func Result_mapAnyT(fn any, result any) any {
+	tag, ok, err := anyResultView(result)
+	if tag < 0 {
+		return Ok[any, any](SkyCall(fn, result))
+	}
+	if tag == 0 {
+		return Ok[any, any](SkyCall(fn, ok))
+	}
+	return Err[any, any](err)
+}
+
+// Result.andThen for the any-typed path. Semantics:
+//   - Ok(x) → fn(x); trust fn's output (expected to be a Result)
+//   - Err(e) → Err(e)
+//   - bare value (shouldn't happen after the FFI trust-boundary fix
+//     but kept defensive) → treat as already-unwrapped Ok and trust
+//     fn to return the next Result.
+//
+// Previously the bare-value branch wrapped fn's result in Ok, which
+// double-wrapped whenever fn itself returned a Result and surfaced
+// `SkyResult(SkyResult(...))` that panicked at the Task boundary.
+func Result_andThenAnyT(fn any, result any) any {
+	tag, ok, err := anyResultView(result)
+	if tag < 0 {
+		return SkyCall(fn, result)
+	}
+	if tag == 0 {
+		return SkyCall(fn, ok)
+	}
+	return Err[any, any](err)
+}
+
+func Result_mapErrorAnyT(fn any, result any) any {
+	tag, ok, err := anyResultView(result)
+	if tag < 0 {
+		return Ok[any, any](result)
+	}
+	if tag == 0 {
+		return Ok[any, any](ok)
+	}
+	return Err[any, any](SkyCall(fn, err))
+}
+
+// P8/Result typed companions — Go generics preserve the caller's E
+// and A, so typed Result pipelines compile without any boxing.
+
+func Result_mapT[E, A, B any](fn func(A) B, r SkyResult[E, A]) SkyResult[E, B] {
+	if r.Tag == 0 {
+		return Ok[E, B](fn(r.OkValue))
+	}
+	return Err[E, B](r.ErrValue)
+}
+
+func Result_andThenT[E, A, B any](fn func(A) SkyResult[E, B], r SkyResult[E, A]) SkyResult[E, B] {
+	if r.Tag == 0 {
+		return fn(r.OkValue)
+	}
+	return Err[E, B](r.ErrValue)
+}
+
+// Result_withDefaultAnyT: Sky-any shape of withDefault. Accepts
+// either an `any`-boxed SkyResult[any, any] or a concretely-typed
+// SkyResult[_, _] from a typed FFI wrapper (reflect fallback). Used
+// by the typed kernel dispatch when HM element flow isn't available
+// at the call site.
+func Result_withDefaultAnyT(def any, result any) any {
+	return Result_withDefault(def, result)
+}
+
+func Result_withDefaultT[E, A any](def A, r SkyResult[E, A]) A {
+	if r.Tag == 0 {
+		return r.OkValue
+	}
+	return def
+}
+
+func Result_mapErrorT[E, F, A any](fn func(E) F, r SkyResult[E, A]) SkyResult[F, A] {
+	if r.Tag == 1 {
+		return Err[F, A](fn(r.ErrValue))
+	}
+	return Ok[F, A](r.OkValue)
+}
+
+// P8/Maybe typed companions.
+
+func Maybe_mapT[A, B any](fn func(A) B, m SkyMaybe[A]) SkyMaybe[B] {
+	if m.Tag == 0 {
+		return Just[B](fn(m.JustValue))
+	}
+	return Nothing[B]()
+}
+
+func Maybe_andThenT[A, B any](fn func(A) SkyMaybe[B], m SkyMaybe[A]) SkyMaybe[B] {
+	if m.Tag == 0 {
+		return fn(m.JustValue)
+	}
+	return Nothing[B]()
+}
+
+func Maybe_withDefaultAnyT(def any, maybe any) any {
+	return Maybe_withDefault(def, maybe)
+}
+
+func Maybe_withDefaultT[A any](def A, m SkyMaybe[A]) A {
+	if m.Tag == 0 {
+		return m.JustValue
+	}
+	return def
+}
+
+// anyResultView returns (tag, okValue, errValue) for any Sky Result
+// shape. tag == -1 signals "not a Result" (caller decides policy).
+// Factoring the reflect dance out of each combinator keeps the hot
+// path identical while letting typed FFI wrappers (which return
+// SkyResult[string, A] for some concrete A) flow through without
+// per-combinator `ResultCoerce[any, any]` wrapping at the call site.
+func anyResultView(result any) (int, any, any) {
+	if r, ok := result.(SkyResult[any, any]); ok {
+		return r.Tag, r.OkValue, r.ErrValue
+	}
+	rv := reflect.ValueOf(result)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		okField := rv.FieldByName("OkValue")
+		errField := rv.FieldByName("ErrValue")
+		if tagField.IsValid() && okField.IsValid() && errField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
+			return int(tagField.Int()), okField.Interface(), errField.Interface()
+		}
+	}
+	return -1, nil, nil
+}
+
+func Result_withDefault(def any, result any) any {
+	// Defensive: any-typed Sky code can pass an already-unwrapped value
+	// (e.g. when withDefault is applied twice). Treat non-Result inputs
+	// as already-extracted Ok values rather than panicking — matches
+	// Elm's "graceful degradation" intent for this combinator.
+	if r, ok := result.(SkyResult[any, any]); ok {
+		if r.Tag == 0 {
+			return r.OkValue
+		}
+		return def
+	}
+	// P7: typed FFI wrappers now return SkyResult[string, A] for some
+	// concrete A. Rather than type-asserting every instantiation, fall
+	// through to reflect on the struct shape — same approach ResultCoerce
+	// uses for its generic fallback.
+	rv := reflect.ValueOf(result)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		okField := rv.FieldByName("OkValue")
+		if tagField.IsValid() && okField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
+			if tagField.Int() == 0 {
+				return okField.Interface()
+			}
+			return def
+		}
+	}
+	if result == nil {
+		return def
+	}
+	return result
+}
+
+func Result_mapError(fn any, result any) any {
+	tag, ok, err := anyResultView(result)
+	if tag < 0 {
+		return result
+	}
+	if tag == 1 {
+		return Err[any, any](SkyCall(fn, err))
+	}
+	return Ok[any, any](ok)
+}
+
+// Result.map2..map5 — apply a function to N successful results, short-
+// circuiting on first Err.
+// ── Applicative combinators ─────────────────────────────────────────
+// All of these tolerate any SkyResult[X, Y] shape (via anyResultView)
+// so typed FFI results flow in without an explicit ResultCoerce wrap.
+
+func Result_map2(fn, a, b any) any {
+	ta, oa, ea := anyResultView(a)
+	if ta < 0 {
+		return a
+	}
+	if ta != 0 {
+		return Err[any, any](ea)
+	}
+	tb, ob, eb := anyResultView(b)
+	if tb < 0 {
+		return b
+	}
+	if tb != 0 {
+		return Err[any, any](eb)
+	}
+	return Ok[any, any](apply2(fn, oa, ob))
+}
+
+func Result_map3(fn, a, b, c any) any {
+	ta, oa, ea := anyResultView(a)
+	if ta < 0 {
+		return a
+	}
+	if ta != 0 {
+		return Err[any, any](ea)
+	}
+	tb, ob, eb := anyResultView(b)
+	if tb < 0 {
+		return b
+	}
+	if tb != 0 {
+		return Err[any, any](eb)
+	}
+	tc, oc, ec := anyResultView(c)
+	if tc < 0 {
+		return c
+	}
+	if tc != 0 {
+		return Err[any, any](ec)
+	}
+	return Ok[any, any](apply3(fn, oa, ob, oc))
+}
+
+func Result_map4(fn, a, b, c, d any) any {
+	ta, oa, ea := anyResultView(a)
+	if ta < 0 {
+		return a
+	}
+	if ta != 0 {
+		return Err[any, any](ea)
+	}
+	tb, ob, eb := anyResultView(b)
+	if tb < 0 {
+		return b
+	}
+	if tb != 0 {
+		return Err[any, any](eb)
+	}
+	tc, oc, ec := anyResultView(c)
+	if tc < 0 {
+		return c
+	}
+	if tc != 0 {
+		return Err[any, any](ec)
+	}
+	td, od, ed := anyResultView(d)
+	if td < 0 {
+		return d
+	}
+	if td != 0 {
+		return Err[any, any](ed)
+	}
+	return Ok[any, any](apply4(fn, oa, ob, oc, od))
+}
+
+func Result_map5(fn, a, b, c, d, e any) any {
+	ta, oa, ea := anyResultView(a)
+	if ta < 0 {
+		return a
+	}
+	if ta != 0 {
+		return Err[any, any](ea)
+	}
+	tb, ob, eb := anyResultView(b)
+	if tb < 0 {
+		return b
+	}
+	if tb != 0 {
+		return Err[any, any](eb)
+	}
+	tc, oc, ec := anyResultView(c)
+	if tc < 0 {
+		return c
+	}
+	if tc != 0 {
+		return Err[any, any](ec)
+	}
+	td, od, ed := anyResultView(d)
+	if td < 0 {
+		return d
+	}
+	if td != 0 {
+		return Err[any, any](ed)
+	}
+	te, oe, ee := anyResultView(e)
+	if te < 0 {
+		return e
+	}
+	if te != 0 {
+		return Err[any, any](ee)
+	}
+	return Ok[any, any](apply5(fn, oa, ob, oc, od, oe))
+}
+
+// Result.andMap : Result e (a -> b) -> Result e a -> Result e b
+func Result_andMap(fr, ra any) any {
+	tfr, ofn, efn := anyResultView(fr)
+	if tfr < 0 {
+		return fr
+	}
+	if tfr != 0 {
+		return Err[any, any](efn)
+	}
+	tra, oa, ea := anyResultView(ra)
+	if tra < 0 {
+		return ra
+	}
+	if tra != 0 {
+		return Err[any, any](ea)
+	}
+	return Ok[any, any](pipelineApply(ofn, oa))
+}
+
+// Result.combine : List (Result e a) -> Result e (List a)
+// First Err short-circuits.
+func Result_combine(results any) any {
+	items := asList(results)
+	out := make([]any, 0, len(items))
+	for _, r := range items {
+		tag, ok, err := anyResultView(r)
+		if tag < 0 {
+			return r
+		}
+		if tag != 0 {
+			return Err[any, any](err)
+		}
+		out = append(out, ok)
+	}
+	return Ok[any, any](out)
+}
+
+// Result.traverse : (a -> Result e b) -> List a -> Result e (List b)
+func Result_traverse(fn, items any) any {
+	xs := asList(items)
+	out := make([]any, 0, len(xs))
+	for _, x := range xs {
+		r := SkyCall(fn, x)
+		tag, okVal, err := anyResultView(r)
+		if tag < 0 {
+			return Err[any, any](ErrInvalidInput("Result.traverse: fn did not return a Result"))
+		}
+		if tag != 0 {
+			return Err[any, any](err)
+		}
+		out = append(out, okVal)
+	}
+	return Ok[any, any](out)
+}
+
+// Slog.* dropped in v0.10.0 — these were straight aliases for the
+// equivalent Log_* functions. Migration: rewrite `Slog.info "msg" […]`
+// as `Log.info "msg" […]`. The runtime + kernel registry no longer
+// expose them.
+
+func stringifyLogArgs(args []any) any {
+	if len(args) == 0 {
+		return ""
+	}
+	if len(args) == 1 {
+		return args[0]
+	}
+	var sb strings.Builder
+	for i, a := range args {
+		if i > 0 {
+			sb.WriteString(" ")
+		}
+		sb.WriteString(fmt.Sprintf("%v", a))
+	}
+	return sb.String()
+}
+
+// ═══════════════════════════════════════════════════════════
+// Maybe operations
+// ═══════════════════════════════════════════════════════════
+
+func Maybe_withDefault(def any, maybe any) any {
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 {
+		if maybe == nil {
+			return def
+		}
+		return maybe
+	}
+	if tag == 0 {
+		return just
+	}
+	return def
+}
+
+func Maybe_map(fn any, maybe any) any {
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 {
+		return Just[any](SkyCall(fn, maybe))
+	}
+	if tag == 0 {
+		return Just[any](SkyCall(fn, just))
+	}
+	return Nothing[any]()
+}
+
+func Maybe_andThen(fn any, maybe any) any {
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 {
+		return SkyCall(fn, maybe)
+	}
+	if tag == 0 {
+		return SkyCall(fn, just)
+	}
+	return Nothing[any]()
+}
+
+func Maybe_mapAnyT(fn any, maybe any) any {
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 {
+		return Just[any](SkyCall(fn, maybe))
+	}
+	if tag == 0 {
+		return Just[any](SkyCall(fn, just))
+	}
+	return Nothing[any]()
+}
+
+func Maybe_andThenAnyT(fn any, maybe any) any {
+	tag, just := anyMaybeView(maybe)
+	if tag < 0 {
+		return SkyCall(fn, maybe)
+	}
+	if tag == 0 {
+		return SkyCall(fn, just)
+	}
+	return Nothing[any]()
+}
+
+// anyMaybeView returns (tag, justValue) for any SkyMaybe shape. Mirrors
+// anyResultView. tag == -1 means "not a Maybe" and the caller decides
+// how to handle it — typically by treating the value as already-unwrapped.
+func anyMaybeView(maybe any) (int, any) {
+	if m, ok := maybe.(SkyMaybe[any]); ok {
+		return m.Tag, m.JustValue
+	}
+	rv := reflect.ValueOf(maybe)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		justField := rv.FieldByName("JustValue")
+		if tagField.IsValid() && justField.IsValid() &&
+			(tagField.Kind() == reflect.Int || tagField.Kind() == reflect.Int64) {
+			return int(tagField.Int()), justField.Interface()
+		}
+	}
+	return -1, nil
+}
+
+// ── Maybe applicative combinators (parallel to Result) ─────────────
+// Short-circuits on the first Nothing. All accept any SkyMaybe[X]
+// shape via anyMaybeView, so typed-FFI Maybe producers flow in
+// without an explicit MaybeCoerce wrap.
+
+func Maybe_map2(fn, a, b any) any {
+	ta, oa := anyMaybeView(a)
+	if ta < 0 || ta != 0 {
+		return Nothing[any]()
+	}
+	tb, ob := anyMaybeView(b)
+	if tb < 0 || tb != 0 {
+		return Nothing[any]()
+	}
+	return Just[any](apply2(fn, oa, ob))
+}
+
+func Maybe_map3(fn, a, b, c any) any {
+	ta, oa := anyMaybeView(a)
+	if ta < 0 || ta != 0 {
+		return Nothing[any]()
+	}
+	tb, ob := anyMaybeView(b)
+	if tb < 0 || tb != 0 {
+		return Nothing[any]()
+	}
+	tc, oc := anyMaybeView(c)
+	if tc < 0 || tc != 0 {
+		return Nothing[any]()
+	}
+	return Just[any](apply3(fn, oa, ob, oc))
+}
+
+func Maybe_map4(fn, a, b, c, d any) any {
+	ta, oa := anyMaybeView(a)
+	if ta < 0 || ta != 0 {
+		return Nothing[any]()
+	}
+	tb, ob := anyMaybeView(b)
+	if tb < 0 || tb != 0 {
+		return Nothing[any]()
+	}
+	tc, oc := anyMaybeView(c)
+	if tc < 0 || tc != 0 {
+		return Nothing[any]()
+	}
+	td, od := anyMaybeView(d)
+	if td < 0 || td != 0 {
+		return Nothing[any]()
+	}
+	return Just[any](apply4(fn, oa, ob, oc, od))
+}
+
+func Maybe_map5(fn, a, b, c, d, e any) any {
+	ta, oa := anyMaybeView(a)
+	if ta < 0 || ta != 0 {
+		return Nothing[any]()
+	}
+	tb, ob := anyMaybeView(b)
+	if tb < 0 || tb != 0 {
+		return Nothing[any]()
+	}
+	tc, oc := anyMaybeView(c)
+	if tc < 0 || tc != 0 {
+		return Nothing[any]()
+	}
+	td, od := anyMaybeView(d)
+	if td < 0 || td != 0 {
+		return Nothing[any]()
+	}
+	te, oe := anyMaybeView(e)
+	if te < 0 || te != 0 {
+		return Nothing[any]()
+	}
+	return Just[any](apply5(fn, oa, ob, oc, od, oe))
+}
+
+// Maybe.andMap : Maybe (a -> b) -> Maybe a -> Maybe b
+func Maybe_andMap(fm, ma any) any {
+	tfm, ofn := anyMaybeView(fm)
+	if tfm < 0 || tfm != 0 {
+		return Nothing[any]()
+	}
+	tma, oa := anyMaybeView(ma)
+	if tma < 0 || tma != 0 {
+		return Nothing[any]()
+	}
+	return Just[any](pipelineApply(ofn, oa))
+}
+
+// Maybe.combine : List (Maybe a) -> Maybe (List a) — first Nothing
+// short-circuits (Just only when every element is Just).
+func Maybe_combine(maybes any) any {
+	items := asList(maybes)
+	out := make([]any, 0, len(items))
+	for _, m := range items {
+		tag, just := anyMaybeView(m)
+		if tag < 0 || tag != 0 {
+			return Nothing[any]()
+		}
+		out = append(out, just)
+	}
+	return Just[any](out)
+}
+
+// Maybe.traverse : (a -> Maybe b) -> List a -> Maybe (List b)
+func Maybe_traverse(fn, items any) any {
+	xs := asList(items)
+	out := make([]any, 0, len(xs))
+	// SkyCall dispatches via reflect — accepts typed-return
+	// lambdas (e.g. `func(any) Maybe[T]`) that v0.13 typed-
+	// codegen produces. The pre-fix raw assertion silently
+	// returned Nothing on every typed lambda (wrong result, not
+	// crash) — worse than panicking because callers couldn't
+	// detect the bug.
+	for _, x := range xs {
+		tag, just := anyMaybeView(SkyCall(fn, x))
+		if tag < 0 || tag != 0 {
+			return Nothing[any]()
+		}
+		out = append(out, just)
+	}
+	return Just[any](out)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Record field access (reflect-based for any-typed params)
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════
+// Dict operations
+// ═══════════════════════════════════════════════════════════
+
+func Dict_empty() any { return map[string]any{} }
+
+func Dict_insert(key any, val any, dict any) any {
+	m := AsDict(unwrapAny(dict))
+	new := make(map[string]any, len(m)+1)
+	for k, v := range m {
+		new[k] = v
+	}
+	// dictProbeKey, not encodeDictKey: inserting an Int key into a map that
+	// came from FFI/Std.Db with bare "10" keys must REPLACE that entry, not
+	// add a second one alongside it. See the typed-key section below.
+	new[dictProbeKey(m, key)] = val
+	return new
+}
+
+func Dict_get(key any, dict any) any {
+	m := AsDict(unwrapAny(dict))
+	v, ok := m[dictProbeKey(m, key)]
+	if ok {
+		return Just[any](derefPointer(v))
+	}
+	return Nothing[any]()
+}
+
+func Dict_remove(key any, dict any) any {
+	m := AsDict(unwrapAny(dict))
+	new := make(map[string]any, len(m))
+	k := dictProbeKey(m, key)
+	for kk, v := range m {
+		if kk != k {
+			new[kk] = v
+		}
+	}
+	return new
+}
+
+func Dict_member(key any, dict any) any {
+	m := AsDict(unwrapAny(dict))
+	_, ok := m[dictProbeKey(m, key)]
+	return ok
+}
+
+func Dict_size(dict any) any {
+	return len(AsDict(unwrapAny(dict)))
+}
+
+func Dict_isEmpty(dict any) any {
+	return len(AsDict(unwrapAny(dict))) == 0
+}
+
+// sortedDictKeys returns the map's string keys in ascending lexical order.
+// Sky's Dict is Elm-shaped: enumeration (keys/values/toList/foldl) is defined
+// to visit entries in sorted-key order, which also makes output deterministic
+// across runs (Go map iteration is randomised).
+func sortedDictKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func Dict_keys(dict any) any { return dictKeysKeyed(dict, dictKeyString) }
+
+func Dict_values(dict any) any { return dictValuesKeyed(dict, dictKeyString) }
+
+// AsDict coerces a Sky-side any to map[string]any. Sky Dict is
+// always map[string]any at runtime; auto-unwraps SkyResult/SkyMaybe.
+func AsDict(v any) map[string]any {
+	v = unwrapAny(v)
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	// Typed codegen sometimes passes a narrower map (map[string]string,
+	// map[string]int, map[string]V_R, …) via AsMapT[V]. Reflect across
+	// string-keyed maps so Dict.get / Dict.member / Dict.toList all
+	// keep working on the typed variants — without this, every lookup
+	// returns Nothing and user code silently receives empty strings
+	// from getField, breaking auth/verify/etc.
+	rv := reflect.ValueOf(v)
+	if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+		out := make(map[string]any, rv.Len())
+		for _, k := range rv.MapKeys() {
+			out[k.String()] = rv.MapIndex(k).Interface()
+		}
+		return out
+	}
+	return map[string]any{}
+}
+
+func Dict_toList(dict any) any { return dictToListKeyed(dict, dictKeyString) }
+
+func Dict_fromList(list any) any {
+	items := asList(list)
+	result := make(map[string]any, len(items))
+	for _, item := range items {
+		// Typed-tuple codegen (v0.17+) can pass a distinct nominal
+		// `T2[string, V]` here; `item.(SkyTuple2)` would hard-panic.
+		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed T2.
+		// Dict.fromList's Sky type is `List (comparable, v)`, so AsTuple2
+		// always receives a tuple.
+		t := AsTuple2(item)
+		result[encodeDictKey(t.V0)] = t.V1
+	}
+	return result
+}
+
+// Dict_map — the un-routed entry point. The key type is recovered from the
+// mapping function's DECLARED first parameter (see dictKeyKindForFn): a
+// `Dict Int v` lowers its `\k v -> …` to `func(int, V) W`, so handing that
+// function the runtime map's `string` key panicked in skyCallDirect (issue
+// #174). When the call site's key type is statically known the compiler routes
+// to `Dict_mapIntKey` / `…FloatKey` / `…CharKey` / `…BoolKey` instead; this
+// path covers the rest (point-free use, key-polymorphic helpers).
+func Dict_map(fn any, dict any) any {
+	return dictMapKeyed(fn, dict, dictKeyKindForFn(fn))
+}
+
+// P8/Dict typed companions — generic over value type V.
+func Dict_emptyT[V any]() map[string]V { return map[string]V{} }
+
+func Dict_insertT[V any](key string, val V, d map[string]V) map[string]V {
+	out := make(map[string]V, len(d)+1)
+	for k, v := range d {
+		out[k] = v
+	}
+	out[key] = val
+	return out
+}
+
+// Dict_getAnyT: delegates to the any/any Dict_get. The typed Dict_getT
+// below requires HM element flow; AnyT fires whenever dispatch needs
+// Sky's any-boxed shape.
+func Dict_getAnyT(key any, dict any) any {
+	return Dict_get(key, dict)
+}
+
+func Dict_getT[V any](key string, d map[string]V) SkyMaybe[V] {
+	if v, ok := d[key]; ok {
+		return Just[V](v)
+	}
+	return Nothing[V]()
+}
+
+func Dict_removeT[V any](key string, d map[string]V) map[string]V {
+	out := make(map[string]V, len(d))
+	for k, v := range d {
+		if k != key {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func Dict_memberT[V any](key string, d map[string]V) bool {
+	_, ok := d[key]
+	return ok
+}
+
+// The `Dict_*T` family below takes and returns the runtime map's key as a bare
+// Go `string`. The Rust compiler does not emit any of them — `kernel.rs` maps
+// every `Sky.Core.Dict` entry to the `any` kernel above (plus the routed
+// `…IntKey` / `…CharKey` / … variants), so nothing here sees an encoded key from
+// a Sky program. They are retained for the legacy oracle's ABI, where the
+// `key string` parameter means the compiler only ever routed them for a
+// `Dict String v` — the one key type `encodeDictKey` leaves verbatim, so they
+// keep agreeing with it. `Dict_keysT` is the one exception worth hardening: it
+// hands keys OUT, so it decodes a tag if it finds one.
+
+// Return []any so Sky's List runtime shape ([]any) is preserved and
+// downstream List.* typed companions unify cleanly (e.g. List_lengthT).
+// Strings are boxed through `any(k)` so V=any inference works when
+// the caller's dict is map[string]V for any V.
+func Dict_keysT[V any](d map[string]V) []any {
+	sk := sortedDictKeys(d)
+	keys := make([]any, 0, len(d))
+	for _, k := range sk {
+		if dk, _, ok := decodeTaggedDictKey(k); ok {
+			keys = append(keys, dk)
+			continue
+		}
+		keys = append(keys, any(k))
+	}
+	return keys
+}
+
+func Dict_valuesT[V any](d map[string]V) []any {
+	sk := sortedDictKeys(d)
+	vals := make([]any, 0, len(d))
+	for _, k := range sk {
+		vals = append(vals, any(d[k]))
+	}
+	return vals
+}
+
+func Dict_mapT[V, W any](fn func(V) W, d map[string]V) map[string]W {
+	out := make(map[string]W, len(d))
+	for k, v := range d {
+		out[k] = fn(v)
+	}
+	return out
+}
+
+// Dict_map2T: Sky's Dict.map signature is `(K -> V -> W) -> Dict K V -> Dict K W`
+// (curried 2-arg fn). The single-arg Dict_mapT (above) is the runtime
+// counterpart for the elided-key variant where the user writes `\_ v -> ...`,
+// but the natural Sky shape passes the key too. This variant accepts an
+// any-typed curried fn (the shape Sky lambdas always lower to) and calls
+// it as fn(k)(v), matching the lowered curry pattern. Used by typed
+// routing when the lambda input/output types are concrete.
+func Dict_map2T[V, W any](fn any, d map[string]V) map[string]W {
+	out := make(map[string]W, len(d))
+	for k, v := range d {
+		// fn is `func(K) func(V) W` shape (Sky-curried 2-arg). Call once
+		// with k to get the inner closure, then with v to get the result.
+		// Both SkyCall and direct invocation are tried for robustness.
+		step := SkyCall(fn, k)
+		result := SkyCall(step, v)
+		if cast, ok := result.(W); ok {
+			out[k] = cast
+		} else {
+			out[k] = Coerce[W](result)
+		}
+	}
+	return out
+}
+
+// Dict_fromListT: build a typed Dict from a list of (String, V) tuples.
+// Mirrors Dict_fromList but with concrete value type V — emitted when the
+// HM-inferred value type is concrete, avoiding the per-element any boxing
+// of the legacy path.
+func Dict_fromListT[V any](list []any) map[string]V {
+	out := make(map[string]V, len(list))
+	for _, item := range list {
+		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed
+		// `T2[string, V]` (v0.17+ typed-tuple codegen). A genuine
+		// non-tuple yields a zero SkyTuple2 with V0==nil; a real Dict
+		// key is never nil, so the `if t.V0 == nil` guard preserves the
+		// prior `default:` silent-skip semantics.
+		t := AsTuple2(item)
+		if t.V0 == nil {
+			// Unexpected shape — leave key absent. Matches Dict_fromList's
+			// silent-on-bad-pair behaviour (would panic in the type assert).
+			continue
+		}
+		key := encodeDictKey(t.V0)
+		if v, ok := t.V1.(V); ok {
+			out[key] = v
+		} else {
+			// Fall back via reflect coerce for heterogeneous slices
+			out[key] = Coerce[V](t.V1)
+		}
+	}
+	return out
+}
+
+// Dict_fromListTA: typed-input list version that delegates to the any
+// variant when the value type cannot be specialised. Kept for symmetry
+// with the List_*TA family even though Dict_fromList's any-output is
+// the trivial fallback.
+func Dict_fromListTA(list []any) any {
+	out := make(map[string]any, len(list))
+	for _, item := range list {
+		// AsTuple2 fast-paths SkyTuple2 and reflect-reboxes a typed T2;
+		// a non-tuple yields V0==nil, preserving the prior `ok` skip.
+		t := AsTuple2(item)
+		if t.V0 != nil {
+			out[encodeDictKey(t.V0)] = t.V1
+		}
+	}
+	return out
+}
+
+// ── Typed-key Dict variants ────────────────────────────────────────
+//
+// A Sky `Dict k v` is a Go `map[string]V` at runtime: `Dict_fromList` /
+// `Dict_insert` stringify every key through `fmt.Sprintf("%v", key)`, and
+// `goty.rs` pins the emitted Go type to `map[string]V` so the shape matches the
+// oracle everywhere (`rt.AsMapT[V]` narrows to `map[string]V`). Lookup-shaped
+// operations (`get`, `member`, `remove`) stringify the probe the same way, so
+// they agree with insertion for ANY key type.
+//
+// The ITERATION-shaped operations are where the key leaves the runtime again —
+// `toList` and `keys` hand it to the caller, `foldl` and `map` hand it to a
+// user function, and `values` is ordered by it. Those five must UNDO the
+// stringification, and a bare `%v` string does not say what to undo it to:
+// "97" is a `Dict Int v` key 97 and a `Dict Char v` key 'a'.
+//
+// So the key SAYS SO ITSELF. `encodeDictKey` writes a two-byte kind tag in
+// front of every non-String key, and `decodeTaggedDictKey` reads it back:
+//
+//	Dict Int v    key 10     → "\x01i10"
+//	Dict Char v   key 'a'    → "\x01c97"
+//	Dict Float v  key 1.5    → "\x01f1.5"
+//	Dict Bool v   key True   → "\x01btrue"
+//	Dict String v key "a"    → "a"           (unchanged — see below)
+//
+// A SELF-DESCRIBING key is what closes issue #174 in full, because the two
+// channels the first fix used both come from the STATIC type and the static
+// type is exactly what a key-polymorphic helper does not have:
+//
+//   - the COMPILER routes a call site whose `Dict k v` it can see to the
+//     `…IntKey` / `…CharKey` / … entry point below (`dict_typed_key_specialised`
+//     in lower.rs) — but in `f : Dict k v -> …` the key erases to `any`, so
+//     there is nothing to route on;
+//   - the CALLBACK carries the key type in its declared first parameter for
+//     `foldl` / `map` (`dictKeyKindForFn`) — but the same erasure makes that
+//     parameter `any`.
+//
+// Both channels are KEPT, as the fallback for a map whose keys were never
+// encoded here: an FFI or `Std.Db` `map[string]any`, a JSON object, a session
+// payload written by an older binary. Per key the order is
+//
+//	tag on the key  →  compiler-routed kind  →  callback-declared kind  →  string
+//
+// so an untagged map behaves exactly as it did before this change and a tagged
+// one needs no static type at all.
+//
+// String keys are deliberately NOT tagged. A `Dict String v` is the shape that
+// crosses into JSON objects, `Std.Db` rows, HTTP headers and FFI `map[string]any`
+// — where the key IS the external name and must stay verbatim — and it is also
+// the overwhelmingly common case, so it keeps its exact prior bytes. The one
+// string that would otherwise be ambiguous (a key that itself starts with the
+// tag byte) is escaped to `"\x01s"+key`, which keeps the encoding injective.
+//
+// Tuple, list, record and ADT keys remain one-way: `%v` is not injective for
+// them (`("a b", "c")` and `("a", "b c")` both render `{a b c}`), so they
+// stringify untagged and `requireDecodableDictKey` reports them.
+
+// dictKeyTagByte prefixes every encoded non-String Dict key.
+//
+// It is `\x01`, not `\x00`: an encoded key travels wherever the Dict does, and
+// PostgreSQL rejects a NUL byte in `text`/`jsonb` — a `Dict Int v` inside a
+// Sky.Live model persisted to a Postgres session store would have failed to
+// write. `\x01` has no such restriction, and JSON escapes it as ``.
+const dictKeyTagByte = '\x01'
+
+// dictKeyKind is the Sky type a stringified runtime key decodes back to.
+type dictKeyKind uint8
+
+const (
+	// dictKeyString — no decode. Also the fallback whenever the key type is
+	// unknown, which keeps the historical (string-key) behaviour.
+	dictKeyString dictKeyKind = iota
+	dictKeyInt
+	dictKeyFloat
+	dictKeyChar
+	dictKeyBool
+)
+
+// dictKeyKindOf classifies a LIVE Sky key value the way `dictKeyKindForFn`
+// classifies a callback's declared parameter — off the Go kind, because that is
+// what the lowering committed the Sky type to. Sky's `Char` is a Go `rune`
+// (`int32`) and Sky's `Int` is a Go `int`, so the int32 case is Char and every
+// other integer width is Int; the two agree with each other by construction,
+// which is what makes `insert`'s encoding and `foldl`'s decoding meet.
+//
+// `ok=false` means "not a key type that round-trips" — a tuple, record, list or
+// ADT key. Those stringify untagged, exactly as before.
+func dictKeyKindOf(k any) (dictKeyKind, bool) {
+	rv := reflect.ValueOf(k)
+	if !rv.IsValid() {
+		return dictKeyString, false
+	}
+	switch rv.Kind() {
+	case reflect.String:
+		return dictKeyString, true
+	case reflect.Int32:
+		return dictKeyChar, true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return dictKeyInt, true
+	case reflect.Float32, reflect.Float64:
+		return dictKeyFloat, true
+	case reflect.Bool:
+		return dictKeyBool, true
+	}
+	return dictKeyString, false
+}
+
+// dictKeyKindLetter is the tag byte for each kind. `dictKeyString`'s 's' is
+// only ever emitted for the escape case described above.
+func dictKeyKindLetter(kind dictKeyKind) byte {
+	switch kind {
+	case dictKeyInt:
+		return 'i'
+	case dictKeyFloat:
+		return 'f'
+	case dictKeyChar:
+		return 'c'
+	case dictKeyBool:
+		return 'b'
+	}
+	return 's'
+}
+
+// encodeDictKey turns a Sky key into the runtime map's string key. It REPLACES
+// the bare `fmt.Sprintf("%v", key)` at every Dict entry point, so that insertion
+// and lookup keep agreeing while iteration gains the ability to invert.
+//
+// The payload after the tag is still `%v` — decimal for Int, the code point for
+// Char, Go's shortest round-trip form for Float, "true"/"false" for Bool — so
+// `decodeDictKey` (which already inverted those) is unchanged and a tagged key
+// stays human-readable in a hex dump.
+func encodeDictKey(k any) string {
+	// Fast path for the dominant case: a `Dict String v` key is returned
+	// verbatim without touching reflect. Only a key that starts with the tag
+	// byte falls through to the escape.
+	if s, ok := k.(string); ok && (len(s) == 0 || s[0] != dictKeyTagByte) {
+		return s
+	}
+	k = derefPointer(unwrapAny(k))
+	kind, ok := dictKeyKindOf(k)
+	if !ok {
+		// Composite key: one-way, exactly as before.
+		return fmt.Sprintf("%v", k)
+	}
+	if kind == dictKeyString {
+		s := reflect.ValueOf(k).String()
+		if len(s) > 0 && s[0] == dictKeyTagByte {
+			// Escape, so a String key that happens to start with the tag
+			// byte can never be read back as some other kind's key.
+			return string([]byte{dictKeyTagByte, 's'}) + s
+		}
+		return s
+	}
+	return string([]byte{dictKeyTagByte, dictKeyKindLetter(kind)}) + fmt.Sprintf("%v", k)
+}
+
+// decodeTaggedDictKey inverts encodeDictKey. `ok=false` means the key carries no
+// tag — an FFI / Std.Db / JSON / pre-upgrade map — and the caller falls back to
+// the statically-supplied kind, which is the behaviour that predates this.
+func decodeTaggedDictKey(s string) (any, dictKeyKind, bool) {
+	if len(s) < 2 || s[0] != dictKeyTagByte {
+		return nil, dictKeyString, false
+	}
+	payload := s[2:]
+	switch s[1] {
+	case 's':
+		return payload, dictKeyString, true
+	case 'i':
+		return decodeDictKey(dictKeyInt, payload), dictKeyInt, true
+	case 'f':
+		return decodeDictKey(dictKeyFloat, payload), dictKeyFloat, true
+	case 'c':
+		return decodeDictKey(dictKeyChar, payload), dictKeyChar, true
+	case 'b':
+		return decodeDictKey(dictKeyBool, payload), dictKeyBool, true
+	}
+	// An unknown tag letter is not ours — treat the whole thing as a String
+	// key rather than silently dropping the entry.
+	return nil, dictKeyString, false
+}
+
+// dictProbeKey is the lookup counterpart of encodeDictKey: it returns the key
+// under which `key` is actually stored in `m`.
+//
+// The encoded form is tried first. The bare `%v` form is the fallback, and it is
+// what keeps a map that was NOT built by these kernels working: an FFI or
+// `Std.Db` `map[string]any` typed as a `Dict Int v` holds "10", not "\x01i10",
+// and `Dict.get 10` on it must still find the entry. Insertion uses the same
+// resolution, so inserting into such a map overwrites the existing entry rather
+// than adding a second, logically-equal key.
+func dictProbeKey(m map[string]any, key any) string {
+	enc := encodeDictKey(key)
+	if len(enc) < 2 || enc[0] != dictKeyTagByte {
+		// Untagged: the encoded form IS the plain form, so there is no second
+		// place to look. This is every `Dict String v` probe, and it costs one
+		// map lookup exactly as it did before.
+		return enc
+	}
+	if _, ok := m[enc]; ok {
+		return enc
+	}
+	plain := fmt.Sprintf("%v", derefPointer(unwrapAny(key)))
+	if _, ok := m[plain]; ok {
+		return plain
+	}
+	return enc
+}
+
+// decodeDictKey inverts the `fmt.Sprintf("%v", key)` that put the key into the
+// map. Every branch has a total fallback: a malformed key (an FFI-supplied
+// `map[string]any` whose keys were never Sky keys) yields the zero value rather
+// than panicking, matching the "these operations always return a list"
+// contract the un-decoded versions had.
+func decodeDictKey(kind dictKeyKind, s string) any {
+	switch kind {
+	case dictKeyInt:
+		if n, err := strconv.Atoi(s); err == nil {
+			return n
+		}
+		// A `Dict Int v` key can have been written through a Float-shaped
+		// Sky value ("1.0"); truncate rather than lose the entry.
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return int(f)
+		}
+		return 0
+	case dictKeyFloat:
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return f
+		}
+		return 0.0
+	case dictKeyChar:
+		// Sky's Char is a Go `rune` (int32), so `%v` prints its DECIMAL CODE
+		// POINT: 'a' is stored as "97", not as "a". Decode that first, and
+		// fall back to the first rune for a key that was stringified from a
+		// one-character string instead.
+		if n, err := strconv.Atoi(s); err == nil {
+			return rune(n)
+		}
+		for _, r := range s {
+			return r
+		}
+		return rune(0)
+	case dictKeyBool:
+		if b, err := strconv.ParseBool(s); err == nil {
+			return b
+		}
+		return false
+	}
+	return s
+}
+
+// dictEntry is one map entry with its key decoded back to the Sky type.
+type dictEntry struct {
+	raw  string      // the runtime map key, i.e. the encoded form
+	key  any         // decoded
+	kind dictKeyKind // what it decoded AS — per entry, see dictEntries
+	val  any
+}
+
+// dictEntries decodes every entry and sorts them by the DECODED key.
+//
+// Sorting the decoded key is the whole point: Sky's Dict is Elm-shaped, so
+// enumeration is defined to visit entries in ascending key order, and the
+// encoded form does not sort the same way ("10" < "9" lexically, 9 < 10
+// numerically). Sorting also makes enumeration deterministic despite Go's
+// randomised map iteration.
+//
+// The kind is resolved PER ENTRY: a key that carries its own tag decodes by
+// that tag and needs no static type (which is what makes a key-polymorphic
+// helper work), and one that does not falls back to `kind` — the compiler-routed
+// or callback-declared type, i.e. the pre-existing behaviour for maps this
+// runtime did not build. A map can legitimately hold both, e.g. after inserting
+// into an FFI-supplied `map[string]any`, so the ordering below is total across
+// kinds rather than assuming one.
+func dictEntries(dict any, kind dictKeyKind) []dictEntry {
+	m := AsDict(unwrapAny(dict))
+	ents := make([]dictEntry, 0, len(m))
+	for k, v := range m {
+		if dk, dkind, ok := decodeTaggedDictKey(k); ok {
+			ents = append(ents, dictEntry{raw: k, key: dk, kind: dkind, val: v})
+			continue
+		}
+		ents = append(ents, dictEntry{raw: k, key: decodeDictKey(kind, k), kind: kind, val: v})
+	}
+	sort.SliceStable(ents, func(i, j int) bool { return dictEntryLess(ents[i], ents[j]) })
+	return ents
+}
+
+// dictEntryLess orders two decoded entries. Within one kind it is the kind's own
+// ascending order — which for a homogeneous dict (every real one) is exactly the
+// order the per-kind comparators gave before. Across kinds it falls back to the
+// kind rank, so a mixed-provenance map still enumerates deterministically
+// instead of tripping a failed type assertion in the comparator.
+func dictEntryLess(a, b dictEntry) bool {
+	if a.kind != b.kind {
+		return a.kind < b.kind
+	}
+	switch a.kind {
+	case dictKeyInt:
+		x, xok := a.key.(int)
+		y, yok := b.key.(int)
+		if xok && yok {
+			return x < y
+		}
+	case dictKeyFloat:
+		x, xok := a.key.(float64)
+		y, yok := b.key.(float64)
+		if xok && yok {
+			return x < y
+		}
+	case dictKeyChar:
+		x, xok := a.key.(rune)
+		y, yok := b.key.(rune)
+		if xok && yok {
+			return x < y
+		}
+	case dictKeyBool:
+		x, xok := a.key.(bool)
+		y, yok := b.key.(bool)
+		if xok && yok {
+			return !x && y
+		}
+	case dictKeyString:
+		// The decoded string, not the raw key: they are the same except for
+		// an escaped key, where the raw carries the escape prefix and would
+		// sort away from its unescaped neighbours.
+		x, xok := a.key.(string)
+		y, yok := b.key.(string)
+		if xok && yok {
+			return x < y
+		}
+	}
+	return a.raw < b.raw
+}
+
+// dictKeyKindForFn reads the key type off a Dict callback's DECLARED first
+// parameter. `Dict.foldl : (k -> v -> a -> a) -> a -> Dict k v -> a` and
+// `Dict.map : (k -> v -> w) -> Dict k v -> Dict k w` both take the key first,
+// and the lowering gives that parameter the key's concrete Go type whenever it
+// knows it — so the function itself carries the answer even at a call site the
+// compiler did not route.
+//
+// `any`-typed (key-polymorphic) callbacks fall back to the string key, which is
+// what they were already receiving.
+func dictKeyKindForFn(fn any) dictKeyKind {
+	if fn == nil {
+		return dictKeyString
+	}
+	t := reflect.TypeOf(fn)
+	if t == nil || t.Kind() != reflect.Func || t.NumIn() == 0 {
+		return dictKeyString
+	}
+	switch t.In(0).Kind() {
+	case reflect.Int32:
+		// Go's `rune` IS int32, and Sky's Int is `int` — so an int32
+		// parameter is a Char.
+		return dictKeyChar
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return dictKeyInt
+	case reflect.Float32, reflect.Float64:
+		return dictKeyFloat
+	case reflect.Bool:
+		return dictKeyBool
+	}
+	return dictKeyString
+}
+
+// A decoded key still has to MATCH the callback's parameter type exactly —
+// `skyCallDirect` type-checks arguments — but it already widens numerics
+// (`int` → `int64`) through its `safeReflectConvert` arm, so decoding to the
+// key's own Go type is enough and no fitting step belongs here.
+
+// ── The five iteration-shaped operations, over decoded keys ────────
+
+func dictToListKeyed(dict any, kind dictKeyKind) any {
+	ents := dictEntries(dict, kind)
+	result := make([]any, 0, len(ents))
+	for _, e := range ents {
+		result = append(result, SkyTuple2{V0: e.key, V1: e.val})
+	}
+	return result
+}
+
+func dictKeysKeyed(dict any, kind dictKeyKind) any {
+	ents := dictEntries(dict, kind)
+	result := make([]any, 0, len(ents))
+	for _, e := range ents {
+		result = append(result, e.key)
+	}
+	return result
+}
+
+// dictValuesKeyed returns no key at all — but the ORDER it returns values in is
+// the key order, so it needs the decoded key just as much (`Dict.values` on a
+// `Dict Int v` with keys 1, 2, 9, 10 came back in lexical key order).
+func dictValuesKeyed(dict any, kind dictKeyKind) any {
+	ents := dictEntries(dict, kind)
+	result := make([]any, 0, len(ents))
+	for _, e := range ents {
+		result = append(result, e.val)
+	}
+	return result
+}
+
+// requireDecodableDictKey reports the ONE key shape that cannot be handed to a
+// callback: a composite key (a tuple, list, record or custom type).
+//
+// `fmt.Sprintf("%v", key)` is not injective for those — `("a b", "c")` and
+// `("a", "b c")` both stringify to `{a b c}` — so no decoder can be correct,
+// and the key genuinely does not survive the round trip. Supporting them means
+// changing what a Dict key is encoded AS, which is a wider change than
+// decoding one.
+//
+// Without this the call falls through to `skyCallDirect` and panics with
+// "argument 0 type mismatch — function expects rt.T2[int,int], got string",
+// which reads as a compiler bug. It is a documented limitation, so say so. The
+// guard fires only where the call was going to panic regardless: a `string`
+// bound for a struct/slice/map parameter has no other outcome.
+func requireDecodableDictKey(op string, fn any, key any) {
+	if _, isStr := key.(string); !isStr {
+		return
+	}
+	t := reflect.TypeOf(fn)
+	if t == nil || t.Kind() != reflect.Func || t.NumIn() == 0 {
+		return
+	}
+	switch t.In(0).Kind() {
+	case reflect.Struct, reflect.Slice, reflect.Array, reflect.Map, reflect.Pointer:
+		panic(fmt.Sprintf(
+			"rt.Dict: unsupported key type %v in %s — Dict keys are stringified at runtime and only String, Int, Float, Char and Bool keys decode back",
+			t.In(0), op))
+	}
+}
+
+func dictFoldlKeyed(fn any, acc any, dict any, kind dictKeyKind) any {
+	result := acc
+	for _, e := range dictEntries(dict, kind) {
+		requireDecodableDictKey("Dict.foldl", fn, e.key)
+		step := SkyCall(fn, e.key)
+		step2 := SkyCall(step, e.val)
+		result = SkyCall(step2, result)
+	}
+	return result
+}
+
+// dictMapKeyed rebuilds the map under the ORIGINAL (stringified) keys — only
+// the values change, so the result is keyed exactly as the input was.
+func dictMapKeyed(fn any, dict any, kind dictKeyKind) any {
+	ents := dictEntries(dict, kind)
+	result := make(map[string]any, len(ents))
+	for _, e := range ents {
+		requireDecodableDictKey("Dict.map", fn, e.key)
+		step := SkyCall(fn, e.key)
+		result[e.raw] = SkyCall(step, e.val)
+	}
+	return result
+}
+
+// ── Compiler-routed entry points ───────────────────────────────────
+//
+// One per (operation, key type). The compiler emits these in place of the
+// default kernel when it can see the key type at the call site; each is a
+// one-liner over the shared implementation above.
+
+func Dict_toListIntKey(dict any) any   { return dictToListKeyed(dict, dictKeyInt) }
+func Dict_toListFloatKey(dict any) any { return dictToListKeyed(dict, dictKeyFloat) }
+func Dict_toListCharKey(dict any) any  { return dictToListKeyed(dict, dictKeyChar) }
+func Dict_toListBoolKey(dict any) any  { return dictToListKeyed(dict, dictKeyBool) }
+
+func Dict_keysIntKey(dict any) any   { return dictKeysKeyed(dict, dictKeyInt) }
+func Dict_keysFloatKey(dict any) any { return dictKeysKeyed(dict, dictKeyFloat) }
+func Dict_keysCharKey(dict any) any  { return dictKeysKeyed(dict, dictKeyChar) }
+func Dict_keysBoolKey(dict any) any  { return dictKeysKeyed(dict, dictKeyBool) }
+
+func Dict_valuesIntKey(dict any) any   { return dictValuesKeyed(dict, dictKeyInt) }
+func Dict_valuesFloatKey(dict any) any { return dictValuesKeyed(dict, dictKeyFloat) }
+func Dict_valuesCharKey(dict any) any  { return dictValuesKeyed(dict, dictKeyChar) }
+func Dict_valuesBoolKey(dict any) any  { return dictValuesKeyed(dict, dictKeyBool) }
+
+func Dict_foldlIntKey(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyInt)
+}
+
+func Dict_foldlFloatKey(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyFloat)
+}
+
+func Dict_foldlCharKey(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyChar)
+}
+
+func Dict_foldlBoolKey(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyBool)
+}
+
+func Dict_mapIntKey(fn any, dict any) any   { return dictMapKeyed(fn, dict, dictKeyInt) }
+func Dict_mapFloatKey(fn any, dict any) any { return dictMapKeyed(fn, dict, dictKeyFloat) }
+func Dict_mapCharKey(fn any, dict any) any  { return dictMapKeyed(fn, dict, dictKeyChar) }
+func Dict_mapBoolKey(fn any, dict any) any  { return dictMapKeyed(fn, dict, dictKeyBool) }
+
+// Dict_foldl — the un-routed entry point; see Dict_map for why the key type
+// comes off the callback.
+func Dict_foldl(fn any, acc any, dict any) any {
+	return dictFoldlKeyed(fn, acc, dict, dictKeyKindForFn(fn))
+}
+
+func Dict_union(a any, b any) any {
+	ma := AsDict(unwrapAny(a))
+	mb := AsDict(unwrapAny(b))
+	result := make(map[string]any, len(ma)+len(mb))
+	for k, v := range mb {
+		result[k] = v
+	}
+	for k, v := range ma {
+		result[k] = v
+	}
+	return result
+}
+
+// ═══════════════════════════════════════════════════════════
+// Math operations
+// ═══════════════════════════════════════════════════════════
+
+func Math_abs(n any) any {
+	x := AsInt(n)
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// Math.min / Math.max are polymorphic (`a -> a -> a`, "any comparable type" —
+// Sky.Core.Math). Compare via skyLessThan, NOT AsInt: AsInt truncates Floats to
+// Int (so `Math.min` over `[0.4 … 1.3]` collapsed the range to 0..1, mis-scaling
+// every Std.Ui.Chart sparkline/heatmap) and is meaningless for Strings.
+func Math_min(a any, b any) any {
+	if skyLessThan(a, b) {
+		return a
+	}
+	return b
+}
+func Math_max(a any, b any) any {
+	if skyLessThan(b, a) {
+		return a
+	}
+	return b
+}
+
+// P8/Math typed companions — direct int arithmetic, no AsInt boxing.
+func Math_absT(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+func Math_minT(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+func Math_maxT(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func Field(record any, field string) any {
+	record = unwrapAny(record)
+	v := reflect.ValueOf(record)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() == reflect.Struct {
+		f := v.FieldByName(field)
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	if m, ok := record.(map[string]any); ok {
+		// v0.16.9 — restore case-insensitive map lookup so typed
+		// codegen's `rt.Field(req, "Path")` finds runtime maps keyed
+		// lowercase ("path") AND so user code via `Dict.get "path"`
+		// keeps working on capitalized maps.  The Sky.Live runtime
+		// req-map keys are lowercase for historical compatibility
+		// with apps that read via lowercase string literals (e.g.
+		// `Dict.get "path" req`); v0.16.7 #417 + v0.16.8 #423
+		// briefly broke that by capitalizing the keys.  Capitalize-
+		// only would break SkyDeploy + every existing app reading
+		// req fields via Sky's Dict.get; lowercase-only breaks
+		// typed-codegen `req.path` access.  Case-insensitive
+		// fallback closes both.
+		if v, ok := m[field]; ok {
+			return v
+		}
+		// Fast-path: try the swapped-case first char (handles the
+		// dominant "Path" ↔ "path" pair without scanning).
+		if len(field) > 0 {
+			lc := byte(0)
+			uc := byte(0)
+			if field[0] >= 'A' && field[0] <= 'Z' {
+				lc = field[0] + ('a' - 'A')
+			} else if field[0] >= 'a' && field[0] <= 'z' {
+				uc = field[0] - ('a' - 'A')
+			}
+			if lc != 0 {
+				if v, ok := m[string(lc)+field[1:]]; ok {
+					return v
+				}
+			}
+			if uc != 0 {
+				if v, ok := m[string(uc)+field[1:]]; ok {
+					return v
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ═══════════════════════════════════════════════════════════
+// Any-typed Task wrappers (until type checker provides types)
+// ═══════════════════════════════════════════════════════════
+
+// Returns an any-typed Task thunk. Shape: `func() any` that returns
+// SkyResult[any, any]. Callers invoke via anyTaskInvoke so downstream
+// paths don't care whether they got a raw `func() any` or the typed
+// SkyTask[any, any] form.
+func AnyTaskSucceed(v any) any {
+	return func() any { return Ok[any, any](v) }
+}
+
+func AnyTaskFail(e any) any {
+	return func() any { return Err[any, any](e) }
+}
+
+// TaskCoerce converts any Task-shaped value (`func() any`, the typed
+// `SkyTask[any, any]`, or already-resolved SkyResult) into the typed
+// `SkyTask[any, any]` form that typed-codegen call sites expect.
+// The compiler inserts this at every typed-return boundary where the
+// inner value came from the any-typed Task builders (AnyTaskSucceed /
+// AnyTaskAndThen / …) but the outer signature declares
+// `rt.SkyTask[any, any]`. Without it, the previous direct
+// `.(rt.SkyTask[any, any])` assertion panicked on `func() any`.
+func TaskCoerce(v any) SkyTask[any, any] {
+	if t, ok := v.(SkyTask[any, any]); ok {
+		return t
+	}
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		return anyTaskInvoke(v)
+	})
+}
+
+// TaskCoerceT returns a typed SkyTask[E, A] from any task-shaped value.
+// Used when function signatures declare concrete Task return types.
+func TaskCoerceT[E any, A any](v any) SkyTask[E, A] {
+	if t, ok := v.(SkyTask[E, A]); ok {
+		return t
+	}
+	return SkyTask[E, A](func() SkyResult[E, A] {
+		raw := anyTaskInvoke(v)
+		return ResultCoerce[E, A](any(raw))
+	})
+}
+
+// Coerce — audit P0-3. Replaces raw `any(body).(T)` assertions that
+// codegen used to emit at typed-return boundaries. Direct assertion
+// panics with a cryptic `interface conversion: interface {} is …, not
+// …` message; Coerce fails with a clear site-identified message that
+// propagates through rt's panic recovery as a clean
+// Err(InvalidInput) at the nearest Task boundary.
+//
+// Behaviour: if v holds T, return it. Else if v is reflect-convertible
+// to T (handles numeric widening, typed-alias round-trips, etc.),
+// convert and return. Else panic with a diagnostic naming both the
+// expected and actual Go types.
+//
+// Usage: emitted as `rt.Coerce[T](body)` where T is a concrete Go
+// type (e.g. `State_Model_R`). For primitives prefer the named
+// helpers (CoerceString/Int/Bool/Float) — they're identical in
+// behaviour but compile without generic instantiation and give a
+// smaller-footprint emit.
+func Coerce[T any](v any) T {
+	if t, ok := v.(T); ok {
+		return t
+	}
+	// Fix A for docs/parametric-record-aliases-bugs.md Surface 2:
+	// function-targeted Coerce must always go via makeFuncAdapter
+	// when the source signature differs from T. Go function types
+	// are nominal in their parameter/return types — partial-applied
+	// ADT ctors lowered into `func(Concrete_R) Msg` then asked to
+	// fit `func(any) Msg` would otherwise panic at the wire
+	// dispatcher. (The exact-signature happy path is already
+	// caught by the v.(T) assertion above.)
+	if v != nil {
+		rv0 := reflect.ValueOf(v)
+		if rv0.IsValid() && rv0.Kind() == reflect.Func {
+			var zero T
+			tt := reflect.TypeOf(zero)
+			if tt != nil && tt.Kind() == reflect.Func {
+				return makeFuncAdapter[T](rv0, tt).(T)
+			}
+		}
+	}
+	// If the source is a Sky Result/Maybe but the target isn't,
+	// unwrap the Ok/Just first. Fixes the path where Ffi.callPure's
+	// auto-Ok-wrap collides with a typed non-Result Sky surface
+	// (Decimal.zero : Decimal — the handler returns the bare
+	// SkyADT, runWithRecover wraps it in Ok, callers Coerce[SkyADT]).
+	// Source must be a Sky container struct (Result/Maybe) — guarding
+	// on Kind avoids panics from `u != v` on uncomparable types
+	// (e.g. func values).
+	if v != nil {
+		if rvSrc := reflect.ValueOf(v); rvSrc.IsValid() && rvSrc.Kind() == reflect.Struct {
+			if rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("OkValue").IsValid() ||
+				rvSrc.FieldByName("Tag").IsValid() && rvSrc.FieldByName("JustValue").IsValid() {
+				var zeroT T
+				targetTy := reflect.TypeOf(zeroT)
+				isResultTarget := false
+				if targetTy != nil {
+					tyStr := targetTy.String()
+					isResultTarget = strings.HasPrefix(tyStr, "rt.SkyResult[") ||
+						strings.HasPrefix(tyStr, "rt.SkyMaybe[")
+				}
+				if !isResultTarget {
+					u := unwrapAny(v)
+					if t, ok := u.(T); ok {
+						return t
+					}
+					v = u
+				}
+			}
+		}
+	}
+	var zero T
+	// nil passes through for pointer/interface/slice/map/func targets.
+	// Sky's `js "nil"` produces Go nil; typed FFI wrappers may need to
+	// pass nil as a *Config or similar pointer arg.
+	if v == nil {
+		targetTy := reflect.TypeOf((*T)(nil)).Elem()
+		switch targetTy.Kind() {
+		case reflect.Ptr, reflect.Interface, reflect.Slice,
+			reflect.Map, reflect.Func, reflect.Chan:
+			return zero
+		}
+	}
+	rv := reflect.ValueOf(v)
+	targetTy := reflect.TypeOf(zero)
+
+	if rv.IsValid() && targetTy != nil {
+		// Numeric-widening (safe subset).
+		if rv.Type().ConvertibleTo(targetTy) {
+			if safeReflectConvert(rv.Kind(), targetTy.Kind()) {
+				return rv.Convert(targetTy).Interface().(T)
+			}
+		}
+		// Slice coercion: []any → []ConcreteT. Sky lists are
+		// homogeneously-typed at the Sky level but lowered to
+		// []any in codegen. Typed FFI wrappers expect the
+		// concrete slice type (e.g. []option.ClientOption). For
+		// empty/nil slices, return nil of the target slice type.
+		// For non-empty slices, convert element-by-element via
+		// reflect.
+		// Function adapter: Sky callbacks are lowered to
+		// `func(any, any, ...) any`, but typed Go FFI wrappers
+		// expect concrete signatures (e.g. `func(http.ResponseWriter,
+		// *http.Request)`). MakeFunc builds a thunk of the target
+		// signature that boxes incoming args via interface, calls
+		// the Sky func, and unwraps the return. Without this, every
+		// FFI that takes a Go callback (mux.HandleFunc, http.Handle,
+		// fyne callbacks, etc.) panics at the typed-arg boundary.
+		if rv.Kind() == reflect.Func && targetTy.Kind() == reflect.Func {
+			return makeFuncAdapter[T](rv, targetTy).(T)
+		}
+		if rv.Kind() == reflect.Slice && targetTy.Kind() == reflect.Slice {
+			n := rv.Len()
+			out := reflect.MakeSlice(targetTy, n, n)
+			elemTy := targetTy.Elem()
+			for i := 0; i < n; i++ {
+				elem := rv.Index(i).Interface()
+				// FFI boundary: Sky lists may contain Result-wrapped
+				// values (from typed T-suffix wrappers). Unwrap Ok
+				// values before coercing to the target element type.
+				elem = unwrapResultOk(elem)
+				if elem == nil {
+					continue
+				}
+				ev := reflect.ValueOf(elem)
+				// Delegate through narrowReflectValue so nested
+				// map/slice targets recurse (e.g. []map[string]any →
+				// []map[string]string needs per-value string coercion
+				// inside each map entry, which the naive ConvertibleTo
+				// check above misses).
+				narrowed := narrowReflectValue(ev, elemTy)
+				if narrowed.IsValid() {
+					out.Index(i).Set(narrowed)
+					continue
+				}
+				// REACHABLE-FROM-SKY: heterogeneous slice element through
+				// a typed narrowing. Subsumed by `CoerceFailure` at the
+				// top-level recover (panic message starts with `rt.Coerce`).
+				panic(fmt.Sprintf(
+					"rt.Coerce: slice element [%d]: cannot convert %T to %v",
+					i, elem, elemTy))
+			}
+			return out.Interface().(T)
+		}
+		// Map coercion: map[string]any → map[string]V. Walk values
+		// element-by-element, converting each via the same rules as
+		// slices. This lets typed codegen say `map[string]string` at
+		// the Sky level while the runtime still stores `map[string]any`
+		// (SQL row dicts, Firestore snapshots, Sky.Live session maps).
+		if rv.Kind() == reflect.Map && targetTy.Kind() == reflect.Map &&
+			rv.Type().Key().Kind() == reflect.String &&
+			targetTy.Key().Kind() == reflect.String {
+			out := reflect.MakeMapWithSize(targetTy, rv.Len())
+			valTy := targetTy.Elem()
+			for _, k := range rv.MapKeys() {
+				elem := rv.MapIndex(k).Interface()
+				elem = unwrapResultOk(elem)
+				if elem == nil {
+					out.SetMapIndex(k, reflect.Zero(valTy))
+					continue
+				}
+				ev := reflect.ValueOf(elem)
+				narrowed := narrowReflectValue(ev, valTy)
+				if narrowed.IsValid() {
+					out.SetMapIndex(k, narrowed)
+					continue
+				}
+				// REACHABLE-FROM-SKY: heterogeneous map value through
+				// typed narrowing. Subsumed by `CoerceFailure` at the
+				// top-level recover.
+				panic(fmt.Sprintf(
+					"rt.Coerce: map value [%v]: cannot convert %T to %v",
+					k.Interface(), elem, valTy))
+			}
+			return out.Interface().(T)
+		}
+		// Pointer ↔ value auto-adapt. FFI constructors return `*T` via
+		// `new(pkg.T)` (builder chain-friendly), but consuming APIs may
+		// expect `T` by value (common with OpenAI / Stripe / Firestore
+		// SDKs whose request structs use `[]Foo` not `[]*Foo`). The
+		// reverse — `T` → `*T` — covers methods that take a pointer
+		// receiver and the user has a value in hand. These auto-adapts
+		// are zero-cost and symmetric so Sky pipeline code doesn't
+		// need to sprinkle explicit deref/addr operators the language
+		// doesn't expose.
+		if rv.Kind() == reflect.Ptr && !rv.IsNil() {
+			elem := rv.Elem()
+			if elem.Type().AssignableTo(targetTy) {
+				return elem.Interface().(T)
+			}
+			if elem.Type().ConvertibleTo(targetTy) && safeReflectConvert(elem.Kind(), targetTy.Kind()) {
+				return elem.Convert(targetTy).Interface().(T)
+			}
+		}
+		if targetTy.Kind() == reflect.Ptr && rv.Type().AssignableTo(targetTy.Elem()) {
+			p := reflect.New(targetTy.Elem())
+			p.Elem().Set(rv)
+			return p.Interface().(T)
+		}
+		// v0.13.x #158 — map→struct narrowing. Source: `map[string]any`
+		// (the runtime shape of Db.query rows, Firestore snapshots,
+		// JSON-decoded blobs). Target: a record alias
+		// `Foo_R = struct { Field1 T1; Field2 T2; ... }`.
+		// Without this branch, `rt.Coerce[Foo_R](dbRow)` panics with
+		// `expected Foo_R, got map[string]interface {}` even though
+		// every field is recoverable by name. Build T field-by-field,
+		// applying narrowReflectValue per field so nested container
+		// types (typed maps, typed slices) round-trip too.
+		if rv.Kind() == reflect.Map && targetTy.Kind() == reflect.Struct &&
+			rv.Type().Key().Kind() == reflect.String {
+			return narrowMapToStruct(rv, targetTy).Interface().(T)
+		}
+		// v0.16.3 #467 — struct→struct cross-shape narrowing for the
+		// user-facing Coerce[T] surface. Mirrors coerceInner's branch
+		// at line 539: a runtime FFI struct (rt.SkyResponse,
+		// rt.SkyRequest, rt.HttpResponse, …) flowing into a user-declared
+		// `type alias`-emitted Go struct (Sky_Http_Server_Response_R,
+		// _Request_R, etc.) needs a field-by-field rebuild.  Pre-fix,
+		// the documented `Server.json body |> Server.withStatus 201`
+		// idiom panicked: Server.withStatus returns rt.SkyResponse, but
+		// the typed-codegen wrap is `Coerce[Sky_Http_Server_Response_R]`.
+		// narrowStructToStruct already exists and is gated against ADT
+		// + tuple shapes, so this is a safe minimal-blast-radius fix.
+		// v0.17 Cause H Step 4 — typed tuple narrowing.  Sky's tuple
+		// literals + value-side fallbacks emit `rt.SkyTuple2 = T2[any, any]`
+		// (see emitTypedTuple2's Nothing arm in Compile.hs).  Go's nominal
+		// generics reject the raw `.(T2[float64, float64])` assertion when
+		// the dynamic type is `T2[any, any]`.  Walk the source's V0/V1/V2
+		// fields and Coerce each into the target element type.  Mirror of
+		// the slice / map narrowing arms above.
+		if rv.Kind() == reflect.Struct && targetTy.Kind() == reflect.Struct {
+			tStr := targetTy.String()
+			if strings.HasPrefix(tStr, "rt.T2[") && rv.NumField() >= 2 {
+				v0Ty := targetTy.Field(0).Type
+				v1Ty := targetTy.Field(1).Type
+				out := reflect.New(targetTy).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+			if strings.HasPrefix(tStr, "rt.T3[") && rv.NumField() >= 3 {
+				v0Ty := targetTy.Field(0).Type
+				v1Ty := targetTy.Field(1).Type
+				v2Ty := targetTy.Field(2).Type
+				out := reflect.New(targetTy).Elem()
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
+					out.Field(0).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
+					out.Field(1).Set(narrowed)
+				}
+				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(2).Interface()), v2Ty); narrowed.IsValid() {
+					out.Field(2).Set(narrowed)
+				}
+				return out.Interface().(T)
+			}
+		}
+		if rv.Kind() == reflect.Struct && targetTy.Kind() == reflect.Struct {
+			if narrowed, ok := narrowStructToStruct(rv, targetTy); ok {
+				return narrowed.Interface().(T)
+			}
+		}
+		// v0.16.3 #461 — SkySet → map[any]V narrowing. Sky's typed Go
+		// form for `Set a` is `map[any]bool`, but the rt.Set_* kernels
+		// hash by `fmt.Sprintf("%v", v)` and return an opaque SkySet
+		// struct ({items: map[string]any}). At a same-module inline
+		// call the result feeds the next any-typed kernel directly;
+		// at a cross-module boundary the typed-codegen wrapper emits
+		// `rt.Coerce[map[any]bool](...)` and panics without this
+		// branch. Walk SkySet.items's VALUES (the originals) and
+		// build the typed map. Mirrors `asSkyResponse` for the
+		// rt.SkyResponse → typed-alias-struct case.
+		if narrowed, ok := skySetToMap(v, targetTy); ok {
+			return narrowed.Interface().(T)
+		}
+	}
+	// REACHABLE-FROM-SKY in two shapes:
+	// (1) `rt.Coerce[T](anyValueFromFfi)` — the FFI returned a value
+	//     of the wrong shape against its declared `.skyi` signature.
+	//     This is an FFI-contract violation; classified `CoerceFailure`
+	//     at the top-level recover (Cycle 6 PC).
+	// (2) typed-codegen routing emitted `Coerce[T]` over a value the
+	//     HM checker never narrowed — that's a COMPILER-BUG-CONTRACT
+	//     (would file a soundness bug), also classified `CoerceFailure`
+	//     so the user sees the actionable "report this" hint.
+	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
+}
+
+// unwrapAny recursively extracts the inner value from SkyResult and
+// SkyMaybe wrappers. This is the universal FFI boundary defence: typed
+// FFI wrappers return SkyResult[E, T] but downstream Sky code may pass
+// the wrapped value to runtime functions (Dict.map, List.member, etc.)
+// that expect the raw T. Without this, every such site panics with
+// "interface {} is rt.SkyResult[...], not <expected>".
+// isSkyContainer reports whether v is a Sky container struct
+// (SkyResult / SkyMaybe / SkyADT shape) — usable as a precondition
+// for unwrapAny when the caller can't risk an `u != v` comparison
+// on an uncomparable source type (slices, maps, funcs).
+func isSkyContainer(v any) bool {
+	if v == nil {
+		return false
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return false
+	}
+	tagF := rv.FieldByName("Tag")
+	if !tagF.IsValid() {
+		return false
+	}
+	if tagF.Kind() != reflect.Int && tagF.Kind() != reflect.Int64 {
+		return false
+	}
+	return rv.FieldByName("OkValue").IsValid() ||
+		rv.FieldByName("JustValue").IsValid()
+}
+
+func unwrapAny(v any) any {
+	if v == nil {
+		return v
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return v
+	}
+	tagF := rv.FieldByName("Tag")
+	if !tagF.IsValid() {
+		return v
+	}
+	// Non-int Tag (e.g. rt.VNode's HTML tag string) — not a Sky container.
+	if tagF.Kind() != reflect.Int && tagF.Kind() != reflect.Int64 {
+		return v
+	}
+	// SkyResult: unwrap Ok (Tag==0 → OkValue)
+	okF := rv.FieldByName("OkValue")
+	if okF.IsValid() && tagF.Int() == 0 {
+		return unwrapAny(okF.Interface())
+	}
+	// SkyMaybe: unwrap Just (Tag==0 → JustValue)
+	justF := rv.FieldByName("JustValue")
+	if justF.IsValid() && tagF.Int() == 0 {
+		return justF.Interface()
+	}
+	return v
+}
+
+// unwrapResultOk is the legacy name — delegates to unwrapAny.
+func unwrapResultOk(v any) any { return unwrapAny(v) }
+
+// safeReflectConvert whitelists reflect.Value.Convert pairs that are
+// semantically meaningful for Sky's type system. Numeric widening
+// between int/float variants is fine. Everything else — especially
+// int→string (ASCII character reinterpret), []byte→string (unsafe
+// if the source is mutated later) — is rejected so Coerce panics
+// with a type-mismatch diagnostic instead of silently producing
+// garbage.
+func safeReflectConvert(from, to reflect.Kind) bool {
+	isNumeric := func(k reflect.Kind) bool {
+		switch k {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			return true
+		}
+		return false
+	}
+	if isNumeric(from) && isNumeric(to) {
+		return true
+	}
+	// Same-kind struct/map/slice/array reinterpret is fine (type-alias
+	// round-trip). Not numeric → not string.
+	return from == to && from != reflect.String
+}
+
+// CoerceString is a named shortcut that avoids generic instantiation
+// at every string-returning typed boundary. Identical to Coerce[string].
+func CoerceString(v any) string {
+	return AsString(v)
+}
+
+func CoerceInt(v any) int       { return AsInt(v) }  // AsInt is strict post-P0-2
+func CoerceBool(v any) bool     { return AsBool(v) } // same
+func CoerceFloat(v any) float64 { return AsFloat(v) }
+
+// Unreachable — audit P0-5. Stands in for raw
+// `panic("sky: internal — codegen reached unreachable case arm …")`
+// emissions at case-arm fallbacks. Logs to stderr (always, regardless
+// of Slog config) and then panics with a distinguishable marker so
+// rt's outer recovery layers (SkyFfiRecover, Server_listen defer,
+// Live_app defer) convert the crash into a clean Err at the Task
+// boundary instead of killing the process.
+//
+// `site` is a short identifier (typically the codegen-generated
+// name of the case subject) so on-call can grep logs to find the
+// originating case block. Returns `any` so it can be inlined as a
+// value-position expression in codegen — but it panics before the
+// return, so the return type is only there to satisfy Go's type
+// inference at the call site.
+func Unreachable(site string) any {
+	// COMPILER-BUG-CONTRACT: the exhaustiveness checker said this
+	// arm was impossible; if we reach it, codegen produced an
+	// over-broad case match. Top-level recover (Cycle 6 PC)
+	// classifies as `CompilerBug` and surfaces the actionable hint.
+	msg := "sky: codegen reached an arm the exhaustiveness checker said was impossible"
+	fmt.Fprintf(os.Stderr, "[sky.unreachable] %s (site=%s)\n%s\n", msg, site, debugStack())
+	panic(fmt.Sprintf("sky.Unreachable(%s): %s", site, msg))
+}
+
+// Run a task thunk regardless of whether it was built via
+// AnyTaskSucceed (now typed as SkyTask[any, any]) or via an older
+// `func() any` form. Returns SkyResult[any, any].
+func anyTaskInvoke(task any) SkyResult[any, any] {
+	switch t := task.(type) {
+	case SkyTask[any, any]:
+		return t()
+	case func() SkyResult[any, any]:
+		return t()
+	case func() any:
+		r := t()
+		if res, ok := r.(SkyResult[any, any]); ok {
+			return res
+		}
+		return Ok[any, any](r)
+	}
+	// Typed codegen may produce `SkyTask[E, A]` with concrete E/A that
+	// Go's type switch can't case on generically. Reflect into the
+	// task: if it's a `func() SkyResult[E, A]`, call it and convert
+	// the result to SkyResult[any, any] via the Tag/OkValue/ErrValue
+	// field extraction pattern used elsewhere in this file.
+	rv := reflect.ValueOf(task)
+	if rv.IsValid() && rv.Kind() == reflect.Func && rv.Type().NumIn() == 0 && rv.Type().NumOut() == 1 {
+		out := rv.Call(nil)
+		if len(out) == 1 {
+			resv := out[0]
+			if resv.Kind() == reflect.Struct {
+				tagF := resv.FieldByName("Tag")
+				okF := resv.FieldByName("OkValue")
+				errF := resv.FieldByName("ErrValue")
+				if tagF.IsValid() && okF.IsValid() && errF.IsValid() {
+					return SkyResult[any, any]{
+						Tag:      int(tagF.Int()),
+						OkValue:  okF.Interface(),
+						ErrValue: errF.Interface(),
+					}
+				}
+			}
+			if res, ok := resv.Interface().(SkyResult[any, any]); ok {
+				return res
+			}
+			return Ok[any, any](resv.Interface())
+		}
+	}
+	// Already-resolved value (rare): treat as Ok.
+	if res, ok := task.(SkyResult[any, any]); ok {
+		return res
+	}
+	return Ok[any, any](task)
+}
+
+func AnyTaskAndThen(fn any, task any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		r := anyTaskInvoke(task)
+		if r.Tag == 0 {
+			return anyTaskInvoke(SkyCall(fn, r.OkValue))
+		}
+		return Err[any, any](r.ErrValue)
+	})
+}
+
+// Task_fromResult lifts a Result into a Task. The pure-bridge case of
+// the FFI flattening story: every FFI call returns Result, but a
+// downstream pipeline may want Task semantics so the value can be
+// composed with effectful steps via Task.andThen / Cmd.perform / a
+// Sky.Http handler return. Bare values fall through as Ok defensively
+// (matches Result_andThen's tag<0 branch — should not arise once typed
+// codegen is in place but worth tolerating).
+func Task_fromResult(result any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		tag, okV, errV := anyResultView(result)
+		if tag < 0 {
+			return Ok[any, any](result)
+		}
+		if tag == 0 {
+			return Ok[any, any](okV)
+		}
+		return Err[any, any](errV)
+	})
+}
+
+// Task_andThenResult chains a Result-returning step after a Task. The
+// fn returns a Result; we normalise its shape so downstream Task code
+// always sees Tag/OkValue/ErrValue without a tag<0 escape hatch.
+func Task_andThenResult(fn any, task any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		r := anyTaskInvoke(task)
+		if r.Tag != 0 {
+			return Err[any, any](r.ErrValue)
+		}
+		res := SkyCall(fn, r.OkValue)
+		tag, okV, errV := anyResultView(res)
+		if tag < 0 {
+			return Ok[any, any](res)
+		}
+		if tag == 0 {
+			return Ok[any, any](okV)
+		}
+		return Err[any, any](errV)
+	})
+}
+
+// Task_mapError transforms a Task's error value without changing the
+// success path. Mirrors Result.mapError. Useful when a downstream
+// pipeline expects a different error type, or when adding context to
+// an error before it propagates.
+func Task_mapError(fn any, task any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		r := anyTaskInvoke(task)
+		if r.Tag == 0 {
+			return Ok[any, any](r.OkValue)
+		}
+		return Err[any, any](SkyCall(fn, r.ErrValue))
+	})
+}
+
+// Task_onError recovers from a Task error by producing a new Task. The
+// fn is invoked only on Err — Ok values pass through unchanged. Lets
+// HTTP handlers convert DB / parse errors into 4xx/5xx Response Tasks
+// at the handler boundary, and lets Sky.Live update branches recover
+// to a "show error message" Msg without aborting the chain.
+func Task_onError(fn any, task any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		r := anyTaskInvoke(task)
+		if r.Tag == 0 {
+			return r
+		}
+		return anyTaskInvoke(SkyCall(fn, r.ErrValue))
+	})
+}
+
+// Result_andThenTask chains a Task-returning step after a Result. The
+// fn is invoked lazily — wrapping the dispatch in a SkyTask thunk
+// preserves Task's deferred-effect semantics so the chained Task only
+// runs when the outer Task is forced (Cmd.perform, main, handler boundary).
+func Result_andThenTask(fn any, result any) any {
+	return SkyTask[any, any](func() SkyResult[any, any] {
+		tag, okV, errV := anyResultView(result)
+		if tag < 0 {
+			return anyTaskInvoke(SkyCall(fn, result))
+		}
+		if tag == 0 {
+			return anyTaskInvoke(SkyCall(fn, okV))
+		}
+		return Err[any, any](errV)
+	})
+}
+
+// Task_sequence: run tasks in order, collect results as a list.
+// First error short-circuits.
+//
+// Uses anyResultView to accept both `SkyResult[any, any]` and any
+// concretely-parameterised `SkyResult[E, A]` — typed codegen emits the
+// latter (e.g. `SkyResult[any, int]` for `Task.succeed (n*n)`) and the
+// old `.(SkyResult[any, any])` assertion panicked at every call site.
+func Task_sequence(tasks any) any {
+	return func() any {
+		xs := AsList(tasks)
+		out := make([]any, 0, len(xs))
+		for _, t := range xs {
+			tag, okV, errV := anyResultView(SkyCall(t))
+			if tag != 0 {
+				return Err[any, any](errV)
+			}
+			out = append(out, okV)
+		}
+		return Ok[any, any](out)
+	}
+}
+
+// Task_parallel: goroutine-backed fan-out; preserves input order;
+// short-circuits on the FIRST error (in launch order). Match the
+// documented Task.parallel semantics: any task returning Err
+// triggers context cancellation so already-running goroutines can
+// observe it (cooperatively, via runWithRecover's panic shield
+// + the result channel select); the function returns as soon as
+// the first error is observed without blocking on every sibling
+// task's natural completion.
+//
+// Important semantic notes:
+//   - Tasks are dispatched eagerly (SkyTask thunks have no input
+//     ctx parameter), so cooperative cancel only helps siblings
+//     that finish before we observe the first Err — the remaining
+//     siblings are best-effort drained in the background via a
+//     detached goroutine that swallows their results.
+//   - Result order is preserved by index: results[i] holds task i's
+//     OkValue when the function returns Ok with the full collected
+//     slice.
+//   - When multiple tasks Err concurrently, the FIRST Err observed
+//     on the channel wins; this matches "first error short-circuits"
+//     in the docstring (declaration order is best-effort given
+//     concurrent dispatch; tie-broken by goroutine scheduling).
+func Task_parallel(tasks any) any {
+	return func() any {
+		xs := AsList(tasks)
+		n := len(xs)
+		if n == 0 {
+			return Ok[any, any]([]any{})
+		}
+		results := make([]any, n)
+		type item struct {
+			idx int
+			tag int
+			ok  any
+			err any
+		}
+		ch := make(chan item, n)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		for i, t := range xs {
+			go func(i int, t any) {
+				tag, okV, errV := anyResultView(SkyCall(t))
+				// Non-blocking send: if ctx is already cancelled
+				// (someone else won the race), discard so the
+				// goroutine exits cleanly without leaking.
+				select {
+				case ch <- item{idx: i, tag: tag, ok: okV, err: errV}:
+				case <-ctx.Done():
+				}
+			}(i, t)
+		}
+		received := 0
+		for received < n {
+			select {
+			case it := <-ch:
+				received++
+				if it.tag != 0 {
+					// First error short-circuits — cancel ctx to
+					// release any sibling goroutines whose work
+					// has finished but couldn't send. Remaining
+					// siblings continue running in the background
+					// (best-effort; SkyTask has no ctx-aware API),
+					// but their results are discarded via the
+					// ctx.Done branch in the sender select.
+					cancel()
+					return Err[any, any](it.err)
+				}
+				results[it.idx] = it.ok
+			}
+		}
+		return Ok[any, any](results)
+	}
+}
+
+// Task_lazy : (() -> a) -> Task e a
+//
+// Defers a PURE thunk into a Task, so expensive computation only runs when the
+// Task is run (inside `Cmd.perform` / `Task.run`) rather than where it is
+// written. `Sky/Core/Task.sky` has always declared this as
+// `Ffi.kernel "Task_lazy"` and `rust/crates/lower/src/kernel.rs` has always
+// lowered it to `rt.Task_lazy` — the Go symbol was simply missing, so the
+// function type-checked and then failed the ABI guard with [E4005].
+//
+// The thunk is invoked through the same reflect path as every other Sky
+// callback. `() -> a` reaches Go either as a zero-argument func or as a
+// one-argument func taking unit, depending on how the caller wrote it, so both
+// are forced. A non-func value is passed through — `Task.lazy` on an already
+// evaluated value is a `Task.succeed`.
+//
+// Deferral only: the thunk re-runs on every run of the Task. Memoisation is
+// the CAF story (a zero-arg top-level binding), deliberately not this.
+func Task_lazy(thunk any) any {
+	return func() any {
+		rv := reflect.ValueOf(thunk)
+		if rv.Kind() != reflect.Func {
+			return Ok[any, any](thunk)
+		}
+		if rv.Type().NumIn() == 0 {
+			return Ok[any, any](SkyCall(thunk))
+		}
+		return Ok[any, any](SkyCall(thunk, struct{}{}))
+	}
+}
+
+func Task_map(fn any, task any) any {
+	return func() any {
+		tag, okV, errV := anyResultView(SkyCall(task))
+		if tag != 0 {
+			return Err[any, any](errV)
+		}
+		return Ok[any, any](SkyCall(fn, okV))
+	}
+}
+
+// Task_map2 … Task_map5 / Task_andMap — the applicative combinators.
+//
+// `hir.KERNEL_FUNCTIONS` has advertised `Task.map2` … `Task.map5` and
+// `Task.andMap` since the kernel table was ported, but no runtime symbol
+// ever existed and `lower/kernel.rs` routed none of them, so every call —
+// qualifier or import — died as `[E4005] Task has no member map2` at
+// codegen. They are defined here rather than advertised and absent.
+//
+// Each is composed from AnyTaskAndThen + Task_map, so the forcing contract
+// is inherited rather than reinvented: every argument task is forced EXACTLY
+// ONCE, LEFT TO RIGHT, and a failure short-circuits the ones to its right
+// (AnyTaskAndThen returns Err without invoking its continuation). `SkyCall`
+// supplies the currying, so a Sky `\a b -> …` and a record-alias constructor
+// both work as `fn`.
+//
+// `Task_andMap(ta, tfn)` takes the VALUE first and the FUNCTION second,
+// matching `Maybe.andMap ma mfn` (sky-stdlib/Sky/Core/Maybe.sky) and
+// `Result.andMap ra rfn`, so the pipeline shape reads identically across the
+// three. It forces `tfn` before `ta`, mirroring those siblings' scrutinee
+// order (`case mfn of` before the value) — for Task that ordering is
+// observable, so it is part of the contract, not an accident.
+func Task_map2(fn, ta, tb any) any {
+	return AnyTaskAndThen(func(a any) any {
+		return Task_map(func(b any) any { return SkyCall(fn, a, b) }, tb)
+	}, ta)
+}
+
+func Task_map3(fn, ta, tb, tc any) any {
+	return AnyTaskAndThen(func(a any) any {
+		return Task_map2(func(b, c any) any { return SkyCall(fn, a, b, c) }, tb, tc)
+	}, ta)
+}
+
+func Task_map4(fn, ta, tb, tc, td any) any {
+	return AnyTaskAndThen(func(a any) any {
+		return Task_map3(func(b, c, d any) any { return SkyCall(fn, a, b, c, d) }, tb, tc, td)
+	}, ta)
+}
+
+func Task_map5(fn, ta, tb, tc, td, te any) any {
+	return AnyTaskAndThen(func(a any) any {
+		return Task_map4(func(b, c, d, e any) any {
+			return SkyCall(fn, a, b, c, d, e)
+		}, tb, tc, td, te)
+	}, ta)
+}
+
+func Task_andMap(ta, tfn any) any {
+	return AnyTaskAndThen(func(fn any) any { return Task_map(fn, ta) }, tfn)
+}
+
+// P8/Task typed companions — SkyTask is `func() SkyResult[E, A]`.
+func Task_mapT[E, A, B any](fn func(A) B, t SkyTask[E, A]) SkyTask[E, B] {
+	return func() SkyResult[E, B] {
+		r := t()
+		if r.Tag != 0 {
+			return Err[E, B](r.ErrValue)
+		}
+		return Ok[E, B](fn(r.OkValue))
+	}
+}
+
+func Task_sequenceT[E, A any](ts []SkyTask[E, A]) SkyTask[E, []A] {
+	return func() SkyResult[E, []A] {
+		out := make([]A, 0, len(ts))
+		for _, t := range ts {
+			r := t()
+			if r.Tag != 0 {
+				return Err[E, []A](r.ErrValue)
+			}
+			out = append(out, r.OkValue)
+		}
+		return Ok[E, []A](out)
+	}
+}
+
+// AnyTaskRun returns a `SkyResult[any, any]` regardless of what shape
+// the caller provided. Accepts:
+//   - Task thunk (`SkyTask[any,any]` / `func() SkyResult[any,any]` /
+//     `func() any`) — invoked and the result normalised via
+//     `anyTaskInvoke` so a `func() any` returning a bare value gets
+//     wrapped in Ok (Sky's FFI trust boundary).
+//   - Already-resolved SkyResult — returned as-is (Sky.Http.Server's
+//     `listen` returns `Ok ()` / `Err msg` directly rather than a
+//     deferred thunk).
+//   - Bare value — wrapped in Ok defensively.
+//
+// The unified shape means every caller of AnyTaskRun sees the same
+// `SkyResult[any, any]` contract and can case on Tag without a
+// `tag < 0` escape hatch.
+func AnyTaskRun(task any) any {
+	if r, ok := task.(SkyResult[any, any]); ok {
+		return r
+	}
+	rv := reflect.ValueOf(task)
+	if rv.IsValid() && rv.Kind() == reflect.Func {
+		return anyTaskInvoke(task)
+	}
+	// Non-task, non-Result input (rare, shouldn't happen from typed
+	// Sky code): if it already looks like a SkyResult shape, pass it
+	// through; otherwise wrap as Ok so downstream case-on-Tag logic
+	// still works. This entry point guarantees a SkyResult-shaped
+	// output so callers never see a tag < 0 escape hatch.
+	if tag, _, _ := anyResultView(task); tag >= 0 {
+		return task
+	}
+	return Ok[any, any](task)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Time
+// ═══════════════════════════════════════════════════════════
+
+// Time.now / Time.unixMillis / Time.timeString — Task-everywhere
+// doctrine (2026-04-24+):
+//   - Time.now / Time.unixMillis: clock reads are non-deterministic
+//     real-world I/O. Kernel sig `() -> Task Error Int`. Runtime
+//     wraps in `func() any` thunk so the lowerer's auto-force on
+//     `let _ = Time.now ()` discard fires the side effect. Inside
+//     a Task chain, the thunk is lifted via Task.andThen/Cmd.perform
+//     in the usual way.
+//   - Time.timeString: pure deterministic formatter (Int -> String,
+//     just strftime-equivalent). No wrapper — bare String.
+func Time_now(_ any) any {
+	return func() any {
+		return Ok[any, any](int(time.Now().UnixMilli()))
+	}
+}
+
+func Time_timeString(ms any) any {
+	// Pin .UTC(): timeString is documented "Pure formatting" (Int -> String), so
+	// it must be deterministic. Without .UTC() the output used the host's local
+	// timezone — a host-dependent result from a "pure" function, and inconsistent
+	// with every other formatter (formatISO8601/RFC3339/HTTP/format all pin UTC).
+	return time.Unix(int64(AsInt(ms))/1000, 0).UTC().Format("15:04:05")
+}
+
+// Typed companions — same shape as the any-path. Task-shaped helpers
+// return `func() SkyResult[any, T]` (= SkyTask[any, T]) so the
+// typed-codegen path can dispatch directly. Time_timeStringT is
+// pure, returns bare string.
+func Time_nowT(_ struct{}) SkyTask[any, int] {
+	return func() SkyResult[any, int] {
+		return Ok[any, int](int(time.Now().UnixMilli()))
+	}
+}
+func Time_timeStringT(ms int) string {
+	return time.Unix(int64(ms)/1000, 0).Format("15:04:05")
+}
+func Time_unixMillisT(_ struct{}) SkyTask[any, int] {
+	return func() SkyResult[any, int] {
+		return Ok[any, int](int(time.Now().UnixMilli()))
+	}
+}
+
+// Sha256.* / Hex.* dropped in v0.10.0 — Sha256.sum256(String.toBytes s)
+// + Hex.encodeToString hash collapses to `Crypto.sha256 s`. Likewise
+// Hex.encode / Hex.decode are subsumed by Encoding.hexEncode /
+// Encoding.hexDecode. Migration done with the consolidation.
+
+func String_toBytes(s any) any {
+	b := []byte(fmt.Sprintf("%v", s))
+	out := make([]any, len(b))
+	for i, v := range b {
+		out[i] = int(v)
+	}
+	return out
+}
+
+// String_fromBytes rebuilds a string from a Sky `List Int` of UTF-8 byte
+// values.
+//
+// It routes through AsList rather than asserting `.([]any)` directly. The
+// raw assertion was a silent-empty-string bug the moment `toBytes` /
+// `fromBytes` acquired Sky signatures: with `toBytes : String -> List Int`
+// declared, typed codegen hands the kernel a Go `[]int`, the `[]any`
+// assertion fails, and `String.fromBytes (String.toBytes s)` returned `""`
+// for every input instead of `s`. AsList boxes any Go slice element-wise —
+// which is exactly why the sibling `String_fromList` already used it.
+func String_fromBytes(bytes any) any {
+	xs := AsList(bytes)
+	if xs == nil {
+		return ""
+	}
+	b := make([]byte, len(xs))
+	for i, v := range xs {
+		b[i] = byte(AsInt(v))
+	}
+	return string(b)
+}
+
+func String_fromChar(c any) any {
+	if r, ok := c.(rune); ok {
+		return string(r)
+	}
+	return fmt.Sprintf("%v", c)
+}
+
+// P8/String typed companion for fromChar — int rune in, one-rune string out.
+func String_fromCharT(r int) string { return string(rune(r)) }
+
+func String_toChar(s any) any {
+	str := fmt.Sprintf("%v", s)
+	for _, r := range str {
+		return r
+	}
+	return rune(0)
+}
+
+// System — CLI args, environment, cwd, exit. Task-everywhere
+// doctrine (2026-04-24+): all observable side effects return
+// Task Error a. Bodies wrapped in `func() any` thunks; the
+// lowerer's auto-force on `let _ = System.exit 1` discards keeps
+// the eager pattern usable.
+//
+// Renamed from Sky kernel `Os` (2026-04-24) to free the `Os`
+// qualifier for the Go FFI `os` package — sky-log et al. need
+// stdin / stderr / fileWriteString from Go's std library and
+// previously hit a kernel-vs-FFI namespace collision.
+//
+// Zero-arg Sky funcs take a unit param at runtime so the call-site
+// form `System.args ()` emits `rt.System_args(struct{}{})` and
+// works uniformly with C2.
+func System_args(_ any) any {
+	return func() any {
+		out := make([]any, 0, len(os.Args))
+		if len(os.Args) > 1 {
+			for _, a := range os.Args[1:] {
+				out = append(out, a)
+			}
+		}
+		return Ok[any, any](out)
+	}
+}
+
+func System_getenv(name any) any {
+	captured := name
+	return func() any {
+		k := fmt.Sprintf("%v", captured)
+		v, ok := os.LookupEnv(k)
+		if !ok {
+			return Err[any, any](ErrNotFound())
+		}
+		return Ok[any, any](v)
+	}
+}
+
+func System_cwd(_ any) any {
+	return func() any {
+		wd, err := os.Getwd()
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		return Ok[any, any](wd)
+	}
+}
+
+// System_getcwd — back-compat alias for System_cwd. The Sky-source
+// stdlib in `sky-stdlib/Sky/Core/System.sky` exposes both names
+// (`cwd` and `getcwd`); both lower to the same Task Error String.
+func System_getcwd(unit any) any { return System_cwd(unit) }
+
+// System_exit: never returns (process terminates) — kept eager and
+// polymorphic per the rationale in lookupKernelType.
+//
+// IMPORTANT: os.Exit BYPASSES all `defer` blocks, including the
+// terminal teardown deferred by Sky.Tui's tuiAppRun. If the user
+// code calls System.exit from inside a Tui app, the terminal would
+// be left in raw mode + alt-screen + dirty modes — readline broken
+// for the rest of the shell session. Run tuiTeardown explicitly
+// before os.Exit so the user's terminal is restored regardless of
+// how the app exits.
+//
+// tuiTeardown is idempotent (deferred path will no-op when it
+// already ran via this fast path). On non-Tui programs the active
+// state is nil and the call returns immediately.
+func System_exit(code any) any {
+	tuiTeardown()
+	os.Exit(AsInt(code))
+	return struct{}{}
+}
+
+// System.setenv : String -> String -> Task Error ()
+// Sets a process env var. Task-shaped per the Task-everywhere
+// doctrine — env mutation is an observable side effect. Returns
+// Ok(()) on success; Err on the rare OS-level failure (illegal
+// name on some platforms — empty string, embedded `=`, embedded
+// NUL).
+//
+// Useful for the rare case of seeding an env var BEFORE Sky.Live
+// reads it (e.g. inside a custom main() that calls Live.app
+// directly). The same goal is normally better met by the sky.toml
+// `[env] prefix` setting + sky.toml-driven defaults — reach for
+// `setenv` only when the value isn't known until runtime (e.g.
+// derived from a startup config flag).
+func System_setenv(name, value any) any {
+	captured := name
+	capturedV := value
+	return func() any {
+		k, ok := captured.(string)
+		if !ok {
+			return Err[any, any](ErrInvalidInput(
+				fmt.Sprintf("setenv: name must be a String, got %T", captured)))
+		}
+		v, ok := capturedV.(string)
+		if !ok {
+			return Err[any, any](ErrInvalidInput(
+				fmt.Sprintf("setenv: value must be a String, got %T", capturedV)))
+		}
+		if err := os.Setenv(k, v); err != nil {
+			return Err[any, any](ErrFfi("setenv " + k + ": " + err.Error()))
+		}
+		// An explicit write is by definition not a compiler-seeded default;
+		// drop any recorded seeding so precedence consumers (resolveLivePort)
+		// treat this value as deliberately chosen.
+		clearSeededDefault(k)
+		return Ok[any, any](nil)
+	}
+}
+
+// System.unsetenv : String -> Task Error ()
+// Removes a process env var. Returns Ok(()) on success (idempotent
+// — unsetting a missing var succeeds). Same Task shape as setenv.
+func System_unsetenv(name any) any {
+	captured := name
+	return func() any {
+		k, ok := captured.(string)
+		if !ok {
+			return Err[any, any](ErrInvalidInput(
+				fmt.Sprintf("unsetenv: name must be a String, got %T", captured)))
+		}
+		if err := os.Unsetenv(k); err != nil {
+			return Err[any, any](ErrFfi("unsetenv " + k + ": " + err.Error()))
+		}
+		// The value is gone; so is any record that it was seeded.
+		clearSeededDefault(k)
+		return Ok[any, any](nil)
+	}
+}
+
+// System.getArg : Int -> Task Error (Maybe String)
+// Returns the nth element of os.Args (0-indexed) as Just s, or
+// Nothing when the index is out of range. Migration target for
+// the dropped `Args.getArg` (v0.10.0 stdlib consolidation).
+func System_getArg(n any) any {
+	captured := AsInt(n)
+	return func() any {
+		if captured < 0 || captured >= len(os.Args) {
+			return Ok[any, any](Nothing[any]())
+		}
+		return Ok[any, any](Just[any](os.Args[captured]))
+	}
+}
+
+// System.getenvOr : String -> String -> String
+// `System.getenvOr key default` — returns the env var if set, else
+// the supplied default. Bare-String return because the call CAN'T
+// fail when a default is supplied (Task-wrapping it would mean
+// every config helper at module top-level needs `Task.run …
+// |> Result.withDefault default`, which is the exact boilerplate
+// the helper exists to avoid). The fallible variants — getenv (Err
+// on missing), getenvInt (Err on parse), getenvBool (Err on parse)
+// — stay Task. Same argument order as the dropped Env.getOrDefault.
+func System_getenvOr(name, def any) any {
+	k := fmt.Sprintf("%v", name)
+	if v, ok := os.LookupEnv(k); ok {
+		return v
+	}
+	return fmt.Sprintf("%v", def)
+}
+
+// System.getenvInt : String -> Task Error Int
+// Returns the env var parsed as an Int, or Err on missing /
+// unparseable. Migration target for the dropped `Env.getInt`.
+func System_getenvInt(name any) any {
+	captured := name
+	return func() any {
+		k := fmt.Sprintf("%v", captured)
+		v, ok := os.LookupEnv(k)
+		if !ok {
+			return Err[any, any](ErrNotFound())
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Err[any, any](ErrFfi("env " + k + ": not an int: " + v))
+		}
+		return Ok[any, any](n)
+	}
+}
+
+// System.getenvBool : String -> Task Error Bool
+// Accepts true/yes/1/on (case-insensitive) as true, false/no/0/off
+// as false; anything else is Err. Missing env var → Err.
+// Migration target for the dropped `Env.getBool`.
+func System_getenvBool(name any) any {
+	captured := name
+	return func() any {
+		k := fmt.Sprintf("%v", captured)
+		v, ok := os.LookupEnv(k)
+		if !ok {
+			return Err[any, any](ErrNotFound())
+		}
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "yes", "1", "on", "y", "t":
+			return Ok[any, any](true)
+		case "false", "no", "0", "off", "n", "f", "":
+			return Ok[any, any](false)
+		}
+		return Err[any, any](ErrFfi("env " + k + ": not a bool: " + v))
+	}
+}
+
+// System.loadEnv : () -> Task Error ()
+// Loads .env (and .env.local if present) into the process env via
+// godotenv. Does not override existing env vars (12-factor: env
+// always wins). Migration target for the dropped `Process.loadEnv`.
+func System_loadEnv(_ any) any {
+	return func() any {
+		// Delegate to the existing Process_loadEnv runtime which
+		// already implements the godotenv-based load. The thunk
+		// shape is preserved either way.
+		return AnyTaskRun(Process_loadEnv(""))
+	}
+}
+
+func Time_sleep(ms any) any {
+	return func() any {
+		time.Sleep(time.Duration(AsInt(ms)) * time.Millisecond)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// Time_unixMillis: see Time_now header for the doctrine note.
+// Task-shaped thunk; lowered call site `rt.Time_unixMillis(struct{}{})`
+// returns the thunk for auto-force discard or Task chain consumption.
+func Time_unixMillis(_ any) any {
+	return func() any {
+		return Ok[any, any](int(time.Now().UnixMilli()))
+	}
+}
+
+// Time.formatISO8601 : Int -> String
+// (unixMillis) → ISO-8601 / RFC 3339 UTC timestamp: "2026-04-12T12:34:56.789Z".
+// The web-standard format — use for JSON APIs, logs, database timestamps.
+func Time_formatISO8601(ms any) any {
+	t := time.UnixMilli(int64(AsInt(ms))).UTC()
+	return t.Format("2006-01-02T15:04:05.000Z")
+}
+
+// Time.formatRFC3339 : Int -> String
+func Time_formatRFC3339(ms any) any {
+	t := time.UnixMilli(int64(AsInt(ms))).UTC()
+	return t.Format(time.RFC3339Nano)
+}
+
+// Time.formatHTTP : Int -> String
+// (unixMillis) → HTTP date header format: "Mon, 02 Jan 2006 15:04:05 GMT".
+// Use for Last-Modified, Date, Expires headers.
+func Time_formatHTTP(ms any) any {
+	t := time.UnixMilli(int64(AsInt(ms))).UTC()
+	return t.Format(http.TimeFormat)
+}
+
+func Time_formatISO8601T(ms int) string {
+	return time.UnixMilli(int64(ms)).UTC().Format("2006-01-02T15:04:05.000Z")
+}
+func Time_formatRFC3339T(ms int) string {
+	return time.UnixMilli(int64(ms)).UTC().Format(time.RFC3339Nano)
+}
+func Time_formatHTTPT(ms int) string {
+	return time.UnixMilli(int64(ms)).UTC().Format(http.TimeFormat)
+}
+
+// Time.format : String -> Int -> String
+// (goLayout, unixMillis) — emits a custom Go-style layout. Sky exposes the
+// Go reference layout "2006-01-02 15:04:05" verbatim. Prefer formatISO8601
+// / formatRFC3339 for machine-readable output and this only for UI text.
+func Time_format(layout any, ms any) any {
+	t := time.UnixMilli(int64(AsInt(ms))).UTC()
+	return t.Format(fmt.Sprintf("%v", layout))
+}
+
+// Time.parseISO8601 : String -> Result String Int
+// Parses an ISO-8601 / RFC 3339 timestamp and returns unix millis.
+// Strict: requires the "T" separator and either a "Z" or +hh:mm offset.
+func Time_parseISO8601(s any) any {
+	str := fmt.Sprintf("%v", s)
+	t, err := time.Parse(time.RFC3339Nano, str)
+	if err != nil {
+		// Try without nanos
+		t, err = time.Parse(time.RFC3339, str)
+		if err != nil {
+			return Err[any, any](ErrDecode("parseISO8601: " + err.Error()))
+		}
+	}
+	return Ok[any, any](int(t.UnixMilli()))
+}
+
+// Time.parse : String -> String -> Result String Int
+// (goLayout, input) — parses using an explicit Go layout string.
+func Time_parse(layout any, s any) any {
+	t, err := time.Parse(fmt.Sprintf("%v", layout), fmt.Sprintf("%v", s))
+	if err != nil {
+		return Err[any, any](ErrDecode("time.parse: " + err.Error()))
+	}
+	return Ok[any, any](int(t.UnixMilli()))
+}
+
+// Time.addMillis : Int -> Int -> Int
+func Time_addMillis(delta any, ms any) any {
+	return AsInt(ms) + AsInt(delta)
+}
+
+// Time.diffMillis : Int -> Int -> Int
+// (later, earlier) — returns later - earlier.
+func Time_diffMillis(later any, earlier any) any {
+	return AsInt(later) - AsInt(earlier)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Random
+// ═══════════════════════════════════════════════════════════
+
+func Random_int(lo any, hi any) any {
+	return func() any {
+		l, h := AsInt(lo), AsInt(hi)
+		if h <= l {
+			return Ok[any, any](l)
+		}
+		return Ok[any, any](l + mrand.Intn(h-l+1))
+	}
+}
+
+func Random_float(lo any, hi any) any {
+	return func() any {
+		l := AsFloat(lo)
+		h := AsFloat(hi)
+		return Ok[any, any](l + mrand.Float64()*(h-l))
+	}
+}
+
+func Random_choice(list any) any {
+	return func() any {
+		items := AsList(list)
+		if len(items) == 0 {
+			return Err[any, any](ErrInvalidInput("empty list"))
+		}
+		return Ok[any, any](items[mrand.Intn(len(items))])
+	}
+}
+
+func Random_shuffle(list any) any {
+	return func() any {
+		items := AsList(list)
+		result := make([]any, len(items))
+		copy(result, items)
+		mrand.Shuffle(len(result), func(i, j int) { result[i], result[j] = result[j], result[i] })
+		return Ok[any, any](result)
+	}
+}
+
+// P8/Random typed companions — Task-shaped. Error type is `any` to
+// match the canonical Sky.Core.Error.Error in the kernel sig (was
+// `string` pre-2026-04-24, the legacy pre-v0.9.6 Error-as-String
+// pattern). Err arms use ErrInvalidInput / ErrFfi typed builders for
+// consistency with the rest of the runtime.
+func Random_intT(lo, hi int) SkyTask[any, int] {
+	return func() SkyResult[any, int] {
+		if hi <= lo {
+			return Ok[any, int](lo)
+		}
+		return Ok[any, int](lo + mrand.Intn(hi-lo+1))
+	}
+}
+
+func Random_floatT(lo, hi float64) SkyTask[any, float64] {
+	return func() SkyResult[any, float64] {
+		return Ok[any, float64](lo + mrand.Float64()*(hi-lo))
+	}
+}
+
+func Random_choiceT[A any](xs []A) SkyTask[any, A] {
+	return func() SkyResult[any, A] {
+		if len(xs) == 0 {
+			return Err[any, A](ErrInvalidInput("empty list"))
+		}
+		return Ok[any, A](xs[mrand.Intn(len(xs))])
+	}
+}
+
+func Random_shuffleT[A any](xs []A) SkyTask[any, []A] {
+	return func() SkyResult[any, []A] {
+		out := make([]A, len(xs))
+		copy(out, xs)
+		mrand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+		return Ok[any, []A](out)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Random — v0.15.47 extensions (range / choiceMaybe / weighted
+// + seeded deterministic variants).
+// ═══════════════════════════════════════════════════════════
+
+// Random_choiceMaybe returns Task Error (Maybe a) — Ok Nothing on empty
+// list, Ok (Just elem) otherwise. Differs from Random_choice which
+// fails outright on empty.
+func Random_choiceMaybe(list any) any {
+	return func() any {
+		items := AsList(list)
+		if len(items) == 0 {
+			return Ok[any, any](makeMaybeNothing())
+		}
+		return Ok[any, any](makeMaybeJust(items[mrand.Intn(len(items))]))
+	}
+}
+
+// Random_weighted picks one element from `[(weight, value), ...]`
+// proportional to weight. Non-positive weights skipped. Returns
+// Ok Nothing if every weight is ≤ 0 (or the list is empty).
+func Random_weighted(list any) any {
+	return func() any {
+		items := AsList(list)
+		if len(items) == 0 {
+			return Ok[any, any](makeMaybeNothing())
+		}
+		// Extract (weight, value) pairs and compute total.
+		weights := make([]float64, 0, len(items))
+		values := make([]any, 0, len(items))
+		total := 0.0
+		for _, it := range items {
+			w, v := wsExtractWeightedPair(it)
+			if w > 0 {
+				weights = append(weights, w)
+				values = append(values, v)
+				total += w
+			}
+		}
+		if total <= 0 {
+			return Ok[any, any](makeMaybeNothing())
+		}
+		r := mrand.Float64() * total
+		cum := 0.0
+		for i, w := range weights {
+			cum += w
+			if r < cum {
+				return Ok[any, any](makeMaybeJust(values[i]))
+			}
+		}
+		// fallthrough (float rounding) — return last
+		return Ok[any, any](makeMaybeJust(values[len(values)-1]))
+	}
+}
+
+// wsExtractWeightedPair pulls (weight: Float, value) from a 2-tuple-like value.
+func wsExtractWeightedPair(v any) (float64, any) {
+	if v == nil {
+		return 0, nil
+	}
+	if pair, ok := v.(SkyTuple2); ok {
+		return AsFloat(pair.V0), pair.V1
+	}
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() {
+		return 0, nil
+	}
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
+		if rv.Len() >= 2 {
+			return AsFloat(rv.Index(0).Interface()), rv.Index(1).Interface()
+		}
+	case reflect.Struct:
+		// SkyTuple2-ish struct via reflect
+		if rv.NumField() >= 2 {
+			return AsFloat(rv.Field(0).Interface()), rv.Field(1).Interface()
+		}
+	}
+	return 0, nil
+}
+
+// makeMaybeJust / makeMaybeNothing build the canonical `Maybe a` ADT
+// shape used by the runtime — `SkyMaybe[any]`. Mirrors what user Sky
+// source lowers to via `Just`/`Nothing`.
+func makeMaybeJust(v any) any {
+	return SkyMaybe[any]{Tag: 0, JustValue: v}
+}
+
+func makeMaybeNothing() any {
+	return SkyMaybe[any]{Tag: 1}
+}
+
+// Random_seededInt implements `Random.seededIntRaw : Int -> Int -> Int -> (Int, Int)`
+// — pure, deterministic. Mixes seed via splitmix64-style step then
+// reduces into [lo, hi].
+func Random_seededInt(seedArg, lo, hi any) any {
+	s := AsInt(seedArg)
+	l := AsInt(lo)
+	h := AsInt(hi)
+	next := seedStep(int64(s))
+	if h <= l {
+		return SkyTuple2{V0: l, V1: int(next)}
+	}
+	width := h - l + 1
+	// Take low 31 bits to stay positive across platforms.
+	v := l + int(uint64(next)>>33)%width
+	if v < l {
+		v = l
+	}
+	return SkyTuple2{V0: v, V1: int(next)}
+}
+
+// Random_seededFloat implements `Random.seededFloatRaw : Int -> (Float, Int)`.
+func Random_seededFloat(seedArg any) any {
+	s := AsInt(seedArg)
+	next := seedStep(int64(s))
+	// Use top 53 bits as a fraction in [0, 1).
+	f := float64(uint64(next)>>11) / float64(1<<53)
+	return SkyTuple2{V0: f, V1: int(next)}
+}
+
+// Random_seededChoice implements `Random.seededChoiceRaw : Int -> List a -> (Maybe a, Int)`.
+func Random_seededChoice(seedArg, listArg any) any {
+	s := AsInt(seedArg)
+	items := AsList(listArg)
+	next := seedStep(int64(s))
+	if len(items) == 0 {
+		return SkyTuple2{V0: makeMaybeNothing(), V1: int(next)}
+	}
+	idx := int(uint64(next)>>33) % len(items)
+	if idx < 0 {
+		idx = 0
+	}
+	return SkyTuple2{V0: makeMaybeJust(items[idx]), V1: int(next)}
+}
+
+// seedStep is a splitmix64 step. Pure, deterministic.
+func seedStep(zIn int64) int64 {
+	z := uint64(zIn)
+	z += uint64(0x9E3779B97F4A7C15)
+	z = (z ^ (z >> 30)) * uint64(0xBF58476D1CE4E5B9)
+	z = (z ^ (z >> 27)) * uint64(0x94D049BB133111EB)
+	z = z ^ (z >> 31)
+	return int64(z)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Process
+// ═══════════════════════════════════════════════════════════
+
+func Process_run(cmd any, args any) any {
+	return func() any {
+		cmdStr := fmt.Sprintf("%v", cmd)
+		argList := AsList(args)
+		strArgs := make([]string, len(argList))
+		for i, a := range argList {
+			strArgs[i] = fmt.Sprintf("%v", a)
+		}
+		c := exec.Command(cmdStr, strArgs...)
+		out, err := c.CombinedOutput()
+		if err != nil {
+			return Err[any, any](ErrIo(fmt.Sprintf("%s: %v", string(out), err)))
+		}
+		return Ok[any, any](string(out))
+	}
+}
+
+// Process.exit / getEnv / getCwd / loadEnv all migrated to System.*
+// in v0.10.0. Process now keeps only `run` (subprocess execution).
+// Typed companions (Process_*T) likewise dropped — only Process_runT
+// stays. Process_loadEnv lives on as the godotenv impl that
+// System_loadEnv delegates to (defined in dotenv.go).
+
+// Args.* dropped in v0.10.0 — `Args.getArgs ()` and `Args.getArg n`
+// were duplicates of `System.args` and a missing `System.getArg`.
+// Both now live on System (System_args / System_getArg above).
+
+// ═══════════════════════════════════════════════════════════
+// File
+// ═══════════════════════════════════════════════════════════
+
+// Default maximum size for File.readFile (100 MiB). Use File.readFileLimit
+// for custom limits. Large files should be streamed with File.openReader.
+const defaultFileReadLimit = 100 << 20
+
+// File.readFile : String -> Task String String
+// Reads up to 100 MiB (hard default). Returns Err if larger — protects against
+// OOMing on an unbounded input. For different limits use readFileLimit.
+func File_readFile(path any) any {
+	return File_readFileLimit(path, defaultFileReadLimit)
+}
+
+// File.readFileLimit : String -> Int -> Task String String
+// Reads up to `limit` bytes. Returns Err if the file exceeds that size, or
+// if the contents are not valid UTF-8 (callers should use readFileBytes for
+// binary data).
+func File_readFileLimit(path any, limit any) any {
+	return func() any {
+		return WithFileSpan("readFile", fmt.Sprintf("%v", path), func() any {
+			p := fmt.Sprintf("%v", path)
+			n := int64(AsInt(limit))
+			if n <= 0 {
+				n = defaultFileReadLimit
+			}
+			f, err := os.Open(p)
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			defer f.Close()
+			// Stat first so we can early-reject oversize files without reading them.
+			st, err := f.Stat()
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			if st.Size() > n {
+				return Err[any, any](ErrIo(fmt.Sprintf("file exceeds %d-byte limit (actual: %d)", n, st.Size())))
+			}
+			data, err := io.ReadAll(io.LimitReader(f, n))
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			return Ok[any, any](string(data))
+		})
+	}
+}
+
+// File.readFileBytes : String -> Task String (List Int)
+// Reads up to the default limit as a list of byte values (0..255) — for
+// binary data where UTF-8 validity doesn't apply.
+func File_readFileBytes(path any) any {
+	return func() any {
+		f, err := os.Open(fmt.Sprintf("%v", path))
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		defer f.Close()
+		data, err := io.ReadAll(io.LimitReader(f, defaultFileReadLimit))
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		out := make([]any, len(data))
+		for i, b := range data {
+			out[i] = int(b)
+		}
+		return Ok[any, any](out)
+	}
+}
+
+func File_writeFile(path any, content any) any {
+	return func() any {
+		return WithFileSpan("writeFile", fmt.Sprintf("%v", path), func() any {
+			err := os.WriteFile(fmt.Sprintf("%v", path), []byte(fmt.Sprintf("%v", content)), 0644)
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			return Ok[any, any](struct{}{})
+		})
+	}
+}
+
+func File_append(path any, content any) any {
+	return func() any {
+		return WithFileSpan("append", fmt.Sprintf("%v", path), func() any {
+			f, err := os.OpenFile(fmt.Sprintf("%v", path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			defer f.Close()
+			_, err = f.WriteString(fmt.Sprintf("%v", content))
+			if err != nil {
+				return Err[any, any](ErrFfi(err.Error()))
+			}
+			return Ok[any, any](struct{}{})
+		})
+	}
+}
+
+func File_exists(path any) any {
+	return func() any {
+		_, err := os.Stat(fmt.Sprintf("%v", path))
+		return Ok[any, any](!os.IsNotExist(err))
+	}
+}
+
+func File_remove(path any) any {
+	return func() any {
+		err := os.Remove(fmt.Sprintf("%v", path))
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func File_mkdirAll(path any) any {
+	return func() any {
+		err := os.MkdirAll(fmt.Sprintf("%v", path), 0755)
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func File_readDir(path any) any {
+	return func() any {
+		entries, err := os.ReadDir(fmt.Sprintf("%v", path))
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		result := make([]any, len(entries))
+		for i, e := range entries {
+			result[i] = e.Name()
+		}
+		return Ok[any, any](result)
+	}
+}
+
+// P8/File typed companions — return `func() SkyResult[string, T]`
+// thunks matching the Task ABI. Covers the path-only operations;
+// richer APIs (readFileLimit, readDir) keep the any/any shape
+// because their Task payloads include additional args.
+func File_readFileT(path string) func() SkyResult[string, string] {
+	return func() SkyResult[string, string] {
+		v := File_readFile(path).(func() any)()
+		if r, ok := v.(SkyResult[any, any]); ok {
+			if r.Tag == 0 {
+				return Ok[string, string](fmt.Sprintf("%v", r.OkValue))
+			}
+			return Err[string, string](fmt.Sprintf("%v", r.ErrValue))
+		}
+		return Err[string, string]("unexpected runtime shape")
+	}
+}
+
+func File_existsT(path string) func() SkyResult[string, bool] {
+	return func() SkyResult[string, bool] {
+		_, err := os.Stat(path)
+		if err == nil {
+			return Ok[string, bool](true)
+		}
+		if os.IsNotExist(err) {
+			return Ok[string, bool](false)
+		}
+		return Err[string, bool](err.Error())
+	}
+}
+
+func File_writeFileT(path, content string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return Err[string, struct{}](err.Error())
+		}
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
+func File_removeT(path string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		if err := os.Remove(path); err != nil {
+			return Err[string, struct{}](err.Error())
+		}
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
+func File_mkdirAllT(path string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return Err[string, struct{}](err.Error())
+		}
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
+func File_isDir(path any) any {
+	return func() any {
+		info, err := os.Stat(fmt.Sprintf("%v", path))
+		if err != nil {
+			return Ok[any, any](false)
+		}
+		return Ok[any, any](info.IsDir())
+	}
+}
+
+func File_tempFile(prefix any) any {
+	f, err := os.CreateTemp("", AsString(prefix))
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	name := f.Name()
+	f.Close()
+	return Ok[any, any](name)
+}
+
+func File_tempDir(prefix any) any {
+	dir, err := os.MkdirTemp("", AsString(prefix))
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	return Ok[any, any](dir)
+}
+
+func File_copy(src any, dst any) any {
+	srcPath := AsString(src)
+	dstPath := AsString(dst)
+	in, err := os.Open(srcPath)
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	defer in.Close()
+	out, err := os.Create(dstPath)
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	return Ok[any, any](struct{}{})
+}
+
+func File_rename(src any, dst any) any {
+	err := os.Rename(AsString(src), AsString(dst))
+	if err != nil {
+		return Err[any, any](ErrIo(err.Error()))
+	}
+	return Ok[any, any](struct{}{})
+}
+
+// ═══════════════════════════════════════════════════════════
+// Io
+// ═══════════════════════════════════════════════════════════
+
+var stdinReader *bufio.Reader
+
+// Io_readLine: kernel sig is `Io.readLine : () -> Task Error String`
+// (lookupKernelType in src/Sky/Type/Constrain/Expression.hs). Task in
+// Sky is a `func() any` thunk per the v0.9.6 effect-boundary audit
+// (deferred so Cmd.perform / Task.run controls when the syscall fires).
+//
+// Pre-fix this returned an eager SkyResult — the typed companion
+// `Io_readLineT` was already a thunk, but the any-typed dispatch
+// path was eager. That meant `let prompt = Io.readLine ()` blocked
+// at module init time inside Sky.Live's update goroutine instead of
+// running on the Cmd.perform-spawned worker. Same wrapper-shape
+// regression class as the v0.9.10 String_toIntT / Maybe-vs-Result
+// fix, applied to Task-vs-eager-Result. Surfaced by the
+// kernel_wrapper_parity_test.go audit on 2026-04-23.
+func Io_readLine(args ...any) any {
+	return func() any {
+		if stdinReader == nil {
+			stdinReader = bufio.NewReader(os.Stdin)
+		}
+		line, err := stdinReader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		return Ok[any, any](strings.TrimRight(line, "\n\r"))
+	}
+}
+
+func Io_writeStdout(s any) any {
+	return func() any {
+		fmt.Print(s)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func Io_writeStderr(s any) any {
+	return func() any {
+		fmt.Fprint(os.Stderr, s)
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// P8/Io typed companions — Task-shaped.
+func Io_readLineT() func() SkyResult[string, string] {
+	return func() SkyResult[string, string] {
+		if stdinReader == nil {
+			stdinReader = bufio.NewReader(os.Stdin)
+		}
+		line, err := stdinReader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return Err[string, string](err.Error())
+		}
+		return Ok[string, string](strings.TrimRight(line, "\n\r"))
+	}
+}
+
+func Io_writeStdoutT(s string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		fmt.Print(s)
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
+func Io_writeStderrT(s string) func() SkyResult[string, struct{}] {
+	return func() SkyResult[string, struct{}] {
+		fmt.Fprint(os.Stderr, s)
+		return Ok[string, struct{}](struct{}{})
+	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Crypto
+// ═══════════════════════════════════════════════════════════
+
+func Crypto_sha256(s any) any {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%v", s)))
+	return hex.EncodeToString(h[:])
+}
+
+func Crypto_sha512(s any) any {
+	h := sha512.Sum512([]byte(fmt.Sprintf("%v", s)))
+	return hex.EncodeToString(h[:])
+}
+
+// Crypto.md5 — retained for legacy interoperability only.
+// Do not use for security-sensitive hashing: use sha256/sha512 instead.
+func Crypto_md5(s any) any {
+	h := md5.Sum([]byte(fmt.Sprintf("%v", s)))
+	return hex.EncodeToString(h[:])
+}
+
+// Crypto.hmacSha256 : String -> String -> String
+// (key, message) → hex HMAC. Uses crypto/hmac.
+func Crypto_hmacSha256(key any, msg any) any {
+	mac := hmac.New(sha256.New, []byte(fmt.Sprintf("%v", key)))
+	mac.Write([]byte(fmt.Sprintf("%v", msg)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// Crypto.hmacSha512 : String -> String -> String
+// (key, message) → hex HMAC-SHA512.
+func Crypto_hmacSha512(key any, msg any) any {
+	mac := hmac.New(sha512.New, []byte(fmt.Sprintf("%v", key)))
+	mac.Write([]byte(fmt.Sprintf("%v", msg)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// Crypto.sha1 : String -> String — hex SHA-1 digest.
+// Retained for interop (git object ids, legacy webhook signatures).
+// Not for security hashing — use sha256/sha512.
+func Crypto_sha1(s any) any {
+	h := sha1.Sum([]byte(fmt.Sprintf("%v", s)))
+	return hex.EncodeToString(h[:])
+}
+
+// Crypto.rsaSha256Sign : String -> String -> Result Error String
+// (PEM private key, message) → standard-base64 RSASSA-PKCS1-v1_5
+// signature over the SHA-256 digest. Accepts PKCS#1 and PKCS#8 PEM
+// keys. The signing key never leaves this process.
+func Crypto_rsaSha256Sign(pemKey any, msg any) any {
+	block, _ := pem.Decode([]byte(fmt.Sprintf("%v", pemKey)))
+	if block == nil {
+		return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: not a PEM-encoded key"))
+	}
+	var priv *rsa.PrivateKey
+	if k, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		priv = k
+	} else if k, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		rk, ok := k.(*rsa.PrivateKey)
+		if !ok {
+			return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: PEM key is not RSA"))
+		}
+		priv = rk
+	} else {
+		return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: could not parse the private key"))
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%v", msg)))
+	sig, err := rsa.SignPKCS1v15(cryptorand.Reader, priv, crypto.SHA256, digest[:])
+	if err != nil {
+		return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: " + err.Error()))
+	}
+	return Ok[any, any](base64.StdEncoding.EncodeToString(sig))
+}
+
+// Crypto.rsaSha256Verify : String -> String -> String -> Bool
+// (PEM public key, message, standard-base64 signature) → valid?
+// False on any parse or verification failure.
+func Crypto_rsaSha256Verify(pemKey any, msg any, sigB64 any) any {
+	block, _ := pem.Decode([]byte(fmt.Sprintf("%v", pemKey)))
+	if block == nil {
+		return false
+	}
+	var pub *rsa.PublicKey
+	if k, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
+		rk, ok := k.(*rsa.PublicKey)
+		if !ok {
+			return false
+		}
+		pub = rk
+	} else if k, err := x509.ParsePKCS1PublicKey(block.Bytes); err == nil {
+		pub = k
+	} else {
+		return false
+	}
+	sig, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", sigB64))
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%v", msg)))
+	return rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], sig) == nil
+}
+
+// Crypto.constantTimeEqual : String -> String -> Bool
+// Compares two strings in constant time — use when comparing secrets (tokens,
+// MACs, password hashes) so attackers can't use timing signals to leak bytes.
+// `==` / String equality is NOT safe for this; it short-circuits on first mismatch.
+func Crypto_constantTimeEqual(a any, b any) any {
+	sa := fmt.Sprintf("%v", a)
+	sb := fmt.Sprintf("%v", b)
+	return subtle.ConstantTimeCompare([]byte(sa), []byte(sb)) == 1
+}
+
+// Crypto.randomBytes : Int -> Task String String
+// Returns n cryptographically-secure random bytes, hex-encoded. Use for session
+// IDs, tokens, CSRF nonces, password-reset keys, etc.
+// Backed by crypto/rand which reads from the OS CSPRNG.
+func Crypto_randomBytes(n any) any {
+	return func() any {
+		size := AsInt(n)
+		if size <= 0 || size > 1024 {
+			return Err[any, any](ErrInvalidInput("Crypto.randomBytes: size must be 1..1024"))
+		}
+		b := make([]byte, size)
+		if _, err := cryptorand.Read(b); err != nil {
+			return Err[any, any](ErrFfi("Crypto.randomBytes: " + err.Error()))
+		}
+		return Ok[any, any](hex.EncodeToString(b))
+	}
+}
+
+// Crypto.randomToken : Int -> Task String String
+// Like randomBytes but returns URL-safe base64 (RFC 4648) for use in cookies,
+// reset links, etc. Width is in bytes of entropy; the returned string is longer.
+func Crypto_randomToken(n any) any {
+	return func() any {
+		size := AsInt(n)
+		if size <= 0 || size > 1024 {
+			return Err[any, any](ErrInvalidInput("Crypto.randomToken: size must be 1..1024"))
+		}
+		b := make([]byte, size)
+		if _, err := cryptorand.Read(b); err != nil {
+			return Err[any, any](ErrFfi("Crypto.randomToken: " + err.Error()))
+		}
+		return Ok[any, any](base64.RawURLEncoding.EncodeToString(b))
+	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Encoding
+// ═══════════════════════════════════════════════════════════
+
+func Encoding_base64Encode(s any) any {
+	return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%v", s)))
+}
+
+func Encoding_base64Decode(s any) any {
+	data, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", s))
+	if err != nil {
+		return Err[any, any](ErrFfi(err.Error()))
+	}
+	return Ok[any, any](string(data))
+}
+
+func Encoding_urlEncode(s any) any {
+	return url.QueryEscape(fmt.Sprintf("%v", s))
+}
+
+func Encoding_urlDecode(s any) any {
+	decoded, err := url.QueryUnescape(fmt.Sprintf("%v", s))
+	if err != nil {
+		return Err[any, any](ErrFfi(err.Error()))
+	}
+	return Ok[any, any](decoded)
+}
+
+func Encoding_hexEncode(s any) any {
+	return hex.EncodeToString([]byte(fmt.Sprintf("%v", s)))
+}
+
+func Encoding_hexDecode(s any) any {
+	data, err := hex.DecodeString(fmt.Sprintf("%v", s))
+	if err != nil {
+		return Err[any, any](ErrFfi(err.Error()))
+	}
+	return Ok[any, any](string(data))
+}
+
+// NOTE (audit, 2026-04-24, resolved): the kernel sig was
+// `String -> Result Error String` for encoders despite the runtime
+// returning bare strings — well-typed user `Ok/Err` patterns were
+// silently impossible to trigger. Kernel sig now `String -> String`
+// (encoders are total functions; decoders correctly stay Result).
+// Both runtime variants below already match this sig.
+
+// P8/Encoding typed companions — direct string in, string/SkyResult out.
+func Encoding_base64EncodeT(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+func Encoding_base64DecodeT(s string) SkyResult[string, string] {
+	data, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return Err[string, string](err.Error())
+	}
+	return Ok[string, string](string(data))
+}
+func Encoding_urlEncodeT(s string) string { return url.QueryEscape(s) }
+func Encoding_urlDecodeT(s string) SkyResult[string, string] {
+	decoded, err := url.QueryUnescape(s)
+	if err != nil {
+		return Err[string, string](err.Error())
+	}
+	return Ok[string, string](decoded)
+}
+func Encoding_hexEncodeT(s string) string { return hex.EncodeToString([]byte(s)) }
+func Encoding_hexDecodeT(s string) SkyResult[string, string] {
+	data, err := hex.DecodeString(s)
+	if err != nil {
+		return Err[string, string](err.Error())
+	}
+	return Ok[string, string](string(data))
+}
+
+// ═══════════════════════════════════════════════════════════
+// Regex
+// ═══════════════════════════════════════════════════════════
+
+func Regex_match(pattern any, s any) any {
+	matched, _ := regexp.MatchString(fmt.Sprintf("%v", pattern), fmt.Sprintf("%v", s))
+	return matched
+}
+
+func Regex_find(pattern any, s any) any {
+	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
+	if err != nil {
+		return Nothing[any]()
+	}
+	match := re.FindString(fmt.Sprintf("%v", s))
+	if match == "" {
+		return Nothing[any]()
+	}
+	return Just[any](match)
+}
+
+func Regex_findAll(pattern any, s any) any {
+	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
+	if err != nil {
+		return []any{}
+	}
+	matches := re.FindAllString(fmt.Sprintf("%v", s), -1)
+	result := make([]any, len(matches))
+	for i, m := range matches {
+		result[i] = m
+	}
+	return result
+}
+
+func Regex_replace(pattern any, replacement any, s any) any {
+	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
+	if err != nil {
+		return s
+	}
+	return re.ReplaceAllString(fmt.Sprintf("%v", s), fmt.Sprintf("%v", replacement))
+}
+
+func Regex_split(pattern any, s any) any {
+	re, err := regexp.Compile(fmt.Sprintf("%v", pattern))
+	if err != nil {
+		return []any{s}
+	}
+	parts := re.Split(fmt.Sprintf("%v", s), -1)
+	result := make([]any, len(parts))
+	for i, p := range parts {
+		result[i] = p
+	}
+	return result
+}
+
+// P8/Regex typed companions — direct string in/out, SkyMaybe[string]
+// for `find`, []string for list-returning operations.
+func Regex_matchT(pattern, s string) bool {
+	matched, _ := regexp.MatchString(pattern, s)
+	return matched
+}
+func Regex_findT(pattern, s string) SkyMaybe[string] {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return Nothing[string]()
+	}
+	m := re.FindString(s)
+	if m == "" {
+		return Nothing[string]()
+	}
+	return Just[string](m)
+}
+func Regex_findAllT(pattern, s string) []string {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return []string{}
+	}
+	return re.FindAllString(s, -1)
+}
+func Regex_replaceT(pattern, replacement, s string) string {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return s
+	}
+	return re.ReplaceAllString(s, replacement)
+}
+func Regex_splitT(pattern, s string) []string {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return []string{s}
+	}
+	return re.Split(s, -1)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Char
+// ═══════════════════════════════════════════════════════════
+
+// firstRune extracts the first Unicode code point from its input.
+// Works for both Sky Char (runtime-typed as single-rune string) and Sky String.
+func firstRune(c any) rune {
+	if r, ok := c.(rune); ok {
+		return r
+	}
+	s := fmt.Sprintf("%v", c)
+	for _, r := range s {
+		return r
+	}
+	return 0
+}
+
+// ── Char kernel: any/any path kept for legacy callers, typed T path
+// added in P8 so call sites with a statically known rune can call
+// directly without the firstRune boxing dance.
+
+func Char_isUpper(c any) any { return unicode.IsUpper(firstRune(c)) }
+func Char_isLower(c any) any { return unicode.IsLower(firstRune(c)) }
+func Char_isDigit(c any) any { return unicode.IsDigit(firstRune(c)) }
+func Char_isAlpha(c any) any { return unicode.IsLetter(firstRune(c)) }
+func Char_toUpper(c any) any { return string(unicode.ToUpper(firstRune(c))) }
+func Char_toLower(c any) any { return string(unicode.ToLower(firstRune(c))) }
+
+// v0.16.7 #419 — Unicode code-point conversion.  toCode returns the
+// rune as an Int (Sky's only integer type); fromCode wraps an Int
+// back into a Char, clamping to the Unicode replacement character
+// when the input is out of range.
+func Char_toCode(c any) any {
+	return int(firstRune(c))
+}
+
+func Char_fromCode(n any) any {
+	r := rune(AsInt(n))
+	if r < 0 || r > 0x10FFFF {
+		return '�'
+	}
+	return r
+}
+
+// Typed companions — direct rune→bool/string, no any boxing.
+func Char_isUpperT(c rune) bool   { return unicode.IsUpper(c) }
+func Char_isLowerT(c rune) bool   { return unicode.IsLower(c) }
+func Char_isDigitT(c rune) bool   { return unicode.IsDigit(c) }
+func Char_isAlphaT(c rune) bool   { return unicode.IsLetter(c) }
+func Char_toUpperT(c rune) string { return string(unicode.ToUpper(c)) }
+func Char_toLowerT(c rune) string { return string(unicode.ToLower(c)) }
+func Char_toCodeT(c rune) int     { return int(c) }
+func Char_fromCodeT(n int) rune {
+	r := rune(n)
+	if r < 0 || r > 0x10FFFF {
+		return '�'
+	}
+	return r
+}
+
+// ═══════════════════════════════════════════════════════════
+// Math (extended)
+// ═══════════════════════════════════════════════════════════
+
+func Math_sqrt(n any) any            { return math.Sqrt(AsFloat(n)) }
+func Math_pow(base any, exp any) any { return math.Pow(AsFloat(base), AsFloat(exp)) }
+func Math_floor(n any) any           { return int(math.Floor(AsFloat(n))) }
+func Math_ceil(n any) any            { return int(math.Ceil(AsFloat(n))) }
+func Math_round(n any) any           { return int(math.Round(AsFloat(n))) }
+func Math_sin(n any) any             { return math.Sin(AsFloat(n)) }
+func Math_cos(n any) any             { return math.Cos(AsFloat(n)) }
+func Math_tan(n any) any             { return math.Tan(AsFloat(n)) }
+func Math_pi() any                   { return math.Pi }
+func Math_e() any                    { return math.E }
+func Math_log(n any) any             { return math.Log(AsFloat(n)) }
+
+// P8/Math typed float companions.
+func Math_sqrtT(n float64) float64        { return math.Sqrt(n) }
+func Math_powT(base, exp float64) float64 { return math.Pow(base, exp) }
+func Math_floorT(n float64) int           { return int(math.Floor(n)) }
+func Math_ceilT(n float64) int            { return int(math.Ceil(n)) }
+func Math_roundT(n float64) int           { return int(math.Round(n)) }
+func Math_sinT(n float64) float64         { return math.Sin(n) }
+func Math_cosT(n float64) float64         { return math.Cos(n) }
+func Math_tanT(n float64) float64         { return math.Tan(n) }
+func Math_piT() float64                   { return math.Pi }
+func Math_eT() float64                    { return math.E }
+func Math_logT(n float64) float64         { return math.Log(n) }
+
+// #366 — full Go math.* parity.
+// Inverse trig
+func Math_asin(n any) any     { return math.Asin(AsFloat(n)) }
+func Math_acos(n any) any     { return math.Acos(AsFloat(n)) }
+func Math_atan(n any) any     { return math.Atan(AsFloat(n)) }
+func Math_atan2(y, x any) any { return math.Atan2(AsFloat(y), AsFloat(x)) }
+
+// Hyperbolic + inverse hyperbolic
+func Math_sinh(n any) any  { return math.Sinh(AsFloat(n)) }
+func Math_cosh(n any) any  { return math.Cosh(AsFloat(n)) }
+func Math_tanh(n any) any  { return math.Tanh(AsFloat(n)) }
+func Math_asinh(n any) any { return math.Asinh(AsFloat(n)) }
+func Math_acosh(n any) any { return math.Acosh(AsFloat(n)) }
+func Math_atanh(n any) any { return math.Atanh(AsFloat(n)) }
+
+// Exp / log family
+func Math_exp(n any) any   { return math.Exp(AsFloat(n)) }
+func Math_exp2(n any) any  { return math.Exp2(AsFloat(n)) }
+func Math_log2(n any) any  { return math.Log2(AsFloat(n)) }
+func Math_log10(n any) any { return math.Log10(AsFloat(n)) }
+
+// Roots + utilities
+func Math_cbrt(n any) any         { return math.Cbrt(AsFloat(n)) }
+func Math_hypot(x, y any) any     { return math.Hypot(AsFloat(x), AsFloat(y)) }
+func Math_trunc(n any) any        { return int(math.Trunc(AsFloat(n))) }
+func Math_mod(x, y any) any       { return math.Mod(AsFloat(x), AsFloat(y)) }
+func Math_remainder(x, y any) any { return math.Remainder(AsFloat(x), AsFloat(y)) }
+
+// Additional constants
+func Math_phi() any        { return math.Phi }
+func Math_sqrt2() any      { return math.Sqrt2 }
+func Math_inf() any        { return math.Inf(1) }
+func Math_nan() any        { return math.NaN() }
+func Math_isNaN(x any) any { return math.IsNaN(AsFloat(x)) }
+
+// Typed companions for the new entries
+func Math_asinT(n float64) float64         { return math.Asin(n) }
+func Math_acosT(n float64) float64         { return math.Acos(n) }
+func Math_atanT(n float64) float64         { return math.Atan(n) }
+func Math_atan2T(y, x float64) float64     { return math.Atan2(y, x) }
+func Math_sinhT(n float64) float64         { return math.Sinh(n) }
+func Math_coshT(n float64) float64         { return math.Cosh(n) }
+func Math_tanhT(n float64) float64         { return math.Tanh(n) }
+func Math_asinhT(n float64) float64        { return math.Asinh(n) }
+func Math_acoshT(n float64) float64        { return math.Acosh(n) }
+func Math_atanhT(n float64) float64        { return math.Atanh(n) }
+func Math_expT(n float64) float64          { return math.Exp(n) }
+func Math_exp2T(n float64) float64         { return math.Exp2(n) }
+func Math_log2T(n float64) float64         { return math.Log2(n) }
+func Math_log10T(n float64) float64        { return math.Log10(n) }
+func Math_cbrtT(n float64) float64         { return math.Cbrt(n) }
+func Math_hypotT(x, y float64) float64     { return math.Hypot(x, y) }
+func Math_truncT(n float64) int            { return int(math.Trunc(n)) }
+func Math_modT(x, y float64) float64       { return math.Mod(x, y) }
+func Math_remainderT(x, y float64) float64 { return math.Remainder(x, y) }
+func Math_phiT() float64                   { return math.Phi }
+func Math_sqrt2T() float64                 { return math.Sqrt2 }
+func Math_infT() float64                   { return math.Inf(1) }
+func Math_nanT() float64                   { return math.NaN() }
+func Math_isNaNT(x float64) bool           { return math.IsNaN(x) }
+
+// ═══════════════════════════════════════════════════════════
+// Additional String functions
+// ═══════════════════════════════════════════════════════════
+
+// String_toList — String -> List Char
+// Decomposes a string into its Unicode code points. Each Char is
+// boxed as a Go rune so downstream Char_* helpers (firstRune) keep
+// the typed fast path.
+func String_toList(s any) any {
+	str := fmt.Sprintf("%v", s)
+	out := make([]any, 0, runeCount(str))
+	for _, r := range str {
+		out = append(out, r)
+	}
+	return out
+}
+
+// String_fromList — List Char -> String
+// Concatenates a list of Char (rune-typed) into a UTF-8 string.
+// Accepts any-slice or typed slice; AsList unwraps the latter
+// element-wise so Sky-source `[ 'a', 'b' ]` literals round-trip.
+func String_fromList(chars any) any {
+	xs := AsList(chars)
+	var b strings.Builder
+	b.Grow(len(xs))
+	for _, c := range xs {
+		if r, ok := c.(rune); ok {
+			b.WriteRune(r)
+			continue
+		}
+		if i, ok := c.(int); ok {
+			b.WriteRune(rune(i))
+			continue
+		}
+		// Last-resort: stringify and append the first rune.
+		b.WriteRune(firstRune(c))
+	}
+	return b.String()
+}
+
+// String_concat — List String -> String
+// Concatenates a list of strings. Mirrors `Std.Html.text`'s
+// idiomatic "join with empty separator" but at the kernel layer so
+// the typed-codegen path can flow through without `rt.SkyCall` per
+// element.
+func String_concat(parts any) any {
+	xs := AsList(parts)
+	var b strings.Builder
+	for _, p := range xs {
+		b.WriteString(fmt.Sprintf("%v", p))
+	}
+	return b.String()
+}
+
+func String_lines(s any) any {
+	parts := strings.Split(fmt.Sprintf("%v", s), "\n")
+	result := make([]any, len(parts))
+	for i, p := range parts {
+		result[i] = p
+	}
+	return result
+}
+
+func String_words(s any) any {
+	parts := strings.Fields(fmt.Sprintf("%v", s))
+	result := make([]any, len(parts))
+	for i, p := range parts {
+		result[i] = p
+	}
+	return result
+}
+
+func String_repeat(n any, s any) any {
+	// A non-positive count is "" (Elm semantics) — `strings.Repeat` panics on a
+	// negative count, and well-typed Sky must never panic.
+	count := AsInt(n)
+	if count <= 0 {
+		return ""
+	}
+	return strings.Repeat(fmt.Sprintf("%v", s), count)
+}
+
+// runeCount returns the number of Unicode code points in s.
+func runeCount(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
+// padChar renders a Sky Char as its single-character string form.
+// Sky Char is a unicode codepoint; the lowering boxes it as a rune
+// (or an int after Char.toCode) inside an `any`. Earlier kernels
+// formatted via fmt.Sprintf("%v", ch) which spells "32" for ' '
+// (decimal codepoint) — see #462. This helper produces " " for ' '.
+func padChar(ch any) string {
+	// rune is an alias for int32 — one case covers both.
+	switch v := ch.(type) {
+	case rune:
+		return string(v)
+	case int:
+		return string(rune(v))
+	case string:
+		return v
+	default:
+		return fmt.Sprintf("%v", ch)
+	}
+}
+
+func String_padLeft(n any, ch any, s any) any {
+	str := fmt.Sprintf("%v", s)
+	pad := padChar(ch)
+	target := AsInt(n)
+	for runeCount(str) < target {
+		str = pad + str
+	}
+	return str
+}
+
+func String_padRight(n any, ch any, s any) any {
+	str := fmt.Sprintf("%v", s)
+	pad := padChar(ch)
+	target := AsInt(n)
+	for runeCount(str) < target {
+		str = str + pad
+	}
+	return str
+}
+
+func String_left(n any, s any) any {
+	runes := []rune(fmt.Sprintf("%v", s))
+	nn := AsInt(n)
+	if nn > len(runes) {
+		nn = len(runes)
+	}
+	if nn < 0 {
+		nn = 0
+	}
+	return string(runes[:nn])
+}
+
+func String_right(n any, s any) any {
+	runes := []rune(fmt.Sprintf("%v", s))
+	nn := AsInt(n)
+	if nn > len(runes) {
+		nn = len(runes)
+	}
+	if nn < 0 {
+		nn = 0
+	}
+	return string(runes[len(runes)-nn:])
+}
+
+// String_dropLeft drops the first n characters (runes) of s. Elm
+// String.dropLeft semantics: negative n returns s unchanged; n
+// >= length returns "".
+func String_dropLeft(n any, s any) any {
+	runes := []rune(fmt.Sprintf("%v", s))
+	nn := AsInt(n)
+	if nn <= 0 {
+		return string(runes)
+	}
+	if nn >= len(runes) {
+		return ""
+	}
+	return string(runes[nn:])
+}
+
+// String_dropRight drops the last n characters (runes) of s. Elm
+// String.dropRight semantics: negative n returns s unchanged; n
+// >= length returns "".
+func String_dropRight(n any, s any) any {
+	runes := []rune(fmt.Sprintf("%v", s))
+	nn := AsInt(n)
+	if nn <= 0 {
+		return string(runes)
+	}
+	if nn >= len(runes) {
+		return ""
+	}
+	return string(runes[:len(runes)-nn])
+}
+
+func String_replace(old any, new_ any, s any) any {
+	return strings.ReplaceAll(fmt.Sprintf("%v", s), fmt.Sprintf("%v", old), fmt.Sprintf("%v", new_))
+}
+
+// String.slice is rune-based. Negative indices count from the end.
+func String_slice(start any, end any, s any) any {
+	runes := []rune(fmt.Sprintf("%v", s))
+	total := len(runes)
+	st := AsInt(start)
+	en := AsInt(end)
+	if st < 0 {
+		st = total + st
+	}
+	if en < 0 {
+		en = total + en
+	}
+	if st < 0 {
+		st = 0
+	}
+	if en > total {
+		en = total
+	}
+	if st > en {
+		return ""
+	}
+	return string(runes[st:en])
+}
+
+// ═══════════════════════════════════════════════════════════
+// Additional List functions
+// ═══════════════════════════════════════════════════════════
+
+func List_isEmpty(list any) any {
+	if list == nil {
+		return true
+	}
+	items := asList(list)
+	return len(items) == 0
+}
+
+// Io_writeString — accepts (text) to stdout OR (writer, text) to the
+// supplied io.Writer. Matches both Sky.Core.Io.writeString signatures
+// historically used.
+func Io_writeString(args ...any) any {
+	switch len(args) {
+	case 1:
+		return func() any {
+			fmt.Print(fmt.Sprintf("%v", args[0]))
+			return Ok[any, any](struct{}{})
+		}
+	case 2:
+		if w, ok := args[0].(io.Writer); ok {
+			_, _ = w.Write([]byte(fmt.Sprintf("%v", args[1])))
+			return Ok[any, any](struct{}{})
+		}
+		fmt.Print(fmt.Sprintf("%v", args[1]))
+		return Ok[any, any](struct{}{})
+	}
+	return Ok[any, any](struct{}{})
+}
+
+// List_sort(xs) — ascending sort by the ELEMENT's own ordering (Elm's
+// `List.sort`).
+//
+// It compared `fmt.Sprintf("%v", …)` until 2026-08-11, i.e. it sorted the
+// RENDERING rather than the value: `[10, 9, 2]` came back `10, 2, 9`,
+// `[-1, -20, 3]` unchanged, and `['a', '~', 'B']` by the decimal spelling of
+// the code point. `List String` was correct, which is why it survived — the
+// rendering of a string is the string, exactly as the stringified form of a
+// `String` Dict key was the key (#174, the same shape one layer down).
+//
+// Now it shares the ordering dispatch `cmp` already had, so `List.sort`,
+// `List.sortBy`, `<`, `>` and `compare` cannot disagree with each other.
+// SliceStable rather than Slice: equal elements keep their input order, which
+// makes the output deterministic and matches `List_sortBy` / `List_sortWith`.
+func List_sort(list any) any {
+	items := asList(list)
+	result := make([]any, len(items))
+	copy(result, items)
+	sort.SliceStable(result, func(i, j int) bool {
+		return skyLessThan(result[i], result[j])
+	})
+	return result
+}
+
+// List_sortBy(keyFn, xs) — stable sort by the `keyFn elem` projection.
+// Keys may be Int, Float, String, Char, a tuple or list of those, or anything
+// fmt.Sprintf can format (see [skyLessThan]).
+func List_sortBy(keyFn any, list any) any {
+	items := asList(list)
+	result := make([]any, len(items))
+	copy(result, items)
+	sort.SliceStable(result, func(i, j int) bool {
+		a := SkyCall(keyFn, result[i])
+		b := SkyCall(keyFn, result[j])
+		return skyLessThan(a, b)
+	})
+	return result
+}
+
+// List_sortWith(cmp, xs) — stable sort by a custom comparator (Elm's
+// List.sortWith). `cmp a b : Int` returns < 0 when a precedes b, > 0 when it
+// follows, 0 when equal — the same contract as the kernel's type signature
+// (`(a -> a -> Int) -> List a -> List a`) in Sky.Type.Constrain.Expression.
+// SliceStable preserves input order for equal keys (matches List_sortBy).
+func List_sortWith(cmp any, list any) any {
+	items := asList(list)
+	result := make([]any, len(items))
+	copy(result, items)
+	sort.SliceStable(result, func(i, j int) bool {
+		return AsInt(SkyCall(cmp, result[i], result[j])) < 0
+	})
+	return result
+}
+
+// skyLessThan — the ordering behind `List.sort` and `List.sortBy`.
+//
+// It defers to [cmpSafe], the same dispatch `<` / `>` / `compare` use, and falls
+// back to a lexicographic compare of the RENDERED values only for a pair that
+// dispatch cannot order at all. The fallback is deliberate and is why this is
+// not simply `cmp`: neither sort kernel has a `.sky` signature, so the checker
+// does not constrain the element to `comparable`, and a `List Bool` or an
+// `any`-typed FFI list must still come back sorted somehow rather than take the
+// process down. `List_sort` has no `comparable` constraint to lean on and a
+// panic there would be a new failure mode, not a fix.
+//
+// Its own type switch used to be the ordering, with arms for `int` / `int64` /
+// `float64` / `string` ONLY — so every `Char` (a Go `int32`), every `int32` /
+// `uint` / other width, and every tuple key fell into the rendered compare and
+// came back in the wrong order.
+func skyLessThan(a, b any) bool {
+	if c, ok := cmpSafe(a, b); ok {
+		return c < 0
+	}
+	// The fallback for a pair `cmpSafe` cannot order (two erased records, a
+	// function, a mixed pair after an `any`-typed FFI return). It used to
+	// compare `fmt.Sprintf("%v", …)`, which is the non-injective rendering
+	// `identity_key.go` exists to replace: two DISTINCT records render the same
+	// string, compare EQUAL, and then land in whatever order the caller
+	// presented them — for `Set.toList` that is Go's randomised map iteration,
+	// so the same set printed in a different order run to run. `identityLess`
+	// is a total order that separates distinct values, so the result is
+	// deterministic. The order itself remains unspecified for such elements;
+	// only its stability is promised.
+	return identityLess(a, b)
+}
+
+func List_member(item any, list any) any {
+	items := asList(list)
+	for _, v := range items {
+		if Eq(v, item) == true {
+			return true
+		}
+	}
+	return false
+}
+
+func List_any(fn any, list any) any {
+	items := asList(list)
+	for _, item := range items {
+		if AsBool(SkyCall(fn, item)) {
+			return true
+		}
+	}
+	return false
+}
+
+func List_all(fn any, list any) any {
+	items := asList(list)
+	for _, item := range items {
+		if !AsBool(SkyCall(fn, item)) {
+			return false
+		}
+	}
+	return true
+}
+
+func List_zip(a any, b any) any {
+	la := asList(a)
+	lb := asList(b)
+	n := len(la)
+	if len(lb) < n {
+		n = len(lb)
+	}
+	result := make([]any, n)
+	for i := 0; i < n; i++ {
+		result[i] = SkyTuple2{V0: la[i], V1: lb[i]}
+	}
+	return result
+}
+
+func List_concat(lists any) any {
+	items := asList(lists)
+	var result []any
+	for _, l := range items {
+		result = append(result, asList(l)...)
+	}
+	return result
+}
+
+func List_concatMap(fn any, list any) any {
+	items := asList(list)
+	var result []any
+	for _, item := range items {
+		mapped := asList(SkyCall(fn, item))
+		result = append(result, mapped...)
+	}
+	return result
+}
+
+func List_filterMap(fn any, list any) any {
+	items := asList(list)
+	var result []any
+	for _, item := range items {
+		maybe := MaybeCoerce[any](SkyCall(fn, item))
+		if maybe.Tag == 0 {
+			result = append(result, maybe.JustValue)
+		}
+	}
+	return result
+}
+
+func List_foldr(fn any, acc any, list any) any {
+	items := asList(list)
+	result := acc
+	for i := len(items) - 1; i >= 0; i-- {
+		step := SkyCall(fn, items[i])
+		result = SkyCall(step, result)
+	}
+	return result
+}
+
+func List_tail(list any) any {
+	items := asList(list)
+	if len(items) == 0 {
+		return Nothing[any]()
+	}
+	return Just[any](items[1:])
+}
+
+// ── Cons / list pattern-destructuring raw accessors ─────────────
+// The Rust codegen's pattern-match binder uses these to destructure
+// a Sky list value in a `case`/param cons pattern (`x :: xs`, `[a, b]`).
+// Unlike List_head / List_tail (which return Maybe), these return raw
+// elements/slices — the pattern's length guard has already run. AsList
+// normalises the []any / SkyList representations.
+
+// SkyLen is the element count of a Sky list value.
+func SkyLen(x any) int { return len(AsList(x)) }
+
+// SkyElem is the i-th element (bounds-guarded; nil when out of range).
+func SkyElem(x any, i int) any {
+	l := AsList(x)
+	if i < 0 || i >= len(l) {
+		return nil
+	}
+	return l[i]
+}
+
+// SkyTailSlice is the list minus its head (empty when already empty).
+func SkyTailSlice(x any) []any {
+	l := AsList(x)
+	if len(l) == 0 {
+		return l
+	}
+	return l[1:]
+}
+
+func List_indexedMap(fn any, list any) any {
+	items := asList(list)
+	result := make([]any, len(items))
+	for i, item := range items {
+		step := SkyCall(fn, i)
+		result[i] = SkyCall(step, item)
+	}
+	return result
+}
+
+func List_find(fn any, list any) any {
+	items := asList(list)
+	for _, item := range items {
+		if AsBool(SkyCall(fn, item)) {
+			return Just[any](item)
+		}
+	}
+	return Nothing[any]()
+}
+
+// Suppress unused import warnings
+var _ = bufio.NewReader
+var _ = io.EOF
+var _ = exec.Command
+var _ = os.Exit
+var _ = time.Now
+var _ = mrand.Intn
+var _ = sha256.Sum256
+var _ = md5.Sum
+var _ = base64.StdEncoding
+var _ = hex.EncodeToString
+var _ = url.QueryEscape
+var _ = regexp.Compile
+var _ = unicode.IsUpper
+var _ = math.Pi
+var _ = sort.Slice
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Http.Server — HTTP server framework
+// ═══════════════════════════════════════════════════════════
+
+// Route represents a single HTTP route
+type SkyRoute struct {
+	Method  string
+	Path    string
+	Handler any // func(SkyRequest) any (Task that returns SkyResponse)
+
+	// StaticDir — non-empty when the route was created by Server_static.
+	// Server_listen detects it and registers http.FileServer instead of
+	// the Sky-handler dispatch path, so static-file serving gets Go
+	// stdlib's path-traversal protection, Last-Modified handling,
+	// Range requests, and MIME type detection without re-implementing
+	// any of it on the Sky side.
+	StaticDir string
+}
+
+// SkyRequest wraps an HTTP request
+type SkyRequest struct {
+	Method     string
+	Path       string
+	Body       string
+	Headers    map[string]any
+	Params     map[string]any
+	Query      map[string]any
+	Cookies    map[string]string
+	Form       map[string]string
+	RemoteAddr string // audit P1-2: client IP for rate-limit keying
+}
+
+// SkyResponse wraps an HTTP response.
+//
+// Streaming (Sky.Http.Server.Stream): when StreamHandler is non-nil
+// the dispatcher in Server_listen takes the chunked-write path
+// instead of `fmt.Fprint(w, Body)`. Body MUST be empty in that
+// shape — the user's handler emits chunks via ServerStream_emit
+// after the dispatcher flushes the head.
+type SkyResponse struct {
+	Status      int
+	Body        string
+	Headers     map[string]string
+	ContentType string
+
+	// StreamHandler is the user's `StreamWriter -> Task Error ()`
+	// closure. The dispatcher special-cases this when non-nil:
+	// writes headers + flush, registers a serverStreamHandle,
+	// invokes the closure (driving the returned Task to
+	// completion), then sweeps the handle.
+	//
+	// Set by Server.Stream.stream (ServerStream_stream); never set
+	// by the buffered builders (Server.text/json/html).
+	StreamHandler any
+}
+
+// asSkyResponse bridges a value into a SkyResponse, accepting either
+// the runtime FFI struct directly OR any record-shaped struct with
+// matching field names (`Status`, `Body`, `Headers`, `ContentType`,
+// optionally `StreamHandler`).
+//
+// Why this exists (v0.15.44): the Layer-3 stdlib now declares
+// `Sky.Http.Server.Response` as a typed Sky record alias, so user
+// handlers' Go return type is `Sky_Http_Server_Response_R` — a
+// distinct nominal struct from `rt.SkyResponse`.  Both shapes flow
+// through the same listener dispatch, `withHeader`, `withCookie`,
+// `csrfIssue`, etc.; every call site that used to do `resp.(SkyResponse)`
+// would panic on the typed shape.  This helper folds both into the
+// runtime's working struct without touching codegen.
+//
+// Fast paths: identical type assertion + the StreamHandler case
+// (Server.Stream still uses the bare runtime struct).  Fallback:
+// reflect-extract each field by name; missing fields keep their
+// zero value (so an older `{ status, body, headers, contentType }`
+// shape — pre-StreamHandler — continues to work).
+//
+// Returns (zero, false) only when src is nil or carries no
+// recognisable field. The bool is for call sites that need to
+// distinguish "not a response" (Server_withHeader's pass-through
+// path) from "a response with all-zero fields".
+func asSkyResponse(src any) (SkyResponse, bool) {
+	if src == nil {
+		return SkyResponse{}, false
+	}
+	if r, ok := src.(SkyResponse); ok {
+		// Even on the fast path, the user may have stamped the
+		// streaming sentinel into Body via ServerStream_stream.
+		// Restore StreamHandler (if not already set) + clear the
+		// sentinel so it doesn't leak onto the wire.
+		if r.StreamHandler == nil {
+			if tok, ok := extractPendingStreamToken(r.Body); ok {
+				if h, found := takePendingStreamHandler(tok); found {
+					r.StreamHandler = h
+					r.Body = ""
+				}
+			}
+		} else if tok, ok := extractPendingStreamToken(r.Body); ok {
+			// StreamHandler already populated (legacy path) — just
+			// clean up the registry entry + strip the sentinel.
+			_, _ = takePendingStreamHandler(tok)
+			r.Body = ""
+		}
+		return r, true
+	}
+	rv := reflect.ValueOf(src)
+	if rv.Kind() == reflect.Ptr && !rv.IsNil() {
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return SkyResponse{}, false
+	}
+	var out SkyResponse
+	matched := false
+	if f := rv.FieldByName("Status"); f.IsValid() {
+		switch f.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			out.Status = int(f.Int())
+			matched = true
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			out.Status = int(f.Uint())
+			matched = true
+		}
+	}
+	if f := rv.FieldByName("Body"); f.IsValid() && f.Kind() == reflect.String {
+		out.Body = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("ContentType"); f.IsValid() && f.Kind() == reflect.String {
+		out.ContentType = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("Headers"); f.IsValid() {
+		switch f.Kind() {
+		case reflect.Map:
+			out.Headers = coerceHeadersToStringMap(f)
+			matched = true
+		}
+	}
+	if f := rv.FieldByName("StreamHandler"); f.IsValid() && f.CanInterface() {
+		iv := f.Interface()
+		if iv != nil {
+			out.StreamHandler = iv
+			matched = true
+		}
+	}
+	// v0.15.44: typed `Sky_Http_Server_Response_R` has no
+	// StreamHandler field — the user-side Response record
+	// alias intentionally hides it. When the source struct
+	// is missing StreamHandler but Body starts with the
+	// streaming sentinel ServerStream_stream stamped in,
+	// restore the closure from pendingStreamHandlers + clear
+	// the sentinel so it never lands on the wire.
+	if out.StreamHandler == nil && out.Body != "" {
+		if tok, ok := extractPendingStreamToken(out.Body); ok {
+			if h, found := takePendingStreamHandler(tok); found {
+				out.StreamHandler = h
+				out.Body = ""
+				matched = true
+			}
+		}
+	}
+	return out, matched
+}
+
+// coerceHeadersToStringMap normalises a map field (any value kind)
+// to map[string]string. Drops entries whose value can't be coerced
+// to a string. Used by asSkyResponse for the Headers field — typed
+// records emit `map[string]string` directly; the older runtime
+// SkyResponse already carries the right shape; defensive against
+// future `map[string]any` widenings.
+func coerceHeadersToStringMap(m reflect.Value) map[string]string {
+	if m.Kind() != reflect.Map || m.IsNil() {
+		return nil
+	}
+	out := make(map[string]string, m.Len())
+	iter := m.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		v := iter.Value()
+		if k.Kind() != reflect.String {
+			continue
+		}
+		if v.Kind() == reflect.String {
+			out[k.String()] = v.String()
+			continue
+		}
+		if v.CanInterface() {
+			out[k.String()] = fmt.Sprintf("%v", v.Interface())
+		}
+	}
+	return out
+}
+
+// asSkyRequest is the inbound-request mirror of asSkyResponse.
+// `Server_param` / `_queryParam` / `_header` / `_getCookie` etc.
+// used to do `req.(SkyRequest)`; typed codegen now hands those
+// kernels a `Sky_Http_Server_Request_R` (or any record-shaped
+// struct) so a direct assertion panics.  Reflect-extract every
+// field that maps 1:1, narrowing `map[string]string` ↔
+// `map[string]any` shapes both ways (typed records use
+// `map[string]string`; the runtime struct keeps `map[string]any`
+// for forward compatibility with header-value polymorphism).
+func asSkyRequest(src any) (SkyRequest, bool) {
+	if src == nil {
+		return SkyRequest{}, false
+	}
+	if r, ok := src.(SkyRequest); ok {
+		return r, true
+	}
+	rv := reflect.ValueOf(src)
+	if rv.Kind() == reflect.Ptr && !rv.IsNil() {
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return SkyRequest{}, false
+	}
+	var out SkyRequest
+	matched := false
+	if f := rv.FieldByName("Method"); f.IsValid() && f.Kind() == reflect.String {
+		out.Method = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("Path"); f.IsValid() && f.Kind() == reflect.String {
+		out.Path = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("Body"); f.IsValid() && f.Kind() == reflect.String {
+		out.Body = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("RemoteAddr"); f.IsValid() && f.Kind() == reflect.String {
+		out.RemoteAddr = f.String()
+		matched = true
+	}
+	if f := rv.FieldByName("Headers"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Headers = mapToAnyValueMap(f)
+		matched = true
+	}
+	if f := rv.FieldByName("Params"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Params = mapToAnyValueMap(f)
+		matched = true
+	}
+	if f := rv.FieldByName("Query"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Query = mapToAnyValueMap(f)
+		matched = true
+	}
+	if f := rv.FieldByName("Cookies"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Cookies = mapToStringMap(f)
+		matched = true
+	}
+	if f := rv.FieldByName("Form"); f.IsValid() && f.Kind() == reflect.Map {
+		out.Form = mapToStringMap(f)
+		matched = true
+	}
+	return out, matched
+}
+
+// mapToAnyValueMap widens any string-keyed map to map[string]any.
+// SkyRequest's Headers/Params/Query carry `any` values for header-
+// list polymorphism; the typed record's matching field is
+// `map[string]string`. Field-by-field copy preserves nil maps as
+// nil (so a missing field stays absent on the runtime struct).
+func mapToAnyValueMap(m reflect.Value) map[string]any {
+	if m.Kind() != reflect.Map || m.IsNil() {
+		return nil
+	}
+	out := make(map[string]any, m.Len())
+	iter := m.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		if k.Kind() != reflect.String {
+			continue
+		}
+		if iter.Value().CanInterface() {
+			out[k.String()] = iter.Value().Interface()
+		}
+	}
+	return out
+}
+
+// mapToStringMap narrows to map[string]string, dropping non-string
+// values. Used for SkyRequest.Cookies / Form whose runtime shape
+// is exactly map[string]string.
+func mapToStringMap(m reflect.Value) map[string]string {
+	if m.Kind() != reflect.Map || m.IsNil() {
+		return nil
+	}
+	out := make(map[string]string, m.Len())
+	iter := m.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		v := iter.Value()
+		if k.Kind() != reflect.String {
+			continue
+		}
+		if v.Kind() == reflect.String {
+			out[k.String()] = v.String()
+		} else if v.CanInterface() {
+			out[k.String()] = fmt.Sprintf("%v", v.Interface())
+		}
+	}
+	return out
+}
+
+// HTTP server safety limits — the DEFAULTS. They exist to prevent
+// trivial resource-exhaustion DoS. The four timeouts are each
+// overridable via env (see httpEnvTimeout) so an app with
+// legitimately long-running handlers (LLM proxying, large
+// downloads, streaming) can extend or disable them without a
+// per-handler workaround.
+const (
+	serverReadHeaderTimeout = 10 * time.Second
+	serverReadTimeout       = 30 * time.Second
+	serverWriteTimeout      = 30 * time.Second
+	serverIdleTimeout       = 120 * time.Second
+	serverMaxHeaderBytes    = 1 << 20 // 1 MiB
+	serverMaxBodyBytes      = 1 << 25 // 32 MiB; users can override per-handler
+)
+
+// httpEnvTimeout reads a Go duration from env var `key` (e.g.
+// "45s", "5m", "2h", or "0" to disable that timeout entirely).
+// Unset or unparseable → `def`. Shared by the HTTP server timeouts
+// and the HTTP client timeout so timeout config is uniform.
+func httpEnvTimeout(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
+}
+
+// colonToMuxPattern translates Sky's documented `:name` path-parameter
+// syntax into Go 1.22+ ServeMux's `{name}` wildcard syntax, returning the
+// rewritten pattern plus the ordered list of captured parameter names.
+//
+// Sky.Http.Server documents `Server.get "/users/:id" h` + `Server.param
+// "id" req`. Go's stdlib mux treats `:id` as a LITERAL segment, so the raw
+// pattern only ever matched the literal URL `/users/:id` — `/users/42`
+// 404'd and `req.Params` was always empty. Rewriting each `:seg` to
+// `{seg}` lets the mux capture the segment; the caller then reads it back
+// via `req.PathValue(name)`. Only single-segment captures are produced
+// (matching Sky's per-segment `:name` semantics); a trailing-`*` catch-all
+// is out of scope. Segments that are exactly `:` (no name) are left
+// untouched so a malformed pattern surfaces as a plain literal rather than
+// a mux-panicking `{}`.
+func colonToMuxPattern(path string) (string, []string) {
+	if !strings.Contains(path, "/:") {
+		return path, nil
+	}
+	segs := strings.Split(path, "/")
+	var names []string
+	for i, seg := range segs {
+		if len(seg) > 1 && seg[0] == ':' {
+			name := seg[1:]
+			names = append(names, name)
+			segs[i] = "{" + name + "}"
+		}
+	}
+	return strings.Join(segs, "/"), names
+}
+
+func Server_listen(port any, routes any) any {
+	p := AsInt(port)
+	routeList := AsList(routes)
+	mux := http.NewServeMux()
+
+	// v0.16.3 #466 follow-up: count paths so we know when to apply
+	// method-aware registration. Method-aware patterns ("GET /api/x")
+	// disambiguate two routes on the SAME path with DIFFERENT methods,
+	// but they CONFLICT with wildcard-method routes registered on
+	// MORE SPECIFIC paths (Go's mux gates this case — neither pattern
+	// strictly more specific). The MountEmbeddedConsole subapp
+	// registers `/_sky/console/_sky/event` wildcard-method, so a
+	// blanket `GET /` from a user handler trips that gate. Fix:
+	// use the method prefix ONLY when 2+ routes share the path —
+	// otherwise stay path-only (which Go's mux happily treats as
+	// "any method on this path"). Preserves the same-path-different-
+	// method coexistence that #466 unlocked without breaking the
+	// console mount.
+	pathRouteCount := make(map[string]int, len(routeList))
+	for _, r := range routeList {
+		if rt, ok := r.(SkyRoute); ok && rt.StaticDir == "" {
+			pathRouteCount[rt.Path]++
+		}
+	}
+
+	for _, r := range routeList {
+		route := r.(SkyRoute)
+		handler := route.Handler
+		pattern := route.Path
+
+		// Static-file routes (registered via Server_static) bypass
+		// the Sky-handler dispatch entirely. http.FileServer +
+		// http.StripPrefix delivers path-traversal protection,
+		// MIME detection, Last-Modified, and Range support — all
+		// the things a hand-rolled static handler in Sky would
+		// have to re-implement.
+		//
+		// Pattern is already prefix-form ("/static/" with trailing
+		// slash) so ServeMux longest-prefix-matches every nested
+		// path. StripPrefix removes the prefix (keeping the
+		// trailing slash) before FileServer maps the rest onto the
+		// directory.
+		if route.StaticDir != "" {
+			stripPattern := pattern
+			if len(stripPattern) > 1 && stripPattern[len(stripPattern)-1] == '/' {
+				stripPattern = stripPattern[:len(stripPattern)-1]
+			}
+			mux.Handle(pattern, http.StripPrefix(stripPattern, http.FileServer(http.Dir(route.StaticDir))))
+			continue
+		}
+
+		// v0.16.3 fix(#466) + refinement: register with Go 1.22+
+		// method-aware mux pattern ONLY when 2+ routes share this
+		// path (i.e. same-path-different-method case that #466 was
+		// originally about). For unique paths, stay path-only — that
+		// keeps Go's "wildcard-method on more-specific path" conflict
+		// rule from tripping on the console mount (#466 follow-up,
+		// caught 2026-06-04 by VerifyScenarioSpec via 15-http-server).
+		// Translate `:name` → `{name}` so Go's mux captures the segment
+		// (raw `:name` matched only the literal path). paramNames drives
+		// req.PathValue read-back inside the handler below.
+		translated, paramNames := colonToMuxPattern(pattern)
+		muxPattern := translated
+		if pathRouteCount[pattern] > 1 && route.Method != "" && route.Method != "*" {
+			muxPattern = route.Method + " " + translated
+		}
+		mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
+			// Panic recovery — one bad handler mustn't kill the process.
+			// Audit P1-5: prod-mode logs omit the Go stack trace from
+			// stderr (to avoid leaking internal paths + memory
+			// addresses) and write the full frame to .skylog/panic.log
+			// for post-mortem inspection. Dev mode keeps the full
+			// stack on stderr for fast-feedback debugging.
+			defer func() {
+				rec := recover()
+				if rec == nil {
+					return
+				}
+				// http.ErrAbortHandler is Go's sentinel value
+				// handlers use to abort cleanly (httputil.
+				// ReverseProxy panics with it when a client
+				// disconnects mid-SSE-stream). Re-panic so
+				// net/http's own handler-recover treats it as
+				// the no-op abort it's meant to be.
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
+				logPanicFrame(req.Method, req.URL.Path, rec)
+				w.WriteHeader(500)
+				fmt.Fprint(w, "Internal Server Error")
+			}()
+			// Bound body read to prevent memory exhaustion.
+			req.Body = http.MaxBytesReader(w, req.Body, serverMaxBodyBytes)
+
+			skyReq := SkyRequest{
+				Method:     req.Method,
+				Path:       req.URL.Path,
+				Headers:    make(map[string]any),
+				Params:     make(map[string]any),
+				Query:      make(map[string]any),
+				Cookies:    make(map[string]string),
+				RemoteAddr: req.RemoteAddr,
+			}
+			for _, ck := range req.Cookies() {
+				skyReq.Cookies[ck.Name] = ck.Value
+			}
+			for k, v := range req.Header {
+				if len(v) > 0 {
+					skyReq.Headers[k] = v[0]
+				}
+			}
+			if req.Body != nil {
+				bodyBytes, err := io.ReadAll(req.Body)
+				if err != nil {
+					w.WriteHeader(413) // Payload Too Large
+					fmt.Fprint(w, "request body too large")
+					return
+				}
+				skyReq.Body = string(bodyBytes)
+			}
+			// Parse form data (application/x-www-form-urlencoded)
+			// from the body so Server.formValue works.
+			if req.Method == "POST" || req.Method == "PUT" || req.Method == "PATCH" {
+				skyReq.Form = make(map[string]string)
+				ct := req.Header.Get("Content-Type")
+				if strings.HasPrefix(ct, "application/x-www-form-urlencoded") || ct == "" {
+					vals, err := url.ParseQuery(skyReq.Body)
+					if err == nil {
+						for k, v := range vals {
+							if len(v) > 0 {
+								skyReq.Form[k] = v[0]
+							}
+						}
+					}
+				}
+			}
+			for k, v := range req.URL.Query() {
+				if len(v) > 0 {
+					skyReq.Query[k] = v[0]
+				}
+			}
+			// URL path captures — Server.param reads these. paramNames was
+			// derived from the `:name` segments this route registered.
+			for _, pn := range paramNames {
+				skyReq.Params[pn] = req.PathValue(pn)
+			}
+
+			// Call the Sky handler and invoke the returned Task
+			// thunk. SkyCall uses reflect so it accepts any
+			// callable shape (any/typed codegen both work).
+			// anyTaskInvoke normalises the thunk regardless of
+			// whether it's `func() any`, `SkyTask[any, any]`, or
+			// an already-resolved SkyResult.
+			task := SkyCall(handler, skyReq)
+			result := any(anyTaskInvoke(task))
+
+			// Accept both the bare SkyResult[any,any] AND the
+			// wider typed SkyResult shapes that typed codegen may
+			// now emit. Fall back via reflect.
+			resp, ok := result.(SkyResult[any, any])
+			if !ok {
+				rv := reflect.ValueOf(result)
+				if rv.IsValid() && rv.Kind() == reflect.Struct {
+					tagF := rv.FieldByName("Tag")
+					okF := rv.FieldByName("OkValue")
+					if tagF.IsValid() && okF.IsValid() {
+						resp = SkyResult[any, any]{
+							Tag:     int(tagF.Int()),
+							OkValue: okF.Interface(),
+						}
+						ok = true
+					}
+				}
+			}
+			if ok && resp.Tag == 0 {
+				// v0.15.44: bridge typed Sky_Http_Server_Response_R
+				// (record alias declared in Layer-3 Server.sky) into
+				// the runtime SkyResponse shape. Older handlers that
+				// return bare `rt.SkyResponse` (FFI direct path,
+				// Server_text/json/html before Layer-3 wrap) keep
+				// the fast-path assertion via asSkyResponse.
+				skyResp, okR := asSkyResponse(resp.OkValue)
+				if !okR {
+					w.WriteHeader(500)
+					fmt.Fprint(w, "Internal Server Error")
+					return
+				}
+				// v0.15.46: WebSocket upgrade sentinel.  The user's
+				// handler returned Server.WebSocket.upgrade; we hijack
+				// the connection and run the upgrade-and-loop dance.
+				if tok, ok := extractPendingWebSocketToken(skyResp.Body); ok {
+					if cfg, found := takePendingWebSocketCfg(tok); found {
+						serveWebSocketUpgrade(w, req, cfg)
+						return
+					}
+				}
+				// Streaming response (Sky.Http.Server.Stream): dispatch
+				// the user's handler over a chunk-writer instead of
+				// buffering the body. The branch sets headers + flushes,
+				// then drives the handler Task to completion. After
+				// return the connection closes naturally.
+				if skyResp.StreamHandler != nil {
+					serveStreamingResponse(w, req, skyResp)
+					return
+				}
+				// Apply the response's default ContentType FIRST so the
+				// Headers map (populated by Server.withHeader) can
+				// override it. Otherwise an explicit
+				// `withHeader "Content-Type" "application/javascript"`
+				// applied to a Server.text/json/html response would be
+				// silently clobbered by the default ("text/plain" etc).
+				if skyResp.ContentType != "" {
+					w.Header().Set("Content-Type", skyResp.ContentType)
+				}
+				for k, v := range skyResp.Headers {
+					w.Header().Set(k, v)
+				}
+				// Safe-by-default security headers (callers can override);
+				// honours SKY_LIVE_FRAME_ANCESTORS for embeddable deploys.
+				setSecurityHeaders(w.Header())
+				// CSRF auto-injection: for HTML responses, walk every
+				// `<form method="POST">` (case-insensitive on both tag
+				// and attribute) and inject a hidden `__sky_csrf` input
+				// just inside the opening tag. The submitted token will
+				// match the cookie via the `r.FormValue("__sky_csrf")`
+				// fallback in the CSRF middleware. Skip injection when
+				// the form already declares the field (idempotent on
+				// double-render). User code stays clean — no per-form
+				// boilerplate.
+				body := skyResp.Body
+				if strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
+					tok := CurrentCsrfToken(req)
+					if tok != "" {
+						body = injectCsrfIntoForms(body, tok)
+					}
+					// Dev-only "🔍 Console" floating link. Injected
+					// just before </body> so it lives outside any
+					// user route container. Returns "" in production
+					// (productionFromEnv() == true), making this a
+					// no-op for staging / prod deployments.
+					if banner := devBannerHTML(); banner != "" {
+						body = injectDevBanner(body, banner)
+					}
+				}
+				if skyResp.Status > 0 {
+					w.WriteHeader(skyResp.Status)
+				}
+				fmt.Fprint(w, body)
+			} else {
+				w.WriteHeader(500)
+				fmt.Fprint(w, "Internal Server Error")
+			}
+		})
+	}
+
+	// Observability endpoints (Phase 1.1a Step 4). Mount BEFORE
+	// any of the user's routes so the catch-all "/" pattern in
+	// user code doesn't shadow them. Opt-out via
+	// OBSERVABILITY_DISABLED=1.
+	// v0.16.0: in-process inline Sky Console mount. Replaces the
+	// v0.15.x subprocess + reverse-proxy mount. Must run BEFORE
+	// MountObservabilityEndpoints so the legacy console HTML root
+	// inside it can defer to the inline one. Same gates as
+	// Sky.Live (production+no-secret → skipped; SKY_LIVE_BASE_PATH
+	// set → skipped; SKY_CONSOLE_EMBED=off → skipped). No port
+	// argument needed — handler runs on this mux directly.
+	_ = p
+	// v0.16.1 PR7 — seed SKY_PARENT_URL so the inline console_app's
+	// init_ reads OUR OWN listener's loopback when it builds the
+	// initial Model. Mirror of the liveAppRun setup; see that path's
+	// comment for the full rationale. Same safety: StartPushExporter
+	// needs BOTH SKY_PARENT_URL + SKY_LIVE_NAMESPACE — we only seed
+	// the URL, so push-export stays inactive for standalone apps.
+	if os.Getenv("SKY_PARENT_URL") == "" {
+		os.Setenv("SKY_PARENT_URL", fmt.Sprintf("http://127.0.0.1:%d", p))
+	}
+	MountEmbeddedConsole(mux)
+	MountObservabilityEndpoints(mux)
+	// v0.16.1 PR 2 — boot-time mount-precedence invariant. When the
+	// user EXPLICITLY asked for a console (SKY_CONSOLE_AUTH=token|app,
+	// not a sub-app, SKY_CONSOLE_EMBED not off) but neither the
+	// inline nor the legacy mount actually claimed /_sky/console,
+	// this prints a FATAL stderr line + os.Exit(1).
+	AssertConsoleInvariantOrExit()
+	// If THIS process is a sub-app (SKY_PARENT_URL + SKY_LIVE_NAMESPACE
+	// set), start the push-exporter so Log.* / metric / span writes
+	// flow back to the parent. No-op for standalone runs.
+	StartPushExporter()
+	// Production-mode gate — single source of truth in
+	// `productionFromEnv`: any ENV / SKY_ENV value EXCEPT
+	// {"dev", "development", "local"} gates. Unset → open.
+	SetProductionMode(productionFromEnv())
+
+	// Step 7 — OTel tracer init. Same shape as Sky.Live; non-fatal
+	// on failure (logs + continues with noop tracer).
+	if err := InitTracingFromEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "[sky.http] OTel init failed (continuing without trace export): %v\n", err)
+	}
+
+	// Wrap with CSRF (Phase 1.2) + observability (Phase 1.1a Step 3).
+	// Order: observability is OUTER so CSRF rejections still get
+	// metered as 403 — surfaces attacks / misconfigs in dashboards.
+	csrfed := CSRFMiddleware(mux)
+	observed := ObservabilityMiddleware(csrfed)
+
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", p),
+		Handler:           observed,
+		ReadHeaderTimeout: httpEnvTimeout("SKY_HTTP_READ_HEADER_TIMEOUT", serverReadHeaderTimeout),
+		ReadTimeout:       httpEnvTimeout("SKY_HTTP_READ_TIMEOUT", serverReadTimeout),
+		WriteTimeout:      httpEnvTimeout("SKY_HTTP_WRITE_TIMEOUT", serverWriteTimeout),
+		IdleTimeout:       httpEnvTimeout("SKY_HTTP_IDLE_TIMEOUT", serverIdleTimeout),
+		MaxHeaderBytes:    serverMaxHeaderBytes,
+	}
+	// v0.16.0: inline console runs in-process — no children to
+	// signal. Still install a SIGINT/SIGTERM/SIGHUP handler so the
+	// server closes gracefully (drains in-flight requests) rather
+	// than dropping connections.
+	srvSigCh := make(chan os.Signal, 2)
+	signal.Notify(srvSigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-srvSigCh
+		// v0.16.1: drain HubExporter (and any other shutdown
+		// hook) BEFORE srv.Close so pending telemetry pushes
+		// reach the hub within Cloud Run / k8s grace windows.
+		// 8 s budget matches Sky.Live's signal handler.
+		RunShutdownHooks(8 * time.Second)
+		_ = srv.Close()
+	}()
+	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
+	err := srv.ListenAndServe()
+	signal.Stop(srvSigCh)
+	if err != nil && err != http.ErrServerClosed {
+		if isAddrInUse(err) {
+			reportPortInUse(p, "pass a different port to Server.listen")
+			os.Exit(1)
+		}
+		return Err[any, any](ErrFfi(err.Error()))
+	}
+	return Ok[any, any](struct{}{})
+}
+
+func Server_get(path any, handler any) any {
+	return SkyRoute{Method: "GET", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+func Server_post(path any, handler any) any {
+	return SkyRoute{Method: "POST", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+func Server_put(path any, handler any) any {
+	return SkyRoute{Method: "PUT", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+func Server_delete(path any, handler any) any {
+	return SkyRoute{Method: "DELETE", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+// Server_api registers an API route — a REST / machine-to-machine
+// endpoint (server-to-server calls, webhooks) that authenticates via
+// Bearer token or HMAC, NOT the browser session cookie. API routes
+// bypass CSRF protection: the double-submit CSRF guard is a
+// browser-form-forgery defence for cookie-authed requests, and an
+// API client neither has nor needs a CSRF token. Mirrors Sky.Live's
+// Live.api so the "API endpoint" category is consistent across both
+// server kinds.
+//
+// `spec` is "METHOD /path" (e.g. "POST /v1/generate"); an omitted
+// method matches any verb.
+func Server_api(spec any, handler any) any {
+	s := fmt.Sprintf("%v", spec)
+	method, pattern := "", s
+	if idx := strings.Index(s, " "); idx > 0 {
+		method = strings.ToUpper(strings.TrimSpace(s[:idx]))
+		pattern = strings.TrimSpace(s[idx+1:])
+	}
+	WithoutCsrf(pattern)
+	return SkyRoute{Method: method, Path: pattern, Handler: handler}
+}
+
+func Server_text(body any) any {
+	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "text/plain"}
+}
+
+func Server_json(body any) any {
+	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "application/json"}
+}
+
+func Server_html(body any) any {
+	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "text/html"}
+}
+
+// injectCsrfIntoForms walks an HTML body and inserts a hidden
+// `<input type="hidden" name="__sky_csrf" value="...">` immediately
+// after every opening `<form …>` whose method is POST (or absent —
+// HTML defaults to GET but apps that omit the attribute and use a
+// POST handler are rare; we cover only declared POSTs here). Case-
+// insensitive matching on both the tag and the method attribute.
+// Idempotent: if a form already contains `name="__sky_csrf"` in its
+// raw markup we skip injection so a double-render doesn't stack
+// duplicate inputs.
+//
+// Why this lives in the runtime: Sky.Http.Server templates are plain
+// strings produced by user code (typically from `<form method="POST"
+// action="…">…</form>`); rather than force every user to remember the
+// CSRF input, the runtime injects it before the body hits the wire.
+// The middleware's `r.FormValue("__sky_csrf")` fallback (see
+// csrf_middleware.go) reads it back. Net effect: AI-written
+// Sky.Http.Server form apps are CSRF-protected by construction, same
+// as Sky.Live apps.
+func injectCsrfIntoForms(body, token string) string {
+	if token == "" {
+		return body
+	}
+	hidden := `<input type="hidden" name="__sky_csrf" value="` + token + `">`
+	var out strings.Builder
+	out.Grow(len(body) + 128)
+	i := 0
+	lower := strings.ToLower(body)
+	for i < len(body) {
+		fIdx := strings.Index(lower[i:], "<form")
+		if fIdx < 0 {
+			out.WriteString(body[i:])
+			break
+		}
+		fIdx += i
+		// Copy everything up to and including the <form ... > opener.
+		closeIdx := strings.Index(body[fIdx:], ">")
+		if closeIdx < 0 {
+			// Unclosed tag — bail and emit the rest unchanged.
+			out.WriteString(body[i:])
+			break
+		}
+		tagEnd := fIdx + closeIdx + 1
+		formTag := body[fIdx:tagEnd]
+		out.WriteString(body[i:tagEnd])
+		// Find the matching `</form>` so we can scope idempotency
+		// check to this form's body.
+		formCloseRel := strings.Index(lower[tagEnd:], "</form>")
+		var formBodyEnd int
+		if formCloseRel < 0 {
+			formBodyEnd = len(body)
+		} else {
+			formBodyEnd = tagEnd + formCloseRel
+		}
+		// Only inject for POST forms (case-insensitive) that don't
+		// already carry a __sky_csrf input.
+		methodLower := strings.ToLower(formTag)
+		isPost := strings.Contains(methodLower, `method="post"`) ||
+			strings.Contains(methodLower, `method='post'`) ||
+			strings.Contains(methodLower, "method=post")
+		alreadyHas := strings.Contains(
+			strings.ToLower(body[tagEnd:formBodyEnd]),
+			`name="__sky_csrf"`)
+		if isPost && !alreadyHas {
+			out.WriteString(hidden)
+		}
+		i = tagEnd
+	}
+	return out.String()
+}
+func Server_htmlT(body string) SkyResponse {
+	return SkyResponse{Status: 200, Body: body, ContentType: "text/html"}
+}
+
+func Server_withStatus(status any, resp any) any {
+	// v0.15.44: accept typed Sky_Http_Server_Response_R via asSkyResponse.
+	r, ok := asSkyResponse(resp)
+	if !ok {
+		return resp
+	}
+	r.Status = AsInt(status)
+	return r
+}
+
+func Server_redirect(url any) any {
+	return SkyResponse{
+		Status:  302,
+		Headers: map[string]string{"Location": fmt.Sprintf("%v", url)},
+	}
+}
+func Server_redirectT(url string) SkyResponse {
+	return SkyResponse{
+		Status:  302,
+		Headers: map[string]string{"Location": url},
+	}
+}
+
+func Server_param(name any, req any) any {
+	// v0.15.44: accept typed Sky_Http_Server_Request_R via asSkyRequest.
+	r, ok := asSkyRequest(req)
+	if !ok {
+		return Nothing[any]()
+	}
+	v, found := r.Params[fmt.Sprintf("%v", name)]
+	if found {
+		return Just[any](v)
+	}
+	return Nothing[any]()
+}
+
+func Server_queryParam(name any, req any) any {
+	r, ok := asSkyRequest(req)
+	if !ok {
+		return Nothing[any]()
+	}
+	v, found := r.Query[fmt.Sprintf("%v", name)]
+	if found {
+		return Just[any](v)
+	}
+	return Nothing[any]()
+}
+
+func Server_header(name any, req any) any {
+	r, ok := asSkyRequest(req)
+	if !ok {
+		return Nothing[any]()
+	}
+	v, found := r.Headers[fmt.Sprintf("%v", name)]
+	if found {
+		return Just[any](v)
+	}
+	return Nothing[any]()
+}
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Http.Middleware — handler → handler transformations
+// ═══════════════════════════════════════════════════════════
+
+// ── Rate limit (audit P1-2) ──────────────────────────────────
+// Sliding-window per-IP counter. Buckets each client IP's request
+// timestamps in a ring and rejects with 429 Too Many Requests once
+// the count within the last minute exceeds the configured cap.
+//
+// Deployments behind a reverse proxy should terminate at the proxy
+// and pass X-Forwarded-For; this helper reads req.RemoteAddr which
+// is what the Go http.Server exposes (the direct peer). For
+// production use behind a proxy, extract the real client IP upstream
+// of rateLimit — leaving that policy decision to the caller is
+// deliberate because it depends on the trust relationship with the
+// proxy.
+//
+// State is in-memory only; restarting the process resets all
+// counters. That's appropriate for a single-node service and
+// explicitly flagged as a limitation in the docs. For multi-node
+// coordinated rate limiting, a Redis-backed counter would plug in
+// via the same interface.
+
+var (
+	rateLimitMu      sync.Mutex
+	rateLimitBuckets = map[string][]time.Time{}
+)
+
+const rateLimitWindow = time.Minute
+
+// Middleware.rateLimit : Int -> Handler -> Handler
+// Wraps a handler so each client IP is allowed at most `maxPerMinute`
+// requests in a rolling 60-second window. On overflow, returns
+// 429 Too Many Requests with a Retry-After: 60 header, bypassing the
+// wrapped handler entirely (no DB work, no log spam, no leak of
+// application state).
+func Middleware_rateLimit(maxPerMinute any, handler any) any {
+	limit := AsInt(maxPerMinute)
+	return func(req any) any {
+		return func() any {
+			// v0.15.44: bridge typed Sky_Http_Server_Request_R.
+			r, _ := asSkyRequest(req)
+			key := r.RemoteAddr
+			if key == "" {
+				// No IP → don't rate-limit (the direct-handler path
+				// in unit tests has this shape). Production always
+				// has RemoteAddr set by net/http.
+				task := SkyCall(handler, req)
+				return anyTaskInvoke(task)
+			}
+			if rateLimitHit(key, limit) {
+				resp := SkyResponse{
+					Status: 429,
+					Body:   "Too Many Requests",
+					Headers: map[string]string{
+						"Retry-After":  "60",
+						"Content-Type": "text/plain",
+					},
+				}
+				return Ok[any, any](resp)
+			}
+			task := SkyCall(handler, req)
+			return anyTaskInvoke(task)
+		}
+	}
+}
+
+// rateLimitHit records a request for `key` and returns true if the
+// key has exceeded `limit` requests within the sliding window.
+// Trims stale timestamps on each call so the map doesn't grow
+// unbounded for long-lived IPs.
+func rateLimitHit(key string, limit int) bool {
+	now := time.Now()
+	cutoff := now.Add(-rateLimitWindow)
+	rateLimitMu.Lock()
+	defer rateLimitMu.Unlock()
+	hist := rateLimitBuckets[key]
+	// Drop stale entries.
+	i := 0
+	for ; i < len(hist); i++ {
+		if hist[i].After(cutoff) {
+			break
+		}
+	}
+	hist = hist[i:]
+	if len(hist) >= limit {
+		// Still over quota even before recording this one.
+		rateLimitBuckets[key] = hist
+		return true
+	}
+	hist = append(hist, now)
+	rateLimitBuckets[key] = hist
+	return false
+}
+
+// rateLimitReset — test-only helper. Not exported through the
+// kernel registry. Lets the spec reset state between cases.
+func rateLimitReset() {
+	rateLimitMu.Lock()
+	rateLimitBuckets = map[string][]time.Time{}
+	rateLimitMu.Unlock()
+}
+
+// Middleware.withCors : List String -> Handler -> Handler
+// Takes a list of allowed origins ("*" for all) and wraps a handler to
+// add Access-Control-Allow-Origin etc. and short-circuit preflights.
+func Middleware_withCors(origins any, handler any) any {
+	allowed := map[string]bool{}
+	allowAll := false
+	for _, o := range asList(origins) {
+		s := fmt.Sprintf("%v", o)
+		if s == "*" {
+			allowAll = true
+		}
+		allowed[s] = true
+	}
+	return func(req any) any {
+		return func() any {
+			r, _ := asSkyRequest(req)
+			origin := ""
+			if o, ok := r.Headers["Origin"]; ok {
+				origin = fmt.Sprintf("%v", o)
+			}
+			allow := ""
+			if allowAll {
+				allow = "*"
+			} else if allowed[origin] {
+				allow = origin
+			}
+			// Preflight
+			if r.Method == "OPTIONS" {
+				resp := SkyResponse{
+					Status:  204,
+					Headers: map[string]string{},
+				}
+				if allow != "" {
+					resp.Headers["Access-Control-Allow-Origin"] = allow
+					resp.Headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+					resp.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+					resp.Headers["Access-Control-Max-Age"] = "3600"
+				}
+				return Ok[any, any](resp)
+			}
+			// Delegate to inner handler, then add CORS headers to response.
+			task := SkyCall(handler, req)
+			res := any(anyTaskInvoke(task))
+			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
+				if resp, ok := asSkyResponse(sr.OkValue); ok {
+					if resp.Headers == nil {
+						resp.Headers = map[string]string{}
+					}
+					if allow != "" {
+						resp.Headers["Access-Control-Allow-Origin"] = allow
+					}
+					return Ok[any, any](resp)
+				}
+			}
+			return res
+		}
+	}
+}
+
+// Middleware.withLogging : Handler -> Handler
+// Logs method, path, status, duration for each request.
+func Middleware_withLogging(handler any) any {
+	return func(req any) any {
+		return func() any {
+			r, _ := asSkyRequest(req)
+			start := time.Now()
+			task := SkyCall(handler, req)
+			res := any(anyTaskInvoke(task))
+			// v0.16.3 #469 — asSkyResponse below consumes the
+			// pending-stream-handler registry as part of restoring
+			// the StreamHandler closure from the body sentinel. Pre-fix
+			// withLogging discarded the resulting `resp` and returned
+			// the original `res`, so the next asSkyResponse call (in
+			// the listener) found an empty registry and wrote the
+			// literal `__sky_stream:N` to the wire. Symmetric with
+			// withCors: wrap the resolved `resp` in Ok and return that.
+			status := 0
+			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
+				if resp, ok := asSkyResponse(sr.OkValue); ok {
+					status = resp.Status
+					if status == 0 {
+						status = 200
+					}
+					dur := time.Since(start).Milliseconds()
+					ctx := map[string]any{
+						"method": r.Method,
+						"path":   r.Path,
+						"status": status,
+						"ms":     dur,
+					}
+					logEmit(logLevelInfo, "info", "http request", ctx)
+					return Ok[any, any](resp)
+				}
+			}
+			dur := time.Since(start).Milliseconds()
+			ctx := map[string]any{
+				"method": r.Method,
+				"path":   r.Path,
+				"status": status,
+				"ms":     dur,
+			}
+			logEmit(logLevelInfo, "info", "http request", ctx)
+			return res
+		}
+	}
+}
+
+// Middleware.withBasicAuth : String -> String -> Handler -> Handler
+// Wraps a handler with HTTP Basic authentication. user + pass are the
+// expected credentials; on mismatch returns 401 with WWW-Authenticate.
+// WARNING: requires HTTPS in production — Basic sends credentials in the clear.
+func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) any {
+	eu := fmt.Sprintf("%v", expectedUser)
+	ep := fmt.Sprintf("%v", expectedPass)
+	return func(req any) any {
+		return func() any {
+			r, _ := asSkyRequest(req)
+			authHeader, _ := r.Headers["Authorization"].(string)
+			const prefix = "Basic "
+			if !strings.HasPrefix(authHeader, prefix) {
+				return Ok[any, any](SkyResponse{
+					Status:  401,
+					Body:    "authentication required",
+					Headers: map[string]string{"WWW-Authenticate": `Basic realm="Sky"`},
+				})
+			}
+			decoded, err := base64.StdEncoding.DecodeString(authHeader[len(prefix):])
+			if err != nil {
+				return Ok[any, any](SkyResponse{Status: 401, Body: "invalid auth"})
+			}
+			parts := strings.SplitN(string(decoded), ":", 2)
+			if len(parts) != 2 {
+				return Ok[any, any](SkyResponse{Status: 401, Body: "invalid auth"})
+			}
+			// Constant-time compare to avoid timing side channels.
+			userOk := subtle.ConstantTimeCompare([]byte(parts[0]), []byte(eu)) == 1
+			passOk := subtle.ConstantTimeCompare([]byte(parts[1]), []byte(ep)) == 1
+			if !(userOk && passOk) {
+				return Ok[any, any](SkyResponse{Status: 401, Body: "bad credentials"})
+			}
+			// v0.16.3 #468 — anyTaskInvoke handles typed SkyTask[E, A]
+			// via reflect-fallback; raw `task.(func() any)()` panicked
+			// on typed handlers.
+			task := SkyCall(handler, req)
+			return any(anyTaskInvoke(task))
+		}
+	}
+}
+
+// Middleware.withRateLimit : String -> Int -> Int -> Handler -> Handler
+// (name, capacity, refillPerSec, handler) — applies a per-IP token bucket
+// limit using the named RateLimit bucket store. Clients over limit get 429.
+func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler any) any {
+	return func(req any) any {
+		return func() any {
+			r, _ := asSkyRequest(req)
+			ip := ""
+			// Try X-Forwarded-For first (behind reverse proxy), then Remote.
+			if v, ok := r.Headers["X-Forwarded-For"].(string); ok && v != "" {
+				if idx := strings.Index(v, ","); idx > 0 {
+					ip = strings.TrimSpace(v[:idx])
+				} else {
+					ip = strings.TrimSpace(v)
+				}
+			}
+			if ip == "" {
+				if v, ok := r.Headers["X-Real-Ip"].(string); ok {
+					ip = v
+				}
+			}
+			if ip == "" {
+				ip = "unknown"
+			}
+			allowed := RateLimit_allow(name, ip, capacity, refillPerSec).(bool)
+			if !allowed {
+				return Ok[any, any](SkyResponse{
+					Status:  429,
+					Body:    "rate limit exceeded",
+					Headers: map[string]string{"Retry-After": "1"},
+				})
+			}
+			// v0.16.3 #468 — anyTaskInvoke handles typed SkyTask[E, A]
+			// via reflect-fallback; raw `task.(func() any)()` panicked
+			// on typed handlers.
+			task := SkyCall(handler, req)
+			return any(anyTaskInvoke(task))
+		}
+	}
+}
+
+// Middleware.withCsrf : Handler -> Handler
+//
+// task #663 — CSRF protection via the double-submit cookie pattern.
+// See sky-stdlib/Sky/Http/Middleware.sky's `withCsrf` docstring for
+// the full contract.  Defaults (cookie name `__Host-sky_csrf`,
+// header `X-Csrf-Token`, form field `_csrf`) are baked in; a future
+// config-record overload can ship if real apps demand it.
+//
+// Token gen: 32 bytes from crypto/rand → base64-URL (no padding).
+// Token compare: subtle.ConstantTimeCompare (no timing leak).
+// Cookie attrs: Path=/; Secure; SameSite=Lax.  `securifyCookieAttrs`
+// strips Secure in dev mode if the user is testing without TLS.
+func Middleware_withCsrf(handler any) any {
+	const (
+		csrfCookie    = "__Host-sky_csrf"
+		csrfHeader    = "X-Csrf-Token"
+		csrfFormField = "_csrf"
+	)
+	return func(req any) any {
+		return func() any {
+			r, ok := asSkyRequest(req)
+			if !ok {
+				// Non-request shape: defer to handler.
+				task := SkyCall(handler, req)
+				return any(anyTaskInvoke(task))
+			}
+			method := strings.ToUpper(r.Method)
+			isSafe := method == "GET" || method == "HEAD" || method == "OPTIONS"
+
+			if isSafe {
+				// Safe method — pass through; ensure cookie is set
+				// if not already present so the next unsafe request
+				// can supply the matching token.
+				task := SkyCall(handler, req)
+				var resp any = anyTaskInvoke(task)
+				if _, hasCookie := r.Cookies[csrfCookie]; !hasCookie {
+					b := make([]byte, 32)
+					if _, err := cryptorand.Read(b); err == nil {
+						token := base64.RawURLEncoding.EncodeToString(b)
+						// anyTaskInvoke returns the handler's payload —
+						// commonly Ok[any, any](SkyResponse{...}). Unwrap
+						// the SkyResponse so the Set-Cookie header lands
+						// on the response struct, then re-wrap.
+						cookieHeader := fmt.Sprintf("%s=%s; %s",
+							csrfCookie, token,
+							securifyCookieAttrs("Path=/; Secure; SameSite=Lax"))
+						if okResult, isResult := resp.(SkyResult[any, any]); isResult && okResult.Tag == 0 {
+							if sr, isResp := okResult.OkValue.(SkyResponse); isResp {
+								if sr.Headers == nil {
+									sr.Headers = map[string]string{}
+								}
+								sr.Headers["Set-Cookie"] = cookieHeader
+								return Ok[any, any](any(sr))
+							}
+						}
+						// Fallback for handlers that return a bare
+						// SkyResponse rather than Ok-wrapped.
+						resp = setCookieHeader(resp, csrfCookie, token, "Path=/; Secure; SameSite=Lax")
+					}
+				}
+				return resp
+			}
+
+			// Unsafe method — validate.
+			cookieToken, hasCookie := r.Cookies[csrfCookie]
+			if !hasCookie || cookieToken == "" {
+				return Ok[any, any](SkyResponse{
+					Status:  403,
+					Body:    "CSRF protection: missing token cookie. Submit the form after first loading a safe (GET) page.",
+					Headers: map[string]string{"Content-Type": "text/plain"},
+				})
+			}
+			// Header takes precedence over form field.
+			var providedToken string
+			if v, ok := r.Headers[csrfHeader].(string); ok && v != "" {
+				providedToken = v
+			} else if r.Form != nil {
+				if v, ok := r.Form[csrfFormField]; ok {
+					providedToken = v
+				}
+			}
+			if providedToken == "" {
+				return Ok[any, any](SkyResponse{
+					Status:  403,
+					Body:    "CSRF protection: missing token in request. Include the token via X-Csrf-Token header or _csrf form field.",
+					Headers: map[string]string{"Content-Type": "text/plain"},
+				})
+			}
+			if subtle.ConstantTimeCompare([]byte(cookieToken), []byte(providedToken)) != 1 {
+				return Ok[any, any](SkyResponse{
+					Status:  403,
+					Body:    "CSRF protection: token mismatch. Re-load the form and re-submit.",
+					Headers: map[string]string{"Content-Type": "text/plain"},
+				})
+			}
+			// Validated — defer to handler.
+			task := SkyCall(handler, req)
+			return any(anyTaskInvoke(task))
+		}
+	}
+}
+
+// Server.getCookie : String -> Request -> Maybe String
+func Server_getCookie(name any, req any) any {
+	r, ok := asSkyRequest(req)
+	if !ok {
+		return Nothing[any]()
+	}
+	if r.Cookies == nil {
+		return Nothing[any]()
+	}
+	v, has := r.Cookies[fmt.Sprintf("%v", name)]
+	if !has {
+		return Nothing[any]()
+	}
+	return Just[any](v)
+}
+
+// SkyCookie — a named cookie value ready to be attached to a response.
+type SkyCookie struct {
+	Name  string
+	Value string
+}
+
+// Server.cookie : String -> String -> Cookie
+// Build an opaque cookie value (safe HttpOnly + SameSite=Lax defaults).
+func Server_cookie(name any, value any) any {
+	return SkyCookie{Name: fmt.Sprintf("%v", name), Value: fmt.Sprintf("%v", value)}
+}
+
+// Server.withCookie — flexible arity so Sky can pipe either a pre-built
+// cookie object or a name/value/attrs triple straight into a response.
+// Forms:
+//
+//	withCookie(Cookie, Response) -> Response
+//	withCookie(name, value, Response) -> Response      (no extra attrs)
+//	withCookie(name, value, attrs, Response) -> Response
+func Server_withCookie(args ...any) any {
+	switch len(args) {
+	case 2:
+		cookie, resp := args[0], args[1]
+		// v0.15.44: bridge typed Sky_Http_Server_Response_R.
+		r, ok := asSkyResponse(resp)
+		if !ok {
+			return resp
+		}
+		c, cok := cookie.(SkyCookie)
+		if !cok {
+			return resp
+		}
+		if r.Headers == nil {
+			r.Headers = map[string]string{}
+		}
+		r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; %s", c.Name, c.Value,
+			securifyCookieAttrs("Path=/; HttpOnly; SameSite=Lax"))
+		return r
+	case 3:
+		name, value, resp := args[0], args[1], args[2]
+		return setCookieHeader(resp, fmt.Sprintf("%v", name), fmt.Sprintf("%v", value), "Path=/; HttpOnly; SameSite=Lax")
+	case 4:
+		name, value, attrs, resp := args[0], args[1], args[2], args[3]
+		return setCookieHeader(resp, fmt.Sprintf("%v", name), fmt.Sprintf("%v", value), fmt.Sprintf("%v", attrs))
+	default:
+		return nil
+	}
+}
+
+func setCookieHeader(resp any, name, value, attrs string) any {
+	r, ok := asSkyResponse(resp)
+	if !ok {
+		return resp
+	}
+	if r.Headers == nil {
+		r.Headers = map[string]string{}
+	}
+	r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; %s", name, value, securifyCookieAttrs(attrs))
+	return r
+}
+
+// ── Audit P1-5: production-mode hardening ────────────────────
+// Two concerns, one env-var switch (SKY_ENV=prod).
+//   (1) Cookies default to HttpOnly + SameSite=Lax. In prod mode we
+//       additionally force Secure so the browser refuses to send the
+//       cookie over plain HTTP (defence against a
+//       forgotten-to-redirect-to-HTTPS deployment). If the caller
+//       supplied explicit attrs that already contain "Secure", we
+//       leave them alone — don't duplicate.
+//   (2) Panic recovery prints to stderr in dev (full stack for fast
+//       feedback) and writes a compact method+path+kind line to
+//       stderr plus the full frame to .skylog/panic.log in prod
+//       (no stack-trace leak in aggregated logs).
+
+// isProd reports whether <PREFIX>_ENV=prod is set. Kept as a small
+// function so tests can monkey-patch via env var at runtime.
+func isProd() bool {
+	return skyGetenv("ENV") == "prod"
+}
+
+// securifyCookieAttrs appends "; Secure" to an attribute string in
+// prod mode, unless it's already present. Idempotent for the
+// caller-opt-in path too.
+func securifyCookieAttrs(attrs string) string {
+	if !isProd() {
+		return attrs
+	}
+	// strings.Contains is fine here; "Secure" in a cookie name is
+	// not a typical payload and this runs only on server response.
+	if strings.Contains(strings.ToLower(attrs), "secure") {
+		return attrs
+	}
+	if attrs == "" {
+		return "Secure"
+	}
+	return attrs + "; Secure"
+}
+
+// logPanicFrame writes the panic context to the right place given
+// SKY_ENV. Dev: full frame on stderr. Prod: compact summary on
+// stderr + full frame appended to .skylog/panic.log (which the host
+// should rotate). Robust against the skylog dir not being
+// writeable: falls back to stderr-only in that case so we never
+// lose a panic report entirely.
+func logPanicFrame(method, path string, rec any) {
+	errKind := fmt.Sprintf("%T", rec)
+	if isProd() {
+		// Compact stderr line — no stack trace, no internal paths.
+		fmt.Fprintf(os.Stderr, "[sky.http] panic %s %s (%s)\n", method, path, errKind)
+		// Full frame to .skylog/panic.log
+		full := fmt.Sprintf("[%s] %s %s %s: %v\n%s\n",
+			time.Now().UTC().Format(time.RFC3339),
+			method, path, errKind, rec, debugStack())
+		_ = os.MkdirAll(".skylog", 0o750)
+		f, err := os.OpenFile(".skylog/panic.log",
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err == nil {
+			_, _ = f.WriteString(full)
+			_ = f.Close()
+		}
+		return
+	}
+	// Dev mode: full trace on stderr for fast feedback (matches the
+	// previous behaviour exactly).
+	log.Printf("[sky.http] panic handling %s %s: %v\n%s",
+		method, path, rec, debugStack())
+}
+
+// Server.method : Request -> String   — HTTP method name in upper case.
+func Server_method(req any) any {
+	if r, ok := asSkyRequest(req); ok {
+		return r.Method
+	}
+	return "GET"
+}
+
+// ── CSRF (audit P1-1) ────────────────────────────────────────
+// Double-submit cookie pattern. Safer than a stateless HMAC because
+// a leaked secret doesn't enable token forgery — and simpler than a
+// session-store-keyed token because there's no per-session state to
+// maintain. Cookie defaults to HttpOnly+SameSite=Strict so the token
+// can't be read by JS, but is still readable to Sky-side render
+// because we hand the token back as a return value, not via reading
+// the cookie at render time.
+//
+// Usage from Sky:
+//   GET handler:
+//     ( token, resp ) = Server.csrfIssue baseResp
+//     -- Embed token in form: <input type="hidden" name="__csrf" value="<token>">
+//   POST handler:
+//     if Server.csrfVerify req then ... else 403
+
+const csrfCookieName = "__csrf"
+const csrfFormField = "__csrf"
+
+// Server.csrfIssue : SkyResponse -> ( String, SkyResponse )
+// Generates a fresh token and attaches it as a Set-Cookie header on
+// the response. Returns the token + updated response as a Sky tuple
+// so the caller can embed the token in their HTML form.
+func Server_csrfIssue(resp any) any {
+	r, ok := asSkyResponse(resp)
+	if !ok {
+		// Honour the contract even when the wrong shape comes in;
+		// the caller's pattern-match will catch the (empty, resp)
+		// pair if the response wasn't a SkyResponse.
+		return SkyTuple2{V0: "", V1: resp}
+	}
+	token := generateCsrfToken()
+	if r.Headers == nil {
+		r.Headers = map[string]string{}
+	}
+	r.Headers["Set-Cookie"] = fmt.Sprintf(
+		"%s=%s; %s", csrfCookieName, token,
+		securifyCookieAttrs("Path=/; HttpOnly; SameSite=Strict"))
+	return SkyTuple2{V0: token, V1: r}
+}
+
+// Server.csrfVerify : Request -> Bool
+// Returns true iff the request's __csrf cookie matches its __csrf
+// form field. Both must be present and equal.
+func Server_csrfVerify(req any) any {
+	r, ok := asSkyRequest(req)
+	if !ok {
+		return false
+	}
+	cookieVal := ""
+	if r.Cookies != nil {
+		cookieVal = r.Cookies[csrfCookieName]
+	}
+	formVal := ""
+	if r.Form != nil {
+		formVal = r.Form[csrfFormField]
+	}
+	if cookieVal == "" || formVal == "" {
+		return false
+	}
+	// Constant-time compare to avoid timing-attack token discovery.
+	return subtle.ConstantTimeCompare([]byte(cookieVal), []byte(formVal)) == 1
+}
+
+func generateCsrfToken() string {
+	b := make([]byte, 32)
+	_, _ = cryptorand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// Server.formValue : String -> Request -> String
+func Server_formValue(key any, req any) any {
+	if r, ok := asSkyRequest(req); ok {
+		if r.Form != nil {
+			if v, ok2 := r.Form[fmt.Sprintf("%v", key)]; ok2 {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// Server.body : Request -> String
+func Server_body(req any) any {
+	if r, ok := asSkyRequest(req); ok {
+		return r.Body
+	}
+	return ""
+}
+
+// Server.path : Request -> String
+func Server_path(req any) any {
+	if r, ok := asSkyRequest(req); ok {
+		return r.Path
+	}
+	return ""
+}
+
+// Server.group : prefix -> routes -> Route
+// Prepends prefix to every route's path.
+func Server_group(prefix any, routes any) any {
+	pStr := fmt.Sprintf("%v", prefix)
+	var out []any
+	if xs, ok := routes.([]any); ok {
+		for _, rt := range xs {
+			if sr, ok2 := rt.(SkyRoute); ok2 {
+				sr.Path = pStr + sr.Path
+				out = append(out, sr)
+			} else {
+				out = append(out, rt)
+			}
+		}
+	}
+	return out
+}
+
+// Server.use : middleware -> routes -> routes (identity for now; wiring TBD).
+func Server_use(_ any, routes any) any { return routes }
+
+// Server.withHeader : String -> String -> Response -> Response
+func Server_withHeader(name any, value any, resp any) any {
+	r, ok := asSkyResponse(resp)
+	if !ok {
+		return resp
+	}
+	if r.Headers == nil {
+		r.Headers = map[string]string{}
+	}
+	r.Headers[fmt.Sprintf("%v", name)] = fmt.Sprintf("%v", value)
+	return r
+}
+
+// Server.any : String -> Handler -> Route
+// Matches any HTTP method on the given path.
+func Server_any(path any, handler any) any {
+	return SkyRoute{Method: "*", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+// Server_static returns a Route that serves files from `dir` under
+// the URL prefix `urlPrefix`. Implementation defers to
+// http.FileServer + http.StripPrefix at registration time
+// (see Server_listen's StaticDir branch) — so path-traversal
+// protection (http.Dir refuses `..`), MIME detection (via
+// mime.TypeByExtension), Last-Modified, and Range request support
+// all come for free from Go's stdlib.
+//
+//   - urlPrefix is normalised: a missing leading "/" is added, a
+//     missing trailing "/" is added so ServeMux's longest-prefix
+//     match catches every nested path.
+//   - dir is a filesystem path relative to the process cwd (or
+//     absolute). A nonexistent dir yields 404s at request time,
+//     not an error here — the listing-or-deny behaviour is the
+//     stdlib's.
+func Server_static(urlPrefix any, dir any) any {
+	prefix := fmt.Sprintf("%v", urlPrefix)
+	if prefix == "" || prefix[0] != '/' {
+		prefix = "/" + prefix
+	}
+	if prefix[len(prefix)-1] != '/' {
+		prefix = prefix + "/"
+	}
+	return SkyRoute{
+		Method:    "GET",
+		Path:      prefix,
+		StaticDir: fmt.Sprintf("%v", dir),
+		// Handler stays nil — the dispatch path checks StaticDir
+		// FIRST and never reaches the handler call site for a
+		// static route.
+		Handler: nil,
+	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// FFI support — panic recovery + argument coercion helpers
+// ═══════════════════════════════════════════════════════════
+
+// SkyFfiRecover installs a deferred recover that converts any Go panic raised
+// inside an FFI call into an Err[any,any] written to *out. Generated FFI
+// wrappers wire it in as:
+//
+//	func <K>_foo(args ...) (out any) {
+//	    defer SkyFfiRecover(&out)()
+//	    ... actual FFI call ...
+//	    return Ok[any, any](result)
+//	}
+//
+// `out` is a named return so the deferred closure can reassign it.
+func SkyFfiRecover(out *any) func() {
+	return func() {
+		if r := recover(); r != nil {
+			*out = Err[any, any](ErrFfi(fmt.Sprintf("panic: %v", r)))
+		}
+	}
+}
+
+// SkyFfiRecoverT is the typed counterpart used by P7's typed FFI wrappers.
+// Parameterised on the success type A; the error slot is `any` so it
+// can carry a structured Sky.Core.Error value (built via ErrFfi etc.)
+// rather than a raw string. Generated typed wrappers wire it in as:
+//
+//	func <K>_fooT(args ...) (out SkyResult[any, A]) {
+//	    defer SkyFfiRecoverT(&out)()
+//	    ... actual FFI call ...
+//	    out = Ok[any, A](result)
+//	    return
+//	}
+//
+// On panic we yield Error.ffi("panic: <recovered>") with FfiPanic
+// details when a stack snapshot is available.
+func SkyFfiRecoverT[A any](out *SkyResult[any, A]) func() {
+	return func() {
+		if r := recover(); r != nil {
+			*out = Err[any, A](ErrFfi(fmt.Sprintf("panic: %v", r)))
+		}
+	}
+}
+
+// SkyFfiArg_string coerces a Sky-side any to a Go string without allocating
+// when the value is already a string. Used by generated FFI wrappers.
+func SkyFfiArg_string(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// SkyFfiArg_int coerces a Sky-side any to a Go int. Handles the common
+// numeric types produced by Sky literals (int, int64, float64).
+func SkyFfiArg_int(v any) int {
+	return AsInt(v)
+}
+
+// SkyFfiArg_bytes coerces a Sky-side any to a Go []byte. Accepts []byte,
+// []any (as list of ints), or a string.
+func SkyFfiArg_bytes(v any) []byte {
+	switch x := v.(type) {
+	case []byte:
+		return x
+	case string:
+		return []byte(x)
+	case []any:
+		out := make([]byte, len(x))
+		for i, e := range x {
+			out[i] = byte(AsInt(e))
+		}
+		return out
+	}
+	return []byte(fmt.Sprintf("%v", v))
+}
+
+// SkyFfiRet_bytes wraps a Go []byte as a Sky []any of int codepoints so
+// downstream Sky code can inspect it via List operations.
+func SkyFfiRet_bytes(b []byte) any {
+	out := make([]any, len(b))
+	for i, c := range b {
+		out[i] = int(c)
+	}
+	return out
+}
+
+// SkyFfiRet_maybeString wraps a *string as Maybe String.
+func SkyFfiRet_maybeString(p *string) any {
+	if p == nil {
+		return Nothing[any]()
+	}
+	return Just[any](*p)
+}
+
+// SkyFfiFieldGet — reflect-based struct-field read, shared by every
+// generated <TypeName><FieldName> getter wrapper so the per-field
+// emission stays a one-liner (keeps stripe_bindings.go & friends
+// manageable in size).
+// SkyFfiFieldGet — reflect-based struct-field read, returning a
+// typed `SkyResult[any, any]`. Every FFI call is a Sky trust boundary
+// and must return `Result Error T` per CLAUDE.md §FFI — infallible
+// getters wrap in Ok, so downstream `Result.andThen` / `Result.traverse`
+// see the shape they expect.
+func SkyFfiFieldGet(recv any, field string) any {
+	if recv == nil {
+		return Err[any, any](ErrFfi(field + ": nil receiver"))
+	}
+	v := reflect.ValueOf(recv)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return Err[any, any](ErrFfi(field + ": nil receiver"))
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return Err[any, any](ErrFfi(field + ": receiver is not a struct"))
+	}
+	f := v.FieldByName(field)
+	if !f.IsValid() {
+		return Err[any, any](ErrFfi(field + ": no such field"))
+	}
+	return Ok[any, any](f.Interface())
+}
+
+// SkyFfiFieldSet — reflect-based struct-field write, returning the
+// (mutated or copied) receiver as `Ok(receiver)` for pipeline-friendly
+// |> composition. value is Sky-any; assignable or convertible types
+// coerce automatically. All FFI helpers return `SkyResult[any, any]`
+// per the Sky trust boundary rule.
+func SkyFfiFieldSet(value any, recv any, field string) any {
+	if recv == nil {
+		return Err[any, any](ErrFfi(field + ": nil receiver"))
+	}
+	rv := reflect.ValueOf(recv)
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			return Err[any, any](ErrFfi(field + ": nil receiver"))
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp
+	default:
+		return Err[any, any](ErrFfi(field + ": receiver is not a struct or pointer"))
+	}
+	if addrable.Kind() != reflect.Struct {
+		return Err[any, any](ErrFfi(field + ": receiver is not a struct"))
+	}
+	f := addrable.FieldByName(field)
+	if !f.IsValid() {
+		return Err[any, any](ErrFfi(field + ": no such field"))
+	}
+	if !f.CanSet() {
+		return Err[any, any](ErrFfi(field + ": field is not settable"))
+	}
+	if value == nil {
+		f.Set(reflect.Zero(f.Type()))
+	} else {
+		vv := reflect.ValueOf(value)
+		if vv.Type().AssignableTo(f.Type()) {
+			f.Set(vv)
+		} else if vv.Type().ConvertibleTo(f.Type()) {
+			f.Set(vv.Convert(f.Type()))
+		} else {
+			return Err[any, any](ErrFfi(field + ": value type incompatible with field"))
+		}
+	}
+	return Ok[any, any](rv.Interface())
+}
+
+// SkyFfiReflectCall invokes a reflect.Value of a function with Sky-side args.
+// Used by generated FFI wrappers when the Go signature contains types the
+// wrapper cannot spell (internal/vendor pkgs, bare generic T, or methods on
+// generic receivers). The reflect.Value is obtained from the caller either
+// via `reflect.ValueOf(pkg.Func)` or `reflect.ValueOf(recv).MethodByName(...)`.
+//
+// hasError:
+//
+//	false → wrap pure result in Ok (or bare list for multi-return)
+//	true  → last Go return must be error; Ok(prefix)/Err on non-nil
+func SkyFfiReflectCall(fn reflect.Value, hasError bool, args []any) any {
+	if !fn.IsValid() || fn.Kind() != reflect.Func {
+		return Err[any, any](ErrFfi("SkyFfiReflectCall: not a function value"))
+	}
+	ft := fn.Type()
+	n := ft.NumIn()
+	variadic := ft.IsVariadic()
+
+	// Coerce each Sky-side any to the expected reflect.Type of the Go param.
+	vals := make([]reflect.Value, 0, len(args))
+	for i, a := range args {
+		var pt reflect.Type
+		if variadic && i >= n-1 {
+			pt = ft.In(n - 1).Elem()
+		} else if i < n {
+			pt = ft.In(i)
+		} else {
+			return Err[any, any](ErrFfi(fmt.Sprintf("SkyFfiReflectCall: too many args (%d) for %v", len(args), ft)))
+		}
+		if a == nil {
+			vals = append(vals, reflect.Zero(pt))
+			continue
+		}
+		v := reflect.ValueOf(a)
+		if v.Type() != pt {
+			if v.Type().ConvertibleTo(pt) {
+				v = v.Convert(pt)
+			} else if pt.Kind() == reflect.Interface && v.Type().Implements(pt) {
+				// fine — reflect will accept an interface-satisfying value
+			}
+		}
+		vals = append(vals, v)
+	}
+
+	// Ensure variadic is invoked correctly when Sky handed us a single slice
+	var results []reflect.Value
+	if variadic && len(args) == n && vals[n-1].Kind() == reflect.Slice {
+		results = fn.CallSlice(vals)
+	} else {
+		results = fn.Call(vals)
+	}
+
+	return unpackReflectResults(results, hasError)
+}
+
+// unpackReflectResults — reflect-call result adapter. Per the Sky FFI
+// trust-boundary rule, every FFI call returns `SkyResult[any, any]` —
+// infallible single-return wraps in Ok, multi-return packs into a
+// SkyTuple2/N and wraps in Ok, void returns produce Ok(struct{}{}).
+// Previously the infallible single-return path surfaced the bare value
+// which forced downstream `|> Result.andThen` pipelines to defensively
+// promote, breaking on round-trips through Task.andThen / the Task
+// boundary coercion.
+func unpackReflectResults(results []reflect.Value, hasError bool) any {
+	n := len(results)
+	switch {
+	case n == 0:
+		return Ok[any, any](struct{}{})
+	case n == 1 && hasError:
+		err, _ := results[0].Interface().(error)
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		return Ok[any, any](struct{}{})
+	case n == 1:
+		return Ok[any, any](results[0].Interface())
+	case hasError:
+		err, _ := results[n-1].Interface().(error)
+		if err != nil {
+			return Err[any, any](ErrFfi(err.Error()))
+		}
+		if n == 2 {
+			return Ok[any, any](results[0].Interface())
+		}
+		out := make([]any, n-1)
+		for i := 0; i < n-1; i++ {
+			out[i] = results[i].Interface()
+		}
+		return Ok[any, any](out)
+	default:
+		out := make([]any, n)
+		for i := 0; i < n; i++ {
+			out[i] = results[i].Interface()
+		}
+		return Ok[any, any](out)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// SkyCall — reflect-based dispatch for any-typed callees
+// ═══════════════════════════════════════════════════════════
+
+// SkyCall invokes f with args, where f is any-typed. Used when the codegen
+// cannot statically prove the callee is a direct Go func (e.g. lambda params,
+// record-field-of-func-type, let-bound closures).
+func SkyCall(f any, args ...any) any {
+	if f == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(f)
+	if rv.Kind() != reflect.Func {
+		if len(args) == 0 {
+			return f
+		}
+		return nil
+	}
+	nin := rv.Type().NumIn()
+	if nin == len(args) && !rv.Type().IsVariadic() {
+		return skyCallDirect(rv, args)
+	}
+	if nin == 0 {
+		out := rv.Call(nil)
+		if len(out) == 0 {
+			return nil
+		}
+		res := out[0].Interface()
+		if len(args) == 0 {
+			return res
+		}
+		return SkyCall(res, args...)
+	}
+	result := f
+	for _, a := range args {
+		result = skyCallOne(result, a)
+	}
+	return result
+}
+
+// isStructuralNarrowCandidate — whitelist for the skyCallDirect
+// fallback. Restricts narrowReflectValue-backed conversion to the
+// kinds where the typed codegen's AsListT / AsMapT / Coerce helpers
+// already do the same walk, so kernels dispatching through
+// reflection stay consistent with direct call sites. Excludes the
+// "primitive → string" fmt.Sprintf path — we want that to remain
+// a panic so a radio onInput bug surfaces cleanly rather than
+// silently becoming the string "true".
+func isStructuralNarrowCandidate(src, target reflect.Kind) bool {
+	if target == reflect.Map && src == reflect.Map {
+		return true
+	}
+	if target == reflect.Slice && src == reflect.Slice {
+		return true
+	}
+	if target == reflect.Struct && src == reflect.Struct {
+		return true
+	}
+	if target == reflect.Ptr || src == reflect.Ptr {
+		return true
+	}
+	return false
+}
+
+func skyCallDirect(rv reflect.Value, args []any) any {
+	vals := make([]reflect.Value, len(args))
+	fnType := rv.Type()
+	for i, a := range args {
+		pt := fnType.In(i)
+		if a == nil {
+			vals[i] = reflect.Zero(pt)
+			continue
+		}
+		av := reflect.ValueOf(a)
+		switch {
+		case av.Type() == pt:
+			vals[i] = av
+		case pt.Kind() == reflect.Interface && av.Type().Implements(pt):
+			// `any` (or any other interface) param accepts everything
+			// that satisfies the interface — most Sky-internal dispatch
+			// is all-any so this is the common path.
+			vals[i] = av
+		case av.Type().ConvertibleTo(pt) && safeReflectConvert(av.Kind(), pt.Kind()):
+			// Numeric widening / same-kind reinterpret. Whitelist gated
+			// to avoid Go's surprise int→string ASCII reinterpret etc.
+			// (See rt.Coerce for the same rule.)
+			vals[i] = av.Convert(pt)
+		default:
+			// Structural narrowing ONLY: the typed codegen inserts
+			// rt.AsListT / rt.AsMapT coercions at direct call sites, but
+			// List_foldlAnyT (and any other reflection-based higher-order
+			// kernel) routes elements through here without that
+			// narrowing. When the param is a concrete map[K]V / []V / *T
+			// / named-struct and the arg is the corresponding any-shaped
+			// runtime value, walk the recursive narrower the boundary
+			// helpers already use.
+			//
+			// Gated on matching-kind containers + pointer (de)ref — we
+			// deliberately do NOT use narrowReflectValue's
+			// any-to-string fmt.Sprintf fallback here, because that
+			// would silently coerce a radio's Bool into a "true" string
+			// when the Msg expected a real chosen value. Silent
+			// primitive-kind coercion is a worse bug than a panic; keep
+			// it a panic so the Msg decode layer or the outer
+			// dispatch recover can surface it as a clean diagnostic.
+			if isStructuralNarrowCandidate(av.Kind(), pt.Kind()) {
+				if narrowed := narrowReflectValue(av, pt); narrowed.IsValid() {
+					vals[i] = narrowed
+					break
+				}
+			}
+			// FUNCTION-typed type variable crossing an `any` kernel boundary.
+			// A kernel whose signature is all-`any` (Std.Config's decoder
+			// combinators, and any other reflection-based higher-order kernel)
+			// hands on the runtime's own generic curried closure — shaped
+			// func(any) any. But HM DID infer the continuation's parameter, so
+			// codegen compiled it as a concrete, possibly multi-argument Go
+			// func. Both are correct; they just are not the same reflect.Type,
+			// and this used to be an outright panic on a well-typed program.
+			//
+			// Bridge them with an adapter that receives the concrete arguments
+			// and applies them through SkyCall, which already implements the
+			// currying the generic closure expects.
+			//
+			// This ONLY runs where the call previously panicked, so it cannot
+			// change the behaviour of any call that already worked. A non-func
+			// argument, or a result that does not fit the declared return
+			// type, still fails loudly.
+			if pt.Kind() == reflect.Func && av.Kind() == reflect.Func {
+				if adapted := adaptSkyFuncValue(av, pt); adapted.IsValid() {
+					vals[i] = adapted
+					break
+				}
+			}
+			// Audit P0-6: pre-fix this branch silently passed `av` into
+			// reflect.Call with a wrong type, which then panicked inside
+			// reflect with a cryptic "reflect: Call using X as Y" message.
+			// SkyFfiRecover caught it and produced Err, which masked the
+			// real boundary check. Now we surface a clean diagnostic
+			// directly so observability shows the FFI mismatch.
+			//
+			// REACHABLE-FROM-SKY (FFI boundary): the bridge from Sky's
+			// any-typed runtime values to a typed Go FFI signature
+			// found a mismatch. Top-level recover (Cycle 6 PC)
+			// classifies as `TypeMismatch` via the rt.AsInt/AsBool
+			// shape pattern doesn't fire here, so the default
+			// `Unexpected` bucket with the raw message is used.
+			panic(fmt.Sprintf(
+				"rt.skyCallDirect: argument %d type mismatch — function expects %v, got %T (%v)",
+				i, pt, a, a))
+		}
+	}
+	out := rv.Call(vals)
+	if len(out) == 0 {
+		return nil
+	}
+	return out[0].Interface()
+}
+
+// adaptSkyFuncValue wraps a Sky-generic closure so it satisfies a concrete Go
+// function type.
+//
+// The generic closure is curried one argument at a time (func(any) any chains);
+// the target may take all its arguments at once. SkyCall already reconciles
+// those two calling conventions, so the adapter just forwards through it.
+//
+// Returns an invalid Value for shapes it will not fake — variadic targets and
+// multi-result targets — so the caller falls through to its normal diagnostic
+// instead of this producing a subtly wrong function.
+func adaptSkyFuncValue(fn reflect.Value, target reflect.Type) reflect.Value {
+	if target.IsVariadic() || target.NumOut() > 1 {
+		return reflect.Value{}
+	}
+	callee := fn.Interface()
+	return reflect.MakeFunc(target, func(args []reflect.Value) []reflect.Value {
+		callArgs := make([]any, len(args))
+		for i, a := range args {
+			callArgs[i] = a.Interface()
+		}
+		res := SkyCall(callee, callArgs...)
+		if target.NumOut() == 0 {
+			return nil
+		}
+		ot := target.Out(0)
+		out := skyValueAsType(res, ot)
+		if !out.IsValid() {
+			// The closure ran but produced something the declared return type
+			// cannot hold. Surface it rather than papering over it.
+			panic(fmt.Sprintf(
+				"rt.adaptSkyFuncValue: adapted function returned %T (%v), "+
+					"which does not fit the declared result type %v", res, res, ot))
+		}
+		return []reflect.Value{out}
+	})
+}
+
+// skyValueAsType converts an any-typed Sky value to a concrete reflect.Type
+// using the same rules as skyCallDirect's argument binding, including the
+// function-adaptation case so curried chains nest.
+//
+// Returns an invalid Value when no rule applies; callers decide the diagnostic.
+func skyValueAsType(v any, t reflect.Type) reflect.Value {
+	if v == nil {
+		return reflect.Zero(t)
+	}
+	rv := reflect.ValueOf(v)
+	switch {
+	case rv.Type() == t:
+		return rv
+	case t.Kind() == reflect.Interface && rv.Type().Implements(t):
+		return rv
+	case rv.Type().ConvertibleTo(t) && safeReflectConvert(rv.Kind(), t.Kind()):
+		return rv.Convert(t)
+	case rv.Kind() == reflect.Func && t.Kind() == reflect.Func:
+		return adaptSkyFuncValue(rv, t)
+	}
+	if isStructuralNarrowCandidate(rv.Kind(), t.Kind()) {
+		if narrowed := narrowReflectValue(rv, t); narrowed.IsValid() {
+			return narrowed
+		}
+	}
+	return reflect.Value{}
+}
+
+func skyCallOne(f any, arg any) any {
+	if f == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(f)
+	if rv.Kind() != reflect.Func {
+		return f
+	}
+	nin := rv.Type().NumIn()
+	if nin == 0 {
+		out := rv.Call(nil)
+		if len(out) == 0 {
+			return nil
+		}
+		return out[0].Interface()
+	}
+	if nin > 1 {
+		// Multi-arg Go function called with a single arg — Sky semantics
+		// say all functions are curried, so this should partially apply
+		// and return a closure waiting for the rest. The previous
+		// reflect.Call with a 1-element slice panicked with "Call with
+		// too few input arguments", which made `List.indexedMap fn xs`
+		// (and any other higher-order combinator that drives the function
+		// one element at a time via skyCallOne) blow up whenever `fn` was
+		// a top-level multi-arg binding emitted as a Go N-ary func.
+		return curryRemainingArgs(rv, []any{arg})
+	}
+	pt := rv.Type().In(0)
+	var av reflect.Value
+	if arg == nil {
+		av = reflect.Zero(pt)
+	} else {
+		av = reflect.ValueOf(arg)
+		// Route through the canonical narrower: a bare ConvertibleTo
+		// check can't turn `[]any` into `[]Foo_R` (a record-list arg),
+		// so a HOF combinator driving a typed function one element at
+		// a time would panic at reflect.Call. narrowReflectValue
+		// handles list/map/record recursion.
+		if av.Type() != pt {
+			if narrowed := narrowReflectValue(av, pt); narrowed.IsValid() &&
+				narrowed.Type().AssignableTo(pt) {
+				av = narrowed
+			}
+		}
+	}
+	out := rv.Call([]reflect.Value{av})
+	if len(out) == 0 {
+		return nil
+	}
+	return out[0].Interface()
+}
+
+// curryRemainingArgs returns a func(any) any closure that captures the
+// args supplied so far, accepts the next, and either invokes the
+// underlying function (when all params are supplied) or recurses to
+// capture more. Used by skyCallOne when a multi-arg Go function is
+// called with fewer args than its arity — Sky semantics curry every
+// function, but the typed codegen emits multi-arg Go funcs directly,
+// so the runtime has to bridge the shape mismatch when the function
+// flows through a higher-order combinator (List.indexedMap,
+// List.foldl, Cmd.perform, etc.) that drives the call one arg at a
+// time via skyCallOne.
+//
+// The returned closure has shape `func(any) any` so subsequent
+// skyCallOne / sky_call invocations see it as a 1-arg function and
+// dispatch normally; the arg-conversion logic in skyCallDirect handles
+// the typed param coercion when we finally have enough args to call
+// the underlying reflect.Value.
+func curryRemainingArgs(rv reflect.Value, captured []any) any {
+	nin := rv.Type().NumIn()
+	return func(next any) any {
+		all := append(append([]any{}, captured...), next)
+		if len(all) >= nin {
+			return skyCallDirect(rv, all)
+		}
+		return curryRemainingArgs(rv, all)
+	}
+}

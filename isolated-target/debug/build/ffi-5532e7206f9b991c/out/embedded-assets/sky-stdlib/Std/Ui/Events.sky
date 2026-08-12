@@ -1,0 +1,50 @@
+-- | Std.Ui.Events — re-exports of event helpers (onClick / onSubmit / onInput) for `Std.Ui`.
+module Std.Ui.Events exposing (onClick, onSubmit, onInput)
+
+-- Std.Ui.Events — re-exports of the event helpers that live on
+-- Std.Ui itself, grouped here for users who prefer importing
+-- events from a dedicated sub-module.
+--
+-- Tier 1 ships static rendering only — the AttrEvent constructor
+-- is recorded on the Element but the inline-style renderer drops
+-- it. Tier 2 wires AttrEvent through Std.Html.Events for actual
+-- Sky.Live event dispatch.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui
+
+
+onClick : msg -> Ui.Attribute msg
+onClick m =
+    Ui.onClick m
+
+
+-- See Std.Ui.onSubmit — `(a -> Attribute b)` is intentionally
+-- permissive so the typed-record-arg pattern (`onSubmit DoSignIn`
+-- where `DoSignIn : LoginForm -> Msg`) type-checks in-module.
+onSubmit : a -> Ui.Attribute b
+onSubmit m =
+    Ui.onSubmit m
+
+
+-- | Input change handler — fires per keystroke for text inputs. The
+-- callback receives the input's current value as a String, so pass a
+-- Msg constructor that takes one (`type Msg = ... | DraftChanged String`).
+--
+-- This re-export used to be annotated `msg -> Ui.Attribute msg`, which
+-- invited a BARE Msg. That type-checked — `Attribute`'s event arm holds
+-- an `any`, so `msg` is phantom there and the annotation was never
+-- forced to agree with the payload — and was wrong at runtime: the
+-- dispatcher only applies the typed value to a handler that is a
+-- function (`applyMsgArgs`), so a bare Msg silently dropped every
+-- keystroke and dispatched the same static message.
+--
+-- The signature now matches `Std.Ui.onInput`, which is also the shape
+-- pinned by docs/skyui/overview.md.
+--
+-- Note this is for ordinary text inputs. Never wire `onInput` to a
+-- password field — use `Ui.form [ Ui.onSubmit … ]` with a typed record,
+-- so the secret is not dispatched on every keystroke.
+onInput : (String -> msg) -> Ui.Attribute msg
+onInput cb =
+    Ui.onInput cb

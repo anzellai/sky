@@ -1,0 +1,1261 @@
+-- | Std.Db.Store — codec-driven persistence (Layer 3 Sky source).
+--
+-- A `Store a` is a table defined by ONE `Codec a` (Std.Codec): the codec drives
+-- the schema (columns from its shape), the writes (record → columns), and the
+-- reads (columns → record) — and the SAME codec serves JSON. No separate
+-- decoder, no `SqlValue` lists.
+--
+-- Top-level scalar fields become typed columns; anything the codec marks as a
+-- blob (ADT / tuple / list / nested record) is stored as a JSON TEXT column.
+--
+-- ```elm
+-- import Std.Codec as Codec exposing (Codec)
+-- import Std.Db.Store as Store exposing (Store)
+--
+-- userCodec : Codec User
+-- userCodec = Codec.object User |> Codec.field "id" .id Codec.string |> ... |> Codec.buildObject
+--
+-- users : Store User
+-- users = Store.fromCodec "users" userCodec |> Store.primaryKey "id"
+--
+-- -- Store.create conn users
+-- -- Store.insert conn users user      : Task Error Int
+-- -- Store.all conn users              : Task Error (List User)
+-- -- Store.findBy conn users "id" "u1" : Task Error (Maybe User)
+-- ```
+module Std.Db.Store exposing
+    ( Store
+    , fromCodec
+    , primaryKey
+    , serial
+    , unique
+    , defaultNow
+    , touchOnUpdate
+    , defaultText
+    , defaultInt
+    , defaultBool
+    , defaultWith
+    , generated
+    , create
+    , migrate
+    , insert
+    , insertMany
+    , upsert
+    , update
+    , updateWhere
+    , updateFields
+    , setFields
+    , adjust
+    , all
+    , findBy
+    , selectRaw
+    , delete
+    , deleteWhere
+    , Table
+    , toTable
+    , Project
+    , project
+    , dumpSchema
+    , pushProject
+    , projectTableCount
+    , resetProject
+    , dropProject
+    , resetTable
+    , dropTable
+    , Query
+    , query
+    , Cond
+    , where_
+    , eq
+    , neq
+    , gt
+    , gte
+    , lt
+    , lte
+    , like
+    , isNull
+    , notNull
+    , inList
+    , and_
+    , or_
+    , not_
+    , orderAsc
+    , orderDesc
+    , limit
+    , offset
+    , toList
+    , toMaybe
+    , count
+    , sqlOf
+    , transaction
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Json.Encode exposing (Value)
+import Std.Codec as Codec exposing (Codec, ColType(..), Shape(..))
+import Std.Db as Db exposing (SqlValue)
+
+type Store a
+    = Store { name : String
+, codec : Codec a
+, pk : String
+, cols : List ( String, String )
+, generated : List String
+, computed : List ( String, () -> SqlValue )
+}
+
+
+-- | Define a store from a table name and its codec. The columns are derived
+-- from the codec's record shape.
+fromCodec : String -> Codec a -> Store a
+fromCodec name codec =
+    Store
+        { name = name
+        , codec = codec
+        , pk = ""
+        , cols = codecColumns codec
+        , generated = []
+        , computed = []
+        }
+
+
+-- | Mark the primary-key column (NOT NULL; used by `findBy`/`delete`/`update`).
+-- Accepts the record FIELD name or the snake column name (resolved either way).
+primaryKey : String -> Store a -> Store a
+primaryKey pk (Store s) =
+    Store { s | pk = resolveCol s.cols pk }
+
+
+-- | Mark an INTEGER primary key as auto-increment (SQLite `INTEGER PRIMARY KEY
+-- AUTOINCREMENT` / Postgres `BIGSERIAL`) — the database assigns it, so `insert`
+-- OMITS the column and the DB fills the next id. Use this for the common
+-- `id : Int` serial-PK table: `Store.fromCodec "todos" codec |> Store.serial "id"`.
+-- (For a String/UUID PK you generate yourself, use `primaryKey` instead.)
+serial : String -> Store a -> Store a
+serial name (Store s) =
+    let
+        col = resolveCol s.cols name
+    in
+        Store
+            { s | pk = col
+            , generated = col :: s.generated
+            , cols =
+                List.map
+                    (\( c, k ) ->
+                        if c == col then
+                            ( c, k ++ "!" )
+
+                        else
+                            ( c, k ))
+                    s.cols
+            }
+
+
+-- | Append a `|`-delimited flag onto a column's colspec kind (see the runtime's
+-- codecColExtras). The flag drives the CREATE-TABLE constraint/default; the base
+-- kind (hence every read/write path) is unaffected.
+addColFlag : String -> String -> List ( String, String ) -> List ( String, String )
+addColFlag col flag cols =
+    List.map
+        (\( c, k ) ->
+            if c == col then
+                ( c, k ++ "|" ++ flag )
+
+            else
+                ( c, k ))
+        cols
+
+
+-- | Mark a column `UNIQUE` in the generated DDL (e.g. a login email):
+-- `Store.fromCodec "users" codec |> Store.primaryKey "id" |> Store.unique "email"`.
+-- A duplicate insert surfaces as a `Task.fail` from the driver.
+unique : String -> Store a -> Store a
+unique name (Store s) =
+    Store { s | cols = addColFlag (resolveCol s.cols name) "u" s.cols }
+
+
+-- | Give a column a `DEFAULT` of the current timestamp (`now()` on Postgres,
+-- `datetime('now')` on SQLite) AND mark it `generated`, so `insert`/`update` OMIT
+-- it and the database stamps it: `Store.defaultNow "created_at"`.
+defaultNow : String -> Store a -> Store a
+defaultNow name (Store s) =
+    let
+        col = resolveCol s.cols name
+    in
+        Store
+            { s | cols = addColFlag col "dnow" s.cols
+            , generated = col :: s.generated
+            }
+
+
+-- | Mark a timestamp column that the DB stamps on INSERT (`defaultNow`) AND that
+-- `Store.update`/`updateWhere` auto-bump to the current time on EVERY update — the
+-- classic `updated_at`: `Store.touchOnUpdate "updated_at"`. No read-modify-write and
+-- no raw SQL: `Store.update` sets it to `now()` for you (a SQL DEFAULT alone only
+-- fires on INSERT).
+touchOnUpdate : String -> Store a -> Store a
+touchOnUpdate name (Store s) =
+    let
+        col = resolveCol s.cols name
+    in
+        Store
+            { s | cols = addColFlag col "dnow" (addColFlag col "touch" s.cols)
+            , generated = col :: s.generated
+            }
+
+
+-- | Give a column a `DEFAULT` text value in the generated DDL:
+-- `Store.defaultText "content" ""`. (Does NOT mark the column generated — the
+-- record's value is still written on insert; the DEFAULT only applies when the
+-- column is omitted, e.g. via `Store.generated`.)
+defaultText : String -> String -> Store a -> Store a
+defaultText name val (Store s) =
+    Store
+        { s | cols = addColFlag (resolveCol s.cols name) ("dtext=" ++ val) s.cols
+        }
+
+
+-- | Give a column a `DEFAULT` integer value in the generated DDL:
+-- `Store.defaultInt "verified" 0`.
+defaultInt : String -> Int -> Store a -> Store a
+defaultInt name val (Store s) =
+    Store
+        { s | cols =
+            addColFlag
+                (resolveCol s.cols name)
+                ("dint=" ++ String.fromInt val)
+                s.cols
+        }
+
+
+-- | Give a column a `DEFAULT` boolean value in the generated DDL (`TRUE`/`FALSE`
+-- on Postgres, `1`/`0` on SQLite): `Store.defaultBool "active" True`.
+defaultBool : String -> Bool -> Store a -> Store a
+defaultBool name val (Store s) =
+    Store
+        { s | cols =
+            addColFlag
+                (resolveCol s.cols name)
+                ("dbool="
+                    ++ (if val then
+                           "true"
+
+                       else
+                           "false"))
+                s.cols
+        }
+
+
+-- | Give a column an APP-SIDE computed default: a `() -> SqlValue` the runtime
+-- calls at INSERT time (the DB can't run Sky, so this complements the SQL-side
+-- `default*`). The prime use is a UUID/String primary key you don't want to pass
+-- on every insert — `Store.defaultWith "id" (\_ -> SqlString (newId ()))` (use the
+-- unit-arg `Task.run` idiom inside for effectful generators like `Uuid.v4`). The
+-- column is marked `generated`, so `insert` ignores the record's value and writes
+-- the computed one instead.
+defaultWith : String -> (() -> SqlValue) -> Store a -> Store a
+defaultWith name gen (Store s) =
+    let
+        col = resolveCol s.cols name
+    in
+        Store
+            { s | computed = ( col, gen ) :: s.computed
+            , generated = col :: s.generated
+            }
+
+
+-- | Mark columns the DATABASE fills — a `serial` PK, a `DEFAULT`/`defaultNow`
+-- timestamp — so `insert` and `update` OMIT them (the DB assigns/keeps them):
+-- `Store.fromCodec "notes" codec |> Store.primaryKey "id" |> Store.generated [ "id", "created_at" ]`.
+generated : List String -> Store a -> Store a
+generated names (Store s) =
+    Store { s | generated = List.map (resolveCol s.cols) names }
+
+
+-- | Create the table (dialect-correct DDL derived from the codec).
+create : Db -> Store a -> Task Error ()
+create conn (Store s) =
+    dbCreateCols conn s.name s.cols s.pk
+
+
+-- | Safe additive migration: create the table if absent, and ADD any columns
+-- the record type has gained (nullable). Never drops, renames, or retypes a
+-- column — those stay manual (see docs/v0.19/auto-migration-architecture.md).
+-- Idempotent; returns the SQL statements it applied (empty when up to date).
+migrate : Db -> Store a -> Task Error (List String)
+migrate conn (Store s) =
+    dbAutoMigrate conn s.name s.cols s.pk
+
+
+-- | Insert a record. Columns marked `generated` (a `serial` PK, `defaultNow`) are
+-- OMITTED so the database assigns them.
+--
+-- Returns the PRIMARY KEY the database assigned when the PK is an Int (a
+-- `Store.serial` id) — that value is the whole point, since a `generated` PK is
+-- omitted from the INSERT and the caller has no other way to learn it. Wire
+-- child rows to this id:
+--
+--     Store.insert conn entries header
+--         |> Task.andThen (\entryId -> Store.insert conn lines { line | entryId = entryId })
+--
+-- For a caller-supplied PK (a String/UUID key) there is no DB-assigned integer,
+-- so the result is the affected-row count.
+insert : Db -> Store a -> a -> Task Error Int
+insert conn (Store s) record =
+    dbExecObjectWith
+        conn
+        s.name
+        (colsExcluding s.generated s.cols)
+        (Codec.toValue s.codec record)
+        (List.map (\( col, gen ) -> ( col, gen () )) s.computed)
+        s.pk
+        (kindOf s.pk s.cols)
+
+
+-- | Bulk-insert many records in ONE multi-row INSERT — for time-series / batch
+-- writes where a per-row `insert` would be N round-trips. Columns marked
+-- `generated` are omitted (the DB fills them). `defaultWith` computed columns are
+-- NOT applied here — provide those values in the records. Returns rows affected.
+insertMany : Db -> Store a -> List a -> Task Error Int
+insertMany conn (Store s) records =
+    dbExecObjectMany
+        conn
+        s.name
+        (colsExcluding s.generated s.cols)
+        (List.map (Codec.toValue s.codec) records)
+
+
+-- | Insert the record, or UPDATE it in place if its primary key already exists
+-- (`INSERT ... ON CONFLICT(pk) DO UPDATE`). The idempotent write for config rows
+-- keyed by a natural/app id — `Store.upsert conn monitors monitor`. Requires a
+-- non-generated PK (a String/UUID key you provide, not `serial`).
+-- Returns the row's PK for an Int-keyed store (0 when an `ON CONFLICT DO
+-- NOTHING` wrote nothing), and the affected-row count otherwise — the same
+-- contract as `insert`.
+upsert : Db -> Store a -> a -> Task Error Int
+upsert conn (Store s) record =
+    dbUpsertObject
+        conn
+        s.name
+        (colsExcluding s.generated s.cols)
+        s.pk
+        (Codec.toValue s.codec record)
+        (kindOf s.pk s.cols)
+
+
+-- | Update the row identified by the record's PRIMARY KEY, setting every column
+-- to the record's value (the PK and `generated` columns are never written). Read
+-- a row, change fields, `update` it back. Returns rows affected.
+update : Db -> Store a -> a -> Task Error Int
+update conn (Store s) record =
+    dbUpdateByPk
+        conn
+        s.name
+        (setColspecOf s.pk s.generated s.cols)
+        s.pk
+        (kindOf s.pk s.cols)
+        (Codec.toValue s.codec record)
+
+
+-- | Update every row matching a `Cond` to the record's column values (PK +
+-- `generated` columns excluded). For compound / ownership conditions the PK alone
+-- can't express: `Store.updateWhere conn notes (Store.and_ [ Store.eq "id" (SqlInt id), Store.eq "user_id" (SqlString uid) ]) note`.
+updateWhere : Db -> Store a -> Cond -> a -> Task Error Int
+updateWhere conn (Store s) rawCond record =
+    let
+        cond = resolveCond s.cols rawCond
+        ( whereSql, whereParams ) = renderCond cond
+    in
+        guardCols
+            s.cols
+            (condCols cond)
+            (dbUpdateWhere
+                conn
+                s.name
+                (setColspecOf s.pk s.generated s.cols)
+                (Codec.toValue s.codec record)
+                whereSql
+                whereParams)
+
+
+-- | PARTIAL-column update by `Cond`: `SET` only the named columns and leave the
+-- rest untouched — unlike `update`/`updateWhere`, which rewrite the WHOLE record
+-- from the codec. This is the PATCH primitive: set one or two columns without a
+-- read-modify-write, and without needing them present in the codec's read shape.
+-- Column names accept the record FIELD or the snake column; values bind as
+-- `SqlValue` params (injection-safe). Example — mark an order shipped:
+-- `Store.updateFields conn orders (eq "id" (SqlString oid))
+--     [ ( "status", SqlString "shipped" ), ( "tracking", SqlString t ) ]`.
+updateFields : Db -> Store a -> Cond -> List ( String, SqlValue ) -> Task Error Int
+updateFields conn (Store s) rawCond rawSets =
+    if List.isEmpty rawSets then
+        Task.succeed 0
+
+    else
+        let
+            cond = resolveCond s.cols rawCond
+            ( whereSql, whereParams ) = renderCond cond
+            sets =
+                List.map (\( f, v ) -> ( resolveCol s.cols f, v )) rawSets
+            setSql =
+                String.join ", " (List.map (\( c, _ ) -> c ++ " = ?") sets)
+            setParams = List.map (\( _, v ) -> v) sets
+            sql =
+                "UPDATE " ++ s.name ++ " SET " ++ setSql ++ " WHERE "
+                    ++ whereSql
+        in
+            guardCols
+                s.cols
+                (List.map (\( c, _ ) -> c) sets ++ condCols cond)
+                (Db.exec conn sql (setParams ++ whereParams))
+
+
+-- | PARTIAL-column update by primary key — the everyday PATCH-by-id:
+-- `Store.setFields conn users (SqlString uid) [ ( "verified", SqlBool True ) ]`.
+setFields : Db -> Store a -> SqlValue -> List ( String, SqlValue ) -> Task Error Int
+setFields conn store pkValue sets =
+    let
+        pkCol =
+            case store of
+
+                Store s ->
+                    s.pk
+    in
+        updateFields conn store (eq pkCol pkValue) sets
+
+
+-- | Atomic relative adjustment of integer columns — `SET col = col + delta` per
+-- entry, by `Cond`. The one write a value-based update can't express (the value
+-- depends on the column's CURRENT value): a race-free counter/stock/balance
+-- change without reading first. Negative deltas subtract:
+-- `Store.adjust conn products (eq "id" (SqlString pid)) [ ( "stock", -qty ) ]`.
+-- (For a clamped decrement like `max 0 (stock - qty)`, that's app logic — stay
+-- with raw `Db.exec` inside a `Store.transaction`.)
+adjust : Db -> Store a -> Cond -> List ( String, Int ) -> Task Error Int
+adjust conn (Store s) rawCond deltas =
+    if List.isEmpty deltas then
+        Task.succeed 0
+
+    else
+        let
+            cond = resolveCond s.cols rawCond
+            ( whereSql, whereParams ) = renderCond cond
+            sets = List.map (\( f, d ) -> ( resolveCol s.cols f, d )) deltas
+            setSql =
+                String.join
+                    ", "
+                    (List.map (\( c, _ ) -> c ++ " = " ++ c ++ " + ?") sets)
+            setParams = List.map (\( _, d ) -> Db.SqlInt d) sets
+            sql =
+                "UPDATE " ++ s.name ++ " SET " ++ setSql ++ " WHERE "
+                    ++ whereSql
+        in
+            guardCols
+                s.cols
+                (List.map (\( c, _ ) -> c) sets ++ condCols cond)
+                (Db.exec conn sql (setParams ++ whereParams))
+
+
+-- | Every row, decoded via the codec.
+all : Db -> Store a -> Task Error (List a)
+all conn store =
+    selectTail conn store ""
+
+
+selectTail : Db -> Store a -> String -> Task Error (List a)
+selectTail conn (Store s) tail =
+    let
+        sql =
+            if tail == "" then
+                "SELECT * FROM " ++ s.name
+
+            else
+                "SELECT * FROM " ++ s.name ++ " " ++ tail
+    in
+        dbQueryObjects conn sql emptyParams s.cols
+            |> Task.andThen (decodeRows s.codec)
+
+
+-- | The single row where `col = value` (value bound as text), or Nothing.
+findBy : Db -> Store a -> String -> String -> Task Error (Maybe a)
+findBy conn (Store s) col value =
+    dbQueryObjects
+        conn
+        ("SELECT * FROM " ++ s.name ++ " WHERE " ++ col ++ " = ? LIMIT 1")
+        [ value ]
+        s.cols
+        |> Task.andThen (decodeRows s.codec)
+        |> Task.map List.head
+
+
+-- | Run ANY SQL and decode each row into a typed projection record via a codec —
+-- the escape hatch for JOINs and aggregates (GROUP BY / COUNT / SUM), which a
+-- single-table Store can't model. You own the SQL; the codec owns the mapping (the
+-- sqlx split), so joins/aggregates come back as records, not `Dict String String`.
+-- The codec's columns must match the SELECT's output columns (alias to snake_case):
+--
+--     type alias Tally = { ideaId : String, votes : Int }
+--     tallyCodec = Codec.auto { ideaId = "", votes = 0 }
+--     Store.selectRaw conn tallyCodec
+--         "SELECT idea_id, COUNT(*) AS votes FROM votes GROUP BY idea_id"
+--         []
+selectRaw : Db -> Codec row -> String -> List SqlValue -> Task Error (List row)
+selectRaw conn codec sql params =
+    dbQueryObjects conn sql params (codecColumns codec)
+        |> Task.andThen (decodeRows codec)
+
+
+-- | Delete rows where `col = value` (single column).
+delete : Db -> Store a -> String -> String -> Task Error Int
+delete conn (Store s) col value =
+    dbExecRawParams
+        conn
+        ("DELETE FROM " ++ s.name ++ " WHERE " ++ col ++ " = ?")
+        [ value ]
+
+
+-- | Delete every row matching a `Cond` — for compound conditions the single-column
+-- `delete` can't express: `Store.deleteWhere conn notes (Store.and_ [ Store.eq "id" (SqlInt id), Store.eq "user_id" (SqlString uid) ])`.
+deleteWhere : Db -> Store a -> Cond -> Task Error Int
+deleteWhere conn (Store s) rawCond =
+    let
+        cond = resolveCond s.cols rawCond
+        ( whereSql, whereParams ) = renderCond cond
+    in
+        guardCols
+            s.cols
+            (condCols cond)
+            (dbExecRawParams
+                conn
+                ("DELETE FROM " ++ s.name ++ " WHERE " ++ whereSql)
+                whereParams)
+
+-- ── Project (schema-dump for file-based migrations) ─────────────────────────
+-- | A table's schema erased of its record type — name, primary key, and
+-- (column, kind) list — for the migration schema-dump.
+type alias Table =
+    { name : String
+    , pk : String
+    , cols : List ( String, String )
+    }
+
+
+-- | Erase a store to its `Table` schema.
+toTable : Store a -> Table
+toTable (Store s) =
+    { name = s.name, pk = s.pk, cols = s.cols }
+
+-- | A project's set of tables — the single declaration `sky db` reads to derive
+-- the target schema: `db = Store.project [ Store.toTable users, Store.toTable orders ]`.
+type Project
+    = Project (List Table)
+
+
+-- | Build a `Project` from a list of erased tables (via `toTable`). Expose the
+-- result as `db : Store.Project` from your entry module for `sky db migrate --gen`.
+project : List Table -> Project
+project tables =
+    Project tables
+
+
+-- | How many tables the project declares — the count `sky db reset` / `sky db
+-- drop` echo in their confirmation prompt.
+projectTableCount : Project -> Int
+projectTableCount (Project tables) =
+    List.length tables
+
+
+-- | Print the project's schema as JSON (between SKY_SCHEMA_* markers) and exit —
+-- the pure, DB-free schema-dump that `sky db migrate --gen` captures to diff
+-- against `db/schema.json`. Make this a project's `main` in the gen entry.
+dumpSchema : Project -> Task Error ()
+dumpSchema (Project tables) =
+    dbDumpProject tables
+
+
+dbDumpProject : List Table -> Task Error ()
+dbDumpProject =
+    Ffi.kernel "Db_dumpProject"
+
+
+-- | Push the whole project's schema to the live DB — create each missing table
+-- and ADD any new columns (nullable), for every store. The no-migration-files
+-- "make my dev DB match my types" path (`sky db push`); production uses the
+-- committed `db/migrations/` files via `sky db migrate`. Returns the SQL applied.
+pushProject : Db -> Project -> Task Error (List String)
+pushProject conn (Project tables) =
+    pushTables conn tables
+
+
+pushTables : Db -> List Table -> Task Error (List String)
+pushTables conn tables =
+    case tables of
+
+        [] ->
+            Task.succeed []
+
+        t :: rest ->
+            dbAutoMigrate conn t.name t.cols t.pk
+                |> Task.andThen
+                       (\applied ->
+                           Task.map
+                               (\more -> applied ++ more)
+                               (pushTables conn rest))
+
+
+-- | EMPTY the data from every table the project declares — keeps the schema and
+-- the `_sky_migrations` ledger, resets autoincrement counters. The `sky db reset`
+-- path. Returns the SQL executed.
+resetProject : Db -> Project -> Task Error (List String)
+resetProject conn (Project tables) =
+    dbResetTables conn (List.map .name tables)
+
+
+-- | DROP every table the project declares PLUS `_sky_migrations` — a fresh
+-- "never ran migrate/push" state. The `sky db drop` path. Returns the SQL executed.
+dropProject : Db -> Project -> Task Error (List String)
+dropProject conn (Project tables) =
+    dbDropTables conn (List.map .name tables ++ [ "_sky_migrations" ])
+
+
+-- | EMPTY the data from a single named table (schema + ledger untouched).
+resetTable : Db -> String -> Task Error (List String)
+resetTable conn name =
+    dbResetTables conn [ name ]
+
+
+-- | DROP a single named table. Does NOT touch `_sky_migrations`.
+dropTable : Db -> String -> Task Error (List String)
+dropTable conn name =
+    dbDropTables conn [ name ]
+
+
+dbResetTables : Db -> List String -> Task Error (List String)
+dbResetTables =
+    Ffi.kernel "Db_resetTables"
+
+
+dbDropTables : Db -> List String -> Task Error (List String)
+dbDropTables =
+    Ffi.kernel "Db_dropTables"
+
+-- ── Query builder (compose conditions + ordering + paging, no raw SQL) ───────
+-- A `Cond` is a composable boolean condition; `and_` / `or_` / `not_` nest them.
+-- A `Query a` carries the conditions (AND-combined across `where_` calls) + ORDER
+-- BY + LIMIT + OFFSET over a `Store a`; a terminal (`toList` / `toMaybe` /
+-- `count`) runs it. Every VALUE binds as a `SqlValue` param — injection-safe.
+-- Drop to `Std.Db.query` only for joins / aggregates the builder doesn't model.
+-- | A composable WHERE condition — build a leaf with `eq` / `gt` / `like` / … and
+-- combine with `and_` / `or_` / `not_`; apply to a query with `where_`. Opaque
+-- (build it with the combinators; don't pattern-match).
+type Cond
+    = CondOp String String SqlValue
+    | CondNull String Bool
+    | CondIn String (List SqlValue)
+    | CondAnd (List Cond)
+    | CondOr (List Cond)
+    | CondNot Cond
+
+type OrderTerm
+    = OrderTerm String String
+
+-- | An in-progress query over a store. Add conditions with `where_`, ordering
+-- with `orderAsc` / `orderDesc`, paging with `limit` / `offset`, then run a
+-- terminal (`toList` / `toMaybe` / `count`).
+type Query a
+    = Query { store : Store a
+, conds : List Cond
+, orders : List OrderTerm
+, limitN : Maybe Int
+, offsetN : Maybe Int
+}
+
+
+-- | Start a query over a store:
+-- `Store.query products |> Store.where_ (Store.eq "active" (SqlBool True)) |> Store.toList conn`.
+query : Store a -> Query a
+query store =
+    Query
+        { store = store
+        , conds = []
+        , orders = []
+        , limitN = Nothing
+        , offsetN = Nothing
+        }
+
+
+-- | Add a condition. Multiple `where_` calls are AND-combined; use `and_` / `or_`
+-- / `not_` inside one call for grouped OR / negation:
+-- `q |> where_ (eq "a" x) |> where_ (or_ [ gt "b" y, eq "c" z ])`.
+where_ : Cond -> Query a -> Query a
+where_ c (Query q) =
+    Query { q | conds = c :: q.conds }
+
+
+-- ── Condition leaves (each returns a `Cond`) ─────────────────────────────────
+-- | `col = value`.
+eq : String -> SqlValue -> Cond
+eq col v =
+    CondOp col "=" v
+
+
+-- | `col <> value`.
+neq : String -> SqlValue -> Cond
+neq col v =
+    CondOp col "<>" v
+
+
+-- | `col > value`.
+gt : String -> SqlValue -> Cond
+gt col v =
+    CondOp col ">" v
+
+
+-- | `col >= value`.
+gte : String -> SqlValue -> Cond
+gte col v =
+    CondOp col ">=" v
+
+
+-- | `col < value`.
+lt : String -> SqlValue -> Cond
+lt col v =
+    CondOp col "<" v
+
+
+-- | `col <= value`.
+lte : String -> SqlValue -> Cond
+lte col v =
+    CondOp col "<=" v
+
+
+-- | `col LIKE pattern` (use `%` / `_` wildcards in the pattern).
+like : String -> String -> Cond
+like col pat =
+    CondOp col "LIKE" (Db.SqlString pat)
+
+
+-- | `col IS NULL`.
+isNull : String -> Cond
+isNull col =
+    CondNull col True
+
+
+-- | `col IS NOT NULL`.
+notNull : String -> Cond
+notNull col =
+    CondNull col False
+
+
+-- | `col IN (v1, v2, …)`. An empty list matches nothing.
+inList : String -> List SqlValue -> Cond
+inList col vs =
+    CondIn col vs
+
+
+-- ── Condition combinators ────────────────────────────────────────────────────
+-- | All of the conditions (AND). An empty list is always true.
+and_ : List Cond -> Cond
+and_ conds =
+    CondAnd conds
+
+
+-- | Any of the conditions (OR). An empty list is always false.
+or_ : List Cond -> Cond
+or_ conds =
+    CondOr conds
+
+
+-- | Negate a condition (NOT).
+not_ : Cond -> Cond
+not_ cond =
+    CondNot cond
+
+
+-- ── Ordering + paging ────────────────────────────────────────────────────────
+-- | Append `ORDER BY col ASC` (chain for multi-column ordering).
+orderAsc : String -> Query a -> Query a
+orderAsc col (Query q) =
+    Query { q | orders = OrderTerm col "ASC" :: q.orders }
+
+
+-- | Append `ORDER BY col DESC`.
+orderDesc : String -> Query a -> Query a
+orderDesc col (Query q) =
+    Query { q | orders = OrderTerm col "DESC" :: q.orders }
+
+
+-- | `LIMIT n`.
+limit : Int -> Query a -> Query a
+limit n (Query q) =
+    Query { q | limitN = Just n }
+
+
+-- | `OFFSET n` (pair with `limit` for paging).
+offset : Int -> Query a -> Query a
+offset n (Query q) =
+    Query { q | offsetN = Just n }
+
+
+-- | Run the query, decoding every matching row via the store's codec.
+toList : Db -> Query a -> Task Error (List a)
+toList conn (Query q) =
+    case q.store of
+
+        Store s ->
+            let
+                conds = List.map (resolveCond s.cols) q.conds
+                orders = List.map (resolveOrder s.cols) q.orders
+                ( whereTail, params ) = buildWhere conds
+                sql =
+                    "SELECT * FROM " ++ s.name ++ whereTail ++ orderTail orders
+                        ++ pageTail q.limitN q.offsetN
+            in
+                guardCols
+                    s.cols
+                    (List.concatMap condCols conds
+                        ++ List.map (\(OrderTerm c _) -> c) orders)
+                    (dbQueryObjects conn sql params s.cols
+                        |> Task.andThen (decodeRows s.codec))
+
+
+-- | Run the query with `LIMIT 1`, returning the first matching row or `Nothing`.
+toMaybe : Db -> Query a -> Task Error (Maybe a)
+toMaybe conn q =
+    toList conn (limit 1 q) |> Task.map List.head
+
+
+-- | Count matching rows via `SELECT COUNT(*)` (filters apply; order/paging ignored).
+count : Db -> Query a -> Task Error Int
+count conn (Query q) =
+    case q.store of
+
+        Store s ->
+            let
+                conds = List.map (resolveCond s.cols) q.conds
+                ( whereTail, params ) = buildWhere conds
+            in
+                guardCols
+                    s.cols
+                    (List.concatMap condCols conds)
+                    (Db.query
+                        conn
+                        ("SELECT COUNT(*) AS n FROM " ++ s.name ++ whereTail)
+                        params
+                        |> Task.map
+                               (\rows ->
+                                   case rows of
+
+                                       row :: _ ->
+                                           Db.getInt "n" row
+
+                                       [] ->
+                                           0))
+
+
+-- | Run a callback inside a DB transaction — Store operations compose by taking
+-- the `tx` handle. Alias over `Db.withTransaction`, so read / write / transact
+-- all stay in the `Store.*` namespace.
+transaction : Db -> (Db -> Task Error a) -> Task Error a
+transaction conn f =
+    Db.withTransaction conn f
+
+
+-- | Encode a TYPED value to a `SqlValue` via its codec, so a filter can compare
+-- against an enum / `Money` / `Time` / `Codec.map` wrapper using the SAME encoding
+-- the column stores — no manual `SqlString`/`SqlInt` wrapping, no drift:
+-- `where_ (Store.eq "status" (Store.sqlOf statusCodec Shipped))`.
+sqlOf : Codec a -> a -> SqlValue
+sqlOf codec value =
+    dbSqlOfValue (Codec.toValue codec value)
+
+
+dbSqlOfValue : Value -> SqlValue
+dbSqlOfValue =
+    Ffi.kernel "Db_sqlOfValue"
+
+
+buildWhere : List Cond -> ( String, List SqlValue )
+buildWhere conds =
+    case conds of
+
+        [] ->
+            ( "", [] )
+
+        _ ->
+            let
+                ( sql, params ) = renderCond (CondAnd (List.reverse conds))
+            in
+                ( " WHERE " ++ sql, params )
+
+
+-- | Every column name referenced by a condition tree (for validation).
+condCols : Cond -> List String
+condCols c =
+    case c of
+
+        CondOp col _ _ ->
+            [ col ]
+
+        CondNull col _ ->
+            [ col ]
+
+        CondIn col _ ->
+            [ col ]
+
+        CondAnd cs ->
+            List.concatMap condCols cs
+
+        CondOr cs ->
+            List.concatMap condCols cs
+
+        CondNot inner ->
+            condCols inner
+
+
+-- | camelCase → snake_case. Delegates to the SAME runtime routine that derives
+-- `Codec.auto` columns, so a filter written with the RECORD FIELD name
+-- (`"priceMinor"`) resolves to exactly its snake column (`"price_minor"`).
+snakeName : String -> String
+snakeName =
+    Ffi.kernel "Db_snakeName"
+
+
+isKnownCol : List ( String, String ) -> String -> Bool
+isKnownCol known col =
+    List.any (\( c, _ ) -> c == col) known
+
+
+-- | Resolve a name to a store column: use it verbatim when it IS a column,
+-- else fall back to its snake_case form (so `"priceMinor"` finds `"price_minor"`),
+-- else return it unchanged so the guard reports it as unknown.
+resolveCol : List ( String, String ) -> String -> String
+resolveCol known col =
+    if isKnownCol known col then
+        col
+
+    else
+        let
+            snake = snakeName col
+        in
+            if isKnownCol known snake then
+                snake
+
+            else
+                col
+
+
+-- | Rewrite every column name in a condition tree via `resolveCol`.
+resolveCond : List ( String, String ) -> Cond -> Cond
+resolveCond known c =
+    case c of
+
+        CondOp col op v ->
+            CondOp (resolveCol known col) op v
+
+        CondNull col wantNull ->
+            CondNull (resolveCol known col) wantNull
+
+        CondIn col vs ->
+            CondIn (resolveCol known col) vs
+
+        CondAnd cs ->
+            CondAnd (List.map (resolveCond known) cs)
+
+        CondOr cs ->
+            CondOr (List.map (resolveCond known) cs)
+
+        CondNot inner ->
+            CondNot (resolveCond known inner)
+
+
+-- | Rewrite an order term's column name via `resolveCol`.
+resolveOrder : List ( String, String ) -> OrderTerm -> OrderTerm
+resolveOrder known (OrderTerm col dir) =
+    OrderTerm (resolveCol known col) dir
+
+
+-- | Fail-fast guard: run `task` only if every used column exists in the store,
+-- else `Task.fail` with the actual column list — a typo (`"activ"`) or a
+-- field-name-instead-of-column (`"priceMinor"` vs `"price_minor"`) is caught with
+-- a clear error before it reaches the database as a raw SQL failure.
+guardCols : List ( String, String ) -> List String -> Task Error x -> Task Error x
+guardCols known used task =
+    case firstUnknownCol known used of
+
+        Nothing ->
+            task
+
+        Just bad ->
+            Task.fail
+                (Error.invalidInput
+                    ("Store: unknown column \"" ++ bad ++ "\" — columns are "
+                        ++ String.join ", " (List.map (\( c, _ ) -> c) known)))
+
+
+firstUnknownCol : List ( String, String ) -> List String -> Maybe String
+firstUnknownCol known used =
+    case used of
+
+        [] ->
+            Nothing
+
+        col :: rest ->
+            if List.any (\( c, _ ) -> c == col) known then
+                firstUnknownCol known rest
+
+            else
+                Just col
+
+
+renderCond : Cond -> ( String, List SqlValue )
+renderCond c =
+    case c of
+
+        CondOp col op v ->
+            ( col ++ " " ++ op ++ " ?", [ v ] )
+
+        CondNull col wantNull ->
+            ( col
+                  ++ (if wantNull then
+                         " IS NULL"
+
+                     else
+                         " IS NOT NULL")
+            , []
+            )
+
+        CondIn col vs ->
+            case vs of
+
+                [] ->
+                    ( "1 = 0", [] )
+
+                _ ->
+                    ( col ++ " IN ("
+                          ++ String.join ", " (List.map (\_ -> "?") vs)
+                          ++ ")"
+                    , vs
+                    )
+
+        CondAnd cs ->
+            renderGroup "1 = 1" " AND " cs
+
+        CondOr cs ->
+            renderGroup "1 = 0" " OR " cs
+
+        CondNot inner ->
+            let
+                ( s, p ) = renderCond inner
+            in
+                ( "NOT (" ++ s ++ ")", p )
+
+
+renderGroup : String -> String -> List Cond -> ( String, List SqlValue )
+renderGroup emptySql sep cs =
+    case cs of
+
+        [] ->
+            ( emptySql, [] )
+
+        _ ->
+            let
+                parts = List.map renderCond cs
+            in
+                ( "(" ++ String.join sep (List.map (\( s, _ ) -> s) parts)
+                      ++ ")"
+                , List.concat (List.map (\( _, p ) -> p) parts)
+                )
+
+
+orderTail : List OrderTerm -> String
+orderTail orders =
+    case orders of
+
+        [] ->
+            ""
+
+        _ ->
+            -- `orderAsc`/`orderDesc` PREPEND (`::`) each term, so `orders` is in
+            -- reverse call-order. Reverse it here so the FIRST `orderAsc` call is
+            -- the PRIMARY sort key and later calls are tie-breakers — i.e.
+            -- `q |> orderAsc "sort_order" |> orderAsc "id"` renders
+            -- `ORDER BY sort_order ASC, id ASC`, not `ORDER BY id ASC, …`.
+            -- (A single order clause is unaffected — reverse of a 1-list is itself.)
+            " ORDER BY "
+                ++ String.join
+                       ", "
+                       (List.map
+                           (\(OrderTerm col dir) -> col ++ " " ++ dir)
+                           (List.reverse orders))
+
+
+pageTail : Maybe Int -> Maybe Int -> String
+pageTail limitN offsetN =
+    let
+        lim =
+            case limitN of
+
+                Just n ->
+                    " LIMIT " ++ String.fromInt n
+
+                Nothing ->
+                    ""
+        off =
+            case offsetN of
+
+                Just n ->
+                    " OFFSET " ++ String.fromInt n
+
+                Nothing ->
+                    ""
+    in
+        lim ++ off
+
+
+-- ── Internal ─────────────────────────────────────────────────────────────────
+emptyParams : List String
+emptyParams =
+    []
+
+
+-- | Drop the named columns from a (col, kind) spec (insert/update omit-lists).
+colsExcluding : List String -> List ( String, String ) -> List ( String, String )
+colsExcluding excl cols =
+    List.filter (\( c, _ ) -> not (List.member c excl)) cols
+
+
+-- | Columns carrying the `touch` flag (Store.touchOnUpdate) — set to `now()` on
+-- every UPDATE by the runtime's codecSetClause.
+touchColsOf : List ( String, String ) -> List ( String, String )
+touchColsOf cols =
+    List.filter (\( _, k ) -> String.contains "touch" k) cols
+
+
+-- | The SET column-spec for an update: every writable column (PK + `generated`
+-- excluded) PLUS the `touch` columns re-added (they live in `generated` so INSERT
+-- omits them, but UPDATE bumps them to `now()`).
+setColspecOf : String -> List String -> List ( String, String ) -> List ( String, String )
+setColspecOf pk gen cols =
+    colsExcluding (pk :: gen) cols ++ touchColsOf cols
+
+
+-- | The declared kind of a column (defaults to "text" when absent).
+kindOf : String -> List ( String, String ) -> String
+kindOf col cols =
+    case cols of
+
+        [] ->
+            "text"
+
+        ( c, k ) :: rest ->
+            if c == col then
+                k
+
+            else
+                kindOf col rest
+
+
+dbUpdateByPk : Db -> String -> List ( String, String ) -> String -> String -> Value -> Task Error Int
+dbUpdateByPk =
+    Ffi.kernel "Db_updateByPk"
+
+
+dbUpdateWhere : Db -> String -> List ( String, String ) -> Value -> String -> List SqlValue -> Task Error Int
+dbUpdateWhere =
+    Ffi.kernel "Db_updateWhere"
+
+
+decodeRows : Codec a -> List String -> Task Error (List a)
+decodeRows codec rows =
+    case rows of
+
+        [] ->
+            Task.succeed []
+
+        j :: rest ->
+            case Codec.fromJson codec j of
+
+                Ok x ->
+                    Task.map (\xs -> x :: xs) (decodeRows codec rest)
+
+                Err e ->
+                    Task.fail e
+
+
+codecColumns : Codec a -> List ( String, String )
+codecColumns codec =
+    case Codec.shape codec of
+
+        SRecord cols ->
+            List.map (\( n, ct ) -> ( n, colTypeStr ct )) cols
+
+        _ ->
+            []
+
+
+colTypeStr : ColType -> String
+colTypeStr ct =
+    case ct of
+
+        CText ->
+            "text"
+
+        CInt ->
+            "int"
+
+        CReal ->
+            "real"
+
+        CBool ->
+            "bool"
+
+        CBlob ->
+            "blob"
+
+        CNull inner ->
+            colTypeStr inner ++ "?"
+
+
+dbCreateCols : Db -> String -> List ( String, String ) -> String -> Task Error ()
+dbCreateCols =
+    Ffi.kernel "Db_createCols"
+
+
+dbAutoMigrate : Db -> String -> List ( String, String ) -> String -> Task Error (List String)
+dbAutoMigrate =
+    Ffi.kernel "Db_autoMigrate"
+
+
+dbExecObject : Db -> String -> List ( String, String ) -> Value -> String -> String -> Task Error Int
+dbExecObject =
+    Ffi.kernel "Db_execObject"
+
+
+dbExecObjectMany : Db -> String -> List ( String, String ) -> List Value -> Task Error Int
+dbExecObjectMany =
+    Ffi.kernel "Db_execObjectMany"
+
+
+dbUpsertObject : Db -> String -> List ( String, String ) -> String -> Value -> String -> Task Error Int
+dbUpsertObject =
+    Ffi.kernel "Db_upsertObject"
+
+
+dbExecObjectWith : Db -> String -> List ( String, String ) -> Value -> List ( String, SqlValue ) -> String -> String -> Task Error Int
+dbExecObjectWith =
+    Ffi.kernel "Db_execObjectWith"
+
+
+dbQueryObjects : Db -> String -> List p -> List ( String, String ) -> Task Error (List String)
+dbQueryObjects =
+    Ffi.kernel "Db_queryObjects"
+
+
+dbExecRawParams : Db -> String -> List p -> Task Error Int
+dbExecRawParams =
+    Ffi.kernel "Db_exec"

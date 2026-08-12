@@ -1,0 +1,509 @@
+module State exposing (..)
+
+-- Pure types + same-shape helpers. No Std.Ui imports here so the
+-- type-checker stays well below the heap-exhaustion limit
+-- (CLAUDE.md Limitation #17).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict exposing (Dict)
+
+-- ─── Tabs ────────────────────────────────────────────────────────
+-- The console has 5 tabs. Active tab is part of Model so navigation
+-- is just a Msg dispatch (no client-side router).
+--
+-- Variants suffixed `Tab_` to avoid collision with the `Overview`
+-- record type alias below (Sky's auto-generated record constructor
+-- shares the type-name as a value, so an unsuffixed `Overview`
+-- variant would shadow it in expression position).
+type Tab
+    = OverviewTab
+    | MetricsTab
+    | LogsTab
+    | TracesTab
+    | ErrorsTab
+    | AnalyticsTab
+
+
+tabLabel : Tab -> String
+tabLabel tab =
+    case tab of
+
+        OverviewTab ->
+            "Overview"
+
+        MetricsTab ->
+            "Metrics"
+
+        LogsTab ->
+            "Logs"
+
+        TracesTab ->
+            "Traces"
+
+        ErrorsTab ->
+            "Errors"
+
+        AnalyticsTab ->
+            "Analytics"
+
+-- ─── Data shapes (mirror /_sky/console/api/* JSON) ──────────────
+-- Overview tab payload — wire shape mirrors `OverviewResponse`
+-- in `runtime-go/rt/console.go`. Fetched periodically from
+-- `GET <parent>/_sky/console/api/overview` when running as the
+-- bundled sub-app (SKY_PARENT_URL set). Falls back to a small
+-- mock for standalone `sky console` invocations.
+type alias Overview =
+    { skyVersion : String
+    , commit : String
+    , builtAt : String
+    , uptimeSeconds : Int
+    , requestsTotal : Int
+    , errorRate5xx : Float
+    , bufferLogUsed : Int
+    , bufferTraceUsed : Int
+    , productionMode : Bool
+    }
+
+-- Log entry shown in the Logs tab — wire shape mirrors
+-- `telemetry.LogEntry` JSON serialisation. Extra context fields
+-- (reqId, sessionId, route, status, latencyMs) let the Logs tab
+-- correlate entries that share a request or a session — click a
+-- badge → filter to "everything this session did".
+type alias LogEntry =
+    { time : String
+    , level : String
+    , message : String
+    , subapp : String
+    , reqId : String
+    , sessionId : String
+    , userLabel : String
+    , route : String
+    , status : Float
+    , latencyMs : Float
+    }
+
+type alias MetricRow =
+    { name : String
+    , typ : String
+    , labels : String
+    , value : Float
+    , sum : Float
+    , count : Float
+    }
+
+type alias TraceRow =
+    { traceId : String
+    , spanId : String
+    , parentId : String
+    , name : String
+    , kind : String
+    , startTime : String
+    , durationMs : Float
+    , status : String
+    }
+
+type alias ErrorRow =
+    { count : Int
+    , message : String
+    }
+
+-- Std.Analytics tab payloads — wire shape mirrors the parent's
+-- `GET /_sky/console/api/analytics` handler (HandleConsoleAnalytics
+-- in runtime-go/rt/console_analytics.go). Because the embedded
+-- console runs IN-PROCESS with the host app, that handler reads the
+-- SAME analytics store the app writes — no separate DB, no env
+-- plumbing. `total` / `uniqueUsers` are scalar aggregates; `counts`
+-- is per-event-name frequency (most frequent first); `recent` is the
+-- newest events for the live stream.
+type alias EventCount =
+    { event : String
+    , count : Int
+    }
+
+type alias AnalyticsEvent =
+    { ts : Int
+    , event : String
+    , userId : String
+    , path : String
+    }
+
+-- One currency's summed revenue. Money props are stored losslessly as
+-- "ISO_CODE AMOUNT", so revenue is summed WITHIN a currency, never
+-- across — `amount` is the exact decimal total as a String (formatted
+-- server-side via shopspring/decimal so cents never drift).
+type alias CurrencyTotal =
+    { currency : String
+    , amount : String
+    , count : Int
+    }
+
+type alias Analytics =
+    { total : Int
+    , uniqueUsers : Int
+    , counts : List EventCount
+    , recent : List AnalyticsEvent
+    , revenue : List CurrencyTotal
+    }
+
+
+emptyAnalytics : Analytics
+emptyAnalytics =
+    { total = 0, uniqueUsers = 0, counts = [], recent = [], revenue = [] }
+
+-- Per-service rollup row consumed by the multi-service Overview
+-- (v0.16.4 B5). One ServiceStat per distinct service_name in the
+-- hub's `console-hot.db`. `status` is a 3-state pill mapped from
+-- the recent error rate: "ok" (green, < 1%), "warn" (amber, 1-5%),
+-- "err" (red, > 5%). `sparkRps` / `sparkP95` carry the last ~60s
+-- of req-per-second + p95-latency samples so the card can render
+-- a sparkline without round-tripping the full log table.
+type alias ServiceStat =
+    { name : String
+    , status : String
+    , reqsPerSec : Float
+    , p95Ms : Float
+    , errorRate : Float
+    , sparkRps : List Float
+    , sparkP95 : List Float
+    }
+
+-- ─── Time-range filter (v0.16.18 #558-PR1) ──────────────────────
+--
+-- Global time-range applied across Logs / Traces tabs. Independent
+-- of the per-tab filters (LogFilter / traceQuery). The selected
+-- variant + a Tick-refreshed `nowMs` snapshot let the view path
+-- compute the ISO-8601 threshold synchronously via
+-- Time.formatISO8601 (pure Int -> String). Rows whose `time` /
+-- `startTime` string is < threshold are filtered out before the
+-- per-tab filters apply.
+--
+-- `RangeAll` skips the filter entirely (no threshold computation).
+-- Default is `Last24h` — matches the typical "what's been happening
+-- today" question. Future PRs widen to slug + free-text + saved
+-- views built on the same row-filter foundation.
+type Range
+    = Last15m
+    | Last1h
+    | Last24h
+    | Last7d
+    | RangeAll
+
+
+-- Range duration in milliseconds. `RangeAll` returns 0 — caller
+-- short-circuits the threshold computation and skips filtering.
+rangeMillis : Range -> Int
+rangeMillis r =
+    case r of
+
+        Last15m ->
+            15 * 60 * 1000
+
+        Last1h ->
+            60 * 60 * 1000
+
+        Last24h ->
+            24 * 60 * 60 * 1000
+
+        Last7d ->
+            7 * 24 * 60 * 60 * 1000
+
+        RangeAll ->
+            0
+
+
+rangeLabel : Range -> String
+rangeLabel r =
+    case r of
+
+        Last15m ->
+            "15m"
+
+        Last1h ->
+            "1h"
+
+        Last24h ->
+            "24h"
+
+        Last7d ->
+            "7d"
+
+        RangeAll ->
+            "All"
+
+
+-- v0.16.18 #558-PR4 — URL token (lowercase) for Range. Symmetric
+-- with parseRange: a token round-trips through both. Distinct from
+-- rangeLabel because "All" displays Title-case but URLs prefer
+-- lowercase.
+rangeKey : Range -> String
+rangeKey r =
+    case r of
+
+        Last15m ->
+            "15m"
+
+        Last1h ->
+            "1h"
+
+        Last24h ->
+            "24h"
+
+        Last7d ->
+            "7d"
+
+        RangeAll ->
+            "all"
+
+
+-- Parse a URL token back into the Range ADT. Unknown / missing
+-- tokens fall back to the Last24h default so a malformed URL
+-- doesn't break boot.
+parseRange : String -> Range
+parseRange s =
+    case s of
+
+        "15m" ->
+            Last15m
+
+        "1h" ->
+            Last1h
+
+        "24h" ->
+            Last24h
+
+        "7d" ->
+            Last7d
+
+        "all" ->
+            RangeAll
+
+        _ ->
+            Last24h
+
+-- ─── Logs filter ────────────────────────────────────────────────
+-- Multi-axis filter: free-text search + level toggles + session id
+-- pivot. UI-side state; serialises into the /_sky/console/api/logs
+-- query string on every refresh.
+type alias LogFilter =
+    { query : String
+    , session : String
+    , showDebug : Bool
+    , showInfo : Bool
+    , showWarn : Bool
+    , showError : Bool
+    }
+
+
+-- Debug entries are off by default — they're the noisy ones (every
+-- noop dispatch). Users opt in via the filter pill on the Logs tab.
+emptyLogFilter : LogFilter
+emptyLogFilter =
+    { query = ""
+    , session = ""
+    , showDebug = False
+    , showInfo = True
+    , showWarn = True
+    , showError = True
+    }
+
+-- ─── Store interface (v0.16.4 B3) ───────────────────────────────
+-- Read-only data plane for the console UI.  Each field is a
+-- Task-returning function that fetches one slice of telemetry.
+-- The bundled console doesn't care how the bytes are produced —
+-- only that the typed shape comes back.
+--
+-- Two implementations ship in v0.16.4:
+--   * `httpStore` (Main.sky) — closes over `parentUrl`, issues
+--     `GET <parent>/_sky/console/api/*` for each read.  This is
+--     the embedded-mode behaviour (every Sky.Live app's auto-
+--     mounted /_sky/console/ subpath).
+--   * `hubStore` (v0.16.4 B4) — backed by direct SQLite reads
+--     over the hub's `console-hot.db` schema.  Same shape as
+--     httpStore; one source ↔ three deployment shapes
+--     (embedded / hub-single / hub-multi).
+--
+-- `listServices` is the v0.16.4 hub addition: embedded mode
+-- reports a single-element list (the host app's name);
+-- hubStore returns the distinct service_name values present.
+--
+-- `readFiltered*` (v0.16.4 B6) are the per-service drill-down
+-- variants of readLogs/readMetrics/readTraces/readErrors used by
+-- the dedicated tab pages (LogsTab.sky / MetricsTab.sky / …) when
+-- the user picks a service from the multi-service Overview's
+-- service card scroller. The first `String` arg is the service
+-- name; an empty string means "all services" (callers should fall
+-- back to the unfiltered read in that case). Embedded mode wires
+-- these to the existing single-service readers (the `svc` arg is
+-- ignored — embedded mode only knows about the host app).
+type alias Store =
+    { readOverview : () -> Task Error Overview
+    , readLogs : LogFilter -> Task Error (List LogEntry)
+    , readMetrics : () -> Task Error (List MetricRow)
+    , readTraces : () -> Task Error (List TraceRow)
+    , readErrors : () -> Task Error (List ErrorRow)
+    , listServices : () -> Task Error (List String)
+    , readServiceStats : () -> Task Error (List ServiceStat)
+    , readFilteredLogs : String -> LogFilter -> Task Error (List LogEntry)
+    , readFilteredMetrics : String -> Task Error (List MetricRow)
+    , readFilteredTraces : String -> Task Error (List TraceRow)
+    , readFilteredErrors : String -> Task Error (List ErrorRow)
+    , readAnalytics : () -> Task Error Analytics
+    }
+
+-- ─── Model + Msg ─────────────────────────────────────────────────
+--
+-- `parentUrl` (SKY_PARENT_URL) is set when running as the embedded
+-- console; `hubDbPath` (SKY_CONSOLE_HUB_DB) is set when running
+-- in-process with the hub daemon. Either being non-empty enables
+-- live fetches via the Store; both empty = standalone mode with
+-- mock data.
+type alias Model =
+    { tab : Tab
+    , parentUrl : String
+    , hubDbPath : String
+    , store : Store
+    , overview : Overview
+    , logs : List LogEntry
+    , metrics : List MetricRow
+    , traces : List TraceRow
+    , errors : List ErrorRow
+    , lastError : String
+    , logFilter : LogFilter
+    , traceQuery : String
+    , selectedService : String
+    , serviceStats : List ServiceStat
+    , identity : Maybe Identity
+    , tenantPrefix : String
+    , range : Range
+    , nowMs : Int
+    , globalQuery : String
+    , analytics : Analytics
+    , logoutUrl : String
+    }
+    -- Non-empty ONLY in embedded mode, where the runtime mounts a
+    -- __Host-sky_console cookie + a /_sky/console/_logout route and
+    -- injects SKY_CONSOLE_LOGOUT_URL. Standalone hub / aggregator
+    -- consoles have no login cookie, so the value stays "" and the
+    -- header renders no "Sign out" link.
+    -- v0.16.18 #558-PR1: global time-range filter applied across
+    -- Logs + Traces tabs. `nowMs` is refreshed every Tick via
+    -- Cmd.perform Time.unixMillis GotNowMs — the view path uses
+    -- `nowMs - rangeMillis range` as the ISO-8601 threshold
+    -- (Time.formatISO8601 is pure Int -> String).
+    -- v0.16.18 #558-PR3: free-text search applied alongside the
+    -- range + service filters. Empty string = no filter. Match
+    -- is case-insensitive substring against multiple row fields
+    -- (logs: message / route / reqId / sessionId; traces: name /
+    -- traceId). Errors + metrics carry no useful text axis so
+    -- the filter doesn't apply to them.
+
+-- Identity threaded from the hub auth-gate via Hub_currentIdentity
+-- (v0.16.6 / #493 part 2c).  Match Std.Live.Console.Identity's
+-- record shape exactly so the existing record-narrowing path
+-- (rt.Coerce[State_Identity_R]) round-trips cleanly.
+--
+-- Identity is populated asynchronously: the bundled console issues
+-- `Cmd.perform Hub.currentIdentity GotIdentity` in init; the response
+-- flows through update.  Until the response arrives `identity` is
+-- Nothing — every per-tab fetch uses the empty tenant prefix (i.e.
+-- it sees all data the operator's gate let in).
+type alias Identity =
+    { subject : String
+    , email : String
+    , claims : Dict String String
+    }
+
+-- Msg covers tab switches + scheduled refresh + each per-endpoint
+-- response. Result-typed responses use the canonical Sky.Core.Error
+-- shape so a failure surfaces as model.lastError without crashing
+-- the tick.
+type Msg
+    = SelectTab Tab
+    | Tick
+    | GotOverview (Result Error Overview)
+    | GotLogs (Result Error (List LogEntry))
+    | GotMetrics (Result Error (List MetricRow))
+    | GotTraces (Result Error (List TraceRow))
+    | GotErrors (Result Error (List ErrorRow))
+    | GotAnalytics (Result Error Analytics)
+    | LogFilterQuery String
+    | LogFilterToggleLevel String
+    | LogFilterPickSession String
+    | LogFilterClear
+    | TraceFilterQuery String
+    | PivotToTrace String
+    | SelectService String
+    | GotServiceStats (Result Error (List ServiceStat))
+    | GotIdentity (Result Error Identity)
+    | SelectRange Range
+    | GotNowMs (Result Error Int)
+    | GlobalQuery String
+    -- v0.16.6 #493 part 2c: identity from the auth-gate.  Populated
+    -- by `Cmd.perform Hub.currentIdentity GotIdentity` in init.
+    -- A successful response with a tenant claim derives the
+    -- tenantPrefix used to filter service-name queries.
+    -- v0.16.18 #558-PR1
+    -- v0.16.18 #558-PR3
+
+
+-- ─── Defaults ────────────────────────────────────────────────────
+emptyOverview : Overview
+emptyOverview =
+    { skyVersion = "—"
+    , commit = "—"
+    , builtAt = "—"
+    , uptimeSeconds = 0
+    , requestsTotal = 0
+    , errorRate5xx = 0.0
+    , bufferLogUsed = 0
+    , bufferTraceUsed = 0
+    , productionMode = False
+    }
+
+
+-- Mock overview used by standalone `sky console` (no parent URL).
+mockOverview : Overview
+mockOverview =
+    emptyOverview
+
+
+mockLogs : List LogEntry
+mockLogs =
+    [ { time = "—"
+      , level = "info"
+      , message = "Standalone mode — no parent URL configured."
+      , subapp = ""
+      , reqId = ""
+      , sessionId = ""
+      , userLabel = ""
+      , route = ""
+      , status = 0.0
+      , latencyMs = 0.0
+      }
+    , { time = "—"
+      , level = "info"
+      , message = "Run from a host app to see live telemetry."
+      , subapp = ""
+      , reqId = ""
+      , sessionId = ""
+      , userLabel = ""
+      , route = ""
+      , status = 0.0
+      , latencyMs = 0.0
+      }
+    ]
+
+
+mockMetrics : List MetricRow
+mockMetrics =
+    []
+
+
+mockTraces : List TraceRow
+mockTraces =
+    []
+
+
+mockErrors : List ErrorRow
+mockErrors =
+    []
