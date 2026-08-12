@@ -475,8 +475,240 @@ pub fn kernel_inventory() -> std::collections::BTreeMap<String, std::collections
 /// change, and not something to smuggle in here.
 const ROUTED_ONLY_KERNEL_MEMBERS: &[(&str, &str)] = &[("List", "sortWith")];
 
+/// The stdlib inventory: module → its public `exposing` surface, read from the
+/// SAME `api/symbols.json` the coverage ledger uses (the `sky doc --export`
+/// code path, in process — no `sky` binary, ~60 ms).
+///
+/// Extracted from [`report`] so the RATCHET below and the printed report share
+/// one definition of the denominator. Two readings of "what is public" is how
+/// a report and its gate come to disagree while both stay green.
+pub fn inventory(
+    root: &std::path::Path,
+) -> Result<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>, String> {
+    let tmp = std::env::temp_dir().join(format!(
+        "sky-familyS-inventory-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let (proj, out) = (tmp.join("project"), tmp.join("site"));
+    std::fs::create_dir_all(&proj)
+        .and(std::fs::create_dir_all(&out))
+        .map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
+    let manifest = project::render_doc_site_export(root, &proj, &out)
+        .map_err(|e| format!("sky doc --export code path FAILED: {e}"))
+        .and_then(|()| {
+            std::fs::read_to_string(out.join("api").join("symbols.json"))
+                .map_err(|e| format!("no api/symbols.json: {e}"))
+        });
+    let _ = std::fs::remove_dir_all(&tmp);
+    let json: serde_json::Value = serde_json::from_str(&manifest?)
+        .map_err(|e| format!("symbols.json is not JSON: {e}"))?;
+    let mut inventory: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        Default::default();
+    for e in json["entries"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        let (m, n) = (
+            e["module"].as_str().unwrap_or_default(),
+            e["name"].as_str().unwrap_or_default(),
+        );
+        if !m.is_empty() && !n.is_empty() {
+            inventory
+                .entry(m.to_string())
+                .or_default()
+                .insert(n.to_string());
+        }
+    }
+    Ok(inventory)
+}
+
+// ---------------------------------------------------------------------------
+// THE RATCHET — what makes item 3's number load-bearing
+// ---------------------------------------------------------------------------
+//
+// `.claude/AUTONOMOUS_GOAL.md` item 3 claims *"67 of 87 stdlib modules are dark
+// to Family S … `Sky.Core.Bytes`, `Sky.Core.Jwt`, `Std.Codec`, `Std.Markdown`,
+// `Std.Compression` are pure and assertable — real, closeable gaps."* Those five
+// were closed, and the CASE COUNTS behind them are pinned exactly
+// (`CORPUS_EXPECTED` / `CORPUS_BEHAVIOURAL_EXPECTED`). The MODULE number was
+// not pinned by anything: `report` computed it, printed it, and returned 0 no
+// matter what it said, and no workflow or script ran the subcommand at all. It
+// could have gone back to 67 in silence.
+//
+// Two things are pinned here, and both are checked from `cargo test -p xtask`
+// (already in CI: `cargo test --workspace --exclude ty --locked`) as well as by
+// `report`'s exit code, so the number fails in CI without costing a tier gate.
+// The whole computation is ~60 ms.
+//
+// WHY A SET AND A CEILING, NOT A PERCENTAGE. `kernel_signature_coverage.rs` is
+// the precedent: it freezes the exact membership that is untyped today and
+// ratchets DOWN only. A set says which module regressed; a percentage says only
+// that something did.
+
+/// Every stdlib module Family S asserts **at least one public symbol** in.
+/// **Ratchets: this set may only GROW.**
+///
+/// A module dropping out is the regression item 3's number describes, and it is
+/// checked by exact equality — so covering a new module also fails here, asking
+/// for the row (and for item 3's number to be restated). Both directions matter:
+/// an un-updated list is how a coverage claim goes stale while staying green.
+///
+/// This counts ASSERTION, not mention. `Sky.Core.Task`, `Std.Html` and `Std.Ui`
+/// appear in `SURFACES`'s `also` lists — they are imported so the `markdown` /
+/// `compression` batteries can reach `Task.run` and fold an `Element` — but no
+/// battery asserts a value ABOUT a symbol of theirs, so they are NOT here. The
+/// printed report used to count them as touched, which understated the dark set
+/// by exactly those 3 (it said 59; the honest number is 62).
+pub const ASSERTED_MODULES: &[&str] = &[
+    "Sky.Core.Basics",
+    "Sky.Core.Bytes",
+    "Sky.Core.Char",
+    "Sky.Core.Crypto",
+    "Sky.Core.Dict",
+    "Sky.Core.Encoding",
+    "Sky.Core.Error",
+    "Sky.Core.Json.Decode",
+    "Sky.Core.Json.Encode",
+    "Sky.Core.Jwt",
+    "Sky.Core.List",
+    "Sky.Core.Math",
+    "Sky.Core.Maybe",
+    "Sky.Core.Path",
+    "Sky.Core.Regex",
+    "Sky.Core.Result",
+    "Sky.Core.Set",
+    "Sky.Core.String",
+    "Sky.Core.ToString",
+    "Std.Codec",
+    "Std.Compression",
+    "Std.Csv",
+    "Std.Decimal",
+    "Std.Markdown",
+    "Std.Money",
+];
+
+/// Stdlib modules with NO Family-S assertion at all — item 3's "dark" number.
+/// **FAIL-ON-INCREASE**, like `coerce-floor`.
+///
+/// 87 modules in the inventory, 25 asserted ⇒ 62 dark. Item 3 was written when
+/// it was 67 and predicted "~62"; this is that number, measured rather than
+/// estimated. A new stdlib module that nothing asserts pushes it to 63 and turns
+/// this red — which is the intended conversation, not an accident: the module is
+/// either coverable (cover it) or it is `Task`/`Element`-shaped (say so here and
+/// raise the ceiling in the same commit).
+pub const DARK_MODULE_CEILING: usize = 62;
+
+/// The five modules item 3 named, with the EXACT number of their public symbols
+/// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
+/// USED to assert `>= 13` against an actual 63 — deleting 50 corpus files kept
+/// it green"*).
+///
+/// [`ASSERTED_MODULES`] alone would let a module keep its seat with one surviving
+/// assertion after the rest were deleted. These five are the closure item 3 is
+/// measured on, so they are pinned symbol-count-exact as well.
+pub const ITEM3_ASSERTED_COUNTS: &[(&str, usize)] = &[
+    ("Sky.Core.Bytes", 11),
+    ("Sky.Core.Jwt", 13),
+    ("Std.Codec", 18),
+    ("Std.Compression", 4),
+    ("Std.Markdown", 2),
+];
+
+/// Modules with >= 1 asserted PUBLIC symbol, and the count per module.
+///
+/// Intersected with the inventory on purpose: a `covers` tag naming a symbol
+/// that is not public must not buy a module a seat.
+pub fn asserted_per_module(
+    inventory: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+) -> std::collections::BTreeMap<String, usize> {
+    let covered = covered_symbols();
+    let mut out = std::collections::BTreeMap::new();
+    for (module, public) in inventory {
+        let n = covered
+            .iter()
+            .filter(|(m, s)| m == module && public.contains(s))
+            .count();
+        if n > 0 {
+            out.insert(module.clone(), n);
+        }
+    }
+    out
+}
+
+/// Check the three pins above. Empty means the ratchet holds.
+///
+/// Shared by [`report`]'s exit code and by the `cargo test` below, so the CLI
+/// and CI cannot disagree about whether coverage regressed.
+pub fn ratchet_failures(
+    inventory: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+) -> Vec<String> {
+    check_pins(&asserted_per_module(inventory), inventory.len())
+}
+
+/// The pin check itself, over plain data.
+///
+/// Split from [`ratchet_failures`] so the tests can hand it a perturbed
+/// coverage picture directly. A ratchet whose only test feeds it the real,
+/// passing tree proves nothing about whether it can fail.
+pub fn check_pins(
+    asserted: &std::collections::BTreeMap<String, usize>,
+    inventory_modules: usize,
+) -> Vec<String> {
+    let mut fails = Vec::new();
+
+    let pinned: std::collections::BTreeSet<&str> = ASSERTED_MODULES.iter().copied().collect();
+    let live: std::collections::BTreeSet<&str> = asserted.keys().map(|s| s.as_str()).collect();
+    for lost in pinned.difference(&live) {
+        fails.push(format!(
+            "REGRESSION: `{lost}` is pinned in ASSERTED_MODULES but Family S now asserts \
+             NOTHING public in it. The dark-module count went UP. Restore the battery's \
+             `covers` tags — do not delete the row."
+        ));
+    }
+    for gained in live.difference(&pinned) {
+        fails.push(format!(
+            "STALE PIN: Family S now asserts symbols in `{gained}`, which is not in \
+             ASSERTED_MODULES. Add the row and restate item 3's dark-module number \
+             (this is good news the pin has to record, or the claim goes stale)."
+        ));
+    }
+
+    let dark = inventory_modules.saturating_sub(asserted.len());
+    if dark > DARK_MODULE_CEILING {
+        fails.push(format!(
+            "REGRESSION: {dark} of {inventory_modules} stdlib modules are dark to Family S; \
+             the ceiling is {DARK_MODULE_CEILING} (FAIL-ON-INCREASE). Cover the new module, \
+             or raise the ceiling in the same commit with the reason."
+        ));
+    }
+
+    for (module, want) in ITEM3_ASSERTED_COUNTS {
+        let got = asserted.get(*module).copied().unwrap_or(0);
+        if got != *want {
+            fails.push(format!(
+                "ITEM-3 MODULE `{module}`: Family S asserts {got} public symbols, pinned at \
+                 {want}. Lower means the closure thinned out; higher means it grew and the \
+                 pin must be raised in the same commit."
+            ));
+        }
+    }
+    fails
+}
+
 /// Print what Family S covers, against the SAME stdlib inventory the coverage
-/// ledger uses (`api/symbols.json`, via the `sky doc --export` code path).
+/// ledger uses ([`inventory`]), and RETURN A VERDICT.
+///
+/// One inventory, not two — v2 §5.3's denominator contract. A second,
+/// hand-maintained symbol table would drift, and a coverage number computed
+/// against a drifting denominator records a coin toss as a fact.
+///
+/// The report names the UNCOVERED symbols of every module the family touches.
+/// That is the point: a family that imports 20 modules and asserts 300 things
+/// about them is not "the stdlib covered", and the honest number is the one
+/// that says so out loud.
+///
+/// The exit code is [`ratchet_failures`]. Until 2026-08-12 this function ended
+/// `0` unconditionally and no workflow or script invoked it, so the number it
+/// printed could regress in silence.
 ///
 /// One inventory, not two — v2 §5.3's denominator contract. A second,
 /// hand-maintained symbol table would drift, and a coverage number computed
@@ -487,45 +719,13 @@ const ROUTED_ONLY_KERNEL_MEMBERS: &[(&str, &str)] = &[("List", "sortWith")];
 /// about them is not "the stdlib covered", and the honest number is the one
 /// that says so out loud.
 pub fn report(root: &std::path::Path) -> i32 {
-    let tmp = std::env::temp_dir().join(format!("sky-familyS-report-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
-    let (proj, out) = (tmp.join("project"), tmp.join("site"));
-    if std::fs::create_dir_all(&proj).and(std::fs::create_dir_all(&out)).is_err() {
-        eprintln!("corpus.stdlib: cannot create {}", tmp.display());
-        return 1;
-    }
-    let manifest = project::render_doc_site_export(root, &proj, &out)
-        .map_err(|e| format!("sky doc --export code path FAILED: {e}"))
-        .and_then(|()| {
-            std::fs::read_to_string(out.join("api").join("symbols.json"))
-                .map_err(|e| format!("no api/symbols.json: {e}"))
-        });
-    let _ = std::fs::remove_dir_all(&tmp);
-    let manifest = match manifest {
-        Ok(m) => m,
+    let inventory = match inventory(root) {
+        Ok(i) => i,
         Err(e) => {
             eprintln!("corpus.stdlib: {e}");
             return 1;
         }
     };
-    let json: serde_json::Value = match serde_json::from_str(&manifest) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("corpus.stdlib: symbols.json is not JSON: {e}");
-            return 1;
-        }
-    };
-    let mut inventory: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
-        Default::default();
-    for e in json["entries"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
-        let (m, n) = (
-            e["module"].as_str().unwrap_or_default(),
-            e["name"].as_str().unwrap_or_default(),
-        );
-        if !m.is_empty() && !n.is_empty() {
-            inventory.entry(m.to_string()).or_default().insert(n.to_string());
-        }
-    }
 
     let covered = covered_symbols();
     println!("FAMILY S — stdlib coverage (against api/symbols.json, the ledger's own inventory)");
@@ -591,12 +791,18 @@ pub fn report(root: &std::path::Path) -> i32 {
         }
     );
     let all_modules = inventory.len();
+    // ASSERTS, not "touches". This line used to divide by `modules.len()` — the
+    // SURFACES list, which includes `also` imports (`Sky.Core.Task`, `Std.Html`,
+    // `Std.Ui`) that no battery asserts anything about. Counting an import as
+    // coverage understated the dark set by 3 and made the reported number
+    // kinder than the truth. `ASSERTED_MODULES` is what the ratchet pins.
+    let asserted_modules = asserted_per_module(&inventory);
     println!();
     println!(
-        "  Family S touches {} of {all_modules} stdlib modules. The other {} are \
-         NOT covered by this family at all.",
-        modules.len(),
-        all_modules.saturating_sub(modules.len())
+        "  Family S ASSERTS a public symbol in {} of {all_modules} stdlib modules. The other \
+         {} are dark to this family (ceiling {DARK_MODULE_CEILING}, FAIL-ON-INCREASE).",
+        asserted_modules.len(),
+        all_modules.saturating_sub(asserted_modules.len())
     );
     if !gaps.is_empty() {
         println!();
@@ -682,7 +888,139 @@ pub fn report(root: &std::path::Path) -> i32 {
             println!("      {}", missing.join(", "));
         }
     }
-    0
+
+    // ---- the verdict --------------------------------------------------------
+    //
+    // This subcommand used to end `0` here regardless of every number above it,
+    // and nothing in `.github/**` or `scripts/**` invoked it. It printed a
+    // coverage claim that nothing could falsify. Now it has a verdict, and the
+    // same verdict is asserted from `cargo test -p xtask` so CI carries it.
+    let fails = ratchet_failures(&inventory);
+    println!();
+    if fails.is_empty() {
+        println!(
+            "corpus.stdlib: PASS — {} asserted module(s), {} dark (ceiling {DARK_MODULE_CEILING}), \
+             item-3 module counts exact.",
+            asserted_modules.len(),
+            all_modules.saturating_sub(asserted_modules.len())
+        );
+        return 0;
+    }
+    eprintln!("corpus.stdlib: FAIL — the stdlib-coverage ratchet does not hold:");
+    for f in &fails {
+        eprintln!("  * {f}");
+    }
+    1
+}
+
+#[cfg(test)]
+mod ratchet_tests {
+    //! The CI face of the ratchet.
+    //!
+    //! `cargo test --workspace --exclude ty --locked` already runs on every push
+    //! (`.github/workflows/rust-ci.yml`), so item 3's module number now fails a
+    //! per-push job without adding a gate to the T1 tier or a second in the
+    //! workflow to forget to add. The whole check is ~60 ms: the inventory comes
+    //! from `project::render_doc_site_export` in process, not from a `sky`
+    //! binary, so there is nothing to build and nothing to go stale.
+
+    fn repo_root() -> std::path::PathBuf {
+        // crates/xtask -> crates -> rust -> repo
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("repo root from crates/xtask")
+            .to_path_buf()
+    }
+
+    /// The pins hold: no module lost its assertions, the dark count did not
+    /// rise, and the five modules item 3 named still assert exactly what they
+    /// asserted when it was closed.
+    #[test]
+    fn stdlib_coverage_ratchet_holds() {
+        let inv = super::inventory(&repo_root()).expect("stdlib inventory");
+        let fails = super::ratchet_failures(&inv);
+        assert!(
+            fails.is_empty(),
+            "the Family-S stdlib-coverage ratchet broke:\n  * {}",
+            fails.join("\n  * ")
+        );
+    }
+
+    /// The live tree's asserted picture, as [`super::check_pins`] sees it.
+    fn live() -> std::collections::BTreeMap<String, usize> {
+        let inv = super::inventory(&repo_root()).expect("stdlib inventory");
+        super::asserted_per_module(&inv)
+    }
+
+    /// The inventory really does contain the 87 modules the dark count divides
+    /// by, and the five item-3 modules are really in it.
+    ///
+    /// Without this, every arm below could be measuring an empty inventory and
+    /// agreeing with itself.
+    #[test]
+    fn the_inventory_is_real() {
+        let inv = super::inventory(&repo_root()).expect("stdlib inventory");
+        assert!(
+            inv.len() >= 80,
+            "the stdlib inventory collapsed to {} modules — the denominator is wrong, \
+             not the coverage",
+            inv.len()
+        );
+        for (m, _) in super::ITEM3_ASSERTED_COUNTS {
+            assert!(inv.contains_key(*m), "item-3 module `{m}` is not in the inventory");
+        }
+    }
+
+    /// ARM 1 — a pinned module losing every assertion is a REGRESSION.
+    #[test]
+    fn losing_a_module_is_caught() {
+        let mut a = live();
+        assert!(a.remove("Std.Markdown").is_some(), "Std.Markdown must start asserted");
+        let fails = super::check_pins(&a, 87);
+        assert!(
+            fails.iter().any(|f| f.contains("REGRESSION") && f.contains("Std.Markdown")),
+            "a module that went dark must be reported, got: {fails:?}"
+        );
+    }
+
+    /// ARM 2 — covering a module the pin does not list is a STALE PIN, so the
+    /// dark number cannot silently improve either.
+    #[test]
+    fn covering_a_new_module_is_caught() {
+        let mut a = live();
+        a.insert("Std.Email".to_string(), 3);
+        let fails = super::check_pins(&a, 87);
+        assert!(
+            fails.iter().any(|f| f.contains("STALE PIN") && f.contains("Std.Email")),
+            "a newly covered module must demand its row, got: {fails:?}"
+        );
+    }
+
+    /// ARM 3 — the dark ceiling is FAIL-ON-INCREASE.
+    #[test]
+    fn a_new_dark_module_is_caught() {
+        let a = live();
+        let fails = super::check_pins(&a, 88);
+        assert!(
+            fails.iter().any(|f| f.contains("dark to Family S")),
+            "one more uncovered stdlib module must breach the ceiling, got: {fails:?}"
+        );
+    }
+
+    /// ARM 4 — an item-3 module keeping its seat while its assertions are
+    /// gutted is caught by the exact count, which [`super::ASSERTED_MODULES`]
+    /// alone would miss.
+    #[test]
+    fn thinning_an_item3_module_is_caught() {
+        let mut a = live();
+        a.insert("Std.Codec".to_string(), 1);
+        let fails = super::check_pins(&a, 87);
+        assert!(
+            fails.iter().any(|f| f.contains("ITEM-3 MODULE") && f.contains("Std.Codec")),
+            "an item-3 module down to one assertion must be reported, got: {fails:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,6 +1432,44 @@ fn markdown_battery(edge: &str) -> Vec<Check> {
                 "mdText \"| a | b |\\n| --- | --- |\\n| 1 | 2 |\"",
                 "ab12",
             ),
+            // ---- constructs that were DECLARED unsupported and now are not --
+            //
+            // A blockquote consumes its `>` marker (it used to survive as
+            // literal text) and its lines join like any wrapped paragraph.
+            s(&["Markdown.render"], "mdText \"> quote\"", "quote"),
+            s(&["Markdown.render"], "mdText \"> a\\n> b\"", "a b"),
+            // Inline markup inside a quote is parsed, so the quote is a block,
+            // not an escaped string.
+            s(&["Markdown.render"], "mdText \"> **q**\"", "q"),
+            // An image is an `img`, so it contributes NO text node — the `!alt`
+            // fallback text is gone. The `src` and `alt` are asserted on the
+            // rendered HTML, which is where an image is observable at all.
+            s(&["Markdown.render"], "mdText \"![alt](img.png)\"", ""),
+            bo(
+                &["Markdown.render"],
+                "String.contains \"src=\\\"img.png\\\"\" (mdHtml \"![alt](img.png)\")",
+                true,
+            ),
+            bo(
+                &["Markdown.render"],
+                "String.contains \"alt=\\\"alt\\\"\" (mdHtml \"![alt](img.png)\")",
+                true,
+            ),
+            // A malformed image degrades to text rather than swallowing the
+            // line — the `!` is kept and the rest parses as ordinary content.
+            s(&["Markdown.render"], "mdText \"![alt](broken\"", "![alt](broken"),
+            // An ordered list past the tenth item. The prefix test used to be
+            // equality against `"1. "`…`"10. "`, so an eleventh item silently
+            // became a paragraph mid-list.
+            s(
+                &["Markdown.render"],
+                "mdText \"9. i\\n10. j\\n11. k\"",
+                "1.i2.j3.k",
+            ),
+            // A rule is a RUN of 3+, not one of five hard-coded strings —
+            // `------` used to render as a paragraph.
+            s(&["Markdown.render"], "mdText \"------\"", ""),
+            s(&["Markdown.render"], "mdText \"****\"", ""),
         ],
         "unicode" => vec![
             s(&["Markdown.render"], "mdText \"世界 **粗体**\"", "世界 粗体"),
@@ -1148,12 +1524,33 @@ fn markdown_battery(edge: &str) -> Vec<Check> {
                 "String.contains \"href=\\\"https://ok.example/p\\\"\" (mdHtml \"[x](https://ok.example/p)\")",
                 true,
             ),
-            // The DECLARED gaps, pinned. A blockquote is not parsed, so its
-            // marker survives as literal text…
-            s(&["Markdown.render"], "mdText \"> quote\"", "> quote"),
-            // …and an image renders as `!` followed by the link text, which is
-            // what "images are not supported" means in practice.
-            s(&["Markdown.render"], "mdText \"![alt](img.png)\"", "!alt"),
+            // An image's URL is a URL-bearing attribute too, so the SAME guard
+            // must cover it. It does — `src` is on `urlBearingAttr`'s allowlist
+            // — but images were not parsed when that guard was written, so
+            // nothing had ever asserted it. Adding the construct adds the
+            // obligation.
+            //
+            // `hasBlankSrc`, not `hasBlank`: an image renders `src=`, and
+            // `hasBlank` only looks at `href=`, so it answers False here whether
+            // the URL was neutralised OR the image was dropped entirely. That
+            // distinction is the whole assertion.
+            bo(&["Markdown.render"], "hasBlankSrc \"![x](javascript:alert(1))\"", true),
+            bo(&["Markdown.render"], "hasScript \"![x](javascript:alert(1))\"", false),
+            // `data:image/…` is the one `data:` form the guard permits, and an
+            // inline image is exactly why. Blanket-blocking it would pass every
+            // assertion above while breaking the feature — so this asserts the
+            // src SURVIVES, not merely that it is not blanked.
+            bo(
+                &["Markdown.render"],
+                "hasBlankSrc \"![x](data:image/png;base64,iVBOR)\"",
+                false,
+            ),
+            bo(
+                &["Markdown.render"],
+                "String.contains \"src=\\\"data:image/png;base64,iVBOR\\\"\" \
+                 (mdHtml \"![x](data:image/png;base64,iVBOR)\")",
+                true,
+            ),
         ],
         _ => vec![],
     }
@@ -2910,6 +3307,7 @@ fn fixtures(slug: &str) -> &'static str {
              mdRaw : String -> Int\nmdRaw src =\n    uiRaw (Markdown.render src)\n\n\n\
              mdHtml : String -> String\nmdHtml src =\n    Html.render (Ui.layout [] (Markdown.render src))\n\n\n\
              hasBlank : String -> Bool\nhasBlank src =\n    String.contains \"href=\\\"about:blank\\\"\" (mdHtml src)\n\n\n\
+             hasBlankSrc : String -> Bool\nhasBlankSrc src =\n    String.contains \"src=\\\"about:blank\\\"\" (mdHtml src)\n\n\n\
              hasScript : String -> Bool\nhasScript src =\n    String.contains \"javascript:\" (mdHtml src)\n\n\n\
              uiText : Element msg -> String\nuiText el =\n    case el of\n\
              \x20       Empty ->\n            \"\"\n\n        Text t ->\n            t\n\n\

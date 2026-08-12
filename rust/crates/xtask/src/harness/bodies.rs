@@ -2732,6 +2732,189 @@ pub fn sky_suites(ctx: &GateCtx) -> GateOutcome {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// lsp — the Neovim editor-parity suite, as a registered gate
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The EXACT number of editor-parity cases: 17 single-fixture symbol-class
+/// cases (`scripts/lsp-test-nvim.lua`) + 32 corpus cases across the
+/// `multimodule` / `diagnostics` / `realapp` groups (`lsp-corpus-nvim.lua`).
+///
+/// `lsp_gate`'s CLI face deliberately does NOT assert a total — the script
+/// cross-checks each corpus group against the count that group declares, and a
+/// second hardcoded number there would be a second place to forget. The
+/// REGISTRY needs one anyway: `expected` is how the harness distinguishes "the
+/// suite ran and passed" from "the suite ran three cases and passed", and a
+/// gate reporting 0 assertions is a FAIL (vacuous), never a pass.
+pub const LSP_EXPECTED: u64 = 49;
+
+/// The Neovim editor-parity suite.
+///
+/// Registered for one reason: until 2026-08-12 `lsp` was the only gate CI ran
+/// under a `Gate —` step that declared no falsifying mutation, because the
+/// registry is where mutations live and it was not in the registry. It was
+/// therefore the one gate whose assertions nobody had ever proven could bite —
+/// and when that question was finally asked, of 18 hover cases **4 passed
+/// against a server that merely echoed the identifier under the cursor**. The
+/// mutation this gate now declares reproduces exactly that class.
+///
+/// Two differences from the CLI face, both deliberate:
+///
+/// * **A missing `nvim` FAILS here.** `xtask lsp` prints a loud skip and exits
+///   0 so a contributor without Neovim is not blocked; the harness cannot, and
+///   `layer2`'s rule is the one that applies — *"a gate that cannot run has not
+///   passed"*. The harness runs in CI and at release, where Neovim is a
+///   declared dependency of the job.
+/// * **The verdict comes from a FILE.** `--json` writes `{total, failures}`;
+///   scraping the script's stdout for a verdict is what v2 §5.3(d) forbids.
+pub fn lsp(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+
+    let have_nvim = Command::new("nvim")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !have_nvim {
+        return GateOutcome::new(
+            false,
+            0,
+            "nvim is not installed. The editor-parity suite did NOT run, so it \
+             has not passed — install Neovim on this runner (the CLI face, \
+             `xtask lsp`, still skips loudly for contributors without it).",
+        );
+    }
+
+    // BUILD the compiler under test, and use the path CARGO reports.
+    //
+    // Not `layer2::sky_binary` (`sky-out/sky`) and not "the binary next to my
+    // own executable" (what the CLI face does): both are artefacts somebody
+    // else produced, and this gate's subject is the LSP server compiled from
+    // the current tree. A gate that drives a prebuilt binary cannot see a
+    // change to `sky-lsp` at all — which would also make this gate's declared
+    // mutation VACUOUS by construction, certifying a falsifier that never
+    // falsified anything.
+    //
+    // `--message-format=json` is how `scripts/lib/cargo-target.sh` answers the
+    // same question: cargo names the executable it produced, so this is correct
+    // under any `CARGO_TARGET_DIR`, `.cargo/config.toml` or profile without
+    // reimplementing cargo's precedence rules. On an up-to-date tree the build
+    // is a no-op and the record still carries the path.
+    let built = Command::new("cargo")
+        .args(["build", "--locked", "-p", "sky", "--message-format=json"])
+        .current_dir(ctx.repo_root.join("rust"))
+        .output();
+    let sky = match built {
+        Ok(o) if o.status.success() => {
+            match String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+                .filter_map(|v| v["executable"].as_str().map(PathBuf::from))
+                .next_back()
+            {
+                Some(p) => p,
+                None => {
+                    return GateOutcome::new(
+                        false,
+                        0,
+                        "cargo built `sky` but reported no executable path",
+                    )
+                }
+            }
+        }
+        Ok(o) => {
+            return GateOutcome::new(
+                false,
+                0,
+                format!(
+                    "cargo build -p sky failed: {}",
+                    layer2::tail(&String::from_utf8_lossy(&o.stderr), 15)
+                ),
+            )
+        }
+        Err(e) => return GateOutcome::new(false, 0, format!("cargo build -p sky: {e}")),
+    };
+    let sky_dir = match sky.parent() {
+        Some(d) => d.to_path_buf(),
+        None => return GateOutcome::new(false, 0, "the sky binary has no parent directory"),
+    };
+    let path = match std::env::var("PATH") {
+        Ok(p) => format!("{}:{p}", sky_dir.display()),
+        Err(_) => sky_dir.display().to_string(),
+    };
+
+    let json = scratch(&ctx.repo_root).join("lsp-nvim.json");
+    let _ = std::fs::remove_file(&json);
+    let script = ctx.repo_root.join("scripts/lsp-test-nvim.sh");
+    if !script.is_file() {
+        return GateOutcome::new(false, 0, "missing scripts/lsp-test-nvim.sh");
+    }
+    let run = Command::new("bash")
+        .arg(&script)
+        .args(["--json".to_string(), json.display().to_string()])
+        .current_dir(&ctx.repo_root)
+        .env("PATH", path)
+        .status();
+    let code = match run {
+        Ok(s) => s.code(),
+        Err(e) => return GateOutcome::new(false, 0, format!("could not run the suite: {e}")),
+    };
+
+    let body = match std::fs::read_to_string(&json) {
+        Ok(b) => b,
+        Err(e) => {
+            return GateOutcome::new(
+                false,
+                0,
+                format!(
+                    "the suite exited {code:?} but wrote no {} ({e}) — it died \
+                     before reporting, which is not a pass",
+                    json.display()
+                ),
+            )
+        }
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(e) => return GateOutcome::new(false, 0, format!("suite JSON is not JSON: {e}")),
+    };
+    let total = parsed["total"].as_u64().unwrap_or(0);
+    let failures: Vec<String> = parsed["failures"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|v| v.as_str().unwrap_or_default().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if total != LSP_EXPECTED {
+        return GateOutcome::new(
+            false,
+            total,
+            format!(
+                "the suite ran {total} cases; LSP_EXPECTED is {LSP_EXPECTED}. A case that \
+                 stopped running is a case that stopped asserting — raise or lower the \
+                 constant in the same commit as the corpus change."
+            ),
+        );
+    }
+    if !failures.is_empty() {
+        return GateOutcome::new(
+            false,
+            total,
+            format!("{} of {total} editor-parity cases failed: {}", failures.len(), failures.join(", ")),
+        );
+    }
+    GateOutcome::new(
+        true,
+        total,
+        format!("{total} Neovim editor-parity cases (17 symbol-class + 32 corpus)"),
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // coverage-ledger — the ratchet over the coverage ledger itself
 // ─────────────────────────────────────────────────────────────────────────────
 

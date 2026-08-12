@@ -3928,7 +3928,7 @@ witness    = "value"
 axes       = { edge = "boundary", surface = "markdown" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "•a•b|1.a2.b|ab12"
+stdout     = "•a•b|1.a2.b|ab12|quote|a b|q||T|T|![alt](broken|1.i2.j3.k||"
 
 [[case]]
 id         = "stdlib_edge/unicode-markdown"
@@ -3954,7 +3954,7 @@ witness    = "value"
 axes       = { edge = "failure", surface = "markdown" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "0|<script>alert(1)</script>|0|T|T|T|T|F|F|F|T|> quote|!alt"
+stdout     = "0|<script>alert(1)</script>|0|T|T|T|T|F|F|F|T|T|F|F|T"
 
 [[case]]
 id         = "stdlib_edge/nominal-compression"

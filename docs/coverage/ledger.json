@@ -291,6 +291,15 @@
       ],
       "tier": "T1"
     },
+    "lsp": {
+      "expected_assertions": 49,
+      "falsifier_proven": true,
+      "summary": "the editor answers hover / goto-def / completion / diagnostics through a REAL Neovim LSP client, on fixtures and a real app",
+      "surfaces": [
+        "lsp"
+      ],
+      "tier": "T1"
+    },
     "reject": {
       "expected_assertions": 68,
       "falsifier_proven": true,
@@ -491,12 +500,12 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1774,
+    "stdlib_entries": 1773,
     "stdlib_modules": 87,
     "surfaces_covered": 127,
     "surfaces_covered_pct": 90.1,
-    "surfaces_equal": 20,
-    "surfaces_stronger": 121,
+    "surfaces_equal": 19,
+    "surfaces_stronger": 122,
     "surfaces_total": 141,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -1853,15 +1862,15 @@
     {
       "category": "tooling",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
-            "by": ".github/workflows/rust-ci.yml: xtask lsp (`xtask:lsp` is not harness-registered — no proven falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "gate `lsp`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Asserted",
@@ -1876,7 +1885,7 @@
       },
       "description": "editor parity: hover, completion, diagnostics, go-to-definition",
       "id": "lsp",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "meta",
@@ -10918,14 +10927,13 @@
           ]
         },
         "Std.Db": {
-          "count": 26,
+          "count": 25,
           "symbols": [
             "SqlField",
             "defaultMigration",
             "deleteById",
             "findByConditions",
             "findManyByField",
-            "findWhere",
             "fromMaybeBool",
             "fromMaybeBytes",
             "fromMaybeDecimal",
@@ -11518,7 +11526,7 @@
           ]
         }
       },
-      "count": 697,
+      "count": 696,
       "pct_of_denominator": 39.3
     },
     "symbols_unreferenced_strict": {
@@ -11980,7 +11988,7 @@
           ]
         },
         "Std.Db": {
-          "count": 27,
+          "count": 26,
           "symbols": [
             "SqlField",
             "SqlValue",
@@ -11988,7 +11996,6 @@
             "deleteById",
             "findByConditions",
             "findManyByField",
-            "findWhere",
             "fromMaybeBool",
             "fromMaybeBytes",
             "fromMaybeDecimal",
@@ -12640,7 +12647,7 @@
           ]
         }
       },
-      "count": 776,
+      "count": 775,
       "pct_of_denominator": 43.7
     }
   },

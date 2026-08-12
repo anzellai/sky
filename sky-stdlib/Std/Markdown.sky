@@ -1,41 +1,81 @@
 -- | Std.Markdown — render markdown source to Std.Ui Element trees (Layer 3 Sky source).
 --
--- Direct render-to-Element (no HTML string round-trip) so styling
--- inherits the surrounding theme (Font.color, Background.color,
--- typography).  Safe to feed UNTRUSTED markdown — the parser never
--- emits raw HTML, scripts, or event handlers, everything routes
--- through typed Std.Ui constructors.  No bluemonday-equivalent
--- sanitiser needed.
+-- Direct render-to-Element (no HTML string round-trip), so text,
+-- headings, lists, blockquotes and images inherit the surrounding
+-- theme (Font.color, Background.color, typography).  Code blocks,
+-- inline code, tables and rules carry a fixed dark palette — see
+-- the note below.  Safe to feed UNTRUSTED markdown — the parser
+-- never emits raw HTML, scripts, or event handlers, everything
+-- routes through typed Std.Ui constructors.  No bluemonday-
+-- equivalent sanitiser needed.
 --
 -- Supported subset is "chat-grade": headers, paragraphs, fenced
 -- code blocks, bullet / ordered lists, horizontal rules, tables,
--- bold, italic, inline code, links, trailing-double-space →
--- `<br>`.  Deliberately not supported in v1: blockquotes, images,
--- footnotes, raw HTML, math, mermaid — a `> quote` keeps its
--- marker as literal text and an `![alt](url)` renders as `!` plus
--- a link, so neither is silently dropped.
+-- blockquotes, images, bold, italic, inline code, links.
+--
+-- What is NOT supported is DECLARED below rather than left to be
+-- discovered, and the declaration is machine-checked by
+-- `rust/crates/project/tests/declared_stdlib_gaps.rs`: every
+-- `not-yet` slug carries a dated expiry, and CI goes red on its
+-- own when that date arrives. A comment is not a declaration.
+--
+-- declared-gaps: not-yet: footnotes, math, mermaid, hard-line-break
+-- declared-gaps: by-design: raw-html
 module Std.Markdown exposing (render, renderInline)
 
 -- Std.Markdown — render markdown source to Std.Ui Element trees.
 --
--- Direct render-to-Element (no HTML string round-trip) so styling
--- inherits the surrounding theme (Font.color, Background.color,
--- typography). The output is a `Ui.column` of block-level
--- elements — embed as a child of any Std.Ui layout.
+-- Direct render-to-Element (no HTML string round-trip). The output
+-- is a `Ui.column` of block-level elements — embed as a child of
+-- any Std.Ui layout. Text, headings, lists, blockquotes and images
+-- carry no colour of their own, so they inherit the surrounding
+-- theme (Font.color, Background.color, typography); code blocks,
+-- inline code, tables and rules DO carry a fixed dark palette
+-- through `Ui.htmlAttribute "style"`, and will not follow a light
+-- theme until that is re-expressed in typed attributes.
 --
 -- The supported subset is "chat-grade": enough for agent
 -- responses, commit messages, PR bodies, prompt history. Block
 -- types: headers (# / ## / ### / #### / ##### / ######),
 -- paragraphs, fenced code blocks (```), bullet lists (- / *),
--- ordered lists (1.), horizontal rules (---), tables (pipe syntax
--- with a `| --- |` separator row). Inline: **bold**, *italic*,
--- `code`, [text](url), trailing-double-space → <br>.
--- Deliberately not supported in v1 (add when needed):
--- blockquotes, images, footnotes, raw HTML, math, mermaid. What
--- an unsupported construct DOES, so it is not a surprise: a
--- `> quote` keeps its marker and renders as an ordinary
--- paragraph; an `![alt](url)` renders as `!` followed by a link
--- labelled `alt`.
+-- ordered lists (any `<digits>. `), horizontal rules (a run of 3+
+-- of - / * / _), blockquotes (`> `), tables (pipe syntax with a
+-- `| --- |` separator row). Inline: **bold**, *italic*, `code`,
+-- [text](url), ![alt](url).
+--
+-- Behaviours worth knowing, all deliberate:
+--   * An ordered list is RENUMBERED from 1 — the source numbers
+--     pick the items, not the labels.
+--   * A code fence's info string (```rust) is dropped; there is no
+--     syntax highlighting to hand it to.
+--   * A table's alignment colons (`|:--|--:|`) parse but do not
+--     change alignment.
+--   * Emphasis is delimiter-only: no `_underscore_` form, no
+--     backslash escapes, no `***bold-italic***`, no reference
+--     links, no autolinks, no setext (`===`) headings.
+--   * A blockquote's lines join into one paragraph, like any
+--     wrapped paragraph; nested `>` levels are not distinguished.
+--
+-- Not supported, DECLARED (see the `declared-gaps:` lines above
+-- the `module` header — each `not-yet` slug has a dated expiry a
+-- test enforces):
+--   * footnotes — `[^1]` needs a two-pass document model to
+--     collect definitions and place them; the parser is a single
+--     forward pass.
+--   * math — `$…$` needs a formula renderer; Std.Ui has no
+--     primitive for one.
+--   * mermaid — needs a graph layout engine. Today ```` ```mermaid ````
+--     renders as an ordinary fenced code block, which is a
+--     readable fallback rather than a silent drop.
+--   * hard-line-break — a trailing double space needs a Std.Ui
+--     line-break primitive, which does not exist; adding one is a
+--     Std.Ui surface change, not a Markdown one. Until then the
+--     break is ignored and the lines join with a space. NOTE: this
+--     module and `docs/stdlib.md` both used to claim the break WAS
+--     supported. It never was.
+--   * raw-html — BY DESIGN, permanently. The untrusted-input
+--     promise below is exactly "this parser cannot emit raw HTML";
+--     supporting it would delete the guarantee, not extend it.
 --
 -- Security: the parser never emits raw HTML, scripts, or event
 -- handlers — everything routes through typed Std.Ui constructors.
@@ -61,6 +101,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
+import Std.Ui.Border as Border
 import Std.Ui.Font as Font
 
 
@@ -87,8 +128,8 @@ renderInline line =
 
 
 -- A block is one "paragraph-shaped" chunk: a heading, a fenced
--- code block, a list, a horizontal rule, a table, or a plain
--- paragraph.
+-- code block, a list, a horizontal rule, a table, a blockquote, or
+-- a plain paragraph.
 type Block
     = HeaderBlock Int String
     | ParaBlock String
@@ -96,6 +137,7 @@ type Block
     | BulletBlock (List String)
     | NumberedBlock (List String)
     | TableBlock (List String) (List (List String))
+    | QuoteBlock String
     | RuleBlock
 
 
@@ -174,6 +216,12 @@ blocksFromLines lines =
                         TableBlock tbl.header tbl.rows
                             :: blocksFromLines tbl.after
 
+                else if isQuoteLine l then
+                    let
+                        q = takeQuoteGroup lines
+                    in
+                        QuoteBlock (fst q) :: blocksFromLines (snd q)
+
                 else
                     let
                         pp = takeParagraph lines
@@ -181,11 +229,84 @@ blocksFromLines lines =
                         ParaBlock (fst pp) :: blocksFromLines (snd pp)
 
 
--- "---" / "***" / "___" with any padding → horizontal rule.
+-- A run of three or more `-`, `*` or `_` (and nothing else) on its
+-- own line → horizontal rule. `t` arrives trimmed, so surrounding
+-- whitespace is already gone.
+--
+-- This used to be equality against a hard-coded list that stopped
+-- at five dashes and contained `"----"` twice, so `------` was a
+-- paragraph while `-----` was a rule. The docstring said "with any
+-- padding"; only the run length was ever the question.
 isHrLine : String -> Bool
 isHrLine t =
-    t == "---" || t == "***" || t == "___"
-        || t == "----" || t == "----" || t == "-----"
+    let
+        first = String.slice 0 1 t
+    in
+        String.length t >= 3
+            && (first == "-" || first == "*" || first == "_")
+            && allChars first t
+
+
+-- Is every character of `s` the single character `c`?
+--
+-- The first-character test above guards this so the character list
+-- is only ever built for a line that could still BE a rule.
+-- `isHrLine` runs on every line of the document (twice, via
+-- `isBlockStarter`), so an unguarded scan would allocate a list
+-- per line of ordinary prose.
+allChars : String -> String -> Bool
+allChars c s =
+    List.all (\ch -> ch == c) (stringChars s)
+
+
+-- The characters of `s`, as single-character strings.
+stringChars : String -> List String
+stringChars s =
+    List.map (\i -> String.slice i (i + 1) s)
+        (List.range 0 (String.length s - 1))
+
+
+-- A blockquote line: `> text`, or a bare `>` for a blank quoted
+-- line. Quoted content keeps its inline markup — only the marker
+-- is consumed.
+isQuoteLine : String -> Bool
+isQuoteLine l =
+    String.startsWith "> " l || String.trim l == ">"
+
+
+-- Group consecutive blockquote lines into one quote, stripping the
+-- `>` marker from each. Joined with a space, the same way
+-- `takeParagraph` joins a wrapped paragraph.
+takeQuoteGroup : List String -> ( String, List String )
+takeQuoteGroup lines =
+    let
+        looped = quoteLoop lines []
+    in
+        ( String.join " " (List.reverse (fst looped)), snd looped )
+
+
+quoteLoop : List String -> List String -> ( List String, List String )
+quoteLoop lines acc =
+    case lines of
+
+        [] ->
+            ( acc, [] )
+
+        l :: rest ->
+            if isQuoteLine l then
+                quoteLoop rest (stripQuoteMarker l :: acc)
+
+            else
+                ( acc, lines )
+
+
+stripQuoteMarker : String -> String
+stripQuoteMarker l =
+    if String.startsWith "> " l then
+        String.slice 2 (String.length l) l
+
+    else
+        ""
 
 
 isBulletLine : String -> Bool
@@ -196,20 +317,42 @@ isBulletLine l =
         || String.startsWith "  * " l
 
 
--- A numbered list line starts "<digits>. ". We approximate with a
--- few common prefixes — proper detection requires Char.isDigit on
--- the first char which is fine but verbose. Cheap heuristic
--- catches `1. ` through `99. ` which is enough for any chat-grade
--- content.
+-- A numbered list line starts `<digits>. `.
+--
+-- This used to be equality against the hard-coded prefixes `"1. "`
+-- through `"10. "`, so an eleventh item silently became a
+-- paragraph in the middle of a list. The docstring claimed the
+-- heuristic "catches `1. ` through `99. `"; it did not. Now the
+-- digit run is scanned, so any number works.
 isNumberedLine : String -> Bool
 isNumberedLine l =
-    let
-        prefixes =
-            [ "1. ", "2. ", "3. ", "4. ", "5. "
-            , "6. ", "7. ", "8. ", "9. ", "10. "
-            ]
-    in
-        List.any (\p -> String.startsWith p l) prefixes
+    numberedPrefixLen l > 0
+
+
+-- The length of a leading `<digits>. ` marker, or 0 when there is
+-- none. Also used to strip the marker, so detection and stripping
+-- cannot disagree about where the item text starts.
+numberedPrefixLen : String -> Int
+numberedPrefixLen l =
+    digitRunThenDot l 0
+
+
+digitRunThenDot : String -> Int -> Int
+digitRunThenDot l i =
+    if isDigitAt l i then
+        digitRunThenDot l (i + 1)
+
+    else if i > 0 && String.slice i (i + 2) l == ". " then
+        i + 2
+
+    else
+        0
+
+
+isDigitAt : String -> Int -> Bool
+isDigitAt l i =
+    List.member (String.slice i (i + 1) l)
+        [ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" ]
 
 
 -- Consume a code fence's body: everything up to the next closing
@@ -421,16 +564,13 @@ stripBulletPrefix l =
         String.slice 2 (String.length l) l
 
 
--- Drop "1. " / "10. ". Find the ". " and slice after it.
+-- Drop the leading `<digits>. `, using the SAME scan that detected
+-- it. Splitting on the first `". "` (the previous implementation)
+-- cut at a `". "` anywhere in the line, so `1. See fig. 2 here`
+-- lost everything up to `fig. `.
 stripNumberedPrefix : String -> String
 stripNumberedPrefix l =
-    case String.split ". " l of
-
-        _ :: rest ->
-            String.join ". " rest
-
-        [] ->
-            l
+    String.slice (numberedPrefixLen l) (String.length l) l
 
 
 -- Consume contiguous paragraph lines (joined by a space when
@@ -467,6 +607,7 @@ isBlockStarter l =
         || String.startsWith "```" l
         || isBulletLine l
         || isNumberedLine l
+        || isQuoteLine l
         || isHrLine (String.trim l)
 
 
@@ -506,6 +647,20 @@ renderBlock b =
 
         TableBlock header rows ->
             renderTable header rows
+
+        QuoteBlock text ->
+            -- Typed attributes, not an `htmlAttribute "style"` string: the
+            -- left bar and padding are the whole visual, and `Border` /
+            -- `Ui.paddingEach` express both. The colour is the same muted
+            -- grey the bullet marker uses, so a quote reads as quieter than
+            -- body text without hard-coding a theme.
+            Ui.el
+                [ Ui.width Ui.fill
+                , Border.widthEach { top = 0, right = 0, bottom = 0, left = 3 }
+                , Border.color (Ui.rgb 90 90 105)
+                , Ui.paddingEach { top = 2, right = 0, bottom = 2, left = 12 }
+                ]
+                (Ui.paragraph [] (renderSpans (parseSpans text)))
 
         RuleBlock ->
             Ui.el
@@ -589,9 +744,9 @@ renderHeader level text =
             else
                 Font.semiBold
     in
-        Ui.el
+        Ui.paragraph
             [ Font.size size, weight ]
-            (Ui.text text)
+            (renderSpans (parseSpans text))
 
 
 bulletRow : String -> String -> Element msg
@@ -625,6 +780,7 @@ type Span
     | ItalicSpan String
     | CodeSpan String
     | LinkSpan String String    -- text, url
+    | ImageSpan String String   -- alt, url
 
 
 parseSpans : String -> List Span
@@ -655,6 +811,21 @@ spanLoop remaining acc pending =
             after = snd tb
         in
             spanLoop after (CodeSpan inner :: flushPending pending acc) ""
+
+    else if String.startsWith "![" remaining then
+        -- Checked BEFORE `[`, or the `[` branch would consume the link
+        -- part and leave a stray `!`. `takeLink` starts at the `[`, so
+        -- the `!` is sliced off first.
+        case takeLink (String.slice 1 (String.length remaining) remaining) of
+
+            Just ( alt, url, after ) ->
+                spanLoop after (ImageSpan alt url :: flushPending pending acc) ""
+
+            Nothing ->
+                spanLoop
+                    (String.slice 1 (String.length remaining) remaining)
+                    acc
+                    (pending ++ "!")
 
     else if String.startsWith "[" remaining then
         case takeLink remaining of
@@ -804,3 +975,14 @@ renderSpan span =
                 , Ui.htmlAttribute "target" "_blank"
                 ]
                 { url = url, label = Ui.text text }
+
+        ImageSpan alt url ->
+            -- `src` is on the runtime's URL-bearing attribute allowlist, so
+            -- the same `about:blank` neutralisation that covers a link's
+            -- `href` covers this (`runtime-go/rt/stdlib_web.go`
+            -- `executableURLScheme`, which permits `data:image/` and nothing
+            -- else in the `data:` family). The alt text is a typed
+            -- `description`, so it is escaped like any other text node.
+            Ui.image
+                [ Ui.width Ui.fill ]
+                { src = url, description = alt }

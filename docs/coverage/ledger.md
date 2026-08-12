@@ -22,20 +22,20 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 |---|---|
 | surfaces | 141 |
 | covered by the new corpus (>= Asserted) | 127 |
-| verdict `stronger` | 121 |
-| verdict `equal` | 20 |
+| verdict `stronger` | 122 |
+| verdict `equal` | 19 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
 | stdlib modules (denominator) | 87 |
-| stdlib entries (denominator) | 1774 |
+| stdlib entries (denominator) | 1773 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 6 | 6.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 776 | 43.7% |
-| symbols unreferenced under the generous rule | 697 | 39.3% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 775 | 43.7% |
+| symbols unreferenced under the generous rule | 696 | 39.3% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -132,7 +132,7 @@ None.
 | `http.middleware-ratelimit` | http | Runs | Falsified | stronger |
 | `http.sse-websocket` | http | Asserted | Falsified | stronger |
 | `lang.constructs` | language | Asserted | Falsified | stronger |
-| `lsp` | tooling | Asserted | Asserted | equal |
+| `lsp` | tooling | Asserted | Falsified | stronger |
 | `meta.coverage-accounting` | meta | None | Falsified | stronger |
 | `observability.console` | observability | Asserted | Falsified | stronger |
 | `runtime.go-rt` | runtime | Asserted | Asserted | equal |
@@ -253,6 +253,7 @@ None.
 | `corpus-reject` | T1 | PROVEN | `compiler.reject` · `compiler.resolve` · `lang.constructs` |
 | `corpus-witness` | T2 | PROVEN | `compiler.codegen-determinism` · `compiler.lower-emit-shape` |
 | `coverage-ledger` | T1 | PROVEN | `meta.coverage-accounting` |
+| `lsp` | T1 | PROVEN | `lsp` |
 | `reject` | T1 | PROVEN | `compiler.reject` · `compiler.infer` |
 | `roundtrip` | T1 | PROVEN | `compiler.parse` · `lang.constructs` |
 | `shared-world` | T1 | PROVEN | `compiler.shared-world` · `compiler.resolve` |

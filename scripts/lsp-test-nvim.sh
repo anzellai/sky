@@ -5,11 +5,30 @@
 # that synthetic JSON-RPC tests miss (label-vs-insertText, filterText,
 # scope handling, etc.).
 #
-# Usage:  scripts/lsp-test-nvim.sh
+# Usage:  PATH="<dir holding the sky under test>:$PATH" scripts/lsp-test-nvim.sh [--json <path>]
+#
+# THE COMPILER UNDER TEST IS THE ONE ON `$PATH`, and there is no fallback. Both
+# callers (`xtask lsp` and the `lsp` harness gate) put the binary they just built
+# at the front of `$PATH`. Until 2026-08-12 the 17-case half of this suite
+# preferred `$PWD/sky-out/sky` instead, so the two halves could measure two
+# different compilers and report one verdict.
+#
+# `--json <path>` additionally writes {"total":N,"failures":[...]} to <path>.
+# The gate harness reads that FILE rather than scraping this script's stdout —
+# `docs/ci-test-architecture-v2.md` §5.3(d): no `grep` in a verdict path. The
+# human-readable per-case lines are unchanged either way.
 #
 # Exit code: 0 if all tests pass, non-zero with first failure name.
 
 set -u
+
+JSON_OUT=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --json) JSON_OUT="${2:?--json needs a path}"; shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
 
 PROJECT_DIR="${LSP_NVIM_PROJECT:-/tmp/lsp-real-test}"
 mkdir -p "$PROJECT_DIR/src"
@@ -108,6 +127,21 @@ for g in "${CORPUS_GROUPS[@]}"; do
         esac
     done <<< "$lines"
 done
+
+if [ -n "$JSON_OUT" ]; then
+    {
+        printf '{"total":%d,"failures":[' "$total"
+        sep=""
+        for f in ${failures[@]+"${failures[@]}"}; do
+            # Only the case NAME is emitted; a failure message can contain a
+            # quote (the hover body is printed with %q) and would break the
+            # document. The message stays on stdout, where a human reads it.
+            printf '%s"%s"' "$sep" "${f%%:*}"
+            sep=","
+        done
+        printf ']}\n'
+    } > "$JSON_OUT"
+fi
 
 echo ""
 if [ ${#failures[@]} -eq 0 ]; then

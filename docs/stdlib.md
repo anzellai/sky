@@ -895,9 +895,13 @@ view model =
 | `Markdown.render` | `String -> Element msg` — block-level (Ui.column of paragraphs / headings / code / lists) |
 | `Markdown.renderInline` | `String -> Element msg` — single line of inline-only markdown |
 
-Renders straight into Std.Ui Element trees (no HTML round-trip) so the surrounding theme controls colour and typography. Subset is "chat-grade": headings (`#`-`######`), paragraphs, fenced code, bullet / ordered lists, horizontal rules, tables (pipe syntax with a `| --- |` separator row), `**bold**` / `*italic*` / `` `code` `` / `[text](url)` / trailing double-space `<br>`.
+Renders straight into Std.Ui Element trees (no HTML round-trip), so text, headings, lists, blockquotes and images take colour and typography from the surrounding theme. Code blocks, inline code, tables and rules carry a fixed dark palette of their own and will not follow a light theme.
 
-Not supported, and what happens instead: a blockquote keeps its `>` marker and renders as an ordinary paragraph; an `![alt](url)` renders as `!` followed by a link labelled `alt`. Footnotes, raw HTML, math and mermaid are passed through as text.
+Subset is "chat-grade": headings (`#`-`######`), paragraphs, fenced code, bullet lists (`-` / `*`), ordered lists (any `<digits>. `), horizontal rules (a run of 3+ of `-` / `*` / `_`), blockquotes (`> `), tables (pipe syntax with a `| --- |` separator row), `**bold**` / `*italic*` / `` `code` `` / `[text](url)` / `![alt](url)`.
+
+Deliberate behaviours: an ordered list is renumbered from 1; a code fence's info string (```` ```rust ````) is dropped; a table's alignment colons parse but do not change alignment; emphasis is delimiter-only (no `_underscore_`, no backslash escapes, no `***bold-italic***`, no reference links, no autolinks, no setext `===` headings); a blockquote's lines join into one paragraph and nested `>` levels are not distinguished.
+
+Not supported, **declared with a dated expiry** that `rust/crates/project/tests/declared_stdlib_gaps.rs` enforces — the test goes red on its own when a date arrives: footnotes (needs a two-pass document model), math (needs a formula renderer Std.Ui has no primitive for), mermaid (needs a graph layout engine; ```` ```mermaid ```` renders as an ordinary code block meanwhile), and a hard line break from a trailing double space (needs a Std.Ui line-break primitive that does not exist — note this was *documented as supported* until v0.20.1 and never was). Raw HTML is unsupported **by design and permanently**: the untrusted-input guarantee below is exactly the statement that this parser cannot emit it.
 
 **Safe with untrusted input** — never emits raw HTML or event handlers; every node routes through typed Std.Ui constructors, and a link's URL is neutralised by the renderer, so a `javascript:` / `vbscript:` / non-image `data:` href becomes `about:blank`. (Before v0.20.1 the href was NOT filtered: `[x](javascript:alert(1))` reached the page verbatim, because HTML-escaping does not help against a payload that needs no metacharacter.)
 

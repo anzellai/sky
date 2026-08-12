@@ -216,6 +216,15 @@ jobs:
         with:
           workspaces: rust
 
+      # Neovim is a DECLARED dependency of the `lsp` harness gate, which joined
+      # the registry on 2026-08-12. Without it that gate reports 0 assertions
+      # and the harness fails — correctly, since a gate that cannot run has not
+      # passed. Installing it here is what makes the release gate able to run
+      # the editor-parity suite at all.
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+
       - name: Workspace tests
         working-directory: rust
         run: cargo test --workspace --locked

@@ -13,7 +13,39 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+### Added
+
+- **`Std.Markdown` renders blockquotes and images.** `> quote` consumes its
+  marker and renders with a left rule (typed `Border` attributes, so it follows
+  the theme); `![alt](url)` renders a real `<img>`. Both were previously
+  "deliberately not supported in v1", with the marker or a literal `!` left in
+  the text. An image's `src` goes through the same URL guard as a link's `href`,
+  so `![x](javascript:…)` becomes `about:blank` and `data:image/…` still works.
+
 ### Fixes
+
+- **`Std.Markdown` documented a hard line break it never implemented.** The
+  module and `docs/stdlib.md` both listed "trailing-double-space → `<br>`" as
+  supported. Nothing in the parser ever looked for it, so the break was silently
+  dropped. This is the same class as the tables defect fixed below, inverted —
+  so the unsupported set is now a machine-checked declaration with a dated
+  expiry (`rust/crates/project/tests/declared_stdlib_gaps.rs`) rather than a
+  comment, and CI goes red on its own when a date arrives.
+
+- **`Std.Markdown` ordered lists stopped working at the eleventh item.** The
+  marker test was equality against the hard-coded prefixes `"1. "`…`"10. "`, so
+  `11. k` silently became a paragraph in the middle of a list. The digit run is
+  now scanned, and the marker is stripped by that same scan — previously it
+  split on the first `". "` anywhere in the line, so `1. See fig. 2 here` lost
+  everything up to `fig. `.
+
+- **`Std.Markdown` horizontal rules were a list of five literals.** `------`
+  (six dashes) rendered as a paragraph while `-----` was a rule, and `"----"`
+  appeared in the list twice. Any run of three or more `-`, `*` or `_` is now a
+  rule, which is what the docstring already claimed.
+
+- **`Std.Markdown` headings did not parse inline markup.** `# **Bold**` rendered
+  the asterisks literally.
 
 - **`List.sort` and `List.sortBy` sorted the RENDERING, not the value.**
   `List.sort [ 10, 9, 2 ]` returned `10, 2, 9`; `[ -1, -20, 3 ]` came back

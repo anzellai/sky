@@ -46,7 +46,17 @@
 #
 # ## Current state
 #
-# No removals. The denominator has never been reduced under this contract.
+# One removal, below.
+
+[[removal]]
+symbol = "Std.Db.findWhere"
+# Accounted 2026-08-12. `xtask denominators` and `coverage-ledger --check` had
+# BOTH been failing on `main` since 988de75b (1774 -> 1773 entries, 1653 -> 1652
+# values, `removals_accounted` still 0). Only the release workflow runs them, so
+# per-push CI stayed green over a red release gate.
+reason = "un-exposed from sky-stdlib/Std/Db.sky because it CONCATENATES a caller-supplied WHERE string into SQL. Audit P1-3 had already renamed the safe surface to unsafeFindWhere, which names what it is and is what a caller must reach for deliberately; findWhere was briefly re-exposed to give the kernel member a Sky signature (a coverage number), and removing it again is that security decision standing. rt.Db_findWhere survives in the runtime as an alias so already-compiled sky-out/ trees keep linking, and kernel_signature_coverage.rs keeps its allowlist row, so the member stays visible as an UNTYPED kernel qualifier rather than vanishing from every ledger."
+owner  = "anzel"
+commit = "988de75b"
 #
 #
 # ===========================================================================

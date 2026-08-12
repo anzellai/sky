@@ -96,16 +96,27 @@ end
 
 -- ─── LSP setup ───────────────────────────────────────────────────────
 
+-- The compiler under test is whatever the CALLER put on `$PATH`. Nothing else.
+--
+-- This used to try `$PWD/sky-out/sky` FIRST, then `~/.cabal/bin/sky`, then
+-- `$PATH`. Both the gate (`bodies::lsp`) and the CLI face put the binary they
+-- built at the front of `$PATH` — and this function ignored it whenever a
+-- `sky-out/sky` happened to exist, which it does on any tree where anyone has
+-- run `scripts/build.sh`. The corpus half of the same suite
+-- (`lsp-corpus-nvim.lua`) has always used `cmd = { "sky", "lsp" }`, so the two
+-- halves of ONE gate could measure TWO DIFFERENT COMPILERS and neither would
+-- say so.
+--
+-- Found 2026-08-12 while proving the hover cases could fail: a mutated server
+-- was on `$PATH`, the 32 corpus cases saw it, and the 17 cases here silently
+-- tested a `sky-out/sky` built an hour earlier and reported PASS. That is the
+-- stale-artefact class, inside the gate that exists to catch editor defects.
+--
+-- `~/.cabal/bin/sky` is gone with it: the Haskell compiler was retired, and a
+-- fallback to a binary from a different LANGUAGE's build is not a fallback.
 local function find_sky_binary()
-    local candidates = {
-        vim.fn.getcwd() .. "/sky-out/sky",
-        vim.fn.expand("~/.cabal/bin/sky"),
-        "sky",
-    }
-    for _, c in ipairs(candidates) do
-        if vim.fn.executable(c) == 1 then
-            return c
-        end
+    if vim.fn.executable("sky") == 1 then
+        return "sky"
     end
     return nil
 end
@@ -151,6 +162,17 @@ end
 
 -- ─── Test helpers ────────────────────────────────────────────────────
 
+-- `expected` is a substring, or a LIST of substrings that must ALL appear.
+--
+-- The list form exists because a single needle equal to the token under the
+-- cursor is not an assertion: a server that echoed the token back would satisfy
+-- it. Three cases here did exactly that (`hover-task-run` needed only "Task"
+-- under `Task.run`; `hover-type-name` only "Model" under `Model`;
+-- `hover-kernel-call` only "Int", which is a substring of `fromInt`). They were
+-- found by mutating the server to return the identifier under the cursor and
+-- seeing which hover cases still passed — 4 of 18 did. Every hover needle now
+-- includes something the source token cannot contain: a `:` separator, an `->`,
+-- or the `type ` prefix.
 local function test_hover(bufnr, line, col, expected_substr)
     local result = nil
     vim.lsp.buf_request(bufnr,
@@ -174,8 +196,12 @@ local function test_hover(bufnr, line, col, expected_substr)
         return false, "hover body not a string"
     end
 
-    if not body:find(expected_substr, 1, true) then
-        return false, string.format("hover body %q lacks %q", body, expected_substr)
+    local needles = type(expected_substr) == "table" and expected_substr
+                    or { expected_substr }
+    for _, n in ipairs(needles) do
+        if not body:find(n, 1, true) then
+            return false, string.format("hover body %q lacks %q", body, n)
+        end
     end
 
     return true, body
@@ -272,11 +298,12 @@ end
 -- ─── Test runner ─────────────────────────────────────────────────────
 
 local tests = {
-    -- Hover on `run` in `Task.run` (line 32 0-based, col 9). Expect Task type.
-    -- (Fixture extension shifted the `main` line from 20 → 32.)
+    -- Hover on `run` in `Task.run` (line 32 0-based, col 9). Expect the full
+    -- kernel signature. "Task" ALONE was echo-satisfiable — it is a substring
+    -- of the very token `Task.run` under the cursor.
     ["hover-task-run"] = function()
         local bufnr = start_lsp(project_dir .. "/src/Main.sky")
-        return test_hover(bufnr, 32, 9, "Task")
+        return test_hover(bufnr, 32, 9, { "Task.run :", "-> Result e a" })
     end,
 
     -- Hover on `count` in `model.count` (line 12 0-based, col 25).
@@ -286,9 +313,11 @@ local tests = {
     end,
 
     -- Hover on `Model` in `stringify : Model -> String` (line 10 0-based, col 13).
+    -- The `type ` prefix is the assertion: "Model" alone is the token under the
+    -- cursor, so it was satisfied by an echo.
     ["hover-type-name"] = function()
         local bufnr = start_lsp(project_dir .. "/src/Main.sky")
-        return test_hover(bufnr, 10, 13, "Model")
+        return test_hover(bufnr, 10, 13, "type Model")
     end,
 
     -- Completion at `Ui.|` — verify `Ui.layout` appears AND insertText
@@ -514,10 +543,12 @@ local tests = {
     end,
 
     -- Hover on `fromInt` (kernel call) at line 12 col 14 in
-    -- `String.fromInt model.count`. Expect Int → String shape.
+    -- `String.fromInt model.count`. Expect the Int → String shape.
+    -- "Int" alone was echo-satisfiable by accident: it is a substring of
+    -- `fromInt`, which is part of the token under the cursor.
     ["hover-kernel-call"] = function()
         local bufnr = start_lsp(project_dir .. "/src/Main.sky")
-        return test_hover(bufnr, 12, 14, "Int")
+        return test_hover(bufnr, 12, 14, { "String.fromInt :", "Int -> String" })
     end,
 
     -- v0.13 G follow-up — goto-def for the remaining USED symbol

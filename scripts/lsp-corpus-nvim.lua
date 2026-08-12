@@ -981,8 +981,14 @@ local function group_realapp()
     case("realapp-hover-model-type-through-exposing-all", function()
         -- `Model` in `update : Msg -> Model -> ( Model, Cmd Msg )` reaches
         -- `State` through `import State exposing (..)`.
+        --
+        -- The needle is "type Model", not "Model". "Model" alone is the token
+        -- UNDER THE CURSOR, so a server that echoed the identifier back would
+        -- have passed this case — it was one of 4 (of 18) hover cases that
+        -- survived exactly that mutation. `hover_type` renders `type <Name>`,
+        -- and the `type ` prefix is the part the source text cannot supply.
         local l, c = find_pos(upd, "Msg -> Model ->")
-        return expect_hover(upd, l, c + 7, { "Model" })
+        return expect_hover(upd, l, c + 7, { "type Model" })
     end)
 
     case("realapp-def-type-through-exposing-all", function()

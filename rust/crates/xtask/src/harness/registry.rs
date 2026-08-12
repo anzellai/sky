@@ -923,6 +923,43 @@ pub static GATES: &[Gate] = &[
         body: bodies::canary,
     },
     Gate {
+        name: "lsp",
+        tier: Tier::T1,
+        // The suite is a bash script driving Neovim headless; `killpg`, the PTY
+        // and the shell are all assumed.
+        platforms: UNIX,
+        // Measured 2026-08-12 on a debug `sky`: ~250 s for 49 cases (17 legacy
+        // at ~8.5 s each, 32 corpus at ~1.6 s each — the corpus groups share one
+        // LSP session). 900 leaves room for a cold session on a slow runner
+        // without turning a hang into a 15-minute wait.
+        budget_s: 900,
+        expected: bodies::LSP_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the editor answers hover / goto-def / completion / diagnostics \
+                  through a REAL Neovim LSP client, on fixtures and a real app",
+        // The mutation is the defect this gate's registration was prompted by:
+        // hover that returns the identifier instead of its type. It is the
+        // cheapest honest one because it is not hypothetical — 4 of the 18 hover
+        // cases passed against exactly this behaviour until their needles were
+        // strengthened, and this mutation is what proves they no longer do.
+        //
+        // `hover_type` is the target because its output (`type Model`) differs
+        // from the source token (`Model`) by a literal prefix, so dropping the
+        // prefix is a one-token change with no side effects on any other path.
+        mutations: Mutations::new(&[Mutation {
+            id: "lsp.hover-echoes-the-token",
+            description: "make hover on a TYPE return the bare identifier instead \
+                          of `type <Name>`; the two type-hover cases must go red \
+                          (they did not, before their needles were strengthened)",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/sky-lsp/src/lib.rs",
+                from: "format!(\"```sky\\ntype {}\\n```\", o.name.as_str())",
+                to: "format!(\"```sky\\n{}\\n```\", o.name.as_str())",
+            },
+        }]),
+        body: bodies::lsp,
+    },
+    Gate {
         name: "coverage-ledger",
         tier: Tier::T1,
         platforms: ALL_PLATFORMS,

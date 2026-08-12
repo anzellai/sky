@@ -372,6 +372,12 @@ static CROSS_CUTTING: &[CrossSurface] = &[
 /// product, and giving them product surfaces would let harness self-tests
 /// count as product coverage.
 static GATE_SURFACES: &[(&str, &[&str])] = &[
+    // The editor surface. `lsp` moved from CI_SURFACES (scored `Asserted`, the
+    // "runs on every push but has not migrated into the harness" tier) into the
+    // registry on 2026-08-12, so it now carries a declared falsifying mutation
+    // and scores on the registered-gate scale. The `xtask:lsp` CI row is
+    // retired in the same commit; leaving both would double-claim the surface.
+    ("lsp", &["lsp"]),
     // Layer-2 member H (`apps/dispatch`). These three gates are the ONLY cover
     // for five modules that, until 2026-08-10, were imported by nothing at all
     // — and with them the file-based migration verbs, which no project
@@ -592,7 +598,12 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     ("xtask:welltyped", &["compiler.fuzz"]),
     ("xtask:divergences", &["compiler.oracle-differential"]),
     ("xtask:shared-world", &["compiler.shared-world"]),
-    ("xtask:lsp", &["lsp"]),
+    // `lsp` is a REGISTERED gate as of 2026-08-12 and claims the `lsp` surface
+    // through `GATE_SURFACES`. The CI step still runs it (the `lsp-fuzz` job),
+    // and this row must stay so the anti-drift test — every xtask subcommand CI
+    // invokes has a row — keeps passing; it claims nothing, exactly like
+    // `xtask:harness`, because counting the surface twice would double-claim it.
+    ("xtask:lsp", &[]),
     (
         "xtask:build-run",
         &[
