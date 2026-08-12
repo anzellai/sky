@@ -1,3 +1,5 @@
+-- rust: reject [E1004] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- gate: reject
 -- defect: user ADT shadows Prelude-exposed `Result` / `Just` / `Nothing`
 -- oracle: reject — Canonicalise error (audit §3.2, CLAUDE.md v0.15.42): a

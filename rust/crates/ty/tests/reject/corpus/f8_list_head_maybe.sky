@@ -1,3 +1,5 @@
+-- rust: reject [E2001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- defect: List.head payload mismatch — `List.head ["a","b"] : Maybe String` fed to
 --         `Maybe.withDefault 0` (`0 : Int`). F8 precise `List.head : List a ->
 --         Maybe a` + `Maybe.withDefault : a -> Maybe a -> a` reject. oracle: reject.

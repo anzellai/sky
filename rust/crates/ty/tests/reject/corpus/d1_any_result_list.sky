@@ -1,3 +1,5 @@
+-- rust: reject [E2001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- defect: `f : Int -> List any` with body `f x = [x]` returns `List Int`; feeding
 --         it to `List.map String.toUpper` (needs `List String`) clashes. The D1
 --         result pin (monomorphic body) closes the wildcard-List absorb. oracle:

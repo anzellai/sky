@@ -1,3 +1,5 @@
+-- rust: reject [E2001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- defect: a record UPDATE sets an EXISTING field to a value of the WRONG type —
 --         `{ r | age = "old" }` where `age : Int`.
 -- oracle: ACCEPTS this (same update-deferral unsoundness — the updated field's

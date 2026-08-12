@@ -1,3 +1,5 @@
+-- rust: reject [E1003] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- gate: reject
 -- defect: non-linear parameter list `f x x = …` (same binder twice)
 -- oracle: reject — emitted Go fails `go build` ("x redeclared in this block").

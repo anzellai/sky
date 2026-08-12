@@ -1,3 +1,5 @@
+-- rust: reject [E2001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- defect: `/` is Float-only (`Float -> Float -> Float`); integer division uses
 --         `//`. With concrete-Int literals, `5 / 2` clashes (Int vs Float).
 --         Write `5.0 / 2.0`, or `5 // 2` for integer division. oracle: reject.

@@ -1,3 +1,5 @@
+-- rust: reject [E1003] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- gate: reject
 -- defect: non-linear case pattern `( a, a )` (same binder twice in one arm)
 -- oracle: reject — emitted Go fails `go build`

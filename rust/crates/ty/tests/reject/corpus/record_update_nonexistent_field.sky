@@ -1,3 +1,5 @@
+-- rust: reject [E2001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- defect: a record UPDATE sets a field the declared record type does NOT have —
 --         `{ r | nope = 1 }` where `r : P` and `P = { name, age }`.
 -- oracle: ACCEPTS this (its update-deferral is UNSOUND — it never re-checks the

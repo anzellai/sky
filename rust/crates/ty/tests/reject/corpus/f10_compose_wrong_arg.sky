@@ -1,3 +1,5 @@
+-- rust: reject [E2001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- defect: unannotated polymorphic `compose g f x = g (f x)` fed a wrong-typed
 --         seed. `String.toUpper : String -> String` as `f` pins x : String, but
 --         `g = String.fromInt : Int -> String` needs f's result to be Int, and

@@ -1,3 +1,5 @@
+-- rust: reject [E2001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- defect: unannotated polymorphic helper `usef f = f 5` (scheme `(Int -> a) -> a`)
 --         applied to `String.toUpper : String -> String`. The `5` pins the
 --         param's domain to Int, clashing with String.toUpper's String domain.

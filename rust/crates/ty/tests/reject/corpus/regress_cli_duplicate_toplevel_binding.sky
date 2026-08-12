@@ -1,3 +1,5 @@
+-- rust: reject [E1002] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- gate: reject
 -- defect: duplicate top-level binding `x` (redefinition in one module)
 -- oracle: reject — Sky has no multi-clause definitions; the oracle emits Go

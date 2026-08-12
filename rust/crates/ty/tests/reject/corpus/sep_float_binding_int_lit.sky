@@ -1,3 +1,5 @@
+-- rust: reject [E2001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- defect: an int literal is concrete `Int`, not a number that widens to Float.
 --         Binding it to a `Float`-annotated name is a type error; write `1.0`.
 --         (Sky separates Int/Float uniformly — INTENTIONALLY stricter than the

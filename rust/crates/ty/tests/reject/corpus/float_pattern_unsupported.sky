@@ -1,3 +1,5 @@
+-- rust: reject [E1006] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- Float literal patterns are unsupported (float equality is unreliable); the
 -- oracle rejects them at canonicalisation, and Sky-rust must reject them at
 -- resolve time [E1006] rather than silently recover-as-wildcard and emit

@@ -1,3 +1,5 @@
+-- rust: reject [E3001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- gate: reject
 -- defect: literal-only `case` with no catch-all `_` arm
 -- oracle: reject — "Non-exhaustive patterns": an Int/String/Char match over an

@@ -1,3 +1,5 @@
+-- rust: reject [E2001] pinned 2026-08-12 — the code this file has always
+--       produced; previously unpinned, so ANY diagnostic satisfied it.
 -- defect: Int and Float are fully separate in Sky (no implicit widening), so
 --         mixing an int literal with a Float in arithmetic is a type error.
 --         `+` is polymorphic `a -> a -> a`, so its operands must share a type;

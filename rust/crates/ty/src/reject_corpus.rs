@@ -145,7 +145,7 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// [`EXPECTED_FILES_WITH_ORACLE_CODE`] or
 /// [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`] and updates BOTH constants in the
 /// same commit.
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 6;
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 21;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the
@@ -161,7 +161,7 @@ pub const EXPECTED_FILES_WITH_DECLARED_CODE: usize =
 /// The EXACT number of corpus files that declare NO diagnostic code. These
 /// still assert rejection, but the rejection is unpinned — any diagnostic
 /// satisfies them. Both faces print them by name. Ratchets DOWNWARD.
-pub const EXPECTED_FILES_WITHOUT_DECLARED_CODE: usize = 15;
+pub const EXPECTED_FILES_WITHOUT_DECLARED_CODE: usize = 0;
 
 /// Generated / cache trees that are never part of any corpus.
 fn is_generated(path: &Path) -> bool {
