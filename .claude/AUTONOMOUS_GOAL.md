@@ -99,7 +99,7 @@ names the gate and the CI job that runs it, because "closed" here means
 | 1 | **RE-DECLARED**, review by **2027-02-12** | `kernel_signature_coverage.rs` — exact-set ratchet + dated review test + a test asserting the declared count matches the list | `test-rest`, `macos-behaviour` |
 | 2 | **CLOSED** | lenient synthesis narrowed first, `[E1012]` pinned by `ty/tests/reject/corpus/ambiguous_type_name.sky` + census | `test-ty`, `parity-reject` |
 | 3 | **PARTIAL — five named gaps CLOSED, residual RE-DECLARED, review by 2027-02-12** | `DARK_MODULE_CEILING = 62` fail-on-increase + `ASSERTED_MODULES` exact pin | `test-rest` (structural), `behaviour-corpus` (behavioural) |
-| 4 | **CLOSED** | 5×3 `Dict` key×operation crossing, 15 manifest rows; the behavioural half now actually executes | `behaviour-corpus` (NEW — it previously ran nowhere) |
+| 4 | **PARTIAL — structural half per-push, behavioural half NIGHTLY** | 5×3 `Dict` key×operation crossing, 15 manifest rows; the behavioural half now executes at all, which it previously did not anywhere | structural: `test-rest`; behavioural: `nightly-sweep.yml` `behaviour-corpus` (NEW) |
 | 5 | **CLOSED** | `EXPECTED_FILES_WITHOUT_DECLARED_CODE = 0`, three-way census, empty-corpus guard | `test-ty`, `parity-reject` |
 | 6 | **CLOSED for the corpus; count ratchet remains release-only** | 49 cases; the skip-to-green path now FAILS when `CI` is set | `lsp-fuzz` |
 | 7 | **CLOSED** (`Std.Email`) / **RE-DECLARED to 2027-02-12** (`Std.Markdown`) | 10 wire-level Go tests; `declared_stdlib_gaps.rs` with expiry | `behaviour-docs`, `macos-behaviour`, `test-rest` |
@@ -119,6 +119,21 @@ names the gate and the CI job that runs it, because "closed" here means
   The corpus is enforced per-push; a SHRINK of it is caught one tier later.
 * **Item 3's residual 62 dark modules** are ratcheted against growth, not
   against staying at 62.
+* **The T2 tier is NIGHTLY, not merge-blocking.** Review by **2027-02-12**.
+  It was first wired per-push on a warm-cache estimate of 274s. The real cost
+  is ~700s locally cold and **over 25 minutes on a GitHub runner**, where it
+  was killed by its own timeout — all 335 cases are `go build`-ed. T1 has a
+  900s ceiling that `ci-green` asserts, so keeping it there meant blowing the
+  budget or raising the ceiling to fit a job I had just added, which is the
+  drift that assertion exists to catch.
+
+  So a regression in the 383 behavioural assertions lands and is caught the
+  next night rather than at review. That is a real weakening versus per-push
+  and it is stated here rather than rounded up to "closed". The path to
+  closing it is SHARDING: `corpus --run` has no shard or filter flag, so
+  partitioning the 335 cases across a CI matrix is a change to the gate
+  itself. Until then this is strictly better than what it replaced, which
+  was no execution anywhere.
 
 ### The lesson this round, recorded because it recurred
 
