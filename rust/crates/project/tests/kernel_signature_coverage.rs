@@ -121,7 +121,14 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
         ],
     ),
     ("Context", &["background", "todo", "withCancel", "withValue"]),
-    ("Db", &["getFieldOr"]),
+    // `findWhere` is untyped ON PURPOSE, and must stay that way. Audit P1-3
+    // renamed it to `unsafeFindWhere`; `rt.Db_findWhere` survives only as an
+    // alias for already-compiled `sky-out/` trees. Typing it requires EXPOSING
+    // it from `Std/Db.sky`, which puts a raw `WHERE`-concatenating function
+    // back in the public API under a name that does not warn — undoing a
+    // security decision to improve a coverage number. It was briefly re-exposed
+    // that way and removed again.
+    ("Db", &["findWhere", "getFieldOr"]),
     (
         "Ffi",
         &["call", "callPure", "callTask", "has", "isPure", "kernel", "toAny"],

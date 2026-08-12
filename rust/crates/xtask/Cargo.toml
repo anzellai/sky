@@ -31,3 +31,10 @@ serde_json.workspace = true
 # a safe `killpg`; the alternative is raw `libc` behind `unsafe`.
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal"] }
+
+# Test-only. `tests/workflows_parse.rs` asserts every `.github/workflows/*.yml`
+# is parseable — the check whose absence let an unparseable `rust-ci.yml` reach
+# `main`, where GitHub refused the file and ran NO jobs at all. `xtask ci-scan`
+# reads those files line-by-line and cannot see a malformed document.
+[dev-dependencies]
+serde_yaml = "0.9"

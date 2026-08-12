@@ -468,7 +468,7 @@ jobs:
         with:
           neovim: true
       - run: cargo build --workspace --locked
-      - name: Gate — lsp (Neovim editor-parity: 17 symbol-class + 32 corpus cases)
+      - name: 'Gate — lsp (Neovim editor-parity: 17 symbol-class + 32 corpus cases)'
         run: cargo run -q -p xtask -- lsp
       - name: Gate — fuzz (robustness + determinism, L7 + L4)
         run: cargo run -q -p xtask -- fuzz

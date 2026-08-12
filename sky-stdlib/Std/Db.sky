@@ -22,7 +22,6 @@ module Std.Db exposing
     , findOneByField
     , findManyByField
     , findByConditions
-    , findWhere
     , unsafeFindWhere
     , queryDecode
     , getByIdDecode
@@ -180,18 +179,18 @@ findByConditions =
     Ffi.kernel "Db_findByConditions"
 
 
--- | `findWhere db table whereClause params` — SELECT every row of
--- `table` matching `whereClause`, with `params` bound to its `?`
--- placeholders.
+-- `findWhere` is deliberately NOT declared or exposed here.
 --
---     Db.findWhere db "post" "author_id = ?" [ authorId ]
+-- Audit P1-3 RENAMED it to `unsafeFindWhere`; `rt.Db_findWhere` survives in
+-- the runtime only as a thin alias for already-compiled `sky-out/` trees that
+-- have not been regenerated (see runtime-go/rt/db_auth.go). Giving it a Sky
+-- signature and exposing it would put a raw `WHERE`-concatenating function
+-- back in the public API under a name that does not say so — which is exactly
+-- what the rename existed to prevent.
 --
--- `rt.Db_findWhere` delegates verbatim to `rt.Db_unsafeFindWhere`,
--- so this carries that binding's type exactly.  Prefer
--- `findByConditions` when the clause is built from user input.
-findWhere : Db -> String -> String -> List a -> Task Error (List (Dict String String))
-findWhere =
-    Ffi.kernel "Db_findWhere"
+-- Use `findOneByField` / `findManyByField` / `findByConditions` (parameterised,
+-- with table and column names validated), or `unsafeFindWhere` when you
+-- genuinely need a raw clause and can carry the injection risk knowingly.
 
 
 -- | `unsafeFindWhere db table whereClause params` — raw `WHERE`
