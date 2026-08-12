@@ -482,6 +482,28 @@ fn app_to_go(
     params: &HashMap<Name, GoTy>,
 ) -> GoTy {
     let go = |t: &Ty| go_ty(t, env, cur_mod, params);
+    // KERNEL-OPAQUE HANDLES WIN OVER EVERY NOMINAL LOOKUP, qualified or not.
+    //
+    // These names denote a runtime handle (a `JsonDecoder`, a JSON `Value`, a
+    // command queue), not a modelled Go struct, so their Go type is `any` NO
+    // MATTER which module's declaration a name resolves to. That has to be
+    // decided BEFORE the qualified fast path below, because `Std.Config` really
+    // does declare `type Decoder a = Decoder` (`sky-stdlib/Std/Config.sky:54`)
+    // — a phantom whose Go form is a single-variant iota enum, `= int`.
+    //
+    // Once the checker started module-qualifying unions, references to that
+    // phantom arrived as `Std.Config.Decoder`, hit `nominal_by_module` here, and
+    // resolved to `Std_Config_Decoder` — so a real kernel decoder handle was
+    // narrowed with `rt.Coerce[Std_Config_Decoder]`, i.e. coerced to an `int`.
+    // `apps/relay` (which imports `Std.Config` for its typed decoders) caught it
+    // as a +15 widening on the `coerce-floor` gate. The bare-name arms further
+    // down had always covered this; hoisting them closes the qualified hole too.
+    if matches!(
+        ty::nominal::base(name),
+        "Decoder" | "Value" | "Cmd" | "Sub"
+    ) {
+        return GoTy::Any;
+    }
     // A qualified reference (`Counter.Msg`) carries its declaring module in the
     // name — resolve it to THAT module's nominal directly, bypassing the
     // `cur_mod` disambiguation (which would wrongly pick a same-module `Msg`).
@@ -529,17 +551,10 @@ fn app_to_go(
         // (e.g. `map[int]V`) never matches that runtime shape and panics under
         // `rt.Coerce` — so pin the Go key type to `string`.
         ("Dict", 2) => GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(go(&args[1]))),
-        ("Cmd", _) => GoTy::Any,
-        ("Sub", _) => GoTy::Any,
-        // Kernel-opaque handle types carry a runtime handle (a `JsonDecoder` /
-        // JSON `Value`), not a modelled Go struct — map to `any`. `Decoder` is
-        // declared in multiple modules (`Sky.Core.Json.Decode` uses a
-        // kernel-implicit one; `Std.Config`/`Std.Db.Decode` each phantom-define
-        // `type Decoder a = Decoder`), so a flat nominal lookup would coerce a
-        // real decoder to an unrelated module's phantom enum (`= int`) and
-        // panic at runtime. `Value` is the same story for JSON encoders.
-        ("Decoder", _) => GoTy::Any,
-        ("Value", _) => GoTy::Any,
+        // `Cmd` / `Sub` / `Decoder` / `Value` are handled by the kernel-opaque
+        // pre-check at the top of this function, which fires for the qualified
+        // form as well. Kept unreachable-but-listed would be a lie; they are
+        // simply gone from this table. See that pre-check for the reasoning.
         _ => {
             // Prefer the current module's own declaration of `name` when it has
             // one (disambiguates a `Msg`/`Model` declared in several modules);

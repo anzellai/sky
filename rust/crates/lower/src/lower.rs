@@ -322,7 +322,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             let Ty::Record(fields, _) = &xs[0] else {
                 return None;
             };
-            if !matches!(&xs[1], Ty::App(cn, _) if cn.as_str() == "Cmd") {
+            if !matches!(&xs[1], Ty::App(cn, _) if ty::nominal::base(cn.as_str()) == "Cmd") {
                 return None;
             }
             let mut names: Vec<String> =
@@ -1805,7 +1805,13 @@ fn rune_lit(s: &str) -> GoExpr {
 fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>) -> bool {
     match t {
         Ty::App(n, args) => {
-            ambiguous.contains(n.as_str()) || args.iter().any(|a| ty_refs_ambiguous(a, ambiguous))
+            // Compare the BARE head. `ambiguous` holds bare names, while a
+            // reference can arrive module-qualified — from
+            // `ast_type_to_ty_qualified` (always could) and now from the checker
+            // for unions too. Comparing the full name would silently make this
+            // set inert and seal the very unions the floor exists to protect.
+            ambiguous.contains(ty::nominal::base(n.as_str()))
+                || args.iter().any(|a| ty_refs_ambiguous(a, ambiguous))
         }
         Ty::Fun(a, b) => ty_refs_ambiguous(a, ambiguous) || ty_refs_ambiguous(b, ambiguous),
         Ty::Tuple(xs) => xs.iter().any(|x| ty_refs_ambiguous(x, ambiguous)),
@@ -1991,13 +1997,13 @@ impl<'a> Ctx<'a> {
             return None;
         }
         let key_ty = match self.sky_ty_of(args[dict_arg])? {
-            Ty::App(dict, dargs) if dict.as_str() == "Dict" && dargs.len() == 2 => {
+            Ty::App(dict, dargs) if ty::nominal::base(dict.as_str()) == "Dict" && dargs.len() == 2 => {
                 dargs[0].clone()
             }
             _ => return None,
         };
         let suffix = match &key_ty {
-            Ty::App(k, ka) if ka.is_empty() => match k.as_str() {
+            Ty::App(k, ka) if ka.is_empty() => match ty::nominal::base(k.as_str()) {
                 "Int" => "Int",
                 "Float" => "Float",
                 "Char" => "Char",
@@ -2017,14 +2023,14 @@ impl<'a> Ctx<'a> {
     /// flex var — the callee's own inferred result type.
     fn expr_is_task(&self, e: ExprId) -> bool {
         if let Some(Ty::App(n, _)) = self.types.exprs.get(&e) {
-            if n.as_str() == "Task" {
+            if ty::nominal::base(n.as_str()) == "Task" {
                 return true;
             }
         }
         if let Expr::Call(callee, _) = &self.body.exprs[e] {
             if let Expr::Var(Res::Def(d)) = &self.body.exprs[*callee] {
                 if let Some(Ty::App(n, _)) = self.def_result_tys.get(d) {
-                    return n.as_str() == "Task";
+                    return ty::nominal::base(n.as_str()) == "Task";
                 }
             }
         }

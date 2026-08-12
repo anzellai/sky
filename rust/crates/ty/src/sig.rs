@@ -138,9 +138,34 @@ pub struct World {
     /// alias (→ qualified key) or a non-alias type (union / kernel / var — kept
     /// bare, exactly as `ast_type_to_ty` produced it pre-#164).
     alias_keys: HashSet<String>,
+    /// The set of all `"<module>.<name>"` UNION keys — the union namespace's
+    /// analogue of [`World::alias_keys`], and the reason a union's DECLARATION
+    /// and every REFERENCE to it agree on one identity.
+    ///
+    /// Both sides consult this ONE set: `record_union` qualifies the union's own
+    /// result type with the key it finds here, and `rewrite_alias_refs`
+    /// qualifies a reference only when the module it resolved to yields a key
+    /// that is in here. A reference that resolves to something else — a builtin
+    /// in the `BUILTIN_MOD` sentinel, a Go FFI type, an unchaseable re-export —
+    /// stays BARE, and `nominal::same` then treats it as "module unknown" rather
+    /// than manufacturing a rejection. See `crate::nominal`.
+    ///
+    /// Built in pass 1a alongside `alias_keys`, and for the same reason: the key
+    /// set must be COMPLETE before any signature resolves, or a forward
+    /// reference to a union declared later in the module order would be left
+    /// bare while its declaration was qualified.
+    union_keys: HashSet<String>,
 }
 
 impl World {
+    /// The two module-qualified key sets, bundled for reference resolution.
+    fn type_keys(&self) -> TypeKeys<'_> {
+        TypeKeys {
+            alias: &self.alias_keys,
+            union: &self.union_keys,
+        }
+    }
+
     /// Build the FULL world from every loaded module (stdlib + deps + entry) —
     /// declarations (passes 1-4) PLUS the body-derived CHECK/LOWER channels
     /// (passes 5-7). This is what the accept/reject checker (`check_modules`) and
@@ -414,6 +439,7 @@ impl World {
             aliases: HashMap::new(),
             alias_by_mod: HashMap::new(),
             alias_keys: HashSet::new(),
+            union_keys: HashSet::new(),
         };
         world.seed_builtin_ctors();
         world
@@ -447,14 +473,21 @@ impl World {
 
         // ---- pass 1a: collect alias names — the bare table (unchanged) + the
         // module-qualified key set + a stash of each alias's (module, name,
-        // params, body-syntax) for pass 1b. The full key set must be complete
-        // before ANY body is resolved, because an alias body may reference an
-        // alias declared in a later module (forward reference). ----
+        // params, body-syntax) for pass 1b — AND the module-qualified UNION key
+        // set. The full key sets must be complete before ANY body is resolved,
+        // because a body may reference an alias OR a union declared in a later
+        // module (forward reference). A union left bare here while its
+        // declaration was qualified would simply stop unifying with itself. ----
         let mut alias_stash: Vec<(ModuleId, String, Vec<String>, ast::Type)> = Vec::new();
         for m in db.module_ids() {
             let mname = db.module_name(m).to_string();
             let tree = db.module_parse(m).tree();
             for decl in tree.decls() {
+                if let ast::Decl::Union(u) = &decl {
+                    if let Some(name) = u.name().map(|t| t.text().to_string()) {
+                        world.union_keys.insert(crate::nominal::qualify(&mname, &name));
+                    }
+                }
                 if let ast::Decl::Alias(a) = &decl {
                     if let Some(name) = a.name().map(|t| t.text().to_string()) {
                         let params = decl_type_vars(a.syntax());
@@ -481,7 +514,7 @@ impl World {
         // a reference to a non-alias type stays bare (== `ast_type_to_ty`). ----
         for (m, name, params, t) in &alias_stash {
             let mname = db.module_name(*m).to_string();
-            let body = resolve_type_names(db, *m, t, &world.alias_keys);
+            let body = resolve_type_names(db, *m, t, world.type_keys());
             world.alias_by_mod.insert(
                 format!("{mname}.{name}"),
                 AliasDef {
@@ -507,7 +540,7 @@ impl World {
                             continue;
                         };
                         let Some(t) = a.ty() else { continue };
-                        let raw = resolve_type_names(db, m, &t, &world.alias_keys);
+                        let raw = resolve_type_names(db, m, &t, world.type_keys());
                         let expanded = world.expand(&raw, 0, &protect);
                         let scheme = Scheme::generalize(expanded);
                         let def = intern_value(db, m, &name);
@@ -529,7 +562,7 @@ impl World {
                         {
                             let raw = a
                                 .ty()
-                                .map(|t| resolve_type_names(db, m, &t, &world.alias_keys))
+                                .map(|t| resolve_type_names(db, m, &t, world.type_keys()))
                                 .unwrap_or(Ty::Error);
                             let expanded = world.expand(&raw, 0, &protect);
                             let scheme = record_ctor_scheme(&expanded);
@@ -1126,8 +1159,19 @@ impl World {
             return;
         };
         let params = decl_type_vars(u.syntax());
+        // The union's own identity, module-qualified — the DECLARATION half of
+        // the contract `rewrite_alias_refs` completes at every reference. Both
+        // sides read `union_keys`, so they cannot disagree: the key is in the set
+        // precisely because pass 1a walked this same `Decl::Union`. Every
+        // constructor's result type carries it, which is what stops
+        // `Conflate.Alpha.Circle` from satisfying a `Conflate.Beta.Shape` slot.
+        let key = crate::nominal::qualify(db.module_name(m), &tname);
         let result = Ty::App(
-            Name::new(&tname),
+            Name::new(if self.union_keys.contains(&key) {
+                &key
+            } else {
+                &tname
+            }),
             params.iter().map(|p| Ty::var(p)).collect(),
         );
         let mut names = Vec::new();
@@ -1137,7 +1181,7 @@ impl World {
             };
             let arg_tys: Vec<Ty> = child_types(var.syntax())
                 .iter()
-                .map(|t| self.expand(&resolve_type_names(db, m, t, &self.alias_keys), 0, protect))
+                .map(|t| self.expand(&resolve_type_names(db, m, t, self.type_keys()), 0, protect))
                 .collect();
             let ty = arg_tys
                 .into_iter()
@@ -1608,54 +1652,74 @@ fn union_names_in_module(db: &dyn SkyDb, m: ModuleId) -> HashSet<String> {
     out
 }
 
-/// `alias_keys` is the program-wide set of `"<module>.<name>"` alias keys.
-fn resolve_type_names(
-    db: &dyn SkyDb,
-    m: ModuleId,
-    t: &ast::Type,
-    alias_keys: &HashSet<String>,
-) -> Ty {
+/// The program-wide module-qualified key sets a type reference is resolved
+/// against. Bundled so the two namespaces travel together and cannot drift.
+#[derive(Clone, Copy)]
+struct TypeKeys<'a> {
+    /// `"<module>.<name>"` for every declared type ALIAS (the #164 fix).
+    alias: &'a HashSet<String>,
+    /// `"<module>.<name>"` for every declared UNION. See [`World::union_keys`].
+    union: &'a HashSet<String>,
+}
+
+fn resolve_type_names(db: &dyn SkyDb, m: ModuleId, t: &ast::Type, keys: TypeKeys<'_>) -> Ty {
     let resolved = db.resolve(m);
     let qualified = ast_type_to_ty_qualified(t);
-    rewrite_alias_refs(db, &resolved.type_refs, alias_keys, &qualified)
+    rewrite_alias_refs(db, &resolved.type_refs, keys, &qualified)
 }
 
 /// Walk a `Ty` (whose `App` names may be qualified — `"Q.Name"`) and rewrite any
-/// name HIR resolves to a declared alias into its module-qualified key; every
-/// other name collapses to its bare final segment (the pre-#164 form). See
-/// [`resolve_type_names`].
+/// name HIR resolves to a declared alias OR union into its module-qualified key;
+/// every other name collapses to its bare final segment (the pre-#164 form). See
+/// [`resolve_type_names`] and [`crate::nominal`].
 fn rewrite_alias_refs(
     db: &dyn SkyDb,
     type_refs: &HashMap<String, TypeRes>,
-    alias_keys: &HashSet<String>,
+    keys: TypeKeys<'_>,
     ty: &Ty,
 ) -> Ty {
     match ty {
         Ty::App(name, args) => {
             let args: Vec<Ty> = args
                 .iter()
-                .map(|a| rewrite_alias_refs(db, type_refs, alias_keys, a))
+                .map(|a| rewrite_alias_refs(db, type_refs, keys, a))
                 .collect();
             let full = name.as_str();
             // The bare final segment: what `ast_type_to_ty` produces, and the
-            // `<name>` half of any alias key.
-            let base = full.rsplit('.').next().unwrap_or(full);
+            // `<name>` half of any alias / union key.
+            let base = crate::nominal::base(full);
             // Resolve through HIR: prefer the exact (possibly qualified) name,
             // then fall back to the bare base (an `exposing`-imported name is
-            // registered bare). A hit that lands on a DECLARED alias is
-            // rewritten to that alias's defining-module key; anything else stays
-            // bare, exactly as before this fix.
+            // registered bare). A hit that lands on a DECLARED alias or union is
+            // rewritten to that declaration's defining-module key; anything else
+            // stays bare, exactly as before this fix.
             if let Some(tr) = type_refs.get(full).or_else(|| type_refs.get(base)) {
                 if let Some(loc) = db.def_loc(tr.con) {
-                    // Gate on `TypeAlias` BEFORE touching `module_name`: only an
-                    // alias can land in `alias_by_mod`, and builtins /
-                    // kernel-implicit types carry a synthetic sentinel module id
-                    // whose `module_name` would panic (index out of bounds). A
-                    // non-alias (union / builtin / kernel type) therefore stays
-                    // bare — identical to `ast_type_to_ty`.
-                    if loc.kind == DefKind::TypeAlias {
-                        let key = format!("{}.{}", db.module_name(loc.module), base);
-                        if alias_keys.contains(&key) {
+                    // Check the SENTINEL before touching `module_name`: builtins
+                    // and kernel-implicit types are interned into
+                    // `BUILTIN_MOD == ModuleId(u32::MAX)`, which is not a real
+                    // module and would index out of bounds. They stay bare —
+                    // which is also what keeps `dictkey`'s `"Dict"`, `unify`'s
+                    // `"List"` super-types and `lower`'s `"Task"`/`"Cmd"`
+                    // dispatch matching, since all of those compare bare strings.
+                    // (`lower::pinned_union_go` and `sky_lsp::def_kind` guard the
+                    // same sentinel the same way.)
+                    if loc.module.index() != u32::MAX {
+                        let key = crate::nominal::qualify(db.module_name(loc.module), base);
+                        // An alias resolves to `alias_by_mod`; a union resolves
+                        // to the identity `record_union` stamped on its own
+                        // declaration. Both sides read the SAME key set, so a
+                        // declaration and every reference to it agree by
+                        // construction. A miss (Go FFI type, unchaseable
+                        // re-export) falls through to bare, and `nominal::same`
+                        // then reads that as "module unknown" rather than
+                        // manufacturing a rejection.
+                        let known = match loc.kind {
+                            DefKind::TypeAlias => keys.alias.contains(&key),
+                            DefKind::TypeCon => keys.union.contains(&key),
+                            _ => false,
+                        };
+                        if known {
                             return Ty::App(Name::new(&key), args);
                         }
                     }
@@ -1664,17 +1728,17 @@ fn rewrite_alias_refs(
             Ty::App(Name::new(base), args)
         }
         Ty::Fun(a, b) => Ty::Fun(
-            Box::new(rewrite_alias_refs(db, type_refs, alias_keys, a)),
-            Box::new(rewrite_alias_refs(db, type_refs, alias_keys, b)),
+            Box::new(rewrite_alias_refs(db, type_refs, keys, a)),
+            Box::new(rewrite_alias_refs(db, type_refs, keys, b)),
         ),
         Ty::Tuple(xs) => Ty::Tuple(
             xs.iter()
-                .map(|x| rewrite_alias_refs(db, type_refs, alias_keys, x))
+                .map(|x| rewrite_alias_refs(db, type_refs, keys, x))
                 .collect(),
         ),
         Ty::Record(fs, ext) => Ty::Record(
             fs.iter()
-                .map(|(n, ft)| (n.clone(), rewrite_alias_refs(db, type_refs, alias_keys, ft)))
+                .map(|(n, ft)| (n.clone(), rewrite_alias_refs(db, type_refs, keys, ft)))
                 .collect(),
             ext.clone(),
         ),

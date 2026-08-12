@@ -304,9 +304,32 @@ impl UnionFind {
         }
     }
 
-    fn describe_flat(&mut self, ft: &FlatTy, depth: u32) -> String {
+    /// Like [`Self::describe_flat`] but keeps the module qualifier on the HEAD
+    /// name. Used for one case only: a mismatch whose two sides share a base
+    /// name, where the stripped form would read "`Shape` vs `Shape`" and the
+    /// declaring module IS the error.
+    fn describe_flat_qualified(&mut self, ft: &FlatTy, depth: u32) -> String {
         match ft {
             FlatTy::App(n, args) if args.is_empty() => n.as_str().to_string(),
+            FlatTy::App(n, _) => {
+                let bare = self.describe_flat(ft, depth);
+                // Swap the (stripped) head for the qualified one, arguments
+                // untouched — they are a separate question.
+                let head = crate::nominal::strip(n.as_str());
+                match bare.strip_prefix(head) {
+                    Some(rest) => format!("{}{}", n.as_str(), rest),
+                    None => bare,
+                }
+            }
+            other => self.describe_flat(other, depth),
+        }
+    }
+
+    fn describe_flat(&mut self, ft: &FlatTy, depth: u32) -> String {
+        match ft {
+            FlatTy::App(n, args) if args.is_empty() => {
+                crate::nominal::strip(n.as_str()).to_string()
+            }
             FlatTy::App(n, args) => {
                 let parts: Vec<String> = args
                     .iter()
@@ -319,7 +342,7 @@ impl UnionFind {
                         }
                     })
                     .collect();
-                format!("{} {}", n.as_str(), parts.join(" "))
+                format!("{} {}", crate::nominal::strip(n.as_str()), parts.join(" "))
             }
             FlatTy::Fun(a, r) => {
                 let sa = self.describe_var(*a, depth + 1);
@@ -373,10 +396,26 @@ impl UnionFind {
                 Ok(())
             }
             (FlatTy::App(n1, a1), FlatTy::App(n2, a2)) => {
-                if n1 == n2 && a1.len() == a2.len() {
+                // Nominal identity is `crate::nominal`'s call, not `==`. Two
+                // same-named unions in DIFFERENT modules are different types —
+                // the cross-module conflation that made `sky check` accept a
+                // program which then panicked with `sky.Unreachable(case)`. A
+                // BARE name means "declaring module unknown" and still matches,
+                // so a resolution gap can never manufacture a rejection.
+                if crate::nominal::same(n1.as_str(), n2.as_str()) && a1.len() == a2.len() {
                     let pairs: Vec<(TyVarId, TyVarId)> =
                         a1.iter().copied().zip(a2.iter().copied()).collect();
-                    self.union(ra, rb, Content::Structure(f1.clone()));
+                    // Keep the QUALIFIED side as the representative so a
+                    // confident identity propagates through inference variables
+                    // instead of being erased by the first bare name it meets.
+                    let winner = if crate::nominal::most_specific(n1.as_str(), n2.as_str())
+                        == n1.as_str()
+                    {
+                        f1.clone()
+                    } else {
+                        f2.clone()
+                    };
+                    self.union(ra, rb, Content::Structure(winner));
                     for (x, y) in pairs {
                         self.unify(x, y)?;
                     }
@@ -384,7 +423,20 @@ impl UnionFind {
                 } else {
                     // Render the FULL applications (args included) — a head-only
                     // `Maybe` vs `String` hides that the mismatch is `Maybe Int`.
-                    let (d1, d2) = (self.describe_flat(&f1, 0), self.describe_flat(&f2, 0));
+                    // Names print BARE (`nominal::strip`) so every pre-existing
+                    // message is byte-identical — except when the two sides share
+                    // a base, where the bare form would say the useless
+                    // "`Shape` vs `Shape`" and the module is the whole point.
+                    let same_base = crate::nominal::base(n1.as_str())
+                        == crate::nominal::base(n2.as_str());
+                    let (d1, d2) = if same_base {
+                        (
+                            self.describe_flat_qualified(&f1, 0),
+                            self.describe_flat_qualified(&f2, 0),
+                        )
+                    } else {
+                        (self.describe_flat(&f1, 0), self.describe_flat(&f2, 0))
+                    };
                     Err(Mismatch::new(format!("type mismatch: `{d1}` vs `{d2}`")))
                 }
             }

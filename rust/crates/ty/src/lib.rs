@@ -18,6 +18,7 @@ mod db;
 pub mod dictkey;
 mod exhaustive;
 mod infer;
+pub mod nominal;
 pub mod reject_corpus;
 pub mod shared;
 mod sig;
@@ -181,7 +182,11 @@ impl Ty {
                 };
                 format!("{lhs} -> {}", b.render_mapped(map))
             }
-            Ty::App(n, args) if args.is_empty() => n.as_str().to_string(),
+            // Print the BARE name: a module qualifier is an internal identity
+            // device (`crate::nominal`), not something a signature should carry.
+            // Keeps every rendered signature, snapshot and oracle message
+            // byte-identical to before unions became module-qualified.
+            Ty::App(n, args) if args.is_empty() => nominal::strip(n.as_str()).to_string(),
             Ty::App(n, args) => {
                 let parts: Vec<String> = args
                     .iter()
@@ -191,7 +196,7 @@ impl Ty {
                         _ => a.render_mapped(map),
                     })
                     .collect();
-                format!("{} {}", n.as_str(), parts.join(" "))
+                format!("{} {}", nominal::strip(n.as_str()), parts.join(" "))
             }
             Ty::Tuple(xs) => {
                 let parts: Vec<String> = xs.iter().map(|t| t.render_mapped(map)).collect();

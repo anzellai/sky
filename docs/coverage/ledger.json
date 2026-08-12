@@ -292,7 +292,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 67,
+      "expected_assertions": 68,
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
       "surfaces": [
@@ -312,7 +312,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 125,
+      "expected_assertions": 126,
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
       "surfaces": [

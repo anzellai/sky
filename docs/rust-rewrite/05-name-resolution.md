@@ -573,18 +573,77 @@ preference to a false REJECTION. A rule that rejects a working program gets
 reverted (as #164 was) and closes nothing; a rule that stays quiet where it
 cannot see leaves today's behaviour untouched.
 
-#### What this does NOT close
+#### What this does NOT close — and what closed it
 
-`[E1012]` fires where a program WRITES an ambiguous type name. It does not, and
-cannot, address the larger fact that the type checker has no cross-module
-identity for unions at all: `ty::sig::rewrite_alias_refs` module-qualifies
-`DefKind::TypeAlias` references only (the #164 fix), and every union collapses to
-its bare final segment, which `unify.rs` then compares as a plain string. Two
-same-named unions in two modules are therefore ONE type to the checker while
-`lower` emits two distinct Go types for them.
-`corpus/repro/cross-module-union-conflation/` pins that as a separate, still-open
-defect: it needs no ambiguous import at all — two fully-qualified references are
-enough — so no use-site ambiguity rule can reach it.
+`[E1012]` fires where a program WRITES an ambiguous type name. It did not, and
+could not, address the larger fact that the type checker had no cross-module
+identity for unions at all: `ty::sig::rewrite_alias_refs` module-qualified
+`DefKind::TypeAlias` references only (the #164 fix), and every union collapsed to
+its bare final segment, which `unify.rs` then compared as a plain string. Two
+same-named unions in two modules were therefore ONE type to the checker while
+`lower` emitted two distinct Go types for them, bridged by an `rt.Coerce` that
+SUCCEEDS (both Go interfaces carry the same method set) and delivers a value no
+`case` arm matches — `sky check` clean, `go build` clean, `sky.Unreachable(case)`
+at runtime. `corpus/repro/cross-module-union-conflation/` pinned it: it needs no
+ambiguous import at all, so no use-site ambiguity rule can reach it.
+
+**Closed 2026-08-12** by giving unions the identity aliases already had. See
+§"Nominal type identity" below.
+
+### Nominal type identity (`ty::nominal`)
+
+`ty::nominal` is the ONE answer to "are these the same type?".
+
+A nominal name is either **qualified** (`"Conflate.Alpha.Shape"` — *the `Shape`
+declared in `Conflate.Alpha`*) or **bare** (`"Shape"` — *some `Shape`, declaring
+module unknown*). Bare names never contain a `.`; module names are dotted, so the
+type name is the LAST segment. No new type was introduced, so nothing downstream
+changed representation.
+
+Where identity is established:
+
+| site | before | after |
+|---|---|---|
+| `sig::World::union_keys` | — | new: `"<module>.<name>"` for every union, built in pass 1a beside `alias_keys` |
+| `sig::record_union` | `Ty::App(bare)` | `Ty::App(union_keys' key)` — the DECLARATION half |
+| `sig::rewrite_alias_refs` | qualified `TypeAlias` only | qualifies `TypeAlias` **and** `TypeCon`, each against its own key set — the REFERENCE half |
+| `unify` | `n1 == n2` | `nominal::same(n1, n2)` |
+
+Both halves read the same `union_keys`, so a declaration and every reference to
+it agree by construction.
+
+**The rule that bounds the blast radius.** `nominal::same` treats a BARE name as
+a wildcard over its base segment. Two types differ ONLY when both are qualified,
+their bases agree, and their qualifiers differ — i.e. only when the compiler
+resolved BOTH sides, with certainty, to two different modules. Everywhere
+resolution is incomplete (an unimported type, a Go FFI type, an unchaseable
+re-export, a kernel-implicit type) the name stays bare and behaves exactly as
+before. This is deliberately the same discipline as `TypeKey::Opaque` in the
+`[E1012]` lattice: prefer a false NEGATIVE over a false REJECTION, because #164
+is what the other trade costs.
+
+**What stays bare, and why that is safe.** Builtins and kernel-implicit types
+intern into the `BUILTIN_MOD` sentinel (`ModuleId(u32::MAX)`) rather than a real
+module, and `rewrite_alias_refs` checks the sentinel before qualifying. So
+`Int`/`List`/`Dict`/`Task`/`Maybe`/`Result`/`Cmd`/`Sub`/`Decoder`/`Value` are
+never qualified — which is what keeps `ty::dictkey`'s `DICT = "Dict"`, `unify`'s
+`"List"` super-type rules and `lower`'s `"Task"`/`"Cmd"` dispatch matching. The
+bare-keyed `World::{ctor_union, union_ctors, aliases}` tables also stay bare;
+`ctor_union`/`union_ctors` are read at exactly one site (`exhaustive.rs`) and only
+as a fallback behind the already-module-correct `union_members_by_def`.
+
+**Rendering.** `Ty`'s printer strips the qualifier, so every signature, snapshot
+and oracle message is byte-identical to before. `unify` re-qualifies only when a
+mismatch's two sides share a base — the one case where the stripped form would
+print the useless ``type mismatch: `Shape` vs `Shape` ``.
+
+**Go emission needed no change.** `lower::goty::app_to_go` already resolved a
+qualified name through `nominal_by_module` and fell back to the bare final
+segment on a miss. Five `lower` sites that compared a FULL `Ty::App` name against
+a bare literal (`"Cmd"`, `"Dict"`, the Dict-key primitives, `"Task"` ×2, and
+`ty_refs_ambiguous`) were switched to compare the base segment, the pattern
+already used for `"Result"｜"Maybe"｜"Task"` nearby — otherwise a qualified name
+would have made them silently inert.
 
 ### Tests
 
