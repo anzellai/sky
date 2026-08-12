@@ -57,6 +57,23 @@ symbol = "Std.Db.findWhere"
 reason = "un-exposed from sky-stdlib/Std/Db.sky because it CONCATENATES a caller-supplied WHERE string into SQL. Audit P1-3 had already renamed the safe surface to unsafeFindWhere, which names what it is and is what a caller must reach for deliberately; findWhere was briefly re-exposed to give the kernel member a Sky signature (a coverage number), and removing it again is that security decision standing. rt.Db_findWhere survives in the runtime as an alias so already-compiled sky-out/ trees keep linking, and kernel_signature_coverage.rs keeps its allowlist row, so the member stays visible as an UNTYPED kernel qualifier rather than vanishing from every ledger."
 owner  = "anzel"
 commit = "988de75b"
+
+[[removal]]
+symbol = "Std.Markdown.allChars"
+# Accounted 2026-08-12. Two module-private helpers left and one arrived, so the
+# unfiltered stdlib denominator fell by exactly 1 (1412 -> 1411 entries,
+# 232 -> 231 hidden-by-exposing). Both departures are recorded rather than the
+# single stanza the ratchet's arithmetic would accept, because the ledger is
+# meant to say what actually left.
+reason = "deleted when minimising the coerce-floor cost of the Std.Markdown rewrite. `allChars` tested a predicate over every char of a string by first materialising it through `stringChars`, so each candidate line allocated a List String purely to answer a boolean. Superseded by `restIsAll`, an index scan that lowers to a flat TCO'd loop with no allocation — same answer, 4 fewer runtime-narrowing tokens, and a faster hot path on the line classifier. No caller outside Std.Markdown existed: the symbol was never in the module's exposing list."
+owner  = "anzel"
+commit = "2771303a"
+
+[[removal]]
+symbol = "Std.Markdown.stringChars"
+reason = "deleted with its only caller, `allChars` (see above). It existed to turn a String into a List String one grapheme at a time so a predicate could be folded over it; `restIsAll` indexes the string directly instead, so nothing needs the intermediate list. Module-private, never exposed, no remaining reference in sky-stdlib."
+owner  = "anzel"
+commit = "2771303a"
 #
 #
 # ===========================================================================

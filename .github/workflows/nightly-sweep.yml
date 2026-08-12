@@ -184,3 +184,87 @@ jobs:
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
+
+  # ── Behavioural corpus (harness tier T2) ────────────────────────────────────
+  #
+  # WHY THIS EXISTS. The T2 tier ran in NO workflow at all. `xtask corpus`
+  # appeared in no job and no script, and `harness --tier t1` cannot reach it:
+  # gate selection is exact tier equality, and the repo's only harness call was
+  # `release.yml`'s `--tier t1`.
+  #
+  # Executed by nothing, therefore: 383 assertions — 335 generated Family-S
+  # cases, the isolation gate, the witness gate, and the Live/Tui render-parity
+  # app. Among them the 15-cell `Dict` key-type x iteration-operation crossing,
+  # which exists BECAUSE #174's `Dict.foldl` panic reached a release through a
+  # corpus that did not cross those axes. The registry records a falsifying
+  # mutation proving `corpus` can fail; the proof was against a gate CI never
+  # invoked.
+  #
+  # WHY NIGHTLY AND NOT PER-PUSH — measured, after getting it wrong. It was
+  # first wired into rust-ci.yml on the estimate "274s locally, and CI wall
+  # clock is the slowest job, so it is free". That estimate was warm-cache. The
+  # real numbers: ~700s locally COLD (corpus alone 506s), and on a GitHub runner
+  # it exceeded 25 MINUTES and was killed by its own timeout. All 335 cases are
+  # `go build`-ed; that is inherently expensive on CI hardware.
+  #
+  # Per-push T1 has a 900s ceiling that `ci-green` asserts. Keeping the job
+  # there meant either blowing that budget or raising the ceiling — and raising
+  # it to fit a job I had just added is precisely the silent budget drift the
+  # assertion exists to catch. So it runs here, in the tier sized for expensive
+  # things, until it can be made to fit.
+  #
+  # HONESTLY: nightly is weaker than per-push. It is not merge-blocking, so a
+  # regression lands and is caught the next night rather than at review. That is
+  # a real gap and it is recorded as one in `.claude/AUTONOMOUS_GOAL.md`. The
+  # path to closing it is sharding — `corpus --run` has no shard or filter flag
+  # today, so partitioning the 335 cases across a matrix is a change to the
+  # gate, not to this file. It is strictly better than the status quo it
+  # replaces, which was no execution anywhere.
+  behaviour-corpus:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "behaviour-corpus"]'), inputs.only) }}
+    runs-on: ubuntu-latest
+    # Killed at 25 min on its first real run. 45 gives a cold-cache run room
+    # while staying far inside the 90-min T3 ceiling.
+    timeout-minutes: 45
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      GO_CACHE_BUDGET_MB: '6144'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-corpus-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-corpus-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+          save-if: 'false'
+      - name: Build sky binary
+        # `harness::layer2::sky_binary` resolves the compiler under test at
+        # `<repo>/sky-out/sky` and treats a missing one as a HARD ERROR, never a
+        # skip — "a gate that cannot run has not passed". Omitting this step is
+        # what made the first run report `apps-fieldbook FAIL 0/8 VACUOUS`.
+        run: |
+          source scripts/lib/cargo-target.sh
+          cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
+          install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
+          sky-out/sky --version
+      - name: 'Gate — behavioural corpus (harness tier T2: 383 assertions)'
+        # The whole tier, not named gates, so a gate ADDED at T2 later is picked
+        # up automatically instead of silently joining the set nothing runs —
+        # which is how this hole opened in the first place.
+        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t2
+      - name: Bound the Go caches before save
+        if: always()
+        run: bash scripts/ci/bound-go-cache.sh

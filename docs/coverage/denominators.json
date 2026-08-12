@@ -6,18 +6,18 @@
     "non_constructs": 44,
     "syntax_kinds": 124
   },
-  "removals_accounted": 1,
+  "removals_accounted": 3,
   "stdlib": {
     "_source": "api/symbols.json, via project::render_doc_site_export (the `sky doc --export` code path)",
-    "entries": 1773,
+    "entries": 1776,
     "explicit_exposing": {
       "entries": 1180,
       "modules": 81,
-      "unfiltered_entries": 1412
+      "unfiltered_entries": 1411
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
-      "entries": 593,
+      "entries": 596,
       "module_names": [
         "Sky.Core.Error",
         "Std.Css",
@@ -32,29 +32,29 @@
     "types": 121,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 2005,
-      "hidden_by_exposing": 232,
+      "entries": 2007,
+      "hidden_by_exposing": 231,
       "types": 128,
-      "values": 1877
+      "values": 1879
     },
-    "values": 1652
+    "values": 1655
   },
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",
     "conformance": {
-      "assertion_calls_incl_pass": 929,
-      "assertions": 922,
+      "assertion_calls_incl_pass": 941,
+      "assertions": 934,
       "by_assertion_fn": {
         "equal": 713,
         "err": 79,
         "expectErrorKind": 0,
         "fail": 24,
-        "isFalse": 25,
-        "isTrue": 58,
+        "isFalse": 29,
+        "isTrue": 66,
         "notEqual": 11,
         "ok": 12
       },
-      "cases": 925,
+      "cases": 937,
       "vacuous_pass": 7
     },
     "examples": {

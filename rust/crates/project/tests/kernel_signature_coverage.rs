@@ -49,7 +49,16 @@ fn repo_root() -> PathBuf {
 /// Advertised kernel-qualifier members with NO Sky-level signature. Each row is
 /// a program the checker cannot arity-check. **Ratchets DOWNWARD only.**
 ///
-/// 94 rows when this gate was added; 68 now. The 26 that left were declared in
+/// 94 rows when this gate was added; **69** now — 25 net departures, not 26.
+/// `Db.findWhere` was declared, then UN-declared again (`988de75b`) because
+/// typing it required exposing a raw `WHERE`-concatenating function from
+/// `Std/Db.sky` under a name that does not warn; it came back to this list and
+/// the count came back with it. This line read "68 now" until 2026-08-12, which
+/// is how a stale hand-maintained number outlives the change that invalidated
+/// it — the count below is the one the gate enforces, so trust the list, and
+/// keep this sentence honest when the list moves.
+///
+/// The 25 that left were declared in
 /// `sky-stdlib/` against the RUNTIME's real shape (verified by
 /// `kernel_signature_runtime_arity.rs`, which compares every declaration's
 /// arrow count with its `runtime-go/rt` parameter count): all 13 unsigned
@@ -318,4 +327,102 @@ fn path_join_and_safe_join_are_declared() {
              instead of a Sky [E2007]"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The DISPOSITION of the 69 that are left
+// ---------------------------------------------------------------------------
+//
+// The ratchet above stops the number GROWING. It says nothing about the number
+// ever reaching zero, and a list that only ever has to not-get-worse is how a
+// gap becomes permanent by default. `declared_stdlib_gaps.rs` solved the same
+// problem for `Std.Markdown` with a dated re-declaration; it reads its slugs out
+// of `.sky` module docstrings, so it cannot host a kernel-signature row. The
+// same discipline is applied here instead, next to the list it governs.
+//
+// A date is not a promise to implement. It is a promise to LOOK AGAIN, out
+// loud, in CI, on a day somebody is paying attention.
+
+/// When the remaining untyped kernel surface must be re-examined and either
+/// closed or re-declared with fresh evidence.
+///
+/// Set ~6 months out from 2026-08-12, matching `declared_stdlib_gaps.rs`.
+const UNTYPED_KERNEL_REVIEW_BY: &str = "2027-02-12";
+
+/// Days since the Unix epoch, UTC. Same helper shape as `declared_stdlib_gaps`.
+fn today_epoch_day() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+        / 86_400
+}
+
+/// `YYYY-MM-DD` -> epoch day. Civil-from-days (Howard Hinnant), same as the
+/// sibling gate so the two cannot disagree about what a date means.
+fn parse_ymd(s: &str) -> Option<i64> {
+    let b: Vec<&str> = s.split('-').collect();
+    if b.len() != 3 {
+        return None;
+    }
+    let y: i64 = b[0].parse().ok()?;
+    let m: i64 = b[1].parse().ok()?;
+    let d: i64 = b[2].parse().ok()?;
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// THE POINT of the date. On the day it passes, this fails and stays failing
+/// until someone either types the remaining members or writes a new date with
+/// new evidence. A malformed date is EXPIRED, deliberately — an unreadable
+/// deadline must not become an unbounded park, which is the exact failure the
+/// declaration exists to prevent.
+#[test]
+fn the_remaining_untyped_kernel_surface_is_still_within_its_review_date() {
+    let today = today_epoch_day();
+    let expired = match parse_ymd(UNTYPED_KERNEL_REVIEW_BY) {
+        Some(day) => today >= day,
+        None => true,
+    };
+    assert!(
+        !expired,
+        "the untyped kernel surface passed its review date of {UNTYPED_KERNEL_REVIEW_BY}.\n\n\
+         69 advertised kernel members across 11 pseudo-modules still have no Sky \
+         signature, so the checker cannot arity-check a call to any of them. They \
+         do NOT reach `go build` as raw Go errors — `lower::reject_over_application` \
+         catches over-application one stage later — but the diagnostic has no span \
+         and says nothing about argument or result TYPES.\n\n\
+         This is not 'not got to yet': the categories are documented above, and \
+         the largest one is members whose real type needs a checker feature the \
+         language does not have. Close what can be closed, then re-declare the \
+         rest with fresh evidence and a new date. Do NOT simply move the date."
+    );
+}
+
+/// The declaration must describe the list it governs. A re-declaration whose
+/// number has drifted from reality is how "68 now" outlived the change that
+/// made it 69 — the stale sentence this gate now prevents.
+#[test]
+fn the_declared_remaining_count_matches_the_allowlist() {
+    let declared: usize = UNTYPED_KERNEL_MEMBERS.iter().map(|(_, ms)| ms.len()).sum();
+    assert_eq!(
+        declared, 69,
+        "the untyped-kernel allowlist holds {declared} member(s), but the \
+         re-declaration above and the module docstring both say 69. Update BOTH \
+         when the list moves — a hand-maintained count that nothing checks is a \
+         number that goes stale silently, which is what happened at 988de75b."
+    );
+    let modules = UNTYPED_KERNEL_MEMBERS.len();
+    assert_eq!(
+        modules, 11,
+        "the allowlist spans {modules} pseudo-module(s), not the 11 declared above"
+    );
 }

@@ -28,8 +28,34 @@ use std::path::Path;
 use std::process::Command;
 
 pub fn run(_args: &[String], repo_root: &Path) -> i32 {
-    // nvim present? A missing nvim is a loud skip locally; CI installs it.
+    // nvim present? A missing nvim is a loud skip LOCALLY and a hard FAILURE in
+    // CI.
+    //
+    // The skip exists so a contributor without Neovim is not blocked, and the
+    // note above says "CI installs nvim explicitly, so the gate is really
+    // enforced there (never a silent skip)". That was an assumption about a
+    // workflow file, enforced by nothing in this process: if the install step is
+    // removed, renamed, or fails on a runner image change, this function returns
+    // 0 and prints SKIP, and `ci-green` reads a pass. The suite would stop
+    // running and no gate would say so — a gate that cannot fail, which is the
+    // one thing this cycle set out to remove.
+    //
+    // `CI` is set to `true` by GitHub Actions (and by every other major CI), so
+    // the environment that is supposed to enforce this now proves it did.
     if !tool_available("nvim") {
+        let in_ci = std::env::var("CI").is_ok_and(|v| !v.is_empty() && v != "false");
+        if in_ci {
+            eprintln!(
+                "LSP GATE: FAIL — `nvim` is not installed, and CI=1.\n\n\
+                 The editor-parity suite (17 symbol-class + 32 corpus cases) did \
+                 NOT run. In CI that is a failure, not a skip: the workflow is \
+                 responsible for installing Neovim, and a missing binary means \
+                 that step is gone or broken. Returning 0 here would report a \
+                 green gate for a suite that executed nothing.\n\n\
+                 Fix the workflow's Neovim install step; do not silence this."
+            );
+            return 1;
+        }
         println!(
             "LSP GATE: SKIP — `nvim` is not installed. The editor-parity \
              suite did NOT run. CI installs Neovim and enforces it; install nvim \

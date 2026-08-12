@@ -68,7 +68,17 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// tuples / lists / records / ADTs carrying strings through `size`, `toList`,
 /// `member`, `union` and `intersect`, plus two guards that de-duplication and
 /// string-free composites still behave.
-pub const CONFORMANCE_EXPECTED: u64 = 923;
+///
+/// **935 since 2026-08-12** (was 923). `UiParagraphInlineConformanceTest` adds 12
+/// cases for the paragraph-child markup class: `Ui.el` inside `Ui.paragraph` —
+/// the highlight-a-phrase pattern `paragraph`'s own docstring recommends —
+/// emitted a `<div>` inside the `<p>`, which the HTML parser hoists out, so the
+/// browser rendered a paragraph, a sibling block, and an orphaned text run. The
+/// cases assert the EMITTED MARKUP because every other gate passed on it: the
+/// broken version compiled, type-checked and ran. Seven pin the fix (tag +
+/// display, both halves), five pin what must NOT change outside a paragraph,
+/// since keying on parent context risks flattening every layout in every app.
+pub const CONFORMANCE_EXPECTED: u64 = 935;
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
