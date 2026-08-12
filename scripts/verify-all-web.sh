@@ -185,6 +185,7 @@ if [ "${SKY_VERIFY_SKIP_CONSOLE_E2E:-0}" != "1" ]; then
     ce_rc=$?
     gate_output "$ce_rc" 8 "$ce_out"
     if [ "$ce_rc" -eq 0 ]; then
+        pass=$((pass+1))
         echo "✓ console-e2e"
     else
         echo "✗ console-e2e (exit $ce_rc)"
@@ -208,6 +209,7 @@ if [ "${SKY_VERIFY_SKIP_UI_SHOWCASE:-0}" != "1" ]; then
     ui_rc=$?
     gate_output "$ui_rc" 15 "$ui_out"
     if [ "$ui_rc" -eq 0 ]; then
+        pass=$((pass+1))
         echo "✓ ui-showcase"
     else
         echo "✗ ui-showcase"
@@ -234,6 +236,7 @@ if [ "${SKY_VERIFY_SKIP_RESILIENCE:-0}" != "1" ]; then
     res_rc=$?
     gate_output "$res_rc" 4 "$res_out"
     if [ "$res_rc" -eq 0 ]; then
+        pass=$((pass+1))
         echo "✓ resilience-desync"
     else
         echo "✗ resilience-desync"
@@ -254,6 +257,7 @@ if [ "${SKY_VERIFY_SKIP_RESILIENCE:-0}" != "1" ]; then
     idle_rc=$?
     gate_output "$idle_rc" 6 "$idle_out"
     if [ "$idle_rc" -eq 0 ]; then
+        pass=$((pass+1))
         echo "✓ resilience-idle"
     else
         echo "✗ resilience-idle"
@@ -264,6 +268,11 @@ fi
 
 # The one and only verdict line, printed after EVERY gate has run. A caller may
 # grep it or read the exit status; both now agree.
+#
+# `pass` counts EVERY check, not just the examples. Only the example loop used
+# to increment it, so a fully green run printed "VERIFY: 10 pass / 0 fail" while
+# 14 checks had passed — a verdict line that undercounts its own successes
+# invites exactly the arithmetic that made "0 fail" match inside "10 fail".
 echo ""
 echo "VERIFY: $pass pass / $fail fail"
 [ ${#FAILS[@]} -eq 0 ] || echo "FAILED: ${FAILS[*]}"
