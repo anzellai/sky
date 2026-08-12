@@ -591,7 +591,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// soundness hole (see its header). The count is the two corpora summed, so a
 /// reject-corpus addition moves it — as `dict_composite_key.sky` (the `[E2008]`
 /// unsupported-`Dict`-key rejection) does here: **125**.
-pub const SHARED_WORLD_EXPECTED: u64 = 125;
+pub const SHARED_WORLD_EXPECTED: u64 = 126;
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
