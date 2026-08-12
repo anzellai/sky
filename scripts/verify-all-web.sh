@@ -36,6 +36,24 @@ bounded() {
     return $rc
 }
 
+# Print a sub-gate's captured output: a short tail when it PASSED, all of it
+# when it FAILED.
+#
+# `tail -N` on a failure is how the browser tier's first nightly run hid its own
+# evidence. The ui-showcase block's `tail -15` cut the failing-snapshot list off
+# at the top, so the report named nine snapshots out of an unknown total; the
+# resilience blocks' `tail -4` kept four Node stack frames and discarded the
+# `Error:` line above them that said what actually went wrong. A gate's failure
+# output is the whole point of running it — never truncate that.
+gate_output() { # gate_output <rc> <pass_tail_lines> <output>
+    local rc="$1" n="$2" out="$3"
+    if [ "$rc" -eq 0 ]; then
+        printf '%s\n' "$out" | tail -"$n"
+    else
+        printf '%s\n' "$out"
+    fi
+}
+
 # (example-name, scenario, port).
 #
 # Apps that hardcode port 8000 in their Sky source (05-mux-server,
@@ -71,6 +89,7 @@ FAILS=()
 for entry in "${TESTS[@]}"; do
     set -- $entry
     name=$1; scenario=$2; port=$3
+    buildlog=""   # per-iteration: never report the PREVIOUS example's build log
     # Build the app if its binary is missing OR older than the compiler under
     # test — robust to clean checkouts and to artifacts pruned by disk hygiene
     # (the example sweep normally pre-builds them; without this, a pruned
@@ -81,10 +100,38 @@ for entry in "${TESTS[@]}"; do
     # it, a binary left behind by ANY earlier compiler satisfies the existence
     # test, so the browser gate certifies the previous release's codegen and a
     # codegen regression sails through green.
+    #
+    # `sky install` FIRST for any example with external Go dependencies. Their
+    # `sky-ffi/` surface is a GENERATED build artifact and `.gitignore`s line
+    # 138 keeps it out of the repo, so on a clean checkout — which is every CI
+    # runner — `sky build` stops at
+    #   "`Github.Com.Gorilla.Mux` has no generated FFI surface … Run `sky install`"
+    # in half a second. Locally the surface is left over from an earlier sweep,
+    # so the step is invisible; on the browser tier's first nightly run
+    # 05-mux-server and 08-notes-app failed for exactly this and NOTHING else.
+    # `scripts/example-sweep.sh` has always run it under the same condition;
+    # this script was the one build site that did not.
     app="$REPO_ROOT/examples/$name/sky-out/app"
     if [ -x "$REPO_ROOT/sky-out/sky" ] && { [ ! -x "$app" ] || [ "$app" -ot "$REPO_ROOT/sky-out/sky" ]; }; then
         echo "  building $name (binary missing or older than the compiler) ..."
-        ( cd "$REPO_ROOT/examples/$name" && bounded 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky >/dev/null 2>&1 )
+        buildlog="$RESULTS_DIR/build-$name.log"
+        (
+            cd "$REPO_ROOT/examples/$name" || exit 2
+            if [ -f sky.toml ] && grep -qE '^\["?go\.dependencies"?\]' sky.toml; then
+                echo "--- sky install ---"
+                # 20 min: the same ceiling example-sweep.sh uses, for the same
+                # reason (13-skyshop introspects 76k Stripe/Firebase symbols).
+                bounded 1200 "$REPO_ROOT/sky-out/sky" install 2>&1 || exit 2
+            fi
+            echo "--- sky build ---"
+            bounded 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky 2>&1
+        ) >"$buildlog" 2>&1
+        # Deliberately NOT `|| exit`: a build failure is not the verdict here.
+        # The verdict is the browser run below, which reports "binary missing"
+        # and counts a failure — so a broken build is caught by the check that
+        # was going to run anyway, and its exit status is recorded rather than
+        # acted on twice.
+        echo "(exit $?)" >>"$buildlog"
     fi
     # Kill any process on this port pre-flight
     pid=$(lsof -ti ":$port" 2>/dev/null || true)
@@ -98,6 +145,14 @@ for entry in "${TESTS[@]}"; do
         FAILS+=("$name")
         echo "✗ $name (port $port, $scenario)"
         echo "$out" | head -3 | sed 's/^/   /'
+        # "binary missing" on its own says nothing about WHY. The build log
+        # holds the compiler's actual diagnostic (the FFI-surface error above
+        # was invisible for a whole nightly run because the build's output went
+        # to /dev/null).
+        if echo "$out" | grep -q "binary missing" && [ -s "${buildlog:-}" ]; then
+            echo "   --- build log tail ($buildlog) ---"
+            tail -20 "$buildlog" | sed 's/^/   /'
+        fi
     fi
 done
 
@@ -128,8 +183,9 @@ if [ "${SKY_VERIFY_SKIP_CONSOLE_E2E:-0}" != "1" ]; then
     # missing binary, or every assertion failing. Capture, then tail.
     ce_out=$(bounded 600 node "$REPO_ROOT/scripts/verify-console-e2e.mjs" 2>&1)
     ce_rc=$?
-    echo "$ce_out" | tail -8
+    gate_output "$ce_rc" 8 "$ce_out"
     if [ "$ce_rc" -eq 0 ]; then
+        pass=$((pass+1))
         echo "✓ console-e2e"
     else
         echo "✗ console-e2e (exit $ce_rc)"
@@ -151,8 +207,9 @@ if [ "${SKY_VERIFY_SKIP_UI_SHOWCASE:-0}" != "1" ]; then
     # 0), not the gate's — which silently swallowed real snapshot failures.
     ui_out=$(bounded 900 bash "$REPO_ROOT/scripts/verify-ui-showcase.sh" 2>&1)
     ui_rc=$?
-    echo "$ui_out" | tail -15
+    gate_output "$ui_rc" 15 "$ui_out"
     if [ "$ui_rc" -eq 0 ]; then
+        pass=$((pass+1))
         echo "✓ ui-showcase"
     else
         echo "✗ ui-showcase"
@@ -177,8 +234,9 @@ if [ "${SKY_VERIFY_SKIP_RESILIENCE:-0}" != "1" ]; then
     # full reload). This is a hard gate.
     res_out=$(bounded 300 node "$REPO_ROOT/scripts/verify-live-resilience.mjs" desync 2>&1)
     res_rc=$?
-    echo "$res_out" | tail -4
+    gate_output "$res_rc" 4 "$res_out"
     if [ "$res_rc" -eq 0 ]; then
+        pass=$((pass+1))
         echo "✓ resilience-desync"
     else
         echo "✗ resilience-desync"
@@ -197,8 +255,9 @@ if [ "${SKY_VERIFY_SKIP_RESILIENCE:-0}" != "1" ]; then
     echo "--- resilience idle-survival (~80s) ---"
     idle_out=$(bounded 300 node "$REPO_ROOT/scripts/verify-live-resilience.mjs" idle 2>&1)
     idle_rc=$?
-    echo "$idle_out" | tail -6
+    gate_output "$idle_rc" 6 "$idle_out"
     if [ "$idle_rc" -eq 0 ]; then
+        pass=$((pass+1))
         echo "✓ resilience-idle"
     else
         echo "✗ resilience-idle"
@@ -209,6 +268,11 @@ fi
 
 # The one and only verdict line, printed after EVERY gate has run. A caller may
 # grep it or read the exit status; both now agree.
+#
+# `pass` counts EVERY check, not just the examples. Only the example loop used
+# to increment it, so a fully green run printed "VERIFY: 10 pass / 0 fail" while
+# 14 checks had passed — a verdict line that undercounts its own successes
+# invites exactly the arithmetic that made "0 fail" match inside "10 fail".
 echo ""
 echo "VERIFY: $pass pass / $fail fail"
 [ ${#FAILS[@]} -eq 0 ] || echo "FAILED: ${FAILS[*]}"

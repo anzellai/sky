@@ -16,7 +16,13 @@ name: Nightly example sweep
 on:
   schedule:
     - cron: '0 6 * * *' # 06:00 UTC daily
-  workflow_dispatch: {} # manual trigger
+  workflow_dispatch: # manual trigger
+    inputs:
+      only:
+        description: 'Which job to run on a manual dispatch (the schedule always runs both)'
+        type: choice
+        default: both
+        options: [both, example-sweep, web-runtime]
 
 # Don't stack nightly runs; a newer run supersedes an in-flight one.
 concurrency:
@@ -24,7 +30,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The two jobs are independent, and each is expensive in its own way (the
+  # sweep is ~60 min, the browser tier holds ~80 s in one place by design).
+  # `inputs.only` lets a manual dispatch run just the one being worked on
+  # instead of burning the other; a scheduled run has no inputs, so
+  # `inputs.only` is empty and both conditions hold.
   example-sweep:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "example-sweep"]'), inputs.only) }}
     runs-on: ubuntu-latest
     # The one job that was already bounded. Kept at 90: a clean-slate rebuild of
     # all 55 examples INCLUDING the FFI/Std.Db ones (skyshop's cold `sky install`
@@ -104,6 +116,7 @@ jobs:
   # click-is-a-no-op, console-error, server-panic and desync/idle classes that
   # only a browser can see.
   web-runtime:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "web-runtime"]'), inputs.only) }}
     runs-on: ubuntu-latest
     # The tier measures ~10 min locally (10 checks incl. two ~80s resilience
     # holds and the console e2e). 1.5x = 15; 25 leaves room for a cold Go cache
@@ -153,6 +166,21 @@ jobs:
         # substring inside "10 fail", passing a run where every Playwright
         # check was dead.
         run: scripts/verify-all-web.sh
+      # A failed browser gate is a picture, a server log or a build log — none
+      # of which survive in the step output. The first nightly run reported
+      # "binary missing" for two examples and "N% pixels exceed" for nine
+      # snapshots, and neither the compiler diagnostic nor a single PNG left
+      # the runner, so both had to be re-derived by hand.
+      - name: Upload failure evidence (diffs, server logs, build logs)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-runtime-evidence
+          path: |
+            .skycache/ui-showcase-diffs/**
+            .skycache/verify/**
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh

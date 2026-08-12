@@ -29,7 +29,29 @@ const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, "..");
 
 const APP_DIR = resolve(REPO_ROOT, "examples/26-ui-showcase");
-const SNAP_DIR = resolve(APP_DIR, "snapshots");
+
+// Snapshot baselines are PLATFORM-KEYED, and they have to be.
+//
+// Chromium composites text with the HOST's font stack. The runner already
+// forces `font-family: monospace` for determinism, but "monospace" resolves to
+// Menlo on macOS and DejaVu Sans Mono on a Linux runner — different advance
+// widths, different hinting, different subpixel coverage. The DOM is identical
+// and 3-8 % of the pixels are not, which is 3-8x the 1 % budget.
+//
+// One shared directory therefore cannot be compared on two platforms. The
+// browser tier's first nightly run on ubuntu-latest failed nine snapshots
+// against macOS-recorded baselines with no product change behind any of them,
+// and `snapshots/README.md` had already predicted precisely that ("Linux
+// Chromium's different font stack would false-positive every baseline") — which
+// is why the gate had stayed release-only, on one developer's Mac.
+//
+// Keying the directory on `process.platform` is what lets the gate run on BOTH:
+// each platform compares against renders recorded on that platform, so a real
+// layout regression fails everywhere and a font difference fails nowhere. A
+// platform with no recorded baselines still FAILS (see `snapshot()` below) —
+// missing baselines are never self-blessed.
+const SNAP_PLATFORM = process.env.SKY_UI_SNAPSHOT_PLATFORM || process.platform;
+const SNAP_DIR = resolve(APP_DIR, "snapshots", SNAP_PLATFORM);
 const DIFF_DIR = resolve(REPO_ROOT, ".skycache/ui-showcase-diffs");
 const PORT = parseInt(process.env.SKY_UI_SHOWCASE_PORT || "8826", 10);
 const BIN = resolve(APP_DIR, "sky-out", "app");
@@ -186,6 +208,15 @@ function rgbEquals(computed, [r, g, b]) {
     return Number(m[1]) === r && Number(m[2]) === g && Number(m[3]) === b;
 }
 
+// The two full-page renders are eyeball references for a human reviewing a
+// baseline update — nothing compares them. They were written into the baseline
+// directory on EVERY run, so an ordinary verification silently rewrote two
+// tracked PNGs with whatever platform happened to be running. Outside an
+// explicit re-record they belong with the other run artifacts.
+function writeFullPage(name, buf) {
+    writeFileSync(resolve(UPDATE_BASELINE ? SNAP_DIR : DIFF_DIR, name), buf);
+}
+
 async function snapshot(page, name, sel, viewport) {
     const baselinePath = resolve(SNAP_DIR, `${name}-${viewport}.png`);
     const target = sel ? await page.locator(`[data-test-id="${sel}"]`) : page;
@@ -205,7 +236,8 @@ async function snapshot(page, name, sel, viewport) {
         fail(
             `${name}-${viewport}`,
             `no baseline at ${baselinePath} — nothing was compared. ` +
-            `Re-record deliberately with scripts/verify-ui-showcase.sh --update-baseline.`,
+            `Baselines are keyed on platform (${SNAP_PLATFORM}); re-record deliberately ` +
+            `on THIS platform with scripts/verify-ui-showcase.sh --update-baseline.`,
         );
         return;
     }
@@ -767,7 +799,7 @@ try {
         // A "page-shape" snapshot too — full page screenshot for the
         // human reviewer to eyeball.
         const fullBuf = await page.screenshot({ fullPage: true, animations: "disabled" });
-        writeFileSync(resolve(SNAP_DIR, "fullpage-desktop.png"), fullBuf);
+        writeFullPage("fullpage-desktop.png", fullBuf);
 
         await context.close();
 
@@ -844,7 +876,7 @@ try {
             ok(`mq-raw parent bg ≠ green at 375px (≥800px override correctly suppressed)`);
         }
         const mobileFull = await mp.screenshot({ fullPage: true, animations: "disabled" });
-        writeFileSync(resolve(SNAP_DIR, "fullpage-mobile.png"), mobileFull);
+        writeFullPage("fullpage-mobile.png", mobileFull);
 
         await mobileCtx.close();
     } finally {
