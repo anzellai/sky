@@ -84,3 +84,54 @@ hidden. None silently passes today.
 Every item above either CLOSED (with a falsifiable gate) or explicitly
 RE-DECLARED with evidence for why it cannot close now and a dated expiry — then
 `main` CI green, then a release tagged.
+
+---
+
+## DISPOSITIONS — recorded 2026-08-12
+
+Written after an adversarial Judge, given this file verbatim, returned
+NOT ACHIEVED on `c77b6ec5` with 11 findings. Every disposition below
+names the gate and the CI job that runs it, because "closed" here means
+*something goes red if it regresses*, not *code was written*.
+
+| # | Disposition | Gate | Runs in |
+|---|---|---|---|
+| 1 | **RE-DECLARED**, review by **2027-02-12** | `kernel_signature_coverage.rs` — exact-set ratchet + dated review test + a test asserting the declared count matches the list | `test-rest`, `macos-behaviour` |
+| 2 | **CLOSED** | lenient synthesis narrowed first, `[E1012]` pinned by `ty/tests/reject/corpus/ambiguous_type_name.sky` + census | `test-ty`, `parity-reject` |
+| 3 | **PARTIAL — five named gaps CLOSED, residual RE-DECLARED, review by 2027-02-12** | `DARK_MODULE_CEILING = 62` fail-on-increase + `ASSERTED_MODULES` exact pin | `test-rest` (structural), `behaviour-corpus` (behavioural) |
+| 4 | **CLOSED** | 5×3 `Dict` key×operation crossing, 15 manifest rows; the behavioural half now actually executes | `behaviour-corpus` (NEW — it previously ran nowhere) |
+| 5 | **CLOSED** | `EXPECTED_FILES_WITHOUT_DECLARED_CODE = 0`, three-way census, empty-corpus guard | `test-ty`, `parity-reject` |
+| 6 | **CLOSED for the corpus; count ratchet remains release-only** | 49 cases; the skip-to-green path now FAILS when `CI` is set | `lsp-fuzz` |
+| 7 | **CLOSED** (`Std.Email`) / **RE-DECLARED to 2027-02-12** (`Std.Markdown`) | 10 wire-level Go tests; `declared_stdlib_gaps.rs` with expiry | `behaviour-docs`, `macos-behaviour`, `test-rest` |
+| 8 | **CLOSED** | `the_four_uncountable_basics_are_now_counted` asserts both ends | `test-rest` |
+| 9 | **PARTIAL — CI-reachable, not merge-blocking** | `nightly-sweep.yml` `web-runtime`, verdict from exit status | nightly only |
+
+### What is honestly still open
+
+* **Item 9 is not merge-blocking and has never been green on `main`.** The
+  only green run is a `workflow_dispatch` on a feature branch. Its snapshot
+  arm also cannot see paragraph rendering: the compared snapshots target
+  `section-*` ids that the paragraph/textColumn demo does not carry, which
+  is why it could not have caught the `<div>`-inside-`<p>` defect fixed in
+  `5b62285a`. Promoting it to per-push needs its runtime to be bounded
+  first; that is a separate change, not a line in this table.
+* **Item 6's `LSP_EXPECTED = 49` anti-shrink ratchet runs only at release.**
+  The corpus is enforced per-push; a SHRINK of it is caught one tier later.
+* **Item 3's residual 62 dark modules** are ratcheted against growth, not
+  against staying at 62.
+
+### The lesson this round, recorded because it recurred
+
+Three release gates (`conformance` census, `denominators`, `coverage-ledger`)
+were red on `main` while per-push CI was green, because only `release.yml`
+runs them — the same structural shape as item 9. And the T2 tier, holding
+383 assertions including the crossing built after #174 escaped, ran in **no**
+workflow at all.
+
+Wiring T2 in closes those instances. `ci_green_needs_every_other_job_in_its_workflow`
+is what stops the next one: the fan-in's `needs` list is what makes a job
+merge-blocking, it was hand-maintained, and nothing checked it.
+
+**A tier nobody runs is indistinguishable from a tier that does not exist.**
+Before declaring any future item closed, name the workflow job that runs its
+gate, and confirm that job is in `ci-green.needs`.
