@@ -1,0 +1,221 @@
+module UiParagraphInlineConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for `Std.Ui.paragraph` child rendering — asserts the
+EMITTED MARKUP, because this defect was invisible to every gate that checks
+"builds" or "type-checks".
+
+THE BUG. `Std.Ui.paragraph`'s own docstring recommends "use `el` inside
+paragraph to highlight a word/phrase". Doing exactly that emitted:
+
+    <p style="display: block;">
+      <div style="display: flex; flex-direction: column; font-weight: 700;">Sky.Live</div>
+       — server-driven web UI
+    </p>
+
+`<div>` is flow content, and the HTML parser auto-closes an open `<p>` when it
+meets one. So the browser did NOT render the paragraph the source describes: it
+rendered a paragraph, then a sibling block, then a bare text run outside any
+paragraph. The highlighted label broke onto its own line and the text after it
+lost the paragraph's styling. Two independent faults produced it — an illegal
+TAG (`div` inside `p`) and an illegal DISPLAY (`flex` inside a text run) — so
+both halves are asserted here; fixing either alone still renders wrong.
+
+WHY MARKUP ASSERTIONS. The program compiled, type-checked, ran, and produced
+output on every gate. Nothing but the bytes of the emitted HTML can distinguish
+the broken rendering from the correct one, so this suite renders real `Element`
+trees through `Ui.layout` + `Html.render` and asserts on the resulting string.
+
+THE ACCEPT-PARITY HALF IS LOAD-BEARING. The fix keys on the PARENT context, so
+the risk is over-application: making every `el` everywhere inline would flatten
+every layout in every Sky app. The `outside a paragraph` cases below pin the
+untouched behaviour, and they are the reason this file is longer than the bug.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Ui as Ui
+import Std.Ui.Font as Font
+import Sky.Test as Test exposing (Test)
+
+
+-- ─── Render helper ─────────────────────────────────────────────────
+-- `Ui.layout` wraps its argument in a root <div>; every assertion below
+-- looks INSIDE that wrapper, so the wrapper's own `display: flex` never
+-- collides with what is being asserted.
+render : Ui.Element msg -> String
+render elem =
+    Html.render (Ui.layout [] elem)
+
+
+-- The exact pattern the `paragraph` docstring recommends, and the one
+-- that shipped broken on sky-lang.org's feature bullets.
+highlightInParagraph : Ui.Element msg
+highlightInParagraph =
+    Ui.paragraph
+        []
+        [ Ui.el [ Font.bold ] (Ui.text "Sky.Live")
+        , Ui.text " — server-driven web UI"
+        ]
+
+
+rowInParagraph : Ui.Element msg
+rowInParagraph =
+    Ui.paragraph
+        []
+        [ Ui.row [] [ Ui.text "a", Ui.text "b" ]
+        , Ui.text " tail"
+        ]
+
+
+-- Same `el`, no paragraph parent. Must be untouched by the fix.
+elInColumn : Ui.Element msg
+elInColumn =
+    Ui.column
+        []
+        [ Ui.el [ Font.bold ] (Ui.text "Sky.Live") ]
+
+
+rowInColumn : Ui.Element msg
+rowInColumn =
+    Ui.column
+        []
+        [ Ui.row [] [ Ui.text "a" ] ]
+
+
+-- A paragraph nested in a column is still a block-level <p>: the fix
+-- must not make the paragraph ITSELF inline, only its children.
+paragraphInColumn : Ui.Element msg
+paragraphInColumn =
+    Ui.column
+        []
+        [ Ui.paragraph [] [ Ui.text "body" ] ]
+
+
+linkInParagraph : Ui.Element msg
+linkInParagraph =
+    Ui.paragraph
+        []
+        [ Ui.text "see "
+        , Ui.link [] { url = "https://sky-lang.org", label = Ui.text "docs" }
+        ]
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui — paragraph children render as legal inline content"
+          [ -- ── The tag half ──────────────────────────────────────
+            Test.test
+                "el inside paragraph emits <span>, never <div>"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains "<span" (render highlightInParagraph)))
+          , Test.test
+                "el inside paragraph emits NO <div> (a <div> auto-closes the <p>)"
+                (\_ ->
+                    -- `Ui.layout`'s root wrapper is the only <div> allowed;
+                    -- the paragraph's subtree must contribute none. Asserting
+                    -- on the substring after "<p" isolates it.
+                    Test.isFalse
+                        (String.contains
+                            "<div"
+                            (afterParagraphOpen (render highlightInParagraph))))
+
+            -- ── The display half ──────────────────────────────────
+          , Test.test
+                "el inside paragraph is display: inline (not flex)"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "display: inline;"
+                            (render highlightInParagraph)))
+          , Test.test
+                "el inside paragraph carries no flex-direction"
+                (\_ ->
+                    Test.isFalse
+                        (String.contains
+                            "flex-direction"
+                            (afterParagraphOpen (render highlightInParagraph))))
+          , Test.test
+                "its own styling still lands on the inline box"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "font-weight: 700;"
+                            (render highlightInParagraph)))
+
+            -- ── A layout child keeps its layout, inline-level ──────
+          , Test.test
+                "row inside paragraph is display: inline-flex"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "display: inline-flex; flex-direction: row;"
+                            (render rowInParagraph)))
+
+            -- ── The paragraph itself is unchanged ─────────────────
+          , Test.test
+                "the <p> element itself stays display: block"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<p style=\"display: block;\""
+                            (render paragraphInColumn)))
+
+            -- ── Semantic tags still win over the span default ─────
+          , Test.test
+                "link inside paragraph is still an <a>"
+                (\_ ->
+                    Test.isTrue (String.contains "<a " (render linkInParagraph)))
+
+            -- ── ACCEPT-PARITY: nothing outside a paragraph moved ───
+          , Test.test
+                "el outside a paragraph is still a flex column <div>"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<div style=\"display: flex; flex-direction: column; font-weight: 700;\""
+                            (render elInColumn)))
+          , Test.test
+                "el outside a paragraph emits no <span>"
+                (\_ ->
+                    Test.isFalse (String.contains "<span" (render elInColumn)))
+          , Test.test
+                "row outside a paragraph is still display: flex (not inline-flex)"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "display: flex; flex-direction: row;"
+                            (render rowInColumn)))
+          , Test.test
+                "row outside a paragraph is not inline-flex"
+                (\_ ->
+                    Test.isFalse
+                        (String.contains "inline-flex" (render rowInColumn)))
+          ]
+    ]
+
+
+-- | Everything from the first `<p` onward — used by the negative
+-- assertions so `Ui.layout`'s own root <div> wrapper (which is legal and
+-- always present) cannot satisfy a "contains <div>" check and mask the
+-- defect.
+afterParagraphOpen : String -> String
+afterParagraphOpen s =
+    case String.split "<p" s of
+
+        _ :: rest ->
+            -- Re-join on the separator so a second "<p" later in the
+            -- document is preserved rather than silently dropped.
+            String.join "<p" rest
+
+        [] ->
+            -- No paragraph rendered at all: return the whole string so the
+            -- caller's assertion fails loudly rather than passing on "".
+            s
+
+
+main : Program
+main =
+    Test.runMain tests
