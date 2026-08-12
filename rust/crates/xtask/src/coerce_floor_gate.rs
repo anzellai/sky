@@ -586,8 +586,24 @@ fn diff_and_gate(
             eprintln!("  {n}: {g} -> {now}  (+{})  [silent-widening]", now - g);
         }
         eprintln!(
-            "  a codegen change emitted MORE runtime narrowing than the locked floor.\n\
-             if this widening is INTENTIONAL + justified, re-bless: \
+            "  the emitted Go carries MORE runtime narrowing than the locked floor.\n\
+             TWO different causes produce this, and they need OPPOSITE fixes — find out\n\
+             which before touching the golden:\n\
+             \x20 (1) a CODEGEN change gave up type info it used to keep. This is the one the\n\
+             \x20     gate exists for. The fix is in the compiler; the golden does not move.\n\
+             \x20 (2) a STDLIB or app SOURCE change added code, and the new code pays the same\n\
+             \x20     per-call-site kernel-ABI narrowing every existing line pays. Nothing got\n\
+             \x20     less typed — there is simply more of it. The golden moves, with a written\n\
+             \x20     justification naming what the tokens bought.\n\
+             \x20\n\
+             \x20 To tell them apart, bisect the SOURCE, not the commit: revert the suspect\n\
+             \x20 .sky file to its last-green content and re-run with `--only=<name>`. If the\n\
+             \x20 count returns to the golden, the compiler is innocent — it is (2). Confirm by\n\
+             \x20 checking WHERE the tokens landed (`-v`, and diff the emitted Go per function):\n\
+             \x20 under (2) every delta sits in a function whose source changed; under (1) they\n\
+             \x20 are scattered through functions nobody touched.\n\
+             \x20\n\
+             if the widening is (2) — INTENTIONAL + justified — re-bless: \
              `cargo run -p xtask -- coerce-floor --bless`"
         );
     }

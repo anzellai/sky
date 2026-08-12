@@ -1394,6 +1394,10 @@ fn write_embedded_migrations(example_dir: &Path, out_dir: &Path) -> Result<(), S
 /// always skipped.
 fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
+    // Everything this call materialises at this level. Anything ELSE already in
+    // `dst` is a leftover from a previous build with a different compiler and
+    // gets pruned below.
+    let mut produced: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let path = entry.path();
@@ -1409,10 +1413,56 @@ fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Resu
                 continue;
             }
             materialise_rt(&path, &dst.join(&name_s), console_needed)?;
+            produced.insert(name_s);
         } else if name_s.ends_with("_test.go") {
             continue;
         } else if name_s.ends_with(".go") {
             std::fs::copy(&path, dst.join(&name_s))?;
+            produced.insert(name_s);
+        }
+    }
+    prune_stale_rt(dst, &produced)?;
+    Ok(())
+}
+
+/// Delete anything in a materialised `rt/` directory that this build did not
+/// just write.
+///
+/// Without this, upgrading the compiler across a release that REMOVES a runtime
+/// file leaves the old `.go` behind in an existing `sky-out/rt/`, and `go build`
+/// then compiles a file whose helpers no longer exist:
+///
+///   rt/dict_key_display.go:31:30: undefined: dictKeyTagByte
+///
+/// The error names a file the user never wrote, about symbols that are correctly
+/// absent, and it survives every rebuild until someone thinks to wipe `sky-out/`
+/// — so the failure looks like a compiler bug rather than a stale artefact. The
+/// examples are documented to build from a wiped slate, which is exactly why
+/// nothing caught this: the wipe hid it.
+///
+/// Safe against the FFI wrappers that also live in `rt/`: `materialise_rt` runs
+/// inside `write_out`, and `materialise_ffi_bindings` re-copies every binding
+/// the program actually calls immediately afterwards in the same build. A
+/// binding pruned here is either rewritten seconds later or genuinely no longer
+/// used (`sky remove`), which is the case this also fixes.
+fn prune_stale_rt(
+    dst: &Path,
+    produced: &std::collections::BTreeSet<String>,
+) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dst)? {
+        let entry = entry?;
+        let name_s = entry.file_name().to_string_lossy().to_string();
+        if produced.contains(&name_s) {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else if name_s.ends_with(".go") {
+            // Only Go sources are ours to remove. A non-`.go` file in here was
+            // not put there by the compiler, so leave it rather than deleting
+            // something whose owner we cannot identify.
+            std::fs::remove_file(&path)?;
         }
     }
     Ok(())
@@ -1942,5 +1992,149 @@ mod sky_toml_tests {
             cfg.extra_defaults
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod materialise_rt_tests {
+    use super::materialise_rt;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("sky-rtmat-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn write(p: &Path, name: &str, body: &str) {
+        fs::create_dir_all(p).unwrap();
+        fs::write(p.join(name), body).unwrap();
+    }
+
+    /// The upgrade path: a release REMOVES a runtime file, and an existing
+    /// `sky-out/` must not keep compiling the old one.
+    ///
+    /// Before the prune, `dst` kept `dropped.go` forever and `go build` failed
+    /// on symbols that were correctly deleted — an error naming a file the user
+    /// never wrote, surviving every rebuild until someone wiped `sky-out/`.
+    #[test]
+    fn a_runtime_file_deleted_upstream_is_removed_from_an_existing_out_dir() {
+        let root = scratch("del");
+        let src = root.join("src");
+        let dst = root.join("dst");
+
+        write(&src, "kept.go", "package rt\n");
+        write(&src, "dropped.go", "package rt\nfunc gone() {}\n");
+        materialise_rt(&src, &dst, false).unwrap();
+        assert!(dst.join("dropped.go").exists(), "setup: first build copies it");
+
+        // The upgrade: upstream no longer ships `dropped.go`.
+        fs::remove_file(src.join("dropped.go")).unwrap();
+        write(&src, "added.go", "package rt\n");
+        materialise_rt(&src, &dst, false).unwrap();
+
+        assert!(dst.join("kept.go").exists(), "an unchanged file must survive");
+        assert!(dst.join("added.go").exists(), "a new file must appear");
+        assert!(
+            !dst.join("dropped.go").exists(),
+            "STALE RUNTIME FILE: `dropped.go` no longer exists upstream but was \
+             left in the materialised rt/, so `go build` would compile it and \
+             fail on helpers that are correctly gone"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Same hazard one level down — `rt/` has subpackages.
+    #[test]
+    fn a_deleted_file_in_a_subpackage_is_also_removed() {
+        let root = scratch("sub");
+        let src = root.join("src");
+        let dst = root.join("dst");
+
+        write(&src.join("sub"), "a.go", "package sub\n");
+        write(&src.join("sub"), "b.go", "package sub\n");
+        materialise_rt(&src, &dst, false).unwrap();
+
+        fs::remove_file(src.join("sub").join("b.go")).unwrap();
+        materialise_rt(&src, &dst, false).unwrap();
+
+        assert!(dst.join("sub").join("a.go").exists());
+        assert!(
+            !dst.join("sub").join("b.go").exists(),
+            "the prune must recurse; a subpackage is where console_app lives"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A whole subpackage that stops being materialised must not linger.
+    /// `console_app` is skipped when the program does not blank-import it, so a
+    /// CLI rebuilt from a Live app's out-dir would otherwise keep the console
+    /// package sitting in its tree.
+    #[test]
+    fn a_subpackage_no_longer_materialised_is_removed() {
+        let root = scratch("consoleapp");
+        let src = root.join("src");
+        let dst = root.join("dst");
+
+        write(&src, "rt.go", "package rt\n");
+        write(&src.join("console_app"), "app.go", "package console_app\n");
+
+        materialise_rt(&src, &dst, true).unwrap();
+        assert!(dst.join("console_app").join("app.go").exists());
+
+        // Rebuilt as a program that does not need the console.
+        materialise_rt(&src, &dst, false).unwrap();
+        assert!(dst.join("rt.go").exists());
+        assert!(
+            !dst.join("console_app").exists(),
+            "console_app was skipped this build, so the stale copy must go"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The prune must not reach past what the compiler owns. Only `.go` files
+    /// are removed; anything else in the directory has an owner we cannot
+    /// identify, and deleting a user's file to fix our own staleness would be a
+    /// far worse bug than the one being fixed.
+    #[test]
+    fn a_non_go_file_is_left_alone() {
+        let root = scratch("nongo");
+        let src = root.join("src");
+        let dst = root.join("dst");
+
+        write(&src, "rt.go", "package rt\n");
+        materialise_rt(&src, &dst, false).unwrap();
+        write(&dst, "notes.txt", "not ours\n");
+
+        materialise_rt(&src, &dst, false).unwrap();
+        assert!(
+            dst.join("notes.txt").exists(),
+            "only .go files are the compiler's to delete"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// `_test.go` files are never copied, so they must never be "pruned" in a
+    /// way that makes the copy step and the prune step disagree.
+    #[test]
+    fn test_files_are_neither_copied_nor_resurrected() {
+        let root = scratch("tests");
+        let src = root.join("src");
+        let dst = root.join("dst");
+
+        write(&src, "rt.go", "package rt\n");
+        write(&src, "rt_test.go", "package rt\n");
+        materialise_rt(&src, &dst, false).unwrap();
+
+        assert!(dst.join("rt.go").exists());
+        assert!(!dst.join("rt_test.go").exists(), "tests are stripped");
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

@@ -318,11 +318,30 @@ pub fn scratch_root(tag: &str) -> PathBuf {
 }
 
 /// Locate the release `sky` binary.
+///
+/// **`CARGO_TARGET_DIR` is honoured FIRST, and that is not a convenience.**
+/// `rust/target/` is where cargo writes only when nothing redirects it. When
+/// `CARGO_TARGET_DIR` is set — a worktree isolating its build so two checkouts
+/// do not clobber each other, which is the normal way to work on this repo —
+/// `cargo build -p sky` writes THERE and `rust/target/release/sky` keeps
+/// whatever stale binary it last held. Hard-coding `rust/target` therefore does
+/// not fail; it silently compiles the corpus with a *different compiler than the
+/// one under test*, and reports the verdict as if it were this tree's.
+///
+/// Measured, not hypothetical: a run against a 4-hour-stale binary reported
+/// `stdlib_edge` 2 RED with `Std.Markdown` rendering `> quote` and `------`
+/// literally — the behaviour of a stdlib revision that had already been
+/// rewritten on disk. The source said one thing and the gate said another, and
+/// the gate was reading an artefact. Re-run with the tree's own binary: 335/335
+/// green. A gate that can silently test the wrong binary can just as easily
+/// report PASS for a tree that is broken.
 pub fn sky_binary(root: &Path) -> Option<PathBuf> {
-    let candidates = [
-        root.join("rust/target/release/sky"),
-        root.join("sky-out/sky"),
-    ];
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(target) = std::env::var_os("CARGO_TARGET_DIR") {
+        candidates.push(PathBuf::from(target).join("release/sky"));
+    }
+    candidates.push(root.join("rust/target/release/sky"));
+    candidates.push(root.join("sky-out/sky"));
     candidates.into_iter().find(|p| p.exists())
 }
 
@@ -336,6 +355,26 @@ pub fn run_cases(root: &Path, cases: &[GenCase], scratch: &Path) -> Vec<CaseResu
         );
         return Vec::new();
     };
+
+    // Which binary produced this verdict, and how old is it. Printed ALWAYS, not
+    // only on failure: the run that motivated this line looked entirely normal —
+    // it named no path, and its 2 REDs described a stdlib revision that no longer
+    // existed on disk. An age in the header turns "the gate disagrees with the
+    // source" into a one-glance diagnosis instead of an investigation.
+    let age = std::fs::metadata(&sky)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| {
+            let mins = d.as_secs() / 60;
+            if mins >= 60 {
+                format!("{}h{}m old", mins / 60, mins % 60)
+            } else {
+                format!("{mins}m old")
+            }
+        })
+        .unwrap_or_else(|| "age unknown".to_string());
+    eprintln!("  compiler under test: {} ({age})", sky.display());
 
     let _ = std::fs::remove_dir_all(scratch);
     let _ = std::fs::create_dir_all(scratch);

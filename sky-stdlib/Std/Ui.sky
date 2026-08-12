@@ -1786,11 +1786,12 @@ renderElement ctx extraAttrs elem =
         Node desc attrs children ->
             -- Pick a semantic HTML tag from the Description (see
             -- `tagForDescription`) — falls back to <div> when the
-            -- element has no Description attached. Region.* helpers
-            -- attach AttrDescribe to control this; we honour the
-            -- *first* AttrDescribe encountered.
+            -- element has no Description attached, or <span> when the
+            -- parent is a paragraph (see `defaultTagIn`). Region.*
+            -- helpers attach AttrDescribe to control this; we honour
+            -- the *first* AttrDescribe encountered.
             let
-                chosenTag = pickSemanticTag "div" attrs
+                chosenTag = pickSemanticTag (defaultTagIn ctx) attrs
             in
                 renderNodeAs chosenTag ctx extraAttrs attrs children
 
@@ -1820,6 +1821,28 @@ pickSemanticTag defaultTag attrs =
 
         _ :: rest ->
             pickSemanticTag defaultTag rest
+
+
+-- The fallback tag for a generic `Node` (`Ui.el`) given the context it
+-- is being rendered INTO.
+--
+-- Inside a paragraph the fallback must be `<span>`, not `<div>`: `<div>`
+-- is flow content and the HTML parser auto-closes an open `<p>` when it
+-- meets one. `Ui.paragraph [] [ Ui.el [ Font.bold ] (Ui.text "Sky.Live")
+-- , Ui.text " — web UI" ]` — the highlight-a-phrase pattern this
+-- module's `paragraph` docstring recommends — therefore parsed as a
+-- paragraph, then a sibling block, then a bare text run: the label broke
+-- onto its own line and the trailing text lost the paragraph's
+-- formatting entirely. `<span>` is phrasing content and nests legally.
+defaultTagIn : LayoutContext -> String
+defaultTagIn ctx =
+    case ctx of
+
+        AsParagraph ->
+            "span"
+
+        _ ->
+            "div"
 
 
 -- Map a Description to the semantically-correct HTML element name.
@@ -2277,6 +2300,14 @@ dispatchTag tag attrs children =
     else if tag == "section" then
         Html.section attrs children
 
+    else if tag == "span" then
+        -- Reached via `defaultTagIn AsParagraph`. Without this branch
+        -- the fallback below silently returns a <div>, which is the
+        -- one tag that must never appear inside a <p> — so the
+        -- paragraph-inline fix would look applied (the style says
+        -- `display: inline`) while the markup stayed invalid.
+        Html.span attrs children
+
     else if tag == "nav" then
         Html.nav attrs children
 
@@ -2473,10 +2504,10 @@ buildStyleString emitDisplay parentCtx myCtx attrs =
                 ""
 
             else if gridOn then
-                "display: grid;" ++ findGridTemplate attrs
+                gridDisplayIn parentCtx ++ findGridTemplate attrs
 
             else
-                displayFor myCtx
+                displayIn parentCtx myCtx
         wrapPart =
             if not gridOn && hasMarker "__wrap" attrs then
                 " flex-wrap: wrap;"
@@ -2633,6 +2664,60 @@ joinWithPipe parts =
 
         x :: rest ->
             x ++ "|" ++ joinWithPipe rest
+
+
+-- `displayFor` picks the box type from the element's OWN context. That
+-- is right everywhere except inside a paragraph, where a block-level box
+-- would interrupt the text run it is supposed to sit in. `displayIn`
+-- adds the parent to the decision: within a paragraph every child
+-- becomes an inline-level box, so a highlighted phrase wraps with the
+-- sentence instead of splitting it. Pairs with `defaultTagIn`, which
+-- keeps the TAG legal inside `<p>`; both halves are needed, since an
+-- inline `<div>` is still auto-closed by the parser and a `<span>` with
+-- `display: flex` still breaks the flow.
+displayIn : LayoutContext -> LayoutContext -> String
+displayIn parentCtx myCtx =
+    case parentCtx of
+
+        AsParagraph ->
+            case myCtx of
+
+                AsRow ->
+                    "display: inline-flex; flex-direction: row;"
+
+                AsColumn ->
+                    "display: inline-flex; flex-direction: column;"
+
+                AsTextColumn ->
+                    "display: inline-flex; flex-direction: column;"
+
+                AsEl ->
+                    -- A plain `el` carries no layout of its own, so
+                    -- `inline` (not `inline-block`) lets a long
+                    -- highlighted phrase wrap across lines like text.
+                    "display: inline;"
+
+                AsParagraph ->
+                    -- A nested paragraph is not expressible in HTML;
+                    -- leave it block so the mistake stays visible
+                    -- rather than silently rendering as a text run.
+                    "display: block;"
+
+        _ ->
+            displayFor myCtx
+
+
+-- `display: grid` is block-level; its inline-level counterpart is
+-- `inline-grid`. Same reasoning as `displayIn`.
+gridDisplayIn : LayoutContext -> String
+gridDisplayIn parentCtx =
+    case parentCtx of
+
+        AsParagraph ->
+            "display: inline-grid;"
+
+        _ ->
+            "display: grid;"
 
 
 displayFor : LayoutContext -> String
