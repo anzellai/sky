@@ -78,3 +78,82 @@ fn every_workflow_declares_jobs_with_steps() {
         }
     }
 }
+
+/// The fan-in must actually fan in.
+///
+/// `ci-green` is the single required status check: branch protection keys on it,
+/// and it asserts every job in its `needs` succeeded. A job that is NOT in that
+/// list still runs and still shows a red X on the run — but it does not block a
+/// merge, because the required check went green without it.
+///
+/// So the `needs` list is load-bearing, and it is hand-maintained. Adding a job
+/// and forgetting the one-line `needs` entry produces a gate that reports and
+/// enforces nothing, which is indistinguishable from the failure this whole
+/// cycle was opened to remove.
+///
+/// This is the general form of a hole found on 2026-08-12: the harness `T2`
+/// tier — 383 behavioural assertions including the `Dict` key×operation
+/// crossing built after #174 escaped — was in no workflow at all. Wiring it in
+/// fixed that instance; this test is what stops the next one, one layer up.
+#[test]
+fn ci_green_needs_every_other_job_in_its_workflow() {
+    let path = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/workflows/rust-ci.yml"
+    ));
+    let text = std::fs::read_to_string(&path).expect("read rust-ci.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("rust-ci.yml parses");
+    let jobs = doc.get("jobs").and_then(|j| j.as_mapping()).expect("`jobs` mapping");
+
+    let all: Vec<String> = jobs
+        .keys()
+        .filter_map(|k| k.as_str())
+        .filter(|n| *n != "ci-green")
+        .map(str::to_string)
+        .collect();
+    assert!(
+        all.len() > 5,
+        "only {} job(s) found besides ci-green — the parse is wrong, and a test \
+         that inspects nothing passes silently",
+        all.len()
+    );
+
+    let needs = jobs
+        .get(serde_yaml::Value::from("ci-green"))
+        .and_then(|g| g.get("needs"))
+        .expect("ci-green declares `needs`");
+    let declared: Vec<String> = match needs {
+        serde_yaml::Value::Sequence(s) => {
+            s.iter().filter_map(|v| v.as_str()).map(str::to_string).collect()
+        }
+        serde_yaml::Value::String(s) => vec![s.clone()],
+        other => panic!("ci-green `needs` is neither a list nor a string: {other:?}"),
+    };
+
+    let missing: Vec<&String> = all.iter().filter(|j| !declared.contains(j)).collect();
+    assert!(
+        missing.is_empty(),
+        "job(s) in rust-ci.yml are NOT in `ci-green.needs`, so they do not block a \
+         merge — the required check can go green while they are red:\n  {}\n\
+         Add each to the `needs:` list.",
+        missing
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+
+    // The inverse: a `needs` entry naming a job that no longer exists makes the
+    // whole fan-in job fail to schedule, which branch protection sees as a
+    // missing check rather than a failure.
+    let phantom: Vec<&String> = declared.iter().filter(|d| !all.contains(d)).collect();
+    assert!(
+        phantom.is_empty(),
+        "ci-green `needs` names job(s) that do not exist in rust-ci.yml:\n  {}",
+        phantom
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}

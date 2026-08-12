@@ -186,7 +186,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 923,
+      "expected_assertions": 935,
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
       "surfaces": [
@@ -500,7 +500,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1773,
+    "stdlib_entries": 1776,
     "stdlib_modules": 87,
     "surfaces_covered": 127,
     "surfaces_covered_pct": 90.1,
@@ -7432,6 +7432,11 @@
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -7518,6 +7523,11 @@
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 3
@@ -9282,6 +9292,11 @@
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -9343,6 +9358,11 @@
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 3
@@ -9834,6 +9854,11 @@
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -9895,6 +9920,11 @@
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 3
@@ -11253,7 +11283,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 127,
+          "count": 130,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -11295,6 +11325,7 @@
             "collectStyle",
             "colorCss",
             "customRangeQuery",
+            "defaultTagIn",
             "descComplementary",
             "descContentInfo",
             "descLabel",
@@ -11303,6 +11334,7 @@
             "descNavigation",
             "dispatchTag",
             "displayFor",
+            "displayIn",
             "elementHasMainAxisFill",
             "elementText",
             "encodeAnimationEntry",
@@ -11325,6 +11357,7 @@
             "fontWeight",
             "fontWordSpacing",
             "fullHd",
+            "gridDisplayIn",
             "gridMarker",
             "gridTracksRaw",
             "hasExplicitHeight",
@@ -11526,8 +11559,8 @@
           ]
         }
       },
-      "count": 696,
-      "pct_of_denominator": 39.3
+      "count": 699,
+      "pct_of_denominator": 39.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -12373,7 +12406,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 127,
+          "count": 130,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -12415,6 +12448,7 @@
             "collectStyle",
             "colorCss",
             "customRangeQuery",
+            "defaultTagIn",
             "descComplementary",
             "descContentInfo",
             "descLabel",
@@ -12423,6 +12457,7 @@
             "descNavigation",
             "dispatchTag",
             "displayFor",
+            "displayIn",
             "elementHasMainAxisFill",
             "elementText",
             "encodeAnimationEntry",
@@ -12445,6 +12480,7 @@
             "fontWeight",
             "fontWordSpacing",
             "fullHd",
+            "gridDisplayIn",
             "gridMarker",
             "gridTracksRaw",
             "hasExplicitHeight",
@@ -12647,8 +12683,8 @@
           ]
         }
       },
-      "count": 775,
-      "pct_of_denominator": 43.7
+      "count": 778,
+      "pct_of_denominator": 43.8
     }
   },
   "units": [
@@ -13734,12 +13770,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 31,
+      "modules_imported": 34,
       "path": "tests/conformance",
-      "refs_generous": 390,
-      "refs_qualified": 384,
+      "refs_generous": 401,
+      "refs_qualified": 395,
       "role": "Conformance",
-      "sky_files": 22,
+      "sky_files": 23,
       "sky_toml_sections": []
     }
   ]
