@@ -59,7 +59,16 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// `DbSchemaConformanceTest` (+76, every `Std.Db.Schema` constructor/modifier
 /// plus the `toProject` encoding). `scripts/conformance.sh` globs
 /// `tests/*Test.sky`, so both are discovered by the existing gate.
-pub const CONFORMANCE_EXPECTED: u64 = 910;
+///
+/// **923 since 2026-08-12** (was 910). `DictSetConformanceTest` gained 13 cases
+/// for the `Set` element-collision class: `SkySet` keyed its backing map on
+/// `fmt.Sprintf("%v", element)`, which is not injective on composites, so
+/// `Set.fromList [ ( "a b", "c" ), ( "a", "b c" ) ]` returned a set of size ONE
+/// and one element of the user's data was silently gone. The new cases cover
+/// tuples / lists / records / ADTs carrying strings through `size`, `toList`,
+/// `member`, `union` and `intersect`, plus two guards that de-duplication and
+/// string-free composites still behave.
+pub const CONFORMANCE_EXPECTED: u64 = 923;
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
