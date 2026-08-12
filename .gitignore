@@ -7,6 +7,10 @@ dist/
 sky-out/
 
 # Dependencies
+# Both forms: the bare name catches a SYMLINK named node_modules, which the
+# trailing-slash pattern (a directory match) lets straight through — that is how
+# a symlink to one developer's absolute path reached the published repo.
+node_modules
 node_modules/
 
 # Sky compiler cache and deps (all projects including examples)
