@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -219,14 +220,11 @@ func sendResend(apiKey string, m emailMsg) any {
 		body["reply_to"] = m.ReplyTo
 	}
 	if len(m.Attachments) > 0 {
-		atts := make([]map[string]any, 0, len(m.Attachments))
-		for _, a := range m.Attachments {
-			atts = append(atts, map[string]any{
-				"filename": a.Filename,
-				"content":  []byte(a.Content),
-			})
-		}
-		body["attachments"] = atts
+		// `content_type` was missing, so Resend had to sniff the bytes and a
+		// PDF could arrive as application/octet-stream. The base64 body is
+		// shared with the other providers via `emailAttachmentsJSON`; Resend
+		// takes no `disposition`.
+		body["attachments"] = emailAttachmentsJSON(m.Attachments, "content_type", "")
 	}
 	resp, err := emailDoJSON("POST", emailEndpoint("resend", "https://api.resend.com/emails"),
 		map[string]string{
@@ -276,6 +274,12 @@ func sendSendGrid(apiKey string, m emailMsg) any {
 	if m.ReplyTo != "" {
 		body["reply_to"] = map[string]string{"email": m.ReplyTo}
 	}
+	if len(m.Attachments) > 0 {
+		// There was no `attachments` key here at all — the field was decoded
+		// for every provider and read by one. SendGrid wants base64 `content`,
+		// the MIME type under `type`, and an explicit `disposition`.
+		body["attachments"] = emailAttachmentsJSON(m.Attachments, "type", "attachment")
+	}
 	_, err := emailDoJSON("POST", emailEndpoint("sendgrid", "https://api.sendgrid.com/v3/mail/send"),
 		map[string]string{
 			"Authorization": "Bearer " + apiKey,
@@ -310,19 +314,32 @@ func sendSes(cfgArg any, m emailMsg) any {
 		"Destination": map[string]any{
 			"ToAddresses": m.To,
 		},
-		"Content": map[string]any{
+	}
+	if len(m.Attachments) > 0 {
+		// SES v2's `Content.Simple` has no attachment field, so this used to
+		// drop every attachment silently. `Content.Raw` takes a base64 MIME
+		// message — the SAME bytes SMTP sends, so the two transports cannot
+		// drift apart in what they carry.
+		body["Content"] = map[string]any{
+			"Raw": map[string]any{
+				"Data": base64.StdEncoding.EncodeToString(buildEmailMIME(m)),
+			},
+		}
+	} else {
+		content := map[string]any{
 			"Simple": map[string]any{
 				"Subject": map[string]any{"Data": m.Subject, "Charset": "UTF-8"},
 				"Body": map[string]any{
 					"Text": map[string]any{"Data": m.TextBody, "Charset": "UTF-8"},
 				},
 			},
-		},
-	}
-	if m.HtmlBody != "" {
-		simple := body["Content"].(map[string]any)["Simple"].(map[string]any)
-		bodyMap := simple["Body"].(map[string]any)
-		bodyMap["Html"] = map[string]any{"Data": m.HtmlBody, "Charset": "UTF-8"}
+		}
+		if m.HtmlBody != "" {
+			simple := content["Simple"].(map[string]any)
+			bodyMap := simple["Body"].(map[string]any)
+			bodyMap["Html"] = map[string]any{"Data": m.HtmlBody, "Charset": "UTF-8"}
+		}
+		body["Content"] = content
 	}
 	if len(m.Cc) > 0 {
 		body["Destination"].(map[string]any)["CcAddresses"] = m.Cc
@@ -417,26 +434,15 @@ func sendSmtp(cfgArg any, m emailMsg) any {
 	recipients = append(recipients, m.Cc...)
 	recipients = append(recipients, m.Bcc...)
 
-	headers := []string{
-		"From: " + m.From,
-		"To: " + strings.Join(m.To, ", "),
-	}
-	if len(m.Cc) > 0 {
-		headers = append(headers, "Cc: "+strings.Join(m.Cc, ", "))
-	}
-	if m.ReplyTo != "" {
-		headers = append(headers, "Reply-To: "+m.ReplyTo)
-	}
-	headers = append(headers, "Subject: "+m.Subject)
-	bodyText := m.TextBody
-	if bodyText == "" && m.HtmlBody != "" {
-		headers = append(headers, "MIME-Version: 1.0")
-		headers = append(headers, "Content-Type: text/html; charset=UTF-8")
-		bodyText = m.HtmlBody
-	}
-	wire := strings.Join(headers, "\r\n") + "\r\n\r\n" + bodyText
+	// The whole message — headers, both bodies, every attachment — is built by
+	// `buildEmailMIME` (email_mime.go). This function used to assemble the wire
+	// inline and drop three things while doing it: every ATTACHMENT (the field
+	// was decoded and then never read), the HTML body whenever a text body was
+	// also set, and any header safety — `"Subject: " + m.Subject` let a CRLF in
+	// the subject append arbitrary headers.
+	wire := buildEmailMIME(m)
 
-	if err := smtp.SendMail(addr, auth, m.From, recipients, []byte(wire)); err != nil {
+	if err := smtp.SendMail(addr, auth, m.From, recipients, wire); err != nil {
 		return Err[any, any](ErrNetwork("email.send/Smtp: " + err.Error()))
 	}
 	return Ok[any, any]("smtp-" + emailGenID())

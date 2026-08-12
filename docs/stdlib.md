@@ -952,6 +952,13 @@ Email.send provider msg     -- Task Error String (provider message ID)
 `SKY_EMAIL_ENDPOINT_<PROVIDER>` (UPPERCASE) overrides the URL when
 pointing at a local mock.
 
+**Attachments** are delivered by all four providers. `withAttachment` adds one;
+SMTP and SES send a `multipart/mixed` MIME message (base64, so arbitrary bytes
+survive), Resend and SendGrid send the provider's own base64 attachment array.
+An attachment with no `mimeType` goes out as `application/octet-stream`. A
+message carrying BOTH `withTextBody` and `withHtmlBody` is sent as
+`multipart/alternative` — both bodies reach the recipient, and the client picks.
+
 ### `Std.Compression` — gzip + zstd
 
 ```elm

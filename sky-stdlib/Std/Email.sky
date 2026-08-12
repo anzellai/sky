@@ -152,6 +152,12 @@ withHtmlBody h msg =
 
 
 -- | Append one attachment.  Call repeatedly for multiple files.
+--
+-- Delivered by every provider: SMTP and SES send a `multipart/mixed`
+-- MIME message (base64, so arbitrary bytes survive), Resend and
+-- SendGrid send the provider's own base64 attachment array.  An
+-- attachment whose `mimeType` is `""` is sent as
+-- `application/octet-stream`.
 withAttachment : Attachment -> EmailMessage -> EmailMessage
 withAttachment att msg =
     { msg | attachments = msg.attachments ++ [ att ] }

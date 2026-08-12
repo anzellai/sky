@@ -166,13 +166,28 @@ running the Postgres arm twice in a row.
 
 #### What member H does NOT cover
 
-`Std.Email.send`'s wire behaviour. The gate asserts composition — every builder,
-every field, attachment append order — but not the SMTP bytes, MIME structure,
-or SES SigV4 signing, which live entirely in Go and need a live transport. Worth
-recording: `sendSmtp` reads `m.Attachments` and **never encodes them**, so an
-attachment added through `withAttachment` is silently dropped on the SMTP path
-while the HTTP providers send it. That is an unasserted, unfixed gap, not a
-covered one.
+`Std.Email.send`'s SES SigV4 signing, which needs live AWS credentials. The
+member itself asserts composition only — every builder, every field, attachment
+append order — not the bytes on the wire.
+
+This paragraph used to record an unfixed gap: that `sendSmtp` never encoded
+`m.Attachments`, so an attachment added through `withAttachment` was silently
+dropped on the SMTP path "while the HTTP providers send it". Both halves were
+wrong in the user's favour and against it: `sendSmtp` never even referenced the
+field (the decode happens in `readEmailMessage`), and of the three HTTP
+providers only Resend sent attachments — SendGrid had no `attachments` key and
+SES used `Content.Simple`, which cannot carry one. Three of four transports
+dropped them.
+
+That is now **closed and covered**, not by this member but by wire-level Go
+tests in `runtime-go/rt/email_attachment_test.go`: a fake SMTP server captures
+the DATA payload and the message is parsed back with `net/mail` +
+`mime/multipart`, and each HTTP provider's request body is captured by an
+`httptest` server through `SKY_EMAIL_ENDPOINT_<PROVIDER>`. The attachment bytes
+are asserted to round-trip, including a payload containing a CRLF, a lone `.`
+and a non-ASCII byte. The same tests pin two defects found alongside it: a
+message with BOTH a text and an HTML body sent only the text over SMTP, and a
+CRLF in the subject injected arbitrary headers (a `Bcc:` to an attacker).
 
 ### Why Postgres is the point of member A
 
