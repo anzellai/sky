@@ -12,6 +12,13 @@ name: Record ui-showcase snapshot baselines
 # It stops at "upload an artifact" on purpose. Re-recording a baseline is the one
 # operation that can turn a real Std.Ui regression green, so it stays a
 # deliberate human act: download, eyeball against the current set, then commit.
+#
+# NOTE: GitHub only offers `workflow_dispatch` for a workflow that exists on the
+# DEFAULT branch, so this is dispatchable once it has merged, not from the branch
+# that adds it. Until then the same renders come out of `web-runtime`'s
+# `web-runtime-evidence` artifact — a run with no baselines for its platform
+# writes every render to .skycache/ui-showcase-diffs/ as `<name>-current.png`,
+# which is how the first Linux set was recorded.
 
 on:
   workflow_dispatch:
