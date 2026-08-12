@@ -6,13 +6,19 @@
 // go.mod indirect via the OTLP stack). TTL is enforced lazily on
 // `get`: an expired entry is treated as a miss + removed.
 //
-// Keys are stringified via fmt.%v — the Sky-side surface is
-// parametric `Cache k v`, but runtime needs comparable keys, so
-// k must be displayable (typical: String / Int).
+// The Sky-side surface is parametric `Cache k v` but the runtime needs a
+// comparable key, so a key is stringified on the way in. That used to be
+// `fmt.Sprintf("%v", key)`, which is not injective on composites: a `put` under
+// `( "a b", "c" )` was readable under `( "a", "b c" )`, a second `put` silently
+// overwrote the first, and a `remove` of one evicted the other. Nothing escapes
+// with the wrong TYPE — the stored value is returned as-is — but the caller got
+// a value that was never stored under the key it asked for. Keys now go through
+// `identityKey` (`identity_key.go`), which is injective. A cache key is never
+// read back, so unlike a `Dict` key it needs no decode and no `[E2008]`-style
+// check-time restriction.
 package rt
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -89,7 +95,7 @@ func Cache_get(idArg, keyArg any) any {
 		if h == nil {
 			return Err[any, any](ErrInvalidInput("cache.get: cache not found"))
 		}
-		k := fmt.Sprintf("%v", keyArg)
+		k := identityKey(keyArg)
 		entry, ok := h.lru.Get(k)
 		if !ok {
 			h.misses.Add(1)
@@ -115,7 +121,7 @@ func Cache_put(idArg, keyArg, valueArg any) any {
 		if h == nil {
 			return Err[any, any](ErrInvalidInput("cache.put: cache not found"))
 		}
-		k := fmt.Sprintf("%v", keyArg)
+		k := identityKey(keyArg)
 		var exp time.Time
 		if h.ttl > 0 {
 			exp = time.Now().Add(h.ttl)
@@ -134,7 +140,7 @@ func Cache_remove(idArg, keyArg any) any {
 		if h == nil {
 			return Err[any, any](ErrInvalidInput("cache.remove: cache not found"))
 		}
-		k := fmt.Sprintf("%v", keyArg)
+		k := identityKey(keyArg)
 		// Decrement eviction count if remove fires the callback — the
 		// LRU OnEvict counter increments on every remove; we want
 		// capacity evictions only. Reverse the increment here.

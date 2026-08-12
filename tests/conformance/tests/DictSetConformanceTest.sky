@@ -128,6 +128,44 @@ setB =
     Set.fromList [ 2, 3, 4 ]
 
 
+-- ─── Composite elements whose `%v` renderings COLLIDE ───────────────
+-- `SkySet` keys its store on a stringified element. That string used to be
+-- `fmt.Sprintf("%v", element)`, which is not injective on composites: the
+-- tuples ( "a b", "c" ) and ( "a", "b c" ) both render `{a b c}`, so the second
+-- silently overwrote the first and this set had ONE element. Lists, records and
+-- ADTs carrying strings collided the same way. Unlike a Dict key, a Set element
+-- is never decoded back out of the key — `toList` returns the ORIGINAL value —
+-- so the fix is an injective key (`runtime-go/rt/identity_key.go`), not an
+-- [E2008]-style rejection: `Set ( Int, Int )`, `Set Color` and
+-- `Set { x : Int }` all worked before and must keep working.
+collidingTuples : Set ( String, String )
+collidingTuples =
+    Set.fromList [ ( "a b", "c" ), ( "a", "b c" ) ]
+
+
+collidingLists : Set (List String)
+collidingLists =
+    Set.fromList [ [ "a b" ], [ "a", "b" ] ]
+
+
+type StrPair
+    = StrPair String String
+
+
+collidingAdts : Set StrPair
+collidingAdts =
+    Set.fromList [ StrPair "x y" "z", StrPair "x" "y z" ]
+
+
+type alias Named =
+    { first : String, last : String }
+
+
+collidingRecords : Set Named
+collidingRecords =
+    Set.fromList [ { first = "x y", last = "z" }, { first = "x", last = "y z" } ]
+
+
 -- #173 — an annotated function returning `Dict k (List Record)`. The annotation
 -- forces `rt.AsMapT[[]Record]` over the foldl accumulator (a typed
 -- `map[string][]…`), which used to hit AsMapT's reflect-fallback and drop EVERY
@@ -224,6 +262,51 @@ tests =
         (\_ -> Test.equal [ 1, 2, 10 ] (Set.toList intSetShuffled))
     , Test.test "Set String toList sorted lexically, insertion-order independent"
         (\_ -> Test.equal [ "apple", "banana", "cherry" ] (Set.toList strSetShuffled))
+
+      -- ══════════════════════════════════════════════════════════════
+      -- Composite elements must not COLLIDE (silent element loss)
+      -- ══════════════════════════════════════════════════════════════
+      -- Every one of these returned size 1 before the injective key landed.
+    , Test.test "Set of tuples-of-strings keeps both distinct elements"
+        (\_ -> Test.equal 2 (Set.size collidingTuples))
+    , Test.test "Set of tuples-of-strings: toList returns both"
+        (\_ -> Test.equal 2 (List.length (Set.toList collidingTuples)))
+    , Test.test "Set of tuples-of-strings: member finds the first"
+        (\_ -> Test.isTrue (Set.member ( "a b", "c" ) collidingTuples))
+    , Test.test "Set of tuples-of-strings: member finds the second"
+        (\_ -> Test.isTrue (Set.member ( "a", "b c" ) collidingTuples))
+    , Test.test "Set of tuples-of-strings: member rejects a value never inserted"
+        (\_ -> Test.isFalse (Set.member ( "a b c", "" ) collidingTuples))
+    , Test.test "Set of lists-of-strings keeps both distinct elements"
+        (\_ -> Test.equal 2 (Set.size collidingLists))
+    , Test.test "Set of ADTs-with-string-payloads keeps both"
+        (\_ -> Test.equal 2 (Set.size collidingAdts))
+    , Test.test "Set of records-of-strings keeps both"
+        (\_ -> Test.equal 2 (Set.size collidingRecords))
+    , Test.test "Set of records: toList does not panic and returns both"
+        (\_ -> Test.equal 2 (List.length (Set.toList collidingRecords)))
+    , Test.test "Set algebra: union of two disjoint colliding singletons has 2"
+        (\_ ->
+            Test.equal 2
+                (Set.size
+                    (Set.union (Set.fromList [ ( "a b", "c" ) ])
+                        (Set.fromList [ ( "a", "b c" ) ])
+                    )
+                )
+        )
+    , Test.test "Set algebra: intersect of two colliding singletons is empty"
+        (\_ ->
+            Test.equal 0
+                (Set.size
+                    (Set.intersect (Set.fromList [ ( "a b", "c" ) ])
+                        (Set.fromList [ ( "a", "b c" ) ])
+                    )
+                )
+        )
+    , Test.test "Set still de-duplicates an element inserted twice"
+        (\_ -> Test.equal 1 (Set.size (Set.fromList [ ( "a b", "c" ), ( "a b", "c" ) ])))
+    , Test.test "Set of composites without strings keeps working (Set (Int, Int))"
+        (\_ -> Test.equal 2 (Set.size (Set.fromList [ ( 1, 2 ), ( 3, 4 ) ])))
 
       -- ══════════════════════════════════════════════════════════════
       -- get / member / insert / remove semantics

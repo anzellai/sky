@@ -12,14 +12,16 @@
 // call has a fresh fingerprint — degrade to no-op behaviour
 // (cache misses, no benefit) without unbounded memory growth.
 //
-// Fingerprint: `fmt.Sprintf("%p|%v|...|%v", fn, a, b, ...)`. The
-// `%v` formatter gives stable strings for primitives, ADTs (via
-// SkyADT.SkyName), records (via Go map ordering — deterministic
-// under sort), and lists. Function pointers and channel handles
-// fingerprint to their runtime address — reasonable for the cache
-// key but means two structurally-identical funcs miss the cache.
-// Acceptable trade-off: the expected use case is `lazy renderItem
-// item` where the function is a stable top-level binding.
+// Fingerprint: the function pointer (`%p`) plus each argument's
+// INJECTIVE identity (`identityKey`, see identity_key.go). It was
+// `fmt.Sprintf("%p|%v|…|%v", …)` until that was found to serve the
+// WRONG memoised subtree — `%v` renders `( "a b", "c" )` and
+// `( "a", "b c" )` identically, and the `|` delimiter was forgeable
+// by an argument containing a pipe. Function pointers and channel
+// handles still fingerprint to their runtime address — reasonable
+// for a cache key, but two structurally-identical funcs miss the
+// cache. Acceptable trade-off: the expected use case is `lazy
+// renderItem item` where the function is a stable top-level binding.
 //
 // Concurrency: sync.Mutex around a map + linked list. Sky.Live's
 // per-session lock + Sky.Tui's main-goroutine model means the
@@ -32,6 +34,7 @@ package rt
 import (
 	"container/list"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -125,23 +128,31 @@ func (c *lazyLRU) store(k string, v any) {
 	}
 }
 
-// lazyKey computes the cache key for a (function, args) pair.
-// Uses %p for the function pointer (stable per top-level binding),
-// %v for each arg. Pipe-delimited so primitive args don't blur
-// across boundaries (`1` + `2` and `12` would otherwise collide).
+// lazyKey computes the cache key for a (function, args) pair: `%p` for the
+// function pointer (stable per top-level binding) followed by each argument's
+// INJECTIVE identity.
+//
+// It used to join `fmt.Sprintf("%v", arg)` renderings with `|`, and both halves
+// of that were unsound as a cache key:
+//
+//   - `%v` is not injective on composites, so `lazy2 view ( "a b", "c" )` and
+//     `lazy2 view ( "a", "b c" )` fingerprinted the same and the second render
+//     served the FIRST one's memoised subtree — a wrong view, silently.
+//   - the `|` delimiter could be forged by an argument containing a literal
+//     pipe: `lazy row "a|b"` and `lazy2 row "a" "b"` collided. The comment
+//     claiming the delimiter kept args from blurring was true only for args
+//     that cannot contain it.
+//
+// `identityKey` is self-delimiting (every string carries its length), so no
+// separator is needed and none can be forged.
 func lazyKey(fn any, args ...any) string {
-	parts := make([]string, 0, 1+len(args))
-	parts = append(parts, fmt.Sprintf("%p", fn))
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%p", fn))
 	for _, a := range args {
-		parts = append(parts, fmt.Sprintf("%v", a))
+		b.WriteByte('|')
+		b.WriteString(identityKey(a))
 	}
-	// Strings.Join would be ~3% faster but adds an import for one
-	// call site. Manual loop is fine.
-	out := parts[0]
-	for i := 1; i < len(parts); i++ {
-		out += "|" + parts[i]
-	}
-	return out
+	return b.String()
 }
 
 // callWithArgs invokes a Sky-shaped curried function with the

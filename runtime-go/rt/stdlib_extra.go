@@ -32,6 +32,14 @@ import (
 // Sky.Core.Set — backed by map[any]struct{}
 // ═══════════════════════════════════════════════════════════
 
+// SkySet is `Sky.Core.Set`'s backing store: element IDENTITY → the ORIGINAL
+// element. `toList` returns the values, never the keys, so a Set — unlike a
+// `Dict` — never has to decode its key back. What it does need is that the key
+// be INJECTIVE, and `fmt.Sprintf("%v", element)` is not: the tuples
+// `( "a b", "c" )` and `( "a", "b c" )` both render `{a b c}`, so the second
+// silently overwrote the first and `Set.fromList` returned a one-element set.
+// See `identity_key.go` for the encoding that closes it, and for why this is a
+// runtime fix rather than a `Dict`-style `[E2008]` check-time rejection.
 type SkySet struct {
 	items map[string]any
 }
@@ -43,7 +51,7 @@ func Set_empty() any {
 func Set_fromList(list any) any {
 	s := SkySet{items: map[string]any{}}
 	for _, v := range asList(list) {
-		k := fmt.Sprintf("%v", v)
+		k := identityKey(v)
 		s.items[k] = v
 	}
 	return s
@@ -72,14 +80,14 @@ func toSkySet(v any) SkySet {
 			items := map[string]any{}
 			for _, k := range rv.MapKeys() {
 				key := k.Interface()
-				items[fmt.Sprintf("%v", key)] = key
+				items[identityKey(key)] = key
 			}
 			return SkySet{items: items}
 		}
 	}
 	items := map[string]any{}
 	for _, x := range asList(v) {
-		items[fmt.Sprintf("%v", x)] = x
+		items[identityKey(x)] = x
 	}
 	return SkySet{items: items}
 }
@@ -144,14 +152,14 @@ func Set_insert(v any, set any) any {
 	for k, v2 := range s.items {
 		out.items[k] = v2
 	}
-	out.items[fmt.Sprintf("%v", v)] = v
+	out.items[identityKey(v)] = v
 	return out
 }
 
 func Set_remove(v any, set any) any {
 	s := toSkySet(set)
 	out := SkySet{items: map[string]any{}}
-	k := fmt.Sprintf("%v", v)
+	k := identityKey(v)
 	for k2, v2 := range s.items {
 		if k2 != k {
 			out.items[k2] = v2
@@ -162,7 +170,7 @@ func Set_remove(v any, set any) any {
 
 func Set_member(v any, set any) any {
 	s := toSkySet(set)
-	_, ok := s.items[fmt.Sprintf("%v", v)]
+	_, ok := s.items[identityKey(v)]
 	return ok
 }
 
@@ -175,10 +183,21 @@ func Set_toList(set any) any {
 	// A Go map iterates in randomised order, so Set.toList — and union /
 	// intersect / diff / fromList, all observed THROUGH toList — returned a
 	// non-deterministic order run-to-run. Elm's Set is ordered; sort by the
-	// element's natural order via the shared comparator. Set keys are
-	// `comparable` by Sky's type system, so cmp never hits its type-mismatch
-	// panic for a well-typed Set.
-	sort.SliceStable(out, func(i, j int) bool { return cmp(out[i], out[j]) < 0 })
+	// element's natural order via the shared comparator.
+	//
+	// `skyLessThan`, not `cmp`. The comment that used to sit here claimed "Set
+	// keys are `comparable` by Sky's type system, so cmp never hits its
+	// type-mismatch panic for a well-typed Set" — that is FALSE. `Sky.Core.Set`
+	// declares `fromList : List a -> Set a` with an UNCONSTRAINED `a` (there is
+	// no `comparable` in Sky's HM system), exactly like `List.sort`, so a Set of
+	// erased records reached `cmp` and took the process down with
+	// `rt.cmp: type mismatch (left map[string]interface {}, …)` — a runtime
+	// panic out of well-typed Sky. It went unnoticed because such a Set
+	// collapsed to ONE element under the old colliding key and a one-element
+	// slice is never compared. `skyLessThan` is the same dispatch under
+	// `List.sort`'s policy: order what can be ordered, fall back for the rest,
+	// never panic.
+	sort.SliceStable(out, func(i, j int) bool { return skyLessThan(out[i], out[j]) })
 	return out
 }
 

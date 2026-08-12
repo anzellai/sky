@@ -8384,7 +8384,17 @@ func skyLessThan(a, b any) bool {
 	if c, ok := cmpSafe(a, b); ok {
 		return c < 0
 	}
-	return fmt.Sprintf("%v", a) < fmt.Sprintf("%v", b)
+	// The fallback for a pair `cmpSafe` cannot order (two erased records, a
+	// function, a mixed pair after an `any`-typed FFI return). It used to
+	// compare `fmt.Sprintf("%v", …)`, which is the non-injective rendering
+	// `identity_key.go` exists to replace: two DISTINCT records render the same
+	// string, compare EQUAL, and then land in whatever order the caller
+	// presented them — for `Set.toList` that is Go's randomised map iteration,
+	// so the same set printed in a different order run to run. `identityLess`
+	// is a total order that separates distinct values, so the result is
+	// deterministic. The order itself remains unspecified for such elements;
+	// only its stability is promised.
+	return identityLess(a, b)
 }
 
 func List_member(item any, list any) any {
