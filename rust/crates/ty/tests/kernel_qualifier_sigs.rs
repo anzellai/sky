@@ -301,13 +301,24 @@ fn accepted_task_applicatives_valid_uses() {
     );
 }
 
-// ---- Db.findWhere ----
+// ---- Db.unsafeFindWhere ----
+//
+// This was `Db.findWhere` until that name was UN-declared. Audit P1-3 renamed
+// it to `unsafeFindWhere`, and giving `findWhere` a Sky signature required
+// exposing it from `Std/Db.sky` — putting a raw `WHERE`-concatenating function
+// back in the public API under a name that does not warn. The signature went;
+// the arity check moves to the name the audit chose to keep.
+//
+// `findWhere` itself is not left unguarded: it is untyped, so an over-applied
+// call is caught by `lower::reject_over_application` rather than by the type
+// layer — a plainer diagnostic with no span, but still `sky check`, never a raw
+// `go build` error.
 
 #[test]
-fn rejected_db_findwhere_over_applied() {
+fn rejected_db_unsafe_findwhere_over_applied() {
     assert_rejected(
-        "Db.findWhere",
-        "println (Basics.toString (Db.findWhere (Db.connect ()) \"post\" \
+        "Db.unsafeFindWhere",
+        "println (Basics.toString (Db.unsafeFindWhere (Db.connect ()) \"post\" \
          \"id = ?\" [ 1 ] \"extra\"))",
     );
 }

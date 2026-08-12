@@ -252,7 +252,12 @@ fn every_declared_kernel_signature_matches_its_runtime_parameter_count() {
         "String.left",
         "String.graphemes",
         "Time.parse",
-        "Db.findWhere",
+        // `Db.findWhere` was an anchor here until it was UN-declared: audit
+        // P1-3 renamed it to `unsafeFindWhere`, and giving it a signature meant
+        // exposing a raw `WHERE`-concatenating function from `Std/Db.sky` under
+        // a name that does not warn. It is in the untyped allowlist instead.
+        // This gate noticed the moment the declaration vanished — which is the
+        // anchor list working, not failing.
         "JsonDec.map5",
         "Task.map2",
         "Task.andMap",
