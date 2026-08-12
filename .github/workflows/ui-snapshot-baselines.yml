@@ -1,0 +1,82 @@
+name: Record ui-showcase snapshot baselines
+
+# Records `examples/26-ui-showcase/snapshots/<platform>/` on a GitHub runner and
+# uploads it as an artifact FOR REVIEW. It never commits.
+#
+# Why it exists: the snapshot baselines are platform-keyed (Chromium renders
+# text with the host font stack, so a macOS baseline is 3-8 % different from the
+# same DOM on Linux — see examples/26-ui-showcase/snapshots/README.md). The
+# nightly `web-runtime` job runs on ubuntu-latest, so the Linux set has to be
+# recorded on a Linux runner; there is otherwise no way to produce it from a Mac.
+#
+# It stops at "upload an artifact" on purpose. Re-recording a baseline is the one
+# operation that can turn a real Std.Ui regression green, so it stays a
+# deliberate human act: download, eyeball against the current set, then commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why are you re-recording? (appears in the run title)'
+        required: true
+        type: string
+
+run-name: 'Record ui-showcase baselines — ${{ inputs.reason }}'
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    # Build sky (~2 min warm) + build the showcase app + one browser pass.
+    timeout-minutes: 25
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      GO_CACHE_BUDGET_MB: '6144'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-web-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-web-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+          save-if: 'false'
+      - name: Install Playwright + its browser
+        run: |
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Build sky binary
+        run: |
+          source scripts/lib/cargo-target.sh
+          cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
+          install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
+          sky-out/sky --version
+      - name: Record baselines
+        run: scripts/verify-ui-showcase.sh --update-baseline
+      - name: Show what was recorded
+        run: |
+          echo "platform: $(node -p 'process.platform')"
+          ls -la "examples/26-ui-showcase/snapshots/$(node -p 'process.platform')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-showcase-baselines
+          path: examples/26-ui-showcase/snapshots/**
+          if-no-files-found: error
+          retention-days: 14
+      - name: Bound the Go caches before save
+        if: always()
+        run: bash scripts/ci/bound-go-cache.sh

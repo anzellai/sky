@@ -8,6 +8,31 @@ Baseline PNGs for `scripts/verify-ui-showcase.{sh,mjs}`. Recorded at:
 - Animations + transitions disabled via `addInitScript`
 - Font stack forced to `monospace` for deterministic text metrics
 
+## One directory per platform
+
+```
+snapshots/
+  darwin/   recorded on macOS   (the release-preflight platform)
+  linux/    recorded on ubuntu  (the nightly `web-runtime` platform)
+```
+
+The runner picks its directory from `process.platform`
+(`SKY_UI_SNAPSHOT_PLATFORM` overrides). This is not tidiness — it is what
+makes the gate runnable on more than one machine.
+
+Chromium composites text with the HOST's font stack. The runner forces
+`font-family: monospace` for determinism, but "monospace" is Menlo on macOS
+and DejaVu Sans Mono on a Linux runner: different advance widths, different
+hinting. Identical DOM, 3-8 % of pixels different — 3-8x the 1 % budget. A
+single shared directory therefore cannot be compared on two platforms, which
+is why this gate spent its life release-only, on one developer's Mac, and
+failed nine snapshots on its first nightly Linux run with no product change
+behind any of them.
+
+A platform with no recorded baselines **fails** — every snapshot reports
+"no baseline … nothing was compared". Missing baselines are never
+self-blessed, on any platform.
+
 ## Updating baselines
 
 Snapshots change legitimately when Sky's renderer, `Std.Ui`, or the
@@ -20,7 +45,7 @@ the Cycle 5 renderer churn.
 TMPDIR=/tmp bash scripts/verify-ui-showcase.sh
 
 # 2. Open `.skycache/ui-showcase-diffs/*.current.png` in an image
-#    viewer alongside `examples/26-ui-showcase/snapshots/*.png`.
+#    viewer alongside `examples/26-ui-showcase/snapshots/<platform>/*.png`.
 #    Confirm every pixel difference is intentional.
 
 # 3. ONLY after the human eyeball pass, re-record:
@@ -30,11 +55,22 @@ TMPDIR=/tmp bash scripts/verify-ui-showcase.sh --update-baseline
 #    checkbox for this.
 ```
 
+A re-record only ever touches the platform you ran it on. To refresh the
+OTHER platform's set, run the `ui-snapshot-baselines` workflow
+(`.github/workflows/ui-snapshot-baselines.yml`, manual dispatch): it records
+on a GitHub runner and uploads the PNGs as an artifact for review. It
+deliberately does not commit them — the eyeball pass in step 2 is not
+optional just because a runner did the rendering.
+
+`fullpage-desktop.png` / `fullpage-mobile.png` are eyeball references for
+that review; nothing compares them. They are written into this directory
+only during a `--update-baseline` run, and into `.skycache/ui-showcase-diffs/`
+otherwise — an ordinary verification must not rewrite a tracked baseline.
+
 ## Tolerance
 
 `±3` px pixel tolerance + 1 % per-pixel colour delta + 1 % total-
-pixel budget — see `scripts/verify-ui-showcase.mjs` § constants.
-This matches CLAUDE.md §"Critical constraints" for cross-platform
-Chromium renders (macOS vs Linux text differs by 1-2 px). On CI we
-only run the runner on macOS today; Linux Chromium's different font
-stack would false-positive every baseline.
+pixel budget — see `scripts/verify-ui-showcase.mjs` § constants. The
+tolerance absorbs same-platform antialiasing jitter; it is not, and was
+never, wide enough to absorb a different font stack — hence the per-platform
+directories above.

@@ -43,13 +43,14 @@
 //                            the TTL at every cleanup tick; a BROKEN
 //                            heartbeat lets it age past TTL → eviction.
 //   SKY_SKY_BIN              override the sky compiler binary used to build
-//                            the fixture (default: release binary, then PATH).
+//                            the fixture (default: <repo>/sky-out/sky, the
+//                            compiler under test, then `sky` on PATH).
 //
 // Exits 0 on success, non-zero on the first failed scenario.
 
 import { spawn, spawnSync } from 'child_process';
 import { chromium } from 'playwright';
-import { mkdirSync, existsSync, createWriteStream, readFileSync } from 'fs';
+import { mkdirSync, existsSync, createWriteStream, readFileSync, readdirSync, statSync, rmSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import net from 'net';
@@ -98,24 +99,89 @@ function killPort(port) {
     } catch (_) {}
 }
 
+// The compiler under test.
+//
+// This used to be `SKY_SKY_BIN || '/Users/anzel/.cargo/bin/release/sky'` — one
+// developer's `CARGO_TARGET_DIR`, spelled out as an absolute path. On that
+// machine it resolved and the gate ran; ANYWHERE else it fell through to `sky`
+// on PATH, which a CI runner does not have, so `ensureFixtureBuilt` threw
+// before a single assertion executed. That is exactly how this gate read green
+// locally and died on its first nightly run — the failure was in the harness,
+// not in Sky.Live.
+//
+// `<repo>/sky-out/sky` is the repo's own convention for "the compiler this
+// checkout just built" (scripts/build.sh, example-sweep.sh, verify-all-web.sh,
+// preflight-tag.sh all install and read it), so it is what the gate must build
+// its fixture with. `SKY_SKY_BIN` still overrides for one-off bisects.
 function skyBin() {
-    const cand = process.env.SKY_SKY_BIN
-        || '/Users/anzel/.cargo/bin/release/sky';
-    if (existsSync(cand)) return cand;
-    return 'sky'; // PATH fallback
+    for (const cand of [process.env.SKY_SKY_BIN, path.join(repoRoot, 'sky-out', 'sky')]) {
+        if (cand && existsSync(cand)) return cand;
+    }
+    return 'sky'; // PATH fallback — a developer install, not a CI path
+}
+
+// Newest mtime under the fixture's Sky sources.
+function newestSourceMtime() {
+    let newest = 0;
+    const walk = (dir) => {
+        for (const ent of readdirSync(dir, { withFileTypes: true })) {
+            const p = path.join(dir, ent.name);
+            if (ent.isDirectory()) { walk(p); continue; }
+            if (!ent.name.endsWith('.sky') && ent.name !== 'sky.toml') continue;
+            newest = Math.max(newest, statSync(p).mtimeMs);
+        }
+    };
+    try { walk(path.join(FIXTURE_DIR, 'src')); } catch (_) {}
+    try { newest = Math.max(newest, statSync(path.join(FIXTURE_DIR, 'sky.toml')).mtimeMs); } catch (_) {}
+    return newest;
 }
 
 function ensureFixtureBuilt() {
+    const sky = skyBin();
     if (existsSync(FIXTURE_BIN)) {
-        log('fixture binary present: ' + FIXTURE_BIN);
-        return;
+        // Existence is NOT enough, and this half is as load-bearing as the
+        // build itself. `sky-out/` is gitignored, so the fixture binary
+        // survives every checkout, rebase and compiler rebuild — and this
+        // check used to return on `existsSync` alone. The binary in the main
+        // working copy was 10 days old when the `sky_sid` idle-eviction fix
+        // landed, so `verify-live-resilience.mjs idle` was still certifying a
+        // PRE-FIX runtime and reporting PASS. A gate that tests last week's
+        // compiler cannot fail on this week's regression.
+        //
+        // Same rule as verify-all-web.sh's example loop: rebuild when the
+        // artefact is older than the compiler under test, or than its own
+        // sources.
+        const binAge = statSync(FIXTURE_BIN).mtimeMs;
+        const reasons = [];
+        if (existsSync(sky) && statSync(sky).mtimeMs > binAge) {
+            reasons.push('older than the compiler under test (' + sky + ')');
+        }
+        if (newestSourceMtime() > binAge) reasons.push('older than its own sources');
+        if (reasons.length === 0) {
+            log('fixture binary present and current: ' + FIXTURE_BIN);
+            return;
+        }
+        log('fixture binary is stale — ' + reasons.join('; ') + '; rebuilding');
+        rmSync(FIXTURE_BIN, { force: true });
     }
-    log('building fixture with ' + skyBin() + ' ...');
-    const r = spawnSync(skyBin(), ['build', 'src/Main.sky'], {
+    log('building fixture with ' + sky + ' ...');
+    const r = spawnSync(sky, ['build', 'src/Main.sky'], {
         cwd: FIXTURE_DIR, encoding: 'utf8', timeout: 360_000,
     });
+    // `r.error` is the ENOENT case: the binary named above does not exist at
+    // all. Reporting only stdout/stderr there produced an empty "fixture build
+    // failed:" with nothing after the colon, which is what the first nightly
+    // run printed.
+    if (r.error) {
+        throw new Error(
+            'could not run the sky compiler at "' + sky + '": ' + r.error.message +
+            '\n  build it first (cargo build --release -p sky + install to sky-out/sky)' +
+            ' or point SKY_SKY_BIN at one.',
+        );
+    }
     if (r.status !== 0 || !existsSync(FIXTURE_BIN)) {
-        throw new Error('fixture build failed:\n' + (r.stdout || '') + (r.stderr || ''));
+        throw new Error('fixture build failed (' + sky + ', exit ' + r.status + '):\n'
+            + (r.stdout || '') + (r.stderr || ''));
     }
     log('fixture built.');
 }
