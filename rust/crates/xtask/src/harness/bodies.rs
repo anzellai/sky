@@ -590,7 +590,14 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// the reject corpus as the checked-in regression for the aliased-unknown-module
 /// soundness hole (see its header). The count is the two corpora summed, so a
 /// reject-corpus addition moves it — as `dict_composite_key.sky` (the `[E2008]`
-/// unsupported-`Dict`-key rejection) does here: **125**.
+/// unsupported-`Dict`-key rejection) did at **125**.
+///
+/// **126 since 2026-08-12**: `ambiguous_type_name.sky` joined the reject corpus
+/// with the type-namespace half of `[E1012]`. That commit bumped
+/// `ty::reject_corpus::EXPECTED_CORPUS_FILES` but not this constant, so the
+/// `shared-world` gate has been reporting `126/125` — the gate itself PASSES
+/// (126 items, identical verdicts); only the harness census was behind. 68
+/// reject-corpus files + 58 `examples/` directories = 126.
 pub const SHARED_WORLD_EXPECTED: u64 = 126;
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
