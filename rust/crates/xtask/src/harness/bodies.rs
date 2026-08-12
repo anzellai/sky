@@ -2491,8 +2491,16 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// * `Core/DictPolyKeyTest` (34) — the same decode through a key-polymorphic
 ///   helper, where the key type is erased.
 ///
-/// 330 + 20 + 34 = 384.
-pub const SKY_SUITES_EXPECTED: u64 = 384;
+/// 330 + 20 + 34 = 384, plus:
+///
+/// * `Core/KernelQualifierSigsTest` (9) — the RUNTIME leg for the 26 kernel-
+///   qualifier members that gained a Sky signature. A signature changes
+///   EMISSION, so "the checker now rejects the misuse" is only half a proof;
+///   one of those members (`String.fromBytes`) built clean and silently
+///   returned `""` until this suite ran it.
+///
+/// 384 + 9 = 393.
+pub const SKY_SUITES_EXPECTED: u64 = 393;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

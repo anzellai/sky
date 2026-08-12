@@ -129,7 +129,13 @@ main =
 handleRegister : Db -> Request -> Task Error Response
 handleRegister db req =
     case ( Server.formValue "email" req, Server.formValue "password" req ) of
-        ( Just email, Just password ) ->
+        ( "", _ ) ->
+            Task.succeed (Server.withStatus 400 (Server.text "email + password required"))
+
+        ( _, "" ) ->
+            Task.succeed (Server.withStatus 400 (Server.text "email + password required"))
+
+        ( email, password ) ->
             Auth.register db email password
                 |> Task.andThen
                     (\uid ->
@@ -137,15 +143,18 @@ handleRegister db req =
                             (Server.json ("{\"id\":" ++ String.fromInt uid ++ "}"))
                     )
 
-        _ ->
-            Task.succeed (Server.withStatus 400 (Server.text "email + password required"))
-
 
 -- POST /login — verifies, signs a token, sets it as an HttpOnly cookie
 handleLogin : Db -> Request -> Task Error Response
 handleLogin db req =
     case ( Server.formValue "email" req, Server.formValue "password" req ) of
-        ( Just email, Just password ) ->
+        ( "", _ ) ->
+            Task.succeed (Server.withStatus 400 (Server.text "email + password required"))
+
+        ( _, "" ) ->
+            Task.succeed (Server.withStatus 400 (Server.text "email + password required"))
+
+        ( email, password ) ->
             Auth.login db email password
                 |> Task.andThenResult
                     (\uid -> Auth.signToken secret { sub = uid } 86400)
@@ -156,9 +165,6 @@ handleLogin db req =
                                 |> Server.withCookie "sky_auth" token
                             )
                     )
-
-        _ ->
-            Task.succeed (Server.withStatus 400 (Server.text "email + password required"))
 
 
 -- GET /me — reads the cookie, verifies, returns the claims

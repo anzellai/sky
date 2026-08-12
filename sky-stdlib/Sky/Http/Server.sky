@@ -31,6 +31,10 @@ module Sky.Http.Server exposing
     , queryParam
     , header
     , getCookie
+    , method
+    , path
+    , body
+    , formValue
     , withHeader
     , cookie
     , withCookie
@@ -213,6 +217,35 @@ header =
 getCookie : String -> Request -> Maybe String
 getCookie =
     Ffi.kernel "Server_getCookie"
+
+
+-- | The request method (`"GET"`, `"POST"`, …).  Equivalent to the
+-- `req.method` field read; the kernel qualifier surface advertises it,
+-- so it carries a signature.
+method : Request -> String
+method =
+    Ffi.kernel "Server_method"
+
+
+-- | The request path (`"/users/42"`), without the query string.
+path : Request -> String
+path =
+    Ffi.kernel "Server_path"
+
+
+-- | The raw request body.
+body : Request -> String
+body =
+    Ffi.kernel "Server_body"
+
+
+-- | `formValue name req` — read a parsed form field.  Unlike `param` /
+-- `queryParam` / `header` this returns a bare `String` (`""` when the
+-- field is absent), because `rt.Server_formValue` returns the value
+-- directly rather than a `Maybe`.
+formValue : String -> Request -> String
+formValue =
+    Ffi.kernel "Server_formValue"
 
 
 -- ─── Cookies ───────────────────────────────────────────────────────

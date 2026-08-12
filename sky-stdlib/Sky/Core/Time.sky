@@ -14,6 +14,8 @@ module Sky.Core.Time exposing
     , formatHTTP
     , formatISO8601
     , formatRFC3339
+    , parse
+    , parseISO8601
     , addMillis
     , diffMillis
     , every
@@ -63,6 +65,29 @@ formatISO8601 =
 formatRFC3339 : Int -> String
 formatRFC3339 =
     Ffi.kernel "Time_formatRFC3339"
+
+
+-- ─── Pure parsing ──────────────────────────────────────────────────
+-- Both parsers are PURE and FALLIBLE — they return `Result`, not
+-- `Task`: `rt.Time_parse` returns a bare `Ok`/`Err`, not the `func()
+-- any` thunk a `Task` lowers to.  (The Go doc-comments above them say
+-- `Result String Int`; the bodies return `ErrDecode`, which is the
+-- `Error` ADT, and the signature follows the body.)
+-- | `parse layout input` — parse `input` with a Go reference layout
+-- (`"2006-01-02"`, `"15:04:05"`), yielding Unix milliseconds.  The
+-- layout comes FIRST, mirroring `format`.
+--
+--     Time.parse "2006-01-02" "2025-01-01" == Ok 1735689600000
+parse : String -> String -> Result Error Int
+parse =
+    Ffi.kernel "Time_parse"
+
+
+-- | Parse an RFC 3339 / ISO 8601 timestamp (with or without
+-- fractional seconds) into Unix milliseconds.
+parseISO8601 : String -> Result Error Int
+parseISO8601 =
+    Ffi.kernel "Time_parseISO8601"
 
 
 -- ─── Arithmetic ────────────────────────────────────────────────────

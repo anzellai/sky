@@ -21,6 +21,7 @@ module Sky.Core.Json.Decode exposing
     , map2
     , map3
     , map4
+    , map5
     )
 
 import Sky.Ffi as Ffi
@@ -123,3 +124,8 @@ map3 =
 map4 : (a -> b -> c -> d -> e) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e
 map4 =
     Ffi.kernel "JsonDec_map4"
+
+
+map5 : (a -> b -> c -> d -> e -> f) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e -> Decoder f
+map5 =
+    Ffi.kernel "JsonDec_map5"

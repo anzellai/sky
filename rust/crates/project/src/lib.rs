@@ -5,7 +5,11 @@
 //! input and reads a query end-to-end — proving the CLI/LSP-shared engine wiring
 //! (doc 01). Real module discovery + `go build` land in M4/M5.
 
-mod abi_guard;
+// `pub` so `tests/kernel_signature_runtime_arity.rs` can check every declared
+// kernel signature against the SAME runtime scan the lowerer uses to decide
+// partial application. A private copy of that scan in the test would be a
+// second definition of "the runtime's arity", and second definitions drift.
+pub mod abi_guard;
 mod build;
 mod doc;
 mod driver;

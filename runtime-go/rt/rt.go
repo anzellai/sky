@@ -6561,6 +6561,57 @@ func Task_map(fn any, task any) any {
 	}
 }
 
+// Task_map2 … Task_map5 / Task_andMap — the applicative combinators.
+//
+// `hir.KERNEL_FUNCTIONS` has advertised `Task.map2` … `Task.map5` and
+// `Task.andMap` since the kernel table was ported, but no runtime symbol
+// ever existed and `lower/kernel.rs` routed none of them, so every call —
+// qualifier or import — died as `[E4005] Task has no member map2` at
+// codegen. They are defined here rather than advertised and absent.
+//
+// Each is composed from AnyTaskAndThen + Task_map, so the forcing contract
+// is inherited rather than reinvented: every argument task is forced EXACTLY
+// ONCE, LEFT TO RIGHT, and a failure short-circuits the ones to its right
+// (AnyTaskAndThen returns Err without invoking its continuation). `SkyCall`
+// supplies the currying, so a Sky `\a b -> …` and a record-alias constructor
+// both work as `fn`.
+//
+// `Task_andMap(ta, tfn)` takes the VALUE first and the FUNCTION second,
+// matching `Maybe.andMap ma mfn` (sky-stdlib/Sky/Core/Maybe.sky) and
+// `Result.andMap ra rfn`, so the pipeline shape reads identically across the
+// three. It forces `tfn` before `ta`, mirroring those siblings' scrutinee
+// order (`case mfn of` before the value) — for Task that ordering is
+// observable, so it is part of the contract, not an accident.
+func Task_map2(fn, ta, tb any) any {
+	return AnyTaskAndThen(func(a any) any {
+		return Task_map(func(b any) any { return SkyCall(fn, a, b) }, tb)
+	}, ta)
+}
+
+func Task_map3(fn, ta, tb, tc any) any {
+	return AnyTaskAndThen(func(a any) any {
+		return Task_map2(func(b, c any) any { return SkyCall(fn, a, b, c) }, tb, tc)
+	}, ta)
+}
+
+func Task_map4(fn, ta, tb, tc, td any) any {
+	return AnyTaskAndThen(func(a any) any {
+		return Task_map3(func(b, c, d any) any { return SkyCall(fn, a, b, c, d) }, tb, tc, td)
+	}, ta)
+}
+
+func Task_map5(fn, ta, tb, tc, td, te any) any {
+	return AnyTaskAndThen(func(a any) any {
+		return Task_map4(func(b, c, d, e any) any {
+			return SkyCall(fn, a, b, c, d, e)
+		}, tb, tc, td, te)
+	}, ta)
+}
+
+func Task_andMap(ta, tfn any) any {
+	return AnyTaskAndThen(func(fn any) any { return Task_map(fn, ta) }, tfn)
+}
+
 // P8/Task typed companions — SkyTask is `func() SkyResult[E, A]`.
 func Task_mapT[E, A, B any](fn func(A) B, t SkyTask[E, A]) SkyTask[E, B] {
 	return func() SkyResult[E, B] {
@@ -6679,15 +6730,26 @@ func String_toBytes(s any) any {
 	return out
 }
 
+// String_fromBytes rebuilds a string from a Sky `List Int` of UTF-8 byte
+// values.
+//
+// It routes through AsList rather than asserting `.([]any)` directly. The
+// raw assertion was a silent-empty-string bug the moment `toBytes` /
+// `fromBytes` acquired Sky signatures: with `toBytes : String -> List Int`
+// declared, typed codegen hands the kernel a Go `[]int`, the `[]any`
+// assertion fails, and `String.fromBytes (String.toBytes s)` returned `""`
+// for every input instead of `s`. AsList boxes any Go slice element-wise —
+// which is exactly why the sibling `String_fromList` already used it.
 func String_fromBytes(bytes any) any {
-	if xs, ok := bytes.([]any); ok {
-		b := make([]byte, len(xs))
-		for i, v := range xs {
-			b[i] = byte(AsInt(v))
-		}
-		return string(b)
+	xs := AsList(bytes)
+	if xs == nil {
+		return ""
 	}
-	return ""
+	b := make([]byte, len(xs))
+	for i, v := range xs {
+		b[i] = byte(AsInt(v))
+	}
+	return string(b)
 }
 
 func String_fromChar(c any) any {
