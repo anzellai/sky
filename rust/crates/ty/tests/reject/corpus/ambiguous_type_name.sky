@@ -1,0 +1,58 @@
+-- gate: reject
+-- defect: a TYPE name bound by TWO `exposing (..)` imports
+-- rust: reject [E1012] ambiguous type name, reported at the use site
+--
+-- The type-namespace half of `ambiguous_unqualified_name.sky`. `Std.Ui` and
+-- `Std.Css` each declare their OWN `Color` (`Std/Ui.sky:179`, `Std/Css.sky:66`)
+-- — two different unions, with different constructors and different Go types.
+-- Both are imported `exposing (..)` and the annotation below is bare, so which
+-- union `Color` denotes was decided by which import line came LAST:
+-- `hir::resolve`'s `types` map is a plain `IndexMap::insert`, and `lower`'s
+-- `TypeEnv::nominal` map is documented "last-writer" on the bare name too
+-- (`lower/src/lower.rs:1346-1353`). Swapping the two imports selected a
+-- different Go type for the same annotation, with no diagnostic either way.
+--
+-- WHY THIS WAS EXCLUDED WHEN `[E1012]` LANDED FOR VALUES. Several type paths
+-- SYNTHESISED a `DefId` when the target module did not really export the name —
+-- kernel-implicit `Decoder` / `Value` / `Error` (which have no `type`
+-- declaration in any `.sky` source) and re-exports (which `exports.rs` does not
+-- chase, by design: it never recurses into another module). So one conceptual
+-- type could carry two `DefId`s, and keying ambiguity on `DefId` identity would
+-- have REJECTED WORKING PROGRAMS — the #164 failure mode, where a resolution fix
+-- passed every corpus gate, broke a real app, and was reverted.
+--
+-- FIX, in the order it had to happen:
+--   1. a kernel-implicit type interns into the ONE `BUILTIN_MOD` sentinel, so
+--      `Decoder` is a single identity in every module that imports it, instead
+--      of a fresh `DefId` per importing module;
+--   2. a re-exported type is chased through the re-exporter's own import list
+--      (parse only — no `resolve` recursion, so no query cycle) to the module
+--      that really declares it;
+--   3. anything still unresolvable — a Go FFI type, an unchaseable re-export —
+--      is marked `TypeKey::Opaque` and can never join an ambiguity verdict.
+--      That is a deliberate false NEGATIVE, chosen over a false REJECTION.
+-- Only then does the `BindLayer` lattice (ambient < open < explicit < local)
+-- run over type bindings, with the error raised at the USE SITE.
+--
+-- ACCEPTED TWINS (so this cannot be satisfied by a compiler that rejects
+-- everything): `twin_unambiguous_type_name_is_accepted`,
+-- `twin_ambiguous_type_never_referenced_is_accepted`,
+-- `twin_qualified_type_reference_is_accepted`,
+-- `twin_kernel_implicit_type_from_two_modules_is_accepted`,
+-- `twin_type_reexported_and_imported_directly_is_accepted`,
+-- `twin_builtin_type_is_ambient_and_never_ambiguous`,
+-- `twin_explicit_type_exposing_beats_exposing_all` — all in `hir/src/lib.rs`.
+-- Dropping either `exposing (..)` line below makes this exact file compile.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Std.Ui exposing (..)
+import Std.Css exposing (..)
+
+swatch : Color -> String
+swatch _c =
+    "x"
+
+main =
+    println (swatch Ui.red)

@@ -492,6 +492,412 @@ mod tests {
         assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
     }
 
+    // ---- ambiguous TYPE names (doc 05 §6b, type namespace) ------------------
+    //
+    // The value/constructor lattice above deliberately excluded the TYPE
+    // namespace, because several type paths synthesise a `DefId` leniently when
+    // a module does not really export the name, so two modules could yield two
+    // `DefId`s for ONE conceptual type and keying on that would manufacture
+    // false rejections (the #164 failure mode).
+    //
+    // Every rejection below is paired with an ACCEPTED twin. The twins are the
+    // load-bearing half: they are the concrete programs the lenient synthesis
+    // would have broken, so they are written FIRST and they must stay green.
+
+    /// Two modules declaring DIFFERENT unions under one name. Constructor names
+    /// are disjoint, so nothing here is caught by the existing ctor rule — the
+    /// TYPE name is the only ambiguous thing.
+    fn ambig_type_deps() -> [(&'static str, &'static str); 2] {
+        [
+            (
+                "Ambig.Alpha",
+                "module Ambig.Alpha exposing (..)\ntype Shape = Circle Int\n",
+            ),
+            (
+                "Ambig.Beta",
+                "module Ambig.Beta exposing (..)\ntype Shape = Square Int\n",
+            ),
+        ]
+    }
+
+    #[test]
+    fn ambiguous_type_name_is_rejected() {
+        // THE defect, one namespace over. `Shape` is bound by two `exposing (..)`
+        // imports and written in an annotation. `hir::resolve`'s `types` map is a
+        // plain last-`insert()`-wins `IndexMap`, so which union the annotation
+        // means is a function of import ORDER — and `lower`'s `nominal` map is
+        // last-writer-wins on the bare name too, so the two orders select two
+        // DIFFERENT Go types.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    tag : Shape -> Int\n\
+                    tag _s =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let [a, b] = ambig_type_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        let msgs = ambiguity_codes(&r);
+        assert_eq!(msgs.len(), 1, "expected one [E1012], got {:?}", r.diagnostics);
+        assert!(msgs[0].contains("Ambig.Alpha"), "{}", msgs[0]);
+        assert!(msgs[0].contains("Ambig.Beta"), "{}", msgs[0]);
+        assert!(msgs[0].contains("type"), "{}", msgs[0]);
+    }
+
+    #[test]
+    fn ambiguous_type_name_is_rejected_either_import_order() {
+        // The pair IS the defect: swapping the two import lines must not change
+        // which union the annotation means, so BOTH orders reject or the rule has
+        // merely moved the order-dependence somewhere else.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Beta exposing (..)\n\
+                    import Ambig.Alpha exposing (..)\n\n\
+                    tag : Shape -> Int\n\
+                    tag _s =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let [a, b] = ambig_type_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert_eq!(ambiguity_codes(&r).len(), 1, "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_unambiguous_type_name_is_accepted() {
+        // The ACCEPTED twin: identical but for `Ambig.Beta` declaring no `Shape`,
+        // so exactly one binding is in scope. A twin failure means the graph shape
+        // broke, not that ambiguity was detected.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    tag : Shape -> Int\n\
+                    tag _s =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let db = db_with(&[
+            (
+                "Ambig.Alpha",
+                "module Ambig.Alpha exposing (..)\ntype Shape = Circle Int\n",
+            ),
+            (
+                "Ambig.Beta",
+                "module Ambig.Beta exposing (..)\ntype Other = Square Int\n",
+            ),
+            ("Main", main),
+        ]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_ambiguous_type_never_referenced_is_accepted() {
+        // Use-site reporting, same as values. Importing two modules that both
+        // export a type name you never write is legal and extremely common.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    main =\n    println \"x\"\n";
+        let [a, b] = ambig_type_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_qualified_type_reference_is_accepted() {
+        // The fix the diagnostic tells the user to apply has to actually work.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    tag : Alpha.Shape -> Int\n\
+                    tag _s =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let [a, b] = ambig_type_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_local_type_declaration_shadows_both_imports() {
+        // Local wins outright — the same C7 rule the value lattice applies.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Beta exposing (..)\n\n\
+                    type Shape = Mine\n\n\
+                    tag : Shape -> Int\n\
+                    tag _s =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let [a, b] = ambig_type_deps();
+        let db = db_with(&[a, b, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    // ---- G2: the false-positive guards the lenient synthesis was protecting --
+
+    #[test]
+    fn twin_kernel_implicit_type_from_two_modules_is_accepted() {
+        // Two kernel pseudo-modules both exposing `Decoder`. NOTE: this case is
+        // accepted with or without the `BUILTIN_MOD` identity fix, because the
+        // old code keyed both on `(self.module, "Decoder")` and so already
+        // agreed WITHIN one module. It is kept as a shape guard, not as the
+        // proof of the fix — `twin_kernel_implicit_type_via_reexport_is_accepted`
+        // below is the discriminating one.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Sky.Core.Json.Decode exposing (Decoder)\n\
+                    import Sky.Core.Json.Encode exposing (Decoder)\n\n\
+                    dec : Decoder -> Int\n\
+                    dec _d =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let db = db_with(&[("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_kernel_implicit_type_via_reexport_is_accepted() {
+        // THE blocker this item was gated on, in the shape that actually bites.
+        //
+        // `Decoder` is KERNEL-IMPLICIT — it has no `type` declaration in any
+        // `.sky` source (`KERNEL_IMPLICIT_TYPES`). A Sky module that re-exposes
+        // it (`Codec.Wrap` below — the `Std.Codec` shape) publishes no export for
+        // it either, because `exports.rs` computes exports from a module's own
+        // parse. So the two routes to ONE conceptual `Decoder` used to mint two
+        // unrelated `DefId`s:
+        //
+        //   via the re-exporter → `def(Codec.Wrap, "Decoder")`
+        //   via the kernel      → `def(Main,       "Decoder")`   (the IMPORTER!)
+        //
+        // A `DefId`-keyed ambiguity rule reports those as two types and rejects
+        // this program. That is the false rejection this whole item was blocked
+        // on, and it is why the leniency had to be narrowed BEFORE the rule was
+        // extended: the re-export chase fails here (the chain ends at a kernel
+        // module, not a Sky declaration), so both routes fall through to the
+        // kernel-implicit branch and agree on ONE identity.
+        let wrap = "module Codec.Wrap exposing (Decoder)\n\
+                    import Sky.Core.Json.Decode exposing (Decoder)\n";
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Sky.Core.Json.Decode exposing (Decoder)\n\
+                    import Codec.Wrap exposing (Decoder)\n\n\
+                    dec : Decoder -> Int\n\
+                    dec _d =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let db = db_with(&[("Codec.Wrap", wrap), ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_type_reexported_and_imported_directly_is_accepted() {
+        // A type reached by two routes is ONE type. `Ambig.Wrap` re-exposes
+        // `Ambig.Alpha`'s `Shape`; importing both must not be ambiguous.
+        // `exports.rs` computes exports from a module's OWN parse and never
+        // recurses, so `Wrap` publishes no `Shape` of its own — the re-export has
+        // to be chased to `Alpha` or the two routes carry two identities.
+        let wrap = "module Ambig.Wrap exposing (Shape)\n\
+                    import Ambig.Alpha exposing (Shape)\n";
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (Shape)\n\
+                    import Ambig.Wrap exposing (Shape)\n\n\
+                    tag : Shape -> Int\n\
+                    tag _s =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let [a, _] = ambig_type_deps();
+        let db = db_with(&[a, ("Ambig.Wrap", wrap), ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_reexport_chase_is_not_defeated_by_import_order() {
+        // The chase must consider EVERY import that could have supplied the
+        // name, not the first one. Here `Ambig.Wrap` imports an unrelated module
+        // `exposing (..)` ABOVE the import it actually re-exports `Shape` from.
+        // A depth-first walk down the first candidate finds nothing, falls back
+        // to `Opaque` — and the ambiguity is then missed rather than
+        // manufactured, so this test guards a false NEGATIVE, not a rejection.
+        let noise = "module Ambig.Noise exposing (..)\nnoise = 1\n";
+        let wrap = "module Ambig.Wrap exposing (Shape)\n\
+                    import Ambig.Noise exposing (..)\n\
+                    import Ambig.Alpha exposing (Shape)\n";
+        // `Ambig.Beta` declares its OWN `Shape`, so this reference IS ambiguous —
+        // between Alpha (reached through Wrap) and Beta. If the chase failed,
+        // Wrap's binding would be `Opaque` and nothing would be reported.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Wrap exposing (Shape)\n\
+                    import Ambig.Beta exposing (Shape)\n\n\
+                    tag : Shape -> Int\n\
+                    tag _s =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let [a, b] = ambig_type_deps();
+        let db = db_with(&[
+            a,
+            b,
+            ("Ambig.Noise", noise),
+            ("Ambig.Wrap", wrap),
+            ("Main", main),
+        ]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        let msgs = ambiguity_codes(&r);
+        assert_eq!(msgs.len(), 1, "expected one [E1012], got {:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn kernel_implicit_type_versus_a_real_declaration_is_ambiguous() {
+        // The kernel-implicit identity earning its keep, in the direction that
+        // REJECTS. `Codec.Wrap` re-exposes the kernel `Decoder`; `Db.Phantom`
+        // declares a `Decoder` of its very own. Those are two different types,
+        // and mixing them is not hypothetical — `lower::goty` carries a
+        // hand-written band-aid for exactly this pair ("`Decoder` is declared in
+        // multiple modules … so a flat nominal lookup would coerce a real
+        // decoder to an unrelated module's phantom enum and panic at runtime").
+        //
+        // Resolving the re-export to the ONE kernel-implicit identity is what
+        // makes this reportable: without it, the re-export falls through to
+        // `TypeKey::Opaque`, the rule abstains, and the mix goes unreported.
+        let wrap = "module Codec.Wrap exposing (Decoder)\n\
+                    import Sky.Core.Json.Decode exposing (Decoder)\n";
+        let phantom = "module Db.Phantom exposing (..)\ntype Decoder = Phantom\n";
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Codec.Wrap exposing (Decoder)\n\
+                    import Db.Phantom exposing (Decoder)\n\n\
+                    dec : Decoder -> Int\n\
+                    dec _d =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let db = db_with(&[("Codec.Wrap", wrap), ("Db.Phantom", phantom), ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert_eq!(
+            ambiguity_codes(&r).len(),
+            1,
+            "expected one [E1012], got {:?}",
+            r.diagnostics
+        );
+    }
+
+    #[test]
+    fn twin_unresolvable_type_identity_abstains_instead_of_rejecting() {
+        // The `TypeKey::Opaque` safeguard, as an executable argument.
+        //
+        // `Ambig.Wrap` re-exposes `Widget`, and it got `Widget` from a KERNEL
+        // pseudo-module — which is not a Sky declaration site, so the re-export
+        // chase ends with nothing, and `Widget` is not one of the
+        // `KERNEL_IMPLICIT_TYPES` either. There is no authoritative identity to
+        // be had: the compiler genuinely cannot tell whether `Wrap.Widget` is
+        // `Ambig.Gamma.Widget` or something else.
+        //
+        // The rule ABSTAINS. Guessing "two identities, therefore two types"
+        // rejects a program that may well be correct, and a rule that rejects
+        // working programs gets reverted (#164) and closes nothing. Guessing the
+        // other way — silently picking the last import — is today's behaviour and
+        // is exactly what this program keeps.
+        //
+        // This is the test that fails if `TypeKey::Opaque` is ever made
+        // comparable, which is the over-rejection failure mode in one line.
+        let wrap = "module Ambig.Wrap exposing (Widget)\n\
+                    import Sky.Core.Json.Decode exposing (Widget)\n";
+        let gamma = "module Ambig.Gamma exposing (..)\ntype Widget = Knob Int\n";
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Wrap exposing (Widget)\n\
+                    import Ambig.Gamma exposing (Widget)\n\n\
+                    tag : Widget -> Int\n\
+                    tag _w =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let db = db_with(&[("Ambig.Wrap", wrap), ("Ambig.Gamma", gamma), ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(
+            ambiguity_codes(&r).is_empty(),
+            "an unresolvable identity must abstain, not reject: {:?}",
+            r.diagnostics
+        );
+    }
+
+    #[test]
+    fn twin_same_type_reached_twice_is_not_ambiguous() {
+        // One module imported under two forms binds ONE type by two routes.
+        let main = "module Main exposing (main)\n\
+                    import Std.Log exposing (println)\n\
+                    import Ambig.Alpha exposing (..)\n\
+                    import Ambig.Alpha exposing (Shape)\n\n\
+                    tag : Shape -> Int\n\
+                    tag _s =\n    1\n\n\
+                    main =\n    println \"x\"\n";
+        let [a, _] = ambig_type_deps();
+        let db = db_with(&[a, ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_builtin_type_is_ambient_and_never_ambiguous() {
+        // `Error` is a BUILTIN type (auto-imported from `Sky.Core.Error`, C19)
+        // AND a kernel-implicit name. A module that also imports an `Error` from
+        // somewhere explicit must keep compiling: the builtin sits in the ambient
+        // layer, exactly as the Prelude does for values.
+        let src = "module Main exposing (main)\n\
+                   import Sky.Core.Prelude exposing (..)\n\
+                   import Sky.Core.Error exposing (Error)\n\
+                   import Std.Log exposing (println)\n\n\
+                   f : Result Error Int -> Int\n\
+                   f _r =\n    1\n\n\
+                   main =\n    println \"x\"\n";
+        let db = db_with(&[("Main", src)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+    }
+
+    #[test]
+    fn twin_explicit_type_exposing_beats_exposing_all() {
+        // The `Explicit > Open` refinement, in the type namespace, in both
+        // import orders.
+        for main in [
+            "module Main exposing (main)\n\
+             import Std.Log exposing (println)\n\
+             import Ambig.Alpha exposing (Shape)\n\
+             import Ambig.Beta exposing (..)\n\n\
+             tag : Shape -> Int\n\
+             tag _s =\n    1\n\n\
+             main =\n    println \"x\"\n",
+            "module Main exposing (main)\n\
+             import Std.Log exposing (println)\n\
+             import Ambig.Beta exposing (..)\n\
+             import Ambig.Alpha exposing (Shape)\n\n\
+             tag : Shape -> Int\n\
+             tag _s =\n    1\n\n\
+             main =\n    println \"x\"\n",
+        ] {
+            let [a, b] = ambig_type_deps();
+            let db = db_with(&[a, b, ("Main", main)]);
+            let m = db.module_by_name("Main").unwrap();
+            let r = resolve(&db, m);
+            assert!(ambiguity_codes(&r).is_empty(), "{:?}", r.diagnostics);
+        }
+    }
+
     #[test]
     fn resolve_records_expr_span() {
         // Phase 1 gate: the resolver's span side-table stamps every expression

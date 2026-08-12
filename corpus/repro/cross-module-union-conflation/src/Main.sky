@@ -1,0 +1,40 @@
+-- PINNED REPRO — `sky check` clean, `go build` clean, PANICS at runtime.
+--
+-- Every reference below is FULLY QUALIFIED. Nothing is ambiguously imported, so
+-- no use-site ambiguity rule — `[E1012]` in any namespace — can reach this.
+--
+-- `Conflate.Alpha.Shape` and `Conflate.Beta.Shape` are two different unions with
+-- disjoint constructors. The type checker cannot tell them apart: every
+-- non-alias type collapses to its bare final segment
+-- (`ty::sig::rewrite_alias_refs` module-qualifies `DefKind::TypeAlias` ONLY),
+-- and `unify.rs` compares `Ty::App` names as plain strings. So `App("Shape")`
+-- from Alpha unifies with `App("Shape")` from Beta and the call below is
+-- "well typed".
+--
+-- Lowering, meanwhile, DOES distinguish them — it emits `Conflate_Alpha_Shape`
+-- and `Conflate_Beta_Shape` as separate Go interfaces — and bridges the gap with
+-- `rt.Coerce[Conflate_Beta_Shape](Conflate_Alpha_Shape_Circle(3))`. That
+-- assertion succeeds, because both Go types are interfaces with the same method
+-- set, and hands `betaTag` a value none of its arms match:
+--
+--     panic: sky.Unreachable(case): sky: codegen reached an arm the
+--            exhaustiveness checker said was impossible
+--
+-- expect: REJECT (or a type error). Actual today: accept, then CompilerBug panic.
+--
+-- This violates "no runtime panic from well-typed Sky code". It is NOT closed by
+-- the type-namespace extension of `[E1012]`, and it is filed here so the gap is
+-- visible rather than remembered — see `docs/rust-rewrite/05-name-resolution.md`
+-- §"What this does NOT close".
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Conflate.Alpha as A
+import Conflate.Beta as B
+
+
+main =
+    println (B.betaTag (A.Circle 3))

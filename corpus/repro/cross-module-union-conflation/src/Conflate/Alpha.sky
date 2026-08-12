@@ -1,0 +1,15 @@
+-- PINNED REPRO — half of the cross-module-union-conflation pair. Hand-written.
+module Conflate.Alpha exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+
+type Shape
+    = Circle Int
+
+
+alphaTag : Shape -> String
+alphaTag s =
+    case s of
+        Circle _n ->
+            "alpha-circle"

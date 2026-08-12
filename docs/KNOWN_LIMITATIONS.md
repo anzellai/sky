@@ -44,6 +44,35 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
    types only, `Update.sky` / `View/Common.sky` / one View module per
    page / `Main.sky` dispatcher).
 
+## Compiler (open soundness gap)
+
+5b. **Two same-named unions in two modules are ONE type to the checker.**
+   `type Shape = Circle Int` in `A` and `type Shape = Square Int` in `B`
+   are indistinguishable to type inference, even when every reference is
+   fully qualified. `ty::sig::rewrite_alias_refs` module-qualifies a type
+   reference only when it resolves to a `DefKind::TypeAlias` (the #164
+   fix); unions collapse to their bare final segment and `unify.rs`
+   compares those as plain strings. Lowering, meanwhile, emits two
+   distinct Go types and bridges them with `rt.Coerce`, which succeeds
+   (both are Go interfaces with the same method set) and delivers a value
+   no `case` arm matches.
+
+   **Symptom**: `sky check` clean, `go build` clean, then
+   `sky.Unreachable(case)` — a `CompilerBug` panic — at runtime. This is
+   an exception to "no runtime panic from well-typed Sky code".
+
+   **Not** covered by `[E1012]`: the ambiguity rule fires where a program
+   writes a doubly-bound name, and this needs no ambiguous import at all.
+
+   **Repro**: `corpus/repro/cross-module-union-conflation/` (checked in,
+   with the full mechanism and why the obvious fix is not a one-liner).
+
+   **Workaround**: do not declare the same type name in two modules of one
+   project *and* pass values of one to a function expecting the other.
+   Same-named `Msg` / `Model` / `Page` per module remains safe as long as
+   the values stay in their own module's functions — which is what
+   `examples/10-live-component`, `19-skyforum` and `39-hub-demo` do.
+
 ## rt.Coerce residual surface (documented sound — not a soundness gap)
 
 6. **`rt.Coerce`-family narrowing calls remain at typed boundaries**

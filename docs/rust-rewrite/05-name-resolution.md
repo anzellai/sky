@@ -541,26 +541,64 @@ Sky.Core.String exposing (..)` + `import Sky.Core.List exposing (..)` with a bar
 `length` reported `[E2001] type mismatch: List _ vs String` and never mentioned
 the ambiguity.
 
-### Scope
+### Scope — values, constructors, and types
 
-Values and constructors. The **type** namespace is deliberately excluded: several
-type-binding paths synthesise a `DefId` leniently when a module does not really
-export the name (kernel-implicit types such as `Decoder` / `Value` / `Error`,
-re-exported types, `exposing (T)` on a kernel pseudo-module), so two modules can
-produce two distinct `DefId`s for one conceptual type. Keying ambiguity on those
-would manufacture false rejections — which is precisely the #164 failure mode
-this doc's companion (`13-change-verification-and-edge-cases.md` D1) exists to
-prevent. Closing the type namespace needs the lenient synthesis to be
-distinguishable from a real export first.
+All three namespaces. The **type** namespace was excluded when the lattice first
+landed, and the reason was specific: several type-binding paths synthesised a
+`DefId` when a module did not really export the name, so one conceptual type
+could carry two identities and a `DefId` comparison would manufacture false
+rejections — the #164 failure mode (`13-change-verification-and-edge-cases.md`
+D1). The leniency had to be narrowed before the rule could be extended, and that
+is the order the work happened in.
+
+#### The lenient sites, and what each one is now
+
+| Site | Was | Is |
+|---|---|---|
+| `bind_exposing_kernel`, `exposing (T)` on a kernel pseudo-module | `self.def(self.module, …)` — a FRESH `DefId` per importing module, so `Decoder` meant a different identity in every module that imported it | one `BUILTIN_MOD` `DefId`, program-wide (`kernel_implicit_type_def`) |
+| `bind_exposing_dep`, `exposing (T)` where the module re-exports `T` | `self.def(exports.module, …)` — the RE-EXPORTER's identity, so the same type reached directly and through the re-export differed | chased through the re-exporter's own import list to the declaring module (`chase_reexported_type`) |
+| `bind_exposing_dep`, `exposing (T)` with nothing authoritative left | fabricated silently | fabricated, and marked `TypeKey::Opaque` |
+| `bind_exposing_foreign`, `exposing (T)` on a Go FFI package | `self.def(self.module, …)`, indistinguishable from a Sky type | `TypeKey::Opaque` — a Go type's identity is a `(package, name)` pair, not a `DefId`, and cannot be compared against one |
+
+`chase_reexported_type` reads the re-exporter's PARSE, not its resolution, so it
+adds no `resolve → resolve` query edge and two mutually-importing modules cannot
+cycle. It is bounded by a visited set.
+
+#### `TypeKey::Opaque` — abstain rather than guess
+
+A binding whose identity had to be fabricated says so, and a winning layer that
+contains one is never called ambiguous: it resolves to the last binding, exactly
+as it did before this rule existed. That is a deliberate false NEGATIVE, taken in
+preference to a false REJECTION. A rule that rejects a working program gets
+reverted (as #164 was) and closes nothing; a rule that stays quiet where it
+cannot see leaves today's behaviour untouched.
+
+#### What this does NOT close
+
+`[E1012]` fires where a program WRITES an ambiguous type name. It does not, and
+cannot, address the larger fact that the type checker has no cross-module
+identity for unions at all: `ty::sig::rewrite_alias_refs` module-qualifies
+`DefKind::TypeAlias` references only (the #164 fix), and every union collapses to
+its bare final segment, which `unify.rs` then compares as a plain string. Two
+same-named unions in two modules are therefore ONE type to the checker while
+`lower` emits two distinct Go types for them.
+`corpus/repro/cross-module-union-conflation/` pins that as a separate, still-open
+defect: it needs no ambiguous import at all — two fully-qualified references are
+enough — so no use-site ambiguity rule can reach it.
 
 ### Tests
 
 `hir/src/lib.rs`'s test module carries the rejection cases and an **accepted twin
-for each** (Family R convention): unambiguous twin, never-referenced twin,
-qualified-reference twin, local-shadow twin, `Explicit`-beats-`Open` twin in both
-import orders, the Prelude/Math ambient twin, and the same-definition-twice twin.
-`rust/crates/ty/tests/reject/corpus/ambiguous_unqualified_name.sky` pins the
-single-file stdlib form with `-- rust: reject [E1012]`.
+for each** (Family R convention). For values: unambiguous twin, never-referenced
+twin, qualified-reference twin, local-shadow twin, `Explicit`-beats-`Open` twin in
+both import orders, the Prelude/Math ambient twin, and the same-definition-twice
+twin. For types, the same set plus the three twins that ARE the leniency
+argument — `twin_kernel_implicit_type_from_two_modules_is_accepted`,
+`twin_type_reexported_and_imported_directly_is_accepted`, and
+`twin_builtin_type_is_ambient_and_never_ambiguous`.
+`rust/crates/ty/tests/reject/corpus/ambiguous_unqualified_name.sky` and
+`ambiguous_type_name.sky` pin the single-file stdlib forms with
+`-- rust: reject [E1012]`.
 
 ---
 

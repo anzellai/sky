@@ -1,0 +1,17 @@
+-- PINNED REPRO — half of the cross-module-union-conflation pair. Hand-written.
+-- Note the constructor names are DISJOINT from `Conflate.Alpha`'s, so nothing
+-- here is caught by the constructor half of `[E1012]`.
+module Conflate.Beta exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+
+type Shape
+    = Square Int
+
+
+betaTag : Shape -> String
+betaTag s =
+    case s of
+        Square _n ->
+            "beta-square"

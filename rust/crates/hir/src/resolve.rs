@@ -258,6 +258,49 @@ struct Origin {
     res: Res,
 }
 
+/// One binding of one unqualified TYPE name.
+///
+/// Separate from [`Origin`] because a type binding carries a [`TypeRes`] rather
+/// than a [`Res`], and because its identity needs a third state that values do
+/// not have — see [`TypeKey`].
+#[derive(Clone)]
+struct TypeOrigin {
+    layer: BindLayer,
+    module: String,
+    qualifier: Option<String>,
+    key: TypeKey,
+    res: TypeRes,
+}
+
+/// Identity of a type binding, for the "same type reached twice" test.
+///
+/// The extra state versus [`res_key`] is [`Opaque`](TypeKey::Opaque), and it is
+/// the whole reason the type namespace was excluded from `[E1012]` when the
+/// value lattice landed. Several type paths SYNTHESISE a `DefId` for a name the
+/// target module does not really export, so a `DefId` comparison can report two
+/// identities for one conceptual type and reject a working program — the #164
+/// failure mode. Rather than compare fabricated identities, a binding whose
+/// identity was fabricated says so, and an ambiguity verdict involving one is
+/// never reached.
+///
+/// That is deliberately conservative: it trades false REJECTIONS (which break
+/// working programs and get reverted) for false NEGATIVES (which leave today's
+/// behaviour exactly as it is). The lenient sites are individually narrowed
+/// first — see `kernel_implicit_type_def` and `chase_reexported_type` — so
+/// `Opaque` is the residue, not the rule.
+#[derive(Clone, PartialEq, Eq)]
+enum TypeKey {
+    /// A real, comparable identity: this name was found in the target module's
+    /// published exports, declared locally, or is a builtin / kernel-implicit
+    /// type with ONE program-wide `DefId`.
+    Id(String),
+    /// The identity was fabricated because nothing authoritative was available
+    /// (a Go FFI type, or a re-export that could not be chased to its
+    /// declaration). Never compares equal to anything, including itself, so it
+    /// can neither create nor join an ambiguity.
+    Opaque,
+}
+
 /// Identity of a resolution, for the "same definition reached twice" test.
 fn res_key(r: &Res) -> String {
     match r {
@@ -312,6 +355,44 @@ fn settle_one(origins: &[Origin]) -> Option<Settled> {
     }
 }
 
+/// Outcome of applying the precedence lattice to one TYPE name's origins.
+enum SettledType {
+    Winner(TypeRes),
+    Ambiguous(Vec<TypeOrigin>),
+}
+
+/// [`settle_one`] for the type namespace. Same lattice, one extra rule: an
+/// [`Opaque`](TypeKey::Opaque) identity cannot be told apart from anything, so a
+/// winning layer containing one is never called ambiguous — it resolves to the
+/// last binding, exactly as it did before this rule existed.
+fn settle_one_type(origins: &[TypeOrigin]) -> Option<SettledType> {
+    if origins.len() < 2 {
+        return None;
+    }
+    let top = origins.iter().map(|o| o.layer).max()?;
+    let winning: Vec<&TypeOrigin> = origins.iter().filter(|o| o.layer == top).collect();
+    // Any fabricated identity in the winning layer disqualifies the whole
+    // verdict. Reporting on it would be guessing that two names we could not
+    // resolve denote different types, which is precisely the guess that
+    // manufactures false rejections.
+    if winning.iter().any(|o| o.key == TypeKey::Opaque) {
+        return winning.last().map(|o| SettledType::Winner(o.res));
+    }
+    let mut distinct: Vec<&TypeOrigin> = Vec::new();
+    for o in &winning {
+        if !distinct.iter().any(|d| d.key == o.key) {
+            distinct.push(o);
+        }
+    }
+    match distinct.len() {
+        0 => None,
+        1 => Some(SettledType::Winner(distinct[0].res)),
+        _ => Some(SettledType::Ambiguous(
+            distinct.into_iter().cloned().collect(),
+        )),
+    }
+}
+
 fn join_and(items: &[String]) -> String {
     join_with(items, "and")
 }
@@ -357,11 +438,14 @@ struct Resolver<'a> {
     /// `settle_precedence` at the end of `build_env`.
     var_origins: HashMap<String, Vec<Origin>>,
     ctor_origins: HashMap<String, Vec<Origin>>,
+    /// Provenance for every unqualified TYPE binding, parallel to `types`.
+    type_origins: HashMap<String, Vec<TypeOrigin>>,
     /// Names whose winning layer holds two or more DIFFERENT definitions. The
     /// binding in `vars` / `ctors` is left alone (so resolution stays total);
     /// the error is raised when a use site actually reads the name.
     ambiguous_vars: HashMap<String, Vec<Origin>>,
     ambiguous_ctors: HashMap<String, Vec<Origin>>,
+    ambiguous_types: HashMap<String, Vec<TypeOrigin>>,
     /// The import being processed, for provenance stamping. `None` outside
     /// `process_import` (builtins and local decls stamp their layer directly).
     cur_import: Option<ImportCtx>,
@@ -414,8 +498,10 @@ impl<'a> Resolver<'a> {
             foreign_open: None,
             var_origins: HashMap::new(),
             ctor_origins: HashMap::new(),
+            type_origins: HashMap::new(),
             ambiguous_vars: HashMap::new(),
             ambiguous_ctors: HashMap::new(),
+            ambiguous_types: HashMap::new(),
             cur_import: None,
             reported_ambiguous: HashSet::new(),
             scopes: Vec::new(),
@@ -547,6 +633,127 @@ impl<'a> Resolver<'a> {
         self.bind_ctor(name, ctor, layer);
     }
 
+    /// Bind an unqualified TYPE name, recording which layer it entered through
+    /// and how trustworthy its identity is.
+    ///
+    /// The `types.insert` is kept verbatim, so for every name bound exactly once
+    /// this is byte-for-byte the old behaviour; `settle_precedence` only revisits
+    /// names with more than one origin.
+    fn bind_type(&mut self, name: String, tr: TypeRes, key: TypeKey, layer: BindLayer) {
+        let (module, qualifier) = match &self.cur_import {
+            Some(c) => (c.module.clone(), c.qualifier.clone()),
+            None => (self.self_module_name(), None),
+        };
+        self.type_origins
+            .entry(name.clone())
+            .or_default()
+            .push(TypeOrigin {
+                layer,
+                module,
+                qualifier,
+                key,
+                res: tr,
+            });
+        self.types.insert(name, tr);
+    }
+
+    /// Bind an unqualified TYPE name at the layer of the import in flight.
+    fn bind_type_imported(&mut self, name: String, tr: TypeRes, key: TypeKey) {
+        let layer = self
+            .cur_import
+            .as_ref()
+            .map(|c| c.layer)
+            .unwrap_or(BindLayer::Open);
+        self.bind_type(name, tr, key, layer);
+    }
+
+    /// The ONE `DefId` for a kernel-implicit type name.
+    ///
+    /// `Decoder` / `Value` / `Attribute` / … have no `type` declaration in any
+    /// `.sky` source (`KERNEL_IMPLICIT_TYPES`), so `import M exposing (Decoder)`
+    /// on a kernel pseudo-module had nothing authoritative to point at and minted
+    /// `self.def(self.module, name)` — a FRESH `DefId` per importing module, and
+    /// a different one per kernel module within a single import list. Two
+    /// references to one conceptual `Decoder` therefore carried two identities,
+    /// which is the specific fact that made a `DefId`-keyed ambiguity rule unsafe.
+    ///
+    /// Interning into `BUILTIN_MOD` instead gives the name ONE program-wide
+    /// identity, the same way `BUILTIN_TYPES` already works — a kernel-implicit
+    /// type is a property of the language, not of whoever imported it. The
+    /// sentinel is the existing one, so every downstream guard that already knows
+    /// `module_name(ModuleId(u32::MAX))` is not a real module keeps covering it
+    /// (`ty::sig::rewrite_alias_refs` gates on `TypeAlias`; `lower`'s
+    /// `pinned_union_go` gates on `index() == u32::MAX`).
+    fn kernel_implicit_type_def(&self, name: &str) -> DefId {
+        self.def(BUILTIN_MOD, name, DefKind::TypeCon)
+    }
+
+    /// Chase a type name that a module `exposing (…)`s but does not DECLARE.
+    ///
+    /// `exports::compute_exports` is computed purely from a module's own parse
+    /// and never recurses (a deliberate salsa-shape choice), so a module that
+    /// re-exposes an imported type publishes nothing for it and
+    /// `exports.type_(name)` misses. The old code minted
+    /// `self.def(exports.module, name)` — an identity belonging to the
+    /// RE-EXPORTER, so the same type reached directly and through the re-export
+    /// carried two identities.
+    ///
+    /// This reads the re-exporter's own import list (parse only — no `resolve`
+    /// recursion, so no query cycle between mutually-importing modules) to find
+    /// which module it got the name from, and returns THAT module's real export.
+    /// Bounded by `visited` so a re-export cycle terminates.
+    /// Breadth-first, and it considers EVERY import that could have supplied the
+    /// name rather than the first one. A depth-first walk down the first
+    /// candidate would miss the declaration whenever an unrelated
+    /// `exposing (..)` import happened to be written above the real source —
+    /// a miss is only a false negative here, never a false rejection, but it is
+    /// avoidable and the search space is tiny.
+    fn chase_reexported_type(&self, from: ModuleId, name: &str) -> Option<(DefId, u16)> {
+        let mut visited: HashSet<u32> = HashSet::new();
+        let mut frontier: Vec<ModuleId> = vec![from];
+        visited.insert(from.index());
+        // A re-export chain deeper than this is not a real program shape; the
+        // bound is belt-and-braces on top of `visited`.
+        for _ in 0..8 {
+            let mut next: Vec<ModuleId> = Vec::new();
+            for m in frontier.drain(..) {
+                let tree = self.db.module_parse(m).tree();
+                for imp in tree.imports() {
+                    let Some(path) = imp.name().map(|n| n.text()) else {
+                        continue;
+                    };
+                    let Some(clause) = imp.exposing().map(|e| cst::read_exposing(e.syntax()))
+                    else {
+                        continue;
+                    };
+                    let names_it = clause.all
+                        || clause.items.iter().any(
+                            |it| matches!(it, cst::ExposedItem::Type { name: n, .. } if n == name),
+                        );
+                    if !names_it {
+                        continue;
+                    }
+                    // A kernel or Go-FFI origin is not a Sky declaration site;
+                    // the caller falls back to its own handling for those.
+                    let ImportSource::Dep(d) = self.db.classify_import(&path) else {
+                        continue;
+                    };
+                    if let Some(found) = self.db.module_exports(d).type_(name) {
+                        return Some(found);
+                    }
+                    if visited.insert(d.index()) {
+                        next.push(d);
+                    }
+                }
+            }
+            if next.is_empty() {
+                return None;
+            }
+            frontier = next;
+        }
+        None
+    }
+
     fn self_module_name(&self) -> String {
         self.db.module_name(self.module).to_string()
     }
@@ -602,6 +809,22 @@ impl<'a> Resolver<'a> {
             self.ctors.insert(name, c);
         }
         self.ambiguous_ctors = cambig.into_iter().collect();
+
+        // Types. Same lattice, same use-site reporting; the difference is that a
+        // fabricated identity abstains instead of voting (see `TypeKey`).
+        let mut twins: Vec<(String, TypeRes)> = Vec::new();
+        let mut tambig: Vec<(String, Vec<TypeOrigin>)> = Vec::new();
+        for (name, origins) in &self.type_origins {
+            match settle_one_type(origins) {
+                Some(SettledType::Winner(tr)) => twins.push((name.clone(), tr)),
+                Some(SettledType::Ambiguous(cands)) => tambig.push((name.clone(), cands)),
+                None => {}
+            }
+        }
+        for (name, tr) in twins {
+            self.types.insert(name, tr);
+        }
+        self.ambiguous_types = tambig.into_iter().collect();
     }
 
     /// Report an ambiguous unqualified reference at the site that reads it.
@@ -613,6 +836,33 @@ impl<'a> Resolver<'a> {
     /// line in the same place. Reporting at the import would reject programs
     /// whose meaning is not order-dependent at all.
     fn report_ambiguous(&mut self, name: &str, cands: &[Origin], span: Option<Span>, what: &str) {
+        let sources: Vec<(String, Option<String>)> = cands
+            .iter()
+            .map(|o| (o.module.clone(), o.qualifier.clone()))
+            .collect();
+        self.report_ambiguous_sources(name, &sources, span, what);
+    }
+
+    /// Same diagnostic for the TYPE namespace. A type reference is ambiguous for
+    /// exactly the reason a value one is — `hir`'s `types` map and `lower`'s
+    /// `nominal` map are both last-writer-wins on the bare name, so which
+    /// declaration an annotation means is a function of import ORDER, and the two
+    /// orders select two different Go types.
+    fn report_ambiguous_type(&mut self, name: &str, cands: &[TypeOrigin], span: Option<Span>) {
+        let sources: Vec<(String, Option<String>)> = cands
+            .iter()
+            .map(|o| (o.module.clone(), o.qualifier.clone()))
+            .collect();
+        self.report_ambiguous_sources(name, &sources, span, "type");
+    }
+
+    fn report_ambiguous_sources(
+        &mut self,
+        name: &str,
+        cands: &[(String, Option<String>)],
+        span: Option<Span>,
+        what: &str,
+    ) {
         if self.quiet > 0 {
             return;
         }
@@ -626,10 +876,10 @@ impl<'a> Resolver<'a> {
         {
             return;
         }
-        let mods: Vec<String> = cands.iter().map(|o| format!("`{}`", o.module)).collect();
+        let mods: Vec<String> = cands.iter().map(|(m, _)| format!("`{m}`")).collect();
         let quals: Vec<String> = cands
             .iter()
-            .filter_map(|o| o.qualifier.as_ref().map(|q| format!("`{q}.{name}`")))
+            .filter_map(|(_, q)| q.as_ref().map(|q| format!("`{q}.{name}`")))
             .collect();
         let fix = if quals.len() == cands.len() && !quals.is_empty() {
             format!("Qualify the reference — write {} — or narrow one import's `exposing (…)` list so only one of them binds `{name}`.", join_or(&quals))
@@ -672,8 +922,16 @@ impl<'a> Resolver<'a> {
         }
         for (name, arity) in BUILTIN_TYPES {
             let con = self.def(BUILTIN_MOD, name, DefKind::TypeCon);
-            self.types
-                .insert((*name).to_string(), TypeRes { con, arity: *arity });
+            // AMBIENT, for the same reason the Prelude's values are: the user did
+            // not choose `List` / `Result` / `Error`, so their presence is not an
+            // authorial claim on the name and must never make an explicit import
+            // of a same-named type ambiguous.
+            self.bind_type(
+                (*name).to_string(),
+                TypeRes { con, arity: *arity },
+                TypeKey::Id(format!("def:{}", con.0)),
+                BindLayer::Ambient,
+            );
         }
         for (cn, ty, index, arity) in BUILTIN_CTORS {
             let type_ = self.def(BUILTIN_MOD, ty, DefKind::TypeCon);
@@ -960,24 +1218,26 @@ impl<'a> Resolver<'a> {
                 self.bind_var_imported(name, Res::Def(def));
             }
             for u in &exports.unions.clone() {
-                self.types.insert(
+                self.bind_type_imported(
                     u.name.as_str().to_string(),
                     TypeRes {
                         con: u.def,
                         arity: u.arity,
                     },
+                    TypeKey::Id(format!("def:{}", u.def.0)),
                 );
                 for ct in &u.ctors {
                     self.bind_ctor_imported(ct.name.as_str().to_string(), to_ctor_ref(ct));
                 }
             }
-            for a in &exports.aliases {
-                self.types.insert(
+            for a in &exports.aliases.clone() {
+                self.bind_type_imported(
                     a.name.as_str().to_string(),
                     TypeRes {
                         con: a.def,
                         arity: a.arity,
                     },
+                    TypeKey::Id(format!("def:{}", a.def.0)),
                 );
             }
             return;
@@ -1009,13 +1269,37 @@ impl<'a> Resolver<'a> {
                     self.bind_var_imported(v.clone(), res);
                 }
                 cst::ExposedItem::Type { name, ctors } => {
-                    if let Some((def, arity)) = exports.type_(name) {
-                        self.types.insert(name.clone(), TypeRes { con: def, arity });
+                    // Identity, in descending order of authority:
+                    //   1. the module really exports it            → its DefId
+                    //   2. it re-exports it from somewhere         → chase, real DefId
+                    //   3. it is a kernel-implicit language type   → the ONE builtin DefId
+                    //   4. nothing authoritative                   → fabricate, and say so
+                    // Only (4) is lenient now. It keeps the recovery binding the
+                    // old code produced — resolution must stay total — but marks
+                    // the identity `Opaque` so it can never be compared against
+                    // another binding and reported ambiguous.
+                    let (tr, key) = if let Some((def, arity)) = exports.type_(name) {
+                        (
+                            TypeRes { con: def, arity },
+                            TypeKey::Id(format!("def:{}", def.0)),
+                        )
+                    } else if let Some((def, arity)) = self.chase_reexported_type(exports.module, name)
+                    {
+                        (
+                            TypeRes { con: def, arity },
+                            TypeKey::Id(format!("def:{}", def.0)),
+                        )
+                    } else if KERNEL_IMPLICIT_TYPES.contains(&name.as_str()) {
+                        let con = self.kernel_implicit_type_def(name);
+                        (
+                            TypeRes { con, arity: 0 },
+                            TypeKey::Id(format!("kernel-implicit:{name}")),
+                        )
                     } else {
-                        // lenient: kernel-implicit or re-exported type
                         let con = self.def(exports.module, name, DefKind::TypeCon);
-                        self.types.insert(name.clone(), TypeRes { con, arity: 0 });
-                    }
+                        (TypeRes { con, arity: 0 }, TypeKey::Opaque)
+                    };
+                    self.bind_type_imported(name.clone(), tr, key);
                     // record-alias constructor value
                     if let Some(def) = exports.value(name) {
                         self.bind_var_imported(name.clone(), Res::Def(def));
@@ -1069,8 +1353,19 @@ impl<'a> Resolver<'a> {
                     );
                 }
                 cst::ExposedItem::Type { name, .. } => {
-                    let con = self.def(self.module, name, DefKind::TypeCon);
-                    self.types.insert(name.clone(), TypeRes { con, arity: 0 });
+                    // A type exposed by a KERNEL pseudo-module has no `.sky`
+                    // declaration to point at. It used to mint a fresh DefId in
+                    // the IMPORTING module, so `Decoder` meant a different
+                    // identity in every module that imported it — and two kernel
+                    // modules in one import list produced two `Decoder`s. One
+                    // program-wide identity instead (see
+                    // `kernel_implicit_type_def`).
+                    let con = self.kernel_implicit_type_def(name);
+                    self.bind_type_imported(
+                        name.clone(),
+                        TypeRes { con, arity: 0 },
+                        TypeKey::Id(format!("kernel-implicit:{name}")),
+                    );
                 }
                 cst::ExposedItem::Operator => {}
             }
@@ -1094,9 +1389,19 @@ impl<'a> Resolver<'a> {
                         .entry(name.clone())
                         .or_default()
                         .insert(name.clone(), TypeResEntry::Foreign(pkg.to_string()));
-                    // also make the bare type resolvable leniently as foreign
+                    // also make the bare type resolvable leniently as foreign.
+                    // A Go FFI type's identity is its (package, name) pair, which
+                    // is not a Sky `DefId` and cannot be compared against one, so
+                    // the binding is `Opaque`: a bare name that might be a Go type
+                    // never joins an ambiguity verdict. Documented false negative
+                    // — the alternative is guessing that a Go `Client` and a Sky
+                    // `Client` are different, which is how #164 broke a real app.
                     let con = self.def(self.module, name, DefKind::TypeCon);
-                    self.types.insert(name.clone(), TypeRes { con, arity: 0 });
+                    self.bind_type_imported(
+                        name.clone(),
+                        TypeRes { con, arity: 0 },
+                        TypeKey::Opaque,
+                    );
                 }
                 cst::ExposedItem::Operator => {}
             }
@@ -1155,7 +1460,12 @@ impl<'a> Resolver<'a> {
                     }
                     let arity = cst::decl_type_vars(u.syntax()).len() as u16;
                     let type_ = self.def(self.module, &tn, DefKind::TypeCon);
-                    self.types.insert(tn.clone(), TypeRes { con: type_, arity });
+                    self.bind_type(
+                        tn.clone(),
+                        TypeRes { con: type_, arity },
+                        TypeKey::Id(format!("def:{}", type_.0)),
+                        BindLayer::Local,
+                    );
                     if let Some(t) = u.name() {
                         self.result
                             .def_spans
@@ -1210,7 +1520,12 @@ impl<'a> Resolver<'a> {
                         .map(|t| matches!(t, ast::Type::Record(_)))
                         .unwrap_or(false);
                     let con = self.def(self.module, &an, DefKind::TypeAlias);
-                    self.types.insert(an.clone(), TypeRes { con, arity });
+                    self.bind_type(
+                        an.clone(),
+                        TypeRes { con, arity },
+                        TypeKey::Id(format!("def:{}", con.0)),
+                        BindLayer::Local,
+                    );
                     if let Some(t) = a.name() {
                         self.result
                             .def_spans
@@ -2140,7 +2455,7 @@ impl<'a> Resolver<'a> {
             ast::Type::Con(c) => {
                 let name = cst::first_upper(c.syntax()).unwrap_or_default();
                 self.record_type_occ(c.syntax().text_range(), &name);
-                self.type_con(&name, Vec::new())
+                self.type_con_at(&name, Vec::new(), Some(self.span_of(c.syntax().text_range())))
             }
             ast::Type::Qual(q) => {
                 let (qual, name) = cst::dotted_parts(q.syntax());
@@ -2156,7 +2471,7 @@ impl<'a> Resolver<'a> {
                     ast::Type::Con(c) => {
                         let name = cst::first_upper(c.syntax()).unwrap_or_default();
                         self.record_type_occ(c.syntax().text_range(), &name);
-                        self.type_con(&name, args)
+                        self.type_con_at(&name, args, Some(self.span_of(c.syntax().text_range())))
                     }
                     ast::Type::Qual(q) => {
                         let (qual, name) = cst::dotted_parts(q.syntax());
@@ -2222,7 +2537,15 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn type_con(&mut self, name: &str, args: Vec<TypeId>) -> TypeId {
+    fn type_con_at(&mut self, name: &str, args: Vec<TypeId>, span: Option<Span>) -> TypeId {
+        // Reported HERE — at the annotation that fails to say which module it
+        // means — never at the import, for the same reason values are: importing
+        // two modules that both export a type name you never write is legal and
+        // common. The binding in `types` is still used so resolution stays total;
+        // `project::build` halts on the diagnostic before lowering runs.
+        if let Some(cands) = self.ambiguous_types.get(name).cloned() {
+            self.report_ambiguous_type(name, &cands, span);
+        }
         if let Some(tr) = self.types.get(name) {
             return self.body.ty(Type::Con {
                 con: Some(*tr),
