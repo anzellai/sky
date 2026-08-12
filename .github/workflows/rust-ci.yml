@@ -466,12 +466,22 @@ jobs:
   #
   # Cost is not the reason it was absent: measured 274s locally (corpus 181s,
   # witness 46s, isolation 39s, fieldbook 7s). CI wall-clock is the slowest job,
-  # not the sum, and this sits far under `macos-determinism`, so per-push
-  # enforcement is free. 274s * 1.5 ≈ 7 min, rounded up for runner variance.
+  # not the sum, so a job that fits under the slowest existing one is free.
+  #
+  # MEASURED, and the two numbers differ enough to matter: the tier is 274s with
+  # a warm Go build cache (corpus 181s) and ~700s cold (corpus 506s), because
+  # every one of the 335 cases is `go build`-ed. Add `scripts/build.sh` and this
+  # job is plausibly the new critical path. `ci-green` asserts the T1 ceiling
+  # (900s + 10% grace) and PUBLISHES the real wall clock every run, so the next
+  # run is the measurement — if this job blows the budget, the answer is to make
+  # it cheaper (or share the compiler build), NOT to raise the ceiling, which is
+  # the silent budget drift that assertion exists to catch.
+  #
+  # 25 min bounds a runaway without hiding a cold-cache run.
   behaviour-corpus:
     needs: setup
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -495,6 +505,15 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
+      - name: Build the compiler to sky-out/sky (Layer-2 gates require it)
+        # `harness::layer2::sky_binary` resolves the compiler under test at
+        # `<repo>/sky-out/sky` and treats a missing one as a HARD ERROR, never a
+        # skip — "a gate that cannot run has not passed". Without this step
+        # `apps-fieldbook` reports VACUOUS and the tier fails, which is exactly
+        # what the first run of this job did. That is the harness working: it
+        # refused to report a pass for a gate that executed nothing.
+        working-directory: .
+        run: bash scripts/build.sh
       - name: 'Gate — behavioural corpus (harness tier T2: 383 assertions)'
         # Runs the whole tier rather than named gates, so a gate ADDED at T2
         # later is picked up here automatically instead of silently joining the
