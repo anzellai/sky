@@ -4,7 +4,15 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = "/Users/anzel/works/playground/sky/examples";
+// Resolve from THIS file, not from one machine's home directory — see the note
+// in scripts/sweep-live-deep.mjs. `SKY_LSP_BIN` overrides the compiler; the
+// default is the one this checkout built.
+const REPO_ROOT = path.resolve(__dirname, "..");
+const ROOT = path.join(REPO_ROOT, "examples");
+const SKY_BIN = process.env.SKY_LSP_BIN
+    || (fs.existsSync(path.join(REPO_ROOT, "sky-out", "sky"))
+        ? path.join(REPO_ROOT, "sky-out", "sky")
+        : "sky");
 const examples = fs.readdirSync(ROOT).filter(d => /^\d+-/.test(d)).sort();
 const results = [];
 
@@ -15,7 +23,7 @@ async function probeExample(dir) {
         if (!fs.existsSync(entry)) return resolve({dir, status: "no-entry"});
         const uri = "file://" + entry;
         const content = fs.readFileSync(entry, 'utf8');
-        const proc = spawn("/Users/anzel/.local/bin/sky", ["lsp"], { cwd: projRoot });
+        const proc = spawn(SKY_BIN, ["lsp"], { cwd: projRoot });
         let diagCount = -1;
         let alive = true;
         let firstDiag = null;

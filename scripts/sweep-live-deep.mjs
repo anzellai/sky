@@ -7,9 +7,14 @@
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 import { writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = "/Users/anzel/works/playground/sky";
+// Resolve the repo from THIS file, not from one machine's home directory. The
+// same absolute-path habit in scripts/verify-live-resilience.mjs is what made
+// the nightly browser tier die on its first run, and it read fine locally the
+// whole time it was broken.
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // (name, port). Set port=null to skip boot (we'll just check it builds).
 const APPS = [
