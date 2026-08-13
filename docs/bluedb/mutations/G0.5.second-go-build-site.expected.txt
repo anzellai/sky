@@ -1,3 +1,3 @@
 PROBE gate=G0.5 state=FAIL root=<scratch-worktree>
   go-build site / zstd tag contract broken
-  expected exactly 1 `go build` site in rust/crates/project/src, found 2: rust/crates/project/src/build.rs:656, rust/crates/project/src/build.rs:1555
+  expected exactly 1 `go build` site in rust/crates/project/src, found 2: rust/crates/project/src/build.rs:709, rust/crates/project/src/build.rs:2165
