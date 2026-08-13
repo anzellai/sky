@@ -1,0 +1,16 @@
+diff --git a/runtime-go/rt/zz_mutation_pebble_link.go b/runtime-go/rt/zz_mutation_pebble_link.go
+new file mode 100644
+index 00000000..70e0b30c
+--- /dev/null
++++ b/runtime-go/rt/zz_mutation_pebble_link.go
+@@ -0,0 +1,10 @@
++package rt
++
++// MUTATION (G0.3): link the engine into EVERY app unconditionally.
++//
++// This is the defect G0.3 exists to catch: the moment anything in `rt` pulls in
++// `bluedb`, every Sky app — including ones that use no Persist collection at
++// all — links pebble and its 24 transitive modules. The prior attempt shipped
++// exactly this shape (`rt/embedded_kernel.go` importing `sky-app/bluedb`) and
++// it broke every non-Persist app.
++import _ "sky-app/bluedb"
