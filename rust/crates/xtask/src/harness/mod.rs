@@ -55,6 +55,27 @@ const PROOF_WINDOW_DAYS: u64 = 30;
 
 const PROOF_LEDGER: &str = "docs/coverage/falsifier-proofs.json";
 
+/// Redirects the proof ledger away from the tracked file.
+///
+/// `--verify-falsifiers` records what it proved, which is correct for the
+/// COMMAND and wrong for a TEST: `tests/harness_e2e.rs` runs the canary through
+/// the real binary, so an ordinary `cargo test -p xtask` rewrote
+/// `docs/coverage/falsifier-proofs.json` and left the working tree dirty. A
+/// checked-in proof that any test run refreshes is not evidence of anything —
+/// it is a timestamp that follows the observer around, and it means `git status`
+/// after a test run can never be trusted to be clean.
+///
+/// Set this to a scratch path and the run banks its proofs there instead.
+const PROOF_LEDGER_ENV: &str = "SKY_PROOF_LEDGER";
+
+/// Where this process should read and write the proof ledger.
+fn proof_ledger_path(root: &Path) -> PathBuf {
+    match std::env::var(PROOF_LEDGER_ENV) {
+        Ok(p) if !p.trim().is_empty() => PathBuf::from(p),
+        _ => root.join(PROOF_LEDGER),
+    }
+}
+
 pub struct Report {
     pub gate: &'static str,
     pub state: GateState,
@@ -678,7 +699,7 @@ struct Proofs {
 
 impl Proofs {
     fn load(root: &Path) -> Proofs {
-        let entries = std::fs::read_to_string(root.join(PROOF_LEDGER))
+        let entries = std::fs::read_to_string(proof_ledger_path(root))
             .ok()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
             .and_then(|v| v.get("gates").cloned())
@@ -701,7 +722,7 @@ impl Proofs {
     }
 
     fn record(root: &Path, reports: &[falsify::FalsifyReport]) -> std::io::Result<()> {
-        let path = root.join(PROOF_LEDGER);
+        let path = proof_ledger_path(root);
         if let Some(p) = path.parent() {
             std::fs::create_dir_all(p)?;
         }
@@ -855,5 +876,57 @@ mod proof_ledger_tests {
         assert_eq!(e["observed"], "VACUOUS");
         assert_eq!(e["outcome"], "NOT-as-declared");
         assert!(!after.fresh("roundtrip"));
+    }
+}
+
+#[cfg(test)]
+mod proof_ledger_location_tests {
+    use super::{proof_ledger_path, PROOF_LEDGER, PROOF_LEDGER_ENV};
+    use std::path::Path;
+
+    /// All three cases in ONE test, deliberately.
+    ///
+    /// `std::env::set_var` mutates process-wide state, and cargo runs tests in
+    /// the same process on multiple threads — as three separate tests these
+    /// raced and two failed, which is a flaky gate rather than a broken
+    /// behaviour. One sequential test is the honest shape for a process-global.
+    #[test]
+    fn the_proof_ledger_honours_an_explicit_path_and_nothing_else() {
+        // 1. Default: the tracked file. Production behaviour must not change
+        //    just because a redirect exists.
+        std::env::remove_var(PROOF_LEDGER_ENV);
+        assert_eq!(
+            proof_ledger_path(Path::new("/repo")),
+            Path::new("/repo").join(PROOF_LEDGER),
+            "with no override the proof ledger must stay the checked-in file"
+        );
+
+        // 2. Redirected. This is what stops `cargo test -p xtask` rewriting a
+        //    TRACKED file: `tests/harness_e2e.rs` drives `--verify-falsifiers`
+        //    against the real repo, and recording a proof is correct for the
+        //    command. Before the redirect, an ordinary test run left
+        //    `docs/coverage/falsifier-proofs.json` modified, so `git status`
+        //    after testing was never clean — and a dirty tree is how 1928 build
+        //    artefacts were swept into a commit earlier in this cycle.
+        std::env::set_var(PROOF_LEDGER_ENV, "/tmp/scratch-ledger.json");
+        assert_eq!(
+            proof_ledger_path(Path::new("/repo")),
+            Path::new("/tmp/scratch-ledger.json"),
+            "an explicit ledger path must be honoured, or the e2e suite writes \
+             to the tracked file again"
+        );
+
+        // 3. An empty value is NOT a redirect. Otherwise `SKY_PROOF_LEDGER=` in
+        //    a shell profile would silently send proofs to the filesystem root —
+        //    the same shape as the `CARGO_TARGET_DIR` pointing at a binary
+        //    directory that produced three false diagnoses this cycle.
+        std::env::set_var(PROOF_LEDGER_ENV, "");
+        assert_eq!(
+            proof_ledger_path(Path::new("/repo")),
+            Path::new("/repo").join(PROOF_LEDGER),
+            "an empty override must fall back, not redirect to nowhere"
+        );
+
+        std::env::remove_var(PROOF_LEDGER_ENV);
     }
 }

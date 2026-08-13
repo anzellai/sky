@@ -26,9 +26,28 @@ fn harness(args: &[&str]) -> Output {
     Command::new(XTASK)
         .arg("harness")
         .args(args)
+        // `--verify-falsifiers` BANKS what it proved, which is right for the
+        // command and wrong here: this suite drives the real binary against the
+        // real repo, so `cargo test -p xtask` was rewriting the tracked
+        // `docs/coverage/falsifier-proofs.json` and leaving the working tree
+        // dirty. A proof that any test run refreshes is a timestamp following
+        // the observer around, and it means `git status` after a test can never
+        // be trusted — which is how 1928 build artefacts got swept into a
+        // commit earlier in this cycle.
+        //
+        // Redirect the ledger to a scratch path. The production path is
+        // unchanged; only this suite writes elsewhere.
+        .env("SKY_PROOF_LEDGER", scratch_ledger())
         .current_dir(repo_root())
         .output()
         .expect("failed to run xtask harness")
+}
+
+/// A per-process scratch ledger, so concurrent test binaries cannot collide.
+fn scratch_ledger() -> PathBuf {
+    let mut p = std::env::temp_dir();
+    p.push(format!("sky-proof-ledger-{}.json", std::process::id()));
+    p
 }
 
 fn stdout(o: &Output) -> String {
