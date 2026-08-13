@@ -174,3 +174,36 @@ mem-guard running · timeout-bound every long run · CGO=0 cross-compile green �
 cgo DataDog zstd while shipped apps link pure-Go klauspost) · `base.CheckComparer`
 is the irreversible gate · no runtime panic or hang from well-typed Sky code ·
 the crash corpus is day-one · every new gate mutation-proven.
+
+## Operating directive — added 2026-08-13 (rebase onto main + resume)
+
+Verbatim, after the branch was rebased onto `main` (v0.20.2 line):
+
+> checkpoint first then continue with ALL remaining tasks, in fully autonomous
+> mode, agents + grill + PIV mode
+
+Which fixes the working method for the rest of this mandate:
+
+* **Fully autonomous.** Do not stop at phase boundaries. Per CLAUDE.md §0 rule
+  4 the ONLY stop condition is a genuine implementation blocker needing a user
+  decision. "Checkpoint reached" is not a stop.
+* **Agents.** Research, audit and per-phase implementation fan out to
+  subagents; the main context holds the plan and the verdicts, not the file
+  dumps.
+* **Grill.** Every plan is adversarially attacked BEFORE implementation (§0.4
+  G1-G5), and every "closed" claim is attacked after.
+* **PIV.** Plan -> Implement -> Verify per unit of work. Verification is a gate
+  run or a test, never an assertion. Nothing is "done" on my say-so.
+
+### Rebase note (2026-08-13)
+
+Rebased 20 commits -> 13 onto `main`. Seven were general gate-vacuity fixes that
+`main` had since solved independently: git dropped two as identical patches, and
+the other five were verified superseded one by one before being dropped (in each
+case `main`'s version was equal or better — it had also stripped hardcoded
+developer home paths out of `scripts/lsp-fleet-sweep.cjs`). Pre-rebase head kept
+at `backup/bluedb-v2-pre-rebase`.
+
+The rebase moved line numbers, which silently invalidated recorded gate
+falsifications — see the G0.4/G0.5 commits. Any future rebase must re-run
+`--verify-mutations` before trusting a single PASS.
