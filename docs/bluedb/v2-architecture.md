@@ -132,10 +132,10 @@ Line numbers in the Evidence column were re-verified against the branch named in
 | **P-3** | **E-B3(c)**: "G2.4 **forbids** what G2.1 requires" | v2.0's G2.4 list is a **closed enumeration** — `Http.*`, `File.*`, `Time.now`, `Uuid.*`, `Random.*`, `Db.execRaw`, `Task.perform` of an external effect. A test rendezvous barrier is in none of them, so there is no literal conflict in the shipped text | The **finding is adopted anyway**, because it becomes true under the G-B7 fix: with a runtime poison flag, a barrier *is* a kernel call inside `transact` and would be poisoned. §2.5 and §7.3 therefore name `Persist.Test.barrier` as an explicitly-exempt kernel, linked only under a test build tag, and G2.1 asserts the rendezvous actually happened |
 
 **Meta-finding.** Both grillers' own citations rot at the same rate as the document's:
-`bytesSuccessor` is at `reader.go:91-100`, not `:100-110`; `IndexID`/`CollID` are at
-`keychange.go:16-20`, not `:25-31`; the coordinate-space bound recording is at `txn.go:171-186`,
-not `:493-501`; the bound predicate is `validate.go:65`, not `:66-71`; `payloadFmtV1` is at
-`keychange.go:42`, not `:41`. This is not a complaint — it is the reason the **Citation
+`bytesSuccessor` is at `[bdb]` `reader.go:91-100`, not `:100-110`; `IndexID`/`CollID` are at
+`[bdb]` `keychange.go:16-20`, not `:25-31`; the coordinate-space bound recording is at `[bdb]` `txn.go:171-186`,
+not `:493-501`; the bound predicate is `[bdb]` `validate.go:65`, not `:66-71`; `payloadFmtV1` is at
+`[bdb]` `keychange.go:42`, not `:41`. This is not a complaint — it is the reason the **Citation
 provenance** rules above are now part of the document rather than an assumed practice, and the
 reason **G0.7** (new) machine-checks that every `file:line` cited in this document still resolves
 to the quoted token on the tagged branch.
@@ -152,16 +152,16 @@ misstated. Each is cited so a griller can check it in one command.
 
 | # | Claim | Reality |
 |---|---|---|
-| P1 | "`[data] driver` is a no-op" implies `[data]` exists | **`[data]` does not exist on `main` at all.** `read_sky_toml_config` (`rust/crates/project/src/build.rs:776-848`) handles `[database]` only. `[data]` is `feat/bluedb`-only. v2 introduces it net-new. |
+| P1 | "`[data] driver` is a no-op" implies `[data]` exists | **`[data]` does not exist on `main` at all.** `read_sky_toml_config` (`[main]` `rust/crates/project/src/build.rs:776-848`) handles `[database]` only. `[data]` is `feat/bluedb`-only. v2 introduces it net-new. |
 | P2 | `Std.Persist` shipped (memory `std_persist_unified_data.md`, 2026-08-04) | **Not on `main`.** `sky-stdlib/Std/` has no `Persist.sky`. It exists only on `feat/bluedb` / `exp/bluedb`. Net-new here. |
-| P3 | `DB_DRIVER` is written and read by nobody | **CONFIRMED, and worse: it is documented as functional.** Written at `build.rs:802`; zero readers in `runtime-go/`, `sky-stdlib/`, `sky-bundled/`. Driver is chosen by DSN shape (`detectDriver`, `runtime-go/rt/db_auth.go:337-351`). Documented as a working knob at `docs/sky-toml.md:202` and `docs/skydb/overview.md:558`. Pinned green by `build.rs:1442`. |
-| P4 | Goal #2's "real SERIALIZABLE" merely lacks cross-backend unity | **On `main` it does not exist at any backend.** `Std.Db` exposes exactly one transaction verb — `withTransaction : Db -> (Db -> Task Error a) -> Task Error a` (`sky-stdlib/Std/Db.sky:216`) — implemented with a bare `d.conn.Begin()` (`db_auth.go:1364-1407`) = driver default = **READ COMMITTED on Postgres**. No isolation type, no isolation argument, no `40001` retry anywhere (`grep -rn "40001" runtime-go/` → empty). `Sky.Core.Error.isRetryable` returns `False` for `Conflict` (`Error.sky:192-209`). |
-| P5 | `kernel_api.rs` + the `kernel_api_covers_registered_kernel_functions` CI gate exist | **Both deleted** (commit `054f6d26`). The gate exists in no workflow. **`AGENTS.md:258` still documents it as current and "fails CI on drift".** A durable instruction file asserting a phantom enforcement mechanism — fix in the same commit as this document's first phase. |
+| P3 | `DB_DRIVER` is written and read by nobody | **CONFIRMED when written — and CLOSED on `main` since, in `6aa275bd`, before this branch was rebased onto it.** It was written at build.rs line 802, had zero readers, and was documented as a working knob at docs/sky-toml.md line 202 / docs/skydb/overview.md line 558 and pinned green by a test at build.rs line 1442. None of those four lines exists on `[main]` now. The successors: the emission is gone and a *negative* assertion pins its absence (`[main]` `rust/crates/project/src/build.rs:1735`), both doc rows now say the driver comes from the DSN's shape (`[main]` `docs/sky-toml.md:208`, `[main]` `docs/skydb/overview.md:561`), and the DSN rule itself is `detectDriver` (`[main]` `runtime-go/rt/db_auth.go:350`). **The four original lines still exist verbatim on `[bdb]`, `[p5e]`, `[exp]` and `backup/bluedb-v2-pre-rebase`** — so a check that only asks "does this line exist somewhere?" resolves them against the wrong tree and reports closed work as outstanding. **The sibling this row missed:** `[auth] driver`, the same defect shape in the same parser, survived that cleanup and was found by G0.4 here (`[main]` `docs/sky-toml.md:183`). |
+| P4 | Goal #2's "real SERIALIZABLE" merely lacks cross-backend unity | **On `main` it does not exist at any backend.** `Std.Db` exposes exactly one transaction verb — `withTransaction : Db -> (Db -> Task Error a) -> Task Error a` (`[main]` `sky-stdlib/Std/Db.sky:216`) — implemented with a bare `d.conn.Begin()` (`[main]` `db_auth.go:1364-1407`) = driver default = **READ COMMITTED on Postgres**. No isolation type, no isolation argument, no `40001` retry anywhere (`grep -rn "40001" runtime-go/` → empty). `Sky.Core.Error.isRetryable` returns `False` for `Conflict` (`[main]` `Error.sky:192-209`). |
+| P5 | `kernel_api.rs` + the `kernel_api_covers_registered_kernel_functions` CI gate exist | **Both deleted** (commit `054f6d26`); the gate existed in no workflow, and AGENTS.md line 258 still documented it as current and "fails CI on drift" — a durable instruction file asserting a phantom enforcement mechanism. **CLOSED in P0 on this branch.** `AGENTS.md` now states what actually holds: kernel-only module docs are *derived*, not curated — the list is `hir::KERNEL_MODULES` (`[main]` `rust/crates/hir/src/kernel.rs:29`), rendered through `kernel_only_modules()` (`[main]` `rust/crates/project/src/doc.rs:53`) and covered by `kernel_only_module_is_queryable` (`[main]` `rust/crates/project/src/doc.rs:1053`). Adding a kernel module documents it by construction, which is a stronger property than the gate that was claimed. |
 | P6 | A CI gate guards console drift | **NOT FOUND.** `grep -rni "drift\|console" .github/workflows/` → zero hits across all five workflow files. |
-| P7 | The `goty.rs` record-fieldset collision lives in `codegen` and blocks the console edit form | **Path wrong, and it does not block.** The function is `select_record_candidate` at **`rust/crates/lower/src/goty.rs:274-302`** (`crates/codegen/src/` contains only `lib.rs`). It selects by field *type* (landed `1a7142f6`, v0.19.1). The erased-`any` recurrence is real but is a *documented workaround* (use a tuple), not a blocker. |
+| P7 | The `goty.rs` record-fieldset collision lives in `codegen` and blocks the console edit form | **Path wrong, and it does not block.** The function is `select_record_candidate` at **`[main]` `rust/crates/lower/src/goty.rs:274-302`** (`crates/codegen/src/` contains only `lib.rs`). It selects by field *type* (landed `1a7142f6`, v0.19.1). The erased-`any` recurrence is real but is a *documented workaround* (use a tuple), not a blocker. |
 | P8 | `-tags pebblegozstd` is a non-negotiable already in force | **The string appears nowhere in the repo** except the mandate doc. CI runs `CGO_ENABLED=0 go test ./rt/...` at `[main]` `rust-ci.yml:255` (macOS determinism job) — v2.0 cited `:219`, which is the **Postgres-only** integration subset (`go test -tags integration ./rt/ -run Postgres`). Either way CGO=0 forecloses the cgo-zstd link path *for tests*. The real exposure is different and still open: **`sky build`'s CGO_ENABLED=1 paths** would link cgo DataDog zstd into a *shipped app* while the CGO=0 path links pure-Go klauspost. There is exactly **one** `go build` invocation site — `run_go_build_once` (`[main]` `build.rs:655-682`) — reached from **three** call paths (`:578` FFI-detected CGO=1, `:590` CGO=0, `:600` CGO=1 retry). Adding the tag at the single site therefore covers all three *by construction*; v2.0's "on both paths" framing was wrong about the shape and is corrected in §7.2. |
 | P9 | `SchemaOf` exists | **Did not exist** when the prior phases relied on it; it exists **only** on `salvage/p5e-foundation` (`runtime-go/bluedb/embedded.go`, added by that branch). It is a *deliverable of the salvage branch*, not a pre-existing facility. |
-| P10 | Sessions are serialised as JSON | **gob.** `docs/skylive/architecture.md:376` is wrong; `encodeSession` at `runtime-go/rt/live_store.go:1278`. |
+| P10 | Sessions are serialised as JSON | **gob.** `[main]` `docs/skylive/architecture.md:376` is wrong; `encodeSession` at `[main]` `runtime-go/rt/live_store.go:1278`. |
 | P11 | `docs/skylive/tiered-session-cache.md` describes a proposal | It says `Status: PROPOSED` but the cache **shipped** (`a6b4c443`), and its `decodeSession` line citation no longer resolves. Stale doc. |
 
 ### 0.2 About `feat/bluedb`'s own claims (research read as research)
@@ -169,12 +169,12 @@ misstated. Each is cited so a griller can check it in one command.
 | # | Claim in the prior docs | Reality in the prior code |
 |---|---|---|
 | P12 | `P.index` declares a secondary index | **Half true, and v2.0 got the other half wrong.** There is no *ordered* secondary-index keyspace: `[bdb]` `keys.go:19-22` defines `tagData 0x00`, `tagChangelog 0x01`, `tagMeta 0x02`, and `index_key.go` is a *validation-coordinate* encoder whose output only lands in `IndexCoord.Key` or a read-set bound. **But a working stored UNIQUE mechanism does exist and is maintained in production on that branch** — `[bdb]` `backend.go:262` `uniqUserKey(coll, indexName, colType, valBytes)` builds a **pk-free** key (`coll ‖ 0x1E ‖ indexName ‖ 0x1F ‖ encodeIndexKey(…)`) whose *value* is the owning pk (`:259-261`), maintained at `embedded.go:288` (old-value delete), `:294-298` (`tx.Get(uKey)` → `ErrUniqueViolation` → `tx.Put(uKey, pk)`) and `:318` (delete on row delete). v2.0 omitted `backend.go` from P1's port list and shipped `unique` as a no-op — corrected in §3.2b and §10. |
-| P13 | Scans are O(all rows in the collection) | **Worse.** The *precise* (declared-index) transactional path calls `tx.reader.Iterate(nil)` (`txn.go:566`) — the whole data keyspace across every collection — and recomputes `tx.indexCoords(k,v)` per row. The *unindexed* fallback `ScanCollection` prefixes by collection and is strictly cheaper. **Declaring an index makes a transactional query slower.** |
-| P14 | `Backend.Capabilities()` gates multi-replica reactivity at startup | `Capabilities()` returns `CrossInstanceReactive: true` (`embedded.go:466-474`) — the opposite of the corrected matrix — **and has no production reader**. The real gate is a string classification of bindings behind a `sync.Once` on the *first session*. |
+| P13 | Scans are O(all rows in the collection) | **Worse.** The *precise* (declared-index) transactional path calls `tx.reader.Iterate(nil)` (`[bdb]` `txn.go:566`) — the whole data keyspace across every collection — and recomputes `tx.indexCoords(k,v)` per row. The *unindexed* fallback `ScanCollection` prefixes by collection and is strictly cheaper. **Declaring an index makes a transactional query slower.** |
+| P14 | `Backend.Capabilities()` gates multi-replica reactivity at startup | `Capabilities()` returns `CrossInstanceReactive: true` (`[bdb]` `embedded.go:466-474`) — the opposite of the corrected matrix — **and has no production reader**. The real gate is a string classification of bindings behind a `sync.Once` on the *first session*. |
 | P15 | The cross-instance reactive bridge exists and RG#1's fix ("empty tenant skips the broker publish") closes a leak | **The cross-instance path does not exist.** `grep "reactiveTenantTopic\|__bluedb:" runtime-go/` → nothing; `rt/bluedb_reactive.go` has no Broker reference. There is no publish to skip; RG#1's fix is vacuous, and the promised `Persist.withTenant` escape hatch was never built. |
 | P16 | A dropped reactive delivery "self-corrects via the resync path, never a permanent silent loss" | **No production consumer reads the resync latch.** `NeedsResync()` / `ResyncPending()` are called only from tests; `markResyncAll` latches a flag nothing reads; `drainReactiveBurst` discards every `Change`. A drop while the rt loop is inside `reactiveRefreshOnce` leaves the session permanently stale. This is the same "gate that cannot fail" class the branch's own RESUME warns about — still open there. |
 | P17 | Reactivity is query-scoped | Detection is query-scoped; **delivery is not**. The computed `Transition`/`Record`/`OrderChanged` are discarded and the consumer re-runs the full query (`Persist.toList` → full collection scan + full codec decode) **per session per notification**. |
-| P18 | The index read-set range test is a biconditional (`⟺`) | Docs specify half-open `[lo, hi)`; shipped code uses **closed `[lo, hi]`** (`index_key.go:107-108`, `validate.go` `inRangeClosed`). Direction is safe (over-reject) but the stated `⟺` is false at the upper boundary. |
+| P18 | The index read-set range test is a biconditional (`⟺`) | Docs specify half-open `[lo, hi)`; shipped code uses **closed `[lo, hi]`** (`[bdb]` `index_key.go:107-108`, `validate.go` `inRangeClosed`). Direction is safe (over-reject) but the stated `⟺` is false at the upper boundary. |
 | P19 | ADR-001: backing sessions with a collection is "not a blocker" because TEA Models are typed records | **Unshown.** `Persist.collection` requires a `Codec a` *value supplied from Sky*, while the funnel's persist point holds `sess.model` as untyped `any` on the Go side. There is no mechanism by which `rt` obtains a codec for the app's Model. §4 dissolves this rather than assuming it. |
 | P20 | `[data]` collapses sessions + app data + analytics into one backend | `[data] path` seeds **only** `DB_PATH`; `sessionPath` and `analyticsPath` remain separate keys. And `backend = "embedded"` emits `DB_DRIVER=embedded`, which nothing reads, so `Db.connect ()` opens **SQLite**. There is no config-driven way to select the embedded engine at all. |
 
@@ -239,15 +239,15 @@ Cross-cutting, serving all five:
 Three separate defects, on two different branches:
 
 1. **On `main` there is no serializable path at all.** `Db.withTransaction` → `d.conn.Begin()`
-   (`db_auth.go:1364-1407`). Postgres gets READ COMMITTED. Write skew is available to every
+   (`[main]` `db_auth.go:1364-1407`). Postgres gets READ COMMITTED. Write skew is available to every
    Sky app today.
 2. **On `feat/bluedb`, sqlite's "serializable" is a pool clamp.** `dbSerializableTxAttempt`
-   (`db_auth.go:1529-1587`) emits `BEGIN IMMEDIATE` over a pinned `*sql.Conn`, but the actual
+   (`[bdb]` `db_auth.go:1529-1587`) emits `BEGIN IMMEDIATE` over a pinned `*sql.Conn`, but the actual
    serialisation comes from `conn.SetMaxOpenConns(1)` applied unconditionally at connect
-   (`db_auth.go:305-321`) for *every* SQLite pool. The branch's own test says so in its name:
+   (`[bdb]` `db_auth.go:305-321`) for *every* SQLite pool. The branch's own test says so in its name:
    `TestWriteSkewSQLiteReadCommittedAlsoHolds_MaxConns1`
-   (`persist_writeskew_test.go:129-141`). The requested isolation level is decorative.
-3. **The dispatch fails open.** `if serializable && d.driver != "pgx"` (`db_auth.go:1535`) sends
+   (`[bdb]` `persist_writeskew_test.go:129-141`). The requested isolation level is decorative.
+3. **The dispatch fails open.** `if serializable && d.driver != "pgx"` (`[bdb]` `db_auth.go:1535`) sends
    *any* future driver down the SQLite arm, while the `SetMaxOpenConns(1)` clamp that arm
    relies on is guarded by `if driver == "sqlite"`. A `mysql`/`duckdb`/`libsql` driver would
    take the sqlite path *without* the clamp and be silently non-serializable.
@@ -338,7 +338,7 @@ before ack. Index-range recording is what makes it *serializable* rather than sn
   `Persist.read` / plain queries always take the reader path. This removes
   `SQLITE_BUSY_SNAPSHOT` upgrade aborts as a class rather than retrying them.
 - **`PRAGMA synchronous = FULL`** on the writer connection when `[data] durability = "full"`.
-  Today's `NORMAL` (`db_auth.go:305-321`) does not fsync per commit under WAL, so an acked
+  Today's `NORMAL` (`[bdb]` `db_auth.go:305-321`) does not fsync per commit under WAL, so an acked
   transaction is durable only against process crash — the exact `A2` grill finding, deferred on
   `feat/bluedb`. It is not deferred here; it is a config key with a safe default.
 
@@ -349,7 +349,7 @@ before ack. Index-range recording is what makes it *serializable* rather than sn
 **Postgres.** `BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})` — per-transaction,
 never a session default. Retry on `40001` (serialization_failure) and `40P01` (deadlock_detected),
 classified from a typed `*pgconn.PgError`, not a substring match. (The prior implementation's
-string fallback — `"could not serialize"`, `"database is locked"`, … at `db_auth.go:1479-1487` —
+string fallback — `"could not serialize"`, `"database is locked"`, … at `[bdb]` `db_auth.go:1479-1487` —
 is kept only as a diagnostic breadcrumb, never as the classifier.)
 
 *Honest bound:* postgres SSI provides serializability, not **strict** serializability — two
@@ -611,9 +611,9 @@ earliness — none of them a compiler change, which is what makes P3 shippable (
 ### 3.1 What exists and what does not
 
 `index_key.go` on `feat/bluedb` is a **validation-coordinate encoder**, not an index. There is
-no index tag in the keyspace (`keys.go:19-22`). Its output feeds `IndexCoord.Key` (changelog
+no index tag in the keyspace (`[bdb]` `keys.go:19-22`). Its output feeds `IndexCoord.Key` (changelog
 witnesses) and `Txn` read-set bounds. The *storage* half was left as
-`TODO(phase3b/4)` (`embedded.go:349-352`) and never landed. Consequences measured in §0.2/P13:
+`TODO(phase3b/4)` (`[bdb]` `embedded.go:349-352`) and never landed. Consequences measured in §0.2/P13:
 the declared-index transactional path iterates the **whole database** and is slower than the
 undeclared one.
 
@@ -675,10 +675,10 @@ The conflict domain is built from identifiers that are **shared across tenants**
 - `[bdb]` `keychange.go:16-20` — `CollID` is "a stable per-collection id"; `IndexID` is "a stable
   per-(collection,index) id". Neither is tenant-scoped.
 - `[bdb]` `keychange.go` and `readset.go` contain **zero** tenant references.
-  `readset.go:20-24` is `indexRange{index IndexID; lo, hi []byte}`.
+  `[bdb]` `readset.go:20-24` is `indexRange{index IndexID; lo, hi []byte}`.
 - `[bdb]` `txn.go:54` — `collWitness map[CollID]bool`, set by `WitnessCollection` (`:200`).
-- The tenant exists only as `Txn.tenant` / `CommitReq.Tenant`, documented at `txn.go:78-81` and
-  `engine.go:123-130` as a **transient reactive routing tag** that is *never durably written*.
+- The tenant exists only as `Txn.tenant` / `CommitReq.Tenant`, documented at `[bdb]` `txn.go:78-81` and
+  `[bdb]` `engine.go:123-130` as a **transient reactive routing tag** that is *never durably written*.
 
 Consequence: tenant T1's `indexRange` matches tenant T2's `IndexCoord` whenever the *values*
 overlap — `status = "active"` encodes to identical coordinate bytes for every tenant. Combined
@@ -876,7 +876,7 @@ and a NULL can never collide with a value. **Dispatch is on the `SkyType` from �
 
 **Escaping for variable-width components.** A composite key with a variable-width component in
 a non-final position is ambiguous unless escaped. (The prior code sidestepped this with
-`checkCompositeLayout`, which *panics at encode time* — `index_key.go:144-164` — a latent trap
+`checkCompositeLayout`, which *panics at encode time* — `[bdb]` `index_key.go:144-164` — a latent trap
 the design doc itself said must move to construction time and never did.) v2 uses the standard
 escape:
 
@@ -929,7 +929,7 @@ window, which is exactly when nobody is looking.
 **Fix — version the payload and fail closed:**
 
 1. `payloadFmtV2` frames a payload whose header carries `coordEncodingVersion uint16`.
-   `keychange.go:42` is the existing hook; the constant becomes a small enum.
+   `[bdb]` `keychange.go:42` is the existing hook; the constant becomes a small enum.
 2. `changelogTailChanges` **fails closed** on any entry whose `coordEncodingVersion` differs from
    the running binary's: validation of a transaction whose window includes such an entry returns
    `ErrValidationFailed` (abort + retry), never "no hit". Over-rejection is safe; under-rejection
@@ -1004,7 +1004,7 @@ func BuildPlan(q QueryPlan, schema CollSchema) Plan
 |---|---|---|
 | Space | **coordinate**: `IndexCoord.Key` = tenant ‖ encoded column bytes, nothing else (`[bdb]` `keychange.go:34-37`) | **physical**: the full user key `0x02 ‖ idxID ‖ [ten ‖] cols ‖ pk` (§3.2c) |
 | Produced at | `Txn.Scan` → `tx.ranges = append(tx.ranges, indexRange{index, lo, hi})` (`[bdb]` `txn.go:171-178`), values converted by `encodeScanRange` (`:183-186`) | the pebble iterator's `SetBounds` |
-| Consumed at | `validate.go:65` — `if r.index == c.Index && inRangeClosed(r.lo, r.hi, c.Key)` | `SeekGE` / `Next` |
+| Consumed at | `[bdb]` `validate.go:65` — `if r.index == c.Index && inRangeClosed(r.lo, r.hi, c.Key)` | `SeekGE` / `Next` |
 
 Record a *physical* bound against a bare coordinate and the range test never matches: the
 recorded `lo`/`hi` carry a `0x02 ‖ idxID` prefix the coordinate does not have, so
@@ -1071,7 +1071,7 @@ Both defects fall out at once:
 
 `gt` no longer returns rows equal to `v`; `lte` no longer misses them. The recorded interval keeps
 the **closed** `[lo, hi]` semantics the shipped validator implements (`inRangeClosed`,
-`validate.go:65`) — P18's correction stands, and the physical/half-open change does not touch it,
+`[bdb]` `validate.go:65`) — P18's correction stands, and the physical/half-open change does not touch it,
 because they are now explicitly different artefacts.
 
 **G2.11 (new) — the two spaces agree.** For a corpus of queries covering every predicate above,
@@ -1101,7 +1101,7 @@ Arm (c) is the one that matters most: it is the only assertion in the design tha
 ### 3.5 Index maintenance inside the single-writer commit path
 
 The txn already buffers writes, computes `indexCoords(userKey, record)` for the new image, and
-reads the pre-image via `ensurePreimage` (`txn.go:243`). v2 changes what is done with them:
+reads the pre-image via `ensurePreimage` (`[bdb]` `txn.go:243`). v2 changes what is done with them:
 
 At `buildReq`, for every buffered write, emit **additional `VersionedWrite` entries** into the
 same `CommitReq.Writes`:
@@ -1314,19 +1314,19 @@ wins → RED.
   `sseChanBufferDefault = 16` (`:6534`) and clamped to `[1, 1024]` by `loadSseChanBuffer()` from
   `SKY_LIVE_SSE_BUFFER`. So the per-connection worst case is operator-tunable up to **1024**
   frames, and any RAM arithmetic that hard-codes 16 is a lower bound, not a bound.
-- Measured size: **~37 KB per session** (`docs/skylive/tiered-session-cache.md:3-9`, from the
+- Measured size: **~37 KB per session** (`[main]` `docs/skylive/tiered-session-cache.md:3-9`, from the
   real OOM incident). Per SSE connection the worst case is ~17 × body size; at a 50 KB body that
   is ~850 KB **per connection**.
-- Eviction is **100% time-based** (`idleEvictPass`, `live_store.go:696-746`). There is **no
+- Eviction is **100% time-based** (`idleEvictPass`, `[main]` `live_store.go:696-746`). There is **no
   count cap and no byte cap** anywhere in `runtime-go/`.
 - The **default** store is `memory`, which has no idle-evict tier at all — locked by
-  `TestTiered_MemoryStoreNoOp` (`live_tiered_cache_test.go:304`).
+  `TestTiered_MemoryStoreNoOp` (`[main]` `live_tiered_cache_test.go:304`).
 - SSE-connected sessions are **immortal twice over**: the explicit
   `!sess.hasSSEConnOtherThan("")` guard (`[main]` `live_store.go:712` — v2.0 cited `:715` —
   re-checked under lock in the candidate walk, locked by `TestTiered_SSEConnectedNeverEvicted`)
-  *and* the 15-second heartbeat that calls `touchLastSeen()` (`live.go:6296`), which defeats the
+  *and* the 15-second heartbeat that calls `touchLastSeen()` (`[main]` `live.go:6296`), which defeats the
   TTL reap as well.
-- Admission control is a static path list (`isBrowserNoisePath`, `live.go:3977`). **Any routed
+- Admission control is a static path list (`isBrowserNoisePath`, `[main]` `live.go:3977`). **Any routed
   GET without a cookie mints a full session** — the crawler OOM vector.
 - Nothing measures or exports session count or bytes.
 
@@ -1359,7 +1359,7 @@ Model remains gob inside a `Bytes` column, exactly as today, with the 5c version
 `[data]` backend, engine-native durability, a migration story, and a spill target.
 
 `chooseStore` (`[main]` `live_store.go:1501`, two callers only — `live.go:3610`,
-`subapp_inprocess.go:402`) gains `case "data"`. `memory`, `sqlite`, `redis`, `postgres` remain as
+`[main]` `subapp_inprocess.go:402`) gains `case "data"`. `memory`, `sqlite`, `redis`, `postgres` remain as
 explicit opt-outs so no existing app breaks (ADR-001's non-breaking constraint is kept).
 
 **`data` is the default only for apps that already use Persist.** v2.0 made it *the* default,
@@ -1527,7 +1527,7 @@ RAM.
 The outbox becomes **coalescing**: a pending *patch* frame is replaced rather than queued (the
 newer frame supersedes the older by construction — the client applies the latest body). Capacity
 becomes 1 patch + a small queue for non-superseding events. The runtime already has a
-drop-and-resync path (`sseConn.outOfSync`, `live.go:2711`) for the case where a frame is lost;
+drop-and-resync path (`sseConn.outOfSync`, `[main]` `live.go:2711`) for the case where a frame is lost;
 a *coalesced replacement* is strictly better than a drop and needs no resync.
 
 Result: per-connection RAM ≈ 1 body + goroutine stack ≈ tens of KB, not ~850 KB.
@@ -1682,7 +1682,7 @@ Three properties follow directly:
    bounds from the transaction." That is **false as written**: `[bdb]` `reader.go:67` is
    `func (r *pebbleReader) Iterate(prefix []byte) Cursor` — a **caller-supplied raw `[]byte`**,
    used as `lower := append([]byte{tagData}, prefix...)` with no collection or tenant
-   enforcement whatsoever. Callers happen to build it via `backend.go:252 dataCollPrefix`, but
+   enforcement whatsoever. Callers happen to build it via `[bdb]` `backend.go:252 dataCollPrefix`, but
    "happen to" is not a structural property, and §5.2 property 3 (and G2.5 arm 3) would have been
    proving something the API contradicts.
 
@@ -1852,10 +1852,10 @@ the decoded row body in the index-key builder → arm 1 RED. Drop the escaping a
 
 ### 6.1 What is wrong
 
-- Reactivity is **embedded-only** and **single-process** (`rt/bluedb_reactive.go:196-198`), and
+- Reactivity is **embedded-only** and **single-process** (`[bdb]` `rt/bluedb_reactive.go:196-198`), and
   the cross-instance path does not exist at all (P15).
 - The capability gate calls **`os.Exit(1)` on the first session**, under `sess.mu`
-  (`bluedb_reactive_gate.go:172`, doc comment at `:156-159` — the exit under the lock is
+  (`[bdb]` `bluedb_reactive_gate.go:172`, doc comment at `:156-159` — the exit under the lock is
   intentional). An app passes its health check and then dies when the first user loads a page.
 - A dropped delivery latches a resync flag that **no production code reads** (P16), so a session
   can be permanently stale.
@@ -1952,7 +1952,7 @@ is dropped.
 **Layering.** `bluedb` still may not import `rt` (it is a leaf). The bridge is the
 `persistglue` package (§7.2) — the same shape as the *existing, in-production*
 `console_app` → `rt.RegisterInlineConsoleCfgProvider` registration
-(`runtime-go/rt/console_app/register_v3.go:33-35`), where a leaf package pushes a factory into
+(`[main]` `runtime-go/rt/console_app/register_v3.go:33-35`), where a leaf package pushes a factory into
 `rt`'s slot at blank-import time. That precedent is cited rather than invented.
 
 ### 6.3 Delivery: apply the delta, do not re-query
@@ -2078,7 +2078,7 @@ first session → RED (the app serves `/healthz` before dying).
 
 Subscriptions are indexed by `(collection, tenant)`. A commit touching one row in one collection
 visits only that bucket, then evaluates the residual predicate once per *distinct* predicate
-(the shared-predicate `matchCache` from `feat/bluedb`'s `reactive.go:121-131` is a genuinely
+(the shared-predicate `matchCache` from `feat/bluedb`'s `[bdb]` `reactive.go:121-131` is a genuinely
 good idea and ports).
 
 | Term | Cost | Notes |
@@ -2159,7 +2159,7 @@ runtime-go/
 ```
 
 `sky build` emits `sky-out/sky_data.go` — modelled on the existing, proven
-`write_embedded_migrations` (`rust/crates/project/src/build.rs:1129`), which already generates a
+`write_embedded_migrations` (`[main]` `rust/crates/project/src/build.rs:1129`), which already generates a
 Go file whose `init()` sets a runtime variable:
 
 ```go
@@ -2188,14 +2188,29 @@ Consequences:
   `sky-app/bluedb`) is what broke every non-Persist Sky app when a single import escaped the
   materialisation gate, and it forced a fragile per-filename prune list in `materialise_rt`. Here
   the prune is one directory decision (`persistglue/` + `bluedb/` are copied iff needed), which
-  is the same shape as the existing `console_app` prune (`build.rs:1189`).
+  is the same shape as the existing `console_app` prune (`[main]` `rust/crates/project/src/build.rs:1418`).
 - **A non-Persist app links no pebble.** Nothing imports it, so nothing is built.
 - **A dead key is impossible.** If `[data] driver` were not read, no glue would be emitted and
   `Persist.*` would have no backend — the app fails at build or boot, not silently.
 
-`DB_DRIVER` is **deleted**, along with the test that pins it (`build.rs:1442`). The `[database]
-driver` documentation at `docs/sky-toml.md:202` and `docs/skydb/overview.md:558` is corrected in
-the same commit.
+`DB_DRIVER` is **already deleted on `main`** — this is no longer work for a BlueDB phase. It was
+planned here as a P0 item against `origin/main` @ `fdbc398d`; `main` closed it independently
+before this branch was rebased onto it, so the citations that pointed at the *defect* now point
+at nothing. They are replaced with the successor evidence:
+
+| Was cited (pre-rebase, the defect) | Now (`[main]`, the fix) |
+|---|---|
+| build.rs line 1442 — `assert!(has("DB_DRIVER", "sqlite"))` | `[main]` `rust/crates/project/src/build.rs:1735` — `"DB_DRIVER must not be emitted — nothing reads it"` |
+| docs/sky-toml.md line 202 — a `driver` row promising `<PREFIX>_DB_DRIVER` selects the driver | `[main]` `docs/sky-toml.md:208` — "The driver is derived from the connection string, not configured." |
+| docs/skydb/overview.md line 558 — `driver = "sqlite"  # SKY_DB_DRIVER` | `[main]` `docs/skydb/overview.md:561` — "The driver comes from the connection string's shape, not from a config key." |
+
+The old lines still exist verbatim on `[bdb]`, `[p5e]`, `[exp]` and
+`backup/bluedb-v2-pre-rebase`, which is why a line-existence check alone would have "resolved"
+them against the wrong tree and reported the work as outstanding. **The sibling defect this
+paragraph did not know about — `[auth] driver`, the same shape one section down in the same
+parser — was found by G0.4 on this branch and closed here**
+(`[main]` `docs/sky-toml.md:183`). `[auth] tokenTtl` and `[auth] cookieName` are NOT dead: their reader is
+app code, per `[main]` `docs/sky-toml.md:161`.
 
 **G0.4 — no dead config, generalised.** `read_sky_toml_config`'s match arms become a
 data-driven table:
@@ -2602,7 +2617,7 @@ unbrowsable, so an `information_schema` walk is never needed and never offered.
 
 > *Premise check:* `exp/bluedb`'s browse layer describes its allow-list as "tables created via
 > `Std.Db.Store` (registered in `Db_createCols`)". On `main`, `Db_createCols`
-> (`runtime-go/rt/db_codec.go:133`) renders and executes the DDL and **registers nothing** — the
+> (`[main]` `runtime-go/rt/db_codec.go:133`) renders and executes the DDL and **registers nothing** — the
 > registry is `exp/bluedb`-only. Sourcing the allow-list from the declared collections avoids
 > building it.
 
@@ -2632,7 +2647,7 @@ token as a data principal. That is a confused deputy — the internal token auth
 console *process*, not an *operator*. `Decide()` reconciles principals (step 3) and the internal
 token is not among them.
 
-Two cleanups the port should carry: `isLoopbackRemoteAddr` (`console.go:409-436`) has **zero
+Two cleanups the port should carry: `isLoopbackRemoteAddr` (`[main]` `console.go:409-436`) has **zero
 callers** — delete it rather than leave a re-wirable loopback bypass; and the console's loopback
 self-fetches do not attach the internal token, so under `SKY_CONSOLE_AUTH=token` in production the
 refresh ticks receive a 401 login page instead of JSON (first paint is unaffected — it is
@@ -3287,7 +3302,7 @@ Key facts a griller should check first, because everything else rests on them:
 
 1. **`userKey` is opaque to the comparer** (`[bdb]` `comparer.go:45-57` `skydbSplit`, doc `:38-44`:
    it "reads the TRAILING LENGTH BYTE arithmetically and NEVER scans for `0x00`", proven against
-   an adversarial corpus incl. `{0x00}`, `{0xFF}` and a prefix pair at `comparer_test.go:22-53`) —
+   an adversarial corpus incl. `{0x00}`, `{0xFF}` and a prefix pair at `[bdb]` `comparer_test.go:22-53`) —
    therefore §3's index/unique namespaces and §5's tenancy component do **not** touch
    `skydb.mvcc.v1`. This is the document's most load-bearing premise and both grillers confirmed
    it.
