@@ -101,15 +101,14 @@ names the gate and the CI job that runs it, because "closed" here means
 | 3 | **PARTIAL — five named gaps CLOSED, residual RE-DECLARED, review by 2027-02-12** | `DARK_MODULE_CEILING = 62` fail-on-increase + `ASSERTED_MODULES` exact pin | `test-rest` (structural), `behaviour-corpus` (behavioural) |
 | 4 | **PARTIAL — structural half per-push, behavioural half NIGHTLY** | 5x3 `Dict` key-type x ACCESS-SHAPE crossing (operations are crossed inside each cell), 15 manifest rows; the behavioural half now executes at all, which it previously did not anywhere | structural: `test-rest`; behavioural: `nightly-sweep.yml` `behaviour-corpus` (NEW) |
 | 5 | **CLOSED** | `EXPECTED_FILES_WITHOUT_DECLARED_CODE = 0`, three-way census, empty-corpus guard | `test-ty`, `parity-reject` |
-| 6 | **CLOSED for the corpus; count ratchet remains release-only** | 49 cases; the skip-to-green path now FAILS when `CI` is set | `lsp-fuzz` |
+| 6 | **CLOSED** — the count ratchet moved to the per-push face in 6f5048fb; this row said "release-only" after that stopped being true | 49 cases; the skip-to-green path now FAILS when `CI` is set | `lsp-fuzz` |
 | 7 | **CLOSED** (`Std.Email`) / **RE-DECLARED to 2027-02-12** (`Std.Markdown`) | 10 wire-level Go tests; `declared_stdlib_gaps.rs` with expiry | Go wire-level tests: `codegen-build` + `macos-behaviour`; gaps test: `test-rest`; Sky-level suite: `behaviour-docs` |
 | 8 | **CLOSED** | `the_four_uncountable_basics_are_now_counted` asserts both ends | `test-rest` |
 | 9 | **PARTIAL — CI-reachable, not merge-blocking** | `nightly-sweep.yml` `web-runtime`, verdict from exit status | nightly only |
 
 ### What is honestly still open
 
-* **Item 9 is not merge-blocking and has never been green on `main`.** The
-  only green run is a `workflow_dispatch` on a feature branch. Its snapshot
+* **Item 9 is not merge-blocking.** It HAS since been green on `main` — scheduled run 31678446956 at `9d2f6c30`, `web-runtime` success. An earlier line here said "never green on main", which was true when written and false within a day; the nightly that disproved it was dispatched deliberately to find out. Its snapshot
   arm also cannot see paragraph rendering: the compared snapshots target
   `section-*` ids that the paragraph/textColumn demo does not carry, which
   is why it could not have caught the `<div>`-inside-`<p>` defect fixed in
@@ -172,14 +171,8 @@ on every count below; each is now fixed or restated.
   merge-blocking" was false, and the docstring asserting it has been corrected.
   Enabling required checks is a repo SETTING, outside this tree; until it
   happens, every gate in this cycle is advisory at merge time.
-* **Row inaccuracies**: item 2's non-vacuity census runs in `test-rest` (not the
-  two jobs named); item 7's 10 wire-level Go tests run in `codegen-build` +
-  `macos-behaviour` (not `behaviour-docs`); item 4's second axis is ACCESS SHAPE,
-  not operation.
-* **Item 9's gate is currently RED on `main`** — the last scheduled nightly
-  reported 5 failures including `resilience-idle`, the exact class item 9 exists
-  for. Fixes have landed on branches since; whether `main` is green is unknown
-  until a nightly runs against it.
+* **Row inaccuracies**: item 7`s 10 wire-level Go tests run in `codegen-build` + `macos-behaviour` (not `behaviour-docs`); item 4`s second axis is ACCESS SHAPE, not operation. NOTE: an earlier bullet here claimed item 2`s census runs in `test-rest` rather than the two jobs originally named — a third Judge showed THAT correction was itself wrong (the census is `ty/src/reject_corpus.rs`, invoked from `ty/tests/reject.rs` -> `test-ty` and `xtask/src/reject_gate.rs` -> `parity-reject`). The original row was right; the correction was the error.
+* **Item 9`s gate was RED on `main`, and is now GREEN** — the 5-failure run predated the resilience fixes; scheduled run 31678446956 at `9d2f6c30` passed `web-runtime`. Recorded because the earlier entry was left standing after the evidence changed.
 
 **The rule this pass adds:** a claim about WHERE a gate runs is itself a claim
 that needs checking. Three rows named the wrong job, and one named a property of

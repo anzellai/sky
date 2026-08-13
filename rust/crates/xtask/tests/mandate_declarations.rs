@@ -145,7 +145,15 @@ fn the_declaration_dates_are_all_real_dates() {
     }
 }
 
-/// Item 2 (browser tier) — the snapshot arm cannot see paragraph rendering.
+/// Mandate item 9 (browser tier) — the snapshot arm cannot see paragraph
+/// rendering.
+///
+/// NUMBERING, because this was filed wrong once: it was written as "item 2",
+/// which is the number of a SEPARATE working list of four known issues used
+/// during the v0.20.1 close-out. Mandate item 2 is type-namespace ambiguity and
+/// is CLOSED. A reader auditing "is item 2 still closed?" would have found a
+/// live re-declaration saying otherwise. Two numbering schemes for two lists is
+/// how that happens; only the MANDATE numbering belongs in this file.
 ///
 /// The compared snapshots target `section-*` test ids; the paragraph demo
 /// carries none, so the tier that exists to catch visual regressions could not
@@ -174,9 +182,9 @@ fn the_declaration_dates_are_all_real_dates() {
 /// missing is the RENDERED confirmation, which is a different and weaker gap
 /// than the item's original wording implies.
 #[test]
-fn item_2_browser_snapshot_coverage_is_within_its_review_date() {
+fn item_9_snapshot_arm_cannot_see_paragraph_rendering_within_review_date() {
     assert_not_expired(
-        "2 (browser tier cannot see paragraph rendering)",
+        "9 (browser tier: snapshot arm cannot see paragraph rendering)",
         "2027-02-12",
         "Closing it needs 26 platform-keyed baseline images re-recorded and \
          HUMAN-EYEBALLED (ui-snapshot-baselines.yml never commits them, by \
