@@ -3257,11 +3257,71 @@ Two items are surfaced here rather than parked as bounds, because they change wh
 
 | # | Decision | Why it is the user's, not the design's |
 |---|---|---|
-| **U1** | **`Money` / `Decimal` are un-indexable in the default database (B1).** | `AGENTS.md` pins `Std.Money` on `Std.Decimal` as the currency default and forbids raw `Float` for currency. So the canonical "orders sorted by total", "products under £X", "revenue by period" query is a **full scan in the default configuration of the default database**. The workaround (index a derived `Int` minor-unit column) is real and cheap, but it is a workaround the user should knowingly accept — or fund an order-preserving decimal encoding, which is a bounded piece of work (a fixed-width scaled-integer encoding with a declared scale is the standard answer) that v2.0 parked as a §11.2 B-row without asking. |
+| **U1** | ✅ **RULED 2026-08-13 — fund the order-preserving encoding. B1 is retired.** | The user's ruling: `Money`/`Decimal` become indexable, via **two columns and each backend's native numeric type**, not a JSON/text blob. See §11.4a below for the full decision and its evidence. |
 | **U2** | **The throughput floors of §2.6** — embedded ≥ 2 000 serializable commits/s, sqlite ≥ 500, postgres ≥ 2 000 at 8 writers. | These are hand-committed absolute minima, and they define what goal #2's verbatim *"high-throughput"* means. They are a product promise, not a measurement: seeding them from the first run is the G-B10 anti-pattern, and inventing them without review means the design graded its own homework. Confirm, raise, or lower them before P3 commits `baselines.json`. |
 
 Goal #5's read-vs-write question, which v2.0 correctly listed here, is **answered** (read **and**
 write, §8.1) and is no longer open.
+
+### 11.4a U1 — RULED: `Money`/`Decimal` are indexable (2026-08-13)
+
+**The decision.** A `Money` field maps to **two columns** — currency and amount — and the amount
+uses each backend's native exact numeric type. Not a single JSON/text blob: a blob is opaque to
+every backend's indexer, so it would guarantee full scans *everywhere and permanently*, and it
+throws away the one backend that already solves this properly.
+
+| Backend | Amount column | Ordering / index |
+|---|---|---|
+| PostgreSQL | `NUMERIC(p,s)` | native, exact, correct |
+| SQLite | `INTEGER` minor units | native, exact, correct |
+| BlueDB | canonical value in the row body | key `(currency, scaled int)` — sign-biased BE, exactly what `ColInt` already does |
+| Redis | canonical string member | same BE bytes for `ZRANGEBYLEX` |
+| Parquet / Arrow / DuckDB / ClickHouse / BigQuery | `DECIMAL(p,s)` | 1:1 lossless export |
+
+**Why this is cheap rather than a new subsystem.** `ColMoney` is *already a declared column type*
+(`[bdb]` `index_key.go:20`); it is merely routed to the non-order-preserving fallback that resolves
+via a residual predicate (`:87`). The work is moving it onto the treatment `ColInt` already gets —
+`out[0] ^= 0x80` sign-bias over big-endian bytes (`[bdb]` `index_key.go:70-77`) — inside the same
+`SkyType`-keyed dispatch §3.3 already defines for `Int`, `Time` and `Float`. It does **not** touch
+the comparer, which is the irreversible artefact. On Postgres and SQLite it needs no custom encoder
+at all: it uses machinery that is already correct.
+
+**Declared scale is not a BlueDB wart — it is the price of interop.** Parquet sizes its physical
+encoding from precision (int32 / int64 / fixed-length byte array, two's-complement big-endian);
+Arrow carries precision+scale+bit-width in the schema; DuckDB (`WIDTH 1-38`) and ClickHouse
+(`P 1-76`) pick their integer width from it; BigQuery offers exactly two fixed envelopes
+(`NUMERIC(38,9)`, `BIGNUMERIC(76.76,38)`). A decimal that never declares a scale cannot land
+losslessly in any of them without re-deriving scale from data at export time. A value exceeding the
+declared scale is a **typed error at insert**, never a silent truncation.
+
+**Currency first in the key** is load-bearing, not decoration. ISO 4217 minor units are not always
+2 (JPY/KRW 0, USD/EUR/GBP 2, BHD/KWD/OMR 3, CLF 4, and Sky's own table gives BTC 8 / ETH 18), so a
+global "always 2 decimals" assumption is wrong. With currency as the key prefix the scale is fixed
+*within* each currency, so per-currency minor units order correctly and cross-currency comparison
+is partitioned rather than meaningless.
+
+**Precedent, for the record.** This problem has two industry answers and we are taking the harder
+one deliberately: Google Spanner refuses it (`NUMERIC` is disallowed in primary keys, foreign keys
+and secondary indexes) and FoundationDB reserves decimal typecodes while explicitly disclaiming
+ordering guarantees — whereas CockroachDB solved it with an exponent-classed base-100 mantissa
+scheme inherited from SQLite4. Ours is simpler than Cockroach's because a declared scale removes
+the variable-exponent case.
+
+**Separate the two encodings.** The canonical VALUE form (what `Codec`/JSON/DB columns round-trip)
+and the ORDER-PRESERVING KEY form are distinct artefacts with distinct names. CockroachDB does not
+reuse `apd`'s marshaling for its keys, and neither should we.
+
+**Landing zone:** P2 (index keyspace + `SkyType` dispatch), alongside `Float`'s net-new total-order
+encoding. B1 moves out of §11.2 and its `sky check` build error is deleted with it.
+
+**Prerequisite found while ruling this — `Std.Codec` cannot persist `Money`/`Decimal` at all
+today.** `Codec.auto` rejects any data-carrying ADT (`[main]` `runtime-go/rt/codec_auto.go:130`),
+and both types are exactly that shape, so the codec path this ruling assumes does not yet exist;
+today's persistence is the raw `SqlDecimal`/`SqlMoney` TEXT path, and every example that sorts by
+money uses an `Int` cents column instead. There is also no `NUMERIC`/`DECIMAL` DDL kind anywhere —
+`schemaTypeName` falls through to `TEXT` on both dialects, so even Postgres receives money as text.
+Both are P2 prerequisites, and neither is a migration risk: because `Codec.auto` has never
+persisted these types, there is no codec-encoded installed base to convert.
 
 ---
 
