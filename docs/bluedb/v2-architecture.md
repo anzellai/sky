@@ -71,7 +71,7 @@ Line numbers in the Evidence column were re-verified against the branch named in
 | # | Finding | Resolution | Evidence |
 |---|---|---|---|
 | **G-B4** | `unique` is in the API with no mechanism, no gate, and the key layout defeats it; **and** the P12 premise was half false — a working stored unique mechanism exists on `feat/bluedb` and `backend.go` was not in P1's port list | §3.2b: unique indexes get a **pk-free** entry key (`0x03` namespace) whose value is the owning pk; duplicate detection in `buildReq` is a **read-set point read**, so concurrent duplicate inserts conflict. `backend.go` **added to P1's port list**. New **G2.7** | **VERIFIED, griller correct**: `[bdb]` `backend.go:262` `func uniqUserKey(coll, indexName string, colType ColType, valBytes []byte) []byte` → `coll ‖ 0x1E ‖ indexName ‖ 0x1F ‖ encodeIndexKey(…)`, **no pk**, pk stored as the *value* (`:259-261`); maintained at `embedded.go:288` (old-value delete), `:294-298` (`tx.Get(uKey)` → `ErrUniqueViolation` → `tx.Put(uKey, []byte(pk))`), `:318` (delete). P12 corrected in §0.2 |
-| **G-B5** | `Codec.Shape` cannot support §3.3's type-directed encodings or B1's build error | §3.3b: the encoding source is the **HIR type of the record literal passed to `Codec.auto`**, correlated with the `Collection` declaration and threaded into the generated glue as `CollDecl.Cols[i].SkyType`. §3.3 and B1 re-derived from that. New **G2.12** (Time-typed vs Int-typed columns encode differently) | **VERIFIED, griller correct**: `[main]` `sky-stdlib/Std/Codec.sky:67-73` — `type ColType = CText \| CInt \| CReal \| CBool \| CBlob \| CNull ColType` (a 5-way **storage** class: Decimal/Money/String all `CText`; Time/Int both `CInt`; Float/Decimal both `CReal`); `Shape` at `:77-80`. And `Shape` is a **runtime** value: `Codec_autoCols` (`runtime-go/rt/codec_auto.go:514`) derives it by `reflect.TypeOf(witness)` |
+| **G-B5** | `Codec.Shape` cannot support §3.3's type-directed encodings or B1's build error | §3.3b: the encoding source is the **HIR type of the record literal passed to `Codec.auto`**, correlated with the `Collection` declaration and threaded into the generated glue as `CollDecl.Cols[i].SkyType`. §3.3 and B1 re-derived from that. New **G2.12** (Time-typed vs Int-typed columns encode differently) | **VERIFIED, griller correct**: `[main]` `sky-stdlib/Std/Codec.sky:67-73` — `type ColType = CText \| CInt \| CReal \| CBool \| CBlob \| CNull ColType` (a 5-way **storage** class: Decimal/Money/String all `CText`; Time/Int both `CInt`; Float/Decimal both `CReal`); `Shape` at `:77-80`. And `Shape` is a **runtime** value: `Codec_autoCols` (`runtime-go/rt/codec_auto.go:515`) derives it by `reflect.TypeOf(witness)` |
 | **G-B6** | "lock-safe" is a verbatim goal-2 clause with zero gates, and §4.4 adds an ABBA cycle | §4.0: the **global lock order** is stated (cache lock is a leaf; deflation snapshots under the cache lock and releases before touching a session). New **G1.5 lock safety** (`go test -race`, timeout ⇒ goroutine dump); mutation: invert acquisition order ⇒ RED | v2.0 §4.3's `sessionCache` declared no mutex and §4.4 described deflation walking sessions while the funnel updates cache accounting. The prior attempt's worst failure was a deadlock on every page load |
 | **G-B7** | G2.4's HIR walk is bypassed by anything beyond a literal lambda | **Adopted**: G2.4 becomes a **runtime poison flag** — a goroutine-local "inside transact" mark that every non-replayable kernel checks. Removes the compiler change from P3. **Extended**: the mark must **propagate across `rt`'s task-spawn seam**, or `Task.parallel` inside a transact body escapes it | `[main]` the mechanism already exists and is canonical: `runtime-go/rt/live_session_ctx.go` — `liveSessionByGoroutine sync.Map`, `currentLiveSession()`, and the `runWithLiveSession(sess, fn)` set/defer-clear wrapper, itself modelled on `goroutine_context.go`'s trace context |
 | **G-B8** | G1.1 probably cannot run, and can pass while the app OOMs | §4.7 restructured: prove the bound the **cheap** way — `maxBytes`/`maxEntries` set LOW, assert the ceiling holds, deflation triggers and 503-refusal fires at **N ≈ 200**; body size **parameterised** (1 KB and 50 KB); an **admission bound on connections**; the 50 k arm demoted to a `--tier=full` capacity **REPORT**, not a correctness gate. `perConnFloor` becomes a committed constant in `baselines.json` | RAM arithmetic confirmed: 50 k × 50 KB ≈ 2.5 GB of bodies vs a 64 MiB `sessionCacheMaxBytes` — the asserted bound is ~2 % of the footprint. **Partial pushback on the fd-limit leg — see below** |
@@ -121,7 +121,7 @@ Line numbers in the Evidence column were re-verified against the branch named in
 
 ### MINORs resolved
 
-`G0.5`'s "both paths" is **one** site — `run_go_build_once` (`[main]` `build.rs:655-682`) — called from **three** paths (`:578` FFI-detected CGO=1, `:590` CGO=0, `:600` CGO=1 retry); §7.2 corrected, and the single site is now cited as the reason the property is structural · `G0.3` gains its mechanism (temp `GOMODCACHE`, `GOPROXY=off`, `go tool nm`) · `G2.2` gains a compaction precondition · `sseChanBuffer` is a **var** (`[main]` `live.go:6540`), clamped from `sseChanBufferDefault=16` (`:6534`) — §4.1 corrected · `live_store.go:715` → **`:712`** · `rust-ci.yml:219` → **`:255`** (`:219` is the Postgres-only integration subset) · §7.6's app moves to `docs/skypersist/todo.md` where **G3.2** gates it, and is completed so it compiles · the Appendix no longer places `consoledata` inside `rt` · `or_` is disclosed as **B3** · P0 explicitly includes building the xtask **gate registry** (there is no existing registry idiom to reuse — only single-purpose gates) · **`Std.Money`/`Decimal` un-indexable in the default database is escalated to a user-attention item**, not a quiet B-row (§11.4), because `Std.Money` on `Std.Decimal` is `AGENTS.md`'s pinned currency default.
+`G0.5`'s "both paths" is **one** site — `run_go_build_once` (`[main]` `build.rs:708-735`) — called from **three** paths (`:578` FFI-detected CGO=1, `:590` CGO=0, `:600` CGO=1 retry); §7.2 corrected, and the single site is now cited as the reason the property is structural · `G0.3` gains its mechanism (temp `GOMODCACHE`, `GOPROXY=off`, `go tool nm`) · `G2.2` gains a compaction precondition · `sseChanBuffer` is a **var** (`[main]` `live.go:6540`), clamped from `sseChanBufferDefault=16` (`:6534`) — §4.1 corrected · `live_store.go:715` → **`:712`** · `rust-ci.yml:219` → **`:255`** (`:219` is the Postgres-only integration subset) · §7.6's app moves to `docs/skypersist/todo.md` where **G3.2** gates it, and is completed so it compiles · the Appendix no longer places `consoledata` inside `rt` · `or_` is disclosed as **B3** · P0 explicitly includes building the xtask **gate registry** (there is no existing registry idiom to reuse — only single-purpose gates) · **`Std.Money`/`Decimal` un-indexable in the default database is escalated to a user-attention item**, not a quiet B-row (§11.4), because `Std.Money` on `Std.Decimal` is `AGENTS.md`'s pinned currency default.
 
 ### PUSHBACK — three findings contested, with evidence
 
@@ -152,14 +152,14 @@ misstated. Each is cited so a griller can check it in one command.
 
 | # | Claim | Reality |
 |---|---|---|
-| P1 | "`[data] driver` is a no-op" implies `[data]` exists | **`[data]` does not exist on `main` at all.** `read_sky_toml_config` (`[main]` `rust/crates/project/src/build.rs:776-848`) handles `[database]` only. `[data]` is `feat/bluedb`-only. v2 introduces it net-new. |
+| P1 | "`[data] driver` is a no-op" implies `[data]` exists | **`[data]` does not exist on `main` at all.** `read_sky_toml_config` (`[main]` `rust/crates/project/src/build.rs:885-996`) handles `[database]` only. `[data]` is `feat/bluedb`-only. v2 introduces it net-new. |
 | P2 | `Std.Persist` shipped (memory `std_persist_unified_data.md`, 2026-08-04) | **Not on `main`.** `sky-stdlib/Std/` has no `Persist.sky`. It exists only on `feat/bluedb` / `exp/bluedb`. Net-new here. |
 | P3 | `DB_DRIVER` is written and read by nobody | **CONFIRMED when written — and CLOSED on `main` since, in `6aa275bd`, before this branch was rebased onto it.** It was written at build.rs line 802, had zero readers, and was documented as a working knob at docs/sky-toml.md line 202 / docs/skydb/overview.md line 558 and pinned green by a test at build.rs line 1442. None of those four lines exists on `[main]` now. The successors: the emission is gone and a *negative* assertion pins its absence (`[main]` `rust/crates/project/src/build.rs:1735`), both doc rows now say the driver comes from the DSN's shape (`[main]` `docs/sky-toml.md:208`, `[main]` `docs/skydb/overview.md:561`), and the DSN rule itself is `detectDriver` (`[main]` `runtime-go/rt/db_auth.go:350`). **The four original lines still exist verbatim on `[bdb]`, `[p5e]`, `[exp]` and `backup/bluedb-v2-pre-rebase`** — so a check that only asks "does this line exist somewhere?" resolves them against the wrong tree and reports closed work as outstanding. **The sibling this row missed:** `[auth] driver`, the same defect shape in the same parser, survived that cleanup and was found by G0.4 here (`[main]` `docs/sky-toml.md:183`). |
-| P4 | Goal #2's "real SERIALIZABLE" merely lacks cross-backend unity | **On `main` it does not exist at any backend.** `Std.Db` exposes exactly one transaction verb — `withTransaction : Db -> (Db -> Task Error a) -> Task Error a` (`[main]` `sky-stdlib/Std/Db.sky:216`) — implemented with a bare `d.conn.Begin()` (`[main]` `db_auth.go:1364-1407`) = driver default = **READ COMMITTED on Postgres**. No isolation type, no isolation argument, no `40001` retry anywhere (`grep -rn "40001" runtime-go/` → empty). `Sky.Core.Error.isRetryable` returns `False` for `Conflict` (`[main]` `Error.sky:192-209`). |
+| P4 | Goal #2's "real SERIALIZABLE" merely lacks cross-backend unity | **On `main` it does not exist at any backend.** `Std.Db` exposes exactly one transaction verb — `withTransaction : Db -> (Db -> Task Error a) -> Task Error a` (`[main]` `sky-stdlib/Std/Db.sky:216`) — implemented with a bare `d.conn.Begin()` (`[main]` `db_auth.go:1364-1407`) = driver default = **READ COMMITTED on Postgres**. No isolation type, no isolation argument, no `40001` retry anywhere (`grep -rn "40001" runtime-go/` → empty). `Conflict` is retryable nowhere: only `Timeout`/`Network`/`Unavailable` reach a `True` arm of `isRetryable` (`[main]` `Error.sky:192-209`), so a serialization conflict falls to `_ -> False`. |
 | P5 | `kernel_api.rs` + the `kernel_api_covers_registered_kernel_functions` CI gate exist | **Both deleted** (commit `054f6d26`); the gate existed in no workflow, and AGENTS.md line 258 still documented it as current and "fails CI on drift" — a durable instruction file asserting a phantom enforcement mechanism. **CLOSED in P0 on this branch.** `AGENTS.md` now states what actually holds: kernel-only module docs are *derived*, not curated — the list is `hir::KERNEL_MODULES` (`[main]` `rust/crates/hir/src/kernel.rs:29`), rendered through `kernel_only_modules()` (`[main]` `rust/crates/project/src/doc.rs:53`) and covered by `kernel_only_module_is_queryable` (`[main]` `rust/crates/project/src/doc.rs:1053`). Adding a kernel module documents it by construction, which is a stronger property than the gate that was claimed. |
 | P6 | A CI gate guards console drift | **NOT FOUND.** `grep -rni "drift\|console" .github/workflows/` → zero hits across all five workflow files. |
 | P7 | The `goty.rs` record-fieldset collision lives in `codegen` and blocks the console edit form | **Path wrong, and it does not block.** The function is `select_record_candidate` at **`[main]` `rust/crates/lower/src/goty.rs:274-302`** (`crates/codegen/src/` contains only `lib.rs`). It selects by field *type* (landed `1a7142f6`, v0.19.1). The erased-`any` recurrence is real but is a *documented workaround* (use a tuple), not a blocker. |
-| P8 | `-tags pebblegozstd` is a non-negotiable already in force | **The string appears nowhere in the repo** except the mandate doc. CI runs `CGO_ENABLED=0 go test ./rt/...` at `[main]` `rust-ci.yml:255` (macOS determinism job) — v2.0 cited `:219`, which is the **Postgres-only** integration subset (`go test -tags integration ./rt/ -run Postgres`). Either way CGO=0 forecloses the cgo-zstd link path *for tests*. The real exposure is different and still open: **`sky build`'s CGO_ENABLED=1 paths** would link cgo DataDog zstd into a *shipped app* while the CGO=0 path links pure-Go klauspost. There is exactly **one** `go build` invocation site — `run_go_build_once` (`[main]` `build.rs:655-682`) — reached from **three** call paths (`:578` FFI-detected CGO=1, `:590` CGO=0, `:600` CGO=1 retry). Adding the tag at the single site therefore covers all three *by construction*; v2.0's "on both paths" framing was wrong about the shape and is corrected in §7.2. |
+| P8 | `-tags pebblegozstd` is a non-negotiable already in force | **The string appears nowhere in the repo** except the mandate doc. CI runs `CGO_ENABLED=0 go test ./rt/...` at `[main]` `rust-ci.yml:255` (macOS determinism job) — v2.0 cited `:219`, which is the **Postgres-only** integration subset (`go test -tags integration ./rt/ -run Postgres`). Either way CGO=0 forecloses the cgo-zstd link path *for tests*. The real exposure is different and still open: **`sky build`'s CGO_ENABLED=1 paths** would link cgo DataDog zstd into a *shipped app* while the CGO=0 path links pure-Go klauspost. There is exactly **one** `go build` invocation site — `run_go_build_once` (`[main]` `build.rs:708-735`) — reached from **three** call paths (`:578` FFI-detected CGO=1, `:590` CGO=0, `:600` CGO=1 retry). Adding the tag at the single site therefore covers all three *by construction*; v2.0's "on both paths" framing was wrong about the shape and is corrected in §7.2. |
 | P9 | `SchemaOf` exists | **Did not exist** when the prior phases relied on it; it exists **only** on `salvage/p5e-foundation` (`runtime-go/bluedb/embedded.go`, added by that branch). It is a *deliverable of the salvage branch*, not a pre-existing facility. |
 | P10 | Sessions are serialised as JSON | **gob.** `[main]` `docs/skylive/architecture.md:376` is wrong; `encodeSession` at `[main]` `runtime-go/rt/live_store.go:1278`. |
 | P11 | `docs/skylive/tiered-session-cache.md` describes a proposal | It says `Status: PROPOSED` but the cache **shipped** (`a6b4c443`), and its `decodeSession` line citation no longer resolves. Stale doc. |
@@ -244,7 +244,7 @@ Three separate defects, on two different branches:
 2. **On `feat/bluedb`, sqlite's "serializable" is a pool clamp.** `dbSerializableTxAttempt`
    (`[bdb]` `db_auth.go:1529-1587`) emits `BEGIN IMMEDIATE` over a pinned `*sql.Conn`, but the actual
    serialisation comes from `conn.SetMaxOpenConns(1)` applied unconditionally at connect
-   (`[bdb]` `db_auth.go:305-321`) for *every* SQLite pool. The branch's own test says so in its name:
+   (`[bdb]` `db_auth.go:356`) for *every* SQLite pool. The branch's own test says so in its name:
    `TestWriteSkewSQLiteReadCommittedAlsoHolds_MaxConns1`
    (`[bdb]` `persist_writeskew_test.go:129-141`). The requested isolation level is decorative.
 3. **The dispatch fails open.** `if serializable && d.driver != "pgx"` (`[bdb]` `db_auth.go:1535`) sends
@@ -338,7 +338,7 @@ before ack. Index-range recording is what makes it *serializable* rather than sn
   `Persist.read` / plain queries always take the reader path. This removes
   `SQLITE_BUSY_SNAPSHOT` upgrade aborts as a class rather than retrying them.
 - **`PRAGMA synchronous = FULL`** on the writer connection when `[data] durability = "full"`.
-  Today's `NORMAL` (`[bdb]` `db_auth.go:305-321`) does not fsync per commit under WAL, so an acked
+  Today's `NORMAL` (`[bdb]` `db_auth.go:356`) does not fsync per commit under WAL, so an acked
   transaction is durable only against process crash — the exact `A2` grill finding, deferred on
   `feat/bluedb`. It is not deferred here; it is a config key with a safe default.
 
@@ -812,7 +812,7 @@ halves of that are false**, and the failure mode is silent:
   **storage** class, not a Sky type. `Decimal`, `Money` and `String` are **all** `CText`;
   `Time` and `Int` are **both** `CInt`; `Float` and `Decimal` are **both** `CReal`.
 - `Shape` (`:77-80`) is a **runtime value**: `Codec.auto` resolves it via
-  `[main]` `runtime-go/rt/codec_auto.go:514` `Codec_autoCols`, which walks
+  `[main]` `runtime-go/rt/codec_auto.go:515` `Codec_autoCols`, which walks
   `reflect.TypeOf(witness)`. Nothing about it is available to `sky check`.
 
 So under v2.0 a `Time` column would take `Int`'s encoding (both `CInt` — harmless by luck, since
@@ -1306,7 +1306,7 @@ wins → RED.
 
 ### 4.1 What exists today, measured
 
-- The Model lives in `liveSession` (`[main]` `runtime-go/rt/live.go:2068`): `model any`,
+- The Model lives in `liveSession` (`[main]` `runtime-go/rt/live.go:2078`): `model any`,
   `handlers`, `prevTree *VNode` (the full rendered tree, with a `map` per node), **two** full HTML
   body strings (`lastComputedBody`, `lastShippedBody`), an ingress channel and a per-connection
   channel each of `sseChanBuffer` `sseFrame`s — where a patch frame's `data` is a **whole body**.
@@ -1358,7 +1358,7 @@ Model remains gob inside a `Bytes` column, exactly as today, with the 5c version
 `Codec.auto` is never asked to derive a `Model`. What we gain is what we actually need: one
 `[data]` backend, engine-native durability, a migration story, and a spill target.
 
-`chooseStore` (`[main]` `live_store.go:1501`, two callers only — `live.go:3610`,
+`chooseStore` (`[main]` `live_store.go:1550`, two callers only — `live.go:3610`,
 `[main]` `subapp_inprocess.go:402`) gains `case "data"`. `memory`, `sqlite`, `redis`, `postgres` remain as
 explicit opt-outs so no existing app breaks (ADR-001's non-breaking constraint is kept).
 
@@ -2159,7 +2159,7 @@ runtime-go/
 ```
 
 `sky build` emits `sky-out/sky_data.go` — modelled on the existing, proven
-`write_embedded_migrations` (`[main]` `rust/crates/project/src/build.rs:1129`), which already generates a
+`write_embedded_migrations` (`[main]` `rust/crates/project/src/build.rs:1354`), which already generates a
 Go file whose `init()` sets a runtime variable:
 
 ```go
@@ -2240,7 +2240,7 @@ key that reaches the glue but is never consumed at runtime → RED (this is the 
 passed). This closes the whole class, not just `DB_DRIVER`.
 
 **G0.5 — the zstd tag.** There is exactly **one** `go build` invocation in the compiler —
-`run_go_build_once` (`[main]` `build.rs:655-682`) — reached from **three** call paths:
+`run_go_build_once` (`[main]` `build.rs:708-735`) — reached from **three** call paths:
 `:578` (FFI-detected CGO=1 first attempt), `:590` (the preferred CGO=0 static build), and `:600`
 (the CGO=1 retry). v2.0 described this as passing the tag "on **both** the CGO=0 and the CGO=1
 retry path", which is wrong twice: there are three paths, and the tag is not passed per-path at
