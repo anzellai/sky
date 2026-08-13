@@ -897,7 +897,10 @@ moneySuite =
                       a = Money.fromMajor Money.USD 10
                       b = Money.fromMajor Money.USD 5
                   in
-                      Test.equal "$15.00" (Money.format (Money.add a b)))
+                      Test.equal
+                          "$15.00"
+                          (Money.add a b |> Result.map Money.format
+                              |> Result.withDefault "ERR"))
         , Test.test
               "percentOf 10% of $100 = $10"
               (\_ ->
@@ -914,9 +917,11 @@ moneySuite =
                   let
                       parts =
                           Money.allocate 3 (Money.fromMajor Money.USD 100)
-                      total = Money.sumOf Money.USD parts
+                      total =
+                          Money.sumOf Money.USD parts |> Result.map Money.format
+                              |> Result.withDefault "ERR"
                   in
-                      Test.equal "$100.00" (Money.format total))
+                      Test.equal "$100.00" total)
         , Test.test
               "allocate $100 over 3 yields 3 parts"
               (\_ ->

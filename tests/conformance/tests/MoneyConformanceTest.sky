@@ -11,7 +11,10 @@ module MoneyConformanceTest exposing (main, tests)
 -- runtime-go/rt/money_kernel.go), never a guess.
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error
 import Sky.Core.List as List
+import Sky.Core.Result as Result
+import Sky.Core.String as String
 import Std.Decimal as Dec
 import Std.Money as Money
 import Sky.Test as Test exposing (Test)
@@ -40,7 +43,7 @@ headFmt xs =
 -- Does a Money list sum EXACTLY to `target` (currency + amount)?
 sumsTo : Money.Currency -> List Money.Money -> Money.Money -> Bool
 sumsTo c xs target =
-    Money.eq (Money.sumOf c xs) target
+    Money.sumOf c xs |> Result.map (\s -> Money.eq s target) |> Result.withDefault False
 
 
 tests : List Test
@@ -129,15 +132,60 @@ tests =
         (\_ -> Test.equal -1234 (Money.toMinor (Money.neg (Money.fromMinor Money.USD 1234))))
 
       -- ── Currency-typed safety: mismatched-currency arithmetic ──
-      --    Doc: "Arithmetic is total within a currency; cross-currency
-      --    operations require explicit convert." add/sub GUARD the mismatch
-      --    by returning the LEFT operand unchanged (no cross-currency mixing).
-    , Test.test "add USD+EUR does NOT mix currencies (returns left operand)"
-        (\_ -> Test.equal "100.00 USD" (Money.formatWithCode (Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50))))
-    , Test.test "sub USD-EUR does NOT mix currencies (returns left operand)"
-        (\_ -> Test.equal "100.00 USD" (Money.formatWithCode (Money.sub (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50))))
+      --    add/sub REPORT a currency mismatch; they do not paper over it.
+      --
+      --    These three assertions previously pinned the opposite behaviour as
+      --    intended: `add (100 USD) (50 EUR)` returned `100 USD`, silently
+      --    discarding the EUR operand. A test asserting that is not a guard —
+      --    it is a wrong answer with a green tick next to it, in the one part
+      --    of the stdlib where a wrong answer is money. `add` and `sub` now
+      --    return `Result Error Money`, so the mismatch has to be handled.
+    , Test.test "add USD+EUR is an Err, not a silently dropped operand"
+        (\_ ->
+            case Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50) of
+                Err _ ->
+                    Test.pass
+
+                Ok m ->
+                    Test.fail ("expected Err, got " ++ Money.formatWithCode m)
+        )
+    , Test.test "sub USD-EUR is an Err, not a silently dropped operand"
+        (\_ ->
+            case Money.sub (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50) of
+                Err _ ->
+                    Test.pass
+
+                Ok m ->
+                    Test.fail ("expected Err, got " ++ Money.formatWithCode m)
+        )
+    , Test.test "the mismatch error names BOTH currencies"
+        (\_ ->
+            case Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 50) of
+                Err e ->
+                    Test.equal True (String.contains "USD" (Error.toString e) && String.contains "EUR" (Error.toString e))
+
+                Ok _ ->
+                    Test.equal True False
+        )
     , Test.test "add USD+USD is total within currency -> 150.00 USD"
-        (\_ -> Test.equal "150.00 USD" (Money.formatWithCode (Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.USD 50))))
+        (\_ -> Test.equal "150.00 USD" (Money.add (Money.fromMajor Money.USD 100) (Money.fromMajor Money.USD 50) |> Result.map Money.formatWithCode |> Result.withDefault "ERR"))
+      -- ── compare agrees with eq (it did not) ──
+      --    `compare` ignored currency entirely, so 100 USD compared EQUAL to
+      --    100 EUR while `eq` said False. Any sort, dedup or binary search
+      --    over mixed-currency Money was silently meaningless.
+    , Test.test "compare is currency-aware: $100 vs EUR100 is not 0"
+        (\_ -> Test.equal False (Money.compare (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 100) == 0))
+    , Test.test "compare agrees with eq on the same pair"
+        (\_ ->
+            let
+                a = Money.fromMajor Money.USD 100
+
+                b = Money.fromMajor Money.EUR 100
+            in
+            Test.equal (Money.eq a b) (Money.compare a b == 0)
+        )
+    , Test.test "compare still orders by amount within one currency"
+        (\_ -> Test.equal -1 (Money.compare (Money.fromMajor Money.USD 5) (Money.fromMajor Money.USD 10)))
     , Test.test "eq is currency-aware: $100 /= €100"
         (\_ -> Test.equal False (Money.eq (Money.fromMajor Money.USD 100) (Money.fromMajor Money.EUR 100)))
     , Test.test "eq same currency + amount -> True"
@@ -284,9 +332,9 @@ tests =
     , Test.test "isZero $5 -> False"
         (\_ -> Test.equal False (Money.isZero (Money.fromMajor Money.USD 5)))
     , Test.test "sumOf empty list -> zero of currency"
-        (\_ -> Test.equal True (Money.eq (Money.sumOf Money.USD []) (Money.zero Money.USD)))
+        (\_ -> Test.equal True (Money.sumOf Money.USD [] |> Result.map (\s -> Money.eq s (Money.zero Money.USD)) |> Result.withDefault False))
     , Test.test "sumOf [10,20,30] USD -> $60.00"
-        (\_ -> Test.equal "60.00 USD" (Money.formatWithCode (Money.sumOf Money.USD [ Money.fromMajor Money.USD 10, Money.fromMajor Money.USD 20, Money.fromMajor Money.USD 30 ])))
+        (\_ -> Test.equal "60.00 USD" (Money.sumOf Money.USD [ Money.fromMajor Money.USD 10, Money.fromMajor Money.USD 20, Money.fromMajor Money.USD 30 ] |> Result.map Money.formatWithCode |> Result.withDefault "ERR"))
 
       -- ── Parse / construction round-trips ──
     , Test.test "fromString USD \"12.34\" -> Ok, formats 12.34 USD"

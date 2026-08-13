@@ -3,9 +3,23 @@
 -- Backed by `shopspring/decimal` in the runtime; safe for money,
 -- accounting, and any domain where binary floating-point rounding
 -- would corrupt totals.  Banker's rounding by default; percent /
--- ratio helpers for fee calculations.  All arithmetic is exact
--- within the decimal type — no implicit precision loss across
--- chains of `mul` / `div` / `add` / `sub`.
+-- ratio helpers for fee calculations.
+--
+-- `add`, `sub` and `mul` are EXACT — the result carries however many
+-- digits it needs, with no rounding step and no configured precision.
+--
+-- `div` is NOT, and cannot be: a quotient like `1 / 3` has no finite
+-- decimal expansion, so a division has to stop somewhere.  It stops at
+-- **16 decimal places**, half-away-from-zero.  That is a real rounding
+-- step in the middle of a chain, so `div` results are not exact and
+-- `(a |> div b) |> mul b` need not return `a`.  Round explicitly with
+-- `round` / `truncate` at the scale your domain requires rather than
+-- inheriting this one — for money that is `Money.minorUnits` of the
+-- currency, which `Money.format` and `Money.allocate` already apply.
+--
+-- (This header previously claimed exactness across `div` as well.  It
+-- was wrong, and it was the kind of wrong that only shows up as a
+-- penny that will not reconcile.)
 --
 -- For currency-typed amounts, prefer `Std.Money` (built on Decimal)
 -- so the ISO-4217 currency code rides alongside the magnitude.

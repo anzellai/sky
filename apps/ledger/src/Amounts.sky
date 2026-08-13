@@ -7,6 +7,7 @@ module Amounts exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
+import Sky.Core.Result as Result
 import Sky.Core.String as String
 import Sky.Core.Time as Time
 import Sky.Core.Task as Task
@@ -75,7 +76,9 @@ invoiceSplitCheck _ =
         total = sumInts parts
         exact =
             total == whole
-                && Money.eq (Money.sumOf book splitMoney) (money whole)
+                && (Money.sumOf book splitMoney
+                       |> Result.map (\s -> Money.eq s (money whole))
+                       |> Result.withDefault False)
     in
         { whole = whole, parts = parts, total = total, exact = exact }
 

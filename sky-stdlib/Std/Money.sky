@@ -1,8 +1,9 @@
 -- | Std.Money — currency-typed Money on `Std.Decimal` (Layer 3 Sky source).
 --
 -- `Money` carries both magnitude and ISO-4217 currency code in one
--- typed value.  Arithmetic is total within a currency; cross-currency
--- operations require explicit `convert` with a rate.
+-- typed value.  `add` / `sub` / `sumOf` are exact within a currency and
+-- return `Err` across currencies — they do NOT silently pick one side.
+-- Convert first with `convert` (which needs a registered rate).
 --
 -- 50+ ISO-4217 codes baked in (USD, EUR, GBP, JPY, AUD, …) plus
 -- crypto (BTC, ETH).  `allocate` splits amounts fairly so rounding
@@ -81,9 +82,14 @@ module Std.Money exposing
 --   let subTotal = Money.fromString USD "99.99"
 --                      |> Result.withDefault (Money.zero USD)
 --       tax = Money.percentOf taxRate subTotal
---       total = Money.add subTotal tax
 --   in
---   Money.format total       -- "$108.87"
+--   Money.add subTotal tax           -- Result Error Money
+--       |> Result.map Money.format   -- Ok "$108.87"
+--
+--   -- Both operands are USD here, so the Err arm is unreachable in
+--   -- THIS example — but it is reachable the moment a second currency
+--   -- enters the program, which is exactly when you want to hear about
+--   -- it rather than silently total one side.
 --
 --   -- Split: $100 invoice across 3 fairly
 --   Money.allocate 3 (Money.fromMajor USD 100)
@@ -94,7 +100,7 @@ module Std.Money exposing
 --   Money.convert EUR (Money.fromMajor USD 100)   -- → Ok €92.00
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Ffi as Ffi
 import Std.Decimal as Dec exposing (Decimal)
@@ -613,22 +619,36 @@ parseCurrency code =
 
 
 -- ─── Arithmetic (currency-checked) ────────────────────────────────
-add : Money -> Money -> Money
+add : Money -> Money -> Result Error Money
 add a b =
     if eqCurrency (currency a) (currency b) then
-        Money (Dec.add (amount a) (amount b)) (currency a)
+        Ok (Money (Dec.add (amount a) (amount b)) (currency a))
 
     else
-        a
+        Err (mismatch "add" a b)
 
 
-sub : Money -> Money -> Money
+sub : Money -> Money -> Result Error Money
 sub a b =
     if eqCurrency (currency a) (currency b) then
-        Money (Dec.sub (amount a) (amount b)) (currency a)
+        Ok (Money (Dec.sub (amount a) (amount b)) (currency a))
 
     else
-        a
+        Err (mismatch "sub" a b)
+
+
+-- The error both `add` and `sub` raise on a currency mismatch.
+--
+-- Naming both operands matters: the failure is that two DIFFERENT currencies met,
+-- so a message that names only one of them leaves the reader guessing which call
+-- site produced the other.
+mismatch : String -> Money -> Money -> Error
+mismatch op a b =
+    Error.invalidInput
+        ("Money." ++ op ++ ": currency mismatch — " ++ currencyCode (currency a)
+            ++ " vs "
+            ++ currencyCode (currency b)
+            ++ ". Convert one side first (Money.convert) — there is no exchange rate here to apply.")
 
 
 -- | Multiply by a scalar (Decimal). Currency carries through.
@@ -667,12 +687,19 @@ allocate parts m =
 
 
 -- | Sum a list of Money values (all should be same currency).
-sumOf : Currency -> List Money -> Money
+-- Sum a list of `Money`, all of which must be in currency `c`.
+--
+-- Returns `Err` on the first entry that is not — it inherited `add`'s old
+-- behaviour of returning the accumulator unchanged, so a single EUR row in a
+-- list of USD rows was dropped from the total in silence. A total that quietly
+-- omits a line is worse than one that fails: it reconciles against nothing and
+-- nobody knows to look.
+sumOf : Currency -> List Money -> Result Error Money
 sumOf c xs =
-    sumOfHelp xs (zero c)
+    sumOfHelp xs (Ok (zero c))
 
 
-sumOfHelp : List Money -> Money -> Money
+sumOfHelp : List Money -> Result Error Money -> Result Error Money
 sumOfHelp xs acc =
     case xs of
 
@@ -680,13 +707,41 @@ sumOfHelp xs acc =
             acc
 
         first :: rest ->
-            sumOfHelp rest (add acc first)
+            case acc of
+
+                Err e ->
+                    Err e
+
+                Ok a ->
+                    sumOfHelp rest (add a first)
 
 
 -- ─── Comparison ───────────────────────────────────────────────────
+-- Order by currency FIRST, then by amount.
+--
+-- Comparing bare magnitudes across currencies is meaningless — 100 USD is not
+-- 100 EUR at any exchange rate but 1.0 — and this returned `0` for that pair,
+-- which meant `compare` disagreed with `eq` (which does check currency). A sort
+-- over mixed-currency `Money` silently interleaved them by magnitude alone, and
+-- any binary search or dedup built on `compare` was wrong without saying so.
+--
+-- Ordering by ISO code first groups each currency together and keeps amounts
+-- ordered within it. That is the only total order on `Money` that does not
+-- invent a conversion rate, and it makes `compare a b == 0` agree with `eq a b`.
 compare : Money -> Money -> Int
 compare a b =
-    Dec.compare (amount a) (amount b)
+    let
+        ca = currencyCode (currency a)
+        cb = currencyCode (currency b)
+    in
+        if ca == cb then
+            Dec.compare (amount a) (amount b)
+
+        else if ca < cb then
+            -1
+
+        else
+            1
 
 
 eq : Money -> Money -> Bool

@@ -5,6 +5,7 @@ module LedgerTest exposing (tests)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Test as Test exposing (Test)
+import Sky.Core.Result as Result
 import Std.Money as Money
 import Amounts
 
@@ -32,11 +33,11 @@ allocationTests =
           "Money.sumOf of the parts equals the original Money"
           (\_ ->
               Test.isTrue
-                  (Money.eq
-                      (Money.sumOf
-                          Amounts.book
-                          (Money.allocate 3 (Amounts.money 100)))
-                      (Amounts.money 100)))
+                  (Money.sumOf
+                      Amounts.book
+                      (Money.allocate 3 (Amounts.money 100))
+                      |> Result.map (\s -> Money.eq s (Amounts.money 100))
+                      |> Result.withDefault False))
     , Test.test
           "invoiceSplitCheck reports exact"
           (\_ -> Test.isTrue (Amounts.invoiceSplitCheck ()).exact)
