@@ -141,3 +141,11 @@ examples/*/sky-out-rust/
 # clean slate, and version drift can't produce a committed-surface clash.
 sky-ffi/
 tests/conformance/sky-out*
+
+# Isolated cargo target dirs used by agents/worktrees. NEVER commit these:
+# 1928 files of one leaked into 2aac9db5 via `git add -A` in a worktree where
+# the build dir sits at the repo root. Both spellings, same reasoning as the
+# node_modules symlink above.
+isolated-target
+isolated-target/
+*-target/
