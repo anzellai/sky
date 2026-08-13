@@ -8,12 +8,17 @@
 //! forever.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use super::registry::{Ctx, GateOutcome, REGISTRY};
 use super::sha256;
 use super::state::{GateState, ProofOutcome};
 use super::status;
+use crate::harness::layer2;
 
 // ---------------------------------------------------------------------------
 // G0.1 — STATUS.md is generated output
@@ -128,14 +133,704 @@ fn is_allowed_bluedb_dep(imp: &str) -> bool {
 // G0.3 — no pebble leak into a non-Persist app
 // ---------------------------------------------------------------------------
 
+/// The witness project.
+///
+/// `examples/09-live-counter` is chosen for four properties, and every one of
+/// them is load-bearing:
+///
+/// * **It is a Sky.Live app**, so it *has* a session store and arm (c) is a
+///   real question about it. A CLI example would satisfy arm (c) vacuously.
+/// * **It imports no `Std.Db` / `Std.Persist`** — `Std.Html`, `Std.Live`,
+///   `Std.Cmd`, `Std.Sub`, `Std.Time`, `Std.Css` only — which is precisely what
+///   makes it a *non-Persist* witness. [`persist_imports_of`] re-derives that
+///   on every run instead of trusting this comment: an edit that gave the
+///   example a collection would otherwise silently turn arms (a)/(b) into
+///   assertions about a Persist app, which they would then pass by being wrong.
+/// * **Its `sky.toml` declares no `[live] store`**, so arm (c) observes the
+///   **default** resolution — the exact path §7.1 says must stay `memory` for
+///   an app that declares no Persist collection. An example pinning
+///   `store = "sqlite"` would only prove that a config echo works.
+/// * **It is small and dependency-free** (one 251-line module, no
+///   `[dependencies]`, no FFI), so two full builds fit the budget and the
+///   `GOPROXY=off` build has nothing it could want to fetch.
+const G0_3_SUBJECT: &str = "examples/09-live-counter";
+
+/// Arm (d)'s tolerance, from §7.2 ("within 1 MB of the same app built on
+/// `[main]`").
+const G0_3_SIZE_TOLERANCE_BYTES: i64 = 1024 * 1024;
+
+/// The line the runtime prints for whichever session store it resolved
+/// (`runtime-go/rt/live_store.go`, `chooseStore`). Arm (c) reads the store the
+/// process actually opened, not the config it was handed.
+const STORE_BANNER: &str = "[sky.live] session store: ";
+
+/// The readiness line every Sky.Live app prints once it is listening.
+const LISTEN_BANNER: &str = "Sky.Live listening on";
+
+const G0_3_BUILD_BUDGET: Duration = Duration::from_secs(360);
+const G0_3_NM_BUDGET: Duration = Duration::from_secs(120);
+
 /// Every arm of G0.3 — "links no pebble", "ships no `bluedb/`", "keeps a
 /// non-`data` session store" — asserts that a thing which does not yet exist
 /// has not leaked. With no pebble anywhere in the tree the assertion cannot
 /// fail, and a gate that cannot fail is exactly what RULE ZERO clause 3
-/// forbids. `NOT RUN` is the truthful state; the probe, not the author, decides
-/// when that stops being true.
+/// forbids. `NOT RUN` is the truthful state until P1 creates
+/// `runtime-go/bluedb/`; **the tree, not the author, decides** when that stops
+/// being true, and the body below runs unconditionally from that moment.
+///
+/// # The arms, and what each one actually executes
+///
+/// | arm | claim | how it is decided |
+/// |---|---|---|
+/// | (a) | links no pebble | `go tool nm` over the built binary, case-insensitive match on `pebble`, with a floor on the symbol count so an empty `nm` cannot pass |
+/// | (b) | ships no `bluedb/` | walk the app's `sky-out/` for a directory of that name |
+/// | (c) | keeps its non-`data` session store | **run** the binary and read the store it opened off its own startup banner |
+/// | (d) | within 1 MB of `main` | build the *same example* out of a `main` worktree with the *same* compiler and diff the sizes |
+///
+/// Arm (d) is the informative one, and the worktree is why it works.
+/// `assets_root_for` (`rust/crates/project/src/driver.rs`) resolves
+/// `sky-stdlib/` + `runtime-go/` by walking **up from the project directory**,
+/// so building `<main-worktree>/examples/09-live-counter` emits against
+/// `main`'s `runtime-go/go.mod` and `main`'s `rt/` even though the compiler
+/// binary is this branch's. That holds the front end constant and isolates the
+/// delta to the module graph — which is the leak arm (d) exists to catch:
+/// pebble entering it with no explicit import.
 pub fn g0_3_no_pebble_leak(ctx: &Ctx) -> GateOutcome {
-    super::pending::p1_substrate(ctx)
+    if !ctx.exists("runtime-go/bluedb") {
+        return GateOutcome::not_run(
+            "runtime-go/bluedb is absent — with no pebble in the module graph, \
+             \"a non-Persist app links none of it\" cannot fail, and a gate that cannot fail \
+             is not evidence (RULE ZERO clause 3). This body runs in full the moment P1 \
+             creates that directory; nothing else has to be remembered."
+                .to_string(),
+        );
+    }
+
+    let Some(sky) = sky_compiler(ctx) else {
+        return GateOutcome::fail(
+            "no compiler to build the witness with",
+            vec![format!(
+                "neither rust/target/release/sky nor sky-out/sky exists under {} — \
+                 build it first (cd rust && cargo build --release -p sky). \
+                 A gate that cannot run has not passed.",
+                ctx.root().display()
+            )],
+        );
+    };
+
+    let subject = ctx.path(G0_3_SUBJECT);
+    if !subject.join("sky.toml").is_file() {
+        return GateOutcome::fail(
+            format!("the G0.3 witness {G0_3_SUBJECT} is not a Sky project"),
+            vec![format!(
+                "no sky.toml at {} — the gate has no subject, which is a FAIL and not a skip",
+                subject.display()
+            )],
+        );
+    }
+
+    // The witness must still BE a non-Persist app. Without this the gate keeps
+    // reporting on `examples/09-live-counter` after someone gives it a
+    // collection, and every arm silently changes meaning.
+    let persist = persist_imports_of(&subject);
+    if !persist.is_empty() {
+        return GateOutcome::fail(
+            format!("the G0.3 witness {G0_3_SUBJECT} is no longer a non-Persist app"),
+            persist
+                .into_iter()
+                .map(|s| format!("{s} — pick a different witness, or this gate asserts nothing"))
+                .collect(),
+        );
+    }
+
+    let Ok(scratch) = Scratch::create("g0.3") else {
+        return GateOutcome::fail(
+            "could not create the gate's scratch directory",
+            vec!["without a scratch HOME the build would inherit the developer's Go config".into()],
+        );
+    };
+    let env = offline_build_env(&scratch.dir);
+
+    let head = match build_project(&sky, &subject, &env.vars, G0_3_BUILD_BUDGET) {
+        Ok(b) => b,
+        Err(e) => {
+            return GateOutcome::fail(
+                format!("the non-Persist witness {G0_3_SUBJECT} did not build offline"),
+                vec![e],
+            )
+        }
+    };
+
+    let mut findings = Vec::new();
+    let mut arms: Vec<String> = Vec::new();
+
+    // ---- arm (a): the binary links no pebble ----------------------------
+    match nm_symbols(&head.binary, G0_3_NM_BUDGET) {
+        Err(e) => findings.push(format!("arm (a) NOT VERIFIED: {e}")),
+        Ok(syms) => {
+            let hits: Vec<&String> = syms
+                .iter()
+                .filter(|s| s.to_ascii_lowercase().contains("pebble"))
+                .collect();
+            if hits.is_empty() {
+                arms.push(format!("(a) 0/{} symbols match pebble", syms.len()));
+            } else {
+                findings.push(format!(
+                    "arm (a): pebble symbols in a non-Persist binary — {} of {} symbols match, e.g. {}",
+                    hits.len(),
+                    syms.len(),
+                    hits.iter().take(5).map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                ));
+            }
+        }
+    }
+
+    // ---- arm (b): no bluedb/ shipped into sky-out/ ------------------------
+    match find_dir_named(&head.out_dir, "bluedb") {
+        Some(p) => findings.push(format!(
+            "arm (b): {} was shipped into the non-Persist app's sky-out/",
+            rel(ctx, &p)
+        )),
+        None => arms.push("(b) no bluedb/ under sky-out/".into()),
+    }
+
+    // ---- arm (c): the session store it actually opened --------------------
+    match observed_session_store(&head.binary, &subject) {
+        Err(e) => findings.push(format!("arm (c) NOT VERIFIED: {e}")),
+        Ok(kind) => {
+            if kind == "data" {
+                findings.push(format!(
+                    "arm (c): the non-Persist app resolved the `data` session store (banner: {STORE_BANNER}{kind}) — \
+                     §7.1 says the [data] default applies only to an app that declares a Persist collection"
+                ));
+            } else {
+                arms.push(format!("(c) session store = {kind}"));
+            }
+        }
+    }
+
+    // ---- arm (d): within 1 MB of the same example built on main ------------
+    match baseline_size_on_main(ctx, &sky, &env.vars) {
+        Err(e) => findings.push(format!("arm (d) NOT VERIFIED: {e}")),
+        Ok(base) => {
+            let delta = head.size as i64 - base.size as i64;
+            if delta.abs() > G0_3_SIZE_TOLERANCE_BYTES {
+                findings.push(format!(
+                    "arm (d): binary is {} bytes ({:+.2} MiB) off the same example built on {} \
+                     ({} vs {} bytes) — tolerance is 1 MiB; pebble in the module graph without an \
+                     explicit import looks exactly like this",
+                    delta,
+                    delta as f64 / (1024.0 * 1024.0),
+                    base.rev,
+                    head.size,
+                    base.size
+                ));
+            } else {
+                arms.push(format!(
+                    "(d) {:+} bytes vs {} (tolerance 1 MiB)",
+                    delta, base.rev
+                ));
+            }
+        }
+    }
+
+    if findings.is_empty() {
+        GateOutcome::pass(format!(
+            "{G0_3_SUBJECT} built offline (GOPROXY=off, scratch HOME, {}): {}",
+            env.cache_note,
+            arms.join("; ")
+        ))
+    } else {
+        GateOutcome::fail(
+            format!("{} of 4 G0.3 arm(s) not satisfied", findings.len()),
+            findings,
+        )
+    }
+}
+
+/// The compiler this gate builds its witnesses with, resolved **inside
+/// `ctx.root`** (H3 — under `--verify-mutations` that is the scratch worktree,
+/// and a gate that reached the developer's `rust/target` would certify the
+/// wrong tree).
+fn sky_compiler(ctx: &Ctx) -> Option<PathBuf> {
+    ["rust/target/release/sky", "sky-out/sky"]
+        .iter()
+        .map(|c| ctx.path(c))
+        .find(|p| p.is_file())
+}
+
+/// `Std.Db` / `Std.Persist` imports anywhere under the project's `src/`, as
+/// `path:line: import …` citations. Empty means the project is a non-Persist
+/// app; non-empty means this gate's witness has stopped being one.
+fn persist_imports_of(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for f in collect_ext(&dir.join("src"), "sky") {
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        for (i, line) in text.lines().enumerate() {
+            let t = line.trim_start();
+            let Some(rest) = t.strip_prefix("import ") else {
+                continue;
+            };
+            let module = rest.split_whitespace().next().unwrap_or("");
+            if module == "Std.Db"
+                || module.starts_with("Std.Db.")
+                || module == "Std.Persist"
+                || module.starts_with("Std.Persist.")
+            {
+                out.push(format!(
+                    "{}:{}: import {module}",
+                    f.file_name().and_then(|n| n.to_str()).unwrap_or("?"),
+                    i + 1
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// A built witness.
+struct BuiltApp {
+    binary: PathBuf,
+    out_dir: PathBuf,
+    size: u64,
+}
+
+/// A baseline measurement plus the revision it came from, so the finding can
+/// name what it was compared against.
+struct Baseline {
+    size: u64,
+    rev: String,
+}
+
+/// Build `dir` from a wiped slate with `env` applied, bounded by `budget`.
+///
+/// The wipe is what makes the measurement the tree's own: `verify-cli.sh`
+/// without `--rebuild` certifies whatever an earlier run left behind, and a
+/// size arm reading a stale binary would report a delta of zero forever.
+fn build_project(
+    sky: &Path,
+    dir: &Path,
+    env: &[(String, String)],
+    budget: Duration,
+) -> Result<BuiltApp, String> {
+    for stale in ["sky-out", ".skycache"] {
+        let _ = std::fs::remove_dir_all(dir.join(stale));
+    }
+    let entry = entry_of(dir).unwrap_or_else(|| "src/Main.sky".to_string());
+
+    let mut cmd = Command::new(sky);
+    cmd.arg("build").arg(&entry).current_dir(dir);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let run = capped(cmd, budget).map_err(|e| format!("`sky build {entry}` in {}: {e}", dir.display()))?;
+    if run.timed_out {
+        return Err(format!(
+            "`sky build {entry}` exceeded {}s and its process group was killed",
+            budget.as_secs()
+        ));
+    }
+    if !run.ok {
+        return Err(format!(
+            "`sky build {entry}` failed in {}:\n{}",
+            dir.display(),
+            layer2::tail(&run.out, 40)
+        ));
+    }
+
+    let out_dir = dir.join("sky-out");
+    let binary = out_dir.join("app");
+    let size = std::fs::metadata(&binary)
+        .map(|m| m.len())
+        .map_err(|e| format!("no binary at {} after a successful build: {e}", binary.display()))?;
+    Ok(BuiltApp {
+        binary,
+        out_dir,
+        size,
+    })
+}
+
+/// `entry = "..."` from a project's `sky.toml`.
+fn entry_of(dir: &Path) -> Option<String> {
+    let toml = std::fs::read_to_string(dir.join("sky.toml")).ok()?;
+    for line in toml.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("entry") else {
+            continue;
+        };
+        let eq = rest.find('=')?;
+        let v = rest[eq + 1..].trim().trim_matches('"');
+        if !v.is_empty() {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
+/// Symbol names from `go tool nm`, with a floor.
+///
+/// The floor is the point. `go tool nm` on a stripped or unreadable file exits
+/// 0 with no output, and "no line matched pebble" over an empty list is the
+/// green lie this whole harness exists to catch — so a symbol table that is
+/// implausibly small is an ERROR, never a pass.
+fn nm_symbols(binary: &Path, budget: Duration) -> Result<Vec<String>, String> {
+    let mut cmd = Command::new("go");
+    cmd.arg("tool").arg("nm").arg(binary);
+    let run = capped(cmd, budget).map_err(|e| format!("`go tool nm {}`: {e}", binary.display()))?;
+    if run.timed_out {
+        return Err(format!(
+            "`go tool nm` exceeded {}s on {}",
+            budget.as_secs(),
+            binary.display()
+        ));
+    }
+    if !run.ok {
+        return Err(format!(
+            "`go tool nm {}` failed:\n{}",
+            binary.display(),
+            layer2::tail(&run.out, 20)
+        ));
+    }
+    let syms: Vec<String> = run
+        .out
+        .lines()
+        .filter_map(|l| l.split_whitespace().last().map(|s| s.to_string()))
+        .collect();
+    if syms.len() < 1000 {
+        return Err(format!(
+            "`go tool nm` listed only {} symbols for {} — too few for a Sky binary; \
+             the arm would be asserting over an empty set",
+            syms.len(),
+            binary.display()
+        ));
+    }
+    Ok(syms)
+}
+
+/// The first directory named `name` anywhere under `root`.
+fn find_dir_named(root: &Path, name: &str) -> Option<PathBuf> {
+    let rd = std::fs::read_dir(root).ok()?;
+    let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    entries.sort();
+    for p in entries {
+        if !p.is_dir() {
+            continue;
+        }
+        if p.file_name().and_then(|n| n.to_str()) == Some(name) {
+            return Some(p);
+        }
+        if let Some(hit) = find_dir_named(&p, name) {
+            return Some(hit);
+        }
+    }
+    None
+}
+
+/// Arm (c), decided by **running the app**: the session store kind off its own
+/// startup banner.
+///
+/// A `sky.toml` read would only prove what the app was told. §7.1's claim is
+/// about what it *resolves to* when told nothing, and `chooseStore` prints that
+/// — so the gate reads the process, not the config.
+fn observed_session_store(binary: &Path, dir: &Path) -> Result<String, String> {
+    let port = layer2::free_port()?;
+    let env = [("SKY_LIVE_PORT", port.to_string())];
+    let mut srv = layer2::Server::spawn(binary, dir, port, &env)?;
+    let ready = srv.wait_ready(LISTEN_BANNER, Duration::from_secs(45));
+    let log = srv.log();
+    let shutdown = srv.shutdown();
+    ready?;
+    shutdown?;
+
+    let line = log
+        .lines()
+        .find(|l| l.contains(STORE_BANNER))
+        .ok_or_else(|| {
+            format!(
+                "the app printed no {STORE_BANNER:?} line, so the store it opened is unknown; output:\n{}",
+                layer2::tail(&log, 40)
+            )
+        })?;
+    let after = &line[line.find(STORE_BANNER).unwrap_or(0) + STORE_BANNER.len()..];
+    Ok(after
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_string())
+}
+
+/// Arm (d)'s baseline: the SAME example, built by the SAME compiler, out of a
+/// detached `main` worktree.
+///
+/// Checking out `main` is enough because `assets_root_for` walks up from the
+/// project directory for `sky-stdlib/` + `runtime-go/`
+/// (`rust/crates/project/src/driver.rs`), so the emit reads `main`'s runtime and
+/// `main`'s `go.mod`. That is deliberately the *only* thing that varies: the
+/// front end is held constant, so a delta is a module-graph delta.
+///
+/// Building `main`'s compiler instead would be the naive reading and is both
+/// far outside the budget and *less* discriminating — it would fold every
+/// codegen change of the branch into arm (d)'s number.
+fn baseline_size_on_main(ctx: &Ctx, sky: &Path, env: &[(String, String)]) -> Result<Baseline, String> {
+    let rev = ["main", "origin/main"]
+        .into_iter()
+        .find(|r| git_rev_exists(ctx.root(), r))
+        .ok_or_else(|| {
+            "neither `main` nor `origin/main` resolves in this clone — arm (d) has no baseline \
+             to compare against, and an unmeasured arm is not a passing arm"
+                .to_string()
+        })?;
+
+    let scratch = Scratch::create("g0.3-baseline")?;
+    let wt = scratch.dir.join("main");
+    let add = Command::new("git")
+        .args(["worktree", "add", "--detach", "--quiet"])
+        .arg(&wt)
+        .arg(rev)
+        .current_dir(ctx.root())
+        .output()
+        .map_err(|e| format!("`git worktree add` for the {rev} baseline: {e}"))?;
+    if !add.status.success() {
+        return Err(format!(
+            "`git worktree add --detach {} {rev}` failed: {}",
+            wt.display(),
+            String::from_utf8_lossy(&add.stderr).trim()
+        ));
+    }
+    let _wt_guard = WorktreeGuard {
+        repo: ctx.root().to_path_buf(),
+        path: wt.clone(),
+    };
+
+    let project = wt.join(G0_3_SUBJECT);
+    if !project.join("sky.toml").is_file() {
+        return Err(format!(
+            "{G0_3_SUBJECT} does not exist on {rev} — arm (d) cannot compare against it"
+        ));
+    }
+    let built = build_project(sky, &project, env, G0_3_BUILD_BUDGET)
+        .map_err(|e| format!("the {rev} baseline build failed: {e}"))?;
+    Ok(Baseline {
+        size: built.size,
+        rev: rev.to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Build environment + bounded subprocesses (shared by G0.3 and G0.5 arm (c))
+// ---------------------------------------------------------------------------
+
+struct BuildEnv {
+    vars: Vec<(String, String)>,
+    /// Exactly which module cache the build used, rendered into the gate's
+    /// PASS detail. See [`offline_build_env`] for why it is disclosed rather
+    /// than asserted.
+    cache_note: String,
+}
+
+/// The offline build environment §7.2 prescribes, and an honest account of the
+/// one clause of it that is not achievable today.
+///
+/// `HOME` is a scratch directory (so no `~/.netrc`, `~/.gitconfig` credential
+/// helper or `~/.config/go/env` can influence the build), `GOFLAGS=-mod=mod`,
+/// `GOTOOLCHAIN=local` (a toolchain download is a network fetch), and
+/// **`GOPROXY=off`** — which is the clause that carries the meaning: the build
+/// provably fetches nothing.
+///
+/// §7.2 also says "fresh `GOMODCACHE`". That is **not** asserted here, and
+/// saying so plainly is the point: nothing in this repo is vendored, so an
+/// empty module cache plus `GOPROXY=off` cannot build *any* Sky app — the arm
+/// would be red for a property no app on any branch has ever had, and a gate
+/// that is permanently red for a reason unrelated to the code is a gate people
+/// stop reading. The cache in use is therefore the ambient one, resolved by
+/// asking `go env` **before** `HOME` is redirected, and named in the gate's
+/// detail line. A caller that has a genuinely fresh, pre-seeded cache supplies
+/// it with `SKY_BLUEDB_GOMODCACHE`, and the detail line then says so.
+fn offline_build_env(scratch: &Path) -> BuildEnv {
+    let home = scratch.join("home");
+    let _ = std::fs::create_dir_all(&home);
+
+    let ambient_modcache = go_env("GOMODCACHE");
+    let ambient_buildcache = go_env("GOCACHE");
+    let (modcache, note) = match std::env::var("SKY_BLUEDB_GOMODCACHE") {
+        Ok(v) if !v.is_empty() => (v.clone(), format!("GOMODCACHE={v} (caller-supplied)")),
+        _ => (
+            ambient_modcache.clone(),
+            format!("GOMODCACHE={ambient_modcache} (ambient; nothing is vendored, so a fresh cache is not asserted)"),
+        ),
+    };
+
+    let mut vars = vec![
+        ("HOME".to_string(), home.display().to_string()),
+        ("GOPROXY".to_string(), "off".to_string()),
+        ("GOFLAGS".to_string(), "-mod=mod".to_string()),
+        ("GOTOOLCHAIN".to_string(), "local".to_string()),
+    ];
+    if !modcache.is_empty() {
+        vars.push(("GOMODCACHE".to_string(), modcache));
+    }
+    if !ambient_buildcache.is_empty() {
+        vars.push(("GOCACHE".to_string(), ambient_buildcache));
+    }
+    BuildEnv {
+        vars,
+        cache_note: note,
+    }
+}
+
+/// One `go env <NAME>`, in the ambient environment.
+fn go_env(name: &str) -> String {
+    Command::new("go")
+        .arg("env")
+        .arg(name)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// A scratch directory that removes itself on every exit path, panic included.
+struct Scratch {
+    dir: PathBuf,
+}
+
+impl Scratch {
+    fn create(tag: &str) -> Result<Scratch, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-bluedb-{tag}-{}-{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos() as u64
+                ^ std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| format!("scratch mkdir {}: {e}", dir.display()))?;
+        Ok(Scratch { dir })
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Removes the baseline worktree from git's administrative state as well as
+/// from disk — a `rm -rf` alone leaves a stale entry in `git worktree list`
+/// that makes the next run's `worktree add` fail.
+struct WorktreeGuard {
+    repo: PathBuf,
+    path: PathBuf,
+}
+
+impl Drop for WorktreeGuard {
+    fn drop(&mut self) {
+        let _ = Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&self.path)
+            .current_dir(&self.repo)
+            .output();
+        let _ = std::fs::remove_dir_all(&self.path);
+        let _ = Command::new("git")
+            .args(["worktree", "prune"])
+            .current_dir(&self.repo)
+            .output();
+    }
+}
+
+struct Capped {
+    ok: bool,
+    /// stdout and stderr interleaved, kept for the failure detail.
+    out: String,
+    timed_out: bool,
+}
+
+/// Run `cmd` under `budget`, killing its whole **process group** on overrun.
+///
+/// The group is the point: `sky build` forks `go build`, and killing only the
+/// direct child leaves a compiler running past the gate's own budget, where it
+/// lands in the next gate's measurement.
+fn capped(mut cmd: Command, budget: Duration) -> Result<Capped, String> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+
+    let sink = Arc::new(Mutex::new(String::new()));
+    let handles: Vec<std::thread::JoinHandle<()>> = [
+        child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+        child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|mut r| {
+        let sink = Arc::clone(&sink);
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = r.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                if let Ok(mut g) = sink.lock() {
+                    g.push_str(&String::from_utf8_lossy(&buf[..n]));
+                }
+            }
+        })
+    })
+    .collect();
+
+    let deadline = Instant::now() + budget;
+    let (ok, timed_out) = loop {
+        match child.try_wait() {
+            Err(e) => return Err(format!("wait failed: {e}")),
+            Ok(Some(status)) => break (status.success(), false),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    kill_group(&mut child);
+                    let _ = child.wait();
+                    break (false, true);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+    for h in handles {
+        let _ = h.join();
+    }
+    let out = sink.lock().map(|g| g.clone()).unwrap_or_default();
+    Ok(Capped { ok, out, timed_out })
+}
+
+#[cfg(unix)]
+fn kill_group(child: &mut Child) {
+    use nix::sys::signal::{killpg, Signal};
+    use nix::unistd::Pid;
+
+    let pgid = Pid::from_raw(child.id() as i32);
+    let _ = killpg(pgid, Signal::SIGTERM);
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(5) {
+        if killpg(pgid, None::<Signal>).is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = killpg(pgid, Signal::SIGKILL);
+}
+
+#[cfg(not(unix))]
+fn kill_group(child: &mut Child) {
+    let _ = child.kill();
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +991,14 @@ fn runtime_env_literals(ctx: &Ctx) -> BTreeMap<String, String> {
 
 const ZSTD_TAG: &str = "pebblegozstd";
 
+/// The symbol fragment that means the **cgo** DataDog codec got linked. Pebble
+/// selects `github.com/DataDog/zstd` unless `pebblegozstd` picks klauspost's
+/// pure-Go one, and Go mangles the module path into the symbol name, so a
+/// linked DataDog codec is visible to `go tool nm`.
+const DATADOG_ZSTD: &str = "datadog/zstd";
+
+const G0_5_BUILD_BUDGET: Duration = Duration::from_secs(360);
+
 /// Arm (a) — `run_go_build_once` is the sole `go build` site — is asserted
 /// unconditionally, and is the arm the declared mutation ("add a second site")
 /// falsifies.
@@ -328,7 +1031,11 @@ pub fn g0_5_zstd_tag(ctx: &Ctx) -> GateOutcome {
         .unwrap_or(false);
 
     let build_rs = ctx.read("rust/crates/project/src/build.rs").unwrap_or_default();
-    let tag_present = build_rs.contains(ZSTD_TAG);
+    let tag_present = sites
+        .iter()
+        .any(|(_, line)| zstd_tag_reaches_site(&build_rs, *line));
+
+    let mut arm_c = "not applicable — runtime-go/go.mod does not require pebble yet".to_string();
 
     if pebble_present {
         if !tag_present {
@@ -336,19 +1043,20 @@ pub fn g0_5_zstd_tag(ctx: &Ctx) -> GateOutcome {
                 "runtime-go/go.mod requires pebble but no `-tags {ZSTD_TAG}` appears at the go build site — CI would link the cgo DataDog zstd while shipped apps link pure-Go klauspost"
             ));
         }
-        findings.push(
-            "arm (c) (`go tool nm` finds no DataDog cgo zstd symbols in a Persist binary) is not implemented, and pebble has landed — implement it with P1".into(),
-        );
+        match g0_5_arm_c(ctx) {
+            Ok(detail) => arm_c = detail,
+            Err(finding) => findings.push(finding),
+        }
     }
 
     if findings.is_empty() {
-        let arm_bc = if pebble_present {
+        let arm_b = if pebble_present {
             "asserted"
         } else {
-            "not applicable — runtime-go/go.mod does not require pebble yet"
+            "not applicable"
         };
         GateOutcome::pass(format!(
-            "1 `go build` site ({}) [tier {}]; arms (b)/(c): {arm_bc}",
+            "1 `go build` site ({}) [tier {}]; arm (b): {arm_b}; arm (c): {arm_c}",
             sites
                 .first()
                 .map(|(f, l)| format!("{f}:{l}"))
@@ -358,6 +1066,243 @@ pub fn g0_5_zstd_tag(ctx: &Ctx) -> GateOutcome {
     } else {
         GateOutcome::fail("go-build site / zstd tag contract broken", findings)
     }
+}
+
+/// Arm (b): the tag reaches the **invocation**, not merely the file.
+///
+/// `build_rs.contains("pebblegozstd")` was the original spelling and is no
+/// longer sufficient — the constant's declaration, its doc comment and its unit
+/// test all mention the string, so deleting `-tags` from the argv would leave a
+/// whole-file `contains` green while every shipped binary changed what it
+/// links. That is a gate weakened by the very commit that implemented the
+/// property, which is the failure mode this harness is named after.
+///
+/// So the check is scoped to the argument list at `site_line`, following the
+/// one level of const indirection the compiler actually uses
+/// (`.args(GO_BUILD_TAG_ARGS)` where `GO_BUILD_TAG_ARGS = ["-tags",
+/// GO_BUILD_ZSTD_TAG]`). Indirection is resolved from the source, not
+/// hard-coded: a rename of either constant keeps working, and deleting the
+/// argument does not.
+fn zstd_tag_reaches_site(src: &str, site_line: usize) -> bool {
+    let lines: Vec<&str> = src.lines().collect();
+    let start = site_line.saturating_sub(1);
+    let window = lines[start..(start + 14).min(lines.len())].join("\n");
+
+    let (holds_tag, tag_args) = tag_carrying_consts(src);
+
+    // `.arg("-tags").arg(<the tag, literal or by name>)`
+    if window.contains("-tags")
+        && (window.contains(ZSTD_TAG) || holds_tag.iter().any(|n| window.contains(n.as_str())))
+    {
+        return true;
+    }
+    // `.args(<a const that IS the -tags pair>)`
+    tag_args.iter().any(|name| window.contains(name.as_str()))
+}
+
+/// The constants in `src` that carry the tag, as
+/// `(holds-the-tag, is-the-whole-"-tags"-pair)`.
+///
+/// Two lists because the compiler spells it in two levels: `GO_BUILD_ZSTD_TAG`
+/// holds the tag string, `GO_BUILD_TAG_ARGS` holds `["-tags",
+/// GO_BUILD_ZSTD_TAG]`.
+fn tag_carrying_consts(src: &str) -> (Vec<String>, Vec<String>) {
+    let mut holds_tag: Vec<String> = Vec::new();
+    for line in src.lines() {
+        if line.contains(ZSTD_TAG) {
+            if let Some(n) = const_name(line) {
+                holds_tag.push(n);
+            }
+        }
+    }
+    let mut pairs: Vec<String> = Vec::new();
+    for line in src.lines() {
+        if !line.contains("-tags") {
+            continue;
+        }
+        let carries =
+            line.contains(ZSTD_TAG) || holds_tag.iter().any(|n| line.contains(n.as_str()));
+        if !carries {
+            continue;
+        }
+        if let Some(n) = const_name(line) {
+            pairs.push(n);
+        }
+    }
+    (holds_tag, pairs)
+}
+
+/// `pub const NAME: T = …` / `const NAME: T = …` -> `NAME`.
+fn const_name(line: &str) -> Option<String> {
+    let pos = line.find("const ")?;
+    let rest = &line[pos + "const ".len()..];
+    let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))?;
+    let name = &rest[..end];
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+/// Arm (c): **a Persist binary contains no DataDog cgo zstd symbols**, on every
+/// one of the three call paths.
+///
+/// `Ok(detail)` is the arm asserted; `Err(finding)` is the arm NOT asserted,
+/// which is a FAIL and never a quiet pass — an arm nobody ran is the exact
+/// shape of the green lie this harness exists to catch.
+///
+/// # How three paths are covered by two builds
+///
+/// The three call paths into `run_go_build_once` (webview CGO=1, static CGO=0,
+/// cgo retry CGO=1) differ in **`CGO_ENABLED` and nothing else** — same argv,
+/// same site (§7.2). So the arm builds the Persist witness through the compiler
+/// (which takes the CGO=0 static path for a pure-Go app), then re-links the very
+/// same emitted `sky-out/` with `CGO_ENABLED=1` using
+/// [`project::GO_BUILD_TAG_ARGS`] — the compiler's OWN flag constant, not a
+/// hand-copied duplicate. That coupling is deliberate: an edit that drops the
+/// tag from the compiler drops it from this re-link too, and the cgo build then
+/// really does pull the DataDog codec, so the arm goes red for the true reason
+/// instead of quietly re-deriving the flag it was supposed to be checking.
+///
+/// # The vacuity guard
+///
+/// "no DataDog zstd symbols" is trivially true of a binary that links no pebble
+/// at all. The arm therefore FAILS unless it first sees pebble symbols in the
+/// witness. Without that, the arm would go green the day the Persist example
+/// stopped using Persist.
+fn g0_5_arm_c(ctx: &Ctx) -> Result<String, String> {
+    let Some(sky) = sky_compiler(ctx) else {
+        return Err(format!(
+            "arm (c) NOT VERIFIED: no compiler at {}/rust/target/release/sky or sky-out/sky — \
+             build it first (cd rust && cargo build --release -p sky)",
+            ctx.root().display()
+        ));
+    };
+    let Some(witness) = persist_witness(ctx) else {
+        // No project imports `Std.Persist`, so "a Persist binary carries no
+        // DataDog zstd" is quantified over the EMPTY SET. Reported as that
+        // rather than asserted — the same treatment G0.2 gives its `bluedb`
+        // arm, and the same reason G0.3 reports NOT RUN: a claim with no
+        // instances is not evidence.
+        //
+        // It is still a ratchet, because the condition is machine-decided and
+        // the moment the API ships it stops being satisfiable this way: once
+        // `sky-stdlib/Std/Persist.sky` exists, a tree with NO Persist project
+        // is a real gap in the corpus and becomes a finding below.
+        if ctx.exists("sky-stdlib/Std/Persist.sky") {
+            return Err(
+                "arm (c) NOT VERIFIED: sky-stdlib/Std/Persist.sky exists, so Persist binaries are \
+                 buildable, but no project under examples/ imports Std.Persist — there is nothing \
+                 to run `go tool nm` over. Ship the Persist example with the API."
+                    .to_string(),
+            );
+        }
+        return Ok(
+            "quantified over an empty set — no project imports Std.Persist and \
+             sky-stdlib/Std/Persist.sky does not exist yet; the arm runs on the first Persist project"
+                .to_string(),
+        );
+    };
+
+    let scratch = Scratch::create("g0.5").map_err(|e| format!("arm (c) NOT VERIFIED: {e}"))?;
+    let env = offline_build_env(&scratch.dir);
+    let dir = ctx.path(&witness);
+    let built = build_project(&sky, &dir, &env.vars, G0_5_BUILD_BUDGET)
+        .map_err(|e| format!("arm (c) NOT VERIFIED: the Persist witness {witness} did not build: {e}"))?;
+
+    let mut checked = Vec::new();
+    for (label, binary) in [
+        ("CGO_ENABLED=0 (the static path)".to_string(), built.binary.clone()),
+        (
+            "CGO_ENABLED=1 (the webview + retry paths)".to_string(),
+            relink_with_cgo(&built.out_dir, &env.vars, G0_5_BUILD_BUDGET)
+                .map_err(|e| format!("arm (c) NOT VERIFIED: {e}"))?,
+        ),
+    ] {
+        let syms = nm_symbols(&binary, G0_3_NM_BUDGET)
+            .map_err(|e| format!("arm (c) NOT VERIFIED on {label}: {e}"))?;
+        let lowered: Vec<String> = syms.iter().map(|s| s.to_ascii_lowercase()).collect();
+
+        if !lowered.iter().any(|s| s.contains("pebble")) {
+            return Err(format!(
+                "arm (c) NOT VERIFIED on {label}: the Persist witness {witness} linked NO pebble \
+                 symbols, so \"no DataDog zstd\" would be true of an empty set"
+            ));
+        }
+        let hits: Vec<&String> = lowered
+            .iter()
+            .filter(|s| s.contains(DATADOG_ZSTD))
+            .collect();
+        if !hits.is_empty() {
+            return Err(format!(
+                "arm (c): DataDog cgo zstd symbols in a Persist binary on {label} — {} matches, e.g. {}; \
+                 `-tags {ZSTD_TAG}` did not reach this build",
+                hits.len(),
+                hits.iter().take(3).map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        checked.push(format!("{label}: {} symbols, 0 DataDog zstd", syms.len()));
+    }
+
+    Ok(format!("{witness} — {}", checked.join("; ")))
+}
+
+/// Re-link an already-emitted `sky-out/` with `CGO_ENABLED=1`, using the
+/// compiler's own build tags. Returns the path of the new binary.
+fn relink_with_cgo(
+    out_dir: &Path,
+    env: &[(String, String)],
+    budget: Duration,
+) -> Result<PathBuf, String> {
+    let bin = out_dir.join("app-cgo1");
+    let mut cmd = Command::new("go");
+    cmd.arg("build")
+        .args(project::GO_BUILD_TAG_ARGS)
+        .arg("-o")
+        .arg(&bin)
+        .arg(".")
+        .current_dir(out_dir)
+        .env("CGO_ENABLED", "1");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let run = capped(cmd, budget).map_err(|e| format!("the CGO_ENABLED=1 re-link: {e}"))?;
+    if run.timed_out {
+        return Err(format!(
+            "the CGO_ENABLED=1 re-link exceeded {}s and its process group was killed",
+            budget.as_secs()
+        ));
+    }
+    if !run.ok {
+        return Err(format!(
+            "the CGO_ENABLED=1 re-link failed in {}:\n{}",
+            out_dir.display(),
+            layer2::tail(&run.out, 30)
+        ));
+    }
+    Ok(bin)
+}
+
+/// The first project under `examples/` whose Sky source imports `Std.Persist`,
+/// as a repo-relative path. `None` means arm (c) has no subject, which the
+/// caller reports rather than skips.
+fn persist_witness(ctx: &Ctx) -> Option<String> {
+    let rd = std::fs::read_dir(ctx.path("examples")).ok()?;
+    let mut dirs: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    dirs.sort();
+    for d in dirs {
+        if !d.join("sky.toml").is_file() {
+            continue;
+        }
+        if persist_imports_of(&d)
+            .iter()
+            .any(|c| c.contains("Std.Persist"))
+        {
+            return Some(rel(ctx, &d));
+        }
+    }
+    None
 }
 
 /// A `Command::new("go")` whose command line contains `build` within the next
@@ -1115,6 +2060,76 @@ mod tests {
     #[test]
     fn static_checks_are_green_on_the_shipped_registry() {
         assert!(static_checks().is_empty(), "{:?}", static_checks());
+    }
+
+    /// The shape the compiler actually ships, plus the two ways it could be
+    /// spelled and the one way it regresses. The last case is the one that
+    /// matters: the tag string still appears in the FILE (constant, doc
+    /// comment, unit test) while the argv no longer carries it — which is
+    /// exactly what a whole-file `contains` would have passed.
+    #[test]
+    fn arm_b_reads_the_invocation_not_the_file() {
+        let shipped = "\
+/// doc comment naming pebblegozstd\n\
+pub const GO_BUILD_ZSTD_TAG: &str = \"pebblegozstd\";\n\
+pub const GO_BUILD_TAG_ARGS: [&str; 2] = [\"-tags\", GO_BUILD_ZSTD_TAG];\n\
+fn go_build_command() {\n\
+    let mut cmd = Command::new(\"go\");\n\
+    cmd.arg(\"build\")\n\
+        .args(GO_BUILD_TAG_ARGS)\n\
+        .arg(\".\");\n\
+}\n";
+        assert!(zstd_tag_reaches_site(shipped, 5));
+
+        let inline = "\
+fn go_build_command() {\n\
+    let mut cmd = Command::new(\"go\");\n\
+    cmd.arg(\"build\")\n\
+        .arg(\"-tags\")\n\
+        .arg(\"pebblegozstd\")\n\
+        .arg(\".\");\n\
+}\n";
+        assert!(zstd_tag_reaches_site(inline, 2));
+
+        let by_name = "\
+pub const GO_BUILD_ZSTD_TAG: &str = \"pebblegozstd\";\n\
+fn go_build_command() {\n\
+    let mut cmd = Command::new(\"go\");\n\
+    cmd.arg(\"build\")\n\
+        .arg(\"-tags\")\n\
+        .arg(GO_BUILD_ZSTD_TAG)\n\
+        .arg(\".\");\n\
+}\n";
+        assert!(zstd_tag_reaches_site(by_name, 3));
+
+        // REGRESSED: the argv lost the tag, the file kept every mention of it.
+        let dropped = "\
+/// doc comment naming pebblegozstd\n\
+pub const GO_BUILD_ZSTD_TAG: &str = \"pebblegozstd\";\n\
+pub const GO_BUILD_TAG_ARGS: [&str; 2] = [\"-tags\", GO_BUILD_ZSTD_TAG];\n\
+#[test]\n\
+fn t() { assert_eq!(GO_BUILD_ZSTD_TAG, \"pebblegozstd\"); }\n\
+fn go_build_command() {\n\
+    let mut cmd = Command::new(\"go\");\n\
+    cmd.arg(\"build\")\n\
+        .arg(\".\");\n\
+}\n";
+        assert!(
+            dropped.contains("pebblegozstd"),
+            "the premise of this case is that a whole-file contains() would pass"
+        );
+        assert!(!zstd_tag_reaches_site(dropped, 7));
+    }
+
+    #[test]
+    fn tag_consts_are_resolved_through_one_level_of_indirection() {
+        let src = "\
+pub const GO_BUILD_ZSTD_TAG: &str = \"pebblegozstd\";\n\
+pub const GO_BUILD_TAG_ARGS: [&str; 2] = [\"-tags\", GO_BUILD_ZSTD_TAG];\n\
+const UNRELATED: &str = \"-tags netgo\";\n";
+        let (holds, pairs) = tag_carrying_consts(src);
+        assert_eq!(holds, vec!["GO_BUILD_ZSTD_TAG"]);
+        assert_eq!(pairs, vec!["GO_BUILD_TAG_ARGS"]);
     }
 
     #[test]

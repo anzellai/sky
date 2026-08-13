@@ -705,9 +705,37 @@ fn sky_build_goflags_from(existing: &str) -> String {
     flags.join(" ")
 }
 
-fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuildAttempt, String> {
+/// The build tag that selects pebble's **pure-Go** zstd (klauspost) over its
+/// cgo DataDog default.
+///
+/// Without it the two builds of the same tree diverge: CI's `CGO_ENABLED=0`
+/// jobs link klauspost while `sky build`'s cgo paths link the DataDog cgo
+/// codec, so one of the two shipped configurations is never the one that was
+/// tested. The tag is not a per-path flag — it is passed at the single
+/// [`run_go_build_once`] site, which is the ONLY `go build` invocation in the
+/// compiler, so all three call paths into it (webview CGO=1, static CGO=0, cgo
+/// retry) inherit it by construction rather than by three copies staying in
+/// sync.
+pub const GO_BUILD_ZSTD_TAG: &str = "pebblegozstd";
+
+/// The `-tags` argument pair every `go build` this compiler runs must carry.
+///
+/// Exported so the G0.5 gate can re-link a Persist binary through the *cgo*
+/// paths with the compiler's own flags instead of a hand-copied duplicate: a
+/// re-derived flag list would keep the gate green through exactly the edit that
+/// drops the tag.
+pub const GO_BUILD_TAG_ARGS: [&str; 2] = ["-tags", GO_BUILD_ZSTD_TAG];
+
+/// The compiler's ONE `go build` invocation, as a not-yet-spawned [`Command`].
+///
+/// Split out from [`run_go_build_once`] purely so the argv is assertable: a
+/// test can read back `-tags pebblegozstd` without running Go. An edit that
+/// drops the tag then fails `go_build_carries_the_pure_go_zstd_tag` instead of
+/// silently changing what every shipped binary links.
+fn go_build_command(out_dir: &Path, cgo: &str, bin_name: &str) -> Command {
     let mut cmd = Command::new("go");
     cmd.arg("build")
+        .args(GO_BUILD_TAG_ARGS)
         .arg("-o")
         .arg(bin_name)
         .arg(".")
@@ -720,6 +748,11 @@ fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuil
     for (k, v) in ffi::inspect::go_env_for_constrained_home() {
         cmd.env(k, v);
     }
+    cmd
+}
+
+fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuildAttempt, String> {
+    let cmd = go_build_command(out_dir, cgo, bin_name);
     match run_bounded(cmd, GO_BUILD_TIMEOUT) {
         Ok(b) if b.timed_out => Err(format!(
             "go build (CGO_ENABLED={cgo}) exceeded {}s and was killed — the Go toolchain hung (stuck linker / module fetch). Partial stderr:\n{}",
@@ -1652,6 +1685,82 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|e| e.to_str()) == Some("sky") {
             out.push(path);
         }
+    }
+}
+
+/// The zstd-tag contract (G0.5 arms (a) and (b)) as tests rather than as a
+/// comment.
+///
+/// The failure this guards is not a crash — it is two builds of the same tree
+/// linking different zstd implementations, so whichever one CI exercised, the
+/// other is the one users run. That is invisible at the source level and
+/// invisible at runtime until it corrupts something, which is exactly why it
+/// needs a test rather than a review habit.
+#[cfg(test)]
+mod go_build_tag_tests {
+    use super::{go_build_command, GO_BUILD_TAG_ARGS, GO_BUILD_ZSTD_TAG};
+    use std::path::Path;
+
+    fn argv(cgo: &str) -> Vec<String> {
+        go_build_command(Path::new("/nonexistent-out-dir"), cgo, "app")
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// The tag is on the argv of the single site — asserted for BOTH
+    /// `CGO_ENABLED` settings, because the cgo one is where the DataDog codec
+    /// could actually link.
+    #[test]
+    fn go_build_carries_the_pure_go_zstd_tag() {
+        assert_eq!(GO_BUILD_ZSTD_TAG, "pebblegozstd");
+        assert_eq!(GO_BUILD_TAG_ARGS, ["-tags", "pebblegozstd"]);
+
+        for cgo in ["0", "1"] {
+            let args = argv(cgo);
+            assert_eq!(args.first().map(String::as_str), Some("build"), "{args:?}");
+            let i = args
+                .iter()
+                .position(|a| a == "-tags")
+                .unwrap_or_else(|| panic!("CGO_ENABLED={cgo}: no `-tags` on the go build argv: {args:?}"));
+            let tags = args
+                .get(i + 1)
+                .unwrap_or_else(|| panic!("CGO_ENABLED={cgo}: `-tags` with no value: {args:?}"));
+            assert!(
+                tags.split(',').any(|t| t == GO_BUILD_ZSTD_TAG),
+                "CGO_ENABLED={cgo}: `-tags {tags}` does not select {GO_BUILD_ZSTD_TAG} — CI would \
+                 link the cgo DataDog zstd while shipped apps link pure-Go klauspost, and only one \
+                 of the two would ever have been tested"
+            );
+        }
+    }
+
+    /// The property that makes ONE tag enough: every call path funnels through
+    /// [`super::run_go_build_once`], and that function holds the only
+    /// `go build` in the crate.
+    ///
+    /// Asserted lexically over this file's own text, which is defensible
+    /// because it IS a lexical property (RULE ZERO clause 5) — and it is the
+    /// regression that matters, since the way this breaks is someone adding a
+    /// second `go build` somewhere else rather than editing this one.
+    #[test]
+    fn there_is_exactly_one_go_build_invocation_and_every_path_funnels_through_it() {
+        // Both needles are written with escaped quotes here, so this test's own
+        // source does not match them and the counts stay honest.
+        let src = include_str!("build.rs");
+        let sites = src.matches(".arg(\"build\")").count();
+        assert_eq!(
+            sites, 1,
+            "expected exactly 1 `go build` site in build.rs, found {sites} — a second site does \
+             not inherit GO_BUILD_TAG_ARGS, which is precisely how the zstd contract regresses"
+        );
+        let call_paths = src.matches("run_go_build_once(out_dir, \"").count();
+        assert_eq!(
+            call_paths, 3,
+            "expected the three documented call paths into run_go_build_once, found {call_paths} \
+             — §7.2's 'all three inherit it by construction' names that number, so a change here \
+             makes the architecture doc wrong"
+        );
     }
 }
 

@@ -18,7 +18,7 @@ pub use build::{
     build_example, build_project, configured_bin_name, configured_source_root, db_driver_conflict,
     driver_for_dsn, emit_example_source, emit_example_warnings, enumerate_skydep_files,
     load_ffi_surface, BuildOptions,
-    BuildReport,
+    BuildReport, GO_BUILD_TAG_ARGS, GO_BUILD_ZSTD_TAG,
 };
 pub use doc::{
     list_modules, render_doc_site, render_doc_site_export, render_guides, render_landing,
