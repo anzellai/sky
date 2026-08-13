@@ -1,3 +1,3 @@
 PROBE gate=G0.1 state=FAIL root=<scratch-worktree>
   STATUS.md is not trustworthy generated output
-  body-sha256 mismatch: recorded adac16568f55c44f10d6a5161e10da300cdbbdd92b8d035fdbea1db93d0108bb, actual efbffcff39132495e82e40c82f61eec4a571861dca97e17f9b1936875f6644e0 — STATUS.md was hand-edited; regenerate with `cargo run -p xtask -- bluedb-gates`
+  body-sha256 mismatch: recorded 207876d50fde5ad77ce8237dd617293541ef5cc855e486d464d2c8b15b18b66f, actual 2574b83124e17ae53450f3d86b3f38eb2f8e2c0058b26480aa28a62144bf5ffc — STATUS.md was hand-edited; regenerate with `cargo run -p xtask -- bluedb-gates`
