@@ -971,7 +971,11 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             // is deliberately NOT seeded from sky.toml — it must come from env.
             ("auth", "cookieName") => cfg.extra_defaults.push(("AUTH_COOKIE".into(), val)),
             ("auth", "tokenTtl") => cfg.extra_defaults.push(("AUTH_TOKEN_TTL".into(), val)),
-            ("auth", "driver") => cfg.extra_defaults.push(("AUTH_DRIVER".into(), val)),
+            // NO `driver` arm. It seeded `AUTH_DRIVER`, which nothing read and
+            // no doc showed an app reading — it named a `jwt`/`session`/`oauth`
+            // choice that does not exist. Falling through to `_` reports it via
+            // `unknown_config_keys`, so a build says so instead of accepting it
+            // silently. Same defect and same fix as `[database] driver`.
             // [log] → the suffixes Std.Log reads (skyGetenv LOG_FORMAT/LOG_LEVEL).
             ("log", "format") => cfg.extra_defaults.push(("LOG_FORMAT".into(), val)),
             ("log", "level") => cfg.extra_defaults.push(("LOG_LEVEL".into(), val)),
@@ -1018,7 +1022,9 @@ fn accepted_config_keys(section: &str) -> &'static [&'static str] {
             "input",
         ],
         "database" => &["driver", "path", "url"],
-        "auth" => &["cookieName", "tokenTtl", "driver"],
+        // `driver` is deliberately absent: it selected a backend that was never
+        // implemented, so recommending it would send users to a dead key.
+        "auth" => &["cookieName", "tokenTtl"],
         "log" => &["format", "level"],
         "analytics" => &["dbPath", "retention"],
         "jobs" => &["store", "storePath", "store_path"],
@@ -1701,10 +1707,18 @@ mod sky_toml_tests {
         assert!(has("LIVE_STORE_PATH", "s.db"));
         assert!(has("LIVE_TTL", "24h"));
         assert!(has("LIVE_MAX_BODY_BYTES", "10485760"));
-        // [auth] keys override the fixed AUTH fallbacks.
+        // [auth] keys override the fixed AUTH fallbacks. These two are read by
+        // the APP (docs/sky-toml.md shows `System.getenvOr "SKY_AUTH_COOKIE"`),
+        // not by runtime-go — which is why they are seeded at all.
         assert!(has("AUTH_COOKIE", "my_sid"));
         assert!(has("AUTH_TOKEN_TTL", "3600"));
-        assert!(has("AUTH_DRIVER", "jwt"));
+        // `driver` is NOT emitted: nothing read `AUTH_DRIVER`, and it named a
+        // jwt/session/oauth choice `Std.Auth` never implemented.
+        assert!(
+            !cfg.extra_defaults.iter().any(|(s, _)| s == "AUTH_DRIVER"),
+            "AUTH_DRIVER must not be emitted — nothing reads it: {:?}",
+            cfg.extra_defaults
+        );
         // [log] keys → Std.Log's LOG_FORMAT / LOG_LEVEL.
         assert!(has("LOG_FORMAT", "json"));
         assert!(has("LOG_LEVEL", "debug"));
@@ -1928,7 +1942,11 @@ mod sky_toml_tests {
         assert!(has("LIVE_STATIC_DIR", "public"));
         assert!(has("LIVE_STORE_PATH", "data/a#b.db")); // '#' inside quotes kept
         assert!(has("AUTH_TOKEN_TTL", "720h"));
-        assert!(has("AUTH_DRIVER", "jwt"));
+        assert!(
+            !cfg.extra_defaults.iter().any(|(s, _)| s == "AUTH_DRIVER"),
+            "AUTH_DRIVER must not be emitted: {:?}",
+            cfg.extra_defaults
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

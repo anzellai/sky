@@ -820,9 +820,18 @@ fn prologue_init(cfg: &LowerConfig) -> GoItem {
         stmts.push(call("rt.SetSkyDefault", &[suffix, value]));
     }
     stmts.push(call("rt.SetSkyDefault", &["LIVE_TTL", "1800"]));
+    // `AUTH_TOKEN_TTL` / `AUTH_COOKIE` are read by the APP, not by `rt` —
+    // docs/sky-toml.md shows `System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400"` at
+    // the call site, and `SetSkyDefault` os.Setenv's the prefixed name, so the
+    // sky.toml value reaches that read. They stay.
     stmts.push(call("rt.SetSkyDefault", &["AUTH_TOKEN_TTL", "86400"]));
     stmts.push(call("rt.SetSkyDefault", &["AUTH_COOKIE", "sky_auth"]));
-    stmts.push(call("rt.SetSkyDefault", &["AUTH_DRIVER", "jwt"]));
+    // No `AUTH_DRIVER`. It was seeded here and read by NOTHING — not `rt`, not
+    // the stdlib, and no documentation ever showed an app reading it. It named
+    // a `jwt`/`session`/`oauth` choice that does not exist: `Std.Auth` is JWT
+    // only, so there is no switch for the value to select. Emitting it
+    // advertised a contract that was never built — the `DB_DRIVER` defect
+    // exactly, and closed the same way.
     GoItem::Init(stmts)
 }
 

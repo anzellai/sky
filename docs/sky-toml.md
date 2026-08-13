@@ -172,14 +172,18 @@ seed (same precedence as every other key).
 secret     = "do-not-ship-this-default"
 tokenTtl   = 86400             # 24 h
 cookieName = "sky_auth"
-driver     = "jwt"             # jwt / session / oauth
 ```
 
 | Key          | Env var                       | Default      | Meaning                              |
 |--------------|-------------------------------|--------------|--------------------------------------|
 | `tokenTtl`   | `<PREFIX>_AUTH_TOKEN_TTL`     | `86400`      | JWT lifetime in seconds              |
 | `cookieName` | `<PREFIX>_AUTH_COOKIE`        | `sky_auth`   | Session cookie name                  |
-| `driver`     | `<PREFIX>_AUTH_DRIVER`        | `jwt`        | `jwt` / `session` / `oauth`          |
+
+> **`driver` is not a key either.** It was documented here as
+> `jwt` / `session` / `oauth` and seeded `<PREFIX>_AUTH_DRIVER`, which nothing
+> read — `Std.Auth` is JWT-only and there is no switch for the value to select.
+> It is no longer emitted, and a `driver = "…"` line now produces the same
+> no-effect build warning as any other unread key.
 
 > **`secret` is NOT a sky.toml key.** It appears in the example block above only
 > to be explicit that it does not work: the compiler deliberately refuses to

@@ -194,10 +194,15 @@ handleMe db req =
 
 ```toml
 [auth]
-tokenSecret = "REPLACE-WITH-32+-BYTE-RANDOM-STRING"   # SKY_AUTH_TOKEN_SECRET
-tokenTtl    = "24h"                                    # SKY_AUTH_TOKEN_TTL (Go duration string)
-cookie      = "sky_sid"                                # SKY_AUTH_COOKIE
+tokenTtl   = "24h"        # SKY_AUTH_TOKEN_TTL (Go duration string)
+cookieName = "sky_sid"    # SKY_AUTH_COOKIE
 ```
+
+The key is `cookieName`, not `cookie`, and **there is no `tokenSecret` key** — the
+compiler deliberately refuses to seed a signing key from a file that is normally
+committed. Set `SKY_AUTH_TOKEN_SECRET` in the environment instead. Both spellings
+this document used to show (`cookie`, `tokenSecret`) are unread keys, so a build
+now warns that they have no effect rather than accepting them silently.
 
 Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → `sky.toml`. See [environment-variable precedence](../../CLAUDE.md#environment-variables) for the full doctrine.
 

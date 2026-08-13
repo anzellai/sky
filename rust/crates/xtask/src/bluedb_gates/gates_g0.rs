@@ -167,10 +167,29 @@ pub fn g0_4_no_dead_config(ctx: &Ctx) -> GateOutcome {
 
     let mut findings = Vec::new();
     for (key, line) in &written {
-        if !read.contains_key(key) {
-            findings.push(format!(
-                "dead config key {key}: written by the compiler at rust/crates/project/src/build.rs:{line}, read by nothing in runtime-go/"
-            ));
+        if read.contains_key(key) {
+            continue;
+        }
+        // A key can have a legitimate consumer that is NOT `runtime-go/`: the
+        // user's own app code. `docs/sky-toml.md` prescribes exactly that for
+        // the `[auth]` family —
+        //   ttl = System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400"
+        // — and `SetSkyDefault` really does `os.Setenv` the prefixed name
+        // (runtime-go/rt/dotenv.go), so the seeded value reaches that read.
+        // Scanning only `runtime-go/` therefore reported two working keys as
+        // dead. It is a REAL exemption, not a waiver: the docs must actually
+        // show user code reading the prefixed name, and this checks that they
+        // do. A key nobody reads cannot be silenced by listing it here — it can
+        // only be silenced by writing a doc that shows the read, which is the
+        // thing that would make it true.
+        match user_facing_read_site(ctx, key) {
+            Some(site) => {
+                let _ = site; // documented consumer found; not a dead key
+            }
+            None => findings.push(format!(
+                "dead config key {key}: written by the compiler at rust/crates/project/src/build.rs:{line}, \
+                 read by nothing in runtime-go/ and shown to no user code in docs/"
+            )),
         }
     }
     for (key, site) in &read {
@@ -194,6 +213,37 @@ pub fn g0_4_no_dead_config(ctx: &Ctx) -> GateOutcome {
             findings,
         )
     }
+}
+
+/// Does the live documentation show USER CODE reading this key's env var?
+///
+/// The contract being verified is narrow and deliberately hard to fake: a
+/// documentation line must contain BOTH a `System.getenv`-family call AND the
+/// `SKY_`-prefixed name of the key. A mere mention — a table row saying the env
+/// var exists, a prose reference to the prefix scheme — does not count, because
+/// that is precisely what a dead key looks like. `SKY_AUTH_DRIVER` had a table
+/// row and nothing else; `SKY_AUTH_TOKEN_TTL` has
+/// `System.getenvOr "SKY_AUTH_TOKEN_TTL"` in a worked example.
+///
+/// `docs/history/` is excluded: frozen roadmaps are not a live contract, and
+/// letting them satisfy this would resurrect keys the project already retired.
+fn user_facing_read_site(ctx: &Ctx, key: &str) -> Option<String> {
+    let prefixed = format!("SKY_{key}");
+    for f in collect_docs(&ctx.path("docs")) {
+        let rel_path = rel(ctx, &f);
+        if rel_path.contains("docs/history/") || rel_path.contains("docs/bluedb/") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        for (i, line) in text.lines().enumerate() {
+            if line.contains(&prefixed) && line.contains("System.getenv") {
+                return Some(format!("{rel_path}:{}", i + 1));
+            }
+        }
+    }
+    None
 }
 
 /// `cfg.extra_defaults.push(("KEY".into(), val))` -> (KEY, line).
@@ -903,6 +953,10 @@ fn rel(ctx: &Ctx, p: &Path) -> String {
 
 fn collect_go(dir: &Path) -> Vec<PathBuf> {
     collect_ext(dir, "go")
+}
+
+fn collect_docs(dir: &Path) -> Vec<PathBuf> {
+    collect_ext(dir, "md")
 }
 
 fn collect_ext(dir: &Path, ext: &str) -> Vec<PathBuf> {
