@@ -260,6 +260,32 @@ jobs:
           cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
           install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
           sky-out/sky --version
+      - name: Warm the Go build cache before the parallel corpus run
+        # The corpus runs 4 workers (`corpus/runner.rs`, WORKERS = 4). On the
+        # first run of this job, all four spawned `go build` simultaneously
+        # against a COLD build cache, each compiling the Go runtime and stdlib
+        # from scratch on a 2-core runner. Exactly four cases died — cases 0-3,
+        # the first batch, within 0.02s of each other — and reported
+        # BUILD-FAILED with EMPTY stderr.
+        #
+        # Empty output is the tell: a Go compile ERROR always prints a
+        # diagnostic. Nothing at all means the process was killed, not that the
+        # code was rejected. Everything from case 5 on passed, once the cache
+        # was warm. The same tier passes on an 8-core macOS host with GOCACHE
+        # *and* GOMODCACHE both emptied, which rules out the caches themselves
+        # and leaves contention.
+        #
+        # So: compile the runtime ONCE, serially, before the fan-out. The four
+        # workers then share a warm cache instead of racing to build the same
+        # objects four times over.
+        #
+        # This is a gate defect, not a compiler one — worth stating plainly,
+        # because it presented as four red `record_update` cases, which is the
+        # issue #166 family and reads exactly like a codegen regression.
+        run: |
+          cd runtime-go
+          CGO_ENABLED=0 go build ./... 2>&1 | tail -5 || true
+          go version
       - name: 'Gate — behavioural corpus (harness tier T2: 383 assertions)'
         # The whole tier, not named gates, so a gate ADDED at T2 later is picked
         # up automatically instead of silently joining the set nothing runs —

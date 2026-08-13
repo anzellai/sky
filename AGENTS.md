@@ -27,7 +27,7 @@ errors, batteries-included stdlib.
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
 Haskell compiler lives under `legacy-haskell-compiler/` and serves as a
 **differential oracle** (`sky-out/sky`) the Rust output is checked against
-byte-for-byte. Current line: **v0.19.x**.
+byte-for-byte. Current line: **v0.20.x**.
 
 ## Language essentials
 
@@ -266,6 +266,16 @@ These apply to any Sky code you write or any compiler change you make:
   kernel-only `Sky.Http.Server` verbs) are hand-curated in
   `rust/crates/project/src/kernel_api.rs`; the `kernel_api_covers_registered_kernel_functions`
   gate fails CI on drift.
+- **Release = write the notes, then the version claims follow.** `CHANGELOG.md`'s
+  newest `## vX.Y.Z` heading is the single source of truth for "what version is
+  this". Files that state the CURRENT line — `README.md`'s status banner and this
+  file's "Current line" — are checked against it by
+  `rust/crates/xtask/tests/docs_state_the_current_version.rs`, so a release that
+  forgets them goes red. (`README.md` sat on "v0.19.x release candidate" through
+  the whole v0.20 line before that gate existed: the first thing a reader or an
+  agent learns about the project, a full minor out of date.) Historical mentions
+  ("v0.17 closed …", "shipped in v0.16.6") are facts about the past and are
+  deliberately NOT rewritten.
 - **Live docs — examples can't rot.** `docs/` is *only* live reference; frozen
   per-version roadmaps and legacy material live under `docs/history/` (excluded
   from gating). `scripts/doc-examples.sh` is the live-docs gate: it `sky check`s
