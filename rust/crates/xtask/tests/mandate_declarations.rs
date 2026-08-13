@@ -144,3 +144,48 @@ fn the_declaration_dates_are_all_real_dates() {
         );
     }
 }
+
+/// Item 2 (browser tier) — the snapshot arm cannot see paragraph rendering.
+///
+/// The compared snapshots target `section-*` test ids; the paragraph demo
+/// carries none, so the tier that exists to catch visual regressions could not
+/// have caught the `<div>`-inside-`<p>` defect fixed in v0.20.1.
+///
+/// ATTEMPTED AND REVERTED, 2026-08-13, with the measurement recorded so the next
+/// attempt does not rediscover it: adding an inline-highlight paragraph to
+/// `examples/26-ui-showcase` and asserting on it WORKS — the assertion passes
+/// with the fix and fails without it. But adding ANY content to that page
+/// reflows sub-pixel rounding across **13 recorded snapshots**, deterministically
+/// (verified by re-running on an identical tree: same 13, twice), and the
+/// baselines are platform-keyed, so closing it costs **26 baseline images**
+/// across darwin and linux.
+///
+/// `.github/workflows/ui-snapshot-baselines.yml` deliberately never commits
+/// those: "re-recording a baseline is the one operation that can turn a real
+/// Std.Ui regression green, so it stays a deliberate human act — download,
+/// eyeball against the current set, then commit." Blessing 26 images without
+/// that review would be exactly the move the workflow exists to prevent, and
+/// merging without re-recording would turn the nightly `web-runtime` job red —
+/// regressing the gate item 9 had just brought green.
+///
+/// The defect class is NOT unguarded meanwhile:
+/// `tests/conformance/tests/UiParagraphInlineConformanceTest.sky` asserts the
+/// emitted markup in 12 cases, per-push, both halves mutation-proven. What is
+/// missing is the RENDERED confirmation, which is a different and weaker gap
+/// than the item's original wording implies.
+#[test]
+fn item_2_browser_snapshot_coverage_is_within_its_review_date() {
+    assert_not_expired(
+        "2 (browser tier cannot see paragraph rendering)",
+        "2027-02-12",
+        "Closing it needs 26 platform-keyed baseline images re-recorded and \
+         HUMAN-EYEBALLED (ui-snapshot-baselines.yml never commits them, by \
+         design). The cheap version — appending a demo and asserting on it — was \
+         built and reverted: it works, but it reflows 13 snapshots on each \
+         platform. The right close is either a snapshot-free assertion page that \
+         no baseline covers, or doing the baseline re-record deliberately with \
+         review. Markup-level protection exists per-push in \
+         UiParagraphInlineConformanceTest.sky (12 cases, mutation-proven); the \
+         gap is rendered confirmation only.",
+    );
+}
