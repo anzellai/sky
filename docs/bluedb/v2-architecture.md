@@ -1810,7 +1810,7 @@ store → (e) RED; skip the index rebuild after the flip → (a) RED.
 **G2.5 — cross-tenant structural impossibility.**
 
 1. *Adversarial contents.* Write rows under tenant `T1` whose bodies contain
-   `{"tenant":"T2"}`, `{"tenant":""}`, `{"tenant":"T2 T1"}`, and a body encoding the raw
+   `{"tenant":"T2"}`, `{"tenant":""}`, `{"tenant":"T2\x00T1"}`, and a body encoding the raw
    escaped key prefix of `T2`. Read under `T2` and under `System`-minus-`T2`. Assert zero rows
    in every scoped read.
 2. *Property test.* For random tenant strings (including embedded `0x00`, `0xFF`, empty, 4 KiB),
