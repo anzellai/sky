@@ -54,5 +54,11 @@ swatch : Color -> String
 swatch _c =
     "x"
 
+-- The witness is the ANNOTATION above, not this call. An earlier version passed
+-- `Ui.red`, which `Std/Ui.sky` does not define — so the file carried a second,
+-- unrelated defect (an unknown name) alongside the one under test. The gate
+-- asserts declared-codes ⊆ observed, so it stayed green and the extra
+-- diagnostic went unnoticed; a reject witness that is red for two reasons
+-- cannot show which one it is pinning.
 main =
-    println (swatch Ui.red)
+    println (swatch (Ui.rgb 255 0 0))
