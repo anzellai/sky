@@ -576,7 +576,7 @@ pub static REGISTRY: &[Gate] = &[
         goal: 2,
         title: "substrate crash corpus (errorfs injection manifest)",
         tier: Tier::Full,
-        run: pending::p1_substrate,
+        run: pending::p1_engine,
         budget_s: 1800,
         mutations: Mutations::new(&[Mutation {
             id: "G2.6/disable-injection-point",
@@ -625,7 +625,7 @@ pub static REGISTRY: &[Gate] = &[
         goal: 2,
         title: "durability on ack — embedded (fsync before ack, survives crash, no reorder)",
         tier: Tier::Full,
-        run: pending::p1_substrate,
+        run: pending::p1_engine,
         budget_s: 900,
         mutations: Mutations::new(&[Mutation {
             id: "G2.9a/ack-before-fsync",

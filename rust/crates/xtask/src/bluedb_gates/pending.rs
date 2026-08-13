@@ -56,6 +56,28 @@ pub fn p1_substrate(ctx: &Ctx) -> GateOutcome {
     probe(ctx, "P1", &["runtime-go/bluedb"])
 }
 
+/// P1's ENGINE substrate — the commit path — as distinct from the key format.
+///
+/// P1 lands in stages: Stage 1 is the irreversible key format (`comparer.go`,
+/// `keys.go`, `hlc.go`) and Stage 2 is the engine hub (`committer.go`,
+/// `pebble_engine.go`, `txn.go`, …). A gate that certifies *durability on ack*
+/// or the *crash corpus* is asking a question about the commit path, and there
+/// is no commit path until `committer.go` exists — `bluedb/` containing three
+/// pure encoding files cannot answer it either way.
+///
+/// Probing the directory therefore made G2.6/G2.9a demand a body for substrate
+/// that had not landed, which is a false trigger of the same shape the P6 probe
+/// had: it forces the phase to either write a gate against nothing, or to skip
+/// it. Both roads end at a gate nobody trusts.
+///
+/// `committer.go` is the right marker because it IS the thing under test: it
+/// owns the single-writer goroutine, group commit, and the `Apply(pebble.Sync)`
+/// that arm (a) of G2.9a is about. `p1_engine_probe_ratchets_on_the_committer`
+/// proves the trigger still fires.
+pub fn p1_engine(ctx: &Ctx) -> GateOutcome {
+    probe(ctx, "P1 (engine)", &["runtime-go/bluedb/committer.go"])
+}
+
 pub fn p2_index(ctx: &Ctx) -> GateOutcome {
     probe(
         ctx,
@@ -186,6 +208,41 @@ mod tests {
         assert!(
             matches!(p6_reactivity(&ctx_at(dir.clone())), GateOutcome::Fail { .. }),
             "P6 substrate present must FAIL while the gate body is unwritten"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Stage 1 (the key format) must NOT trip the engine gates; Stage 2 must.
+    #[test]
+    fn p1_engine_probe_ratchets_on_the_committer() {
+        let dir = std::env::temp_dir().join(format!("bluedb-pending-eng-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("runtime-go/bluedb")).unwrap();
+
+        // Stage 1: key format only. Durability gates have nothing to certify.
+        for f in ["comparer.go", "keys.go", "hlc.go"] {
+            std::fs::write(dir.join("runtime-go/bluedb").join(f), "package bluedb\n").unwrap();
+        }
+        assert!(
+            matches!(p1_engine(&ctx_at(dir.clone())), GateOutcome::NotRun { .. }),
+            "the key format alone must not demand a durability gate body"
+        );
+        // …while the directory probe DOES fire, which is what G0.3 keys on.
+        assert!(matches!(
+            p1_substrate(&ctx_at(dir.clone())),
+            GateOutcome::Fail { .. }
+        ));
+
+        // Stage 2: the commit path lands. Now the durability gates are owed.
+        std::fs::write(
+            dir.join("runtime-go/bluedb/committer.go"),
+            "package bluedb\n",
+        )
+        .unwrap();
+        assert!(
+            matches!(p1_engine(&ctx_at(dir.clone())), GateOutcome::Fail { .. }),
+            "committer.go present must FAIL while the durability gate has no body"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
