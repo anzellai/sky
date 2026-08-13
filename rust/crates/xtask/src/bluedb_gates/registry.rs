@@ -613,18 +613,42 @@ pub static REGISTRY: &[Gate] = &[
             targets: &["runtime-go/bluedb"],
         }]),
     },
+    // G2.9 was ONE gate whose five arms straddled three phases, which is not a
+    // gate but a scheduling accident: arms (a)-(c) are embedded/pebble and close
+    // in P1, arm (d) needs a `[data] durability` config key whose parser is P4's,
+    // and arm (e) is sqlite WAL/checkpoint policy, which is P3's. A gate that
+    // cannot close inside the phase that owns it has exactly two outcomes — it
+    // reports partial green (a lie), or it stays red for three phases until
+    // someone stops reading it. Split so each half can actually close.
     Gate {
-        id: "G2.9",
+        id: "G2.9a",
         goal: 2,
-        title: "durability on ack",
+        title: "durability on ack — embedded (fsync before ack, survives crash, no reorder)",
         tier: Tier::Full,
         run: pending::p1_substrate,
         budget_s: 900,
         mutations: Mutations::new(&[Mutation {
-            id: "G2.9/ack-before-fsync",
+            id: "G2.9a/ack-before-fsync",
             patch: "docs/bluedb/mutations/G2.9.ack-before-fsync.patch",
             expect: "acked write missing after restart",
             targets: &["runtime-go/bluedb"],
+        }]),
+    },
+    Gate {
+        id: "G2.9b",
+        goal: 2,
+        title: "durability on ack — the `durability` knob and the sqlite WAL policy",
+        tier: Tier::Full,
+        // P3 substrate, not P1: arm (d) needs a durability setting the engine
+        // does not have (`pebble_engine.go`'s config has no such field and the
+        // committer hard-codes `Apply(pebble.Sync)`), and arm (e) is sqlite.
+        run: pending::p3_isolation,
+        budget_s: 900,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.9b/normal-durability-still-syncs",
+            patch: "docs/bluedb/mutations/G2.9b.normal-durability-still-syncs.patch",
+            expect: "durability=normal indistinguishable from strict",
+            targets: &["runtime-go/bluedb", "runtime-go/rt"],
         }]),
     },
     Gate {

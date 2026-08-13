@@ -90,12 +90,28 @@ pub fn p5_sessions(ctx: &Ctx) -> GateOutcome {
     )
 }
 
+/// P6's substrate is `rt/changebus.go` — and ONLY that.
+///
+/// `runtime-go/bluedb/changefeed.go` used to be probed here too, and it is the
+/// wrong marker: it is L1 substrate, not reactivity. `committer.go:144,152`
+/// call `hasChangeSubs` / `emitChangeBatch` directly, so the engine does not
+/// compile without it — verified by dropping the file, which yields
+/// `undefined: ChangeBatch, changeFeedSub`. It therefore lands in **P1**, and
+/// its presence says nothing whatsoever about whether P6's reactivity exists.
+///
+/// This is a NARROWING of a false trigger, not a widening of an exemption, and
+/// the distinction is the one this module's header is about. The probe still
+/// fires on P6's real substrate: `changebus.go` is net-new in P6 (§10.1 —
+/// "`ChangeBus` **local + postgres**"), exists on no branch today, and cannot
+/// be created by P1. `pending_probe_fires_when_p6_substrate_appears` proves the
+/// ratchet still works by creating that file and asserting FAIL.
+///
+/// The alternative — leaving the probe as-is — would have made P1 red for a
+/// file P1 is required to port, and the only ways out of that are to skip the
+/// gate or to weaken it later under pressure. A probe that cries wolf gets
+/// disabled; that is how the false-green class starts.
 pub fn p6_reactivity(ctx: &Ctx) -> GateOutcome {
-    probe(
-        ctx,
-        "P6",
-        &["runtime-go/rt/changebus.go", "runtime-go/bluedb/changefeed.go"],
-    )
+    probe(ctx, "P6", &["runtime-go/rt/changebus.go"])
 }
 
 pub fn p7_console_read(ctx: &Ctx) -> GateOutcome {
@@ -140,6 +156,38 @@ mod tests {
             }
             _ => panic!("substrate present must FAIL a pending gate, never NOT RUN or PASS"),
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The P6 probe was narrowed to drop `bluedb/changefeed.go` (L1 substrate
+    /// the committer calls, so P1 must port it). This proves the narrowing did
+    /// NOT disarm the ratchet: P6's real substrate still flips the gate to FAIL.
+    ///
+    /// Without this, "the probe was mis-specified" is exactly the sentence that
+    /// turns a ratchet into a rubber stamp — so the claim is measured, not
+    /// argued.
+    #[test]
+    fn p6_probe_still_ratchets_on_its_real_substrate() {
+        let dir = std::env::temp_dir().join(format!("bluedb-pending-p6-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // The engine file P1 legitimately ports must NOT trip P6.
+        std::fs::create_dir_all(dir.join("runtime-go/bluedb")).unwrap();
+        std::fs::write(dir.join("runtime-go/bluedb/changefeed.go"), "package bluedb\n").unwrap();
+        assert!(
+            matches!(p6_reactivity(&ctx_at(dir.clone())), GateOutcome::NotRun { .. }),
+            "porting the L1 changefeed must leave P6 NOT RUN — it is not P6 substrate"
+        );
+
+        // P6's own substrate must still trip it.
+        std::fs::create_dir_all(dir.join("runtime-go/rt")).unwrap();
+        std::fs::write(dir.join("runtime-go/rt/changebus.go"), "package rt\n").unwrap();
+        assert!(
+            matches!(p6_reactivity(&ctx_at(dir.clone())), GateOutcome::Fail { .. }),
+            "P6 substrate present must FAIL while the gate body is unwritten"
+        );
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
