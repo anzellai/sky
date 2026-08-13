@@ -207,3 +207,59 @@ at `backup/bluedb-v2-pre-rebase`.
 The rebase moved line numbers, which silently invalidated recorded gate
 falsifications — see the G0.4/G0.5 commits. Any future rebase must re-run
 `--verify-mutations` before trusting a single PASS.
+
+## Delegated judgement — added 2026-08-13
+
+Verbatim:
+
+> ok keep going, set loop and schedule to ensure you can take my mandates and
+> alignments to PIV in agents mode e2e until bluedb is ready.
+> when you have questions or judgement call from me, please use my thought
+> process and our alignments to make the call yourself.
+
+**This removes the blocking-question step.** Run to completion; decide the
+judgement calls; report the decision and its reasoning rather than asking. Halt
+ONLY for a genuine external blocker (auth wall, irreversible action outside the
+repo, a decision that would spend real money or touch production data).
+
+### The user's decision heuristics, derived from the rulings actually made
+
+Apply these in order when a call has to be made:
+
+1. **A wrong answer with a green tick is the worst outcome available.** Silent
+   wrongness beats loud failure only for the person shipping it. `Money.add`
+   dropping an operand, gates recording PASS while never running, docs asserting
+   a gate that does not exist — all the same defect, and all ruled FIX.
+2. **Verify by mutation, never by assertion.** A gate or test is not closed
+   until it has been shown to go red. "It passes" is not evidence it can fail.
+3. **Root cause, not workaround** — and check for the sibling. `[database]
+   driver` was fixed while `[auth] driver`, the same defect in the same parser,
+   survived. When fixing one instance, look for the others.
+4. **Prefer the native mechanism over a new one.** Postgres `NUMERIC` over a
+   text blob; `ColInt`'s existing sign-bias over a new encoder; extend a proven
+   mechanism rather than building a parallel one.
+5. **Portable + scalable + maintainable beats clever.** The U1 ruling chose the
+   layout that every backend AND every analytics target can consume, over the
+   simpler single blob.
+6. **Honest UNKNOWN over convenient PASS.** Goal 0 reads UNKNOWN because G0.3
+   cannot run. Do not certify what was not executed; do not narrow a goal to fit
+   what shipped.
+7. **Tier-appropriate, not maximal.** Do not add production ceremony a use case
+   does not call for; do not let something headed for real users ship on toy
+   defaults.
+8. **Batch pushes at milestones**, commit locally and liberally.
+
+### Reporting contract
+
+State decisions taken and WHY, in the user's terms. Surface anything that
+changes what the product *is* (a promise made or withdrawn, a breaking API, an
+irreversible encoding) prominently — as a decision already taken with its
+reasoning, not as a question.
+
+### Open, decided by me under this delegation
+
+* **U2 throughput floors** (embedded >= 2000 serializable commits/s, sqlite >= 500,
+  postgres >= 2000 @ 8 writers). Ruling: ADOPT AS WRITTEN as the P3 floor, and
+  treat the first measured run as a check against them rather than as their
+  source (seeding from measurement is the G-B10 anti-pattern the doc names).
+  If a floor cannot be met, that is a finding to report, not a number to lower.
