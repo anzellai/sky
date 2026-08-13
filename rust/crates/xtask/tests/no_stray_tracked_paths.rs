@@ -95,6 +95,9 @@ fn no_tracked_build_output_directories() {
                 bad.push(path.to_string());
             }
         }
+        if is_cargo_artifact(path) && !bad.iter().any(|b| b == path) {
+            bad.push(path.to_string());
+        }
     }
     assert!(
         bad.is_empty(),
@@ -102,4 +105,65 @@ fn no_tracked_build_output_directories() {
          `git rm --cached` it.",
         bad.join("\n  ")
     );
+}
+
+/// Is this path inside a cargo target directory under ANY name?
+///
+/// The exact-name list above matches the segment `target` and missed
+/// `isolated-target`, which is how 1928 build files reached `main` in
+/// `2aac9db5`: a `git add -A` in a worktree whose cargo target dir sat at the
+/// repo root under a non-standard name. `CARGO_TARGET_DIR` accepts any path, so
+/// "the directory is called target" was never a safe assumption — and agents
+/// and parallel worktrees routinely use a distinct name precisely to avoid
+/// clobbering each other.
+///
+/// Two independent signals, either of which is conclusive:
+///   * a path segment that IS `target` or ends in `-target`; or
+///   * a `.fingerprint/` segment, which only cargo writes.
+///
+/// The second is the safety net for a target dir named something else entirely
+/// (`build-out/`, `cargo-tmp/`): the name can be anything, but the contents
+/// still look exactly like cargo's.
+fn is_cargo_artifact(path: &str) -> bool {
+    path.split('/').any(|seg| {
+        seg == "target" || seg.ends_with("-target") || seg == ".fingerprint"
+    })
+}
+
+/// The classifier is asserted directly, so this file proves it can fail without
+/// needing a polluted index to test against — the index is (now) clean, and a
+/// scan over a clean index passes whether or not the rule works.
+#[test]
+fn the_cargo_artifact_classifier_catches_what_actually_leaked() {
+    // The real leaked paths, verbatim from `git ls-tree` at 2aac9db5.
+    for leaked in [
+        "isolated-target/debug/xtask",
+        "isolated-target/debug/.fingerprint/base-08c4f1cdbd8f2468/lib-base",
+        "isolated-target/release/build/ffi-1368cf38e80fb13a/out/embedded-assets/sky-stdlib/Std/Ui.sky",
+        "target/debug/deps/libsyntax.rlib",
+        "some/nested/build-target/debug/foo",
+        "weirdly-named-dir/debug/.fingerprint/x/lib-y",
+    ] {
+        assert!(
+            is_cargo_artifact(leaked),
+            "`{leaked}` is cargo build output and must be flagged — this is the \
+             exact shape that reached main"
+        );
+    }
+
+    // Real source paths that merely mention the word must NOT be flagged, or
+    // the rule fires on the repo's own code and gets weakened back out again.
+    for ok in [
+        "rust/crates/xtask/src/harness/registry.rs",
+        "scripts/lib/cargo-target.sh",
+        "docs/rust-rewrite/13-change-verification-and-edge-cases.md",
+        "rust/crates/codegen/src/target_shape.rs",
+        "sky-stdlib/Std/Ui.sky",
+    ] {
+        assert!(
+            !is_cargo_artifact(ok),
+            "`{ok}` is a real tracked source path and must NOT be flagged — an \
+             over-eager rule here is how this check gets deleted later"
+        );
+    }
 }
