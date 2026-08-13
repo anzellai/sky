@@ -263,9 +263,17 @@ These apply to any Sky code you write or any compiler change you make:
   CLI verbs change, update **this file**, `templates/CLAUDE.md` (+ `templates/AGENTS.md`),
   and the matching `docs/*` in the **same commit** (see the [Deep dives](#deep-dives)
   table). Kernel-only module docs (`Std.Live`, `Std.Tui`, `Std.Jobs`, the
-  kernel-only `Sky.Http.Server` verbs) are hand-curated in
-  `rust/crates/project/src/kernel_api.rs`; the `kernel_api_covers_registered_kernel_functions`
-  gate fails CI on drift.
+  kernel-only `Sky.Http.Server` verbs) are **derived**, not hand-curated: the
+  module list is `hir::KERNEL_MODULES` (`rust/crates/hir/src/kernel.rs`) and
+  `sky doc` renders them through `kernel_only_modules()`
+  (`rust/crates/project/src/doc.rs`), covered by that module's
+  `kernel_only_module_is_queryable` test. Adding a kernel module therefore makes
+  it documented by construction. (This bullet previously named a hand-curated
+  `kernel_api.rs` and a `kernel_api_covers_registered_kernel_functions` gate
+  that "fails CI on drift". Both were deleted in `054f6d26`; neither the file,
+  the test, nor any workflow reference to it exists. An instruction file that
+  asserts a phantom enforcement mechanism is worse than one that says nothing —
+  every agent reading it believed this surface was gated when it was not.)
 - **Release = write the notes, then the version claims follow.** `CHANGELOG.md`'s
   newest `## vX.Y.Z` heading is the single source of truth for "what version is
   this". Files that state the CURRENT line — `README.md`'s status banner and this
