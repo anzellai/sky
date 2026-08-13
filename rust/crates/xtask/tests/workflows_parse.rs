@@ -260,3 +260,118 @@ fn every_harness_tier_with_gates_is_invoked_somewhere() {
         dead.join(", ")
     );
 }
+
+/// Every workflow that gates a COMMIT to `main` must be one the required check
+/// actually covers.
+///
+/// `ci_green_needs_every_other_job_in_its_workflow` inspects `rust-ci.yml` and
+/// nothing else, and a Judge defeated it exactly there: drop in a second
+/// push-triggered workflow with a failing job and all three tests stay green,
+/// because `ci-green` — the single required status check — knows nothing about
+/// other files. The job goes red on the run and the merge proceeds.
+///
+/// So the fan-in is only as good as the set of workflows it can see. A workflow
+/// that runs per-commit on `main` is either:
+///   * `rust-ci.yml`, whose jobs `ci-green` fans in and which the sibling test
+///     keeps complete; or
+///   * on the list below, WITH a reason — meaning someone decided out loud that
+///     its failure should not block a merge.
+///
+/// Anything else is a gate whose verdict nobody is required to honour, which is
+/// the same shape as a gate that does not run.
+///
+/// Workflows triggered only by tags, schedules, or manual dispatch are out of
+/// scope: they do not gate a commit, and their coverage is asserted by
+/// `every_harness_tier_with_gates_is_invoked_somewhere` instead.
+const NON_BLOCKING_PER_COMMIT_WORKFLOWS: &[(&str, &str)] = &[(
+    "docs-site.yml",
+    "publishes the GitHub Pages docs site. A publish failure is a broken \
+     deploy, not a broken compiler, and holding merges on it would couple the \
+     source of truth to a hosting side effect.",
+)];
+
+#[test]
+fn every_per_commit_workflow_is_covered_by_the_required_check_or_declared() {
+    let mut offenders = Vec::new();
+    let mut checked = 0usize;
+
+    for path in workflows() {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let text = std::fs::read_to_string(&path).expect("read workflow");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+
+        // `on:` — note YAML parses a bare `on` key as the BOOLEAN true, which is
+        // why this looks up both spellings. Getting that wrong makes the test
+        // silently inspect nothing.
+        let on = doc
+            .get("on")
+            .or_else(|| doc.get(serde_yaml::Value::Bool(true)));
+        let Some(on) = on else { continue };
+
+        let gates_a_commit = ["push", "pull_request"].iter().any(|trigger| {
+            let Some(t) = on.get(*trigger) else {
+                return false;
+            };
+            // `push: { tags: [...] }` with no `branches` is a TAG trigger — it
+            // fires after the merge is already in, so it gates nothing.
+            let has_branches = t.get("branches").is_some();
+            let has_tags = t.get("tags").is_some();
+            has_branches || (!has_tags && !t.is_mapping())
+        });
+        if !gates_a_commit {
+            continue;
+        }
+        checked += 1;
+
+        let covered = name == "rust-ci.yml"
+            || NON_BLOCKING_PER_COMMIT_WORKFLOWS
+                .iter()
+                .any(|(n, _)| *n == name);
+        if !covered {
+            offenders.push(name);
+        }
+    }
+
+    assert!(
+        checked >= 2,
+        "only {checked} per-commit workflow(s) found — the trigger parse is \
+         wrong (a bare `on:` key parses as the boolean true in YAML), and a test \
+         that inspects nothing passes silently"
+    );
+    assert!(
+        offenders.is_empty(),
+        "workflow(s) run on every commit to `main` but are NOT covered by the \
+         `ci-green` required check:\n  {}\n\n\
+         `ci-green` fans in `rust-ci.yml` only, so these can go red while the \
+         required check goes green and the merge proceeds. Either move the jobs \
+         into rust-ci.yml (where the fan-in keeps them), or add the workflow to \
+         NON_BLOCKING_PER_COMMIT_WORKFLOWS with a written reason — an explicit \
+         decision that its failure should not block a merge.",
+        offenders.join("\n  ")
+    );
+}
+
+/// The allowlist must carry reasons, not just names. An entry with an empty
+/// reason is a silent exemption, which is the thing being prevented.
+#[test]
+fn every_non_blocking_declaration_states_why() {
+    for (name, reason) in NON_BLOCKING_PER_COMMIT_WORKFLOWS {
+        assert!(
+            reason.len() > 40,
+            "`{name}` is exempted from the required check with no real reason \
+             ({} chars). Write why its failure must not block a merge.",
+            reason.len()
+        );
+        assert!(
+            workflows()
+                .iter()
+                .any(|p| p.file_name().and_then(|n| n.to_str()) == Some(*name)),
+            "`{name}` is exempted but no such workflow exists — a stale \
+             exemption silently widens the hole it was carved for"
+        );
+    }
+}

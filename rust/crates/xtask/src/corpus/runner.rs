@@ -122,7 +122,30 @@ pub fn run_case(sky: &Path, dir: &Path, case: &GenCase) -> Verdict {
         return if declared_reject {
             Verdict::RejectedAsDeclared
         } else {
-            Verdict::BuildFailed(msg)
+            // A build that produced no diagnostic did not REJECT the program —
+            // it died. Saying so is the difference between "the compiler emitted
+            // bad Go" and "the runner was starved", which read identically
+            // before this and cost three CI rounds to tell apart.
+            //
+            // `has_diagnostic` deliberately ignores the compiler's own progress
+            // log: `sky build` prints `-- Parsing` … `Sky lowering succeeded` on
+            // the happy path, so a killed `go build` still leaves that behind
+            // and the output only LOOKS non-empty.
+            let has_diagnostic = build
+                .merged
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .any(|l| !is_compiler_progress(l));
+            if has_diagnostic {
+                Verdict::BuildFailed(msg)
+            } else {
+                Verdict::BuildFailed(format!(
+                    "{}\n      NO DIAGNOSTIC — the build emitted no error of its \
+                     own, so the program was not rejected.\n      {}",
+                    msg,
+                    build.termination()
+                ))
+            }
         };
     }
     if declared_reject {
@@ -162,6 +185,39 @@ struct Output {
     status_ok: bool,
     stdout: String,
     merged: String,
+    /// How the process ended, kept so a failure can say WHY rather than only
+    /// that it happened. `None` code with a `Some` signal is a kill.
+    code: Option<i32>,
+    signal: Option<i32>,
+    timed_out: bool,
+}
+
+impl Output {
+    /// A one-line account of the termination, for when the process produced no
+    /// diagnostic of its own.
+    ///
+    /// This exists because four corpus cases once reported `BUILD-FAILED` with
+    /// EMPTY stderr, and the empty message is what made the cause unreadable:
+    /// a Go compile error always prints something, so "no output" means the
+    /// process was killed rather than that the code was rejected. Distinguishing
+    /// those two took three CI rounds to work out from timing alone.
+    fn termination(&self) -> String {
+        if self.timed_out {
+            return "process exceeded the per-case wall-clock budget and its \
+                    process group was killed"
+                .to_string();
+        }
+        match (self.code, self.signal) {
+            (_, Some(sig)) => format!(
+                "process was KILLED by signal {sig} — it did not reject the \
+                 program, it died. On a constrained runner this is usually \
+                 memory or CPU contention (several parallel `go build`s \
+                 cold-starting), not a defect in the code under test."
+            ),
+            (Some(c), None) => format!("process exited with status {c}"),
+            (None, None) => "process ended without an exit code or a signal".to_string(),
+        }
+    }
 }
 
 /// Run a command under a wall-clock ceiling, killing its process group on
@@ -216,10 +272,20 @@ fn run_bounded(cmd: &mut Command, budget: Duration) -> Result<Output, String> {
 
     let stdout = h1.join().unwrap_or_default();
     let stderr = h2.join().unwrap_or_default();
+    #[cfg(unix)]
+    let signal = {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    };
+    #[cfg(not(unix))]
+    let signal = None;
     Ok(Output {
         status_ok: status.success() && !timed_out,
         merged: format!("{stdout}{stderr}"),
         stdout,
+        code: status.code(),
+        signal,
+        timed_out,
     })
 }
 
@@ -665,4 +731,70 @@ fn report(results: &[CaseResult], wall: Duration, total: usize) {
         wall.as_secs_f64(),
         per_case
     );
+}
+
+/// Is this line part of `sky build`'s own progress log rather than a diagnostic?
+///
+/// The compiler narrates its phases on stdout (`-- Parsing`, `Names resolved`,
+/// `Sky lowering succeeded`, …). When a subsequent `go build` is KILLED, that
+/// narration is all that remains — so "the output is non-empty" is not evidence
+/// that anything was diagnosed. Four corpus cases reported `BUILD-FAILED` whose
+/// captured text ended at `Sky lowering succeeded`, and reading that as a
+/// compiler complaint is what made the failure look like a codegen regression
+/// in the `record_update` family.
+fn is_compiler_progress(line: &str) -> bool {
+    let l = line.trim();
+    l.starts_with("--")
+        || l.starts_with("Names resolved")
+        || l.starts_with("Types OK")
+        || l.starts_with("Wrote ")
+        || l.starts_with("Sky lowering succeeded")
+        || l.starts_with("Compilation successful")
+        || l.starts_with("Running go build")
+        || l.starts_with("Build complete")
+}
+
+#[cfg(test)]
+mod termination_tests {
+    use super::is_compiler_progress;
+
+    /// The exact lines that were left behind by the killed builds. If any of
+    /// these stops counting as progress, a killed build starts reporting itself
+    /// as a diagnosed rejection again.
+    #[test]
+    fn the_compilers_progress_log_is_not_a_diagnostic() {
+        for line in [
+            "-- Parsing",
+            "-- Canonicalising",
+            "   Names resolved",
+            "-- Type Checking",
+            "   Types OK (1 module(s))",
+            "-- Generating Go",
+            "   Wrote /tmp/sky-corpus-run/case-00000/sky-out/main.go",
+            "Sky lowering succeeded",
+        ] {
+            assert!(
+                is_compiler_progress(line),
+                "`{line}` is progress narration, not a diagnostic — counting it \
+                 as one is how a KILLED build reads as a rejected program"
+            );
+        }
+    }
+
+    /// And a real diagnostic must still count, or every genuine build failure
+    /// gets mislabelled as a kill — the same defect pointing the other way.
+    #[test]
+    fn a_real_diagnostic_still_counts() {
+        for line in [
+            "./main.go:31:30: undefined: dictKeyTagByte",
+            "cannot use x (variable of type int) as string value",
+            "# sky-app/rt",
+            "too many arguments in call to rt.Path_join",
+        ] {
+            assert!(
+                !is_compiler_progress(line),
+                "`{line}` is a real diagnostic and must be treated as one"
+            );
+        }
+    }
 }
