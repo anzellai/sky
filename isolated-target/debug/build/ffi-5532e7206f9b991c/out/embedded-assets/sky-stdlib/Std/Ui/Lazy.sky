@@ -1,0 +1,47 @@
+-- | Std.Ui.Lazy — memoised Element trees for `Std.Ui`.
+module Std.Ui.Lazy exposing (lazy, lazy2, lazy3, lazy4, lazy5)
+
+-- Std.Ui.Lazy — memoised Element trees.
+--
+--     view model =
+--         Lazy.lazy renderRow model.row
+--
+-- v0.12+: the bodies below are kernel-mapped to a runtime LRU
+-- cache (`Std_Ui_Lazy_lazy*` in `runtime-go/rt/lazy.go`). The
+-- Sky source remains as a type-checker reference; actual calls
+-- route through the kernel registry. Cache key is
+-- `(function-pointer, args-fingerprint)`. The LRU is bounded
+-- (default 1024 entries; override via `SKY_UI_LAZY_CAP=N`).
+--
+-- Stable subtrees (long lists, repeated render passes with
+-- unchanged inputs) hit the cache. Pathological cases — every
+-- call has a fresh fingerprint — degrade to passthrough behaviour
+-- (cache miss, no benefit) without unbounded memory growth.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui exposing (Element)
+
+
+lazy : (a -> Element msg) -> a -> Element msg
+lazy f a =
+    f a
+
+
+lazy2 : (a -> b -> Element msg) -> a -> b -> Element msg
+lazy2 f a b =
+    f a b
+
+
+lazy3 : (a -> b -> c -> Element msg) -> a -> b -> c -> Element msg
+lazy3 f a b c =
+    f a b c
+
+
+lazy4 : (a -> b -> c -> d -> Element msg) -> a -> b -> c -> d -> Element msg
+lazy4 f a b c d =
+    f a b c d
+
+
+lazy5 : (a -> b -> c -> d -> e -> Element msg) -> a -> b -> c -> d -> e -> Element msg
+lazy5 f a b c d e =
+    f a b c d e

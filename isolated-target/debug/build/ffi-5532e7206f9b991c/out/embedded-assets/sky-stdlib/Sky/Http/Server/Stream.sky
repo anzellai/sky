@@ -1,0 +1,155 @@
+-- | Sky.Http.Server.Stream — server-side streaming HTTP responses.
+--
+-- Mirror image of `Sky.Core.Http.Stream`:
+--
+--   * `Sky.Core.Http.Stream` — CLIENT-side incremental body reads
+--     (consume an upstream's chunked response one chunk at a time).
+--
+--   * `Sky.Http.Server.Stream` — SERVER-side incremental body
+--     writes (emit a chunked response to an HTTP client one chunk
+--     at a time).
+--
+-- Driving use case: an HTTP endpoint that streams LLM tokens to a
+-- dashboard / control plane.  The handler opens the response with
+-- `stream "text/event-stream"`, emits chunks as upstream tokens
+-- arrive, and finishes when the upstream stream closes — the
+-- client sees bytes flow incrementally instead of waiting for the
+-- whole completion.  Server-Sent Events (SSE) is one canonical
+-- consumer; chunked text/plain / chunked application/json work
+-- identically.
+--
+-- Lifecycle:
+--
+--  1. The handler returns `Server.Stream.stream contentType
+--     handler` instead of `Server.text` / `Server.json` / etc.
+--     This is still a `Task Error Response` — the dispatcher
+--     detects the streaming sentinel on the response and routes
+--     to the chunk-write path instead of buffering the body.
+--
+--  2. The runtime writes response headers (Content-Type from
+--     `contentType`, plus the standard security headers), flushes
+--     the head, and invokes `handler` with a `StreamWriter`
+--     bound to the underlying `http.ResponseWriter`.
+--
+--  3. `handler` calls `emit chunk writer` zero or more times.
+--     Each chunk is written + flushed immediately — the client's
+--     socket sees the bytes before the handler returns.
+--
+--  4. When `handler` returns (or `finish writer` is called
+--     explicitly), the response is sealed and the connection
+--     closes.  `finish` is idempotent — calling it from the
+--     handler's tail position before the natural return is safe.
+--
+-- Example — minimal SSE endpoint:
+--
+--   import Sky.Http.Server as Server
+--   import Sky.Http.Server.Stream as Stream
+--   import Sky.Core.Time as Time
+--   import Sky.Core.Task as Task
+--
+--   handleEvents : Request -> Task Error Response
+--   handleEvents _ =
+--       Stream.stream "text/event-stream" (\writer ->
+--           Stream.emit "event: hello\ndata: 1\n\n" writer
+--               |> Task.andThen (\_ -> Time.sleep 100)
+--               |> Task.andThen (\_ -> Stream.emit "event: tick\ndata: 2\n\n" writer)
+--               |> Task.andThen (\_ -> Stream.finish writer))
+--
+-- See `docs/skylive/http-streaming.md` (§"Server-side") for the
+-- architectural write-up and `examples/30-sse-server-demo` for a
+-- runnable SSE counter.
+module Sky.Http.Server.Stream exposing (StreamWriter(..), stream, emit, finish, withContentType)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+
+-- | Opaque handle for an in-flight streaming response.  The wrapped
+-- `Int` is the runtime's per-stream id; user code treats it as
+-- opaque (constructors are exposed only so JSON round-trip is
+-- expressible if absolutely required).
+type StreamWriter
+    = StreamWriter Int
+
+
+-- | Internal — direct kernel alias.  The runtime returns a
+-- `Task Error Response` carrying a sentinel that the dispatcher
+-- recognises and special-cases.
+streamRaw : String -> (StreamWriter -> Task Error ()) -> Task Error Response
+streamRaw =
+    Ffi.kernel "ServerStream_stream"
+
+
+-- | `stream contentType handler` — begin a streaming response.
+--
+-- The dispatcher writes headers + flushes BEFORE invoking
+-- `handler`, so the client sees the response code and
+-- Content-Type immediately.  `handler` then emits chunks via
+-- `emit chunk writer`.  When `handler` returns the connection
+-- closes.
+--
+-- `contentType` examples: `"text/event-stream"`,
+-- `"text/plain; charset=utf-8"`, `"application/x-ndjson"`,
+-- `"application/octet-stream"`.  The dispatcher will not
+-- compress / buffer / CSRF-inject the body.
+stream : String -> (StreamWriter -> Task Error ()) -> Task Error Response
+stream contentType handler =
+    streamRaw contentType handler
+
+
+-- | Internal — direct kernel alias on the raw Int.
+emitRaw : String -> Int -> Task Error ()
+emitRaw =
+    Ffi.kernel "ServerStream_emit"
+
+
+-- | `emit chunk writer` — write `chunk` to the response body and
+-- flush.  The bytes hit the client's socket before this Task
+-- resolves.  Calling `emit` on a writer whose stream has already
+-- finished is a no-op (returns `Task.succeed ()`).
+emit : String -> StreamWriter -> Task Error ()
+emit chunk writer =
+    case writer of
+
+        StreamWriter raw ->
+            emitRaw chunk raw
+
+
+-- | Internal — direct kernel alias on the raw Int.
+finishRaw : Int -> Task Error ()
+finishRaw =
+    Ffi.kernel "ServerStream_finish"
+
+
+-- | `finish writer` — mark the response complete.  Implicit at
+-- handler-return; explicit when the handler wants to release
+-- the connection early (e.g. after a sentinel `done` event in an
+-- SSE stream).  Idempotent — calling on an already-finished
+-- writer is a no-op.
+finish : StreamWriter -> Task Error ()
+finish writer =
+    case writer of
+
+        StreamWriter raw ->
+            finishRaw raw
+
+
+-- | Internal — direct kernel alias on the raw Int.
+withContentTypeRaw : String -> Int -> Task Error ()
+withContentTypeRaw =
+    Ffi.kernel "ServerStream_withContentType"
+
+
+-- | `withContentType ct writer` — set the response's
+-- Content-Type.  Best-effort: if the headers have already been
+-- flushed (any prior `emit` or any subsequent dispatcher action)
+-- this is a no-op.  Call BEFORE the first `emit` to win.  The
+-- usual way to set the content type is the `stream` argument;
+-- this helper is for cases where the handler decides the
+-- response format only after side-effectful inspection.
+withContentType : String -> StreamWriter -> Task Error ()
+withContentType ct writer =
+    case writer of
+
+        StreamWriter raw ->
+            withContentTypeRaw ct raw

@@ -11,7 +11,72 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## Unreleased
+## v0.20.1 — the paragraph that was not a paragraph, and the tier nobody ran (2026-08-13)
+
+### Fixed — `Std.Ui`
+
+- **`el` inside `paragraph` emitted a `<div>`, and the browser hoisted it out of
+  the `<p>`.** The highlight-a-phrase pattern `paragraph`'s own docstring
+  recommends — `Ui.paragraph [] [ Ui.el [ Font.bold ] (Ui.text "Sky.Live"),
+  Ui.text " — web UI" ]` — produced flow content inside a paragraph, which the
+  HTML parser closes the paragraph *before*. So the rendered document was a
+  paragraph, then a sibling block, then a bare text run outside any paragraph:
+  the highlighted label broke onto its own line and the text after it lost the
+  paragraph's formatting. Visible on any bullet list built this way.
+
+  Two independent faults produced it, and fixing either alone still rendered
+  wrong: the TAG (a generic node fell back to `div` regardless of context) and
+  the DISPLAY (`flex` inside a text run). Inside a paragraph, `el` is now a
+  `<span>` with `display: inline`, and `row`/`column` become `inline-flex`, so a
+  highlighted phrase wraps with its sentence instead of splitting it. Nothing
+  outside a paragraph changes — five accept-parity assertions pin that, because
+  keying on parent context is exactly how a fix like this flattens every layout
+  in every app.
+
+  The regression test asserts on the EMITTED MARKUP, because nothing else could
+  tell the two renderings apart: the broken version compiled, type-checked, ran,
+  and passed every existing gate.
+
+### Fixed — `Std.Markdown`
+
+- **Blockquotes and images render.** `> quote` consumes its marker and renders
+  with a left rule (typed `Border` attributes, so it follows the theme);
+  `![alt](url)` renders a real `<img>`. Both were previously "deliberately not
+  supported in v1", with the marker or a literal `!` left in the text. An
+  image's `src` goes through the same URL guard as a link's `href`, so
+  `![x](javascript:…)` becomes `about:blank` and `data:image/…` still works.
+
+### Toolchain
+
+- **`sky check`/`sky build` no longer compile a runtime file the compiler
+  deleted.** The build materialised `runtime-go/rt` into `sky-out/rt` and never
+  pruned it, so upgrading across a release that REMOVES a runtime source left
+  the old file behind and `go build` failed on helpers that were correctly gone
+  — an error naming a file you never wrote, surviving every rebuild until you
+  thought to wipe `sky-out/`. Nothing caught it because the examples are built
+  from a wiped slate, and the wipe is what hides this class.
+
+### Internal — gates
+
+Not user-visible, recorded because the mandate for this cycle was that a gate
+which cannot fail is worse than no gate.
+
+- **The harness T2 tier ran in no workflow at all** — 383 behavioural
+  assertions, including the `Dict` key-type × access-shape crossing built after
+  #174's `Dict.foldl` panic reached a release. It now runs nightly. Per-push was
+  tried first and reverted: it costs 25+ minutes on a runner against a 900s
+  per-push ceiling, and raising that ceiling to fit it would be the budget drift
+  the ceiling exists to catch.
+- **Three release-only gates were red on `main`** while per-push CI was green —
+  the conformance census, the coverage denominator ratchet, and the coverage
+  ledger. All three now pass, and the denominator's shrink is accounted for by
+  name rather than re-baselined.
+- **The kernel-signature surface went 93 → 69 unsigned members** across the
+  v0.20 line, and the remainder now carries a dated review (2027-02-12) enforced
+  by a test, plus a test pinning the count so the hand-maintained number cannot
+  drift again.
+- **A missing Neovim reported a *green* editor-parity gate in CI.** It now fails
+  there and still skips locally.
 
 ### Added
 

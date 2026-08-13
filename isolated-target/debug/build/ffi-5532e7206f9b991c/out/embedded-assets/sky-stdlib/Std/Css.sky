@@ -1,0 +1,1458 @@
+-- | Std.Css — the typed stylesheet DSL (Layer 3 Sky source).
+module Std.Css exposing (..)
+
+-- | Std.Css — the typed stylesheet DSL.
+--
+-- v0.13 Layer 3: rewritten from Go runtime kernels to Sky source.
+-- 100% pure Sky — CSS generation is just string building, so there
+-- is no runtime bridge (unlike Std.Html, which needs the VNode
+-- converter).
+--
+-- Typed where the value-space is bounded, typed-String-with-escape-
+-- hatch where it is not — the same line elm-css draws:
+--   * `Length` / `Color` ADTs cover the value space property
+--     builders share (`width (px 100)`, `color (hex "ff6600")`).
+--   * Small keyword enums (`Display`, `Position`, …) make
+--     `display flex` un-mistypeable.
+--   * Genuinely open-ended compound properties (`transition`,
+--     `transform`, `gridTemplateColumns`, `fontFamily`) take a
+--     `String` — fully enumerating their grammar is not worth it,
+--     and an escape hatch is needed regardless.
+--
+-- Under the hood a `CssProp` is still a `(String, String)` pair —
+-- typed values render to their CSS string at construction time, so
+-- `display flex` is `CssProp "display" "flex"`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+
+-- ─── Core types ─────────────────────────────────────────────────
+-- A single CSS declaration: `key: value;`.
+type CssProp
+    = CssProp String String
+
+-- A top-level stylesheet entry.
+type CssRule
+    = CssRule String (List CssProp)
+    | CssMedia String (List CssRule)
+    | CssKeyframes String (List String)
+    | CssRaw String
+        -- `selector { prop; prop; }`
+        -- `@media query { rule rule }`
+        -- `@keyframes name { frame frame }`
+        -- a pre-rendered fragment, emitted verbatim
+
+-- A length / size / time / angle value.  The escape hatch
+-- `LenRaw` carries anything the ADT does not model directly
+-- (`calc(...)`, `min-content`, `var(--x)`, fractional px, …).
+type Length
+    = Px Int
+    | Rem Float
+    | Em Float
+    | Pct Float
+    | Vh Int
+    | Vw Int
+    | Ch Float
+    | Fr Int
+    | Num Float
+    | LenAuto
+    | LenZero
+    | LenRaw String
+        -- a unitless number — `line-height: 1.6`, `flex-basis: 0`, …
+
+-- A colour value.  `ColorRaw` is the escape hatch for named
+-- colours, `var(--x)`, gradients used as a colour, etc.
+type Color
+    = Hex String
+    | Rgb Int Int Int
+    | Rgba Int Int Int Float
+    | Hsl Int Int Int
+    | Hsla Int Int Int Float
+    | ColorTransparent
+    | ColorCurrent
+    | ColorRaw String
+
+-- ─── Keyword enums (bounded value spaces) ───────────────────────
+-- Each carries a `*Raw` escape hatch for the rare value the enum
+-- does not list.
+type Display
+    = Block
+    | Inline
+    | InlineBlock
+    | Flex
+    | InlineFlex
+    | Grid
+    | InlineGrid
+    | DisplayNone
+    | DisplayRaw String
+
+type Position
+    = Static
+    | Relative
+    | Absolute
+    | Fixed
+    | Sticky
+    | PositionRaw String
+
+type TextAlign
+    = AlignLeft
+    | AlignRight
+    | AlignCenter
+    | AlignJustify
+    | TextAlignRaw String
+
+type Cursor
+    = Pointer
+    | CursorDefault
+    | CursorText
+    | NotAllowed
+    | Grab
+    | Grabbing
+    | CursorRaw String
+
+type FlexDirection
+    = Row
+    | RowReverse
+    | Column
+    | ColumnReverse
+    | FlexDirectionRaw String
+
+type FlexWrap
+    = NoWrap
+    | Wrap
+    | WrapReverse
+    | FlexWrapRaw String
+
+-- Shared by justify-content / align-items / align-content.
+type Align
+    = Start
+    | End
+    | Center
+    | SpaceBetween
+    | SpaceAround
+    | SpaceEvenly
+    | Stretch
+    | Baseline
+    | AlignRaw String
+
+type FontWeight
+    = Normal
+    | Bold
+    | Lighter
+    | Bolder
+    | Weight Int
+    | FontWeightRaw String
+
+type FontStyle
+    = FontNormal
+    | Italic
+    | Oblique
+    | FontStyleRaw String
+
+type Overflow
+    = Visible
+    | Hidden
+    | Scroll
+    | OverflowAuto
+    | OverflowRaw String
+
+type WhiteSpace
+    = WsNormal
+    | NoWrapWs
+    | Pre
+    | PreWrap
+    | PreLine
+    | WhiteSpaceRaw String
+
+type BoxSizing
+    = ContentBox
+    | BorderBox
+    | BoxSizingRaw String
+
+type PointerEvents
+    = PeAuto
+    | PeNone
+    | PointerEventsRaw String
+
+type TextDecoration
+    = NoDecoration
+    | Underline
+    | LineThrough
+    | Overline
+    | TextDecorationRaw String
+
+type BorderStyle
+    = Solid
+    | Dashed
+    | Dotted
+    | BorderNone
+    | BorderStyleRaw String
+
+
+-- ─── Value renderers ────────────────────────────────────────────
+floatStr : Float -> String
+floatStr n =
+    String.fromFloat n
+
+
+lengthToString : Length -> String
+lengthToString lengthVal =
+    case lengthVal of
+
+        Px n ->
+            String.fromInt n ++ "px"
+
+        Rem n ->
+            floatStr n ++ "rem"
+
+        Em n ->
+            floatStr n ++ "em"
+
+        Pct n ->
+            floatStr n ++ "%"
+
+        Vh n ->
+            String.fromInt n ++ "vh"
+
+        Vw n ->
+            String.fromInt n ++ "vw"
+
+        Ch n ->
+            floatStr n ++ "ch"
+
+        Fr n ->
+            String.fromInt n ++ "fr"
+
+        Num n ->
+            floatStr n
+
+        LenAuto ->
+            "auto"
+
+        LenZero ->
+            "0"
+
+        LenRaw s ->
+            s
+
+
+colorToString : Color -> String
+colorToString c =
+    case c of
+
+        Hex s ->
+            if String.startsWith "#" s then
+                s
+
+            else
+                "#" ++ s
+
+        Rgb r g b ->
+            "rgb(" ++ String.fromInt r ++ "," ++ String.fromInt g ++ ","
+                ++ String.fromInt b
+                ++ ")"
+
+        Rgba r g b a ->
+            "rgba(" ++ String.fromInt r ++ "," ++ String.fromInt g ++ ","
+                ++ String.fromInt b
+                ++ ","
+                ++ floatStr a
+                ++ ")"
+
+        Hsl h s l ->
+            "hsl(" ++ String.fromInt h ++ "," ++ String.fromInt s ++ "%,"
+                ++ String.fromInt l
+                ++ "%)"
+
+        Hsla h s l a ->
+            "hsla(" ++ String.fromInt h ++ "," ++ String.fromInt s ++ "%,"
+                ++ String.fromInt l
+                ++ "%,"
+                ++ floatStr a
+                ++ ")"
+
+        ColorTransparent ->
+            "transparent"
+
+        ColorCurrent ->
+            "currentColor"
+
+        ColorRaw s ->
+            s
+
+
+-- ─── Length builders ────────────────────────────────────────────
+px : Int -> Length
+px n =
+    Px n
+
+
+rem : Float -> Length
+rem n =
+    Rem n
+
+
+em : Float -> Length
+em n =
+    Em n
+
+
+pct : Float -> Length
+pct n =
+    Pct n
+
+
+vh : Int -> Length
+vh n =
+    Vh n
+
+
+vw : Int -> Length
+vw n =
+    Vw n
+
+
+ch : Float -> Length
+ch n =
+    Ch n
+
+
+fr : Int -> Length
+fr n =
+    Fr n
+
+
+-- A unitless number — `line-height: 1.6`, `flex-basis: 0`, etc.
+num : Float -> Length
+num n =
+    Num n
+
+
+-- v0.17 Limitation #9 close — bare-value constants.  Pre-v0.17
+-- these took `()` to dodge a Go init() ordering issue; the
+-- v0.17 canonicaliser tightening (PR-19) closed that class so
+-- pure-literal constants can ship as bare values.  Old call
+-- sites `Css.zero ()` are migrated in the same commit.
+zero : Length
+zero =
+    LenZero
+
+
+auto : Length
+auto =
+    LenAuto
+
+
+-- Escape hatch for any length the ADT does not model.
+lengthRaw : String -> Length
+lengthRaw s =
+    LenRaw s
+
+
+calc : String -> String -> String -> Length
+calc a op b =
+    LenRaw ("calc(" ++ a ++ " " ++ op ++ " " ++ b ++ ")")
+
+
+minmax : Length -> Length -> Length
+minmax a b =
+    LenRaw ("minmax(" ++ lengthToString a ++ "," ++ lengthToString b ++ ")")
+
+
+-- ─── Colour builders ────────────────────────────────────────────
+hex : String -> Color
+hex s =
+    Hex s
+
+
+rgb : Int -> Int -> Int -> Color
+rgb r g b =
+    Rgb r g b
+
+
+rgba : Int -> Int -> Int -> Float -> Color
+rgba r g b a =
+    Rgba r g b a
+
+
+hsl : Int -> Int -> Int -> Color
+hsl h s l =
+    Hsl h s l
+
+
+hsla : Int -> Int -> Int -> Float -> Color
+hsla h s l a =
+    Hsla h s l a
+
+
+transparent : Color
+transparent =
+    ColorTransparent
+
+
+currentColor : Color
+currentColor =
+    ColorCurrent
+
+
+-- Escape hatch for named colours / `var(--x)` / etc.
+colorRaw : String -> Color
+colorRaw s =
+    ColorRaw s
+
+
+-- ─── Transform / gradient / var value builders (String-valued) ──
+deg : Float -> String
+deg n =
+    floatStr n ++ "deg"
+
+
+ms : Int -> String
+ms n =
+    String.fromInt n ++ "ms"
+
+
+sec : Float -> String
+sec n =
+    floatStr n ++ "s"
+
+
+rotate : String -> String
+rotate v =
+    "rotate(" ++ v ++ ")"
+
+
+scale : Float -> String
+scale n =
+    "scale(" ++ floatStr n ++ ")"
+
+
+translateX : Length -> String
+translateX v =
+    "translateX(" ++ lengthToString v ++ ")"
+
+
+translateY : Length -> String
+translateY v =
+    "translateY(" ++ lengthToString v ++ ")"
+
+
+cssVar : String -> String
+cssVar name =
+    "var(--" ++ name ++ ")"
+
+
+cssVarOr : String -> String -> String
+cssVarOr name fallback =
+    "var(--" ++ name ++ "," ++ fallback ++ ")"
+
+
+linearGradient : String -> List String -> String
+linearGradient angle stops =
+    "linear-gradient(" ++ angle ++ ", " ++ String.join ", " stops ++ ")"
+
+
+repeat : Int -> Length -> String
+repeat n trackSize =
+    "repeat(" ++ String.fromInt n ++ ", " ++ lengthToString trackSize ++ ")"
+
+
+-- A single box-shadow value: `offsetX offsetY blur color` (px units).
+shadow : Int -> Int -> Int -> Color -> String
+shadow offsetX offsetY blur c =
+    String.fromInt offsetX ++ "px " ++ String.fromInt offsetY ++ "px "
+        ++ String.fromInt blur
+        ++ "px "
+        ++ colorToString c
+
+
+-- ─── Bare keyword constants (String-valued) ─────────────────────
+-- These take `()` to sidestep zero-arity memoisation interacting
+-- with Go's `init()` ordering (CLAUDE.md Limitation #13).  Used in
+-- String-valued property slots (`border (none ())`, `fontFamily
+-- (systemFont ())`).
+none : String
+none =
+    "none"
+
+
+systemFont : String
+systemFont =
+    "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
+
+
+monoFont : () -> String
+monoFont _ =
+    "ui-monospace, 'SF Mono', Monaco, 'Cascadia Code', monospace"
+
+
+-- ─── Property builders: bare-name passthrough ───────────────────
+-- The generic escape hatch — `property "name" "value"`.
+property : String -> String -> CssProp
+property k v =
+    CssProp k v
+
+
+-- Escape hatch for a pre-formatted `"name:value"` declaration
+-- string — splits on the first colon.  Useful when porting CSS
+-- pasted verbatim.
+rawProp : String -> CssProp
+rawProp decl =
+    case String.split ":" decl of
+
+        k :: rest ->
+            CssProp (String.trim k) (String.trim (String.join ":" rest))
+
+        [] ->
+            CssProp decl ""
+
+
+-- Define a CSS custom property: `--name: value;`.
+defineVar : String -> String -> CssProp
+defineVar name val =
+    CssProp ("--" ++ name) val
+
+
+-- Append ` !important` to a property's value.
+important : CssProp -> CssProp
+important p =
+    case p of
+
+        CssProp k v ->
+            CssProp k (v ++ " !important")
+
+
+-- ─── Property builders: Length-valued ───────────────────────────
+width : Length -> CssProp
+width v =
+    CssProp "width" (lengthToString v)
+
+
+height : Length -> CssProp
+height v =
+    CssProp "height" (lengthToString v)
+
+
+maxWidth : Length -> CssProp
+maxWidth v =
+    CssProp "max-width" (lengthToString v)
+
+
+minWidth : Length -> CssProp
+minWidth v =
+    CssProp "min-width" (lengthToString v)
+
+
+maxHeight : Length -> CssProp
+maxHeight v =
+    CssProp "max-height" (lengthToString v)
+
+
+minHeight : Length -> CssProp
+minHeight v =
+    CssProp "min-height" (lengthToString v)
+
+
+fontSize : Length -> CssProp
+fontSize v =
+    CssProp "font-size" (lengthToString v)
+
+
+lineHeight : Length -> CssProp
+lineHeight v =
+    CssProp "line-height" (lengthToString v)
+
+
+letterSpacing : Length -> CssProp
+letterSpacing v =
+    CssProp "letter-spacing" (lengthToString v)
+
+
+padding : Length -> CssProp
+padding v =
+    CssProp "padding" (lengthToString v)
+
+
+paddingTop : Length -> CssProp
+paddingTop v =
+    CssProp "padding-top" (lengthToString v)
+
+
+paddingBottom : Length -> CssProp
+paddingBottom v =
+    CssProp "padding-bottom" (lengthToString v)
+
+
+paddingLeft : Length -> CssProp
+paddingLeft v =
+    CssProp "padding-left" (lengthToString v)
+
+
+paddingRight : Length -> CssProp
+paddingRight v =
+    CssProp "padding-right" (lengthToString v)
+
+
+padding2 : Length -> Length -> CssProp
+padding2 a b =
+    CssProp "padding" (lengthToString a ++ " " ++ lengthToString b)
+
+
+padding4 : Length -> Length -> Length -> Length -> CssProp
+padding4 t r b l =
+    CssProp
+        "padding"
+        (lengthToString t ++ " " ++ lengthToString r ++ " " ++ lengthToString b
+            ++ " "
+            ++ lengthToString l)
+
+
+margin : Length -> CssProp
+margin v =
+    CssProp "margin" (lengthToString v)
+
+
+marginTop : Length -> CssProp
+marginTop v =
+    CssProp "margin-top" (lengthToString v)
+
+
+marginBottom : Length -> CssProp
+marginBottom v =
+    CssProp "margin-bottom" (lengthToString v)
+
+
+marginLeft : Length -> CssProp
+marginLeft v =
+    CssProp "margin-left" (lengthToString v)
+
+
+marginRight : Length -> CssProp
+marginRight v =
+    CssProp "margin-right" (lengthToString v)
+
+
+margin2 : Length -> Length -> CssProp
+margin2 a b =
+    CssProp "margin" (lengthToString a ++ " " ++ lengthToString b)
+
+
+margin4 : Length -> Length -> Length -> Length -> CssProp
+margin4 t r b l =
+    CssProp
+        "margin"
+        (lengthToString t ++ " " ++ lengthToString r ++ " " ++ lengthToString b
+            ++ " "
+            ++ lengthToString l)
+
+
+gap : Length -> CssProp
+gap v =
+    CssProp "gap" (lengthToString v)
+
+
+rowGap : Length -> CssProp
+rowGap v =
+    CssProp "row-gap" (lengthToString v)
+
+
+columnGap : Length -> CssProp
+columnGap v =
+    CssProp "column-gap" (lengthToString v)
+
+
+borderRadius : Length -> CssProp
+borderRadius v =
+    CssProp "border-radius" (lengthToString v)
+
+
+borderRadius4 : Length -> Length -> Length -> Length -> CssProp
+borderRadius4 tl tr br bl =
+    CssProp
+        "border-radius"
+        (lengthToString tl ++ " " ++ lengthToString tr ++ " "
+            ++ lengthToString br
+            ++ " "
+            ++ lengthToString bl)
+
+
+top : Length -> CssProp
+top v =
+    CssProp "top" (lengthToString v)
+
+
+bottom : Length -> CssProp
+bottom v =
+    CssProp "bottom" (lengthToString v)
+
+
+left : Length -> CssProp
+left v =
+    CssProp "left" (lengthToString v)
+
+
+right : Length -> CssProp
+right v =
+    CssProp "right" (lengthToString v)
+
+
+-- ─── Property builders: Colour-valued ───────────────────────────
+color : Color -> CssProp
+color c =
+    CssProp "color" (colorToString c)
+
+
+background : Color -> CssProp
+background c =
+    CssProp "background" (colorToString c)
+
+
+backgroundColor : Color -> CssProp
+backgroundColor c =
+    CssProp "background-color" (colorToString c)
+
+
+borderColor : Color -> CssProp
+borderColor c =
+    CssProp "border-color" (colorToString c)
+
+
+-- ─── Property builders: keyword-enum-valued ─────────────────────
+display : Display -> CssProp
+display d =
+    let
+        v =
+            case d of
+
+                Block ->
+                    "block"
+
+                Inline ->
+                    "inline"
+
+                InlineBlock ->
+                    "inline-block"
+
+                Flex ->
+                    "flex"
+
+                InlineFlex ->
+                    "inline-flex"
+
+                Grid ->
+                    "grid"
+
+                InlineGrid ->
+                    "inline-grid"
+
+                DisplayNone ->
+                    "none"
+
+                DisplayRaw s ->
+                    s
+    in
+        CssProp "display" v
+
+
+position : Position -> CssProp
+position p =
+    let
+        v =
+            case p of
+
+                Static ->
+                    "static"
+
+                Relative ->
+                    "relative"
+
+                Absolute ->
+                    "absolute"
+
+                Fixed ->
+                    "fixed"
+
+                Sticky ->
+                    "sticky"
+
+                PositionRaw s ->
+                    s
+    in
+        CssProp "position" v
+
+
+textAlign : TextAlign -> CssProp
+textAlign a =
+    let
+        v =
+            case a of
+
+                AlignLeft ->
+                    "left"
+
+                AlignRight ->
+                    "right"
+
+                AlignCenter ->
+                    "center"
+
+                AlignJustify ->
+                    "justify"
+
+                TextAlignRaw s ->
+                    s
+    in
+        CssProp "text-align" v
+
+
+cursor : Cursor -> CssProp
+cursor c =
+    let
+        v =
+            case c of
+
+                Pointer ->
+                    "pointer"
+
+                CursorDefault ->
+                    "default"
+
+                CursorText ->
+                    "text"
+
+                NotAllowed ->
+                    "not-allowed"
+
+                Grab ->
+                    "grab"
+
+                Grabbing ->
+                    "grabbing"
+
+                CursorRaw s ->
+                    s
+    in
+        CssProp "cursor" v
+
+
+flexDirection : FlexDirection -> CssProp
+flexDirection d =
+    let
+        v =
+            case d of
+
+                Row ->
+                    "row"
+
+                RowReverse ->
+                    "row-reverse"
+
+                Column ->
+                    "column"
+
+                ColumnReverse ->
+                    "column-reverse"
+
+                FlexDirectionRaw s ->
+                    s
+    in
+        CssProp "flex-direction" v
+
+
+flexWrap : FlexWrap -> CssProp
+flexWrap w =
+    let
+        v =
+            case w of
+
+                NoWrap ->
+                    "nowrap"
+
+                Wrap ->
+                    "wrap"
+
+                WrapReverse ->
+                    "wrap-reverse"
+
+                FlexWrapRaw s ->
+                    s
+    in
+        CssProp "flex-wrap" v
+
+
+alignToString : Align -> String
+alignToString a =
+    case a of
+
+        Start ->
+            "flex-start"
+
+        End ->
+            "flex-end"
+
+        Center ->
+            "center"
+
+        SpaceBetween ->
+            "space-between"
+
+        SpaceAround ->
+            "space-around"
+
+        SpaceEvenly ->
+            "space-evenly"
+
+        Stretch ->
+            "stretch"
+
+        Baseline ->
+            "baseline"
+
+        AlignRaw s ->
+            s
+
+
+justifyContent : Align -> CssProp
+justifyContent a =
+    CssProp "justify-content" (alignToString a)
+
+
+alignItems : Align -> CssProp
+alignItems a =
+    CssProp "align-items" (alignToString a)
+
+
+alignContent : Align -> CssProp
+alignContent a =
+    CssProp "align-content" (alignToString a)
+
+
+fontWeight : FontWeight -> CssProp
+fontWeight w =
+    let
+        v =
+            case w of
+
+                Normal ->
+                    "normal"
+
+                Bold ->
+                    "bold"
+
+                Lighter ->
+                    "lighter"
+
+                Bolder ->
+                    "bolder"
+
+                Weight n ->
+                    String.fromInt n
+
+                FontWeightRaw s ->
+                    s
+    in
+        CssProp "font-weight" v
+
+
+fontStyle : FontStyle -> CssProp
+fontStyle s =
+    let
+        v =
+            case s of
+
+                FontNormal ->
+                    "normal"
+
+                Italic ->
+                    "italic"
+
+                Oblique ->
+                    "oblique"
+
+                FontStyleRaw raw ->
+                    raw
+    in
+        CssProp "font-style" v
+
+
+overflowToString : Overflow -> String
+overflowToString o =
+    case o of
+
+        Visible ->
+            "visible"
+
+        Hidden ->
+            "hidden"
+
+        Scroll ->
+            "scroll"
+
+        OverflowAuto ->
+            "auto"
+
+        OverflowRaw s ->
+            s
+
+
+overflow : Overflow -> CssProp
+overflow o =
+    CssProp "overflow" (overflowToString o)
+
+
+overflowX : Overflow -> CssProp
+overflowX o =
+    CssProp "overflow-x" (overflowToString o)
+
+
+overflowY : Overflow -> CssProp
+overflowY o =
+    CssProp "overflow-y" (overflowToString o)
+
+
+whiteSpace : WhiteSpace -> CssProp
+whiteSpace w =
+    let
+        v =
+            case w of
+
+                WsNormal ->
+                    "normal"
+
+                NoWrapWs ->
+                    "nowrap"
+
+                Pre ->
+                    "pre"
+
+                PreWrap ->
+                    "pre-wrap"
+
+                PreLine ->
+                    "pre-line"
+
+                WhiteSpaceRaw s ->
+                    s
+    in
+        CssProp "white-space" v
+
+
+boxSizing : BoxSizing -> CssProp
+boxSizing b =
+    let
+        v =
+            case b of
+
+                ContentBox ->
+                    "content-box"
+
+                BorderBox ->
+                    "border-box"
+
+                BoxSizingRaw s ->
+                    s
+    in
+        CssProp "box-sizing" v
+
+
+pointerEvents : PointerEvents -> CssProp
+pointerEvents p =
+    let
+        v =
+            case p of
+
+                PeAuto ->
+                    "auto"
+
+                PeNone ->
+                    "none"
+
+                PointerEventsRaw s ->
+                    s
+    in
+        CssProp "pointer-events" v
+
+
+textDecoration : TextDecoration -> CssProp
+textDecoration d =
+    let
+        v =
+            case d of
+
+                NoDecoration ->
+                    "none"
+
+                Underline ->
+                    "underline"
+
+                LineThrough ->
+                    "line-through"
+
+                Overline ->
+                    "overline"
+
+                TextDecorationRaw s ->
+                    s
+    in
+        CssProp "text-decoration" v
+
+
+-- ─── Property builders: String-valued (open-ended grammars) ─────
+-- These compound properties (`transition`, `transform`,
+-- `grid-template-*`, `font-family`, …) have effectively unbounded
+-- value grammars — typing them fully is elm-css-scale work for
+-- marginal gain.  Build the value with the helpers above
+-- (`translateX`, `linearGradient`, `cssVar`, …) or pass a literal.
+border : String -> CssProp
+border v =
+    CssProp "border" v
+
+
+borderTop : String -> CssProp
+borderTop v =
+    CssProp "border-top" v
+
+
+borderBottom : String -> CssProp
+borderBottom v =
+    CssProp "border-bottom" v
+
+
+borderLeft : String -> CssProp
+borderLeft v =
+    CssProp "border-left" v
+
+
+borderRight : String -> CssProp
+borderRight v =
+    CssProp "border-right" v
+
+
+borderStyle : BorderStyle -> CssProp
+borderStyle b =
+    let
+        v =
+            case b of
+
+                Solid ->
+                    "solid"
+
+                Dashed ->
+                    "dashed"
+
+                Dotted ->
+                    "dotted"
+
+                BorderNone ->
+                    "none"
+
+                BorderStyleRaw s ->
+                    s
+    in
+        CssProp "border-style" v
+
+
+borderWidth : Length -> CssProp
+borderWidth v =
+    CssProp "border-width" (lengthToString v)
+
+
+fontFamily : String -> CssProp
+fontFamily v =
+    CssProp "font-family" v
+
+
+transition : String -> CssProp
+transition v =
+    CssProp "transition" v
+
+
+transitionProp : String -> Float -> String -> CssProp
+transitionProp prop dur timing =
+    CssProp "transition" (prop ++ " " ++ floatStr dur ++ "s " ++ timing)
+
+
+transitionDuration : String -> CssProp
+transitionDuration v =
+    CssProp "transition-duration" v
+
+
+transitionTimingFunction : String -> CssProp
+transitionTimingFunction v =
+    CssProp "transition-timing-function" v
+
+
+transform : String -> CssProp
+transform v =
+    CssProp "transform" v
+
+
+animation : String -> CssProp
+animation v =
+    CssProp "animation" v
+
+
+boxShadow : String -> CssProp
+boxShadow v =
+    CssProp "box-shadow" v
+
+
+-- Compose several shadow fragments into one `box-shadow`.
+shadows : List String -> CssProp
+shadows vals =
+    CssProp "box-shadow" (String.join ", " vals)
+
+
+outline : String -> CssProp
+outline v =
+    CssProp "outline" v
+
+
+outlineOffset : Length -> CssProp
+outlineOffset v =
+    CssProp "outline-offset" (lengthToString v)
+
+
+backgroundImage : String -> CssProp
+backgroundImage v =
+    CssProp "background-image" v
+
+
+backgroundSize : String -> CssProp
+backgroundSize v =
+    CssProp "background-size" v
+
+
+backgroundPosition : String -> CssProp
+backgroundPosition v =
+    CssProp "background-position" v
+
+
+backgroundRepeat : String -> CssProp
+backgroundRepeat v =
+    CssProp "background-repeat" v
+
+
+filter : String -> CssProp
+filter v =
+    CssProp "filter" v
+
+
+backdropFilter : String -> CssProp
+backdropFilter v =
+    CssProp "backdrop-filter" v
+
+
+flex : String -> CssProp
+flex v =
+    CssProp "flex" v
+
+
+flexGrow : Int -> CssProp
+flexGrow n =
+    CssProp "flex-grow" (String.fromInt n)
+
+
+flexShrink : Int -> CssProp
+flexShrink n =
+    CssProp "flex-shrink" (String.fromInt n)
+
+
+flexBasis : Length -> CssProp
+flexBasis v =
+    CssProp "flex-basis" (lengthToString v)
+
+
+gridTemplateColumns : String -> CssProp
+gridTemplateColumns v =
+    CssProp "grid-template-columns" v
+
+
+gridTemplateRows : String -> CssProp
+gridTemplateRows v =
+    CssProp "grid-template-rows" v
+
+
+gridColumn : String -> CssProp
+gridColumn v =
+    CssProp "grid-column" v
+
+
+gridRow : String -> CssProp
+gridRow v =
+    CssProp "grid-row" v
+
+
+gridGap : Length -> CssProp
+gridGap v =
+    CssProp "grid-gap" (lengthToString v)
+
+
+zIndex : Int -> CssProp
+zIndex n =
+    CssProp "z-index" (String.fromInt n)
+
+
+opacity : Float -> CssProp
+opacity n =
+    CssProp "opacity" (floatStr n)
+
+
+content : String -> CssProp
+content v =
+    CssProp "content" v
+
+
+textTransform : String -> CssProp
+textTransform v =
+    CssProp "text-transform" v
+
+
+visibility : String -> CssProp
+visibility v =
+    CssProp "visibility" v
+
+
+objectFit : String -> CssProp
+objectFit v =
+    CssProp "object-fit" v
+
+
+objectPosition : String -> CssProp
+objectPosition v =
+    CssProp "object-position" v
+
+
+listStyle : String -> CssProp
+listStyle v =
+    CssProp "list-style" v
+
+
+listStyleType : String -> CssProp
+listStyleType v =
+    CssProp "list-style-type" v
+
+
+listStylePosition : String -> CssProp
+listStylePosition v =
+    CssProp "list-style-position" v
+
+
+verticalAlign : String -> CssProp
+verticalAlign v =
+    CssProp "vertical-align" v
+
+
+userSelect : String -> CssProp
+userSelect v =
+    CssProp "user-select" v
+
+
+wordBreak : String -> CssProp
+wordBreak v =
+    CssProp "word-break" v
+
+
+borderCollapse : String -> CssProp
+borderCollapse v =
+    CssProp "border-collapse" v
+
+
+clear : String -> CssProp
+clear v =
+    CssProp "clear" v
+
+
+float : String -> CssProp
+float v =
+    CssProp "float" v
+
+
+borderSpacing : Length -> CssProp
+borderSpacing v =
+    CssProp "border-spacing" (lengthToString v)
+
+
+-- ─── Rules + rendering ──────────────────────────────────────────
+-- `selector { props }`.
+rule : String -> List CssProp -> CssRule
+rule selector props =
+    CssRule selector props
+
+
+-- `@media query { rules }`.
+media : String -> List CssRule -> CssRule
+media query rules =
+    CssMedia query rules
+
+
+-- `@keyframes name { frames }`.  Build frames with `frame`.
+keyframes : String -> List String -> CssRule
+keyframes name frames =
+    CssKeyframes name frames
+
+
+-- One keyframe step: `0% { prop; prop }`.
+frame : String -> List CssProp -> String
+frame pct props =
+    pct ++ " { " ++ String.join "; " (List.map renderProp props) ++ " }"
+
+
+-- A raw, pre-rendered stylesheet fragment, emitted verbatim.
+raw : String -> CssRule
+raw s =
+    CssRaw s
+
+
+renderProp : CssProp -> String
+renderProp p =
+    case p of
+
+        CssProp k v ->
+            k ++ ":" ++ v
+
+
+renderRule : CssRule -> String
+renderRule r =
+    case r of
+
+        CssRule selector props ->
+            selector ++ " {\n"
+                ++ String.join
+                       ""
+                       (List.map
+                           (\p ->
+                               case p of
+
+                                   CssProp k v ->
+                                       "  " ++ k ++ ": " ++ v ++ ";\n")
+                           props)
+                ++ "}\n"
+
+        CssMedia query rules ->
+            "@media " ++ query ++ " {\n"
+                ++ String.join "" (List.map renderRule rules)
+                ++ "}\n"
+
+        CssKeyframes name frames ->
+            "@keyframes " ++ name ++ " { " ++ String.join " " frames ++ " }\n"
+
+        CssRaw s ->
+            if String.endsWith "\n" s then
+                s
+
+            else
+                s ++ "\n"
+
+
+-- Render a list of rules to a complete stylesheet string.
+stylesheet : List CssRule -> String
+stylesheet rules =
+    String.join "" (List.map renderRule rules)
+
+
+-- Render a list of props as an inline `style="a:b;c:d"` string.
+styles : List CssProp -> String
+styles props =
+    String.join ";" (List.map renderProp props)

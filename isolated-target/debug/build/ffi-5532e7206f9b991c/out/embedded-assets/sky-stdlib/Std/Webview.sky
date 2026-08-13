@@ -1,0 +1,92 @@
+-- | Std.Webview — desktop UI backend (Layer 3 Sky source).
+--
+-- `Webview.app` is the cross-backend mirror of `Live.app` and
+-- `Tui.app`: same TEA shape (init / update / view / subscriptions),
+-- view returns a `Std.Ui.Element` tree, and the runtime owns the
+-- window. The Sky.Live HTML renderer + VNode diff are reused;
+-- instead of HTTP/SSE, the bridge is `webview_go`'s `Bind()` +
+-- `Eval()` running in-process.
+--
+-- v0.1 MVP scope (macOS only):
+--
+--   * Minimal window config — `title : String`, `size : (Int, Int)`.
+--   * `Cmd.perform` / `Sub.every` / global hotkeys via webview's
+--     own key event dispatch.
+--   * XSS-hardening parity with Sky.Live (focus-preserving DOM
+--     replacer, `__skyReviveScripts` for late-injected `<script>`
+--     tags).
+--
+-- Out of scope for v0.1: tray icons, native file dialogs,
+-- alwaysOnTop / transparent / decorated windows, voice intents,
+-- Windows / Linux smoke testing (the runtime is build-tagged for
+-- all three OSes; v0.1 only validates macOS).
+module Std.Webview exposing (app, WindowCfg, AppCfg, defaultWindow, withTitle, withSize)
+
+import Sky.Ffi as Ffi
+
+-- | Window configuration. Closed record for v0.1 (better HM error
+-- messages) — open record to absorb optional fields (alwaysOnTop,
+-- transparent, decorated) in v0.2.
+type alias WindowCfg =
+    { title : String
+    , size : ( Int, Int )
+    }
+
+
+-- | `defaultWindow` — 800×600 window titled "Sky".  Builders below
+-- override each field.  Apps that construct WindowCfg via this
+-- builder chain stay source-compat when v0.2 adds optional fields.
+defaultWindow : WindowCfg
+defaultWindow =
+    { title = "Sky", size = ( 800, 600 ) }
+
+
+-- | `withTitle "My App" cfg` — replace the window title.
+withTitle : String -> WindowCfg -> WindowCfg
+withTitle title cfg =
+    { cfg | title = title }
+
+
+-- | `withSize w h cfg` — replace the initial window size in pixels.
+withSize : Int -> Int -> WindowCfg -> WindowCfg
+withSize w h cfg =
+    { cfg | size = ( w, h ) }
+
+-- | TEA-shaped app config. Same shape as `Tui.app` plus a `window`
+-- field. The `view` returns a `Std.Ui.Element msg` tree — same as
+-- Sky.Live / Sky.Tui — so the same view function renders unchanged
+-- under the desktop backend.
+--
+-- `Html` is the canonical post-`Ui.layout` shape: every view function
+-- wraps its `Element` tree in `Ui.layout [] (...)` before returning,
+-- and the resulting `Html` value flows through the renderer.  The
+-- typed slot rejects raw `Element` (must layout first) and rejects
+-- string / int / record returns that previously passed silently
+-- against the `any` widening.
+type alias AppCfg model msg =
+    { init : () -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg )
+    , view : model -> Html
+    , subscriptions : model -> Sub msg
+    , window : WindowCfg
+    }
+
+
+-- | Open a native desktop window and run the TEA loop until the
+-- user closes it. Returns `Task Error ()` so it sits at the top
+-- of `main =` just like `Live.app` / `Tui.app`:
+--
+-- ```elm
+-- main =
+--     Webview.app
+--         { init = init
+--         , update = update
+--         , view = view
+--         , subscriptions = subscriptions
+--         , window = { title = "Sky Stopwatch", size = ( 800, 600 ) }
+--         }
+--         |> Task.run
+-- ```
+app : AppCfg model msg -> Task Error ()
+app =
+    Ffi.kernel "Webview_app"

@@ -1,0 +1,392 @@
+module Main exposing (main)
+
+-- | sky-doc-tui — terminal-rendered doc browser.
+--
+-- Companion to the HTTP server in @Main.sky@.  Reads the same
+-- @$SKY_DOC_DIR/api/symbols.json@ catalogue, but parsing + search
+-- happen entirely in the Go runtime via two kernel bindings:
+--
+--   * `Doc.loadCatalog : String -> Result Error Int`
+--   * `Doc.searchCatalog : String -> String -> Int -> (List String, Int)`
+--
+-- The Sky-side code only holds the cached display lines (already
+-- pre-formatted + pre-coloured) for the visible window — usually
+-- 20 entries.  This is what makes the TUI tractable on the
+-- Stripe-SDK-scale `examples/13-skyshop` catalogue (80k entries):
+-- pure-Sky Json.Decode took minutes; the Go loader takes ~250 ms,
+-- per-keystroke search ~1 ms.
+--
+-- Keys (forwarded by the Sky.Tui focus ring):
+--   * Up / Down        — scroll selection
+--   * /                — focus the search input
+--   * Esc              — clear search
+--   * Ctrl-C           — quit
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.System as System
+import Sky.Core.Error exposing (Error)
+import Sky.Ffi as Ffi
+import Std.Tui as Tui
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Kernel bindings (registered in src/Sky/Generate/Go/Kernel.hs)
+-- ═══════════════════════════════════════════════════════════════════
+-- Doc.loadCatalog path : Result Error Int
+-- Synchronous Go-side JSON parse + cache.  Result.Ok carries the
+-- total entry count for the status line.
+loadCatalog : String -> Result Error Int
+loadCatalog =
+    Ffi.kernel "Doc_loadCatalog"
+
+
+-- Doc.searchCatalog path query maxShown : (List String, Int)
+-- Returns (top-N pre-formatted display lines, total match count).
+-- Pure compute against the cached blob — no I/O.
+searchCatalog : String -> String -> Int -> ( List String, Int )
+searchCatalog =
+    Ffi.kernel "Doc_searchCatalog"
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Model + Msg
+-- ═══════════════════════════════════════════════════════════════════
+maxShown : Int
+maxShown =
+    20
+
+type alias Model =
+    { path : String
+    , total : Int
+    , query : String
+    , filtered : List String
+    , filteredCount : Int
+    , selected : Int
+    , loadError : String
+    }
+
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    }
+
+type Msg
+    = UpdateQuery String
+    | ArrowUp
+    | ArrowDown
+    | ClearQuery
+    | FocusSearch
+    | Quit
+    | NoOp
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Init — synchronous load via the kernel binding
+-- ═══════════════════════════════════════════════════════════════════
+init : () -> ( Model, Cmd Msg )
+init _ =
+    let
+        dir = System.getenvOr "SKY_DOC_DIR" ""
+        path = dir ++ "/api/symbols.json"
+    in
+        if dir == "" then
+            ( emptyModel "" "SKY_DOC_DIR not set — run via `sky doc --tui`."
+            , Cmd.none
+            )
+
+        else
+            case loadCatalog path of
+
+                Ok total ->
+                    let
+                        ( lines, count ) = searchCatalog path "" maxShown
+                    in
+                        ( { path = path
+                          , total = total
+                          , query = ""
+                          , filtered = lines
+                          , filteredCount = count
+                          , selected = 0
+                          , loadError = ""
+                          }
+                        , Cmd.none
+                        )
+
+                Err _ ->
+                    ( emptyModel path ("failed to read " ++ path), Cmd.none )
+
+
+emptyModel : String -> String -> Model
+emptyModel path err =
+    { path = path
+    , total = 0
+    , query = ""
+    , filtered = []
+    , filteredCount = 0
+    , selected = 0
+    , loadError = err
+    }
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Update
+-- ═══════════════════════════════════════════════════════════════════
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        UpdateQuery q ->
+            let
+                ( lines, count ) = searchCatalog model.path q maxShown
+            in
+                ( { model | query = q
+                  , filtered = lines
+                  , filteredCount = count
+                  , selected = 0
+                  }
+                , Cmd.none
+                )
+
+        ArrowDown ->
+            let
+                visible = List.length model.filtered
+                next = model.selected + 1
+                clamped =
+                    if next >= visible then
+                        visible - 1
+
+                    else
+                        next
+            in
+                ( { model | selected = clamped }, Cmd.none )
+
+        ArrowUp ->
+            let
+                prev = model.selected - 1
+                clamped =
+                    if prev < 0 then
+                        0
+
+                    else
+                        prev
+            in
+                ( { model | selected = clamped }, Cmd.none )
+
+        ClearQuery ->
+            let
+                ( lines, count ) = searchCatalog model.path "" maxShown
+            in
+                ( { model | query = ""
+                  , filtered = lines
+                  , filteredCount = count
+                  , selected = 0
+                  }
+                , Cmd.none
+                )
+
+        FocusSearch ->
+            ( model, Cmd.none )
+
+        Quit ->
+            ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.kind == "ctrl" && k.value == "c" then
+        Quit
+
+    else if k.kind == "up" then
+        ArrowUp
+
+    else if k.kind == "down" then
+        ArrowDown
+
+    else if k.kind == "escape" then
+        ClearQuery
+
+    else if k.kind == "char" && k.value == "/" then
+        FocusSearch
+
+    else
+        NoOp
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Colours
+-- ═══════════════════════════════════════════════════════════════════
+bg : Ui.Color
+bg =
+    Ui.rgb 16 18 28
+
+
+fg : Ui.Color
+fg =
+    Ui.rgb 220 220 230
+
+
+dim : Ui.Color
+dim =
+    Ui.rgb 130 130 145
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 142 200 168
+
+
+selBg : Ui.Color
+selBg =
+    Ui.rgb 50 70 100
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- View
+-- ═══════════════════════════════════════════════════════════════════
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.padding 16
+        , Ui.spacing 8
+        , Background.color bg
+        , Font.color fg
+        , Ui.width Ui.fill
+        , Ui.height Ui.fill
+        ]
+        [ header
+        , searchRow model
+        , statusLine model
+        , resultsList model
+        , helpLine
+        ]
+
+
+header : Element Msg
+header =
+    Ui.row
+        [ Ui.spacing 8 ]
+        [ Ui.el [ Font.color accent, Font.bold ] (Ui.text "Sky docs")
+        , Ui.el [ Font.color dim ] (Ui.text "— terminal browser")
+        ]
+
+
+searchRow : Model -> Element Msg
+searchRow model =
+    Ui.row
+        [ Ui.spacing 8, Ui.width Ui.fill ]
+        [ Ui.el [ Font.color dim ] (Ui.text "›")
+        , Ui.input
+              [ Ui.width Ui.fill
+              , Background.color (Ui.rgb 30 36 60)
+              , Font.color fg
+              , Ui.paddingXY 8 2
+              , Border.color (Ui.rgb 80 100 140)
+              , Border.width 1
+              , Ui.htmlAttribute "value" model.query
+              , Ui.htmlAttribute
+                    "placeholder"
+                    "filter by name, module or signature…"
+              , Ui.onInput UpdateQuery
+              ]
+        ]
+
+
+statusLine : Model -> Element Msg
+statusLine model =
+    if not (String.isEmpty model.loadError) then
+        Ui.el [ Font.color (Ui.rgb 230 130 130) ] (Ui.text model.loadError)
+
+    else
+        let
+            shown = List.length model.filtered
+            suffix =
+                if model.filteredCount > shown then
+                    " (showing " ++ String.fromInt shown ++ ")"
+
+                else
+                    ""
+        in
+            Ui.el
+                [ Font.color dim ]
+                (Ui.text
+                    (String.fromInt model.filteredCount ++ " / "
+                        ++ String.fromInt model.total
+                        ++ " entries"
+                        ++ suffix))
+
+
+resultsList : Model -> Element Msg
+resultsList model =
+    if List.isEmpty model.filtered then
+        Ui.el
+            [ Font.color dim, Ui.padding 8 ]
+            (Ui.text
+                (if String.isEmpty model.query then
+                    ""
+
+                else
+                    "(no matches)"))
+
+    else
+        Ui.column
+            [ Ui.spacing 0, Ui.width Ui.fill ]
+            (List.indexedMap (renderRow model.selected) model.filtered)
+
+
+renderRow : Int -> Int -> String -> Element Msg
+renderRow selected i line =
+    let
+        rowBg =
+            if i == selected then
+                selBg
+
+            else
+                bg
+    in
+        Ui.el
+            [ Background.color rowBg
+            , Font.color fg
+            , Ui.paddingXY 4 0
+            , Ui.width Ui.fill
+            ]
+            (Ui.text line)
+
+
+helpLine : Element Msg
+helpLine =
+    Ui.el
+        [ Font.color dim ]
+        (Ui.text "↑↓ select · / focus search · esc clear · ctrl-c quit")
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Main
+-- ═══════════════════════════════════════════════════════════════════
+main =
+    Tui.app
+        (Tui.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> Tui.withOnKey onKey)
+        |> Task.run

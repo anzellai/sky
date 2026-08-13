@@ -1,0 +1,83 @@
+-- | Std.Cmd — TEA-side outbound effects (Layer 3 Sky source).
+--
+-- A `Cmd msg` is a deferred effect that, when run by the runtime
+-- (Sky.Live / Sky.Tui / Sky.Cli), eventually produces a `msg`
+-- delivered back to `update`.  `Cmd.perform` is the canonical way
+-- to spawn an async Task from inside `update`.
+--
+-- `Cmd msg` is runtime-typed (empty home) — it shares its Go
+-- representation with the existing kernel-registered Cmd type.
+--
+-- The pub/sub fan-out comes in two flavours:
+--   * `publish`        — echo-by-default; publisher's own
+--                        subscription on the same topic receives
+--                        the broadcast (matches Redis / NATS /
+--                        MQTT semantics).
+--   * `publishNoEcho`  — broker skips delivery to the publisher's
+--                        own subscription. Pair with a direct model
+--                        update for the "instant feedback for
+--                        publisher" pattern without paying the
+--                        broker round-trip (v0.16+ cross-process
+--                        broker tiers turn that hop into 10-100ms+
+--                        of network latency).
+module Std.Cmd exposing (none, batch, perform, publish, publishNoEcho)
+
+import Sky.Ffi as Ffi
+
+
+-- | No outbound effect.
+none : Cmd msg
+none =
+    Ffi.kernel "Cmd_none"
+
+
+-- | Run multiple commands concurrently in goroutines.
+batch : List (Cmd msg) -> Cmd msg
+batch =
+    Ffi.kernel "Cmd_batch"
+
+
+-- | Spawn a Task in the background; when it completes, dispatch
+-- its `Result` to `update` via the supplied `(Result -> msg)`
+-- continuation.
+perform : Task err a -> (Result err a -> msg) -> Cmd msg
+perform =
+    Ffi.kernel "Cmd_perform"
+
+
+-- | `publish topic payload` — broadcast `payload` to every Sky.Live
+-- session that has declared `Sub.subscribeTopic topic` in its
+-- `subscriptions`. Fire-and-forget; no result feedback to the
+-- publisher. The publisher's own subscription (if any) ALSO
+-- receives the payload — echo-by-default matches Redis/NATS/MQTT
+-- semantics. App code can self-skip on `Origin == sess.sid` if
+-- needed, OR use `publishNoEcho` to push the suppression into the
+-- broker.
+--
+-- The payload is delivered as an opaque `any`; subscribers decode
+-- it via the `toMsg : any -> msg` function passed to
+-- `Sub.subscribeTopic`. See `docs/skylive/pubsub-design.md` for the
+-- architecture write-up.
+publish : String -> any -> Cmd msg
+publish =
+    Ffi.kernel "Cmd_publish"
+
+
+-- | `publishNoEcho topic payload` — broadcast `payload` to every
+-- subscriber EXCEPT the publisher's own session. Same shape as
+-- `publish` but the broker filters out the self-echo.
+--
+-- Use this when the publisher updates its own model directly in
+-- `update` (typical for "instant feedback" patterns — e.g. a chat
+-- message you've already appended locally, a vote you've already
+-- tallied) and only needs the broker for the foreign fan-out. Saves
+-- one broker round-trip per publish; in v0.16+ cross-process broker
+-- tiers (Redis / Cloud Pub/Sub / NATS) that's 10-100ms+ of
+-- user-visible latency.
+--
+-- The semantic difference is purely in delivery — the resulting
+-- `SessionEvent.Origin` is still the publisher's sid, and other
+-- subscribers see the broadcast identically to `publish`.
+publishNoEcho : String -> any -> Cmd msg
+publishNoEcho =
+    Ffi.kernel "Cmd_publishNoEcho"

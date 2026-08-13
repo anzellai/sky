@@ -1,0 +1,130 @@
+-- | Std.Ui.Background — typed background-* attribute helpers for `Std.Ui`.
+--
+-- `color / image / linearGradient / gradient` build typed
+-- `Attribute msg` values that the layout renderer translates into
+-- inline `style="background-..."` CSS — no stylesheet authoring,
+-- no escape hatches.  Pseudo-class variants (`hoverColor`,
+-- `focusColor`, `activeColor`, `disabledColor`,
+-- `focusVisibleColor`) emit a sky-id-scoped `<style>` block so the
+-- transitions work without JavaScript.
+module Std.Ui.Background exposing
+    ( color
+    , image
+    , gradient
+    , linearGradient
+    , hoverColor
+    , focusColor
+    , focusVisibleColor
+    , activeColor
+    , disabledColor
+    )
+
+-- Std.Ui.Background — background colour / image / gradient helpers.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui exposing
+    ( Color
+    , Attribute
+    , bgColor
+    , bgImage
+    , bgGradient
+    , colorCss
+    , onPseudo
+    , hover
+    , focus
+    , focusVisible
+    , active
+    , disabled
+    )
+
+
+-- Bring Color + Attribute (and the Std.Ui helper functions) into
+-- scope unqualified. `import Std.Ui as Ui` alone doesn't make
+-- `Ui.Color` unify cleanly with the bare Color type at user call
+-- sites — Sky's canonicaliser treats the qualified name as a
+-- distinct type-of-type.
+-- Solid background colour. Composes with width/height/padding.
+color : Color -> Attribute msg
+color c =
+    bgColor c
+
+
+-- ─── Pseudo-classes (issue #377) ─────────────────────────────────
+--
+-- `hoverColor` swaps the background colour while the pointer is
+-- over the element. Hover rules are auto-gated behind
+-- `@media (hover: hover)` by the runtime so they don't fire as
+-- sticky-hover on touch devices.
+hoverColor : Color -> Attribute msg
+hoverColor c =
+    onPseudo hover [ bgColor c ]
+
+
+-- `focusColor` targets `:focus-visible` (the safer default — only
+-- fires on keyboard navigation, never on click-induced focus
+-- rings). Use `focusActiveColor` when you want the sticky-focus
+-- behaviour.
+focusColor : Color -> Attribute msg
+focusColor c =
+    onPseudo focusVisible [ bgColor c ]
+
+
+-- Explicit `:focus-visible` alias for users who prefer the
+-- spelled-out form.
+focusVisibleColor : Color -> Attribute msg
+focusVisibleColor c =
+    onPseudo focusVisible [ bgColor c ]
+
+
+-- `activeColor` — background while the element is being clicked /
+-- tapped. CSS `:active`.
+activeColor : Color -> Attribute msg
+activeColor c =
+    onPseudo active [ bgColor c ]
+
+
+-- `disabledColor` — background when the element has the
+-- `disabled` attribute. Most useful on `<input>` / `<button>`;
+-- silently has no visual effect on other elements.
+disabledColor : Color -> Attribute msg
+disabledColor c =
+    onPseudo disabled [ bgColor c ]
+
+
+-- Background image from a URL. The renderer emits
+-- `background-image: url('<url>');` — pair with a typical
+-- `background-size: cover` via `Ui.style` if you need the
+-- image to fill the element.
+image : String -> Attribute msg
+image url =
+    bgImage url
+
+
+-- Linear gradient with an angle (in degrees) and a list of
+-- (offset-percent, colour) stops. Renders as
+-- `background-image: linear-gradient(<angle>deg, <c1> <p1>%, …);`.
+linearGradient : Float -> List ( Float, Color ) -> Attribute msg
+linearGradient angle stops =
+    let
+        stopParts = List.map renderStop stops
+        joined = String.join ", " stopParts
+        css =
+            "linear-gradient(" ++ String.fromFloat angle ++ "deg, " ++ joined
+                ++ ")"
+    in
+        bgGradient css
+
+
+-- Pre-built CSS gradient string (escape hatch). Pass the full
+-- `linear-gradient(...)` / `radial-gradient(...)` value — the
+-- renderer prefixes with `background-image: `.
+gradient : String -> Attribute msg
+gradient css =
+    bgGradient css
+
+
+renderStop : ( Float, Color ) -> String
+renderStop ( pct, c ) =
+    colorCss c ++ " " ++ String.fromFloat pct ++ "%"

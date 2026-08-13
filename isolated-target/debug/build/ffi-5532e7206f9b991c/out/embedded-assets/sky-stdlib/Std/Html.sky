@@ -1,0 +1,491 @@
+-- | Std.Html — the typed HTML element surface (Layer 3 Sky source).
+module Std.Html exposing (..)
+
+-- | Std.Html — the typed HTML element surface.
+--
+-- v0.13 Layer 3: rewritten from Go runtime kernels to Sky source.
+-- Element builders return a typed `Html msg` ADT; the renderer/
+-- diff layer stays in Go and consumes the ADT via the single
+-- `htmlToVNode` FFI converter (registered separately — `Std.Html`
+-- itself is 100% pure Sky).
+--
+-- The ADT:
+--   * `HElement tag attrs children` — a normal element (<div> …)
+--   * `HText s`                     — a text node (HTML-escaped on render)
+--   * `HRaw s`                      — raw, un-escaped HTML (trusted content)
+--
+-- Attributes/events come from Std.Html.Attributes / Std.Html.Events.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Std.Html.Attributes exposing (Attribute)
+
+-- ─── Core type ──────────────────────────────────────────────────
+type Html msg
+    = HElement String (List (Attribute msg)) (List (Html msg))
+    | HText String
+    | HRaw String
+
+
+-- ─── Text nodes ─────────────────────────────────────────────────
+text : String -> Html msg
+text s =
+    HText s
+
+
+-- Raw, un-escaped HTML — for trusted pre-rendered content only.
+raw : String -> Html msg
+raw s =
+    HRaw s
+
+
+-- ─── Generic element builders ───────────────────────────────────
+-- Build an element of an arbitrary tag (custom elements, SVG, …).
+node : String -> List (Attribute msg) -> List (Html msg) -> Html msg
+node tag attrs children =
+    HElement tag attrs children
+
+
+-- A void element of an arbitrary tag (no children).
+voidNode : String -> List (Attribute msg) -> Html msg
+voidNode tag attrs =
+    HElement tag attrs []
+
+
+-- ─── Container / flow elements (attrs -> children -> Html) ──────
+div : List (Attribute msg) -> List (Html msg) -> Html msg
+div attrs children =
+    HElement "div" attrs children
+
+
+span : List (Attribute msg) -> List (Html msg) -> Html msg
+span attrs children =
+    HElement "span" attrs children
+
+
+p : List (Attribute msg) -> List (Html msg) -> Html msg
+p attrs children =
+    HElement "p" attrs children
+
+
+h1 : List (Attribute msg) -> List (Html msg) -> Html msg
+h1 attrs children =
+    HElement "h1" attrs children
+
+
+h2 : List (Attribute msg) -> List (Html msg) -> Html msg
+h2 attrs children =
+    HElement "h2" attrs children
+
+
+h3 : List (Attribute msg) -> List (Html msg) -> Html msg
+h3 attrs children =
+    HElement "h3" attrs children
+
+
+h4 : List (Attribute msg) -> List (Html msg) -> Html msg
+h4 attrs children =
+    HElement "h4" attrs children
+
+
+h5 : List (Attribute msg) -> List (Html msg) -> Html msg
+h5 attrs children =
+    HElement "h5" attrs children
+
+
+h6 : List (Attribute msg) -> List (Html msg) -> Html msg
+h6 attrs children =
+    HElement "h6" attrs children
+
+
+a : List (Attribute msg) -> List (Html msg) -> Html msg
+a attrs children =
+    HElement "a" attrs children
+
+
+button : List (Attribute msg) -> List (Html msg) -> Html msg
+button attrs children =
+    HElement "button" attrs children
+
+
+form : List (Attribute msg) -> List (Html msg) -> Html msg
+form attrs children =
+    HElement "form" attrs children
+
+
+label : List (Attribute msg) -> List (Html msg) -> Html msg
+label attrs children =
+    HElement "label" attrs children
+
+
+nav : List (Attribute msg) -> List (Html msg) -> Html msg
+nav attrs children =
+    HElement "nav" attrs children
+
+
+section : List (Attribute msg) -> List (Html msg) -> Html msg
+section attrs children =
+    HElement "section" attrs children
+
+
+article : List (Attribute msg) -> List (Html msg) -> Html msg
+article attrs children =
+    HElement "article" attrs children
+
+
+header : List (Attribute msg) -> List (Html msg) -> Html msg
+header attrs children =
+    HElement "header" attrs children
+
+
+footer : List (Attribute msg) -> List (Html msg) -> Html msg
+footer attrs children =
+    HElement "footer" attrs children
+
+
+-- NOTE: the `<main>` landmark element is `mainNode` (defined below), NOT `main`.
+-- A binding named `main` here collides with every program's own `main` entry
+-- point: `import Std.Html exposing (main)` in a module that also defines `main`
+-- resolves the bare `main` to the PROGRAM entry (local shadows import, C7), so
+-- `Html.main [...]` fails with an arity mismatch. `mainNode` sidesteps that. (#4)
+aside : List (Attribute msg) -> List (Html msg) -> Html msg
+aside attrs children =
+    HElement "aside" attrs children
+
+
+ul : List (Attribute msg) -> List (Html msg) -> Html msg
+ul attrs children =
+    HElement "ul" attrs children
+
+
+ol : List (Attribute msg) -> List (Html msg) -> Html msg
+ol attrs children =
+    HElement "ol" attrs children
+
+
+li : List (Attribute msg) -> List (Html msg) -> Html msg
+li attrs children =
+    HElement "li" attrs children
+
+
+table : List (Attribute msg) -> List (Html msg) -> Html msg
+table attrs children =
+    HElement "table" attrs children
+
+
+thead : List (Attribute msg) -> List (Html msg) -> Html msg
+thead attrs children =
+    HElement "thead" attrs children
+
+
+tbody : List (Attribute msg) -> List (Html msg) -> Html msg
+tbody attrs children =
+    HElement "tbody" attrs children
+
+
+tfoot : List (Attribute msg) -> List (Html msg) -> Html msg
+tfoot attrs children =
+    HElement "tfoot" attrs children
+
+
+tr : List (Attribute msg) -> List (Html msg) -> Html msg
+tr attrs children =
+    HElement "tr" attrs children
+
+
+th : List (Attribute msg) -> List (Html msg) -> Html msg
+th attrs children =
+    HElement "th" attrs children
+
+
+td : List (Attribute msg) -> List (Html msg) -> Html msg
+td attrs children =
+    HElement "td" attrs children
+
+
+textarea : List (Attribute msg) -> List (Html msg) -> Html msg
+textarea attrs children =
+    HElement "textarea" attrs children
+
+
+select : List (Attribute msg) -> List (Html msg) -> Html msg
+select attrs children =
+    HElement "select" attrs children
+
+
+option : List (Attribute msg) -> List (Html msg) -> Html msg
+option attrs children =
+    HElement "option" attrs children
+
+
+pre : List (Attribute msg) -> List (Html msg) -> Html msg
+pre attrs children =
+    HElement "pre" attrs children
+
+
+code : List (Attribute msg) -> List (Html msg) -> Html msg
+code attrs children =
+    HElement "code" attrs children
+
+
+strong : List (Attribute msg) -> List (Html msg) -> Html msg
+strong attrs children =
+    HElement "strong" attrs children
+
+
+em : List (Attribute msg) -> List (Html msg) -> Html msg
+em attrs children =
+    HElement "em" attrs children
+
+
+small : List (Attribute msg) -> List (Html msg) -> Html msg
+small attrs children =
+    HElement "small" attrs children
+
+
+fieldset : List (Attribute msg) -> List (Html msg) -> Html msg
+fieldset attrs children =
+    HElement "fieldset" attrs children
+
+
+legend : List (Attribute msg) -> List (Html msg) -> Html msg
+legend attrs children =
+    HElement "legend" attrs children
+
+
+blockquote : List (Attribute msg) -> List (Html msg) -> Html msg
+blockquote attrs children =
+    HElement "blockquote" attrs children
+
+
+figure : List (Attribute msg) -> List (Html msg) -> Html msg
+figure attrs children =
+    HElement "figure" attrs children
+
+
+figcaption : List (Attribute msg) -> List (Html msg) -> Html msg
+figcaption attrs children =
+    HElement "figcaption" attrs children
+
+
+details : List (Attribute msg) -> List (Html msg) -> Html msg
+details attrs children =
+    HElement "details" attrs children
+
+
+summary : List (Attribute msg) -> List (Html msg) -> Html msg
+summary attrs children =
+    HElement "summary" attrs children
+
+
+dialog : List (Attribute msg) -> List (Html msg) -> Html msg
+dialog attrs children =
+    HElement "dialog" attrs children
+
+
+video : List (Attribute msg) -> List (Html msg) -> Html msg
+video attrs children =
+    HElement "video" attrs children
+
+
+audio : List (Attribute msg) -> List (Html msg) -> Html msg
+audio attrs children =
+    HElement "audio" attrs children
+
+
+canvas : List (Attribute msg) -> List (Html msg) -> Html msg
+canvas attrs children =
+    HElement "canvas" attrs children
+
+
+iframe : List (Attribute msg) -> List (Html msg) -> Html msg
+iframe attrs children =
+    HElement "iframe" attrs children
+
+
+progress : List (Attribute msg) -> List (Html msg) -> Html msg
+progress attrs children =
+    HElement "progress" attrs children
+
+
+meter : List (Attribute msg) -> List (Html msg) -> Html msg
+meter attrs children =
+    HElement "meter" attrs children
+
+
+script : List (Attribute msg) -> List (Html msg) -> Html msg
+script attrs children =
+    HElement "script" attrs children
+
+
+-- ─── Void elements (attrs only — no children) ───────────────────
+img : List (Attribute msg) -> Html msg
+img attrs =
+    HElement "img" attrs []
+
+
+input : List (Attribute msg) -> Html msg
+input attrs =
+    HElement "input" attrs []
+
+
+br : List (Attribute msg) -> Html msg
+br attrs =
+    HElement "br" attrs []
+
+
+hr : List (Attribute msg) -> Html msg
+hr attrs =
+    HElement "hr" attrs []
+
+
+meta : List (Attribute msg) -> Html msg
+meta attrs =
+    HElement "meta" attrs []
+
+
+link : List (Attribute msg) -> Html msg
+link attrs =
+    HElement "link" attrs []
+
+
+area : List (Attribute msg) -> Html msg
+area attrs =
+    HElement "area" attrs []
+
+
+base : List (Attribute msg) -> Html msg
+base attrs =
+    HElement "base" attrs []
+
+
+col : List (Attribute msg) -> Html msg
+col attrs =
+    HElement "col" attrs []
+
+
+embed : List (Attribute msg) -> Html msg
+embed attrs =
+    HElement "embed" attrs []
+
+
+source : List (Attribute msg) -> Html msg
+source attrs =
+    HElement "source" attrs []
+
+
+track : List (Attribute msg) -> Html msg
+track attrs =
+    HElement "track" attrs []
+
+
+wbr : List (Attribute msg) -> Html msg
+wbr attrs =
+    HElement "wbr" attrs []
+
+
+-- ─── Document-structure elements ────────────────────────────────
+body : List (Attribute msg) -> List (Html msg) -> Html msg
+body attrs children =
+    HElement "body" attrs children
+
+
+htmlNode : List (Attribute msg) -> List (Html msg) -> Html msg
+htmlNode attrs children =
+    HElement "html" attrs children
+
+
+headNode : List (Attribute msg) -> List (Html msg) -> Html msg
+headNode attrs children =
+    HElement "head" attrs children
+
+
+title : List (Attribute msg) -> List (Html msg) -> Html msg
+title attrs children =
+    HElement "title" attrs children
+
+
+-- titleNode wraps a raw string directly in <title>.
+titleNode : String -> Html msg
+titleNode s =
+    HElement "title" [] [ HText s ]
+
+
+-- ─── Legacy-compat aliases ──────────────────────────────────────
+-- Kept so older stdlib / example code that referenced the
+-- `*Node` kernel names keeps compiling.
+headerNode : List (Attribute msg) -> List (Html msg) -> Html msg
+headerNode attrs children =
+    HElement "header" attrs children
+
+
+codeNode : List (Attribute msg) -> List (Html msg) -> Html msg
+codeNode attrs children =
+    HElement "code" attrs children
+
+
+mainNode : List (Attribute msg) -> List (Html msg) -> Html msg
+mainNode attrs children =
+    HElement "main" attrs children
+
+
+footerNode : List (Attribute msg) -> List (Html msg) -> Html msg
+footerNode attrs children =
+    HElement "footer" attrs children
+
+
+linkNode : List (Attribute msg) -> Html msg
+linkNode attrs =
+    HElement "link" attrs []
+
+
+-- ─── Special nodes ──────────────────────────────────────────────
+-- styleNode embeds a CSS stylesheet string inside a <style> tag.
+-- The CSS body is a raw text child — the browser's CSS engine does
+-- not HTML-decode it, so it must NOT be escaped.
+styleNode : List (Attribute msg) -> String -> Html msg
+styleNode attrs css =
+    HElement "style" attrs [ HRaw css ]
+
+
+-- doctype wraps the document children in a <!DOCTYPE html> root.
+-- The renderer recognises the `!doctype-wrapper` tag and emits the
+-- DOCTYPE prefix before the children.
+doctype : List (Html msg) -> Html msg
+doctype children =
+    HElement "!doctype-wrapper" [] children
+
+
+-- ─── Rendering (the one FFI boundary) ───────────────────────────
+-- The Sky `Html` ADT is converted to the runtime `VNode` and
+-- serialised to an HTML string by a single hand-audited Go
+-- primitive.  Sky.Live calls the converter internally at the
+-- `view` boundary; `render` is for explicit server-side rendering
+-- (Sky.Http.Server handlers).
+render : Html msg -> String
+render node =
+    Ffi.callPure "htmlRender" [ node ]
+
+
+-- toString is an alias of render, kept for API familiarity.
+toString : Html msg -> String
+toString node =
+    render node
+
+
+-- HTML-escape a text string (for safe interpolation into content).
+escapeHtml : String -> String
+escapeHtml s =
+    Ffi.callPure "htmlEscapeText" [ s ]
+
+
+-- Escape a string for safe use inside a double-quoted attribute.
+escapeAttr : String -> String
+escapeAttr s =
+    Ffi.callPure "htmlEscapeAttr" [ s ]
+
+
+-- Serialise a single attribute to its `key="value"` string form.
+attrToString : Attribute msg -> String
+attrToString attr =
+    Ffi.callPure "htmlAttrToString" [ attr ]

@@ -1,0 +1,283 @@
+module AnalyticsTab exposing (analyticsView)
+
+-- Std.Analytics tab — the product-analytics view for the embedded
+-- console. Rendered by View.sky's content router when the active tab
+-- is `AnalyticsTab`, in BOTH embedded and hub modes (the data is the
+-- host app's own event store, not per-service hub telemetry).
+--
+-- Layout: two summary stat cards (total events, unique identified
+-- users) → an "events by name" frequency panel → a recent-event
+-- stream. Data comes from the parent's /_sky/console/api/analytics
+-- endpoint (see Main.sky fetchAnalytics), which reads the SAME
+-- Std.Analytics store the app writes — the console runs in-process
+-- with the host, so there is no second DB and no env plumbing.
+--
+-- Palette mirrors ErrorsTab.sky so the tab is visually consistent
+-- with the rest of the console.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import State exposing (..)
+
+
+bgPage : Ui.Color
+bgPage =
+    Ui.rgb 20 23 28
+
+
+bgRaised : Ui.Color
+bgRaised =
+    Ui.rgb 20 23 28
+
+
+bgCode : Ui.Color
+bgCode =
+    Ui.rgb 44 50 60
+
+
+border_ : Ui.Color
+border_ =
+    Ui.rgb 53 59 70
+
+
+borderSoft : Ui.Color
+borderSoft =
+    Ui.rgb 42 47 56
+
+
+textPrimary : Ui.Color
+textPrimary =
+    Ui.rgb 240 243 247
+
+
+textSecondary : Ui.Color
+textSecondary =
+    Ui.rgb 197 203 212
+
+
+textMuted : Ui.Color
+textMuted =
+    Ui.rgb 141 150 163
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 126 182 255
+
+
+mono : String
+mono =
+    "ui-monospace, Menlo, monospace"
+
+
+-- ─── Entry point ────────────────────────────────────────────────
+analyticsView : Analytics -> List (Element Msg)
+analyticsView a =
+    [ statRow a
+    , revenuePanel a.revenue
+    , eventsPanel a.counts
+    , recentPanel a.recent
+    ]
+
+
+-- ── revenue (Money summed per currency) ─────────────────────────
+revenuePanel : List CurrencyTotal -> Element Msg
+revenuePanel rows =
+    panel
+        "Revenue by currency"
+        (if List.isEmpty rows then
+            [ emptyState
+                  "No revenue captured — track a Money prop to see totals."
+            ]
+
+        else
+            List.map currencyRowView rows)
+
+
+currencyRowView : CurrencyTotal -> Element Msg
+currencyRowView r =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 60)
+              , Font.size 13
+              , Font.bold
+              , Font.color textMuted
+              , Font.family mono
+              ]
+              (Ui.text r.currency)
+        , Ui.el
+              [ Ui.width Ui.fill
+              , Font.size 15
+              , Font.bold
+              , Font.color textPrimary
+              , Font.family mono
+              ]
+              (Ui.text r.amount)
+        , Ui.el
+              [ Font.size 12, Font.color textMuted, Font.family mono ]
+              (Ui.text (String.fromInt r.count ++ "×"))
+        ]
+
+
+-- ── summary stat cards ──────────────────────────────────────────
+statRow : Analytics -> Element Msg
+statRow a =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 12 ]
+        [ statCard "TOTAL EVENTS" (String.fromInt a.total)
+        , statCard "IDENTIFIED USERS" (String.fromInt a.uniqueUsers)
+        ]
+
+
+statCard : String -> String -> Element Msg
+statCard label value =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.spacing 8
+        , Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 16
+        ]
+        [ Ui.el
+              [ Font.size 11, Font.color textMuted, Font.letterSpacing 5.0e-2 ]
+              (Ui.text label)
+        , Ui.el
+              [ Font.size 28
+              , Font.bold
+              , Font.color textPrimary
+              , Font.family mono
+              ]
+              (Ui.text value)
+        ]
+
+
+-- ── events by name ──────────────────────────────────────────────
+eventsPanel : List EventCount -> Element Msg
+eventsPanel rows =
+    panel
+        "Events by name"
+        (if List.isEmpty rows then
+            [ emptyState "No events captured yet." ]
+
+        else
+            List.map eventCountView rows)
+
+
+eventCountView : EventCount -> Element Msg
+eventCountView r =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.el
+              [ Ui.width Ui.fill
+              , Font.size 13
+              , Font.color textPrimary
+              , Font.family mono
+              ]
+              (Ui.text r.event)
+        , Ui.el
+              [ Font.size 13, Font.bold, Font.color accent, Font.family mono ]
+              (Ui.text (String.fromInt r.count))
+        ]
+
+
+-- ── recent event stream ─────────────────────────────────────────
+recentPanel : List AnalyticsEvent -> Element Msg
+recentPanel rows =
+    panel
+        "Recent events"
+        (if List.isEmpty rows then
+            [ emptyState "Nothing recent to show." ]
+
+        else
+            List.map recentRowView rows)
+
+
+recentRowView : AnalyticsEvent -> Element Msg
+recentRowView e =
+    let
+        who =
+            if e.userId == "" then
+                "anonymous"
+
+            else
+                e.userId
+    in
+        Ui.row
+            [ Ui.width Ui.fill
+            , Ui.paddingXY 0 5
+            , Ui.spacing 12
+            , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+            , Border.color borderSoft
+            ]
+            [ Ui.row
+                  [ Ui.width Ui.fill, Ui.spacing 8 ]
+                  [ Ui.el
+                        [ Font.size 13
+                        , Font.color textSecondary
+                        , Font.family mono
+                        ]
+                        (Ui.text e.event)
+                  , if e.path == "" then
+                        Ui.none
+
+                    else
+                        Ui.el
+                            [ Font.size 12
+                            , Font.color textMuted
+                            , Font.family mono
+                            ]
+                            (Ui.text e.path)
+                  ]
+            , Ui.el
+                  [ Font.size 12, Font.color textMuted, Font.family mono ]
+                  (Ui.text who)
+            ]
+
+
+-- ── shared panel + empty-state helpers (mirror ErrorsTab.sky) ────
+panel : String -> List (Element Msg) -> Element Msg
+panel title children =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 6
+        , Ui.width Ui.fill
+        ]
+        (Ui.el
+            [ Font.size 12
+            , Font.bold
+            , Font.color textMuted
+            , Font.letterSpacing 5.0e-2
+            , Ui.paddingXY 0 4
+            ]
+            (Ui.text (String.toUpper title))
+            :: children)
+
+
+emptyState : String -> Element Msg
+emptyState message =
+    Ui.el
+        [ Ui.padding 20, Ui.centerX, Font.color textMuted, Font.italic ]
+        (Ui.text message)

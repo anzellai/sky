@@ -1,0 +1,41 @@
+-- | Sky.Core.Json.Decode.Pipeline — pipeline-style record decoding
+-- (Layer 3 Sky source).
+--
+-- Compose decoders for record fields one at a time, e.g.
+--
+--     userDecoder : Decoder User
+--     userDecoder =
+--         Decode.succeed makeUser
+--             |> Pipeline.required "id" Decode.int
+--             |> Pipeline.required "name" Decode.string
+--             |> Pipeline.optional "email" Decode.string ""
+module Sky.Core.Json.Decode.Pipeline exposing (required, optional, custom, requiredAt)
+
+import Sky.Ffi as Ffi
+
+
+-- | Decode a required field by name.
+required : String -> Decoder a -> Decoder (a -> b) -> Decoder b
+required =
+    Ffi.kernel "JsonDecP_required"
+
+
+-- | Decode an optional field; fall back to the supplied default
+-- when the field is absent or null.
+optional : String -> Decoder a -> a -> Decoder (a -> b) -> Decoder b
+optional =
+    Ffi.kernel "JsonDecP_optional"
+
+
+-- | Inject a custom decoder into the pipeline (more general than
+-- `required` — the first arg is a Decoder, not a field name).
+custom : Decoder a -> Decoder (a -> b) -> Decoder b
+custom =
+    Ffi.kernel "JsonDecP_custom"
+
+
+-- | Like `required` but takes a path (list of nested keys) into
+-- a deeply-nested object.
+requiredAt : List String -> Decoder a -> Decoder (a -> b) -> Decoder b
+requiredAt =
+    Ffi.kernel "JsonDecP_requiredAt"

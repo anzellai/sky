@@ -1,0 +1,49 @@
+-- | Sky.Core.Path — pure filesystem-path helpers (Layer 3 Sky source).
+--
+-- Operate on `String` paths without touching the filesystem.  Use
+-- `Sky.Core.File` for the effectful side (read / write / exists).
+module Sky.Core.Path exposing (base, dir, ext, isAbsolute, join, safeJoin)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+-- | Join path segments with the platform separator, cleaning the result.
+--
+--     Path.join [ "src", "Main.sky" ] == "src/Main.sky"
+--
+-- Takes ONE argument — the list of segments — not a variadic spine.  The
+-- signature is what makes `Path.join "a" "b"` a Sky type error [E2007]
+-- instead of a `go build` failure: a kernel-qualifier reference with no
+-- declared signature infers as an unconstrained type variable, and the
+-- arity gate cannot fire on a variable.
+join : List String -> String
+join =
+    Ffi.kernel "Path_join"
+
+
+-- | Join `relative` onto `root`, refusing any result that escapes `root`
+-- (`"../../etc/passwd"`).  Use whenever a path segment comes from user input.
+safeJoin : String -> String -> Result Error String
+safeJoin =
+    Ffi.kernel "Path_safeJoin"
+
+
+base : String -> String
+base =
+    Ffi.kernel "Path_base"
+
+
+dir : String -> String
+dir =
+    Ffi.kernel "Path_dir"
+
+
+ext : String -> String
+ext =
+    Ffi.kernel "Path_ext"
+
+
+isAbsolute : String -> Bool
+isAbsolute =
+    Ffi.kernel "Path_isAbsolute"

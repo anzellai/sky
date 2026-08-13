@@ -1,0 +1,168 @@
+-- | Std.Html.Events — typed DOM event handlers for Std.Html (Layer 3 Sky source).
+module Std.Html.Events exposing (..)
+
+-- | Std.Html.Events — typed DOM event handlers for Std.Html.
+--
+-- v0.13 Layer 3: rewritten from Go runtime kernels to Sky source.
+-- Each builder returns an `Attribute msg` carrying a typed `Event
+-- msg` (see Std.Html.Attributes for the ADTs).  The compiler/LSP
+-- now flag a handler-shape mismatch — e.g. binding `onInput` to a
+-- `msg` instead of a `(String -> msg)` — at the call site.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html.Attributes exposing (..)
+
+
+-- ─── Zero-wire-arg events (the Msg dispatches as-is) ────────────
+-- Generic escape hatch: bind any DOM event name to a handler.
+-- Uses `OnRaw` so the handler's type stays decoupled from the
+-- surrounding `Html msg` — `on` accepts a plain Msg OR a
+-- `(payload -> Msg)` form handler.
+on : String -> a -> Attribute msg
+on name handler =
+    EventAttr (OnRaw name handler)
+
+
+onClick : msg -> Attribute msg
+onClick msg =
+    EventAttr (OnMsg "click" msg)
+
+
+-- `onSubmit` accepts a plain Msg OR a `(formData -> Msg)` handler
+-- (the typed-record form pattern — `onSubmit DoSignIn` where
+-- `DoSignIn : LoginForm -> Msg`).  The handler type is decoupled
+-- from the `Attribute msg` param via `OnRaw` so it does NOT leak
+-- into the surrounding `Html msg`.
+onSubmit : a -> Attribute msg
+onSubmit handler =
+    EventAttr (OnRaw "submit" handler)
+
+
+onDblClick : msg -> Attribute msg
+onDblClick msg =
+    EventAttr (OnMsg "dblclick" msg)
+
+
+onFocus : msg -> Attribute msg
+onFocus msg =
+    EventAttr (OnMsg "focus" msg)
+
+
+onBlur : msg -> Attribute msg
+onBlur msg =
+    EventAttr (OnMsg "blur" msg)
+
+
+onMouseOver : msg -> Attribute msg
+onMouseOver msg =
+    EventAttr (OnMsg "mouseover" msg)
+
+
+onMouseOut : msg -> Attribute msg
+onMouseOut msg =
+    EventAttr (OnMsg "mouseout" msg)
+
+
+onMouseDown : msg -> Attribute msg
+onMouseDown msg =
+    EventAttr (OnMsg "mousedown" msg)
+
+
+onMouseUp : msg -> Attribute msg
+onMouseUp msg =
+    EventAttr (OnMsg "mouseup" msg)
+
+
+onContextMenu : msg -> Attribute msg
+onContextMenu msg =
+    EventAttr (OnMsg "contextmenu" msg)
+
+
+onReset : msg -> Attribute msg
+onReset msg =
+    EventAttr (OnMsg "reset" msg)
+
+
+onScroll : msg -> Attribute msg
+onScroll msg =
+    EventAttr (OnMsg "scroll" msg)
+
+
+onSelect : msg -> Attribute msg
+onSelect msg =
+    EventAttr (OnMsg "select" msg)
+
+
+onLoad : msg -> Attribute msg
+onLoad msg =
+    EventAttr (OnMsg "load" msg)
+
+
+onError : msg -> Attribute msg
+onError msg =
+    EventAttr (OnMsg "error" msg)
+
+
+-- ─── Value-carrying events (handler receives the input value) ───
+onInput : (String -> msg) -> Attribute msg
+onInput handler =
+    EventAttr (OnString "input" handler)
+
+
+onChange : (String -> msg) -> Attribute msg
+onChange handler =
+    EventAttr (OnString "change" handler)
+
+
+onKeyDown : (String -> msg) -> Attribute msg
+onKeyDown handler =
+    EventAttr (OnString "keydown" handler)
+
+
+onKeyUp : (String -> msg) -> Attribute msg
+onKeyUp handler =
+    EventAttr (OnString "keyup" handler)
+
+
+onKeyPress : (String -> msg) -> Attribute msg
+onKeyPress handler =
+    EventAttr (OnString "keypress" handler)
+
+
+-- ─── Checkbox state ─────────────────────────────────────────────
+onCheck : (Bool -> msg) -> Attribute msg
+onCheck handler =
+    EventAttr (OnBool "change" handler)
+
+
+-- ─── File / image side-channel events (sky- prefixed) ───────────
+-- The renderer routes `sky-`-prefixed event names through the
+-- data-sky-ev-* side channel; the handler receives the file's
+-- data URL as a String.
+onFile : (String -> msg) -> Attribute msg
+onFile handler =
+    EventAttr (OnString "sky-file" handler)
+
+
+onImage : (String -> msg) -> Attribute msg
+onImage handler =
+    EventAttr (OnString "sky-image" handler)
+
+
+-- ─── File-upload hints (browser-side resize / cap) ──────────────
+-- These are plain attributes the upload side-channel reads — not
+-- events — but they live here next to onFile/onImage for ergonomics.
+fileMaxSize : Int -> Attribute msg
+fileMaxSize n =
+    Attr "data-sky-ev-sky-file-max-size" (String.fromInt n)
+
+
+fileMaxWidth : Int -> Attribute msg
+fileMaxWidth n =
+    Attr "data-sky-ev-sky-file-max-width" (String.fromInt n)
+
+
+fileMaxHeight : Int -> Attribute msg
+fileMaxHeight n =
+    Attr "data-sky-ev-sky-file-max-height" (String.fromInt n)

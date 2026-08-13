@@ -81,10 +81,24 @@ fn every_workflow_declares_jobs_with_steps() {
 
 /// The fan-in must actually fan in.
 ///
-/// `ci-green` is the single required status check: branch protection keys on it,
-/// and it asserts every job in its `needs` succeeded. A job that is NOT in that
-/// list still runs and still shows a red X on the run — but it does not block a
-/// merge, because the required check went green without it.
+/// `ci-green` asserts every job in its `needs` succeeded, and is the check
+/// INTENDED to be the single required one. A job that is NOT in that list still
+/// runs and still shows a red X on the run, but `ci-green` goes green without
+/// it — so once promoted, that job stops blocking merges.
+///
+/// STATE OF THE WORLD, 2026-08-13, because an earlier version of this docstring
+/// asserted the opposite as fact and a Judge caught it: `main` currently has
+/// **no required status checks at all** (`GET /branches/main/protection` returns
+/// `required_status_checks: null`; PR review IS required). `rust-ci.yml`'s own
+/// header describes ci-green as an ADDITIONAL check pending promotion, which is
+/// step 2 of that rollout and lives in repo settings, outside this tree.
+///
+/// So today this test protects a property that is not yet load-bearing. That is
+/// the right time to add it — the alternative is discovering on promotion day
+/// that the list drifted for months — but the claim "in `needs` ⇒
+/// merge-blocking" is FALSE until required checks are enabled, and saying
+/// otherwise would be the same kind of unverified assertion this file exists to
+/// stop.
 ///
 /// So the `needs` list is load-bearing, and it is hand-maintained. Adding a job
 /// and forgetting the one-line `needs` entry produces a gate that reports and
@@ -155,5 +169,94 @@ fn ci_green_needs_every_other_job_in_its_workflow() {
             .map(|s| s.as_str())
             .collect::<Vec<_>>()
             .join("\n  ")
+    );
+}
+
+/// Every harness TIER that has gates must be invoked by something.
+///
+/// This is the general form of a defect found three times in one cycle. Gate
+/// selection is exact tier equality (`harness/mod.rs`: `g.tier ==
+/// o.tier.unwrap_or(Tier::T1)`), so `--tier t1` runs T1 and nothing else. A gate
+/// registered at any other tier is therefore invisible unless some workflow or
+/// script names that tier explicitly.
+///
+/// What that cost, in order of discovery:
+///   * **T2** — 383 behavioural assertions, including the `Dict` key ×
+///     access-shape crossing built after #174's `Dict.foldl` panic reached a
+///     release. Executed by nothing.
+///   * **T3** — `apps-ledger-postgres`, `apps-dispatch-postgres`, `apps-fleet`.
+///     Executed by nothing.
+///   * **T4** — `apps-ffi-scale`, the pre-release FFI-scale benchmark whose
+///     entire purpose is to run at release. Executed by nothing.
+///
+/// Each was registered, budgeted, documented, and dead. The registry even
+/// records falsifying mutations proving some of them CAN fail — proofs against
+/// gates nothing invoked.
+///
+/// A tier nobody runs is indistinguishable from a tier that does not exist, so
+/// this asserts the invocation exists rather than trusting that someone
+/// remembered. It deliberately checks BOTH workflows and scripts: a tier run
+/// only by `preflight-tag.sh` is weaker than one in CI, but it is not dead, and
+/// this test is about deadness.
+#[test]
+fn every_harness_tier_with_gates_is_invoked_somewhere() {
+    let repo = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+
+    // Which tiers the registry actually assigns to gates.
+    let registry = std::fs::read_to_string(repo.join("rust/crates/xtask/src/harness/registry.rs"))
+        .expect("read registry.rs");
+    let mut needed: Vec<&str> = Vec::new();
+    for (marker, flag) in [
+        ("Tier::T1", "t1"),
+        ("Tier::T2", "t2"),
+        ("Tier::T3", "t3"),
+        ("Tier::T4", "t4"),
+    ] {
+        if registry.contains(marker) {
+            needed.push(flag);
+        }
+    }
+    assert!(
+        needed.len() >= 3,
+        "found only {} tier(s) in registry.rs — the scan is wrong, and a test \
+         that inspects nothing passes silently",
+        needed.len()
+    );
+
+    // Everything that could invoke one.
+    let mut haystack = String::new();
+    for dir in ["\u{2e}github/workflows", "scripts"] {
+        let d = repo.join(dir.replace('\u{2e}', "."));
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.filter_map(|e| e.ok()) {
+            let p = e.path();
+            if p.is_file() {
+                if let Ok(t) = std::fs::read_to_string(&p) {
+                    haystack.push_str(&t);
+                    haystack.push('\n');
+                }
+            }
+        }
+    }
+    assert!(
+        haystack.contains("--tier"),
+        "no `--tier` invocation found in any workflow or script — the file scan \
+         is broken, not the repo"
+    );
+
+    let dead: Vec<&str> = needed
+        .iter()
+        .copied()
+        .filter(|t| !haystack.contains(&format!("--tier {t}")))
+        .collect();
+    assert!(
+        dead.is_empty(),
+        "harness tier(s) have registered gates but are invoked by NO workflow \
+         and NO script: {}\n\n\
+         Gate selection is exact tier equality, so those gates run nowhere — \
+         registered, budgeted, and dead. Add a `harness --tier <t>` invocation \
+         to a workflow (or, for a pre-release tier, to release.yml), or move the \
+         gates to a tier that runs.",
+        dead.join(", ")
     );
 }
