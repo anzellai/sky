@@ -11,6 +11,43 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.20.2 — the gates that only ran at release (2026-08-13)
+
+No compiler, stdlib or runtime change. Every entry here is CI enforcement, and
+it is tagged so the line has a clean marker rather than because a user gains a
+feature: `sky upgrade` from v0.20.1 changes nothing you can observe in a build.
+
+Recorded because the omissions were real, and each is now something that goes
+RED rather than something someone remembers.
+
+### Gates that existed and did not run
+
+- **The editor-parity corpus could shrink for a whole cycle.** `LSP_EXPECTED`
+  pins it at 49 cases, but that assertion lived in a harness body that only
+  `--tier t1` executes — a RELEASE invocation. Per-push CI calls `xtask lsp`
+  directly and checked only that the cases which RAN passed, so deleting cases
+  stayed green until tag day. Now enforced per-push; zero cases and a missing
+  report are failures too.
+- **A killed build reported itself as a rejected program.** The corpus runner
+  kept only a boolean status and discarded the exit code and signal, so four
+  `go build`s killed on a constrained runner read as a codegen regression in the
+  `record_update` family and took three CI rounds to tell apart. It now names
+  the signal and says NO DIAGNOSTIC when the build emitted no error of its own.
+- **The required-check fan-in could only see one workflow file.** A second
+  push-triggered workflow with a failing job would not have blocked a merge.
+
+### Gates that could not be trusted
+
+- **An ordinary `cargo test` rewrote a tracked proof ledger.** The falsifier
+  proof timestamp refreshed on any test run, so it measured when someone last
+  ran the tests rather than when the mutation was last proven — and `git status`
+  after testing was never clean. `SKY_PROOF_LEDGER` redirects it; the suite now
+  leaves the tree clean.
+- **A reject witness was red for two reasons.** `ambiguous_type_name.sky` called
+  a name that does not exist, so it carried an unknown-name defect alongside the
+  ambiguous-type defect it exists to pin. The declared-codes-subset rule kept it
+  green either way.
+
 ## v0.20.1 — the paragraph that was not a paragraph, and the tier nobody ran (2026-08-13)
 
 ### Fixed — `Std.Ui`
