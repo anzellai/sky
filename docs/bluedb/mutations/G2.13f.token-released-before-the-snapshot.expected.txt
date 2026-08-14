@@ -3,4 +3,4 @@ PROBE gate=G2.13f state=FAIL root=<scratch-worktree>
   TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin did not report a passing `go test -json` event (it FAILED)
   TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin: === RUN   TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin
   TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin:     audit_test.go:948: pebbleReader.Close() was about to hand its watermark token back with 1 pebble snapshot(s) STILL OPEN. The token is what the close drain counts, so between that release and snap.Close() the engine believes no reader is live while pebble still has the snapshot registered — Close's phase 3 then runs e.db.Close() under it and reports "leaked snapshots". Close the snapshot FIRST; release the token LAST.
-  TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin: --- FAIL: TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin (0.15s)
+  TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin: --- FAIL: TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin (0.16s)
