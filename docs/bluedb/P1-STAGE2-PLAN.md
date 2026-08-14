@@ -97,8 +97,12 @@ all 39 prior-art files. The only persisted bound is `gc.go:124`'s
 > `comparerName = "skydb.mvcc.v1"`, breaks the leading-byte-stripping invariant
 > `base.CheckComparer` enforces, and requires `skydb.mvcc.v2` plus a full store
 > rewrite. The bug is in the caller. **Stage 2 must not modify `comparer.go` or
-> `keys.go` at all** — enforce with `git diff --exit-code` on both as a
-> pre-commit check.
+> `keys.go` at all** — enforced (since 2026-08-14) by a pinned Stage-1 content
+> sha256 for both files in
+> `rust/crates/xtask/src/bluedb_gates/frozen_stage1.rs`, checked by `cargo
+> test`. The `git diff --exit-code` pre-commit check this line used to ask for
+> was never written, and a guard that lives outside the repository could not
+> have held the plan's #1 risk anyway.
 
 **N1b, same commit:** `scanPrefixMaterialize` (`txn.go:632-637`) never checks
 `cur.Err()`, so the `n ≥ 31` regime returns an empty collection with no error.
@@ -341,9 +345,17 @@ with the exact-count assertion. This makes discrimination structural and gives
   **before** the crash corpus lands.
 - `--verify-mutations` has no budget at all; seven mutations on one gate is 14
   probes, each preceded by a `cargo build` in the worktree.
-- G0.1's title claims "matches a fresh run"; its body checks only the banner and
+- ~~G0.1's title claims "matches a fresh run"; its body checks only the banner and
   a `body-sha256`. The fresh-run comparison lives in `--check`, which nothing
-  invokes. Narrow the title AND wire `--check` (both, not either).
+  invokes. Narrow the title AND wire `--check` (both, not either).~~
+  **CLOSED (title) / NOT IMPLEMENTABLE (`--check`), 2026-08-14.** The title now
+  reads "STATUS.md is generated output: GENERATED banner + a body-sha256 that
+  matches its body (hand edits detected)" — what the body proves and no more.
+  Wiring `--check` INTO the gate is not possible in that position and the
+  instruction to do both was mistaken: the fast tier regenerates `STATUS.md` as
+  part of the same invocation, so a comparison taken from inside a gate compares
+  the file with the file the same process just wrote. `--check` stays what it is
+  — a separate top-level invocation for CI to run against a committed tree.
 - Nothing asserts a declared mutation's patch file exists — 39 are unauthored
   today. Add a test for non-pending gates only.
 
@@ -498,7 +510,17 @@ ratchet working. Do not silence it, and do not narrow `p1_engine` off
 ## Risks, ranked
 
 1. **Someone fixes N1 in `skydbSplit`.** Irreversible under a frozen comparer
-   name. Guard: `git diff --exit-code` on `comparer.go` and `keys.go`.
+   name. ~~Guard: `git diff --exit-code` on `comparer.go` and `keys.go`.~~
+   **MECHANISED 2026-08-14.** The `git diff --exit-code` guard was never
+   implemented, and would not have been durable if it had been — it lives
+   outside the repository, runs on one machine, and is silent when skipped. The
+   #1 risk was held off by evidence (someone reading a diff), not by a
+   mechanism. It is now
+   `bluedb_gates::frozen_stage1::the_frozen_key_format_files_have_not_moved_since_stage_1`:
+   the Stage-1 (`bb34a667`) content sha256 of **both** files, pinned as a
+   constant and compared by `cargo test`, with the failure message spelling out
+   that changing them is a format break requiring `skydb.mvcc.v2` plus a full
+   store rewrite — never a bug fix.
 2. **N4's drain deadlocks** (D1) or leaves `Close` unretryable (D10).
 3. **N3's latch mis-scopes** — silences too much (breaks acked⇒durable) or too
    little (still crashes on background fatals). Needs the two-sided test pair:

@@ -14,6 +14,7 @@
 //! The countermeasure to "a fresh or compacted session inherits CLAIMS": goal
 //! status is COMPUTED by running the gates, never read from prose.
 
+pub mod frozen_stage1;
 pub mod gates_g0;
 pub mod gates_g2;
 pub mod gates_g2_13;
