@@ -196,7 +196,21 @@ func (tx *Txn) recordPoint(userKey []byte, ts HLC, present bool) {
 // WitnessCollection records a collection-level fallback witness (§2.2): any change to coll
 // in the window conflicts. The coarsest safe witness — used when even the index is unknown
 // (e.g. a full-collection predicate over an unsupported colType).
-func (tx *Txn) WitnessCollection(coll CollID) { tx.collWitness[coll] = true }
+//
+// Defect H3b: like recordPoint, it records NOTHING once the reader has latched an I/O
+// error. A collection witness is a claim about a scan the body actually performed — "I read
+// this collection at readTs, conflict me against changes to it". After a failed read the
+// body did NOT read it, and the witness is then strictly WORSE than nothing: it looks like a
+// satisfied dependency to validate() (no concurrent change to the collection ⇒ pass), so it
+// actively certifies a view that was never observed. The rows the scan could not read are
+// not in the window at all — they are OLD — so no window-based witness can catch them. Only
+// refusing the read-set entry, plus Commit's fail-closed check, is sound.
+func (tx *Txn) WitnessCollection(coll CollID) {
+	if tx.reader.Err() != nil {
+		return
+	}
+	tx.collWitness[coll] = true
+}
 
 // Put buffers an upsert (§1.3). newIndex = indexer(userKey, value); oldIndex is derived once
 // from the pre-image at readTs (§1.4). Last-write-wins within the txn.
@@ -262,12 +276,18 @@ func (tx *Txn) indexCoords(userKey, record []byte) []IndexCoord {
 // (validation failed — the driver retries), a durability error, or nil. Idempotent after the
 // first call; Close()s the reader.
 //
-// Defect H3 — FAIL CLOSED. If any point read underneath this txn hit an I/O error, the
-// body ran against a view that reported rows as absent without having read them. Nothing
-// downstream can recover that: the read-set no longer describes what the body saw, and
-// validate() would pass it. So the error is returned BEFORE e.Commit is reached and no
-// write is funnelled. The error is deliberately not ErrConflict — a retry against the same
-// unreadable block would loop, and Transact propagates a non-conflict error immediately.
+// Defect H3 / H3b — FAIL CLOSED. If any read underneath this txn hit an I/O error — a
+// point read (H3) or a scan (H3b) — the body ran against a view that reported rows as
+// absent, or a collection as empty, without having read them. Nothing downstream can
+// recover that: the read-set no longer describes what the body saw, and validate() would
+// pass it. So the error is returned BEFORE e.Commit is reached and no write is funnelled.
+// The error is deliberately not ErrConflict — a retry against the same unreadable block
+// would loop, and Transact propagates a non-conflict error immediately.
+//
+// This ONE check covers both surfaces because both latch on the same reader (reader.go's
+// err field). That is deliberate: a second, scan-specific flag checked at a second place
+// would be a mechanism whose next sibling surface could again be forgotten — which is
+// exactly how H3b survived H3.
 func (tx *Txn) Commit() error {
 	if tx.done {
 		return nil
@@ -571,9 +591,23 @@ func backoff(attempt int) {
 // every row under the collection's data-key prefix with the write-set merged in. Pairing the
 // witness with the materialization in one method makes the read-set contract structural — a
 // txn-Query can never do a bare reader.Iterate that records nothing.
+//
+// Defect H3b — THE ORDER OF THE TWO STATEMENTS IS THE CONTRACT. The witness is recorded
+// AFTER the materialization and only if it succeeded. Witnessing first meant a scan that
+// failed on I/O still left `collWitness[coll] = true` in the read-set: an empty collection
+// recorded as a WITNESSED FACT. That reads to validate() as a satisfied dependency, so the
+// txn that concluded "no such row" from a scan it could not perform commits its INSERT over
+// the row that was there. Recording nothing is the sound answer; Commit fails closed on the
+// reader's latched error (which the cursor's failure has already set), so the missing entry
+// is never consulted. Ordering within the body is otherwise immaterial — readTs is pinned at
+// Begin and the witness is evaluated over the (readTs, commitTs] window at commit time.
 func (tx *Txn) ScanCollection(coll CollID, prefix []byte) Cursor {
+	cur := tx.scanPrefixMaterialize(prefix)
+	if cur.Err() != nil {
+		return cur
+	}
 	tx.WitnessCollection(coll)
-	return tx.scanPrefixMaterialize(prefix)
+	return cur
 }
 
 // scanPrefixMaterialize returns an ordered, write-set-merged cursor over every visible row whose
@@ -602,6 +636,13 @@ func (tx *Txn) materializeScan(prefix []byte, cur Cursor) Cursor {
 	scanErr := cur.Err()
 	cur.Close()
 	if scanErr != nil {
+		// Defect H3b: also poison the READER, not just the returned cursor. A cursor
+		// produced by tx.reader.Iterate has already latched on the way through
+		// pebbleCursor.fail; this covers the other arm — a base cursor from anywhere else
+		// (an overlay, a future index-backed scan, a test's stand-in). materializeScan is a
+		// Txn method, so a failed base scan it consumed IS a failed read of THIS
+		// transaction, and Txn.Commit's existing check is what must see it.
+		tx.reader.latch(scanErr)
 		return &sliceCursor{i: -1, err: scanErr}
 	}
 

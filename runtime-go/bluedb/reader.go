@@ -16,13 +16,22 @@ type pebbleReader struct {
 	tok    ReaderToken
 	reg    *watermarkRegistry
 
-	// err latches the FIRST I/O error observed by a point read (defect H3). Get's
-	// (value, commitTs, ok) shape has no error channel, so an unreadable SSTable would
-	// otherwise be reported as ok=false — indistinguishable from an absent key. It is
+	// err latches the FIRST I/O error observed by ANY read taken through this reader —
+	// a point read (defect H3) or a scan (defect H3b). Get's (value, commitTs, ok) shape
+	// has no error channel and a Cursor that stopped early is shaped exactly like an
+	// exhausted one, so an unreadable SSTable would otherwise be reported as ok=false /
+	// zero rows — indistinguishable from an absent key / an empty collection. It is
 	// latched (never cleared) so a single transient read failure anywhere in the txn's
-	// life poisons the whole reader: Txn.Commit consults it and fails closed. Iterate's
-	// errors do NOT land here — a Cursor has its own Err() and materializeScan already
-	// surfaces it (defect N1b).
+	// life poisons the whole reader: Txn.Commit consults it and fails closed.
+	//
+	// Defect H3b — WHY SCAN ERRORS LAND HERE AND NOT ONLY ON THE CURSOR. A Cursor keeps
+	// its own Err() (which cursor failed, and why: that is per-cursor diagnosis and is
+	// unchanged). But the commit-boundary question is transaction-scoped — "may this
+	// txn's read-set be trusted?" — and a cursor is a transient object the body creates,
+	// drains and drops. An error reachable ONLY through an object the caller may discard
+	// cannot be a commit guarantee; that is verbatim the argument H3 made for Get, and
+	// ScanCollection is the exported query surface it was not applied to. So a failed
+	// scan poisons the reader too, and Txn.Commit's single existing check covers both.
 	err error
 }
 
@@ -30,9 +39,10 @@ var _ Reader = (*pebbleReader)(nil)
 
 func (r *pebbleReader) ReadTs() HLC { return r.readTs }
 
-// Err reports the first I/O error a point read on this reader hit, or nil. See the err
-// field: a non-nil Err means at least one Get's "absent" answer is NOT evidence of
-// absence, so every consumer of this reader must fail closed rather than act on it.
+// Err reports the first I/O error a read on this reader hit — point read or scan — or
+// nil. See the err field: a non-nil Err means at least one Get's "absent" answer is NOT
+// evidence of absence, or at least one scan's row set is NOT evidence of the collection's
+// contents, so every consumer of this reader must fail closed rather than act on it.
 func (r *pebbleReader) Err() error { return r.err }
 
 // Close releases this reader's pinned view. THE ORDER OF THE TWO STATEMENTS IS THE
@@ -129,14 +139,27 @@ func (r *pebbleReader) Get(userKey []byte) (value []byte, commitTs HLC, ok bool)
 	return out, ts, true
 }
 
-// latch records the FIRST point-read I/O error on this reader. First-wins: the earliest
-// failure is the one that explains any downstream "absent", and a later error must not
-// overwrite it (nor must a later SUCCESS clear it — a reader that has once lied about
-// absence stays poisoned for its whole life, because the read-set it fed is already built).
+// latch records the FIRST read I/O error on this reader (point read or scan). First-wins:
+// the earliest failure is the one that explains any downstream "absent" / "empty", and a
+// later error must not overwrite it (nor must a later SUCCESS clear it — a reader that has
+// once lied about absence stays poisoned for its whole life, because the read-set it fed is
+// already built). A nil error is NOT a latch: pebbleCursor.Next calls this with
+// iter.Error() on every exhaustion, and clean exhaustion is the overwhelmingly common case.
 func (r *pebbleReader) latch(err error) {
+	if err == nil {
+		return
+	}
 	if r.err == nil {
 		r.err = err
 	}
+}
+
+// failedCursor returns a cursor that is born failed, latching the reason on the reader
+// first. Every "this scan cannot run" exit in Iterate goes through it, so no such exit can
+// produce a cursor whose error is invisible at the commit boundary (defect H3b).
+func (r *pebbleReader) failedCursor(err error) Cursor {
+	r.latch(err)
+	return &pebbleCursor{err: err, owner: r}
 }
 
 // Iterate returns an ordered, snapshot-consistent cursor over distinct user-keys
@@ -173,14 +196,14 @@ func (r *pebbleReader) Iterate(prefix []byte) Cursor {
 	// inside lower, upward); it exists so any future bound-construction regression is
 	// loud instead of returning a wrong-but-plausible empty result.
 	if skydbCompare(lower, upper) >= 0 {
-		return &pebbleCursor{err: fmt.Errorf(
-			"bluedb: inverted data-scan bounds for prefix %x: [% x, % x)", prefix, lower, upper)}
+		return r.failedCursor(fmt.Errorf(
+			"bluedb: inverted data-scan bounds for prefix %x: [% x, % x)", prefix, lower, upper))
 	}
 	iter, err := r.snap.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
-		return &pebbleCursor{err: err}
+		return r.failedCursor(err)
 	}
-	return &pebbleCursor{iter: iter, readTs: r.readTs, lower: lower}
+	return &pebbleCursor{iter: iter, readTs: r.readTs, lower: lower, owner: r}
 }
 
 // dataScanUpper returns the exclusive upper bound for a data-keyspace scan over
@@ -240,9 +263,30 @@ type pebbleCursor struct {
 	curVal []byte
 	curTs  HLC
 	err    error
+
+	// owner is the reader this cursor scans through, or nil for a cursor built outside a
+	// reader (deadReader's). Defect H3b: a scan failure is latched on it as well as kept
+	// here, because a cursor's Err() is only as good as the caller's discipline in reading
+	// it, while the reader's latch is what Txn.Commit already consults.
+	owner *pebbleReader
 }
 
 var _ Cursor = (*pebbleCursor)(nil)
+
+// fail records a scan error on BOTH this cursor (per-cursor diagnosis: which scan failed)
+// and the owning reader (per-transaction poison: the commit boundary's fail-closed check).
+// A nil error is a no-op — Next calls this on every exhaustion, clean or not.
+func (c *pebbleCursor) fail(err error) {
+	if err == nil {
+		return
+	}
+	if c.err == nil {
+		c.err = err
+	}
+	if c.owner != nil {
+		c.owner.latch(err)
+	}
+}
 
 func (c *pebbleCursor) Next() bool {
 	if c.err != nil || c.iter == nil {
@@ -257,7 +301,7 @@ func (c *pebbleCursor) Next() bool {
 			c.iter.SeekGE(append(append([]byte(nil), c.lastPrefix...), sentinel))
 		}
 		if !c.iter.Valid() {
-			c.err = c.iter.Error()
+			c.fail(c.iter.Error())
 			return false
 		}
 		k := c.iter.Key()
@@ -270,7 +314,7 @@ func (c *pebbleCursor) Next() bool {
 			// No version <= readTs for this prefix (and none after) — but there may be
 			// a later prefix; continue jumps via lastPrefix.
 			if !c.iter.Valid() {
-				c.err = c.iter.Error()
+				c.fail(c.iter.Error())
 				return false
 			}
 			continue
@@ -289,6 +333,16 @@ func (c *pebbleCursor) Next() bool {
 			continue
 		}
 		v := c.iter.Value()
+		if e := c.iter.Error(); e != nil {
+			// Defect H3b, the value arm — the exact sibling of Get's post-Value() check.
+			// A lazily-fetched value can fail its block read AFTER positioning succeeded,
+			// and pebble hands back an empty slice when it does. Falling through would read
+			// len(v) == 0 as markerTombstone's neighbour and `continue` — laundering "this
+			// block could not be read" into "this row was deleted", which is the same lie as
+			// H3's absent, one row at a time and with no cursor error to show for it.
+			c.fail(e)
+			return false
+		}
 		if len(v) == 0 || v[0] == markerTombstone {
 			continue // tombstoned as-of readTs — skip
 		}

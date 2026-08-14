@@ -107,13 +107,15 @@ type Reader interface {
 	// the given prefix (nil ⇒ the whole data keyspace), newest visible version per
 	// distinct user-key, tombstones skipped.
 	Iterate(prefix []byte) Cursor
-	// Err reports the first I/O error a point read on this reader hit, latched, or nil.
-	// It mirrors Cursor.Err(): Get's three-value shape has no error channel, so without
-	// this an unreadable block is indistinguishable from an absent key. Consumers MUST
-	// fail closed on a non-nil Err rather than treat any Get's ok=false as absence —
-	// Txn.Commit does exactly that (an I/O error laundered into "absent" is how a
-	// swallowed error becomes an unwanted INSERT). Iterate's errors are reported by the
-	// returned Cursor's own Err(), not here.
+	// Err reports the first I/O error ANY read on this reader hit — a Get (defect H3) or
+	// a scan taken through Iterate (defect H3b) — latched, or nil. Get's three-value shape
+	// has no error channel and a Cursor that stopped early is shaped exactly like an
+	// exhausted one, so without this an unreadable block is indistinguishable from an
+	// absent key or an empty collection. Consumers MUST fail closed on a non-nil Err
+	// rather than treat any ok=false / empty scan as evidence — Txn.Commit does exactly
+	// that (an I/O error laundered into "absent" is how a swallowed error becomes an
+	// unwanted INSERT). The Cursor keeps its own Err() as well: that is per-cursor
+	// diagnosis, this is the per-transaction verdict.
 	Err() error
 	ReadTs() HLC
 	// Close unregisters this reader's watermark token and releases the pinned view.

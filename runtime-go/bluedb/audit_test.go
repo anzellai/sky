@@ -2270,3 +2270,210 @@ func TestAuditS1ChangelogTailFailsClosedOnACorruptKey(t *testing.T) {
 			"caller can mistake a truncated tail for a complete one.", len(got))
 	}
 }
+
+// TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary pins defect H3b — the LIVE SIBLING
+// that H3's fix left open.
+//
+// H3 made Txn.Commit fail closed on tx.reader.Err(). But reader.go documented that error
+// as POINT READS ONLY ("Iterate's errors do NOT land here — a Cursor has its own Err()"),
+// so an I/O error inside Txn.ScanCollection surfaced on Cursor.Err() and nowhere else, and
+// the transaction committed anyway. ScanCollection is the exported query surface and, since
+// the Stage-2 excision of the range paths, the only live arm of the serializability claim.
+//
+// The consequence is verbatim the one H3's own docstring forbids, one method over: the scan
+// returns zero rows because a block could not be read, the body reads that as "the
+// collection has no such row", inserts, and Commit returns nil. The row that was there is
+// gone. Two things made it invisible:
+//
+//   - Cursor.Err() is a per-cursor object the body creates, drains and drops. An error
+//     reachable only through it is a guarantee about the caller's discipline, not about the
+//     store.
+//   - ScanCollection recorded collWitness[coll] BEFORE the scan, so a FAILED scan still left
+//     an empty collection in the read-set as a witnessed fact — which validate() then finds
+//     satisfied (no concurrent change to the collection ⇒ pass). The rows the scan could not
+//     read are OLD; no (readTs, commitTs] window witness can ever catch them.
+//
+// The fix reuses H3's mechanism rather than inventing a second one: a scan failure latches on
+// the same reader.err, so Txn.Commit's single existing check covers both surfaces, and the
+// witness is recorded only after a scan that succeeded.
+//
+// FIXTURE — the fault window is the SCAN ONLY, and that is load-bearing, not incidental.
+// Txn.Put reads a pre-image through reader.Get (ensurePreimage), which under a still-armed
+// injector would latch via the H3 path and make this test pass against the UNFIXED scan
+// path — vacuous, and vacuous in exactly the way this phase has already been burned by. So
+// the injector is armed immediately before the scan and disarmed immediately after: a
+// TRANSIENT fault, which is also the realistic one. The pre-image read then SUCCEEDS and
+// finds the row, so the read-set is entirely well-formed and validate() passes it — the
+// commit is stopped by nothing but the scan's latched error.
+//
+// The other three fixture conditions are H3's, for the same reasons: a 256 KiB memTableSize
+// plus an explicit Flush so the rows live in an SSTable; a REOPEN so the block cache is cold;
+// and ~800 KiB of padding so Open's own meta reads cannot warm the rows' blocks. Both the
+// injector count and the scan's own row count are asserted, so a fixture that regresses into
+// serving from cache fails loudly instead of passing on nothing.
+func TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary(t *testing.T) {
+	const coll = CollID(7)
+	const collName = "orders"
+	const targetPk = "pk0200" // mid-keyspace: not in the block Open's meta reads warm
+	const val = "row-that-exists"
+
+	key := dataUserKey(collName, targetPk)
+	prefix := collPrefix(collName)
+
+	var armed atomic.Bool
+	var injected atomic.Int64
+	inj := errorfs.InjectorFunc(func(op errorfs.Op) error {
+		isRead := op.Kind == errorfs.OpFileRead || op.Kind == errorfs.OpFileReadAt
+		if armed.Load() && isRead && strings.HasSuffix(op.Path, ".sst") {
+			injected.Add(1)
+			return errorfs.ErrInjected
+		}
+		return nil
+	})
+	fs := errorfs.Wrap(vfs.NewMem(), inj)
+
+	clk := &fakeClock{}
+	clk.set(3000)
+	cfg := config{dir: crashDir, fs: fs, wallClock: clk.fn(), memTableSize: 256 << 10}
+
+	// Write the collection among enough padding to fill many blocks, then flush.
+	e1, err := openWith(cfg)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	padding := strings.Repeat("x", 2048)
+	for i := 0; i < 400; i++ {
+		pk := fmt.Sprintf("pk%04d", i)
+		if pk == targetPk {
+			put(t, e1, string(dataUserKey(collName, pk)), val)
+			continue
+		}
+		put(t, e1, string(dataUserKey(collName, pk)), padding)
+	}
+	if err := e1.db.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	// Sanity gate on the WRITING engine (its cache is discarded at Close, so this cannot
+	// warm the reader below): the scan really does return the row. Without it, the armed
+	// scan's "empty" could just as well mean the fixture never stored anything.
+	rOK := e1.snapshotAt(e1.NowTs())
+	cOK := rOK.Iterate(prefix)
+	okRows := 0
+	sawTarget := false
+	for cOK.Next() {
+		okRows++
+		if string(cOK.Key()) == string(key) && string(cOK.Value()) == val {
+			sawTarget = true
+		}
+	}
+	cOKErr := cOK.Err()
+	cOK.Close()
+	rOK.Close()
+	if cOKErr != nil || okRows != 400 || !sawTarget {
+		t.Fatalf("fixture: unfaulted scan of %q returned %d rows (target seen: %v, err %v) — want 400 incl. %q",
+			collName, okRows, sawTarget, cOKErr, key)
+	}
+	if err := e1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Reopen: a fresh block cache, so the flushed rows must be re-read from the file.
+	e, err := openWith(cfg)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() {
+		armed.Store(false) // never tear down under injection
+		_ = e.Close()
+	}()
+
+	// ── The transaction. The body is the canonical scan-then-insert: "if the collection
+	// has no such row, insert one". Under the fault the scan cannot answer, so the only
+	// sound outcome is an error and NO write. ──
+	var bodyRan int
+	var scanRows int
+	var scanSawTarget bool
+	var scanErr error
+	txErr := e.Transact(func(tx *Txn) error {
+		bodyRan++
+		armed.Store(true)
+		cur := tx.ScanCollection(coll, prefix)
+		rows, saw := 0, false
+		for cur.Next() {
+			rows++
+			if string(cur.Key()) == string(key) {
+				saw = true
+			}
+		}
+		cerr := cur.Err()
+		cur.Close()
+		// Disarm INSIDE the body: the fault is transient and covers the scan only, so the
+		// Put's pre-image read below succeeds. See the fixture note above — leaving it armed
+		// would route this test through H3's already-fixed point-read path.
+		armed.Store(false)
+		if bodyRan == 1 {
+			scanRows, scanSawTarget, scanErr = rows, saw, cerr
+		}
+		if !saw {
+			return tx.Put(key, []byte("INSERTED-OVER-AN-IO-ERROR"))
+		}
+		return nil
+	})
+
+	// ── The fixture rule: prove the fault was REACHED, not merely armed. ──
+	// An injection test that cannot prove it injected is indistinguishable from one that
+	// passed because nothing happened. Fatalf, not Errorf: at zero injections every
+	// assertion below is meaningless and would mis-attribute a cache hit to the fix.
+	if bodyRan == 0 {
+		t.Fatalf("Transact never ran the body — the test proves nothing about the commit boundary")
+	}
+	if n := injected.Load(); n == 0 {
+		t.Fatalf("the SSTable-read injector fired ZERO times — the armed ScanCollection was served "+
+			"from the block cache or the memtable and never touched a file, so this test proves "+
+			"NOTHING. Fix the fixture (padding, flush, reopen), do not weaken the assertions. "+
+			"(the scan returned %d rows)", scanRows)
+	}
+	if scanSawTarget || scanRows != 0 {
+		t.Fatalf("ScanCollection under an injected SSTable read fault returned %d rows (target seen: "+
+			"%v) — the scan was served from the block cache / memtable and never touched a file, so "+
+			"this test proves NOTHING. Fix the fixture, do not weaken the assertions.",
+			scanRows, scanSawTarget)
+	}
+	// The cursor flag. Pre-existing (defect N1b already surfaced it here), so this is a
+	// fixture check, not the thing under test — the point of H3b is that this flag alone
+	// never reached the commit boundary. Errorf, so the two assertions that follow still run.
+	if scanErr == nil {
+		t.Errorf("ScanCollection swallowed an injected SSTable read fault: 0 rows with Err() == nil — "+
+			"an I/O error is INDISTINGUISHABLE from collection %q being empty", collName)
+	} else if !errors.Is(scanErr, errorfs.ErrInjected) {
+		t.Errorf("ScanCollection surfaced %v, want the injected sentinel %v", scanErr, errorfs.ErrInjected)
+	}
+
+	// ── Assertion 1 (the consequence, not the flag): the txn FAILS rather than inserting. ──
+	// Errorf, NOT Fatalf: assertion 2 below shows what the commit actually did to the store,
+	// and it must still run under the mutation. A Fatalf here would report only "committed"
+	// and never that the durable row was clobbered.
+	if txErr == nil {
+		t.Errorf("Transact COMMITTED under an injected SCAN fault: the body saw collection %q as "+
+			"empty because a block could not be read, and inserted over row %q. Commit must fail "+
+			"closed on the scan's error the same way it does on a point read's (defect H3b).",
+			collName, key)
+	} else if !errors.Is(txErr, errorfs.ErrInjected) {
+		t.Errorf("Transact failed with %v, want the injected read error propagated (a conflict/retry "+
+			"would loop against the same unreadable block)", txErr)
+	}
+
+	// ── Assertion 2: the durable row is untouched — no insert was laundered through. ──
+	after := e.snapshotAt(e.NowTs())
+	defer after.Close()
+	av, _, aok := after.Get(key)
+	if !aok {
+		t.Errorf("row %q vanished across the faulted txn", key)
+	} else if string(av) != val {
+		t.Errorf("row %q = %q after the faulted txn, want %q — the failed SCAN was laundered into "+
+			"an INSERT that overwrote a committed row", key, av, val)
+	}
+	if err := after.Err(); err != nil {
+		t.Errorf("post-fault reader reports Err() = %v, want nil", err)
+	}
+}
