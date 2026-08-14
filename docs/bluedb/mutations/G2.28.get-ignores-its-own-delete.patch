@@ -1,0 +1,22 @@
+diff --git a/runtime-go/bluedb/txn.go b/runtime-go/bluedb/txn.go
+index 58dcefcc..486133ef 100644
+--- a/runtime-go/bluedb/txn.go
++++ b/runtime-go/bluedb/txn.go
+@@ -143,10 +143,13 @@ func (tx *Txn) ReadTs() HLC { return tx.readTs }
+ // overlaid key (the txn's own buffered write) is NOT added to the read-set — the txn's own
+ // write is not a dependency (this is what makes self-upsert not self-conflict, §7.5).
+ func (tx *Txn) Get(userKey []byte) (value []byte, ok bool) {
+-	if bw, exists := tx.writes[string(userKey)]; exists {
+-		if bw.op == OpDelete {
+-			return nil, false
+-		}
++	// MUTATION G2.28: the overlay answers for a buffered PUT and falls THROUGH for a buffered
++	// DELETE, so a key this transaction has deleted resolves against the begin-snapshot and
++	// the pre-delete row comes back with ok=true. Read-your-own-writes still holds for the
++	// put half, the write-set is still committed correctly, and nothing on the commit path
++	// changes — while insert-if-absent, delete-then-recreate and every in-transaction
++	// idempotency check take the branch for a row the transaction has already removed.
++	if bw, exists := tx.writes[string(userKey)]; exists && bw.op != OpDelete {
+ 		return append([]byte(nil), bw.value...), true
+ 	}
+ 	v, ts, present := tx.reader.Get(userKey)

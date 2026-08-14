@@ -170,6 +170,76 @@ func TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes(t *testing.T) {
 			t.Fatalf("materializeScan swallowed the base-scan error: Err() = %v, want %v", cur.Err(), boom)
 		}
 	})
+
+	// N1c — the SAME leak on the OVERLAY side of the same method.
+	//
+	// The arms above gate the READER's bounds: which committed rows a scan of one
+	// collection may return. `materializeScan` then merges the transaction's own buffered
+	// writes over that result, and the write-set is keyed by the WHOLE user-key across
+	// every collection the transaction has touched — a Persist transaction is
+	// multi-collection by construction (write the order, then read the users). That merge
+	// is a second door onto the same property, and it needs its own prefix test: drop the
+	// `bytes.HasPrefix(key, prefix)` guard and a txn that wrote `orders` and then scanned
+	// `users` gets the order row handed back as a user, with the reader's bounds still
+	// perfectly correct.
+	//
+	// Both halves are asserted, because a guard that rejects EVERYTHING would satisfy the
+	// leak half alone while deleting read-your-own-writes over the scanned collection.
+	// The arm's name carries NO `/`: G2.13a pins its leaves at depth 2 (the `collNameLen=…`
+	// arms) and `every_pinned_set_names_real_tests_at_a_uniform_depth` holds one gate to one
+	// depth. N1b sits at depth 3 because it is G2.13b's, not G2.13a's.
+	t.Run("N1c-write-set-overlay-does-not-leak-across-collections", func(t *testing.T) {
+		clk := &fakeClock{}
+		clk.set(1000)
+		e := openDisk(t, clk.fn())
+
+		put(t, e, string(dataUserKey("users", "u1")), "committed-user")
+
+		tx, err := e.Begin()
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer tx.Abort()
+
+		// A buffered write in ANOTHER collection — the ordinary first half of a Persist
+		// transaction — and one in the collection about to be scanned, which is the
+		// overlay's real job.
+		if err := tx.Put(dataUserKey("orders", "o1"), []byte("buffered-order")); err != nil {
+			t.Fatalf("put orders: %v", err)
+		}
+		if err := tx.Put(dataUserKey("users", "u2"), []byte("buffered-user")); err != nil {
+			t.Fatalf("put users: %v", err)
+		}
+
+		cur := tx.ScanCollection(CollID(4), collPrefix("users"))
+		defer cur.Close()
+		var got []string
+		for cur.Next() {
+			got = append(got, string(cur.Key()))
+		}
+		if err := cur.Err(); err != nil {
+			t.Fatalf("ScanCollection(users): %v", err)
+		}
+
+		usersPrefix := string(collPrefix("users"))
+		for _, k := range got {
+			if !strings.HasPrefix(k, usersPrefix) {
+				t.Fatalf("ScanCollection(users) returned %q, whose key %q is not under the "+
+					"scanned prefix %q — the WRITE-SET OVERLAY leaked a row across the "+
+					"collection boundary (this transaction had buffered it into `orders`), so a "+
+					"multi-collection transaction reads its own writes as rows of whichever "+
+					"collection it happens to scan next", got, k, usersPrefix)
+			}
+		}
+
+		want := []string{string(dataUserKey("users", "u1")), string(dataUserKey("users", "u2"))}
+		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			t.Fatalf("ScanCollection(users) returned %q, want %q — the overlay must still merge "+
+				"this transaction's OWN buffered write for the scanned collection, or the "+
+				"leak assertion above is satisfied by an overlay that merges nothing",
+				got, want)
+		}
+	})
 }
 
 // TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs pins defect N5.
@@ -1524,6 +1594,124 @@ func TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor(t *testing.T) {
 	if _, spilled := e2.recent.after(HLC{WallMs: 53000, Logical: 0}); !spilled {
 		t.Fatalf("a readTs below the raised floor did not report spilled — the floor is not " +
 			"actually diverting those validations to the durable changelog")
+	}
+}
+
+// TestAuditC6bRingSpillRaisesTheFloorItLeftBehind is the ring's OTHER floor-raising site,
+// and the one that is live in every production process.
+//
+// `recentRing.trim` (GC-driven) and the cold-start seed above both raise the floor and
+// both have a fixture. `spillOldest` — the RAM cap, `defaultMaxRingEntries = 100_000`, so
+// ALWAYS on — had none: `pebble_engine.go` says "tests set a small cap via
+// config.maxRingEntries to force the spill path" and no test ever did, which left the
+// function at 0.0% coverage while it ran in every deployment past a hundred thousand
+// commits.
+//
+// The floor is what makes a spill SAFE. Dropping entries from RAM is fine — the durable
+// changelog still holds every one of them — but only if `after(readTs)` then REFUSES to
+// answer for a readTs beneath them, so `processTxn` diverts that one validation to
+// `Changelog.Tail`. Drop the entries without raising the floor and `after` reports
+// `spilled=false` for a window it no longer holds: the committer validates against a
+// window missing every spilled commit, and a transaction whose conflict was among them
+// commits. Under-rejection — a lost update, the same class as N6, reached by RAM pressure
+// rather than a malformed payload.
+//
+// The cap is set to 2 and FOUR commits are driven past the transaction's readTs, so the
+// conflicting one is provably out of the ring by arithmetic rather than by timing.
+func TestAuditC6bRingSpillRaisesTheFloorItLeftBehind(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(71000)
+	e, err := openWith(config{dir: t.TempDir(), wallClock: clk.fn(), maxRingEntries: 2})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer e.Close()
+
+	put(t, e, "spill-read", "v1")
+	put(t, e, "spill-other", "v1")
+
+	// ── The conflict arm ───────────────────────────────────────────────────────────────
+	tx, err := e.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if v, ok := tx.Get([]byte("spill-read")); !ok || string(v) != "v1" {
+		t.Fatalf("fixture: Get(spill-read) = %q,%v want \"v1\",true — the txn must really have "+
+			"read the row for the point dependency below to exist", v, ok)
+	}
+	readTs := tx.ReadTs()
+
+	// The conflicting commit, strictly after the txn's readTs, through the transactional
+	// path so it reaches the ring at all.
+	txnPut(t, e, CollID(1), "spill-read", "v2")
+	// Three more, which push it out of a two-entry ring.
+	txnPut(t, e, CollID(1), "spill-fill-1", "x")
+	txnPut(t, e, CollID(1), "spill-fill-2", "x")
+	txnPut(t, e, CollID(1), "spill-fill-3", "x")
+
+	// The point arm must be the only live one, or the conflict below could be detected by
+	// a different arm of validate() and this would stop being about the window.
+	if len(tx.collWitness) != 0 || len(tx.ranges) != 0 || len(tx.indexWitness) != 0 {
+		t.Fatalf("fixture: this txn carries %d collection witness(es), %d range(s) and %d index "+
+			"witness(es); the point arm must be the only live arm",
+			len(tx.collWitness), len(tx.ranges), len(tx.indexWitness))
+	}
+
+	// The body's conclusion, derived from the value it read.
+	if err := tx.Put([]byte("spill-summary"), []byte("derived-from-v1")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	if err := tx.Commit(); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a transaction that READ spill-read at v1, and then wrote a value derived from "+
+			"it, COMMITTED (err=%v) even though a concurrent commit had superseded spill-read "+
+			"with v2 — a commit the ring had since SPILLED under its %d-entry cap. spillOldest "+
+			"released those entries without raising the floor over them, so after(readTs %+v) "+
+			"answered `not spilled` for a window it no longer holds and the committer never "+
+			"diverted to Changelog.Tail: validation ran against a window missing every spilled "+
+			"commit — under-rejection, a lost update from RAM pressure alone",
+			err, e.recent.maxEntries, readTs)
+	}
+
+	// Non-vacuity: the setup really did drive the readTs below a raised floor. Without
+	// this the arm above would also be satisfied by a run in which nothing ever spilled
+	// and the in-RAM window caught the conflict directly.
+	if _, spilled := e.recent.after(readTs); !spilled {
+		t.Fatalf("fixture: after(readTs %+v) reports the window COMPLETE with %d entr(ies) held "+
+			"under a %d-entry cap — the conflicting commit was never spilled, so the arm above "+
+			"proved nothing about the spill path", readTs, len(e.recent.entries), e.recent.maxEntries)
+	}
+
+	// ── The control: the spill fallback must not refuse a transaction it need not ──────
+	//
+	// Changelog.Tail returns EVERY change above the readTs, so a validator reached through
+	// the spill path sees a strictly larger window than the ring would have held. Without
+	// this arm, "the transaction was refused" is satisfied by a fallback that conflicts
+	// everything it is handed.
+	ctl, err := e.Begin()
+	if err != nil {
+		t.Fatalf("begin control: %v", err)
+	}
+	if v, ok := ctl.Get([]byte("spill-other")); !ok || string(v) != "v1" {
+		t.Fatalf("fixture: control Get(spill-other) = %q,%v want \"v1\",true", v, ok)
+	}
+	ctlReadTs := ctl.ReadTs()
+	txnPut(t, e, CollID(1), "spill-fill-4", "x")
+	txnPut(t, e, CollID(1), "spill-fill-5", "x")
+	txnPut(t, e, CollID(1), "spill-fill-6", "x")
+	txnPut(t, e, CollID(1), "spill-fill-7", "x")
+	if err := ctl.Put([]byte("spill-summary-control"), []byte("derived-from-spill-other")); err != nil {
+		t.Fatalf("control put: %v", err)
+	}
+	if _, spilled := e.recent.after(ctlReadTs); !spilled {
+		t.Fatalf("fixture: the control's readTs %+v did not fall below the floor either, so it "+
+			"never exercised the spill fallback it exists to control for", ctlReadTs)
+	}
+	if err := ctl.Commit(); err != nil {
+		t.Fatalf("control: a transaction whose read-set NOTHING in its (spilled) validation "+
+			"window touched was refused (%v). The Changelog.Tail fallback over-rejects, so the "+
+			"conflict arm above proves nothing — a fallback that returns ErrConflict for every "+
+			"spilled readTs would satisfy it", err)
 	}
 }
 

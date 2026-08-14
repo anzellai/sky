@@ -974,6 +974,28 @@ pub static REGISTRY: &[Gate] = &[
                 expect: "inverted bounds (a silent empty collection): the scan is indistinguishable from a",
                 targets: &["runtime-go/bluedb/reader.go"],
             },
+            // The THIRD regime, and the one on the other side of the same
+            // method. The two mutations above are `reader.go`'s bounds;
+            // `materializeScan` then merges the transaction's own buffered
+            // writes over that result, keyed by whole user-keys across every
+            // collection the transaction has touched. A fifth Judge deleted the
+            // `bytes.HasPrefix(key, prefix)` guard out of that merge: N1's fix
+            // intact, every collNameLen arm green, and a txn that wrote
+            // `orders` and scanned `users` handed the order row back as a user.
+            // The gate's own title says "do not leak rows across collections"
+            // and it was gating one of the two doors.
+            Mutation {
+                id: "G2.13a/write-set-overlay-ignores-the-scanned-prefix",
+                patch: "docs/bluedb/mutations/G2.13a.write-set-overlay-ignores-the-scanned-prefix.patch",
+                // Verbatim from the observed failure of the N1c arm, and from
+                // the LEAKAGE assertion rather than its control: the scan of
+                // `users` returned `orders\x1fo1` alongside the two real rows.
+                // One Go string-literal segment, with no format verb in it.
+                expect: "the WRITE-SET OVERLAY leaked a row across the",
+                // txn.go only — the two mutations above are reader.go, so no
+                // patch of this gate can trigger another's assertion.
+                targets: &["runtime-go/bluedb/txn.go"],
+            },
         ]),
     },
     Gate {
@@ -1225,6 +1247,28 @@ pub static REGISTRY: &[Gate] = &[
             // the fixture reaches the arm that asks whether the floor actually
             // diverts anything.
             expect: "a readTs below the raised floor did not report spilled",
+            targets: &["runtime-go/bluedb/recent_changes.go"],
+        },
+        // The SIXTH door, and the one that is on in every process. The mutation
+        // above deletes `after`'s floor CHECK; this one deletes the floor RAISE
+        // at the third of the three sites that perform it. `trim` and the
+        // cold-start seed each had a fixture; `spillOldest` — the RAM cap, at
+        // `defaultMaxRingEntries = 100_000` — had none, and sat at 0.0%
+        // coverage while `pebble_engine.go:24` claimed "tests set a small cap
+        // via config.maxRingEntries to force the spill path". No test did. A
+        // fifth Judge inverted the guard: entries released, floor left where it
+        // was, `after(readTs)` answering `spilled=false` for a window the ring
+        // no longer holds, and the committer validating a transaction against a
+        // window missing every spilled commit. Under-rejection with no fault
+        // involved at all — only enough commits.
+        Mutation {
+            id: "G2.13h/ring-spill-does-not-raise-the-floor",
+            patch: "docs/bluedb/mutations/G2.13h.ring-spill-does-not-raise-the-floor.patch",
+            // Verbatim from the observed failure, and from the CONSEQUENCE
+            // assertion — the transaction committed — rather than the
+            // fixture's ring-state check below it, which the Fatalf above never
+            // reaches. One Go string-literal segment, no format verb inside it.
+            expect: "diverted to Changelog.Tail: validation ran against a window missing every spilled",
             targets: &["runtime-go/bluedb/recent_changes.go"],
         },
         ]),
@@ -1538,16 +1582,38 @@ pub static REGISTRY: &[Gate] = &[
         tier: Tier::Fast,
         run: gates_runtime::g2_26_point_arm_enforces,
         budget_s: 300,
-        mutations: Mutations::new(&[Mutation {
-            id: "G2.26/point-arm-is-not-consulted",
-            patch: "docs/bluedb/mutations/G2.26.point-arm-is-not-consulted.patch",
-            // Verbatim from the observed failure. The read-set is still fully
-            // populated under this patch — G2.14 stays GREEN, which is the point
-            // of it — while a transaction whose row was superseded commits a
-            // value derived from a version that no longer exists.
-            expect: "validate()'s point arm did not detect the conflict",
-            targets: &["runtime-go/bluedb/validate.go"],
-        }]),
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.26/point-arm-is-not-consulted",
+                patch: "docs/bluedb/mutations/G2.26.point-arm-is-not-consulted.patch",
+                // Verbatim from the observed failure. The read-set is still fully
+                // populated under this patch — G2.14 stays GREEN, which is the point
+                // of it — while a transaction whose row was superseded commits a
+                // value derived from a version that no longer exists.
+                expect: "validate()'s point arm did not detect the conflict",
+                targets: &["runtime-go/bluedb/validate.go"],
+            },
+            // The arm's OTHER half. `readset.go:16` declares two point
+            // dependencies — `present: true` ("the version I read is still
+            // current") and `present: false` ("the key I found free is still
+            // free", the point-PHANTOM) — and until 2026-08-14 only the first
+            // had a fixture. A fifth Judge narrowed the arm to `ok &&
+            // pr.present`: the read-set stays fully populated, the mutation
+            // above still reddens its own arm, `go test ./bluedb/...` and every
+            // gate stayed green, and reserve-if-free — username, seat,
+            // idempotency key, order id — double-books.
+            Mutation {
+                id: "G2.26/point-arm-ignores-absent-reads",
+                patch: "docs/bluedb/mutations/G2.26.point-arm-ignores-absent-reads.patch",
+                // Verbatim from the observed failure of the ABSENT-read arm. The
+                // superseded-row arm above PASSES under this patch and its
+                // Fatalf never fires, so the two mutations of this gate are
+                // classified on two assertions that cannot both appear in one
+                // transcript.
+                expect: "validate()'s point arm ignored the read that saw the key absent",
+                targets: &["runtime-go/bluedb/validate.go"],
+            },
+        ]),
     },
     Gate {
         id: "G2.27",
@@ -1575,6 +1641,55 @@ pub static REGISTRY: &[Gate] = &[
                 // fixture's own assertion, which is the leaf that names the wire.
                 expect: "The SSI validation window is built by DECODING this payload",
                 targets: &["runtime-go/bluedb/keychange.go"],
+            },
+        ]),
+    },
+    // G2.28 — read-your-own-writes, the write-set overlay on the READ side.
+    //
+    // G2.14 gates what a transaction RECORDS; G2.26 / G2.27 gate what
+    // `validate()` ENFORCES. None of the three is about what a transaction body
+    // READS BACK, and `Txn.Get`'s overlay branch (`txn.go:146-151`) sat at 0.0%
+    // coverage as a result: no test in the package called `Txn.Get` on a key the
+    // same transaction had written. `stage2_readset_test.go` calls Get, Put and
+    // Delete in one body but always on DIFFERENT keys — it asks what the
+    // read-set records, and the overlay is invisible to that question.
+    //
+    // A fifth Judge collapsed the branch to `exists && bw.op != OpDelete`, so a
+    // `Get` on a key the transaction had just deleted fell through to the
+    // snapshot and returned the committed row with `ok=true`. Every gate in the
+    // harness stayed green.
+    //
+    // TWO mutations, one per claim, because read-your-writes is two separately
+    // deletable properties and a single mutation would leave whichever half it
+    // did not touch falsifiable by nothing — the shape the whole family is split
+    // to refuse.
+    Gate {
+        id: "G2.28",
+        goal: 2,
+        title: "a transaction's Get reflects its own buffered writes — a put is what it returns, a delete makes it report ABSENT — and only for keys it really wrote",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_28_read_your_own_writes,
+        budget_s: 300,
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.28/get-does-not-see-its-own-put",
+                patch: "docs/bluedb/mutations/G2.28.get-does-not-see-its-own-put.patch",
+                // Verbatim from the observed failure of the PUT arm with the
+                // overlay branch deleted outright. It fires FIRST, before the
+                // delete arm, so this mutation's transcript never carries the
+                // string the delete mutation below is classified on.
+                expect: "a transaction did not read its own buffered PUT",
+                targets: &["runtime-go/bluedb/txn.go"],
+            },
+            Mutation {
+                id: "G2.28/get-ignores-its-own-delete",
+                patch: "docs/bluedb/mutations/G2.28.get-ignores-its-own-delete.patch",
+                // The Judge's two lines, and verbatim from the observed failure
+                // of the DELETE arm. The PUT arm PASSES under this patch — the
+                // overlay still answers for a buffered put — so the two
+                // assertions cannot both appear in one transcript.
+                expect: "a transaction did not read its own buffered DELETE",
+                targets: &["runtime-go/bluedb/txn.go"],
             },
         ]),
     },

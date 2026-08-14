@@ -237,6 +237,13 @@ pub const AUDIT_OWNERSHIP: &[Owned] = &[
         owner: "G2.13h",
         property: "a corrupt cold-start seed raises the recent-changes ring floor (C6b)",
     },
+    Owned {
+        test: "TestAuditC6bRingSpillRaisesTheFloorItLeftBehind",
+        owner: "G2.13h",
+        property: "the ring's RAM cap raises the floor over the entries it spills, so a readTs \
+                   beneath them validates against the durable changelog instead of a window the \
+                   ring no longer holds (C6b)",
+    },
     // -- the N4 lifecycle sweep (commit `ad9b3900`), owned by G2.13j. --
     //
     // These landed with their fix and sat here as `UNGATED` for exactly one
@@ -491,6 +498,17 @@ pub const G2_13A_TESTS: &[&str] = &[
     "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=33",
     "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=34",
     "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=130",
+    // N1c — the SAME property on the OVERLAY side of the same scan. The eight
+    // arms above gate the READER's bounds (`reader.go`); `materializeScan` then
+    // merges the transaction's own buffered writes over that result, keyed by
+    // whole user-keys across every collection the transaction has touched. That
+    // merge is a second door onto "a scan of one collection returns only that
+    // collection's rows", and until this leaf existed it was gated by nothing:
+    // deleting the `bytes.HasPrefix(key, prefix)` guard left every arm above
+    // green while a txn that wrote `orders` and scanned `users` got the order
+    // row back as a user. Depth 2, like its siblings — see the Go comment over
+    // the arm.
+    "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1c-write-set-overlay-does-not-leak-across-collections",
 ];
 
 const G2_13A_ANCHORS: &[SourceAnchor] = &[
@@ -504,14 +522,31 @@ const G2_13A_ANCHORS: &[SourceAnchor] = &[
         needle: "t.Run(fmt.Sprintf(\"collNameLen=%d\", n)",
         why: "that format string IS the sub-test naming, and the `-run` anchor is written against it",
     },
+    // The N1c arm's own two assertions. The arm is one leaf carrying both halves
+    // of the overlay property, and each half is separately deletable, so each is
+    // separately pinned.
+    SourceAnchor {
+        func: N1_FUNC,
+        needle: "the WRITE-SET OVERLAY leaked a row across the",
+        why: "THE consequence assertion of the overlay door: a key the transaction buffered into \
+              ANOTHER collection came back out of a scan of this one, with the reader's bounds \
+              perfectly correct and every collNameLen arm above green",
+    },
+    SourceAnchor {
+        func: N1_FUNC,
+        needle: "the overlay must still merge",
+        why: "the control. A guard that rejected EVERY buffered key would satisfy the leak \
+              assertion above while deleting read-your-own-writes over the scanned collection, \
+              which is the opposite failure and just as silent",
+    },
 ];
 
-/// Exactly two `t.Run(` sites in the N1 function: the `collNameLen` loop
-/// (G2.13a) and the N1b sub-test (G2.13b). A third would belong to neither
-/// gate.
+/// Exactly three `t.Run(` sites in the N1 function: the `collNameLen` loop
+/// (G2.13a), the N1b sub-test (G2.13b) and the N1c overlay arm (G2.13a). A
+/// fourth would belong to no gate.
 const N1_SITES: &[SubtestSites] = &[SubtestSites {
     func: N1_FUNC,
-    sites: 2,
+    sites: 3,
 }];
 
 pub fn g2_13a_iterate_bounds(ctx: &Ctx) -> GateOutcome {
@@ -841,6 +876,17 @@ pub const G2_13H_TESTS: &[&str] = &[
     C6B_BLIND_FUNC,
     "TestAuditC6bAdvanceOnAnUnknownTokenIsAnError",
     "TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor",
+    // The SIXTH door, and the only one of them that is live in every production
+    // process. `spillOldest` is the ring's RAM cap (`defaultMaxRingEntries =
+    // 100_000`, so always on), and it is the third site that raises the floor —
+    // the other two being `trim` and the cold-start seed, each of which had a
+    // fixture. This one had none: `pebble_engine.go:24` says "tests set a small
+    // cap via config.maxRingEntries to force the spill path" and no test ever
+    // did, which left the function at 0.0% coverage. Release the entries without
+    // raising the floor and `after(readTs)` answers `spilled=false` for a window
+    // the ring no longer holds — the same under-rejection as N6, reached by RAM
+    // pressure instead of a malformed payload.
+    "TestAuditC6bRingSpillRaisesTheFloorItLeftBehind",
 ];
 
 /// N6's two arms, required as EVIDENCE (see [`AuditGate::required_subtests`]).
@@ -923,6 +969,23 @@ const G2_13H_ANCHORS: &[SourceAnchor] = &[
               that still answers `not spilled` sends the transaction on with a window the ring \
               cannot vouch for, instead of to Changelog.Tail",
     },
+    // The spill door's own two assertions — the consequence, and the control
+    // that stops a fallback which conflicts everything from satisfying it.
+    SourceAnchor {
+        func: "TestAuditC6bRingSpillRaisesTheFloorItLeftBehind",
+        needle: "diverted to Changelog.Tail: validation ran against a window missing every spilled",
+        why: "THE consequence of the RAM cap dropping entries without raising the floor: the \
+              committer validates against a window it has been told is complete and is not, and \
+              a transaction whose conflict was among the spilled changes commits — a lost update \
+              that needs no fault, only a hundred thousand commits",
+    },
+    SourceAnchor {
+        func: "TestAuditC6bRingSpillRaisesTheFloorItLeftBehind",
+        needle: "The Changelog.Tail fallback over-rejects, so the",
+        why: "the control. Changelog.Tail hands back a strictly LARGER window than the ring held, \
+              so without this arm the assertion above is satisfied by a spill path that refuses \
+              every transaction whose readTs fell below the floor",
+    },
 ];
 
 /// Two `t.Run(` sites in the N6 function — the control arm and the main arm —
@@ -945,6 +1008,10 @@ const G2_13H_SITES: &[SubtestSites] = &[
     },
     SubtestSites {
         func: "TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor",
+        sites: 0,
+    },
+    SubtestSites {
+        func: "TestAuditC6bRingSpillRaisesTheFloorItLeftBehind",
         sites: 0,
     },
 ];
@@ -1991,6 +2058,15 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
             "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=130",
         ],
     },
+    // The overlay door of the same gate. It reddens the N1c arm alone: N1's fix
+    // in `reader.go` is untouched, so every `collNameLen` arm above stays green
+    // and the two mutations of G2.13a are measured on disjoint leaves.
+    LeafCoverage {
+        mutation: "G2.13a/write-set-overlay-ignores-the-scanned-prefix",
+        leaves: &[
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1c-write-set-overlay-does-not-leak-across-collections",
+        ],
+    },
     LeafCoverage {
         mutation: "G2.13b/failed-scan-reads-as-an-empty-collection",
         leaves: &[
@@ -2066,6 +2142,10 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
     LeafCoverage {
         mutation: "G2.13h/ring-answers-for-a-range-it-does-not-hold",
         leaves: &["TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor"],
+    },
+    LeafCoverage {
+        mutation: "G2.13h/ring-spill-does-not-raise-the-floor",
+        leaves: &["TestAuditC6bRingSpillRaisesTheFloorItLeftBehind"],
     },
     // -- G2.13i: two files, two doors, one mutation each.
     LeafCoverage {
@@ -2268,6 +2348,19 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
     LeafCoverage {
         mutation: "G2.26/point-arm-is-not-consulted",
         leaves: &["TestValidateDetectsAPointReadOverwrittenConcurrently"],
+    },
+    LeafCoverage {
+        mutation: "G2.26/point-arm-ignores-absent-reads",
+        leaves: &["TestValidateDetectsAPointReadOverwrittenConcurrently"],
+    },
+    // -- G2.28: one leaf, two arms, one mutation each.
+    LeafCoverage {
+        mutation: "G2.28/get-does-not-see-its-own-put",
+        leaves: &["TestTxnGetReadsItsOwnBufferedWrites"],
+    },
+    LeafCoverage {
+        mutation: "G2.28/get-ignores-its-own-delete",
+        leaves: &["TestTxnGetReadsItsOwnBufferedWrites"],
     },
     LeafCoverage {
         mutation: "G2.27/collection-witness-arm-is-not-consulted",

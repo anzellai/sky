@@ -129,6 +129,53 @@ func TestValidateDetectsAPointReadOverwrittenConcurrently(t *testing.T) {
 			"was overwritten before it landed — a lost update", err)
 	}
 
+	// ── The point-PHANTOM arm: a read that saw the key ABSENT ──────────────────────────
+	//
+	// `readset.go`'s pointRead carries `present: false ⇒ the txn's logic depended on this
+	// key being ABSENT`, and that half of the point arm is a DIFFERENT dependency from the
+	// one above: not "the version I read is still current" but "the key I found free is
+	// still free". Reserve-if-free is the shape every username, seat, idempotency key and
+	// order id in the product rests on, and it is expressed exactly this way — Get, find
+	// nothing, Put.
+	//
+	// A point arm that consults only `present` reads (`if pr, ok := rs.points[…]; ok &&
+	// pr.present`) leaves the whole read-set POPULATED, keeps the arm above green, and
+	// double-books every one of them. The arm below is that difference, stated as the
+	// consequence.
+	abs, err := e.Begin()
+	if err != nil {
+		t.Fatalf("begin absent-read arm: %v", err)
+	}
+	if v, ok := abs.Get([]byte("pt-free")); ok {
+		t.Fatalf("fixture: Get(pt-free) = %q,%v want absent — the reservation below has to rest "+
+			"on a read that really found the key free", v, ok)
+	}
+
+	// A concurrent writer claims the key this txn concluded was free, strictly after its
+	// readTs. Through the transactional path, so the change reaches the validation window.
+	txnPut(t, e, CollID(1), "pt-free", "claimed-by-them")
+
+	// The body's conclusion: it is free, so take it.
+	if err := abs.Put([]byte("pt-free"), []byte("claimed-by-us")); err != nil {
+		t.Fatalf("absent-read arm put: %v", err)
+	}
+
+	// Same isolation as the arm above: the point arm must be the only live one, or a
+	// witness could be what detects this instead.
+	if len(abs.collWitness) != 0 || len(abs.ranges) != 0 || len(abs.indexWitness) != 0 {
+		t.Fatalf("fixture: the absent-read txn carries %d collection witness(es), %d range(s) "+
+			"and %d index witness(es); the point arm must be the only live arm",
+			len(abs.collWitness), len(abs.ranges), len(abs.indexWitness))
+	}
+
+	if err := abs.Commit(); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a transaction that READ pt-free, found it ABSENT, and then reserved it, "+
+			"COMMITTED (err=%v) even though a concurrent commit had already claimed pt-free. "+
+			"validate()'s point arm ignored the read that saw the key absent, so a point-phantom "+
+			"is invisible to it: reserve-if-free double-books, and two holders of the same "+
+			"username / seat / idempotency key both believe they won", err)
+	}
+
 	// ── The control: nothing in the window intersects the read-set ─────────────────────
 	ctl, err := e.Begin()
 	if err != nil {

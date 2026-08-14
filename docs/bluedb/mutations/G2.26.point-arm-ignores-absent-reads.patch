@@ -1,0 +1,20 @@
+diff --git a/runtime-go/bluedb/validate.go b/runtime-go/bluedb/validate.go
+index 8a790405..60f5f537 100644
+--- a/runtime-go/bluedb/validate.go
++++ b/runtime-go/bluedb/validate.go
+@@ -40,8 +40,14 @@ func validate(rs *ReadSet, window []KeyChange) (conflict bool, culprit []byte, p
+ 	for i := range window {
+ 		ch := &window[i]
+ 		// Point read — the leaseable conflict class (§6.2).
++		// MUTATION G2.26: the point arm consults only the reads that saw a row PRESENT, so
++		// the point-PHANTOM half of `pointRead` (readset.go:16 — "present: false ⇒ the txn's
++		// logic depended on this key being ABSENT") stops conflicting with anything. The
++		// read-set is still fully populated and the superseded-row arm still fires, so G2.14
++		// and the present-read half of this gate stay green, while every reserve-if-free in
++		// the product — username, seat, idempotency key, order id — double-books.
+ 		if len(rs.points) > 0 {
+-			if _, ok := rs.points[string(ch.Pk)]; ok {
++			if pr, ok := rs.points[string(ch.Pk)]; ok && pr.present {
+ 				return true, ch.Pk, true
+ 			}
+ 		}

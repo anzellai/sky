@@ -1,0 +1,20 @@
+diff --git a/runtime-go/bluedb/recent_changes.go b/runtime-go/bluedb/recent_changes.go
+index 49433dff..95a51117 100644
+--- a/runtime-go/bluedb/recent_changes.go
++++ b/runtime-go/bluedb/recent_changes.go
+@@ -94,7 +94,14 @@ func (r *recentRing) spillOldest(n int) {
+ 		r.entries[i].changes = nil // release the dropped change lists for GC
+ 	}
+ 	r.entries = r.entries[n:]
+-	if r.floor.Less(newFloor) {
++	// MUTATION G2.13h: the guard is inverted, so the floor is never raised over the entries
++	// the spill just released. `trim` and the cold-start seed still raise it correctly — the
++	// gates that own those stay green — while the RAM cap, which is on in every process
++	// (`defaultMaxRingEntries = 100_000`), drops committed changes out of the validation
++	// window and `after(readTs)` keeps answering `spilled=false` for a range the ring no
++	// longer holds. processTxn then validates against a window missing every spilled commit
++	// instead of diverting to Changelog.Tail: under-rejection, a lost update.
++	if newFloor.Less(r.floor) {
+ 		r.floor = newFloor
+ 	}
+ }

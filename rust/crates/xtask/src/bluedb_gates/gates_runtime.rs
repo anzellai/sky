@@ -121,6 +121,7 @@ pub const RUNTIME_SOURCES: &[&str] = &[
     "runtime-go/bluedb/keys_test.go",
     "runtime-go/bluedb/lock_test.go",
     "runtime-go/bluedb/stage2_readset_test.go",
+    "runtime-go/bluedb/txn_overlay_test.go",
     "runtime-go/bluedb/validate_test.go",
 ];
 
@@ -165,6 +166,15 @@ pub const RUNTIME_OWNERSHIP: &[RuntimeOwned] = &[
         test: "TestChangelogPayloadCarriesTheCollectionIdTheWitnessMatchesOn",
         owner: "G2.27",
         property: "the collection id the witness matches on survives the changelog wire format",
+    },
+    // -- G2.28 ------------------------------------------------------------
+    RuntimeOwned {
+        file: "runtime-go/bluedb/txn_overlay_test.go",
+        test: "TestTxnGetReadsItsOwnBufferedWrites",
+        owner: "G2.28",
+        property: "Txn.Get reflects the transaction's own buffered writes — a put is what it \
+                   returns, a delete makes it report ABSENT — and only for keys the transaction \
+                   really wrote",
     },
     // -- G2.15 ------------------------------------------------------------
     RuntimeOwned {
@@ -475,7 +485,7 @@ fn run_file_gate(ctx: &Ctx, g: &FileGate) -> GateOutcome {
 
     // ── (1a) the FAMILY's population is the recorded population, both ways ──
     let recorded: Vec<&str> = RUNTIME_OWNERSHIP.iter().map(|o| o.test).collect();
-    let where_ = "runtime-go/bluedb/{bench,comparer,comparer_property,engine,gc,keys,lock,stage2_readset,validate}_test.go";
+    let where_ = "runtime-go/bluedb/{bench,comparer,comparer_property,engine,gc,keys,lock,stage2_readset,txn_overlay,validate}_test.go";
     let mut findings = unreadable;
     findings.extend(check_pinned_population(&declared, &recorded, where_, PIN_NAME));
 
@@ -694,6 +704,20 @@ pub const G2_26_ANCHORS: &[SourceAnchor] = &[
         why: "the control. Without it the fixture is satisfied by a validator that conflicts \
               EVERYTHING, which refuses to commit rather than committing serializably",
     },
+    // The point-PHANTOM half, added after a Judge measured that the arm above
+    // was the WHOLE of what this fixture asserted. `readset.go:16` documents two
+    // point dependencies — "the version I read is still current" and "the key I
+    // found free is still free" — and only the first had a fixture, so
+    // narrowing the arm to `ok && pr.present` left the read-set fully populated,
+    // this gate PASSING, and every reserve-if-free in the product double-booking.
+    SourceAnchor {
+        func: "TestValidateDetectsAPointReadOverwrittenConcurrently",
+        needle: "validate()'s point arm ignored the read that saw the key absent",
+        why: "THE consequence assertion for the point-phantom: a transaction that read a key, \
+              found it ABSENT, and reserved it must not commit behind a concurrent claim. \
+              Without it a point arm that consults only `present` reads passes every other \
+              assertion in the package",
+    },
 ];
 
 pub fn g2_26_point_arm_enforces(ctx: &Ctx) -> GateOutcome {
@@ -751,6 +775,83 @@ pub fn g2_27_collection_witness_enforces(ctx: &Ctx) -> GateOutcome {
             budget: Duration::from_secs(120),
             property: "validate() REFUSES a phantom insert into a witnessed collection, and the \
                        collection id it matches on survives the wire",
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// G2.28 — read-your-own-writes: the write-set overlay on the READ side
+// ---------------------------------------------------------------------------
+//
+// # Why this is its own gate
+//
+// G2.14 gates what a transaction body RECORDS; G2.26 / G2.27 gate what
+// `validate()` ENFORCES. All three are about the read-set. None of them is about
+// what a transaction body READS BACK, and the distance is not small: `txn.go:45`
+// puts "read-your-writes overlay" in the type's own docstring and `Txn.Get`
+// implements it at `txn.go:145`, and until this gate existed **no test in the
+// package called `Txn.Get` on a key the same transaction had written**. The whole
+// overlay branch sat at 0.0% coverage. `stage2_readset_test.go` calls Get, Put
+// and Delete in one body, but always on different keys — it is asking what the
+// read-set records, and the overlay is invisible to that question.
+//
+// A fifth adversarial Judge measured it with two lines: `Txn.Get` on a key the
+// transaction had just DELETED fell through to the snapshot and returned the
+// committed row with `ok=true`. Every gate in the harness stayed green.
+//
+// # What makes the fixture non-vacuous
+//
+// Read-your-writes is two separately-deletable claims — a buffered PUT is what
+// `Get` returns, a buffered DELETE makes `Get` report ABSENT — so each is its own
+// assertion, with its own mutation. Two controls stop either being satisfied by a
+// degenerate overlay: a key the transaction never wrote must still resolve to the
+// snapshot (so `Get` really reaches it), and a PUT over a DELETE must resolve
+// again (so the tombstone belongs to the buffered write, not permanently to the
+// key).
+pub const G2_28_TESTS: &[&str] = &["TestTxnGetReadsItsOwnBufferedWrites"];
+
+/// Four, one per claim the fixture makes, because an anchor is this family's
+/// per-leaf falsifier and the leaf carries four separately-deletable assertions.
+pub const G2_28_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: "TestTxnGetReadsItsOwnBufferedWrites",
+        needle: "a transaction did not read its own buffered PUT",
+        why: "THE put half. Without the overlay a read-modify-write sequence inside one \
+              transaction body computes every step from the pre-transaction value, and the \
+              committed result is the last write rather than the accumulated one",
+    },
+    SourceAnchor {
+        func: "TestTxnGetReadsItsOwnBufferedWrites",
+        needle: "a transaction did not read its own buffered DELETE",
+        why: "THE delete half, and the Judge's two lines: the tombstone is not consulted, the \
+              pre-delete row comes back with ok=true, and insert-if-absent / delete-then-recreate \
+              / every in-transaction idempotency check take the branch for a row the transaction \
+              has already removed",
+    },
+    SourceAnchor {
+        func: "TestTxnGetReadsItsOwnBufferedWrites",
+        needle: "the overlay answered for a key the transaction never wrote",
+        why: "the first control — an overlay that answered for EVERYTHING would satisfy both arms \
+              above while a Get had stopped reading committed data at all",
+    },
+    SourceAnchor {
+        func: "TestTxnGetReadsItsOwnBufferedWrites",
+        needle: "the tombstone outlived the write it came from",
+        why: "the second control — a mask that is permanent per KEY rather than per buffered \
+              write satisfies the delete arm while breaking delete-then-recreate, which is the \
+              shape the delete arm exists to protect",
+    },
+];
+
+pub fn g2_28_read_your_own_writes(ctx: &Ctx) -> GateOutcome {
+    run_file_gate(
+        ctx,
+        &FileGate {
+            id: "G2.28",
+            tests: G2_28_TESTS,
+            anchors: G2_28_ANCHORS,
+            budget: Duration::from_secs(120),
+            property: "a transaction's Get reflects its own buffered writes, put and delete alike",
         },
     )
 }
@@ -2074,6 +2175,7 @@ pub const RUNTIME_GATES: &[(&str, &[&str], &[SourceAnchor])] = &[
     ("G2.14", G2_14_TESTS, G2_14_ANCHORS),
     ("G2.26", G2_26_TESTS, G2_26_ANCHORS),
     ("G2.27", G2_27_TESTS, G2_27_ANCHORS),
+    ("G2.28", G2_28_TESTS, G2_28_ANCHORS),
     ("G2.15", G2_15_TESTS, G2_15_ANCHORS),
     ("G2.16", G2_16_TESTS, G2_16_ANCHORS),
     ("G2.17", G2_17_TESTS, G2_17_ANCHORS),
@@ -2255,6 +2357,7 @@ mod tests {
             ("G2.14", g2_14_readset_scope),
             ("G2.26", g2_26_point_arm_enforces),
             ("G2.27", g2_27_collection_witness_enforces),
+            ("G2.28", g2_28_read_your_own_writes),
             ("G2.15", g2_15_group_commit_per_job),
             ("G2.16", g2_16_read_resolution),
             ("G2.17", g2_17_restart_floor),

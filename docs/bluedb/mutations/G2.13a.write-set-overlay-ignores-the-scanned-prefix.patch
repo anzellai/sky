@@ -1,0 +1,30 @@
+diff --git a/runtime-go/bluedb/txn.go b/runtime-go/bluedb/txn.go
+index 58dcefcc..25973c3b 100644
+--- a/runtime-go/bluedb/txn.go
++++ b/runtime-go/bluedb/txn.go
+@@ -1,7 +1,6 @@
+ package bluedb
+ 
+ import (
+-	"bytes"
+ 	"errors"
+ 	"math/rand"
+ 	"sort"
+@@ -648,10 +647,14 @@ func (tx *Txn) materializeScan(prefix []byte, cur Cursor) Cursor {
+ 
+ 	// Overlay the write-set (only keys under this collection's prefix): a buffered put appears,
+ 	// a buffered delete masks.
++	// MUTATION G2.13a: the overlay stops filtering by the scanned collection's prefix. The
++	// READER's bounds are untouched — N1's fix in reader.go is intact and every collNameLen
++	// arm of this gate's fixture stays green — but the write-set is keyed by whole user-keys
++	// across every collection the transaction has touched, and a Persist transaction is
++	// multi-collection by construction. A txn that writes `orders` and then scans `users`
++	// gets the order row merged into the users result: the same cross-collection leak as N1,
++	// one door over.
+ 	for _, key := range tx.order {
+-		if !bytes.HasPrefix([]byte(key), prefix) {
+-			continue
+-		}
+ 		bw := tx.writes[key]
+ 		if bw.op == OpDelete {
+ 			delete(rows, key)
