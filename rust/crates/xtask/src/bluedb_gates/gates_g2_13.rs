@@ -120,10 +120,15 @@ const PIN_NAME: &str = "AUDIT_OWNERSHIP (bluedb_gates/gates_g2_13.rs)";
 ///
 /// It was then kept unused AGAIN on the same argument, and needed a THIRD time
 /// within the month: `TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary` landed in
-/// `b540bed2` with the H3b fix it pins and no gate of its own. It carries that
-/// value now. A vocabulary the table has needed three times is not a decoration,
-/// and the alternative each time was an ownership table that reported full
-/// coverage of a corpus it did not cover.
+/// `b540bed2` with the H3b fix it pins and no gate of its own. It carried that
+/// value until **G2.13m** gave it one. A vocabulary the table has needed three
+/// times is not a decoration, and the alternative each time was an ownership table
+/// that reported full coverage of a corpus it did not cover.
+///
+/// No row carries it today — every fixture in [`AUDIT_SOURCE`] is owned. That is
+/// the state the word exists to make VISIBLE rather than to make permanent, and
+/// the three occasions above are why it is kept against the fourth.
+#[allow(dead_code)] // the interval it describes is empty today; see the doc above
 const UNGATED: &str = "— (recorded, run by no gate)";
 
 /// One `func Test…` in [`AUDIT_SOURCE`], and the gate that runs it.
@@ -264,17 +269,18 @@ pub const AUDIT_OWNERSHIP: &[Owned] = &[
         property: "the pebble Fatalf latch is CONSUMED at every exit that could otherwise claim \
                    success — the door, both commit drains, both GC Applies, and Close (N3)",
     },
+    // -- H3's live sibling (commit `b540bed2`), owned by G2.13m. --
+    //
+    // It arrived with the fix it pins and no gate, and sat here as UNGATED for
+    // exactly as long as that was true — the third time reading this table the
+    // honest way found a fixture that only CI's `go test ./bluedb/...` ran, and
+    // that was therefore invisible to `--verify-mutations`, to `STATUS.md` and to
+    // every goal verdict. G2.6 does run it (it carries an injector, so the
+    // injection manifest reaches it), but G2.6's subject is the corpus, not the
+    // reader, so no gate asserted its PROPERTY until G2.13m.
     Owned {
-        // The word exists for exactly this: a fixture that lands with the fix it
-        // pins, ahead of the gate that will own it. It arrived on this branch in
-        // `b540bed2` (H3's live sibling — a failed SCAN committed anyway) with no
-        // gate, and recording it as UNGATED is what stops the ownership table
-        // reading as full coverage of a corpus it does not cover. G2.6 does run it
-        // — it carries an injector, so the injection manifest reaches it — but no
-        // gate asserts its PROPERTY, and G2.6's subject is the corpus, not the
-        // reader.
         test: "TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary",
-        owner: UNGATED,
+        owner: "G2.13m",
         property: "an I/O fault inside Txn.ScanCollection reaches the commit boundary rather than \
                    reading as an empty collection (H3b)",
     },
@@ -1416,6 +1422,95 @@ pub fn g2_13l_latch_is_consumed_at_every_exit(ctx: &Ctx) -> GateOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// G2.13m — H3b: a failed SCAN reaches the commit boundary
+// ---------------------------------------------------------------------------
+
+const H3B_FUNC: &str = "TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary";
+
+/// **H3's live sibling.** H3 made `Txn.Commit` fail closed on `tx.reader.Err()`,
+/// and `reader.go` then documented that error as POINT READS ONLY — so an I/O
+/// fault inside `Txn.ScanCollection` surfaced on `Cursor.Err()` and nowhere else,
+/// and the transaction committed. The consequence is verbatim the one H3's own
+/// docstring forbids, one method over: the scan returns zero rows because a block
+/// could not be read, the body reads that as "the collection has no such row",
+/// inserts, and `Commit` returns nil over the row that was there.
+///
+/// # Why this is its own gate and not an arm of G2.13b or G2.13g
+///
+/// Three properties, three gates, exactly as the one-gate-per-property split
+/// requires — and here the split is not a formality, because each of the three
+/// can be broken while the other two hold:
+///
+/// * **G2.13g (H3)** is the POINT-read channel: `reader.Get` must latch rather
+///   than answer "absent".
+/// * **G2.13b (N1b)** is the CURSOR's own answer: `materializeScan` must not hand
+///   back a write-set-only collection over a base read that failed.
+/// * **G2.13m (H3b)** is the COMMIT BOUNDARY: whatever the cursor says, the
+///   transaction must not commit on a read-set built from a scan that failed.
+///
+/// Its mutation demonstrates the independence rather than asserting it: deleting
+/// the two reader-latch arms leaves `Cursor.Err()` answering exactly as before —
+/// N1b's property, and this fixture's own pre-condition check, both still pass —
+/// while the txn commits its INSERT. Nothing else in the corpus reddens.
+pub const G2_13M_TESTS: &[&str] = &[H3B_FUNC];
+
+/// The two fixture conditions this gate pins in SOURCE, because both are
+/// load-bearing and neither is visible to `go test`'s exit code.
+///
+/// The fixture's own doc says why the first is not incidental: `Txn.Put` reads a
+/// pre-image through `reader.Get`, so an injector left armed across the whole body
+/// would route this test through H3's ALREADY-FIXED point-read path and make it
+/// pass against an unfixed scan path. The arming is what makes the fault transient
+/// and the scan the only thing that can stop the commit.
+///
+/// The second is this corpus's standing rule for injection fixtures: an injection
+/// test that cannot prove it injected is indistinguishable from one that passed
+/// because nothing happened. Delete that guard and a fixture that regresses into
+/// being served from the block cache goes green having exercised nothing.
+const G2_13M_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: H3B_FUNC,
+        needle: "armed.Store(true)",
+        why: "the fault window is the SCAN ONLY; leaving the injector armed across Txn.Put routes \
+              this test through H3's already-fixed point-read path and it passes against an \
+              unfixed scan",
+    },
+    SourceAnchor {
+        func: H3B_FUNC,
+        needle: "if n := injected.Load(); n == 0 {",
+        why: "the zero-injection guard — without it a scan served from the block cache reports \
+              the same zero rows as a faulted one, and the gate certifies a fixture that touched \
+              no file",
+    },
+];
+
+/// Zero `t.Run(` sites, and the zero is load-bearing exactly as it is for the
+/// five other sub-test-free fixtures: a NEW arm added here would be neither run
+/// by this gate's pattern nor accounted for by it.
+const G2_13M_SITES: &[SubtestSites] = &[SubtestSites {
+    func: H3B_FUNC,
+    sites: 0,
+}];
+
+pub fn g2_13m_scan_failure_reaches_the_commit_boundary(ctx: &Ctx) -> GateOutcome {
+    run_audit_gate(
+        ctx,
+        &AuditGate {
+            id: "G2.13m",
+            tests: G2_13M_TESTS,
+            required_subtests: &[],
+            anchors: G2_13M_ANCHORS,
+            sites: G2_13M_SITES,
+            // ~0.5s: 400 padded rows, one flush, one reopen, one faulted scan.
+            // The budget is the file's convention.
+            budget: Duration::from_secs(240),
+            property: "an I/O fault inside a transaction's scan fails the commit instead of \
+                       committing over the rows it could not read",
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Leaf coverage — which mutation reddens which pinned leaf
 // ---------------------------------------------------------------------------
 
@@ -1622,6 +1717,16 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
             "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/close-is-the-last-moment-the-process-can-be-told",
         ],
     },
+    // -- G2.13m: one leaf, one mutation, and the mutation is chosen so that it
+    //    reddens THIS leaf and no other. Deleting the two reader-latch arms of
+    //    the H3b fix leaves `Cursor.Err()` answering — so N1b's fixture (G2.13b)
+    //    and this one's own pre-condition check both still pass — while the txn
+    //    commits its INSERT over the row the scan could not read. Verified by
+    //    running the whole `./bluedb/` suite under the patch: one `--- FAIL:`.
+    LeafCoverage {
+        mutation: "G2.13m/scan-failure-never-reaches-the-commit-boundary",
+        leaves: &["TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary"],
+    },
     // -- G2.9a, brought under this rule ------------------------------------
     //
     // The `NoSync` revert turns all seven red, and the recorded transcript says
@@ -1774,11 +1879,10 @@ pub const SOURCE_SIDE_FALSIFIERS: &[SourceSideFalsifier] = &[
         gate: "G2.6",
         leaf: "TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary",
         why: "its RUN outcome is the H3b property (a failed SCAN reaches the commit boundary), \
-              which no gate owns yet — the fixture landed with its fix in `b540bed2` and is \
-              recorded UNGATED in AUDIT_OWNERSHIP. A mutation registered on G2.6 to redden it \
-              would mint a PROVEN for the corpus gate out of the reader's defect, which is what \
-              the one-gate-per-property split forbids. G2.6's own pin over it — the injector \
-              construction plus the three fired-count needles — is enforced on every run",
+              which is G2.13m's. A mutation registered on G2.6 to redden it would mint a PROVEN \
+              for the corpus gate out of the reader's defect, which is what the one-gate-per- \
+              property split forbids. G2.6's own pin over it — the injector construction plus the \
+              three fired-count needles — is enforced on every run",
     },
     SourceSideFalsifier {
         gate: "G2.6",
@@ -1853,6 +1957,7 @@ fn gate_anchors(gate: &str) -> &'static [SourceAnchor] {
         "G2.13j" => G2_13J_ANCHORS,
         "G2.13k" => G2_13K_ANCHORS,
         "G2.13l" => G2_13L_ANCHORS,
+        "G2.13m" => G2_13M_ANCHORS,
         _ => &[],
     }
 }
@@ -1877,6 +1982,7 @@ mod tests {
         ("G2.13j", g2_13j_lifecycle_pins_the_exported_surface),
         ("G2.13k", g2_13k_post_ack_panic_is_never_absorbed),
         ("G2.13l", g2_13l_latch_is_consumed_at_every_exit),
+        ("G2.13m", g2_13m_scan_failure_reaches_the_commit_boundary),
     ];
 
     const ALL_SETS: &[(&str, &[&str])] = &[
@@ -1892,6 +1998,7 @@ mod tests {
         ("G2.13j", G2_13J_TESTS),
         ("G2.13k", G2_13K_TESTS),
         ("G2.13l", G2_13L_TESTS),
+        ("G2.13m", G2_13M_TESTS),
     ];
 
     /// The sub-test leaves each gate requires as evidence, alongside its `-run`
@@ -2104,6 +2211,7 @@ mod tests {
             .chain(G2_13J_ANCHORS.iter())
             .chain(G2_13K_ANCHORS.iter())
             .chain(G2_13L_ANCHORS.iter())
+            .chain(G2_13M_ANCHORS.iter())
             .chain(G2_13F_ANCHORS.iter())
         {
             let body = bodies

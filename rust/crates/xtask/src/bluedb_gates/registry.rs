@@ -353,10 +353,45 @@ pub static REGISTRY: &[Gate] = &[
             targets: &["rust/crates/project/src/build.rs"],
         }]),
     },
+    // TITLE NARROWED TO THE BODY (Judge gap 4). It used to read "every gate's
+    // recorded mutation still applies and still turns it red", which is
+    // `--verify-mutations`' claim, not this gate's: `g0_6_mutations_verified`
+    // never calls `git apply` and never runs a gate. It audits the LEDGER that
+    // run wrote — the patch file exists, the ledger has an entry, the entry
+    // records PROVEN (VACUOUS for the canary), the recorded RED transcript
+    // contains the declared assertion, and no declared target has moved since the
+    // sha the proof was taken at.
+    //
+    // That distinction is the whole reason the gate is cheap (0.4s) and
+    // `--verify-mutations` is not (~1h). A title claiming the expensive property
+    // for the cheap gate is exactly the thing a compacted session inherits and
+    // cannot check, so it says what it does.
+    //
+    // NO MUTATION LISTS A `*_test.go` IN `targets`, so `targets_moved` never fires
+    // on a fixture edit. That is deliberate, and it is not a hole:
+    //
+    //   * The fixture-side dependency IS real — a reworded `t.Fatalf` can make a
+    //     mutation's `expect` unreachable — but it is already covered by a check
+    //     that is strictly stronger than a staleness hint.
+    //     `every_pinned_leaf_is_reddened_by_a_recorded_mutation` (gates_g2_13.rs)
+    //     resolves each leaf's body out of the Go source ON EVERY `cargo test` and
+    //     requires the mutation's `expect` to still live in it; G0.6 itself
+    //     requires the recorded transcript to still contain it. Both read the tree
+    //     as it is, rather than asking whether a file changed.
+    //   * `audit_test.go` is ONE file behind ~20 mutations across 14 gates. Listing
+    //     it would decay every one of them on any edit to the corpus — including
+    //     adding an unrelated fixture — which is the "signal that always fires is a
+    //     signal nobody reads" rule this harness already applies to
+    //     `gate-state.tsv`, `STATUS.md` and `*.expected.txt` (see
+    //     `mutations::harness_generated`).
+    //
+    // So the answer is recorded rather than fixed: the decay clock stays on the
+    // SUBJECT of the patch, and the fixture side is guarded by assertions that run
+    // more often and say more.
     Gate {
         id: "G0.6",
         goal: 0,
-        title: "every gate's recorded mutation still applies and still turns it red",
+        title: "every mutation's ledger proof exists, records PROVEN, carries its RED output, and has not decayed",
         tier: Tier::Full,
         run: gates_g0::g0_6_mutations_verified,
         budget_s: 3600,
@@ -377,10 +412,26 @@ pub static REGISTRY: &[Gate] = &[
             targets: &["docs/bluedb/mutations"],
         }]),
     },
+    // TITLE MATCHED TO THE BODY (Judge gap 5), and the BODY tightened first.
+    //
+    // It used to read "every cited file:line resolves on its tagged branch". For a
+    // citation with no adjacent backticked identifier the only check was
+    // `c.line > n_lines` — "does the file have that many lines" — and for one WITH
+    // an identifier not even that: presence at the cited line was a warning that
+    // never entered `findings`, and the EOF check sat in the `else` arm, so
+    // `foo.go:99999` passed as long as `foo` appeared anywhere in the file.
+    //
+    // The body now checks the line bound for EVERY citation (see `check_citations`)
+    // — a strengthening that cannot invent a failure, because a line past EOF is
+    // wrong however the citation is written. The remaining gap is deliberate and
+    // §9.6's: whether the cited line is the RIGHT line stays a warning, because
+    // line numbers drift on every edit of a cited file and a checker that fires on
+    // all of them is one nobody reads. The title therefore claims resolution and
+    // range, and says out loud that the line itself is a warning.
     Gate {
         id: "G0.7",
         goal: 0,
-        title: "harness self-integrity + every cited file:line resolves on its tagged branch",
+        title: "harness self-integrity + every citation resolves: one file, in-range line, named token present (a MOVED line is a warning)",
         tier: Tier::Fast,
         run: gates_g0::g0_7_self_integrity,
         budget_s: 120,
@@ -1206,6 +1257,38 @@ pub static REGISTRY: &[Gate] = &[
                 targets: &["runtime-go/bluedb/pebble_engine.go"],
             },
         ]),
+    },
+    // G2.13m — H3's live sibling, and the fixture that landed without a gate.
+    //
+    // `TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary` arrived in `b540bed2`
+    // with the H3b fix it pins and sat in AUDIT_OWNERSHIP as UNGATED: run only by
+    // CI's `go test ./bluedb/...`, and therefore invisible to
+    // `--verify-mutations`, to `STATUS.md` and to every goal verdict. That is the
+    // third time reading the ownership table honestly has found a fixture nothing
+    // gated (G2.13h's four, G2.13j/k's three, this one).
+    //
+    // ONE mutation, and it is chosen to be discriminating rather than merely
+    // sufficient: deleting the two arms of the H3b fix that reach the READER
+    // leaves `Cursor.Err()` answering exactly as before, so G2.13b's property
+    // (N1b) and this fixture's own pre-condition check both still pass, while the
+    // transaction commits its INSERT over the row the scan could not read. Run
+    // against the whole `./bluedb/` suite it produces exactly one `--- FAIL:`.
+    Gate {
+        id: "G2.13m",
+        goal: 2,
+        title: "an I/O fault inside a txn's scan fails the commit, not just the cursor",
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13m_scan_failure_reaches_the_commit_boundary,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.13m/scan-failure-never-reaches-the-commit-boundary",
+            patch: "docs/bluedb/mutations/G2.13m.scan-failure-never-reaches-the-commit-boundary.patch",
+            // Verbatim from the observed failure, and from the CONSEQUENCE arm
+            // rather than the flag arm: the fixture's cursor-error check is N1b's
+            // and passes under this patch, which is the point of it.
+            expect: "closed on the scan's error the same way it does on a point read's (defect H3b).",
+            targets: &["runtime-go/bluedb/reader.go", "runtime-go/bluedb/txn.go"],
+        }]),
     },
     // -- Goal 3 — easy + simple (P4) ---------------------------------------
     Gate {

@@ -1,0 +1,33 @@
+diff --git a/runtime-go/bluedb/reader.go b/runtime-go/bluedb/reader.go
+index 6edfe9ca..3ec7d9e6 100644
+--- a/runtime-go/bluedb/reader.go
++++ b/runtime-go/bluedb/reader.go
+@@ -283,9 +283,10 @@ func (c *pebbleCursor) fail(err error) {
+ 	if c.err == nil {
+ 		c.err = err
+ 	}
+-	if c.owner != nil {
+-		c.owner.latch(err)
+-	}
++	// MUTATION G2.13m (H3b): the failure stays on the CURSOR. Cursor.Err() still answers,
++	// so every per-cursor assertion is unmoved — but the reader is never poisoned, so
++	// Txn.Commit's fail-closed check sees a clean read-set and the transaction that
++	// concluded "no such row" from a scan it could not perform commits its INSERT.
+ }
+ 
+ func (c *pebbleCursor) Next() bool {
+diff --git a/runtime-go/bluedb/txn.go b/runtime-go/bluedb/txn.go
+index 58dcefcc..617af18a 100644
+--- a/runtime-go/bluedb/txn.go
++++ b/runtime-go/bluedb/txn.go
+@@ -642,7 +642,9 @@ func (tx *Txn) materializeScan(prefix []byte, cur Cursor) Cursor {
+ 		// (an overlay, a future index-backed scan, a test's stand-in). materializeScan is a
+ 		// Txn method, so a failed base scan it consumed IS a failed read of THIS
+ 		// transaction, and Txn.Commit's existing check is what must see it.
+-		tx.reader.latch(scanErr)
++		// MUTATION G2.13m (H3b): the returned cursor still carries the error — N1b's
++		// property is untouched — but the READER is not poisoned, so the commit
++		// boundary never learns the scan failed.
+ 		return &sliceCursor{i: -1, err: scanErr}
+ 	}
+ 

@@ -1,18 +1,45 @@
 diff --git a/runtime-go/bluedb/txn.go b/runtime-go/bluedb/txn.go
-index ec7243b9..fd7d7560 100644
+index 58dcefcc..9013ba35 100644
 --- a/runtime-go/bluedb/txn.go
 +++ b/runtime-go/bluedb/txn.go
-@@ -599,11 +599,9 @@ func (tx *Txn) materializeScan(prefix []byte, cur Cursor) Cursor {
- 	// (or, worse, write-set-only) collection. Overlaying buffered writes on a failed
- 	// base read yields a plausible-looking partial collection that a predicate then
- 	// treats as the truth. Surface the error and return no rows.
--	scanErr := cur.Err()
-+	// MUTATION G2.13b (N1b): cur.Err() is never consulted again, so a failed base
-+	// scan is reported as the buffered write-set alone.
+@@ -636,14 +636,12 @@ func (tx *Txn) materializeScan(prefix []byte, cur Cursor) Cursor {
+ 	scanErr := cur.Err()
  	cur.Close()
--	if scanErr != nil {
+ 	if scanErr != nil {
+-		// Defect H3b: also poison the READER, not just the returned cursor. A cursor
+-		// produced by tx.reader.Iterate has already latched on the way through
+-		// pebbleCursor.fail; this covers the other arm — a base cursor from anywhere else
+-		// (an overlay, a future index-backed scan, a test's stand-in). materializeScan is a
+-		// Txn method, so a failed base scan it consumed IS a failed read of THIS
+-		// transaction, and Txn.Commit's existing check is what must see it.
++		// MUTATION G2.13b (N1b), the HALF-FIX: the reader is still poisoned and the
++		// error is still carried on the returned cursor, so H3b's commit-boundary
++		// property is untouched — but the overlay is handed back ANYWAY. The caller
++		// drains a plausible-looking write-set-only collection and a predicate treats
++		// it as the truth, which is the defect N1b names, one flag short of invisible.
+ 		tx.reader.latch(scanErr)
 -		return &sliceCursor{i: -1, err: scanErr}
--	}
+ 	}
  
  	// Overlay the write-set (only keys under this collection's prefix): a buffered put appears,
- 	// a buffered delete masks.
+@@ -666,7 +664,7 @@ func (tx *Txn) materializeScan(prefix []byte, cur Cursor) Cursor {
+ 		keys = append(keys, k)
+ 	}
+ 	sort.Strings(keys)
+-	sc := &sliceCursor{i: -1}
++	sc := &sliceCursor{i: -1, err: scanErr}
+ 	for _, k := range keys {
+ 		sc.keys = append(sc.keys, []byte(k))
+ 		sc.vals = append(sc.vals, rows[k])
+@@ -686,9 +684,8 @@ type sliceCursor struct {
+ var _ Cursor = (*sliceCursor)(nil)
+ 
+ func (c *sliceCursor) Next() bool {
+-	if c.err != nil {
+-		return false
+-	}
++	// MUTATION G2.13b (N1b): the error no longer stops the drain, so the rows the
++	// overlay invented are served over a base read that failed.
+ 	c.i++
+ 	return c.i < len(c.keys)
+ }

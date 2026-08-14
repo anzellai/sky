@@ -1361,6 +1361,25 @@ fn go_build_sites(ctx: &Ctx) -> Vec<(String, usize)> {
 /// `--verify-mutations` is the expensive re-derivation; G0.6 is the cheap
 /// standing assertion that its results exist, cover every mutation of every
 /// implemented gate, carry the expected RED output, and have not decayed.
+///
+/// **What this body does NOT do**, because the gate's title used to say it did:
+/// it never calls `git apply`, never builds, and never runs a gate. "The mutation
+/// still applies and still turns its gate red" is re-established only by
+/// `--verify-mutations`, which is why that takes about an hour and this takes
+/// under a second. Everything here is an audit of the LEDGER that run wrote —
+/// four checks per mutation:
+///
+/// 1. the patch file is still on disk (and a ledger entry without one is a FAIL,
+///    not a shrug);
+/// 2. the ledger has an entry for it;
+/// 3. the entry records `PROVEN` — `VACUOUS` for the canary, and `VACUOUS`
+///    anywhere else is a green lie;
+/// 4. the recorded RED transcript still contains the declared assertion, and no
+///    declared `target` has moved since the sha the proof was taken at.
+///
+/// Point 4's second half is a HINT with known blind spots — see the note on the
+/// `G0.6` entry in `registry.rs` for why no mutation lists a `*_test.go` in
+/// `targets` and what covers the fixture side instead.
 pub fn g0_6_mutations_verified(ctx: &Ctx) -> GateOutcome {
     let state = GateState::load(ctx.root());
     let mut findings = Vec::new();
@@ -1479,7 +1498,11 @@ pub fn g0_7_self_integrity(ctx: &Ctx) -> GateOutcome {
 
     if findings.is_empty() {
         GateOutcome::pass(format!(
-            "3 static checks green over {} gates; {cite_total} citations resolved ({} warning(s))",
+            "3 static checks green over {} gates; {cite_total} citations each resolve to exactly \
+             one file on their tagged branch, with the cited line inside that file, and every \
+             citation that names an identifier still contains it ({} of them at a line that has \
+             MOVED — a warning by §9.6, not a finding, so the cited line number is checked for \
+             existence, not for accuracy)",
             REGISTRY.len(),
             cite_warnings.len()
         ))
@@ -1729,6 +1752,20 @@ fn check_citations(ctx: &Ctx) -> (Vec<String>, Vec<String>, usize) {
         };
 
         let n_lines = text.lines().count();
+        // UNCONDITIONAL, and it did not used to be (Judge gap 5). This check lived
+        // in the `else` arm below, so a citation that named an identifier was
+        // never asked whether its LINE existed at all: `foo.go:99999` passed as
+        // long as `foo` appeared somewhere in the file. A line past EOF is
+        // unambiguously wrong whatever else the citation says, and hoisting it
+        // cannot invent a failure — which is the bar for tightening this gate,
+        // since a citation checker that cries wolf is one nobody reads.
+        if c.line > n_lines {
+            findings.push(format!(
+                "{doc_rel}:{}: `{}:{}` [{tag}] points past EOF ({resolved_path} has {n_lines} lines)",
+                c.line_no, c.path, c.line
+            ));
+            continue;
+        }
         if let Some(tok) = &c.token {
             if !text.contains(tok.as_str()) {
                 findings.push(format!(
@@ -1748,11 +1785,6 @@ fn check_citations(ctx: &Ctx) -> (Vec<String>, Vec<String>, usize) {
                     c.line_no, c.path, c.line
                 ));
             }
-        } else if c.line > n_lines {
-            findings.push(format!(
-                "{doc_rel}:{}: `{}:{}` [{tag}] points past EOF ({resolved_path} has {n_lines} lines)",
-                c.line_no, c.path, c.line
-            ));
         }
     }
 

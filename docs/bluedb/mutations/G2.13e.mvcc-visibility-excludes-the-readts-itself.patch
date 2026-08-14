@@ -1,8 +1,8 @@
 diff --git a/runtime-go/bluedb/reader.go b/runtime-go/bluedb/reader.go
-index 6feedcd1..2d34ff3c 100644
+index 6edfe9ca..d3fde075 100644
 --- a/runtime-go/bluedb/reader.go
 +++ b/runtime-go/bluedb/reader.go
-@@ -115,6 +115,15 @@ func (r *pebbleReader) Get(userKey []byte) (value []byte, commitTs HLC, ok bool)
+@@ -125,6 +125,15 @@ func (r *pebbleReader) Get(userKey []byte) (value []byte, commitTs HLC, ok bool)
  		// read-set would then carry a dependency on a version that never existed.
  		return nil, HLC{}, false
  	}
@@ -18,7 +18,7 @@ index 6feedcd1..2d34ff3c 100644
  	v := iter.Value()
  	if e := iter.Error(); e != nil {
  		// A lazily-fetched value can fail its block read AFTER positioning succeeded. Same
-@@ -288,6 +297,11 @@ func (c *pebbleCursor) Next() bool {
+@@ -332,6 +341,11 @@ func (c *pebbleCursor) Next() bool {
  			// already this prefix, so the loop's next seek jumps past it.
  			continue
  		}
@@ -28,5 +28,5 @@ index 6feedcd1..2d34ff3c 100644
 +			continue
 +		}
  		v := c.iter.Value()
- 		if len(v) == 0 || v[0] == markerTombstone {
- 			continue // tombstoned as-of readTs — skip
+ 		if e := c.iter.Error(); e != nil {
+ 			// Defect H3b, the value arm — the exact sibling of Get's post-Value() check.

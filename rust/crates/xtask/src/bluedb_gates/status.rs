@@ -131,11 +131,40 @@ pub fn render(header: &Header, rows: &[Row]) -> String {
         ));
     }
 
-    // --- non-PASS detail -------------------------------------------------
-    let bad: Vec<&Row> = rows.iter().filter(|r| r.state != GateState::Pass).collect();
-    if !bad.is_empty() {
-        body.push_str("\n## Failures\n");
-        for r in bad {
+    body.push_str(
+        "\nThe `Mutation proof` cell reads `PROVEN @ <sha>`: the sha `--verify-mutations` was RUN \
+         against. That is necessarily an ANCESTOR of the commit recording it — the run happens, \
+         then its transcripts and ledger are committed — so an older sha there is the normal \
+         state, not a stale one. `UNVERIFIED-SINCE <sha>` is the stale state: a path the mutation \
+         declares as a target changed after the proof was taken.\n",
+    );
+
+    // --- per-gate detail, PASS INCLUDED ----------------------------------
+    //
+    // This section used to be `## Failures` and rendered `detail` only for
+    // non-PASS rows. A gate's `detail` is where it records what its TITLE does not
+    // cover — G0.5's arm (c) reporting "quantified over an empty set", G0.6's "39
+    // not authored yet" — and under the old rule those qualifications were
+    // unreachable from the artefact the moment their gate went green. The title
+    // is what a compacted session inherits; a qualification that only prints on
+    // failure is a qualification that is never read.
+    //
+    // Rows with nothing to say (a NOT-RUN pending gate whose body returns no
+    // detail) are omitted rather than padded, so the section stays readable — but
+    // a row is included whenever it is non-PASS OR has anything of its own to
+    // report, which is exactly the set that could carry a qualification.
+    let detailed: Vec<&Row> = rows
+        .iter()
+        .filter(|r| r.state != GateState::Pass || !r.detail.is_empty() || !r.findings.is_empty())
+        .collect();
+    if !detailed.is_empty() {
+        body.push_str(
+            "\n## Gate detail — in each gate's own words, PASS included\n\n\
+             A green row is not the whole verdict. Read the gate's own line below before quoting \
+             its title: this is where a PASS records the clause it could not reach, the set it \
+             quantified over, or the part of its subject that does not exist yet.\n",
+        );
+        for r in detailed {
             body.push_str(&format!("### {} — {} [{}]\n", r.id, r.title, r.state.label()));
             if !r.detail.is_empty() {
                 body.push_str(&format!("    {}\n", r.detail));
@@ -157,6 +186,26 @@ pub fn render(header: &Header, rows: &[Row]) -> String {
         header.host,
         header.tier.label()
     ));
+    // WHAT THE STAMPS MEAN, stated in the file itself.
+    //
+    // `commit:` is HEAD at the moment this file was generated. It is NOT the
+    // commit that contains this file, and it cannot be: the content must exist
+    // before the commit that carries it, so the sha of that commit is not
+    // computable while writing it. The stamp therefore always names an ANCESTOR of
+    // the commit you are reading it in — normally the parent. The same is true one
+    // level down for `PROVEN @ <sha>` in the table.
+    //
+    // This is inherent, so it is DESCRIBED rather than "fixed": a reader who does
+    // not know it reads an older sha as evidence the file is stale, and a reader
+    // who assumes it names the containing commit reads the file as claiming more
+    // than it can.
+    out.push_str(
+        "<!-- stamps:      `commit` is HEAD when this file was GENERATED, and `PROVEN @ <sha>` \
+         below is the sha `--verify-mutations` RAN at. Both necessarily name an ANCESTOR of the \
+         commit that contains them (content precedes its own commit sha), normally the parent. \
+         Staleness is reported explicitly instead: see `full-tier` on the next line and the \
+         STALE banner in the body. -->\n",
+    );
     match &header.full_tier {
         Some((c, ran, host)) => {
             let mark = match header.full_tier_behind {
