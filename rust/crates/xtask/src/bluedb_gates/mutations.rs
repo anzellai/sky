@@ -858,7 +858,7 @@ mod tests {
         assert!(harness_generated(super::super::status::STATUS_PATH));
         assert!(!diff_moves_a_target(
             "docs/bluedb/mutations/G0.2.rt-imports-bluedb.expected.txt\n\
-             docs/bluedb/mutations/G0.5.second-go-build-site.expected.txt\n\
+             docs/bluedb/mutations/G0.5.untagged-go-build-site.expected.txt\n\
              docs/bluedb/gate-state.tsv\n\
              docs/bluedb/STATUS.md\n"
         ));

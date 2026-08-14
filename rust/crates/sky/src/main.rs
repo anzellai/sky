@@ -1540,13 +1540,15 @@ fn cmd_console(args: &[String]) -> ExitCode {
     }
 }
 
-/// The compiler's **second** `go build`, as a not-yet-spawned [`Command`].
+/// One of the compiler's three `go build`s, as a not-yet-spawned [`Command`].
 ///
-/// The first is `project::build::go_build_command`, which compiles an emitted
-/// `sky-out/`. This one compiles a package inside `runtime-go/` itself, which is
-/// why it was invisible to the G0.5 scan (that reads
-/// `rust/crates/project/src` only) and shipped for a while with no `-tags` at
-/// all — the exact defect G0.5 exists to prevent.
+/// The others are `project::build::go_build_command`, which compiles an emitted
+/// `sky-out/`, and `ffi::inspect::build_inspector`, which compiles
+/// `sky-ffi-inspect`. This one compiles a package inside `runtime-go/` itself,
+/// which is why it was invisible to the G0.5 scan while that scan read
+/// `rust/crates/project/src` only, and shipped for a while with no `-tags` at
+/// all — the exact defect G0.5 exists to prevent. The scan now covers every
+/// `<crate>/src` under `rust/crates`, so all three are in it.
 ///
 /// It carries [`project::GO_BUILD_TAG_ARGS`] — the same constant the other site
 /// uses, referenced rather than copied, so the two cannot drift apart.

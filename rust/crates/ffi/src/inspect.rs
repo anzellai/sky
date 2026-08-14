@@ -438,6 +438,38 @@ pub(crate) fn xdg_cache_sky() -> PathBuf {
     std::env::temp_dir().join("sky-cache")
 }
 
+/// The build tag that selects pebble's **pure-Go** zstd (klauspost) over its
+/// cgo DataDog default.
+///
+/// # Why it lives in `ffi` and not in `project`, which owns the app build
+///
+/// It was declared in `project::build` while `project` was believed to hold the
+/// compiler's only `go build`. It does not: `rust/crates/sky/src/main.rs`
+/// builds `cmd/sky-hub` inside `runtime-go/`, and `build_inspector` below builds
+/// `sky-ffi-inspect`. `project` depends on `ffi` (this module already supplies
+/// `go_env_for_constrained_home` to `project`'s `go_build_command`), so a
+/// constant declared in `project` is unreachable from here — and the only way to
+/// tag this site would have been a hand-copied literal, which is the drift the
+/// tag exists to prevent.
+///
+/// `ffi::inspect` is the lowest point in the crate DAG that already carries
+/// Go-invocation knowledge, so it is where the compiler's Go build flags belong.
+/// `project` re-exports both constants, so `project::GO_BUILD_TAG_ARGS` — the
+/// path every existing caller and the G0.5 gate use — is unchanged.
+///
+/// Without the tag the two builds of the same tree diverge: `CGO_ENABLED=0`
+/// jobs link klauspost while the cgo paths link the DataDog cgo codec, so one of
+/// the two shipped configurations is never the one that was tested.
+pub const GO_BUILD_ZSTD_TAG: &str = "pebblegozstd";
+
+/// The `-tags` argument pair every `go build` this compiler runs must carry.
+///
+/// Referenced, never re-derived. Exported so the G0.5 gate can re-link a Persist
+/// binary through the *cgo* paths with the compiler's own flags instead of a
+/// hand-copied duplicate: a re-derived flag list would keep the gate green
+/// through exactly the edit that drops the tag.
+pub const GO_BUILD_TAG_ARGS: [&str; 2] = ["-tags", GO_BUILD_ZSTD_TAG];
+
 /// Go env overrides (`GOCACHE`, `GOPATH`) to apply to `go build` when `$HOME`
 /// isn't writable — Go's build cache defaults under `$HOME` (`~/.cache/go-build`
 /// / `~/Library/Caches/go-build`) and its module cache under `$HOME/go`, so an
@@ -504,8 +536,15 @@ fn build_inspector(
         }
         std::fs::write(&dst, bytes).map_err(|e| format!("write {}: {e}", dst.display()))?;
     }
+    // `GO_BUILD_TAG_ARGS`, like every other `go build` the compiler spawns. It
+    // is a no-op on TODAY'S inspector graph — the generated tree imports the
+    // user's Go package, not `runtime-go` — and that is a property of today's
+    // graph, not of this call site. Uniformity is what G0.5 asserts, and it is
+    // what stops the next site from being the one nobody tagged.
     let out = Command::new("go")
-        .args(["build", "-ldflags=-s -w", "-o"])
+        .args(["build", "-ldflags=-s -w"])
+        .args(GO_BUILD_TAG_ARGS)
+        .arg("-o")
         .arg(bin)
         .arg(".")
         .current_dir(cache_root)

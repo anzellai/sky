@@ -553,6 +553,22 @@ pub fn g2_13b_failed_scan_is_an_error(ctx: &Ctx) -> GateOutcome {
 
 pub const G2_13C_TESTS: &[&str] = &["TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs"];
 
+/// The fixture's own consequence assertion.
+///
+/// It carried NO anchor, and its per-leaf falsifier was a [`LEAF_COVERAGE`] row
+/// — which lives in `#[cfg(test)]` and which **no gate body reads**. On a
+/// `--tier=full` run alone this body could therefore have been `{}`: an empty Go
+/// test emits `pass`, `run_audit_gate` establishes only that a func of that name
+/// emitted one, and the gate would have reported PASS with the fixture gutted.
+/// The anchor moves the falsifier into the gate itself, where `cargo test` is no
+/// longer the only thing standing between a gutted body and a green board.
+const G2_13C_ANCHORS: &[SourceAnchor] = &[SourceAnchor {
+    func: "TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs",
+    needle: "and the commit clock RESTARTED:",
+    why: "that IS the consequence the fixture exists to state — a mis-sized hlc_hi read as a fresh \
+          store, so the commit clock re-issues timestamps it has already handed out",
+}];
+
 pub fn g2_13c_corrupt_hlc_hi(ctx: &Ctx) -> GateOutcome {
     run_audit_gate(
         ctx,
@@ -560,7 +576,7 @@ pub fn g2_13c_corrupt_hlc_hi(ctx: &Ctx) -> GateOutcome {
             id: "G2.13c",
             tests: G2_13C_TESTS,
             required_subtests: &[],
-            anchors: &[],
+            anchors: G2_13C_ANCHORS,
             sites: &[SubtestSites {
                 func: "TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs",
                 sites: 0,
@@ -580,6 +596,16 @@ pub fn g2_13c_corrupt_hlc_hi(ctx: &Ctx) -> GateOutcome {
 
 pub const G2_13D_TESTS: &[&str] = &["TestAuditC1CommitOnClosedChannelReturnsError"];
 
+/// Same gap, same close as [`G2_13C_ANCHORS`] — this leaf was in exactly the
+/// state the Judge named for c/e/g/h and was not on the list, which is reason to
+/// close it rather than reason to leave it.
+const G2_13D_ANCHORS: &[SourceAnchor] = &[SourceAnchor {
+    func: "TestAuditC1CommitOnClosedChannelReturnsError",
+    needle: "the write was never enqueued, never applied and is not durable",
+    why: "that IS the C1 defect stated as a consequence — a recovered `send on closed channel` \
+          acking nil for a write that never reached the committer",
+}];
+
 pub fn g2_13d_no_false_ack(ctx: &Ctx) -> GateOutcome {
     run_audit_gate(
         ctx,
@@ -587,7 +613,7 @@ pub fn g2_13d_no_false_ack(ctx: &Ctx) -> GateOutcome {
             id: "G2.13d",
             tests: G2_13D_TESTS,
             required_subtests: &[],
-            anchors: &[],
+            anchors: G2_13D_ANCHORS,
             sites: &[SubtestSites {
                 func: "TestAuditC1CommitOnClosedChannelReturnsError",
                 sites: 0,
@@ -613,6 +639,23 @@ pub const G2_13E_TESTS: &[&str] = &[
     "TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs",
 ];
 
+/// One anchor per arm, because the two arms state two different halves and a
+/// function-level needle from either says nothing about the other.
+const G2_13E_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: "TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot",
+        needle: "the ASSIGNED-but-unapplied commitTs.",
+        why: "that IS the deterministic arm's property — a readTs taken from the in-memory high \
+              water names a commit the pinned snapshot cannot serve",
+    },
+    SourceAnchor {
+        func: "TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs",
+        needle: "Its readTs names a commit outside its own pinned snapshot — defect H1.",
+        why: "that IS the visibility boundary the property arm exists to state — `at or below`, \
+              inclusive of the readTs itself",
+    },
+];
+
 pub fn g2_13e_readts_pinned_with_snapshot(ctx: &Ctx) -> GateOutcome {
     run_audit_gate(
         ctx,
@@ -620,7 +663,7 @@ pub fn g2_13e_readts_pinned_with_snapshot(ctx: &Ctx) -> GateOutcome {
             id: "G2.13e",
             tests: G2_13E_TESTS,
             required_subtests: &[],
-            anchors: &[],
+            anchors: G2_13E_ANCHORS,
             sites: &[
                 SubtestSites {
                     func: "TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot",
@@ -721,6 +764,15 @@ pub fn g2_13f_close_quiesces_readers(ctx: &Ctx) -> GateOutcome {
 /// the other.
 pub const G2_13G_TESTS: &[&str] = &["TestAuditH3ReaderGetSurfacesIoErrors"];
 
+/// Assertion 1 of the fixture — the FLAG, spelled `Errorf` so assertion 2 (the
+/// transaction failing closed) still runs behind it.
+const G2_13G_ANCHORS: &[SourceAnchor] = &[SourceAnchor {
+    func: "TestAuditH3ReaderGetSurfacesIoErrors",
+    needle: "Get swallowed an injected SSTable read fault: ok=false with Err() == nil",
+    why: "that IS the H3 defect stated directly — an injected read fault returning `absent` with \
+          no error, which a caller cannot tell from a row that is not there",
+}];
+
 pub fn g2_13g_failed_read_is_an_error(ctx: &Ctx) -> GateOutcome {
     run_audit_gate(
         ctx,
@@ -728,7 +780,7 @@ pub fn g2_13g_failed_read_is_an_error(ctx: &Ctx) -> GateOutcome {
             id: "G2.13g",
             tests: G2_13G_TESTS,
             required_subtests: &[],
-            anchors: &[],
+            anchors: G2_13G_ANCHORS,
             sites: &[SubtestSites {
                 func: "TestAuditH3ReaderGetSurfacesIoErrors",
                 sites: 0,
@@ -831,6 +883,22 @@ const G2_13H_ANCHORS: &[SourceAnchor] = &[
         why: "that IS the fail-closed half: the blind job with an undecodable payload must not \
               commit at all, which is what makes the ring's completeness reachable rather than a \
               race the fixture happens to win",
+    },
+    // The two REMAINING doors. They were covered only by a LEAF_COVERAGE row —
+    // `#[cfg(test)]` data that no gate body reads — so a `--tier=full` run alone
+    // could not tell either body from `{}`. Same close as the blind-path door
+    // above, one door later.
+    SourceAnchor {
+        func: "TestAuditC6bAdvanceOnAnUnknownTokenIsAnError",
+        needle: "the caller then reads at a readTs GC may collect underneath it",
+        why: "that IS the watermark door's consequence — `Advance` on an unknown token returning \
+              nil pins no GC floor, so the reader's readTs is collectable under it",
+    },
+    SourceAnchor {
+        func: "TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor",
+        needle: "lower floor means after(readTs) answers `not spilled` for a range the ring does NOT",
+        why: "that IS the cold-start door's consequence — a seed that swallows a decode error \
+              leaves a floor claiming a range the ring does not hold",
     },
 ];
 
@@ -2078,7 +2146,11 @@ fn gate_anchors(gate: &str) -> &'static [SourceAnchor] {
         "G2.9a" => super::gates_g2::G2_9A_ANCHORS,
         "G2.13a" => G2_13A_ANCHORS,
         "G2.13b" => G2_13B_ANCHORS,
+        "G2.13c" => G2_13C_ANCHORS,
+        "G2.13d" => G2_13D_ANCHORS,
+        "G2.13e" => G2_13E_ANCHORS,
         "G2.13f" => G2_13F_ANCHORS,
+        "G2.13g" => G2_13G_ANCHORS,
         "G2.13h" => G2_13H_ANCHORS,
         "G2.13i" => G2_13I_ANCHORS,
         "G2.13j" => G2_13J_ANCHORS,
@@ -2365,21 +2437,26 @@ mod tests {
     /// function it names, TODAY. A needle that never matched would make its
     /// gate permanently red, and one copied wrong would make it red for the
     /// wrong reason.
+    ///
+    /// The population is READ FROM [`gate_anchors`] over [`ALL_SETS`], not from
+    /// a hand-chained list of the anchor constants. It was such a list, and a
+    /// list is a place a new constant can fail to appear: the four sets added
+    /// for G2.13c/d/e/g would have been silently unchecked here on exactly the
+    /// commit that introduced them.
     #[test]
     fn every_source_anchor_resolves_against_the_corpus() {
         let src = audit_src();
         let bodies = enumerate_injections(&src);
-        for a in G2_13A_ANCHORS
+        let anchors: Vec<&SourceAnchor> = ALL_SETS
             .iter()
-            .chain(G2_13B_ANCHORS.iter())
-            .chain(G2_13H_ANCHORS.iter())
-            .chain(G2_13I_ANCHORS.iter())
-            .chain(G2_13J_ANCHORS.iter())
-            .chain(G2_13K_ANCHORS.iter())
-            .chain(G2_13L_ANCHORS.iter())
-            .chain(G2_13M_ANCHORS.iter())
-            .chain(G2_13F_ANCHORS.iter())
-        {
+            .flat_map(|(id, _)| gate_anchors(id).iter())
+            .collect();
+        assert!(
+            !anchors.is_empty(),
+            "no anchors resolved for any G2.13 gate — the derivation is broken, and an empty \
+             population makes this test pass by quantifying over nothing"
+        );
+        for a in anchors {
             let body = bodies
                 .iter()
                 .find(|f| f.test == a.func)

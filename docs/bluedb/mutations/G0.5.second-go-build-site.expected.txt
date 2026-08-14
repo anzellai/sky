@@ -1,4 +1,0 @@
-PROBE gate=G0.5 state=FAIL root=<scratch-worktree>
-  go-build site / zstd tag contract broken
-  expected exactly 1 `go build` site in rust/crates/project/src, found 2: rust/crates/project/src/build.rs:736, rust/crates/project/src/build.rs:2274
-  arm (c) NOT VERIFIED: no compiler at <scratch-worktree>/rust/target/release/sky or sky-out/sky — build it first (cd rust && cargo build --release -p sky)

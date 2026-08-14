@@ -705,28 +705,21 @@ fn sky_build_goflags_from(existing: &str) -> String {
     flags.join(" ")
 }
 
-/// The build tag that selects pebble's **pure-Go** zstd (klauspost) over its
-/// cgo DataDog default.
+/// The zstd build tag, re-exported from its declaration in [`ffi::inspect`].
 ///
-/// Without it the two builds of the same tree diverge: CI's `CGO_ENABLED=0`
-/// jobs link klauspost while `sky build`'s cgo paths link the DataDog cgo
-/// codec, so one of the two shipped configurations is never the one that was
-/// tested. The tag is not a per-path flag — it is passed at the single
-/// [`run_go_build_once`] site, which is the ONLY `go build` invocation in the
-/// compiler, so all three call paths into it (webview CGO=1, static CGO=0, cgo
-/// retry) inherit it by construction rather than by three copies staying in
-/// sync.
-pub const GO_BUILD_ZSTD_TAG: &str = "pebblegozstd";
-
-/// The `-tags` argument pair every `go build` this compiler runs must carry.
+/// It USED to be declared here, on the belief — stated in its own docstring —
+/// that [`run_go_build_once`] was "the ONLY `go build` invocation in the
+/// compiler". It is not, and the belief cost a site: `sky console-serve` builds
+/// `cmd/sky-hub` from `rust/crates/sky/src/main.rs` and shipped with no `-tags`
+/// at all, while `ffi::inspect::build_inspector` builds `sky-ffi-inspect`.
+/// `project` depends on `ffi`, so the constant had to move DOWN the DAG for the
+/// third site to be able to inherit it rather than copy it.
 ///
-/// Exported so the G0.5 gate can re-link a Persist binary through the *cgo*
-/// paths with the compiler's own flags instead of a hand-copied duplicate: a
-/// re-derived flag list would keep the gate green through exactly the edit that
-/// drops the tag.
-pub const GO_BUILD_TAG_ARGS: [&str; 2] = ["-tags", GO_BUILD_ZSTD_TAG];
+/// Both names keep their `project::` path so every caller — and G0.5 — is
+/// unchanged.
+pub use ffi::inspect::{GO_BUILD_TAG_ARGS, GO_BUILD_ZSTD_TAG};
 
-/// The compiler's ONE `go build` invocation, as a not-yet-spawned [`Command`].
+/// The app-build `go build` invocation, as a not-yet-spawned [`Command`].
 ///
 /// Split out from [`run_go_build_once`] purely so the argv is assertable: a
 /// test can read back `-tags pebblegozstd` without running Go. An edit that

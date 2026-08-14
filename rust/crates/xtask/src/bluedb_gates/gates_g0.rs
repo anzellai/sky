@@ -123,10 +123,24 @@ pub fn g0_2_layering(ctx: &Ctx) -> GateOutcome {
     }
 }
 
+/// **Pebble, and nothing else.**
+///
+/// This used to also allow `github.com/cockroachdb/errors` and the whole of
+/// `golang.org/x/`, which made the gate's title ("bluedb imports only pebble +
+/// stdlib") an overstatement of its body: two module namespaces could have been
+/// pulled in without the gate noticing, and `golang.org/x/` is not a namespace
+/// anybody owns.
+///
+/// Both were speculative — they were written against dependencies pebble's API
+/// was expected to force, and `runtime-go/bluedb/*.go` imports neither today
+/// (`github.com/cockroachdb/pebble/v2`, `/vfs` and `/vfs/errorfs` are the only
+/// non-stdlib imports in the package). So the allowance is DELETED rather than
+/// the title narrowed: the body now proves what the title says, and the day
+/// bluedb genuinely needs one of them, the gate goes red and the decision is
+/// taken deliberately with a line of argument next to it, which is what an
+/// allowlist is for.
 fn is_allowed_bluedb_dep(imp: &str) -> bool {
     imp.starts_with("github.com/cockroachdb/pebble")
-        || imp.starts_with("github.com/cockroachdb/errors")
-        || imp.starts_with("golang.org/x/")
 }
 
 // ---------------------------------------------------------------------------
@@ -1026,30 +1040,78 @@ const DATADOG_ZSTD: &str = "datadog/zstd";
 
 const G0_5_BUILD_BUDGET: Duration = Duration::from_secs(360);
 
-/// Arm (a) — `run_go_build_once` is the sole `go build` site — is asserted
-/// unconditionally, and is the arm the declared mutation ("add a second site")
-/// falsifies.
+/// Arm (a) — **every** `go build` site in the compiler carries the tag — is
+/// asserted unconditionally, and is the arm the declared mutation ("add an
+/// untagged site") falsifies.
 ///
-/// Arms (b) `-tags pebblegozstd` and (c) `go tool nm` finds no DataDog cgo zstd
-/// symbols are asserted **iff `runtime-go/go.mod` requires pebble**. The tag
-/// selects pebble's pure-Go zstd implementation; with no pebble in the module
-/// graph it selects nothing, and asserting it would be theatre. The condition is
-/// read from `go.mod`, not chosen by the gate author, and it ratchets: the
-/// commit that adds pebble turns arms (b)/(c) live.
+/// # Why the invariant is "every site", and no longer "exactly one site"
+///
+/// It used to assert that `rust/crates/project/src` held exactly one `go build`
+/// and that that one carried the tag. Both halves were wrong at once. There are
+/// **three** compiler sites — the app build (`project::build`), the hub build
+/// (`sky::main`, `cmd/sky-hub` inside `runtime-go/`) and the inspector build
+/// (`ffi::inspect`, `sky-ffi-inspect`) — plus the gate's own cgo re-link below.
+/// Two of the three shipped with no `-tags` at all, and neither was visible to
+/// the scan.
+///
+/// "Exactly one site" is therefore false against correct code, and its declared
+/// mutation ("add a second site") is satisfied by real shipped code. The
+/// invariant that survives the correction is the one the property was always
+/// about: *every* site carries the tag, however many there are. Counting sites
+/// was only ever a proxy for it.
+///
+/// The tag check is unconditional, where it used to be gated on
+/// `runtime-go/go.mod` requiring pebble. It is a SOURCE-level contract about the
+/// argv, not a claim about today's import graph — the hub's own docstring makes
+/// exactly that argument for tagging a site pebble does not currently reach —
+/// and a check that switches itself off cannot catch the site that gets added
+/// while it is off.
+///
+/// Arm (c) — `go tool nm` finds no DataDog cgo zstd symbols in a real Persist
+/// binary — IS still conditional on pebble being in the module graph, because
+/// there are no symbols to look for otherwise. That condition is read from
+/// `go.mod`, not chosen by the gate author, and it ratchets.
 pub fn g0_5_zstd_tag(ctx: &Ctx) -> GateOutcome {
     let mut findings = Vec::new();
 
-    let sites = go_build_sites(ctx);
-    if sites.len() != 1 {
+    let scan = go_build_sites(ctx);
+
+    // The vacuity floor. "0 of 0 sites are untagged" is a green lie, and it is
+    // the shape a broken scan (a moved crate root, a renamed `Command::new`)
+    // takes — indistinguishable from a clean tree without this.
+    if scan.sites.is_empty() {
         findings.push(format!(
-            "expected exactly 1 `go build` site in rust/crates/project/src, found {}: {}",
-            sites.len(),
-            sites
-                .iter()
-                .map(|(f, l)| format!("{f}:{l}"))
-                .collect::<Vec<_>>()
-                .join(", ")
+            "no `go build` site found in any of the {} crate source trees under rust/crates — \
+             the compiler certainly runs `go build`, so the scan is broken and certifies nothing",
+            scan.roots
         ));
+    }
+
+    // The constants that carry the tag, over the UNION of every scanned file.
+    //
+    // Per-file was wrong and silently so: `rust/crates/sky/src/main.rs` writes
+    // `.args(project::GO_BUILD_TAG_ARGS)` and declares neither constant, so a
+    // per-file derivation returned two empty lists and reported the site as
+    // UNTAGGED — a gate red on correct code, which is how a widened scan gets
+    // narrowed again.
+    let universe = tag_carrying_consts(
+        &scan
+            .texts
+            .values()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+
+    for (file, line) in &scan.sites {
+        let text = scan.texts.get(file).map(String::as_str).unwrap_or_default();
+        if !zstd_tag_reaches_site(text, *line, &universe) {
+            findings.push(format!(
+                "go build site {file}:{line} does not carry `-tags {ZSTD_TAG}` — that build links \
+                 pebble's cgo DataDog zstd while every other build of the same tree links pure-Go \
+                 klauspost, and only one of the two is ever the one that was tested"
+            ));
+        }
     }
 
     let pebble_present = ctx
@@ -1057,19 +1119,8 @@ pub fn g0_5_zstd_tag(ctx: &Ctx) -> GateOutcome {
         .map(|m| m.contains("cockroachdb/pebble"))
         .unwrap_or(false);
 
-    let build_rs = ctx.read("rust/crates/project/src/build.rs").unwrap_or_default();
-    let tag_present = sites
-        .iter()
-        .any(|(_, line)| zstd_tag_reaches_site(&build_rs, *line));
-
     let mut arm_c = "not applicable — runtime-go/go.mod does not require pebble yet".to_string();
-
     if pebble_present {
-        if !tag_present {
-            findings.push(format!(
-                "runtime-go/go.mod requires pebble but no `-tags {ZSTD_TAG}` appears at the go build site — CI would link the cgo DataDog zstd while shipped apps link pure-Go klauspost"
-            ));
-        }
         match g0_5_arm_c(ctx) {
             Ok(detail) => arm_c = detail,
             Err(finding) => findings.push(finding),
@@ -1077,17 +1128,16 @@ pub fn g0_5_zstd_tag(ctx: &Ctx) -> GateOutcome {
     }
 
     if findings.is_empty() {
-        let arm_b = if pebble_present {
-            "asserted"
-        } else {
-            "not applicable"
-        };
         GateOutcome::pass(format!(
-            "1 `go build` site ({}) [tier {}]; arm (b): {arm_b}; arm (c): {arm_c}",
-            sites
-                .first()
+            "{} `go build` site(s) over {} crate source trees, every one carrying `-tags {ZSTD_TAG}` \
+             ({}) [tier {}]; arm (c): {arm_c}",
+            scan.sites.len(),
+            scan.roots,
+            scan.sites
+                .iter()
                 .map(|(f, l)| format!("{f}:{l}"))
-                .unwrap_or_default(),
+                .collect::<Vec<_>>()
+                .join(", "),
             ctx.tier.label()
         ))
     } else {
@@ -1110,12 +1160,37 @@ pub fn g0_5_zstd_tag(ctx: &Ctx) -> GateOutcome {
 /// GO_BUILD_ZSTD_TAG]`). Indirection is resolved from the source, not
 /// hard-coded: a rename of either constant keeps working, and deleting the
 /// argument does not.
-fn zstd_tag_reaches_site(src: &str, site_line: usize) -> bool {
+///
+/// # `universe`, and the trap that makes it necessary
+///
+/// The constant names come from the caller as the union over EVERY scanned
+/// file, not from `src`. A site does not have to declare the constant it uses:
+/// `rust/crates/sky/src/main.rs` writes `.args(project::GO_BUILD_TAG_ARGS)`,
+/// declares neither `GO_BUILD_ZSTD_TAG` nor `GO_BUILD_TAG_ARGS`, and contains
+/// neither the literal `pebblegozstd` nor `-tags` anywhere `const_name` would
+/// accept. Deriving the names from `src` alone therefore returned two empty
+/// lists and called that site untagged — a widened scan going red on correct
+/// code, which is how a widened scan gets narrowed back again.
+///
+/// The window is comment-stripped for the same reason the body text is: a
+/// docstring naming `GO_BUILD_TAG_ARGS` above the argv is a mention, not a flag.
+fn zstd_tag_reaches_site(
+    src: &str,
+    site_line: usize,
+    universe: &(Vec<String>, Vec<String>),
+) -> bool {
     let lines: Vec<&str> = src.lines().collect();
     let start = site_line.saturating_sub(1);
-    let window = lines[start..(start + 14).min(lines.len())].join("\n");
+    let window: String = lines[start..(start + 14).min(lines.len())]
+        .iter()
+        .map(|l| match l.find("//") {
+            Some(p) => &l[..p],
+            None => l,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    let (holds_tag, tag_args) = tag_carrying_consts(src);
+    let (holds_tag, tag_args) = universe;
 
     // `.arg("-tags").arg(<the tag, literal or by name>)`
     if window.contains("-tags")
@@ -1332,26 +1407,81 @@ fn persist_witness(ctx: &Ctx) -> Option<String> {
     None
 }
 
+/// Every `go build` site the compiler workspace contains, plus the text of every
+/// file scanned to find them.
+pub struct GoBuildScan {
+    /// `(repo-relative file, 1-based line)` of each `Command::new("go")` whose
+    /// command line contains `build`.
+    pub sites: Vec<(String, usize)>,
+    /// Every scanned file's text, keyed by the same repo-relative path. Kept
+    /// because the tag check needs BOTH the site's own file (for the argv
+    /// window) and the union of all of them (for the constant the site
+    /// references but does not declare) — see [`zstd_tag_reaches_site`].
+    pub texts: BTreeMap<String, String>,
+    /// How many `<crate>/src` trees were walked. Rendered into the PASS detail:
+    /// a scan that walked nothing would otherwise report "0 untagged sites".
+    pub roots: usize,
+}
+
 /// A `Command::new("go")` whose command line contains `build` within the next
 /// few lines. `go get` / `go tool` sites are not `go build` sites.
-fn go_build_sites(ctx: &Ctx) -> Vec<(String, usize)> {
-    let mut out = Vec::new();
-    for f in collect_ext(&ctx.path("rust/crates/project/src"), "rs") {
-        let Ok(text) = std::fs::read_to_string(&f) else {
-            continue;
-        };
-        let lines: Vec<&str> = text.lines().collect();
-        for (i, line) in lines.iter().enumerate() {
-            if !line.contains("Command::new(\"go\")") {
+///
+/// # The scope, and why it is not a curated list
+///
+/// This read `rust/crates/project/src` **only**, on the belief — written into
+/// `GO_BUILD_ZSTD_TAG`'s own docstring — that `run_go_build_once` was "the ONLY
+/// `go build` invocation in the compiler". It was not, and the gate that exists
+/// to catch exactly that could not see the counter-example:
+/// `rust/crates/sky/src/main.rs` builds `cmd/sky-hub` inside `runtime-go/` and
+/// shipped with no `-tags` at all, and widening the scan then found a third at
+/// `rust/crates/ffi/src/inspect.rs` (`sky-ffi-inspect`) in the same state.
+///
+/// So the roots are enumerated from the filesystem — every `<crate>/src` under
+/// `rust/crates` — rather than listed by an author. A new crate that shells out
+/// to `go build` is in scope the day it is created, and a scope this gate cannot
+/// see is a scope a future site can hide in.
+fn go_build_sites(ctx: &Ctx) -> GoBuildScan {
+    let mut sites = Vec::new();
+    let mut texts = BTreeMap::new();
+    let mut roots = 0usize;
+
+    let mut crate_dirs: Vec<PathBuf> = match std::fs::read_dir(ctx.path("rust/crates")) {
+        Ok(rd) => rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.join("src").is_dir())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    crate_dirs.sort();
+
+    for c in crate_dirs {
+        roots += 1;
+        for f in collect_ext(&c.join("src"), "rs") {
+            let Ok(text) = std::fs::read_to_string(&f) else {
                 continue;
+            };
+            let path = rel(ctx, &f);
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if !line.contains("Command::new(\"go\")") {
+                    continue;
+                }
+                let window = lines[i..(i + 6).min(lines.len())].join(" ");
+                if window.contains(".arg(\"build\")") || window.contains("\"build\",") {
+                    sites.push((path.clone(), i + 1));
+                }
             }
-            let window = lines[i..(i + 6).min(lines.len())].join(" ");
-            if window.contains(".arg(\"build\")") || window.contains("\"build\",") {
-                out.push((rel(ctx, &f), i + 1));
-            }
+            texts.insert(path, text);
         }
     }
-    out
+
+    sites.sort();
+    GoBuildScan {
+        sites,
+        texts,
+        roots,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1370,7 +1500,9 @@ fn go_build_sites(ctx: &Ctx) -> Vec<(String, usize)> {
 /// four checks per mutation:
 ///
 /// 1. the patch file is still on disk (and a ledger entry without one is a FAIL,
-///    not a shrug);
+///    not a shrug; a patch-less mutation with no ledger entry is exempt ONLY
+///    while its gate's own body reports `NotRun`, which [`gate_does_not_run`]
+///    establishes by executing it);
 /// 2. the ledger has an entry for it;
 /// 3. the entry records `PROVEN` — `VACUOUS` for the canary, and `VACUOUS`
 ///    anywhere else is a green lie;
@@ -1394,14 +1526,27 @@ pub fn g0_6_mutations_verified(ctx: &Ctx) -> GateOutcome {
                         "{}: the ledger records a proof but the patch at {} is gone",
                         m.id, m.patch
                     ));
-                } else {
-                    // The gate is not authored yet. It already renders NOT RUN,
-                    // which renders its goal UNKNOWN, so counting it here would
-                    // drown the real findings without adding any signal. An
-                    // *implemented* gate with no patch cannot hide this way:
-                    // `--verify-mutations` records MUTATION-STALE for it, and
-                    // that lands in the ledger and is caught below.
+                } else if gate_does_not_run(ctx, gate) {
+                    // The gate has no body yet: it renders NOT RUN, which
+                    // renders its goal UNKNOWN, never PASS. There is nothing for
+                    // a mutation to falsify, so requiring one would be requiring
+                    // evidence about code that does not exist — and counting it
+                    // as a finding would drown the real ones behind 39 rows that
+                    // say only "P2 has not landed".
                     unauthored += 1;
+                } else {
+                    // An unauthored mutation on a gate that RUNS is a different
+                    // animal entirely, and the blanket exemption above used to
+                    // cover it: the gate reports PASS, its goal counts that
+                    // PASS, and nothing anywhere has shown the gate can go red.
+                    // That is a gate proven by nothing, which is the one thing
+                    // this harness exists to make impossible.
+                    findings.push(format!(
+                        "{}: {} RUNS but this mutation has no patch at {} — a gate that executes \
+                         and reports PASS while nothing has shown it can go RED is UNPROVEN in \
+                         substance, whatever the ledger says",
+                        m.id, gate.id, m.patch
+                    ));
                 }
                 continue;
             }
@@ -1458,17 +1603,43 @@ pub fn g0_6_mutations_verified(ctx: &Ctx) -> GateOutcome {
 
     if findings.is_empty() {
         GateOutcome::pass(format!(
-            "every authored mutation carries a current proof ({unauthored} not authored yet)"
+            "every mutation of a gate that RUNS carries a current proof ({unauthored} unauthored, \
+             every one of them on a gate whose body reports NOT RUN — checked by executing that \
+             body, not by assuming it)"
         ))
     } else {
         GateOutcome::fail(
             format!(
-                "{} mutation proof problem(s) ({unauthored} not authored yet)",
+                "{} mutation proof problem(s) ({unauthored} unauthored on NOT-RUN gates)",
                 findings.len()
             ),
             findings,
         )
     }
+}
+
+/// Does this gate's body decline to execute?
+///
+/// The exemption for an unauthored mutation is only defensible for a gate that
+/// has no body — and "has no body" must be DERIVED, never taken from the author,
+/// or the exemption becomes the place to hide a green lie (§10.1). So the gate's
+/// own body is executed and its outcome read: `NotRun` is the machine-checked
+/// answer, and the `pending` probes that produce it read the concrete paths
+/// their phase creates.
+///
+/// It costs nothing today: every gate that reaches this branch is a
+/// `pending::*` substrate probe, which is a handful of `Path::exists` calls. A
+/// gate with a REAL body that lost its patch pays that body's cost once, and
+/// pays it into a finding — which is the right price for a state that must not
+/// pass quietly.
+///
+/// G0.6 is excluded by id: a self-call would be unbounded recursion, and G0.6
+/// plainly runs, since it is what is asking.
+fn gate_does_not_run(ctx: &Ctx, gate: &super::registry::Gate) -> bool {
+    if gate.id == "G0.6" {
+        return false;
+    }
+    matches!((gate.run)(ctx), GateOutcome::NotRun { .. })
 }
 
 pub fn expected_path(patch: &str) -> String {
@@ -1498,11 +1669,12 @@ pub fn g0_7_self_integrity(ctx: &Ctx) -> GateOutcome {
 
     if findings.is_empty() {
         GateOutcome::pass(format!(
-            "3 static checks green over {} gates; {cite_total} citations each resolve to exactly \
-             one file on their tagged branch, with the cited line inside that file, and every \
-             citation that names an identifier still contains it ({} of them at a line that has \
-             MOVED — a warning by §9.6, not a finding, so the cited line number is checked for \
-             existence, not for accuracy)",
+            "3 static checks green over {} gates; {cite_total} citations in {CITATION_DOC} \
+             (outside its fenced illustrations — see `check_citations` for the scope and why it \
+             is one document) each resolve to exactly one file on their tagged branch, with the \
+             cited line inside that file, and every citation that names an identifier still \
+             contains it ({} of them at a line that has MOVED — a warning by §9.6, not a finding, \
+             so the cited line number is checked for existence, not for accuracy)",
             REGISTRY.len(),
             cite_warnings.len()
         ))
@@ -1696,8 +1868,29 @@ fn preceding_backticked_ident(head: &str) -> Option<String> {
 /// without a tag is a defect, not a detail"), and a citation whose tagged
 /// branch is not present in this clone is a warning, because absence of a
 /// reference branch is a property of the checkout, not of the document.
+/// The ONE document whose citations this gate resolves, named as a constant so
+/// the gate's PASS detail and its title quote the same scope.
+pub const CITATION_DOC: &str = "docs/bluedb/v2-architecture.md";
+
+/// Resolve every citation in [`CITATION_DOC`], outside its fenced illustrations.
+///
+/// # Why one document, and why that is stated rather than implied
+///
+/// The gate's title used to say "every citation resolves", which quantified over
+/// a set no reader could see. The scope is one document, and widening it was
+/// measured before being declined: `docs/bluedb/` carries 39 further `path:line`
+/// citations — 35 in `P1-STAGE2-PLAN.md`, 3 in `RESUME.md`, 1 in the generated
+/// `STATUS.md`. They are not written in this grammar. Almost none carries a
+/// `[main]`/`[bdb]`/`[p5e]`/`[exp]` tag, and a large share cite PEBBLE's own
+/// source (`db.go:885`, `version_state.go:191`,
+/// `pebble/v2@v2.1.6/snapshot.go:62-69`) — resolvable against the Go module
+/// cache and against no branch [`tag_branch`] knows.
+///
+/// So this is a real limit, recorded in the title, and not a claim of coverage
+/// the body does not have. The day a second document adopts the tagged grammar,
+/// it belongs in this scope.
 fn check_citations(ctx: &Ctx) -> (Vec<String>, Vec<String>, usize) {
-    let doc_rel = "docs/bluedb/v2-architecture.md";
+    let doc_rel = CITATION_DOC;
     let Some(doc) = ctx.read(doc_rel) else {
         return (
             vec![format!("{doc_rel} is missing — G0.7 cannot check citations")],
@@ -2138,7 +2331,7 @@ fn go_build_command() {\n\
         .args(GO_BUILD_TAG_ARGS)\n\
         .arg(\".\");\n\
 }\n";
-        assert!(zstd_tag_reaches_site(shipped, 5));
+        assert!(zstd_tag_reaches_site(shipped, 5, &tag_carrying_consts(shipped)));
 
         let inline = "\
 fn go_build_command() {\n\
@@ -2148,7 +2341,7 @@ fn go_build_command() {\n\
         .arg(\"pebblegozstd\")\n\
         .arg(\".\");\n\
 }\n";
-        assert!(zstd_tag_reaches_site(inline, 2));
+        assert!(zstd_tag_reaches_site(inline, 2, &tag_carrying_consts(inline)));
 
         let by_name = "\
 pub const GO_BUILD_ZSTD_TAG: &str = \"pebblegozstd\";\n\
@@ -2159,7 +2352,7 @@ fn go_build_command() {\n\
         .arg(GO_BUILD_ZSTD_TAG)\n\
         .arg(\".\");\n\
 }\n";
-        assert!(zstd_tag_reaches_site(by_name, 3));
+        assert!(zstd_tag_reaches_site(by_name, 3, &tag_carrying_consts(by_name)));
 
         // REGRESSED: the argv lost the tag, the file kept every mention of it.
         let dropped = "\
@@ -2177,7 +2370,66 @@ fn go_build_command() {\n\
             dropped.contains("pebblegozstd"),
             "the premise of this case is that a whole-file contains() would pass"
         );
-        assert!(!zstd_tag_reaches_site(dropped, 7));
+        assert!(!zstd_tag_reaches_site(
+            dropped,
+            7,
+            &tag_carrying_consts(dropped)
+        ));
+    }
+
+    /// **Trap 1**: a site that REFERENCES the constant without declaring it.
+    ///
+    /// This is `rust/crates/sky/src/main.rs` reduced to its shape — it writes
+    /// `project::GO_BUILD_TAG_ARGS`, declares neither constant, and contains
+    /// neither `pebblegozstd` nor `-tags` outside a doc comment. Deriving the
+    /// constant names from the SCANNED file returns two empty lists and calls
+    /// this untagged, so widening the scan without widening the universe turns
+    /// the gate red on correct code.
+    ///
+    /// Both directions are asserted, because only the pair proves the union is
+    /// what carries it: green against the declaring file's constants, red
+    /// against an empty universe.
+    #[test]
+    fn a_site_that_references_the_const_without_declaring_it_is_tagged() {
+        let declaring = "\
+pub const GO_BUILD_ZSTD_TAG: &str = \"pebblegozstd\";\n\
+pub const GO_BUILD_TAG_ARGS: [&str; 2] = [\"-tags\", GO_BUILD_ZSTD_TAG];\n";
+
+        let referencing = "\
+/// It carries [`project::GO_BUILD_TAG_ARGS`] — the same constant.\n\
+fn hub_go_build_command() {\n\
+    let mut cmd = Command::new(\"go\");\n\
+    cmd.arg(\"build\")\n\
+        .args(project::GO_BUILD_TAG_ARGS)\n\
+        .arg(\"./cmd/sky-hub\");\n\
+}\n";
+
+        let union = tag_carrying_consts(&format!("{declaring}\n{referencing}"));
+        assert!(
+            zstd_tag_reaches_site(referencing, 3, &union),
+            "the union of every scanned file is what resolves a constant the site does not declare"
+        );
+        assert!(
+            !zstd_tag_reaches_site(referencing, 3, &tag_carrying_consts(referencing)),
+            "the premise: derived from this file alone, the same correct site reads as untagged"
+        );
+    }
+
+    /// A doc comment INSIDE the window is a mention, not a flag.
+    #[test]
+    fn a_commented_out_tag_does_not_satisfy_the_site() {
+        let declaring = "\
+pub const GO_BUILD_ZSTD_TAG: &str = \"pebblegozstd\";\n\
+pub const GO_BUILD_TAG_ARGS: [&str; 2] = [\"-tags\", GO_BUILD_ZSTD_TAG];\n";
+        let commented = "\
+fn go_build_command() {\n\
+    let mut cmd = Command::new(\"go\");\n\
+    cmd.arg(\"build\")\n\
+        // .args(GO_BUILD_TAG_ARGS) — dropped while debugging\n\
+        .arg(\".\");\n\
+}\n";
+        let union = tag_carrying_consts(&format!("{declaring}\n{commented}"));
+        assert!(!zstd_tag_reaches_site(commented, 2, &union));
     }
 
     #[test]
