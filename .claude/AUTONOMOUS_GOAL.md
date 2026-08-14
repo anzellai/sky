@@ -66,8 +66,15 @@ Two user decisions are locked and must not be re-litigated:
 - **Resolve blockers autonomously.** Do not stop to ask. If a decision is
   genuinely ambiguous, take the option most consistent with the design doc,
   record the choice and the reasoning in the commit, and continue.
-- **PIV**: plan, implement, verify — with agents, and adversarially grilled
-  where the surface is risky.
+- **PIV**: plan, implement, verify — with agents.
+- **GRILL EVERY PHASE.** Not "where the surface is risky" — every phase, as a
+  distinct step with its own agent, whose job is to BREAK the landed work while
+  its tests stay green. An implementer verifying its own work is not an
+  adversary, however conscientious; it shares the assumptions that produced the
+  gap. The evidence is direct: P5a found P2's shell-injection defect
+  *incidentally*, while doing something else. A griller pointed at P2 would have
+  gone looking for it. Eleven commits landed before the first grill round, which
+  is eleven too many.
 - **RULE ZERO still applies**, carried from the BlueDB mandate because it was
   earned there: a gate that has never been observed failing is not evidence.
   The licence gate in particular must be shown rejecting a bundle it should
