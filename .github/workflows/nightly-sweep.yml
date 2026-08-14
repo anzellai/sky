@@ -19,10 +19,23 @@ on:
   workflow_dispatch: # manual trigger
     inputs:
       only:
-        description: 'Which job to run on a manual dispatch (the schedule always runs both)'
+        # `both` is a historical name kept because it is the stored default of
+        # this input: it means "every job", and the `if:` on each job spells
+        # that out. The list must name EVERY job — `behaviour-corpus` and
+        # `harness-t3` guard on `inputs.only` but were never added here, so a
+        # manual dispatch could not select either one.
+        description: 'Which job to run on a manual dispatch (the schedule always runs every job)'
         type: choice
         default: both
-        options: [both, example-sweep, web-runtime]
+        options:
+          [
+            both,
+            example-sweep,
+            web-runtime,
+            behaviour-corpus,
+            harness-t3,
+            bluedb-harness,
+          ]
 
 # Don't stack nightly runs; a newer run supersedes an in-flight one.
 concurrency:
@@ -366,6 +379,125 @@ jobs:
           sky-out/sky --version
       - name: 'Gate — Layer-2 app tier (harness tier T3)'
         run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t3
+      - name: Bound the Go caches before save
+        if: always()
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── BlueDB gate harness — full tier + mutation re-verification ──────────────
+  #
+  # WHY THIS EXISTS. `grep -rin bluedb .github/ scripts/` returned NOTHING. The
+  # whole BlueDB harness — every gate BODY, `--check`, `--verify-mutations`, and
+  # the full tier that is the only thing able to clear a STALE clock — was
+  # invoked by no automation at all. What DID run was the `#[cfg(test)]` units
+  # inside `rust/crates/xtask/src/bluedb_gates/*`, via `cargo test --workspace`:
+  # the harness's own unit tests, green forever, while the gates they support
+  # executed nowhere. `gate_manifest_test.rs` could not notice, because it
+  # scans CI → xtask and never the converse; the new
+  # `bluedb_gates_is_invoked_by_at_least_one_workflow` test closes that
+  # direction and PINS this job — deleting it turns `cargo test -p xtask` red.
+  #
+  # WHY NIGHTLY AND NOT PER-PUSH. `--tier=full` is the tier that actually runs
+  # the expensive gates, and `--verify-mutations` applies every recorded
+  # falsifying patch and rebuilds for each probe — two `cargo build`s per
+  # mutation. That is T3-shaped work, and T1 has a 900s ceiling `ci-green`
+  # asserts. The per-push tier instead gained the part that is cheap and
+  # unambiguous: `codegen-build` now runs `go test ./rt/... ./bluedb/...` and a
+  # `-race` step over `./bluedb/...`.
+  #
+  # STEP ORDER IS LOAD-BEARING. `--verify-mutations` refuses to run against a
+  # tree that differs from HEAD (`mutations::head_skew`, and `docs/bluedb` is in
+  # `MEASURED_FROM_HEAD` while `STATUS.md` is NOT in the dev-tree exemption
+  # list). `--tier=full` WRITES `docs/bluedb/STATUS.md`. Running the full tier
+  # first therefore makes the mutation verifier refuse on skew it created
+  # itself. Mutations first, full tier second.
+  #
+  # HONESTLY, AND ON PURPOSE: this job is EXPECTED TO REPORT FAILURE while the
+  # BlueDB build-out is in progress. `bluedb-gates` exits 1 when any goal
+  # verdict is UNKNOWN, and goals 1-5 are UNKNOWN today because their substrate
+  # is not built yet — that IS the verdict, and publishing it nightly is the
+  # point (same shape as `ci-green`'s budget assertion in rust-ci.yml). Nightly
+  # is not a required check, so this blocks no merge. Do not silence it with
+  # `continue-on-error`, and do not narrow the tier to make it green.
+  #
+  # NOT WIRED HERE, AND WHY: `bluedb-gates --check` was the third item asked
+  # for. It cannot pass in ANY post-commit checkout, on three independent axes,
+  # so wiring it would ship a permanently-red step rather than a gate:
+  #   1. Clock 1 compares STATUS.md's recorded `commit:` to HEAD. A commit
+  #      cannot record its own SHA, so the recorded value is necessarily an
+  #      ancestor once the regeneration is committed.
+  #   2. Clock 2 requires the full-tier ledger to be 0 commits behind HEAD —
+  #      same argument.
+  #   3. The hashed body carries a per-gate wall-clock `Time` column at 0.1s
+  #      resolution, so "matches a fresh run" is not reproducible across hosts.
+  # `--check` is a PRE-COMMIT gate by construction (HEAD is the parent, and the
+  # regenerated STATUS.md records exactly it). Making it CI-usable needs the
+  # clocks and the STATUS.md body format changed — a harness redesign, not a
+  # workflow edit. Tracked as such rather than papered over.
+  bluedb-harness:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "bluedb-harness"]'), inputs.only) }}
+    runs-on: ubuntu-latest
+    # Mutation verification is two `cargo build`s per recorded mutation plus the
+    # full tier. 60 leaves room while staying inside the 90-min T3 ceiling.
+    timeout-minutes: 60
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      GO_CACHE_BUDGET_MB: '6144'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `mutations::head_skew` and `full_tier_behind` both shell out to git
+          # (`git status`, `git rev-list <sha>..HEAD`). A depth-1 checkout has
+          # no history, so `rev-list` fails and the clock reads "maximally
+          # stale" rather than measuring anything.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-bluedb-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-bluedb-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+          save-if: 'false'
+      - name: Build sky binary
+        # Gate bodies that compile Sky resolve the compiler under test at
+        # `<repo>/sky-out/sky` and treat a missing one as a hard error, never a
+        # skip — omitting this step is what made `behaviour-corpus`'s first run
+        # report `0/8 VACUOUS`.
+        run: |
+          source scripts/lib/cargo-target.sh
+          cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
+          install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
+          sky-out/sky --version
+      - name: 'Gate — bluedb mutation proofs re-verified (every recorded falsifier goes RED)'
+        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- bluedb-gates --verify-mutations
+      - name: 'Gate — bluedb full tier (the only run that can clear a STALE full-tier clock)'
+        # `if: always()` so a red mutation verifier does not hide the tier's
+        # verdict. Both are evidence; one is not a precondition of the other.
+        if: always()
+        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- bluedb-gates --tier=full
+      - name: Upload the regenerated STATUS.md + gate-state ledger
+        # `--tier=full` writes both, and the runner is discarded — without this
+        # the run's actual per-gate verdicts survive only as scrollback.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bluedb-status
+          path: |
+            docs/bluedb/STATUS.md
+            docs/bluedb/gate-state.tsv
+          if-no-files-found: warn
+          retention-days: 14
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh

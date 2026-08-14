@@ -625,6 +625,17 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     // The harness runs the registered gates; their coverage is already scored
     // through GATE_SURFACES, and counting it twice here would double-claim.
     ("xtask:harness", &[]),
+    // The BlueDB gate harness, invoked by nightly-sweep.yml's `bluedb-harness`
+    // job (`--verify-mutations`, then `--tier=full`). It claims NO surface id,
+    // and that is the honest accounting rather than a shortcut: what it
+    // certifies is the BlueDB build-out and the harness's own falsifiability,
+    // and neither is a `docs/coverage/denominators.json` surface today. The row
+    // exists because `every_ci_invoked_xtask_subcommand_declares_its_surfaces`
+    // requires every CI-invoked subcommand to be accounted for — an unlisted
+    // one would run on every nightly and contribute nothing to the ledger,
+    // which is how a surface comes to read `weaker` while a gate for it runs.
+    // When BlueDB gains denominator surfaces, they belong here.
+    ("xtask:bluedb-gates", &[]),
     (
         "script:scripts/conformance.sh",
         &["db.sqlite", "db.codec-store", "auth.password-session"],

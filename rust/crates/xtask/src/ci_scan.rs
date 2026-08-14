@@ -54,11 +54,27 @@ pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// cargo run -q -p xtask -- roundtrip
 /// cargo run -q -p xtask -- build-run --shape live --run
 /// cargo run --release -q -p xtask -- "$g"
+/// cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t2
 /// ```
 ///
 /// Plus the not-yet-used-but-plausible direct-binary form
 /// (`target/release/xtask roundtrip`), handled so that switching to it does not
 /// silently disarm the callers.
+///
+/// THE FOURTH SHAPE WAS A BLIND SPOT. The scan used to skip cargo's own flags
+/// with `while toks[j].starts_with('-')`, which stops dead at the VALUE of a
+/// flag that takes one: in `--manifest-path rust/Cargo.toml --`, the value does
+/// not start with `-`, so the loop exited before reaching the `--` separator
+/// and the invocation was dropped ENTIRELY — not reported as unresolvable,
+/// which is the one outcome this module promises never to produce. Every
+/// `nightly-sweep.yml` invocation uses that shape, so `harness --tier t2`,
+/// `harness --tier t3` and (when it was added) `bluedb-gates` were invisible to
+/// both callers: `gate_manifest_test` asserted nothing about them and
+/// `coverage_ledger` scored their surfaces as CI-absent. Scanning forward to
+/// the `--` separator has no such dependence on what cargo's flags look like.
+///
+/// The forward scan stops at a shell separator, so `cargo build -p xtask && cmd
+/// -- x` cannot borrow the `--` of an unrelated command on the same line.
 ///
 /// Returns the token verbatim (quotes stripped); variable references are
 /// resolved later by [`resolve`].
@@ -76,10 +92,10 @@ pub fn gate_tokens(line: &str) -> Vec<String> {
             && (bare == "xtask" || bare.rsplit('/').next() == Some("xtask"))
             && bare.contains('/');
         if is_cargo_form {
-            // `-p xtask [flags...] -- <gate>`: skip cargo's own flags, then take
-            // the token right after the `--` separator.
+            // `-p xtask [cargo flags, with or without values...] -- <gate>`:
+            // scan forward to the `--` separator and take the token after it.
             let mut j = i + 1;
-            while j < toks.len() && unquote(toks[j]) != "--" && unquote(toks[j]).starts_with('-') {
+            while j < toks.len() && unquote(toks[j]) != "--" && !is_shell_separator(toks[j]) {
                 j += 1;
             }
             if j < toks.len() && unquote(toks[j]) == "--" {
@@ -98,6 +114,15 @@ pub fn gate_tokens(line: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Does this token end one command and begin another?
+///
+/// The bound on [`gate_tokens`]'s forward scan: without it, a `-p xtask`
+/// invocation with no `--` of its own would adopt the `--` of whatever came
+/// next on the line and mint a gate name out of an unrelated flag.
+fn is_shell_separator(tok: &str) -> bool {
+    matches!(tok, "&&" | "||" | "|" | ";" | "&") || tok.ends_with(';') || tok.starts_with('#')
 }
 
 pub enum Resolved {
@@ -301,4 +326,82 @@ fn rel_of(repo_root: &Path, file: &Path) -> String {
         .unwrap_or(file)
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// THE DISCOVERY ARTEFACT. This line is verbatim from
+    /// `.github/workflows/nightly-sweep.yml`, and the previous extractor
+    /// returned NOTHING for it: the flag-skipping loop stopped at
+    /// `rust/Cargo.toml` — the VALUE of `--manifest-path` — before it could
+    /// reach the `--` separator. Every nightly invocation uses this shape, so
+    /// `harness --tier t2`, `harness --tier t3` and `bluedb-gates` were all
+    /// dropped silently, and both callers scored them as absent.
+    #[test]
+    fn a_cargo_flag_that_takes_a_value_does_not_hide_the_gate() {
+        assert_eq!(
+            gate_tokens(
+                "        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t2"
+            ),
+            vec!["harness".to_string()]
+        );
+        assert_eq!(
+            gate_tokens(
+                "        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- bluedb-gates --verify-mutations"
+            ),
+            vec!["bluedb-gates".to_string()]
+        );
+    }
+
+    /// The shapes that already worked must keep working — the fix widened the
+    /// scan, and a widened scan is exactly the kind that starts over-matching.
+    #[test]
+    fn the_pre_existing_shapes_still_resolve() {
+        assert_eq!(
+            gate_tokens("        run: cargo run -q -p xtask -- coerce-floor"),
+            vec!["coerce-floor".to_string()]
+        );
+        assert_eq!(
+            gate_tokens("        run: cargo run -q -p xtask -- build-run --shape live --run"),
+            vec!["build-run".to_string()]
+        );
+        assert_eq!(
+            gate_tokens("cargo run --release -q -p xtask -- \"$g\""),
+            vec!["$g".to_string()]
+        );
+        assert_eq!(
+            gate_tokens("rust/target/release/xtask roundtrip"),
+            vec!["roundtrip".to_string()]
+        );
+        assert!(gate_tokens("  # cargo run -q -p xtask -- reject").is_empty());
+    }
+
+    /// The bound on the forward scan. Without it, a `-p xtask` command with no
+    /// `--` of its own adopts the next command's separator and invents a gate
+    /// called `--nocapture`, which `gate_manifest_test` would then report as an
+    /// undispatched CI gate name — a red build caused entirely by the reader.
+    #[test]
+    fn the_forward_scan_stops_at_a_shell_separator() {
+        assert!(gate_tokens("cargo build -p xtask && cargo test -- --nocapture").is_empty());
+        assert!(gate_tokens("cargo build -p xtask; other -- thing").is_empty());
+        // Two real invocations on one line still yield both, in order.
+        assert_eq!(
+            gate_tokens("cargo run -q -p xtask -- infer && cargo run -q -p xtask -- reject"),
+            vec!["infer".to_string(), "reject".to_string()]
+        );
+    }
+
+    /// `mentions_command`'s substring contract, which `coverage_ledger`'s
+    /// pinned `cmd:` rows depend on. The Go step deliberately orders its
+    /// packages `./rt/... ./bluedb/...` and puts `-tags` AFTER them so that
+    /// this literal survives; both other orderings are the weakening.
+    #[test]
+    fn the_pinned_go_test_literal_survives_the_bluedb_step_but_not_a_reorder() {
+        let step = "        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/... ./bluedb/... -tags pebblegozstd";
+        assert!(step.contains("go test ./rt/..."));
+        assert!(!"go test ./bluedb/... ./rt/...".contains("go test ./rt/..."));
+        assert!(!"go test -tags pebblegozstd ./rt/...".contains("go test ./rt/..."));
+    }
 }

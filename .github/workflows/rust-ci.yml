@@ -307,8 +307,45 @@ jobs:
       - run: cargo build --workspace --locked
       - name: Gate — coerce-floor (runtime-coercion floor lock, FAIL-ON-INCREASE)
         run: cargo run -q -p xtask -- coerce-floor
-      - name: Gate — runtime rt tests (go test)
-        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
+      # `./bluedb/...` joins this step because nothing ran it: `grep -rin bluedb
+      # .github/ scripts/` returned NOTHING, so Stage 1's 13 Go tests executed
+      # only when a human typed `go test`.
+      #
+      # THE ARGUMENT ORDER IS LOAD-BEARING. `coverage_ledger.rs`'s CI_SURFACES
+      # pins the literal `cmd:go test ./rt/...` and resolves it by SUBSTRING
+      # match against workflow lines (`ci_scan::mentions_command`). Writing
+      # `go test ./bluedb/... ./rt/...`, or inserting `-tags` between `go test`
+      # and the packages, destroys that substring — and the ledger then reports
+      # `runtime.go-rt` and `runtime.panic-classes` as WEAKER at the exact
+      # moment the tests got stronger. `go help test` documents the trailing
+      # form (`go test [build/test flags] [packages] [build/test flags]`), so
+      # the tag goes AFTER the package list and the pinned literal survives
+      # verbatim. Verified: `xtask coverage-ledger --check` reports no weakening.
+      #
+      # `-tags pebblegozstd` is the reason gate G0.5 exists. Pebble selects the
+      # cgo DataDog zstd unless the tag is set (`internal/compression/
+      # zstd_cgo.go`: `//go:build cgo && !pebblegozstd`), and `sky build` sets
+      # it at its single `go build` site — so a CI run without it certifies a
+      # link no shipped app has.
+      - name: Gate — runtime rt + bluedb tests (go test)
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/... ./bluedb/... -tags pebblegozstd
+      # -race MUST be its own step, and it MUST set CGO_ENABLED=1. Reproduced in
+      # a linux/amd64 container: `CGO_ENABLED=0 go test -race` fails outright
+      # with `go: -race requires cgo; enable cgo by setting CGO_ENABLED=1`,
+      # while the same command SUCCEEDS on darwin/arm64 — the perfect
+      # works-locally-breaks-in-CI trap, and this runner is ubuntu. Folding
+      # `-race` into the step above would therefore delete the correctness run
+      # along with it.
+      #
+      # Scoped to `./bluedb/...`: the detector costs ~10x and `./rt/...` already
+      # runs ~25s here. HONEST LIMIT — the four bluedb test files spawn no
+      # goroutines today, so this step currently proves only that the package
+      # builds and passes UNDER the detector. It is wired now so the first
+      # concurrent test is race-checked BY CONSTRUCTION (`hlc.go` already
+      # carries a `sync.Mutex`, and the MVCC/txn engine is next) instead of
+      # depending on someone remembering to add this step later.
+      - name: Gate — bluedb race detector (go test -race; requires cgo)
+        run: cd ../runtime-go && CGO_ENABLED=1 go test -race ./bluedb/... -tags pebblegozstd
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -613,8 +650,13 @@ jobs:
           shared-key: sky-macos
           save-if: 'false'
       - run: cargo build --workspace --locked
-      - name: Gate — runtime rt tests (go test, 2nd platform)
-        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
+      # Same argument order and same `-tags` placement as the Linux twin, and
+      # for the same two reasons (the pinned `cmd:go test ./rt/...` literal in
+      # CI_SURFACES, and pebble's cgo-zstd default). NO `-race` step here: the
+      # detector runs on Linux, and macOS minutes bill at 10x — a 2nd platform
+      # is here for platform determinism, not for a second copy of every gate.
+      - name: Gate — runtime rt + bluedb tests (go test, 2nd platform)
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/... ./bluedb/... -tags pebblegozstd
       - name: Gate — project integration tests (go build regressions, 2nd platform)
         run: cargo test -p project --locked
       - name: Gate — stdlib behavioral conformance (2nd platform)
