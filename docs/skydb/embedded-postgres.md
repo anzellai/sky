@@ -176,13 +176,49 @@ The configure line excludes, at minimum: `--without-readline` (GPL),
 pre-3.0 dual licence is messier). zlib, lz4, zstd, ICU and libxml2 are
 permissive and may be linked.
 
+### Extensions
+
+`contrib` ships with PostgreSQL core under the same permissive licence, so it is
+built and included at no licence cost and little size: `pg_trgm`, `pgcrypto`,
+`hstore`, `citext`, `btree_gin`, `btree_gist`, `pg_stat_statements`,
+`postgres_fdw`. `pgoutput` is built into core and is what logical replication
+runs on.
+
+Two third-party extensions are included, both under the PostgreSQL Licence and
+both small: **pgvector** (embeddings are common enough that its absence is the
+thing people notice) and **pg_partman** (the standard tool for the time-range
+partitioning that makes append-heavy tables workable).
+
+Three widely-used extensions are **excluded, on licence grounds, deliberately**:
+
+| Extension | Licence | Why excluded |
+|---|---|---|
+| PostGIS | GPL-2.0 | copyleft inside an Apache-2.0 distribution |
+| TimescaleDB | Timescale License (TSL) | source-available, not permissive |
+| Citus | AGPL-3.0 | network copyleft |
+
+This table exists so the question stays settled. Anyone needing them points
+`SKY_DB_URL` at an external PostgreSQL, which costs nothing architecturally —
+the app only ever consumes a DSN.
+
+Shipping an extension makes it *available*; `CREATE EXTENSION` is still
+per-database.
+
 ### The gate
 
 An SBOM is generated per bundle in CI, listing every linked library and its
-licence, and **a gate fails the build if a bundle links anything GPL, LGPL or
-AGPL**. The check runs against the actual linked objects, not against the
-configure line — a configure flag records an intention, and the linked binary
-records what happened. This distinction is the whole reason the gate exists.
+licence, and **a gate fails the build if a bundle carries anything GPL, LGPL or
+AGPL**.
+
+Two properties of that gate are load-bearing:
+
+1. **It runs against the actual binaries, not the configure line.** A configure
+   flag records an intention; the built artifact records what happened.
+2. **It walks every shared object in the bundle, not just `postgres`.** An
+   extension is a `.so` loaded by `dlopen` at runtime — it is never linked into
+   the server binary. A gate that inspected only the main executable would pass
+   a bundle containing a GPL extension in `lib/`, while appearing to check
+   exactly the thing it missed.
 
 `NOTICE.md` carries the PostgreSQL copyright and licence text.
 
