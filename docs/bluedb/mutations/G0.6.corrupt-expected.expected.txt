@@ -1,5 +1,4 @@
 PROBE gate=G0.6 state=FAIL root=<scratch-worktree>
-  3 mutation proof problem(s) (41 not authored yet)
-  G0.1/hand-edit-status: UNVERIFIED-SINCE 831128ab — a declared target moved
+  2 mutation proof problem(s) (41 not authored yet)
   G0.2/rt-imports-bluedb: recorded expected output does not contain the declared assertion "forbidden edge rt -> bluedb"
-  G0.7/mutationless-gate: UNVERIFIED-SINCE 831128ab — a declared target moved
+  G0.7/mutationless-gate: UNVERIFIED-SINCE 8ca6c608 — a declared target moved
