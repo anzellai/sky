@@ -1,0 +1,19 @@
+diff --git a/runtime-go/bluedb/recent_changes.go b/runtime-go/bluedb/recent_changes.go
+index 49433dff..df9e31af 100644
+--- a/runtime-go/bluedb/recent_changes.go
++++ b/runtime-go/bluedb/recent_changes.go
+@@ -43,9 +43,11 @@ func newRecentRing() *recentRing { return &recentRing{} }
+ // Changelog.Tail, and if THAT errors it acks ErrConflict rather than proceeding with a
+ // nil window (Fix-1). A `return nil, false` here would be the exact N6 shape.
+ func (r *recentRing) after(readTs HLC) (changes []KeyChange, spilled bool) {
+-	if readTs.Less(r.floor) {
+-		return nil, true
+-	}
++	// MUTATION G2.13h: the ring answers for a range it does not hold. Dropping the floor
++	// check is the `return nil, false` the doc above names as "the exact N6 shape": a reader
++	// whose readTs is below the retained window gets whatever entries happen to survive,
++	// reported as a COMPLETE window, so the committer never diverts it to Changelog.Tail and
++	// it validates against the changes that spilled out — under-rejection.
+ 	var out []KeyChange
+ 	for i := range r.entries {
+ 		if readTs.Less(r.entries[i].commitTs) { // commitTs > readTs

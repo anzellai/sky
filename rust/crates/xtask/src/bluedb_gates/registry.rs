@@ -510,6 +510,53 @@ pub static REGISTRY: &[Gate] = &[
             targets: &["rust/crates/xtask/src/bluedb_gates"],
         }]),
     },
+    // G0.8 — the CLASS behind four rounds of one-leaf-at-a-time findings.
+    //
+    // Round 3 hardened the producer of `collWitness`; round 4 deleted the
+    // consumer, one file away, and every gate stayed green. Each fix was local to
+    // the site attacked, and the mechanically answerable question nobody asked
+    // was: which engine sources are touched by NO recorded mutation? Across the
+    // 51 patches then in `docs/bluedb/mutations/`, zero touched `validate.go` or
+    // `readset.go` — both named verbatim in P1's scope row — and eight of the
+    // seventeen non-test sources were in that state.
+    //
+    // The population is `read_dir`, never a list; coverage is read from the
+    // patches' own `diff --git` paths, never from `Mutation.targets` (which is
+    // deliberately broader — see `mutations.rs`, which refuses to read it for the
+    // same reason). The exemption list carries an argument AND a `funcs` pin
+    // reconciled both ways, so an exemption written once cannot silently cover
+    // behaviour written later. The body and its argument live in
+    // `gates_runtime.rs`.
+    Gate {
+        id: "G0.8",
+        goal: 0,
+        title: "every non-test source in runtime-go/bluedb/ is touched by a recorded mutation, or is deliberately unmutated with an argument and a reconciled `funcs` pin",
+        tier: Tier::Fast,
+        run: gates_runtime::g0_8_engine_sources_are_mutation_covered,
+        budget_s: 60,
+        mutations: Mutations::new(&[Mutation {
+            id: "G0.8/a-mutation-stops-touching-the-source-it-proved",
+            patch: "docs/bluedb/mutations/G0.8.a-mutation-stops-touching-the-source-it-proved.patch",
+            // The decay this gate exists to catch, in the exact shape rounds 3
+            // and 4 took: a file's ONLY falsifier stops reaching it and nothing
+            // says so. `recent_changes.go` — the ring that IS the SSI validation
+            // window — is touched by exactly one recorded mutation, and the patch
+            // re-points that mutation at a different diff.
+            //
+            // It is also the proof that reading the PATCH rather than the
+            // declaration is load-bearing. `Mutation.targets` still names
+            // `recent_changes.go` under this patch, so a gate that trusted the
+            // declared targets would report the file covered and stay green;
+            // only reading what `git apply` would actually change sees it.
+            //
+            // The obvious alternative — a patch that ADDS an unmutated engine
+            // source — cannot work here and the reason is worth recording: the
+            // patch that creates the file NAMES the file, so the gate reads it
+            // as covered by that very mutation. Tried, observed green, replaced.
+            expect: "no recorded mutation's patch touches this engine source",
+            targets: &["rust/crates/xtask/src/bluedb_gates/registry.rs"],
+        }]),
+    },
     Gate {
         id: "G0.C",
         goal: 0,
@@ -1146,6 +1193,26 @@ pub static REGISTRY: &[Gate] = &[
             expect: "lower floor means after(readTs) answers `not spilled` for a range the ring does NOT",
             targets: &["runtime-go/bluedb/pebble_engine.go"],
         },
+        // The FIFTH door, and the one G0.8 asked for: `recent_changes.go` — the
+        // ring that IS the SSI validation window — was touched by no recorded
+        // mutation at all, so nothing had shown a line of it to be load-bearing.
+        // The mutation is the one its own docstring names ("A `return nil,
+        // false` here would be the exact N6 shape"): delete the floor check, and
+        // a reader below the retained window is handed whatever entries survive,
+        // reported as a COMPLETE window, so the committer never diverts it to
+        // Changelog.Tail. Same class as the four above, one file over, and it
+        // reddens exactly one leaf.
+        Mutation {
+            id: "G2.13h/ring-answers-for-a-range-it-does-not-hold",
+            patch: "docs/bluedb/mutations/G2.13h.ring-answers-for-a-range-it-does-not-hold.patch",
+            // Verbatim from the observed failure, and from the SECOND assertion
+            // of the cold-start fixture rather than the first: the floor is still
+            // raised correctly under this patch (that is the mutation above), so
+            // the fixture reaches the arm that asks whether the floor actually
+            // diverts anything.
+            expect: "a readTs below the raised floor did not report spilled",
+            targets: &["runtime-go/bluedb/recent_changes.go"],
+        },
         ]),
     },
     // G2.13i — the two Stage-1 remedies that shipped with NO test.
@@ -1407,6 +1474,74 @@ pub static REGISTRY: &[Gate] = &[
             expect: ": ScanCollection must record it",
             targets: &["runtime-go/bluedb/txn.go"],
         }]),
+    },
+    // G2.26 / G2.27 — `validate()` ITSELF, the two arms Stage 2 still claims.
+    //
+    // G2.14 gates the fact that a transaction RECORDS its dependencies. A fourth
+    // Judge round measured what that leaves open: deleting `validate()`'s
+    // collection-witness arm —
+    //
+    //     -  if len(rs.collWitness) > 0 && rs.collWitness[ch.Coll] {
+    //     -      return true, ch.Pk, false
+    //     -  }
+    //
+    // — let a scan-then-insert transaction that conflicts at HEAD commit CLEAN (a
+    // phantom, no serial order) with `go test ./bluedb/...`, `cargo test -p
+    // xtask`, `--tier=full` and `--verify-mutations` all green. Gutting
+    // `validate()` entirely was caught by exactly ONE assertion in the corpus,
+    // and only on the point arm. `stage2_readset_test.go` asserts the read-set is
+    // POPULATED; nothing asserted the conflict was DETECTED, and the distance
+    // between those two is the whole of SERIALIZABLE.
+    //
+    // One gate per arm, and each fixture carries a control (a change that must
+    // NOT conflict), so a validator gutted to `return false` fails one arm and
+    // one gutted to `return true` fails the other.
+    Gate {
+        id: "G2.26",
+        goal: 2,
+        title: "validate() REFUSES a transaction whose point read was superseded after its readTs, and does not refuse one whose read-set the window never touched",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_26_point_arm_enforces,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.26/point-arm-is-not-consulted",
+            patch: "docs/bluedb/mutations/G2.26.point-arm-is-not-consulted.patch",
+            // Verbatim from the observed failure. The read-set is still fully
+            // populated under this patch — G2.14 stays GREEN, which is the point
+            // of it — while a transaction whose row was superseded commits a
+            // value derived from a version that no longer exists.
+            expect: "validate()'s point arm did not detect the conflict",
+            targets: &["runtime-go/bluedb/validate.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.27",
+        goal: 2,
+        title: "validate() REFUSES a phantom insert into a witnessed collection, does not refuse a change to a collection it never witnessed, and the collection id it matches on survives the changelog wire format",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_27_collection_witness_enforces,
+        budget_s: 300,
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.27/collection-witness-arm-is-not-consulted",
+                patch: "docs/bluedb/mutations/G2.27.collection-witness-arm-is-not-consulted.patch",
+                // The Judge's four-line deletion, verbatim in effect, and its
+                // assertion verbatim from the observed failure.
+                expect: "validate()'s collection-witness arm is the only thing that detects it",
+                targets: &["runtime-go/bluedb/validate.go"],
+            },
+            Mutation {
+                id: "G2.27/payload-drops-the-collection-id",
+                patch: "docs/bluedb/mutations/G2.27.payload-drops-the-collection-id.patch",
+                // The same arm deleted at a DISTANCE, with every line of
+                // validate.go intact: the SSI window is built from the DECODED
+                // payload, so a collection id that does not survive the wire makes
+                // the witness match nothing. Classified on the round-trip
+                // fixture's own assertion, which is the leaf that names the wire.
+                expect: "The SSI validation window is built by DECODING this payload",
+                targets: &["runtime-go/bluedb/keychange.go"],
+            },
+        ]),
     },
     Gate {
         id: "G2.15",

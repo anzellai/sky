@@ -900,6 +900,18 @@ const G2_13H_ANCHORS: &[SourceAnchor] = &[
         why: "that IS the cold-start door's consequence — a seed that swallows a decode error \
               leaves a floor claiming a range the ring does not hold",
     },
+    // The same fixture's SECOND assertion, and a separate claim: the one above
+    // says the floor was RAISED, this one says raising it actually diverts a
+    // validation. `G2.13h/ring-answers-for-a-range-it-does-not-hold` is
+    // classified on it — the ring's own falsifier, which no mutation reached
+    // until G0.8 asked which engine sources were touched by none.
+    SourceAnchor {
+        func: "TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor",
+        needle: "a readTs below the raised floor did not report spilled",
+        why: "that IS the ring's fail-closed contract at the point it is consumed: a raised floor \
+              that still answers `not spilled` sends the transaction on with a window the ring \
+              cannot vouch for, instead of to Changelog.Tail",
+    },
 ];
 
 /// Two `t.Run(` sites in the N6 function — the control arm and the main arm —

@@ -1,0 +1,22 @@
+diff --git a/runtime-go/bluedb/validate.go b/runtime-go/bluedb/validate.go
+index 8a790405..d2e42576 100644
+--- a/runtime-go/bluedb/validate.go
++++ b/runtime-go/bluedb/validate.go
+@@ -39,12 +39,11 @@ func validate(rs *ReadSet, window []KeyChange) (conflict bool, culprit []byte, p
+ 	}
+ 	for i := range window {
+ 		ch := &window[i]
+-		// Point read — the leaseable conflict class (§6.2).
+-		if len(rs.points) > 0 {
+-			if _, ok := rs.points[string(ch.Pk)]; ok {
+-				return true, ch.Pk, true
+-			}
+-		}
++		// MUTATION G2.26: the point-read arm is not consulted. Txn.Get and the Put/Delete
++		// pre-image still RECORD their point dependencies — `stage2_readset_test.go` and
++		// G2.14 both stay green — but nothing matches them against the window, so a
++		// transaction whose row was superseded after its readTs commits a value derived
++		// from a version that no longer exists: the lost update, silently.
+ 		// Collection-level fallback witness — predicate contention, NOT leaseable.
+ 		if len(rs.collWitness) > 0 && rs.collWitness[ch.Coll] {
+ 			return true, ch.Pk, false

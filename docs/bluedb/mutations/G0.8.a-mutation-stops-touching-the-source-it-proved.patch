@@ -1,0 +1,17 @@
+diff --git a/rust/crates/xtask/src/bluedb_gates/registry.rs b/rust/crates/xtask/src/bluedb_gates/registry.rs
+--- a/rust/crates/xtask/src/bluedb_gates/registry.rs
++++ b/rust/crates/xtask/src/bluedb_gates/registry.rs
+@@ -1204,7 +1204,12 @@
+         // reddens exactly one leaf.
+         Mutation {
+             id: "G2.13h/ring-answers-for-a-range-it-does-not-hold",
+-            patch: "docs/bluedb/mutations/G2.13h.ring-answers-for-a-range-it-does-not-hold.patch",
++            // MUTATION G0.8: this mutation no longer touches the source it
++            // proves. `recent_changes.go`'s only falsifier now points at a diff
++            // that changes `pebble_engine.go`, so nothing anywhere reaches the
++            // ring — while `targets` below still names it, which is exactly why
++            // G0.8 reads the patch instead.
++            patch: "docs/bluedb/mutations/G2.13h.corrupt-cold-start-seed-leaves-the-floor-low.patch",
+             // Verbatim from the observed failure, and from the SECOND assertion
+             // of the cold-start fixture rather than the first: the floor is still
+             // raised correctly under this patch (that is the mutation above), so

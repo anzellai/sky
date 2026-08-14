@@ -69,6 +69,8 @@
 //! | Gate | Property | Leaves |
 //! |------|----------|--------|
 //! | G2.14 | the excised read-set arms have no producer; the live ones record | 1 |
+//! | G2.26 | validate() REFUSES a superseded point read, and only then | 1 |
+//! | G2.27 | validate() REFUSES a phantom into a witnessed collection | 2 |
 //! | G2.15 | every job in a drained batch gets its own commitTs | 3 |
 //! | G2.16 | a read resolves the newest version at or below its readTs | 5 |
 //! | G2.17 | the commit clock never re-issues a timestamp across a restart | 2 |
@@ -119,6 +121,7 @@ pub const RUNTIME_SOURCES: &[&str] = &[
     "runtime-go/bluedb/keys_test.go",
     "runtime-go/bluedb/lock_test.go",
     "runtime-go/bluedb/stage2_readset_test.go",
+    "runtime-go/bluedb/validate_test.go",
 ];
 
 /// Quoted into findings so a failure says which pin to update.
@@ -142,6 +145,26 @@ pub const RUNTIME_OWNERSHIP: &[RuntimeOwned] = &[
         test: "TestStage2ReadSetRangesHaveNoProducer",
         owner: "G2.14",
         property: "the excised range/index arms have no producer and the live arms do record",
+    },
+    // -- G2.26 ------------------------------------------------------------
+    RuntimeOwned {
+        file: "runtime-go/bluedb/validate_test.go",
+        test: "TestValidateDetectsAPointReadOverwrittenConcurrently",
+        owner: "G2.26",
+        property: "a point read superseded after its readTs is REFUSED, and an untouched one is not",
+    },
+    // -- G2.27 ------------------------------------------------------------
+    RuntimeOwned {
+        file: "runtime-go/bluedb/validate_test.go",
+        test: "TestValidateDetectsAPhantomInsertIntoAWitnessedCollection",
+        owner: "G2.27",
+        property: "a phantom insert into a witnessed collection is REFUSED, and a change elsewhere is not",
+    },
+    RuntimeOwned {
+        file: "runtime-go/bluedb/validate_test.go",
+        test: "TestChangelogPayloadCarriesTheCollectionIdTheWitnessMatchesOn",
+        owner: "G2.27",
+        property: "the collection id the witness matches on survives the changelog wire format",
     },
     // -- G2.15 ------------------------------------------------------------
     RuntimeOwned {
@@ -438,7 +461,7 @@ fn run_file_gate(ctx: &Ctx, g: &FileGate) -> GateOutcome {
 
     // ── (1a) the FAMILY's population is the recorded population, both ways ──
     let recorded: Vec<&str> = RUNTIME_OWNERSHIP.iter().map(|o| o.test).collect();
-    let where_ = "runtime-go/bluedb/{bench,comparer,comparer_property,engine,gc,keys,lock,stage2_readset}_test.go";
+    let where_ = "runtime-go/bluedb/{bench,comparer,comparer_property,engine,gc,keys,lock,stage2_readset,validate}_test.go";
     let mut findings = check_pinned_population(&declared, &recorded, where_, PIN_NAME);
 
     // ── (1a') and each row is recorded against the file that really declares it ──
@@ -592,6 +615,119 @@ pub fn g2_14_readset_scope(ctx: &Ctx) -> GateOutcome {
             anchors: G2_14_ANCHORS,
             budget: Duration::from_secs(120),
             property: "the excised Stage-2 read-set arms have no producer and the live arms do record",
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// G2.26 / G2.27 — validate() ITSELF: the two arms Stage 2 still claims
+// ---------------------------------------------------------------------------
+//
+// # Why these two gates exist, when G2.14 already gates the read-set
+//
+// G2.14 certifies that a transaction body RECORDS its dependencies. It says
+// nothing about whether anything ENFORCES them, and the distance between those
+// two is the whole of SERIALIZABLE. A fourth adversarial Judge measured it: the
+// four-line deletion of `validate()`'s collection-witness arm let a
+// scan-then-insert transaction commit clean — a phantom with no serial order —
+// with `go test ./bluedb/...`, `cargo test -p xtask`, `--tier=full` and
+// `--verify-mutations` ALL green, because G2.14's fixture asserts the read-set
+// is populated and stops there. Gutting `validate()` entirely was caught by
+// exactly ONE assertion in the corpus, and only on the point arm.
+//
+// P1's scope row and `txn.go`'s excision note put the range and index-witness
+// arms structurally out of reach, so the point arm and the collection witness
+// are ALL of what P1 still claims about SERIALIZABLE. One gate per arm, for the
+// reason the whole family is split that way: a single gate would let one defect
+// mint two PROVENs out of one undifferentiated failure.
+//
+// # What makes each gate's fixture non-vacuous
+//
+// Each fixture runs its shape TWICE — once where the concurrent change really
+// does intersect the read-set, once where it provably does not. A `validate()`
+// gutted to `return false` fails the first arm; one gutted to `return true`
+// fails the second. And each fixture isolates ITS arm: the point fixture
+// asserts its read-set carries no witnesses, the witness fixture asserts the
+// phantom key is not a point dependency. That isolation is what makes the two
+// registered mutations discriminating — the observed transcripts show each
+// reddening its own fixture and leaving the other's PASSING.
+
+pub const G2_26_TESTS: &[&str] = &["TestValidateDetectsAPointReadOverwrittenConcurrently"];
+
+/// Both arms of the one fixture, because a control that is deleted stops being a
+/// control silently.
+pub const G2_26_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: "TestValidateDetectsAPointReadOverwrittenConcurrently",
+        needle: "validate()'s point arm did not detect the conflict",
+        why: "THE consequence assertion. Deleting `validate()`'s point arm leaves the read-set \
+              fully populated and every other fixture in the package green, while a transaction \
+              whose row was superseded after its readTs commits a value derived from a version \
+              that no longer exists — the lost update, silently",
+    },
+    SourceAnchor {
+        func: "TestValidateDetectsAPointReadOverwrittenConcurrently",
+        needle: "validate() over-rejects, so the conflict arm above proves nothing",
+        why: "the control. Without it the fixture is satisfied by a validator that conflicts \
+              EVERYTHING, which refuses to commit rather than committing serializably",
+    },
+];
+
+pub fn g2_26_point_arm_enforces(ctx: &Ctx) -> GateOutcome {
+    run_file_gate(
+        ctx,
+        &FileGate {
+            id: "G2.26",
+            tests: G2_26_TESTS,
+            anchors: G2_26_ANCHORS,
+            budget: Duration::from_secs(120),
+            property: "validate() REFUSES a transaction whose point read was superseded, and only then",
+        },
+    )
+}
+
+pub const G2_27_TESTS: &[&str] = &[
+    "TestValidateDetectsAPhantomInsertIntoAWitnessedCollection",
+    "TestChangelogPayloadCarriesTheCollectionIdTheWitnessMatchesOn",
+];
+
+/// Three: the phantom consequence, its control, and the wire-format half one
+/// layer below — the SSI window is built from the DECODED payload, so a
+/// collection id that does not survive the round-trip disables the witness arm
+/// globally without `validate.go` being touched at all.
+pub const G2_27_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: "TestValidateDetectsAPhantomInsertIntoAWitnessedCollection",
+        needle: "validate()'s collection-witness arm is the only thing that detects it",
+        why: "THE consequence assertion, and the Judge's four-line deletion stated as a history: \
+              the committed summary says 1 row, the store holds 2, and the inserted key was never \
+              read, so no other arm of validate() can see it",
+    },
+    SourceAnchor {
+        func: "TestValidateDetectsAPhantomInsertIntoAWitnessedCollection",
+        needle: "and a validator that rejects everything would satisfy",
+        why: "the control — a change to a collection the transaction never witnessed must NOT \
+              conflict, or the phantom arm above is satisfied by an engine that cannot commit",
+    },
+    SourceAnchor {
+        func: "TestChangelogPayloadCarriesTheCollectionIdTheWitnessMatchesOn",
+        needle: "The SSI validation window is built by DECODING this payload",
+        why: "the wire half of the same property: the window's KeyChanges come from \
+              DecodeChangelogPayload, so a dropped collection id is the witness arm deleted at a \
+              distance, with every line of validate.go intact",
+    },
+];
+
+pub fn g2_27_collection_witness_enforces(ctx: &Ctx) -> GateOutcome {
+    run_file_gate(
+        ctx,
+        &FileGate {
+            id: "G2.27",
+            tests: G2_27_TESTS,
+            anchors: G2_27_ANCHORS,
+            budget: Duration::from_secs(120),
+            property: "validate() REFUSES a phantom insert into a witnessed collection, and the \
+                       collection id it matches on survives the wire",
         },
     )
 }
@@ -1097,6 +1233,371 @@ pub fn g2_25_one_writer_one_format(ctx: &Ctx) -> GateOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// G0.8 — every engine SOURCE is reachable by a recorded mutation
+// ---------------------------------------------------------------------------
+//
+// # The class, not the instance
+//
+// Four adversarial Judge rounds have now each found one unfalsified leaf, and
+// each fix has been local to the site attacked. Round 3 hardened the PRODUCER of
+// `collWitness` (`Txn.ScanCollection`); round 4 deleted the CONSUMER
+// (`validate()`'s witness arm) and every gate stayed green. The two are one file
+// apart.
+//
+// The question nobody asked, and the reason the next round would have found the
+// next instance, is mechanically answerable: **which engine source files are
+// touched by NO recorded mutation?** Across the 51 patches in
+// `docs/bluedb/mutations/`, ZERO touched `validate.go` or `readset.go` — both
+// named verbatim in P1's scope row. Eight of the seventeen non-test sources in
+// `runtime-go/bluedb/` were in that state.
+//
+// This gate asks it on every run. The population comes from `read_dir`, never
+// from a list, because a list is exactly where a new file hides — the same
+// argument `runtime_sources_plus_the_two_older_families_are_the_whole_package`
+// makes one level up for `*_test.go`. Coverage is read from the PATCHES' own
+// `diff --git` paths rather than from `Mutation.targets`: `targets` is a
+// declaration whose purpose is the `UNVERIFIED-SINCE` decay check and is
+// deliberately broader than the diff (`mutations.rs` says so where it refuses to
+// read it for the same reason), while `git apply` changes precisely what the diff
+// headers name.
+//
+// # The exemption, and why it is not an escape hatch
+//
+// A source may be listed in [`DELIBERATELY_UNMUTATED`] instead — the idiom
+// `SOURCE_SIDE_FALSIFIERS` already establishes for leaves that no honest revert
+// can redden. An exemption carries three things:
+//
+// 1. **An argument** for why no honest revert of THIS file reddens a gate with a
+//    discriminating assertion. "Nobody got to it yet" is not one.
+// 2. **A `funcs` pin** — every top-level `func` the file declares today,
+//    reconciled BOTH ways on every run. An exemption is a statement about the
+//    behaviour a file contains; the first function to arrive in an exempt file
+//    turns this gate red and forces the argument to be re-made. That is what
+//    stops an exemption written once from covering code written later.
+// 3. **Mutual exclusion** — an exempt file that a mutation DOES touch is a stale
+//    exemption, and is reported as one. The two lists cannot both be right.
+
+/// The engine directory whose non-test sources this gate enumerates.
+const ENGINE_DIR: &str = "runtime-go/bluedb";
+
+/// A source deliberately left unmutated, with the argument and the pin.
+pub struct UnmutatedSource {
+    pub file: &'static str,
+    /// Every top-level `func` the file declares, canonicalised as `Recv.method`
+    /// (receiver type without `*`) or a bare name. Reconciled both ways.
+    pub funcs: &'static [&'static str],
+    pub why: &'static str,
+}
+
+pub const DELIBERATELY_UNMUTATED: &[UnmutatedSource] = &[
+    UnmutatedSource {
+        file: "runtime-go/bluedb/engine.go",
+        funcs: &[],
+        why: "it declares NO function at all — it is the package's type surface (the Engine / \
+              Reader / Cursor / Changelog / WatermarkRegistry interfaces, CommitReq, ReadSet, \
+              CommitResult, the sentinel errors). There is no behaviour to revert: every edit \
+              here is either a compile error or a change to some other file's behaviour. The \
+              `funcs` pin is EMPTY, so the first function to land in it turns this gate red and \
+              the exemption has to be argued again",
+    },
+    UnmutatedSource {
+        file: "runtime-go/bluedb/readset.go",
+        funcs: &["inRangeClosed"],
+        why: "its one function, `inRangeClosed`, has a single consumer — `validate()`'s range arm \
+              — and `ReadSet.ranges` has NO producer in Stage 2 (Txn.Scan / ScanRange / \
+              ScanFallback were excised; TestStage2ReadSetRangesHaveNoProducer pins it, G2.14 \
+              gates it). `txn.go`'s excision note states the corollary as a REQUIREMENT rather \
+              than an observation: *mutating inRangeClosed to `return false` must not change any \
+              Stage-2 gate*. A mutation here is therefore obliged to record VACUOUS; one that \
+              recorded PROVEN would mean some gate had started asserting the range arm, which \
+              Stage 2 forbids. The remainder of the file is type declarations",
+    },
+    UnmutatedSource {
+        file: "runtime-go/bluedb/hotkey.go",
+        funcs: &[
+            "hotKeyTable.anyHot",
+            "hotKeyTable.decay",
+            "hotKeyTable.hotSubset",
+            "hotKeyTable.isHot",
+            "hotKeyTable.recordAbort",
+            "leaseManager.acquire",
+            "leaseManager.grantHeadLocked",
+            "leaseManager.hasWaiters",
+            "leaseManager.reap",
+            "leaseManager.release",
+            "leaseManager.removeLocked",
+            "newHotKeyTable",
+            "newLeaseManager",
+        ],
+        why: "the hot-key / lease layer is a LIVENESS mechanism (§6.2, §6.4): it decides which \
+              path a contended transaction takes and how long it waits, never whether the \
+              committer validates it. `validate()` runs inside the single committer for every \
+              transactional job either way, and `recordAbort` is fed BY the validator's verdict \
+              (committer.go, gated on `pointConflict`) rather than consulted by it — so no revert \
+              of this file can produce a non-serializable history, which is what every Stage-2 \
+              gate asserts. It is also referenced by NO test in the package today, so any revert \
+              would record VACUOUS: that is a coverage statement about §6.2, which P1 makes no \
+              claim about, not a hole in a claim P1 does make",
+    },
+    UnmutatedSource {
+        file: "runtime-go/bluedb/changefeed.go",
+        funcs: &[
+            "changeFeedSub.Overflowed",
+            "pebbleEngine.emitChangeBatch",
+            "pebbleEngine.hasChangeSubs",
+            "pebbleEngine.subscribeChanges",
+        ],
+        why: "the Phase-4 reactive fan-out. It sits entirely AFTER Apply — `emitChangeBatch` is \
+              called on already-durable, already-validated changes — so the worst a revert can do \
+              is lose a notification, never a durable write, a commitTs or a conflict verdict. No \
+              P1 gate asserts anything over it and no test in the package references it, so a \
+              mutation records VACUOUS. P4's gates are the ones that will own it",
+    },
+    // `recent_changes.go` was in this list's shape too — the ring that IS the
+    // SSI validation window, touched by no mutation — and is NOT exempt: its
+    // falsifier is `G2.13h/ring-answers-for-a-range-it-does-not-hold`, the
+    // revert its own docstring names as "the exact N6 shape".
+    UnmutatedSource {
+        file: "runtime-go/bluedb/hlc.go",
+        funcs: &[
+            "HLC.IsZero",
+            "HLC.Less",
+            "hlcClock.highWater",
+            "hlcClock.next",
+            "newHLCClock",
+            "nonNegative",
+            "systemWallClock",
+        ],
+        why: "every honest revert of this file surfaces as ONE assertion — the commit clock \
+              re-issued or reordered a timestamp — and two registered mutations already own that \
+              assertion, both reaching it THROUGH `hlcClock.next()`: \
+              `G2.17/reopen-does-not-floor-the-clock` (classified on `restart floor violated:`) \
+              and `G2.15/one-committs-for-the-whole-batch` (on `per-job commitTs not strictly \
+              increasing:`). A third mutation inside `hlc.go` would trip one of those two strings \
+              and mint a second PROVEN out of a defect that is already proven, which \
+              `expect_strings_are_pairwise_discriminating` forbids by construction and which the \
+              one-gate-per-property split exists to prevent. The only behaviour those two do not \
+              reach is the logical-overflow borrow at `math.MaxUint32`, which needs 2^32 commits \
+              inside one wall-millisecond: a mutation of it records VACUOUS, which is a statement \
+              about the corpus rather than a proof",
+    },
+];
+
+/// Every top-level `func` declaration in a Go source, canonicalised.
+///
+/// A line beginning `func ` at column zero is a declaration — comments start
+/// `//` and every nested closure is indented — so this needs no parser.
+fn go_func_names(src: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for line in src.lines() {
+        let Some(rest) = line.strip_prefix("func ") else {
+            continue;
+        };
+        let ident = |s: &str| -> String {
+            s.trim_start()
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect()
+        };
+        if let Some(after) = rest.trim_start().strip_prefix('(') {
+            // A method: `(recv *Type) Name(`.
+            let Some((recv, tail)) = after.split_once(')') else {
+                continue;
+            };
+            let ty = recv
+                .split_whitespace()
+                .next_back()
+                .unwrap_or("")
+                .trim_start_matches('*');
+            let name = ident(tail);
+            if !ty.is_empty() && !name.is_empty() {
+                out.insert(format!("{ty}.{name}"));
+            }
+        } else {
+            let name = ident(rest);
+            if !name.is_empty() {
+                out.insert(name);
+            }
+        }
+    }
+    out
+}
+
+/// The repo-relative paths a unified diff declares it changes.
+fn patch_paths(patch: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for line in patch.lines() {
+        let Some(rest) = line.strip_prefix("diff --git ") else {
+            continue;
+        };
+        for p in rest.split_whitespace() {
+            let p = p
+                .strip_prefix("a/")
+                .or_else(|| p.strip_prefix("b/"))
+                .unwrap_or(p);
+            out.insert(p.to_string());
+        }
+    }
+    out
+}
+
+/// The non-test `.go` sources in `runtime-go/bluedb/`, discovered on disk.
+fn engine_sources(ctx: &Ctx) -> Result<BTreeSet<String>, String> {
+    let dir = ctx.path(ENGINE_DIR);
+    let mut out = BTreeSet::new();
+    for e in std::fs::read_dir(&dir).map_err(|e| format!("read {ENGINE_DIR}: {e}"))? {
+        let p = e.map_err(|e| format!("dir entry in {ENGINE_DIR}: {e}"))?.path();
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if name.ends_with(".go") && !name.ends_with("_test.go") {
+            out.insert(format!("{ENGINE_DIR}/{name}"));
+        }
+    }
+    Ok(out)
+}
+
+/// Every engine source a REGISTERED mutation's patch touches.
+///
+/// A patch that is not on disk contributes NO coverage and raises no finding
+/// here, and both halves of that are deliberate. Gates for goals 1–5 gate a
+/// substrate that has not landed: they are registered (§9.6 check 1 requires it),
+/// their bodies are `pending` probes, and their mutations are declared before the
+/// patch can be authored. Reporting each of them here would drown this gate's own
+/// findings behind rows that say only "P2 has not landed" — and the missing patch
+/// itself is already G0.6's finding, on the gates that RUN, in the words that
+/// belong to it.
+///
+/// Silence is safe because the direction is fail-CLOSED: an unread patch shrinks
+/// the covered set, so it can only make this gate redder, never greener.
+fn mutation_covered(ctx: &Ctx) -> BTreeSet<String> {
+    let mut covered = BTreeSet::new();
+    for gate in super::registry::REGISTRY {
+        for m in gate.mutations.as_slice() {
+            if let Some(text) = ctx.read(m.patch) {
+                covered.extend(patch_paths(&text));
+            }
+        }
+    }
+    covered
+}
+
+/// The uncovered set, computed the same way in the gate body and in
+/// `cargo test`. `(uncovered, findings)`.
+fn coverage_findings(
+    sources: &BTreeSet<String>,
+    covered: &BTreeSet<String>,
+    func_names: impl Fn(&str) -> Option<BTreeSet<String>>,
+) -> (Vec<String>, Vec<String>) {
+    let exempt: BTreeSet<&str> = DELIBERATELY_UNMUTATED.iter().map(|u| u.file).collect();
+    let mut findings = Vec::new();
+
+    let uncovered: Vec<String> = sources
+        .iter()
+        .filter(|s| !covered.contains(*s) && !exempt.contains(s.as_str()))
+        .cloned()
+        .collect();
+    for f in &uncovered {
+        findings.push(format!(
+            "{f}: no recorded mutation's patch touches this engine source, and it is not in \
+             DELIBERATELY_UNMUTATED. Nothing has shown that any line of it is load-bearing — \
+             which is the state `validate.go` was in when a four-line deletion of the SSI \
+             validator's collection-witness arm left every gate green. Author a mutation whose \
+             assertion lives in a gated test, or record it as deliberately-unmutated WITH the \
+             argument for why no honest revert reddens a gate"
+        ));
+    }
+
+    for u in DELIBERATELY_UNMUTATED {
+        if !sources.contains(u.file) {
+            findings.push(format!(
+                "{}: DELIBERATELY_UNMUTATED names a file that is not a non-test source in \
+                 {ENGINE_DIR} — an exemption for a file that does not exist exempts nothing and \
+                 hides the rename that moved it",
+                u.file
+            ));
+            continue;
+        }
+        if covered.contains(u.file) {
+            findings.push(format!(
+                "{}: exempted as deliberately-unmutated, but a recorded mutation's patch DOES \
+                 touch it. The exemption is stale — delete the row; the file is covered",
+                u.file
+            ));
+        }
+        let Some(on_disk) = func_names(u.file) else {
+            findings.push(format!(
+                "{}: cannot read the exempted source to reconcile its `funcs` pin",
+                u.file
+            ));
+            continue;
+        };
+        let pinned: BTreeSet<String> = u.funcs.iter().map(|s| (*s).to_string()).collect();
+        if on_disk != pinned {
+            let added: Vec<&String> = on_disk.difference(&pinned).collect();
+            let gone: Vec<&String> = pinned.difference(&on_disk).collect();
+            findings.push(format!(
+                "{}: the `funcs` pin has drifted — arrived: {added:?}, gone: {gone:?}. An \
+                 exemption is an argument about the behaviour a file CONTAINS, so behaviour that \
+                 arrived after the argument was written is not covered by it. Re-make the \
+                 argument for the new surface, or give the file a mutation",
+                u.file
+            ));
+        }
+    }
+
+    (uncovered, findings)
+}
+
+pub fn g0_8_engine_sources_are_mutation_covered(ctx: &Ctx) -> GateOutcome {
+    let sources = match engine_sources(ctx) {
+        Ok(s) => s,
+        Err(e) => {
+            return GateOutcome::fail(
+                "G0.8 cannot enumerate the engine sources it certifies",
+                vec![e],
+            )
+        }
+    };
+    if sources.is_empty() {
+        return GateOutcome::fail(
+            "G0.8 found no engine sources",
+            vec![format!(
+                "G0.8: {ENGINE_DIR} holds no non-test `.go` file — an empty population makes \
+                 every coverage claim below vacuously true"
+            )],
+        );
+    }
+
+    let covered = mutation_covered(ctx);
+    let (uncovered, findings) = coverage_findings(&sources, &covered, |f| {
+        ctx.read(f).map(|t| go_func_names(&t))
+    });
+
+    if findings.is_empty() {
+        GateOutcome::pass(format!(
+            "all {} non-test source(s) in {ENGINE_DIR} are accounted for: {} touched by a \
+             recorded mutation's patch, {} deliberately unmutated with an argument and a \
+             reconciled `funcs` pin",
+            sources.len(),
+            sources.len() - DELIBERATELY_UNMUTATED.len(),
+            DELIBERATELY_UNMUTATED.len()
+        ))
+    } else {
+        GateOutcome::fail(
+            format!(
+                "{} of {} non-test source(s) in {ENGINE_DIR} are falsified by nothing",
+                uncovered.len(),
+                sources.len()
+            ),
+            findings,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The family, as data — read by `gates_g2_13.rs`'s per-leaf rule
 // ---------------------------------------------------------------------------
 
@@ -1107,6 +1608,8 @@ pub fn g2_25_one_writer_one_format(ctx: &Ctx) -> GateOutcome {
 /// reason `gate_anchors` is: G2.9a is not an `AuditGate` either.
 pub const RUNTIME_GATES: &[(&str, &[&str], &[SourceAnchor])] = &[
     ("G2.14", G2_14_TESTS, G2_14_ANCHORS),
+    ("G2.26", G2_26_TESTS, G2_26_ANCHORS),
+    ("G2.27", G2_27_TESTS, G2_27_ANCHORS),
     ("G2.15", G2_15_TESTS, G2_15_ANCHORS),
     ("G2.16", G2_16_TESTS, G2_16_ANCHORS),
     ("G2.17", G2_17_TESTS, G2_17_ANCHORS),
@@ -1225,6 +1728,8 @@ mod tests {
     fn every_gate_is_registered_and_wired_to_its_own_body() {
         let bodies: &[(&str, fn(&Ctx) -> GateOutcome)] = &[
             ("G2.14", g2_14_readset_scope),
+            ("G2.26", g2_26_point_arm_enforces),
+            ("G2.27", g2_27_collection_witness_enforces),
             ("G2.15", g2_15_group_commit_per_job),
             ("G2.16", g2_16_read_resolution),
             ("G2.17", g2_17_restart_floor),
@@ -1290,6 +1795,74 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// **G0.8's subject, asserted at `cargo test` time too.**
+    ///
+    /// The gate body computes this from `ctx.root()`; this computes it from the
+    /// repo, so a source that arrives with no falsifier fails the BUILD rather
+    /// than waiting for a full-tier run. Same helpers, so the two cannot drift.
+    #[test]
+    fn every_engine_source_is_mutation_covered_or_argued() {
+        let root = repo();
+        let mut sources: BTreeSet<String> = BTreeSet::new();
+        for e in std::fs::read_dir(root.join(ENGINE_DIR)).expect("read runtime-go/bluedb") {
+            let p = e.expect("dir entry").path();
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            if name.ends_with(".go") && !name.ends_with("_test.go") {
+                sources.insert(format!("{ENGINE_DIR}/{name}"));
+            }
+        }
+        assert!(!sources.is_empty(), "no engine sources found");
+
+        // Same rule as the gate body: an unauthored patch (the goal-1..5 probes)
+        // contributes no coverage and is G0.6's finding, not this one's.
+        let mut covered: BTreeSet<String> = BTreeSet::new();
+        for gate in super::super::registry::REGISTRY {
+            for m in gate.mutations.as_slice() {
+                if let Ok(text) = std::fs::read_to_string(root.join(m.patch)) {
+                    covered.extend(patch_paths(&text));
+                }
+            }
+        }
+
+        let (_, findings) = coverage_findings(&sources, &covered, |f| {
+            std::fs::read_to_string(root.join(f)).ok().map(|t| go_func_names(&t))
+        });
+        assert!(findings.is_empty(), "{}", findings.join("\n\n"));
+    }
+
+    /// The parser G0.8's `funcs` pin rests on, over the two shapes Go has.
+    #[test]
+    fn go_func_names_reads_methods_and_functions() {
+        let src = "\
+package bluedb\n\
+\n\
+// func notADeclaration()\n\
+func inRangeClosed(lo, hi, key []byte) bool {\n\
+\tf := func(x int) int { return x }\n\
+\treturn f(1) == 1\n\
+}\n\
+\n\
+func (c *hlcClock) next() HLC {}\n\
+func (h HLC) Less(o HLC) bool {}\n";
+        let got = go_func_names(src);
+        let want: BTreeSet<String> = ["inRangeClosed", "hlcClock.next", "HLC.Less"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn g0_8_is_registered_cross_cutting_and_wired_to_its_body() {
+        let g = super::super::registry::find("G0.8").expect("G0.8 unregistered");
+        assert_eq!(g.goal, 0, "G0.8 is cross-cutting");
+        assert_eq!(
+            g.run as usize, g0_8_engine_sources_are_mutation_covered as usize,
+            "G0.8 is not wired to its body"
+        );
+        assert!(!g.mutations.as_slice().is_empty());
     }
 
     /// These fixtures are flat. The gate bodies assert it at run time (a new

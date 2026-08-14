@@ -1,0 +1,19 @@
+diff --git a/runtime-go/bluedb/keychange.go b/runtime-go/bluedb/keychange.go
+index df0eddd9..ab659371 100644
+--- a/runtime-go/bluedb/keychange.go
++++ b/runtime-go/bluedb/keychange.go
+@@ -52,7 +52,13 @@ func EncodeChangelogPayload(changes []KeyChange) []byte {
+ 	buf = appendUvarint(buf, uint64(len(changes)))
+ 	for i := range changes {
+ 		c := &changes[i]
+-		buf = appendUvarint(buf, uint64(c.Coll))
++		// MUTATION G2.27: the collection id is not carried on the wire. The field slot
++		// stays, so every payload still decodes and nothing anywhere errors — the changes
++		// simply all come back attributed to collection 0. The SSI validation window is
++		// built from the DECODED changes, so validate()'s collection-witness arm then
++		// matches nothing and every phantom insert reads as a clean commit, without a
++		// single line of validate.go being touched.
++		buf = appendUvarint(buf, 0)
+ 		buf = appendBytes(buf, c.Pk)
+ 		buf = append(buf, byte(c.Op))
+ 		buf = appendBytes(buf, c.Record)

@@ -1,0 +1,21 @@
+diff --git a/runtime-go/bluedb/validate.go b/runtime-go/bluedb/validate.go
+index 8a790405..60d2e7f8 100644
+--- a/runtime-go/bluedb/validate.go
++++ b/runtime-go/bluedb/validate.go
+@@ -45,10 +45,12 @@ func validate(rs *ReadSet, window []KeyChange) (conflict bool, culprit []byte, p
+ 				return true, ch.Pk, true
+ 			}
+ 		}
+-		// Collection-level fallback witness — predicate contention, NOT leaseable.
+-		if len(rs.collWitness) > 0 && rs.collWitness[ch.Coll] {
+-			return true, ch.Pk, false
+-		}
++		// MUTATION G2.27: the collection-level fallback witness is not consulted. The
++		// read-set still RECORDS the witness — `stage2_readset_test.go` and G2.14 both
++		// stay green — but nothing reads it, so a concurrent INSERT of a brand-new pk into
++		// a scanned collection is a change the validator has no arm to match, and the
++		// transaction that concluded "these are all the rows" commits over it. This is the
++		// Judge's four-line deletion, verbatim in effect.
+ 		// Index ranges + index-level fallback witness, over both New and Old coords — predicate
+ 		// contention, NOT leaseable (§6.4).
+ 		if len(rs.ranges) > 0 || len(rs.indexWitness) > 0 {
