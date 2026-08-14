@@ -15,7 +15,7 @@ proof	G0.C/noop	VACUOUS	33f6c8f3
 proof	G2.13a/degenerate-upper-bound	PROVEN	33f6c8f3
 proof	G2.13a/iterate-bounds-end-in-a-user-byte	PROVEN	33f6c8f3
 proof	G2.13b/failed-scan-reads-as-an-empty-collection	PROVEN	33f6c8f3
-proof	G2.13c/corrupt-hlc-hi-reads-as-a-fresh-store	PROVEN	33f6c8f3
+proof	G2.13c/corrupt-hlc-hi-reads-as-a-fresh-store	PROVEN	82d43a58
 proof	G2.13d/commit-on-a-closed-engine-acks-success	PROVEN	33f6c8f3
 proof	G2.13e/mvcc-visibility-excludes-the-readts-itself	PROVEN	33f6c8f3
 proof	G2.13e/snapshot-readts-is-the-in-memory-high-water	PROVEN	33f6c8f3
@@ -50,13 +50,13 @@ proof	G2.20/threshold-not-clamped-to-durablehi	PROVEN	33f6c8f3
 proof	G2.21/retention-does-not-trim-below-t	PROVEN	33f6c8f3
 proof	G2.22/version-suffix-not-inverted	PROVEN	33f6c8f3
 proof	G2.23/successor-returns-its-input	PROVEN	33f6c8f3
-proof	G2.24/decode-data-version-drops-its-bounds-guard	PROVEN	d834b8f4
-proof	G2.25/comparer-name-drifts	PROVEN	33f6c8f3
+proof	G2.24/decode-data-version-drops-its-bounds-guard	PROVEN	82d43a58
+proof	G2.25/comparer-name-drifts	PROVEN	82d43a58
 proof	G2.26/point-arm-is-not-consulted	PROVEN	33f6c8f3
 proof	G2.27/collection-witness-arm-is-not-consulted	PROVEN	33f6c8f3
 proof	G2.27/payload-drops-the-collection-id	PROVEN	33f6c8f3
-proof	G2.6/disable-injection-point	PROVEN	33f6c8f3
-proof	G2.9a/ack-before-fsync	PROVEN	33f6c8f3
-proof	G2.9a/sealed-engine-still-runs-gc	PROVEN	33f6c8f3
-proof	G2.9a/wal-fatal-never-reaches-the-ack	PROVEN	33f6c8f3
-integrity	f4d321456351684aa96a65f204cbf9cf1dd79b2086b6661aff21696a18b06908
+proof	G2.6/disable-injection-point	PROVEN	82d43a58
+proof	G2.9a/ack-before-fsync	PROVEN	82d43a58
+proof	G2.9a/sealed-engine-still-runs-gc	PROVEN	82d43a58
+proof	G2.9a/wal-fatal-never-reaches-the-ack	PROVEN	82d43a58
+integrity	614143ac9d604dc1436799a333d806799b22d36eece373f1119f846b76e43033
