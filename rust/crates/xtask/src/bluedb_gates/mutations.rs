@@ -157,23 +157,44 @@ pub fn head_sha(root: &Path) -> String {
 /// proof's SUBJECT moves and stays quiet otherwise, and `registry.rs` already
 /// hand-excludes `gate-state.tsv` from G0.6's `targets` for exactly this reason
 /// (see the comment on `G0.6/corrupt-expected`). That hand-exclusion does not
-/// reach one level down: G0.6's subject *is* `docs/bluedb/mutations`, and
-/// `--verify-mutations` writes the `*.expected.txt` files in that directory on
-/// every run. So each re-derivation of G0.6's proof invalidated itself at the
-/// next commit, and its `UNVERIFIED-SINCE` became a signal that always fires
-/// and therefore nobody reads.
+/// reach one level down, and the same defect has now been found three times in
+/// three different generated files. The set is therefore enumerated here, with
+/// the reason each member is in it:
+///
+/// * **`docs/bluedb/gate-state.tsv`** ([`super::state::STATE_PATH`]) — the
+///   proof ledger. `--verify-mutations` rewrites it at the end of every run, so
+///   any target set naming it decays on the act of taking the proof.
+/// * **`docs/bluedb/mutations/*.expected.txt`** — the recorded RED outputs.
+///   G0.6's subject *is* `docs/bluedb/mutations`, and the runner writes these
+///   files in that directory on every run, so each re-derivation of G0.6's
+///   proof invalidated itself at the next commit.
+/// * **`docs/bluedb/STATUS.md`** ([`super::status::STATUS_PATH`]) — G0.1's
+///   declared target, and the file the fast tier regenerates on every run. Its
+///   header carries the HEAD sha and a timestamp, so it is byte-different on
+///   *every* run: there is no resting state. A committed-and-fresh `STATUS.md`
+///   always decayed G0.1's proof; an uncommitted one is stale. Observed twice —
+///   commit `2e391295` took the finding count 3 → 4, and it re-fired
+///   immediately after `522b04e1`.
 ///
 /// **`*.patch` is deliberately NOT here.** A patch is hand-authored evidence,
 /// not an output; editing one MUST decay the proof it belongs to, because the
 /// proof is a statement about that exact patch.
 ///
-/// Excluding the recorded outputs does not weaken detection: a corrupted
-/// `*.expected.txt` is caught head-on by G0.6's own assertion — "recorded
-/// expected output does not contain the declared assertion" — which is the
-/// whole subject of that gate. The staleness clock was never the mechanism
-/// guarding those files.
+/// Excluding the generated outputs does not weaken detection, because the
+/// staleness clock was never the mechanism guarding them. It is a *hint*; the
+/// two real checks are strictly stronger and untouched. If a patch stops
+/// applying, `--verify-mutations` reports `MUTATION-STALE`; if a gate stops
+/// detecting the defect its patch reintroduces, it reports `VACUOUS`. A
+/// corrupted `*.expected.txt` is additionally caught head-on by G0.6's own
+/// assertion — "recorded expected output does not contain the declared
+/// assertion" — and G0.1's patch anchors on `STATUS.md`'s stable `Legend:`
+/// line, so regenerating the file cannot break the mutation.
+///
+/// The governing rule, the one `registry.rs` already records for
+/// `gate-state.tsv`: a signal that always fires is a signal nobody reads.
 fn harness_generated(path: &str) -> bool {
     path == super::state::STATE_PATH
+        || path == super::status::STATUS_PATH
         || (path.starts_with("docs/bluedb/mutations/") && path.ends_with(".expected.txt"))
 }
 
@@ -793,21 +814,40 @@ mod tests {
         ));
     }
 
-    /// The half that stops the proof invalidating itself: `--verify-mutations`
-    /// WRITES the `*.expected.txt` files under G0.6's declared target
-    /// `docs/bluedb/mutations`, so if a diff naming one counted as movement,
-    /// every re-derivation of G0.6's proof would decay at the next commit and
-    /// `UNVERIFIED-SINCE` would be permanently on.
+    /// The half that stops the proof invalidating itself. All three members of
+    /// the generated set are here because each was a separate instance of the
+    /// same defect:
+    ///
+    /// * `--verify-mutations` WRITES the `*.expected.txt` files under G0.6's
+    ///   declared target `docs/bluedb/mutations`;
+    /// * it rewrites `gate-state.tsv` at the end of every run;
+    /// * the fast tier regenerates `STATUS.md`, G0.1's declared target, whose
+    ///   header carries the HEAD sha and a timestamp — so it differs on every
+    ///   run and G0.1 had no resting state at all.
+    ///
+    /// If a diff naming any of them counted as movement, the corresponding
+    /// proof would decay at the next commit and `UNVERIFIED-SINCE` would be
+    /// permanently on.
     #[test]
     fn a_regenerated_harness_output_is_not_a_moved_target() {
         assert!(harness_generated(
             "docs/bluedb/mutations/G0.2.rt-imports-bluedb.expected.txt"
         ));
         assert!(harness_generated("docs/bluedb/gate-state.tsv"));
+        assert!(harness_generated("docs/bluedb/STATUS.md"));
+        // The constants, so a path rename cannot silently drop a member.
+        assert!(harness_generated(super::super::state::STATE_PATH));
+        assert!(harness_generated(super::super::status::STATUS_PATH));
         assert!(!diff_moves_a_target(
             "docs/bluedb/mutations/G0.2.rt-imports-bluedb.expected.txt\n\
              docs/bluedb/mutations/G0.5.second-go-build-site.expected.txt\n\
-             docs/bluedb/gate-state.tsv\n"
+             docs/bluedb/gate-state.tsv\n\
+             docs/bluedb/STATUS.md\n"
+        ));
+        // G0.1's own resting state: a full-tier run touches exactly these, and
+        // its proof must survive committing them.
+        assert!(!diff_moves_a_target(
+            "docs/bluedb/STATUS.md\ndocs/bluedb/gate-state.tsv\n"
         ));
         assert!(!diff_moves_a_target(""));
     }
@@ -825,11 +865,23 @@ mod tests {
             "docs/bluedb/mutations/G0.2.rt-imports-bluedb.patch\n"
         ));
         // …and it still counts when buried among regenerated outputs, which is
-        // the shape the real diff takes.
+        // the shape the real diff takes — including `STATUS.md`, the newest
+        // member of the generated set, which must not shadow it.
         assert!(diff_moves_a_target(
             "docs/bluedb/mutations/G0.1.hand-edit-status.expected.txt\n\
              docs/bluedb/mutations/G0.2.rt-imports-bluedb.patch\n\
+             docs/bluedb/STATUS.md\n\
              docs/bluedb/gate-state.tsv\n"
+        ));
+        // G0.1's own patch is the sharp case: its target STATUS.md is now
+        // generated, but the patch that mutates it is still hand-authored
+        // evidence, so editing the patch must still decay G0.1's proof.
+        assert!(!harness_generated(
+            "docs/bluedb/mutations/G0.1.hand-edit-status.patch"
+        ));
+        assert!(diff_moves_a_target(
+            "docs/bluedb/STATUS.md\n\
+             docs/bluedb/mutations/G0.1.hand-edit-status.patch\n"
         ));
         // Neither is the subject the gates actually guard.
         assert!(diff_moves_a_target("runtime-go/rt/live_store.go\n"));
