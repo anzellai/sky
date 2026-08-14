@@ -15,11 +15,25 @@ type pebbleReader struct {
 	readTs HLC
 	tok    ReaderToken
 	reg    *watermarkRegistry
+
+	// err latches the FIRST I/O error observed by a point read (defect H3). Get's
+	// (value, commitTs, ok) shape has no error channel, so an unreadable SSTable would
+	// otherwise be reported as ok=false — indistinguishable from an absent key. It is
+	// latched (never cleared) so a single transient read failure anywhere in the txn's
+	// life poisons the whole reader: Txn.Commit consults it and fails closed. Iterate's
+	// errors do NOT land here — a Cursor has its own Err() and materializeScan already
+	// surfaces it (defect N1b).
+	err error
 }
 
 var _ Reader = (*pebbleReader)(nil)
 
 func (r *pebbleReader) ReadTs() HLC { return r.readTs }
+
+// Err reports the first I/O error a point read on this reader hit, or nil. See the err
+// field: a non-nil Err means at least one Get's "absent" answer is NOT evidence of
+// absence, so every consumer of this reader must fail closed rather than act on it.
+func (r *pebbleReader) Err() error { return r.err }
 
 func (r *pebbleReader) Close() {
 	if r.reg != nil {
@@ -35,18 +49,39 @@ func (r *pebbleReader) Close() {
 // absent. The boundary test is a byte compare of the two PREFIXES (grill C1 fix) —
 // never an equality of the two Split() integers, which collide for equal-length
 // user-keys and would leak a neighbouring key's value.
+//
+// Defect H3: a failed positioning is NOT absence. `SeekGE` returns false both when the
+// key genuinely has no visible version AND when the block it needed could not be read,
+// so the iterator must be interrogated with iter.Error() after positioning; the error is
+// latched on r.err and surfaced by Err(). Checking the NewIter error alone fixes NOTHING
+// — pebble.Snapshot.NewIter (pebble/v2@v2.1.6 snapshot.go:62-69) returns a nil error
+// unconditionally and panics on a closed snapshot instead.
 func (r *pebbleReader) Get(userKey []byte) (value []byte, commitTs HLC, ok bool) {
 	prefix := dataKeyPrefix(userKey)
 	lower := prefix
 	upper := append(append([]byte(nil), prefix...), sentinel) // immediate successor
 	iter, err := r.snap.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
+		// Defence in depth, currently UNREACHABLE for a snapshot: Snapshot.NewIter
+		// (snapshot.go:62-69) always returns a nil error. Kept — and latched, not
+		// silently dropped — so that if the constructor ever gains a real failure mode
+		// (or this reader is repointed at *pebble.DB, whose NewIter CAN error), the
+		// failure surfaces as an error rather than as a wrong "absent".
+		r.latch(err)
 		return nil, HLC{}, false
 	}
 	defer iter.Close()
 
 	target := encodeDataKey(userKey, r.readTs)
-	if !iter.SeekGE(target) || !iter.Valid() {
+	seeked := iter.SeekGE(target)
+	if e := iter.Error(); e != nil {
+		// THE H3 fix. An unreadable SSTable/block reaches us as (!seeked, Error() != nil);
+		// without this branch it is laundered into "the row is absent", which is how a
+		// swallowed I/O error becomes an unwanted INSERT at the commit boundary.
+		r.latch(e)
+		return nil, HLC{}, false
+	}
+	if !seeked || !iter.Valid() {
 		return nil, HLC{}, false
 	}
 	k := iter.Key()
@@ -62,11 +97,27 @@ func (r *pebbleReader) Get(userKey []byte) (value []byte, commitTs HLC, ok bool)
 		return nil, HLC{}, false
 	}
 	v := iter.Value()
+	if e := iter.Error(); e != nil {
+		// A lazily-fetched value can fail its block read AFTER positioning succeeded. Same
+		// contract: never report an I/O failure as an answer about the row.
+		r.latch(e)
+		return nil, HLC{}, false
+	}
 	if len(v) == 0 || v[0] == markerTombstone {
 		return nil, ts, false // visible version is a delete → absent as-of readTs
 	}
 	out := append([]byte(nil), v[1:]...)
 	return out, ts, true
+}
+
+// latch records the FIRST point-read I/O error on this reader. First-wins: the earliest
+// failure is the one that explains any downstream "absent", and a later error must not
+// overwrite it (nor must a later SUCCESS clear it — a reader that has once lied about
+// absence stays poisoned for its whole life, because the read-set it fed is already built).
+func (r *pebbleReader) latch(err error) {
+	if r.err == nil {
+		r.err = err
+	}
 }
 
 // Iterate returns an ordered, snapshot-consistent cursor over distinct user-keys

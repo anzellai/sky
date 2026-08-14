@@ -157,7 +157,19 @@ func (tx *Txn) Get(userKey []byte) (value []byte, ok bool) {
 	return v, true
 }
 
+// recordPoint adds a point-key dependency, first-read-wins.
+//
+// Defect H3: it records NOTHING when the underlying reader has latched an I/O error. A
+// failed Get hands back (nil, {0,0}, false), and recording that as
+// pointRead{present: false} launders "the block could not be read" into "the row is
+// absent" — a dependency that validate() then finds satisfied, so the txn commits an
+// INSERT over a row that may well exist. Skipping the entry is safe rather than lax
+// because Commit fails closed on reader.Err() before the request is ever built: the
+// read-set is never consulted on this path.
 func (tx *Txn) recordPoint(userKey []byte, ts HLC, present bool) {
+	if tx.reader.Err() != nil {
+		return
+	}
 	k := string(userKey)
 	if _, exists := tx.points[k]; !exists {
 		tx.points[k] = pointRead{versionSeen: ts, present: present}
@@ -249,12 +261,22 @@ func (tx *Txn) indexCoords(userKey, record []byte) []IndexCoord {
 // Commit builds one CommitReq and funnels it to the committer (§4). Returns ErrConflict
 // (validation failed — the driver retries), a durability error, or nil. Idempotent after the
 // first call; Close()s the reader.
+//
+// Defect H3 — FAIL CLOSED. If any point read underneath this txn hit an I/O error, the
+// body ran against a view that reported rows as absent without having read them. Nothing
+// downstream can recover that: the read-set no longer describes what the body saw, and
+// validate() would pass it. So the error is returned BEFORE e.Commit is reached and no
+// write is funnelled. The error is deliberately not ErrConflict — a retry against the same
+// unreadable block would loop, and Transact propagates a non-conflict error immediately.
 func (tx *Txn) Commit() error {
 	if tx.done {
 		return nil
 	}
 	tx.done = true
 	defer tx.reader.Close()
+	if err := tx.reader.Err(); err != nil {
+		return err
+	}
 	return tx.e.Commit(tx.buildReq()).Err
 }
 

@@ -83,12 +83,21 @@ type Engine interface {
 
 // Reader is a lock-free, snapshot-consistent view as of a fixed readTs.
 type Reader interface {
-	// Get resolves userKey as of readTs. ok=false means absent or tombstoned.
+	// Get resolves userKey as of readTs. ok=false means absent or tombstoned — OR, if
+	// Err() is non-nil, that the read FAILED and says nothing about the row (defect H3).
 	Get(userKey []byte) (value []byte, commitTs HLC, ok bool)
 	// Iterate returns an ordered, snapshot-consistent cursor over user-keys sharing
 	// the given prefix (nil ⇒ the whole data keyspace), newest visible version per
 	// distinct user-key, tombstones skipped.
 	Iterate(prefix []byte) Cursor
+	// Err reports the first I/O error a point read on this reader hit, latched, or nil.
+	// It mirrors Cursor.Err(): Get's three-value shape has no error channel, so without
+	// this an unreadable block is indistinguishable from an absent key. Consumers MUST
+	// fail closed on a non-nil Err rather than treat any Get's ok=false as absence —
+	// Txn.Commit does exactly that (an I/O error laundered into "absent" is how a
+	// swallowed error becomes an unwanted INSERT). Iterate's errors are reported by the
+	// returned Cursor's own Err(), not here.
+	Err() error
 	ReadTs() HLC
 	// Close unregisters this reader's watermark token and releases the pinned view.
 	Close()

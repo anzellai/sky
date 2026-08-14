@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/vfs"
+	"github.com/cockroachdb/pebble/v2/vfs/errorfs"
 )
 
 // collSep is the L2 collection/pk separator baked into every data user-key
@@ -274,6 +277,161 @@ func TestAuditC1CommitOnClosedChannelReturnsError(t *testing.T) {
 	if !res.CommitTs.IsZero() {
 		t.Fatalf("failed Commit carries commitTs %+v, want the zero value — a non-zero ts on an error "+
 			"result invites a caller to record a version that does not exist", res.CommitTs)
+	}
+}
+
+// TestAuditH3ReaderGetSurfacesIoErrors pins defect H3.
+//
+// pebbleReader.Get returns (value, commitTs, ok) — no error channel. It used to discard
+// the NewIter error and treat a failed SeekGE as "absent", so an unreadable SSTable block
+// was INDISTINGUISHABLE from a missing key. Checking the NewIter error fixes nothing:
+// pebble.Snapshot.NewIter (pebble/v2@v2.1.6 snapshot.go:62-69) returns a nil error
+// unconditionally and panics on a closed snapshot instead. The fix is iter.Error() after
+// positioning, latched onto the reader and exposed as Err() (mirroring Cursor.Err()).
+//
+// The harness injects errorfs.ErrInjected on every read of a *.sst file. Getting the read
+// to actually TOUCH a file took three things, each of which the fixture would otherwise be
+// silently vacuous without:
+//
+//   - a 256 KiB memTableSize plus an explicit db.Flush(), so the row lives in an SSTable
+//     and not in the memtable, where no file read happens at all;
+//   - a REOPEN before arming, because openWith builds a fresh pebble.Options and therefore
+//     a fresh block cache — the writing engine's cache would serve the row from memory;
+//   - PADDING: 400 rows of 2 KiB. A single-row store produces a one-block SSTable, and
+//     Open's own hlc_hi / gc-threshold meta reads pull that one block into the new cache,
+//     so the armed Get is served from memory and observes no fault. (That is not a
+//     hypothetical — it is what the first cut of this test did, and it passed against the
+//     UNFIXED reader.) With ~800 KiB spread over many blocks, the meta keys sit in a
+//     different block from the target row and the target block is genuinely cold.
+//
+// The armed Get is asserted to reach the file (ok must be false), which is what keeps
+// those three conditions honest: if any of them regresses, the read succeeds from cache
+// and the test fails loudly instead of passing vacuously.
+//
+// Both assertions matter, and the second is the load-bearing one:
+//
+//  1. Get answers ok == false AND Err() != nil — the error is DISTINGUISHABLE from
+//     absence. This is only the flag.
+//  2. A Transact body doing that same Get FAILS instead of committing an insert. This is
+//     what proves the fail-closed plumbing (Txn.Commit consulting reader.Err(), and
+//     recordPoint refusing to log a failed read as present:false). Without it a green
+//     assertion 1 would sit next to a reader whose lie still reaches the committer.
+func TestAuditH3ReaderGetSurfacesIoErrors(t *testing.T) {
+	const key = "h3-key0200" // mid-keyspace: its block is not the one Open's meta reads warm
+	const val = "row-that-exists"
+
+	var armed atomic.Bool
+	inj := errorfs.InjectorFunc(func(op errorfs.Op) error {
+		isRead := op.Kind == errorfs.OpFileRead || op.Kind == errorfs.OpFileReadAt
+		if armed.Load() && isRead && strings.HasSuffix(op.Path, ".sst") {
+			return errorfs.ErrInjected
+		}
+		return nil
+	})
+	fs := errorfs.Wrap(vfs.NewMem(), inj)
+
+	clk := &fakeClock{}
+	clk.set(3000)
+	cfg := config{dir: crashDir, fs: fs, wallClock: clk.fn(), memTableSize: 256 << 10}
+
+	// Write the row among enough padding to fill many blocks, then flush to an SSTable.
+	e1, err := openWith(cfg)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	padding := strings.Repeat("x", 2048)
+	for i := 0; i < 400; i++ {
+		k := fmt.Sprintf("h3-key%04d", i)
+		if k == key {
+			put(t, e1, k, val)
+			continue
+		}
+		put(t, e1, k, padding)
+	}
+	if err := e1.db.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	// Sanity gate on the WRITING engine (its cache is discarded at Close, so this cannot
+	// warm the reader below): the row is really there. Without it, the armed "absent"
+	// could just as well mean the fixture never stored anything.
+	rOK := e1.snapshotAt(e1.NowTs())
+	v, _, ok := rOK.Get([]byte(key))
+	rOK.Close()
+	if !ok || string(v) != val {
+		t.Fatalf("fixture: Get(%q) = %q,%v before injection — want %q", key, v, ok, val)
+	}
+	if err := e1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Reopen: a fresh block cache, so the flushed row must be re-read from the file.
+	e, err := openWith(cfg)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() {
+		armed.Store(false) // never tear down under injection
+		_ = e.Close()
+	}()
+
+	armed.Store(true)
+
+	// ── Assertion 1: an I/O error is distinguishable from absence. ──
+	r := e.snapshotAt(e.NowTs())
+	gotV, _, gotOK := r.Get([]byte(key))
+	readErr := r.Err()
+	r.Close()
+	if gotOK {
+		t.Fatalf("Get under an injected SSTable read fault returned ok=true (%q) — the read was served "+
+			"from the block cache / memtable and never touched a file, so this test proves NOTHING. "+
+			"Fix the fixture (padding, flush, reopen), do not weaken the assertion.", gotV)
+	}
+	// Errorf, NOT Fatalf: assertion 2 below is the one that proves the fail-closed plumbing,
+	// and it must still run when this flag is missing. A Fatalf here would mask it — the
+	// mutation proof would only ever show assertion 1 going red, which says nothing about
+	// whether Commit actually consults the flag.
+	if readErr == nil {
+		t.Errorf("Get swallowed an injected SSTable read fault: ok=false with Err() == nil — "+
+			"an I/O error is INDISTINGUISHABLE from key %q being absent", key)
+	} else if !errors.Is(readErr, errorfs.ErrInjected) {
+		t.Errorf("Get surfaced %v, want the injected sentinel %v", readErr, errorfs.ErrInjected)
+	}
+
+	// ── Assertion 2 (the load-bearing one): the txn FAILS rather than inserting. ──
+	// The body is the canonical read-modify-write: "if absent, insert". Under the fault the
+	// Get cannot answer, so the only sound outcome is an error and NO write.
+	var bodyRan int
+	txErr := e.Transact(func(tx *Txn) error {
+		bodyRan++
+		if _, found := tx.Get([]byte(key)); !found {
+			return tx.Put([]byte(key), []byte("INSERTED-OVER-AN-IO-ERROR"))
+		}
+		return nil
+	})
+	if bodyRan == 0 {
+		t.Fatalf("Transact never ran the body — the test proves nothing about the commit boundary")
+	}
+	if txErr == nil {
+		t.Errorf("Transact COMMITTED under an injected read fault: the body saw %q as absent because the "+
+			"block could not be read, and inserted over it. Commit must fail closed on reader.Err().", key)
+	} else if !errors.Is(txErr, errorfs.ErrInjected) {
+		t.Errorf("Transact failed with %v, want the injected read error propagated (a conflict/retry would loop)", txErr)
+	}
+
+	// Disarm and prove the store is untouched: the pre-existing row still holds its
+	// original value, i.e. no insert was laundered through.
+	armed.Store(false)
+	after := e.snapshotAt(e.NowTs())
+	defer after.Close()
+	av, _, aok := after.Get([]byte(key))
+	if !aok {
+		t.Fatalf("row %q vanished across the faulted txn", key)
+	}
+	if string(av) != val {
+		t.Fatalf("row %q = %q after the faulted txn — the failed read was laundered into an INSERT", key, av)
+	}
+	if err := after.Err(); err != nil {
+		t.Fatalf("post-fault reader reports Err() = %v, want nil", err)
 	}
 }
 
