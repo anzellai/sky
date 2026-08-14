@@ -135,6 +135,61 @@ clusters:
   dir must be detected and reported, never attempted. This is where
   `pg_upgrade` eventually lands.
 
+## Licensing and distribution
+
+Sky is Apache-2.0 and ships a `NOTICE.md`. Bundling a database engine into a
+distributed binary is a licence question, and it is answered here rather than at
+release time.
+
+**PostgreSQL itself is redistributable.** The PostgreSQL Licence is permissive
+(BSD/MIT-shaped): use, copy, modify and distribute, commercially, embedded,
+provided the copyright notice and the disclaimer are retained. It is compatible
+with Apache-2.0.
+
+**The risk is not PostgreSQL, it is what a given build links.** A stock
+distribution pulls in libraries with their own terms, and the sharp one is
+`psql`, which links **GNU readline (GPL-3.0)**. Bundling a stock `psql` would
+put a GPL-linked binary inside an Apache-2.0 product.
+
+The resolution is to ship the server and not the interactive client. `--embed`
+needs `postgres`, `initdb`, `pg_ctl`, and `pg_dump`/`pg_restore` for backups. It
+does not need `psql`. **`psql` is therefore deliberately excluded from the
+shipped set** — not an oversight to be helpfully corrected later.
+
+### Bundles are built from source, in CI
+
+Sky does **not** redistribute a third party's prebuilt binaries. Doing so would
+mean inheriting someone else's configure line, their linked dependencies, and
+their continued availability — none of which we control, all of which we would
+be shipping.
+
+Instead, PostgreSQL is built from source in Sky's own CI with a pinned version
+and a known configure line, published as release artifacts. That buys full
+control of the licence surface, reproducibility, an auditable SBOM, exact
+version pinning, and no third-party availability risk. The cost is a
+per-platform build matrix; PostgreSQL compiles in roughly 10–20 minutes, so this
+is a per-release job, not a per-commit one.
+
+The configure line excludes, at minimum: `--without-readline` (GPL),
+`--without-systemd` (LGPL), and the `--without-perl --without-python
+--without-tcl` procedural languages. OpenSSL is 3.x only (Apache-2.0; the
+pre-3.0 dual licence is messier). zlib, lz4, zstd, ICU and libxml2 are
+permissive and may be linked.
+
+### The gate
+
+An SBOM is generated per bundle in CI, listing every linked library and its
+licence, and **a gate fails the build if a bundle links anything GPL, LGPL or
+AGPL**. The check runs against the actual linked objects, not against the
+configure line — a configure flag records an intention, and the linked binary
+records what happened. This distinction is the whole reason the gate exists.
+
+`NOTICE.md` carries the PostgreSQL copyright and licence text.
+
+Note that hosting is not distribution: running PostgreSQL on a server triggers
+no redistribution obligation under any of these licences. This section is about
+the `sky` toolchain and `--embed` binaries, which are distributed.
+
 ## Related fixes this depends on
 
 Two live defects in the shipped runtime sit directly under this work.
@@ -163,7 +218,8 @@ Each phase ships its own commit and is verifiable in isolation.
 |---|---|
 | **P1** | Isolation levels + deployment-aware pool configuration (independent of everything below) |
 | **P2** | Cluster supervisor: data dir, `initdb`, hashed socket path, `sky db start` / `stop` / `ps`, the registry |
-| **P3** | `sky db provision --embed` — fetch, checksum, pin |
+| **P2b** | CI bundle build: PostgreSQL from source per platform, pinned configure line, SBOM, the GPL/LGPL/AGPL link gate, `NOTICE.md` entry |
+| **P3** | `sky db provision --embed` — fetch Sky's own bundle, checksum, pin |
 | **P4** | `sky run` integration, ref-counted |
 | **P5** | `sky build --embed` and `./app --embed`, including the failure modes above |
 | **P6** | Shared-cluster service mode: database-per-app, role-per-app, generated unit + backup timer |
