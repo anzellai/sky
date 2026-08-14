@@ -1053,6 +1053,7 @@ fn stop_impl(all: bool) -> Result<String, String> {
                 if let Some(e) = reg.clusters.get_mut(&project) {
                     e.pid = 0;
                 }
+                remove_socket_dir_if_empty(Path::new(&entry.socket_dir));
                 stopped.push(project);
             }
             Ok(o) => failed.push(format!(
@@ -1077,6 +1078,17 @@ fn stop_impl(all: bool) -> Result<String, String> {
         stopped.len(),
         stopped.iter().map(|p| format!("  {p}")).collect::<Vec<_>>().join("\n")
     ))
+}
+
+/// A clean shutdown removes the socket file but leaves its directory, so
+/// without this every project ever started accumulates an empty directory in
+/// `/tmp` that nothing will ever clean up.
+///
+/// `remove_dir` — never `remove_dir_all`. It fails harmlessly on a non-empty
+/// directory, which is the interlock: if anything is still in there, another
+/// postmaster is using it and this is not our directory to delete.
+fn remove_socket_dir_if_empty(socket_dir: &Path) {
+    let _ = std::fs::remove_dir(socket_dir);
 }
 
 /// `sky db ps [--all]` — what is actually running, having first reconciled the

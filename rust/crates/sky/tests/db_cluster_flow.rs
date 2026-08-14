@@ -274,6 +274,14 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
     assert!(stop.status.success(), "sky db stop failed:\n{}", both(&stop));
     assert!(fx.postmaster_pid().is_none(), "postmaster.pid survived a clean stop");
     assert!(!socket.exists(), "the socket survived a clean stop");
+    // PostgreSQL removes the socket file but not its directory. Without the
+    // cleanup, every project ever started leaves an empty directory in /tmp that
+    // nothing will ever collect.
+    assert!(
+        !socket_dir.exists(),
+        "an empty socket directory was left behind: {}",
+        socket_dir.display()
+    );
 
     // The registry entry stays (the data dir is still there) but must never
     // report a pid for a process that is gone.
