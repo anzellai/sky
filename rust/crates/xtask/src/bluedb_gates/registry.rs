@@ -356,6 +356,13 @@ pub static REGISTRY: &[Gate] = &[
             // NOT `gate-state.tsv`: `--verify-mutations` writes that file
             // itself, so listing it would make this proof UNVERIFIED-SINCE the
             // instant it was taken — a signal that always fires.
+            //
+            // Naming the directory has the same problem one level down — the
+            // runner writes the `*.expected.txt` files INSIDE it — which is why
+            // the staleness clock filters the diff through
+            // `mutations::harness_generated` rather than relying on this list
+            // being hand-pruned. Hand-authored `*.patch` files here still decay
+            // the proof, as they must.
             targets: &["docs/bluedb/mutations"],
         }]),
     },

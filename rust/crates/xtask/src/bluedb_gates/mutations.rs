@@ -150,20 +150,62 @@ pub fn head_sha(root: &Path) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
+/// Files the harness WRITES ITSELF. A change to one of them is not evidence
+/// that a proof decayed — it is evidence that the harness ran.
+///
+/// `Mutation.targets` exists precisely so that `UNVERIFIED-SINCE` fires when a
+/// proof's SUBJECT moves and stays quiet otherwise, and `registry.rs` already
+/// hand-excludes `gate-state.tsv` from G0.6's `targets` for exactly this reason
+/// (see the comment on `G0.6/corrupt-expected`). That hand-exclusion does not
+/// reach one level down: G0.6's subject *is* `docs/bluedb/mutations`, and
+/// `--verify-mutations` writes the `*.expected.txt` files in that directory on
+/// every run. So each re-derivation of G0.6's proof invalidated itself at the
+/// next commit, and its `UNVERIFIED-SINCE` became a signal that always fires
+/// and therefore nobody reads.
+///
+/// **`*.patch` is deliberately NOT here.** A patch is hand-authored evidence,
+/// not an output; editing one MUST decay the proof it belongs to, because the
+/// proof is a statement about that exact patch.
+///
+/// Excluding the recorded outputs does not weaken detection: a corrupted
+/// `*.expected.txt` is caught head-on by G0.6's own assertion — "recorded
+/// expected output does not contain the declared assertion" — which is the
+/// whole subject of that gate. The staleness clock was never the mechanism
+/// guarding those files.
+fn harness_generated(path: &str) -> bool {
+    path == super::state::STATE_PATH
+        || (path.starts_with("docs/bluedb/mutations/") && path.ends_with(".expected.txt"))
+}
+
+/// Does a `git diff --name-only` listing name anything that is not a harness
+/// output? Split out of [`targets_moved`] so the predicate is testable without
+/// a repository to diff.
+fn diff_moves_a_target(diff_names: &str) -> bool {
+    diff_names
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .any(|p| !harness_generated(p))
+}
+
 /// MAJOR-17: has any of the mutation's declared `targets` changed between the
 /// sha the proof was taken at and `HEAD`?
 ///
 /// A whole-tree "has anything changed" probe would mark everything unverified
 /// after every commit, and a signal that always fires is a signal nobody reads —
-/// which is why `Mutation` carries `targets` at all. An unresolvable sha is
-/// treated as moved: unknown provenance is not evidence of freshness.
+/// which is why `Mutation` carries `targets` at all. For the same reason the
+/// diff is filtered through [`harness_generated`]: a target set that contains
+/// the harness's own outputs would decay on the act of taking the proof.
+///
+/// An unresolvable sha is treated as moved: unknown provenance is not evidence
+/// of freshness.
 pub fn targets_moved(root: &Path, sha: &str, targets: &[&str]) -> bool {
     let mut cmd = Command::new("git");
     cmd.args(["diff", "--name-only", sha, "HEAD", "--"])
         .args(targets)
         .current_dir(root);
     match cmd.output() {
-        Ok(o) if o.status.success() => !String::from_utf8_lossy(&o.stdout).trim().is_empty(),
+        Ok(o) if o.status.success() => diff_moves_a_target(&String::from_utf8_lossy(&o.stdout)),
         _ => true,
     }
 }
@@ -749,6 +791,48 @@ mod tests {
             "0000000000000000000000000000000000000000",
             &["docs"]
         ));
+    }
+
+    /// The half that stops the proof invalidating itself: `--verify-mutations`
+    /// WRITES the `*.expected.txt` files under G0.6's declared target
+    /// `docs/bluedb/mutations`, so if a diff naming one counted as movement,
+    /// every re-derivation of G0.6's proof would decay at the next commit and
+    /// `UNVERIFIED-SINCE` would be permanently on.
+    #[test]
+    fn a_regenerated_harness_output_is_not_a_moved_target() {
+        assert!(harness_generated(
+            "docs/bluedb/mutations/G0.2.rt-imports-bluedb.expected.txt"
+        ));
+        assert!(harness_generated("docs/bluedb/gate-state.tsv"));
+        assert!(!diff_moves_a_target(
+            "docs/bluedb/mutations/G0.2.rt-imports-bluedb.expected.txt\n\
+             docs/bluedb/mutations/G0.5.second-go-build-site.expected.txt\n\
+             docs/bluedb/gate-state.tsv\n"
+        ));
+        assert!(!diff_moves_a_target(""));
+    }
+
+    /// The other half, without which the exclusion would be a hole rather than
+    /// a filter: a `*.patch` is HAND-AUTHORED evidence, not an output. The proof
+    /// is a statement about that exact patch, so editing one must decay it —
+    /// even though it lives in the same directory as the recorded outputs.
+    #[test]
+    fn a_hand_authored_patch_is_a_moved_target() {
+        assert!(!harness_generated(
+            "docs/bluedb/mutations/G0.2.rt-imports-bluedb.patch"
+        ));
+        assert!(diff_moves_a_target(
+            "docs/bluedb/mutations/G0.2.rt-imports-bluedb.patch\n"
+        ));
+        // …and it still counts when buried among regenerated outputs, which is
+        // the shape the real diff takes.
+        assert!(diff_moves_a_target(
+            "docs/bluedb/mutations/G0.1.hand-edit-status.expected.txt\n\
+             docs/bluedb/mutations/G0.2.rt-imports-bluedb.patch\n\
+             docs/bluedb/gate-state.tsv\n"
+        ));
+        // Neither is the subject the gates actually guard.
+        assert!(diff_moves_a_target("runtime-go/rt/live_store.go\n"));
     }
 
     #[test]
