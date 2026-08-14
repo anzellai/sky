@@ -1294,7 +1294,28 @@ pub static REGISTRY: &[Gate] = &[
                 // `…DoNotRaceCloseIntoAPanic` GREEN (gc.go's isClosed() does
                 // answer a call made after Close returned), so only a fixture
                 // that puts Close INSIDE a pass can see it.
-                expect: "Close PANICKED with an unpinned GC pass in flight:",
+                //
+                // THE ASSERTION IS THE PROPERTY, NOT THE SIDE THAT OBSERVED IT,
+                // and this one was authored the other way round. It read
+                // `Close PANICKED with an unpinned GC pass in flight:` — the
+                // verdict raised when CLOSE touches the closed handle first.
+                // The pass can touch it first instead, and then the fixture
+                // fails on its other arm with a message this string does not
+                // appear in. The gate is red either way; the CLASSIFIER is not,
+                // because it asks only whether this exact string is present.
+                //
+                // Measured rather than reasoned about: 12 runs of the mutated
+                // fixture, 12 red, split 7 (Close's side) / 5 (the pass's side).
+                // So the recorded PROVEN was a ~58% coin flip, and the original
+                // "fires on every run (5/5) by construction" was right about the
+                // GATE and wrong about the ASSERTION — 5/5 was luck on which
+                // side won. A falsifier that reports PROVEN most of the time is
+                // worse than none, because nobody looks again.
+                //
+                // Both arms now carry one shared verdict clause naming the
+                // property, so the classification no longer depends on who wins
+                // the race. Re-measured at 12/12 after the change.
+                expect: "an unpinned GC pass raced Close into a panic",
                 targets: &["runtime-go/bluedb/gc.go"],
             },
         ]),

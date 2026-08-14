@@ -1845,6 +1845,27 @@ func TestAuditN4GCPassIsPinnedAgainstAConcurrentClose(t *testing.T) {
 	// One fifth into the pass: past the entry check by a wide margin, and with ~80% of the
 	// pass — the NewIter, the whole scan, the side Apply — still ahead of it.
 	time.Sleep(pass / 5)
+
+	// The width guard's other half, and it is the same discipline: the fixture must FAIL
+	// rather than silently pass when the window it depends on was not actually held. The
+	// guard above proves a pass is long enough MEASURED ONCE; this proves THIS pass was
+	// still in flight at the moment Close is about to be called. If it already finished,
+	// Close meets no live iterator, nothing panics under the mutation either, and the test
+	// would report PASS having exercised nothing — a false green that reads exactly like a
+	// fixed defect.
+	//
+	// The receive is non-blocking and one-sided: it can only fire when the window was
+	// definitely lost, never when it was merely close. Consuming the value is safe because
+	// this arm is terminal.
+	select {
+	case early := <-out:
+		t.Fatalf("fixture: the timed GC pass finished BEFORE Close was called (err=%v, panicked=%v) "+
+			"— the %s pass measured by the control run took under %s this time, so Close would meet "+
+			"no in-flight pass and this test would pass without exercising the pin at all. Raise the "+
+			"load per attempt.", early.err, early.panicked, pass, pass/5)
+	default:
+	}
+
 	var closeErr error
 	func() {
 		// Guarded because the unpinned pass panics Close ITSELF, not only the pass: pebble's
@@ -1854,7 +1875,7 @@ func TestAuditN4GCPassIsPinnedAgainstAConcurrentClose(t *testing.T) {
 		// than an unrecovered panic that takes every later test in the binary with it.
 		defer func() {
 			if r := recover(); r != nil {
-				t.Fatalf("Close PANICKED with an unpinned GC pass in flight: %v\n"+
+				t.Fatalf("an unpinned GC pass raced Close into a panic — CLOSE's side: %v\n"+
 					"The pass holds a live Pebble iterator that the phase-2 drain knows nothing "+
 					"about, because gc.go took no pin. The drain must be able to see the pass.", r)
 			}
@@ -1865,7 +1886,7 @@ func TestAuditN4GCPassIsPinnedAgainstAConcurrentClose(t *testing.T) {
 	select {
 	case o := <-out:
 		if o.panicked != nil {
-			t.Fatalf("the in-flight GC pass PANICKED when Close closed the handle underneath it: %v\n"+
+			t.Fatalf("an unpinned GC pass raced Close into a panic — the PASS's side: %v\n"+
 				"`if e.isClosed()` is a CHECK WITH NO PIN: nothing stops phase 3 from running "+
 				"e.db.Close() after it returns false, and the pass's next handle operation "+
 				"(NewBatch/NewIter, the side Apply, persistThreshold's Apply) panics unconditionally "+

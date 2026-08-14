@@ -1106,18 +1106,41 @@ const G2_13J_ANCHORS: &[SourceAnchor] = &[
         why: "that IS the fail-OPEN half: a post-close Tail answering (nil, nil) looks like an \
               empty changelog to a caller, which is the same defect wearing a different face",
     },
+    // BOTH sides of the race, anchored separately, because the defect is
+    // observed from whichever side touches the closed handle first and the two
+    // are different code paths. Measured, not assumed: 12 runs of the mutated
+    // fixture split 7 / 5 between them. Anchoring only one would leave the other
+    // arm guttable — and, before the shared verdict clause below existed, it
+    // ALSO made the recorded falsification a coin flip (see the note on the
+    // mutation in `registry.rs`).
     SourceAnchor {
         func: N4_GC_PIN_FUNC,
-        needle: "Close PANICKED with an unpinned GC pass in flight:",
-        why: "that IS the TOCTOU verdict, seen from Close's side (pebble unrefs the file cache and \
-              panics on a live iterator from the racing pass)",
+        needle: "The pass holds a live Pebble iterator that the phase-2 drain knows nothing ",
+        why: "that IS the TOCTOU verdict seen from CLOSE's side — pebble unrefs the file cache and \
+              panics on a live iterator belonging to the racing pass",
+    },
+    SourceAnchor {
+        func: N4_GC_PIN_FUNC,
+        needle: "`if e.isClosed()` is a CHECK WITH NO PIN: nothing stops phase 3 from running ",
+        why: "that IS the same verdict seen from the PASS's side — the check returns false, phase 3 \
+              closes the handle underneath it, and the pass's next handle op panics on the caller's \
+              goroutine. It fires on 5 runs in 12, so a gate anchored only on Close's side would \
+              not notice this arm disappearing",
     },
     SourceAnchor {
         func: N4_GC_PIN_FUNC,
         needle: "The gate needs a pass ",
         why: "that IS the fixture's own width guard — it FAILS rather than silently passing when a \
               GC pass is too quick for Close to land inside it, which is the only thing that makes \
-              the assertion above meaningful",
+              the assertions above meaningful",
+    },
+    SourceAnchor {
+        func: N4_GC_PIN_FUNC,
+        needle: "the timed GC pass finished BEFORE Close was called",
+        why: "the width guard's OTHER half. The guard above measures one control pass; this one \
+              proves THIS pass was still in flight when Close was called. Without it a pass that \
+              happened to finish early makes the fixture report PASS having exercised nothing — a \
+              false green indistinguishable from a fixed defect",
     },
 ];
 

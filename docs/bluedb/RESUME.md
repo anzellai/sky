@@ -241,6 +241,56 @@ A new `*_test.go` under `runtime-go/bluedb/` owned by no family is now a
 `cargo test` failure: the three families must partition the directory, discovered
 by `read_dir` rather than read from a list.
 
+### Round 4 — `validate()` itself (G2.26 / G2.27), and the class (G0.8)
+
+G2.14 gates the fact that a transaction **records** its dependencies. A fourth
+Judge round measured what that leaves open: deleting the four lines of
+`validate()`'s collection-witness arm (`validate.go:48-51`) let a
+scan-then-insert transaction commit clean — the same phantom, one file over from
+round 3's fix — with `go test`, `cargo test -p xtask`, `--tier=full` and
+`--verify-mutations` all green. Gutting `validate()` entirely was caught by
+**one** assertion in the whole corpus, and only on the point arm.
+
+`runtime-go/bluedb/validate_test.go` asserts the CONSEQUENCE — the conflicting
+transaction is REFUSED — arm by arm, each fixture with a control (a concurrent
+change that must NOT conflict) so that `return false` fails one arm and
+`return true` fails the other, and each isolating its arm (the point fixture
+asserts it carries no witnesses; the phantom fixture asserts the inserted key is
+not a point read):
+
+| Gate | Property | Leaves |
+|---|---|---|
+| G2.26 | a point read superseded after its readTs is refused, and only then | 1 |
+| G2.27 | a phantom insert into a witnessed collection is refused, and the collection id it matches on survives the wire | 2 |
+
+**G0.8 is the class.** Round 3 hardened the producer of `collWitness`; round 4
+deleted the consumer. Each fix was local to the site attacked, and the
+mechanically answerable question nobody asked was: *which engine sources are
+touched by NO recorded mutation?* Across the 51 patches then in
+`docs/bluedb/mutations/`, **eight of the seventeen** non-test sources were —
+`changefeed.go`, `engine.go`, `hlc.go`, `hotkey.go`, `keychange.go`,
+`readset.go`, `recent_changes.go`, `validate.go`. Two of them are named verbatim
+in P1's scope row.
+
+G0.8 asks it on every run. The population is `read_dir`; coverage is read from
+the patches' own `diff --git` paths, never from `Mutation.targets` (a
+declaration deliberately broader than the diff). A source may instead sit in
+`DELIBERATELY_UNMUTATED` with an argument **and** a `funcs` pin reconciled both
+ways, so an exemption written once cannot silently cover behaviour written
+later. Five sources are there today: `engine.go` (declares no function at all),
+`readset.go` (its one function is structurally unreachable in Stage 2, and
+`txn.go`'s excision note *requires* that mutating it change no gate),
+`hotkey.go` and `changefeed.go` (liveness-only / post-Apply, referenced by no
+test, so a mutation records VACUOUS) and `hlc.go` (every honest revert trips an
+assertion `G2.15`'s and `G2.17`'s mutations already own).
+
+G0.8's own falsifier is worth reading before writing another: it re-points
+`recent_changes.go`'s only mutation at a different diff while leaving
+`Mutation.targets` still naming the file, so a gate that trusted the declaration
+stays green. The obvious alternative — a patch that ADDS an unmutated source —
+was tried first and observed GREEN, because the patch that creates the file
+names the file.
+
 **And one harness bug the exercise surfaced.** `--- FAIL: <name>` is the only
 line that says WHICH leaf failed, and Go emits it after that test's output — so
 the 40-line head-truncated quote dropped exactly it for any table-driven fixture
