@@ -1,5 +1,6 @@
 PROBE gate=G2.24 state=FAIL root=<scratch-worktree>
-  every key parser rejects corrupt bytes without panicking and still accepts well-formed ones is not proven: 3/4 pinned fixture(s) reported a passing event
+  the key-format parser population does not match its pin (17 recorded); and every key parser rejects corrupt bytes without panicking and still accepts well-formed ones is not proven: 3/4 pinned fixture(s) reported a passing event
+  runtime-go/bluedb/keys.go: the recorded guard `if len(key) < 2+dataSuffixLen || key[len(key)-1] != dataLenByte {` is not present exactly once. decodeHLC is safe only because every caller establishes the length first
   TestDecodeDataVersionRejectsCorruptKeysWithoutPanic did not report a passing `go test -json` event (it FAILED)
   TestDecodeDataVersionRejectsCorruptKeysWithoutPanic: === RUN   TestDecodeDataVersionRejectsCorruptKeysWithoutPanic
   TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key  (len=0): runtime error: slice bounds out of range [:-1]

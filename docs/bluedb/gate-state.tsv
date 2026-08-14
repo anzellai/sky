@@ -50,7 +50,7 @@ proof	G2.20/threshold-not-clamped-to-durablehi	PROVEN	33f6c8f3
 proof	G2.21/retention-does-not-trim-below-t	PROVEN	33f6c8f3
 proof	G2.22/version-suffix-not-inverted	PROVEN	33f6c8f3
 proof	G2.23/successor-returns-its-input	PROVEN	33f6c8f3
-proof	G2.24/decode-data-version-drops-its-bounds-guard	VACUOUS	33f6c8f3
+proof	G2.24/decode-data-version-drops-its-bounds-guard	PROVEN	d834b8f4
 proof	G2.25/comparer-name-drifts	PROVEN	33f6c8f3
 proof	G2.26/point-arm-is-not-consulted	PROVEN	33f6c8f3
 proof	G2.27/collection-witness-arm-is-not-consulted	PROVEN	33f6c8f3
@@ -59,4 +59,4 @@ proof	G2.6/disable-injection-point	PROVEN	33f6c8f3
 proof	G2.9a/ack-before-fsync	PROVEN	33f6c8f3
 proof	G2.9a/sealed-engine-still-runs-gc	PROVEN	33f6c8f3
 proof	G2.9a/wal-fatal-never-reaches-the-ack	PROVEN	33f6c8f3
-integrity	b411f3d040870fc321eb400370d889bec800f92c20285813a8e9e5807090a895
+integrity	f4d321456351684aa96a65f204cbf9cf1dd79b2086b6661aff21696a18b06908
