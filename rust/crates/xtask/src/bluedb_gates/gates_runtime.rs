@@ -420,49 +420,64 @@ struct FileGate {
     property: &'static str,
 }
 
-/// Read every source in [`RUNTIME_SOURCES`], returning `(declared names, bodies)`
-/// or the findings that stopped it.
-fn read_family(ctx: &Ctx, gate: &str) -> Result<(BTreeSet<String>, Vec<super::gates_g2::EnumeratedTest>, Vec<(String, BTreeSet<String>)>), Vec<String>>
-{
-    let mut declared = BTreeSet::new();
-    let mut bodies = Vec::new();
-    let mut per_file = Vec::new();
-    let mut findings = Vec::new();
+/// What [`read_family`] could read, and what it could not.
+struct Family {
+    declared: BTreeSet<String>,
+    bodies: Vec<super::gates_g2::EnumeratedTest>,
+    per_file: Vec<(String, BTreeSet<String>)>,
+    /// Sources in [`RUNTIME_SOURCES`] that are not on disk. A finding, never a
+    /// reason to stop — see [`read_family`].
+    unreadable: Vec<String>,
+}
+
+/// Read every source in [`RUNTIME_SOURCES`], reporting what was missing rather
+/// than refusing to continue.
+///
+/// This used to return `Err` on the first unreadable source and `run_file_gate`
+/// returned on it. That is the same short-circuit
+/// [`super::gates_g2::merge_static_and_behavioural`] documents, one level
+/// earlier, and it is wrong here for a reason specific to this family: nine
+/// files feed fourteen gates, but each gate pins fixtures in only one or two of
+/// them. A missing `gc_test.go` says nothing about whether G2.25's comparer
+/// fixtures still hold — and `go test` runs them either way, because the package
+/// still builds from the files that ARE there. A missing source is a finding
+/// about the corpus, merged with everything the fixtures reported.
+fn read_family(ctx: &Ctx, gate: &str) -> Family {
+    let mut f = Family {
+        declared: BTreeSet::new(),
+        bodies: Vec::new(),
+        per_file: Vec::new(),
+        unreadable: Vec::new(),
+    };
     for src in RUNTIME_SOURCES {
         let Some(text) = ctx.read(src) else {
-            findings.push(format!(
+            f.unreadable.push(format!(
                 "{gate}: cannot read {src} — a pinned corpus that is not on disk has not passed"
             ));
             continue;
         };
         let names = go_test_names(&text);
-        declared.extend(names.iter().cloned());
-        per_file.push(((*src).to_string(), names));
-        bodies.extend(enumerate_injections(&text));
+        f.declared.extend(names.iter().cloned());
+        f.per_file.push(((*src).to_string(), names));
+        f.bodies.extend(enumerate_injections(&text));
     }
-    if findings.is_empty() {
-        Ok((declared, bodies, per_file))
-    } else {
-        Err(findings)
-    }
+    f
 }
 
 /// The one body all twelve share.
 fn run_file_gate(ctx: &Ctx, g: &FileGate) -> GateOutcome {
-    let (declared, bodies, per_file) = match read_family(ctx, g.id) {
-        Ok(v) => v,
-        Err(findings) => {
-            return GateOutcome::fail(
-                format!("{} cannot read the corpus it certifies", g.id),
-                findings,
-            )
-        }
-    };
+    let Family {
+        declared,
+        bodies,
+        per_file,
+        unreadable,
+    } = read_family(ctx, g.id);
 
     // ── (1a) the FAMILY's population is the recorded population, both ways ──
     let recorded: Vec<&str> = RUNTIME_OWNERSHIP.iter().map(|o| o.test).collect();
     let where_ = "runtime-go/bluedb/{bench,comparer,comparer_property,engine,gc,keys,lock,stage2_readset,validate}_test.go";
-    let mut findings = check_pinned_population(&declared, &recorded, where_, PIN_NAME);
+    let mut findings = unreadable;
+    findings.extend(check_pinned_population(&declared, &recorded, where_, PIN_NAME));
 
     // ── (1a') and each row is recorded against the file that really declares it ──
     for o in RUNTIME_OWNERSHIP {
