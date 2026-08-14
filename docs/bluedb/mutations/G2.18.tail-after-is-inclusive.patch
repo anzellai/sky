@@ -1,0 +1,27 @@
+diff --git a/runtime-go/bluedb/changelog.go b/runtime-go/bluedb/changelog.go
+index de56a80f..dedce069 100644
+--- a/runtime-go/bluedb/changelog.go
++++ b/runtime-go/bluedb/changelog.go
+@@ -85,7 +85,9 @@ func (c *changelog) Tail(after HLC) ([]ChangelogEntry, error) {
+ 	if after.IsZero() {
+ 		seek = lo
+ 	} else {
+-		seek = changelogKeyAfter(after)
++		// MUTATION G2.18: seek to `after` itself rather than to its immediate
++		// successor, so Tail(after) re-delivers the entry AT after.
++		seek = encodeChangelogKey(after)
+ 	}
+ 
+ 	var out []ChangelogEntry
+@@ -94,9 +96,8 @@ func (c *changelog) Tail(after HLC) ([]ChangelogEntry, error) {
+ 		if !tsOK {
+ 			return nil, fmt.Errorf("%w: %x", errCorruptChangelogKey, iter.Key())
+ 		}
+-		if !after.IsZero() && !after.Less(ts) {
+-			continue // defensive: skip anything <= after
+-		}
++		// MUTATION G2.18: the defensive skip removed with the seek above, so the
++		// inclusive tail is actually observable.
+ 		v := iter.Value()
+ 		out = append(out, ChangelogEntry{
+ 			CommitTs: ts,

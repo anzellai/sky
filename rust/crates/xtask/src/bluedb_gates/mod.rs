@@ -18,6 +18,7 @@ pub mod frozen_stage1;
 pub mod gates_g0;
 pub mod gates_g2;
 pub mod gates_g2_13;
+pub mod gates_runtime;
 pub mod mutations;
 pub mod pending;
 pub mod registry;

@@ -1,0 +1,16 @@
+diff --git a/runtime-go/bluedb/txn.go b/runtime-go/bluedb/txn.go
+index 58dcefcc..0485952e 100644
+--- a/runtime-go/bluedb/txn.go
++++ b/runtime-go/bluedb/txn.go
+@@ -606,7 +606,10 @@ func (tx *Txn) ScanCollection(coll CollID, prefix []byte) Cursor {
+ 	if cur.Err() != nil {
+ 		return cur
+ 	}
+-	tx.WitnessCollection(coll)
++	// MUTATION G2.14: the collection witness is not recorded. The scan still returns
++	// every row, so nothing about the cursor changes — but the read-set carries NO
++	// dependency on the collection, so a concurrent INSERT of a brand-new pk is
++	// invisible to validate() and the txn that concluded "no such row" commits over it.
+ 	return cur
+ }
+ 

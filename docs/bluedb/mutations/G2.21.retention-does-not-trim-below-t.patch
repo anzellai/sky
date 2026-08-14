@@ -1,0 +1,21 @@
+diff --git a/runtime-go/bluedb/gc.go b/runtime-go/bluedb/gc.go
+index 03dd39db..6064543a 100644
+--- a/runtime-go/bluedb/gc.go
++++ b/runtime-go/bluedb/gc.go
+@@ -177,12 +177,10 @@ func (e *pebbleEngine) GC() (GCStats, error) {
+ 	// is disjoint from any concurrent commit.
+ 	clLo := []byte{tagChangelog}
+ 	clHi := encodeChangelogKey(T) // exclusive upper: keys strictly below commitTs T
+-	if skydbCompare(clLo, clHi) < 0 {
+-		if err := batch.DeleteRange(clLo, clHi, nil); err != nil {
+-			return stats, err
+-		}
+-		stats.ChangelogTrimmed = true
+-	}
++	// MUTATION G2.21: the retention range-tombstone deleted. The pass still reports a
++	// threshold and still deletes stale versions, so every other GC assertion holds —
++	// the changelog simply grows without bound below T.
++	_, _ = clLo, clHi
+ 
+ 	if batch.Empty() {
+ 		return stats, nil

@@ -1,0 +1,17 @@
+diff --git a/runtime-go/bluedb/reader.go b/runtime-go/bluedb/reader.go
+index 6edfe9ca..34023178 100644
+--- a/runtime-go/bluedb/reader.go
++++ b/runtime-go/bluedb/reader.go
+@@ -132,8 +132,10 @@ func (r *pebbleReader) Get(userKey []byte) (value []byte, commitTs HLC, ok bool)
+ 		r.latch(e)
+ 		return nil, HLC{}, false
+ 	}
+-	if len(v) == 0 || v[0] == markerTombstone {
+-		return nil, ts, false // visible version is a delete → absent as-of readTs
++	// MUTATION G2.16: the tombstone arm deleted. A delete is a VERSION, and the point
++	// read now resolves it as a present (empty) row — a deleted key reading as existing.
++	if len(v) == 0 {
++		return nil, ts, false
+ 	}
+ 	out := append([]byte(nil), v[1:]...)
+ 	return out, ts, true

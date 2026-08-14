@@ -1,0 +1,16 @@
+diff --git a/runtime-go/bluedb/watermark.go b/runtime-go/bluedb/watermark.go
+index 8567eb1a..baee5f49 100644
+--- a/runtime-go/bluedb/watermark.go
++++ b/runtime-go/bluedb/watermark.go
+@@ -254,7 +254,10 @@ func (w *watermarkRegistry) advanceThreshold() (HLC, bool) {
+ 		// readTs > durableHi stays protected (T ≤ durableHi ≤ readTs), and this
+ 		// guarantees persisted_T ≤ durableHi ≤ durable hlc_hi unconditionally — closing
+ 		// both the reader-wedge and the changelog-trim-tail failure modes (§5.2, Fix-3).
+-		candidate = minHLC(candidate, dur)
++		// MUTATION G2.20 (Fix-3 clamp reverted): T is no longer held at or below the
++		// durable high-water, so a pass in the assigned-but-not-applied window persists
++		// a threshold above what a crash would recover.
++		_ = dur
+ 	}
+ 	if w.threshold.Less(candidate) {
+ 		w.threshold = candidate

@@ -1,0 +1,15 @@
+diff --git a/runtime-go/bluedb/comparer.go b/runtime-go/bluedb/comparer.go
+index 740ffe91..6ece7cbc 100644
+--- a/runtime-go/bluedb/comparer.go
++++ b/runtime-go/bluedb/comparer.go
+@@ -10,7 +10,9 @@ import (
+ // A store created with it refuses to open under any other comparer. Changing the
+ // byte layout, the HLC width, the inversion, or the length-byte convention
+ // requires a new name ("skydb.mvcc.v2") AND a full store rewrite/migration.
+-const comparerName = "skydb.mvcc.v1"
++// MUTATION G2.25: the format name edited. Every store written under the old name
++// becomes unopenable, and nothing but the pin says so.
++const comparerName = "skydb.mvcc.v1v2"
+ 
+ // skydbComparer is the LOCKED Comparer (§2.4). It MIRRORS the techniques of
+ // Pebble's shipped cockroachkvs.Comparer exactly — prefix-only Separator/Successor,

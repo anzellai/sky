@@ -1,0 +1,26 @@
+diff --git a/runtime-go/bluedb/watermark.go b/runtime-go/bluedb/watermark.go
+index 8567eb1a..eaad2a3a 100644
+--- a/runtime-go/bluedb/watermark.go
++++ b/runtime-go/bluedb/watermark.go
+@@ -207,17 +207,10 @@ func (w *watermarkRegistry) minLive() HLC {
+ // candidateLocked computes the GC-floor candidate assuming w.mu is held: min over
+ // live tokens, or the current high-water when the live set is empty (§5.2).
+ func (w *watermarkRegistry) candidateLocked() HLC {
+-	if len(w.live) == 0 {
+-		return w.highWater()
+-	}
+-	var min HLC
+-	first := true
+-	for _, ts := range w.live {
+-		if first || ts.Less(min) {
+-			min, first = ts, false
+-		}
+-	}
+-	return min
++	// MUTATION G2.19 (§5.2 min-over-live reverted): the floor is the high-water
++	// regardless of who is reading, so a version a registered snapshot still resolves
++	// falls below T and is collected under it.
++	return w.highWater()
+ }
+ 
+ // advanceThreshold is the register-before-advance barrier (§5.2 part iii). In ONE

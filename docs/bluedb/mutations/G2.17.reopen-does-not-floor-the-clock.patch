@@ -1,0 +1,16 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 5c0043cf..57d549be 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -286,7 +286,10 @@ func openWith(cfg config) (*pebbleEngine, error) {
+ 
+ 	e := &pebbleEngine{
+ 		db:    db,
+-		hlc:   newHLCClock(persistedHi, cfg.wallClock),
++		// MUTATION G2.17 (§3.3 restart floor reverted): the clock is seeded from zero
++		// rather than the persisted high-water, so a backward wall clock re-issues
++		// commitTs values that are already on disk.
++		hlc:   newHLCClock(HLC{}, cfg.wallClock),
+ 		fatal: fatal, // N3: the latch quietLogger has been writing to since before Open
+ 		// Everything on disk up to persistedHi (metaHLCHi) was written in a synced,
+ 		// committed batch, so the durable high-water starts AT persistedHi (Fix-3). A

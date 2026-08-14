@@ -1,0 +1,17 @@
+diff --git a/runtime-go/bluedb/keys.go b/runtime-go/bluedb/keys.go
+index 1c8ffd59..3e480c74 100644
+--- a/runtime-go/bluedb/keys.go
++++ b/runtime-go/bluedb/keys.go
+@@ -111,9 +111,9 @@ func dataKeyPrefix(userKey []byte) []byte {
+ func decodeDataVersion(key []byte) (HLC, bool) {
+ 	// Shortest well-formed versioned data key: tag ‖ (empty userKey) ‖ sentinel ‖
+ 	// invTs(12) ‖ lenByte == 2 + dataSuffixLen bytes, ending in dataLenByte.
+-	if len(key) < 2+dataSuffixLen || key[len(key)-1] != dataLenByte {
+-		return HLC{}, false
+-	}
++	// MUTATION G2.24: the bounds/trailer guard deleted. `start` goes negative on any
++	// key shorter than the suffix, and the slice panics — on bytes that came off disk,
++	// in the middle of a scan.
+ 	// version occupies [len-1-12, len-1)
+ 	start := len(key) - 1 - hlcEncodedLen
+ 	inv := key[start : len(key)-1]

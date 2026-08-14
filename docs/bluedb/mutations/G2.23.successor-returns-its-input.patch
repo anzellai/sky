@@ -1,0 +1,25 @@
+diff --git a/runtime-go/bluedb/comparer.go b/runtime-go/bluedb/comparer.go
+index 740ffe91..63634348 100644
+--- a/runtime-go/bluedb/comparer.go
++++ b/runtime-go/bluedb/comparer.go
+@@ -144,16 +144,10 @@ func skydbSuccessor(dst, a []byte) []byte {
+ 	if len(a) == 0 {
+ 		return append(dst, sentinel)
+ 	}
+-	aKey, ok := keyPartNoSentinel(a)
+-	if !ok {
+-		return append(dst, a...)
+-	}
+-	n := len(dst)
+-	dst = pebble.DefaultComparer.Successor(dst, aKey)
+-	if bytes.Equal(aKey, dst[n:]) {
+-		return append(dst[:n], a...)
+-	}
+-	return append(dst, sentinel)
++	// MUTATION G2.23: Successor never shortens. Compare(a, succ) <= 0 still holds
++	// trivially, so every remaining assertion in the property fixture passes; what is
++	// lost is every index-block shortening Pebble would have done.
++	return append(dst, a...)
+ }
+ 
+ // skydbImmediateSuccessor appends 0x00 to a bare prefix a, yielding the smallest

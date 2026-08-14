@@ -1,0 +1,15 @@
+diff --git a/runtime-go/bluedb/keys.go b/runtime-go/bluedb/keys.go
+index 1c8ffd59..45883389 100644
+--- a/runtime-go/bluedb/keys.go
++++ b/runtime-go/bluedb/keys.go
+@@ -84,7 +84,9 @@ func encodeDataKey(userKey []byte, commitTs HLC) []byte {
+ 	out = append(out, tagData)
+ 	out = append(out, userKey...)
+ 	out = append(out, sentinel)
+-	out = append(out, invert12(encodeHLC(commitTs))...)
++	// MUTATION G2.22: the version suffix is no longer bit-inverted, so a user-key's
++	// versions sort OLDEST first and one SeekGE no longer resolves newest <= readTs.
++	out = append(out, encodeHLC(commitTs)...)
+ 	out = append(out, dataLenByte)
+ 	return out
+ }

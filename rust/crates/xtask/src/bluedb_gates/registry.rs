@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use super::gates_g0;
 use super::gates_g2;
 use super::gates_g2_13;
+use super::gates_runtime;
 use super::pending;
 
 // ---------------------------------------------------------------------------
@@ -884,7 +885,17 @@ pub static REGISTRY: &[Gate] = &[
     Gate {
         id: "G2.13d",
         goal: 2,
-        title: "a commit against a closed engine does not ack success",
+        // The title said "a closed ENGINE" until 2026-08-14, and the fixture it
+        // names does not close one. `audit_test.go:271-281` closes the COMMIT
+        // CHANNEL out from under a live engine — and asserts, explicitly, that
+        // the engine is neither closed nor sealed — so that `Commit` meets a
+        // `send on closed channel` panic on a store that still looks healthy.
+        // That is the C1 defect: the panic was recovered and the caller acked
+        // `nil` for a write that was never enqueued. A title naming a closed
+        // engine described a different (and easier) scenario, and a reader
+        // checking STATUS.md against the corpus would have found no fixture for
+        // it.
+        title: "a commit whose channel closed under it does not ack success",
         tier: Tier::Fast,
         run: gates_g2_13::g2_13d_no_false_ack,
         budget_s: 300,
@@ -1288,6 +1299,245 @@ pub static REGISTRY: &[Gate] = &[
             // and passes under this patch, which is the point of it.
             expect: "closed on the scan's error the same way it does on a point read's (defect H3b).",
             targets: &["runtime-go/bluedb/reader.go", "runtime-go/bluedb/txn.go"],
+        }]),
+    },
+    // G2.14–G2.25 — the engine corpus P1 INHERITED, one gate per property.
+    //
+    // Until 2026-08-14 the harness gated the two test files P1 WROTE
+    // (`audit_test.go`, `crashsim_test.go`) and none of the eight it inherited.
+    // 38 of the package's 68 `func Test…` names appeared nowhere under
+    // `rust/crates/xtask/src/`, so group commit, GC, the watermark, the
+    // changelog and the key format were — under RULE ZERO — unproven, however
+    // green `go test ./bluedb/` was: no gate ran them, no pin named them, no
+    // mutation targeted them, and nothing could tell a corpus that asserts them
+    // from one that had been deleted.
+    //
+    // That was not theoretical. An adversarial Judge deleted four lines —
+    // `tx.WitnessCollection(coll)` from `ScanCollection` and the
+    // `if !rs.collWitness[coll]` assertion that is its only witness — and a
+    // scan-then-insert transaction that conflicts at HEAD committed CLEAN,
+    // with `go test`, `cargo test -p xtask`, `--tier=full` and
+    // `--verify-mutations` all green. G2.14 is that assertion's gate.
+    //
+    // The split is by property, for the reason the G2.13a–m split exists: one
+    // gate with twelve mutations would let one defect mint twelve PROVENs out of
+    // one undifferentiated failure. The population pins, the per-leaf source
+    // anchors and the grouping argument live in `gates_runtime.rs`.
+    Gate {
+        id: "G2.14",
+        goal: 2,
+        title: "the excised Stage-2 read-set arms have no producer, and the live arms do record",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_14_readset_scope,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.14/scan-does-not-witness-its-collection",
+            patch: "docs/bluedb/mutations/G2.14.scan-does-not-witness-its-collection.patch",
+            // Verbatim, and it is the Judge's own attack: delete the
+            // `tx.WitnessCollection(coll)` call out of `ScanCollection` and the
+            // read-set records NOTHING for a scanned collection, which validate()
+            // reads as a satisfied dependency.
+            expect: ": ScanCollection must record it",
+            targets: &["runtime-go/bluedb/txn.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.15",
+        goal: 2,
+        title: "every job in a drained batch commits at its own strictly-increasing commitTs",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_15_group_commit_per_job,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.15/one-committs-for-the-whole-batch",
+            patch: "docs/bluedb/mutations/G2.15.one-committs-for-the-whole-batch.patch",
+            // Verbatim from the observed failure, and from the FIRST assertion the
+            // revert trips rather than the one the defect is named after: with one
+            // `hlc.next()` before the loop instead of one per job, the jobs' own
+            // timestamps stop being strictly increasing before any changelog entry
+            // has a chance to be overwritten. Declaring the changelog-loss string
+            // would have recorded VACUOUS — the fixture never reaches it.
+            expect: "per-job commitTs not strictly increasing: ",
+            targets: &["runtime-go/bluedb/committer.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.16",
+        goal: 2,
+        title: "a read resolves the newest version at or below its readTs, from memtable or SSTable",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_16_read_resolution,
+        budget_s: 600,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.16/tombstone-resolves-as-a-present-row",
+            patch: "docs/bluedb/mutations/G2.16.tombstone-resolves-as-a-present-row.patch",
+            // Verbatim. A delete is a VERSION; dropping the marker arm of the
+            // point read makes the visible tombstone resolve as a present (empty)
+            // row, which is a deleted key reading as existing.
+            expect: "Get(K,t2 after delete)=",
+            targets: &["runtime-go/bluedb/reader.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.17",
+        goal: 2,
+        title: "the commit clock never re-issues a timestamp across a restart",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_17_restart_floor,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.17/reopen-does-not-floor-the-clock",
+            patch: "docs/bluedb/mutations/G2.17.reopen-does-not-floor-the-clock.patch",
+            // Verbatim. Seeding the HLC from zero rather than the persisted
+            // hlc_hi is §3.3's floor deleted: a backward wall clock then re-issues
+            // commitTs values that are already on disk.
+            expect: "restart floor violated: persisted hi=",
+            targets: &["runtime-go/bluedb/pebble_engine.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.18",
+        goal: 2,
+        title: "the changelog round-trips verbatim and tails strictly after a commitTs",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_18_changelog_roundtrip,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.18/tail-after-is-inclusive",
+            patch: "docs/bluedb/mutations/G2.18.tail-after-is-inclusive.patch",
+            // Verbatim. `Tail(after)` feeds the SSI validation window; making it
+            // inclusive re-delivers a change the transaction has already accounted
+            // for at its readTs.
+            expect: "want 2 starting chg-b",
+            targets: &["runtime-go/bluedb/changelog.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.19",
+        goal: 2,
+        title: "GC never collects a version a live reader can still need",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_19_gc_collects_only_the_dead,
+        budget_s: 400,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.19/gc-floor-ignores-live-readers",
+            patch: "docs/bluedb/mutations/G2.19.gc-floor-ignores-live-readers.patch",
+            // Verbatim, and note WHICH assertion fires: the floor one, before the
+            // collection one. §5.2's min-over-live is what holds T down to the
+            // oldest registered reader; without it T jumps to the high-water and
+            // the version a live snapshot resolves is collected under it.
+            expect: "GC floor must be pinned to live reader readTs ",
+            targets: &["runtime-go/bluedb/watermark.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.20",
+        goal: 2,
+        title: "the GC threshold is durable, monotone and never above the durable high-water",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_20_threshold_is_durable_and_clamped,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.20/threshold-not-clamped-to-durablehi",
+            patch: "docs/bluedb/mutations/G2.20.threshold-not-clamped-to-durablehi.patch",
+            // Verbatim. Deleting Fix-3's one-line clamp lets a GC in the
+            // assigned-but-not-yet-applied window persist a T above what is
+            // durable; after a crash, recovered hlc_hi < gc_threshold and every
+            // reader wedges on ErrSnapshotTooOld.
+            expect: "advanceThreshold must clamp candidate (tNew=",
+            targets: &["runtime-go/bluedb/watermark.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.21",
+        goal: 2,
+        title: "a GC pass trims the changelog below T and writes no other logical state",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_21_gc_pass_is_physical,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.21/retention-does-not-trim-below-t",
+            patch: "docs/bluedb/mutations/G2.21.retention-does-not-trim-below-t.patch",
+            // Verbatim. The retention range-tombstone is the ONE logical write a
+            // pass makes; deleting it leaves the changelog growing without bound,
+            // and leaves this gate's other fixture (which asserts a pass writes
+            // NOTHING else) trivially satisfiable by a pass that does nothing.
+            expect: "expected retention trim at T=",
+            targets: &["runtime-go/bluedb/gc.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.22",
+        goal: 2,
+        title: "the on-disk key encoding satisfies Pebble's comparer contract",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_22_comparer_contract,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.22/version-suffix-not-inverted",
+            patch: "docs/bluedb/mutations/G2.22.version-suffix-not-inverted.patch",
+            // Verbatim. The 12-byte suffix is bit-inverted precisely so a larger
+            // commitTs sorts EARLIER; that is what makes one SeekGE resolve
+            // "newest version <= readTs". Un-inverting it is the irreversible
+            // format change §8.1 exists to catch before the first SSTable.
+            expect: "expected newer < older under Compare (newest first); got ",
+            targets: &["runtime-go/bluedb/keys.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.23",
+        goal: 2,
+        title: "the comparer's key-shortening hooks stay inside Pebble's contract",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_23_shortening_hooks,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.23/successor-returns-its-input",
+            patch: "docs/bluedb/mutations/G2.23.successor-returns-its-input.patch",
+            // Verbatim. A Successor that returns its input satisfies
+            // `Compare(a, succ) <= 0` trivially and is legal-looking; what it
+            // costs is every index-block shortening Pebble does, and the fixture's
+            // must-shorten clause is the only thing that says so.
+            expect: "returned its input unchanged; a strictly greater shortened key exists (key-part ",
+            targets: &["runtime-go/bluedb/comparer.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.24",
+        goal: 2,
+        title: "every key parser rejects corrupt bytes without panicking and still accepts well-formed ones",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_24_key_parsers_fail_closed,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.24/decode-data-version-drops-its-bounds-guard",
+            patch: "docs/bluedb/mutations/G2.24.decode-data-version-drops-its-bounds-guard.patch",
+            // Verbatim from the recovered panic the fixture converts into a
+            // failure. `decodeDataVersion` parses bytes that came off DISK, where
+            // a truncated key is a data-integrity event to report — never a
+            // process crash in the middle of a scan.
+            expect: "panicked on key ",
+            targets: &["runtime-go/bluedb/keys.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.25",
+        goal: 2,
+        title: "a store admits one writer and one immutable format name",
+        tier: Tier::Fast,
+        run: gates_runtime::g2_25_one_writer_one_format,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.25/comparer-name-drifts",
+            patch: "docs/bluedb/mutations/G2.25.comparer-name-drifts.patch",
+            // Verbatim. The name IS the format's identity — it is what makes a
+            // foreign-comparer open refusable — and editing it is the one change
+            // that silently makes every existing store unopenable. The gate's two
+            // other leaves assert Pebble-provided refusals that no revert of
+            // BlueDB code can redden; their falsifier is the anchor, recorded with
+            // its argument in SOURCE_SIDE_FALSIFIERS.
+            expect: "comparer name drifted: ",
+            targets: &["runtime-go/bluedb/comparer.go"],
         }]),
     },
     // -- Goal 3 — easy + simple (P4) ---------------------------------------

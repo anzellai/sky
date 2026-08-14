@@ -1790,6 +1790,103 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
     // `durable prefix has a HOLE` assertion itself, so gutting the fixture, or
     // deleting the assertion out of it, turns G2.9a red on the next run. See
     // [`SOURCE_SIDE_FALSIFIERS`].
+    //
+    // ==== G2.14–G2.25 — the inherited engine corpus (`gates_runtime.rs`) ======
+    //
+    // Every row below is the observed blast radius of ONE minimal revert, read off
+    // the transcript `--verify-mutations` wrote — never predicted. Where a
+    // mutation reddens fewer leaves than its gate pins, the remaining leaves are
+    // covered by the second falsifier kind: a `SourceAnchor` on each leaf's own
+    // property assertion, checked from the tree on EVERY run (see the module doc
+    // of `gates_runtime.rs`). That is deliberate rather than a shortfall — a
+    // mutation broad enough to redden all five of G2.20's fixtures would be a
+    // mutation whose proof no longer says which property it is about.
+    //
+    // G2.14 — the four-line attack, now caught. Deleting `tx.WitnessCollection`
+    // out of `ScanCollection` leaves the scan returning every row and the cursor
+    // clean; only this fixture's `collWitness` assertion notices, which is exactly
+    // why the assertion (and now the anchor over it) is load-bearing.
+    LeafCoverage {
+        mutation: "G2.14/scan-does-not-witness-its-collection",
+        leaves: &["TestStage2ReadSetRangesHaveNoProducer"],
+    },
+    // G2.15 — one commitTs for the whole batch. Both per-job fixtures redden;
+    // `TestGroupCommitBasic` deliberately does NOT, because it asserts the
+    // property that survives the defect (distinct values form a strictly
+    // increasing order) and is anchored instead.
+    LeafCoverage {
+        mutation: "G2.15/one-committs-for-the-whole-batch",
+        leaves: &[
+            "TestGroupCommitPerJobDistinctChangelog",
+            "TestGroupCommitPerJobSameKeyDistinctVersions",
+        ],
+    },
+    // G2.16 — a tombstone resolving as a present row is a point-read defect, so
+    // it reddens the tombstone fixture alone: the ordered scan has its own
+    // marker handling and the spill fixture writes no deletes.
+    LeafCoverage {
+        mutation: "G2.16/tombstone-resolves-as-a-present-row",
+        leaves: &["TestTombstone"],
+    },
+    // G2.17 — seeding the clock from zero reddens both halves of the restart
+    // property at once: the floor itself, and the recovered high-water that makes
+    // the floor checkable.
+    LeafCoverage {
+        mutation: "G2.17/reopen-does-not-floor-the-clock",
+        leaves: &["TestHLCMonotonicRestartFloor", "TestMetadataInBatch"],
+    },
+    LeafCoverage {
+        mutation: "G2.18/tail-after-is-inclusive",
+        leaves: &["TestChangelogWrite"],
+    },
+    // G2.19 — with the floor no longer min-over-live, the reader-protection
+    // fixture fails at its FIRST assertion (the floor), before reaching the one
+    // that reads the collected version back. The other three assert what GC may
+    // collect when nothing is live, which the revert does not change.
+    LeafCoverage {
+        mutation: "G2.19/gc-floor-ignores-live-readers",
+        leaves: &["TestGC2aReaderProtected"],
+    },
+    // G2.20 — the clamp's revert reddens the unit fixture and the crash
+    // regression written for it, which is the pair Fix-3 (b) and (c) name.
+    LeafCoverage {
+        mutation: "G2.20/threshold-not-clamped-to-durablehi",
+        leaves: &[
+            "TestAdvanceThresholdClampsToDurableHi",
+            "TestGCThresholdClampSurvivesCrashNoReaderWedge",
+        ],
+    },
+    // G2.21 — and note which one stays green: `TestGC2bPhysicalOnly` asserts a
+    // pass writes NOTHING, so a pass that trims nothing satisfies it. That is the
+    // whole reason the trim fixture is in the same gate and separately anchored.
+    LeafCoverage {
+        mutation: "G2.21/retention-does-not-trim-below-t",
+        leaves: &["TestGCChangelogRetentionTrimsBelowT"],
+    },
+    // G2.22 — un-inverting the version suffix leaves `base.CheckComparer` GREEN:
+    // oldest-first is still a lawful total order. It is the MVCC reading of that
+    // order — newest first within a user-key — that breaks, and one fixture
+    // asserts it.
+    LeafCoverage {
+        mutation: "G2.22/version-suffix-not-inverted",
+        leaves: &["TestVersionOrderingNewestFirst"],
+    },
+    LeafCoverage {
+        mutation: "G2.23/successor-returns-its-input",
+        leaves: &["TestSuccessorProperties"],
+    },
+    LeafCoverage {
+        mutation: "G2.24/decode-data-version-drops-its-bounds-guard",
+        leaves: &["TestDecodeDataVersionRejectsCorruptKeysWithoutPanic"],
+    },
+    // G2.25 — the name drift reddens the pin and nothing else, which is the
+    // measurement behind the two SOURCE_SIDE_FALSIFIERS rows: a store created
+    // under the drifted name still refuses the fixture's deliberately-wrong one,
+    // and Pebble's directory lock is indifferent to both.
+    LeafCoverage {
+        mutation: "G2.25/comparer-name-drifts",
+        leaves: &["TestComparerName"],
+    },
 ];
 
 /// Mutations that redden their gate **before it runs a single test**, and
@@ -1909,6 +2006,33 @@ pub const SOURCE_SIDE_FALSIFIERS: &[SourceSideFalsifier] = &[
         why: "its RUN outcome is G2.9a's seal contract, reached by \
               `G2.9a/sealed-engine-still-runs-gc`",
     },
+    // -- G2.25: the two refusals BlueDB does not implement --------------------
+    //
+    // Recorded here rather than left to the anchor silently, because the reason
+    // is worth stating: these two fixtures assert behaviour of the STORAGE
+    // ENGINE that BlueDB deliberately does not reimplement, so there is no hunk
+    // of BlueDB whose revert reddens them. Inventing a patch that turned them red
+    // — a process-wide Open cache, say — would redden them for a defect nobody
+    // has and would record a proof about code that does not exist, which is worse
+    // than saying so.
+    SourceSideFalsifier {
+        gate: "G2.25",
+        leaf: "TestSecondOpenFailsSingleProcessLock",
+        why: "the exclusive directory lock is Pebble's (a LOCK file, flock on unix, acquired in \
+              Open); BlueDB relies on it rather than reinventing a flock (design §6), so no revert \
+              of BlueDB source can make a second Open succeed. What CAN silently end the reliance \
+              is the assertion disappearing, and G2.25's anchor on it is checked on every run",
+    },
+    SourceSideFalsifier {
+        gate: "G2.25",
+        leaf: "TestWrongComparerNameRefusesOpen",
+        why: "the refusal is Pebble's manifest check against the recorded Comparer.Name. Dropping \
+              BlueDB's own `Comparer: skydbComparer` from openWith does NOT redden it — the store \
+              is then created under Pebble's default name and the fixture's deliberately-wrong \
+              name still mismatches — so the fixture is honestly unreddenable from this side. Its \
+              live sibling `TestComparerName` IS reddenable, and `G2.25/comparer-name-drifts` \
+              proves it",
+    },
 ];
 
 /// The needles a gate enforces over one pinned fixture's EXECUTING body.
@@ -1958,7 +2082,14 @@ fn gate_anchors(gate: &str) -> &'static [SourceAnchor] {
         "G2.13k" => G2_13K_ANCHORS,
         "G2.13l" => G2_13L_ANCHORS,
         "G2.13m" => G2_13M_ANCHORS,
-        _ => &[],
+        // G2.14–G2.25 (`gates_runtime.rs`) — the inherited engine corpus. Its
+        // per-leaf falsifier kind is the anchor for EVERY leaf, so the table is
+        // read from there rather than restated here.
+        other => super::gates_runtime::RUNTIME_GATES
+            .iter()
+            .find(|(id, _, _)| *id == other)
+            .map(|(_, _, anchors)| *anchors)
+            .unwrap_or(&[]),
     }
 }
 
@@ -2042,6 +2173,13 @@ mod tests {
                 .map(|m| m.test)
                 .collect(),
         ));
+        // G2.14–G2.25 — the inherited engine corpus (`gates_runtime.rs`). They
+        // join the rule rather than getting a parallel one: the rule IS the
+        // answer to "would emptying this leaf's body be noticed", and 38 leaves
+        // that had never been asked it is exactly why that file exists.
+        for (id, tests, _) in super::super::gates_runtime::RUNTIME_GATES {
+            out.push((*id, tests.to_vec()));
+        }
         out
     }
 
@@ -2068,7 +2206,32 @@ mod tests {
     fn corpus_bodies() -> Vec<super::super::gates_g2::EnumeratedTest> {
         let mut bodies = enumerate_injections(&audit_src());
         bodies.extend(enumerate_injections(&crashsim_src()));
+        // …and the eight inherited sources, now that G2.14–G2.25 are governed.
+        // A leaf whose body cannot be located reports as missing evidence, so
+        // omitting these would have failed CLOSED — but loudly and for the wrong
+        // reason.
+        for src in super::super::gates_runtime::RUNTIME_SOURCES {
+            bodies.extend(enumerate_injections(&runtime_src(src)));
+        }
         bodies
+    }
+
+    /// One of `gates_runtime.rs`'s sources, read from the tree.
+    fn runtime_src(rel: &str) -> String {
+        std::fs::read_to_string(repo().join(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"))
+    }
+
+    /// Every Go test source the per-leaf rule ranges over, concatenated. The
+    /// haystack `every_declared_assertion_is_verbatim_in_the_fixture_that_emits_it`
+    /// searches: a declared `expect` must be text a FIXTURE emits, and the set of
+    /// fixtures is now all three families'.
+    fn governed_corpus_text() -> String {
+        let mut s = format!("{}\n{}", audit_src(), crashsim_src());
+        for src in super::super::gates_runtime::RUNTIME_SOURCES {
+            s.push('\n');
+            s.push_str(&runtime_src(src));
+        }
+        s
     }
 
     /// The ownership table IS the file's population. Checked here as well as in
@@ -2291,12 +2454,7 @@ mod tests {
     /// exactly the shape [`STRUCTURAL_MUTATIONS`] records.
     #[test]
     fn every_declared_assertion_is_verbatim_in_the_fixture_that_emits_it() {
-        let corpus = format!(
-            "{}\n{}",
-            audit_src(),
-            std::fs::read_to_string(repo().join("runtime-go/bluedb/crashsim_test.go"))
-                .expect("read crashsim_test.go")
-        );
+        let corpus = governed_corpus_text();
         for (id, _) in governed_gates() {
             let g = super::super::registry::find(id).expect("registered");
             for m in g.mutations.as_slice() {
@@ -2306,7 +2464,7 @@ mod tests {
                 assert!(
                     corpus.contains(m.expect),
                     "{}: declares `{}`, which appears nowhere in the Go corpus \
-                     ({AUDIT_SOURCE} + crashsim_test.go) — an `expect` string must be copied from \
+                     (every governed *_test.go under runtime-go/bluedb) — an `expect` string must be copied from \
                      the failure the mutation actually produces",
                     m.id,
                     m.expect
@@ -2352,11 +2510,7 @@ mod tests {
     /// same check the gate runs, which is the gut-the-body property spelled out.
     #[test]
     fn every_source_side_falsifier_is_a_pin_the_gate_actually_enforces() {
-        let mut bodies = enumerate_injections(&audit_src());
-        bodies.extend(enumerate_injections(
-            &std::fs::read_to_string(repo().join("runtime-go/bluedb/crashsim_test.go"))
-                .expect("read crashsim_test.go"),
-        ));
+        let bodies = corpus_bodies();
 
         for r in SOURCE_SIDE_FALSIFIERS {
             let needles = enforced_needles(r.gate, r.leaf);

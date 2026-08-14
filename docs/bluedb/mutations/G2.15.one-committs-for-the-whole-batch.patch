@@ -1,0 +1,16 @@
+diff --git a/runtime-go/bluedb/committer.go b/runtime-go/bluedb/committer.go
+index 6a847a75..78b487e0 100644
+--- a/runtime-go/bluedb/committer.go
++++ b/runtime-go/bluedb/committer.go
+@@ -201,8 +201,10 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
+ 	jobTs := make([]HLC, len(batch))
+ 	var hasWrites bool
+ 	var lastCommitTs HLC
++	// MUTATION G2.15 (Fix-2 reverted): ONE commitTs for the whole drained batch.
++	batchTs := e.hlc.next()
+ 	for i, j := range batch {
+-		commitTs := e.hlc.next() // §3.3 — strictly monotonic, floored across restart
++		commitTs := batchTs
+ 		jobTs[i] = commitTs
+ 		lastCommitTs = commitTs
+ 		if len(j.req.Writes) > 0 {
