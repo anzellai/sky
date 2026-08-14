@@ -379,6 +379,39 @@ uniqueness enforcement. Line 73 is the sharper case: its *evidence* column
 correctly locates the mechanism at `embedded.go`, while its *remedy* column
 draws the opposite conclusion. Amend both in a later commit.
 
+## Fault-injection fixtures: prove the fault was REACHED, not just armed
+
+Found the hard way in C3. This document prescribed H3's fixture as "one row +
+small `memTableSize` + `Flush()` + reopen, then inject on `*.sst` reads". That
+fixture **passed against the unfixed reader** — a green test proving nothing.
+
+Cause: a single row makes a one-block SSTable, and `openWith`'s own `hlc_hi` and
+gc-threshold meta reads pull that block into the fresh cache. By the time the
+armed `Get` ran, **zero filesystem operations occurred**. The injector was
+armed at a door nobody walked through.
+
+It was caught by instrumenting the injector to count ops, not by reading the
+test. The fix is 400×2 KiB of padding plus a mid-keyspace target key, so the
+meta reads land in a different block.
+
+**Rule for every remaining injection fixture (C10's crash corpus especially):
+assert the injected op actually fired.** Count invocations in the
+`InjectorFunc` and fail if the count is zero. An injection test that cannot
+prove it injected is indistinguishable from one that passes because nothing
+happened — the same shape as `go test -run` matching no tests.
+
+Second lesson from the same commit: use `t.Errorf`, not `t.Fatalf`, for the
+first of several assertions. A `Fatalf` on "the flag went red" masks the
+downstream assertion about whether anything CONSULTS the flag — so the mutation
+proof would only ever demonstrate the flag, which is the uninteresting half.
+
+## `audit_test.go` is shared
+
+Every C-commit appends to `runtime-go/bluedb/audit_test.go`. Concurrent agents
+must append only — never rewrite, never reorder — and stage the file by
+composing the intended blob rather than `git add`-ing a working tree that holds
+someone else's in-flight test.
+
 ## Commit sequence
 
 `--verify-mutations` refuses to run against a tree that differs from HEAD
