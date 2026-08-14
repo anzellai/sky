@@ -873,6 +873,20 @@ func newPostgresStore(connStr string, ttl, idleEvict time.Duration) (*postgresSt
 	if err != nil {
 		return nil, err
 	}
+	// The session store is the HOTTEST pool in a Sky.Live app — every
+	// request reads and writes its session — and until v0.20.3 it was the
+	// only one with no ceiling at all: Go's `MaxOpenConns` zero value is
+	// unlimited, so a traffic spike opened one PostgreSQL backend per
+	// concurrent request until the server answered `FATAL: sorry, too many
+	// clients already`, which fails the session lookup and therefore every
+	// request, not just the excess ones.
+	//
+	// It takes the AUXILIARY sizing (a quarter of the app's own pool, see
+	// db_pool.go) rather than a full share, because it shares one server's
+	// max_connections budget with `Db.connect` in the same process, and a
+	// session read/write is sub-millisecond work that a handful of
+	// connections saturates.
+	dbAuxPoolConfig().applyTo(db)
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS sky_sessions (
 			sid        TEXT PRIMARY KEY,

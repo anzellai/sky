@@ -228,6 +228,94 @@ run time, set the DSN (`SKY_DB_PATH` / `DATABASE_URL`), not a driver name.
 > in the runtime ever read**, so a mismatched `driver` was silently ignored and
 > the app quietly opened the other engine. The variable is no longer emitted.
 
+### Connection pool (PostgreSQL)
+
+**You should not need these.** The runtime sizes the pool from the deployment it
+detects, and the defaults are chosen rather than inherited. Reach for them when
+you know your server's `max_connections` budget and how many app instances share
+it — that is a fact about your deployment which the app cannot see.
+
+```toml
+[database]
+url             = "postgres://…"
+maxOpenConns    = 12        # ceiling on simultaneous backends
+maxIdleConns    = 12        # keep them; below open causes reconnect churn
+connMaxLifetime = "30m"     # retire a connection so a failover heals
+connMaxIdleTime = "5m"      # reap one that has gone quiet
+```
+
+| Key | Env var | Default (VM) | Default (serverless) |
+|---|---|---|---|
+| `maxOpenConns` | `<PREFIX>_DB_MAX_OPEN_CONNS` | 4 × CPU, clamped 4–32 | 2 × CPU, clamped 2–8 |
+| `maxIdleConns` | `<PREFIX>_DB_MAX_IDLE_CONNS` | = `maxOpenConns` | = `maxOpenConns` |
+| `connMaxLifetime` | `<PREFIX>_DB_CONN_MAX_LIFETIME` | `30m` | `30m` |
+| `connMaxIdleTime` | `<PREFIX>_DB_CONN_MAX_IDLE_TIME` | `5m` | `60s` |
+
+Durations accept Go syntax (`"30m"`, `"90s"`, `"1h30m"`) or a bare integer read
+as seconds. `0` disables a limit.
+
+**The sizing is deployment-aware because the right number is not a property of
+the app — it is a property of how many copies of it there are.** On a VM the app
+is one process. On request-billed serverless the platform runs many small
+instances and each holds its own pool, so the per-instance number that is
+conservative on a VM is a connection storm across fifty of them. The runtime
+reuses the same `K_SERVICE` / `AWS_LAMBDA_FUNCTION_NAME` detection the telemetry
+exporter uses to vary its flush cadence. Force it either way with
+`SKY_RUNTIME_MODE=serverless` / `=vm`.
+
+Two things follow from the serverless defaults that are worth knowing: the pool
+is small, so an operator running high per-instance request concurrency (Cloud Run
+defaults to 80) may genuinely need to raise `maxOpenConns` — and raising it is a
+decision about the server's connection budget, which is why it is explicit rather
+than automatic. And `connMaxIdleTime` is short, because a frozen instance keeps
+its TCP connections and therefore the PostgreSQL backend *processes* behind them
+alive while doing no work at all.
+
+**These keys are PostgreSQL-only.** SQLite is pinned to a single connection by
+its global writer lock — raising it reintroduces the `SQLITE_BUSY` class — so
+setting them alongside a SQLite DSN logs a warning and changes nothing.
+
+> Before v0.20.3 none of this existed: the runtime clamped SQLite and let
+> PostgreSQL fall through on Go's `database/sql` defaults, under a comment
+> asserting those defaults were "already sane". They are `MaxOpenConns = 0`
+> (**unlimited**), `MaxIdleConns = 2`, and no connection lifetime — so a burst
+> opened backends until PostgreSQL answered `FATAL: sorry, too many clients
+> already`, and below that threshold the pool churned connections because only
+> two stayed idle.
+
+### Transaction isolation
+
+```toml
+[database]
+isolation = "serializable"   # default: the driver's own level
+txRetry   = 3                # default: 0 — read the warning below first
+```
+
+| Key | Env var | Default | Meaning |
+|---|---|---|---|
+| `isolation` | `<PREFIX>_DB_ISOLATION` | (unset) | Level `Std.Db.transaction` begins at |
+| `txRetry` | `<PREFIX>_DB_TX_RETRY` | `0` | Retry budget for a `40001` / `40P01` conflict |
+
+`isolation` accepts `read uncommitted`, `read committed`, `repeatable read` and
+`serializable`, in any case and with spaces, hyphens or underscores. Unset means
+the driver's own default, which on PostgreSQL is READ COMMITTED — **that is the
+shipped behaviour and adding this key does not change it.** Raising the default
+silently would start surfacing serialization failures to apps that have never
+seen one.
+
+> **`txRetry` requires a replayable transaction body — the runtime cannot check
+> this for you.** Retrying a serialization failure means running the body AGAIN.
+> A `Task` body may already have sent an email, charged a card or called a
+> third-party API before the conflicting write was detected, and `ROLLBACK` undoes
+> none of that: the database's half of the work is atomic, the outside world's
+> half is not. Enable it only when every effect inside the body is either a write
+> on the same transaction or genuinely idempotent. It is off by default for this
+> reason.
+
+Both keys are PostgreSQL-only. SQLite transactions already serialise on the
+single pooled connection, so there is no weaker level to ask for and no `40001`
+to retry; setting either alongside a SQLite DSN warns and changes nothing.
+
 ---
 
 ## `[jobs]` *(v0.19.14+)*

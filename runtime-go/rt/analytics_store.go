@@ -142,11 +142,24 @@ func analyticsStore() *sql.DB {
 		if err != nil {
 			return
 		}
+		// Pool sizing for both drivers. SQLite is pinned to one connection;
+		// Postgres gets the auxiliary sizing (a quarter of the app pool) —
+		// see db_pool.go.
+		//
+		// The comment this replaces said "Postgres handles concurrency
+		// natively — no single-conn cap", which conflated two things.
+		// Postgres does handle concurrency natively; that is not a reason to
+		// leave `MaxOpenConns` at Go's zero value, which means UNLIMITED and
+		// makes a burst of analytics writes able to exhaust the same
+		// `max_connections` budget the app's own queries need.
 		if driver == "sqlite" {
-			// SQLite is single-file: serialise this process's writes + WAL so the
-			// console reader coexists. Postgres handles concurrency natively — no
-			// single-conn cap, no PRAGMAs.
-			db.SetMaxOpenConns(1)
+			sqlitePoolConfig().applyTo(db)
+		} else {
+			dbAuxPoolConfig().applyTo(db)
+		}
+		if driver == "sqlite" {
+			// SQLite is single-file: WAL so the console reader coexists with
+			// this process's writes.
 			for _, p := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`} {
 				if _, err := db.Exec(p); err != nil {
 					db.Close()

@@ -920,6 +920,35 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
                 cfg.db_dsn = Some(val.clone());
                 cfg.extra_defaults.push(("DB_PATH".into(), val))
             }
+            // Connection-pool sizing + transaction isolation → the
+            // suffixes db_pool.go reads. All four pool knobs are
+            // PostgreSQL-only (SQLite is pinned to one connection by its
+            // global writer lock and warns if these are set), and the
+            // runtime's own deployment-aware defaults apply when they
+            // are absent — these exist for the operator who knows their
+            // server's max_connections budget.
+            ("database", "maxOpenConns") => {
+                cfg.extra_defaults.push(("DB_MAX_OPEN_CONNS".into(), val))
+            }
+            ("database", "maxIdleConns") => {
+                cfg.extra_defaults.push(("DB_MAX_IDLE_CONNS".into(), val))
+            }
+            ("database", "connMaxLifetime") => {
+                cfg.extra_defaults.push(("DB_CONN_MAX_LIFETIME".into(), val))
+            }
+            ("database", "connMaxIdleTime") => {
+                cfg.extra_defaults.push(("DB_CONN_MAX_IDLE_TIME".into(), val))
+            }
+            // `isolation` raises the level Std.Db.transaction begins at.
+            // Unset = the driver default (READ COMMITTED on PostgreSQL),
+            // which is what shipped before this key existed and is not
+            // changed by adding it. `txRetry` is the retry budget for a
+            // 40001/40P01 conflict and is only safe when the transaction
+            // body is REPLAYABLE — see resolveDbTxConfig in db_pool.go.
+            ("database", "isolation") => {
+                cfg.extra_defaults.push(("DB_ISOLATION".into(), val))
+            }
+            ("database", "txRetry") => cfg.extra_defaults.push(("DB_TX_RETRY".into(), val)),
             // `[analytics] dbPath` → the Std.Analytics store override
             // (SKY_ANALYTICS_DB_PATH). Unset → analytics reuses the console DB
             // (SKY_CONSOLE_DB_PATH). See analytics_store.go.
@@ -1017,7 +1046,17 @@ fn accepted_config_keys(section: &str) -> &'static [&'static str] {
             "maxBodyBytes",
             "input",
         ],
-        "database" => &["driver", "path", "url"],
+        "database" => &[
+            "driver",
+            "path",
+            "url",
+            "maxOpenConns",
+            "maxIdleConns",
+            "connMaxLifetime",
+            "connMaxIdleTime",
+            "isolation",
+            "txRetry",
+        ],
         "auth" => &["cookieName", "tokenTtl", "driver"],
         "log" => &["format", "level"],
         "analytics" => &["dbPath", "retention"],
@@ -1771,6 +1810,47 @@ mod sky_toml_tests {
             .extra_defaults
             .iter()
             .any(|(s, v)| s == "JOBS_STORE_PATH" && v == "/tmp/j.db"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[database]`'s pool + isolation keys must reach the suffixes
+    /// `runtime-go/rt/db_pool.go` reads, and must not report themselves unknown.
+    ///
+    /// Before these existed, the PostgreSQL pool had no configuration surface at
+    /// all — the runtime fell through on Go's `database/sql` defaults
+    /// (`MaxOpenConns = 0`, i.e. unlimited) under a comment asserting those
+    /// defaults were "already sane".
+    #[test]
+    fn database_pool_and_isolation_keys_seed_env_defaults() {
+        let dir = std::env::temp_dir().join("sky-db-pool-toml-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(
+            &path,
+            "name = \"x\"\n[database]\nurl = \"postgres://u:p@h/db\"\n\
+             maxOpenConns = 12\nmaxIdleConns = 12\n\
+             connMaxLifetime = \"30m\"\nconnMaxIdleTime = \"5m\"\n\
+             isolation = \"serializable\"\ntxRetry = 3\n",
+        )
+        .unwrap();
+        let cfg = read_sky_toml_config(&path);
+        let has = |suffix: &str, value: &str| {
+            cfg.extra_defaults
+                .iter()
+                .any(|(s, v)| s == suffix && v == value)
+        };
+        assert!(has("DB_MAX_OPEN_CONNS", "12"), "{:?}", cfg.extra_defaults);
+        assert!(has("DB_MAX_IDLE_CONNS", "12"));
+        assert!(has("DB_CONN_MAX_LIFETIME", "30m"));
+        assert!(has("DB_CONN_MAX_IDLE_TIME", "5m"));
+        assert!(has("DB_ISOLATION", "serializable"));
+        assert!(has("DB_TX_RETRY", "3"));
+        assert!(
+            cfg.unknown_config_keys.is_empty(),
+            "{:?}",
+            cfg.unknown_config_keys
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

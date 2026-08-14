@@ -48,6 +48,17 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Connection-pool bounds for the telemetry persistence handle. Small and
+// fixed: a single buffered flusher goroutine does all the writing, so the
+// pool exists to survive a burst and to bound the damage, not to scale.
+// See EnsurePersistence for why the deployment-aware sizing in
+// `rt/db_pool.go` cannot be reached from this package.
+const (
+	telemetryPoolMaxConns = 4
+	telemetryPoolLifetime = 30 * time.Minute
+	telemetryPoolIdleTime = 60 * time.Second
+)
+
 // The console telemetry store (logs / metrics / spans) — the embedded schema
 // mirrors `control-plane/static/console.db.schema.sql` in SkyDeploy. v0.19 makes
 // it dialect-aware so it can share the app's Postgres (one DB for everything);
@@ -189,6 +200,29 @@ func (s *Store) EnablePersistence(path string) error {
 	if err != nil {
 		return err
 	}
+	// Bound the pool. Go's `database/sql` zero value for MaxOpenConns is
+	// UNLIMITED, so before this the telemetry writer could open a
+	// PostgreSQL backend per concurrent flush and compete with the app's
+	// own queries for the server's max_connections budget — observability
+	// taking down the thing it observes.
+	//
+	// The deployment-aware sizing lives in `rt` (db_pool.go), which imports
+	// THIS package, so it cannot be called from here without an import
+	// cycle. That costs nothing in practice: this is a batched background
+	// writer, so a small fixed pool is the right answer on a VM and on
+	// serverless alike, and the short idle timeout is the conservative
+	// choice in both (a re-dial on a background flush is invisible).
+	//
+	// Deliberately the same small pool on SQLite rather than the
+	// single-connection clamp used elsewhere. This store is read
+	// concurrently by the console mini-app while being written here, and a
+	// one-connection pool turns any read issued while rows from another
+	// query are still open into a self-deadlock. Bounded-but-plural is the
+	// safe change; unbounded was the defect.
+	db.SetMaxOpenConns(telemetryPoolMaxConns)
+	db.SetMaxIdleConns(telemetryPoolMaxConns)
+	db.SetConnMaxLifetime(telemetryPoolLifetime)
+	db.SetConnMaxIdleTime(telemetryPoolIdleTime)
 	if driver == "sqlite" {
 		// WAL mode → console mini-app can read concurrently with our writes.
 		if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {

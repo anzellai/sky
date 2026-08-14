@@ -623,6 +623,8 @@ Db.withTransaction db
 
 If either UPDATE returns an error (FK violation, deadlock, anything), the runtime calls `ROLLBACK` and surfaces the `Err` to your caller. Both succeed → `COMMIT`.
 
+**What a transaction guarantees, precisely.** It is atomic — all of it lands or none of it does. Its *isolation* is the driver's default, which on PostgreSQL is READ COMMITTED and on SQLite is whatever the single pooled connection serialises into. So the balance-transfer above is atomic, but under READ COMMITTED a concurrent transfer touching the same rows can still interleave in ways a `SELECT`-then-`UPDATE` written as two statements will not notice. Where that matters, do the arithmetic in SQL (`balance = balance - ?`, as above) rather than reading a value into Sky and writing it back, or raise the level with `[database] isolation` in [`sky.toml`](../sky-toml.md#transaction-isolation) — and read what that key says about retries before enabling one, because a retried transaction body runs twice.
+
 ### Result/Task bridges
 
 Decoders are `Result`-shaped, but DB calls are `Task`. Three helpers compose them without nested `case`:
@@ -637,7 +639,7 @@ See [Result/Task bridges](../../CLAUDE.md#resulttask-bridges) for the full cheat
 
 ## Production checklist
 
-- **Connection pooling is on by default.** `Db.open` returns a `*sql.DB` — Go's `database/sql` manages the pool. No per-request open/close.
+- **Connection pooling is on by default, and sized by Sky rather than inherited.** `Db.open` returns a `*sql.DB`, and `Db.connect` configures it: SQLite is pinned to one connection by its global writer lock, and PostgreSQL gets a bounded pool whose size depends on whether the runtime detects a VM or request-billed serverless — because the number that matters is how many *instances* hold a pool, not how many the app opens. Override per-deployment with `[database] maxOpenConns` / `maxIdleConns` / `connMaxLifetime` / `connMaxIdleTime`; see [`sky.toml`](../sky-toml.md#connection-pool-postgresql). Before v0.20.3 the PostgreSQL pool was unconfigured — `MaxOpenConns = 0`, meaning unlimited backends against a server whose own `max_connections` default is 100.
 - **Set explicit timeouts** for production. The default driver timeouts are generous; tighten via the connection URL (`?statement_timeout=5s` for Postgres).
 - **Never embed secrets in `sky.toml`.** Use `DATABASE_URL` from the environment in production; keep `sky.toml` for local-dev defaults only.
 - **Index columns you query**. The `findOneByField` / `findManyByField` / `findByConditions` helpers don't add indexes — that's still a deliberate schema decision.
