@@ -1,0 +1,8 @@
+PROBE gate=G2.13b state=FAIL root=<scratch-worktree>
+  a failed scan surfaces an error, not an empty collection is not proven: 0/1 pinned fixture(s) reported a passing event
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection did not report a passing `go test -json` event (it FAILED)
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes: === RUN   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection: === RUN   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection:     audit_test.go:148: materializeScan over a failed cursor returned 1 rows ["orders\x1fpk2"], want 0 — a partial/write-set-only collection is worse than an error
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection (0.10s)
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes (0.10s)

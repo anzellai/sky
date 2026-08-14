@@ -1,8 +1,12 @@
 PROBE gate=G0.6 state=FAIL root=<scratch-worktree>
-  6 mutation proof problem(s) (39 not authored yet)
+  10 mutation proof problem(s) (39 not authored yet)
   G0.2/rt-imports-bluedb: recorded expected output does not contain the declared assertion "forbidden edge rt -> bluedb"
-  G0.2/rt-imports-bluedb: UNVERIFIED-SINCE 4201fed5 — a declared target moved
-  G0.6/corrupt-expected: UNVERIFIED-SINCE 4201fed5 — a declared target moved
-  G0.7/mutationless-gate: UNVERIFIED-SINCE 4201fed5 — a declared target moved
-  G2.6/disable-injection-point: recorded MUTATION-STALE but PROVEN is required
-  G2.9a/ack-before-fsync: UNVERIFIED-SINCE 4201fed5 — a declared target moved
+  G0.6/corrupt-expected: UNVERIFIED-SINCE 7d41cb93 — a declared target moved
+  G0.7/mutationless-gate: UNVERIFIED-SINCE 7d41cb93 — a declared target moved
+  G2.13a/iterate-bounds-end-in-a-user-byte: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13b/failed-scan-reads-as-an-empty-collection: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13c/corrupt-hlc-hi-reads-as-a-fresh-store: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13d/commit-on-a-closed-engine-acks-success: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13e/snapshot-readts-is-the-in-memory-high-water: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13f/close-does-not-quiesce-readers: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13g/failed-point-read-reads-as-an-absent-row: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
