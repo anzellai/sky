@@ -2,7 +2,7 @@
 # full-tier<TAB>commit<TAB>ran<TAB>host
 # proof<TAB>mutation-id<TAB>outcome<TAB>commit
 # integrity<TAB>sha256 of every line above this one
-full-tier	c9113f81	2026-08-14T19:44:29Z	macos/aarch64
+full-tier	86a4456c	2026-08-14T21:13:43Z	macos/aarch64
 proof	G0.1/hand-edit-status	PROVEN	0705e2d8
 proof	G0.2/rt-imports-bluedb	PROVEN	0705e2d8
 proof	G0.3/persistglue-unconditional	PROVEN	0705e2d8
@@ -64,4 +64,4 @@ proof	G2.6/disable-injection-point	PROVEN	0705e2d8
 proof	G2.9a/ack-before-fsync	PROVEN	0705e2d8
 proof	G2.9a/sealed-engine-still-runs-gc	PROVEN	0705e2d8
 proof	G2.9a/wal-fatal-never-reaches-the-ack	PROVEN	0705e2d8
-integrity	bd3acf6999f7f451df6d9519528e9427815b63ddedbc3176394f9ed12a9d2c56
+integrity	14e806919c22513fafce7746db86e589b08c76b13542f086a502d1e4cc8f1260
