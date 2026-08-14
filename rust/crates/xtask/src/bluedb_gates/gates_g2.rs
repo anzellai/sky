@@ -980,6 +980,61 @@ pub(super) fn check_run_evidence(run: &GoTestRun, pinned: &[&str]) -> Vec<String
     findings
 }
 
+/// Merge a gate's STATIC half with its DYNAMIC half, so that neither can hide
+/// the other.
+///
+/// Every gate in this family has two halves: a static one that reconciles a
+/// pinned list against the source, and a dynamic one that runs Go fixtures. The
+/// shape this function exists to forbid is the static half `return`ing on its
+/// first finding, BEFORE the fixtures run — because then the one case the
+/// fixtures exist for (a source edit that touches something pinned) is exactly
+/// the case in which their evidence is never collected.
+///
+/// `614b1517` found that on G2.24: the gate's registered mutation deletes a line
+/// that is itself one of the pinned strings, so the gate went red on a string
+/// comparison and the declared assertion — emitted only by the fixture —
+/// never appeared. `--verify-mutations` called that proof VACUOUS and was right
+/// to. What the gate had been shown to detect was a line moving, not the defect.
+///
+/// The contract here: run BOTH halves, then combine. A static finding never
+/// replaces the behavioural findings, it is added to them.
+///
+/// `static_half` names the static check in the voice of the merged finding
+/// (e.g. `"population reconciliation"`).
+pub(super) fn merge_static_and_behavioural(
+    static_detail: String,
+    mut static_findings: Vec<String>,
+    static_half: &str,
+    behaviour: GateOutcome,
+) -> GateOutcome {
+    if static_findings.is_empty() {
+        return behaviour;
+    }
+    match behaviour {
+        GateOutcome::Pass { detail } => {
+            static_findings.push(format!(
+                "the fixtures themselves are green — {detail} — so this gate is red on its \
+                 {static_half} alone"
+            ));
+            GateOutcome::fail(static_detail, static_findings)
+        }
+        GateOutcome::Fail {
+            detail,
+            findings: behavioural,
+        } => {
+            static_findings.extend(behavioural);
+            GateOutcome::fail(format!("{static_detail}; and {detail}"), static_findings)
+        }
+        GateOutcome::NotRun { reason } => {
+            static_findings.push(format!(
+                "and the fixtures did not run ({reason}), so the behavioural half of this gate is \
+                 unproven on top of the {static_half} finding(s) above"
+            ));
+            GateOutcome::fail(static_detail, static_findings)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // G2.9a — durability on ack (embedded / pebble), arms (a)–(c)
 // ---------------------------------------------------------------------------
@@ -1129,46 +1184,55 @@ pub fn g2_9a_durability_on_ack(ctx: &Ctx) -> GateOutcome {
         G2_9A_SOURCE,
     ));
 
-    if !findings.is_empty() {
-        return GateOutcome::fail(
-            format!(
-                "the crash corpus does not match its pinned population, or a pinned fixture no \
-                 longer carries its property assertion ({} declared, {} pinned, {} anchor(s))",
-                declared.len(),
-                G2_9A_CRASH_TESTS.len(),
-                G2_9A_ANCHORS.len()
-            ),
-            findings,
-        );
-    }
+    // The static half is now COMPLETE, and it does NOT return. Its findings are
+    // merged with the fixtures' below — see [`merge_static_and_behavioural`] for
+    // why returning here instead would make the behavioural evidence
+    // unobservable in precisely the case the fixtures exist for. Two of this
+    // gate's three registered mutations declare an assertion only a fixture can
+    // emit ("acked write missing after restart", "ABSENT after reopen"), and
+    // both would be unreachable from any tree that also moved a pinned string.
+    let static_detail = format!(
+        "the crash corpus does not match its pinned population, or a pinned fixture no longer \
+         carries its property assertion ({} declared, {} pinned, {} anchor(s))",
+        declared.len(),
+        G2_9A_CRASH_TESTS.len(),
+        G2_9A_ANCHORS.len()
+    );
 
     // ── (2) + (3) run them, with the cache defeated and per-test evidence ──
     // 840s of the gate's 900s budget: the remainder covers this body's own
     // parsing and leaves headroom for `capped` to kill the group and reap.
-    let run = match go_test(ctx, G2_9A_CRASH_TESTS, Duration::from_secs(840)) {
-        Ok(r) => r,
-        Err(e) => return GateOutcome::fail(e, vec!["a gate that cannot run has not passed".into()]),
+    let behaviour = match go_test(ctx, G2_9A_CRASH_TESTS, Duration::from_secs(840)) {
+        Err(e) => GateOutcome::fail(e, vec!["a gate that cannot run has not passed".into()]),
+        Ok(run) => {
+            let mut behavioural = check_run_evidence(&run, G2_9A_CRASH_TESTS);
+            behavioural.extend(run.failure_log.iter().cloned());
+            if behavioural.is_empty() {
+                GateOutcome::pass(format!(
+                    "acked ⇒ durable: {} crash/durability tests pinned in source and observed \
+                     passing via `go test -json -count=1` (arms a–c, embedded/pebble)",
+                    G2_9A_CRASH_TESTS.len()
+                ))
+            } else {
+                GateOutcome::fail(
+                    format!(
+                        "durability on ack is not proven: {}/{} pinned crash tests reported a \
+                         passing event",
+                        run.passed.len(),
+                        G2_9A_CRASH_TESTS.len()
+                    ),
+                    behavioural,
+                )
+            }
+        }
     };
 
-    findings.extend(check_run_evidence(&run, G2_9A_CRASH_TESTS));
-    findings.extend(run.failure_log.iter().cloned());
-
-    if findings.is_empty() {
-        GateOutcome::pass(format!(
-            "acked ⇒ durable: {} crash/durability tests pinned in source and observed passing via \
-             `go test -json -count=1` (arms a–c, embedded/pebble)",
-            G2_9A_CRASH_TESTS.len()
-        ))
-    } else {
-        GateOutcome::fail(
-            format!(
-                "durability on ack is not proven: {}/{} pinned crash tests reported a passing event",
-                run.passed.len(),
-                G2_9A_CRASH_TESTS.len()
-            ),
-            findings,
-        )
-    }
+    merge_static_and_behavioural(
+        static_detail,
+        findings,
+        "population/anchor reconciliation",
+        behaviour,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1541,28 +1605,11 @@ pub fn g2_6_injection_manifest(ctx: &Ctx) -> GateOutcome {
         }
     }
 
-    if !findings.is_empty() {
-        // The declared assertion, worded for the case the mutation produces. The
-        // other direction gets its own wording so the two cannot be confused —
-        // `mutations.rs` matches on this string, and a message that fired for
-        // "more sites" as well would prove the wrong thing.
-        let detail = if found_total < recorded_total {
-            format!(
-                "fewer injection sites than the recorded manifest: {found_total} enumerated across \
-                 {} corpus file(s), {recorded_total} recorded",
-                on_disk.len()
-            )
-        } else if found_total > recorded_total {
-            format!(
-                "more injection sites than the recorded manifest: {found_total} enumerated, {recorded_total} recorded"
-            )
-        } else {
-            format!("the injection corpus does not match the recorded manifest ({found_total} site(s) on both sides, attributed differently)")
-        };
-        return GateOutcome::fail(detail, findings);
-    }
+    // Whether the manifest reconciliation found anything is recorded HERE,
+    // because the second static check below appends to the same vector and the
+    // two have different declared wordings.
+    let manifest_disagrees = !findings.is_empty();
 
-    // ── Run them, under the same three anti-vacuity assertions as G2.9a ──
     let tests: Vec<&str> = INJECTION_MANIFEST.iter().map(|m| m.test).collect();
     // Every manifest test must also be a real `func Test…` declaration, so the
     // `-run` anchor below is known to name something before it is used.
@@ -1576,46 +1623,79 @@ pub fn g2_6_injection_manifest(ctx: &Ctx) -> GateOutcome {
             ));
         }
     }
-    if !findings.is_empty() {
-        return GateOutcome::fail(
-            "fewer injection sites than the recorded manifest: a recorded site names no runnable test"
-                .to_string(),
-            findings,
-        );
-    }
 
+    // The declared assertion, worded for the case the mutation produces. The
+    // other direction gets its own wording so the two cannot be confused —
+    // `mutations.rs` matches on this string, and a message that fired for
+    // "more sites" as well would prove the wrong thing.
+    //
+    // The wording is chosen exactly as it was when each check returned on its
+    // own: the manifest reconciliation speaks first when it has something to
+    // say, and the declaration check speaks only when the manifest agreed.
+    let static_detail = if !manifest_disagrees {
+        "fewer injection sites than the recorded manifest: a recorded site names no runnable test"
+            .to_string()
+    } else if found_total < recorded_total {
+        format!(
+            "fewer injection sites than the recorded manifest: {found_total} enumerated across \
+             {} corpus file(s), {recorded_total} recorded",
+            on_disk.len()
+        )
+    } else if found_total > recorded_total {
+        format!(
+            "more injection sites than the recorded manifest: {found_total} enumerated, {recorded_total} recorded"
+        )
+    } else {
+        format!("the injection corpus does not match the recorded manifest ({found_total} site(s) on both sides, attributed differently)")
+    };
+
+    // ── Run them, under the same three anti-vacuity assertions as G2.9a ──
+    //
+    // Unconditionally: the static halves above no longer return instead of this,
+    // they return WITH it. A manifest that has drifted is a real finding, but it
+    // is not a reason to stop observing what the injection fixtures do — and the
+    // fixtures are the only thing here that can show a fault reaching an error
+    // path rather than merely being constructed. See
+    // [`merge_static_and_behavioural`].
+    //
     // 1700s of the gate's 1800s budget. The MANIFEST fixture alone waits up to
     // 30s for a background fatal to latch and then up to 5s for a Close that is
     // expected never to return.
-    let run = match go_test(ctx, &tests, Duration::from_secs(1700)) {
-        Ok(r) => r,
-        Err(e) => return GateOutcome::fail(e, vec!["a gate that cannot run has not passed".into()]),
+    let behaviour = match go_test(ctx, &tests, Duration::from_secs(1700)) {
+        Err(e) => GateOutcome::fail(e, vec!["a gate that cannot run has not passed".into()]),
+        Ok(run) => {
+            let mut behavioural = check_run_evidence(&run, &tests);
+            behavioural.extend(run.failure_log.iter().cloned());
+            if behavioural.is_empty() {
+                let covered: Vec<String> = INJECTION_MANIFEST
+                    .iter()
+                    .map(|m| format!("{} [{}]", m.test, m.fault))
+                    .collect();
+                GateOutcome::pass(format!(
+                    "{recorded_total} errorfs injection site(s) enumerated across {} corpus file(s), all recorded, \
+                     all asserting a non-zero fired count, all observed passing via `go test -json -count=1`: {}",
+                    on_disk.len(),
+                    covered.join("; ")
+                ))
+            } else {
+                GateOutcome::fail(
+                    format!(
+                        "the injection corpus did not run clean: {}/{} recorded fixtures reported a passing event",
+                        run.passed.len(),
+                        tests.len()
+                    ),
+                    behavioural,
+                )
+            }
+        }
     };
 
-    findings.extend(check_run_evidence(&run, &tests));
-    findings.extend(run.failure_log.iter().cloned());
-
-    if findings.is_empty() {
-        let covered: Vec<String> = INJECTION_MANIFEST
-            .iter()
-            .map(|m| format!("{} [{}]", m.test, m.fault))
-            .collect();
-        GateOutcome::pass(format!(
-            "{recorded_total} errorfs injection site(s) enumerated across {} corpus file(s), all recorded, \
-             all asserting a non-zero fired count, all observed passing via `go test -json -count=1`: {}",
-            on_disk.len(),
-            covered.join("; ")
-        ))
-    } else {
-        GateOutcome::fail(
-            format!(
-                "the injection corpus did not run clean: {}/{} recorded fixtures reported a passing event",
-                run.passed.len(),
-                tests.len()
-            ),
-            findings,
-        )
-    }
+    merge_static_and_behavioural(
+        static_detail,
+        findings,
+        "manifest reconciliation",
+        behaviour,
+    )
 }
 
 #[cfg(test)]

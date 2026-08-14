@@ -405,55 +405,66 @@ fn run_audit_gate(ctx: &Ctx, g: &AuditGate) -> GateOutcome {
         }
     }
 
-    if !findings.is_empty() {
-        return GateOutcome::fail(
-            format!(
-                "the audit corpus does not match its pinned population ({} `func Test…` declared, \
-                 {} recorded in {PIN_NAME})",
-                declared.len(),
-                recorded.len()
-            ),
-            findings,
-        );
-    }
+    // The static half is COMPLETE here, and it does not return. Thirteen gates
+    // share this body, and every one of them declares a mutation whose assertion
+    // only a fixture can emit; returning on a static finding would make all
+    // thirteen unfalsifiable from any tree whose edit also moved a pinned
+    // string, which is the shape `614b1517` found on G2.24. See
+    // [`super::gates_g2::merge_static_and_behavioural`].
+    //
+    // `audit_test.go` is ONE file behind every one of those gates, so a single
+    // stray `func Test…` in it would otherwise have silenced the behavioural
+    // half of thirteen gates at once.
+    let static_detail = format!(
+        "the audit corpus does not match its pinned population ({} `func Test…` declared, \
+         {} recorded in {PIN_NAME})",
+        declared.len(),
+        recorded.len()
+    );
 
     // ── (2) + (3) run them, cache defeated, per-test evidence required ──
-    let run = match go_test(ctx, g.tests, g.budget) {
-        Ok(r) => r,
-        Err(e) => return GateOutcome::fail(e, vec!["a gate that cannot run has not passed".into()]),
+    let behaviour = match go_test(ctx, g.tests, g.budget) {
+        Err(e) => GateOutcome::fail(e, vec!["a gate that cannot run has not passed".into()]),
+        Ok(run) => {
+            let mut behavioural = check_run_evidence(&run, &expected);
+            behavioural.extend(run.failure_log.iter().cloned());
+            if behavioural.is_empty() {
+                // The owned rows are rendered, not merely recorded: STATUS.md should say
+                // what the corpus covers without anyone reading Rust — the same reason
+                // G2.6 renders its injection manifest.
+                let covered: Vec<&str> = AUDIT_OWNERSHIP
+                    .iter()
+                    .filter(|o| o.owner.split('+').any(|owner| owner == g.id))
+                    .map(|o| o.property)
+                    .collect();
+                GateOutcome::pass(format!(
+                    "{}: {} pinned fixture(s) observed passing via `go test -json -count=1` under \
+                     the anchored pattern `{}` [{}]",
+                    g.property,
+                    expected.len(),
+                    super::gates_g2::run_pattern(g.tests),
+                    covered.join("; ")
+                ))
+            } else {
+                GateOutcome::fail(
+                    format!(
+                        "{} is not proven: {}/{} pinned fixture(s) reported a passing event",
+                        g.property,
+                        run.passed.intersection(&pinned_set(&expected)).count(),
+                        expected.len()
+                    ),
+                    behavioural,
+                )
+            }
+        }
     };
 
-    findings.extend(check_run_evidence(&run, &expected));
-    findings.extend(run.failure_log.iter().cloned());
-
-    if findings.is_empty() {
-        // The owned rows are rendered, not merely recorded: STATUS.md should say
-        // what the corpus covers without anyone reading Rust — the same reason
-        // G2.6 renders its injection manifest.
-        let covered: Vec<&str> = AUDIT_OWNERSHIP
-            .iter()
-            .filter(|o| o.owner.split('+').any(|owner| owner == g.id))
-            .map(|o| o.property)
-            .collect();
-        GateOutcome::pass(format!(
-            "{}: {} pinned fixture(s) observed passing via `go test -json -count=1` under the \
-             anchored pattern `{}` [{}]",
-            g.property,
-            expected.len(),
-            super::gates_g2::run_pattern(g.tests),
-            covered.join("; ")
-        ))
-    } else {
-        GateOutcome::fail(
-            format!(
-                "{} is not proven: {}/{} pinned fixture(s) reported a passing event",
-                g.property,
-                run.passed.intersection(&pinned_set(&expected)).count(),
-                expected.len()
-            ),
-            findings,
-        )
-    }
+    super::gates_g2::merge_static_and_behavioural(
+        static_detail,
+        findings,
+        "population reconciliation",
+        behaviour,
+    )
 }
 
 fn pinned_set(tests: &[&str]) -> BTreeSet<String> {

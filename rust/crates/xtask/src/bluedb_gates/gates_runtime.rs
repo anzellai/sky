@@ -518,53 +518,61 @@ fn run_file_gate(ctx: &Ctx, g: &FileGate) -> GateOutcome {
         }
     }
 
-    if !findings.is_empty() {
-        return GateOutcome::fail(
-            format!(
-                "the inherited engine corpus does not match its pinned population ({} `func Test…` \
-                 declared across {} file(s), {} recorded in {PIN_NAME})",
-                declared.len(),
-                RUNTIME_SOURCES.len(),
-                recorded.len()
-            ),
-            findings,
-        );
-    }
+    // The static half is COMPLETE here, and it does not return. Fourteen gates
+    // share this body and nine source files feed it, so a single unrecorded
+    // `func Test…` anywhere in that corpus would otherwise have silenced the
+    // behavioural half of all fourteen at once — the shape `614b1517` found on
+    // G2.24, which is itself one of the fourteen. See
+    // [`super::gates_g2::merge_static_and_behavioural`].
+    let static_detail = format!(
+        "the inherited engine corpus does not match its pinned population ({} `func Test…` \
+         declared across {} file(s), {} recorded in {PIN_NAME})",
+        declared.len(),
+        RUNTIME_SOURCES.len(),
+        recorded.len()
+    );
 
     // ── (2) + (3) run them, cache defeated, per-test evidence required ──
-    let run = match go_test(ctx, g.tests, g.budget) {
-        Ok(r) => r,
-        Err(e) => return GateOutcome::fail(e, vec!["a gate that cannot run has not passed".into()]),
+    let behaviour = match go_test(ctx, g.tests, g.budget) {
+        Err(e) => GateOutcome::fail(e, vec!["a gate that cannot run has not passed".into()]),
+        Ok(run) => {
+            let mut behavioural = check_run_evidence(&run, g.tests);
+            behavioural.extend(run.failure_log.iter().cloned());
+            if behavioural.is_empty() {
+                let covered: Vec<&str> = RUNTIME_OWNERSHIP
+                    .iter()
+                    .filter(|o| o.owner == g.id)
+                    .map(|o| o.property)
+                    .collect();
+                GateOutcome::pass(format!(
+                    "{}: {} pinned fixture(s) observed passing via `go test -json -count=1` under \
+                     the anchored pattern `{}` [{}]",
+                    g.property,
+                    g.tests.len(),
+                    super::gates_g2::run_pattern(g.tests),
+                    covered.join("; ")
+                ))
+            } else {
+                let pinned: BTreeSet<String> = g.tests.iter().map(|s| s.to_string()).collect();
+                GateOutcome::fail(
+                    format!(
+                        "{} is not proven: {}/{} pinned fixture(s) reported a passing event",
+                        g.property,
+                        run.passed.intersection(&pinned).count(),
+                        g.tests.len()
+                    ),
+                    behavioural,
+                )
+            }
+        }
     };
-    findings.extend(check_run_evidence(&run, g.tests));
-    findings.extend(run.failure_log.iter().cloned());
 
-    if findings.is_empty() {
-        let covered: Vec<&str> = RUNTIME_OWNERSHIP
-            .iter()
-            .filter(|o| o.owner == g.id)
-            .map(|o| o.property)
-            .collect();
-        GateOutcome::pass(format!(
-            "{}: {} pinned fixture(s) observed passing via `go test -json -count=1` under the \
-             anchored pattern `{}` [{}]",
-            g.property,
-            g.tests.len(),
-            super::gates_g2::run_pattern(g.tests),
-            covered.join("; ")
-        ))
-    } else {
-        let pinned: BTreeSet<String> = g.tests.iter().map(|s| s.to_string()).collect();
-        GateOutcome::fail(
-            format!(
-                "{} is not proven: {}/{} pinned fixture(s) reported a passing event",
-                g.property,
-                run.passed.intersection(&pinned).count(),
-                g.tests.len()
-            ),
-            findings,
-        )
-    }
+    super::gates_g2::merge_static_and_behavioural(
+        static_detail,
+        findings,
+        "population reconciliation",
+        behaviour,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1568,36 +1576,19 @@ pub fn g2_24_key_parsers_fail_closed(ctx: &Ctx) -> GateOutcome {
         },
     );
 
-    if findings.is_empty() {
-        return behaviour;
-    }
-    let pinned = format!(
-        "the key-format parser population does not match its pin ({} recorded)",
-        G2_24_PARSERS.len()
-    );
-    match behaviour {
-        GateOutcome::Pass { detail } => {
-            findings.push(format!(
-                "the fixtures themselves are green — {detail} — so this gate is red on its \
-                 population reconciliation alone"
-            ));
-            GateOutcome::fail(pinned, findings)
-        }
-        GateOutcome::Fail {
-            detail,
-            findings: behavioural,
-        } => {
-            findings.extend(behavioural);
-            GateOutcome::fail(format!("{pinned}; and {detail}"), findings)
-        }
-        GateOutcome::NotRun { reason } => {
-            findings.push(format!(
-                "and the fixtures did not run ({reason}), so the behavioural half of this gate is \
-                 unproven on top of the population mismatch"
-            ));
-            GateOutcome::fail(pinned, findings)
-        }
-    }
+    // The merge itself is [`super::gates_g2::merge_static_and_behavioural`] —
+    // one implementation, because this gate's defect turned out to be a class
+    // and the same combine is now used by `run_file_gate`, `run_audit_gate`,
+    // G2.6 and G2.9a.
+    super::gates_g2::merge_static_and_behavioural(
+        format!(
+            "the key-format parser population does not match its pin ({} recorded)",
+            G2_24_PARSERS.len()
+        ),
+        findings,
+        "population reconciliation",
+        behaviour,
+    )
 }
 
 // ---------------------------------------------------------------------------
