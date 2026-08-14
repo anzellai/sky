@@ -1,0 +1,9 @@
+PROBE gate=G2.13l state=FAIL root=<scratch-worktree>
+  the N3 Fatalf latch is consumed at every exit that could claim success is not proven: 5/7 pinned fixture(s) reported a passing event
+  TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess did not report a passing `go test -json` event (it FAILED)
+  TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-threshold-persist-refuses-before-any-delete did not report a passing `go test -json` event (it FAILED)
+  TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess: === RUN   TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess
+  TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-threshold-persist-refuses-before-any-delete: === RUN   TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-threshold-persist-refuses-before-any-delete
+  TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-threshold-persist-refuses-before-any-delete:     audit_test.go:2624: the stale version K@{WallMs:94000 Logical:1} was DELETED by a pass whose own threshold write it could not trust. The persist is ordered before any physical delete precisely so that a pass which cannot establish its floor changes nothing on disk
+  TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-threshold-persist-refuses-before-any-delete: --- FAIL: TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-threshold-persist-refuses-before-any-delete (0.07s)
+  TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess: --- FAIL: TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess (0.39s)
