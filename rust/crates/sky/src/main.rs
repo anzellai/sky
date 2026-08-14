@@ -1540,6 +1540,52 @@ fn cmd_console(args: &[String]) -> ExitCode {
     }
 }
 
+/// The compiler's **second** `go build`, as a not-yet-spawned [`Command`].
+///
+/// The first is `project::build::go_build_command`, which compiles an emitted
+/// `sky-out/`. This one compiles a package inside `runtime-go/` itself, which is
+/// why it was invisible to the G0.5 scan (that reads
+/// `rust/crates/project/src` only) and shipped for a while with no `-tags` at
+/// all — the exact defect G0.5 exists to prevent.
+///
+/// It carries [`project::GO_BUILD_TAG_ARGS`] — the same constant the other site
+/// uses, referenced rather than copied, so the two cannot drift apart.
+///
+/// # Why the tag, when today it changes nothing
+///
+/// Today it is a no-op here, twice over, and that is measured rather than
+/// assumed: `go list -deps ./cmd/sky-hub` returns the identical 505 packages
+/// with and without it (pebble is imported only by `runtime-go/bluedb/*`, and
+/// the hub does not import bluedb); and pebble reaches for the cgo DataDog codec
+/// only under `CGO_ENABLED=1`, which this site pins off.
+///
+/// Both of those are properties of TODAY'S import graph, not of this call site.
+/// `runtime-go` is one Go module. The day the hub stores its `--data-dir` in
+/// bluedb, or the day the `CGO_ENABLED=0` workaround below is revisited, an
+/// untagged build here links the cgo DataDog zstd while every `sky build` links
+/// pure-Go klauspost — two builds of one tree, only one of them tested.
+/// Inheriting the constant means that day needs no edit.
+///
+/// Split out from the caller purely so the argv is assertable, exactly as
+/// `go_build_command` is: an edit that drops the tag fails
+/// `the_hub_build_carries_the_pure_go_zstd_tag` instead of silently changing
+/// what the hub links.
+///
+/// `CGO_ENABLED=0`: `rt/hub` transitively imports `rt` (webview.go, cgo+WebKit
+/// on darwin); disabling cgo routes through `webview_stub.go` and dodges the
+/// Apple `ld_prime` long-symbol assertion. The hub never calls webview.
+fn hub_go_build_command(runtime_go: &Path, hub_bin: &Path) -> Command {
+    let mut cmd = Command::new("go");
+    cmd.arg("build")
+        .args(project::GO_BUILD_TAG_ARGS)
+        .arg("-o")
+        .arg(hub_bin)
+        .arg("./cmd/sky-hub")
+        .current_dir(runtime_go)
+        .env("CGO_ENABLED", "0");
+    cmd
+}
+
 /// `sky console-serve` builds and spawns the standalone Sky Console Hub daemon
 /// (OTLP receivers plus a SQLite hot store) from `runtime-go/cmd/sky-hub` (pure
 /// Go, `CGO_ENABLED=0`). Flags: `--port N`, `--data-dir DIR`, `--auth MODE`, and
@@ -1600,16 +1646,7 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
             "sky console-serve: building hub daemon (one-time per version, into {})...",
             hub_dir.display()
         );
-        // CGO_ENABLED=0: rt/hub transitively imports rt (webview.go, cgo+WebKit
-        // on darwin); disabling cgo routes through webview_stub.go and dodges the
-        // Apple ld_prime long-symbol assertion. The hub never calls webview.
-        let status = Command::new("go")
-            .args(["build", "-o"])
-            .arg(&hub_bin)
-            .arg("./cmd/sky-hub")
-            .current_dir(&runtime_go)
-            .env("CGO_ENABLED", "0")
-            .status();
+        let status = hub_go_build_command(&runtime_go, &hub_bin).status();
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => {
@@ -4470,6 +4507,45 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The compiler has TWO `go build` sites. `project`'s own
+    /// `go_build_carries_the_pure_go_zstd_tag` pins the first; this pins the
+    /// second, which shipped with no `-tags` at all until a Judge found it, and
+    /// which no gate was looking at because the G0.5 scan reads
+    /// `rust/crates/project/src` only.
+    ///
+    /// Asserted on the argv, and on the argv coming from the shared constant:
+    /// re-deriving the flag list here would keep the test green through exactly
+    /// the edit it is supposed to catch.
+    #[test]
+    fn the_hub_build_carries_the_pure_go_zstd_tag() {
+        let cmd = hub_go_build_command(Path::new("/rt-go"), Path::new("/cache/sky-hub"));
+        let argv: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        let tag_at = argv
+            .iter()
+            .position(|a| a == "-tags")
+            .expect("the hub `go build` must carry -tags");
+        assert_eq!(
+            argv[tag_at + 1],
+            project::GO_BUILD_ZSTD_TAG,
+            "the hub must select the SAME zstd as every other build of this tree"
+        );
+        // …and from the shared pair, not a local copy of the string.
+        assert_eq!(&argv[tag_at..tag_at + 2], &project::GO_BUILD_TAG_ARGS[..]);
+
+        assert_eq!(argv[0], "build");
+        assert!(argv.iter().any(|a| a == "./cmd/sky-hub"));
+        assert_eq!(cmd.get_current_dir(), Some(Path::new("/rt-go")));
+        // The cgo pin is load-bearing for the darwin ld_prime workaround AND is
+        // half of why the tag is a no-op today; losing it silently changes both.
+        assert!(cmd
+            .get_envs()
+            .any(|(k, v)| k == "CGO_ENABLED" && v == Some("0".as_ref())));
+    }
 
     #[test]
     fn parse_semver_handles_v_prefix_and_suffixes() {

@@ -211,4 +211,4 @@ A green row is not the whole verdict. Read the gate's own line below before quot
 ### G5.8 — confirm + undo [NOT RUN]
     P8 substrate absent (probed: runtime-go/rt/consoledata/write.go, runtime-go/rt/consoledata) — implement this gate with the phase that creates it
 
-<!-- body-sha256: 68242cbb84a86bce777cd3b8e369140c21db237d737fa0f685476d2b5bc4413a -->
+<!-- body-sha256: 2d4e58442beac35cf93382f66022cbb770806d53efc7b20c5e76888cceba8595 -->

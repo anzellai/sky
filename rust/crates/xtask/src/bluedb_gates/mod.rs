@@ -354,8 +354,16 @@ fn run_check(root: &Path, fresh: &str, head: &str, ledger: &state::GateState) ->
                 );
                 bad = true;
             }
-            let (fresh_body, _) = status::split_body_and_sha(fresh).expect("render is well-formed");
-            if fresh_body != body {
+            // The FRESHNESS question, not the integrity one. `body` above is
+            // the hashed region — banner + stamps + body — because the sha now
+            // covers the stamps. Comparing THAT against a fresh render would
+            // diff on `ran:`, which every regeneration legitimately rewrites, so
+            // this comparison takes the stamp-free view. The stamps have their
+            // own clocks immediately below (`commit:` vs HEAD, full_tier_behind).
+            let on_disk_body =
+                status::reproducible_body(&on_disk).expect("trailer already located above");
+            let fresh_body = status::reproducible_body(fresh).expect("render is well-formed");
+            if fresh_body != on_disk_body {
                 eprintln!(
                     "bluedb-gates --check: STATUS.md does not match a fresh run — run `cargo run -p xtask -- bluedb-gates`"
                 );

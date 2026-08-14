@@ -219,8 +219,29 @@ pub fn render(header: &Header, rows: &[Row]) -> String {
         None => out.push_str("<!-- full-tier:   (never run)  STALE -->\n"),
     }
     out.push_str(&body);
-    out.push_str(&format!("\n{SHA_PREFIX}{} -->\n", sha256::hex(body.as_bytes())));
-    out
+
+    // THE HASH COVERS THE STAMPS, not just the body.
+    //
+    // It used to cover `body` alone, and that left the header comments — the
+    // `commit:` / `ran:` / `full-tier:` stamps — outside the integrity envelope.
+    // Those stamps are the staleness clock the `stamps:` line two blocks up
+    // tells the reader to trust, so the one part of this file that asserts "this
+    // evidence is current" was the one part a hand edit could rewrite with the
+    // recorded sha still matching. `full-tier: deadbeef  ran: 2099-01-01…` and
+    // G0.1 reported PASS.
+    //
+    // `out` at this point is banner + stamps + body. Hashing it and appending
+    // the trailer afterwards is what keeps the self-reference well-founded: the
+    // digest covers every byte of the file EXCEPT the trailer line that carries
+    // it, which is the only region a sha can cover without containing itself.
+    let hashed = out;
+    let mut file = String::with_capacity(hashed.len() + 96);
+    file.push_str(&hashed);
+    file.push_str(&format!(
+        "\n{SHA_PREFIX}{} -->\n",
+        sha256::hex(hashed.as_bytes())
+    ));
+    file
 }
 
 fn escape_cell(s: &str) -> String {
@@ -243,11 +264,40 @@ fn goal_label_short(goal: u8) -> String {
     goal.to_string()
 }
 
-/// Split a rendered `STATUS.md` into `(body, recorded-sha)`.
+/// Split a rendered `STATUS.md` into `(hashed-region, recorded-sha)`.
 ///
-/// The body is everything from the first blank line after the header comments
-/// through the line before the `body-sha256` trailer — i.e. exactly what
-/// [`render`] hashed. Returns `None` when the trailer is absent.
+/// # What the hash covers
+///
+/// **Everything except the trailer line that carries it.** That is: the
+/// `GENERATED` banner, the `commit: … ran: … host: … tier: …` stamp, the
+/// `stamps:` explainer, the `full-tier: … ran: … host: … [STALE …]` stamp, and
+/// the whole rendered body (goal roll-up, gate table with its per-gate timings,
+/// and the per-gate detail section). Every byte a hand edit could touch is in
+/// the digest, and the caller's comparison is therefore a real integrity check
+/// rather than a check of the parts nobody would bother forging.
+///
+/// # What it does NOT cover, and why that is not a hole
+///
+/// The `<!-- body-sha256: … -->` trailer itself. A digest cannot contain
+/// itself; excluding exactly that one line — and nothing else — is what makes
+/// the self-reference well-founded. Rewriting the trailer alone still fails,
+/// because the recorded value then disagrees with the digest of everything
+/// above it.
+///
+/// # This is NOT the "does it match a fresh run" comparison
+///
+/// The stamps are wall-clock and git state: a regeneration a minute later
+/// legitimately writes a different `ran:`, and one commit later a different
+/// `commit:`. Hashing them is fine — the generator recomputes the digest over
+/// whatever it just wrote — but *comparing two independent renders* over them
+/// would fail on every run for no reason. That comparison
+/// (`bluedb-gates --check`) uses [`reproducible_body`] instead, and the stamps
+/// get their own dedicated staleness clocks there (`commit:` vs HEAD,
+/// `full_tier_behind`). Keeping the two questions in two functions is the point:
+/// "was this file edited by hand" and "is this file what a re-run would produce"
+/// are different questions with different answers.
+///
+/// Returns `None` when the trailer is absent.
 pub fn split_body_and_sha(text: &str) -> Option<(String, String)> {
     let idx = text.rfind(SHA_PREFIX)?;
     let recorded = text[idx + SHA_PREFIX.len()..]
@@ -255,15 +305,34 @@ pub fn split_body_and_sha(text: &str) -> Option<(String, String)> {
         .next()?
         .to_string();
     let head = &text[..idx];
-    // `render` appends "\n{SHA_PREFIX}…" after the body, so drop that one newline.
+    // `render` appends "\n{SHA_PREFIX}…" after the hashed region, so drop that
+    // one separator newline — and nothing else. Header lines stay in.
+    let region = head.strip_suffix('\n').unwrap_or(head).to_string();
+    Some((region, recorded))
+}
+
+/// The part of a rendered `STATUS.md` a re-run reproduces from the same inputs:
+/// the body, with the `<!--` header comments dropped.
+///
+/// Used only by `bluedb-gates --check` to ask "does the committed file match a
+/// fresh render". It deliberately excludes the header stamps, which a fresh
+/// render always rewrites (new `ran:` wall-clock, possibly a new `commit:`) —
+/// those are checked against HEAD and the full-tier ledger directly, not by
+/// string equality against another render.
+///
+/// It is NOT an integrity boundary. [`split_body_and_sha`] is; this is a
+/// freshness comparison, and pointing a hand-edit check at it is exactly the
+/// defect that let `full-tier: deadbeef  ran: 2099-01-01T00:00:00Z` pass G0.1.
+pub fn reproducible_body(text: &str) -> Option<String> {
+    let idx = text.rfind(SHA_PREFIX)?;
+    let head = &text[..idx];
     let body = head.strip_suffix('\n').unwrap_or(head);
-    // and drop the header comment lines
     let body = body
         .lines()
         .skip_while(|l| l.starts_with("<!--"))
         .collect::<Vec<_>>()
         .join("\n");
-    Some((format!("{body}\n").trim_end_matches('\n').to_string() + "\n", recorded))
+    Some(format!("{body}\n").trim_end_matches('\n').to_string() + "\n")
 }
 
 /// Render the "Mutation proof" cell for one gate (§9.4's table + MAJOR-17).
@@ -355,6 +424,100 @@ mod tests {
         let tampered = out.replace("BlueDB v2 — STATUS", "BlueDB v2 — STATUS (all green!)");
         let (body, sha) = split_body_and_sha(&tampered).unwrap();
         assert_ne!(sha256::hex(body.as_bytes()), sha);
+    }
+
+    /// The Judge's exact hand edit: rewrite the `full-tier:` stamp — the
+    /// staleness clock the `stamps:` line tells readers to trust — and leave
+    /// everything else, sha included, untouched. This used to round-trip
+    /// cleanly, so G0.1 reported PASS over a document claiming its hardest
+    /// gates had run in 2099.
+    #[test]
+    fn editing_the_full_tier_stamp_breaks_the_recorded_sha() {
+        let out = render(&header(), &[row("G0.1", 0, GateState::Pass)]);
+        let tampered = out.replace(
+            "<!-- full-tier:   bbbbbbb  ran: 2026-08-08T00:00:00Z  host: linux -->",
+            "<!-- full-tier:   deadbeef  ran: 2099-01-01T00:00:00Z  host: linux -->",
+        );
+        assert_ne!(tampered, out, "the fixture must actually contain the stamp");
+
+        let (region, sha) = split_body_and_sha(&tampered).unwrap();
+        assert_ne!(
+            sha256::hex(region.as_bytes()),
+            sha,
+            "the full-tier staleness stamp must be inside the integrity envelope"
+        );
+    }
+
+    /// Same for the fast-tier stamp line and the GENERATED banner: the whole
+    /// header is covered, not just the one line the regression was found on.
+    #[test]
+    fn editing_any_header_line_breaks_the_recorded_sha() {
+        let out = render(&header(), &[row("G0.1", 0, GateState::Pass)]);
+        for (from, to) in [
+            ("commit:      aaaaaaa", "commit:      ffffff0"),
+            ("ran: 2026-08-09T00:00:00Z", "ran: 2099-01-01T00:00:00Z"),
+            ("tier: fast", "tier: full"),
+            ("DO NOT EDIT.", "DO NOT EDIT!"),
+        ] {
+            let tampered = out.replace(from, to);
+            assert_ne!(tampered, out, "fixture must contain {from:?}");
+            let (region, sha) = split_body_and_sha(&tampered).unwrap();
+            assert_ne!(
+                sha256::hex(region.as_bytes()),
+                sha,
+                "hand edit to {from:?} went undetected"
+            );
+        }
+    }
+
+    /// The one region the digest cannot cover is the digest. Forging it alone
+    /// must still be caught, or "excluded from the hash" would be a hole rather
+    /// than a well-foundedness requirement.
+    #[test]
+    fn rewriting_the_sha_trailer_alone_is_still_caught() {
+        let out = render(&header(), &[row("G0.1", 0, GateState::Pass)]);
+        let (_, real) = split_body_and_sha(&out).unwrap();
+        let tampered = out.replace(&real, &"0".repeat(real.len()));
+        let (region, sha) = split_body_and_sha(&tampered).unwrap();
+        assert_ne!(sha256::hex(region.as_bytes()), sha);
+    }
+
+    /// `--check`'s freshness comparison must NOT see the stamps, or it would go
+    /// red on the wall clock alone. Two renders that differ only in `ran:` and
+    /// `commit:` have the same reproducible body — and different digests.
+    #[test]
+    fn reproducible_body_excludes_the_stamps_that_every_run_rewrites() {
+        let a = render(&header(), &[row("G0.1", 0, GateState::Pass)]);
+        let mut h = header();
+        h.commit = "ccccccc".into();
+        h.ran = "2026-08-09T00:00:01Z".into();
+        let b = render(&h, &[row("G0.1", 0, GateState::Pass)]);
+
+        assert_ne!(a, b, "the stamps really did change");
+        assert_eq!(
+            reproducible_body(&a).unwrap(),
+            reproducible_body(&b).unwrap(),
+            "a re-run one second later must not read as a content change"
+        );
+        assert_ne!(
+            split_body_and_sha(&a).unwrap().1,
+            split_body_and_sha(&b).unwrap().1,
+            "…while the integrity digest DOES move, because it covers the stamps"
+        );
+    }
+
+    /// The hashed region is the whole file minus the trailer — asserted
+    /// positively, so a future edit that quietly re-narrows it fails here.
+    #[test]
+    fn the_hashed_region_is_the_whole_file_minus_the_trailer() {
+        let out = render(&header(), &[row("G0.1", 0, GateState::Pass)]);
+        let (region, _) = split_body_and_sha(&out).unwrap();
+        assert!(region.starts_with(BANNER));
+        assert!(region.contains("<!-- commit:      aaaaaaa"));
+        assert!(region.contains("<!-- full-tier:   bbbbbbb"));
+        assert!(region.contains("# BlueDB v2 — STATUS"));
+        assert!(!region.contains(SHA_PREFIX));
+        assert_eq!(out, format!("{region}\n{SHA_PREFIX}{} -->\n", sha256::hex(region.as_bytes())));
     }
 
     #[test]
