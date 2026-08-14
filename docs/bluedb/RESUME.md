@@ -284,6 +284,33 @@ later. Five sources are there today: `engine.go` (declares no function at all),
 test, so a mutation records VACUOUS) and `hlc.go` (every honest revert trips an
 assertion `G2.15`'s and `G2.17`'s mutations already own).
 
+**Running a full `--verify-mutations`: build `sky` first.** `G0.3` must compile
+its subject, and the scratch worktree is a fresh `git worktree add` with no
+build artefacts — so the runner lends it a prebuilt compiler from the developer
+tree, looked up at `rust/target/release/sky` or `sky-out/sky`
+(`mutations::dev_tree_compiler`). If neither exists the gate goes red with
+"neither … exists" rather than its declared assertion, the discriminating
+classifier correctly refuses to call that PROVEN, and G0.3 reports **VACUOUS**
+— a whole-sweep FAIL for a missing binary. Observed again in this round from a
+clean worktree, and cleared by nothing but `cp rust/target/release/sky
+sky-out/sky`. So: `cargo build --release -p sky` (or copy one in) before the
+sweep. *The runner could tell these apart — an absent compiler is a
+prerequisite failure, not a vacuous falsification — and saying so at the point
+of use would be strictly better than this paragraph.*
+
+**A flaky falsifier reads as PROVEN until someone counts.** `G2.13j`'s
+falsification was recorded PROVEN and was a coin flip: the mutated fixture goes
+red 12/12, but on two different assertions (7/12 Close's side, 5/12 the pass's
+side) and the declared `expect` named one of them. The classifier asks only
+whether that one string is present, so ~42% of runs would have recorded
+VACUOUS. The gate's author had checked 5/5 and concluded "by construction, not
+by winning an interleaving" — true of the GATE, false of the ASSERTION. The
+rule it yields: **an `expect` must name the property, not the side that
+observed it.** Both arms now share one verdict clause and the mutation is
+classified on that; re-measured 14/14. The same race also allowed a false
+GREEN (a pass that finished before Close was called exercises nothing), now a
+named fixture failure.
+
 G0.8's own falsifier is worth reading before writing another: it re-points
 `recent_changes.go`'s only mutation at a different diff while leaving
 `Mutation.targets` still naming the file, so a gate that trusted the declaration

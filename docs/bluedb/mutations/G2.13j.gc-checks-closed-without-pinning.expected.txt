@@ -2,6 +2,6 @@ PROBE gate=G2.13j state=FAIL root=<scratch-worktree>
   the exported non-reader surface is pinned against Close is not proven: 1/2 pinned fixture(s) reported a passing event
   TestAuditN4GCPassIsPinnedAgainstAConcurrentClose did not report a passing `go test -json` event (it FAILED)
   TestAuditN4GCPassIsPinnedAgainstAConcurrentClose: === RUN   TestAuditN4GCPassIsPinnedAgainstAConcurrentClose
-  TestAuditN4GCPassIsPinnedAgainstAConcurrentClose:     audit_test.go:1857: Close PANICKED with an unpinned GC pass in flight: element has outstanding references
+  TestAuditN4GCPassIsPinnedAgainstAConcurrentClose:     audit_test.go:1878: an unpinned GC pass raced Close into a panic — CLOSE's side: element has outstanding references
   TestAuditN4GCPassIsPinnedAgainstAConcurrentClose:         The pass holds a live Pebble iterator that the phase-2 drain knows nothing about, because gc.go took no pin. The drain must be able to see the pass.
   TestAuditN4GCPassIsPinnedAgainstAConcurrentClose: --- FAIL: TestAuditN4GCPassIsPinnedAgainstAConcurrentClose (0.47s)
