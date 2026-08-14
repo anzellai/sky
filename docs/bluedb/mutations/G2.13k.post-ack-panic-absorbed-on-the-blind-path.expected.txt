@@ -5,5 +5,5 @@ PROBE gate=G2.13k state=FAIL root=<scratch-worktree>
   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: === RUN   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed
   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path: === RUN   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path
   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path:     audit_test.go:1710: a panic raised AFTER processBlindPhase1's acks went out was SILENTLY ABSORBED. recover() consumes the panic unconditionally, so `r != nil && !acked` is not a no-op in the acked case — it is a fail-open that hides an unexplained fault in the single writer goroutine. The post-ack arm must seal and re-panic.
-  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path (0.13s)
-  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed (0.18s)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path (0.10s)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed (0.15s)
