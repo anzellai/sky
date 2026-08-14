@@ -10,5 +10,3 @@ proof	G0.5/second-go-build-site	PROVEN	831128ab
 proof	G0.6/corrupt-expected	PROVEN	831128ab
 proof	G0.7/mutationless-gate	PROVEN	831128ab
 proof	G0.C/noop	VACUOUS	831128ab
-proof	G2.9a/ack-before-fsync	MUTATION-STALE	fa8f536e
-proof	G2.9b/normal-durability-still-syncs	MUTATION-STALE	fa8f536e
