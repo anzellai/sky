@@ -1,0 +1,10 @@
+PROBE gate=G2.13k state=FAIL root=<scratch-worktree>
+  a post-ack durability panic is never absorbed is not proven: 1/3 pinned fixture(s) reported a passing event
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed did not report a passing `go test -json` event (it FAILED)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path did not report a passing `go test -json` event (it FAILED)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: === RUN   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path: === RUN   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path: bluedb: durability fault — sealing engine: bluedb: injected post-ack fault (test)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path:     audit_test.go:1749: a panic raised AFTER processTxn's acks went out was SILENTLY ABSORBED. With every job already in the acked set there is nobody left to inform, so absorbing makes the fault unobservable in the process it happened in.
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path (0.06s)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed (0.16s)

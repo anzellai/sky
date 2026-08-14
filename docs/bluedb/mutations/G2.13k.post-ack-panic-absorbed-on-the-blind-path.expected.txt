@@ -1,0 +1,9 @@
+PROBE gate=G2.13k state=FAIL root=<scratch-worktree>
+  a post-ack durability panic is never absorbed is not proven: 1/3 pinned fixture(s) reported a passing event
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed did not report a passing `go test -json` event (it FAILED)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path did not report a passing `go test -json` event (it FAILED)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: === RUN   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path: === RUN   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path:     audit_test.go:1710: a panic raised AFTER processBlindPhase1's acks went out was SILENTLY ABSORBED. recover() consumes the panic unconditionally, so `r != nil && !acked` is not a no-op in the acked case — it is a fail-open that hides an unexplained fault in the single writer goroutine. The post-ack arm must seal and re-panic.
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path (0.11s)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed (0.16s)

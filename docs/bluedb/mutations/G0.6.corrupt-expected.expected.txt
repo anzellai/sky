@@ -1,22 +1,11 @@
 PROBE gate=G0.6 state=FAIL root=<scratch-worktree>
-  20 mutation proof problem(s) (39 not authored yet)
+  9 mutation proof problem(s) (39 not authored yet)
   G0.2/rt-imports-bluedb: recorded expected output does not contain the declared assertion "forbidden edge rt -> bluedb"
-  G0.2/rt-imports-bluedb: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G0.6/corrupt-expected: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G0.7/mutationless-gate: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G2.6/disable-injection-point: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G2.9a/ack-before-fsync: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G2.13a/degenerate-upper-bound: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.13c/corrupt-hlc-hi-reads-as-a-fresh-store: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G2.13d/commit-on-a-closed-engine-acks-success: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G2.13e/snapshot-readts-is-the-in-memory-high-water: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G2.13e/mvcc-visibility-excludes-the-readts-itself: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.13f/close-does-not-quiesce-readers: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G2.13f/closed-engine-reads-as-an-empty-store: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.13f/token-released-before-the-snapshot: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.13h/undecodable-payload-validates-as-no-changes: UNVERIFIED-SINCE 6121b876 — a declared target moved
-  G2.13h/pending-window-does-not-see-the-batch: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.13h/advance-on-an-unknown-token-returns-nil: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.13h/corrupt-cold-start-seed-leaves-the-floor-low: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.13i/gc-skips-corrupt-keys-without-bound: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.13i/changelog-skips-a-corrupt-key: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G0.6/corrupt-expected: UNVERIFIED-SINCE a6d3f58d — a declared target moved
+  G0.7/mutationless-gate: UNVERIFIED-SINCE a6d3f58d — a declared target moved
+  G2.9a/sealed-engine-still-runs-gc: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.9a/wal-fatal-never-reaches-the-ack: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13j/changelog-handed-out-without-a-pin: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13j/gc-checks-closed-without-pinning: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13k/post-ack-panic-absorbed-on-the-blind-path: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G2.13k/post-ack-panic-absorbed-on-the-txn-path: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv

@@ -1,0 +1,6 @@
+PROBE gate=G2.9a state=FAIL root=<scratch-worktree>
+  durability on ack is not proven: 6/7 pinned crash tests reported a passing event
+  TestInjectedFaultsReopenConsistent did not report a passing `go test -json` event (it FAILED)
+  TestInjectedFaultsReopenConsistent: === RUN   TestInjectedFaultsReopenConsistent
+  TestInjectedFaultsReopenConsistent:     crashsim_test.go:520: nil-acked commit fault00=f0 ABSENT after reopen — acked⇒durable violated: got "",false
+  TestInjectedFaultsReopenConsistent: --- FAIL: TestInjectedFaultsReopenConsistent (0.00s)

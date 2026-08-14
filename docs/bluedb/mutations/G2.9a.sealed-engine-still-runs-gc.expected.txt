@@ -1,0 +1,6 @@
+PROBE gate=G2.9a state=FAIL root=<scratch-worktree>
+  durability on ack is not proven: 6/7 pinned crash tests reported a passing event
+  TestSealContractRefusesWrites did not report a passing `go test -json` event (it FAILED)
+  TestSealContractRefusesWrites: === RUN   TestSealContractRefusesWrites
+  TestSealContractRefusesWrites:     crashsim_test.go:271: sealed engine must refuse GC with ErrSealed, got bluedb: pebble reported a fatal fault: bluedb: pebble fatal: pebble: fatal commit error: injected error
+  TestSealContractRefusesWrites: --- FAIL: TestSealContractRefusesWrites (0.00s)
