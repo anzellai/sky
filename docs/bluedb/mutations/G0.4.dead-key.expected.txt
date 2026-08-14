@@ -1,3 +1,3 @@
 PROBE gate=G0.4 state=FAIL root=<scratch-worktree>
   1 dead config key(s)
-  dead config key DATA_BOGUS: written by the compiler at rust/crates/project/src/build.rs:2274, read by nothing in runtime-go/ and shown to no user code in docs/
+  dead config key DATA_BOGUS: written by the compiler at rust/crates/project/src/build.rs:2267, read by nothing in runtime-go/ and shown to no user code in docs/

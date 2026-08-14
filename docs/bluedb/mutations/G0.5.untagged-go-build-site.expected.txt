@@ -1,0 +1,4 @@
+PROBE gate=G0.5 state=FAIL root=<scratch-worktree>
+  go-build site / zstd tag contract broken
+  go build site rust/crates/sky/src/main.rs:1602 does not carry `-tags pebblegozstd` — that build links pebble's cgo DataDog zstd while every other build of the same tree links pure-Go klauspost, and only one of the two is ever the one that was tested
+  arm (c) NOT VERIFIED: no compiler at <scratch-worktree>/rust/target/release/sky or sky-out/sky — build it first (cd rust && cargo build --release -p sky)

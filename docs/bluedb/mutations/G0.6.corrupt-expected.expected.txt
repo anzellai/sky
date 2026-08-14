@@ -1,4 +1,8 @@
 PROBE gate=G0.6 state=FAIL root=<scratch-worktree>
-  2 mutation proof problem(s) (39 not authored yet)
+  6 mutation proof problem(s) (39 unauthored on NOT-RUN gates)
   G0.2/rt-imports-bluedb: recorded expected output does not contain the declared assertion "forbidden edge rt -> bluedb"
-  G0.7/mutationless-gate: UNVERIFIED-SINCE 9a6ea010 — a declared target moved
+  G0.3/persistglue-unconditional: UNVERIFIED-SINCE 0560cf8c — a declared target moved
+  G0.4/dead-key: UNVERIFIED-SINCE 0560cf8c — a declared target moved
+  G0.5/untagged-go-build-site: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G0.6/corrupt-expected: UNVERIFIED-SINCE 0560cf8c — a declared target moved
+  G0.7/mutationless-gate: UNVERIFIED-SINCE 0560cf8c — a declared target moved

@@ -223,11 +223,11 @@ Cross-cutting, serving all five:
 |---|---|
 | **G0.1** | `docs/bluedb/STATUS.md` is generated and matches a fresh run (hand edits detected) |
 | **G0.2** | `rt` never imports `bluedb`; `bluedb` imports only pebble + stdlib |
-| **G0.3** | A non-Persist app links no pebble, builds cold-cache offline, ships no `bluedb/`, and **keeps its non-`data` session store** |
+| **G0.3** | A non-Persist app links no pebble, builds **offline** (`GOPROXY=off`, scratch `HOME`, ambient module cache), ships no `bluedb/`, and **keeps its non-`data` session store** |
 | **G0.4** | No dead config key: every env suffix the compiler writes has a runtime reader, and vice versa — *and* every glue-affecting key changes observable behaviour, not just glue bytes |
-| **G0.5** | `sky build` passes `-tags pebblegozstd` at the single `run_go_build_once` site, so all three call paths inherit it |
-| **G0.6** | Every gate's recorded mutation still applies and still turns it red |
-| **G0.7** | Harness self-integrity: every gate has ≥1 mutation, every goal has ≥1 gate, every gate maps to one goal, every `file:line` cited in this document still resolves to the quoted token on its tagged branch |
+| **G0.5** | **Every** `go build` site under `rust/crates` passes `-tags pebblegozstd`, so every call path into every one of them inherits it |
+| **G0.6** | Every mutation of a gate that **runs** has a current ledger proof: it exists, records `PROVEN`, carries its RED output, and has not decayed |
+| **G0.7** | Harness self-integrity: every gate has ≥1 mutation, every goal has ≥1 gate, every gate maps to one goal, every `file:line` cited in **this document**, outside its fenced illustrations, still resolves to the quoted token on its tagged branch |
 | **G0.C** | **The canary.** A deliberately vacuous gate + a no-op patch. `--verify-mutations` must report `VACUOUS`; reporting `PROVEN` is a harness failure (§9.4) |
 
 ---
@@ -2239,26 +2239,44 @@ bytes but changes no behaviour is a **FAIL**. *Mutations:* add a key with no rea
 key that reaches the glue but is never consumed at runtime → RED (this is the one v2.0 would have
 passed). This closes the whole class, not just `DB_DRIVER`.
 
-**G0.5 — the zstd tag.** There is exactly **one** `go build` invocation in the compiler —
-`run_go_build_once` (`[main]` `build.rs:754-768`) — reached from **three** call paths:
-`:578` (FFI-detected CGO=1 first attempt), `:590` (the preferred CGO=0 static build), and `:600`
-(the CGO=1 retry). v2.0 described this as passing the tag "on **both** the CGO=0 and the CGO=1
-retry path", which is wrong twice: there are three paths, and the tag is not passed per-path at
-all — it is passed at the single site, so **all three inherit it by construction**. That is a
-stronger property than v2.0 claimed, and the gate should assert the structure rather than
-enumerate paths: (a) `run_go_build_once` is the sole `Command::new(go).arg("build")` site in the
-crate (a lexical check — genuinely lexical, so grep is defensible here per RULE ZERO clause 5);
-(b) it passes `-tags pebblegozstd`; (c) a Persist example built through **each** of the three call
-paths contains no DataDog cgo zstd symbols, checked with `go tool nm`. *Mutations:* drop the tag
-from `run_go_build_once` → (b) and (c) RED; add a second `go build` site without the tag → (a)
-RED — this is the mutation that matters, because a second site is exactly how the property would
-regress. The `go test` form (P8) is already satisfied by `CGO_ENABLED=0` in CI
+**G0.5 — the zstd tag.** The app build is `run_go_build_once` (`[main]` `build.rs:754-768`),
+reached from **three** call paths: `:578` (FFI-detected CGO=1 first attempt), `:590` (the
+preferred CGO=0 static build), and `:600` (the CGO=1 retry). v2.0 described this as passing the
+tag "on **both** the CGO=0 and the CGO=1 retry path", which is wrong twice: there are three
+paths, and the tag is not passed per-path at all — it is passed at the site, so **all three
+inherit it by construction**.
+
+This paragraph then said there was exactly **one** `go build` invocation in the compiler, and
+made "sole site" arm (a) of the gate. **That was false, and the gate's own scan is why nobody
+noticed**: it read `rust/crates/project/src` only, so it could not see `sky console-serve`
+building `cmd/sky-hub` inside `runtime-go/`, which shipped with no `-tags` at all — the exact
+defect this gate exists to prevent, invisible to it. Widening the scan then found a third, in the
+same state, building `sky-ffi-inspect`.
+
+So "exactly one site" is a claim the tree falsifies, and its mutation ("add a second site") is
+satisfied by real shipped code. The invariant the count was only ever a proxy for is the one that
+survives: (a) **every** `Command::new(go).arg("build")` site under `rust/crates` carries
+`-tags pebblegozstd` — a lexical check, genuinely lexical, so grep is defensible here per
+RULE ZERO clause 5, with the roots enumerated from the filesystem rather than listed by an author,
+and one level of const indirection resolved over the union of every scanned file (a site
+REFERENCES the constant; it does not have to declare it); (b) a Persist example built through
+**each** of the three app-build call paths contains no DataDog cgo zstd symbols, checked with
+`go tool nm`. `GO_BUILD_ZSTD_TAG`/`GO_BUILD_TAG_ARGS` moved down the crate DAG into `ffi::inspect`
+so the inspector site can inherit the constant rather than copy it; `project` re-exports both.
+*Mutation:* add an untagged `go build` site — placed in `sky/src/main.rs`, so it falsifies the
+widening as well as the tag. The `go test` form (P8) is already satisfied by `CGO_ENABLED=0` in CI
 (`[main]` `rust-ci.yml:255`) and is asserted separately.
 
-**G0.3 — mechanism, not aspiration.** "Builds cold-cache offline" needs a procedure or it is
-untestable: the gate builds in a scratch `HOME` with a fresh `GOMODCACHE`, `GOFLAGS=-mod=mod`,
-and **`GOPROXY=off`**, so any module not already vendored fails the build rather than silently
-fetching. "Links no pebble" is checked with **`go tool nm`** on the output binary
+**G0.3 — mechanism, not aspiration.** "Builds offline" needs a procedure or it is
+untestable: the gate builds in a scratch `HOME` with `GOFLAGS=-mod=mod` and **`GOPROXY=off`**, so
+any module not already in the cache fails the build rather than silently fetching. The module
+cache is the **ambient** one, and this document said "cold-cache" for both this arm and the risk
+row below without a procedure that produced one. There is no procedure that could: nothing in
+this repo is vendored, so a fresh `GOMODCACHE` plus `GOPROXY=off` cannot build *any* Sky app on
+*any* branch, and the arm would be permanently red for a property no code has ever had. The cache
+actually used is named in the gate's PASS detail, and a caller with a genuinely fresh, pre-seeded
+one supplies it via `SKY_BLUEDB_GOMODCACHE`.
+"Links no pebble" is checked with **`go tool nm`** on the output binary
 (`! nm(binary) contains "pebble"`), not by grepping source imports — a transitive import would
 pass a source grep. Arms: (a) a non-Persist Sky.Live app links zero pebble symbols; (b) it ships
 no `bluedb/` directory into `sky-out/`; (c) it selects a **non-`data`** session store (§4.2);
@@ -3234,7 +3252,7 @@ shape a PASS verdict must never take).
 
 | # | Risk | Likelihood | Mitigation |
 |---|---|---|---|
-| R1 | **Pebble bloats every Sky app.** Binary +10–18 MB; pebble pulls sentry + prometheus transitively | high if wired wrongly | G0.3 asserts a non-Persist app links zero pebble symbols, ships no `bluedb/`, and builds cold-cache **offline**. The glue-file design (§7.2) is what makes this structural rather than a prune list. |
+| R1 | **Pebble bloats every Sky app.** Binary +10–18 MB; pebble pulls sentry + prometheus transitively | high if wired wrongly | G0.3 asserts a non-Persist app links zero pebble symbols, ships no `bluedb/`, and builds **offline** (`GOPROXY=off`; the module cache is the ambient one — see §7.2). The glue-file design (§7.2) is what makes this structural rather than a prune list. |
 | R2 | **Replacing the session store breaks a working subsystem.** | medium | The funnel is a single seam — only what "persist" means inside `persistAndShipFrame` changes. Legacy stores stay as opt-outs. G1.2/G1.3 are the guard. |
 | R3 | **Deflation adds a store read to the event path.** | medium | Measured in G1.1's latency arm; deflation is LRU-cold-first so hot sessions are unaffected; `sessionCacheMaxBytes` is tunable upward. |
 | R4 | **Inverting two locked tests** (`TestTiered_SSEConnectedNeverEvicted`, `TestReactive_TenantNeverDurable`) | certain | Both are inverted deliberately and in the open, with the replacement test named in §4.4 / §5.2. A griller should check that the *replacement* is stronger, not merely different. |

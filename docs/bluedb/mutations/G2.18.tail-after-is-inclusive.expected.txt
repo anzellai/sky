@@ -3,4 +3,4 @@ PROBE gate=G2.18 state=FAIL root=<scratch-worktree>
   TestChangelogWrite did not report a passing `go test -json` event (it FAILED)
   TestChangelogWrite: === RUN   TestChangelogWrite
   TestChangelogWrite:     engine_test.go:427: tail(after t0) = 3 entries, first="chg-a"; want 2 starting chg-b
-  TestChangelogWrite: --- FAIL: TestChangelogWrite (0.08s)
+  TestChangelogWrite: --- FAIL: TestChangelogWrite (0.11s)
