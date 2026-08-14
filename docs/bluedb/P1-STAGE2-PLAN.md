@@ -412,6 +412,58 @@ must append only — never rewrite, never reorder — and stage the file by
 composing the intended blob rather than `git add`-ing a working tree that holds
 someone else's in-flight test.
 
+## N3 needed SIX consumption points, not five — the plan's fix would have hung
+
+The plan (already once-corrected by the grill) specified five points at which to
+consume the fatal latch: after `pebble.Open`, in `Close()`, at the committer's
+two `Apply` sites, and at both GC applies. **All five are unreachable in the
+case that matters.**
+
+Measured during C8, with a single injected MANIFEST write error: after a
+background MANIFEST fatal pebble does not degrade, it **wedges** —
+`version_set.go:664-672` treats any MANIFEST error as fatal by design. The next
+`Commit` did not return in 30 s, the engine never sealed, and `Close` could not
+run either, because every one of the five consumes the latch *after* an `Apply`
+that never finishes.
+
+So the fix as planned would have traded a process kill for a **permanent silent
+hang of every writer** — strictly worse, because a crash at least says
+something. The sixth point is a door check at `Commit` entry (one atomic load).
+
+The lesson generalises past this defect: **a latch is only as good as its
+earliest consumer.** When the failure mode is a wedge rather than an error
+return, every consumer placed downstream of the wedge is decorative. Ask where
+the subject STOPS, not where it fails.
+
+Two smaller deviations from the same commit, both accepted: the fail-open sweep
+also fixed `Advance`-on-unknown-token and the cold-start ring seed, which sit in
+files adjacent to the five the sweep named. Excluding them for scope purity
+would have left two instances of the class the sweep exists to eliminate.
+
+Also from C8: `Errorf` is budgeted at 32 lines. Unbounded it emitted 121,145
+lines in one fixture run.
+
+## The test suite was partly testing the hole
+
+C6b found that three existing helpers — `mkJob`, `TestChangelogWrite`,
+`commitWithLog` — passed raw marker strings as changelog payloads and **only
+ever worked because of the fail-open** they were nominally unrelated to. Closing
+N6 broke them; they now build well-formed payloads.
+
+Worth remembering when a fix breaks tests that "should" be unaffected: the
+suite may have been depending on the defect. That is evidence for the fix, not
+against it.
+
+## And one test was discarded for being green
+
+C7b wrote the obvious Begin→Close race test first. Under the mis-ordered
+`Close` it passed **60/60 rounds in three consecutive runs** — the reader has to
+execute one call after releasing its token, while the closer must be woken from
+a channel, so the window essentially never opens under test. It was discarded
+rather than shipped green. What ships holds the registry lock so the reader's
+`Release` parks on it, then reads pebble's own `Metrics().Snapshots.Count` at
+that instant.
+
 ## Commit sequence
 
 `--verify-mutations` refuses to run against a tree that differs from HEAD
