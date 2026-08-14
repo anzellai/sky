@@ -1810,22 +1810,24 @@ pub fn expected_path(patch: &str) -> String {
 pub fn g0_7_self_integrity(ctx: &Ctx) -> GateOutcome {
     let mut findings = static_checks();
 
-    let (cite_findings, cite_warnings, cite_total) = check_citations(ctx);
-    findings.extend(cite_findings);
+    let cites = check_citations(ctx);
+    findings.extend(cites.findings.iter().cloned());
+    let cite_warnings = &cites.warnings;
 
     // §9.6: a moved line is a warning, not a failure — surfaced on demand so a
     // signal that always fires never drowns the ones that matter.
     if ctx.verbose {
-        for w in &cite_warnings {
+        for w in cite_warnings {
             println!("  warn: {w}");
         }
     }
 
     if findings.is_empty() {
+        let scope = citation_scope(&cites);
         GateOutcome::pass(format!(
-            "3 static checks green over {} gates; {cite_total} citations in {CITATION_DOC} \
+            "3 static checks green over {} gates; {scope} \
              (outside its fenced illustrations — see `check_citations` for the scope and why it \
-             is one document) each resolve to exactly one file on their tagged branch, with the \
+             is one document) resolve to exactly one file on their tagged branch, with the \
              cited line inside that file, and every citation that names an identifier still \
              contains it ({} of them at a line that has MOVED — a warning by §9.6, not a finding, \
              so the cited line number is checked for existence, not for accuracy)",
@@ -2043,19 +2045,19 @@ pub const CITATION_DOC: &str = "docs/bluedb/v2-architecture.md";
 /// So this is a real limit, recorded in the title, and not a claim of coverage
 /// the body does not have. The day a second document adopts the tagged grammar,
 /// it belongs in this scope.
-fn check_citations(ctx: &Ctx) -> (Vec<String>, Vec<String>, usize) {
+fn check_citations(ctx: &Ctx) -> CitationReport {
     let doc_rel = CITATION_DOC;
     let Some(doc) = ctx.read(doc_rel) else {
-        return (
-            vec![format!("{doc_rel} is missing — G0.7 cannot check citations")],
-            vec![],
-            0,
-        );
+        return CitationReport {
+            findings: vec![format!("{doc_rel} is missing — G0.7 cannot check citations")],
+            ..CitationReport::default()
+        };
     };
 
     let cites = parse_citations(&doc);
     let mut findings = Vec::new();
     let mut warnings = Vec::new();
+    let mut skipped = 0usize;
     let mut branch_cache: BTreeMap<String, bool> = BTreeMap::new();
     let mut listing_cache: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
@@ -2080,6 +2082,13 @@ fn check_citations(ctx: &Ctx) -> (Vec<String>, Vec<String>, usize) {
                 .entry(branch.to_string())
                 .or_insert_with(|| git_rev_exists(ctx.root(), branch));
             if !known {
+                // Counted, not silently dropped. This `continue` used to leave
+                // the citation indistinguishable from a resolved one: `cite_total`
+                // was `cites.len()`, so the PASS detail asserted that every parsed
+                // citation resolved on its tagged branch while this arm had
+                // checked none of them. In a clone without `feat/bluedb` that is
+                // the difference between "all 40 resolve" and "0 were looked at".
+                skipped += 1;
                 warnings.push(format!(
                     "{doc_rel}:{}: [{tag}] branch `{branch}` is not present in this clone — `{}:{}` unresolvable here",
                     c.line_no, c.path, c.line
@@ -2135,7 +2144,100 @@ fn check_citations(ctx: &Ctx) -> (Vec<String>, Vec<String>, usize) {
         }
     }
 
-    (findings, warnings, cites.len())
+    CitationReport {
+        findings,
+        warnings,
+        total: cites.len(),
+        skipped,
+    }
+}
+
+/// What a citation sweep actually established, kept apart from what it parsed.
+///
+/// `total` is every citation found in the document; `skipped` is those whose
+/// `[tag]` names a branch this clone does not have. `resolved` is the
+/// difference — and it is the only number a PASS may claim, because it is the
+/// only one this run has evidence for. Collapsing the two (reporting `total` as
+/// though it were `resolved`) is the exact shape of the defect class this
+/// harness exists to catch: a green result whose text describes work that did
+/// not happen.
+#[derive(Default)]
+struct CitationReport {
+    findings: Vec<String>,
+    warnings: Vec<String>,
+    total: usize,
+    skipped: usize,
+}
+
+impl CitationReport {
+    fn resolved(&self) -> usize {
+        self.total.saturating_sub(self.skipped)
+    }
+}
+
+/// The scope clause of G0.7's PASS detail.
+///
+/// Extracted from the gate body for one reason: in a clone that has every
+/// tagged branch — which is every clone this harness has ever run in — the
+/// skipped arm never executes, so a PASS proves nothing about what the gate
+/// would say when it does. A pure function over a `CitationReport` can be
+/// driven into that state by a test, which is the difference between the
+/// accounting being asserted and being executed.
+fn citation_scope(report: &CitationReport) -> String {
+    if report.skipped == 0 {
+        format!("all {} citations in {CITATION_DOC}", report.total)
+    } else {
+        // The shortfall is stated before the total, because it is the number
+        // that bounds what this PASS means.
+        format!(
+            "{} of the {} citations in {CITATION_DOC} ({} SKIPPED — their [tag] branch is \
+             absent from this clone, so this run says nothing about them)",
+            report.resolved(),
+            report.total,
+            report.skipped
+        )
+    }
+}
+
+#[cfg(test)]
+mod citation_scope_tests {
+    use super::{citation_scope, CitationReport};
+
+    #[test]
+    fn a_full_sweep_claims_every_citation() {
+        let r = CitationReport {
+            total: 138,
+            skipped: 0,
+            ..CitationReport::default()
+        };
+        assert_eq!(citation_scope(&r), format!("all 138 citations in {}", super::CITATION_DOC));
+    }
+
+    #[test]
+    fn a_partial_sweep_claims_only_what_it_checked() {
+        let r = CitationReport {
+            total: 138,
+            skipped: 40,
+            ..CitationReport::default()
+        };
+        let s = citation_scope(&r);
+        // The three properties that make this PASS honest: it claims 98, not
+        // 138; it says the word SKIPPED so a reader cannot miss the shortfall;
+        // and it never opens with "all".
+        assert!(s.starts_with("98 of the 138"), "claimed the wrong count: {s}");
+        assert!(s.contains("40 SKIPPED"), "did not surface the shortfall: {s}");
+        assert!(!s.contains("all 138"), "claimed a full sweep it did not do: {s}");
+    }
+
+    #[test]
+    fn skipping_everything_claims_nothing() {
+        let r = CitationReport {
+            total: 138,
+            skipped: 138,
+            ..CitationReport::default()
+        };
+        assert!(citation_scope(&r).starts_with("0 of the 138"));
+    }
 }
 
 fn git_rev_exists(root: &Path, rev: &str) -> bool {
