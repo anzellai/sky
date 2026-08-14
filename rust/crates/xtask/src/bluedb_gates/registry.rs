@@ -274,7 +274,16 @@ pub static REGISTRY: &[Gate] = &[
     Gate {
         id: "G0.1",
         goal: 0,
-        title: "STATUS.md is generated and matches a fresh run (hand edits detected)",
+        // NARROWED to what the body proves. It read "…and matches a fresh run
+        // (hand edits detected)"; the body checks the GENERATED banner and the
+        // trailing `body-sha256`, and nothing here re-renders the file to
+        // compare against. The fresh-run comparison lives in `--check`, which
+        // CANNOT run inside a gate: the fast tier regenerates `STATUS.md` as
+        // part of the same invocation, so a post-run comparison always compares
+        // the file with itself. `docs/bluedb/P1-STAGE2-PLAN.md` asked for the
+        // narrowing AND for `--check` to be wired; the second half is not
+        // implementable in this position, so the title states the first.
+        title: "STATUS.md is generated output: GENERATED banner + a body-sha256 that matches its body (hand edits detected)",
         tier: Tier::Fast,
         run: gates_g0::g0_1_status_generated,
         budget_s: 30,
@@ -722,14 +731,38 @@ pub static REGISTRY: &[Gate] = &[
         tier: Tier::Fast,
         run: gates_g2_13::g2_13a_iterate_bounds,
         budget_s: 300,
-        mutations: Mutations::new(&[Mutation {
-            id: "G2.13a/iterate-bounds-end-in-a-user-byte",
-            patch: "docs/bluedb/mutations/G2.13a.iterate-bounds-end-in-a-user-byte.patch",
-            // Verbatim from the observed failure of collNameLen=30 under the
-            // reverted bound construction: 2 rows where 1 was required, err=nil.
-            expect: "cross-collection leakage (another collection's rows scanned as this one's)",
-            targets: &["runtime-go/bluedb/reader.go"],
-        }]),
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.13a/iterate-bounds-end-in-a-user-byte",
+                patch: "docs/bluedb/mutations/G2.13a.iterate-bounds-end-in-a-user-byte.patch",
+                // Verbatim from the observed failure of collNameLen=30 under the
+                // reverted bound construction: 2 rows where 1 was required.
+                //
+                // It is the LEAKAGE branch specifically. Until 2026-08-14 the
+                // fixture printed both diagnoses from one `t.Fatalf` on any
+                // row-count deviation, so this string appeared in a transcript
+                // whose actual failure was `returned 0 rows` — the opposite
+                // regime — and the declared assertion could not discriminate
+                // its own defect. The fixture now emits one assertion per
+                // regime; this names the >1-row one.
+                expect: "cross-collection leakage (another collection's rows scanned as this one's)",
+                targets: &["runtime-go/bluedb/reader.go"],
+            },
+            // The two SHORT collection names (28, 29) are correct by luck of
+            // the length, so no revert of N1's fix can redden them — they were
+            // pinned leaves falsified by nothing. A degenerate `[lower, lower)`
+            // upper bound is the same class (a silent empty collection) at
+            // EVERY length, so it covers the two controls as well as the six.
+            Mutation {
+                id: "G2.13a/degenerate-upper-bound",
+                patch: "docs/bluedb/mutations/G2.13a.degenerate-upper-bound.patch",
+                // Verbatim from the observed failure, and the ZERO-ROW branch —
+                // deliberately the other one, so the two mutations of this gate
+                // prove the two regimes separately.
+                expect: "inverted bounds (a silent empty collection): the scan is indistinguishable from a",
+                targets: &["runtime-go/bluedb/reader.go"],
+            },
+        ]),
     },
     Gate {
         id: "G2.13b",
@@ -789,14 +822,29 @@ pub static REGISTRY: &[Gate] = &[
         tier: Tier::Fast,
         run: gates_g2_13::g2_13e_readts_pinned_with_snapshot,
         budget_s: 300,
-        mutations: Mutations::new(&[Mutation {
-            id: "G2.13e/snapshot-readts-is-the-in-memory-high-water",
-            patch: "docs/bluedb/mutations/G2.13e.snapshot-readts-is-the-in-memory-high-water.patch",
-            // Verbatim. The patch moves ONLY the readTs choice: N4's
-            // closed-check-and-pin section stays, so G2.13f is untouched by it.
-            expect: "the ASSIGNED-but-unapplied commitTs.",
-            targets: &["runtime-go/bluedb/pebble_engine.go"],
-        }]),
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.13e/snapshot-readts-is-the-in-memory-high-water",
+                patch: "docs/bluedb/mutations/G2.13e.snapshot-readts-is-the-in-memory-high-water.patch",
+                // Verbatim. The patch moves ONLY the readTs choice: N4's
+                // closed-check-and-pin section stays, so G2.13f is untouched by it.
+                expect: "the ASSIGNED-but-unapplied commitTs.",
+                targets: &["runtime-go/bluedb/pebble_engine.go"],
+            },
+            // The PROPERTY arm is insensitive to the mutation above — a readTs
+            // that is too HIGH still leaves every acked commit visible — so it
+            // was a pinned leaf falsified by nothing. What violates "sees every
+            // commit at or below its readTs" is the visibility boundary itself:
+            // `commitTs < readTs` instead of `<=`, which makes a reader unable
+            // to serve the very commit it names.
+            Mutation {
+                id: "G2.13e/mvcc-visibility-excludes-the-readts-itself",
+                patch: "docs/bluedb/mutations/G2.13e.mvcc-visibility-excludes-the-readts-itself.patch",
+                // Verbatim from the property arm's own failure.
+                expect: "Its readTs names a commit outside its own pinned snapshot — defect H1.",
+                targets: &["runtime-go/bluedb/reader.go"],
+            },
+        ]),
     },
     Gate {
         id: "G2.13f",
@@ -810,14 +858,41 @@ pub static REGISTRY: &[Gate] = &[
         tier: Tier::Full,
         run: gates_g2_13::g2_13f_close_quiesces_readers,
         budget_s: 600,
-        mutations: Mutations::new(&[Mutation {
-            id: "G2.13f/close-does-not-quiesce-readers",
-            patch: "docs/bluedb/mutations/G2.13f.close-does-not-quiesce-readers.patch",
-            // Verbatim from the observed failure: Close returned pebble's own
-            // "leaked snapshots" error while the transaction's reader was pinned.
-            expect: "handle underneath a live reader, whose next operation panics inside pebble",
-            targets: &["runtime-go/bluedb/pebble_engine.go"],
-        }]),
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.13f/close-does-not-quiesce-readers",
+                patch: "docs/bluedb/mutations/G2.13f.close-does-not-quiesce-readers.patch",
+                // Verbatim from the observed failure: Close returned pebble's own
+                // "leaked snapshots" error while the transaction's reader was pinned.
+                expect: "handle underneath a live reader, whose next operation panics inside pebble",
+                targets: &["runtime-go/bluedb/pebble_engine.go"],
+            },
+            // Two of this gate's four arms were falsified by nothing. Each gets
+            // the mutation that reddens it DETERMINISTICALLY — neither relies
+            // on winning the race the arm is about, because a mutation that
+            // only sometimes fires records VACUOUS the times it does not.
+            //
+            // The concurrent-snapshot arm ends in two post-Close assertions:
+            // a closed engine must refuse, not read as an empty store.
+            Mutation {
+                id: "G2.13f/closed-engine-reads-as-an-empty-store",
+                patch: "docs/bluedb/mutations/G2.13f.closed-engine-reads-as-an-empty-store.patch",
+                // Verbatim. `snapshotAt` returns a reader whose Err() is nil, so
+                // the time-travel path after Close reads as an empty store and
+                // a transaction has nothing to fail closed on. Never reaches
+                // pebble, so it cannot panic the test binary instead.
+                expect: "snapshotAt() after Close reports Err() =",
+                targets: &["runtime-go/bluedb/pebble_engine.go"],
+            },
+            // The Begin-path arm: the ORDER of the two statements in
+            // pebbleReader.Close, which C7 recorded rather than fixed.
+            Mutation {
+                id: "G2.13f/token-released-before-the-snapshot",
+                patch: "docs/bluedb/mutations/G2.13f.token-released-before-the-snapshot.patch",
+                expect: "snapshot(s) STILL OPEN. The token is what the close drain counts, so between that",
+                targets: &["runtime-go/bluedb/reader.go"],
+            },
+        ]),
     },
     Gate {
         id: "G2.13g",
@@ -875,7 +950,81 @@ pub static REGISTRY: &[Gate] = &[
             // route through decodePayload there; reader.go / txn.go /
             // pebble_engine.go — G2.13a–g's targets — are untouched.
             targets: &["runtime-go/bluedb/committer.go"],
-        }]),
+        },
+        // FOUR mutations, one per door, because the gate pins six leaves and
+        // the mutation above reddens three of them. The other three — the N6
+        // CONTROL arm and the two remaining C6b doors — were falsified by
+        // nothing, and an empty Go test emits `pass`, so their bodies could
+        // have been gutted with this gate staying green AND PROVEN. See
+        // `gates_g2_13.rs`'s LEAF_COVERAGE, which records the leaf each
+        // mutation's RED transcript actually turned red and is checked against
+        // that transcript.
+        Mutation {
+            id: "G2.13h/pending-window-does-not-see-the-batch",
+            patch: "docs/bluedb/mutations/G2.13h.pending-window-does-not-see-the-batch.patch",
+            // Verbatim from the observed failure of the CONTROL arm with the
+            // intra-batch half of the window dropped from validate()'s input:
+            // the txn that had read the key committed clean.
+            expect: "validate() do not detect this conflict at",
+            targets: &["runtime-go/bluedb/committer.go"],
+        },
+        Mutation {
+            id: "G2.13h/advance-on-an-unknown-token-returns-nil",
+            patch: "docs/bluedb/mutations/G2.13h.advance-on-an-unknown-token-returns-nil.patch",
+            // Verbatim from the observed failure with Advance's
+            // ErrUnknownReader restored to the pre-fix `return nil`.
+            expect: "the caller then reads at a readTs GC may collect underneath it",
+            targets: &["runtime-go/bluedb/watermark.go"],
+        },
+        Mutation {
+            id: "G2.13h/corrupt-cold-start-seed-leaves-the-floor-low",
+            patch: "docs/bluedb/mutations/G2.13h.corrupt-cold-start-seed-leaves-the-floor-low.patch",
+            // Verbatim from the observed failure with the per-entry decode
+            // error dropped on the floor again: floor {0,0} where persistedHi
+            // was required.
+            expect: "lower floor means after(readTs) answers `not spilled` for a range the ring does NOT",
+            targets: &["runtime-go/bluedb/pebble_engine.go"],
+        },
+        ]),
+    },
+    // G2.13i — the two Stage-1 remedies that shipped with NO test.
+    //
+    // `gc.go`'s corrupt-key count + per-pass abort and `changelog.go`'s
+    // fail-closed on a malformed key were both authored, both argued for in
+    // their docstrings, and neither was ever executed by anything. The second is
+    // the one `P1-STAGE2-PLAN.md` ranks risk #5 — "`changelog.go` gets
+    // `continue` by mechanical analogy with `gc.go`, silently breaking
+    // serializability" — so the remedy against the plan's own named risk was
+    // unguarded.
+    //
+    // TWO mutations, because there are two files and two doors: a single
+    // mutation would leave whichever half it did not touch falsifiable by
+    // nothing, which is precisely the finding this gate exists in answer to.
+    Gate {
+        id: "G2.13i",
+        goal: 2,
+        title: "corrupt keys fail the operation closed (GC counts + aborts; the changelog refuses)",
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13i_corrupt_keys_fail_closed,
+        budget_s: 300,
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.13i/gc-skips-corrupt-keys-without-bound",
+                patch: "docs/bluedb/mutations/G2.13i.gc-skips-corrupt-keys-without-bound.patch",
+                // Verbatim from the observed failure of the counted-skip arm
+                // under a bare `continue`: CorruptKeys = 0 where 3 were met.
+                expect: "A skip that is not counted is a permanent and INVISIBLE leak of the fault",
+                targets: &["runtime-go/bluedb/gc.go"],
+            },
+            Mutation {
+                id: "G2.13i/changelog-skips-a-corrupt-key",
+                patch: "docs/bluedb/mutations/G2.13i.changelog-skips-a-corrupt-key.patch",
+                // Verbatim from the observed failure under the plan's risk #5:
+                // Tail returned 3 entries and err=nil over a malformed key.
+                expect: "A changelog key that does not parse must fail the read, never be skipped",
+                targets: &["runtime-go/bluedb/changelog.go"],
+            },
+        ]),
     },
     // -- Goal 3 — easy + simple (P4) ---------------------------------------
     Gate {

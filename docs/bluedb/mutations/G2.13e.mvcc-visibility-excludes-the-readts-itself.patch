@@ -1,0 +1,32 @@
+diff --git a/runtime-go/bluedb/reader.go b/runtime-go/bluedb/reader.go
+index 6feedcd1..2d34ff3c 100644
+--- a/runtime-go/bluedb/reader.go
++++ b/runtime-go/bluedb/reader.go
+@@ -115,6 +115,15 @@ func (r *pebbleReader) Get(userKey []byte) (value []byte, commitTs HLC, ok bool)
+ 		// read-set would then carry a dependency on a version that never existed.
+ 		return nil, HLC{}, false
+ 	}
++	// MUTATION G2.13e (H1): the visibility predicate is STRICT — commitTs < readTs
++	// where §2.5 says commitTs <= readTs. The seek still lands on the newest version at
++	// or below readTs; this drops the boundary one. A reader therefore cannot see the
++	// commit its own readTs NAMES, which is exactly the property "a snapshot sees every
++	// commit at or below its readTs" denies — and since Snapshot's readTs is durableHi,
++	// the version it hides is the last durable commit, on every snapshot.
++	if !ts.Less(r.readTs) {
++		return nil, HLC{}, false
++	}
+ 	v := iter.Value()
+ 	if e := iter.Error(); e != nil {
+ 		// A lazily-fetched value can fail its block read AFTER positioning succeeded. Same
+@@ -288,6 +297,11 @@ func (c *pebbleCursor) Next() bool {
+ 			// already this prefix, so the loop's next seek jumps past it.
+ 			continue
+ 		}
++		// MUTATION G2.13e (H1): the same strict predicate on the scan path, so Get and
++		// Iterate stay consistent with each other while both disagree with §2.5.
++		if !ts.Less(c.readTs) {
++			continue
++		}
+ 		v := c.iter.Value()
+ 		if len(v) == 0 || v[0] == markerTombstone {
+ 			continue // tombstoned as-of readTs — skip

@@ -91,11 +91,29 @@ func TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes(t *testing.T) {
 			}
 			scanErr := c.Err()
 
-			if len(got) != 1 {
-				t.Fatalf("collName len %d: Iterate(%q‖0x1F) returned %d rows %q, want exactly 1 (%q); err=%v\n"+
-					"  >1 row  = cross-collection leakage (another collection's rows scanned as this one's)\n"+
-					"  0 rows  = inverted bounds (a silent empty collection)",
+			// TWO deviations, TWO assertions — not one message carrying a legend.
+			//
+			// The single `len(got) != 1` Fatalf that used to live here printed BOTH
+			// diagnoses unconditionally, so its text was evidence for neither: G2.13a
+			// declares "cross-collection leakage" as the assertion its mutation must
+			// make fire, and the recorded RED transcript showed that phrase printed by
+			// a run whose actual failure was `returned 0 rows` — the OPPOSITE regime.
+			// An `expect` string that cannot discriminate its own defect proves nothing
+			// about it, and `mutations.rs` classifies purely on that string's presence.
+			//
+			// The two regimes have different causes and different consequences (>1 row
+			// = another collection's rows scanned as this one's; 0 rows = a scan
+			// indistinguishable from an empty collection), so each states its own.
+			switch {
+			case len(got) > 1:
+				t.Fatalf("collName len %d: Iterate(%q‖0x1F) returned %d rows %q, want exactly 1 (%q); err=%v — "+
+					"cross-collection leakage (another collection's rows scanned as this one's)",
 					n, nameA, len(got), got, keyA, scanErr)
+			case len(got) == 0:
+				t.Fatalf("collName len %d: Iterate(%q‖0x1F) returned zero rows, want exactly 1 (%q); err=%v — "+
+					"inverted bounds (a silent empty collection): the scan is indistinguishable from a "+
+					"collection that has no rows",
+					n, nameA, keyA, scanErr)
 			}
 			if got[0] != string(keyA) {
 				t.Fatalf("collName len %d: Iterate returned %q, want %q", n, got[0], keyA)
@@ -538,11 +556,24 @@ func TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot(t *testing.T) {
 // whatever readTs a Snapshot announces, its pinned view contains every commit at or
 // below it. That is the whole content of "snapshot-consistent as of readTs".
 //
-// This arm is racy by nature — it hammers Snapshot() against a live committer hoping to
-// land inside the assign→Apply window — so it SUPPORTS the proof rather than carrying
-// it; TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot above is the deterministic one.
-// It is worth running under -race regardless: the fix moves the readTs read inside
-// durMu, and a torn read of durableHiVal would surface here.
+// This arm hammers Snapshot() against a live committer, so it SUPPORTS the proof rather
+// than carrying it; TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot above is the
+// deterministic one. It is worth running under -race regardless: the fix moves the readTs
+// read inside durMu, and a torn read of durableHiVal would surface here.
+//
+// IT USED TO INSPECT NOTHING, AND NOT RACILY — DETERMINISTICALLY. The reader loop below
+// only examines keys whose commit had already ACKED (`upto`), and the writer's FIRST
+// commit takes ~5 ms to fsync while all 300 Snapshot() iterations complete in under 5 ms.
+// Measured over three runs while authoring a mutation for this leaf: `maxUpto = 0`,
+// `inspections = 0`, every time. The inner loop — the entire assertion — never ran, the
+// test passed in every conceivable state of the engine, and no mutation could redden it.
+// A "racy" test that in practice never reaches its assertion is not weak evidence; it is
+// none.
+//
+// Two lines fix it and they are both load-bearing: WAIT for the first ack before reading
+// (so `upto` is non-zero and the boundary case `ts == readTs` is exercised — ~300 of them
+// per run), and COUNT the inspections so a future change that silently empties the loop
+// again fails instead of passing.
 func TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs(t *testing.T) {
 	clk := &fakeClock{}
 	clk.set(7000)
@@ -576,6 +607,19 @@ func TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs(t *testing.T) {
 		}
 	}()
 
+	// Wait for the first ACK. Without this the loop below inspects zero keys on every
+	// iteration (see the note above) and the test asserts nothing at all.
+	for waited := 0; lastCommitted.Load() == 0; waited++ {
+		if waited > 10_000 {
+			close(stop)
+			<-done
+			t.Fatalf("fixture: the writer acked no commit in 10s, so `upto` would be 0 on every " +
+				"iteration and the reader loop would inspect NOTHING")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	inspected := 0
 	for n := 0; n < iterations; n++ {
 		r, err := e.Snapshot()
 		if err != nil {
@@ -590,6 +634,7 @@ func TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs(t *testing.T) {
 			if readTs.Less(ts) {
 				continue // committed above this reader's view — correctly invisible
 			}
+			inspected++
 			if _, _, ok := r.Get([]byte(fmt.Sprintf("h1-prop-%04d", i))); !ok {
 				r.Close()
 				close(stop)
@@ -603,6 +648,14 @@ func TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs(t *testing.T) {
 	}
 	close(stop)
 	<-done
+
+	// The coverage assertion, and it is not a formality: this test spent its whole life
+	// green with `inspected == 0`.
+	if inspected == 0 {
+		t.Fatalf("the reader loop examined ZERO (readTs, commit) pairs across %d snapshots — every "+
+			"acked commit was above every reader's readTs, or none had acked yet. Nothing about "+
+			"snapshot consistency was checked; fix the fixture, do not weaken the assertion.", iterations)
+	}
 }
 
 // TestAuditN4CloseDoesNotPanicConcurrentSnapshot pins the first half of defect N4: a
@@ -1828,5 +1881,392 @@ func TestAuditN4GCPassIsPinnedAgainstAConcurrentClose(t *testing.T) {
 	if closeErr != nil {
 		t.Fatalf("Close returned %v; with the pass pinned, the bounded drain must wait it out and "+
 			"then close cleanly", closeErr)
+	}
+}
+
+// auditS1CorruptDataKey builds a key that lives in the DATA keyspace (tag 0x00) and that
+// decodeDataVersion CANNOT parse. It is a well-formed versioned key whose trailing LENGTH
+// byte has rotted from 0x0D to 0x00 — the shape bit-rot or a partial write produces, not a
+// shape any writer in this package can emit. decodeDataVersion rejects it (the trailing
+// byte is not dataLenByte) while skydbSplit still treats it as a flat key, so Pebble orders
+// it without complaint: exactly the "unreadable but present" key the remedy is about.
+//
+// The user-key part sorts strictly AFTER the single-letter data keys these tests commit,
+// which is load-bearing for the abort arm: the genuine stale-version delete is queued into
+// the batch BEFORE the corrupt run is reached, so "nothing was deleted" after an abort
+// proves the batch was DISCARDED rather than merely never populated.
+func auditS1CorruptDataKey(n int) []byte {
+	k := encodeDataKey([]byte(fmt.Sprintf("zz-corrupt-%05d", n)), HLC{WallMs: uint64(n) + 1, Logical: 1})
+	k[len(k)-1] = unversioned
+	return k
+}
+
+// auditS1PlantCorruptDataKeys writes `n` unparseable data keys into a CLOSED store through
+// a raw Pebble handle — behind the engine's back, the same technique
+// TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs and
+// TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor use. It returns the keys it planted so
+// the caller can assert they SURVIVED the pass (GC must never delete what it cannot read).
+func auditS1PlantCorruptDataKeys(t *testing.T, dir string, n int) [][]byte {
+	t.Helper()
+	raw, err := pebble.Open(dir, &pebble.Options{Comparer: skydbComparer, Logger: quietLogger{}})
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	b := raw.NewBatch()
+	planted := make([][]byte, 0, n)
+	for i := 0; i < n; i++ {
+		k := auditS1CorruptDataKey(i)
+		if _, ok := decodeDataVersion(k); ok {
+			_ = b.Close()
+			_ = raw.Close()
+			t.Fatalf("fixture: the planted key %x DECODES as a versioned data key, so GC would "+
+				"never take the misparse arm and this test would prove nothing", k)
+		}
+		if err := b.Set(k, []byte{markerPut, 'x'}, nil); err != nil {
+			_ = b.Close()
+			_ = raw.Close()
+			t.Fatalf("plant corrupt data key %d: %v", i, err)
+		}
+		planted = append(planted, k)
+	}
+	if err := raw.Apply(b, pebble.Sync); err != nil {
+		_ = b.Close()
+		_ = raw.Close()
+		t.Fatalf("apply planted keys: %v", err)
+	}
+	if err := b.Close(); err != nil {
+		_ = raw.Close()
+		t.Fatalf("batch close: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("raw close: %v", err)
+	}
+	return planted
+}
+
+// auditS1HasRawKey reports whether an EXACT physical key is present, bypassing every layer
+// of MVCC resolution — the only probe that can tell "GC left the unreadable key alone" from
+// "GC deleted the evidence".
+func auditS1HasRawKey(t *testing.T, e *pebbleEngine, key []byte) bool {
+	t.Helper()
+	v, closer, err := e.db.Get(key)
+	if err == pebble.ErrNotFound {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("raw get %x: %v", key, err)
+	}
+	_ = v
+	_ = closer.Close()
+	return true
+}
+
+// TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys pins the Stage-1 remedy in
+// gc.go's delete loop (gc.go, the `ts, ok := decodeDataVersion(k)` arm).
+//
+// decodeDataVersion used to return a bare HLC. A key it could not parse therefore read back
+// as {0,0} — a commitTs strictly below every threshold — so GC treated it as provably dead
+// and PHYSICALLY DELETED it. That destroys the only remaining evidence of the fault: the
+// corrupt key is gone, no counter records it, and the operator learns nothing. Stage-1 made
+// the decode (HLC, bool), and the remedy has THREE parts, not one:
+//
+//   - SKIP the key. GC has no basis on which to call an unreadable key dead.
+//   - COUNT it in GCStats.CorruptKeys. Skipping alone leaks the key permanently and
+//     invisibly: the pass bounds cover the whole data keyspace, so every later pass
+//     re-visits the same key forever and nothing on the outside ever learns that it did.
+//   - ABORT the pass once the count exceeds maxCorruptKeysPerPass. One stray key is a datum
+//     worth surfacing in stats; thousands means the KEYSPACE is damaged (or was written by
+//     a format this build does not understand), and sweeping it silently on every pass,
+//     forever, is worse than refusing to sweep it at all.
+//
+// Both halves are exercised because they fail in opposite directions: an implementation
+// that only skips passes an abort-free test, and an implementation that only aborts passes
+// a skip-only test while refusing to make progress over a single stray key.
+//
+// The assertions are CONSEQUENCES, not shapes. "GC returned an error" alone would also pass
+// against a wrong fix, so the abort arm additionally proves that the stale version whose
+// delete was already queued into the batch is STILL ON DISK: the abort returns before the
+// batch is applied, so a pass that cannot trust the keyspace changes nothing. And the skip
+// arm proves the unreadable keys themselves survived, which is the whole point of not
+// deleting what you cannot read.
+//
+// FIXTURE-VACUITY GUARDS. auditS1PlantCorruptDataKeys asserts every planted key really is
+// undecodable before it is written (a key that parses would never reach the arm under
+// test), each arm asserts GCStats.CorruptKeys is non-zero (a pass that never met the
+// corruption proves nothing about what it does when it does), and the abort arm asserts the
+// count stopped AT the bound rather than at the end of the planted run — which is what
+// distinguishes "aborted" from "scanned everything and happened to error".
+func TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys(t *testing.T) {
+	// seed opens a store, writes three versions of one user-key (so exactly one version is
+	// a genuine GC candidate: the newest-below-T is kept, the strictly-older one dies),
+	// closes it, plants `corrupt` unparseable data keys behind its back, and reopens.
+	seed := func(t *testing.T, wallMs int64, corrupt int) (*pebbleEngine, HLC, [][]byte) {
+		t.Helper()
+		dir := t.TempDir()
+		clk := &fakeClock{}
+		clk.set(wallMs)
+
+		e1, err := openWith(config{dir: dir, wallClock: clk.fn()})
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		t1 := put(t, e1, "K", "v1") // the strictly-older version: the one real GC candidate
+		_ = put(t, e1, "K", "v2")   // the newest version below T: kept
+		_ = put(t, e1, "K", "v3")   // at/above T: kept
+		if err := e1.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+		if t1.IsZero() {
+			t.Fatalf("fixture: the stale version's commitTs is the fresh-store sentinel, so the " +
+				"delete this test watches for would never be queued")
+		}
+
+		planted := auditS1PlantCorruptDataKeys(t, dir, corrupt)
+
+		e2, err := openWith(config{dir: dir, wallClock: clk.fn()})
+		if err != nil {
+			t.Fatalf("reopen over %d unparseable data keys = %v; the store itself is intact and "+
+				"GC has a defined answer for them, so refusing to open is the wrong remedy", corrupt, err)
+		}
+		t.Cleanup(func() { _ = e2.Close() })
+		return e2, t1, planted
+	}
+
+	t.Run("a-few-are-skipped-counted-and-the-pass-still-completes", func(t *testing.T) {
+		const corrupt = 3
+		e, t1, planted := seed(t, 71000, corrupt)
+
+		st, err := e.GC()
+		if err != nil {
+			t.Fatalf("a pass over %d unparseable data keys returned %v, want nil. Three stray "+
+				"keys are a datum, not a diagnosis: the pass must skip them, record them, and "+
+				"finish its real work. Refusing to collect anything at all because one key on "+
+				"disk is unreadable hands the operator a store whose version history grows "+
+				"without bound.", corrupt, err)
+		}
+		if st.CorruptKeys != corrupt {
+			t.Fatalf("the pass met %d unparseable data keys and reported GCStats.CorruptKeys = %d. "+
+				"A skip that is not counted is a permanent and INVISIBLE leak of the fault: the "+
+				"pass bounds its scan over the WHOLE data keyspace, so every later pass re-visits "+
+				"the same unreadable key forever and nothing outside the loop ever learns that it "+
+				"did. The counter is the only record that the keyspace is damaged, and it is the "+
+				"quantity the per-pass abort is computed from — an uncounted skip disables the "+
+				"abort as surely as deleting it does.",
+				corrupt, st.CorruptKeys)
+		}
+		if st.VersionsDeleted < 1 {
+			t.Fatalf("the pass deleted %d versions; the fixture left exactly one collectible "+
+				"stale version, so a completed pass must have collected it. A pass that skips "+
+				"the corrupt keys but also abandons its real work is a silent no-op wearing a "+
+				"success return.", st.VersionsDeleted)
+		}
+		if auditS1HasRawKey(t, e, encodeDataKey([]byte("K"), t1)) {
+			t.Fatalf("the stale version K@%+v survived a completed pass — the fixture's one real "+
+				"GC candidate was not collected, so this arm is not observing a working pass at "+
+				"all", t1)
+		}
+		for _, k := range planted {
+			if !auditS1HasRawKey(t, e, k) {
+				t.Fatalf("a data key the pass could not parse was DELETED (%x is gone). "+
+					"GC must never delete a key it cannot read: that key is the only surviving "+
+					"evidence of the fault, and deleting it is precisely the pre-Stage-1 "+
+					"behaviour, where a misparse read back as commitTs {0,0} and therefore as "+
+					"older than every conceivable threshold.", k)
+			}
+		}
+	})
+
+	t.Run("past-the-per-pass-bound-the-pass-aborts-and-deletes-nothing", func(t *testing.T) {
+		// Comfortably past the bound, so the count can be asserted to have stopped AT the
+		// bound rather than at the end of the planted run.
+		const corrupt = maxCorruptKeysPerPass + 176
+		e, t1, planted := seed(t, 72000, corrupt)
+
+		st, err := e.GC()
+		if !errors.Is(err, ErrCorruptDataKeys) {
+			t.Fatalf("the pass swept %d unparseable data keys — past the per-pass bound of %d — "+
+				"and returned err = %v, want ErrCorruptDataKeys. "+
+				"An unbounded skip turns a damaged keyspace into a silent, permanent no-op: the "+
+				"pass reports success, re-scans the same unreadable keys on every future pass "+
+				"forever, and no operator is ever told the store cannot be read. One stray key "+
+				"is a datum; thousands is a diagnosis, and the pass has to stop and say so.",
+				st.CorruptKeys, maxCorruptKeysPerPass, err)
+		}
+		if st.CorruptKeys != maxCorruptKeysPerPass+1 {
+			t.Fatalf("the aborting pass reported GCStats.CorruptKeys = %d over %d planted keys, "+
+				"want exactly %d — the pass must stop AT the bound, not run the keyspace to its "+
+				"end and error afterwards. A count equal to the planted run means the abort is "+
+				"a post-hoc verdict on a full sweep rather than a bound on the work.",
+				st.CorruptKeys, corrupt, maxCorruptKeysPerPass+1)
+		}
+		if st.VersionsDeleted < 1 {
+			t.Fatalf("the aborted pass reported %d queued deletes; the fixture's collectible "+
+				"stale version sorts BEFORE the corrupt run, so a pass that aborted at the bound "+
+				"must already have queued it. Zero means the fixture never reached the delete "+
+				"arm and the next assertion would be vacuous.", st.VersionsDeleted)
+		}
+		if !auditS1HasRawKey(t, e, encodeDataKey([]byte("K"), t1)) {
+			t.Fatalf("the aborted pass DELETED the stale version K@%+v anyway. "+
+				"The abort returns BEFORE the batch is applied precisely so that a pass which "+
+				"has decided it cannot trust the keyspace changes nothing on disk. A half-issued "+
+				"GC over a store the same pass just declared unreadable is worse than either "+
+				"finishing or refusing.", t1)
+		}
+		for _, k := range planted[:8] {
+			if !auditS1HasRawKey(t, e, k) {
+				t.Fatalf("an unparseable data key was deleted by the aborting pass (%x is gone); "+
+					"the abort is a diagnosis, not a repair, and it must leave the damaged "+
+					"keyspace exactly as it found it", k)
+			}
+		}
+	})
+}
+
+// TestAuditS1ChangelogTailFailsClosedOnACorruptKey pins the Stage-1 remedy in
+// changelog.go's Tail loop (the `ts, tsOK := changelogTsOf(iter.Key())` arm).
+//
+// changelogTsOf became (HLC, bool) in Stage-1, and the remedy on the `false` arm is an
+// ERROR. It is NOT `continue`, and the distinction is the single easiest way to break
+// serializability in this package — which is why the plan (docs/bluedb/P1-STAGE2-PLAN.md,
+// "Risks, ranked" #5) names "changelog.go gets `continue` by mechanical analogy with
+// gc.go" as silently breaking serializability.
+//
+// The two keyspaces are NOT analogous. Skipping an unreadable key in gc.go declines to
+// delete something; skipping one here declines to REPORT something. Tail backs
+// changelogTailChanges, the Fix-8 spill fallback that computes a transaction's SSI
+// validation window. A skipped key silently drops a COMMITTED change out of that window, so
+// a phantom whose conflicting change lives at exactly that key is never seen and the
+// transaction commits: under-rejection, i.e. a serializability break, exactly the class
+// validate.go's contract forbids. Failing closed is already plumbed for — changelogTailChanges
+// converts the error into ErrConflict and the driver re-Begins at a fresher readTs.
+//
+// The assertions are the CONSEQUENCE rather than the shape. It is not enough that Tail
+// returns an error: it must return NO entries with it, because a truncated window handed
+// back alongside an error is worse than either alone — a caller that logs the error and
+// uses the slice validates against a window with a hole, which is the very outcome the
+// error exists to prevent.
+//
+// FIXTURE-VACUITY GUARDS, three of them. (1) A baseline Tail before the corruption is
+// planted must return all three seeded entries, proving the fixture built a window Tail can
+// actually walk. (2) A raw scan of the changelog keyspace after planting must find exactly
+// four keys, exactly one of which changelogTsOf rejects — proving the planted key landed
+// INSIDE the scanned bounds and really is unparseable. (3) A Tail of the sub-window ABOVE
+// the planted key must still succeed and return its entry, proving the failure is
+// attributable to the corrupt key rather than to a changelog that has stopped working.
+func TestAuditS1ChangelogTailFailsClosedOnACorruptKey(t *testing.T) {
+	dir := t.TempDir()
+	clk := &fakeClock{}
+	clk.set(74000)
+
+	e1, err := openWith(config{dir: dir, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	ts1 := commitWithLog(t, e1, "s1-cl-a", "v1", "chg-a")
+	ts2 := commitWithLog(t, e1, "s1-cl-b", "v2", "chg-b")
+	ts3 := commitWithLog(t, e1, "s1-cl-c", "v3", "chg-c")
+
+	// GUARD 1: the seeded window is walkable before anything is corrupted.
+	baseline, err := e1.Changelog().Tail(HLC{})
+	if err != nil {
+		t.Fatalf("fixture: Tail over the uncorrupted changelog failed with %v, so the corrupt "+
+			"case below could not be attributed to the corruption", err)
+	}
+	if len(baseline) != 3 {
+		t.Fatalf("fixture: Tail over the uncorrupted changelog returned %d entries, want 3 "+
+			"(commitTs %+v/%+v/%+v) — a window this test never built cannot be holed",
+			len(baseline), ts1, ts2, ts3)
+	}
+	if err := e1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Plant a malformed key INSIDE the changelog keyspace, behind the engine's back: a
+	// changelog key whose fixed-width (tag ‖ ts12 ‖ 0x00) body has been truncated mid-HLC.
+	// changelogTsOf rejects it on length; skydbSplit still reads it as a flat key, so Pebble
+	// stores and orders it happily — the "present but unreadable" shape bit-rot produces.
+	full := encodeChangelogKey(ts2)
+	bad := append(append([]byte(nil), full[:1+8]...), unversioned)
+	if _, ok := changelogTsOf(bad); ok {
+		t.Fatalf("fixture: the planted key %x PARSES as a changelog key, so Tail would never "+
+			"take the arm under test and this test would prove nothing", bad)
+	}
+	raw, err := pebble.Open(dir, &pebble.Options{Comparer: skydbComparer, Logger: quietLogger{}})
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	if err := raw.Set(bad, []byte("not-a-changelog-entry"), pebble.Sync); err != nil {
+		t.Fatalf("plant malformed changelog key: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("raw close: %v", err)
+	}
+
+	// The cold-start ring seed reads this same changelog and now fails; per C6b that raises
+	// the ring floor rather than refusing the open, so the store still opens.
+	e2, err := openWith(config{dir: dir, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("reopen over a malformed changelog key = %v; the correct degradation is C6b's "+
+			"raised ring floor, not a refusal to open", err)
+	}
+	defer e2.Close()
+
+	// GUARD 2: the planted key is inside the bounds Tail scans, and is the only unreadable
+	// one there.
+	lo, hi := changelogKeyspaceBounds()
+	it, err := e2.db.NewIter(&pebble.IterOptions{LowerBound: lo, UpperBound: hi})
+	if err != nil {
+		t.Fatalf("raw changelog iter: %v", err)
+	}
+	total, unreadable := 0, 0
+	for ok := it.First(); ok; ok = it.Next() {
+		total++
+		if _, parsed := changelogTsOf(it.Key()); !parsed {
+			unreadable++
+		}
+	}
+	if err := it.Close(); err != nil {
+		t.Fatalf("raw changelog iter close: %v", err)
+	}
+	if total != 4 || unreadable != 1 {
+		t.Fatalf("fixture: the changelog keyspace holds %d keys of which %d are unparseable, "+
+			"want 4 and 1. The planted key has to sit INSIDE the bounds Tail scans, or Tail "+
+			"never meets it and every assertion below is vacuous", total, unreadable)
+	}
+
+	// GUARD 3: the sub-window strictly above the planted key still reads, so the failure
+	// below is attributable to the corrupt key and not to a broken changelog.
+	above, err := e2.Changelog().Tail(ts2)
+	if err != nil {
+		t.Fatalf("fixture: Tail(%+v) — the sub-window that seeks PAST the planted key — failed "+
+			"with %v, so a failure over the full window would not be attributable to the "+
+			"planted key", ts2, err)
+	}
+	if len(above) != 1 || above[0].CommitTs != ts3 {
+		t.Fatalf("fixture: Tail(%+v) returned %d entries, want exactly 1 at %+v — the fixture "+
+			"is not the window this test believes it is", ts2, len(above), ts3)
+	}
+
+	// The claim: the FULL window, which contains the malformed key, fails closed.
+	got, err := e2.Changelog().Tail(HLC{})
+	if !errors.Is(err, errCorruptChangelogKey) {
+		t.Fatalf("Tail walked the full window over a malformed changelog key and returned %d "+
+			"entries with err = %v. "+
+			"A changelog key that does not parse must fail the read, never be skipped. Tail "+
+			"backs changelogTailChanges, the spill fallback that computes a transaction's SSI "+
+			"validation window, so a skipped key silently drops a COMMITTED change out of that "+
+			"window and the phantom that conflicts with it is never seen. That is "+
+			"under-rejection, i.e. a serializability break, and the truncated window is "+
+			"indistinguishable to the caller from a complete one. Failing closed is already "+
+			"plumbed: changelogTailChanges turns the error into ErrConflict and the driver "+
+			"re-Begins at a fresher readTs.",
+			len(got), err)
+	}
+	if got != nil {
+		t.Fatalf("Tail returned %d entries ALONGSIDE its fail-closed error. "+
+			"A partial window handed back with an error is worse than either alone: a caller "+
+			"that logs the error and uses the slice validates against exactly the window with "+
+			"a hole that the error exists to prevent. The result must be nil, so that no "+
+			"caller can mistake a truncated tail for a complete one.", len(got))
 	}
 }

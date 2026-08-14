@@ -1,0 +1,21 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 5c0043cf..a0c041f1 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -333,11 +333,11 @@ func openWith(cfg config) (*pebbleEngine, error) {
+ 	} else {
+ 		for _, entry := range tail {
+ 			chg, derr := DecodeChangelogPayload(entry.Payload)
+-			if derr != nil {
+-				seedFailed = true
+-				break
+-			}
+-			if len(chg) > 0 {
++			// MUTATION G2.13h (C6b/cold-start seed): the pre-fix fail-open — `derr == nil`
++			// with NO else. The undecodable entry is skipped, the seed is silently partial,
++			// and the floor below is never raised, so the ring keeps claiming a range it
++			// does not hold.
++			if derr == nil && len(chg) > 0 {
+ 				e.recent.append(entry.CommitTs, chg)
+ 			}
+ 		}

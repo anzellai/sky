@@ -1,0 +1,20 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 5c0043cf..3b109211 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -695,7 +695,14 @@ func (e *pebbleEngine) snapshotAtChecked(readTs HLC) (Reader, error) {
+ func (e *pebbleEngine) snapshotAt(readTs HLC) Reader {
+ 	r, err := e.snapshotAtChecked(readTs)
+ 	if err != nil {
+-		return &deadReader{err: err}
++		// MUTATION G2.13f (N4, time-travel arm): the single-result form DROPS the
++		// refusal. `&deadReader{}` reads exactly like a reader over an empty store —
++		// Get says absent, Iterate yields nothing, and Err() is nil — so a closed
++		// engine is indistinguishable from a store with no rows, and a caller that
++		// fails closed on Err() (Txn.Commit) has nothing to fail closed on. This is
++		// the fail-open half of N4's time-travel path, one `err:` field away from
++		// the fix.
++		return &deadReader{}
+ 	}
+ 	return r
+ }

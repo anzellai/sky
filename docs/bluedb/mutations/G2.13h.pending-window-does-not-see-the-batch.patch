@@ -1,0 +1,16 @@
+diff --git a/runtime-go/bluedb/committer.go b/runtime-go/bluedb/committer.go
+index 6a847a75..64a22cb9 100644
+--- a/runtime-go/bluedb/committer.go
++++ b/runtime-go/bluedb/committer.go
+@@ -381,7 +381,10 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
+ 		}
+ 		window := make([]KeyChange, 0, len(base)+len(pending))
+ 		window = append(window, base...)
+-		window = append(window, pending...)
++		// MUTATION G2.13h (N6/control): the INTRA-BATCH half of the SSI validation window is
++		// dropped, so validate() sees only ring.after(readTs) and never the changes committed
++		// by earlier jobs of THIS batch — a blind write and a txn that read the same key in
++		// one drain window stop conflicting.
+ 
+ 		if conflict, culprit, pointConflict := validate(j.req.ReadSet, window); conflict {
+ 			j.done <- CommitResult{Err: ErrConflict} // abort THIS job; assign NO commitTs

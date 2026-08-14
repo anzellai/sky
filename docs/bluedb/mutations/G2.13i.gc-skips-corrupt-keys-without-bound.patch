@@ -1,0 +1,38 @@
+diff --git a/runtime-go/bluedb/gc.go b/runtime-go/bluedb/gc.go
+index 03dd39db..88cd1d7c 100644
+--- a/runtime-go/bluedb/gc.go
++++ b/runtime-go/bluedb/gc.go
+@@ -2,7 +2,6 @@ package bluedb
+ 
+ import (
+ 	"errors"
+-	"fmt"
+ 
+ 	"github.com/cockroachdb/pebble/v2"
+ )
+@@ -132,19 +131,12 @@ func (e *pebbleEngine) GC() (GCStats, error) {
+ 		}
+ 		ts, ok := decodeDataVersion(k)
+ 		if !ok {
+-			// NEVER delete a key you cannot parse. A key whose version suffix does not
+-			// decode is either corrupt or written by a format this build does not know;
+-			// either way GC has no basis to call it dead, and destroying it destroys the
+-			// only evidence of the fault. Skip it, COUNT it (GCStats.CorruptKeys), and
+-			// abort the pass once the count says the keyspace — not a stray key — is the
+-			// problem. `_`-ing the ok flag here would silently resurrect the pre-Stage-1
+-			// behaviour of deleting on a {0,0} misparse.
+-			stats.CorruptKeys++
+-			if stats.CorruptKeys > maxCorruptKeysPerPass {
+-				_ = iter.Close()
+-				return stats, fmt.Errorf("%w: %d unparseable keys in one pass (threshold %d); nothing deleted",
+-					ErrCorruptDataKeys, stats.CorruptKeys, maxCorruptKeysPerPass)
+-			}
++			// MUTATION G2.13i: the UNBOUNDED skip. The key is still not deleted — so this
++			// looks like the safe half of the remedy — but nothing counts it and nothing
++			// stops the pass. GCStats.CorruptKeys stays 0, so no caller can learn the
++			// keyspace is damaged, and maxCorruptKeysPerPass never fires, so a store whose
++			// whole data keyspace is unreadable is re-swept silently on every pass, forever,
++			// with the pass reporting success each time.
+ 			continue
+ 		}
+ 		if !ts.Less(T) {

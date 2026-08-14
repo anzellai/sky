@@ -1,25 +1,38 @@
-//! G2.13a–h — the eight audit-corpus properties, **one gate each**.
+//! G2.13a–i — the nine audit-corpus properties, **one gate each**.
 //!
 //! The subject is `runtime-go/bluedb/audit_test.go`: the regression corpus the
-//! C2–C8 fixes shipped with, one fixture per defect found in the Stage-2 port.
+//! C2–C8 fixes shipped with, one fixture per defect found in the Stage-2 port,
+//! plus (G2.13i) the two Stage-1 remedies that shipped with no test at all.
 //!
-//! # Why eight gates and not one gate with eight mutations
+//! # Why one gate per PROPERTY — and why that is not a cap on mutations
 //!
 //! `mutations.rs` classifies a mutation with
 //! `if red.exit_ok || !red.output.contains(m.expect)`. It checks only that
 //! **this** mutation's `expect` string is PRESENT — never that the others are
 //! ABSENT — and nothing anywhere required `expect` strings to be mutually
-//! discriminating. With eight mutations hung off one gate, a single C1-era
-//! defect that broke several properties at once would mint eight `PROVEN`s out
-//! of one undifferentiated failure, and the ledger would record eight proofs
-//! that were really one. Eight gates makes the discrimination structural, and
-//! gives `STATUS.md` a row per property. (`docs/bluedb/P1-STAGE2-PLAN.md`,
-//! "Seven gates, not one gate with seven mutations".)
+//! discriminating. With every property's mutation hung off ONE gate, a single
+//! C1-era defect that broke several at once would mint a `PROVEN` for each out
+//! of one undifferentiated failure, and the ledger would record nine proofs
+//! that were really one. A gate per property makes the discrimination
+//! structural, and gives `STATUS.md` a row per property.
+//! (`docs/bluedb/P1-STAGE2-PLAN.md`, "Seven gates, not one gate with seven
+//! mutations".)
 //!
 //! The companion half of that argument now exists too:
 //! `expect_strings_are_pairwise_discriminating` in `registry.rs` asserts no
 //! declared assertion is a substring of another ACROSS THE WHOLE REGISTRY, so
 //! two gates can no longer be satisfied by one message.
+//!
+//! **What the split does NOT license is one mutation per gate.** That reading
+//! was encoded here as an `assert_eq!(mutations.len(), 1)`, and it was actively
+//! harmful: a gate pins several test leaves, one mutation typically reddens
+//! some of them, and an empty Go test function emits `pass` — so every leaf no
+//! mutation touches could have its body deleted with the gate staying green
+//! **and** reporting `PROVEN`. Twelve leaves across four gates were in exactly
+//! that state, and the equality assertion forbade the fix. The requirement is
+//! now the right way round: at least one mutation per gate, and at least one
+//! mutation per pinned LEAF, recorded in [`LEAF_COVERAGE`] and checked against
+//! the RED transcript that justifies it.
 //!
 //! # The three anti-vacuity assertions
 //!
@@ -38,7 +51,7 @@
 //!
 //! # The fourth assertion this corpus needs and G2.9a's does not
 //!
-//! Two of the eight properties live in ONE Go function
+//! Two of the nine properties live in ONE Go function
 //! (`TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes` carries N1's
 //! `collNameLen=…` table AND N1b's failed-scan sub-test), so the two gates
 //! address SUB-TESTS, not functions — see
@@ -79,7 +92,7 @@ use super::gates_g2::{
 };
 use super::registry::{Ctx, GateOutcome};
 
-/// The corpus under test. One file, eight gates, and one ownership table over
+/// The corpus under test. One file, nine gates, and one ownership table over
 /// it — see [`AUDIT_OWNERSHIP`].
 pub const AUDIT_SOURCE: &str = "runtime-go/bluedb/audit_test.go";
 
@@ -95,13 +108,14 @@ const PIN_NAME: &str = "AUDIT_OWNERSHIP (bluedb_gates/gates_g2_13.rs)";
 /// surfaced the hole this vocabulary now describes in the past tense: the four
 /// fail-open fixtures (N6 / C6b, commit `f776dd27`) sat here as `UNGATED` while
 /// only CI's `go test ./bluedb/...` ran them — invisible to `--verify-mutations`,
-/// to `STATUS.md`, and to any goal verdict. **G2.13h** owns them now, and no row
-/// carries this value.
+/// to `STATUS.md`, and to any goal verdict. **G2.13h** owns them now.
 ///
-/// It is kept, unused, on purpose. A fixture can land ahead of its gate again,
-/// and the table must be able to SAY so in the interval rather than omit the
-/// row; deleting the word would make silence the only available answer.
-#[allow(dead_code)]
+/// It was then kept unused on the argument that a fixture can land ahead of its
+/// gate again and the table must be able to SAY so in the interval. That
+/// happened within the week: three N4/durability fixtures landed alongside the
+/// fix they pin, and they carry this value until the commit that lands those
+/// fixes gives them a gate. Deleting the word would have made silence the only
+/// available answer.
 const UNGATED: &str = "— (recorded, run by no gate)";
 
 /// One `func Test…` in [`AUDIT_SOURCE`], and the gate that runs it.
@@ -119,7 +133,7 @@ pub struct Owned {
 /// Two-way checked by every gate body: a row with no declaration is a FAIL (the
 /// gate would `-run` a name that matches nothing and STILL EXIT 0), and a
 /// declaration with no row is a FAIL (a new fixture that is neither run nor
-/// accounted for). That is why the table covers tests the eight gates do NOT
+/// accounted for). That is why the table covers tests the nine gates do NOT
 /// own — the two N3 fixtures belong to G2.6 — and why it has a word for a
 /// fixture nothing runs ([`UNGATED`]): an ownership table may not be a list of
 /// the things it already covers. Reading it that way is what found the four
@@ -177,7 +191,7 @@ pub const AUDIT_OWNERSHIP: &[Owned] = &[
         owner: "G2.13f",
         property: "pebbleReader.Close closes the pebble snapshot FIRST and releases its watermark token LAST (N4 residual)",
     },
-    // -- owned by G2.6, not by the seven: these are the injection fixtures its
+    // -- owned by G2.6, not by the nine: these are the injection fixtures its
     //    manifest enumerates, and it runs them under the same three assertions.
     Owned {
         test: "TestAuditN3BackgroundFatalDoesNotKillTheProcess",
@@ -209,6 +223,46 @@ pub const AUDIT_OWNERSHIP: &[Owned] = &[
         test: "TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor",
         owner: "G2.13h",
         property: "a corrupt cold-start seed raises the recent-changes ring floor (C6b)",
+    },
+    // -- landed ahead of their gate, 2026-08-14 -----------------------------
+    //
+    // Three fixtures added by the concurrent fix of the two engine defects this
+    // audit also turned up. They are recorded here — with the word for it —
+    // rather than omitted, because an ownership table that lists only what it
+    // already covers reports full coverage of whatever it happens to list, and
+    // reading it the other way round is what found G2.13h's four fail-open
+    // rows. Right now CI's `go test ./bluedb/...` runs them and nothing else
+    // does: they are invisible to `--verify-mutations`, to `STATUS.md` and to
+    // every goal verdict.
+    //
+    // OWED by the commit that lands those fixes: a gate that `-run`s them, and
+    // a mutation per leaf (see [`LEAF_COVERAGE`]). The N4 pair belongs with
+    // G2.13f's property; the post-ack one is a durability-route statement.
+    Owned {
+        test: "TestAuditN4ChangelogAndGCDoNotRaceCloseIntoAPanic",
+        owner: UNGATED,
+        property: "the changelog and GC paths do not race Close into a panic (N4)",
+    },
+    Owned {
+        test: "TestAuditN4GCPassIsPinnedAgainstAConcurrentClose",
+        owner: UNGATED,
+        property: "a GC pass is pinned against a concurrent Close (N4)",
+    },
+    Owned {
+        test: "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed",
+        owner: UNGATED,
+        property: "a durability panic AFTER the ack is not silently absorbed",
+    },
+    // -- the two Stage-1 remedies that shipped WITHOUT a test, owned by G2.13i. --
+    Owned {
+        test: "TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys",
+        owner: "G2.13i",
+        property: "an unparseable data key is skipped, COUNTED, and past the per-pass bound aborts the pass with ErrCorruptDataKeys (Stage 1)",
+    },
+    Owned {
+        test: "TestAuditS1ChangelogTailFailsClosedOnACorruptKey",
+        owner: "G2.13i",
+        property: "a malformed changelog key fails the read closed instead of being skipped out of an SSI validation window (Stage 1)",
     },
 ];
 
@@ -251,8 +305,8 @@ struct AuditGate {
     /// event. Empty for every gate whose pinned functions have no sub-tests,
     /// and for the two that address sub-tests directly through [`Self::tests`].
     ///
-    /// Only G2.13h needs it: it `-run`s whole functions, one of which carries
-    /// two `t.Run` arms. They are required evidence rather than pattern levels
+    /// G2.13h and G2.13i need it: each `-run`s whole functions, one of which
+    /// carries two `t.Run` arms. They are required evidence rather than pattern levels
     /// because a Go parent passes when its remaining body passes — so a
     /// sub-test that quietly stopped running would leave the parent green.
     /// `check_run_evidence` also treats a pinned name's DESCENDANTS as `-run`
@@ -267,7 +321,7 @@ struct AuditGate {
     property: &'static str,
 }
 
-/// The one body all seven share.
+/// The one body all nine share.
 fn run_audit_gate(ctx: &Ctx, g: &AuditGate) -> GateOutcome {
     let Some(src) = ctx.read(AUDIT_SOURCE) else {
         return GateOutcome::fail(
@@ -285,7 +339,7 @@ fn run_audit_gate(ctx: &Ctx, g: &AuditGate) -> GateOutcome {
     let mut findings = check_pinned_population(&declared, &recorded, AUDIT_SOURCE, PIN_NAME);
 
     // The population the RUN must evidence: what `-run` selects, plus the
-    // sub-test leaves below it. Identical to `g.tests` for the seven gates that
+    // sub-test leaves below it. Identical to `g.tests` for the gates that
     // declare no leaves.
     let expected: Vec<&str> = g
         .tests
@@ -764,9 +818,249 @@ pub fn g2_13h_commit_route_fails_closed(ctx: &Ctx) -> GateOutcome {
     )
 }
 
+// ---------------------------------------------------------------------------
+// G2.13i — the two Stage-1 remedies that shipped with no test at all
+// ---------------------------------------------------------------------------
+
+const S1_GC_FUNC: &str = "TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys";
+
+/// **Corrupt keys fail the operation CLOSED.**
+///
+/// Two remedies landed in Stage 1 with no regression behind either of them, and
+/// an audit found both. They are one property from two directions:
+///
+/// * `gc.go`'s pass may SKIP a data key `decodeDataVersion` cannot parse — it is
+///   the only evidence of the fault, so deleting it would destroy the evidence —
+///   but it must COUNT the skip (`GCStats.CorruptKeys`) and ABORT the pass with
+///   `ErrCorruptDataKeys` past `maxCorruptKeysPerPass`. An uncounted skip is an
+///   invisible, permanent leak; an unbounded one turns a damaged keyspace into a
+///   silent no-op that every future pass repeats.
+/// * `changelog.go`'s `Tail` must fail closed with `errCorruptChangelogKey`
+///   rather than `continue` past a malformed key. `P1-STAGE2-PLAN.md` ranks that
+///   `continue` — "by mechanical analogy with `gc.go`" — risk **#5**, and names
+///   its consequence exactly: a committed change silently missing from a
+///   transaction's SSI validation window, i.e. under-rejection, i.e. a
+///   serializability break.
+///
+/// The pairing is deliberate and is why this is one gate: the two files invite
+/// the SAME wrong move (skip and carry on), and only one of them can afford it.
+pub const G2_13I_TESTS: &[&str] = &[
+    S1_GC_FUNC,
+    "TestAuditS1ChangelogTailFailsClosedOnACorruptKey",
+];
+
+/// The GC fixture's two arms, required as EVIDENCE (see
+/// [`AuditGate::required_subtests`]) — the `-run` pattern stays at depth 1 and a
+/// Go parent passes when its remaining body passes, so an arm that quietly
+/// stopped running would leave the parent green. The two are not
+/// interchangeable: the first proves a bounded number of corrupt keys is skipped
+/// AND counted AND the pass still completes; the second proves the pass STOPS at
+/// the bound and applies nothing.
+pub const G2_13I_SUBTESTS: &[&str] = &[
+    "TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys/a-few-are-skipped-counted-and-the-pass-still-completes",
+    "TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys/past-the-per-pass-bound-the-pass-aborts-and-deletes-nothing",
+];
+
+const G2_13I_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: S1_GC_FUNC,
+        needle: "t.Run(\"a-few-are-skipped-counted-and-the-pass-still-completes\"",
+        why: "that literal IS the counted-skip arm's name; without it the gate would require a leaf \
+              nothing generates",
+    },
+    SourceAnchor {
+        func: S1_GC_FUNC,
+        needle: "t.Run(\"past-the-per-pass-bound-the-pass-aborts-and-deletes-nothing\"",
+        why: "that literal IS the abort arm's name, and the abort is the half `gc.go`'s bound exists \
+              for",
+    },
+];
+
+const G2_13I_SITES: &[SubtestSites] = &[
+    SubtestSites {
+        func: S1_GC_FUNC,
+        sites: 2,
+    },
+    SubtestSites {
+        func: "TestAuditS1ChangelogTailFailsClosedOnACorruptKey",
+        sites: 0,
+    },
+];
+
+pub fn g2_13i_corrupt_keys_fail_closed(ctx: &Ctx) -> GateOutcome {
+    run_audit_gate(
+        ctx,
+        &AuditGate {
+            id: "G2.13i",
+            tests: G2_13I_TESTS,
+            required_subtests: G2_13I_SUBTESTS,
+            anchors: G2_13I_ANCHORS,
+            sites: G2_13I_SITES,
+            // The abort arm plants `maxCorruptKeysPerPass + 176` keys through a
+            // raw pebble handle; measured at ~0.6s for both fixtures.
+            budget: Duration::from_secs(240),
+            property: "corrupt keys fail the operation closed rather than being skipped",
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Leaf coverage — which mutation reddens which pinned leaf
+// ---------------------------------------------------------------------------
+
+/// One mutation, and the pinned leaves its **recorded RED transcript** shows it
+/// turning red.
+///
+/// # Why this table exists
+///
+/// The three anti-vacuity assertions prove a pinned leaf RAN. Nothing proved its
+/// body ASSERTS anything — and an empty Go test function emits `pass`. So a leaf
+/// that no mutation reddens can be gutted with the gate staying green, and the
+/// gate still reports `PROVEN`, because the proof is a statement about whichever
+/// leaf the one recorded mutation happened to touch. Twelve leaves across four
+/// gates were in that state when this table was written.
+///
+/// # Why it is evidence rather than a claim
+///
+/// Every row is checked against the artefact `--verify-mutations` writes: the
+/// mutated gate's verbatim output at `<patch>.expected.txt`, in which a Go
+/// failure appears as `--- FAIL: <full test name>`. See
+/// `every_pinned_leaf_is_reddened_by_a_recorded_mutation`. A row cannot be
+/// written ahead of the run that justifies it.
+#[allow(dead_code)]
+pub struct LeafCoverage {
+    /// The registered mutation id.
+    pub mutation: &'static str,
+    /// Pinned leaves of that mutation's gate which its RED run turned red.
+    /// Never a superset of the gate's pinned leaves, and never empty.
+    pub leaves: &'static [&'static str],
+}
+
+#[allow(dead_code)] // read by `every_pinned_leaf_is_reddened_by_a_recorded_mutation`
+pub const LEAF_COVERAGE: &[LeafCoverage] = &[
+    // -- G2.13a: the bound-construction revert reddens the leak regime (30) and
+    //    the inverted regime (31+). Lengths 28/29 are correct BY LUCK of the
+    //    length, so no revert of that fix can redden them; the degenerate-upper
+    //    mutation below is what covers the two controls.
+    LeafCoverage {
+        mutation: "G2.13a/iterate-bounds-end-in-a-user-byte",
+        leaves: &[
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=30",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=31",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=32",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=33",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=34",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=130",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13a/degenerate-upper-bound",
+        leaves: &[
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=28",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=29",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=30",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=31",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=32",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=33",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=34",
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=130",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13b/failed-scan-reads-as-an-empty-collection",
+        leaves: &[
+            "TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13c/corrupt-hlc-hi-reads-as-a-fresh-store",
+        leaves: &["TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs"],
+    },
+    LeafCoverage {
+        mutation: "G2.13d/commit-on-a-closed-engine-acks-success",
+        leaves: &["TestAuditC1CommitOnClosedChannelReturnsError"],
+    },
+    LeafCoverage {
+        mutation: "G2.13e/snapshot-readts-is-the-in-memory-high-water",
+        leaves: &["TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot"],
+    },
+    LeafCoverage {
+        mutation: "G2.13f/close-does-not-quiesce-readers",
+        leaves: &[
+            "TestAuditN4CloseWaitsForLiveReaders",
+            "TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13e/mvcc-visibility-excludes-the-readts-itself",
+        leaves: &["TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs"],
+    },
+    LeafCoverage {
+        mutation: "G2.13f/closed-engine-reads-as-an-empty-store",
+        leaves: &["TestAuditN4CloseDoesNotPanicConcurrentSnapshot"],
+    },
+    LeafCoverage {
+        mutation: "G2.13f/token-released-before-the-snapshot",
+        leaves: &["TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin"],
+    },
+    LeafCoverage {
+        mutation: "G2.13g/failed-point-read-reads-as-an-absent-row",
+        leaves: &["TestAuditH3ReaderGetSurfacesIoErrors"],
+    },
+    LeafCoverage {
+        mutation: "G2.13h/undecodable-payload-validates-as-no-changes",
+        leaves: &[
+            "TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow",
+            "TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow/N6/an-undecodable-payload-must-not-let-both-commit",
+            "TestAuditC6bBlindPathRingAppendCannotBeHoledEither",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13h/pending-window-does-not-see-the-batch",
+        leaves: &[
+            "TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow/control/a-well-formed-payload-makes-the-later-txn-conflict",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13h/advance-on-an-unknown-token-returns-nil",
+        leaves: &["TestAuditC6bAdvanceOnAnUnknownTokenIsAnError"],
+    },
+    LeafCoverage {
+        mutation: "G2.13h/corrupt-cold-start-seed-leaves-the-floor-low",
+        leaves: &["TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor"],
+    },
+    // -- G2.13i: two files, two doors, one mutation each.
+    LeafCoverage {
+        mutation: "G2.13i/gc-skips-corrupt-keys-without-bound",
+        leaves: &[
+            "TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys",
+            "TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys/a-few-are-skipped-counted-and-the-pass-still-completes",
+            "TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys/past-the-per-pass-bound-the-pass-aborts-and-deletes-nothing",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13i/changelog-skips-a-corrupt-key",
+        leaves: &["TestAuditS1ChangelogTailFailsClosedOnACorruptKey"],
+    },
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The nine gate bodies, paired with their ids. Cross-checked against
+    /// [`ALL_SETS`] so the two cannot drift.
+    const BODIES: &[(&str, fn(&Ctx) -> GateOutcome)] = &[
+        ("G2.13a", g2_13a_iterate_bounds),
+        ("G2.13b", g2_13b_failed_scan_is_an_error),
+        ("G2.13c", g2_13c_corrupt_hlc_hi),
+        ("G2.13d", g2_13d_no_false_ack),
+        ("G2.13e", g2_13e_readts_pinned_with_snapshot),
+        ("G2.13f", g2_13f_close_quiesces_readers),
+        ("G2.13g", g2_13g_failed_read_is_an_error),
+        ("G2.13h", g2_13h_commit_route_fails_closed),
+        ("G2.13i", g2_13i_corrupt_keys_fail_closed),
+    ];
 
     const ALL_SETS: &[(&str, &[&str])] = &[
         ("G2.13a", G2_13A_TESTS),
@@ -777,12 +1071,14 @@ mod tests {
         ("G2.13f", G2_13F_TESTS),
         ("G2.13g", G2_13G_TESTS),
         ("G2.13h", G2_13H_TESTS),
+        ("G2.13i", G2_13I_TESTS),
     ];
 
     /// The sub-test leaves each gate requires as evidence, alongside its `-run`
-    /// population. Only G2.13h has any; the entry is here so a second gate that
-    /// grows leaves cannot forget the checks below.
-    const ALL_SUBTESTS: &[(&str, &[&str])] = &[("G2.13h", G2_13H_SUBTESTS)];
+    /// population — the two gates that `-run` whole FUNCTIONS carrying `t.Run`
+    /// arms.
+    const ALL_SUBTESTS: &[(&str, &[&str])] =
+        &[("G2.13h", G2_13H_SUBTESTS), ("G2.13i", G2_13I_SUBTESTS)];
 
     fn repo() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -931,6 +1227,7 @@ mod tests {
             .iter()
             .chain(G2_13B_ANCHORS.iter())
             .chain(G2_13H_ANCHORS.iter())
+            .chain(G2_13I_ANCHORS.iter())
         {
             let body = bodies
                 .iter()
@@ -967,7 +1264,11 @@ mod tests {
                 s.func
             );
         };
-        for s in N1_SITES.iter().chain(G2_13H_SITES.iter()) {
+        for s in N1_SITES
+            .iter()
+            .chain(G2_13H_SITES.iter())
+            .chain(G2_13I_SITES.iter())
+        {
             check(s);
         }
         // The five sub-test-free fixtures, reached through their gate
@@ -1008,30 +1309,145 @@ mod tests {
         }
     }
 
-    /// Every one of the eight is a REAL body, not a `pending` probe. The
+    /// Every one of the nine is a REAL body, not a `pending` probe. The
     /// substrate has landed, so a pending gate here would be the ratchet
     /// failing open.
+    ///
+    /// **This test used to require EXACTLY one mutation per gate**, on the
+    /// argument that the one-gate-per-property split is what makes the
+    /// falsifications discriminating. That argument is about `expect` strings —
+    /// which `registry.rs`'s `expect_strings_are_pairwise_discriminating`
+    /// enforces directly — and as a cap on the mutation COUNT it did active
+    /// harm: it forbade the second mutation that would have covered a pinned
+    /// leaf the first one leaves green. Six leaves were falsified by nothing at
+    /// all, and this assertion is what stopped anyone fixing that. It is now a
+    /// floor, and the coverage requirement below is the real check.
     #[test]
-    fn all_eight_are_registered_with_real_bodies_and_one_mutation_each() {
-        let bodies: &[(&str, fn(&Ctx) -> GateOutcome)] = &[
-            ("G2.13a", g2_13a_iterate_bounds),
-            ("G2.13b", g2_13b_failed_scan_is_an_error),
-            ("G2.13c", g2_13c_corrupt_hlc_hi),
-            ("G2.13d", g2_13d_no_false_ack),
-            ("G2.13e", g2_13e_readts_pinned_with_snapshot),
-            ("G2.13f", g2_13f_close_quiesces_readers),
-            ("G2.13g", g2_13g_failed_read_is_an_error),
-            ("G2.13h", g2_13h_commit_route_fails_closed),
-        ];
-        for (id, f) in bodies {
+    fn all_nine_are_registered_with_real_bodies_and_at_least_one_mutation_each() {
+        for (id, f) in BODIES {
             let g = super::super::registry::find(id).unwrap_or_else(|| panic!("{id} unregistered"));
             assert_eq!(g.goal, 2, "{id} belongs to goal 2");
             assert_eq!(g.run as usize, *f as usize, "{id} is not wired to its body");
-            assert_eq!(
-                g.mutations.as_slice().len(),
-                1,
-                "{id} must declare EXACTLY one mutation — the one-gate-per-property split is \
-                 what makes the falsifications discriminating"
+            assert!(
+                !g.mutations.as_slice().is_empty(),
+                "{id} declares no mutation"
+            );
+        }
+        // The list is the population: a gate added to ALL_SETS but not here (or
+        // vice versa) would slip past every check in this module.
+        let bodies: BTreeSet<&str> = BODIES.iter().map(|(id, _)| *id).collect();
+        let sets: BTreeSet<&str> = ALL_SETS.iter().map(|(id, _)| *id).collect();
+        assert_eq!(bodies, sets, "BODIES and ALL_SETS disagree about the population");
+    }
+
+    /// **Every pinned leaf is turned red by at least one recorded mutation.**
+    ///
+    /// The hole this closes: an empty Go test function emits `pass`. A gate's
+    /// three anti-vacuity assertions prove the leaf RAN — not that its body
+    /// asserts anything. So a leaf that no mutation reddens could have its body
+    /// gutted and the gate would stay green **and** report `PROVEN`, because the
+    /// proof is about whichever leaf the one recorded mutation happens to touch.
+    ///
+    /// Found by audit across three gates at once: G2.13h's mutation left both
+    /// C6b doors and the N6 control green, G2.13e's left the property arm green,
+    /// G2.13f's left two of four green, and G2.13a's leaves the two
+    /// correct-by-luck control lengths green. Twelve leaves, one blind spot.
+    ///
+    /// **The claim is checked against the RECORDED TRANSCRIPT, not asserted.**
+    /// `--verify-mutations` writes the mutated gate's output verbatim to
+    /// `<patch>.expected.txt` on a PROVEN verdict, and a Go failure prints
+    /// `--- FAIL: <full test name>`. So "this mutation reddens that leaf" is a
+    /// fact about a committed artefact — which is what makes the table below
+    /// evidence rather than a promise, and what makes it decay honestly (edit a
+    /// patch, and the transcript it belongs to must be re-taken).
+    #[test]
+    fn every_pinned_leaf_is_reddened_by_a_recorded_mutation() {
+        let root = repo();
+        for (id, set) in ALL_SETS {
+            let g = super::super::registry::find(id).expect("registered");
+            let leaves: BTreeSet<&str> = set
+                .iter()
+                .chain(
+                    ALL_SUBTESTS
+                        .iter()
+                        .filter(|(sid, _)| sid == id)
+                        .flat_map(|(_, l)| l.iter()),
+                )
+                .copied()
+                .collect();
+
+            let mut covered: BTreeSet<&str> = BTreeSet::new();
+            for m in g.mutations.as_slice() {
+                let row = LEAF_COVERAGE
+                    .iter()
+                    .find(|r| r.mutation == m.id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{} has no LEAF_COVERAGE row — every mutation of an audit gate must \
+                             record which pinned leaves its RED run actually reddened",
+                            m.id
+                        )
+                    });
+                let transcript = std::fs::read_to_string(
+                    root.join(super::super::gates_g0::expected_path(m.patch)),
+                )
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}: cannot read the recorded RED transcript {}: {e}. A mutation's leaf \
+                         coverage is read from the transcript `--verify-mutations` writes, so a \
+                         new mutation is not finished until it has been RUN: \
+                         `cargo run -p xtask -- bluedb-gates --verify-mutations --only={id}`",
+                        m.id,
+                        super::super::gates_g0::expected_path(m.patch)
+                    )
+                });
+                for leaf in row.leaves {
+                    assert!(
+                        leaves.contains(leaf),
+                        "{} claims to redden {leaf}, which is not a pinned leaf of {id}",
+                        m.id
+                    );
+                    assert!(
+                        transcript.contains(&format!("--- FAIL: {leaf}")),
+                        "{} claims to redden {leaf}, but its recorded RED transcript carries no \
+                         `--- FAIL: {leaf}` line. The claim is checked against the artefact; \
+                         re-run --verify-mutations, or fix the claim",
+                        m.id
+                    );
+                    covered.insert(leaf);
+                }
+            }
+
+            let uncovered: Vec<&str> = leaves.difference(&covered).copied().collect();
+            assert!(
+                uncovered.is_empty(),
+                "{id}: {} pinned leaf/leaves are falsified by NO mutation: {uncovered:?}\n\n\
+                 An empty Go test emits `pass`, so those bodies could be gutted and this gate \
+                 would stay green AND report PROVEN. Author a mutation that reddens them (see \
+                 docs/bluedb/mutations/) and record it in LEAF_COVERAGE.",
+                uncovered.len()
+            );
+        }
+    }
+
+    /// No LEAF_COVERAGE row may name a mutation that is not registered — a
+    /// stale row would otherwise sit there looking like coverage.
+    #[test]
+    fn every_leaf_coverage_row_names_a_registered_mutation() {
+        let registered: BTreeSet<&str> = super::super::registry::REGISTRY
+            .iter()
+            .flat_map(|g| g.mutations.as_slice().iter().map(|m| m.id))
+            .collect();
+        for r in LEAF_COVERAGE {
+            assert!(
+                registered.contains(r.mutation),
+                "LEAF_COVERAGE names {}, which is not a registered mutation",
+                r.mutation
+            );
+            assert!(
+                !r.leaves.is_empty(),
+                "{}: a row claiming no leaves is not coverage",
+                r.mutation
             );
         }
     }

@@ -1,0 +1,28 @@
+diff --git a/runtime-go/bluedb/changelog.go b/runtime-go/bluedb/changelog.go
+index de56a80f..c435f129 100644
+--- a/runtime-go/bluedb/changelog.go
++++ b/runtime-go/bluedb/changelog.go
+@@ -2,7 +2,6 @@ package bluedb
+ 
+ import (
+ 	"errors"
+-	"fmt"
+ 
+ 	"github.com/cockroachdb/pebble/v2"
+ )
+@@ -92,7 +91,14 @@ func (c *changelog) Tail(after HLC) ([]ChangelogEntry, error) {
+ 	for ok := iter.SeekGE(seek); ok; ok = iter.Next() {
+ 		ts, tsOK := changelogTsOf(iter.Key())
+ 		if !tsOK {
+-			return nil, fmt.Errorf("%w: %x", errCorruptChangelogKey, iter.Key())
++			// MUTATION G2.13i: the plan's risk #5, verbatim — "changelog.go gets `continue`
++			// by mechanical analogy with gc.go", which silently breaks serializability. The
++			// two keyspaces are not analogous: skipping in gc.go declines to DELETE, skipping
++			// here declines to REPORT. Tail backs changelogTailChanges, the Fix-8 spill
++			// fallback that computes a transaction's SSI validation window, so the window
++			// silently loses a COMMITTED change and the txn that conflicts with it commits —
++			// under-rejection, with a truncated tail the caller cannot tell from a whole one.
++			continue
+ 		}
+ 		if !after.IsZero() && !after.Less(ts) {
+ 			continue // defensive: skip anything <= after

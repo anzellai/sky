@@ -1,0 +1,31 @@
+diff --git a/runtime-go/bluedb/reader.go b/runtime-go/bluedb/reader.go
+index 6feedcd1..19336dac 100644
+--- a/runtime-go/bluedb/reader.go
++++ b/runtime-go/bluedb/reader.go
+@@ -206,11 +206,21 @@ func dataScanUpper(prefix []byte) []byte {
+ 		// data key, i.e. a silent zero-row scan.
+ 		return []byte{tagChangelog}
+ 	}
+-	// succ's last byte is (non-0xFF)+1 ∈ [0x01, 0xFF], so succ never ends in 0x00
+-	// while every stored key's Split-prefix always does. No valid prefix can equal
+-	// succ, so [succ, succ‖0x00) contains no valid prefix and succ‖0x00 excludes
+-	// exactly what bare succ would — while being a well-formed bare bound.
+-	return append(succ, sentinel)
++	// MUTATION G2.13a (N1, the DEGENERATE-BOUND regime): the successor is computed, used
++	// only for its nil check, and then thrown away — the EXCLUSIVE upper bound handed
++	// back is the scan's own INCLUSIVE lower bound, the off-by-one that reads as "stop
++	// where you started".
++	//
++	// This is the quiet half of N1, and it is quiet for two reasons. The bound is
++	// perfectly well-formed — it ends in 0x00, so skydbSplit parses it as a bare prefix
++	// and every comparer invariant still holds — so nothing downstream can tell it is
++	// wrong. And [lower, lower) is the EMPTY interval at EVERY collection-name length,
++	// so it takes out the n <= 29 lengths that are correct by luck under the
++	// trailing-user-byte regime as well as the n >= 30 ones that are not. Pebble carries
++	// no production assertion on an empty or inverted bound pair: absent Iterate's
++	// structural check this is a silent, Err()-nil "this collection has no rows" for a
++	// store that is full.
++	return dataKeyPrefix(prefix)
+ }
+ 
+ // bytesSuccessor returns the smallest byte string strictly greater than every

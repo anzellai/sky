@@ -1,0 +1,16 @@
+diff --git a/runtime-go/bluedb/watermark.go b/runtime-go/bluedb/watermark.go
+index 8567eb1a..109a1224 100644
+--- a/runtime-go/bluedb/watermark.go
++++ b/runtime-go/bluedb/watermark.go
+@@ -171,7 +171,10 @@ func (w *watermarkRegistry) Advance(tok ReaderToken, readTs HLC) error {
+ 		return ErrSnapshotTooOld
+ 	}
+ 	if _, ok := w.live[tok]; !ok {
+-		return ErrUnknownReader
++		// MUTATION G2.13h (C6b/Advance): the pre-fix fail-open. An unknown token is a
++		// silent no-op that ACKS SUCCESS — the caller is told its readTs is registered and
++		// the GC floor is pinned at it while nothing at all is pinned.
++		return nil
+ 	}
+ 	w.live[tok] = readTs
+ 	return nil

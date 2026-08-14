@@ -1,0 +1,26 @@
+diff --git a/runtime-go/bluedb/reader.go b/runtime-go/bluedb/reader.go
+index 6feedcd1..8612c26b 100644
+--- a/runtime-go/bluedb/reader.go
++++ b/runtime-go/bluedb/reader.go
+@@ -54,13 +54,17 @@ func (r *pebbleReader) Err() error { return r.err }
+ // beginSnapshot hands its *pebbleReader straight to Txn, whose Commit/Abort call this
+ // Close directly — so this ordering is that path's only guarantee.
+ func (r *pebbleReader) Close() {
+-	if r.snap != nil {
+-		_ = r.snap.Close()
+-	}
+-	// LAST. Do not hoist: see the doc comment.
++	// MUTATION G2.13f (N4, residual arm): the watermark token goes back FIRST, before
++	// the *pebble.Snapshot is closed — the statement order C7 recorded rather than
++	// fixed. Between the release and snap.Close() the close drain sees an empty pin set
++	// while pebble still has the snapshot registered, so Close's phase 3 runs
++	// e.db.Close() under it and reports "leaked snapshots: N open snapshots on DB".
+ 	if r.reg != nil {
+ 		r.reg.Release(r.tok)
+ 	}
++	if r.snap != nil {
++		_ = r.snap.Close()
++	}
+ }
+ 
+ // Get resolves userKey as of readTs (§2.5). The seek lands on the newest version
