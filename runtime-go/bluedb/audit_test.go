@@ -228,6 +228,55 @@ func TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs(t *testing.T) {
 		"a mis-sized meta value is corruption, not a fresh store", metaHLCHi, hlcEncodedLen)
 }
 
+// TestAuditC1CommitOnClosedChannelReturnsError pins defect C1: a commit against a closed
+// engine MUST NOT report success.
+//
+// Commit declared an UNNAMED return. When `e.ch <- job` panics on a channel Close already
+// closed, the deferred recover sent CommitResult{Err: ErrClosed} into job.done — a
+// buffered channel nobody will ever read, because `return <-job.done` never executed. The
+// function therefore returned the ZERO CommitResult: Err == nil. The caller sees a
+// SUCCESSFUL commit for a write that was never enqueued, never applied, never durable.
+//
+// The fix is BOTH halves: name the return AND make the recover assign it. Naming the
+// return alone is a no-op — res stays zero and the false ack survives behind a diff that
+// looks like the fix. This test fails against that half-fix exactly as it fails against
+// the original.
+//
+// Fully deterministic, no timing: the engine is hand-built in-package with ch already
+// closed and closed still false, so isClosed() answers false, the send panics, and the
+// recover fires — the precise interleaving the real Close race produces, without racing.
+func TestAuditC1CommitOnClosedChannelReturnsError(t *testing.T) {
+	e := &pebbleEngine{ch: make(chan *commitJob, maxBatch)}
+	close(e.ch)
+
+	// Precondition: the early-out guards must NOT be what returns the error, or the test
+	// would pass without ever reaching the send.
+	if e.sealed.Load() {
+		t.Fatalf("fixture: engine reports sealed; the ErrSealed guard would short-circuit the send")
+	}
+	if e.isClosed() {
+		t.Fatalf("fixture: engine reports closed; the ErrClosed guard would short-circuit the send")
+	}
+
+	res := e.Commit(CommitReq{
+		Writes: []VersionedWrite{{UserKey: []byte("c1-key"), Op: OpPut, Value: []byte("v")}},
+	})
+
+	if res.Err == nil {
+		t.Fatalf("Commit on a closed committer channel returned Err = nil (CommitTs %+v) — a FALSE ACK: "+
+			"the write was never enqueued, never applied and is not durable, yet the caller is told it "+
+			"committed. The recover must assign the NAMED return, not send into the unread job.done",
+			res.CommitTs)
+	}
+	if !errors.Is(res.Err, ErrClosed) {
+		t.Fatalf("Commit on a closed committer channel returned %v, want ErrClosed", res.Err)
+	}
+	if !res.CommitTs.IsZero() {
+		t.Fatalf("failed Commit carries commitTs %+v, want the zero value — a non-zero ts on an error "+
+			"result invites a caller to record a version that does not exist", res.CommitTs)
+	}
+}
+
 // failingCursor is a base cursor that yields nothing and reports an error, standing in
 // for an I/O failure the test cannot force out of Pebble.
 type failingCursor struct{ err error }

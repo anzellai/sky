@@ -394,7 +394,22 @@ func (e *pebbleEngine) snapshotAt(readTs HLC) Reader {
 }
 
 // Commit enqueues the request to the single committer and blocks until durable.
-func (e *pebbleEngine) Commit(req CommitReq) CommitResult {
+//
+// The result is a NAMED return, and that is load-bearing (C1). `e.ch <- job` panics if
+// Close raced us and closed the channel; the deferred recover must convert that into
+// ErrClosed. It cannot do so by sending into job.done — `return <-job.done` never
+// executed, so nothing will ever read that buffered channel, and the function would
+// return the ZERO CommitResult: Err == nil. A commit against a closed engine would
+// report SUCCESS. The recover therefore assigns `res` directly.
+//
+// Naming the return WITHOUT rewriting the deferred body is a no-op that looks like a
+// fix — res stays zero and the false ack survives. The two halves only work together,
+// which is why TestAuditC1CommitOnClosedChannelReturnsError exists.
+//
+// The recover is also the RIGHT mechanism here: holding closeMu across the send to make
+// the race impossible would stall Close behind a full e.ch (the committer must drain it,
+// and Close takes the same lock), trading a false ack for a deadlock.
+func (e *pebbleEngine) Commit(req CommitReq) (res CommitResult) {
 	if e.sealed.Load() {
 		return CommitResult{Err: ErrSealed}
 	}
@@ -420,8 +435,9 @@ func (e *pebbleEngine) Commit(req CommitReq) CommitResult {
 	job := &commitJob{req: req, done: make(chan CommitResult, 1)}
 	defer func() {
 		// A send on a closed channel panics if Close raced us; recover to ErrClosed.
+		// Assign the NAMED result — job.done is unread on this path (see the doc comment).
 		if r := recover(); r != nil {
-			job.done <- CommitResult{Err: ErrClosed}
+			res = CommitResult{Err: ErrClosed}
 		}
 	}()
 	e.ch <- job
