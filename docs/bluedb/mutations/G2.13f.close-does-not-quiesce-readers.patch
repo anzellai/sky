@@ -1,0 +1,20 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 09574281..d571b50c 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -834,11 +834,10 @@ func (e *pebbleEngine) closeWithin(timeout time.Duration) error {
+ 
+ 	// ── Phase 2: quiesce. NO lock held — see the doc comment. ──
+ 	e.wg.Wait() // idempotent: returns immediately on a retry
+-	if live := e.reg.waitDrained(timeout); live > 0 {
+-		return fmt.Errorf("%w: %d reader(s) still pinned after %s — the Pebble handle is "+
+-			"deliberately still OPEN (closing it would panic the next operation on those "+
+-			"readers); release them and call Close again", ErrReadersLive, live, timeout)
+-	}
++	// MUTATION G2.13f (N4): the reader drain is gone. Close races straight on to
++	// e.db.Close() while readers are still pinned, which is the defect — every later
++	// operation on such a reader panics inside pebble.
++	_ = timeout
+ 
+ 	// ── Phase 3: close the handle. ──
+ 	e.closeMu.Lock()

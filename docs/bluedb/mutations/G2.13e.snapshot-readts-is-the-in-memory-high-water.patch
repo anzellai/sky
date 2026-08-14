@@ -1,0 +1,30 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 09574281..0192da47 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -558,14 +558,20 @@ var snapshotCalls atomic.Int64
+ // inverts this — do not introduce one.
+ func (e *pebbleEngine) Snapshot() (Reader, error) {
+ 	snapshotCalls.Add(1)
+-	r, err := e.beginSnapshot()
++	// MUTATION G2.13e (H1): readTs is picked by reg.Register() — the IN-MEMORY HLC
++	// high-water, which the committer bumps at hlc.next() BEFORE the Apply — instead of
++	// durableHi read under durMu in the same critical section that pins the snapshot.
++	// The N4 closed-check-and-pin section is left intact so ONLY the readTs choice moves.
++	e.closeMu.RLock()
++	defer e.closeMu.RUnlock()
++	if e.closed {
++		return nil, ErrClosed
++	}
++	tok, readTs, err := e.reg.Register()
+ 	if err != nil {
+-		// Explicitly nil, NOT `return e.beginSnapshot()`: returning a nil *pebbleReader
+-		// through a Reader result would hand back a non-nil interface holding a nil
+-		// pointer, and every `if r != nil` at a call site would be wrong.
+ 		return nil, err
+ 	}
+-	return e.track(r), nil
++	return e.track(&pebbleReader{snap: e.db.NewSnapshot(), readTs: readTs, tok: tok, reg: e.reg}), nil
+ }
+ 
+ // track wraps a reader in the close-drain outer pin (N4). See trackedReader.

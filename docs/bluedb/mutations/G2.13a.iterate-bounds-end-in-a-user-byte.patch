@@ -1,0 +1,29 @@
+diff --git a/runtime-go/bluedb/reader.go b/runtime-go/bluedb/reader.go
+index 6feedcd1..0a22a529 100644
+--- a/runtime-go/bluedb/reader.go
++++ b/runtime-go/bluedb/reader.go
+@@ -164,7 +164,8 @@ func (r *pebbleReader) Iterate(prefix []byte) Cursor {
+ 	// tagData ‖ prefix ‖ 0x00 — ends in 0x00, so Split returns len and it is a bare
+ 	// prefix. It is <= every data key whose user-key begins with prefix (equal-prefix
+ 	// keys carry a 13-byte suffix, and the empty suffix sorts first).
+-	lower := dataKeyPrefix(prefix)
++	// MUTATION G2.13a (N1): the bound ends in an arbitrary USER byte again.
++	lower := append([]byte{tagData}, prefix...)
+ 	upper := dataScanUpper(prefix)
+ 	// Structural check, not a cover-up: Pebble carries no production assertion on an
+ 	// inverted bound pair — it simply yields zero rows with Err() == nil, which is
+@@ -206,11 +207,9 @@ func dataScanUpper(prefix []byte) []byte {
+ 		// data key, i.e. a silent zero-row scan.
+ 		return []byte{tagChangelog}
+ 	}
+-	// succ's last byte is (non-0xFF)+1 ∈ [0x01, 0xFF], so succ never ends in 0x00
+-	// while every stored key's Split-prefix always does. No valid prefix can equal
+-	// succ, so [succ, succ‖0x00) contains no valid prefix and succ‖0x00 excludes
+-	// exactly what bare succ would — while being a well-formed bare bound.
+-	return append(succ, sentinel)
++	// MUTATION G2.13a (N1): the 0x00 terminator is gone, so this bound ends in an
++	// arbitrary user byte and skydbSplit mis-reads it as a suffix length.
++	return succ
+ }
+ 
+ // bytesSuccessor returns the smallest byte string strictly greater than every

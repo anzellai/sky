@@ -1,0 +1,17 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 09574281..bf49ae32 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -720,9 +720,10 @@ func (e *pebbleEngine) Commit(req CommitReq) (res CommitResult) {
+ 	job := &commitJob{req: req, done: make(chan CommitResult, 1)}
+ 	defer func() {
+ 		// A send on a closed channel panics if Close raced us; recover to ErrClosed.
+-		// Assign the NAMED result — job.done is unread on this path (see the doc comment).
++		// MUTATION G2.13d (C1): the recover sends into job.done, which nothing will ever
++		// read — `return <-job.done` never executed — so Commit returns the ZERO result.
+ 		if r := recover(); r != nil {
+-			res = CommitResult{Err: ErrClosed}
++			job.done <- CommitResult{Err: ErrClosed}
+ 		}
+ 	}()
+ 	e.ch <- job

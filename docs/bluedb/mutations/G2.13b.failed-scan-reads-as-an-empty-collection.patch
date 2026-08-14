@@ -1,0 +1,18 @@
+diff --git a/runtime-go/bluedb/txn.go b/runtime-go/bluedb/txn.go
+index ec7243b9..fd7d7560 100644
+--- a/runtime-go/bluedb/txn.go
++++ b/runtime-go/bluedb/txn.go
+@@ -599,11 +599,9 @@ func (tx *Txn) materializeScan(prefix []byte, cur Cursor) Cursor {
+ 	// (or, worse, write-set-only) collection. Overlaying buffered writes on a failed
+ 	// base read yields a plausible-looking partial collection that a predicate then
+ 	// treats as the truth. Surface the error and return no rows.
+-	scanErr := cur.Err()
++	// MUTATION G2.13b (N1b): cur.Err() is never consulted again, so a failed base
++	// scan is reported as the buffered write-set alone.
+ 	cur.Close()
+-	if scanErr != nil {
+-		return &sliceCursor{i: -1, err: scanErr}
+-	}
+ 
+ 	// Overlay the write-set (only keys under this collection's prefix): a buffered put appears,
+ 	// a buffered delete masks.

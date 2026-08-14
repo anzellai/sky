@@ -76,14 +76,58 @@ pub(super) struct GoTestRun {
     pub timed_out: bool,
 }
 
-/// Run exactly `tests` under `budget`, with the three anti-vacuity flags.
+/// Build the **anchored, closed** `-run` pattern for a set of test names.
 ///
-/// The `-run` pattern is **anchored and closed** (`^(A|B)$`): an unanchored
-/// pattern silently pulls in every test whose name has one of these as a
-/// prefix, and then the "exactly N passes" assertion would be measuring a
-/// population the gate never declared.
+/// An unanchored pattern silently pulls in every test whose name has one of
+/// these as a prefix, and then the "exactly N passes" assertion would be
+/// measuring a population the gate never declared. So every level is `^(…)$`.
+///
+/// `go test -run` splits its argument on `/` and matches element *i* against
+/// name level *i*, so a SUBTEST is addressed by a multi-level pattern
+/// (`^(TestX)$/^(sub)$`). G2.13a and G2.13b need that: they certify two
+/// different properties that live in one Go function, and a gate that ran the
+/// whole function would go red under the *other* gate's mutation — which is
+/// precisely the undifferentiated failure the seven-gate split exists to
+/// prevent.
+///
+/// The set must be of UNIFORM depth (asserted by
+/// `every_pinned_set_has_uniform_depth`): a mixed-depth set would emit a level
+/// whose alternation omits the shallower names, and Go would then run them
+/// unfiltered.
+pub(super) fn run_pattern(tests: &[&str]) -> String {
+    let depth = tests.iter().map(|t| t.split('/').count()).max().unwrap_or(1);
+    let mut levels: Vec<String> = Vec::new();
+    for i in 0..depth {
+        let mut alts: Vec<&str> = Vec::new();
+        for t in tests {
+            if let Some(part) = t.split('/').nth(i) {
+                if !alts.contains(&part) {
+                    alts.push(part);
+                }
+            }
+        }
+        if alts.is_empty() {
+            // Only reachable from a mixed-depth set. `^()$` matches the empty
+            // string and would filter everything out; stopping here is the
+            // conservative reading, and the uniform-depth test forbids the case.
+            break;
+        }
+        levels.push(format!("^({})$", alts.join("|")));
+    }
+    levels.join("/")
+}
+
+/// Every strict ancestor of a (possibly nested) test name: `A/b/c` ⇒ `A`,
+/// `A/b`. Empty for a top-level name, which is why
+/// [`check_run_evidence`] behaves identically for a slash-free pinned set.
+fn ancestors(name: &str) -> Vec<String> {
+    let parts: Vec<&str> = name.split('/').collect();
+    (1..parts.len()).map(|i| parts[..i].join("/")).collect()
+}
+
+/// Run exactly `tests` under `budget`, with the three anti-vacuity flags.
 pub(super) fn go_test(ctx: &Ctx, tests: &[&str], budget: Duration) -> Result<GoTestRun, String> {
-    let pattern = format!("^({})$", tests.join("|"));
+    let pattern = run_pattern(tests);
 
     let mut cmd = Command::new("go");
     cmd.arg("test")
@@ -199,7 +243,18 @@ pub(super) fn check_pinned_population(
 }
 
 /// Assertion (3): exactly the pinned tests reported `pass`.
+///
+/// A pinned SUBTEST also produces a pass event for its parent, so the ancestors
+/// of the pinned set are permitted in `passed` but are not required to be there
+/// — the leaves are what the gate certifies. For a slash-free pinned set the
+/// ancestor set is empty and this is exactly "passed == pinned".
 pub(super) fn check_run_evidence(run: &GoTestRun, pinned: &[&str]) -> Vec<String> {
+    let allowed: BTreeSet<String> = pinned
+        .iter()
+        .flat_map(|s| {
+            std::iter::once(s.to_string()).chain(ancestors(s))
+        })
+        .collect();
     let pinned: BTreeSet<String> = pinned.iter().map(|s| s.to_string()).collect();
     let mut findings = Vec::new();
 
@@ -217,7 +272,7 @@ pub(super) fn check_run_evidence(run: &GoTestRun, pinned: &[&str]) -> Vec<String
             }
         ));
     }
-    for extra in run.passed.difference(&pinned) {
+    for extra in run.passed.difference(&allowed) {
         findings.push(format!(
             "{extra} passed but is not in the pinned set — the `-run` anchor is leaking"
         ));
@@ -728,6 +783,51 @@ func TestOther(t *testing.T) {\n}\n";
             f.iter().all(|s| s.contains("exit status is not evidence")),
             "{f:?}"
         );
+    }
+
+    #[test]
+    fn a_top_level_set_builds_the_pattern_it_always_did() {
+        assert_eq!(run_pattern(&["TestA", "TestB"]), "^(TestA|TestB)$");
+        assert_eq!(run_pattern(&["TestA"]), "^(TestA)$");
+    }
+
+    /// The mechanism G2.13a and G2.13b are built on: two properties in ONE Go
+    /// function, addressed separately, so neither goes red under the other's
+    /// mutation.
+    #[test]
+    fn a_subtest_set_builds_one_anchored_level_per_depth() {
+        assert_eq!(
+            run_pattern(&["TestX/sub1", "TestX/sub2"]),
+            "^(TestX)$/^(sub1|sub2)$"
+        );
+        assert_eq!(
+            run_pattern(&["TestX/N1b/failed-scan"]),
+            "^(TestX)$/^(N1b)$/^(failed-scan)$"
+        );
+    }
+
+    #[test]
+    fn ancestors_are_the_strict_prefixes_and_a_top_level_name_has_none() {
+        assert!(ancestors("TestA").is_empty());
+        assert_eq!(ancestors("A/b/c"), vec!["A".to_string(), "A/b".to_string()]);
+    }
+
+    /// The parent's own pass event is evidence about the parent, not a leak —
+    /// but a SIBLING subtest passing still is. Without the second half the
+    /// N1/N1b split would be undetectable.
+    #[test]
+    fn a_pinned_subtests_parent_may_pass_but_a_sibling_may_not() {
+        assert!(check_run_evidence(
+            &run_with(&["TestX", "TestX/sub1"], &[], true),
+            &["TestX/sub1"]
+        )
+        .is_empty());
+        let f = check_run_evidence(
+            &run_with(&["TestX", "TestX/sub1", "TestX/other"], &[], true),
+            &["TestX/sub1"],
+        );
+        assert_eq!(f.len(), 1, "{f:?}");
+        assert!(f[0].contains("TestX/other") && f[0].contains("leaking"), "{f:?}");
     }
 
     #[test]

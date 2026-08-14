@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 
 use super::gates_g0;
 use super::gates_g2;
+use super::gates_g2_13;
 use super::pending;
 
 // ---------------------------------------------------------------------------
@@ -701,6 +702,140 @@ pub static REGISTRY: &[Gate] = &[
             targets: &["runtime-go/bluedb"],
         }]),
     },
+    // G2.13a–g — the audit corpus, ONE GATE PER PROPERTY.
+    //
+    // Seven gates rather than one gate with seven mutations, because
+    // `mutations.rs` classifies with `red.exit_ok || !red.output.contains(
+    // m.expect)`: it checks only that THIS mutation's assertion fired, never
+    // that the other six did not. Seven mutations on one gate would let a
+    // single defect that broke several properties mint seven PROVENs out of one
+    // undifferentiated failure. See `gates_g2_13.rs`'s module doc and
+    // `expect_strings_are_pairwise_discriminating` below, which closes the
+    // other half of that hole for the whole registry.
+    //
+    // Titles name the PROPERTY, not the defect id: a gate is a statement about
+    // what holds, and "N1" is only a pointer to when it did not.
+    Gate {
+        id: "G2.13a",
+        goal: 2,
+        title: "Iterate bounds do not leak rows across collections",
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13a_iterate_bounds,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.13a/iterate-bounds-end-in-a-user-byte",
+            patch: "docs/bluedb/mutations/G2.13a.iterate-bounds-end-in-a-user-byte.patch",
+            // Verbatim from the observed failure of collNameLen=30 under the
+            // reverted bound construction: 2 rows where 1 was required, err=nil.
+            expect: "cross-collection leakage (another collection's rows scanned as this one's)",
+            targets: &["runtime-go/bluedb/reader.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.13b",
+        goal: 2,
+        title: "a failed scan surfaces an error, not an empty collection",
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13b_failed_scan_is_an_error,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.13b/failed-scan-reads-as-an-empty-collection",
+            patch: "docs/bluedb/mutations/G2.13b.failed-scan-reads-as-an-empty-collection.patch",
+            // Verbatim from the observed failure: the write-set overlay alone
+            // came back as a one-row collection instead of an error.
+            expect: "a partial/write-set-only collection is worse than an error",
+            // txn.go only: N1's fix is in reader.go, so the two patches — and
+            // therefore the two gates — cannot trigger each other.
+            targets: &["runtime-go/bluedb/txn.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.13c",
+        goal: 2,
+        title: "a mis-sized hlc_hi refuses to open and never re-issues a commitTs",
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13c_corrupt_hlc_hi,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.13c/corrupt-hlc-hi-reads-as-a-fresh-store",
+            patch: "docs/bluedb/mutations/G2.13c.corrupt-hlc-hi-reads-as-a-fresh-store.patch",
+            // Verbatim: the fixture asserts the CONSEQUENCE, so the recorded
+            // failure is the restarted clock, not merely "openWith succeeded".
+            expect: "and the commit clock RESTARTED:",
+            targets: &["runtime-go/bluedb/pebble_engine.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.13d",
+        goal: 2,
+        title: "a commit against a closed engine does not ack success",
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13d_no_false_ack,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.13d/commit-on-a-closed-engine-acks-success",
+            patch: "docs/bluedb/mutations/G2.13d.commit-on-a-closed-engine-acks-success.patch",
+            // Verbatim. The patch reverts ONLY the recover body and leaves the
+            // named return in place, so it also reproduces the half-fix the
+            // plan names as risk 4 — the diff that looks like the fix and is not.
+            expect: "the write was never enqueued, never applied and is not durable",
+            targets: &["runtime-go/bluedb/pebble_engine.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.13e",
+        goal: 2,
+        title: "a Snapshot's readTs is pinned with its snapshot",
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13e_readts_pinned_with_snapshot,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.13e/snapshot-readts-is-the-in-memory-high-water",
+            patch: "docs/bluedb/mutations/G2.13e.snapshot-readts-is-the-in-memory-high-water.patch",
+            // Verbatim. The patch moves ONLY the readTs choice: N4's
+            // closed-check-and-pin section stays, so G2.13f is untouched by it.
+            expect: "the ASSIGNED-but-unapplied commitTs.",
+            targets: &["runtime-go/bluedb/pebble_engine.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.13f",
+        goal: 2,
+        // FULL, not fast: the drain arms carry real timeouts (a 20s
+        // `closeWithin` with a 20s guard behind it, a 15s hang guard on the
+        // leaked-reader arm). The passing case is ~2s; the budget is sized for
+        // the failing one, because a gate that outruns its budget is a FAIL and
+        // a FAIL for the wrong reason proves nothing.
+        title: "Close quiesces readers instead of racing them",
+        tier: Tier::Full,
+        run: gates_g2_13::g2_13f_close_quiesces_readers,
+        budget_s: 600,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.13f/close-does-not-quiesce-readers",
+            patch: "docs/bluedb/mutations/G2.13f.close-does-not-quiesce-readers.patch",
+            // Verbatim from the observed failure: Close returned pebble's own
+            // "leaked snapshots" error while the transaction's reader was pinned.
+            expect: "handle underneath a live reader, whose next operation panics inside pebble",
+            targets: &["runtime-go/bluedb/pebble_engine.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.13g",
+        goal: 2,
+        title: "a failed point read is an error, not an absent row",
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13g_failed_read_is_an_error,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.13g/failed-point-read-reads-as-an-absent-row",
+            patch: "docs/bluedb/mutations/G2.13g.failed-point-read-reads-as-an-absent-row.patch",
+            // Verbatim, and it is assertion 1 of the fixture — the FLAG. The
+            // fixture uses Errorf there precisely so assertion 2 (the txn
+            // failing closed) still runs; both fire under this patch.
+            expect: "Get swallowed an injected SSTable read fault: ok=false with Err() == nil",
+            targets: &["runtime-go/bluedb/reader.go"],
+        }]),
+    },
     // -- Goal 3 — easy + simple (P4) ---------------------------------------
     Gate {
         id: "G3.1",
@@ -1083,6 +1218,58 @@ mod tests {
         let before = ids.len();
         ids.dedup();
         assert_eq!(before, ids.len(), "duplicate mutation id");
+    }
+
+    /// **The gap that made seven-mutations-on-one-gate dangerous, closed for
+    /// every gate.**
+    ///
+    /// `mutations.rs` classifies a falsification with
+    /// `if red.exit_ok || !red.output.contains(m.expect)`. It asks only whether
+    /// THIS mutation's assertion is present — never whether any OTHER
+    /// mutation's is absent. Nothing anywhere required the declared assertions
+    /// to be mutually distinguishable, so two gates could be satisfied by one
+    /// message: mutate A, watch a shared string appear, record `PROVEN` for
+    /// both A and B, and B's proof is a statement about A's defect.
+    ///
+    /// The strongest cheap invariant is that no declared assertion is a
+    /// SUBSTRING of another. Substring, not equality: `contains` is the
+    /// operator the classifier uses, so an assertion nested inside another's
+    /// text fires whenever the outer one does, which is exactly the collision.
+    /// (`<never>` is the canary's sentinel and is compared by identity in the
+    /// runner, so it is exempt — but only from itself.)
+    ///
+    /// This does not make a mutation's blast radius zero — a patch can still
+    /// break more than one gate's SUBJECT — but it does make each recorded
+    /// proof a statement about its own property.
+    #[test]
+    fn expect_strings_are_pairwise_discriminating() {
+        let mut all: Vec<(&str, &str)> = Vec::new();
+        for g in REGISTRY {
+            for m in g.mutations.as_slice() {
+                if m.expect == "<never>" {
+                    continue; // the canary sentinel; never matched by `contains`
+                }
+                assert!(
+                    !m.expect.is_empty(),
+                    "{} declares an empty assertion, which every output contains",
+                    m.id
+                );
+                all.push((m.id, m.expect));
+            }
+        }
+        for (i, (id_a, a)) in all.iter().enumerate() {
+            for (j, (id_b, b)) in all.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                assert!(
+                    !b.contains(a),
+                    "{id_a}'s assertion {a:?} is a substring of {id_b}'s {b:?} — a single failure \
+                     emitting {b:?} would satisfy BOTH proofs, and the classifier only ever checks \
+                     for presence"
+                );
+            }
+        }
     }
 
     #[test]

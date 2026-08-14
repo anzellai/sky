@@ -1,0 +1,23 @@
+diff --git a/runtime-go/bluedb/reader.go b/runtime-go/bluedb/reader.go
+index 6feedcd1..a89a93de 100644
+--- a/runtime-go/bluedb/reader.go
++++ b/runtime-go/bluedb/reader.go
+@@ -92,15 +92,9 @@ func (r *pebbleReader) Get(userKey []byte) (value []byte, commitTs HLC, ok bool)
+ 	defer iter.Close()
+ 
+ 	target := encodeDataKey(userKey, r.readTs)
+-	seeked := iter.SeekGE(target)
+-	if e := iter.Error(); e != nil {
+-		// THE H3 fix. An unreadable SSTable/block reaches us as (!seeked, Error() != nil);
+-		// without this branch it is laundered into "the row is absent", which is how a
+-		// swallowed I/O error becomes an unwanted INSERT at the commit boundary.
+-		r.latch(e)
+-		return nil, HLC{}, false
+-	}
+-	if !seeked || !iter.Valid() {
++	// MUTATION G2.13g (H3): iter.Error() is never interrogated after positioning, so a
++	// failed SeekGE is laundered into "the row is absent".
++	if !iter.SeekGE(target) || !iter.Valid() {
+ 		return nil, HLC{}, false
+ 	}
+ 	k := iter.Key()

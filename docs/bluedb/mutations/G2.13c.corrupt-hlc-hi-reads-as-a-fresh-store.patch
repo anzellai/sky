@@ -1,0 +1,20 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 09574281..2d895d73 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -502,11 +502,10 @@ func readMetaHLC(db *pebble.DB, name string) (HLC, error) {
+ 		return HLC{}, err
+ 	}
+ 	defer closer.Close()
+-	if len(v) != hlcEncodedLen {
+-		return HLC{}, fmt.Errorf(
+-			"bluedb: corrupt metadata %q: got %d bytes, want %d — refusing to open "+
+-				"(a mis-sized hlc_hi would restart the commit clock and re-issue a committed commitTs)",
+-			name, len(v), hlcEncodedLen)
++	// MUTATION G2.13c (N5): a TRUNCATED value is folded back into the fresh-store
++	// sentinel, so corruption is indistinguishable from an empty store.
++	if len(v) < hlcEncodedLen {
++		return HLC{}, nil
+ 	}
+ 	return decodeHLC(v), nil
+ }
