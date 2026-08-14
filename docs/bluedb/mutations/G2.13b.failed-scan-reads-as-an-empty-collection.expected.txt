@@ -4,5 +4,5 @@ PROBE gate=G2.13b state=FAIL root=<scratch-worktree>
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes: === RUN   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection: === RUN   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection:     audit_test.go:166: materializeScan over a failed cursor returned 1 rows ["orders\x1fpk2"], want 0 — a partial/write-set-only collection is worse than an error
-  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection (0.08s)
-  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes (0.08s)
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1b/failed-scan-surfaces-an-error-not-an-empty-collection (0.13s)
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes (0.13s)
