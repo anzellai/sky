@@ -88,6 +88,40 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
 		return
 	}
 
+	// ── C6b: decode every payload FIRST, before a single byte enters the batch. ──
+	//
+	// This is the SECOND instance of N6's class, in the same file. The ring append below
+	// used to sit after Apply and read `derr == nil && len(chg) > 0`, so a blind commit
+	// whose payload would not decode was written durably and acked, while its changes
+	// never entered the recent-changes ring. A CONCURRENT open transaction — one whose
+	// readTs is below this commit, in a different drain window — validates against
+	// ring.after(readTs), so it validates against a window missing a committed change:
+	// under-rejection, exactly as in decodePayload's `pending` case. The ring append is
+	// not an optimisation here; the doc above says why it is a correctness obligation.
+	//
+	// Decoding up front makes the only available remedy reachable: abort the job before
+	// anything is written. After Apply the write is durable and there is nothing to undo.
+	// It costs the firehose nothing — an empty payload returns immediately, exactly as
+	// the post-Apply `len(...) == 0` check did — and it removes the second decode.
+	live := make([]*commitJob, 0, len(batch))
+	changes := make([][]KeyChange, 0, len(batch))
+	for _, j := range batch {
+		chg, derr := decodePayload(j.req.ChangelogPayload)
+		if derr != nil {
+			j.done <- CommitResult{Err: derr}
+			continue
+		}
+		live = append(live, j)
+		changes = append(changes, chg)
+	}
+	if len(live) == 0 {
+		return // every job rejected, each already acked — nothing to apply, no metadata
+	}
+	// From here on `batch` means the surviving jobs, INCLUDING inside the deferred
+	// recover below (it closes over the variable, and this assignment precedes it), so a
+	// rejected job cannot be acked twice.
+	batch = live
+
 	// SEAL on a synchronous durability panic (see the Phase-1 contract). Acks happen only
 	// AFTER Apply, so on a panic no job has been acked and this recover acks each exactly once.
 	//
@@ -145,20 +179,20 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
 		e.sealed.Store(true)
 	} else {
 		e.advanceDurableHi(lastCommitTs)
-		// Ring append for concurrent-open-txn correctness (see doc above). Empty-payload
-		// writes decode to nothing → append nothing. The Phase-4 change-feed (§4.1) emits the
-		// SAME decoded changes here — strictly AFTER advanceDurableHi (durable-before-notify,
-		// §7), reusing this decode (not a second one), carrying the job's transient tenant tag.
+		// Ring append for concurrent-open-txn correctness (see doc above), using the
+		// changes decoded BEFORE the batch was built (C6b) — every surviving job's payload
+		// is known to decode, so there is no error arm left here to swallow. Empty-payload
+		// writes carry no changes → append nothing. The Phase-4 change-feed (§4.1) emits
+		// the SAME list, strictly AFTER advanceDurableHi (durable-before-notify, §7),
+		// carrying the job's transient tenant tag.
 		feed := e.hasChangeSubs()
 		for i, j := range batch {
-			if len(j.req.ChangelogPayload) == 0 {
+			if len(changes[i]) == 0 {
 				continue
 			}
-			if chg, derr := DecodeChangelogPayload(j.req.ChangelogPayload); derr == nil && len(chg) > 0 {
-				e.recent.append(jobTs[i], chg)
-				if feed {
-					e.emitChangeBatch(ChangeBatch{CommitTs: jobTs[i], Tenant: j.req.Tenant, Changes: chg})
-				}
+			e.recent.append(jobTs[i], changes[i])
+			if feed {
+				e.emitChangeBatch(ChangeBatch{CommitTs: jobTs[i], Tenant: j.req.Tenant, Changes: changes[i]})
 			}
 		}
 	}
@@ -230,12 +264,20 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 		if j.req.ReadSet == nil {
 			// ── BLIND-WRITE FAST PATH within a mixed batch (§5.4). No validation; but a
 			// later txn in THIS batch must validate against it → decode into pending. ──
+			// N6: decode BEFORE assigning a commitTs or writing anything. An undecodable
+			// payload aborts this job rather than contributing an invisible hole to
+			// `pending` — see decodePayload.
+			chg, derr := decodePayload(j.req.ChangelogPayload)
+			if derr != nil {
+				j.done <- CommitResult{Err: derr} // NOT ErrConflict: a retry decodes identically
+				acked[j] = true                   // Fix-7: record the inline ack
+				continue
+			}
 			commitTs := e.hlc.next()
 			e.writeJob(b, j, commitTs)
 			if len(j.req.Writes) > 0 {
 				hasWrites = true
 			}
-			chg := decodePayload(j.req.ChangelogPayload)
 			pending = append(pending, chg...)
 			applied = append(applied, appliedJob{job: j, commitTs: commitTs, changes: chg})
 			if maxApplied.Less(commitTs) {
@@ -283,12 +325,19 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 			continue
 		}
 
+		// N6, same as the blind arm: decode before the ts is assigned and before anything
+		// is written, so an undecodable payload aborts instead of holing `pending`.
+		chg, derr := decodePayload(j.req.ChangelogPayload)
+		if derr != nil {
+			j.done <- CommitResult{Err: derr}
+			acked[j] = true
+			continue
+		}
 		commitTs := e.hlc.next() // validate-then-assign (no burned ts)
 		e.writeJob(b, j, commitTs)
 		if len(j.req.Writes) > 0 {
 			hasWrites = true
 		}
-		chg := decodePayload(j.req.ChangelogPayload)
 		pending = append(pending, chg...)
 		applied = append(applied, appliedJob{job: j, commitTs: commitTs, changes: chg})
 		if maxApplied.Less(commitTs) {
@@ -368,8 +417,21 @@ func (e *pebbleEngine) foldFatal(err error) error {
 	return errors.Join(err, fmt.Errorf("%w: %s", ErrPebbleFatal, msg))
 }
 
-// writeJob encodes one job's data versions + its opaque changelog entry into the batch at
+// writeJob encodes one job's data versions + its changelog entry into the batch at
 // commitTs. Shared by the blind and transactional paths (identical Phase-1 encoding).
+//
+// C6b classification — the discarded `b.Set` errors are FAIL-OPEN BY DESIGN, and here is
+// the argument rather than the assumption. pebble's Batch.Set can return non-nil on
+// EXACTLY one condition: `b.index != nil && b.index.Add(...) != nil` (batch.go). e.db is
+// always driven with db.NewBatch(), which builds a NON-indexed batch (index == nil), so
+// Set is unconditionally nil here. Checking it would add a branch per write to the
+// firehose's innermost loop to test something that cannot happen.
+//
+// THE CONDITION UNDER WHICH THIS STOPS BEING TRUE, stated so a future change cannot
+// silently invalidate it: switching any of these batches to db.NewIndexedBatch(). If that
+// ever happens, a failed Set silently omits a write from a batch that then applies and
+// acks as durable — the fail-open this note exists to make impossible-to-miss. The same
+// argument covers the two metadata Sets in processBlindPhase1/processTxn.
 func (e *pebbleEngine) writeJob(b *pebble.Batch, j *commitJob, commitTs HLC) {
 	for _, w := range j.req.Writes {
 		k := encodeDataKey(w.UserKey, commitTs)
@@ -388,18 +450,32 @@ func (e *pebbleEngine) writeJob(b *pebble.Batch, j *commitJob, commitTs HLC) {
 	}
 }
 
-// decodePayload decodes a changelog payload to its KeyChange list (nil on empty or error —
-// a malformed payload validates as "no changes" for that job, never a false accept of a
-// later txn against garbage).
-func decodePayload(payload []byte) []KeyChange {
+// decodePayload decodes a changelog payload to its KeyChange list. An EMPTY payload is
+// legitimately no changes; a payload that does not DECODE is an error (defect N6).
+//
+// It used to return nil for both, and its docstring argued that was safe: "a malformed
+// payload validates as 'no changes' for that job, never a false accept of a later txn
+// against garbage". THAT REASONING IS INVERTED for the `pending` path. pending is the
+// intra-batch half of the validation window: the changes of jobs already written into
+// THIS drain's batch, against which every later txn in the same window is validated. A
+// job whose payload silently contributes nothing to pending is a job whose committed
+// changes a later txn never sees — so that txn commits against a window missing them.
+// That is UNDER-rejection, i.e. a serializability break, and it is the identical shape
+// this package refuses `continue` for one file over in changelog.go's Tail.
+//
+// "Never a false accept against garbage" was answering the wrong question. Validating
+// against garbage would over-reject, which is safe; validating against a HOLE
+// under-rejects, which is not. The two are not symmetric and the comment treated them
+// as if they were.
+//
+// The caller's remedy is to ABORT the job — assign no commitTs, write nothing. Then the
+// window has nothing to miss, because the job never committed. Aborting is also the only
+// remedy available before the batch is applied, which is where both call sites now sit.
+func decodePayload(payload []byte) ([]KeyChange, error) {
 	if len(payload) == 0 {
-		return nil
+		return nil, nil
 	}
-	chg, err := DecodeChangelogPayload(payload)
-	if err != nil {
-		return nil
-	}
-	return chg
+	return DecodeChangelogPayload(payload)
 }
 
 // changelogTailChanges decodes the durable Changelog.Tail(after) into a flat KeyChange list —

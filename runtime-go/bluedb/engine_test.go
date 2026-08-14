@@ -56,9 +56,30 @@ func getAt(t *testing.T, e *pebbleEngine, key string, ts HLC) (string, bool) {
 func mkJob(key, val, changelog string) *commitJob {
 	req := CommitReq{Writes: []VersionedWrite{{UserKey: []byte(key), Op: OpPut, Value: []byte(val)}}}
 	if changelog != "" {
-		req.ChangelogPayload = []byte(changelog)
+		req.ChangelogPayload = logPayload(changelog)
 	}
 	return &commitJob{req: req, done: make(chan CommitResult, 1)}
+}
+
+// logPayload builds a WELL-FORMED changelog payload carrying `marker` as its single
+// KeyChange's Pk. Tests used to pass the marker as raw bytes, which only worked because
+// decodePayload swallowed the decode error (defect N6) — a payload that does not decode
+// now fails the commit closed, as it must, since it cannot contribute to the SSI
+// validation window. logMarker is the inverse, for asserting round-trips.
+func logPayload(marker string) []byte {
+	return EncodeChangelogPayload([]KeyChange{{Pk: []byte(marker)}})
+}
+
+func logMarker(t *testing.T, payload []byte) string {
+	t.Helper()
+	chg, err := DecodeChangelogPayload(payload)
+	if err != nil {
+		t.Fatalf("changelog payload %x does not decode: %v", payload, err)
+	}
+	if len(chg) != 1 {
+		t.Fatalf("changelog payload decoded to %d changes, want 1", len(chg))
+	}
+	return string(chg[0].Pk)
 }
 
 // TestGroupCommitPerJobDistinctChangelog is Fix-2 (a): a drained batch with >=2 jobs
@@ -103,8 +124,8 @@ func TestGroupCommitPerJobDistinctChangelog(t *testing.T) {
 	}
 	want := []string{"chg-0", "chg-1", "chg-2"}
 	for i, ent := range entries {
-		if string(ent.Payload) != want[i] || ent.CommitTs != tss[i] {
-			t.Fatalf("changelog entry %d = %q@%+v want %q@%+v", i, ent.Payload, ent.CommitTs, want[i], tss[i])
+		if got := logMarker(t, ent.Payload); got != want[i] || ent.CommitTs != tss[i] {
+			t.Fatalf("changelog entry %d = %q@%+v want %q@%+v", i, got, ent.CommitTs, want[i], tss[i])
 		}
 	}
 }
@@ -360,8 +381,10 @@ func TestGroupCommitBasic(t *testing.T) {
 	}
 }
 
-// TestChangelogWrite verifies the opaque L1 changelog payload round-trips keyed by
-// commitTs, ascending, tail-readable.
+// TestChangelogWrite verifies the L1 changelog payload round-trips keyed by commitTs,
+// ascending, tail-readable — the bytes come back VERBATIM. (They are stored verbatim but
+// are not opaque: the committer decodes them to build the SSI validation window, which is
+// why a payload that does not decode now fails the commit closed — defect N6.)
 func TestChangelogWrite(t *testing.T) {
 	clk := &fakeClock{}
 	clk.set(1000)
@@ -372,7 +395,7 @@ func TestChangelogWrite(t *testing.T) {
 	for i, p := range payloads {
 		r := e.Commit(CommitReq{
 			Writes:           []VersionedWrite{{UserKey: []byte(fmt.Sprintf("k%d", i)), Op: OpPut, Value: []byte("x")}},
-			ChangelogPayload: []byte(p),
+			ChangelogPayload: logPayload(p),
 		})
 		if r.Err != nil {
 			t.Fatalf("commit %d: %v", i, r.Err)
@@ -388,8 +411,8 @@ func TestChangelogWrite(t *testing.T) {
 		t.Fatalf("tail len=%d want %d", len(entries), len(payloads))
 	}
 	for i, ent := range entries {
-		if string(ent.Payload) != payloads[i] {
-			t.Fatalf("entry %d payload=%q want %q", i, ent.Payload, payloads[i])
+		if got := logMarker(t, ent.Payload); got != payloads[i] {
+			t.Fatalf("entry %d payload=%q want %q", i, got, payloads[i])
 		}
 		if ent.CommitTs != tss[i] {
 			t.Fatalf("entry %d ts=%+v want %+v", i, ent.CommitTs, tss[i])
@@ -400,16 +423,18 @@ func TestChangelogWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tail-after: %v", err)
 	}
-	if len(after) != 2 || string(after[0].Payload) != "chg-b" {
-		t.Fatalf("tail(after t0) = %d entries, first=%q; want 2 starting chg-b", len(after), firstPayload(after))
+	if len(after) != 2 || logMarker(t, after[0].Payload) != "chg-b" {
+		t.Fatalf("tail(after t0) = %d entries, first=%q; want 2 starting chg-b", len(after), firstMarker(t, after))
 	}
 }
 
-func firstPayload(e []ChangelogEntry) string {
+// firstMarker decodes the first entry's payload back to its marker (see logPayload).
+func firstMarker(t *testing.T, e []ChangelogEntry) string {
+	t.Helper()
 	if len(e) == 0 {
 		return ""
 	}
-	return string(e[0].Payload)
+	return logMarker(t, e[0].Payload)
 }
 
 // TestIterateOrdered: the snapshot cursor returns distinct user-keys in ascending

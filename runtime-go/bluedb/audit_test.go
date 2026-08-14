@@ -1163,3 +1163,297 @@ func TestAuditN3SynchronousWalFaultStillErrorsTheAck(t *testing.T) {
 		t.Errorf("a commit after the WAL durability fault acked nil (commitTs %+v)", after.CommitTs)
 	}
 }
+
+// TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow pins defect N6 — the
+// fail-open C1's agent found, and the reason C6b is a sweep rather than a point fix.
+//
+// decodePayload silently returned nil on a decode error, and its docstring argued the
+// case: "a malformed payload validates as 'no changes' for that job, never a false accept
+// of a later txn against garbage". That answers the wrong question. Validating against
+// GARBAGE would over-reject, which is safe. Validating against a HOLE under-rejects,
+// which is not, and a hole is what nil produces: `pending` is the intra-batch half of the
+// SSI validation window — the changes of jobs already written into THIS drain's batch —
+// so a job that commits while contributing nothing to it is a job whose committed changes
+// a later txn in the same window never sees.
+//
+// THE ASSERTION IS THE CONSEQUENCE, NOT THE SHAPE. "decodePayload returns an error" would
+// also be satisfied by a fix that returns the error and then ignores it. What must be
+// impossible is the HISTORY: a blind job commits a change to K, and a transaction that
+// READ K at a readTs below it commits too, in the same drain window. Exactly one of them
+// may commit.
+//
+// The control arm is what makes the main arm mean anything. With a WELL-FORMED payload
+// carrying the same KeyChange, the later txn MUST be rejected — that proves `pending` and
+// validate() really do catch this conflict, so "both committed" in the main arm is
+// genuinely the payload's absence from the window and not some unrelated gap in
+// validation.
+//
+// Driven through e.process directly: that is the deterministic form of the one shape that
+// matters here, a single drained batch holding both jobs. Waiting for the group committer
+// to coalesce them would be a race.
+func TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow(t *testing.T) {
+	const key = "n6-key"
+
+	// A payload that is NOT a valid payloadFmtV1 blob. Asserted, not assumed: if
+	// DecodeChangelogPayload ever accepted this, the whole fixture would be vacuous.
+	corrupt := []byte("n6-not-a-payload")
+	if _, err := DecodeChangelogPayload(corrupt); err == nil {
+		t.Fatalf("fixture: %q DECODES — the test would exercise the clean path and prove nothing", corrupt)
+	}
+	wellFormed := EncodeChangelogPayload([]KeyChange{{Pk: []byte(key), Op: OpPut, Record: []byte("v2")}})
+	if _, err := DecodeChangelogPayload(wellFormed); err != nil {
+		t.Fatalf("fixture: the control payload does not decode: %v", err)
+	}
+
+	// run drives ONE drain window holding a blind job that writes `key` with the given
+	// payload, followed by a txn that READ `key` at the pre-batch readTs.
+	run := func(t *testing.T, payload []byte) (blind, txn CommitResult) {
+		t.Helper()
+		clk := &fakeClock{}
+		clk.set(41000)
+		e := openDisk(t, clk.fn())
+
+		base := put(t, e, key, "v1") // the version the txn's read observed
+		readTs := e.durableHi()
+		if readTs != base {
+			t.Fatalf("fixture: durableHi %v != the committed ts %v", readTs, base)
+		}
+
+		blindJob := &commitJob{
+			req: CommitReq{
+				Writes:           []VersionedWrite{{UserKey: []byte(key), Op: OpPut, Value: []byte("v2")}},
+				ChangelogPayload: payload,
+			},
+			done: make(chan CommitResult, 1),
+		}
+		txnJob := &commitJob{
+			req: CommitReq{
+				Writes: []VersionedWrite{{UserKey: []byte("n6-other"), Op: OpPut, Value: []byte("x")}},
+				ReadTs: readTs,
+				// The txn read `key` and saw the version committed at `base`. Any change to
+				// `key` committed after readTs must conflict with it.
+				ReadSet: &ReadSet{points: map[string]pointRead{
+					key: {versionSeen: base, present: true},
+				}},
+			},
+			done: make(chan CommitResult, 1),
+		}
+
+		e.process([]*commitJob{blindJob, txnJob}) // ONE batch, blind first — the N6 shape
+		return <-blindJob.done, <-txnJob.done
+	}
+
+	t.Run("control/a-well-formed-payload-makes-the-later-txn-conflict", func(t *testing.T) {
+		blind, txn := run(t, wellFormed)
+		if blind.Err != nil {
+			t.Fatalf("control: the blind job with a well-formed payload failed: %v", blind.Err)
+		}
+		if !errors.Is(txn.Err, ErrConflict) {
+			t.Fatalf("control: the txn that READ %q committed (%v) even though a blind job in the "+
+				"SAME drain window changed it. `pending` + validate() do not detect this conflict at "+
+				"all, so the main arm below cannot distinguish a holed window from a broken "+
+				"validator — fix this before trusting either.", key, txn.Err)
+		}
+	})
+
+	t.Run("N6/an-undecodable-payload-must-not-let-both-commit", func(t *testing.T) {
+		blind, txn := run(t, corrupt)
+
+		// THE CONSEQUENCE. Exactly one of these two may commit.
+		if blind.Err == nil && txn.Err == nil {
+			t.Errorf("BOTH committed. The blind job wrote %q at %+v and the txn that had READ %q at "+
+				"an earlier readTs committed at %+v in the same drain window. The blind job's payload "+
+				"did not decode, so it contributed NOTHING to `pending`, and the txn validated "+
+				"against a window missing that job's committed change — under-rejection, i.e. a "+
+				"serializability break. An undecodable payload must fail the job CLOSED.",
+				key, blind.CommitTs, key, txn.CommitTs)
+		}
+
+		// And the specific remedy: the undecodable job is the one refused, with a decode
+		// error rather than ErrConflict (a retry would decode identically and loop).
+		if blind.Err == nil {
+			t.Errorf("the blind job with an undecodable payload COMMITTED (commitTs %+v) — its "+
+				"changes can never enter the validation window or the recent-changes ring, so every "+
+				"concurrent transaction below its commitTs validates against a hole", blind.CommitTs)
+		} else {
+			if errors.Is(blind.Err, ErrConflict) {
+				t.Errorf("the undecodable job was refused with ErrConflict, which Transact RETRIES — "+
+					"the payload decodes identically on every attempt, so the txn would loop to its "+
+					"retry bound instead of surfacing the fault: %v", blind.Err)
+			}
+			if !blind.CommitTs.IsZero() {
+				t.Errorf("the refused job carries commitTs %+v, want the zero value", blind.CommitTs)
+			}
+		}
+	})
+}
+
+// TestAuditC6bBlindPathRingAppendCannotBeHoledEither is the SECOND instance of N6's class,
+// in the same file, and the reason the sweep exists.
+//
+// processBlindPhase1's ring append used to sit AFTER Apply and read
+// `derr == nil && len(chg) > 0`. A blind commit whose payload would not decode was
+// therefore written durably and acked, while its changes never entered the recent-changes
+// ring. Nothing in that drain window notices — an all-blind window has no `pending` and no
+// validation at all. The victim is a CONCURRENT open transaction in a DIFFERENT window,
+// whose readTs is below this commit: it validates against ring.after(readTs), and the
+// change is not there. Same under-rejection, different door.
+//
+// The assertion is again the consequence: an open transaction that READ the key must not
+// be able to commit alongside a durable blind change to it. Under the pre-fix code the
+// blind job acks nil, the ring never learns of it, and the transaction commits clean.
+func TestAuditC6bBlindPathRingAppendCannotBeHoledEither(t *testing.T) {
+	const key = "c6b-key"
+	clk := &fakeClock{}
+	clk.set(43000)
+	e := openDisk(t, clk.fn())
+
+	base := put(t, e, key, "v1")
+	readTs := e.durableHi()
+
+	// An ALL-BLIND drain window (no ReadSet anywhere) → processBlindPhase1, the path under
+	// test. The payload does not decode.
+	corrupt := []byte("c6b-not-a-payload")
+	if _, err := DecodeChangelogPayload(corrupt); err == nil {
+		t.Fatalf("fixture: %q decodes — the test would prove nothing", corrupt)
+	}
+	blindJob := &commitJob{
+		req: CommitReq{
+			Writes:           []VersionedWrite{{UserKey: []byte(key), Op: OpPut, Value: []byte("v2")}},
+			ChangelogPayload: corrupt,
+		},
+		done: make(chan CommitResult, 1),
+	}
+	e.process([]*commitJob{blindJob})
+	blind := <-blindJob.done
+
+	// Now a transaction that began BEFORE that window (readTs = base) and read the key.
+	txnJob := &commitJob{
+		req: CommitReq{
+			Writes: []VersionedWrite{{UserKey: []byte("c6b-other"), Op: OpPut, Value: []byte("x")}},
+			ReadTs: readTs,
+			ReadSet: &ReadSet{points: map[string]pointRead{
+				key: {versionSeen: base, present: true},
+			}},
+		},
+		done: make(chan CommitResult, 1),
+	}
+	e.process([]*commitJob{txnJob})
+	txn := <-txnJob.done
+
+	if blind.Err == nil && txn.Err == nil {
+		t.Errorf("BOTH committed. The all-blind window durably wrote %q at %+v with a payload that "+
+			"does not decode, so the recent-changes ring never learned of the change; the "+
+			"transaction that had READ %q at readTs %+v then validated against ring.after(readTs) "+
+			"— a window missing a committed change — and committed at %+v. The ring append is not "+
+			"an optimisation on this path; it is what makes a concurrent txn's window complete.",
+			key, blind.CommitTs, key, readTs, txn.CommitTs)
+	}
+	if blind.Err == nil {
+		t.Errorf("the blind job with an undecodable payload committed at %+v — decode BEFORE the "+
+			"batch is built, so the only available remedy (abort) is still reachable", blind.CommitTs)
+	}
+}
+
+// TestAuditC6bAdvanceOnAnUnknownTokenIsAnError is one row of the C6b sweep.
+//
+// watermarkRegistry.Advance used to return nil after doing nothing when the token was not
+// live. That is fail-open in N6's direction — the caller is told a safety property holds
+// when it does not. Advance's contract is "this reader's readTs has moved forward and the
+// GC floor is pinned at it"; a nil return for a token that is not in `live` pins nothing,
+// so a reactive binding would go on reading at a readTs GC is free to collect.
+func TestAuditC6bAdvanceOnAnUnknownTokenIsAnError(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(47000)
+	e := openDisk(t, clk.fn())
+	ts := put(t, e, "c6b-adv", "v1")
+
+	tok, _, err := e.reg.Register()
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	// A live token advances normally — the fixture proves the error below is about
+	// liveness and not about the readTs or the threshold.
+	if err := e.reg.Advance(tok, ts); err != nil {
+		t.Fatalf("Advance on a LIVE token = %v, want nil", err)
+	}
+
+	e.reg.Release(tok)
+	if err := e.reg.Advance(tok, ts); !errors.Is(err, ErrUnknownReader) {
+		t.Fatalf("Advance on a RELEASED token = %v, want ErrUnknownReader. Returning nil tells "+
+			"the caller its readTs is registered and the GC floor is pinned at it when nothing "+
+			"is pinned — the caller then reads at a readTs GC may collect underneath it", err)
+	}
+	if err := e.reg.Advance(ReaderToken(9999), ts); !errors.Is(err, ErrUnknownReader) {
+		t.Fatalf("Advance on a never-issued token = %v, want ErrUnknownReader", err)
+	}
+}
+
+// TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor is one row of the C6b sweep.
+//
+// openWith seeds the recent-changes ring from the durable changelog tail, and used to
+// drop both a Tail error and a per-entry decode error on the floor: `terr == nil` /
+// `derr == nil` with no else. The ring IS the SSI validation window, so a partially
+// seeded ring whose floor still claims to cover the whole range is a window with a hole —
+// N6's shape at open time.
+//
+// Refusing to open would be too harsh (the store itself is fine), and the correct
+// degradation already exists: a readTs below `floor` reports spilled=true and the txn
+// validates via the durable Changelog.Tail instead. So the remedy is to make the ring
+// ADMIT the range it could not seed, by raising the floor to persistedHi.
+//
+// The fixture corrupts a changelog entry's PAYLOAD behind the engine's back — the key
+// still parses, so Tail returns the entry and DecodeChangelogPayload is what fails, which
+// is the arm that had no error path at all.
+func TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor(t *testing.T) {
+	dir := t.TempDir()
+	clk := &fakeClock{}
+	clk.set(53000)
+
+	e1, err := openWith(config{dir: dir, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	ts := commitWithLog(t, e1, "c6b-seed", "v1", "chg-seed")
+	persistedHi := e1.NowTs()
+	if err := e1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if persistedHi.IsZero() || persistedHi != ts {
+		t.Fatalf("fixture: persistedHi %v / commitTs %v — the floor assertion needs a real ts", persistedHi, ts)
+	}
+
+	// Corrupt the PAYLOAD (not the key) of that changelog entry.
+	raw, err := pebble.Open(dir, &pebble.Options{Comparer: skydbComparer, Logger: quietLogger{}})
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	if err := raw.Set(encodeChangelogKey(ts), []byte("not-a-payload"), pebble.Sync); err != nil {
+		t.Fatalf("corrupt changelog payload: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("raw close: %v", err)
+	}
+
+	e2, err := openWith(config{dir: dir, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("reopen over a corrupt changelog payload = %v; the store itself is intact and "+
+			"the ring has a correct degradation, so refusing to open is the wrong remedy", err)
+	}
+	defer e2.Close()
+
+	// The seed could not be completed, so the ring must not claim to cover below
+	// persistedHi. Any reader below it now takes after()'s spilled branch and validates
+	// against the durable changelog — which fails closed on the same corrupt entry
+	// (changelog.Tail + changelogTailChanges → ErrConflict) rather than silently.
+	if e2.recent.floor != persistedHi {
+		t.Fatalf("after a failed cold-start seed the ring floor is %+v, want persistedHi %+v. A "+
+			"lower floor means after(readTs) answers `not spilled` for a range the ring does NOT "+
+			"hold, so a transaction validates against a window with a hole — under-rejection",
+			e2.recent.floor, persistedHi)
+	}
+	if _, spilled := e2.recent.after(HLC{WallMs: 53000, Logical: 0}); !spilled {
+		t.Fatalf("a readTs below the raised floor did not report spilled — the floor is not " +
+			"actually diverting those validations to the durable changelog")
+	}
+}

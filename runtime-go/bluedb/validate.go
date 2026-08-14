@@ -26,6 +26,14 @@ var validateCalls atomic.Int64
 // the victim read as a point, and leasing it would not help. pointConflict gates recordAbort.
 func validate(rs *ReadSet, window []KeyChange) (conflict bool, culprit []byte, pointConflict bool) {
 	validateCalls.Add(1)
+	// C6b classification — FAIL-OPEN BY DESIGN, and the design is in the type. A nil
+	// ReadSet is not "validation failed to produce a read-set"; it is CommitReq's declared
+	// encoding for a BLIND write ("ReadSet: nil ⇒ skip validation"), and a blind write has
+	// no read to be stale. Txn.buildReq always constructs a non-nil ReadSet even when the
+	// txn read nothing, so a transactional job can never arrive here as nil. What would
+	// make this unsafe is a caller that dropped a read-set on an error path and passed nil;
+	// there is no such caller, and the two producers of CommitReq (Txn.buildReq and the
+	// blind Commit path) are the invariant to check if that ever changes.
 	if rs == nil {
 		return false, nil, false
 	}
@@ -62,6 +70,15 @@ func coordHit(rs *ReadSet, coords []IndexCoord) bool {
 		}
 		for j := range rs.ranges {
 			r := &rs.ranges[j]
+			// C6b classification — AUDIT-N2, a KNOWN fail-open, tracked not accepted.
+			// inRangeClosed rejects a coord whose encoded key is longer than the band's
+			// bounds, so a descending non-fixed-width (text) index under-rejects a phantom
+			// that is inside the value range. It is not fixable here: Descending /
+			// rangeOptimized / encodeScanRange all live in index_key.go, which Stage 2
+			// deliberately keeps out. Owned by G2.12 and anchored in readset.go's AUDIT-N2
+			// note. It is also outside Stage 2's serializability claim by construction —
+			// rs.ranges has NO writer in this package, since Txn.Scan/ScanFallback were
+			// excised, so this arm is structurally unreachable today.
 			if r.index == c.Index && inRangeClosed(r.lo, r.hi, c.Key) {
 				return true
 			}

@@ -155,15 +155,25 @@ func (w *watermarkRegistry) RegisterAt(readTs HLC) (ReaderToken, error) {
 	return tok, nil
 }
 
+// Advance moves a live token forward to readTs.
+//
+// C6b: an UNKNOWN token is an error, not a silent no-op. It used to return nil after
+// doing nothing, which tells the caller "your new readTs is registered and GC is floored
+// at it" when nothing of the sort is registered — a reactive binding could then read at a
+// readTs GC is free to collect out from under it. That is fail-open in the same direction
+// as N6: the caller is told the safety property holds when it does not. The token is
+// unknown only if it was already Released (or never issued), both of which are caller
+// bugs the caller can act on.
 func (w *watermarkRegistry) Advance(tok ReaderToken, readTs HLC) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if readTs.Less(w.threshold) {
 		return ErrSnapshotTooOld
 	}
-	if _, ok := w.live[tok]; ok {
-		w.live[tok] = readTs
+	if _, ok := w.live[tok]; !ok {
+		return ErrUnknownReader
 	}
+	w.live[tok] = readTs
 	return nil
 }
 
@@ -224,6 +234,13 @@ func (w *watermarkRegistry) advanceThreshold() (HLC, bool) {
 	// read slightly early is at most stale-low → clamps MORE conservatively, always
 	// correctness-safe, and reading outside w.mu keeps the two locks (w.mu, engine
 	// durMu) strictly non-nested so there is no lock-ordering hazard vs the committer.
+	//
+	// C6b classification of the nil arm — FAIL-OPEN BY DESIGN, with a bounded blast
+	// radius. A registry with no durableHi does not clamp, so T could in principle be
+	// advanced past what is durable. openWith wires e.reg.durableHi unconditionally,
+	// immediately after newWatermarkRegistry, so no engine-backed registry can be in that
+	// state; the arm exists only for the hand-built registries in watermark unit tests,
+	// which have no Pebble handle and therefore no durability to outrun.
 	haveDur := w.durableHi != nil
 	var dur HLC
 	if haveDur {

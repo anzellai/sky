@@ -314,12 +314,36 @@ func openWith(cfg config) (*pebbleEngine, error) {
 		e.recent.maxEntries = defaultMaxRingEntries
 	}
 	e.trimReqs = make(chan HLC, 8)
-	if tail, terr := (&changelog{db: db}).Tail(persistedThreshold); terr == nil {
+	// C6b: a seed that cannot be completed raises the floor to persistedHi instead of
+	// leaving a partially-seeded ring behind. The ring IS the validation window, and a
+	// window with a hole under-rejects — the same class as N6. Failing to open on a
+	// transient read error would be too harsh (the store is fine), and the correct
+	// degradation already exists: a readTs below `floor` reports spilled=true and the txn
+	// validates via the durable Changelog.Tail instead. So the remedy is to make the ring
+	// admit it does not cover that range.
+	//
+	// Nothing today can observe the difference — a txn's readTs is durableHi, which right
+	// after Open equals persistedHi, so its window is empty either way — but that argument
+	// rests entirely on Txn being the only producer of a CommitReq.ReadSet. That is a
+	// property of today's call graph, not of this function, which is exactly the kind of
+	// premise a fail-open should not be resting on.
+	seedFailed := false
+	if tail, terr := (&changelog{db: db}).Tail(persistedThreshold); terr != nil {
+		seedFailed = true
+	} else {
 		for _, entry := range tail {
-			if chg, derr := DecodeChangelogPayload(entry.Payload); derr == nil && len(chg) > 0 {
+			chg, derr := DecodeChangelogPayload(entry.Payload)
+			if derr != nil {
+				seedFailed = true
+				break
+			}
+			if len(chg) > 0 {
 				e.recent.append(entry.CommitTs, chg)
 			}
 		}
+	}
+	if seedFailed && e.recent.floor.Less(persistedHi) {
+		e.recent.floor = persistedHi
 	}
 	// Floor at least at the persisted GC threshold (the same watermark version-GC uses). Use
 	// max, not assign: a small-cap cold-start seed may have already spilled and raised the

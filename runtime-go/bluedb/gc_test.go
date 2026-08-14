@@ -242,8 +242,8 @@ func TestGCChangelogRetentionTrimsBelowT(t *testing.T) {
 		t.Fatalf("tail: %v", err)
 	}
 	// Only the entry at commitTs == T (not < T) survives.
-	if len(entries) != 1 || string(entries[0].Payload) != "chg-c" || entries[0].CommitTs != tsC {
-		t.Fatalf("retention: got %d entries (first=%q), want 1 (chg-c at T)", len(entries), firstPayload(entries))
+	if len(entries) != 1 || logMarker(t, entries[0].Payload) != "chg-c" || entries[0].CommitTs != tsC {
+		t.Fatalf("retention: got %d entries (first=%q), want 1 (chg-c at T)", len(entries), firstMarker(t, entries))
 	}
 	// No new entry above the last commit.
 	tail, err := e.Changelog().Tail(tsC)
@@ -485,7 +485,7 @@ func commitWithLog(t *testing.T, e *pebbleEngine, key, val, log string) HLC {
 	t.Helper()
 	r := e.Commit(CommitReq{
 		Writes:           []VersionedWrite{{UserKey: []byte(key), Op: OpPut, Value: []byte(val)}},
-		ChangelogPayload: []byte(log),
+		ChangelogPayload: logPayload(log),
 	})
 	if r.Err != nil {
 		t.Fatalf("commitWithLog %q: %v", key, r.Err)

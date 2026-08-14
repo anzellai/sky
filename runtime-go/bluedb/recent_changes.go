@@ -37,6 +37,11 @@ func newRecentRing() *recentRing { return &recentRing{} }
 // (the validation window's ring half). O(commits-since-readTs). If readTs < floor (the ring
 // was trimmed/spilled out from under this reader) it returns spilled=true so the caller
 // validates via Changelog.Tail(readTs) instead — correct, just off the in-RAM fast path.
+// C6b classification — FAIL-CLOSED. The `spilled` return is the opposite of a swallowed
+// error: it refuses to answer rather than answering with a window it cannot vouch for,
+// and the single caller (processTxn) treats it as an obligation — it goes to
+// Changelog.Tail, and if THAT errors it acks ErrConflict rather than proceeding with a
+// nil window (Fix-1). A `return nil, false` here would be the exact N6 shape.
 func (r *recentRing) after(readTs HLC) (changes []KeyChange, spilled bool) {
 	if readTs.Less(r.floor) {
 		return nil, true
@@ -74,6 +79,12 @@ func (r *recentRing) append(commitTs HLC, changes []KeyChange) {
 // only. The dropped entries' change slices are niled before the reslice so they are GC'd
 // immediately (the reslice keeps the backing array, which Go compacts on the next grow — RAM
 // stays O(maxEntries)). floor is monotone (never lowered).
+// C6b classification of the guard below — FAIL-OPEN BY DESIGN, in the SAFE direction. A
+// silent return here over-retains (the ring may exceed maxEntries), which costs RAM and
+// never correctness; the unsafe direction would be dropping entries without raising
+// `floor`, which is what the newFloor assignment exists to prevent. The `n >= len` arm is
+// also unreachable from the only caller: append passes len(entries)-maxEntries with
+// maxEntries > 0, which is strictly less than len(entries).
 func (r *recentRing) spillOldest(n int) {
 	if n <= 0 || n >= len(r.entries) {
 		return

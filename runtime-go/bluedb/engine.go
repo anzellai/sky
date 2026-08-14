@@ -28,6 +28,10 @@ var (
 	// Transact; returned typed after maxTxnAttempts. errors.Is-friendly so Phase 3 can
 	// branch on it (§5.2).
 	ErrConflict = errors.New("bluedb: transaction conflict")
+	// ErrUnknownReader: WatermarkRegistry.Advance was handed a token that is not live
+	// (already Released, or never issued). Returned rather than ignored (C6b) — a silent
+	// no-op tells the caller its new readTs is protected from GC when nothing pins it.
+	ErrUnknownReader = errors.New("bluedb: unknown reader token")
 	// ErrPebbleFatal: pebble reported a Logger.Fatalf (defect N3). Fatalf no longer
 	// panics — it latched, and this is that latch surfacing at the next point the
 	// engine would otherwise have reported success. It is unrollbackable by
@@ -131,10 +135,20 @@ type CommitReq struct {
 	// Writes is the buffered write-set (put/delete per user-key).
 	Writes []VersionedWrite
 
-	// ChangelogPayload is OPAQUE to L1 (grill 1b): L2 owns the encode/decode of the
-	// KeyChange list; the engine stores these bytes verbatim at 0x01‖commitTs and
-	// hands them back unparsed on tail-read. Keeps bluedb.Engine a clean KV/MVCC
-	// substrate. Empty ⇒ no changelog entry is written for this commit.
+	// ChangelogPayload is stored VERBATIM at 0x01‖commitTs and handed back unparsed on
+	// tail-read. Empty ⇒ no changelog entry is written for this commit.
+	//
+	// It is NOT opaque, and the previous wording here ("OPAQUE to L1: L2 owns the
+	// encode/decode") was already false when it was written: the committer decodes it on
+	// every commit to build the SSI validation window (`pending`), the recent-changes ring
+	// and the change feed. The format is EncodeChangelogPayload's, which lives in this
+	// package. What IS true is that L1 never interprets a KeyChange's CONTENTS — only its
+	// key and index coordinates, which are what conflict detection is defined over.
+	//
+	// A payload that does not decode therefore FAILS THE COMMIT CLOSED (defect N6): it
+	// cannot contribute to the validation window, and a job that commits without
+	// contributing is a job a later transaction validates against a hole for. See
+	// decodePayload.
 	ChangelogPayload []byte
 
 	// Phase-2 fields (nil/empty in phase 1 → pure blind-write fast path). The engine
