@@ -765,11 +765,16 @@ impl Drop for WorktreeGuard {
     }
 }
 
-struct Capped {
-    ok: bool,
+/// `pub(super)` so sibling gate modules run their subprocesses through the SAME
+/// process-group killer. A gate that spawns with a plain `Command::output()`
+/// leaks its children past its own budget into the next gate's measurement,
+/// which is the defect `capped` exists to close — so there is one implementation
+/// and every module shares it.
+pub(super) struct Capped {
+    pub(super) ok: bool,
     /// stdout and stderr interleaved, kept for the failure detail.
-    out: String,
-    timed_out: bool,
+    pub(super) out: String,
+    pub(super) timed_out: bool,
 }
 
 /// Run `cmd` under `budget`, killing its whole **process group** on overrun.
@@ -777,7 +782,7 @@ struct Capped {
 /// The group is the point: `sky build` forks `go build`, and killing only the
 /// direct child leaves a compiler running past the gate's own budget, where it
 /// lands in the next gate's measurement.
-fn capped(mut cmd: Command, budget: Duration) -> Result<Capped, String> {
+pub(super) fn capped(mut cmd: Command, budget: Duration) -> Result<Capped, String> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

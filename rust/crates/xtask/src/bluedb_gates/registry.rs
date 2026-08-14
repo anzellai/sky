@@ -20,6 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use super::gates_g0;
+use super::gates_g2;
 use super::pending;
 
 // ---------------------------------------------------------------------------
@@ -632,7 +633,7 @@ pub static REGISTRY: &[Gate] = &[
         goal: 2,
         title: "durability on ack — embedded (fsync before ack, survives crash, no reorder)",
         tier: Tier::Full,
-        run: pending::p1_engine,
+        run: gates_g2::g2_9a_durability_on_ack,
         budget_s: 900,
         mutations: Mutations::new(&[Mutation {
             id: "G2.9a/ack-before-fsync",

@@ -2,6 +2,7 @@ package bluedb
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,17 +53,34 @@ func TestCrashAckedWritesSurvive(t *testing.T) {
 	defer e2.Close()
 
 	// metadata + data recover TOGETHER (C3): high-water == max data version.
+	//
+	// Errorf, NOT Fatalf, and the two halves are read INDEPENDENTLY (the data loop
+	// below reads at `lastTs`, not at the recovered high-water). Both choices are
+	// the same C3 lesson: a Fatalf on the first of several assertions masks the
+	// later ones, so a mutation proof would only ever demonstrate the metadata
+	// half — and reading the data at the recovered high-water would conflate "the
+	// row is gone" with "the row is invisible below a high-water that also went
+	// missing". G2.9a's mutation has to move the DATA assertion; keep it reachable.
 	if e2.NowTs() != lastTs {
-		t.Fatalf("recovered hlc_hi=%+v want last acked %+v", e2.NowTs(), lastTs)
+		t.Errorf("recovered hlc_hi=%+v want last acked %+v", e2.NowTs(), lastTs)
 	}
-	r := e2.snapshotAt(e2.NowTs())
+	r := e2.snapshotAt(lastTs)
 	defer r.Close()
+	var missing []string
 	for i := 0; i < n; i++ {
 		key := fmt.Sprintf("k%03d", i)
 		v, _, ok := r.Get([]byte(key))
 		if !ok || string(v) != fmt.Sprintf("v%d", i) {
-			t.Fatalf("acked write %s lost across crash: got %q,%v", key, v, ok)
+			missing = append(missing, fmt.Sprintf("%s(got %q,%v)", key, v, ok))
 		}
+	}
+	if len(missing) > 0 {
+		// The wording is load-bearing: G2.9a declares "acked write missing after
+		// restart" as the assertion its mutation must make fire, and the gate
+		// surfaces this line verbatim. Bounded to five examples — an unbounded
+		// per-key Errorf emitted 121,145 lines in one C8 fixture run.
+		t.Errorf("acked write missing after restart: %d/%d acked writes absent from the crash clone (first: %s)",
+			len(missing), n, strings.Join(missing[:min(len(missing), 5)], ", "))
 	}
 }
 
@@ -106,8 +124,15 @@ func TestCrashNoTornBatch(t *testing.T) {
 			present++
 		}
 	}
-	if present != 100 {
-		t.Fatalf("torn batch: %d/100 writes recovered (must be all-or-nothing; acked ⇒ all)", present)
+	// Two distinct failures, distinguished because they have distinct causes: NONE
+	// of an acked batch surviving is a durability break (the ack was a lie), while
+	// SOME of it surviving is an atomicity break (the batch was torn). Collapsing
+	// them into one message would let G2.9a's mutation report the atomicity
+	// assertion as its falsification, which is not the property it certifies.
+	if present == 0 {
+		t.Errorf("acked write missing after restart: the entire acked 100-write batch is absent from the crash clone")
+	} else if present != 100 {
+		t.Errorf("torn batch: %d/100 writes recovered (must be all-or-nothing; acked ⇒ all)", present)
 	}
 }
 
@@ -321,10 +346,20 @@ func TestCrashConcurrentNoAckedLoss(t *testing.T) {
 
 	r := e2.snapshotAt(e2.NowTs())
 	defer r.Close()
+	var missing []string
 	for key, val := range acked {
 		v, _, ok := r.Get([]byte(key))
 		if !ok || string(v) != val {
-			t.Fatalf("acked write %s=%s lost across concurrent crash: got %q,%v", key, val, v, ok)
+			missing = append(missing, fmt.Sprintf("%s=%s(got %q,%v)", key, val, v, ok))
 		}
+	}
+	if len(missing) > 0 {
+		// Read at the RECOVERED high-water, so "missing" here covers both a lost
+		// row and a row stranded above a high-water that was itself lost. Either
+		// way the commit acked nil and cannot be read back after restart, which is
+		// exactly the acked⇒durable break the phrase names.
+		sort.Strings(missing)
+		t.Errorf("acked write missing after restart: %d/%d nil-acked concurrent writes unreadable at the recovered high-water %+v (first: %s)",
+			len(missing), len(acked), e2.NowTs(), strings.Join(missing[:min(len(missing), 5)], ", "))
 	}
 }

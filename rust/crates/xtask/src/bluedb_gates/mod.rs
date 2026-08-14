@@ -15,6 +15,7 @@
 //! status is COMPUTED by running the gates, never read from prose.
 
 pub mod gates_g0;
+pub mod gates_g2;
 pub mod mutations;
 pub mod pending;
 pub mod registry;

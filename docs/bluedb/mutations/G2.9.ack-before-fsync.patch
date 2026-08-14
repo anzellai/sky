@@ -1,0 +1,22 @@
+diff --git a/runtime-go/bluedb/committer.go b/runtime-go/bluedb/committer.go
+index 7548ae81..0e855fab 100644
+--- a/runtime-go/bluedb/committer.go
++++ b/runtime-go/bluedb/committer.go
+@@ -173,7 +173,7 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
+ 		return
+ 	}
+ 
+-	err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the whole group
++	err := e.db.Apply(b, pebble.NoSync) // MUTATION G2.9a: ack before fsync
+ 	err = e.foldFatal(err)            // N3 consumption point 3/5 — BEFORE the branch below
+ 	if err != nil {
+ 		e.sealed.Store(true)
+@@ -364,7 +364,7 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
+ 		return
+ 	}
+ 
+-	err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the group
++	err := e.db.Apply(b, pebble.NoSync) // MUTATION G2.9a: ack before fsync
+ 	err = e.foldFatal(err)            // N3 consumption point 4/5 — BEFORE the branch below
+ 	if err != nil {
+ 		e.sealed.Store(true) // Fix-5: seal on the durability fault (Phase-1 fail-loud)
