@@ -256,7 +256,9 @@ func (e *pebbleEngine) leaseReaper() {
 	}
 }
 
-// beginSnapshot backs Begin() (§3.4, R-2.8). In ONE critical section under durMu it reads
+// beginSnapshot backs BOTH Begin() and Snapshot() (§3.4, R-2.8) — it is the single
+// reader-construction path, which is what keeps H1 fixed: a second construction site is
+// exactly how Snapshot drifted into picking an un-applied readTs. In ONE critical section under durMu it reads
 // readTs = durableHi (the durably-applied high-water, advanced post-Apply), pins the Pebble
 // snapshot AFTER that read (so snap ⊇ every commit ≤ readTs), and registers the token at
 // readTs (flooring GC's T at readTs → the retention invariant). Holding durMu across the
@@ -362,24 +364,51 @@ func (e *pebbleEngine) Readers() WatermarkRegistry { return e.reg }
 // pays ZERO pre-image snapshots. Package-level so tests can snapshot it around one Put.
 var snapshotCalls atomic.Int64
 
-// Snapshot atomically registers a reader token + picks readTs, then pins a Pebble
-// snapshot seqnum for a frozen, lock-free consistent view (§2.5 invariant, C4).
+// Snapshot pins a frozen, lock-free consistent view for an ad-hoc (transaction-less)
+// read: readTs, the Pebble snapshot seqnum and the watermark token are all chosen in
+// ONE critical section (§2.5 invariant, C4).
+//
+// Defect H1. This used to be built in three UNSYNCHRONISED steps —
+// reg.Register() (which picks readTs = the in-memory HLC high-water), then
+// db.NewSnapshot(). Both halves are wrong, and independently:
+//
+//   - readTs was the in-memory high-water, which the committer bumps at hlc.next()
+//     BEFORE the Apply. So a readTs could name a commitTs that has been ASSIGNED but
+//     is not yet applied — in flight, not durable, and not in any snapshot. The
+//     reader then claims to be a consistent view as of a commit that does not exist
+//     yet, and (worse) floors GC at it.
+//   - even with the right readTs, the token and the snapshot pin were taken at
+//     different instants with no lock between them, so a commit landing in the gap
+//     is in the pin but not under the readTs, or vice versa.
+//
+// beginSnapshot (:beginSnapshot) already solves exactly this for Begin(): under durMu
+// it reads readTs = durableHi (advanced only AFTER Apply(Sync) returns), pins the
+// snapshot after that read, and registers the token at that same readTs before
+// releasing durMu — which also serializes against GC's advanceThreshold. Snapshot is
+// therefore a thin wrapper over it rather than a second, subtly different
+// construction; the two paths cannot drift apart because there is only one of them.
+//
+// Note what the fix is NOT: hoisting a durableHi read into watermarkRegistry.Register.
+// advanceThreshold reads durableHi before w.mu deliberately (a stale-LOW value clamps
+// the GC threshold more conservatively, which is always safe); a stale-low value is
+// NOT safe for CHOOSING a readTs — it would silently hand back an older view than the
+// caller's own just-acked commit. The atomicity has to live where the snapshot is
+// pinned, which is here.
+//
+// LOCK ORDER (whole package): closeMu → durMu → w.mu → hlcMu. Register/candidateLocked
+// call w.highWater() → hlc.highWater() while holding w.mu, which is why hlcMu is last;
+// beginSnapshot takes durMu then w.mu (via RegisterAt) and never the reverse. No path
+// inverts this — do not introduce one.
 func (e *pebbleEngine) Snapshot() (Reader, error) {
 	snapshotCalls.Add(1)
-	if e.isClosed() {
-		return nil, ErrClosed
-	}
-	tok, readTs, err := e.reg.Register()
+	r, err := e.beginSnapshot()
 	if err != nil {
+		// Explicitly nil, NOT `return e.beginSnapshot()`: returning a nil *pebbleReader
+		// through a Reader result would hand back a non-nil interface holding a nil
+		// pointer, and every `if r != nil` at a call site would be wrong.
 		return nil, err
 	}
-	snap := e.db.NewSnapshot()
-	return &pebbleReader{
-		snap:   snap,
-		readTs: readTs,
-		tok:    tok,
-		reg:    e.reg,
-	}, nil
+	return r, nil
 }
 
 // snapshotAt pins a reader at an EXPLICIT readTs (time-travel read). Not part of the

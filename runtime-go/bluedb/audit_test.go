@@ -447,3 +447,143 @@ func (c *failingCursor) Value() []byte { return nil }
 func (c *failingCursor) CommitTs() HLC { return HLC{} }
 func (c *failingCursor) Err() error    { return c.err }
 func (c *failingCursor) Close()        {}
+
+// TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot pins defect H1, deterministically.
+//
+// Engine.Snapshot used to build its reader in three unsynchronised steps: pick
+// readTs = watermarkRegistry.Register() (== the IN-MEMORY HLC high-water), then
+// db.NewSnapshot(). The committer bumps that high-water at hlc.next(), which happens
+// BEFORE the batch is applied — so between next() and Apply the high-water names a
+// commitTs that is assigned, not durable, and in no snapshot. A Snapshot taken in that
+// window returned a reader announcing ReadTs() == that in-flight commitTs while its
+// pinned view could not contain it: a "consistent view as of T" that is missing T, and
+// a watermark token that floors GC at a commit which may never land.
+//
+// The window is real but narrow in wall-clock terms, so this test does not race for it:
+// it drives e.hlc.next() DIRECTLY, which is precisely the state a committer leaves
+// behind between timestamp assignment and Apply, and then asserts the property the fix
+// establishes — Snapshot's readTs is durableHi (advanced only after Apply(Sync)
+// RETURNS), never the in-memory high-water.
+func TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(5000)
+	e := openDisk(t, clk.fn())
+
+	// A clean, fully durable commit first, so durableHi is non-zero and the assertion
+	// below cannot pass merely because everything is the {0,0} sentinel.
+	committed := put(t, e, "h1-key", "v1")
+	if durable := e.durableHi(); durable != committed {
+		t.Fatalf("fixture: durableHi = %v after an acked commit, want the commitTs %v "+
+			"(the committer must advance durableHi before it acks)", durable, committed)
+	}
+
+	// Simulate a committer that has ASSIGNED the next commitTs but has not applied it.
+	// This is not a synthetic state: it is exactly what process() leaves between
+	// hlc.next() and Apply(Sync).
+	inFlight := e.hlc.next()
+	if !committed.Less(inFlight) {
+		t.Fatalf("fixture: hlc.next() = %v, want strictly above the last commit %v", inFlight, committed)
+	}
+	if hw := e.NowTs(); hw != inFlight {
+		t.Fatalf("fixture: NowTs() = %v, want the un-applied %v — the in-memory high-water is "+
+			"what the broken Snapshot used to hand out", hw, inFlight)
+	}
+
+	r, err := e.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	defer r.Close()
+
+	if r.ReadTs() == inFlight {
+		t.Fatalf("Snapshot().ReadTs() = %v — the ASSIGNED-but-unapplied commitTs. The reader claims "+
+			"to be a consistent view as of a commit that is not durable and not in its pinned "+
+			"snapshot, and its watermark token floors GC at a commit that may never land.", inFlight)
+	}
+	if got, want := r.ReadTs(), e.durableHi(); got != want {
+		t.Fatalf("Snapshot().ReadTs() = %v, want durableHi = %v — readTs must be the "+
+			"durably-applied high-water, chosen under durMu in the same critical section that "+
+			"pins the snapshot and registers the token", got, want)
+	}
+
+	// The pinned view must actually serve the last durable commit at that readTs.
+	v, ts, ok := r.Get([]byte("h1-key"))
+	if !ok || string(v) != "v1" {
+		t.Fatalf("Get(h1-key) = %q,%v at readTs %v — want v1; a readTs the snapshot cannot serve "+
+			"is the other half of H1", v, ok, r.ReadTs())
+	}
+	if ts != committed {
+		t.Fatalf("Get(h1-key) resolved commitTs %v, want %v", ts, committed)
+	}
+}
+
+// TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs is the PROPERTY behind H1:
+// whatever readTs a Snapshot announces, its pinned view contains every commit at or
+// below it. That is the whole content of "snapshot-consistent as of readTs".
+//
+// This arm is racy by nature — it hammers Snapshot() against a live committer hoping to
+// land inside the assign→Apply window — so it SUPPORTS the proof rather than carrying
+// it; TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot above is the deterministic one.
+// It is worth running under -race regardless: the fix moves the readTs read inside
+// durMu, and a torn read of durableHiVal would surface here.
+func TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(7000)
+	e := openDisk(t, clk.fn())
+
+	const iterations = 300
+
+	var lastCommitted atomic.Uint64 // index of the highest key whose commit has ACKED
+	commitTs := make([]HLC, iterations)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		for i := 0; i < iterations; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			res := e.Commit(CommitReq{Writes: []VersionedWrite{{
+				UserKey: []byte(fmt.Sprintf("h1-prop-%04d", i)),
+				Op:      OpPut,
+				Value:   []byte("v"),
+			}}})
+			if res.Err != nil {
+				return
+			}
+			commitTs[i] = res.CommitTs
+			lastCommitted.Store(uint64(i) + 1) // i is durable+acked
+		}
+	}()
+
+	for n := 0; n < iterations; n++ {
+		r, err := e.Snapshot()
+		if err != nil {
+			t.Fatalf("Snapshot: %v", err)
+		}
+		readTs := r.ReadTs()
+		// Only inspect keys whose commit had already ACKED when this snapshot was taken:
+		// their commitTs is stable and non-racy to read.
+		upto := int(lastCommitted.Load())
+		for i := 0; i < upto; i++ {
+			ts := commitTs[i]
+			if readTs.Less(ts) {
+				continue // committed above this reader's view — correctly invisible
+			}
+			if _, _, ok := r.Get([]byte(fmt.Sprintf("h1-prop-%04d", i))); !ok {
+				r.Close()
+				close(stop)
+				<-done
+				t.Fatalf("reader at readTs %v cannot see key %d committed at %v (<= readTs). "+
+					"Its readTs names a commit outside its own pinned snapshot — defect H1.",
+					readTs, i, ts)
+			}
+		}
+		r.Close()
+	}
+	close(stop)
+	<-done
+}
