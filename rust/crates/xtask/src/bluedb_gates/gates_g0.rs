@@ -352,7 +352,29 @@ pub fn g0_3_no_pebble_leak(ctx: &Ctx) -> GateOutcome {
 /// `ctx.root`** (H3 — under `--verify-mutations` that is the scratch worktree,
 /// and a gate that reached the developer's `rust/target` would certify the
 /// wrong tree).
+/// Locate the `sky` compiler this gate builds its subject with.
+///
+/// In-tree first. `SKY_BLUEDB_COMPILER` is the documented escape hatch for the
+/// mutation runner, whose scratch worktree is a fresh `git worktree add` with
+/// no build artefacts — without it G0.3 goes red with "no compiler exists"
+/// rather than its declared assertion, and the falsification is VACUOUS.
+///
+/// This does not weaken the H3 invariant (a gate must not reach outside
+/// `ctx.root`), because what is borrowed is the TOOL, not the SUBJECT: the
+/// example project, `sky-stdlib/` and `runtime-go/` all still resolve inside
+/// `ctx.root`, and the compiler finds its assets by walking up from the project
+/// directory — so a mutation to the tree under test is still what gets built.
+/// The runner refuses to set this for any mutation that patches compiler source
+/// (`mutations::mutation_touches_compiler`), because a prebuilt binary would
+/// not contain such a mutation. External tool, in-tree subject, declared rather
+/// than inherited.
 fn sky_compiler(ctx: &Ctx) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("SKY_BLUEDB_COMPILER") {
+        let p = PathBuf::from(p);
+        // Validated, never trusted: a bad path is a loud failure, not a silent
+        // fallback that would change which compiler produced the evidence.
+        return p.is_file().then_some(p);
+    }
     ["rust/target/release/sky", "sky-out/sky"]
         .iter()
         .map(|c| ctx.path(c))

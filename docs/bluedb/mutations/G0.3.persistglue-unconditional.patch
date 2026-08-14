@@ -1,16 +1,24 @@
 diff --git a/runtime-go/rt/zz_mutation_pebble_link.go b/runtime-go/rt/zz_mutation_pebble_link.go
 new file mode 100644
-index 00000000..70e0b30c
+index 00000000..e32f8db6
 --- /dev/null
 +++ b/runtime-go/rt/zz_mutation_pebble_link.go
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,18 @@
 +package rt
 +
-+// MUTATION (G0.3): link the engine into EVERY app unconditionally.
++// MUTATION (G0.3): pull the storage engine into EVERY app.
 +//
-+// This is the defect G0.3 exists to catch: the moment anything in `rt` pulls in
-+// `bluedb`, every Sky app — including ones that use no Persist collection at
-+// all — links pebble and its 24 transitive modules. The prior attempt shipped
-+// exactly this shape (`rt/embedded_kernel.go` importing `sky-app/bluedb`) and
-+// it broke every non-Persist app.
-+import _ "sky-app/bluedb"
++// G0.3 arm (a) asserts that a non-Persist app links no pebble. This is the
++// defect that property exists to catch: anything in `rt` that reaches the
++// engine puts pebble — and its 24 transitive modules — into every Sky binary,
++// including apps that use no Persist collection at all.
++//
++// The prior attempt shipped this shape via `rt/embedded_kernel.go` importing
++// `sky-app/bluedb`, and it broke every non-Persist app. The import is spelled
++// directly at pebble here rather than via `bluedb` because `bluedb/` is only
++// materialised into `sky-out/` for projects that need it: importing it from
++// `rt` makes the app fail to COMPILE, which is red for the wrong reason and
++// classifies VACUOUS. This reproduces the property under test — pebble symbols
++// in a non-Persist binary — rather than a build error that merely looks like a
++// failure.
++import _ "github.com/cockroachdb/pebble/v2"

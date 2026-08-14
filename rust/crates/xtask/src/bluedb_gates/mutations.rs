@@ -181,8 +181,73 @@ struct ProbeResult {
     exit_ok: bool,
 }
 
+/// Does this mutation change the COMPILER, rather than the tree it compiles?
+///
+/// This decides whether the probe may borrow a prebuilt `sky` from the
+/// developer's tree, and it is the whole safety argument for doing so.
+///
+/// A gate like G0.3 must build its subject, and the scratch worktree is a fresh
+/// `git worktree add` with no build artefacts — so there is no compiler at all.
+/// That is why G0.3's falsification was VACUOUS: the gate went red with "no
+/// compiler exists" rather than its declared assertion, and the discriminating
+/// classifier correctly refused to call that PROVEN.
+///
+/// Borrowing is safe **only** when the mutation lives outside the compiler's
+/// own source. The compiler resolves `sky-stdlib/` and `runtime-go/` by walking
+/// up from the project directory, so with the subject inside the worktree those
+/// assets — and any mutation to them — come from the worktree. The tool is
+/// external; the thing under test never is.
+///
+/// When the mutation patches compiler source, a prebuilt binary would NOT
+/// contain it: the probe would measure an unmutated compiler while reporting a
+/// mutated tree. That is a silently weakened proof, which is worse than the
+/// vacuity it replaces. Then we lend nothing and the gate falls back to in-root
+/// paths.
+///
+/// The question is answered from the PATCH, never from the declared `targets`.
+/// The two look interchangeable and are not: `targets` drives the
+/// `UNVERIFIED-SINCE` decay check and is deliberately broader than the diff —
+/// G0.3's name `rust/crates/project/src/build.rs`, because a change there could
+/// invalidate the proof, even though the patch does not touch it. Reading
+/// `targets` here would conflate "could this proof be stale?" with "does this
+/// patch modify the compiler?" and leave G0.3 permanently vacuous.
+///
+/// The patch is exact rather than heuristic: `git apply` changes precisely what
+/// the diff headers name, so there is no undeclared path to miss.
+fn mutation_touches_compiler(root: &Path, m: &Mutation) -> bool {
+    let Ok(patch) = std::fs::read_to_string(root.join(m.patch)) else {
+        // Unreadable patch: assume the worst. A missing patch is already
+        // MUTATION-STALE elsewhere; it must not also buy an external compiler.
+        return true;
+    };
+    patch.lines().any(|l| {
+        l.starts_with("diff --git ")
+            && l.split_whitespace().skip(2).any(|p| {
+                p.trim_start_matches("a/")
+                    .trim_start_matches("b/")
+                    .starts_with("rust/")
+            })
+    })
+}
+
+/// A prebuilt `sky` from the DEVELOPER's tree, for gates that must compile
+/// something. Only ever consulted via [`mutation_touches_compiler`]. Returns
+/// `None` rather than a bad path, so an absent compiler stays an honest gate
+/// failure instead of becoming a confusing one.
+fn dev_tree_compiler(root: &Path) -> Option<PathBuf> {
+    ["rust/target/release/sky", "sky-out/sky"]
+        .iter()
+        .map(|c| root.join(c))
+        .find(|p| p.is_file())
+}
+
 /// Build `xtask` **inside the worktree** and run one gate there.
-fn probe(guard: &WorktreeGuard, gate_id: &str, verbose: bool) -> Result<ProbeResult, String> {
+fn probe(
+    guard: &WorktreeGuard,
+    gate_id: &str,
+    verbose: bool,
+    compiler: Option<&Path>,
+) -> Result<ProbeResult, String> {
     let target_dir = guard.scratch.join("target");
     let build = Command::new("cargo")
         .args(["build", "--quiet", "-p", "xtask"])
@@ -208,11 +273,15 @@ fn probe(guard: &WorktreeGuard, gate_id: &str, verbose: bool) -> Result<ProbeRes
         ));
     }
 
-    let out = Command::new(&bin)
-        .args(["bluedb-gates", "--mutation-probe", &format!("--only={gate_id}")])
-        .current_dir(&guard.wt)
-        .output()
-        .map_err(|e| format!("probe run: {e}"))?;
+    let mut cmd = Command::new(&bin);
+    cmd.args(["bluedb-gates", "--mutation-probe", &format!("--only={gate_id}")])
+        .current_dir(&guard.wt);
+    // The TOOL may come from outside the worktree; the SUBJECT never does. See
+    // `mutation_touches_compiler` for why that is safe here and refused there.
+    if let Some(c) = compiler {
+        cmd.env("SKY_BLUEDB_COMPILER", c);
+    }
+    let out = cmd.output().map_err(|e| format!("probe run: {e}"))?;
 
     let text = format!(
         "{}{}",
@@ -359,8 +428,17 @@ fn verify_one(
         return Some(ProofOutcome::MutationStale);
     }
 
+    // A gate that builds something needs a compiler, and the scratch worktree
+    // has none. Lend the dev tree's — but only when the mutation is not IN the
+    // compiler, or the proof would be measuring an unmutated tool.
+    let compiler = if mutation_touches_compiler(root, m) {
+        None
+    } else {
+        dev_tree_compiler(root)
+    };
+
     // --- baseline, measured in the worktree ------------------------------
-    let base = match probe(guard, gate_id, verbose) {
+    let base = match probe(guard, gate_id, verbose, compiler.as_deref()) {
         Ok(p) => p,
         Err(e) => {
             report.failures.push(format!("{}: baseline probe failed: {e}", m.id));
@@ -457,7 +535,7 @@ fn verify_one(
     }
 
     // --- run the mutated gate, built from and executed in the worktree ----
-    let red = match probe(guard, gate_id, verbose) {
+    let red = match probe(guard, gate_id, verbose, compiler.as_deref()) {
         Ok(p) => p,
         Err(e) => {
             report
