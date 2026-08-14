@@ -1,6 +1,9 @@
 # P1 Stage 2 — the engine hub. Grilled plan.
 
-> Status: **PLANNED, NOT STARTED.** Stage 1 (the irreversible key format) is
+> Status: **STAGE 2 LANDED** at `077531c9`; the C2-C12 fix sequence below is complete.
+> Two independent adversarial Judge rounds have run, each returning NOT COMPLETE
+> with 11 gaps; both sets are fixed and a third round is owed before P1 may be
+> called done. Stage 1 (the irreversible key format) is
 > committed. This document is the plan after two adversarial reviews — one on
 > correctness, one on enforcement/vacuity — folded in. 25 findings; the ones
 > that changed the plan are recorded inline with their reasoning, because a
