@@ -326,6 +326,342 @@ pub fn g2_9a_durability_on_ack(ctx: &Ctx) -> GateOutcome {
     }
 }
 
+// ---------------------------------------------------------------------------
+// G2.6 — the substrate crash corpus (errorfs injection manifest)
+// ---------------------------------------------------------------------------
+
+/// One recorded fault-injection site.
+///
+/// The unit is `(file, test)` and NOT merely "a test that mentions errorfs",
+/// because the distinction this gate is built on is the one the plan draws:
+/// `vfs.NewCrashableMem` + `CrashClone` is crash **simulation** — it replays a
+/// filesystem truncated at the last sync — while `errorfs` is fault
+/// **injection**: it makes a named operation fail while the process keeps
+/// running. Only the second can reach an error path. G2.9a's corpus is mostly
+/// the first; this gate quantifies over the second, which is why the two gates
+/// overlap in exactly one test and no more.
+pub struct Injection {
+    /// Repo-relative path to the Go test source.
+    pub file: &'static str,
+    /// The enclosing `func Test…`.
+    pub test: &'static str,
+    /// How many `errorfs.InjectorFunc(` constructions this test contains. A set
+    /// comparison alone cannot see the second injector of a two-injector test
+    /// being deleted; the count can.
+    pub sites: usize,
+    /// What the injector makes fail. Prose, rendered into the gate's detail so
+    /// STATUS.md says what the corpus actually covers.
+    pub fault: &'static str,
+}
+
+/// THE RECORDED MANIFEST.
+///
+/// Recorded here, in the gate, rather than in a doc: this is the pin the gate
+/// compares against, and a pin that lives anywhere the gate does not read is a
+/// pin that can drift silently. It is rendered into the gate's PASS detail and
+/// therefore into `STATUS.md`, so the corpus is legible without reading Rust.
+///
+/// Recorded AFTER C8, as the plan requires: C8 added the MANIFEST-write
+/// injector, so a manifest taken before it would have pinned a corpus with a
+/// hole in it and then defended the hole.
+///
+/// Provenance of each row — the prior art had exactly ONE real injection site
+/// (`TestInjectedFaultsReopenConsistent`); the other three are net-new in this
+/// branch's C3 and C8:
+pub const INJECTION_MANIFEST: &[Injection] = &[
+    Injection {
+        file: "runtime-go/bluedb/audit_test.go",
+        test: "TestAuditH3ReaderGetSurfacesIoErrors",
+        sites: 1,
+        fault: "read/read-at of any *.sst — the reader must surface it as an error, not as absence (C3)",
+    },
+    Injection {
+        file: "runtime-go/bluedb/audit_test.go",
+        test: "TestAuditN3BackgroundFatalDoesNotKillTheProcess",
+        sites: 1,
+        fault: "write/sync of MANIFEST-* on a flush goroutine — a background pebble fatal must latch, not kill the process (C8)",
+    },
+    Injection {
+        file: "runtime-go/bluedb/audit_test.go",
+        test: "TestAuditN3SynchronousWalFaultStillErrorsTheAck",
+        sites: 1,
+        fault: "sync of the *.log WAL inside Apply — the fatal must be folded into the ack (C8)",
+    },
+    Injection {
+        file: "runtime-go/bluedb/crashsim_test.go",
+        test: "TestInjectedFaultsReopenConsistent",
+        sites: 1,
+        fault: "sync of the *.log WAL — the fail-stop durability regression, the ONE injection site inherited from the prior art",
+    },
+];
+
+/// The substring each injection fixture must carry to prove the fault was
+/// REACHED rather than merely armed.
+///
+/// This is the C3 lesson made structural. That commit's first H3 fixture passed
+/// against the UNFIXED reader: a single row makes a one-block SSTable, `Open`'s
+/// own meta reads pulled that block into the fresh cache, and by the time the
+/// armed `Get` ran **zero filesystem operations occurred**. The injector was
+/// armed at a door nobody walked through, and nothing in the test could tell.
+///
+/// It was caught by instrumenting the injector to COUNT, so counting is what is
+/// required here. Two halves, both necessary: the counter must be incremented
+/// where the fault is returned, and the test must FAIL at zero. Requiring only
+/// the increment would accept a fixture that counts and never looks.
+const FIRED_COUNTER_INCREMENT: &str = "injected.Add(1)";
+const FIRED_COUNTER_READ: &str = "injected.Load()";
+const FIRED_ZERO_GUARD: &str = "fired ZERO times";
+
+/// The construction the enumerator keys on.
+const INJECTOR_CTOR: &str = "errorfs.InjectorFunc(";
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct EnumeratedTest {
+    pub test: String,
+    pub sites: usize,
+    pub body: String,
+}
+
+/// Enumerate every `errorfs` injection site in one Go source, attributed to the
+/// top-level function that contains it.
+///
+/// Attribution matters: an injector constructed outside a test (a shared helper,
+/// a `var` at package scope) is not a site this gate can run, and counting it
+/// would let the manifest be satisfied by a construction no test executes.
+pub(super) fn enumerate_injections(src: &str) -> Vec<EnumeratedTest> {
+    let mut out: Vec<EnumeratedTest> = Vec::new();
+
+    for line in src.lines() {
+        if let Some(rest) = line.strip_prefix("func ") {
+            // `func (r *recv) Name(` is a method, not a top-level function; the
+            // name we want is the one before the first `(` in either spelling.
+            let test = match rest.strip_prefix('(') {
+                Some(after_recv) => after_recv
+                    .split_once(") ")
+                    .map(|(_, m)| m.split('(').next().unwrap_or("").to_string())
+                    .unwrap_or_default(),
+                None => rest.split('(').next().unwrap_or("").to_string(),
+            };
+            out.push(EnumeratedTest {
+                test,
+                sites: 0,
+                body: String::new(),
+            });
+        }
+        if let Some(f) = out.last_mut() {
+            f.body.push_str(line);
+            f.body.push('\n');
+            if line.contains(INJECTOR_CTOR) {
+                f.sites += 1;
+            }
+        }
+    }
+    out.retain(|f| !f.test.is_empty());
+    out
+}
+
+/// Where the corpus lives. The sweep DISCOVERS `*_test.go` here rather than
+/// reading a list, because a list is a place for a new file carrying a new
+/// injection site to hide. The discovered set is then cross-checked against
+/// [`G2_6_SOURCES`], so discovery cannot silently shrink either.
+const G2_6_TEST_DIR: &str = "runtime-go/bluedb";
+
+/// The corpus files as recorded. Two-way check: a file here that is gone is a
+/// FAIL (the sweep quietly stopped covering it), and a file on disk that is not
+/// here is a FAIL (the sweep is covering something nobody accounted for).
+const G2_6_SOURCES: &[&str] = &[
+    "audit_test.go",
+    "bench_test.go",
+    "comparer_property_test.go",
+    "comparer_test.go",
+    "crashsim_test.go",
+    "engine_test.go",
+    "gc_test.go",
+    "keys_test.go",
+    "lock_test.go",
+    "stage2_readset_test.go",
+];
+
+pub fn g2_6_injection_manifest(ctx: &Ctx) -> GateOutcome {
+    let mut findings = Vec::new();
+
+    // ── Discover the corpus, and reconcile it with the recorded list ──
+    let mut on_disk: BTreeSet<String> = BTreeSet::new();
+    match std::fs::read_dir(ctx.path(G2_6_TEST_DIR)) {
+        Err(e) => {
+            return GateOutcome::fail(
+                format!("cannot read {G2_6_TEST_DIR}: {e}"),
+                vec!["the crash corpus is this gate's subject; without it there is nothing to enumerate".into()],
+            )
+        }
+        Ok(rd) => {
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with("_test.go") {
+                    on_disk.insert(name);
+                }
+            }
+        }
+    }
+    let recorded: BTreeSet<String> = G2_6_SOURCES.iter().map(|s| s.to_string()).collect();
+    for gone in recorded.difference(&on_disk) {
+        findings.push(format!(
+            "{G2_6_TEST_DIR}/{gone} is recorded in G2_6_SOURCES but is not on disk — the sweep would \
+             silently stop covering it"
+        ));
+    }
+    for new in on_disk.difference(&recorded) {
+        findings.push(format!(
+            "{G2_6_TEST_DIR}/{new} is on disk but not recorded in G2_6_SOURCES — a new test file is \
+             where a new injection site hides from a manifest"
+        ));
+    }
+
+    // Read the WHOLE corpus, not just the manifest's files: an injection site
+    // added in a file nobody thought to look at is exactly the unrecorded site
+    // this gate exists to notice.
+    let mut enumerated: Vec<(String, EnumeratedTest)> = Vec::new();
+    for name in on_disk.union(&recorded) {
+        let rel = format!("{G2_6_TEST_DIR}/{name}");
+        let Some(src) = ctx.read(&rel) else { continue };
+        for t in enumerate_injections(&src) {
+            if t.sites > 0 {
+                enumerated.push((rel.clone(), t));
+            }
+        }
+    }
+
+    let found_total: usize = enumerated.iter().map(|(_, t)| t.sites).sum();
+    let recorded_total: usize = INJECTION_MANIFEST.iter().map(|m| m.sites).sum();
+
+    // ── Manifest comparison ──
+    for m in INJECTION_MANIFEST {
+        match enumerated
+            .iter()
+            .find(|(f, t)| f == m.file && t.test == m.test)
+        {
+            None => findings.push(format!(
+                "{}::{} is in the recorded manifest but constructs no {INJECTOR_CTOR} — the fault it \
+                 injects ({}) is no longer exercised anywhere",
+                m.file, m.test, m.fault
+            )),
+            Some((_, t)) => {
+                if t.sites != m.sites {
+                    findings.push(format!(
+                        "{}::{} constructs {} injector(s), the manifest records {}",
+                        m.file, m.test, t.sites, m.sites
+                    ));
+                }
+                // ── The C3 rule: the fixture must prove it INJECTED. ──
+                for (needle, why) in [
+                    (FIRED_COUNTER_INCREMENT, "the injector does not count its invocations"),
+                    (FIRED_COUNTER_READ, "nothing reads the invocation count"),
+                    (FIRED_ZERO_GUARD, "there is no assertion that the count is non-zero"),
+                ] {
+                    if !t.body.contains(needle) {
+                        findings.push(format!(
+                            "{}::{} is missing `{needle}` — {why}. An injection fixture that cannot \
+                             prove it injected is indistinguishable from one that passed because \
+                             nothing happened (C3: the first H3 fixture passed against the UNFIXED \
+                             reader because caching meant ZERO filesystem operations occurred).",
+                            m.file, m.test
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    for (f, t) in &enumerated {
+        if !INJECTION_MANIFEST
+            .iter()
+            .any(|m| m.file == f && m.test == t.test)
+        {
+            findings.push(format!(
+                "{f}::{} constructs {} injector(s) but is not in the recorded manifest — record it \
+                 (with its fault and its fired-count assertion) or remove it; an unrecorded \
+                 injection site is neither run by this gate nor accounted for by it",
+                t.test, t.sites
+            ));
+        }
+    }
+
+    if !findings.is_empty() {
+        // The declared assertion, worded for the case the mutation produces. The
+        // other direction gets its own wording so the two cannot be confused —
+        // `mutations.rs` matches on this string, and a message that fired for
+        // "more sites" as well would prove the wrong thing.
+        let detail = if found_total < recorded_total {
+            format!(
+                "fewer injection sites than the recorded manifest: {found_total} enumerated across \
+                 {} corpus file(s), {recorded_total} recorded",
+                on_disk.len()
+            )
+        } else if found_total > recorded_total {
+            format!(
+                "more injection sites than the recorded manifest: {found_total} enumerated, {recorded_total} recorded"
+            )
+        } else {
+            format!("the injection corpus does not match the recorded manifest ({found_total} site(s) on both sides, attributed differently)")
+        };
+        return GateOutcome::fail(detail, findings);
+    }
+
+    // ── Run them, under the same three anti-vacuity assertions as G2.9a ──
+    let tests: Vec<&str> = INJECTION_MANIFEST.iter().map(|m| m.test).collect();
+    // Every manifest test must also be a real `func Test…` declaration, so the
+    // `-run` anchor below is known to name something before it is used.
+    for m in INJECTION_MANIFEST {
+        let declared = ctx.read(m.file).map(|s| go_test_names(&s)).unwrap_or_default();
+        if !declared.contains(m.test) {
+            findings.push(format!(
+                "{}::{} is recorded in the manifest but is not a `func Test…` declaration in that \
+                 file — `go test -run` would match nothing for it and STILL EXIT 0",
+                m.file, m.test
+            ));
+        }
+    }
+    if !findings.is_empty() {
+        return GateOutcome::fail(
+            "fewer injection sites than the recorded manifest: a recorded site names no runnable test"
+                .to_string(),
+            findings,
+        );
+    }
+
+    // 1700s of the gate's 1800s budget. The MANIFEST fixture alone waits up to
+    // 30s for a background fatal to latch and then up to 5s for a Close that is
+    // expected never to return.
+    let run = match go_test(ctx, &tests, Duration::from_secs(1700)) {
+        Ok(r) => r,
+        Err(e) => return GateOutcome::fail(e, vec!["a gate that cannot run has not passed".into()]),
+    };
+
+    findings.extend(check_run_evidence(&run, &tests));
+    findings.extend(run.failure_log.iter().cloned());
+
+    if findings.is_empty() {
+        let covered: Vec<String> = INJECTION_MANIFEST
+            .iter()
+            .map(|m| format!("{} [{}]", m.test, m.fault))
+            .collect();
+        GateOutcome::pass(format!(
+            "{recorded_total} errorfs injection site(s) enumerated across {} corpus file(s), all recorded, \
+             all asserting a non-zero fired count, all observed passing via `go test -json -count=1`: {}",
+            on_disk.len(),
+            covered.join("; ")
+        ))
+    } else {
+        GateOutcome::fail(
+            format!(
+                "the injection corpus did not run clean: {}/{} recorded fixtures reported a passing event",
+                run.passed.len(),
+                tests.len()
+            ),
+            findings,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,6 +740,117 @@ func TestOther(t *testing.T) {\n}\n";
     #[test]
     fn the_full_pinned_set_passing_is_green() {
         assert!(check_run_evidence(&run_with(&["TestA", "TestB"], &[], true), &["TestA", "TestB"]).is_empty());
+    }
+
+    // -- G2.6 ----------------------------------------------------------------
+
+    #[test]
+    fn injections_are_attributed_to_the_enclosing_test() {
+        let src = "\
+package bluedb\n\
+func helper() {\n\
+\tinj := errorfs.InjectorFunc(func(op errorfs.Op) error { return nil })\n\
+}\n\
+func TestOne(t *testing.T) {\n\
+\tinj := errorfs.InjectorFunc(func(op errorfs.Op) error { return nil })\n\
+}\n\
+func TestNoInjection(t *testing.T) {\n\
+\tfs := vfs.NewMem()\n\
+}\n";
+        let got = enumerate_injections(src);
+        let with: Vec<(&str, usize)> = got
+            .iter()
+            .filter(|t| t.sites > 0)
+            .map(|t| (t.test.as_str(), t.sites))
+            .collect();
+        // The helper's site is enumerated and attributed to `helper` — which is
+        // what makes it visible as an UNRECORDED site rather than silently
+        // satisfying a manifest row for a test that no longer injects.
+        assert_eq!(with, vec![("helper", 1), ("TestOne", 1)]);
+    }
+
+    #[test]
+    fn two_injectors_in_one_test_are_counted_separately() {
+        let src = "\
+func TestTwo(t *testing.T) {\n\
+\ta := errorfs.InjectorFunc(f)\n\
+\tb := errorfs.InjectorFunc(g)\n\
+}\n";
+        let got = enumerate_injections(src);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].sites, 2);
+    }
+
+    /// The shipped manifest must describe the shipped corpus. This runs from
+    /// the crate's own source tree (not a `Ctx`), so a manifest that drifts
+    /// fails `cargo test` as well as the gate.
+    #[test]
+    fn the_recorded_manifest_matches_the_corpus_on_disk() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .expect("repo root");
+        let mut found: Vec<(String, String, usize)> = Vec::new();
+        for entry in std::fs::read_dir(repo.join(G2_6_TEST_DIR)).expect("corpus dir").flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with("_test.go") {
+                continue;
+            }
+            let src = std::fs::read_to_string(entry.path()).expect("read");
+            for t in enumerate_injections(&src) {
+                if t.sites > 0 {
+                    found.push((format!("{G2_6_TEST_DIR}/{name}"), t.test.clone(), t.sites));
+                }
+            }
+        }
+        found.sort();
+        let mut want: Vec<(String, String, usize)> = INJECTION_MANIFEST
+            .iter()
+            .map(|m| (m.file.to_string(), m.test.to_string(), m.sites))
+            .collect();
+        want.sort();
+        assert_eq!(found, want, "INJECTION_MANIFEST has drifted from runtime-go/bluedb");
+    }
+
+    /// Every recorded fixture must carry the C3 fired-count assertion. Checked
+    /// here as well as in the gate so the property is a build-time fact, not
+    /// only a full-tier one.
+    #[test]
+    fn every_recorded_fixture_proves_its_injector_fired() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .expect("repo root");
+        for m in INJECTION_MANIFEST {
+            let src = std::fs::read_to_string(repo.join(m.file)).expect("read");
+            let body = enumerate_injections(&src)
+                .into_iter()
+                .find(|t| t.test == m.test)
+                .unwrap_or_else(|| panic!("{} not found in {}", m.test, m.file))
+                .body;
+            for needle in [FIRED_COUNTER_INCREMENT, FIRED_COUNTER_READ, FIRED_ZERO_GUARD] {
+                assert!(
+                    body.contains(needle),
+                    "{}::{} is missing `{needle}`",
+                    m.file,
+                    m.test
+                );
+            }
+        }
+    }
+
+    /// The declared `expect` string must be reachable from the body, and it
+    /// must be the LOW branch only. If "fewer" also fired for "more", the
+    /// mutation would prove the wrong direction.
+    #[test]
+    fn the_declared_expect_string_is_the_gate_s_own_wording() {
+        let g = super::super::registry::find("G2.6").expect("G2.6 is registered");
+        let expect = g.mutations.as_slice()[0].expect;
+        let src = include_str!("gates_g2.rs");
+        assert!(
+            src.contains(expect),
+            "G2.6 declares `{expect}`, which appears nowhere in the body that must emit it"
+        );
     }
 
     /// G2.9b must stay pending: this gate covers arms (a)–(c) only, and the

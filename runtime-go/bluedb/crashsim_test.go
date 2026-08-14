@@ -217,11 +217,16 @@ func TestInjectedFaultsReopenConsistent(t *testing.T) {
 	clk.set(2000)
 
 	var armed atomic.Bool
+	var injected atomic.Int64
 	// Arm a fault on the WAL fsync (the *.log file). Under Apply(pebble.Sync) the WAL
 	// sync is synchronous, so this fault surfaces through Apply → Fatalf-panic → seal.
+	// The injector COUNTS its invocations: G2.6 enumerates this site and requires the
+	// count check, because a fixture that cannot prove it injected is indistinguishable
+	// from one that passed because nothing happened.
 	inj := errorfs.InjectorFunc(func(op errorfs.Op) error {
 		isSync := op.Kind == errorfs.OpFileSync || op.Kind == errorfs.OpFileSyncData || op.Kind == errorfs.OpFileSyncTo
 		if armed.Load() && isSync && strings.HasSuffix(op.Path, ".log") {
+			injected.Add(1)
 			return errorfs.ErrInjected
 		}
 		return nil
@@ -260,6 +265,16 @@ func TestInjectedFaultsReopenConsistent(t *testing.T) {
 		} else {
 			sawSeal = true
 		}
+	}
+	// ── The fixture rule, and it must come FIRST. ──
+	// At zero injections `!sawSeal` is true for the innocent reason that no fault was
+	// ever delivered, and its message would blame the engine for swallowing a fault
+	// that never happened. Ordering the fixture check ahead of it is what keeps the
+	// diagnosis attributable.
+	if n := injected.Load(); n == 0 {
+		t.Fatalf("the WAL-fsync injector fired ZERO times — no commit in the armed window reached "+
+			"an fsync of a *.log file, so this test proves NOTHING about acked⇒durable. Fix the "+
+			"fixture, do not weaken the assertions. (sawSeal=%v)", sawSeal)
 	}
 	if !sawSeal {
 		t.Fatalf("armed WAL-fsync fault produced NO errored ack — a durability fault was silently swallowed (acked⇒durable broken)")

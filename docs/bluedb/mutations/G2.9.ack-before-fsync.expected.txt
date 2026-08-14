@@ -1,0 +1,23 @@
+PROBE gate=G2.9a state=FAIL root=<scratch-worktree>
+  durability on ack is not proven: 1/6 pinned crash tests reported a passing event
+  TestCrashAckedWritesSurvive did not report a passing `go test -json` event (it FAILED)
+  TestCrashConcurrentNoAckedLoss did not report a passing `go test -json` event (it FAILED)
+  TestCrashHLCNoReissue did not report a passing `go test -json` event (it FAILED)
+  TestCrashNoTornBatch did not report a passing `go test -json` event (it FAILED)
+  TestInjectedFaultsReopenConsistent did not report a passing `go test -json` event (it FAILED)
+  TestCrashAckedWritesSurvive: === RUN   TestCrashAckedWritesSurvive
+  TestCrashAckedWritesSurvive:     crashsim_test.go:65: recovered hlc_hi={WallMs:2000 Logical:0} want last acked {WallMs:2000 Logical:50}
+  TestCrashAckedWritesSurvive:     crashsim_test.go:82: acked write missing after restart: 50/50 acked writes absent from the crash clone (first: k000(got "",false), k001(got "",false), k002(got "",false), k003(got "",false), k004(got "",false))
+  TestCrashAckedWritesSurvive: --- FAIL: TestCrashAckedWritesSurvive (0.00s)
+  TestCrashNoTornBatch: === RUN   TestCrashNoTornBatch
+  TestCrashNoTornBatch:     crashsim_test.go:133: acked write missing after restart: the entire acked 100-write batch is absent from the crash clone
+  TestCrashNoTornBatch: --- FAIL: TestCrashNoTornBatch (0.00s)
+  TestCrashHLCNoReissue: === RUN   TestCrashHLCNoReissue
+  TestCrashHLCNoReissue:     crashsim_test.go:167: restart floor violated: hi={WallMs:9000 Logical:1} next={WallMs:100 Logical:1} (must be strictly greater despite backward clock)
+  TestCrashHLCNoReissue: --- FAIL: TestCrashHLCNoReissue (0.00s)
+  TestInjectedFaultsReopenConsistent: === RUN   TestInjectedFaultsReopenConsistent
+  TestInjectedFaultsReopenConsistent:     crashsim_test.go:265: armed WAL-fsync fault produced NO errored ack — a durability fault was silently swallowed (acked⇒durable broken)
+  TestInjectedFaultsReopenConsistent: --- FAIL: TestInjectedFaultsReopenConsistent (0.00s)
+  TestCrashConcurrentNoAckedLoss: === RUN   TestCrashConcurrentNoAckedLoss
+  TestCrashConcurrentNoAckedLoss:     crashsim_test.go:362: acked write missing after restart: 200/200 nil-acked concurrent writes unreadable at the recovered high-water {WallMs:2000 Logical:0} (first: g0-k0=v0-0(got "",false), g0-k10=v0-10(got "",false), g0-k11=v0-11(got "",false), g0-k12=v0-12(got "",false), g0-k13=v0-13(got "",false))
+  TestCrashConcurrentNoAckedLoss: --- FAIL: TestCrashConcurrentNoAckedLoss (0.00s)

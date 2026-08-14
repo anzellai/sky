@@ -322,9 +322,11 @@ func TestAuditH3ReaderGetSurfacesIoErrors(t *testing.T) {
 	const val = "row-that-exists"
 
 	var armed atomic.Bool
+	var injected atomic.Int64
 	inj := errorfs.InjectorFunc(func(op errorfs.Op) error {
 		isRead := op.Kind == errorfs.OpFileRead || op.Kind == errorfs.OpFileReadAt
 		if armed.Load() && isRead && strings.HasSuffix(op.Path, ".sst") {
+			injected.Add(1)
 			return errorfs.ErrInjected
 		}
 		return nil
@@ -382,6 +384,20 @@ func TestAuditH3ReaderGetSurfacesIoErrors(t *testing.T) {
 	gotV, _, gotOK := r.Get([]byte(key))
 	readErr := r.Err()
 	r.Close()
+
+	// ── The fixture rule: prove the fault was REACHED, not merely armed. ──
+	// This is the assertion the prose above argues for, made MEASURED rather than
+	// argued. G2.6 enumerates this injection site and requires the count check to
+	// be present, because an injection test that cannot prove it injected is
+	// indistinguishable from one that passed because nothing happened. Fatalf, not
+	// Errorf: at zero injections every assertion below it is meaningless and would
+	// mis-attribute a cache hit to the reader's error handling.
+	if n := injected.Load(); n == 0 {
+		t.Fatalf("the SSTable-read injector fired ZERO times — the armed Get was served from the "+
+			"block cache or the memtable and never touched a file, so this test proves NOTHING. "+
+			"Fix the fixture (padding, flush, reopen), do not weaken the assertions. (Get returned %q,%v)",
+			gotV, gotOK)
+	}
 	if gotOK {
 		t.Fatalf("Get under an injected SSTable read fault returned ok=true (%q) — the read was served "+
 			"from the block cache / memtable and never touched a file, so this test proves NOTHING. "+

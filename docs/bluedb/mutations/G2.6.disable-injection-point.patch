@@ -1,0 +1,23 @@
+diff --git a/runtime-go/bluedb/audit_test.go b/runtime-go/bluedb/audit_test.go
+index aa2a1d8..0f46135 100644
+--- a/runtime-go/bluedb/audit_test.go
++++ b/runtime-go/bluedb/audit_test.go
+@@ -1112,15 +1112,9 @@ func TestAuditN3BackgroundFatalDoesNotKillTheProcess(t *testing.T) {
+ func TestAuditN3SynchronousWalFaultStillErrorsTheAck(t *testing.T) {
+ 	var armed atomic.Bool
+ 	var injected atomic.Int64
+-	inj := errorfs.InjectorFunc(func(op errorfs.Op) error {
+-		isSync := op.Kind == errorfs.OpFileSync || op.Kind == errorfs.OpFileSyncData || op.Kind == errorfs.OpFileSyncTo
+-		if armed.Load() && isSync && strings.HasSuffix(op.Path, ".log") {
+-			injected.Add(1)
+-			return errorfs.ErrInjected
+-		}
+-		return nil
+-	})
+-	fs := errorfs.Wrap(vfs.NewMem(), inj)
++	// MUTATION (G2.6): the errorfs injection site is gone; the fixture runs on a
++	// plain in-memory FS and can no longer inject anything.
++	fs := vfs.NewMem()
+ 
+ 	clk := &fakeClock{}
+ 	clk.set(37000)

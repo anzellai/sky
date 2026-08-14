@@ -584,7 +584,7 @@ pub static REGISTRY: &[Gate] = &[
         goal: 2,
         title: "substrate crash corpus (errorfs injection manifest)",
         tier: Tier::Full,
-        run: pending::p1_engine,
+        run: gates_g2::g2_6_injection_manifest,
         budget_s: 1800,
         mutations: Mutations::new(&[Mutation {
             id: "G2.6/disable-injection-point",
