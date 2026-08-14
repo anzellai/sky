@@ -349,6 +349,36 @@ with the exact-count assertion. This makes discrimination structural and gives
 
 ---
 
+## N6 — found during C1, not by either grill: `decodePayload` fails open
+
+`committer.go:352` silently returns `nil` on a decode error, and its docstring
+justifies it: *"a malformed payload validates as 'no changes' for that job,
+never a false accept of a later txn against garbage"*.
+
+**That reasoning is inverted for the `pending` path.** A blind job's undecodable
+payload contributes nothing to `pending`, so a later txn in the *same drain
+window* validates against a window missing that job's committed changes. That is
+under-rejection — the identical shape the plan rejects `continue` for in
+`changelog.go`, one function over, with a comment arguing it is safe.
+
+Two defects of one class, in one file, one reasoned about correctly and one not,
+is the strongest evidence available that the class is worth a systematic sweep
+rather than a per-site fix. **Before C8 closes, sweep every error path in the
+commit/validation route for fail-open behaviour** — `committer.go`,
+`changelog.go`, `validate.go`, `recent_changes.go` — and record each site as
+fail-open-by-design (with the argument) or fail-closed.
+
+Fix in the C2–C8 sequence: schedule as **C6b**, immediately after H1, since both
+concern what the validation window is permitted to omit.
+
+## Two more doc rows carry the `uniqUserKey` conflation
+
+C1 amended §10.1's P1 row. `v2-architecture.md:73` (G-B4) and `:171` (P12) say
+the same wrong thing — that adding `backend.go` to P1's port list restores
+uniqueness enforcement. Line 73 is the sharper case: its *evidence* column
+correctly locates the mechanism at `embedded.go`, while its *remedy* column
+draws the opposite conclusion. Amend both in a later commit.
+
 ## Commit sequence
 
 `--verify-mutations` refuses to run against a tree that differs from HEAD
