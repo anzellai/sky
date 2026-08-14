@@ -1537,24 +1537,27 @@ fn check_decode_hlc_call_sites(read: impl Fn(&str) -> Option<String>) -> Vec<Str
 }
 
 pub fn g2_24_key_parsers_fail_closed(ctx: &Ctx) -> GateOutcome {
-    // ── The two-way reconciliation the title needs, BEFORE the fixtures ──
+    // ── The two-way reconciliation the title needs, ALONGSIDE the fixtures ──
     //
     // Four fixtures prove four parsers fail closed. "Every key parser" is a
     // claim about a POPULATION, and until this ran the population was a hand
     // list checked against nothing.
+    //
+    // It runs alongside the fixtures and NEVER instead of them. It used to
+    // return early on the first population finding, and that made the gate's
+    // behavioural evidence unobservable precisely when a source edit touched one
+    // of the pinned strings — which is the case the fixtures exist for.
+    // `decodeDataVersion`'s bounds guard IS one of those pinned strings (it is
+    // the guard recorded for the first `DECODE_HLC_CALL_SITES` row), so deleting
+    // it — G2.24's own registered mutation — tripped the reconciliation and the
+    // gate returned before `go test` ran the panic the deletion creates. The
+    // gate was red either way, but red on a string comparison rather than on the
+    // recovered panic, and a proof that a gate detects a defect has to be a
+    // proof that it observed the DEFECT.
     let mut findings = check_key_parser_population(|f| ctx.read(f));
     findings.extend(check_decode_hlc_call_sites(|f| ctx.read(f)));
-    if !findings.is_empty() {
-        return GateOutcome::fail(
-            format!(
-                "the key-format parser population does not match its pin ({} recorded)",
-                G2_24_PARSERS.len()
-            ),
-            findings,
-        );
-    }
 
-    run_file_gate(
+    let behaviour = run_file_gate(
         ctx,
         &FileGate {
             id: "G2.24",
@@ -1563,7 +1566,38 @@ pub fn g2_24_key_parsers_fail_closed(ctx: &Ctx) -> GateOutcome {
             budget: Duration::from_secs(120),
             property: "every key parser rejects corrupt bytes without panicking and still accepts well-formed ones",
         },
-    )
+    );
+
+    if findings.is_empty() {
+        return behaviour;
+    }
+    let pinned = format!(
+        "the key-format parser population does not match its pin ({} recorded)",
+        G2_24_PARSERS.len()
+    );
+    match behaviour {
+        GateOutcome::Pass { detail } => {
+            findings.push(format!(
+                "the fixtures themselves are green — {detail} — so this gate is red on its \
+                 population reconciliation alone"
+            ));
+            GateOutcome::fail(pinned, findings)
+        }
+        GateOutcome::Fail {
+            detail,
+            findings: behavioural,
+        } => {
+            findings.extend(behavioural);
+            GateOutcome::fail(format!("{pinned}; and {detail}"), findings)
+        }
+        GateOutcome::NotRun { reason } => {
+            findings.push(format!(
+                "and the fixtures did not run ({reason}), so the behavioural half of this gate is \
+                 unproven on top of the population mismatch"
+            ));
+            GateOutcome::fail(pinned, findings)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
