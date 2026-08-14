@@ -1,7 +1,9 @@
 package bluedb
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,27 +24,105 @@ const maxBatch = 1024
 // a small cap via config.maxRingEntries to force the spill path.
 const defaultMaxRingEntries = 100_000
 
+// fatalLatch records the FIRST Logger.Fatalf pebble ever reports, so the engine can
+// convert it into an error instead of dying (defect N3). It is a standalone value, NOT
+// a field on pebbleEngine, and that is forced: opts.Logger must be installed BEFORE
+// pebble.Open, which is before the engine struct exists. openWith constructs the latch,
+// installs quietLogger{lat: lat}, and wires e.fatal = lat once Open has returned.
+//
+// The fields are atomics because they are NOT optional here: pebble calls Fatalf from
+// ~36 sites, and the flush/compaction ones (version_set.go:671's logAndApply arm) run
+// on background goroutines that race every consumer.
+//
+// takeFatal DOES NOT CLEAR. A clear-on-read latch loses a second fatal, and worse,
+// charges a background fatal to whichever innocent batch happened to read it first.
+// A pebble fatal is unrollbackable by construction, so "sticky" is the correct shape:
+// once set, every consumption point keeps failing until the engine is rebuilt.
+type fatalLatch struct {
+	set atomic.Bool
+	msg atomic.Value // string; stored after set, so readers tolerate the gap
+}
+
+// record latches msg iff nothing is latched yet. Nil-receiver-safe: a latch-less
+// quietLogger (see Fatalf) never reaches here.
+func (l *fatalLatch) record(msg string) {
+	if l == nil {
+		return
+	}
+	if l.set.CompareAndSwap(false, true) {
+		l.msg.Store(msg)
+	}
+}
+
+// takeFatal reports the latched fatal, if any. It does NOT clear — see the type doc.
+// Nil-receiver-safe so hand-built engines in tests need no latch.
+func (l *fatalLatch) takeFatal() (string, bool) {
+	if l == nil || !l.set.Load() {
+		return "", false
+	}
+	if m, ok := l.msg.Load().(string); ok {
+		return m, true
+	}
+	// set is published before msg; a reader in that window still knows a fatal happened,
+	// which is the load-bearing half.
+	return "(pebble fatal recorded; message not yet published)", true
+}
+
 // quietLogger routes Pebble's Logger. Pebble's Logger has THREE methods
 // (Infof/Errorf/Fatalf) — the design doc's two-method assumption was wrong.
 //
-// Infof/Errorf are silenced (chatter). Fatalf MUST NOT be a no-op: on a WAL
-// fsync failure Pebble's applyInternal (db.go:882-897, pinned v2.1.6) calls
-// Logger.Fatalf(...) and then FALLS THROUGH to `return nil`. The stock logger's
-// Fatalf does os.Exit(1); a no-op would make Apply(Sync) return nil for a write
-// that never reached durable storage — the committer would ack Err:nil for a lost
-// write, breaking the acked⇒durable contract deterministically. So Fatalf PANICS.
-// The panic unwinds synchronously through Apply on the committer goroutine (the
-// WAL sync is synchronous under pebble.Sync + !noSyncWait), where process()'s
-// deferred recover catches it while acked==false, seals the engine, and delivers
-// an ERRORED ack for the in-flight batch. A nil ack therefore always means durable.
-// We panic (not os.Exit) so the fault is contained + converted to a fail-loud seal
-// rather than crashing the host process.
-type quietLogger struct{}
+// Infof is silenced (chatter). Errorf is NOT: pebble logs at error level while a store
+// is degrading — failing flushes, failing compactions — and swallowing that means the
+// first thing an operator ever learns about a dying store is the seal.
+//
+// Fatalf is the whole of defect N3. It MUST NOT be a no-op: on a WAL fsync failure
+// pebble's applyInternal (db.go:882-897, pinned v2.1.6) calls Logger.Fatalf(...) and
+// then FALLS THROUGH to `return nil`, so a silent Fatalf makes Apply(Sync) return nil
+// for a write that never reached durable storage — an Err:nil ack for a lost write.
+// But it must not PANIC either, which is what it used to do: pebble calls Fatalf from
+// flush and compaction goroutines (version_set.go:671, compaction.go:349/369/1317,
+// compaction_picker.go:1962), and NO recover in this package can reach those stacks. A
+// disk-full or EIO on a background flush therefore killed the whole Sky app process.
+//
+// So Fatalf LATCHES, and the engine consumes the latch at every point where it would
+// otherwise claim success — see takeFatal's call sites. That is what makes a background
+// fatal a sealed engine and an errored ack rather than either a crash or a silent lie.
+type quietLogger struct{ lat *fatalLatch }
 
-func (quietLogger) Infof(string, ...any)  {}
-func (quietLogger) Errorf(string, ...any) {}
-func (quietLogger) Fatalf(format string, args ...any) {
-	panic(fmt.Sprintf("bluedb: pebble fatal: "+format, args...))
+// quietLoggerErrorBudget bounds Errorf output, and the bound is not cosmetic. Pebble
+// retries a failing flush in a tight loop, so an UNBOUNDED stderr Errorf emitted 121,145
+// lines in a single run of TestAuditN3BackgroundFatalDoesNotKillTheProcess — burying the
+// seal it exists to precede, and making the failure mode of a degrading store "the log
+// disk filled up". The first few lines carry the whole diagnostic value: what failed, on
+// what file. After the budget the engine's own seal is the signal.
+const quietLoggerErrorBudget = 32
+
+var quietLoggerErrors atomic.Int64
+
+func (quietLogger) Infof(string, ...any) {}
+
+func (quietLogger) Errorf(format string, args ...any) {
+	n := quietLoggerErrors.Add(1)
+	if n > quietLoggerErrorBudget {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "bluedb: pebble: "+format+"\n", args...)
+	if n == quietLoggerErrorBudget {
+		fmt.Fprintf(os.Stderr, "bluedb: pebble: further error-level messages suppressed "+
+			"(budget %d); a fatal will still seal the engine\n", quietLoggerErrorBudget)
+	}
+}
+
+func (l quietLogger) Fatalf(format string, args ...any) {
+	msg := fmt.Sprintf("bluedb: pebble fatal: "+format, args...)
+	if l.lat == nil {
+		// No latch ⇒ nobody will ever consume this. Panicking is the defect N3 is about,
+		// but silently discarding a fatal is strictly worse, so an unlatched logger keeps
+		// the old fail-loud behaviour. Only raw pebble handles opened outside openWith
+		// (test fixtures) land here; every engine path installs a latch.
+		panic(msg)
+	}
+	l.lat.record(msg)
 }
 
 // config carries Open parameters, including the test seams (injectable clock + FS).
@@ -79,6 +159,12 @@ type pebbleEngine struct {
 	wg sync.WaitGroup
 
 	sealed atomic.Bool
+
+	// fatal is the pebble Logger.Fatalf latch (defect N3), wired from the standalone
+	// fatalLatch openWith had to build before opts.Logger existed. Consumed — never
+	// cleared — at every point the engine would otherwise report success: after
+	// pebble.Open, in Close, after each committer Apply, and after each GC Apply.
+	fatal *fatalLatch
 
 	// recent is the in-RAM recent-changes ring (§4.2), mutated ONLY by the committer
 	// goroutine (append/after/trim). trimReqs marshals GC's trim(T) onto the committer so
@@ -161,9 +247,12 @@ func Open(dir string) (Engine, error) {
 }
 
 func openWith(cfg config) (*pebbleEngine, error) {
+	// N3: the latch has to exist before opts, because opts.Logger has to exist before
+	// pebble.Open, which is before there is any engine to hang it on.
+	fatal := &fatalLatch{}
 	opts := &pebble.Options{
 		Comparer: skydbComparer,
-		Logger:   quietLogger{},
+		Logger:   quietLogger{lat: fatal},
 	}
 	if cfg.fs != nil {
 		opts.FS = cfg.fs
@@ -174,6 +263,14 @@ func openWith(cfg config) (*pebbleEngine, error) {
 	db, err := pebble.Open(cfg.dir, opts)
 	if err != nil {
 		return nil, err
+	}
+	// N3 consumption point 1/5 — a fatal DURING Open. version_set.go:191/196/202
+	// (MANIFEST flush / sync / set-current in createManifest) fire here, and Open's own
+	// error propagation from those sites is not something to rely on: a latched fatal
+	// means the store this handle describes is not sound, so refuse the handle.
+	if msg, ok := fatal.takeFatal(); ok {
+		_ = db.Close()
+		return nil, fmt.Errorf("%w: %s", ErrPebbleFatal, msg)
 	}
 
 	persistedHi, err := readMetaHLC(db, metaHLCHi)
@@ -188,8 +285,9 @@ func openWith(cfg config) (*pebbleEngine, error) {
 	}
 
 	e := &pebbleEngine{
-		db:  db,
-		hlc: newHLCClock(persistedHi, cfg.wallClock),
+		db:    db,
+		hlc:   newHLCClock(persistedHi, cfg.wallClock),
+		fatal: fatal, // N3: the latch quietLogger has been writing to since before Open
 		// Everything on disk up to persistedHi (metaHLCHi) was written in a synced,
 		// committed batch, so the durable high-water starts AT persistedHi (Fix-3). A
 		// fresh store has persistedHi = {0,0}. Seeding it here (not {0,0}) lets the first
@@ -556,6 +654,26 @@ func (e *pebbleEngine) Commit(req CommitReq) (res CommitResult) {
 	if e.sealed.Load() {
 		return CommitResult{Err: ErrSealed}
 	}
+	// N3 consumption point 6/6 — the DOOR, and it is NOT one of the plan's five. It was
+	// added because running the fixture showed the five are unreachable in the case that
+	// matters most.
+	//
+	// After a background MANIFEST fatal, pebble does not degrade — it WEDGES. logAndApply
+	// treats any MANIFEST error as fatal by design (version_set.go:664-672: "preferred to
+	// attempting to unwind various file and b-tree reference counts"), so the flush never
+	// completes, memtables accumulate, and every writer blocks inside Apply. Measured with
+	// a SINGLE injected MANIFEST write error: the next Commit did not return in 30s, the
+	// engine never sealed, and Close could not run either — because all three of those
+	// consume the latch AFTER an Apply that will never finish.
+	//
+	// So without this check the fix trades a process kill for a silent, permanent hang of
+	// every writer, which is not obviously an improvement. With it, a latched fatal is a
+	// prompt typed error at the door and the app can fail over. The cost on the firehose
+	// is one atomic load, the same as the sealed check above.
+	if msg, ok := e.fatal.takeFatal(); ok {
+		e.sealed.Store(true)
+		return CommitResult{Err: fmt.Errorf("%w: %w: %s", ErrSealed, ErrPebbleFatal, msg)}
+	}
 	if e.isClosed() {
 		return CommitResult{Err: ErrClosed}
 	}
@@ -705,6 +823,13 @@ func (e *pebbleEngine) closeWithin(timeout time.Duration) error {
 		return e.closeErr
 	}
 	e.closeErr = e.db.Close()
+	// N3 consumption point 2/5 — a fatal nobody else got to. A background flush or
+	// compaction can latch one at any instant, including after the last commit acked, and
+	// Close is the last moment the process can be told. Joined rather than replacing
+	// db.Close's own verdict: both are real and neither subsumes the other.
+	if msg, ok := e.fatal.takeFatal(); ok {
+		e.closeErr = errors.Join(e.closeErr, fmt.Errorf("%w: %s", ErrPebbleFatal, msg))
+	}
 	e.dbClosed = true
 	return e.closeErr
 }

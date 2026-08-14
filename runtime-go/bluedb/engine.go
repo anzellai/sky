@@ -28,6 +28,11 @@ var (
 	// Transact; returned typed after maxTxnAttempts. errors.Is-friendly so Phase 3 can
 	// branch on it (§5.2).
 	ErrConflict = errors.New("bluedb: transaction conflict")
+	// ErrPebbleFatal: pebble reported a Logger.Fatalf (defect N3). Fatalf no longer
+	// panics — it latched, and this is that latch surfacing at the next point the
+	// engine would otherwise have reported success. It is unrollbackable by
+	// construction, so it always accompanies a seal on the commit paths.
+	ErrPebbleFatal = errors.New("bluedb: pebble reported a fatal fault")
 	// ErrReadersLive: Close's bounded drain expired with readers still pinned (defect
 	// N4). The engine is NOT closed in that case — the Pebble handle is deliberately
 	// left OPEN, because closing it would panic those readers' next operation — and

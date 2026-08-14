@@ -892,3 +892,274 @@ func TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin(t *testing.T) {
 			"reader(s), want 0", live)
 	}
 }
+
+// TestAuditN3BackgroundFatalDoesNotKillTheProcess pins the half of defect N3 that no
+// recover in this package could ever have covered.
+//
+// quietLogger.Fatalf used to panic. That was a deliberate choice for ONE site —
+// pebble's applyInternal (db.go:882-897) calls Logger.Fatalf on a WAL commit fault and
+// then FALLS THROUGH to `return nil`, so a silent Fatalf means Apply(Sync) reports
+// success for a write that never reached disk. Panicking converted that into a seal,
+// synchronously, on the committer goroutine, where process()'s recover was waiting.
+//
+// But pebble calls Fatalf from ~36 sites, and the ENOSPC/EIO ones run on flush and
+// compaction goroutines: version_set.go:671 (logAndApply's "any error here is fatal"
+// arm, covering MANIFEST write/flush/sync/set-current), compaction.go:349/369/1317,
+// compaction_picker.go:1962. A panic on one of those stacks unwinds a goroutine this
+// package never started and cannot recover — so in a Sky app a disk-full during a
+// background flush KILLED THE PROCESS.
+//
+// The fix cannot simply silence Fatalf either: with a latch and no consumer on the
+// background path, a broken MANIFEST is swallowed and the engine goes on acking commits
+// as durable. So the latch is consumed at five points, and the committer's is placed
+// BEFORE the `if err != nil {seal} else {advanceDurableHi; ring append; emit}` branch —
+// after it, a lost write would have advanced durableHi and fired the change feed.
+//
+// FIXTURE. errorfs injects on MANIFEST-* writes and syncs; a small memTableSize forces
+// frequent flushes, and each flush completion runs logAndApply, which writes the
+// MANIFEST on a background goroutine. Per the plan's injection rule the injector COUNTS
+// its invocations and the test fails if the count is zero — an injection test that
+// cannot prove it injected is indistinguishable from one that passed because nothing
+// happened.
+//
+// UNDER THE MUTATION (restore `panic(msg)` in Fatalf) the background flush goroutine
+// panics with no recover anywhere on its stack and the whole `go test` binary dies. That
+// is the falsification, and it is unmissable.
+func TestAuditN3BackgroundFatalDoesNotKillTheProcess(t *testing.T) {
+	var armed atomic.Bool
+	var injected atomic.Int64
+	// TRANSIENT, and that is deliberate rather than gentle. A PERMANENTLY failing MANIFEST
+	// wedges pebble: the flush cannot complete, memtables accumulate, and every writer
+	// stalls inside Apply — measured, the follow-up Commit below never returns. That state
+	// says nothing about whether the latch is consumed, because no consumption point is
+	// ever reached. Injecting once models the realistic fault (a transient EIO) and leaves
+	// the store writable, so the assertions about what the NEXT commit does are observable.
+	// The fatal is still fatal: pebble has declared the store unrecoverable and the engine
+	// must seal regardless of the disk having recovered.
+	const injectAtMost = 1
+	inj := errorfs.InjectorFunc(func(op errorfs.Op) error {
+		if !armed.Load() || !strings.Contains(op.Path, "MANIFEST-") {
+			return nil
+		}
+		switch op.Kind {
+		case errorfs.OpFileWrite, errorfs.OpFileSync, errorfs.OpFileSyncData, errorfs.OpFileSyncTo:
+			if injected.Load() < injectAtMost {
+				injected.Add(1)
+				return errorfs.ErrInjected
+			}
+		}
+		return nil
+	})
+	fs := errorfs.Wrap(vfs.NewMem(), inj)
+
+	clk := &fakeClock{}
+	clk.set(31000)
+	// 64 KiB memtable: a few hundred padded rows force repeated background flushes, and
+	// every flush completion is a MANIFEST write on a goroutine we do not own.
+	e, err := openWith(config{dir: crashDir, fs: fs, wallClock: clk.fn(), memTableSize: 64 << 10})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() {
+		armed.Store(false) // never tear down under injection
+		// BOUNDED, because this engine is expected to be unclosable. Close's phase 2 does
+		// wg.Wait() on the committer, and the committer is parked inside an Apply that
+		// pebble will never complete once the MANIFEST flush has failed. The mem FS is
+		// discarded with the test, so leaking the handle costs nothing; hanging the suite
+		// would cost everything.
+		done := make(chan struct{})
+		go func() { _ = e.Close(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Logf("Close did not return in 5s — expected: pebble wedges its writers behind a " +
+				"failed MANIFEST flush, so the committer never leaves Apply")
+		}
+	}()
+
+	// A clean prefix, so the store is real and the flush machinery is warm before arming.
+	padding := strings.Repeat("p", 2048)
+	for i := 0; i < 40; i++ {
+		put(t, e, fmt.Sprintf("n3-clean%04d", i), padding)
+	}
+
+	armed.Store(true)
+
+	// Enough padded rows to overflow the 64 KiB memtable a few times over. The writes run
+	// on their own goroutine because a pebble whose flushes keep failing eventually stalls
+	// writers, and a stall must fail this test by timeout rather than hang it.
+	wrote := make(chan struct{})
+	go func() {
+		defer close(wrote)
+		for i := 0; i < 120; i++ {
+			e.Commit(CommitReq{Writes: []VersionedWrite{{
+				UserKey: []byte(fmt.Sprintf("n3-fault%04d", i)), Op: OpPut, Value: []byte(padding),
+			}}})
+		}
+	}()
+
+	// Wait for a BACKGROUND fatal to be latched. This is the flush goroutine's Fatalf
+	// arriving on a stack no recover in this package is on — the whole of N3.
+	deadline := time.Now().Add(30 * time.Second)
+	var latched bool
+	for time.Now().Before(deadline) {
+		if _, ok := e.fatal.takeFatal(); ok {
+			latched = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// ── The fixture rule: prove the fault was REACHED, not merely armed. ──
+	if n := injected.Load(); n == 0 {
+		t.Fatalf("the MANIFEST injector fired ZERO times — no background fatal was ever provoked, "+
+			"so this test proves NOTHING about background Fatalf. Fix the fixture (memTableSize, "+
+			"row size, row count), do not weaken the assertions. (latched=%v)", latched)
+	} else {
+		t.Logf("MANIFEST injector fired %d times", n)
+	}
+
+	// ── Surviving to here IS the primary assertion. ──
+	// Under the mutation the process is already gone: the panic is raised on a pebble
+	// flush goroutine, and no recover in this package is on that stack.
+
+	// Errorf, not Fatalf: the assertions below are about whether anything CONSULTS the
+	// latch, which is the interesting half, and a Fatalf here would mask them.
+	if !latched {
+		t.Errorf("the injector fired %d times but no pebble fatal was latched in 30s — either the "+
+			"injected op never reached a Logger.Fatalf site, or takeFatal CLEARED the latch on the "+
+			"first read (it must not: a clear-on-read latch loses a second fatal and charges a "+
+			"background fatal to an innocent batch)", injected.Load())
+	}
+
+	// A commit issued after the background fatal must NOT ack success. This is the arm a
+	// fix that merely silences Fatalf fails: with the latch unconsumed, the WAL is fine,
+	// Apply returns nil, and the engine keeps acking a store pebble has declared
+	// unrecoverable as durable. Bounded, so a pebble write-stall reports rather than hangs.
+	ack := make(chan CommitResult, 1)
+	go func() {
+		ack <- e.Commit(CommitReq{Writes: []VersionedWrite{{
+			UserKey: []byte("n3-after-fatal"), Op: OpPut, Value: []byte("x"),
+		}}})
+	}()
+	select {
+	case res := <-ack:
+		if res.Err == nil {
+			t.Errorf("Commit after a background pebble fatal acked nil (commitTs %+v) — the engine "+
+				"is reporting durability on a store pebble has declared unrecoverable", res.CommitTs)
+		}
+	case <-time.After(30 * time.Second):
+		t.Errorf("Commit after a background pebble fatal never returned in 30s")
+	}
+	if !e.sealed.Load() {
+		t.Errorf("the engine did NOT seal after a background pebble fatal — a broken MANIFEST " +
+			"was swallowed and the engine would go on accepting writes")
+	}
+
+	// The latch is STICKY: neither the wait loop above nor the committer's consumption may
+	// have cleared it.
+	if _, ok := e.fatal.takeFatal(); !ok && latched {
+		t.Errorf("the fatal latch was CLEARED by a read — takeFatal must not clear, or a second " +
+			"fatal is lost and a background fatal can be charged to an innocent batch")
+	}
+
+	// The padding loop is NOT expected to finish: whichever of its commits was inside Apply
+	// when the MANIFEST flush failed is parked there for good, and its caller is parked on
+	// job.done. That is pebble's wedge, not a defect in this fix — and it is precisely why
+	// the door check above exists, since it is the only thing that gives a NEW writer an
+	// answer. Logged, not asserted, because asserting either outcome would be asserting
+	// pebble's scheduling.
+	select {
+	case <-wrote:
+	case <-time.After(5 * time.Second):
+		t.Logf("the padding write loop is still parked — expected: pebble wedges the in-flight " +
+			"Apply behind the failed MANIFEST flush")
+	}
+}
+
+// TestAuditN3SynchronousWalFaultStillErrorsTheAck guards the OTHER direction of N3, and
+// the pair is the point: neither test alone is a proof.
+//
+// The background test above is passed by a "fix" that simply makes Fatalf a no-op — the
+// process survives precisely because nothing happens. But db.go:885 calls Fatalf on a
+// fatal WAL commit error and then FALLS THROUGH to `return nil`, so silencing Fatalf
+// makes Apply(Sync) return nil for a write that never reached durable storage: the
+// committer acks Err:nil and the acked⇒durable contract is broken deterministically.
+//
+// This test injects on the WAL fsync (the *.log file, the same seam
+// TestInjectedFaultsReopenConsistent uses) and asserts a commit under that fault acks an
+// ERROR. It fails against a silenced Fatalf, and it fails against a latch that is never
+// consumed at the committer's Apply — which is exactly what makes the five consumption
+// points, and not just the latch, the fix.
+//
+// The injector counts its invocations and the test fails at zero, per the plan's rule.
+func TestAuditN3SynchronousWalFaultStillErrorsTheAck(t *testing.T) {
+	var armed atomic.Bool
+	var injected atomic.Int64
+	inj := errorfs.InjectorFunc(func(op errorfs.Op) error {
+		isSync := op.Kind == errorfs.OpFileSync || op.Kind == errorfs.OpFileSyncData || op.Kind == errorfs.OpFileSyncTo
+		if armed.Load() && isSync && strings.HasSuffix(op.Path, ".log") {
+			injected.Add(1)
+			return errorfs.ErrInjected
+		}
+		return nil
+	})
+	fs := errorfs.Wrap(vfs.NewMem(), inj)
+
+	clk := &fakeClock{}
+	clk.set(37000)
+	e, err := openWith(config{dir: crashDir, fs: fs, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() {
+		armed.Store(false)
+		_ = e.Close()
+	}()
+
+	// Clean baseline: the WAL path works, so a later error is attributable to the fault.
+	if res := e.Commit(CommitReq{Writes: []VersionedWrite{{
+		UserKey: []byte("n3-wal-clean"), Op: OpPut, Value: []byte("v"),
+	}}}); res.Err != nil {
+		t.Fatalf("fixture: clean commit failed before any injection: %v", res.Err)
+	}
+
+	armed.Store(true)
+
+	// Precondition that makes this test discriminate. Nothing is latched yet, so Commit's
+	// DOOR check (consumption point 6) cannot be what produces the error below: the fault
+	// happens during THIS commit's own Apply, on the committer goroutine, and only the
+	// post-Apply fold (consumption point 3) can turn it into an ack. Without this
+	// precondition the test would also pass with the post-Apply fold deleted — the second
+	// commit would trip the door and `sawError` would still be true.
+	if _, latched := e.fatal.takeFatal(); latched {
+		t.Fatalf("fixture: a fatal was already latched before the first faulting commit — the " +
+			"door check, not the post-Apply fold, would be under test")
+	}
+
+	first := e.Commit(CommitReq{Writes: []VersionedWrite{{
+		UserKey: []byte("n3-wal-fault00"), Op: OpPut, Value: []byte("v"),
+	}}})
+
+	if n := injected.Load(); n == 0 {
+		t.Fatalf("the WAL-fsync injector fired ZERO times — the commit never reached an fsync of " +
+			"a *.log file, so this test proves NOTHING. Fix the fixture, do not weaken the assertion.")
+	}
+	if first.Err == nil {
+		t.Errorf("the FIRST commit under an injected WAL-fsync fault acked Err == nil (commitTs "+
+			"%+v). pebble's applyInternal (db.go:885) calls Logger.Fatalf and then FALLS THROUGH "+
+			"to `return nil`, so Apply reports success for a write that never reached durable "+
+			"storage. A Fatalf that is merely SILENCED produces exactly this, and so does a latch "+
+			"that is never folded into the result of the committer's Apply.", first.CommitTs)
+	}
+	if !e.sealed.Load() {
+		t.Errorf("the engine did not seal after a WAL durability fault — subsequent commits would " +
+			"be accepted against a store whose last write was lost")
+	}
+	// And the seal holds: a later commit is refused rather than acked.
+	if after := e.Commit(CommitReq{Writes: []VersionedWrite{{
+		UserKey: []byte("n3-wal-after"), Op: OpPut, Value: []byte("v"),
+	}}}); after.Err == nil {
+		t.Errorf("a commit after the WAL durability fault acked nil (commitTs %+v)", after.CommitTs)
+	}
+}

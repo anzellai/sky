@@ -172,7 +172,12 @@ func (e *pebbleEngine) GC() (GCStats, error) {
 	}
 	// PHYSICAL-ONLY side Apply, NoSync (grill 2b): dead versions need no individual
 	// fsync — a later real commit's Sync (or a background compaction) flushes them.
-	if err := e.db.Apply(batch, pebble.NoSync); err != nil {
+	if err := e.foldFatal(e.db.Apply(batch, pebble.NoSync)); err != nil {
+		// N3 consumption point 5/5 (the delete pass). The plan's first draft named only
+		// "the committer" as the consumer, which loses a GC-triggered fatal entirely or —
+		// worse — mis-attributes it to whichever commit happens to Apply next. GC issues
+		// its own batches on the caller's goroutine, so it must consume its own.
+		e.sealed.Store(true)
 		return stats, err
 	}
 	return stats, nil
@@ -189,7 +194,15 @@ func (e *pebbleEngine) persistThreshold(t HLC) error {
 	if err := b.Set(encodeMetaKey(metaGCThreshold), encodeHLC(t), nil); err != nil {
 		return err
 	}
-	return e.db.Apply(b, pebble.Sync)
+	// N3 consumption point 5/5 (the threshold persist). This Apply is Sync, so it is
+	// exactly the db.go:885 shape: pebble can call Logger.Fatalf and still `return nil`.
+	// Unconsumed, GC would report T durably persisted when it was not — and T is the
+	// monotone floor every later pass and every reader's ErrSnapshotTooOld check trusts.
+	if err := e.foldFatal(e.db.Apply(b, pebble.Sync)); err != nil {
+		e.sealed.Store(true)
+		return err
+	}
+	return nil
 }
 
 // bytesEqual is a tiny local equality (avoids importing bytes solely for this).

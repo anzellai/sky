@@ -90,6 +90,13 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
 
 	// SEAL on a synchronous durability panic (see the Phase-1 contract). Acks happen only
 	// AFTER Apply, so on a panic no job has been acked and this recover acks each exactly once.
+	//
+	// STILL LOAD-BEARING AFTER N3, which is easy to get wrong. N3 made Logger.Fatalf latch
+	// instead of panic, so this recover no longer catches THAT. But pebble also raises a
+	// RAW panic on a WAL WriteRecord failure (db.go:955, `panic(err)` — no logger
+	// involved), synchronously on this goroutine inside Apply. Deleting this recover
+	// because "Fatalf doesn't panic any more" would turn that class into a process kill,
+	// which is the same defect N3 exists to close, one site over.
 	acked := false
 	defer func() {
 		if r := recover(); r != nil && !acked {
@@ -133,6 +140,7 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
 	}
 
 	err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the whole group
+	err = e.foldFatal(err)            // N3 consumption point 3/5 — BEFORE the branch below
 	if err != nil {
 		e.sealed.Store(true)
 	} else {
@@ -192,6 +200,10 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 	// so it cannot fault; the only panic source is Apply. On a panic no APPLIED job has been
 	// acked yet — the recover acks them ErrSealed, and SKIPS inline-acked jobs (Fix-7), so
 	// every j.done receives exactly one result.
+	//
+	// Kept after N3 for the same reason as processBlindPhase1's: pebble's raw
+	// `panic(err)` on a WAL WriteRecord failure (db.go:955) has no logger in its path and
+	// is therefore untouched by the Fatalf latch.
 	defer func() {
 		if r := recover(); r != nil {
 			e.sealed.Store(true)
@@ -304,6 +316,7 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 	}
 
 	err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the group
+	err = e.foldFatal(err)            // N3 consumption point 4/5 — BEFORE the branch below
 	if err != nil {
 		e.sealed.Store(true) // Fix-5: seal on the durability fault (Phase-1 fail-loud)
 	} else {
@@ -324,6 +337,35 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 		a.job.done <- CommitResult{CommitTs: a.commitTs, Err: err} // ack after Apply
 		acked[a.job] = true
 	}
+}
+
+// foldFatal folds a latched pebble Logger.Fatalf into an Apply's error result (defect N3).
+//
+// WHERE IT MUST BE CALLED. Immediately after Apply and BEFORE the
+// `if err != nil {seal} else {advanceDurableHi; ring append; emit}` branch. Both halves
+// matter:
+//
+//   - BEFORE, because a fatal that arrives after the branch has already advanced
+//     durableHi and fired the change feed for a write that is not durable. Readers would
+//     then be handed a readTs naming it and subscribers notified of it.
+//   - AFTER Apply rather than instead of it, because Apply's own error is the common
+//     case and the two are independent: db.go:885 calls Fatalf and then FALLS THROUGH to
+//     `return nil`, so a WAL commit fault reaches us as (err == nil, latch set) — the
+//     exact shape that used to require Fatalf to panic.
+//
+// errors.Join keeps both when both fire; it returns nil when neither does, so the
+// no-fault path (every commit, always) allocates nothing and the branch below is
+// unchanged.
+//
+// The latch is NOT cleared by this read, so every later batch sees it too. That is
+// deliberate: a pebble fatal is unrollbackable, the engine is sealed on the first
+// consumption anyway, and a clear-on-read latch would let a second fatal vanish.
+func (e *pebbleEngine) foldFatal(err error) error {
+	msg, ok := e.fatal.takeFatal()
+	if !ok {
+		return err
+	}
+	return errors.Join(err, fmt.Errorf("%w: %s", ErrPebbleFatal, msg))
 }
 
 // writeJob encodes one job's data versions + its opaque changelog entry into the batch at
