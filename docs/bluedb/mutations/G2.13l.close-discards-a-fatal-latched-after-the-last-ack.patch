@@ -1,0 +1,24 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 5c0043cf..638125dc 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -1,7 +1,6 @@
+ package bluedb
+ 
+ import (
+-	"errors"
+ 	"fmt"
+ 	"os"
+ 	"sync"
+@@ -893,9 +892,8 @@ func (e *pebbleEngine) closeWithin(timeout time.Duration) error {
+ 	// compaction can latch one at any instant, including after the last commit acked, and
+ 	// Close is the last moment the process can be told. Joined rather than replacing
+ 	// db.Close's own verdict: both are real and neither subsumes the other.
+-	if msg, ok := e.fatal.takeFatal(); ok {
+-		e.closeErr = errors.Join(e.closeErr, fmt.Errorf("%w: %s", ErrPebbleFatal, msg))
+-	}
++	// MUTATION G2.13l: N3 consumption point 2/5 deleted — a fatal latched by a
++	// background flush after the last ack is discarded with the handle.
+ 	e.dbClosed = true
+ 	return e.closeErr
+ }

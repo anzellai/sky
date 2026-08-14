@@ -726,6 +726,24 @@ fn verify_one(
     }
 
     if m.expect == "<never>" {
+        // `<never>` is classified on the EXIT CODE alone — the one place in this
+        // runner with no discriminating assertion. That is correct for the
+        // canary and for nothing else, so a non-canary gate reaching here is a
+        // harness FAIL rather than a verdict. `registry.rs`'s
+        // `the_never_sentinel_is_the_canary_s_alone` refuses it at `cargo test`
+        // time; this refuses it at run time, because a static check cannot see a
+        // registry a future refactor builds dynamically.
+        if gate_id != CANARY_ID {
+            report.failures.push(format!(
+                "HARNESS FAIL: {} declares the `<never>` sentinel on {gate_id}, which is not the \
+                 canary. `<never>` is classified on the exit code with NO discriminating \
+                 assertion, and is exempted from G0.6's recorded-output check and from pairwise \
+                 discrimination — on any gate but the canary that is a falsification requirement \
+                 opted out of by spelling",
+                m.id
+            ));
+            return Some(ProofOutcome::MutationStale);
+        }
         // The canary: it asserts `true`, so staying green IS the correct
         // answer, and going red would mean the runner is not measuring what it
         // claims.

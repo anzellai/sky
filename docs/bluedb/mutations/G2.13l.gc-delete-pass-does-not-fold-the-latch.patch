@@ -1,0 +1,15 @@
+diff --git a/runtime-go/bluedb/gc.go b/runtime-go/bluedb/gc.go
+index 03dd39db..fc15bfba 100644
+--- a/runtime-go/bluedb/gc.go
++++ b/runtime-go/bluedb/gc.go
+@@ -189,7 +189,9 @@ func (e *pebbleEngine) GC() (GCStats, error) {
+ 	}
+ 	// PHYSICAL-ONLY side Apply, NoSync (grill 2b): dead versions need no individual
+ 	// fsync — a later real commit's Sync (or a background compaction) flushes them.
+-	if err := e.foldFatal(e.db.Apply(batch, pebble.NoSync)); err != nil {
++	// MUTATION G2.13l: N3 consumption point 5/5 (the delete pass) deleted — the pass
++	// applies its physical deletes and reports success over a latched fatal.
++	if err := e.db.Apply(batch, pebble.NoSync); err != nil {
+ 		// N3 consumption point 5/5 (the delete pass). The plan's first draft named only
+ 		// "the committer" as the consumer, which loses a GC-triggered fatal entirely or —
+ 		// worse — mis-attributes it to whichever commit happens to Apply next. GC issues

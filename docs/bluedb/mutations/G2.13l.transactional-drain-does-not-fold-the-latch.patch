@@ -1,0 +1,15 @@
+diff --git a/runtime-go/bluedb/committer.go b/runtime-go/bluedb/committer.go
+index 6a847a75..790c3060 100644
+--- a/runtime-go/bluedb/committer.go
++++ b/runtime-go/bluedb/committer.go
+@@ -434,7 +434,9 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
+ 	}
+ 
+ 	err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the group
+-	err = e.foldFatal(err)            // N3 consumption point 4/5 — BEFORE the branch below
++	// MUTATION G2.13l: N3 consumption point 4/5 deleted — the TRANSACTIONAL drain's
++	// own fold. The blind path keeps its fold, so a validated transaction acks nil
++	// over a batch pebble has already declared unrecoverable.
+ 	if err != nil {
+ 		e.sealed.Store(true) // Fix-5: seal on the durability fault (Phase-1 fail-loud)
+ 	} else {

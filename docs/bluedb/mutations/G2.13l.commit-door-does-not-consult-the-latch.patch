@@ -1,0 +1,18 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 5c0043cf..ee9ee9f8 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -736,10 +736,9 @@ func (e *pebbleEngine) Commit(req CommitReq) (res CommitResult) {
+ 	// every writer, which is not obviously an improvement. With it, a latched fatal is a
+ 	// prompt typed error at the door and the app can fail over. The cost on the firehose
+ 	// is one atomic load, the same as the sealed check above.
+-	if msg, ok := e.fatal.takeFatal(); ok {
+-		e.sealed.Store(true)
+-		return CommitResult{Err: fmt.Errorf("%w: %w: %s", ErrSealed, ErrPebbleFatal, msg)}
+-	}
++	// MUTATION G2.13l: N3 consumption point 6/6 — the DOOR — deleted. The latch is
++	// left for whichever consumption point further in happens to be reached, which
++	// after a MANIFEST fatal is none of them: pebble wedges its writers inside Apply.
+ 	if e.isClosed() {
+ 		return CommitResult{Err: ErrClosed}
+ 	}

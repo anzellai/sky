@@ -1,0 +1,15 @@
+diff --git a/runtime-go/bluedb/gc.go b/runtime-go/bluedb/gc.go
+index 03dd39db..94030257 100644
+--- a/runtime-go/bluedb/gc.go
++++ b/runtime-go/bluedb/gc.go
+@@ -215,7 +215,9 @@ func (e *pebbleEngine) persistThreshold(t HLC) error {
+ 	// exactly the db.go:885 shape: pebble can call Logger.Fatalf and still `return nil`.
+ 	// Unconsumed, GC would report T durably persisted when it was not — and T is the
+ 	// monotone floor every later pass and every reader's ErrSnapshotTooOld check trusts.
+-	if err := e.foldFatal(e.db.Apply(b, pebble.Sync)); err != nil {
++	// MUTATION G2.13l: N3 consumption point 5/5 (the threshold persist) deleted — the
++	// pass reports T durably persisted when it is not, and proceeds to delete.
++	if err := e.db.Apply(b, pebble.Sync); err != nil {
+ 		e.sealed.Store(true)
+ 		return err
+ 	}

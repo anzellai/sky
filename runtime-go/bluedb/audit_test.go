@@ -2477,3 +2477,199 @@ func TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary(t *testing.T) {
 		t.Errorf("post-fault reader reports Err() = %v, want nil", err)
 	}
 }
+
+// n3SyntheticFatal is the message the arms below latch DIRECTLY, without going through
+// pebble. That is the deliberate decomposition of N3, not a shortcut:
+//
+//   - "a real pebble Logger.Fatalf reaches the latch instead of killing the process" is
+//     TestAuditN3BackgroundFatalDoesNotKillTheProcess's property, proven with an errorfs
+//     MANIFEST fault and a counted injector.
+//   - "every exit that could otherwise claim success consumes the latch" is a different
+//     property, and it is the one that was gated 1-in-7. Reaching each of those exits
+//     through a real fault is not merely awkward, it is impossible for most of them:
+//     pebble does not degrade after a MANIFEST fatal, it WEDGES (logAndApply treats any
+//     MANIFEST error as fatal by design), so every writer parks inside Apply and the exits
+//     behind it are never reached at all. A fixture that cannot reach the code it is about
+//     proves nothing, per this corpus's own rule for injection fixtures.
+//
+// The latch's PROVENANCE is irrelevant to the consumption property — a latched fatal is a
+// latched fatal — so recording one directly is what makes each exit reachable AND
+// deterministic. Nothing here is timing-dependent.
+const n3SyntheticFatal = "synthetic: pebble Logger.Fatalf, latched"
+
+// TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess pins the SECOND half of N3.
+//
+// Fatalf latches rather than panics (pebble_engine.go's quietLogger). A latch nobody reads
+// is strictly worse than the panic it replaced: the process survives and the engine goes on
+// acking commits over a store pebble has declared unrecoverable. The fix is therefore not
+// the latch but its CONSUMPTION, at every exit that would otherwise report success — and
+// each consumption point is an independent hunk that can be deleted on its own.
+//
+// One arm per consumption point, each asserting the property that point exists for, each
+// discriminating: deleting ANY ONE of them turns exactly its own arm red and leaves the
+// others green (verified by mutation — see G2.13l in the gate registry). The blind-drain
+// arm's revert is already `G2.9a/wal-fatal-never-reaches-the-ack`, so it carries no second
+// mutation of its own: two mutations of one hunk would be one proof counted twice.
+//
+// The one consumption point with NO arm is the post-Open check, and that is recorded rather
+// than quietly skipped: see N3_CONSUMPTION_POINTS in the gate.
+func TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess(t *testing.T) {
+	t.Run("the-commit-door-answers-before-the-batch", func(t *testing.T) {
+		clk := &fakeClock{}
+		clk.set(91000)
+		e := openDisk(t, clk.fn())
+		put(t, e, "n3-door", "v1")
+
+		e.fatal.record(n3SyntheticFatal)
+		res := e.Commit(CommitReq{Writes: []VersionedWrite{{
+			UserKey: []byte("n3-door"), Op: OpPut, Value: []byte("v2"),
+		}}})
+
+		if !errors.Is(res.Err, ErrSealed) {
+			t.Fatalf("Commit with a latched fatal returned err = %v, which is not ErrSealed — the "+
+				"DOOR did not answer. Behind it pebble WEDGES: after a MANIFEST fatal logAndApply "+
+				"never completes, every writer blocks inside Apply, and the consumption points "+
+				"further in are never reached at all", res.Err)
+		}
+		if !errors.Is(res.Err, ErrPebbleFatal) {
+			t.Fatalf("the door refused with %v, which does not name the pebble fatal", res.Err)
+		}
+		if v, ok := getAt(t, e, "n3-door", e.durableHi()); ok && v == "v2" {
+			t.Fatalf("the write the door was asked to refuse is DURABLE (%q): it was applied and "+
+				"only then folded, so the store took a write it had already declared "+
+				"unrecoverable", v)
+		}
+	})
+
+	t.Run("the-blind-drain-folds-it-into-its-own-ack", func(t *testing.T) {
+		clk := &fakeClock{}
+		clk.set(92000)
+		e := openDisk(t, clk.fn())
+		put(t, e, "n3-blind", "v1")
+
+		e.fatal.record(n3SyntheticFatal)
+		j := &commitJob{
+			req:  CommitReq{Writes: []VersionedWrite{{UserKey: []byte("n3-blind"), Op: OpPut, Value: []byte("v2")}}},
+			done: make(chan CommitResult, 1),
+		}
+		e.process([]*commitJob{j})
+		r := <-j.done
+
+		if !errors.Is(r.Err, ErrPebbleFatal) {
+			t.Fatalf("the ALL-BLIND drain acked err = %v with a fatal latched. Apply(Sync) returns "+
+				"nil on exactly this shape — pebble's applyInternal calls Logger.Fatalf and then "+
+				"falls through to `return nil` — so a drain that does not fold the latch acks a "+
+				"write the store has already declared unrecoverable", r.Err)
+		}
+		if !e.sealed.Load() {
+			t.Fatalf("the blind drain folded the fatal but left the engine UNSEALED, so the next " +
+				"commit is accepted as if nothing had happened")
+		}
+	})
+
+	t.Run("the-transactional-drain-folds-it-into-its-own-ack", func(t *testing.T) {
+		clk := &fakeClock{}
+		clk.set(93000)
+		e := openDisk(t, clk.fn())
+		base := put(t, e, "n3-txn", "v1")
+		readTs := e.durableHi()
+
+		e.fatal.record(n3SyntheticFatal)
+		j := &commitJob{
+			req: CommitReq{
+				Writes: []VersionedWrite{{UserKey: []byte("n3-txn-other"), Op: OpPut, Value: []byte("x")}},
+				ReadTs: readTs,
+				ReadSet: &ReadSet{points: map[string]pointRead{
+					"n3-txn": {versionSeen: base, present: true},
+				}},
+			},
+			done: make(chan CommitResult, 1),
+		}
+		e.process([]*commitJob{j})
+		r := <-j.done
+
+		if !errors.Is(r.Err, ErrPebbleFatal) {
+			t.Fatalf("the TRANSACTIONAL drain acked err = %v with a fatal latched. It is a second "+
+				"Apply site with its own seal-or-advance branch, and the blind path's fold does "+
+				"not run for it — a validated transaction is exactly the commit a caller is most "+
+				"entitled to believe", r.Err)
+		}
+		if !e.sealed.Load() {
+			t.Fatalf("the transactional drain folded the fatal but left the engine UNSEALED")
+		}
+	})
+
+	t.Run("the-gc-threshold-persist-refuses-before-any-delete", func(t *testing.T) {
+		clk := &fakeClock{}
+		clk.set(94000)
+		e := openDisk(t, clk.fn())
+		t1 := put(t, e, "K", "v1")
+		put(t, e, "K", "v2")
+		put(t, e, "K", "v3")
+
+		e.fatal.record(n3SyntheticFatal)
+		st, err := e.GC()
+
+		if !st.Advanced {
+			t.Fatalf("fixture: the pass did not advance T, so persistThreshold never ran and this "+
+				"arm is measuring nothing (stats %+v)", st)
+		}
+		if !errors.Is(err, ErrPebbleFatal) {
+			t.Fatalf("GC persisted the threshold and returned err = %v. That Apply is Sync, so it "+
+				"is the db.go Fatalf-then-nil shape; unconsumed, GC reports T durably persisted "+
+				"when it is not — and T is the monotone floor every later pass and every reader's "+
+				"snapshot-too-old check trusts", err)
+		}
+		if !auditS1HasRawKey(t, e, encodeDataKey([]byte("K"), t1)) {
+			t.Fatalf("the stale version K@%+v was DELETED by a pass whose own threshold write it "+
+				"could not trust. The persist is ordered before any physical delete precisely so "+
+				"that a pass which cannot establish its floor changes nothing on disk", t1)
+		}
+	})
+
+	t.Run("the-gc-delete-pass-folds-it-into-the-pass-verdict", func(t *testing.T) {
+		clk := &fakeClock{}
+		clk.set(95000)
+		e := openDisk(t, clk.fn())
+		put(t, e, "K", "v1")
+		put(t, e, "K", "v2")
+		put(t, e, "K", "v3")
+		if _, err := e.GC(); err != nil {
+			t.Fatalf("fixture: the settling pass failed: %v", err)
+		}
+
+		e.fatal.record(n3SyntheticFatal)
+		st, err := e.GC()
+
+		if st.Advanced {
+			t.Fatalf("fixture: the second pass ADVANCED T (%+v), so persistThreshold ran and "+
+				"consumed the latch — this arm would be measuring the threshold write, not the "+
+				"delete pass", st)
+		}
+		if !st.ChangelogTrimmed {
+			t.Fatalf("fixture: the second pass issued no changelog trim, so its batch was empty "+
+				"and the delete pass never reached its Apply at all (stats %+v)", st)
+		}
+		if !errors.Is(err, ErrPebbleFatal) {
+			t.Fatalf("the delete pass applied its batch and reported err = %v. GC issues its own "+
+				"batches on the CALLER's goroutine, so it must consume its own fatal: charged to "+
+				"whichever commit happens to Apply next, it is mis-attributed, and charged to "+
+				"nobody it is lost", err)
+		}
+	})
+
+	t.Run("close-is-the-last-moment-the-process-can-be-told", func(t *testing.T) {
+		clk := &fakeClock{}
+		clk.set(96000)
+		e := openDisk(t, clk.fn())
+		put(t, e, "n3-close", "v1")
+
+		e.fatal.record(n3SyntheticFatal)
+		if err := e.Close(); !errors.Is(err, ErrPebbleFatal) {
+			t.Fatalf("Close returned %v with a fatal latched. A background flush or compaction can "+
+				"latch one at any instant, including after the last commit acked and after the "+
+				"last reader went away; Close is the final moment anything in the process is "+
+				"listening, and a verdict that omits it loses the fatal for good", err)
+		}
+	})
+}

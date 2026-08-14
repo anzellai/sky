@@ -250,6 +250,130 @@ pub(super) fn check_source_anchors(
     findings
 }
 
+/// The `t.Run` call, as it is spelled in the corpus. Shared with
+/// `gates_g2_13.rs`'s sub-test site counts so the two cannot drift.
+pub(super) const T_RUN: &str = "t.Run(";
+
+/// **The comment-stripped body of ONE pinned LEAF** — the executing text a
+/// gutted leaf would lose.
+///
+/// # Why the granularity is the leaf and not the function
+///
+/// Every per-leaf rule in this crate answers one question: *would emptying THIS
+/// leaf's body be noticed?* An empty Go test emits `pass`, and so does a
+/// `t.Run("…", func(t *testing.T) {})`. [`enumerate_injections`] attributes text
+/// to the enclosing `func Test…`, which is the right unit for a leaf that IS a
+/// function and the wrong one for a leaf that is a sub-test arm: the sibling
+/// arm's assertions are in the same function body, so a needle found there says
+/// nothing about the arm being asked about. `audit_test.go`'s GC fixture is the
+/// concrete case — the counted-skip arm carries the assertion, the abort arm
+/// carries a different one, and a function-level search cannot tell them apart.
+///
+/// # Resolution
+///
+/// `Parent` → the whole function body. `Parent/rest` → the closure of
+/// `t.Run("rest", …)`, where `rest` is everything after the FIRST `/` (a
+/// sub-test name may itself contain `/`, and two in this corpus do). A leaf
+/// whose name is GENERATED (`t.Run(fmt.Sprintf(…), …)`) has no literal to find;
+/// it resolves to the function's unique non-literal `t.Run` site, and only when
+/// there is exactly one — an ambiguous function returns `None` rather than a
+/// guess, and the caller reports that as missing evidence.
+#[allow(dead_code)] // read by `every_pinned_leaf_is_reddened_by_a_recorded_mutation`
+pub(super) fn leaf_body(bodies: &[EnumeratedTest], leaf: &str) -> Option<String> {
+    let (func, sub) = match leaf.split_once('/') {
+        Some((f, s)) => (f, Some(s)),
+        None => (leaf, None),
+    };
+    let body = &bodies.iter().find(|f| f.test == func)?.body;
+    match sub {
+        None => Some(body.clone()),
+        Some(name) => subtest_closure(body, name),
+    }
+}
+
+/// The closure body of one `t.Run` arm inside an already-comment-stripped
+/// function body. See [`leaf_body`] for the resolution rule.
+#[allow(dead_code)] // reached through `leaf_body`
+fn subtest_closure(body: &str, name: &str) -> Option<String> {
+    if let Some(at) = body.find(&format!("{T_RUN}\"{name}\"")) {
+        return closure_at(body, at);
+    }
+    // A generated name. The only honest resolution is a unique generated site.
+    let mut generated: Vec<usize> = Vec::new();
+    let mut from = 0;
+    while let Some(i) = body[from..].find(T_RUN) {
+        let at = from + i;
+        if !body[at + T_RUN.len()..].starts_with('"') {
+            generated.push(at);
+        }
+        from = at + T_RUN.len();
+    }
+    match generated.as_slice() {
+        [only] => closure_at(body, *only),
+        _ => None,
+    }
+}
+
+/// The brace-matched body of the function literal that starts at the first `{`
+/// at or after `at`.
+///
+/// String, raw-string and rune literals are skipped, because a `{` inside one is
+/// not a block (`strip_go_comments` keeps literals, deliberately — the needles
+/// live in `t.Fatalf` format strings). Scanning is byte-wise, which is safe on
+/// UTF-8: every byte of a multi-byte sequence is >= 0x80 and can never be
+/// mistaken for one of the ASCII delimiters.
+#[allow(dead_code)] // reached through `leaf_body`
+fn closure_at(body: &str, at: usize) -> Option<String> {
+    let b = body.as_bytes();
+    let mut i = at;
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'`' | b'\'' => {
+                i = skip_literal(b, i);
+                continue;
+            }
+            b'{' => {
+                if depth == 0 {
+                    start = i + 1;
+                }
+                depth += 1;
+            }
+            b'}' => {
+                if depth == 0 {
+                    return None; // malformed; a guess here would be worse
+                }
+                depth -= 1;
+                if depth == 0 {
+                    return Some(body[start..i].to_string());
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The index just past the literal that opens at `i`.
+#[allow(dead_code)] // reached through `leaf_body`
+fn skip_literal(b: &[u8], i: usize) -> usize {
+    let quote = b[i];
+    let mut j = i + 1;
+    while j < b.len() {
+        if quote != b'`' && b[j] == b'\\' {
+            j += 2;
+            continue;
+        }
+        if b[j] == quote {
+            return j + 1;
+        }
+        j += 1;
+    }
+    b.len()
+}
+
 /// One Go source with every COMMENT removed and every string literal kept.
 ///
 /// **Why this exists.** Every source-side pin in this file and in
@@ -702,6 +826,13 @@ pub const INJECTION_MANIFEST: &[Injection] = &[
         test: "TestAuditN3SynchronousWalFaultStillErrorsTheAck",
         sites: 1,
         fault: "sync of the *.log WAL inside Apply — the fatal must be folded into the ack (C8)",
+    },
+    Injection {
+        file: "runtime-go/bluedb/audit_test.go",
+        test: "TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary",
+        sites: 1,
+        fault: "read/read-at of any *.sst under a SCAN — the failed scan must reach the commit \
+                boundary, not read as an empty collection (H3b)",
     },
     Injection {
         file: "runtime-go/bluedb/crashsim_test.go",

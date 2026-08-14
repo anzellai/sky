@@ -1132,6 +1132,81 @@ pub static REGISTRY: &[Gate] = &[
             },
         ]),
     },
+    // G2.13l — the OTHER half of N3, and the half that was gated 1-in-7.
+    //
+    // `quietLogger.Fatalf` latches instead of panicking; the value of that is
+    // entirely in the CONSUMPTION, at every exit that would otherwise report
+    // success. Each consumption point is an independently deletable hunk, and
+    // deleting each in turn and running the whole suite left FIVE OF SIX GREEN —
+    // including `pebble_engine.go`'s Commit door, which the source itself calls
+    // decisive ("without this check the fix trades a process kill for a silent,
+    // permanent hang of every writer"). The one that was covered,
+    // `committer.go`'s blind-path fold, was covered by G2.9a, whose subject is
+    // durability-on-ack rather than the latch.
+    //
+    // FIVE mutations, not six: the blind-path fold's revert is already
+    // `G2.9a/wal-fatal-never-reaches-the-ack`, and two mutations of one hunk are
+    // one proof counted twice. That arm's per-leaf falsifier is the source anchor
+    // on its own assertion. The post-Open check has no mutation either, and its
+    // argument is recorded — with the measurements behind it — in
+    // `gates_g2_13.rs`'s N3_CONSUMPTION_POINTS.
+    Gate {
+        id: "G2.13l",
+        goal: 2,
+        title: "the N3 Fatalf latch is consumed at every exit that could claim success",
+        // Measured at 0.37s for all six arms: each latches directly and waits on
+        // nothing, which is the point of latching directly.
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13l_latch_is_consumed_at_every_exit,
+        budget_s: 300,
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.13l/commit-door-does-not-consult-the-latch",
+                patch: "docs/bluedb/mutations/G2.13l.commit-door-does-not-consult-the-latch.patch",
+                // Verbatim. With the door deleted the job reaches the committer,
+                // whose blind-path fold DOES answer — so the ack still names the
+                // pebble fatal and only the SHAPE discriminates: the door refuses
+                // with ErrSealed before anything is written, the fold reports
+                // after the write is durable.
+                expect: ", which is not ErrSealed — the ",
+                targets: &["runtime-go/bluedb/pebble_engine.go"],
+            },
+            Mutation {
+                id: "G2.13l/transactional-drain-does-not-fold-the-latch",
+                patch: "docs/bluedb/mutations/G2.13l.transactional-drain-does-not-fold-the-latch.patch",
+                // Verbatim. The blind path keeps its fold, so this reddens the
+                // transactional arm alone: a validated transaction acks nil over a
+                // batch pebble has already declared unrecoverable.
+                expect: " with a fatal latched. It is a second ",
+                targets: &["runtime-go/bluedb/committer.go"],
+            },
+            Mutation {
+                id: "G2.13l/gc-threshold-persist-does-not-fold-the-latch",
+                patch: "docs/bluedb/mutations/G2.13l.gc-threshold-persist-does-not-fold-the-latch.patch",
+                // Verbatim, and note WHICH assertion fires: the pass still errors
+                // (the delete pass folds instead), so the discriminating half is
+                // that it DELETED under a floor it could not establish.
+                expect: "was DELETED by a pass whose own threshold write it ",
+                targets: &["runtime-go/bluedb/gc.go"],
+            },
+            Mutation {
+                id: "G2.13l/gc-delete-pass-does-not-fold-the-latch",
+                patch: "docs/bluedb/mutations/G2.13l.gc-delete-pass-does-not-fold-the-latch.patch",
+                // Verbatim. Reached with `advanced == false`, so persistThreshold
+                // is skipped and this Apply is the only consumer left.
+                expect: "the delete pass applied its batch and reported err = ",
+                targets: &["runtime-go/bluedb/gc.go"],
+            },
+            Mutation {
+                id: "G2.13l/close-discards-a-fatal-latched-after-the-last-ack",
+                patch: "docs/bluedb/mutations/G2.13l.close-discards-a-fatal-latched-after-the-last-ack.patch",
+                // Verbatim. Close is the last consumer; with its join deleted the
+                // verdict is a bare nil and the fatal is gone with the handle.
+                expect: " with a fatal latched. A background flush or compaction can ",
+                targets: &["runtime-go/bluedb/pebble_engine.go"],
+            },
+        ]),
+    },
     // -- Goal 3 — easy + simple (P4) ---------------------------------------
     Gate {
         id: "G3.1",
@@ -1537,6 +1612,56 @@ mod tests {
     /// This does not make a mutation's blast radius zero — a patch can still
     /// break more than one gate's SUBJECT — but it does make each recorded
     /// proof a statement about its own property.
+    /// **`<never>` belongs to the canary and to nothing else.**
+    ///
+    /// Three independent checks exempt it, and each exemption is a hole if the
+    /// sentinel can be spelled by an ordinary gate:
+    ///
+    /// * `mutations.rs` classifies `<never>` on `red.exit_ok` ALONE — no
+    ///   discriminating assertion at all, so any patch that leaves the gate red
+    ///   reports `PROVEN` and any patch that leaves it green reports `VACUOUS`.
+    /// * `gates_g0.rs`'s G0.6 skips the recorded-output check, so such a
+    ///   mutation needs no RED transcript.
+    /// * `expect_strings_are_pairwise_discriminating` skips it, so it cannot
+    ///   collide with anything.
+    ///
+    /// Together those make `<never>` a general escape from every falsification
+    /// requirement in the crate, available by typing seven characters. It is the
+    /// canary's sentinel — the ONE gate whose correct verdict is `VACUOUS` — and
+    /// nothing about the three exemptions is sound for any other gate. Asserted
+    /// here rather than left to the reader of three separate files.
+    #[test]
+    fn the_never_sentinel_is_the_canary_s_alone() {
+        for g in REGISTRY {
+            for m in g.mutations.as_slice() {
+                if m.expect == "<never>" {
+                    assert_eq!(
+                        g.id, CANARY_ID,
+                        "{} declares the `<never>` sentinel, which exempts it from the \
+                         discriminating-assertion check (mutations.rs), from G0.6's recorded-output \
+                         check (gates_g0.rs) and from pairwise discrimination (below). Those \
+                         exemptions are sound only for the canary, whose correct verdict IS \
+                         VACUOUS; on any other gate they are a falsification requirement opted out \
+                         of by spelling",
+                        m.id
+                    );
+                }
+            }
+        }
+        // And the canary really does use it — otherwise the rule above is a
+        // statement about an empty set.
+        let canary = find(CANARY_ID).expect("the canary is permanently registered");
+        assert!(
+            canary
+                .mutations
+                .as_slice()
+                .iter()
+                .all(|m| m.expect == "<never>"),
+            "the canary must declare `<never>`: it asserts `true`, so there is no assertion that \
+             could fire and no RED output to record"
+        );
+    }
+
     #[test]
     fn expect_strings_are_pairwise_discriminating() {
         let mut all: Vec<(&str, &str)> = Vec::new();

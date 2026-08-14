@@ -89,7 +89,7 @@ use std::time::Duration;
 
 use super::gates_g2::{
     check_pinned_population, check_run_evidence, check_source_anchors, enumerate_injections,
-    go_test, go_test_names, SourceAnchor,
+    go_test, go_test_names, SourceAnchor, T_RUN,
 };
 use super::registry::{Ctx, GateOutcome};
 
@@ -118,11 +118,12 @@ const PIN_NAME: &str = "AUDIT_OWNERSHIP (bluedb_gates/gates_g2_13.rs)";
 /// **G2.13k** gave them one. Deleting the word would have made silence the only
 /// available answer both times.
 ///
-/// So it is unused AGAIN, deliberately, and the `allow` is the cost of keeping a
-/// vocabulary the table has now needed twice. `every_owner_is_a_registered_gate_
-/// or_explicitly_ungated` still reads it, so the two spellings of "nothing runs
-/// this" — the value and the test that tolerates it — cannot drift apart.
-#[allow(dead_code)]
+/// It was then kept unused AGAIN on the same argument, and needed a THIRD time
+/// within the month: `TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary` landed in
+/// `b540bed2` with the H3b fix it pins and no gate of its own. It carries that
+/// value now. A vocabulary the table has needed three times is not a decoration,
+/// and the alternative each time was an ownership table that reported full
+/// coverage of a corpus it did not cover.
 const UNGATED: &str = "— (recorded, run by no gate)";
 
 /// One `func Test…` in [`AUDIT_SOURCE`], and the gate that runs it.
@@ -257,6 +258,26 @@ pub const AUDIT_OWNERSHIP: &[Owned] = &[
         property: "a durability panic raised AFTER the acks have gone out seals and re-panics on \
                    both commit paths, rather than being absorbed",
     },
+    Owned {
+        test: "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess",
+        owner: "G2.13l",
+        property: "the pebble Fatalf latch is CONSUMED at every exit that could otherwise claim \
+                   success — the door, both commit drains, both GC Applies, and Close (N3)",
+    },
+    Owned {
+        // The word exists for exactly this: a fixture that lands with the fix it
+        // pins, ahead of the gate that will own it. It arrived on this branch in
+        // `b540bed2` (H3's live sibling — a failed SCAN committed anyway) with no
+        // gate, and recording it as UNGATED is what stops the ownership table
+        // reading as full coverage of a corpus it does not cover. G2.6 does run it
+        // — it carries an injector, so the injection manifest reaches it — but no
+        // gate asserts its PROPERTY, and G2.6's subject is the corpus, not the
+        // reader.
+        test: "TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary",
+        owner: UNGATED,
+        property: "an I/O fault inside Txn.ScanCollection reaches the commit boundary rather than \
+                   reading as an empty collection (H3b)",
+    },
     // -- the two Stage-1 remedies that shipped WITHOUT a test, owned by G2.13i. --
     Owned {
         test: "TestAuditS1GcAbortsRatherThanSkippingUnboundedCorruptKeys",
@@ -288,7 +309,6 @@ pub struct SubtestSites {
     pub sites: usize,
 }
 
-const T_RUN: &str = "t.Run(";
 
 struct AuditGate {
     id: &'static str,
@@ -623,6 +643,32 @@ pub const G2_13F_TESTS: &[&str] = &[
     "TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin",
 ];
 
+/// The leaked-reader arm's own property assertion.
+///
+/// It is here because the per-leaf rule found this leaf falsified by nothing:
+/// `G2.13f/close-does-not-quiesce-readers` DOES redden it — the recorded
+/// transcript says so — but the line it reddens is
+/// `TestAuditN4CloseWaitsForLiveReaders`'s assertion, in a different function.
+/// Gutting THIS body to `{}` therefore left the gate green, the mutation still
+/// `PROVEN`, and the arm certified by a statement about its neighbour. The two
+/// needles are the two halves the arm exists to state — a NAMED report rather
+/// than a hang, and a hang caught by a bound rather than by the suite timing
+/// out.
+const G2_13F_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: "TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs",
+        needle: "Close with a leaked reader = %v, want ErrReadersLive",
+        why: "that IS the arm's property — a leaked reader makes Close REPORT, by name, instead of \
+              hanging or forcing the handle shut",
+    },
+    SourceAnchor {
+        func: "TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs",
+        needle: "Close HUNG on a leaked reader — the drain is unbounded",
+        why: "that IS the bound the report replaces; without it the arm cannot tell a report from \
+              a hang the suite timeout happens to interrupt",
+    },
+];
+
 pub fn g2_13f_close_quiesces_readers(ctx: &Ctx) -> GateOutcome {
     run_audit_gate(
         ctx,
@@ -630,7 +676,7 @@ pub fn g2_13f_close_quiesces_readers(ctx: &Ctx) -> GateOutcome {
             id: "G2.13f",
             tests: G2_13F_TESTS,
             required_subtests: &[],
-            anchors: &[],
+            anchors: G2_13F_ANCHORS,
             sites: &[
                 SubtestSites {
                     func: "TestAuditN4CloseDoesNotPanicConcurrentSnapshot",
@@ -716,9 +762,11 @@ const N6_FUNC: &str = "TestAuditN6UndecodablePayloadCannotHoleTheValidationWindo
 /// every goal verdict — while the class they guard is the one that produced N6
 /// *and* a second instance in the same file, which is why the sweep exists at
 /// all.
+const C6B_BLIND_FUNC: &str = "TestAuditC6bBlindPathRingAppendCannotBeHoledEither";
+
 pub const G2_13H_TESTS: &[&str] = &[
     N6_FUNC,
-    "TestAuditC6bBlindPathRingAppendCannotBeHoledEither",
+    C6B_BLIND_FUNC,
     "TestAuditC6bAdvanceOnAnUnknownTokenIsAnError",
     "TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor",
 ];
@@ -752,6 +800,28 @@ const G2_13H_ANCHORS: &[SourceAnchor] = &[
         needle: "t.Run(\"N6/an-undecodable-payload-must-not-let-both-commit\"",
         why: "that literal IS the main arm's name, and the arm carries the assertion the mutation \
               is classified on",
+    },
+    // The blind-path door's OWN assertion. The two anchors above pin the N6
+    // function's arms; nothing pinned THIS fixture, and its mutation
+    // (`G2.13h/undecodable-payload-validates-as-no-changes`) is classified on a
+    // string that lives in the N6 function — so the gate certified the blind
+    // path with a statement about the transactional one. That is the exact
+    // attack the per-leaf rule now refuses: revert `committer.go`'s fail-closed
+    // decode and empty this body, and before these anchors existed `go test`,
+    // `--tier=full` and `--verify-mutations` were all green.
+    SourceAnchor {
+        func: C6B_BLIND_FUNC,
+        needle: "BOTH committed. The all-blind window durably wrote",
+        why: "that IS the under-rejection verdict this fixture exists to raise — an all-blind drain \
+              durably acking a row the ring never learns of, and a concurrent txn then validating \
+              against a window missing a committed change",
+    },
+    SourceAnchor {
+        func: C6B_BLIND_FUNC,
+        needle: "the blind job with an undecodable payload committed at %+v — decode BEFORE the ",
+        why: "that IS the fail-closed half: the blind job with an undecodable payload must not \
+              commit at all, which is what makes the ring's completeness reachable rather than a \
+              race the fixture happens to win",
     },
 ];
 
@@ -852,6 +922,25 @@ const G2_13I_ANCHORS: &[SourceAnchor] = &[
         needle: "t.Run(\"past-the-per-pass-bound-the-pass-aborts-and-deletes-nothing\"",
         why: "that literal IS the abort arm's name, and the abort is the half `gc.go`'s bound exists \
               for",
+    },
+    // The abort arm's OWN assertions. The two anchors above pin the arms' NAMES,
+    // which a `t.Run("…", func(t *testing.T) {})` satisfies just as well as a
+    // populated arm does. The gate's only mutation
+    // (`G2.13i/gc-skips-corrupt-keys-without-bound`) is classified on a string
+    // that lives in the COUNTED-SKIP arm, so this arm — the half the per-pass
+    // bound exists for — was certified by its sibling.
+    SourceAnchor {
+        func: S1_GC_FUNC,
+        needle: "want ErrCorruptDataKeys. ",
+        why: "that IS the abort verdict: past the bound the pass must STOP and say so, rather than \
+              report success over a keyspace it has just declared unreadable",
+    },
+    SourceAnchor {
+        func: S1_GC_FUNC,
+        needle: "the aborted pass DELETED the stale version K@%+v anyway. ",
+        why: "that IS the `deletes-nothing` half of the arm's own name — the abort returns before \
+              the batch is applied, so a pass that decided it cannot trust the keyspace changes \
+              nothing on disk",
     },
 ];
 
@@ -1066,6 +1155,267 @@ pub fn g2_13k_post_ack_panic_is_never_absorbed(ctx: &Ctx) -> GateOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// G2.13l — N3: the Fatalf latch is consumed at every exit that could claim success
+// ---------------------------------------------------------------------------
+
+const N3_LATCH_FUNC: &str = "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess";
+
+/// The Go sources the consumption points live in. Non-test only: a `takeFatal()`
+/// in a fixture is a test READING the latch, not the engine consuming it.
+const N3_SOURCES: &[&str] = &[
+    "runtime-go/bluedb/pebble_engine.go",
+    "runtime-go/bluedb/committer.go",
+    "runtime-go/bluedb/gc.go",
+];
+
+/// One place the engine reads the N3 latch, and what falsifies that read.
+///
+/// # Why a table and not a count
+///
+/// `quietLogger.Fatalf` LATCHES instead of panicking, and the whole value of that
+/// is the consumption: "the engine consumes the latch at every point where it
+/// would otherwise claim success" (`pebble_engine.go`). A latch nobody reads is
+/// strictly worse than the panic it replaced — the process survives and keeps
+/// acking commits over a store pebble has declared unrecoverable.
+///
+/// Every consumption point is an independently deletable hunk, and an audit
+/// measured what that was worth: deleting each of them in turn and running the
+/// WHOLE suite, **five of six stayed green**, including the Commit door, which the
+/// source itself calls decisive ("without this check the fix trades a process kill
+/// for a silent, permanent hang of every writer"). The one that was gated —
+/// `committer.go`'s blind-path fold — was gated by G2.9a, whose subject is
+/// durability-on-ack rather than the latch.
+///
+/// So this table is the population, it is RECONCILED against the sources on every
+/// run (an added consumption point is a FAIL until it is recorded, exactly as
+/// [`AUDIT_OWNERSHIP`] treats an added fixture), and each row names its falsifier.
+#[allow(dead_code)] // read by the two N3 reconciliation tests below
+struct N3Point {
+    /// The source the read lives in.
+    file: &'static str,
+    /// A verbatim slice of the reading line, unique in `file` after comment
+    /// stripping. Deleting the point deletes the needle.
+    needle: &'static str,
+    /// The `t.Run` arm of [`N3_LATCH_FUNC`] that falsifies it, or `""` when the
+    /// point is recorded as unreddenable — see [`N3Point::falsifier`].
+    arm: &'static str,
+    /// The registered mutation that reddens `arm`, or the argument for why no
+    /// honest revert can.
+    falsifier: &'static str,
+}
+
+const N3_CONSUMPTION_POINTS: &[N3Point] = &[
+    N3Point {
+        file: "runtime-go/bluedb/pebble_engine.go",
+        needle: "if msg, ok := fatal.takeFatal(); ok {",
+        arm: "",
+        falsifier: "NO HONEST REVERT REDDENS IT, and the evidence is measured rather than \
+                    assumed. This is the post-Open check, and to redden it a fault would have to \
+                    make pebble Fatalf during Open while Open still RETURNED NIL. Injecting a \
+                    write/sync/sync-data fault on MANIFEST-* through errorfs during a fresh Open \
+                    was tried in all three shapes: `pebble.Open` returns the injected error \
+                    itself every time (observed err = `injected error`, ErrPebbleFatal absent), \
+                    so `openWith` fails at the line ABOVE this one and deleting this check \
+                    changes nothing observable. On a REOPEN the same fault wedges pebble \
+                    entirely — Open never returns, so there is no verdict to observe at all. The \
+                    check is defence-in-depth against a pebble contract that today does not need \
+                    it, which is precisely the shape a mutation cannot falsify honestly",
+    },
+    N3Point {
+        file: "runtime-go/bluedb/pebble_engine.go",
+        needle: "return CommitResult{Err: fmt.Errorf(\"%w: %w: %s\", ErrSealed, ErrPebbleFatal, msg)}",
+        arm: "the-commit-door-answers-before-the-batch",
+        falsifier: "G2.13l/commit-door-does-not-consult-the-latch",
+    },
+    N3Point {
+        file: "runtime-go/bluedb/pebble_engine.go",
+        needle: "e.closeErr = errors.Join(e.closeErr, fmt.Errorf(\"%w: %s\", ErrPebbleFatal, msg))",
+        arm: "close-is-the-last-moment-the-process-can-be-told",
+        falsifier: "G2.13l/close-discards-a-fatal-latched-after-the-last-ack",
+    },
+    N3Point {
+        file: "runtime-go/bluedb/committer.go",
+        needle: "// N3 consumption point 3/5 — BEFORE the branch below",
+        arm: "the-blind-drain-folds-it-into-its-own-ack",
+        falsifier: "G2.9a/wal-fatal-never-reaches-the-ack — the ONE point that was already \
+                    gated. It carries no second mutation here deliberately: two mutations of one \
+                    hunk are one proof counted twice, which is the rule SOURCE_SIDE_FALSIFIERS \
+                    applies to G2.6's overlapping fixtures. The arm's own falsifier is \
+                    G2_13L_ANCHORS' pin on its assertion",
+    },
+    N3Point {
+        file: "runtime-go/bluedb/committer.go",
+        needle: "// N3 consumption point 4/5 — BEFORE the branch below",
+        arm: "the-transactional-drain-folds-it-into-its-own-ack",
+        falsifier: "G2.13l/transactional-drain-does-not-fold-the-latch",
+    },
+    N3Point {
+        file: "runtime-go/bluedb/gc.go",
+        needle: "if err := e.foldFatal(e.db.Apply(batch, pebble.NoSync)); err != nil {",
+        arm: "the-gc-delete-pass-folds-it-into-the-pass-verdict",
+        falsifier: "G2.13l/gc-delete-pass-does-not-fold-the-latch",
+    },
+    N3Point {
+        file: "runtime-go/bluedb/gc.go",
+        needle: "if err := e.foldFatal(e.db.Apply(b, pebble.Sync)); err != nil {",
+        arm: "the-gc-threshold-persist-refuses-before-any-delete",
+        falsifier: "G2.13l/gc-threshold-persist-does-not-fold-the-latch",
+    },
+];
+
+/// The two spellings of "the engine reads the latch here", counted across
+/// [`N3_SOURCES`] so a NEW consumption point cannot appear unrecorded.
+///
+/// `.takeFatal()` (with the dot, so the method DECLARATION does not match) and
+/// `foldFatal(`. The recorded totals include the three that are not consumption
+/// points and are therefore not rows above: `foldFatal`'s own declaration, its
+/// internal `e.fatal.takeFatal()`, and — deliberately — nothing else.
+const N3_TAKE_FATAL_OCCURRENCES: usize = 4;
+const N3_FOLD_FATAL_OCCURRENCES: usize = 5;
+
+pub const G2_13L_TESTS: &[&str] = &[N3_LATCH_FUNC];
+
+/// One arm per consumption point that HAS one. Required as evidence rather than
+/// selected by the pattern, for [`AuditGate::required_subtests`]'s reason.
+pub const G2_13L_SUBTESTS: &[&str] = &[
+    "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-commit-door-answers-before-the-batch",
+    "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-blind-drain-folds-it-into-its-own-ack",
+    "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-transactional-drain-folds-it-into-its-own-ack",
+    "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-threshold-persist-refuses-before-any-delete",
+    "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-delete-pass-folds-it-into-the-pass-verdict",
+    "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/close-is-the-last-moment-the-process-can-be-told",
+];
+
+/// One anchor per arm, on that ARM's own property assertion — not on its name.
+///
+/// A `t.Run("…", func(t *testing.T) {})` satisfies a name pin exactly as well as a
+/// populated arm does, which is the hole the per-leaf rule exists to close. Each
+/// needle below sits INSIDE its arm's closure, so emptying the arm deletes it and
+/// this gate says which arm by name on the next run.
+const G2_13L_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: N3_LATCH_FUNC,
+        needle: "which is not ErrSealed — the ",
+        why: "that IS the door arm's property: the latch is answered BEFORE the batch, because \
+              behind the door pebble wedges its writers inside Apply and the folds further in are \
+              never reached",
+    },
+    SourceAnchor {
+        func: N3_LATCH_FUNC,
+        needle: "the ALL-BLIND drain acked err = %v with a fatal latched.",
+        why: "that IS the blind-drain arm's property, and the arm no mutation of this gate \
+              reddens — its revert belongs to G2.9a, so this pin is its per-leaf falsifier",
+    },
+    SourceAnchor {
+        func: N3_LATCH_FUNC,
+        needle: "the TRANSACTIONAL drain acked err = %v with a fatal latched.",
+        why: "that IS the transactional-drain arm's property: a second Apply site with its own \
+              seal-or-advance branch, which the blind path's fold does not cover",
+    },
+    SourceAnchor {
+        func: N3_LATCH_FUNC,
+        needle: "the stale version K@%+v was DELETED by a pass whose own threshold write it ",
+        why: "that IS the threshold arm's discriminating half — with the persist's fold deleted \
+              the pass still errors (the delete pass folds instead), and what changes is that it \
+              DELETES under a floor it could not establish",
+    },
+    SourceAnchor {
+        func: N3_LATCH_FUNC,
+        needle: "the delete pass applied its batch and reported err = %v.",
+        why: "that IS the delete-pass arm's property: GC issues its own batches on the caller's \
+              goroutine, so a fatal it does not consume is either mis-attributed to the next \
+              commit or lost",
+    },
+    SourceAnchor {
+        func: N3_LATCH_FUNC,
+        needle: "Close returned %v with a fatal latched.",
+        why: "that IS the Close arm's property — Close is the final moment anything in the \
+              process is listening to a fatal a background flush latched after the last ack",
+    },
+];
+
+/// Exactly six `t.Run(` sites: one per consumption point that has an arm. A
+/// seventh would be an arm nobody declared; a sixth-minus-one would be a
+/// consumption point that quietly lost its falsifier.
+const G2_13L_SITES: &[SubtestSites] = &[SubtestSites {
+    func: N3_LATCH_FUNC,
+    sites: 6,
+}];
+
+/// Count the two spellings of a latch read across [`N3_SOURCES`], comment-blind.
+///
+/// Comment-blind for `strip_go_comments`'s reason: a consumption point that is
+/// present but COMMENTED OUT is text, not a read.
+fn n3_latch_reads(read: impl Fn(&str) -> Option<String>) -> Option<(usize, usize)> {
+    let (mut take, mut fold) = (0usize, 0usize);
+    for file in N3_SOURCES {
+        let code = super::gates_g2::strip_go_comments(&read(file)?);
+        take += code.matches(".takeFatal()").count();
+        fold += code.matches("foldFatal(").count();
+    }
+    Some((take, fold))
+}
+
+/// **The N3 latch is consumed at every exit that could otherwise claim success.**
+///
+/// Two halves, and neither is sufficient alone:
+///
+/// 1. **No UNRECORDED consumption point exists.** The latch reads are counted
+///    across the engine sources and compared against the recorded totals; a count
+///    ABOVE them means a read landed that [`N3_CONSUMPTION_POINTS`] does not name,
+///    and therefore that nothing falsifies. That is the state five of the six
+///    points were in.
+/// 2. **The six arms run**, under the corpus's three anti-vacuity assertions, each
+///    anchored on its OWN property assertion.
+///
+/// The asymmetry in (1) is deliberate. A count BELOW the pin means a consumption
+/// point was DELETED — which is what every mutation of this gate does, and what
+/// its arms are there to catch. Failing here on an under-count would short-circuit
+/// the gate before `go test` ran, so each mutation would prove only that the pin
+/// noticed the edit, never that a fixture noticed the DEFECT. The two-way
+/// reconciliation (exact counts, plus each recorded needle present exactly once)
+/// is `every_n3_consumption_point_is_present_and_uniquely_pinned`, in `cargo test`
+/// where no mutation runs.
+pub fn g2_13l_latch_is_consumed_at_every_exit(ctx: &Ctx) -> GateOutcome {
+    let Some((take_fatal, fold_fatal)) = n3_latch_reads(|f| ctx.read(f)) else {
+        return GateOutcome::fail(
+            "cannot read the N3 engine sources".to_string(),
+            vec!["G2.13l reconciles the N3 consumption points against them".into()],
+        );
+    };
+    if take_fatal > N3_TAKE_FATAL_OCCURRENCES || fold_fatal > N3_FOLD_FATAL_OCCURRENCES {
+        return GateOutcome::fail(
+            format!(
+                "the N3 consumption points do not match their pin ({} recorded)",
+                N3_CONSUMPTION_POINTS.len()
+            ),
+            vec![format!(
+                "the engine sources carry {take_fatal} `.takeFatal()` and {fold_fatal} \
+                 `foldFatal(` occurrence(s); the pin records {N3_TAKE_FATAL_OCCURRENCES} and \
+                 {N3_FOLD_FATAL_OCCURRENCES}. A latch read that appears without a row in \
+                 N3_CONSUMPTION_POINTS is a consumption point nothing falsifies — five of six \
+                 were in exactly that state when this gate was written"
+            )],
+        );
+    }
+
+    run_audit_gate(
+        ctx,
+        &AuditGate {
+            id: "G2.13l",
+            tests: G2_13L_TESTS,
+            required_subtests: G2_13L_SUBTESTS,
+            anchors: G2_13L_ANCHORS,
+            sites: G2_13L_SITES,
+            // Measured at 0.37s for all six arms: every one latches directly and
+            // waits on nothing. The budget is the file's convention.
+            budget: Duration::from_secs(240),
+            property: "the N3 Fatalf latch is consumed at every exit that could claim success",
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Leaf coverage — which mutation reddens which pinned leaf
 // ---------------------------------------------------------------------------
 
@@ -1232,6 +1582,46 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
             "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path",
         ],
     },
+    // -- G2.13l: one mutation per consumption point that has one, each named for
+    //    the point it deletes and each classified on ITS OWN arm's assertion. The
+    //    blind-drain arm has no row because it has no mutation here — its revert
+    //    is `G2.9a/wal-fatal-never-reaches-the-ack`, and a second mutation of one
+    //    hunk is one proof counted twice; its per-leaf falsifier is the anchor.
+    LeafCoverage {
+        mutation: "G2.13l/commit-door-does-not-consult-the-latch",
+        leaves: &[
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess",
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-commit-door-answers-before-the-batch",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13l/transactional-drain-does-not-fold-the-latch",
+        leaves: &[
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess",
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-transactional-drain-folds-it-into-its-own-ack",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13l/gc-threshold-persist-does-not-fold-the-latch",
+        leaves: &[
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess",
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-threshold-persist-refuses-before-any-delete",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13l/gc-delete-pass-does-not-fold-the-latch",
+        leaves: &[
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess",
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/the-gc-delete-pass-folds-it-into-the-pass-verdict",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13l/close-discards-a-fatal-latched-after-the-last-ack",
+        leaves: &[
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess",
+            "TestAuditN3LatchIsConsumedAtEveryExitThatCouldClaimSuccess/close-is-the-last-moment-the-process-can-be-told",
+        ],
+    },
     // -- G2.9a, brought under this rule ------------------------------------
     //
     // The `NoSync` revert turns all seven red, and the recorded transcript says
@@ -1382,6 +1772,16 @@ pub const SOURCE_SIDE_FALSIFIERS: &[SourceSideFalsifier] = &[
     },
     SourceSideFalsifier {
         gate: "G2.6",
+        leaf: "TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary",
+        why: "its RUN outcome is the H3b property (a failed SCAN reaches the commit boundary), \
+              which no gate owns yet — the fixture landed with its fix in `b540bed2` and is \
+              recorded UNGATED in AUDIT_OWNERSHIP. A mutation registered on G2.6 to redden it \
+              would mint a PROVEN for the corpus gate out of the reader's defect, which is what \
+              the one-gate-per-property split forbids. G2.6's own pin over it — the injector \
+              construction plus the three fired-count needles — is enforced on every run",
+    },
+    SourceSideFalsifier {
+        gate: "G2.6",
         leaf: "TestAuditN3BackgroundFatalDoesNotKillTheProcess",
         why: "reverting the Fatalf latch does not redden this fixture, it KILLS the test binary — \
               there is no `--- FAIL:` line to record, and a gate cannot report on a process that \
@@ -1428,25 +1828,38 @@ fn enforced_needles(gate: &str, leaf: &str) -> Vec<&'static str> {
         }
         return Vec::new();
     }
-    let anchors: &[SourceAnchor] = match gate {
-        "G2.9a" => super::gates_g2::G2_9A_ANCHORS,
-        "G2.13a" => G2_13A_ANCHORS,
-        "G2.13b" => G2_13B_ANCHORS,
-        "G2.13h" => G2_13H_ANCHORS,
-        "G2.13i" => G2_13I_ANCHORS,
-        "G2.13j" => G2_13J_ANCHORS,
-        "G2.13k" => G2_13K_ANCHORS,
-        _ => &[],
-    };
-    anchors
+    gate_anchors(gate)
         .iter()
         .filter(|a| a.func == leaf)
         .map(|a| a.needle)
         .collect()
 }
 
+/// Every [`SourceAnchor`] a gate enforces on every run.
+///
+/// Keyed by gate id rather than reached through the gate descriptor because
+/// G2.9a is not an [`AuditGate`] and carries its anchors in `gates_g2.rs`. A
+/// gate absent from the match enforces none, which
+/// `every_pinned_leaf_is_reddened_by_a_recorded_mutation` reports as missing
+/// per-leaf evidence rather than as absence of a rule.
+fn gate_anchors(gate: &str) -> &'static [SourceAnchor] {
+    match gate {
+        "G2.9a" => super::gates_g2::G2_9A_ANCHORS,
+        "G2.13a" => G2_13A_ANCHORS,
+        "G2.13b" => G2_13B_ANCHORS,
+        "G2.13f" => G2_13F_ANCHORS,
+        "G2.13h" => G2_13H_ANCHORS,
+        "G2.13i" => G2_13I_ANCHORS,
+        "G2.13j" => G2_13J_ANCHORS,
+        "G2.13k" => G2_13K_ANCHORS,
+        "G2.13l" => G2_13L_ANCHORS,
+        _ => &[],
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::gates_g2::leaf_body;
     use super::*;
 
     /// The eleven gate bodies, paired with their ids. Cross-checked against
@@ -1463,6 +1876,7 @@ mod tests {
         ("G2.13i", g2_13i_corrupt_keys_fail_closed),
         ("G2.13j", g2_13j_lifecycle_pins_the_exported_surface),
         ("G2.13k", g2_13k_post_ack_panic_is_never_absorbed),
+        ("G2.13l", g2_13l_latch_is_consumed_at_every_exit),
     ];
 
     const ALL_SETS: &[(&str, &[&str])] = &[
@@ -1477,6 +1891,7 @@ mod tests {
         ("G2.13i", G2_13I_TESTS),
         ("G2.13j", G2_13J_TESTS),
         ("G2.13k", G2_13K_TESTS),
+        ("G2.13l", G2_13L_TESTS),
     ];
 
     /// The sub-test leaves each gate requires as evidence, alongside its `-run`
@@ -1485,6 +1900,7 @@ mod tests {
         ("G2.13h", G2_13H_SUBTESTS),
         ("G2.13i", G2_13I_SUBTESTS),
         ("G2.13k", G2_13K_SUBTESTS),
+        ("G2.13l", G2_13L_SUBTESTS),
     ];
 
     /// **Every gate the per-leaf rule governs**, with the leaves each pins.
@@ -1531,6 +1947,21 @@ mod tests {
 
     fn audit_src() -> String {
         std::fs::read_to_string(repo().join(AUDIT_SOURCE)).expect("read audit_test.go")
+    }
+
+    fn crashsim_src() -> String {
+        std::fs::read_to_string(repo().join("runtime-go/bluedb/crashsim_test.go"))
+            .expect("read crashsim_test.go")
+    }
+
+    /// Every `func Test…` body in the two sources the per-leaf rule ranges over,
+    /// comment-stripped. Both files, because `governed_gates()` spans them:
+    /// G2.13* pins `audit_test.go`, G2.9a pins `crashsim_test.go`, and G2.6's
+    /// injection manifest names fixtures in each.
+    fn corpus_bodies() -> Vec<super::super::gates_g2::EnumeratedTest> {
+        let mut bodies = enumerate_injections(&audit_src());
+        bodies.extend(enumerate_injections(&crashsim_src()));
+        bodies
     }
 
     /// The ownership table IS the file's population. Checked here as well as in
@@ -1672,6 +2103,8 @@ mod tests {
             .chain(G2_13I_ANCHORS.iter())
             .chain(G2_13J_ANCHORS.iter())
             .chain(G2_13K_ANCHORS.iter())
+            .chain(G2_13L_ANCHORS.iter())
+            .chain(G2_13F_ANCHORS.iter())
         {
             let body = bodies
                 .iter()
@@ -1714,6 +2147,7 @@ mod tests {
             .chain(G2_13I_SITES.iter())
             .chain(G2_13J_SITES.iter())
             .chain(G2_13K_SITES.iter())
+            .chain(G2_13L_SITES.iter())
         {
             check(s);
         }
@@ -1904,11 +2338,11 @@ mod tests {
         assert_eq!(bodies, sets, "BODIES and ALL_SETS disagree about the population");
     }
 
-    /// **Every pinned leaf is turned red by at least one recorded mutation.**
+    /// **Every pinned leaf carries a falsifier keyed on ITS OWN assertion.**
     ///
     /// The hole this closes: an empty Go test function emits `pass`. A gate's
     /// three anti-vacuity assertions prove the leaf RAN — not that its body
-    /// asserts anything. So a leaf that no mutation reddens could have its body
+    /// asserts anything. So a leaf that nothing falsifies could have its body
     /// gutted and the gate would stay green **and** report `PROVEN`, because the
     /// proof is about whichever leaf the one recorded mutation happens to touch.
     ///
@@ -1917,22 +2351,56 @@ mod tests {
     /// G2.13f's left two of four green, and G2.13a's leaves the two
     /// correct-by-luck control lengths green. Twelve leaves, one blind spot.
     ///
-    /// **The claim is checked against the RECORDED TRANSCRIPT, not asserted.**
-    /// `--verify-mutations` writes the mutated gate's output verbatim to
-    /// `<patch>.expected.txt` on a PROVEN verdict, and a Go failure prints
-    /// `--- FAIL: <full test name>`. So "this mutation reddens that leaf" is a
-    /// fact about a committed artefact — which is what makes the table below
-    /// evidence rather than a promise, and what makes it decay honestly (edit a
-    /// patch, and the transcript it belongs to must be re-taken).
+    /// # Why "a mutation reddened it" was not enough, and what replaced it
+    ///
+    /// The first version of this rule asked only that a COMMITTED TRANSCRIPT
+    /// carry `--- FAIL: <leaf>`. That is a fact about the artefact, but it is
+    /// the WRONG fact: a Go parent fails when any descendant does, a mutation
+    /// can redden a fixture through a shared helper, and — the case that
+    /// actually shipped — a mutation can be *classified* on an assertion that
+    /// lives in a DIFFERENT leaf of the same gate. `--- FAIL:` then appears
+    /// beside a leaf whose body has nothing to do with the proof, and the rule
+    /// was satisfied by RELABELLING. Every one of the three leaves the docstring
+    /// promised to protect stayed guttable.
+    ///
+    /// A falsifier is now required to be keyed on the leaf's own text, one of
+    /// two ways:
+    ///
+    /// 1. **A recorded mutation whose `expect` string is verbatim inside the
+    ///    LEAF's comment-stripped body** ([`super::super::gates_g2::leaf_body`] —
+    ///    the sub-test closure, not the enclosing function, because sibling arms
+    ///    share a function). Then gutting the leaf deletes the string the runner
+    ///    classifies on, and the next `--verify-mutations` reports `VACUOUS`
+    ///    instead of `PROVEN`. The transcript check is KEPT on top of it: the
+    ///    mutation must also have been observed reddening that leaf.
+    /// 2. **A [`SourceAnchor`] whose needle is inside the LEAF's body**, and
+    ///    which occurs exactly once in the enclosing function. That is strictly
+    ///    stronger — it is checked from the tree as it stands on EVERY gate run,
+    ///    so the gate itself goes red naming the fixture, rather than a proof
+    ///    quietly decaying at the next mutation run.
+    ///
+    /// [`SOURCE_SIDE_FALSIFIERS`] remains the third kind and is unchanged: a
+    /// leaf whose gate enforces a pin over it by some other spelling (G2.6's
+    /// fired-count needles), each with its argument, verified by
+    /// `every_source_side_falsifier_is_a_pin_the_gate_actually_enforces`.
+    ///
+    /// A row that reddens a leaf WITHOUT carrying its assertion is not deleted —
+    /// it is true, and it is evidence of blast radius — it simply no longer
+    /// counts as that leaf's falsifier.
     #[test]
     fn every_pinned_leaf_is_reddened_by_a_recorded_mutation() {
         let root = repo();
+        let bodies = corpus_bodies();
         for (id, leaf_list) in governed_gates() {
             let id = &id;
             let g = super::super::registry::find(id).expect("registered");
             let leaves: BTreeSet<&str> = leaf_list.iter().copied().collect();
 
             let mut covered: BTreeSet<&str> = BTreeSet::new();
+            // Recorded beside the uncovered list, so a failure says which leaves
+            // a mutation touched without asserting — the shape that made the
+            // relabelled rule look closed.
+            let mut reddened_elsewhere: Vec<String> = Vec::new();
             for m in g.mutations.as_slice() {
                 if STRUCTURAL_MUTATIONS.iter().any(|(mid, _)| *mid == m.id) {
                     continue; // reddens the gate before `go test` runs; see the const's doc
@@ -1974,13 +2442,41 @@ mod tests {
                          re-run --verify-mutations, or fix the claim",
                         m.id
                     );
+                    let body = leaf_body(&bodies, leaf).unwrap_or_else(|| {
+                        panic!(
+                            "{}: cannot resolve the body of {leaf} in the Go corpus — a leaf whose \
+                             text cannot be located cannot be shown to carry an assertion",
+                            m.id
+                        )
+                    });
+                    if body.contains(m.expect) {
+                        covered.insert(leaf);
+                    } else {
+                        reddened_elsewhere.push(format!(
+                            "{leaf} (reddened by {}, whose assertion {:?} is NOT in that leaf's own \
+                             body)",
+                            m.id, m.expect
+                        ));
+                    }
+                }
+            }
+
+            // The second evidence kind: an anchor on the leaf's own assertion,
+            // enforced by the gate on every run. Uniqueness inside the enclosing
+            // function is what makes gutting the leaf actually trip it — see
+            // `every_per_leaf_anchor_is_unique_in_its_function`.
+            for leaf in &leaves {
+                let Some(body) = leaf_body(&bodies, leaf) else {
+                    continue;
+                };
+                if gate_anchors(id).iter().any(|a| body.contains(a.needle)) {
                     covered.insert(leaf);
                 }
             }
 
-            // The second evidence kind: a pin the gate enforces on every run.
-            // Verified by `every_source_side_falsifier_is_a_pin_the_gate_actually_
-            // enforces`, so this is a lookup, not a second claim.
+            // The third: a pin the gate enforces by another spelling. Verified by
+            // `every_source_side_falsifier_is_a_pin_the_gate_actually_enforces`,
+            // so this is a lookup, not a second claim.
             for r in SOURCE_SIDE_FALSIFIERS.iter().filter(|r| r.gate == *id) {
                 covered.insert(r.leaf);
             }
@@ -1990,12 +2486,154 @@ mod tests {
                 uncovered.is_empty(),
                 "{id}: {} pinned leaf/leaves are falsified by NOTHING: {uncovered:?}\n\n\
                  An empty Go test emits `pass`, so those bodies could be gutted and this gate \
-                 would stay green AND report PROVEN. Close it one of the two ways: author a \
-                 mutation that reddens the leaf (see docs/bluedb/mutations/) and record it in \
-                 LEAF_COVERAGE, or anchor the gate on the leaf's own property assertion (see \
-                 SourceAnchor) and record it in SOURCE_SIDE_FALSIFIERS with the argument for why \
-                 no honest revert reaches it.",
+                 would stay green AND report PROVEN. Reddened-but-not-by-their-own-assertion: \
+                 {reddened_elsewhere:?}\n\n\
+                 Close it one of three ways: author a mutation classified on an assertion that \
+                 lives IN THAT LEAF (see docs/bluedb/mutations/) and record it in LEAF_COVERAGE; \
+                 anchor the gate on the leaf's own property assertion (see SourceAnchor); or \
+                 record it in SOURCE_SIDE_FALSIFIERS with the argument for why no honest revert \
+                 reaches it.",
                 uncovered.len()
+            );
+        }
+    }
+
+    /// A per-leaf [`SourceAnchor`] must occur EXACTLY ONCE in the function it is
+    /// checked against.
+    ///
+    /// `check_source_anchors` searches the enclosing `func Test…` — it has no
+    /// notion of sub-test arms. An anchor whose needle also appears in a sibling
+    /// arm would therefore survive its own arm being emptied, which is precisely
+    /// the falsifier failing to falsify. Uniqueness makes the function-level
+    /// check behave as a leaf-level one.
+    #[test]
+    fn every_per_leaf_anchor_is_unique_in_its_function() {
+        let bodies = corpus_bodies();
+        for (id, _) in governed_gates() {
+            for a in gate_anchors(&id) {
+                let func = &bodies
+                    .iter()
+                    .find(|f| f.test == a.func)
+                    .unwrap_or_else(|| panic!("{id}: no `func {}` in the corpus", a.func))
+                    .body;
+                assert_eq!(
+                    func.matches(a.needle).count(),
+                    1,
+                    "{id}: `{}` occurs more than once in {} — an anchor that a SIBLING arm also \
+                     satisfies survives its own arm being emptied",
+                    a.needle,
+                    a.func
+                );
+            }
+        }
+    }
+
+    /// **Every N3 latch read is a recorded consumption point, and every recorded
+    /// point is still there — exactly once.**
+    ///
+    /// The two-way half of G2.13l's reconciliation. The GATE checks only for an
+    /// EXCESS (a read nothing falsifies), because an under-count is what its own
+    /// mutations produce and failing there would short-circuit the run before a
+    /// fixture could notice the defect — see the gate's doc. Here, where no
+    /// mutation runs, both directions are checked: a deleted or moved consumption
+    /// point fails, and so does a needle that has stopped being unique (a pin that
+    /// matches two lines cannot say which one it is about).
+    #[test]
+    fn every_n3_consumption_point_is_present_and_uniquely_pinned() {
+        let root = repo();
+        let read = |f: &str| std::fs::read_to_string(root.join(f)).ok();
+
+        let (take, fold) = n3_latch_reads(read).expect("read the N3 engine sources");
+        assert_eq!(
+            (take, fold),
+            (N3_TAKE_FATAL_OCCURRENCES, N3_FOLD_FATAL_OCCURRENCES),
+            "the engine sources carry {take} `.takeFatal()` and {fold} `foldFatal(` reads; the pin \
+             records {N3_TAKE_FATAL_OCCURRENCES} and {N3_FOLD_FATAL_OCCURRENCES}. A read that \
+             appears without an N3_CONSUMPTION_POINTS row is a consumption point nothing \
+             falsifies; a read that DISAPPEARED is a fatal the engine will report as success"
+        );
+
+        for p in N3_CONSUMPTION_POINTS {
+            let src = std::fs::read_to_string(root.join(p.file)).expect("read");
+            // The two `committer.go` points are pinned by their marker COMMENTS:
+            // their code lines are byte-identical (`err = e.foldFatal(err)`), so
+            // only the marker distinguishes them. That is sound here because the
+            // count above is taken over comment-STRIPPED code — commenting a fold
+            // out lowers it, and deleting the marker fails this loop.
+            let hay = if p.needle.trim_start().starts_with("//") {
+                src.clone()
+            } else {
+                super::super::gates_g2::strip_go_comments(&src)
+            };
+            assert_eq!(
+                hay.matches(p.needle).count(),
+                1,
+                "{}: `{}` is not present exactly once. Falsifier: {}",
+                p.file,
+                p.needle,
+                p.falsifier
+            );
+            if p.arm.is_empty() {
+                continue;
+            }
+            let leaf = format!("{N3_LATCH_FUNC}/{}", p.arm);
+            assert!(
+                G2_13L_SUBTESTS.contains(&leaf.as_str()),
+                "{} names arm {}, which G2.13l does not require as evidence — an arm the gate does \
+                 not demand is an arm that can stop running",
+                p.needle,
+                p.arm
+            );
+        }
+
+        // Every arm G2.13l requires belongs to a recorded point, so an arm cannot
+        // outlive the consumption point it was written for.
+        for leaf in G2_13L_SUBTESTS {
+            let arm = leaf.split_once('/').expect("sub-test path").1;
+            assert!(
+                N3_CONSUMPTION_POINTS.iter().any(|p| p.arm == arm),
+                "{leaf} is required evidence but no N3_CONSUMPTION_POINTS row names it"
+            );
+        }
+    }
+
+    /// Every N3 falsifier is either a registered mutation id or a recorded
+    /// argument — never a bare gesture at one.
+    ///
+    /// A row whose `falsifier` names a mutation that does not exist would read as
+    /// coverage while being none, which is the whole failure mode this file
+    /// exists to stop. A row that carries prose instead is allowed — that is the
+    /// "no honest revert reddens it" case — but it must be prose, not an id with a
+    /// typo, so anything containing a slash is required to resolve.
+    #[test]
+    fn every_n3_falsifier_is_a_registered_mutation_or_a_recorded_argument() {
+        let registered: BTreeSet<&str> = super::super::registry::REGISTRY
+            .iter()
+            .flat_map(|g| g.mutations.as_slice().iter().map(|m| m.id))
+            .collect();
+        for p in N3_CONSUMPTION_POINTS {
+            let first = p.falsifier.split_whitespace().next().unwrap_or("");
+            if first.contains('/') {
+                assert!(
+                    registered.contains(first),
+                    "{}: falsifier {first} is not a registered mutation",
+                    p.needle
+                );
+                continue;
+            }
+            assert!(
+                p.arm.is_empty() || p.falsifier.len() > 80,
+                "{}: neither a registered mutation nor an argument long enough to be one",
+                p.needle
+            );
+        }
+        // The point with no arm is the one claimed unreddenable; it must SAY so
+        // rather than simply omit an arm.
+        for p in N3_CONSUMPTION_POINTS.iter().filter(|p| p.arm.is_empty()) {
+            assert!(
+                p.falsifier.contains("NO HONEST REVERT REDDENS IT"),
+                "{}: recorded with no arm but no stated argument for why",
+                p.needle
             );
         }
     }
