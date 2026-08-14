@@ -16,6 +16,23 @@ var errCorruptChangelogKey = errors.New("bluedb: malformed changelog key")
 // and HOW it is ordered; the PAYLOAD is opaque L1 bytes (an L2-owned encoding).
 type changelog struct {
 	db *pebble.DB
+
+	// e is the owning engine, present iff this changelog was handed out through
+	// Engine.Changelog() — i.e. iff it can outlive a Close. Tail takes the engine's
+	// check-and-pin (N4) when it is set; see Tail.
+	//
+	// A NIL e means "provably not raceable with Close", and there are exactly two such
+	// constructions, both inside this package, both argued rather than assumed:
+	//
+	//   - openWith's cold-start ring seed, which runs BEFORE the engine value is returned
+	//     to anyone, so no caller can hold a handle on which to call Close;
+	//   - changelogTailChanges (committer.go), which runs ON the committer goroutine —
+	//     Close's phase 2 wg.Wait()s that goroutine to completion before phase 3 closes
+	//     the handle, so the drain barrier already covers it.
+	//
+	// Any THIRD construction site must pass an engine. A raw *pebble.DB with no lifecycle
+	// is what GAP 1 was.
+	e *pebbleEngine
 }
 
 var _ Changelog = (*changelog)(nil)
@@ -33,7 +50,28 @@ var _ Changelog = (*changelog)(nil)
 // under-rejection, i.e. a serializability break, exactly the class validate.go's contract
 // forbids. changelogTailChanges already converts an error into ErrConflict (the driver
 // re-Begins at a fresher readTs), so failing closed is both correct and already plumbed.
+// It also FAILS CLOSED on a concurrent Close, and that is a distinct hazard (N4). A
+// Changelog handed out by Engine.Changelog() is an exported, caller-retained value, so
+// Tail can be entered at any point in the engine's life — including while Close is
+// running. c.db.NewIter on a closed Pebble handle does not return an error, it PANICS
+// ("pebble: closed", db.go), and that panic surfaces on the CALLER's goroutine where no
+// recover in this package can reach it. The check-and-pin below is the same one
+// beginSnapshot takes: once it is held, Close's phase-2 drain cannot complete — and
+// therefore phase 3 cannot close the handle — until this read has returned. ErrClosed is
+// the answer on the other side of the barrier, which Tail's error result already carries.
+//
+// The unpin is deferred FIRST so it runs LAST, after `defer iter.Close()`: the pin must
+// outlive every use of the iterator, not merely the NewIter call. Entries are copied out
+// into fresh slices, so nothing returned points into Pebble's memory once it is dropped.
 func (c *changelog) Tail(after HLC) ([]ChangelogEntry, error) {
+	if c.e != nil {
+		tok, err := c.e.pinIfOpen()
+		if err != nil {
+			return nil, err
+		}
+		defer c.e.reg.unpin(tok)
+	}
+
 	lo, hi := changelogKeyspaceBounds()
 	iter, err := c.db.NewIter(&pebble.IterOptions{LowerBound: lo, UpperBound: hi})
 	if err != nil {

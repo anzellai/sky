@@ -1473,3 +1473,360 @@ func TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor(t *testing.T) {
 			"actually diverting those validations to the durable changelog")
 	}
 }
+
+// TestAuditN4ChangelogAndGCDoNotRaceCloseIntoAPanic is the reproduction that shipped
+// broken: Engine.Changelog() handed back a raw *pebble.DB with NO closed-check and NO
+// pin, and Engine.GC() checked isClosed() and then used the handle anyway. Both are the
+// N4 class the close-drain exists to close, and both were reachable from the EXPORTED
+// surface — a caller holding a Changelog across Close (or running a GC pass on its own
+// goroutine) took an unrecovered "pebble: closed" panic, on ITS goroutine, where nothing
+// in this package can catch it.
+//
+// The shape is deliberate. The workers keep calling AFTER Close has returned, so on the
+// broken code the panic is not a narrow interleaving to be won — it is certain: every
+// call after phase 3 hits a closed handle. That is what makes this a gate rather than a
+// lottery (it detonated on round 0 when the fix was reverted). On the fixed code the same
+// calls are answered with ErrClosed, which is the OTHER half of the assertion: the remedy
+// must be a typed error, not a hang and not a silent empty result.
+//
+// The verdict per worker is (panicked, unexpected-error). Anything other than nil or
+// ErrClosed fails — an engine that answered a post-close Tail with (nil, nil) would look
+// like an empty changelog to a caller, which is the fail-open version of the same bug.
+func TestAuditN4ChangelogAndGCDoNotRaceCloseIntoAPanic(t *testing.T) {
+	e, err := openWith(config{dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// Seed: something for Tail to walk and for the GC pass to scan.
+	for i := 0; i < 8; i++ {
+		r := e.Commit(CommitReq{
+			Writes:           []VersionedWrite{{UserKey: dataUserKey("c", fmt.Sprintf("k%d", i)), Op: OpPut, Value: []byte("v")}},
+			ChangelogPayload: logPayload(fmt.Sprintf("seed-%d", i)),
+		})
+		if r.Err != nil {
+			t.Fatalf("seed commit %d: %v", i, r.Err)
+		}
+	}
+
+	type verdict struct {
+		what     string
+		panicked any
+		badErr   error
+	}
+	const workers = 3
+	const ops = 3
+	stop := make(chan struct{})
+	results := make(chan verdict, workers*ops)
+
+	spin := func(what string, op func() error) {
+		go func() {
+			v := verdict{what: what}
+			defer func() {
+				v.panicked = recover()
+				results <- v
+			}()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if err := op(); err != nil && !errors.Is(err, ErrClosed) {
+					v.badErr = err
+					return
+				}
+			}
+		}()
+	}
+
+	// A Changelog obtained BEFORE Close and held across it — the exported-value-outlives-
+	// the-engine shape, and the one the Judge reproduced.
+	held := e.Changelog()
+	for i := 0; i < workers; i++ {
+		spin("held Changelog().Tail", func() error {
+			_, err := held.Tail(HLC{})
+			return err
+		})
+		spin("fresh Changelog().Tail", func() error {
+			_, err := e.Changelog().Tail(HLC{})
+			return err
+		})
+		spin("GC", func() error {
+			_, err := e.GC()
+			return err
+		})
+	}
+
+	// Let the workers get going, then close underneath them and let them keep calling.
+	time.Sleep(20 * time.Millisecond)
+	closeErr := e.closeWithin(5 * time.Second)
+	time.Sleep(30 * time.Millisecond) // post-close calls — certain to hit the closed handle
+	close(stop)
+
+	deadline := time.After(30 * time.Second)
+	for i := 0; i < workers*ops; i++ {
+		select {
+		case v := <-results:
+			if v.panicked != nil {
+				t.Errorf("%s PANICKED racing Close: %v\n"+
+					"A pebble handle operation on a closed DB panics unconditionally, on the CALLER's "+
+					"goroutine. The remedy is the N4 check-and-pin (pinIfOpen): check `closed` and take "+
+					"the liveness pin under ONE closeMu.RLock, so Close's drain waits for the call or "+
+					"the call is refused with ErrClosed.", v.what, v.panicked)
+			}
+			if v.badErr != nil {
+				t.Errorf("%s returned %v; want nil or ErrClosed", v.what, v.badErr)
+			}
+		case <-deadline:
+			t.Fatalf("worker %d/%d did not report within 30s — a close-drain deadlock is as much a "+
+				"failure here as a panic", i+1, workers*ops)
+		}
+	}
+	if closeErr != nil {
+		t.Fatalf("Close returned %v. With the pins held only for the duration of each call, the "+
+			"bounded drain must complete: a persistent ErrReadersLive means a pin is being leaked "+
+			"on some path (an early return without its unpin).", closeErr)
+	}
+
+	// The barrier holds after Close has fully returned, too — the terminal state ANSWERS,
+	// it does not panic. Guarded so a regression here is a test failure rather than a
+	// panic that takes the whole test binary (and every later test) down with it.
+	terminal := func(what string, op func() error) {
+		t.Helper()
+		var err error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s PANICKED on a fully closed engine: %v", what, r)
+				}
+			}()
+			err = op()
+		}()
+		if err != nil && !errors.Is(err, ErrClosed) {
+			t.Errorf("%s on a fully closed engine = %v, want ErrClosed", what, err)
+		} else if err == nil {
+			t.Errorf("%s on a fully closed engine returned NO error; a terminal engine must "+
+				"answer ErrClosed, not a silent empty result", what)
+		}
+	}
+	terminal("Tail", func() error { _, err := held.Tail(HLC{}); return err })
+	terminal("GC", func() error { _, err := e.GC(); return err })
+}
+
+// TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed pins the POST-ACK arm of both
+// commit paths' durability recover.
+//
+// processBlindPhase1's guard used to read `if r := recover(); r != nil && !acked`. recover()
+// is not conditional on the `&&` — it runs first and CONSUMES the panic — so once the acks
+// had gone out, a panic was swallowed with no seal, no repanic and no log, and the single
+// writer goroutine returned to its range loop from an unexplained fault. The window is
+// real: `defer b.Close()` is registered AFTER that defer and therefore runs BEFORE it, on
+// every path including the fully-acked one.
+//
+// The fault is injected (postAckFaultInject) because nothing else reaches that window on a
+// healthy handle — the genuine sources are broken pebble invariants. The test drives
+// process() directly on the TEST goroutine (the mkJob/e.process shape the other white-box
+// commit tests use), so the re-panic is observable instead of taking the process down.
+//
+// Both halves are asserted: the panic must escape (not be absorbed) AND the engine must be
+// sealed, and the ack that already went out must still carry its real result — a post-ack
+// fault must not retroactively rewrite a durable commit's verdict.
+func TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed(t *testing.T) {
+	catch := func(t *testing.T, e *pebbleEngine, jobs []*commitJob) any {
+		t.Helper()
+		var got any
+		func() {
+			defer func() { got = recover() }()
+			e.process(jobs)
+		}()
+		return got
+	}
+
+	t.Run("blind-path", func(t *testing.T) {
+		clk := &fakeClock{}
+		clk.set(71000)
+		e := openDisk(t, clk.fn())
+
+		postAckFaultInject.Store(true)
+		t.Cleanup(func() { postAckFaultInject.Store(false) })
+
+		job := mkJob("post-ack-blind", "v1", "cl-blind")
+		got := catch(t, e, []*commitJob{job})
+		if got == nil {
+			t.Fatalf("a panic raised AFTER processBlindPhase1's acks went out was SILENTLY ABSORBED. " +
+				"recover() consumes the panic unconditionally, so `r != nil && !acked` is not a " +
+				"no-op in the acked case — it is a fail-open that hides an unexplained fault in the " +
+				"single writer goroutine. The post-ack arm must seal and re-panic.")
+		}
+		if !e.sealed.Load() {
+			t.Fatalf("the post-ack fault did not SEAL the engine; a recovered durability fault must " +
+				"leave the engine refusing writes, not accepting them")
+		}
+		res := <-job.done
+		if res.Err != nil {
+			t.Fatalf("the ack that had ALREADY gone out was rewritten to %v; a fault after the ack "+
+				"must not retroactively fail a commit that was applied and acked", res.Err)
+		}
+	})
+
+	t.Run("txn-path", func(t *testing.T) {
+		clk := &fakeClock{}
+		clk.set(72000)
+		e := openDisk(t, clk.fn())
+
+		key := "post-ack-txn"
+		base := put(t, e, key, "v1")
+		readTs := e.durableHi()
+
+		postAckFaultInject.Store(true)
+		t.Cleanup(func() { postAckFaultInject.Store(false) })
+
+		// A txn job with a clean read-set → validates, applies, acks; then the seam fires.
+		txnJob := &commitJob{
+			req: CommitReq{
+				Writes:  []VersionedWrite{{UserKey: []byte(key), Op: OpPut, Value: []byte("v2")}},
+				ReadTs:  readTs,
+				ReadSet: &ReadSet{points: map[string]pointRead{key: {versionSeen: base, present: true}}},
+			},
+			done: make(chan CommitResult, 1),
+		}
+		got := catch(t, e, []*commitJob{txnJob})
+		if got == nil {
+			t.Fatalf("a panic raised AFTER processTxn's acks went out was SILENTLY ABSORBED. With " +
+				"every job already in the acked set there is nobody left to inform, so absorbing " +
+				"makes the fault unobservable in the process it happened in.")
+		}
+		if !e.sealed.Load() {
+			t.Fatalf("the post-ack fault did not SEAL the engine on the transactional path")
+		}
+		res := <-txnJob.done
+		if res.Err != nil {
+			t.Fatalf("the ack that had ALREADY gone out was rewritten to %v", res.Err)
+		}
+	})
+}
+
+// TestAuditN4GCPassIsPinnedAgainstAConcurrentClose gates the OTHER half of GAP 1, and it
+// needs a different shape from the Changelog one — which is the point of it existing.
+//
+// gc.go's `if e.isClosed()` DOES answer a call made after Close has returned, so the
+// spin-workers-then-Close shape (TestAuditN4ChangelogAndGCDoNotRaceCloseIntoAPanic)
+// passes against the broken GC code: verified by mutation, that test stays green with the
+// pin reverted. The GC defect is a genuine TOCTOU — the check is a check with no pin, so
+// Close's phase 3 can run e.db.Close() at any point AFTER it returned false, and every
+// later handle op in the pass (NewBatch/NewIter, the side Apply, persistThreshold's Apply)
+// panics unconditionally. A gate for it has to put Close INSIDE the window, not after it.
+//
+// So the window is made wide and the wideness is MEASURED rather than assumed: the data
+// keyspace is loaded until one control pass takes a real, timed duration, and the fixture
+// FAILS (rather than silently passing) if a pass is too quick to hold Close inside it.
+// Close is then called one fifth of the way through a pass. Under the mutation that lands
+// db.Close() mid-pass every time; under the fix Close's phase-2 drain waits on the GC pin
+// and the pass completes normally — which is the second assertion here, since a drain that
+// did NOT wait would show up as a nil error from a pass that panicked.
+func TestAuditN4GCPassIsPinnedAgainstAConcurrentClose(t *testing.T) {
+	e, err := openWith(config{dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// One real commit so durableHi > 0 → the advanced threshold T is non-zero and GC does
+	// NOT take its `T.IsZero()` early return (which would skip the whole scan).
+	if r := e.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: dataUserKey("c", "anchor"), Op: OpPut, Value: []byte("v")}}}); r.Err != nil {
+		t.Fatalf("anchor commit: %v", r.Err)
+	}
+
+	// Bulk-load ONE version per user-key, directly through the handle: a single version is
+	// never collectible (the newest version below T is always kept), so every pass scans the
+	// same keyspace and the measured duration stays valid for the timed pass below.
+	loaded := 0
+	load := func(n int) {
+		t.Helper()
+		b := e.db.NewBatch()
+		defer b.Close()
+		for i := 0; i < n; i++ {
+			k := encodeDataKey([]byte(fmt.Sprintf("bulk/%08d", loaded+i)), HLC{WallMs: 1, Logical: 1})
+			if err := b.Set(k, []byte{markerPut}, nil); err != nil {
+				t.Fatalf("bulk set: %v", err)
+			}
+		}
+		if err := e.db.Apply(b, pebble.NoSync); err != nil {
+			t.Fatalf("bulk apply: %v", err)
+		}
+		loaded += n
+	}
+
+	const wantPass = 60 * time.Millisecond
+	var pass time.Duration
+	for attempt := 0; attempt < 4; attempt++ {
+		load(300_000)
+		t0 := time.Now()
+		if _, err := e.GC(); err != nil {
+			t.Fatalf("control GC pass: %v", err)
+		}
+		if pass = time.Since(t0); pass >= wantPass {
+			break
+		}
+	}
+	if pass < wantPass {
+		t.Fatalf("fixture: a GC pass over %d keys takes only %s (want >= %s). The gate needs a pass "+
+			"long enough for Close's phase 3 to land INSIDE it; raise the load per attempt.",
+			loaded, pass, wantPass)
+	}
+
+	type gcOutcome struct {
+		err      error
+		panicked any
+	}
+	out := make(chan gcOutcome, 1)
+	go func() {
+		var o gcOutcome
+		defer func() {
+			o.panicked = recover()
+			out <- o
+		}()
+		_, o.err = e.GC()
+	}()
+
+	// One fifth into the pass: past the entry check by a wide margin, and with ~80% of the
+	// pass — the NewIter, the whole scan, the side Apply — still ahead of it.
+	time.Sleep(pass / 5)
+	var closeErr error
+	func() {
+		// Guarded because the unpinned pass panics Close ITSELF, not only the pass: pebble's
+		// DB.Close unrefs the file cache and panics "element has outstanding references" when
+		// an iterator from the racing pass is still live (file_cache.go → genericcache). That
+		// is the same defect seen from the other side, and it deserves a named failure rather
+		// than an unrecovered panic that takes every later test in the binary with it.
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("Close PANICKED with an unpinned GC pass in flight: %v\n"+
+					"The pass holds a live Pebble iterator that the phase-2 drain knows nothing "+
+					"about, because gc.go took no pin. The drain must be able to see the pass.", r)
+			}
+		}()
+		closeErr = e.closeWithin(60 * time.Second)
+	}()
+
+	select {
+	case o := <-out:
+		if o.panicked != nil {
+			t.Fatalf("the in-flight GC pass PANICKED when Close closed the handle underneath it: %v\n"+
+				"`if e.isClosed()` is a CHECK WITH NO PIN: nothing stops phase 3 from running "+
+				"e.db.Close() after it returns false, and the pass's next handle operation "+
+				"(NewBatch/NewIter, the side Apply, persistThreshold's Apply) panics unconditionally "+
+				"on the caller's goroutine. The remedy is pinIfOpen held for the WHOLE pass.", o.panicked)
+		}
+		if o.err != nil && !errors.Is(o.err, ErrClosed) {
+			t.Fatalf("the in-flight GC pass returned %v; want nil (it was pinned and completed) or ErrClosed", o.err)
+		}
+	case <-time.After(90 * time.Second):
+		t.Fatalf("the in-flight GC pass never reported — a pin held across a wait Close depends on " +
+			"is a deadlock, which fails this gate exactly as a panic does")
+	}
+	if closeErr != nil {
+		t.Fatalf("Close returned %v; with the pass pinned, the bounded drain must wait it out and "+
+			"then close cleanly", closeErr)
+	}
+}

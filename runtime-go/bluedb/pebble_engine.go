@@ -438,6 +438,43 @@ func (e *pebbleEngine) beginSnapshot() (*pebbleReader, error) {
 	return &pebbleReader{snap: snap, readTs: readTs, tok: tok, reg: e.reg}, nil
 }
 
+// pinIfOpen is the NON-READER arm of the N4 check-and-pin, and it is deliberately the
+// same mechanism beginSnapshot/snapshotAtChecked already use rather than a second
+// lifecycle scheme: verify Close's phase 1 has not run AND take the liveness pin under
+// ONE closeMu.RLock, then do the work lock-free and unpin at the end.
+//
+// WHY THE CALLERS NEED IT. Every operation that touches e.db outside the committer
+// goroutine is a TOCTOU against Close otherwise, because pebble does not degrade on a
+// closed handle — it panics unconditionally (db.go: NewIter/Apply/NewSnapshot all check
+// d.closed and panic "pebble: closed"). `isClosed()` alone is a CHECK with no pin, so
+// Close's phase 3 db.Close() can land between the check and the very next statement;
+// closeWithin's phase-2 drain waits only on e.reg's pins, so an operation holding no pin
+// is invisible to it. That is what let Changelog().Tail race Close into an unrecovered
+// panic (reproduced on round 0) and what left gc.go's whole pass unprotected after its
+// isClosed() returned false. Holding the pin makes the two mutually exclusive: either the
+// pin is taken before `closed` is set (and the drain waits for it), or the check sees
+// `closed` and the caller gets ErrClosed. There is no third interleaving.
+//
+// The pin is reg.pin() — LIVENESS ONLY, not a `live` registration — because these callers
+// have no readTs and must not floor GC (GC itself is one of them; registering would make
+// a pass clamp its own candidate).
+//
+// LOCK ORDER: closeMu → w.mu, a prefix of the package order (closeMu → durMu → w.mu →
+// hlcMu); reg.pin takes only w.mu and returns without waiting on anything, so the section
+// takes no unbounded wait and never starves Close's pending Lock().
+//
+// The caller MUST unpin on every path (defer), and the unpin MUST be ordered AFTER the
+// last use of e.db — including an iterator's Close. Releasing early re-opens the exact
+// window this closes.
+func (e *pebbleEngine) pinIfOpen() (ReaderToken, error) {
+	e.closeMu.RLock()
+	defer e.closeMu.RUnlock()
+	if e.closed {
+		return 0, ErrClosed
+	}
+	return e.reg.pin(), nil
+}
+
 // enqueueTrim is GC's hand-off of a new threshold T to the committer (Fix-3). Non-blocking:
 // a full channel drops the request and a later GC pass re-sends a higher T (trim is monotone
 // → dropping only over-retains briefly). GC NEVER touches the ring directly.
@@ -513,7 +550,12 @@ func readMetaHLC(db *pebble.DB, name string) (HLC, error) {
 
 func (e *pebbleEngine) NowTs() HLC { return e.hlc.highWater() }
 
-func (e *pebbleEngine) Changelog() Changelog       { return &changelog{db: e.db} }
+// Changelog hands back the post-commit stream reader. The engine pointer travels with it
+// (N4): the returned value outlives this call — it is on the exported Engine interface, so
+// a caller may hold it across a Close — and its Tail does a Pebble read, so the reader
+// itself has to take the check-and-pin. `&changelog{db: e.db}` alone was a raw handle with
+// no lifecycle at all.
+func (e *pebbleEngine) Changelog() Changelog       { return &changelog{db: e.db, e: e} }
 func (e *pebbleEngine) Readers() WatermarkRegistry { return e.reg }
 
 // snapshotCalls counts Engine.Snapshot() invocations — a test seam (mirrors validateCalls /

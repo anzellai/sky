@@ -50,10 +50,27 @@ var ErrCorruptDataKeys = errors.New("bluedb: GC found unparseable data keys")
 //   - The newest version < T per user-key is KEPT (a reader at exactly T must still
 //     resolve it); only strictly-older versions below T are dropped; a key's sole
 //     remaining version is never dropped.
+//
+// N4 — the lifecycle arm. GC is an EXPORTED method (Engine.GC) called on the CALLER's
+// goroutine, and every phase below touches e.db: NewBatch/NewIter (:the delete pass),
+// Apply (:the side apply), and persistThreshold's own NewBatch/Apply. `if e.isClosed()`
+// was a check with NO pin, so Close's phase 3 could run e.db.Close() at any point after
+// it returned false — pebble then panics unconditionally on the next handle operation,
+// on this goroutine, unrecoverably. The check-and-pin (pinIfOpen) makes the pass and
+// phase 3 mutually exclusive: the drain in phase 2 waits for the pin, and a pass that
+// starts after `closed` is set gets ErrClosed instead of a handle. The pin is held for
+// the WHOLE pass — including persistThreshold, whose Apply is the one that must not be
+// half-issued against a dying handle.
+//
+// A pass is bounded work (one keyspace scan + two Applies) with no unbounded wait inside
+// it, so it cannot make Close burn its drain timeout; the pin is liveness-only (not a
+// `live` registration) so it does not clamp the very threshold this pass advances.
 func (e *pebbleEngine) GC() (GCStats, error) {
-	if e.isClosed() {
-		return GCStats{}, ErrClosed
+	tok, err := e.pinIfOpen()
+	if err != nil {
+		return GCStats{}, err
 	}
+	defer e.reg.unpin(tok)
 	if e.sealed.Load() {
 		return GCStats{}, ErrSealed
 	}

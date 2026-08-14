@@ -23,6 +23,26 @@ var changelogTailFaultInject atomic.Bool
 // errInjectedChangelogFault is the sentinel the Fix-1 test seam raises on the spill path.
 var errInjectedChangelogFault = errors.New("bluedb: injected changelog-tail fault (test)")
 
+// postAckFaultInject is a TEST SEAM for the POST-ACK arm of the durability recover in
+// processBlindPhase1 / processTxn. That arm is otherwise unreachable from a test: the only
+// real panic sources after the acks have gone out are broken invariants inside pebble's
+// Batch.Close or a send on a done channel that is by construction open and buffered, and
+// neither can be induced on a healthy handle. Without the seam the arm's behaviour —
+// seal + re-panic rather than silent absorption — would ship unproven, which is exactly
+// how the `&& !acked` fail-open survived review in the first place.
+//
+// atomic so the committer-goroutine read races cleanly with the test-goroutine set under
+// `go test -race`. Costs one atomic load per GROUP COMMIT (not per write).
+var postAckFaultInject atomic.Bool
+
+// postAckFaultPoint panics iff the post-ack test seam is armed. Called as the LAST
+// statement of both commit paths, after every job has its result.
+func postAckFaultPoint() {
+	if postAckFaultInject.Load() {
+		panic("bluedb: injected post-ack fault (test)")
+	}
+}
+
 // committer is the single writer goroutine (§3.2). It group-commits: grabs the
 // first queued job, drains up to maxBatch more non-blocking, and processes the
 // batch as ONE Pebble Batch + one Apply(Sync). Assigning commitTs here (not in the
@@ -131,15 +151,47 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
 	// involved), synchronously on this goroutine inside Apply. Deleting this recover
 	// because "Fatalf doesn't panic any more" would turn that class into a process kill,
 	// which is the same defect N3 exists to close, one site over.
+	//
+	// THE POST-ACK ARM IS NOT A NO-OP, and writing the guard as
+	// `if r := recover(); r != nil && !acked` made it one. recover() runs
+	// UNCONDITIONALLY — it consumes the panic the moment it is called — so with
+	// acked == true the panic was swallowed whole: no seal, no ack (there is nothing left
+	// to ack), no repanic, no log. The committer goroutine simply returned to its range
+	// loop and kept accepting work from an engine whose single writer had just unwound
+	// through an unexplained fault. That window is REACHABLE: `defer b.Close()` is
+	// registered AFTER this defer, so it runs BEFORE it, and it runs on every path
+	// including the one where every ack has already been sent.
+	//
+	// So the two arms are split, and neither absorbs:
+	//
+	//   - PRE-ACK (acked == false): the original contract. Seal, and hand every job in the
+	//     surviving batch the ErrSealed result its Commit is still blocked waiting for.
+	//     Absorbing is correct here because the recover REPLACES the ack — the caller
+	//     learns about the fault through its CommitResult.
+	//   - POST-ACK (acked == true): seal and RE-PANIC. There is no caller left to inform:
+	//     every job already has its result, so absorbing would make the fault
+	//     unobservable in the process it happened in. And the sources in this window are
+	//     not durability faults with a known blast radius — they are broken invariants
+	//     (a Pebble batch that will not close, a send on a done channel that should be
+	//     unclosed and buffered). "Continue with the single writer goroutine in an
+	//     unknown state" is not a safer answer than a stack trace; it is the fail-open
+	//     class C6b sweeps for, dressed as robustness. The seal still runs first, so if
+	//     the process is supervised and restarts, the engine it left behind refuses
+	//     writes rather than accepting them.
 	acked := false
 	defer func() {
-		if r := recover(); r != nil && !acked {
-			e.sealed.Store(true)
-			fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
-			err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
-			for _, j := range batch {
-				j.done <- CommitResult{Err: err}
-			}
+		r := recover()
+		if r == nil {
+			return
+		}
+		e.sealed.Store(true)
+		fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
+		if acked {
+			panic(r) // post-ack: nothing left to ack; never absorb it silently
+		}
+		err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
+		for _, j := range batch {
+			j.done <- CommitResult{Err: err}
 		}
 	}()
 
@@ -201,6 +253,7 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
 	for i, j := range batch {
 		j.done <- CommitResult{CommitTs: jobTs[i], Err: err} // ACK ONLY AFTER Apply returns
 	}
+	postAckFaultPoint() // test seam only; see postAckFaultInject
 }
 
 // appliedJob records a job that passed validation and was written into the batch (to
@@ -238,17 +291,33 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 	// Kept after N3 for the same reason as processBlindPhase1's: pebble's raw
 	// `panic(err)` on a WAL WriteRecord failure (db.go:955) has no logger in its path and
 	// is therefore untouched by the Fatalf latch.
+	//
+	// The POST-ACK arm is the same one processBlindPhase1 documents, expressed against the
+	// acked SET rather than a flag: the question "is this pre- or post-ack" is exactly "is
+	// there anyone left to inform". If the recover finds no unacked job, every caller has
+	// already been given its result and absorbing the panic here would make the fault
+	// unobservable in the process it happened in — so it seals and RE-PANICS instead. That
+	// window is reachable through `defer b.Close()`, which is registered after this defer
+	// and therefore runs before it, on every path including the fully-acked one.
 	defer func() {
-		if r := recover(); r != nil {
-			e.sealed.Store(true)
-			fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
-			err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
-			for _, j := range batch {
-				if acked[j] {
-					continue
-				}
-				j.done <- CommitResult{Err: err}
+		r := recover()
+		if r == nil {
+			return
+		}
+		e.sealed.Store(true)
+		fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
+		informed := false
+		err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
+		for _, j := range batch {
+			if acked[j] {
+				continue
 			}
+			j.done <- CommitResult{Err: err}
+			acked[j] = true
+			informed = true
+		}
+		if !informed {
+			panic(r) // post-ack: nobody left to inform; never absorb it silently
 		}
 	}()
 
@@ -386,6 +455,7 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
 		a.job.done <- CommitResult{CommitTs: a.commitTs, Err: err} // ack after Apply
 		acked[a.job] = true
 	}
+	postAckFaultPoint() // test seam only; see postAckFaultInject
 }
 
 // foldFatal folds a latched pebble Logger.Fatalf into an Apply's error result (defect N3).
