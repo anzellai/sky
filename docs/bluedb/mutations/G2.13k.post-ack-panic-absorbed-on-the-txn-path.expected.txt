@@ -5,6 +5,6 @@ PROBE gate=G2.13k state=FAIL root=<scratch-worktree>
   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: === RUN   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed
   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path: === RUN   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path
   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path: bluedb: durability fault — sealing engine: bluedb: injected post-ack fault (test)
-  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path:     audit_test.go:1749: a panic raised AFTER processTxn's acks went out was SILENTLY ABSORBED. With every job already in the acked set there is nobody left to inform, so absorbing makes the fault unobservable in the process it happened in.
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path:     audit_test.go:1937: a panic raised AFTER processTxn's acks went out was SILENTLY ABSORBED. With every job already in the acked set there is nobody left to inform, so absorbing makes the fault unobservable in the process it happened in.
   TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path (0.05s)
-  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed (0.15s)
+  TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed: --- FAIL: TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed (0.12s)

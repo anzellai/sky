@@ -3,4 +3,4 @@ PROBE gate=G2.13h state=FAIL root=<scratch-worktree>
   TestAuditC6bRingSpillRaisesTheFloorItLeftBehind did not report a passing `go test -json` event (it FAILED)
   TestAuditC6bRingSpillRaisesTheFloorItLeftBehind: === RUN   TestAuditC6bRingSpillRaisesTheFloorItLeftBehind
   TestAuditC6bRingSpillRaisesTheFloorItLeftBehind:     audit_test.go:1666: a transaction that READ spill-read at v1, and then wrote a value derived from it, COMMITTED (err=<nil>) even though a concurrent commit had superseded spill-read with v2 — a commit the ring had since SPILLED under its 2-entry cap. spillOldest released those entries without raising the floor over them, so after(readTs {WallMs:71000 Logical:2}) answered `not spilled` for a window it no longer holds and the committer never diverted to Changelog.Tail: validation ran against a window missing every spilled commit — under-rejection, a lost update from RAM pressure alone
-  TestAuditC6bRingSpillRaisesTheFloorItLeftBehind: --- FAIL: TestAuditC6bRingSpillRaisesTheFloorItLeftBehind (0.10s)
+  TestAuditC6bRingSpillRaisesTheFloorItLeftBehind: --- FAIL: TestAuditC6bRingSpillRaisesTheFloorItLeftBehind (0.08s)

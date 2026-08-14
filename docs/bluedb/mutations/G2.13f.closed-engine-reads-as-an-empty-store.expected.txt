@@ -2,5 +2,5 @@ PROBE gate=G2.13f state=FAIL root=<scratch-worktree>
   Close quiesces readers instead of racing them is not proven: 3/4 pinned fixture(s) reported a passing event
   TestAuditN4CloseDoesNotPanicConcurrentSnapshot did not report a passing `go test -json` event (it FAILED)
   TestAuditN4CloseDoesNotPanicConcurrentSnapshot: === RUN   TestAuditN4CloseDoesNotPanicConcurrentSnapshot
-  TestAuditN4CloseDoesNotPanicConcurrentSnapshot:     audit_test.go:754: snapshotAt() after Close reports Err() = <nil>, want ErrClosed
-  TestAuditN4CloseDoesNotPanicConcurrentSnapshot: --- FAIL: TestAuditN4CloseDoesNotPanicConcurrentSnapshot (0.11s)
+  TestAuditN4CloseDoesNotPanicConcurrentSnapshot:     audit_test.go:824: snapshotAt() after Close reports Err() = <nil>, want ErrClosed
+  TestAuditN4CloseDoesNotPanicConcurrentSnapshot: --- FAIL: TestAuditN4CloseDoesNotPanicConcurrentSnapshot (0.15s)

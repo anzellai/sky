@@ -1,7 +1,8 @@
 PROBE gate=G2.6 state=FAIL root=<scratch-worktree>
-  fewer injection sites than the recorded manifest: 5 enumerated across 11 corpus file(s), 6 recorded; and the injection corpus did not run clean: 5/6 recorded fixtures reported a passing event
+  fewer injection sites than the recorded manifest: 5 enumerated across 12 corpus file(s), 6 recorded; and the injection corpus did not run clean: 5/6 recorded fixtures reported a passing event
+  runtime-go/bluedb/txn_overlay_test.go is on disk but not recorded in G2_6_SOURCES — a new test file is where a new injection site hides from a manifest
   runtime-go/bluedb/audit_test.go::TestAuditN3SynchronousWalFaultStillErrorsTheAck is in the recorded manifest but constructs no errorfs.InjectorFunc( — the fault it injects (sync of the *.log WAL inside Apply — the fatal must be folded into the ack (C8)) is no longer exercised anywhere
   TestAuditN3SynchronousWalFaultStillErrorsTheAck did not report a passing `go test -json` event (it FAILED)
   TestAuditN3SynchronousWalFaultStillErrorsTheAck: === RUN   TestAuditN3SynchronousWalFaultStillErrorsTheAck
-  TestAuditN3SynchronousWalFaultStillErrorsTheAck:     audit_test.go:1208: the WAL-fsync injector fired ZERO times — the commit never reached an fsync of a *.log file, so this test proves NOTHING. Fix the fixture, do not weaken the assertion.
+  TestAuditN3SynchronousWalFaultStillErrorsTheAck:     audit_test.go:1278: the WAL-fsync injector fired ZERO times — the commit never reached an fsync of a *.log file, so this test proves NOTHING. Fix the fixture, do not weaken the assertion.
   TestAuditN3SynchronousWalFaultStillErrorsTheAck: --- FAIL: TestAuditN3SynchronousWalFaultStillErrorsTheAck (0.00s)

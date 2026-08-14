@@ -2,5 +2,5 @@ PROBE gate=G2.13e state=FAIL root=<scratch-worktree>
   a Snapshot's readTs is pinned with its snapshot is not proven: 1/2 pinned fixture(s) reported a passing event
   TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot did not report a passing `go test -json` event (it FAILED)
   TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot: === RUN   TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot
-  TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot:     audit_test.go:534: Snapshot().ReadTs() = {5000 2} — the ASSIGNED-but-unapplied commitTs. The reader claims to be a consistent view as of a commit that is not durable and not in its pinned snapshot, and its watermark token floors GC at a commit that may never land.
-  TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot: --- FAIL: TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot (0.09s)
+  TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot:     audit_test.go:604: Snapshot().ReadTs() = {5000 2} — the ASSIGNED-but-unapplied commitTs. The reader claims to be a consistent view as of a commit that is not durable and not in its pinned snapshot, and its watermark token floors GC at a commit that may never land.
+  TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot: --- FAIL: TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot (0.11s)

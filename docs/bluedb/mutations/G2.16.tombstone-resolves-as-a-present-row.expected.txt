@@ -3,4 +3,4 @@ PROBE gate=G2.16 state=FAIL root=<scratch-worktree>
   TestTombstone did not report a passing `go test -json` event (it FAILED)
   TestTombstone: === RUN   TestTombstone
   TestTombstone:     engine_test.go:231: Get(K,t2 after delete)="",true want absent
-  TestTombstone: --- FAIL: TestTombstone (0.09s)
+  TestTombstone: --- FAIL: TestTombstone (0.06s)

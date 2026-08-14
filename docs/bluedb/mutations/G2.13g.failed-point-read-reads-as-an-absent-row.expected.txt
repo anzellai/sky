@@ -2,7 +2,7 @@ PROBE gate=G2.13g state=FAIL root=<scratch-worktree>
   a failed point read is an error, not an absent row is not proven: 0/1 pinned fixture(s) reported a passing event
   TestAuditH3ReaderGetSurfacesIoErrors did not report a passing `go test -json` event (it FAILED)
   TestAuditH3ReaderGetSurfacesIoErrors: === RUN   TestAuditH3ReaderGetSurfacesIoErrors
-  TestAuditH3ReaderGetSurfacesIoErrors:     audit_test.go:429: Get swallowed an injected SSTable read fault: ok=false with Err() == nil — an I/O error is INDISTINGUISHABLE from key "h3-key0200" being absent
-  TestAuditH3ReaderGetSurfacesIoErrors:     audit_test.go:450: Transact COMMITTED under an injected read fault: the body saw "h3-key0200" as absent because the block could not be read, and inserted over it. Commit must fail closed on reader.Err().
-  TestAuditH3ReaderGetSurfacesIoErrors:     audit_test.go:466: row "h3-key0200" = "INSERTED-OVER-AN-IO-ERROR" after the faulted txn — the failed read was laundered into an INSERT
+  TestAuditH3ReaderGetSurfacesIoErrors:     audit_test.go:499: Get swallowed an injected SSTable read fault: ok=false with Err() == nil — an I/O error is INDISTINGUISHABLE from key "h3-key0200" being absent
+  TestAuditH3ReaderGetSurfacesIoErrors:     audit_test.go:520: Transact COMMITTED under an injected read fault: the body saw "h3-key0200" as absent because the block could not be read, and inserted over it. Commit must fail closed on reader.Err().
+  TestAuditH3ReaderGetSurfacesIoErrors:     audit_test.go:536: row "h3-key0200" = "INSERTED-OVER-AN-IO-ERROR" after the faulted txn — the failed read was laundered into an INSERT
   TestAuditH3ReaderGetSurfacesIoErrors: --- FAIL: TestAuditH3ReaderGetSurfacesIoErrors (0.01s)

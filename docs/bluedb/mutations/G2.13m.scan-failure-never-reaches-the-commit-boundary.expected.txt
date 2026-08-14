@@ -2,6 +2,6 @@ PROBE gate=G2.13m state=FAIL root=<scratch-worktree>
   an I/O fault inside a transaction's scan fails the commit instead of committing over the rows it could not read is not proven: 0/1 pinned fixture(s) reported a passing event
   TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary did not report a passing `go test -json` event (it FAILED)
   TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary: === RUN   TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary
-  TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary:     audit_test.go:2478: Transact COMMITTED under an injected SCAN fault: the body saw collection "orders" as empty because a block could not be read, and inserted over row "orders\x1fpk0200". Commit must fail closed on the scan's error the same way it does on a point read's (defect H3b).
-  TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary:     audit_test.go:2494: row "orders\x1fpk0200" = "INSERTED-OVER-AN-IO-ERROR" after the faulted txn, want "row-that-exists" — the failed SCAN was laundered into an INSERT that overwrote a committed row
+  TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary:     audit_test.go:2666: Transact COMMITTED under an injected SCAN fault: the body saw collection "orders" as empty because a block could not be read, and inserted over row "orders\x1fpk0200". Commit must fail closed on the scan's error the same way it does on a point read's (defect H3b).
+  TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary:     audit_test.go:2682: row "orders\x1fpk0200" = "INSERTED-OVER-AN-IO-ERROR" after the faulted txn, want "row-that-exists" — the failed SCAN was laundered into an INSERT that overwrote a committed row
   TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary: --- FAIL: TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary (0.01s)

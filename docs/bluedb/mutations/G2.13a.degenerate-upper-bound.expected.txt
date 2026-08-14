@@ -29,13 +29,13 @@ PROBE gate=G2.13a state=FAIL root=<scratch-worktree>
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=130: 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 1f 00, 00 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 6b 1f 00) — inverted bounds (a silent empty collection): the scan is indistinguishable from a collection that has no rows
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1c-write-set-overlay-does-not-leak-across-collections: === RUN   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1c-write-set-overlay-does-not-leak-across-collections
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1c-write-set-overlay-does-not-leak-across-collections:     audit_test.go:221: ScanCollection(users): bluedb: inverted data-scan bounds for prefix 75736572731f: [00 75 73 65 72 73 1f 00, 00 75 73 65 72 73 1f 00)
-  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=28: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=28 (0.11s)
-  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=29: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=29 (0.09s)
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=28: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=28 (0.10s)
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=29: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=29 (0.05s)
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=30: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=30 (0.06s)
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=31: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=31 (0.06s)
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=32: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=32 (0.06s)
-  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=33: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=33 (0.08s)
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=33: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=33 (0.06s)
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=34: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=34 (0.07s)
   TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=130: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/collNameLen=130 (0.06s)
-  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1c-write-set-overlay-does-not-leak-across-collections: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1c-write-set-overlay-does-not-leak-across-collections (0.05s)
-  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes (0.64s)
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1c-write-set-overlay-does-not-leak-across-collections: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes/N1c-write-set-overlay-does-not-leak-across-collections (0.06s)
+  TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes: --- FAIL: TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes (0.59s)
