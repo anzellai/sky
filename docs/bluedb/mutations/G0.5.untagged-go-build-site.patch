@@ -1,0 +1,31 @@
+diff --git a/rust/crates/sky/src/main.rs b/rust/crates/sky/src/main.rs
+index 2cc824f6..09a59de5 100644
+--- a/rust/crates/sky/src/main.rs
++++ b/rust/crates/sky/src/main.rs
+@@ -1588,6 +1588,26 @@ fn hub_go_build_command(runtime_go: &Path, hub_bin: &Path) -> Command {
+     cmd
+ }
+ 
++/// MUTATION (G0.5/untagged-go-build-site): a fourth compiler `go build`, added
++/// the way the third one really was — a small helper next to the verb that needs
++/// it, with no `-tags` on the argv because the author did not know there was a
++/// tag to carry.
++///
++/// It is in `sky/src/main.rs` rather than `project/src/build.rs` deliberately:
++/// the pre-widening scan read `rust/crates/project/src` ONLY, so a site here is
++/// one the old gate could not have seen at all. The mutation therefore falsifies
++/// the WIDENING as well as the tag invariant.
++#[allow(dead_code)]
++fn mutation_untagged_go_build(runtime_go: &Path, out_bin: &Path) -> Command {
++    let mut cmd = Command::new("go");
++    cmd.arg("build")
++        .arg("-o")
++        .arg(out_bin)
++        .arg("./cmd/sky-hub")
++        .current_dir(runtime_go);
++    cmd
++}
++
+ /// `sky console-serve` builds and spawns the standalone Sky Console Hub daemon
+ /// (OTLP receivers plus a SQLite hot store) from `runtime-go/cmd/sky-hub` (pure
+ /// Go, `CGO_ENABLED=0`). Flags: `--port N`, `--data-dir DIR`, `--auth MODE`, and
