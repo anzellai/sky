@@ -247,11 +247,361 @@ pub(super) fn go_test(ctx: &Ctx, tests: &[&str], budget: Duration) -> Result<GoT
 ///
 /// The needle is searched for in a body passed through [`strip_go_comments`], so
 /// commenting the assertion out does not satisfy it either.
+///
+/// # What an anchor proves, and what it does not — read this before relying on one
+///
+/// The check is [`anchor_verdict`], and it is a SOURCE-shape check, not a proof
+/// of semantics. Precisely:
+///
+/// **It proves** the needle is present in the enclosing function's
+/// brace-delimited body (so text after the closing `}` cannot satisfy it), that
+/// it is in code the scanner can reach (not behind `if false`, not after a
+/// `return` that leaves its block), that it is not inside a comment, and — when
+/// the needle sits inside a call to the `testing` API — that the call is one
+/// that FAILS the test (`Fatal`/`Fatalf`/`Error`/`Errorf`/`Fail`/`FailNow`)
+/// rather than one that merely reports (`Log`/`Logf`/`Skip`/…). Rewriting
+/// `t.Fatalf(<needle>)` to `t.Logf(<needle>)` — the round-4 Judge's
+/// falsification, at `lock_test.go:25` — is red.
+///
+/// **It does not prove** the assertion is REACHED at run time, nor that its
+/// condition still discriminates. A body whose guard is inverted
+/// (`if err != nil` → `if err == nil`), whose assertion sits in a closure that is
+/// never invoked, whose `t.Fatalf` is guarded by a condition that can no longer
+/// hold, or which returns early through a helper this scanner does not follow,
+/// still satisfies its anchor. Reachability analysis is intraprocedural,
+/// syntactic and deliberately shallow. **An anchor is a floor, not a proof**: it
+/// makes GUTTING a fixture loud, which is the vacuity class it was introduced
+/// for; it does not make a fixture correct. The falsifier that proves a fixture
+/// still discriminates is a recorded mutation
+/// (`super::gates_g2_13::LEAF_COVERAGE`), and where a leaf has both, the
+/// mutation is the stronger evidence.
 pub struct SourceAnchor {
     /// The enclosing `func Test…`.
     pub func: &'static str,
     pub needle: &'static str,
     pub why: &'static str,
+}
+
+// ---------------------------------------------------------------------------
+// The anchor matcher
+// ---------------------------------------------------------------------------
+
+/// `testing` API calls that FAIL the test.
+///
+/// Matched on the last `.`-separated segment of the callee, so `t.Fatalf`,
+/// `tb.Fatalf` and `sub.Errorf` all count — the receiver's name is not the
+/// property.
+const FAILING_REPORTERS: &[&str] = &["Fatal", "Fatalf", "Error", "Errorf", "Fail", "FailNow"];
+
+/// `testing` (and `fmt`) calls that report WITHOUT failing.
+///
+/// A needle that has moved from [`FAILING_REPORTERS`] into one of these is the
+/// downgrade attack: the text is byte-identical, the occurrence count is
+/// unchanged, the test still passes, and the assertion is gone.
+const QUIET_REPORTERS: &[&str] = &[
+    "Log", "Logf", "Skip", "Skipf", "SkipNow", "Print", "Printf", "Println",
+];
+
+/// Why an anchor does or does not hold. Each negative arm names a DIFFERENT
+/// defeat, because "the needle is missing" and "the needle is now logged" want
+/// different fixes and a single message for both is a report that has to be
+/// re-investigated from scratch.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum AnchorVerdict {
+    /// Present, reachable, and wired to something that fails — or a construct
+    /// pin (see [`SourceAnchor`]) that is present and reachable.
+    Holds,
+    /// Nowhere in the executing body.
+    Missing,
+    /// Present, but only in code this scanner can prove is never reached.
+    Unreachable,
+    /// Present and reachable, but the call it sits in reports without failing.
+    Downgraded(String),
+    /// The needle OPENS a block (it ends in `{`), and that block no longer
+    /// contains any failing call — the condition is still evaluated and nothing
+    /// happens when it holds.
+    GuardNeverFails,
+}
+
+/// Decide one anchor against one already-comment-stripped, brace-delimited
+/// function body.
+///
+/// Three needle shapes exist in the corpus and each gets the strongest rule its
+/// shape admits:
+///
+/// 1. **A message inside a report call** (most anchors) — the needle lives in a
+///    `t.Fatalf` format string. The rule walks OUTWARD from the occurrence
+///    through the enclosing call spans to the innermost `testing`-API call and
+///    requires it to be a failing one. Walking outward rather than looking at
+///    the immediately enclosing call is what keeps
+///    `t.Fatalf(fmt.Sprintf(<needle>))` green while `t.Logf(<needle>)` is red.
+/// 2. **A guard** (`if n := injected.Load(); n == 0 {`) — the needle opens a
+///    block; the block must contain a failing call.
+/// 3. **A construct pin** (`t.Run("blind-path"`, `armed.Store(true)`) — pinning
+///    a sub-test population or a fixture's arming, per [`SourceAnchor`]'s job
+///    (1). These assert nothing by nature, so presence + reachability is the
+///    whole rule, and the docstring above says so rather than implying more.
+pub(super) fn anchor_verdict(body: &str, needle: &str) -> AnchorVerdict {
+    let live = live_text(body);
+    let hits: Vec<usize> = live.match_indices(needle).map(|(i, _)| i).collect();
+    if hits.is_empty() {
+        return if body.contains(needle) {
+            AnchorVerdict::Unreachable
+        } else {
+            AnchorVerdict::Missing
+        };
+    }
+
+    let mut worst: Option<AnchorVerdict> = None;
+    for at in hits {
+        let end = at + needle.len();
+        match enclosing_reporter(&live, at, end) {
+            Some(name) if FAILING_REPORTERS.contains(&name.as_str()) => return AnchorVerdict::Holds,
+            Some(name) => {
+                worst.get_or_insert(AnchorVerdict::Downgraded(name));
+            }
+            None => {
+                let trimmed = needle.trim_end();
+                if trimmed.ends_with('{') {
+                    let brace = at + trimmed.len() - 1;
+                    match closure_at(&live, brace) {
+                        Some(block) if block_contains_failing_call(&block) => {
+                            return AnchorVerdict::Holds
+                        }
+                        _ => {
+                            worst.get_or_insert(AnchorVerdict::GuardNeverFails);
+                        }
+                    }
+                } else {
+                    // Shape (3): a construct pin. Presence in reachable code is
+                    // everything this needle can be asked to prove.
+                    return AnchorVerdict::Holds;
+                }
+            }
+        }
+    }
+    worst.unwrap_or(AnchorVerdict::Holds)
+}
+
+/// The body with every region this scanner can prove UNREACHABLE blanked to NUL.
+///
+/// Blanking rather than deleting keeps every surviving offset usable for the
+/// paren/brace walks above, and NUL cannot appear in any needle, so a blanked
+/// region can neither satisfy a search nor splice two live fragments into a
+/// match that exists in neither.
+///
+/// Two forms are recognised, both of them defeats the round-4 Judge listed:
+///
+/// * `if false { … }` — the block is dead from its opening brace.
+/// * a `return` statement — the rest of its OWN block is dead. `if err != nil {
+///   return }` therefore kills nothing outside the `if`, which is the point: a
+///   `return` at the top of a test function's body kills the whole fixture and
+///   says so, while ordinary early-exit control flow is untouched.
+///
+/// One form RESURRECTS: a `case` / `default` clause. Arms of a `switch` or
+/// `select` share one brace-delimited block, so without this a `case a: return`
+/// would blank every arm BELOW it and report their assertions as unreachable.
+/// That is the over-eager direction — a false RED on ordinary Go, indistinguishable
+/// to its author from a broken gate — and this corpus already writes both shapes
+/// (`audit_test.go` has a `switch` whose arms each `t.Fatalf`, and several
+/// `select`s whose arms do). An arm therefore inherits the ENCLOSING block's
+/// deadness, not the previous arm's: a switch nested inside `if false` stays dead
+/// in every arm.
+///
+/// Deliberately NOT modelled: `t.Skip`, `runtime.Goexit`, `panic`, `goto`/labels,
+/// and any interprocedural exit. `t.Skip` needs no modelling here — a skipped test
+/// emits `skip`, not `pass`, and [`check_run_evidence`] already requires a pass
+/// event for every pinned leaf.
+fn live_text(body: &str) -> String {
+    let b = body.as_bytes();
+    let mut mask = vec![true; b.len()];
+    // Cumulative deadness per open block; a block pushed under a dead ancestor
+    // is dead from birth. The base entry is the BODY ITSELF — `body` is the text
+    // BETWEEN a function's braces, so its outermost statements are inside a
+    // block that has no `{` in this string to push it. Without the base entry a
+    // `return` at the top of a fixture would have no block to kill, which is the
+    // one place it matters most.
+    let mut stack: Vec<bool> = vec![false];
+    let mut i = 0usize;
+    while i < b.len() {
+        let dead = stack.last().copied().unwrap_or(false);
+        match b[i] {
+            b'"' | b'`' | b'\'' => {
+                let j = skip_literal(b, i);
+                if dead {
+                    for m in mask.iter_mut().take(j.min(b.len())).skip(i) {
+                        *m = false;
+                    }
+                }
+                i = j;
+                continue;
+            }
+            b'{' => {
+                mask[i] = !dead;
+                let opened_dead = dead || body[..i].trim_end().ends_with("if false");
+                stack.push(opened_dead);
+                i += 1;
+            }
+            b'}' => {
+                stack.pop();
+                mask[i] = !stack.last().copied().unwrap_or(false);
+                i += 1;
+            }
+            _ => {
+                // A `case` / `default` opens a new arm of the switch or select
+                // whose body is the block currently on top of the stack. Whatever
+                // the previous arm did to that block ends here; only an ancestor's
+                // deadness survives. `case` and `default` are reserved words in
+                // Go, so a whole-word match cannot be an identifier.
+                let dead = if is_word_at(b, i, b"case") || is_word_at(b, i, b"default") {
+                    let inherited = stack.len().checked_sub(2).is_some_and(|p| stack[p]);
+                    if let Some(top) = stack.last_mut() {
+                        *top = inherited;
+                    }
+                    inherited
+                } else {
+                    dead
+                };
+                mask[i] = !dead;
+                if is_word_at(b, i, b"return") {
+                    // The `return` itself keeps the deadness it already had;
+                    // everything after it in this block becomes dead.
+                    for m in mask.iter_mut().take(i + 6).skip(i) {
+                        *m = !dead;
+                    }
+                    if let Some(top) = stack.last_mut() {
+                        *top = true;
+                    } else {
+                        // A `return` outside any block cannot happen in a
+                        // brace-delimited body; treat it as inert.
+                    }
+                    i += 6;
+                    continue;
+                }
+                i += 1;
+            }
+        }
+    }
+    let out: Vec<u8> = b
+        .iter()
+        .zip(mask)
+        .map(|(c, live)| if live { *c } else { 0 })
+        .collect();
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Is `word` present at `i` as a whole identifier?
+fn is_word_at(b: &[u8], i: usize, word: &[u8]) -> bool {
+    if !b[i..].starts_with(word) {
+        return false;
+    }
+    let before_ok = i == 0 || !is_ident_byte(b[i - 1]);
+    let after = i + word.len();
+    let after_ok = after >= b.len() || !is_ident_byte(b[after]);
+    before_ok && after_ok
+}
+
+fn is_ident_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
+}
+
+/// The last `.`-separated segment of the innermost `testing`-API call that
+/// ENCLOSES `[at, end)`, walking outward until one is found.
+///
+/// `None` means the occurrence is not an argument of any reporting call — a
+/// construct pin, or a guard. Literals are opaque to the paren walk, which is
+/// what puts a needle living inside a `t.Fatalf` format string in that call's
+/// argument span rather than in whatever the format string's own parentheses
+/// appear to open.
+fn enclosing_reporter(text: &str, at: usize, end: usize) -> Option<String> {
+    let b = text.as_bytes();
+    let mut opens: Vec<usize> = Vec::new();
+    let mut i = 0usize;
+    while i < at {
+        match b[i] {
+            b'"' | b'`' | b'\'' => {
+                let j = skip_literal(b, i);
+                if j > at {
+                    // `at` is inside this literal. If the whole occurrence is
+                    // too, the enclosing calls are exactly what is open here.
+                    if end <= j {
+                        return pick_reporter(text, &opens);
+                    }
+                }
+                i = j;
+            }
+            b'(' => {
+                opens.push(i);
+                i += 1;
+            }
+            b')' => {
+                opens.pop();
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    // A call that CLOSES inside the occurrence does not enclose it.
+    let mut depth = opens.len();
+    let mut min_depth = depth;
+    let mut i = at;
+    while i < end.min(b.len()) {
+        match b[i] {
+            b'"' | b'`' | b'\'' => i = skip_literal(b, i),
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                min_depth = min_depth.min(depth);
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    opens.truncate(min_depth);
+    pick_reporter(text, &opens)
+}
+
+/// Innermost-first, the first enclosing call whose callee is a known reporter.
+fn pick_reporter(text: &str, opens: &[usize]) -> Option<String> {
+    opens.iter().rev().find_map(|p| {
+        let name = callee_of(text, *p);
+        (FAILING_REPORTERS.contains(&name.as_str()) || QUIET_REPORTERS.contains(&name.as_str()))
+            .then_some(name)
+    })
+}
+
+/// The callee immediately before an opening paren, reduced to its last
+/// `.`-separated segment. Empty when the paren does not follow an identifier
+/// (a `func(…)` literal, a parenthesised expression, a conversion).
+fn callee_of(text: &str, paren: usize) -> String {
+    let b = text.as_bytes();
+    let mut s = paren;
+    while s > 0 && (is_ident_byte(b[s - 1]) || b[s - 1] == b'.') {
+        s -= 1;
+    }
+    text[s..paren].rsplit('.').next().unwrap_or("").to_string()
+}
+
+/// Does this (already live-masked) block contain a call that fails the test?
+fn block_contains_failing_call(block: &str) -> bool {
+    let b = block.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'`' | b'\'' => i = skip_literal(b, i),
+            b'(' => {
+                if FAILING_REPORTERS.contains(&callee_of(block, i).as_str()) {
+                    return true;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    false
 }
 
 /// Check a set of [`SourceAnchor`]s against already-enumerated function bodies.
@@ -271,16 +621,34 @@ pub(super) fn check_source_anchors(
                 "{gate_id}: {source} has no `func {}` to anchor against",
                 a.func
             )),
-            Some(f) => {
-                if !f.body.contains(a.needle) {
-                    findings.push(format!(
-                        "{source}::{} no longer contains `{}` in EXECUTING code — {}. An empty Go \
-                         test function emits `pass`, so a gate that only runs its fixtures cannot \
-                         tell a body that asserts this from a body that asserts nothing.",
-                        a.func, a.needle, a.why
-                    ));
-                }
-            }
+            Some(f) => match anchor_verdict(&f.body, a.needle) {
+                AnchorVerdict::Holds => {}
+                AnchorVerdict::Missing => findings.push(format!(
+                    "{source}::{} no longer contains `{}` in EXECUTING code — {}. An empty Go \
+                     test function emits `pass`, so a gate that only runs its fixtures cannot \
+                     tell a body that asserts this from a body that asserts nothing.",
+                    a.func, a.needle, a.why
+                )),
+                AnchorVerdict::Unreachable => findings.push(format!(
+                    "{source}::{} still contains `{}` but only in UNREACHABLE code — behind an \
+                     `if false`, or after a `return` that leaves the enclosing block. {}. Text \
+                     that cannot run is not an assertion.",
+                    a.func, a.needle, a.why
+                )),
+                AnchorVerdict::Downgraded(call) => findings.push(format!(
+                    "{source}::{} still contains `{}`, but it now sits inside `{call}(…)`, which \
+                     REPORTS WITHOUT FAILING — {}. The needle is byte-identical and the test \
+                     passes either way, which is exactly the rewrite this check exists to catch; \
+                     the assertion must be one of {FAILING_REPORTERS:?}.",
+                    a.func, a.needle, a.why
+                )),
+                AnchorVerdict::GuardNeverFails => findings.push(format!(
+                    "{source}::{} still opens `{}`, but that block contains no failing call — {}. \
+                     The condition is evaluated and nothing happens when it holds, so the guard \
+                     passes whether or not the property does.",
+                    a.func, a.needle, a.why
+                )),
+            },
         }
     }
     findings
@@ -358,7 +726,9 @@ fn subtest_closure(body: &str, name: &str) -> Option<String> {
 /// live in `t.Fatalf` format strings). Scanning is byte-wise, which is safe on
 /// UTF-8: every byte of a multi-byte sequence is >= 0x80 and can never be
 /// mistaken for one of the ASCII delimiters.
-#[allow(dead_code)] // reached through `leaf_body`
+///
+/// Also how [`enumerate_injections`] narrows a function's line region to its
+/// real body, and how [`anchor_verdict`] resolves the block a guard needle opens.
 fn closure_at(body: &str, at: usize) -> Option<String> {
     let b = body.as_bytes();
     let mut i = at;
@@ -393,7 +763,6 @@ fn closure_at(body: &str, at: usize) -> Option<String> {
 }
 
 /// The index just past the literal that opens at `i`.
-#[allow(dead_code)] // reached through `leaf_body`
 fn skip_literal(b: &[u8], i: usize) -> usize {
     let quote = b[i];
     let mut j = i + 1;
@@ -931,7 +1300,23 @@ const INJECTOR_CTOR: &str = "errorfs.InjectorFunc(";
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct EnumeratedTest {
     pub test: String,
+    /// `errorfs.InjectorFunc(` constructions attributed to this function, counted
+    /// over the whole LINE REGION from its `func` line to the next one — see
+    /// [`enumerate_injections`] for why the two fields read different spans.
     pub sites: usize,
+    /// The function's BRACE-DELIMITED body: from the `{` that opens it to the
+    /// matching `}`, with comments already stripped.
+    ///
+    /// Scoping this to the braces is what stops a needle being satisfied from
+    /// OUTSIDE the function. The line-region span it replaced ran to the next
+    /// `func` line, so a package-level `var _ = "<needle>"` sitting between two
+    /// functions was attributed to the one above it and satisfied its anchor —
+    /// one of the four rewrites the round-4 Judge used to hold an anchor up with
+    /// the assertion deleted.
+    ///
+    /// Empty when the braces do not balance (a truncated or malformed file):
+    /// every consumer then reports the needle as missing, which is the
+    /// fail-closed direction.
     pub body: String,
 }
 
@@ -946,6 +1331,13 @@ pub(super) struct EnumeratedTest {
 /// returns — which every source-side pin in this file and in `gates_g2_13.rs`
 /// then greps — contain only text that executes. Commented-out code is text
 /// that does not, and a pin a comment can satisfy is not a pin.
+///
+/// **Two spans, deliberately.** `sites` is counted over the LINE REGION (the
+/// `func` line to the next one) because an injector constructed at package scope
+/// between two functions is a site the manifest must still account for —
+/// narrowing that span would let a site hide in the gap. `body` is narrowed to
+/// the function's BRACES, because the gap is exactly where text that satisfies a
+/// needle without executing inside the function lives.
 pub(super) fn enumerate_injections(src: &str) -> Vec<EnumeratedTest> {
     let mut out: Vec<EnumeratedTest> = Vec::new();
     let src = strip_go_comments(src);
@@ -976,7 +1368,43 @@ pub(super) fn enumerate_injections(src: &str) -> Vec<EnumeratedTest> {
         }
     }
     out.retain(|f| !f.test.is_empty());
+    for f in &mut out {
+        f.body = func_open_brace(&f.body)
+            .and_then(|at| closure_at(&f.body, at))
+            .unwrap_or_default();
+    }
     out
+}
+
+/// The `{` that opens a function's body: the first one at paren AND bracket
+/// depth zero.
+///
+/// Not simply "the first `{`", because a signature can contain one —
+/// `func f(x struct{ A int })`, `func f() map[string]int` with a literal
+/// default, a generic `func f[T ~struct{ … }]()`. Those braces are inside the
+/// parameter parens or the type-parameter brackets; the body's is not. Nothing
+/// in today's corpus needs this, and that is exactly why it is written down: the
+/// first signature that did would otherwise silently produce an empty body.
+fn func_open_brace(region: &str) -> Option<usize> {
+    let b = region.as_bytes();
+    let (mut paren, mut bracket) = (0usize, 0usize);
+    let mut i = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'`' | b'\'' => {
+                i = skip_literal(b, i);
+                continue;
+            }
+            b'(' => paren += 1,
+            b')' => paren = paren.saturating_sub(1),
+            b'[' => bracket += 1,
+            b']' => bracket = bracket.saturating_sub(1),
+            b'{' if paren == 0 && bracket == 0 => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Where the corpus lives. The sweep DISCOVERS `*_test.go` here rather than
@@ -1072,8 +1500,13 @@ pub fn g2_6_injection_manifest(ctx: &Ctx) -> GateOutcome {
                     ));
                 }
                 // ── The C3 rule: the fixture must prove it INJECTED. ──
+                //
+                // Read through `live_text` for the same reason the anchors are:
+                // a guard behind `if false`, or after a `return` that leaves the
+                // block, is text rather than a check.
+                let executing = live_text(&t.body);
                 for (needle, why) in G2_6_FIXTURE_PINS.iter().copied() {
-                    if !t.body.contains(needle) {
+                    if !executing.contains(needle) {
                         findings.push(format!(
                             "{}::{} is missing `{needle}` in EXECUTING code — {why}. An injection \
                              fixture that cannot prove it injected is indistinguishable from one \
@@ -1302,6 +1735,306 @@ func TestOther(t *testing.T) {\n}\n";
     #[test]
     fn the_full_pinned_set_passing_is_green() {
         assert!(check_run_evidence(&run_with(&["TestA", "TestB"], &[], true), &["TestA", "TestB"]).is_empty());
+    }
+
+    // -- the anchor matcher --------------------------------------------------
+    //
+    // Every case below is a rewrite that leaves the needle BYTE-IDENTICAL, the
+    // occurrence count unchanged and the Go test passing. Under the old rule —
+    // `f.body.contains(a.needle)` over a body that ran to the next `func` line —
+    // all four were green with the assertion gone. They are the round-4 Judge's
+    // GAP 2, one test each.
+
+    /// The needle in the only place it is supposed to be.
+    const SHIPPED: &str = "\
+func TestLock(t *testing.T) {\n\
+\tif err == nil {\n\
+\t\tt.Fatalf(\"second Open must FAIL\")\n\
+\t}\n\
+}\n";
+
+    fn body_of(src: &str, func: &str) -> String {
+        enumerate_injections(src)
+            .into_iter()
+            .find(|t| t.test == func)
+            .unwrap_or_else(|| panic!("no {func}"))
+            .body
+    }
+
+    #[test]
+    fn an_assertion_in_a_failing_call_holds() {
+        assert_eq!(
+            anchor_verdict(&body_of(SHIPPED, "TestLock"), "second Open must FAIL"),
+            AnchorVerdict::Holds
+        );
+    }
+
+    /// **The Judge's reproduction**: `lock_test.go:25`, `t.Fatalf` → `t.Logf`.
+    #[test]
+    fn downgrading_the_assertion_to_a_log_is_red() {
+        let logged = SHIPPED.replace("t.Fatalf(", "t.Logf(");
+        let body = body_of(&logged, "TestLock");
+        assert!(
+            body.contains("second Open must FAIL"),
+            "the premise: a plain `contains` — the old rule — is still satisfied"
+        );
+        assert_eq!(
+            anchor_verdict(&body, "second Open must FAIL"),
+            AnchorVerdict::Downgraded("Logf".into())
+        );
+    }
+
+    /// A needle held up by text OUTSIDE the function it is anchored to.
+    #[test]
+    fn a_package_level_string_after_the_closing_brace_cannot_hold_an_anchor() {
+        let gutted = "\
+func TestLock(t *testing.T) {\n\
+}\n\
+var _ = \"second Open must FAIL\"\n\
+func TestNext(t *testing.T) {\n\
+}\n";
+        assert!(
+            gutted.contains("second Open must FAIL"),
+            "the premise: the needle is still in the file"
+        );
+        assert_eq!(
+            anchor_verdict(&body_of(gutted, "TestLock"), "second Open must FAIL"),
+            AnchorVerdict::Missing
+        );
+    }
+
+    #[test]
+    fn an_assertion_behind_if_false_is_unreachable() {
+        let dead = "\
+func TestLock(t *testing.T) {\n\
+\tif false {\n\
+\t\tt.Fatalf(\"second Open must FAIL\")\n\
+\t}\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(dead, "TestLock"), "second Open must FAIL"),
+            AnchorVerdict::Unreachable
+        );
+    }
+
+    #[test]
+    fn an_assertion_after_an_early_return_is_unreachable() {
+        let dead = "\
+func TestLock(t *testing.T) {\n\
+\treturn\n\
+\tif err == nil {\n\
+\t\tt.Fatalf(\"second Open must FAIL\")\n\
+\t}\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(dead, "TestLock"), "second Open must FAIL"),
+            AnchorVerdict::Unreachable
+        );
+    }
+
+    /// The other direction, and it is the one that keeps the rule usable:
+    /// ordinary early-exit control flow kills nothing outside its own block.
+    #[test]
+    fn a_return_inside_an_if_does_not_kill_the_rest_of_the_function() {
+        let ordinary = "\
+func TestLock(t *testing.T) {\n\
+\tif skip {\n\
+\t\treturn\n\
+\t}\n\
+\tif err == nil {\n\
+\t\tt.Fatalf(\"second Open must FAIL\")\n\
+\t}\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(ordinary, "TestLock"), "second Open must FAIL"),
+            AnchorVerdict::Holds
+        );
+    }
+
+    /// The over-eager direction, and the corpus writes both shapes: arms of a
+    /// `switch` or `select` share one block, so an earlier arm's `return` must
+    /// not blank the arms below it. A false RED here reads exactly like a broken
+    /// gate to the author of perfectly ordinary Go.
+    #[test]
+    fn a_return_in_one_arm_does_not_kill_the_arms_below_it() {
+        let sw = "\
+func TestX(t *testing.T) {\n\
+\tswitch {\n\
+\tcase len(got) > 1:\n\
+\t\treturn\n\
+\tcase len(got) == 0:\n\
+\t\tt.Fatalf(\"returned zero rows, want exactly 1\")\n\
+\t}\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(sw, "TestX"), "returned zero rows, want exactly 1"),
+            AnchorVerdict::Holds
+        );
+
+        let sel = "\
+func TestY(t *testing.T) {\n\
+\tselect {\n\
+\tcase <-done:\n\
+\t\treturn\n\
+\tdefault:\n\
+\t\tt.Fatalf(\"Close never returned after its last reader was released\")\n\
+\t}\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(
+                &body_of(sel, "TestY"),
+                "Close never returned after its last reader was released"
+            ),
+            AnchorVerdict::Holds
+        );
+    }
+
+    /// …and the resurrection inherits the ENCLOSING block, so it cannot be used
+    /// to revive an arm of a switch that is itself dead.
+    #[test]
+    fn a_case_cannot_revive_a_switch_that_is_itself_dead() {
+        let dead = "\
+func TestX(t *testing.T) {\n\
+\tif false {\n\
+\t\tswitch {\n\
+\t\tcase a:\n\
+\t\t\treturn\n\
+\t\tcase b:\n\
+\t\t\tt.Fatalf(\"second Open must FAIL\")\n\
+\t\t}\n\
+\t}\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(dead, "TestX"), "second Open must FAIL"),
+            AnchorVerdict::Unreachable
+        );
+
+        // The same, with the whole switch after a `return` at body level.
+        let after_return = "\
+func TestX(t *testing.T) {\n\
+\treturn\n\
+\tswitch {\n\
+\tcase b:\n\
+\t\tt.Fatalf(\"second Open must FAIL\")\n\
+\t}\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(after_return, "TestX"), "second Open must FAIL"),
+            AnchorVerdict::Unreachable
+        );
+    }
+
+    /// A guard needle (one that ends in `{`) is judged by what its block does.
+    #[test]
+    fn a_guard_whose_block_no_longer_fails_is_red() {
+        let armed = "\
+func TestInject(t *testing.T) {\n\
+\tif n := injected.Load(); n == 0 {\n\
+\t\tt.Fatalf(\"the injector fired ZERO times\")\n\
+\t}\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(armed, "TestInject"), "if n := injected.Load(); n == 0 {"),
+            AnchorVerdict::Holds
+        );
+
+        let toothless = armed.replace("t.Fatalf(", "t.Logf(");
+        assert_eq!(
+            anchor_verdict(
+                &body_of(&toothless, "TestInject"),
+                "if n := injected.Load(); n == 0 {"
+            ),
+            AnchorVerdict::GuardNeverFails
+        );
+    }
+
+    /// A construct pin asserts nothing by nature — see [`SourceAnchor`] — so the
+    /// rule for it is presence + reachability, and no more. Both directions.
+    #[test]
+    fn a_construct_pin_needs_only_to_be_reachable() {
+        let src = "\
+func TestArms(t *testing.T) {\n\
+\tarmed.Store(true)\n\
+\tt.Run(\"blind-path\", func(t *testing.T) {\n\
+\t\tt.Fatalf(\"x\")\n\
+\t})\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(src, "TestArms"), "t.Run(\"blind-path\""),
+            AnchorVerdict::Holds
+        );
+        assert_eq!(
+            anchor_verdict(&body_of(src, "TestArms"), "armed.Store(true)"),
+            AnchorVerdict::Holds
+        );
+
+        let dead = src.replace("\tarmed.Store(true)\n", "\tif false {\n\t\tarmed.Store(true)\n\t}\n");
+        assert_eq!(
+            anchor_verdict(&body_of(&dead, "TestArms"), "armed.Store(true)"),
+            AnchorVerdict::Unreachable
+        );
+    }
+
+    /// The walk goes OUTWARD, so a message composed before it is reported is
+    /// judged by the call that reports it, not by `fmt.Sprintf`.
+    #[test]
+    fn a_message_built_by_sprintf_is_judged_by_the_reporting_call() {
+        let holds = "\
+func TestX(t *testing.T) {\n\
+\tt.Fatalf(fmt.Sprintf(\"prefix drifted: %q\", got))\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(holds, "TestX"), "prefix drifted: %q"),
+            AnchorVerdict::Holds
+        );
+        let logged = holds.replace("t.Fatalf(", "t.Logf(");
+        assert_eq!(
+            anchor_verdict(&body_of(&logged, "TestX"), "prefix drifted: %q"),
+            AnchorVerdict::Downgraded("Logf".into())
+        );
+    }
+
+    /// A brace in the SIGNATURE is not the brace that opens the body.
+    #[test]
+    fn a_struct_parameter_does_not_truncate_the_body() {
+        let src = "\
+func TestX(t *testing.T, cfg struct{ N int }) {\n\
+\tt.Fatalf(\"needle in the body\")\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(src, "TestX"), "needle in the body"),
+            AnchorVerdict::Holds
+        );
+    }
+
+    /// A parenthesis inside the needle's own format string must not be mistaken
+    /// for the call structure around it.
+    #[test]
+    fn parentheses_inside_the_needle_do_not_confuse_the_walk() {
+        let src = "\
+func TestX(t *testing.T) {\n\
+\tt.Errorf(\"Get(K,t0<t1)=%q,%v want absent\", v, ok)\n\
+}\n";
+        assert_eq!(
+            anchor_verdict(&body_of(src, "TestX"), "Get(K,t0<t1)=%q,%v want absent"),
+            AnchorVerdict::Holds
+        );
+    }
+
+    /// The anchors this file owns, against the corpus as it is on disk. The
+    /// gate checks the same thing at run time; this makes it a `cargo test`
+    /// fact too, and it is what would have failed had the tightened matcher
+    /// rejected a shipped anchor.
+    #[test]
+    fn g2_9a_anchors_hold_on_the_corpus() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .expect("repo root");
+        let text = std::fs::read_to_string(repo.join(G2_9A_SOURCE)).expect("read");
+        let bodies = enumerate_injections(&text);
+        let findings = check_source_anchors(&bodies, G2_9A_ANCHORS, "G2.9a", G2_9A_SOURCE);
+        assert!(findings.is_empty(), "{findings:#?}");
     }
 
     // -- G2.6 ----------------------------------------------------------------
