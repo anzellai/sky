@@ -2141,7 +2141,16 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
     // of the eight.
     LeafCoverage {
         mutation: "G2.13h/ring-answers-for-a-range-it-does-not-hold",
-        leaves: &["TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor"],
+        // Two leaves since the spill fixture landed, and the second is blast
+        // radius rather than that leaf's falsifier: deleting `after`'s floor
+        // CHECK and failing to RAISE the floor have the same consequence at the
+        // committer, so the spill fixture's Fatalf fires under either. The
+        // spill leaf's own falsifier is the mutation below, whose assertion
+        // lives in its body.
+        leaves: &[
+            "TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor",
+            "TestAuditC6bRingSpillRaisesTheFloorItLeftBehind",
+        ],
     },
     LeafCoverage {
         mutation: "G2.13h/ring-spill-does-not-raise-the-floor",

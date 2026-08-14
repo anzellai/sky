@@ -1,10 +1,6 @@
 PROBE gate=G2.13h state=FAIL root=<scratch-worktree>
-  the commit/validation route fails closed is not proven: 5/7 pinned fixture(s) reported a passing event
-  TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor did not report a passing `go test -json` event (it FAILED)
+  the commit/validation route fails closed is not proven: 6/7 pinned fixture(s) reported a passing event
   TestAuditC6bRingSpillRaisesTheFloorItLeftBehind did not report a passing `go test -json` event (it FAILED)
-  TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor: === RUN   TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor
-  TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor:     audit_test.go:1595: a readTs below the raised floor did not report spilled — the floor is not actually diverting those validations to the durable changelog
   TestAuditC6bRingSpillRaisesTheFloorItLeftBehind: === RUN   TestAuditC6bRingSpillRaisesTheFloorItLeftBehind
   TestAuditC6bRingSpillRaisesTheFloorItLeftBehind:     audit_test.go:1666: a transaction that READ spill-read at v1, and then wrote a value derived from it, COMMITTED (err=<nil>) even though a concurrent commit had superseded spill-read with v2 — a commit the ring had since SPILLED under its 2-entry cap. spillOldest released those entries without raising the floor over them, so after(readTs {WallMs:71000 Logical:2}) answered `not spilled` for a window it no longer holds and the committer never diverted to Changelog.Tail: validation ran against a window missing every spilled commit — under-rejection, a lost update from RAM pressure alone
-  TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor: --- FAIL: TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor (0.17s)
-  TestAuditC6bRingSpillRaisesTheFloorItLeftBehind: --- FAIL: TestAuditC6bRingSpillRaisesTheFloorItLeftBehind (0.08s)
+  TestAuditC6bRingSpillRaisesTheFloorItLeftBehind: --- FAIL: TestAuditC6bRingSpillRaisesTheFloorItLeftBehind (0.10s)

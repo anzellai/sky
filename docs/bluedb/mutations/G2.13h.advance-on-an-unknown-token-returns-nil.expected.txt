@@ -1,6 +1,6 @@
 PROBE gate=G2.13h state=FAIL root=<scratch-worktree>
-  the commit/validation route fails closed is not proven: 5/6 pinned fixture(s) reported a passing event
+  the commit/validation route fails closed is not proven: 6/7 pinned fixture(s) reported a passing event
   TestAuditC6bAdvanceOnAnUnknownTokenIsAnError did not report a passing `go test -json` event (it FAILED)
   TestAuditC6bAdvanceOnAnUnknownTokenIsAnError: === RUN   TestAuditC6bAdvanceOnAnUnknownTokenIsAnError
-  TestAuditC6bAdvanceOnAnUnknownTokenIsAnError:     audit_test.go:1452: Advance on a RELEASED token = <nil>, want ErrUnknownReader. Returning nil tells the caller its readTs is registered and the GC floor is pinned at it when nothing is pinned — the caller then reads at a readTs GC may collect underneath it
+  TestAuditC6bAdvanceOnAnUnknownTokenIsAnError:     audit_test.go:1522: Advance on a RELEASED token = <nil>, want ErrUnknownReader. Returning nil tells the caller its readTs is registered and the GC floor is pinned at it when nothing is pinned — the caller then reads at a readTs GC may collect underneath it
   TestAuditC6bAdvanceOnAnUnknownTokenIsAnError: --- FAIL: TestAuditC6bAdvanceOnAnUnknownTokenIsAnError (0.05s)

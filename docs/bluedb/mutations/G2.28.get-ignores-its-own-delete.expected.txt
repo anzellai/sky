@@ -1,0 +1,6 @@
+PROBE gate=G2.28 state=FAIL root=<scratch-worktree>
+  a transaction's Get reflects its own buffered writes, put and delete alike is not proven: 0/1 pinned fixture(s) reported a passing event
+  TestTxnGetReadsItsOwnBufferedWrites did not report a passing `go test -json` event (it FAILED)
+  TestTxnGetReadsItsOwnBufferedWrites: === RUN   TestTxnGetReadsItsOwnBufferedWrites
+  TestTxnGetReadsItsOwnBufferedWrites:     txn_overlay_test.go:70: Get(ryw-deleted) = "committed-v1",true, want absent — a transaction did not read its own buffered DELETE: the tombstone was not consulted and the PRE-DELETE row came back from the snapshot with ok=true, so a body that removes a row and then asks whether it exists is told that it does — insert-if-absent, delete-then-recreate and every in-transaction idempotency check take the wrong branch
+  TestTxnGetReadsItsOwnBufferedWrites: --- FAIL: TestTxnGetReadsItsOwnBufferedWrites (0.09s)

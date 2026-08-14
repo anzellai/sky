@@ -1,0 +1,6 @@
+PROBE gate=G2.26 state=FAIL root=<scratch-worktree>
+  validate() REFUSES a transaction whose point read was superseded, and only then is not proven: 0/1 pinned fixture(s) reported a passing event
+  TestValidateDetectsAPointReadOverwrittenConcurrently did not report a passing `go test -json` event (it FAILED)
+  TestValidateDetectsAPointReadOverwrittenConcurrently: === RUN   TestValidateDetectsAPointReadOverwrittenConcurrently
+  TestValidateDetectsAPointReadOverwrittenConcurrently:     validate_test.go:172: a transaction that READ pt-free, found it ABSENT, and then reserved it, COMMITTED (err=<nil>) even though a concurrent commit had already claimed pt-free. validate()'s point arm ignored the read that saw the key absent, so a point-phantom is invisible to it: reserve-if-free double-books, and two holders of the same username / seat / idempotency key both believe they won
+  TestValidateDetectsAPointReadOverwrittenConcurrently: --- FAIL: TestValidateDetectsAPointReadOverwrittenConcurrently (0.09s)
