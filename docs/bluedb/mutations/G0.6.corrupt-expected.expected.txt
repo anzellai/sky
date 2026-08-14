@@ -1,9 +1,8 @@
 PROBE gate=G0.6 state=FAIL root=<scratch-worktree>
-  7 mutation proof problem(s) (39 not authored yet)
-  G0.1/hand-edit-status: UNVERIFIED-SINCE adb5d3fd — a declared target moved
+  6 mutation proof problem(s) (39 not authored yet)
+  G0.1/hand-edit-status: UNVERIFIED-SINCE 7cb27dc3 — a declared target moved
   G0.2/rt-imports-bluedb: recorded expected output does not contain the declared assertion "forbidden edge rt -> bluedb"
-  G0.3/persistglue-unconditional: recorded VACUOUS but PROVEN is required
-  G0.6/corrupt-expected: UNVERIFIED-SINCE adb5d3fd — a declared target moved
-  G0.7/mutationless-gate: UNVERIFIED-SINCE adb5d3fd — a declared target moved
+  G0.6/corrupt-expected: UNVERIFIED-SINCE 7cb27dc3 — a declared target moved
+  G0.7/mutationless-gate: UNVERIFIED-SINCE 7cb27dc3 — a declared target moved
   G2.9a/ack-before-fsync: the ledger records a proof but the patch at docs/bluedb/mutations/G2.9.ack-before-fsync.patch is gone
   G2.9b/normal-durability-still-syncs: the ledger records a proof but the patch at docs/bluedb/mutations/G2.9b.normal-durability-still-syncs.patch is gone
