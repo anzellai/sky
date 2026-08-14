@@ -16,8 +16,8 @@ PROBE gate=G2.9a state=FAIL root=<scratch-worktree>
   TestCrashHLCNoReissue:     crashsim_test.go:167: restart floor violated: hi={WallMs:9000 Logical:1} next={WallMs:100 Logical:1} (must be strictly greater despite backward clock)
   TestCrashHLCNoReissue: --- FAIL: TestCrashHLCNoReissue (0.00s)
   TestInjectedFaultsReopenConsistent: === RUN   TestInjectedFaultsReopenConsistent
-  TestInjectedFaultsReopenConsistent:     crashsim_test.go:265: armed WAL-fsync fault produced NO errored ack — a durability fault was silently swallowed (acked⇒durable broken)
+  TestInjectedFaultsReopenConsistent:     crashsim_test.go:275: the WAL-fsync injector fired ZERO times — no commit in the armed window reached an fsync of a *.log file, so this test proves NOTHING about acked⇒durable. Fix the fixture, do not weaken the assertions. (sawSeal=false)
   TestInjectedFaultsReopenConsistent: --- FAIL: TestInjectedFaultsReopenConsistent (0.00s)
   TestCrashConcurrentNoAckedLoss: === RUN   TestCrashConcurrentNoAckedLoss
-  TestCrashConcurrentNoAckedLoss:     crashsim_test.go:362: acked write missing after restart: 200/200 nil-acked concurrent writes unreadable at the recovered high-water {WallMs:2000 Logical:0} (first: g0-k0=v0-0(got "",false), g0-k10=v0-10(got "",false), g0-k11=v0-11(got "",false), g0-k12=v0-12(got "",false), g0-k13=v0-13(got "",false))
+  TestCrashConcurrentNoAckedLoss:     crashsim_test.go:377: acked write missing after restart: 200/200 nil-acked concurrent writes unreadable at the recovered high-water {WallMs:2000 Logical:0} (first: g0-k0=v0-0(got "",false), g0-k10=v0-10(got "",false), g0-k11=v0-11(got "",false), g0-k12=v0-12(got "",false), g0-k13=v0-13(got "",false))
   TestCrashConcurrentNoAckedLoss: --- FAIL: TestCrashConcurrentNoAckedLoss (0.00s)
