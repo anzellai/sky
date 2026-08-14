@@ -542,6 +542,36 @@ compiler for `dev_tree_compiler` to lend) and the `inRangeClosed` "undefined"
 that was a stale language-server index. Three times this phase, a tool lied
 about the tree rather than the tree being broken.
 
+## OPEN — N6's third instance: an ABSENT changelog payload
+
+Found during round-4 remediation, documented at the head of `validate_test.go`,
+**not fixed**, and owed before P1 can close.
+
+`Engine.Commit` with `Writes` and an **empty** `ChangelogPayload` applies
+durably but contributes nothing to the recent-changes ring. A transaction whose
+`readTs` sits below that commit then validates against a window that never
+mentions it — under-rejection, i.e. a serializability break. `committer.go`'s
+own docstring states the principle this violates.
+
+It is the same class as N6 (an *undecodable* payload) and as the `changelog.go`
+site C1 made fail closed (a *corrupt* key), reached a third way: **absent**.
+Three instances now, of one class, in one file.
+
+It was found because the `put` test helper does it on **every call** — which
+also means the ring has been under-populated across a good deal of this phase's
+test corpus without anything noticing.
+
+Not fixed in place because the blast radius reaches the N6 and C6b gates, and a
+change there needs its own falsifiers re-derived rather than folded into a
+remediation commit. The fix wants: decide whether an empty payload beside a
+non-empty `Writes` is (a) a caller error the engine must reject, or (b) a legal
+"no observable change" that the ring may ignore — and if (b), state what makes
+that safe given the write IS durable. Then gate it.
+
+**Do not resolve this by making the test helper pass a payload.** That silences
+the symptom and leaves the exported engine API accepting a write it will not
+report.
+
 ## Commit sequence
 
 `--verify-mutations` refuses to run against a tree that differs from HEAD
