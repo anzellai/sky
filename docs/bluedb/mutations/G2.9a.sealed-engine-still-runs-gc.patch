@@ -1,0 +1,15 @@
+diff --git a/runtime-go/bluedb/gc.go b/runtime-go/bluedb/gc.go
+index 03dd39db..4f5c3797 100644
+--- a/runtime-go/bluedb/gc.go
++++ b/runtime-go/bluedb/gc.go
+@@ -71,9 +71,7 @@ func (e *pebbleEngine) GC() (GCStats, error) {
+ 		return GCStats{}, err
+ 	}
+ 	defer e.reg.unpin(tok)
+-	if e.sealed.Load() {
+-		return GCStats{}, ErrSealed
+-	}
++	// MUTATION G2.9a: a sealed engine still runs a GC pass.
+ 
+ 	// (1) Advance T behind the register barrier (§5.2 part iii). This is the ONLY
+ 	// place T moves; it moves up only. The candidate is min-over-live, or the

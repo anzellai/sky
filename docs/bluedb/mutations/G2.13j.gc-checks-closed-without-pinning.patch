@@ -1,0 +1,18 @@
+diff --git a/runtime-go/bluedb/gc.go b/runtime-go/bluedb/gc.go
+index 03dd39db..5dbc443a 100644
+--- a/runtime-go/bluedb/gc.go
++++ b/runtime-go/bluedb/gc.go
+@@ -66,11 +66,9 @@ var ErrCorruptDataKeys = errors.New("bluedb: GC found unparseable data keys")
+ // it, so it cannot make Close burn its drain timeout; the pin is liveness-only (not a
+ // `live` registration) so it does not clamp the very threshold this pass advances.
+ func (e *pebbleEngine) GC() (GCStats, error) {
+-	tok, err := e.pinIfOpen()
+-	if err != nil {
+-		return GCStats{}, err
++	if e.isClosed() { // MUTATION G2.13j: a check with NO pin
++		return GCStats{}, ErrClosed
+ 	}
+-	defer e.reg.unpin(tok)
+ 	if e.sealed.Load() {
+ 		return GCStats{}, ErrSealed
+ 	}

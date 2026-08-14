@@ -1,0 +1,40 @@
+diff --git a/runtime-go/bluedb/committer.go b/runtime-go/bluedb/committer.go
+index 6a847a75..77da8f08 100644
+--- a/runtime-go/bluedb/committer.go
++++ b/runtime-go/bluedb/committer.go
+@@ -300,24 +300,18 @@ func (e *pebbleEngine) processTxn(batch []*commitJob) {
+ 	// window is reachable through `defer b.Close()`, which is registered after this defer
+ 	// and therefore runs before it, on every path including the fully-acked one.
+ 	defer func() {
+-		r := recover()
+-		if r == nil {
+-			return
+-		}
+-		e.sealed.Store(true)
+-		fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
+-		informed := false
+-		err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
+-		for _, j := range batch {
+-			if acked[j] {
+-				continue
++		// MUTATION G2.13k: the pre-fix shape — seal, inform whoever is left, and
++		// absorb the panic whether or not anyone was left to inform.
++		if r := recover(); r != nil {
++			e.sealed.Store(true)
++			fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
++			err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
++			for _, j := range batch {
++				if acked[j] {
++					continue
++				}
++				j.done <- CommitResult{Err: err}
+ 			}
+-			j.done <- CommitResult{Err: err}
+-			acked[j] = true
+-			informed = true
+-		}
+-		if !informed {
+-			panic(r) // post-ack: nobody left to inform; never absorb it silently
+ 		}
+ 	}()
+ 

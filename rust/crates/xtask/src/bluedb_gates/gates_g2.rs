@@ -193,6 +193,63 @@ pub(super) fn go_test(ctx: &Ctx, tests: &[&str], budget: Duration) -> Result<GoT
     })
 }
 
+/// A literal construct that must appear in a pinned function's EXECUTING body.
+///
+/// Two jobs, and the second is why this type moved down here from
+/// `gates_g2_13.rs`:
+///
+/// 1. **Pinning a population `go_test_names` cannot see.** A sub-test name is a
+///    `t.Run` argument, sometimes built by `fmt.Sprintf`, so the only honest way
+///    to pin it in SOURCE is to pin the construct that generates it.
+/// 2. **Making an emptied fixture a FAILURE.** An empty Go test function emits
+///    `pass`. Every anti-vacuity assertion a gate carries proves a leaf RAN; none
+///    of them proves its body ASSERTS anything, so a leaf could be gutted to `{}`
+///    with its gate staying green. Anchoring a gate on the leaf's own PROPERTY
+///    ASSERTION closes that at the source level: delete the body, or delete the
+///    assertion out of it, and the gate goes red on the next run — no recorded
+///    transcript required, and nothing to keep fresh.
+///
+/// The needle is searched for in a body passed through [`strip_go_comments`], so
+/// commenting the assertion out does not satisfy it either.
+pub struct SourceAnchor {
+    /// The enclosing `func Test…`.
+    pub func: &'static str,
+    pub needle: &'static str,
+    pub why: &'static str,
+}
+
+/// Check a set of [`SourceAnchor`]s against already-enumerated function bodies.
+///
+/// Shared by `run_audit_gate` and by G2.9a, which is not an `AuditGate` but needs
+/// the identical pin for the identical reason.
+pub(super) fn check_source_anchors(
+    bodies: &[EnumeratedTest],
+    anchors: &[SourceAnchor],
+    gate_id: &str,
+    source: &str,
+) -> Vec<String> {
+    let mut findings = Vec::new();
+    for a in anchors {
+        match bodies.iter().find(|f| f.test == a.func) {
+            None => findings.push(format!(
+                "{gate_id}: {source} has no `func {}` to anchor against",
+                a.func
+            )),
+            Some(f) => {
+                if !f.body.contains(a.needle) {
+                    findings.push(format!(
+                        "{source}::{} no longer contains `{}` in EXECUTING code — {}. An empty Go \
+                         test function emits `pass`, so a gate that only runs its fixtures cannot \
+                         tell a body that asserts this from a body that asserts nothing.",
+                        a.func, a.needle, a.why
+                    ));
+                }
+            }
+        }
+    }
+    findings
+}
+
 /// One Go source with every COMMENT removed and every string literal kept.
 ///
 /// **Why this exists.** Every source-side pin in this file and in
@@ -444,6 +501,77 @@ pub const G2_9A_CRASH_TESTS: &[&str] = &[
 
 const G2_9A_SOURCE: &str = "runtime-go/bluedb/crashsim_test.go";
 
+/// **One anchor per pinned fixture, on that fixture's own PROPERTY ASSERTION.**
+///
+/// The pinned population, `-count=1` and the per-test `pass` events prove each of
+/// the seven RAN. None of them proves a body still asserts anything, and an empty
+/// Go test function emits `pass` — so before these anchors existed every one of
+/// the seven could have been gutted to `{}` with this gate green and its
+/// falsification still recorded `PROVEN`. That is the exact defect
+/// `gates_g2_13.rs`'s `LEAF_COVERAGE` closes from the transcript side; this closes
+/// it from the source side, which is strictly cheaper (no artefact to keep fresh)
+/// and strictly earlier (a `cargo test` failure, not a full-tier one).
+///
+/// The needles are the assertions themselves, not incidental scaffolding: deleting
+/// the assertion out of a fixture that still runs is the same vacuity as deleting
+/// the fixture, and both are findings here.
+///
+/// Two fixtures carry TWO anchors, because their property has two halves that no
+/// single revert reddens together — the seal contract refuses Commit *and* GC, and
+/// the injected-fault fixture asserts an errored ack *and* that the acked writes
+/// are readable after reopen.
+pub const G2_9A_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: "TestCrashAckedWritesSurvive",
+        needle: "acked write missing after restart: %d/%d acked writes absent from the crash clone",
+        why: "that IS the acked⇒survives assertion (§7 invariant 1)",
+    },
+    SourceAnchor {
+        func: "TestCrashNoTornBatch",
+        needle: "torn batch: %d/100 writes recovered (must be all-or-nothing; acked ⇒ all)",
+        why: "that IS the all-or-nothing assertion (§7 invariant 2)",
+    },
+    SourceAnchor {
+        func: "TestCrashHLCNoReissue",
+        needle: "restart floor violated: hi=%+v next=%+v (must be strictly greater despite backward clock)",
+        why: "that IS the restart-floor assertion (§7 invariant 3) — a backward wall clock must not \
+              re-issue a commitTs",
+    },
+    SourceAnchor {
+        func: "TestSealContractRefusesWrites",
+        needle: "sealed engine must refuse Commit with ErrSealed, got %v",
+        why: "that IS the write half of the seal contract",
+    },
+    SourceAnchor {
+        func: "TestSealContractRefusesWrites",
+        needle: "sealed engine must refuse GC with ErrSealed, got %v",
+        why: "that IS the GC half of the seal contract — `every write path` includes the one that \
+              deletes",
+    },
+    SourceAnchor {
+        func: "TestCrashDurablePrefixNoReorder",
+        needle: "durable prefix has a HOLE: %q@%+v survived the crash while %q@%+v — acked ",
+        why: "that IS the no-reorder assertion, and it is the ONLY thing in this gate that tests \
+              arm (c)'s prefix clause; see LEAF_COVERAGE for why no recorded mutation reaches it",
+    },
+    SourceAnchor {
+        func: "TestInjectedFaultsReopenConsistent",
+        needle: "armed WAL-fsync fault produced NO errored ack",
+        why: "that IS the fail-stop half of arm (a) — a nil ack must mean durable",
+    },
+    SourceAnchor {
+        func: "TestInjectedFaultsReopenConsistent",
+        needle: "ABSENT after reopen — acked⇒durable violated",
+        why: "that IS the reopen half: every commit that acked nil before the fault must still be \
+              readable from the store the fault left behind",
+    },
+    SourceAnchor {
+        func: "TestCrashConcurrentNoAckedLoss",
+        needle: "nil-acked concurrent writes unreadable at the recovered high-water",
+        why: "that IS the concurrent-load arm of acked⇒survives",
+    },
+];
+
 pub fn g2_9a_durability_on_ack(ctx: &Ctx) -> GateOutcome {
     let Some(src) = ctx.read(G2_9A_SOURCE) else {
         return GateOutcome::fail(
@@ -460,12 +588,26 @@ pub fn g2_9a_durability_on_ack(ctx: &Ctx) -> GateOutcome {
         G2_9A_SOURCE,
         "G2_9A_CRASH_TESTS (bluedb_gates/gates_g2.rs)",
     );
+
+    // ── (1b) each pinned fixture still CARRIES its property assertion ──
+    // Without this the seven anti-vacuity assertions above prove only that seven
+    // functions ran; `func TestCrashAckedWritesSurvive(t *testing.T) {}` runs and
+    // passes. See [`G2_9A_ANCHORS`].
+    findings.extend(check_source_anchors(
+        &enumerate_injections(&src),
+        G2_9A_ANCHORS,
+        "G2.9a",
+        G2_9A_SOURCE,
+    ));
+
     if !findings.is_empty() {
         return GateOutcome::fail(
             format!(
-                "the crash corpus does not match its pinned population ({} declared, {} pinned)",
+                "the crash corpus does not match its pinned population, or a pinned fixture no \
+                 longer carries its property assertion ({} declared, {} pinned, {} anchor(s))",
                 declared.len(),
-                G2_9A_CRASH_TESTS.len()
+                G2_9A_CRASH_TESTS.len(),
+                G2_9A_ANCHORS.len()
             ),
             findings,
         );
@@ -597,6 +739,24 @@ pub const INJECTION_MANIFEST: &[Injection] = &[
 const FIRED_COUNTER_INCREMENT: &str = "injected.Add(1)";
 const FIRED_COUNTER_READ: &str = "injected.Load()";
 const FIRED_ZERO_GUARD: &str = "fired ZERO times";
+
+/// The three needles as ONE list, with the finding each one's absence produces.
+///
+/// It is a `const` rather than an inline array in the gate body because
+/// `gates_g2_13::SOURCE_SIDE_FALSIFIERS` records G2.6's five fixtures as falsified
+/// by this pin, and a claim about what a gate enforces must read the gate's own
+/// list. Two copies would let the claim outlive the check.
+pub(super) const G2_6_FIXTURE_PINS: &[(&str, &str)] = &[
+    (
+        FIRED_COUNTER_INCREMENT,
+        "the injector does not count its invocations",
+    ),
+    (FIRED_COUNTER_READ, "nothing reads the invocation count"),
+    (
+        FIRED_ZERO_GUARD,
+        "there is no assertion that the count is non-zero",
+    ),
+];
 
 /// The construction the enumerator keys on.
 const INJECTOR_CTOR: &str = "errorfs.InjectorFunc(";
@@ -745,11 +905,7 @@ pub fn g2_6_injection_manifest(ctx: &Ctx) -> GateOutcome {
                     ));
                 }
                 // ── The C3 rule: the fixture must prove it INJECTED. ──
-                for (needle, why) in [
-                    (FIRED_COUNTER_INCREMENT, "the injector does not count its invocations"),
-                    (FIRED_COUNTER_READ, "nothing reads the invocation count"),
-                    (FIRED_ZERO_GUARD, "there is no assertion that the count is non-zero"),
-                ] {
+                for (needle, why) in G2_6_FIXTURE_PINS.iter().copied() {
                     if !t.body.contains(needle) {
                         findings.push(format!(
                             "{}::{} is missing `{needle}` in EXECUTING code — {why}. An injection \

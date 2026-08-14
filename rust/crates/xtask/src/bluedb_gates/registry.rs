@@ -645,12 +645,44 @@ pub static REGISTRY: &[Gate] = &[
         tier: Tier::Full,
         run: gates_g2::g2_9a_durability_on_ack,
         budget_s: 900,
-        mutations: Mutations::new(&[Mutation {
-            id: "G2.9a/ack-before-fsync",
-            patch: "docs/bluedb/mutations/G2.9.ack-before-fsync.patch",
-            expect: "acked write missing after restart",
-            targets: &["runtime-go/bluedb"],
-        }]),
+        // THREE mutations, because the gate pins seven leaves and the first one
+        // alone left three of them falsified only in name. `NoSync` turns all
+        // seven red, but for the seal contract, the injected-fault fixture and
+        // the durable-prefix fixture the line it reddens is that fixture's own
+        // PRECONDITION guard ("the WAL-fsync injector fired ZERO times … this
+        // test proves NOTHING", "not one of the 322 acked commits survived …
+        // the prefix property below was never exercised") — the property is
+        // never reached. Two of the three now have a mutation that reaches it;
+        // the third's argument, and its source-side falsifier, are recorded in
+        // `gates_g2_13.rs`'s LEAF_COVERAGE and SOURCE_SIDE_FALSIFIERS.
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.9a/ack-before-fsync",
+                patch: "docs/bluedb/mutations/G2.9.ack-before-fsync.patch",
+                expect: "acked write missing after restart",
+                targets: &["runtime-go/bluedb"],
+            },
+            Mutation {
+                id: "G2.9a/sealed-engine-still-runs-gc",
+                patch: "docs/bluedb/mutations/G2.9a.sealed-engine-still-runs-gc.patch",
+                // Verbatim from the observed failure with gc.go's `sealed` check
+                // reverted: the engine sealed on the injected WAL fault (the
+                // fixture's earlier arms all pass) and then ran a GC pass anyway.
+                // "Every write path refuses loudly" includes the one that deletes.
+                expect: "sealed engine must refuse GC with ErrSealed, got",
+                targets: &["runtime-go/bluedb/gc.go"],
+            },
+            Mutation {
+                id: "G2.9a/wal-fatal-never-reaches-the-ack",
+                patch: "docs/bluedb/mutations/G2.9a.wal-fatal-never-reaches-the-ack.patch",
+                // Verbatim. Deleting N3 consumption point 3/5 leaves the injector
+                // FIRING — so the fixture's precondition guard passes and the run
+                // reaches the property — while a latched WAL fatal never reaches
+                // the ack: the commit acks nil and its write is gone after reopen.
+                expect: "ABSENT after reopen — acked⇒durable violated",
+                targets: &["runtime-go/bluedb/committer.go"],
+            },
+        ]),
     },
     Gate {
         id: "G2.9b",
@@ -1023,6 +1055,80 @@ pub static REGISTRY: &[Gate] = &[
                 // Tail returned 3 entries and err=nil over a malformed key.
                 expect: "A changelog key that does not parse must fail the read, never be skipped",
                 targets: &["runtime-go/bluedb/changelog.go"],
+            },
+        ]),
+    },
+    // G2.13j / G2.13k — the three fixtures commit `ad9b3900` landed with its
+    // fix, and which for one commit were run by CI's `go test ./bluedb/...` and
+    // by NOTHING else: invisible to --verify-mutations, to STATUS.md and to every
+    // goal verdict. `AUDIT_OWNERSHIP` said so, in the word it keeps for it.
+    //
+    // TWO gates, not one, and the split is the doctrine rather than a preference:
+    // a handle's lifecycle and a committer's post-ack fault handling are two
+    // properties, no single defect breaks both, and STATUS.md should carry a row
+    // for each. Folding them together would be the "one gate with several
+    // mutations" shape the G2.13a–i split exists to refuse.
+    Gate {
+        id: "G2.13j",
+        goal: 2,
+        title: "the exported non-reader surface is pinned against Close",
+        // FULL: both arms carry real waits sized for the FAILING case (a 30s
+        // per-worker report deadline, a 60s closeWithin, a 90s pass deadline).
+        // Passing wall time is 0.8s; a gate that outruns its budget is a FAIL for
+        // the wrong reason.
+        tier: Tier::Full,
+        run: gates_g2_13::g2_13j_lifecycle_pins_the_exported_surface,
+        budget_s: 480,
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.13j/changelog-handed-out-without-a-pin",
+                patch: "docs/bluedb/mutations/G2.13j.changelog-handed-out-without-a-pin.patch",
+                // Verbatim from the observed failure with `Changelog()` reverted
+                // to `&changelog{db: e.db}`: 6/6 changelog workers took an
+                // unrecovered "pebble: closed" on their own goroutines, and the
+                // held handle panicked again after Close had fully returned.
+                expect: "A pebble handle operation on a closed DB panics unconditionally, on the CALLER's",
+                targets: &["runtime-go/bluedb/pebble_engine.go", "runtime-go/bluedb/changelog.go"],
+            },
+            Mutation {
+                id: "G2.13j/gc-checks-closed-without-pinning",
+                patch: "docs/bluedb/mutations/G2.13j.gc-checks-closed-without-pinning.patch",
+                // Verbatim, and from the OTHER fixture — which is the whole
+                // reason there are two. This revert leaves
+                // `…DoNotRaceCloseIntoAPanic` GREEN (gc.go's isClosed() does
+                // answer a call made after Close returned), so only a fixture
+                // that puts Close INSIDE a pass can see it.
+                expect: "Close PANICKED with an unpinned GC pass in flight:",
+                targets: &["runtime-go/bluedb/gc.go"],
+            },
+        ]),
+    },
+    Gate {
+        id: "G2.13k",
+        goal: 2,
+        title: "a post-ack durability panic is never absorbed",
+        // Measured at 0.15s: the fault comes through a seam and neither arm waits.
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13k_post_ack_panic_is_never_absorbed,
+        budget_s: 300,
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "G2.13k/post-ack-panic-absorbed-on-the-blind-path",
+                patch: "docs/bluedb/mutations/G2.13k.post-ack-panic-absorbed-on-the-blind-path.patch",
+                // Verbatim. The patch restores `if r := recover(); r != nil &&
+                // !acked` on the blind path ONLY, and the txn arm is observed
+                // still PASSING under it — so the two arms are proven separately
+                // rather than by one undifferentiated failure of their parent.
+                expect: "a panic raised AFTER processBlindPhase1's acks went out was SILENTLY ABSORBED.",
+                targets: &["runtime-go/bluedb/committer.go"],
+            },
+            Mutation {
+                id: "G2.13k/post-ack-panic-absorbed-on-the-txn-path",
+                patch: "docs/bluedb/mutations/G2.13k.post-ack-panic-absorbed-on-the-txn-path.patch",
+                // Verbatim, and the mirror image: the blind arm is observed
+                // PASSING under this one.
+                expect: "a panic raised AFTER processTxn's acks went out was SILENTLY ABSORBED.",
+                targets: &["runtime-go/bluedb/committer.go"],
             },
         ]),
     },

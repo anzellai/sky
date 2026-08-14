@@ -88,7 +88,8 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use super::gates_g2::{
-    check_pinned_population, check_run_evidence, enumerate_injections, go_test, go_test_names,
+    check_pinned_population, check_run_evidence, check_source_anchors, enumerate_injections,
+    go_test, go_test_names, SourceAnchor,
 };
 use super::registry::{Ctx, GateOutcome};
 
@@ -112,10 +113,16 @@ const PIN_NAME: &str = "AUDIT_OWNERSHIP (bluedb_gates/gates_g2_13.rs)";
 ///
 /// It was then kept unused on the argument that a fixture can land ahead of its
 /// gate again and the table must be able to SAY so in the interval. That
-/// happened within the week: three N4/durability fixtures landed alongside the
-/// fix they pin, and they carry this value until the commit that lands those
-/// fixes gives them a gate. Deleting the word would have made silence the only
-/// available answer.
+/// happened within the week: three N4/durability fixtures (commit `ad9b3900`)
+/// landed alongside the fix they pin and carried this value until **G2.13j** and
+/// **G2.13k** gave them one. Deleting the word would have made silence the only
+/// available answer both times.
+///
+/// So it is unused AGAIN, deliberately, and the `allow` is the cost of keeping a
+/// vocabulary the table has now needed twice. `every_owner_is_a_registered_gate_
+/// or_explicitly_ungated` still reads it, so the two spellings of "nothing runs
+/// this" — the value and the test that tolerates it — cannot drift apart.
+#[allow(dead_code)]
 const UNGATED: &str = "— (recorded, run by no gate)";
 
 /// One `func Test…` in [`AUDIT_SOURCE`], and the gate that runs it.
@@ -224,34 +231,31 @@ pub const AUDIT_OWNERSHIP: &[Owned] = &[
         owner: "G2.13h",
         property: "a corrupt cold-start seed raises the recent-changes ring floor (C6b)",
     },
-    // -- landed ahead of their gate, 2026-08-14 -----------------------------
+    // -- the N4 lifecycle sweep (commit `ad9b3900`), owned by G2.13j. --
     //
-    // Three fixtures added by the concurrent fix of the two engine defects this
-    // audit also turned up. They are recorded here — with the word for it —
-    // rather than omitted, because an ownership table that lists only what it
-    // already covers reports full coverage of whatever it happens to list, and
-    // reading it the other way round is what found G2.13h's four fail-open
-    // rows. Right now CI's `go test ./bluedb/...` runs them and nothing else
-    // does: they are invisible to `--verify-mutations`, to `STATUS.md` and to
-    // every goal verdict.
-    //
-    // OWED by the commit that lands those fixes: a gate that `-run`s them, and
-    // a mutation per leaf (see [`LEAF_COVERAGE`]). The N4 pair belongs with
-    // G2.13f's property; the post-ack one is a durability-route statement.
+    // These landed with their fix and sat here as `UNGATED` for exactly one
+    // commit: CI's `go test ./bluedb/...` ran them and nothing else did, so they
+    // were invisible to `--verify-mutations`, to `STATUS.md` and to every goal
+    // verdict — the same hole reading this table the other way round found for
+    // G2.13h's four fail-open rows, one week later.
     Owned {
         test: "TestAuditN4ChangelogAndGCDoNotRaceCloseIntoAPanic",
-        owner: UNGATED,
-        property: "the changelog and GC paths do not race Close into a panic (N4)",
+        owner: "G2.13j",
+        property: "a Changelog handed out by the engine, and a GC call, answer ErrClosed across a \
+                   Close instead of panicking on the caller's goroutine (N4)",
     },
     Owned {
         test: "TestAuditN4GCPassIsPinnedAgainstAConcurrentClose",
-        owner: UNGATED,
-        property: "a GC pass is pinned against a concurrent Close (N4)",
+        owner: "G2.13j",
+        property: "a GC pass in flight is pinned, so Close waits for it rather than closing the \
+                   handle underneath it (N4)",
     },
+    // -- the post-ack durability arm (commit `ad9b3900`), owned by G2.13k. --
     Owned {
         test: "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed",
-        owner: UNGATED,
-        property: "a durability panic AFTER the ack is not silently absorbed",
+        owner: "G2.13k",
+        property: "a durability panic raised AFTER the acks have gone out seals and re-panics on \
+                   both commit paths, rather than being absorbed",
     },
     // -- the two Stage-1 remedies that shipped WITHOUT a test, owned by G2.13i. --
     Owned {
@@ -270,18 +274,9 @@ pub const AUDIT_OWNERSHIP: &[Owned] = &[
 // The gate descriptor
 // ---------------------------------------------------------------------------
 
-/// A literal construct that must appear in a pinned function's body.
-///
-/// The source-side pin for names `go_test_names` cannot see. A sub-test name is
-/// a `t.Run` argument, and one of the two here is built by `fmt.Sprintf` from a
-/// literal `[]int`, so the only honest way to pin the population in SOURCE is
-/// to pin the construct that generates it.
-pub struct SourceAnchor {
-    /// The enclosing `func Test…`.
-    pub func: &'static str,
-    pub needle: &'static str,
-    pub why: &'static str,
-}
+// [`SourceAnchor`] used to be declared here. It moved to `gates_g2.rs`, beside
+// `enumerate_injections` and `strip_go_comments` — the functions that give it its
+// meaning — because G2.9a needs the identical pin and is not an [`AuditGate`].
 
 /// The exact number of `t.Run(` sites a pinned function may contain.
 ///
@@ -364,23 +359,7 @@ fn run_audit_gate(ctx: &Ctx, g: &AuditGate) -> GateOutcome {
     let bodies = enumerate_injections(&src);
     let body_of = |name: &str| bodies.iter().find(|f| f.test == name).map(|f| &f.body);
 
-    for a in g.anchors {
-        match body_of(a.func) {
-            None => findings.push(format!(
-                "{}: {AUDIT_SOURCE} has no `func {}` to anchor against",
-                g.id, a.func
-            )),
-            Some(body) => {
-                if !body.contains(a.needle) {
-                    findings.push(format!(
-                        "{}::{} no longer contains `{}` — {}. The sub-test names this gate `-run`s \
-                         are generated by that construct, and a `-run` that matches nothing EXITS 0.",
-                        AUDIT_SOURCE, a.func, a.needle, a.why
-                    ));
-                }
-            }
-        }
-    }
+    findings.extend(check_source_anchors(&bodies, g.anchors, g.id, AUDIT_SOURCE));
     for s in g.sites {
         match body_of(s.func) {
             None => findings.push(format!(
@@ -905,6 +884,188 @@ pub fn g2_13i_corrupt_keys_fail_closed(ctx: &Ctx) -> GateOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// G2.13j — the exported non-reader surface is pinned against Close
+// ---------------------------------------------------------------------------
+
+const N4_LIFECYCLE_FUNC: &str = "TestAuditN4ChangelogAndGCDoNotRaceCloseIntoAPanic";
+const N4_GC_PIN_FUNC: &str = "TestAuditN4GCPassIsPinnedAgainstAConcurrentClose";
+
+/// **Every exported operation that touches the Pebble handle is pinned against
+/// Close, so a concurrent Close answers it rather than racing it.**
+///
+/// G2.13f states this for the READER path (`beginSnapshot` / `snapshotAtChecked`
+/// take the check-and-pin, and Close's drain waits on the tokens). These two
+/// fixtures state it for the paths that hold no reader at all: `Engine.Changelog()`
+/// hands back a value the caller may keep across a Close, and `Engine.GC()` runs a
+/// whole multi-phase pass on the CALLER's goroutine. Both were shipped with the
+/// wrong shape — a raw `*pebble.DB` with no lifecycle, and `if e.isClosed()`, a
+/// check with NO pin — and pebble does not degrade on a closed handle, it panics
+/// unconditionally, on that goroutine, where no recover in the package can reach
+/// it.
+///
+/// **Two fixtures because the two defects need different shapes, and that is the
+/// finding, not an accident.** `isClosed()` DOES answer a call made after Close
+/// returned, so the spin-workers-then-Close shape passes against the broken GC
+/// code (verified by mutation: `G2.13j/gc-checks-closed-without-pinning` leaves
+/// `…DoNotRaceCloseIntoAPanic` GREEN). The GC arm therefore puts Close INSIDE a
+/// pass whose length it measures first. One fixture could not have covered both.
+pub const G2_13J_TESTS: &[&str] = &[N4_LIFECYCLE_FUNC, N4_GC_PIN_FUNC];
+
+/// One anchor per fixture, on its own property assertion — see
+/// [`super::gates_g2::SourceAnchor`]. Both fixtures END in a `t.Fatalf`/`t.Errorf`
+/// that names the defect; delete it (or the body around it) and this gate goes
+/// red, which is what stops an emptied fixture reporting `pass`.
+const G2_13J_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: N4_LIFECYCLE_FUNC,
+        needle: "A pebble handle operation on a closed DB panics unconditionally, on the CALLER's",
+        why: "that IS the panic verdict this fixture exists to raise — the workers keep calling \
+              AFTER Close has returned, so on the broken code the panic is certain, not a race to win",
+    },
+    SourceAnchor {
+        func: N4_LIFECYCLE_FUNC,
+        needle: "on a fully closed engine returned NO error; a terminal engine must ",
+        why: "that IS the fail-OPEN half: a post-close Tail answering (nil, nil) looks like an \
+              empty changelog to a caller, which is the same defect wearing a different face",
+    },
+    SourceAnchor {
+        func: N4_GC_PIN_FUNC,
+        needle: "Close PANICKED with an unpinned GC pass in flight:",
+        why: "that IS the TOCTOU verdict, seen from Close's side (pebble unrefs the file cache and \
+              panics on a live iterator from the racing pass)",
+    },
+    SourceAnchor {
+        func: N4_GC_PIN_FUNC,
+        needle: "The gate needs a pass ",
+        why: "that IS the fixture's own width guard — it FAILS rather than silently passing when a \
+              GC pass is too quick for Close to land inside it, which is the only thing that makes \
+              the assertion above meaningful",
+    },
+];
+
+const G2_13J_SITES: &[SubtestSites] = &[
+    SubtestSites {
+        func: N4_LIFECYCLE_FUNC,
+        sites: 0,
+    },
+    SubtestSites {
+        func: N4_GC_PIN_FUNC,
+        sites: 0,
+    },
+];
+
+pub fn g2_13j_lifecycle_pins_the_exported_surface(ctx: &Ctx) -> GateOutcome {
+    run_audit_gate(
+        ctx,
+        &AuditGate {
+            id: "G2.13j",
+            tests: G2_13J_TESTS,
+            required_subtests: &[],
+            anchors: G2_13J_ANCHORS,
+            sites: G2_13J_SITES,
+            // Both arms carry REAL waits sized for the failing case: a 30s
+            // per-worker report deadline and a 5s `closeWithin` on the first, a
+            // 60s `closeWithin` and a 90s pass deadline on the second. Measured
+            // at 0.8s passing; the budget is for the hang.
+            budget: Duration::from_secs(420),
+            property: "the exported non-reader surface is pinned against Close",
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// G2.13k — a post-ack durability panic is never absorbed
+// ---------------------------------------------------------------------------
+
+const POST_ACK_FUNC: &str = "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed";
+
+/// **A durability panic raised after the acks have gone out seals the engine and
+/// RE-PANICS — it is never absorbed.**
+///
+/// A separate gate from G2.13j, and separate for the reason the module doc gives:
+/// these are two properties, not two doors onto one. G2.13j is about a handle's
+/// lifecycle; this is about what the single writer goroutine does with a fault
+/// nobody is left to be told about. No single defect breaks both, and `STATUS.md`
+/// should carry a row for each.
+///
+/// `processBlindPhase1`'s guard read `if r := recover(); r != nil && !acked`.
+/// `recover()` is not conditional on the `&&` — it runs first and CONSUMES the
+/// panic — so once the acks had gone out the fault was swallowed whole: no seal,
+/// no repanic, no log, and the writer goroutine returned to its range loop from an
+/// unexplained fault. `processTxn` carried the same shape expressed against its
+/// `acked` set. Both arms are pinned, and they are pinned SEPARATELY (see
+/// [`G2_13K_SUBTESTS`]) because each is reverted by its own hunk.
+pub const G2_13K_TESTS: &[&str] = &[POST_ACK_FUNC];
+
+/// The two commit paths, required as EVIDENCE (see [`AuditGate::required_subtests`]).
+///
+/// The `-run` pattern stays at depth 1 and a Go parent passes when its remaining
+/// body passes, so an arm that quietly stopped running would leave the parent
+/// green. They are not interchangeable: the blind path's guard is a `bool` flag,
+/// the transactional path's is "is the acked SET already full", and each mutation
+/// below reverts exactly one of them — verified by observing that each leaves the
+/// OTHER arm passing.
+pub const G2_13K_SUBTESTS: &[&str] = &[
+    "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path",
+    "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path",
+];
+
+const G2_13K_ANCHORS: &[SourceAnchor] = &[
+    SourceAnchor {
+        func: POST_ACK_FUNC,
+        needle: "t.Run(\"blind-path\"",
+        why: "that literal IS the blind arm's name; without it the gate would require a leaf \
+              nothing generates",
+    },
+    SourceAnchor {
+        func: POST_ACK_FUNC,
+        needle: "t.Run(\"txn-path\"",
+        why: "that literal IS the transactional arm's name",
+    },
+    SourceAnchor {
+        func: POST_ACK_FUNC,
+        needle: "a panic raised AFTER processBlindPhase1's acks went out was SILENTLY ABSORBED.",
+        why: "that IS the blind arm's assertion, and the mutation is classified on it",
+    },
+    SourceAnchor {
+        func: POST_ACK_FUNC,
+        needle: "a panic raised AFTER processTxn's acks went out was SILENTLY ABSORBED.",
+        why: "that IS the transactional arm's assertion",
+    },
+    SourceAnchor {
+        func: POST_ACK_FUNC,
+        needle: "must not retroactively fail a commit that was applied and acked",
+        why: "that IS the half neither mutation reddens: a fault after the ack must not rewrite \
+              the verdict of a commit that was already durable. An arm that only checked the \
+              panic escaped would pass a `seal + repanic` that also corrupted the results",
+    },
+];
+
+/// Exactly two `t.Run(` sites: the two commit paths. A third would be required
+/// evidence nobody declared.
+const G2_13K_SITES: &[SubtestSites] = &[SubtestSites {
+    func: POST_ACK_FUNC,
+    sites: 2,
+}];
+
+pub fn g2_13k_post_ack_panic_is_never_absorbed(ctx: &Ctx) -> GateOutcome {
+    run_audit_gate(
+        ctx,
+        &AuditGate {
+            id: "G2.13k",
+            tests: G2_13K_TESTS,
+            required_subtests: G2_13K_SUBTESTS,
+            anchors: G2_13K_ANCHORS,
+            sites: G2_13K_SITES,
+            // Measured at 0.15s wall — the fault is injected through a seam and
+            // neither arm waits on anything. The budget is the file's convention.
+            budget: Duration::from_secs(240),
+            property: "a post-ack durability panic is never absorbed",
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Leaf coverage — which mutation reddens which pinned leaf
 // ---------------------------------------------------------------------------
 
@@ -1042,13 +1203,253 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
         mutation: "G2.13i/changelog-skips-a-corrupt-key",
         leaves: &["TestAuditS1ChangelogTailFailsClosedOnACorruptKey"],
     },
+    // -- G2.13j: two defects, two shapes, one leaf each. The GC row is the
+    //    interesting one — `G2.13j/gc-checks-closed-without-pinning` leaves the
+    //    OTHER fixture green (its `isClosed()` does answer a call made after
+    //    Close returned), which is exactly why the two fixtures exist.
+    LeafCoverage {
+        mutation: "G2.13j/changelog-handed-out-without-a-pin",
+        leaves: &["TestAuditN4ChangelogAndGCDoNotRaceCloseIntoAPanic"],
+    },
+    LeafCoverage {
+        mutation: "G2.13j/gc-checks-closed-without-pinning",
+        leaves: &["TestAuditN4GCPassIsPinnedAgainstAConcurrentClose"],
+    },
+    // -- G2.13k: one function, two arms, one hunk each. Each mutation reddens
+    //    its own arm and leaves the other PASSING (observed), so the parent's
+    //    red is attributable.
+    LeafCoverage {
+        mutation: "G2.13k/post-ack-panic-absorbed-on-the-blind-path",
+        leaves: &[
+            "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed",
+            "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/blind-path",
+        ],
+    },
+    LeafCoverage {
+        mutation: "G2.13k/post-ack-panic-absorbed-on-the-txn-path",
+        leaves: &[
+            "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed",
+            "TestAuditPostAckDurabilityPanicIsNotSilentlyAbsorbed/txn-path",
+        ],
+    },
+    // -- G2.9a, brought under this rule ------------------------------------
+    //
+    // The `NoSync` revert turns all seven red, and the recorded transcript says
+    // so — but read the transcript rather than the count. For THREE of the seven
+    // the line it reddened is the fixture's own PRECONDITION guard, not its
+    // property:
+    //
+    //   * `TestSealContractRefusesWrites`  → "the WAL-fsync injector fired ZERO
+    //     times … this test proves NOTHING about the seal contract"
+    //   * `TestInjectedFaultsReopenConsistent` → the same guard
+    //   * `TestCrashDurablePrefixNoReorder` → "not one of the 322 acked commits
+    //     survived … the prefix property below was never exercised"
+    //
+    // A leaf whose only falsifier stops it before it tests anything is falsified
+    // in name only, so two of the three get a mutation that reaches the property
+    // itself. The third does not, and that is recorded rather than papered over —
+    // see the note below the last row.
+    LeafCoverage {
+        mutation: "G2.9a/ack-before-fsync",
+        leaves: &[
+            "TestCrashAckedWritesSurvive",
+            "TestCrashConcurrentNoAckedLoss",
+            "TestCrashDurablePrefixNoReorder",
+            "TestCrashHLCNoReissue",
+            "TestCrashNoTornBatch",
+            "TestInjectedFaultsReopenConsistent",
+            "TestSealContractRefusesWrites",
+        ],
+    },
+    // The seal contract's OWN assertion: the engine seals (the fixture's earlier
+    // arms still pass) and then a write path is asked to refuse. GC is that write
+    // path — "once sealed every write path refuses loudly" includes the one that
+    // deletes — and reverting its `sealed` check reddens this fixture and nothing
+    // else in the corpus.
+    LeafCoverage {
+        mutation: "G2.9a/sealed-engine-still-runs-gc",
+        leaves: &["TestSealContractRefusesWrites"],
+    },
+    // Arm (a)'s own assertion. Deleting N3 consumption point 3/5 leaves the
+    // injector firing (so the precondition guard passes) while a latched WAL
+    // fatal never reaches the ack — the commit acks nil and its write is absent
+    // after reopen. `acked ⇒ durable`, falsified at the point it is claimed.
+    LeafCoverage {
+        mutation: "G2.9a/wal-fatal-never-reaches-the-ack",
+        leaves: &["TestInjectedFaultsReopenConsistent"],
+    },
+    // NO ROW REACHES `TestCrashDurablePrefixNoReorder`'s prefix assertion, and it
+    // is not for want of trying. The property — what survives a crash is a PREFIX
+    // of the commit history in commitTs order — is a consequence of two facts that
+    // no fix hunk in this package owns: Pebble writes one WAL, and the committer is
+    // a single goroutine that assigns commitTs and Applies in the same order. A
+    // HOLE requires commitTs order to differ from WAL order, so the only lever is
+    // moving timestamp assignment out of the committer into the caller
+    // (`committer.go`'s doc names that choice as the serialization point C1 relies
+    // on) — a redesign, not a revert, and one whose inversion is scheduler-dependent
+    // even then. A mutation that only sometimes fires records VACUOUS the times it
+    // does not, which this file already refuses (see G2.13f's two deterministic
+    // mutations).
+    //
+    // Its falsifier is therefore the SOURCE-SIDE one — `G2_9A_ANCHORS` pins the
+    // `durable prefix has a HOLE` assertion itself, so gutting the fixture, or
+    // deleting the assertion out of it, turns G2.9a red on the next run. See
+    // [`SOURCE_SIDE_FALSIFIERS`].
 ];
+
+/// Mutations that redden their gate **before it runs a single test**, and
+/// therefore carry no per-leaf evidence by construction.
+///
+/// [`LEAF_COVERAGE`] reads `--- FAIL: <leaf>` lines out of a recorded transcript.
+/// A gate that fails its SOURCE-side reconciliation returns before `go test` is
+/// invoked, so its transcript has no such line to read — not because the proof is
+/// weak, but because the defect it reintroduces is not a defect in any fixture.
+/// `G2.6/disable-injection-point` deletes an `errorfs` injector; G2.6 answers
+/// "fewer injection sites than the recorded manifest" and stops.
+///
+/// This is a marker, not an excuse, and it is checked in the direction that
+/// matters: `a_structural_mutation_really_produced_no_per_test_failure` asserts the
+/// transcript contains NO `--- FAIL:` line at all. A mutation that DID redden a
+/// fixture cannot be filed here to avoid recording which one.
+#[allow(dead_code)] // read by `every_pinned_leaf_is_reddened_by_a_recorded_mutation`
+pub const STRUCTURAL_MUTATIONS: &[(&str, &str)] = &[(
+    "G2.6/disable-injection-point",
+    "deleting an injection site fails G2.6's manifest reconciliation, which returns before \
+     `go test` runs — the recorded transcript is the manifest finding, with no per-test events \
+     in it",
+)];
+
+// ---------------------------------------------------------------------------
+// Source-side falsifiers — the leaves whose falsifier is the gate's own pin
+// ---------------------------------------------------------------------------
+
+/// A pinned leaf whose falsifier is a **source pin the gate enforces on every
+/// run**, rather than a recorded mutation transcript.
+///
+/// # Why this is the same rule, not a weaker one
+///
+/// The rule [`LEAF_COVERAGE`] exists to enforce is: *an emptied fixture body must
+/// make something go RED*. An empty Go test function emits `pass`, so a leaf no
+/// falsifier reaches can be gutted with its gate green and its proof still
+/// `PROVEN`. A recorded mutation is one way to satisfy that. A source anchor on
+/// the leaf's own property assertion is another, and it is strictly stronger on
+/// both axes that matter:
+///
+/// * **It is checked on every run**, from the tree as it is, rather than against
+///   an artefact recorded once that must be re-taken to stay true.
+/// * **It fires earlier and more precisely** — the GATE itself goes red naming the
+///   fixture and the assertion, instead of a falsification quietly turning
+///   `VACUOUS` at the next `--verify-mutations`.
+///
+/// # Why some leaves have no other option
+///
+/// Two situations, both represented here:
+///
+/// 1. **G2.6.** Its property is "the fault-injection corpus is complete and
+///    armed". The RUN outcome of each of its five fixtures is a statement about
+///    somebody else's property — H3's reader (G2.13g), Fix-1's durability and the
+///    seal contract (G2.9a), N3's Fatalf latch — so a mutation registered on G2.6
+///    that reddened one of them would mint a second `PROVEN` out of one defect.
+///    That is precisely what the one-gate-per-property split and
+///    `expect_strings_are_pairwise_discriminating` exist to forbid. Its per-leaf
+///    falsifier is the pin it already enforces: the injector construction plus the
+///    three fired-count needles, in EXECUTING code. Empty any of the five bodies
+///    and G2.6 says so by name.
+/// 2. **`TestCrashDurablePrefixNoReorder`.** No honest revert reddens the prefix
+///    property — see the note at the end of [`LEAF_COVERAGE`].
+#[allow(dead_code)] // read by the source-side coverage tests
+pub struct SourceSideFalsifier {
+    pub gate: &'static str,
+    pub leaf: &'static str,
+    pub why: &'static str,
+}
+
+#[allow(dead_code)] // read by `every_pinned_leaf_is_reddened_by_a_recorded_mutation`
+pub const SOURCE_SIDE_FALSIFIERS: &[SourceSideFalsifier] = &[
+    SourceSideFalsifier {
+        gate: "G2.9a",
+        leaf: "TestCrashDurablePrefixNoReorder",
+        why: "the prefix property follows from Pebble's single WAL plus a single-writer committer \
+              that assigns commitTs and Applies in one order; no fix hunk's revert holes it, and \
+              the one that could (moving assignment to the caller) is a redesign whose inversion \
+              is scheduler-dependent",
+    },
+    SourceSideFalsifier {
+        gate: "G2.6",
+        leaf: "TestAuditH3ReaderGetSurfacesIoErrors",
+        why: "its RUN outcome is G2.13g's property (the reader surfaces an I/O fault as an error); \
+              a mutation here would mint a second PROVEN out of G2.13g's defect",
+    },
+    SourceSideFalsifier {
+        gate: "G2.6",
+        leaf: "TestAuditN3BackgroundFatalDoesNotKillTheProcess",
+        why: "reverting the Fatalf latch does not redden this fixture, it KILLS the test binary — \
+              there is no `--- FAIL:` line to record, and a gate cannot report on a process that \
+              no longer exists",
+    },
+    SourceSideFalsifier {
+        gate: "G2.6",
+        leaf: "TestAuditN3SynchronousWalFaultStillErrorsTheAck",
+        why: "the hunk that reddens it is N3 consumption point 3/5, which is already the subject \
+              of `G2.9a/wal-fatal-never-reaches-the-ack`; two mutations of one hunk are one proof \
+              counted twice",
+    },
+    SourceSideFalsifier {
+        gate: "G2.6",
+        leaf: "TestInjectedFaultsReopenConsistent",
+        why: "its RUN outcome is G2.9a's arm (a); both of G2.9a's mutations already reach it",
+    },
+    SourceSideFalsifier {
+        gate: "G2.6",
+        leaf: "TestSealContractRefusesWrites",
+        why: "its RUN outcome is G2.9a's seal contract, reached by \
+              `G2.9a/sealed-engine-still-runs-gc`",
+    },
+];
+
+/// The needles a gate enforces over one pinned fixture's EXECUTING body.
+///
+/// Empty means the gate would not notice that body being replaced by `{}` — which
+/// is what [`SOURCE_SIDE_FALSIFIERS`] rows are checked against.
+#[allow(dead_code)] // read by `every_source_side_falsifier_is_a_pin_the_gate_actually_enforces`
+fn enforced_needles(gate: &str, leaf: &str) -> Vec<&'static str> {
+    // G2.6 does not use SourceAnchor: it enforces the injector construction plus
+    // the three C3 fired-count needles on every manifest row, which is the same
+    // pin by a different spelling and predates it.
+    if gate == "G2.6" {
+        if super::gates_g2::INJECTION_MANIFEST
+            .iter()
+            .any(|m| m.test == leaf)
+        {
+            return super::gates_g2::G2_6_FIXTURE_PINS
+                .iter()
+                .map(|(n, _)| *n)
+                .collect();
+        }
+        return Vec::new();
+    }
+    let anchors: &[SourceAnchor] = match gate {
+        "G2.9a" => super::gates_g2::G2_9A_ANCHORS,
+        "G2.13a" => G2_13A_ANCHORS,
+        "G2.13b" => G2_13B_ANCHORS,
+        "G2.13h" => G2_13H_ANCHORS,
+        "G2.13i" => G2_13I_ANCHORS,
+        "G2.13j" => G2_13J_ANCHORS,
+        "G2.13k" => G2_13K_ANCHORS,
+        _ => &[],
+    };
+    anchors
+        .iter()
+        .filter(|a| a.func == leaf)
+        .map(|a| a.needle)
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The nine gate bodies, paired with their ids. Cross-checked against
+    /// The eleven gate bodies, paired with their ids. Cross-checked against
     /// [`ALL_SETS`] so the two cannot drift.
     const BODIES: &[(&str, fn(&Ctx) -> GateOutcome)] = &[
         ("G2.13a", g2_13a_iterate_bounds),
@@ -1060,6 +1461,8 @@ mod tests {
         ("G2.13g", g2_13g_failed_read_is_an_error),
         ("G2.13h", g2_13h_commit_route_fails_closed),
         ("G2.13i", g2_13i_corrupt_keys_fail_closed),
+        ("G2.13j", g2_13j_lifecycle_pins_the_exported_surface),
+        ("G2.13k", g2_13k_post_ack_panic_is_never_absorbed),
     ];
 
     const ALL_SETS: &[(&str, &[&str])] = &[
@@ -1072,13 +1475,52 @@ mod tests {
         ("G2.13g", G2_13G_TESTS),
         ("G2.13h", G2_13H_TESTS),
         ("G2.13i", G2_13I_TESTS),
+        ("G2.13j", G2_13J_TESTS),
+        ("G2.13k", G2_13K_TESTS),
     ];
 
     /// The sub-test leaves each gate requires as evidence, alongside its `-run`
-    /// population — the two gates that `-run` whole FUNCTIONS carrying `t.Run`
-    /// arms.
-    const ALL_SUBTESTS: &[(&str, &[&str])] =
-        &[("G2.13h", G2_13H_SUBTESTS), ("G2.13i", G2_13I_SUBTESTS)];
+    /// population — the gates that `-run` whole FUNCTIONS carrying `t.Run` arms.
+    const ALL_SUBTESTS: &[(&str, &[&str])] = &[
+        ("G2.13h", G2_13H_SUBTESTS),
+        ("G2.13i", G2_13I_SUBTESTS),
+        ("G2.13k", G2_13K_SUBTESTS),
+    ];
+
+    /// **Every gate the per-leaf rule governs**, with the leaves each pins.
+    ///
+    /// [`ALL_SETS`] is the audit-corpus family; this adds the two engine gates
+    /// whose populations live in `gates_g2.rs`. Extending the rule to them is the
+    /// whole point: G2.9a pins seven crash fixtures and G2.6 five injection
+    /// fixtures, and until this list existed neither was asked whether an emptied
+    /// body would be noticed. G2.6's answer was `no` for all five, from the
+    /// transcript side — its mutation never reaches `go test` at all.
+    fn governed_gates() -> Vec<(&'static str, Vec<&'static str>)> {
+        let mut out: Vec<(&'static str, Vec<&'static str>)> = ALL_SETS
+            .iter()
+            .map(|(id, set)| {
+                let mut leaves: Vec<&'static str> = set.to_vec();
+                for (sid, subs) in ALL_SUBTESTS {
+                    if sid == id {
+                        leaves.extend_from_slice(subs);
+                    }
+                }
+                (*id, leaves)
+            })
+            .collect();
+        out.push((
+            "G2.9a",
+            super::super::gates_g2::G2_9A_CRASH_TESTS.to_vec(),
+        ));
+        out.push((
+            "G2.6",
+            super::super::gates_g2::INJECTION_MANIFEST
+                .iter()
+                .map(|m| m.test)
+                .collect(),
+        ));
+        out
+    }
 
     fn repo() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1228,6 +1670,8 @@ mod tests {
             .chain(G2_13B_ANCHORS.iter())
             .chain(G2_13H_ANCHORS.iter())
             .chain(G2_13I_ANCHORS.iter())
+            .chain(G2_13J_ANCHORS.iter())
+            .chain(G2_13K_ANCHORS.iter())
         {
             let body = bodies
                 .iter()
@@ -1268,6 +1712,8 @@ mod tests {
             .iter()
             .chain(G2_13H_SITES.iter())
             .chain(G2_13I_SITES.iter())
+            .chain(G2_13J_SITES.iter())
+            .chain(G2_13K_SITES.iter())
         {
             check(s);
         }
@@ -1292,20 +1738,138 @@ mod tests {
     /// emits it. That is what makes "copied from a real observed failure, never
     /// composed" (`P1-STAGE2-PLAN.md` risk 6) checkable rather than a promise —
     /// a composed string would not be found here.
+    ///
+    /// G2.9a's three mutations are held to the same rule against
+    /// `crashsim_test.go`. G2.6's ONE mutation is not, and that exemption is
+    /// named rather than implied: its assertion is the GATE's own wording (a
+    /// manifest reconciliation finding, emitted before `go test` runs), and
+    /// `the_declared_expect_string_is_the_gate_s_own_wording` in `gates_g2.rs`
+    /// checks it against the body that must emit it. Requiring it to appear in a
+    /// fixture would be requiring evidence the design says does not exist —
+    /// exactly the shape [`STRUCTURAL_MUTATIONS`] records.
     #[test]
     fn every_declared_assertion_is_verbatim_in_the_fixture_that_emits_it() {
-        let src = audit_src();
-        for (id, _) in ALL_SETS {
+        let corpus = format!(
+            "{}\n{}",
+            audit_src(),
+            std::fs::read_to_string(repo().join("runtime-go/bluedb/crashsim_test.go"))
+                .expect("read crashsim_test.go")
+        );
+        for (id, _) in governed_gates() {
             let g = super::super::registry::find(id).expect("registered");
             for m in g.mutations.as_slice() {
+                if STRUCTURAL_MUTATIONS.iter().any(|(mid, _)| *mid == m.id) {
+                    continue;
+                }
                 assert!(
-                    src.contains(m.expect),
-                    "{}: declares `{}`, which appears nowhere in {AUDIT_SOURCE} — an `expect` \
-                     string must be copied from the failure the mutation actually produces",
+                    corpus.contains(m.expect),
+                    "{}: declares `{}`, which appears nowhere in the Go corpus \
+                     ({AUDIT_SOURCE} + crashsim_test.go) — an `expect` string must be copied from \
+                     the failure the mutation actually produces",
                     m.id,
                     m.expect
                 );
             }
+        }
+    }
+
+    /// A [`STRUCTURAL_MUTATIONS`] entry is a claim that the mutation's recorded
+    /// RED transcript carries no per-test failure at all. Checked against the
+    /// artefact, in the direction that can be abused: a mutation that DID redden
+    /// a fixture must record WHICH, not be filed here to avoid saying.
+    #[test]
+    fn a_structural_mutation_really_produced_no_per_test_failure() {
+        let root = repo();
+        for (id, why) in STRUCTURAL_MUTATIONS {
+            let m = super::super::registry::REGISTRY
+                .iter()
+                .flat_map(|g| g.mutations.as_slice())
+                .find(|m| m.id == *id)
+                .unwrap_or_else(|| panic!("{id} is not a registered mutation"));
+            let transcript =
+                std::fs::read_to_string(root.join(super::super::gates_g0::expected_path(m.patch)))
+                    .unwrap_or_else(|e| {
+                        panic!("{id}: cannot read the recorded RED transcript: {e}")
+                    });
+            assert!(
+                !transcript.contains("--- FAIL: "),
+                "{id} is recorded as structural ({why}), but its RED transcript DOES carry a \
+                 `--- FAIL:` line — record the leaves it reddened in LEAF_COVERAGE instead"
+            );
+        }
+    }
+
+    /// **Every [`SOURCE_SIDE_FALSIFIERS`] row names a pin the gate really
+    /// enforces, and gutting that leaf's body really trips it.**
+    ///
+    /// The row is a claim of the form "this leaf cannot be emptied without the
+    /// gate noticing". It is verified, not asserted, in three steps: the gate
+    /// must declare at least one needle over that fixture; the needle must be
+    /// present in the fixture as it stands today (a pin that never matched is a
+    /// permanently red gate, not a falsifier); and an EMPTY body must fail the
+    /// same check the gate runs, which is the gut-the-body property spelled out.
+    #[test]
+    fn every_source_side_falsifier_is_a_pin_the_gate_actually_enforces() {
+        let mut bodies = enumerate_injections(&audit_src());
+        bodies.extend(enumerate_injections(
+            &std::fs::read_to_string(repo().join("runtime-go/bluedb/crashsim_test.go"))
+                .expect("read crashsim_test.go"),
+        ));
+
+        for r in SOURCE_SIDE_FALSIFIERS {
+            let needles = enforced_needles(r.gate, r.leaf);
+            assert!(
+                !needles.is_empty(),
+                "{}::{} is recorded as falsified by a source-side pin ({}), but {} declares no \
+                 needle over that fixture — the body could be replaced by `{{}}` and the gate \
+                 would still report PASS",
+                r.gate,
+                r.leaf,
+                r.why,
+                r.gate
+            );
+            let body = &bodies
+                .iter()
+                .find(|f| f.test == r.leaf)
+                .unwrap_or_else(|| panic!("{}: no `func {}` in the corpus", r.gate, r.leaf))
+                .body;
+            for n in &needles {
+                assert!(
+                    body.contains(n),
+                    "{}::{} is claimed to be pinned by `{n}`, which is not in its EXECUTING body",
+                    r.gate,
+                    r.leaf
+                );
+                // The gut-the-body property, asserted directly: an empty function
+                // satisfies no needle, so the gate's check reports it.
+                let gutted = format!("func {}(t *testing.T) {{\n}}\n", r.leaf);
+                assert!(
+                    !gutted.contains(n),
+                    "{}::{}: `{n}` survives an emptied body — it is not a pin on the assertion",
+                    r.gate,
+                    r.leaf
+                );
+            }
+        }
+    }
+
+    /// No row may claim a leaf its gate does not pin, and no gate may be named
+    /// that the rule does not govern — either would be coverage recorded against
+    /// nothing.
+    #[test]
+    fn every_source_side_falsifier_names_a_pinned_leaf_of_a_governed_gate() {
+        let governed = governed_gates();
+        for r in SOURCE_SIDE_FALSIFIERS {
+            let (_, leaves) = governed
+                .iter()
+                .find(|(id, _)| *id == r.gate)
+                .unwrap_or_else(|| panic!("{} is not under the per-leaf rule", r.gate));
+            assert!(
+                leaves.contains(&r.leaf),
+                "{} claims {}, which is not one of its pinned leaves",
+                r.gate,
+                r.leaf
+            );
         }
     }
 
@@ -1363,28 +1927,24 @@ mod tests {
     #[test]
     fn every_pinned_leaf_is_reddened_by_a_recorded_mutation() {
         let root = repo();
-        for (id, set) in ALL_SETS {
+        for (id, leaf_list) in governed_gates() {
+            let id = &id;
             let g = super::super::registry::find(id).expect("registered");
-            let leaves: BTreeSet<&str> = set
-                .iter()
-                .chain(
-                    ALL_SUBTESTS
-                        .iter()
-                        .filter(|(sid, _)| sid == id)
-                        .flat_map(|(_, l)| l.iter()),
-                )
-                .copied()
-                .collect();
+            let leaves: BTreeSet<&str> = leaf_list.iter().copied().collect();
 
             let mut covered: BTreeSet<&str> = BTreeSet::new();
             for m in g.mutations.as_slice() {
+                if STRUCTURAL_MUTATIONS.iter().any(|(mid, _)| *mid == m.id) {
+                    continue; // reddens the gate before `go test` runs; see the const's doc
+                }
                 let row = LEAF_COVERAGE
                     .iter()
                     .find(|r| r.mutation == m.id)
                     .unwrap_or_else(|| {
                         panic!(
-                            "{} has no LEAF_COVERAGE row — every mutation of an audit gate must \
-                             record which pinned leaves its RED run actually reddened",
+                            "{} has no LEAF_COVERAGE row — every mutation of a gate under the \
+                             per-leaf rule must record which pinned leaves its RED run actually \
+                             reddened (or be recorded in STRUCTURAL_MUTATIONS)",
                             m.id
                         )
                     });
@@ -1418,13 +1978,23 @@ mod tests {
                 }
             }
 
+            // The second evidence kind: a pin the gate enforces on every run.
+            // Verified by `every_source_side_falsifier_is_a_pin_the_gate_actually_
+            // enforces`, so this is a lookup, not a second claim.
+            for r in SOURCE_SIDE_FALSIFIERS.iter().filter(|r| r.gate == *id) {
+                covered.insert(r.leaf);
+            }
+
             let uncovered: Vec<&str> = leaves.difference(&covered).copied().collect();
             assert!(
                 uncovered.is_empty(),
-                "{id}: {} pinned leaf/leaves are falsified by NO mutation: {uncovered:?}\n\n\
+                "{id}: {} pinned leaf/leaves are falsified by NOTHING: {uncovered:?}\n\n\
                  An empty Go test emits `pass`, so those bodies could be gutted and this gate \
-                 would stay green AND report PROVEN. Author a mutation that reddens them (see \
-                 docs/bluedb/mutations/) and record it in LEAF_COVERAGE.",
+                 would stay green AND report PROVEN. Close it one of the two ways: author a \
+                 mutation that reddens the leaf (see docs/bluedb/mutations/) and record it in \
+                 LEAF_COVERAGE, or anchor the gate on the leaf's own property assertion (see \
+                 SourceAnchor) and record it in SOURCE_SIDE_FALSIFIERS with the argument for why \
+                 no honest revert reaches it.",
                 uncovered.len()
             );
         }

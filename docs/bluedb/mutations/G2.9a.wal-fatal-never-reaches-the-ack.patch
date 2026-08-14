@@ -1,0 +1,14 @@
+diff --git a/runtime-go/bluedb/committer.go b/runtime-go/bluedb/committer.go
+index 6a847a75..3d2c585d 100644
+--- a/runtime-go/bluedb/committer.go
++++ b/runtime-go/bluedb/committer.go
+@@ -226,7 +226,8 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
+ 	}
+ 
+ 	err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the whole group
+-	err = e.foldFatal(err)            // N3 consumption point 3/5 — BEFORE the branch below
++	// MUTATION G2.9a: N3 consumption point 3/5 deleted — a latched WAL fatal never
++	// reaches this ack.
+ 	if err != nil {
+ 		e.sealed.Store(true)
+ 	} else {

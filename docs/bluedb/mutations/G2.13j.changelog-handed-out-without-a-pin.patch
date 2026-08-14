@@ -1,0 +1,13 @@
+diff --git a/runtime-go/bluedb/pebble_engine.go b/runtime-go/bluedb/pebble_engine.go
+index 5c0043cf..b42133dd 100644
+--- a/runtime-go/bluedb/pebble_engine.go
++++ b/runtime-go/bluedb/pebble_engine.go
+@@ -555,7 +555,7 @@ func (e *pebbleEngine) NowTs() HLC { return e.hlc.highWater() }
+ // a caller may hold it across a Close — and its Tail does a Pebble read, so the reader
+ // itself has to take the check-and-pin. `&changelog{db: e.db}` alone was a raw handle with
+ // no lifecycle at all.
+-func (e *pebbleEngine) Changelog() Changelog       { return &changelog{db: e.db, e: e} }
++func (e *pebbleEngine) Changelog() Changelog       { return &changelog{db: e.db} } // MUTATION G2.13j: no engine, no pin
+ func (e *pebbleEngine) Readers() WatermarkRegistry { return e.reg }
+ 
+ // snapshotCalls counts Engine.Snapshot() invocations — a test seam (mirrors validateCalls /

@@ -1,0 +1,32 @@
+diff --git a/runtime-go/bluedb/committer.go b/runtime-go/bluedb/committer.go
+index 6a847a75..714373d1 100644
+--- a/runtime-go/bluedb/committer.go
++++ b/runtime-go/bluedb/committer.go
+@@ -180,18 +180,15 @@ func (e *pebbleEngine) processBlindPhase1(batch []*commitJob) {
+ 	//     writes rather than accepting them.
+ 	acked := false
+ 	defer func() {
+-		r := recover()
+-		if r == nil {
+-			return
+-		}
+-		e.sealed.Store(true)
+-		fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
+-		if acked {
+-			panic(r) // post-ack: nothing left to ack; never absorb it silently
+-		}
+-		err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
+-		for _, j := range batch {
+-			j.done <- CommitResult{Err: err}
++		// MUTATION G2.13k: the `&& !acked` fail-open — recover() consumes the panic
++		// unconditionally, so a post-ack fault is absorbed whole.
++		if r := recover(); r != nil && !acked {
++			e.sealed.Store(true)
++			fmt.Fprintf(os.Stderr, "bluedb: durability fault — sealing engine: %v\n", r)
++			err := fmt.Errorf("%w: durability panic: %v", ErrSealed, r)
++			for _, j := range batch {
++				j.done <- CommitResult{Err: err}
++			}
+ 		}
+ 	}()
+ 
