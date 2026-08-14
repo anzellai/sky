@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/cockroachdb/pebble/v2"
 )
 
 // collSep is the L2 collection/pk separator baked into every data user-key
@@ -146,6 +148,84 @@ func TestAuditN1IterateBoundsDoNotLeakAcrossPrefixes(t *testing.T) {
 			t.Fatalf("materializeScan swallowed the base-scan error: Err() = %v, want %v", cur.Err(), boom)
 		}
 	})
+}
+
+// TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs pins defect N5.
+//
+// readMetaHLC used to test `len(v) < hlcEncodedLen` and return `{0,0}, nil`, making a
+// TRUNCATED hlc_hi indistinguishable from an ABSENT one — the fresh-store sentinel.
+// newHLCClock floors the commit clock to that value, so a corrupt hlc_hi restarts the
+// clock from the bare wall clock and RE-ISSUES a commitTs that is already on disk. Two
+// transactions then share one MVCC data key (userKey ‖ ~commitTs) and the later Set
+// silently overwrites the earlier COMMITTED version. Irrecoverable, and invisible to
+// every read.
+//
+// The fix is `!=` and an error: corruption refuses to open rather than guessing.
+//
+// This test asserts the CONSEQUENCE, not merely the shape. "openWith returns an error"
+// alone would also pass against a wrong fix. Under the mutation openWith SUCCEEDS, the
+// clock is re-seeded from the (frozen) wall clock, and the very next Commit hands back a
+// commitTs that is NOT greater than the one already recorded on disk — which is what the
+// final assertion catches.
+func TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs(t *testing.T) {
+	dir := t.TempDir()
+	clk := &fakeClock{}
+	clk.set(5000) // frozen: the reopened clock cannot out-run the recorded ts on wall time alone
+
+	e1, err := openWith(config{dir: dir, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	recorded := put(t, e1, "orders\x1fpk1", "v1")
+	if err := e1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if recorded.IsZero() {
+		t.Fatalf("recorded commitTs is the fresh-store sentinel — the fixture proves nothing")
+	}
+
+	// Truncate hlc_hi behind the engine's back: 3 bytes where 12 are required. This is the
+	// bit-rot / partial-write shape, not a shape any writer in this package can produce.
+	raw, err := pebble.Open(dir, &pebble.Options{Comparer: skydbComparer, Logger: quietLogger{}})
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	if err := raw.Set(encodeMetaKey(metaHLCHi), []byte{0x01, 0x02, 0x03}, pebble.Sync); err != nil {
+		t.Fatalf("corrupt hlc_hi: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("raw close: %v", err)
+	}
+
+	e2, openErr := openWith(config{dir: dir, wallClock: clk.fn()})
+	if openErr != nil {
+		// The fix: refuse to open. The message must NAME the key so an operator can act on
+		// it — an anonymous "corrupt metadata" is not an actionable refusal.
+		if !strings.Contains(openErr.Error(), metaHLCHi) {
+			t.Fatalf("openWith rejected the corrupt store but the error does not name %q: %v", metaHLCHi, openErr)
+		}
+		return
+	}
+	defer e2.Close()
+
+	// It opened over a 3-byte hlc_hi. Prove the consequence rather than asserting the
+	// shape: the store MUST NOT be able to re-issue a commitTs at or below `recorded`.
+	reopenedHigh := e2.NowTs() // the restart floor the corrupt read produced
+	reissued := e2.Commit(CommitReq{
+		Writes: []VersionedWrite{{UserKey: []byte("orders\x1fpk2"), Op: OpPut, Value: []byte("v2")}},
+	})
+	if reissued.Err != nil {
+		t.Fatalf("commit after reopen: %v", reissued.Err)
+	}
+	if !recorded.Less(reissued.CommitTs) {
+		t.Fatalf("openWith accepted a truncated %q (3 bytes, want %d) and the commit clock RESTARTED: "+
+			"the reopened high-water is %+v (IsZero=%v — the fresh-store sentinel the corrupt read "+
+			"forged), so the next commitTs is %+v, NOT greater than the already-committed %+v — "+
+			"the next write to a shared key silently overwrites a committed version",
+			metaHLCHi, hlcEncodedLen, reopenedHigh, reopenedHigh.IsZero(), reissued.CommitTs, recorded)
+	}
+	t.Fatalf("openWith accepted a truncated %q (3 bytes, want %d) instead of refusing to open; "+
+		"a mis-sized meta value is corruption, not a fresh store", metaHLCHi, hlcEncodedLen)
 }
 
 // failingCursor is a base cursor that yields nothing and reports an error, standing in

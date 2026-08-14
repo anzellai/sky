@@ -312,7 +312,28 @@ func (e *pebbleEngine) drainTrimRequests() {
 	}
 }
 
-// readMetaHLC reads an HLC-valued metadata key; returns {0,0} if absent.
+// readMetaHLC reads an HLC-valued metadata key. ABSENCE is the fresh-store
+// sentinel {0,0}; a PRESENT value of the wrong length is CORRUPTION and is
+// returned as an error, not silently folded into that sentinel (N5).
+//
+// The distinction is load-bearing. hlc_hi is the restart floor: newHLCClock
+// floors the clock to it, so a corrupt hlc_hi read as {0,0} restarts the clock
+// from the bare wall clock and can RE-ISSUE a commitTs already on disk. Two
+// transactions then share a data key (the MVCC key is userKey ‖ ~commitTs), the
+// later Set silently overwrites the earlier committed version, and no read can
+// tell. That is irrecoverable, so openWith refuses to open instead of guessing.
+//
+// The length test is exact (!=, not <) and safe to rely on: every writer emits
+// exactly hlcEncodedLen bytes via encodeHLC (committer.go, gc.go), an absent key
+// returns pebble.ErrNotFound and is handled above, and nothing ever Sets an
+// empty meta value.
+//
+// TRADE-OFF, deliberately taken: this makes any future WIDENING of a meta value
+// (say a 13-byte hlc_hi carrying an extra field) a hard refuse-to-open for older
+// binaries rather than a lenient truncating read — and there is no repair verb
+// yet, so a store corrupted here needs an out-of-band fix. That is the correct
+// side to err on: refusing to open is recoverable by rolling the binary forward,
+// re-issuing a committed commitTs is not.
 func readMetaHLC(db *pebble.DB, name string) (HLC, error) {
 	v, closer, err := db.Get(encodeMetaKey(name))
 	if err == pebble.ErrNotFound {
@@ -322,8 +343,11 @@ func readMetaHLC(db *pebble.DB, name string) (HLC, error) {
 		return HLC{}, err
 	}
 	defer closer.Close()
-	if len(v) < hlcEncodedLen {
-		return HLC{}, nil
+	if len(v) != hlcEncodedLen {
+		return HLC{}, fmt.Errorf(
+			"bluedb: corrupt metadata %q: got %d bytes, want %d — refusing to open "+
+				"(a mis-sized hlc_hi would restart the commit clock and re-issue a committed commitTs)",
+			name, len(v), hlcEncodedLen)
 	}
 	return decodeHLC(v), nil
 }
