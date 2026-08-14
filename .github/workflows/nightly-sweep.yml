@@ -297,7 +297,7 @@ jobs:
         # issue #166 family and reads exactly like a codegen regression.
         run: |
           cd runtime-go
-          CGO_ENABLED=0 go build ./... 2>&1 | tail -5 || true
+          CGO_ENABLED=0 go build -tags pebblegozstd ./... 2>&1 | tail -5 || true
           go version
       - name: 'Gate — behavioural corpus (harness tier T2: 383 assertions)'
         # The whole tier, not named gates, so a gate ADDED at T2 later is picked
