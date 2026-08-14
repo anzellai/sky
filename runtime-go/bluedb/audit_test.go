@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/cockroachdb/pebble/v2/vfs"
@@ -586,4 +587,214 @@ func TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs(t *testing.T) {
 	}
 	close(stop)
 	<-done
+}
+
+// TestAuditN4CloseDoesNotPanicConcurrentSnapshot pins the first half of defect N4: a
+// reader pinned across Close.
+//
+// Every reader entry point ends in a pebble call that PANICS on a closed DB rather than
+// returning an error — Snapshot.NewIter → DB.newIter (db.go:1061-1062) and
+// DB.NewSnapshot (db.go:2062) both do `if err := d.closed.Load(); err != nil { panic }`.
+// Engine.Snapshot's isClosed() check was therefore a TOCTOU, not a guard: Close could
+// land between the check and the NewSnapshot. snapshotAt did not check at all. And Close
+// neither waited for live readers nor invalidated them, so it closed the handle out from
+// under whatever was mid-scan.
+//
+// The contract asserted here is total: under arbitrary interleaving, a snapshot request
+// either succeeds or reports ErrClosed, and nothing panics — including reads issued on a
+// reader that was pinned before Close began.
+func TestAuditN4CloseDoesNotPanicConcurrentSnapshot(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(11000)
+	e := openDisk(t, clk.fn())
+	put(t, e, "n4-key", "v1")
+
+	const workers = 16
+	stop := make(chan struct{})
+	finished := make(chan error, workers)
+
+	for w := 0; w < workers; w++ {
+		go func() {
+			// A panic anywhere in here fails the test rather than killing the process
+			// silently in another goroutine.
+			defer func() {
+				if r := recover(); r != nil {
+					finished <- fmt.Errorf("PANIC in a concurrent reader: %v", r)
+				}
+			}()
+			for {
+				select {
+				case <-stop:
+					finished <- nil
+					return
+				default:
+				}
+
+				r, err := e.Snapshot()
+				if err != nil {
+					if !errors.Is(err, ErrClosed) {
+						finished <- fmt.Errorf("Snapshot: %v, want nil or ErrClosed", err)
+						return
+					}
+					finished <- nil // closed — this worker is done
+					return
+				}
+				// Use the reader: Get and Iterate are the two paths that reach
+				// pebble's panicking newIter.
+				r.Get([]byte("n4-key"))
+				c := r.Iterate(nil)
+				for c.Next() {
+				}
+				c.Close()
+				r.Close()
+
+				// The time-travel path (reg == nil, no closed-check before the fix) —
+				// the arm the first plan missed.
+				tr := e.snapshotAt(HLC{WallMs: 11000, Logical: 1})
+				tr.Get([]byte("n4-key"))
+				tr.Close()
+			}
+		}()
+	}
+
+	// Let the workers get into the loop, then close underneath them.
+	time.Sleep(20 * time.Millisecond)
+	if err := e.Close(); err != nil {
+		t.Fatalf("Close under concurrent readers: %v — want nil (the drain must let every "+
+			"in-flight reader finish, not fail and not force the handle shut)", err)
+	}
+	close(stop)
+
+	for i := 0; i < workers; i++ {
+		select {
+		case err := <-finished:
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("a reader goroutine never finished — Close returned while a reader was " +
+				"still blocked or wedged")
+		}
+	}
+
+	// After a completed Close the answer is a clean refusal, not a panic.
+	if _, err := e.Snapshot(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Snapshot() after Close = %v, want ErrClosed", err)
+	}
+	if got := e.snapshotAt(HLC{WallMs: 11000, Logical: 1}).Err(); !errors.Is(got, ErrClosed) {
+		t.Fatalf("snapshotAt() after Close reports Err() = %v, want ErrClosed", got)
+	}
+}
+
+// TestAuditN4CloseWaitsForLiveReaders pins the other half of N4 — and it is the test the
+// naive fix cannot pass.
+//
+// The obvious repair (hold closeMu.Lock() across the reader drain) DEADLOCKS
+// deterministically, not under load: the reader here is held by an open transaction, and
+// a transaction releases its reader on the way out of Txn.Commit → tx.e.Commit →
+// isClosed() → closeMu.RLock(). With Close holding (or waiting for) the write lock, that
+// RLock blocks, the deferred tx.reader.Close() never runs, the refcount never drops, and
+// Close waits out its entire window every time any transaction is open. Hence the
+// three-phase Close: the `closed` FLAG — not the lock — is what stops new pins, so the
+// drain runs with closeMu released.
+//
+// The transaction is deliberate. A bare Snapshot reader would release without ever
+// touching closeMu, and the naive implementation would pass.
+func TestAuditN4CloseWaitsForLiveReaders(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(13000)
+	e := openDisk(t, clk.fn())
+	put(t, e, "n4-live", "v1")
+
+	tx, err := e.Begin()
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- e.closeWithin(20 * time.Second) }()
+
+	// Close must NOT complete while the transaction's reader is pinned.
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned (%v) while a reader was still pinned — it closed the Pebble "+
+			"handle underneath a live reader, whose next operation panics inside pebble", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	// The engine is sealed but NOT closed: the pinned reader still reads.
+	if _, found := tx.Get([]byte("n4-live")); !found {
+		t.Fatalf("a reader pinned before Close cannot read during the drain — the view was " +
+			"torn down under it")
+	}
+
+	// Release it the way a real caller does. e.Commit refuses (ErrClosed — C1), and the
+	// deferred reader.Close() is what unblocks the drain.
+	if err := tx.Commit(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("tx.Commit() during close = %v, want ErrClosed", err)
+	}
+
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close after the reader was released = %v, want nil", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatalf("Close never returned after its last reader was released — the drain is " +
+			"deadlocked against the reader-release path (closeMu held across the drain)")
+	}
+}
+
+// TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs is the arm that keeps the
+// mitigation honest: a drain that can wait forever is a hang, and a drain wrapped in
+// sync.Once that gives up is unrecoverable — the Once is consumed, so Close can never be
+// retried and the directory lock is held for the life of the process.
+//
+// The documented choice: Close REPORTS (ErrReadersLive, naming the count), leaves the
+// Pebble handle OPEN — closing it would panic the leaked reader's next operation, which
+// is the very defect N4 is about — and stays retryable. Releasing the reader and calling
+// Close again completes it.
+func TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(17000)
+	e := openDisk(t, clk.fn())
+	put(t, e, "n4-leak", "v1")
+
+	leaked, err := e.Snapshot() // deliberately never Closed until the end
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- e.closeWithin(150 * time.Millisecond) }()
+
+	select {
+	case err := <-closed:
+		if !errors.Is(err, ErrReadersLive) {
+			t.Fatalf("Close with a leaked reader = %v, want ErrReadersLive — a bounded, "+
+				"named report is the whole point of the arm", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatalf("Close HUNG on a leaked reader — the drain is unbounded")
+	}
+
+	// The handle is still open, which is what makes the report safe: the leaked reader
+	// works instead of panicking.
+	if v, _, ok := leaked.Get([]byte("n4-leak")); !ok || string(v) != "v1" {
+		t.Fatalf("leaked reader Get = %q,%v after the failed Close — want v1,true; the engine "+
+			"must not tear the handle down under a reader it just refused to wait for", v, ok)
+	}
+
+	// Retryable: release, close again, done. (A sync.Once here would make this
+	// impossible — the engine would be stuck open forever.)
+	leaked.Close()
+	if err := e.Close(); err != nil {
+		t.Fatalf("Close retry after releasing the leaked reader = %v, want nil — Close must "+
+			"not be consumed by a failed drain", err)
+	}
+	// And terminal: a further Close replays the verdict rather than double-closing the DB
+	// (pebble panics on that).
+	if err := e.Close(); err != nil {
+		t.Fatalf("third Close = %v, want the replayed nil verdict", err)
+	}
 }

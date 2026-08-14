@@ -1,6 +1,7 @@
 package bluedb
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -118,9 +119,22 @@ type pebbleEngine struct {
 	changeSubs    map[uint64]*changeFeedSub
 	changeSubNext uint64
 
-	closeMu   sync.Mutex
-	closed    bool
-	closeOnce sync.Once
+	// Close is a THREE-PHASE, RETRYABLE state machine (defect N4) — not a sync.Once.
+	//
+	//	closed   — phase 1. Set under closeMu.Lock(). From here on no NEW reader can be
+	//	           pinned and no commit is accepted. It is the FLAG, not the lock, that
+	//	           holds that line, which is what lets phase 2 run with closeMu released.
+	//	dbClosed — phase 3. The Pebble handle is gone; the engine is terminal.
+	//	closeErr — the result of e.db.Close(), replayed to every later Close call so a
+	//	           second Close (t.Cleanup after an explicit one, say) is idempotent
+	//	           rather than a second db.Close() — which pebble PANICS on (db.go:1698).
+	//
+	// closeMu is an RWMutex so the hot read paths (Commit's isClosed, beginSnapshot's
+	// check-and-pin) take it shared and never serialize against each other.
+	closeMu  sync.RWMutex
+	closed   bool
+	dbClosed bool
+	closeErr error
 }
 
 // durableHi returns the highest durably-applied commitTs (guards the GC clamp).
@@ -265,8 +279,34 @@ func (e *pebbleEngine) leaseReaper() {
 // RegisterAt serializes against GC's advanceThreshold (which reads durableHi under durMu
 // then takes w.mu — never both at once), so GC cannot advance T past readTs between the pin
 // and the registration. durMu is never nested under w.mu anywhere, so there is no lock cycle.
+// Defect N4: the closed-check and the pin are taken under ONE closeMu.RLock. A bare
+// isClosed() followed by db.NewSnapshot() is a TOCTOU against Close — NewSnapshot on a
+// closed DB panics unconditionally (pebble db.go:2062 → d.closed.Load()) — and a reader
+// pinned after Close read its refcount is invisible to the drain. Holding the read lock
+// across RegisterAt makes the two mutually exclusive with Close's phase 1: either the
+// pin is registered before `closed` is set (and the drain waits for it), or the check
+// sees `closed` and refuses. There is no third interleaving.
+//
+// The section takes no unbounded wait (no channel receive, no lock held by a blocked
+// party), so Close's pending Lock() — which blocks new RLocks behind it — is never
+// starved and never waits on a reader.
+//
+// RESIDUAL, recorded rather than hidden. The reader returned here goes to Begin() and is
+// closed by Txn.Commit/Abort, so it carries only the watermark token as its liveness pin
+// — not the outer pin trackedReader adds on the Snapshot()/snapshotAt paths. Because
+// pebbleReader.Close() releases that token BEFORE it closes the *pebble.Snapshot, a
+// transaction ending at the exact instant the drain completes can still have an unclosed
+// snapshot when phase 3 runs. The consequence is bounded and cannot corrupt or panic:
+// e.db.Close() accumulates a "leaked snapshots" error (pebble db.go:1818 — the check is
+// the LAST statement, so the close itself completed), and the reader's subsequent
+// snap.Close() is safe against a closed DB (snapshot.go:133-141 only takes db.mu and
+// unlinks; maybeScheduleCompaction bails at compaction.go:2025 on d.closed). Closing it
+// properly means releasing the pin as pebbleReader.Close's LAST statement, which is an
+// edit to reader.go — owned by another workstream this commit does not touch.
 func (e *pebbleEngine) beginSnapshot() (*pebbleReader, error) {
-	if e.isClosed() {
+	e.closeMu.RLock()
+	defer e.closeMu.RUnlock()
+	if e.closed {
 		return nil, ErrClosed
 	}
 	e.durMu.Lock()
@@ -408,18 +448,96 @@ func (e *pebbleEngine) Snapshot() (Reader, error) {
 		// pointer, and every `if r != nil` at a call site would be wrong.
 		return nil, err
 	}
-	return r, nil
+	return e.track(r), nil
 }
 
-// snapshotAt pins a reader at an EXPLICIT readTs (time-travel read). Not part of the
-// public Engine surface (§3.1 drops caller-supplied readTs to close the 2a TOCTOU);
-// it exercises the MVCC read-resolution core (§2.5) at arbitrary versions and backs
-// the versioned round-trip / snapshot-isolation tests.
-func (e *pebbleEngine) snapshotAt(readTs HLC) Reader {
-	return &pebbleReader{
-		snap:   e.db.NewSnapshot(),
-		readTs: readTs,
+// track wraps a reader in the close-drain outer pin (N4). See trackedReader.
+func (e *pebbleEngine) track(r *pebbleReader) *trackedReader {
+	return &trackedReader{pebbleReader: r, reg: e.reg, outer: e.reg.pin()}
+}
+
+// trackedReader is a reader whose liveness pin outlives its own Close work.
+//
+// pebbleReader.Close() releases the watermark token BEFORE it closes the
+// *pebble.Snapshot. If that token were the only thing the close drain waited on, the
+// drain could complete in the gap between those two statements — Close would then run
+// e.db.Close() while a snapshot is still registered with pebble, which surfaces as a
+// "leaked snapshots" error out of DB.Close (db.go:1818). The outer pin is taken at
+// construction and dropped only AFTER the inner Close has returned, so a reader counts
+// as live for the whole of its teardown, not just up to its watermark release.
+//
+// It exists because reader.go is owned by another workstream in this cycle; the
+// alternative — an engine handle on pebbleReader itself, dropped as its last
+// statement — is the same fix one layer down and should replace this when that file is
+// free. Everything Reader requires other than Close is promoted from the embedded
+// *pebbleReader, so there is no second implementation of the read path to keep in sync.
+type trackedReader struct {
+	*pebbleReader
+	reg   *watermarkRegistry
+	outer ReaderToken
+	once  sync.Once
+}
+
+var _ Reader = (*trackedReader)(nil)
+
+func (r *trackedReader) Close() {
+	// once: a double Close must not drop a pin the registry has since reissued to a
+	// different reader (tokens are monotone, but unpin is by value).
+	r.once.Do(func() {
+		r.pebbleReader.Close()
+		r.reg.unpin(r.outer)
+	})
+}
+
+// deadReader is the Reader a closed engine hands back on the legacy snapshotAt path,
+// which has no error result to return (see snapshotAt). Every read answers "nothing,
+// and here is why" — Err() is ErrClosed, so a caller that fails closed on Err (as
+// Txn.Commit does) cannot mistake it for an empty store.
+type deadReader struct{ err error }
+
+var _ Reader = (*deadReader)(nil)
+
+func (r *deadReader) Get([]byte) ([]byte, HLC, bool) { return nil, HLC{}, false }
+func (r *deadReader) Iterate([]byte) Cursor          { return &pebbleCursor{err: r.err} }
+func (r *deadReader) Err() error                     { return r.err }
+func (r *deadReader) ReadTs() HLC                    { return HLC{} }
+func (r *deadReader) Close()                         {}
+
+// snapshotAtChecked pins a reader at an EXPLICIT readTs (time-travel read). Not part of
+// the public Engine surface (§3.1 drops caller-supplied readTs to close the 2a TOCTOU);
+// it exercises the MVCC read-resolution core (§2.5) at arbitrary versions and backs the
+// versioned round-trip / snapshot-isolation tests.
+//
+// Defect N4, the arm the first plan missed: this path used to call db.NewSnapshot()
+// with NO closed-check at all (an immediate panic if Close had run) and to build its
+// reader with reg == nil — so it took no token, and a live time-travel reader was
+// INVISIBLE to the close drain. Both are fixed here: the check-and-pin is one
+// closeMu.RLock section, exactly as beginSnapshot's.
+//
+// The pin is reg.pin(), NOT a `live` registration: a time-travel readTs is deliberately
+// allowed to sit below the GC floor, so registering it would either drag T back down or
+// (via RegisterAt) fail the read with ErrSnapshotTooOld. Liveness and the GC floor are
+// separate questions and this is the caller that proves it.
+func (e *pebbleEngine) snapshotAtChecked(readTs HLC) (Reader, error) {
+	e.closeMu.RLock()
+	defer e.closeMu.RUnlock()
+	if e.closed {
+		return nil, ErrClosed
 	}
+	return e.track(&pebbleReader{snap: e.db.NewSnapshot(), readTs: readTs}), nil
+}
+
+// snapshotAt is the single-result form snapshotAtChecked's callers use. It is kept
+// because the signature is load-bearing for the ported tests, and a closed engine is
+// not a state any of them reach; the closed case returns a deadReader (Err() ==
+// ErrClosed) rather than a nil Reader, so a caller that ignores the distinction gets an
+// answer that fails closed instead of a nil dereference.
+func (e *pebbleEngine) snapshotAt(readTs HLC) Reader {
+	r, err := e.snapshotAtChecked(readTs)
+	if err != nil {
+		return &deadReader{err: err}
+	}
+	return r
 }
 
 // Commit enqueues the request to the single committer and blocks until durable.
@@ -514,25 +632,91 @@ func (e *pebbleEngine) releaseLeases(tickets []*leaseTicket) {
 	}
 }
 
+// isClosed reports whether Close's phase 1 has run. Deliberately a SHORT shared lock
+// with nothing else inside it: e.Commit calls this on every write, and widening it over
+// e.Commit's blindHotLeases (which blocks on <-t.granted) would hold the read side of
+// closeMu across an unbounded wait and wedge Close's phase 1 behind a lease queue.
 func (e *pebbleEngine) isClosed() bool {
-	e.closeMu.Lock()
-	defer e.closeMu.Unlock()
+	e.closeMu.RLock()
+	defer e.closeMu.RUnlock()
 	return e.closed
 }
 
-// Close drains the committer and closes Pebble.
-func (e *pebbleEngine) Close() error {
-	var err error
-	e.closeOnce.Do(func() {
-		e.closeMu.Lock()
+// defaultCloseDrain bounds how long Close waits for live readers to be released before
+// it gives up and reports (see Close). Generous enough that no correct caller — one that
+// closes its readers and its transactions — ever notices it; short enough that a leak is
+// a report at a human timescale rather than a hang.
+const defaultCloseDrain = 10 * time.Second
+
+// ErrReadersLive is returned by Close when live readers were still pinned after the
+// drain window. The engine is NOT closed in that case: the Pebble handle is still open
+// and Close can be called again once the readers are released.
+//
+// (It belongs in engine.go's sentinel block with the others; it is declared here because
+// that file is owned by another workstream in this cycle.)
+var ErrReadersLive = errors.New("bluedb: readers still live at close")
+
+// Close quiesces the engine in THREE phases, and the lock is RELEASED between them.
+// That structure is the fix for defect N4, and the obvious alternative is not merely
+// slower — it deadlocks deterministically.
+//
+//  1. under closeMu.Lock(): set closed, close(e.ch), close(e.reaperStop). UNLOCK.
+//  2. NO lock held: wg.Wait() for the committer + reaper, then wait for every live
+//     reader to be released, bounded by `timeout`.
+//  3. under closeMu.Lock(): e.db.Close().
+//
+// WHY THE LOCK CANNOT BE HELD ACROSS PHASE 2. Every reader-release path runs through
+// code that takes closeMu: Txn.Commit → e.Commit → isClosed(). Go's RWMutex blocks new
+// RLocks once a writer is waiting, so if Close held (or were waiting for) the write lock
+// across the drain, an open transaction's Commit would block in isClosed(), its deferred
+// tx.reader.Close() would never run, the reader would never be released, and Close would
+// burn its entire timeout — every time any transaction is open, not under load. What
+// keeps the line during phase 2 is the `closed` FLAG, which is already set: every pin
+// site (beginSnapshot, snapshotAtChecked) checks it under a shared lock, so no NEW
+// reader can appear while the drain runs. The flag is the barrier; the lock is not.
+//
+// WHY THE DRAIN IS BOUNDED AND WHY Close IS RETRYABLE. This used to be a sync.Once. A
+// fallible drain inside a Once is unrecoverable: a drain that times out consumes the
+// Once, so Close can never be retried — the directory lock is then held for the life of
+// the process with no way to release it, or (if we forced db.Close() anyway) the DB is
+// closed underneath readers whose very next operation panics inside pebble. So the
+// choice here is explicit: on a drain timeout Close REPORTS (ErrReadersLive, naming the
+// count) and leaves the engine open and closeable. The engine never closes the Pebble
+// handle while a reader is pinned, which is precisely why no reader can be raced into a
+// panic. Releasing the leaked reader and calling Close again completes the close.
+func (e *pebbleEngine) Close() error { return e.closeWithin(defaultCloseDrain) }
+
+func (e *pebbleEngine) closeWithin(timeout time.Duration) error {
+	// ── Phase 1: seal. Refuse new work; stop the background goroutines. ──
+	e.closeMu.Lock()
+	if e.dbClosed {
+		defer e.closeMu.Unlock()
+		return e.closeErr // terminal: replay the verdict, never db.Close() twice (pebble panics)
+	}
+	if !e.closed {
 		e.closed = true
 		close(e.ch) // committer drains remaining jobs then returns
 		if e.reaperStop != nil {
 			close(e.reaperStop) // lease reaper exits (§6.3)
 		}
-		e.closeMu.Unlock()
-		e.wg.Wait()
-		err = e.db.Close()
-	})
-	return err
+	}
+	e.closeMu.Unlock()
+
+	// ── Phase 2: quiesce. NO lock held — see the doc comment. ──
+	e.wg.Wait() // idempotent: returns immediately on a retry
+	if live := e.reg.waitDrained(timeout); live > 0 {
+		return fmt.Errorf("%w: %d reader(s) still pinned after %s — the Pebble handle is "+
+			"deliberately still OPEN (closing it would panic the next operation on those "+
+			"readers); release them and call Close again", ErrReadersLive, live, timeout)
+	}
+
+	// ── Phase 3: close the handle. ──
+	e.closeMu.Lock()
+	defer e.closeMu.Unlock()
+	if e.dbClosed { // a concurrent Close won the race and already did it
+		return e.closeErr
+	}
+	e.closeErr = e.db.Close()
+	e.dbClosed = true
+	return e.closeErr
 }

@@ -1,6 +1,9 @@
 package bluedb
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // watermarkRegistry is the WatermarkRegistry (§5.2): it atomically picks a reader's
 // readTs and records its token in one critical section (closes the grill 2a TOCTOU),
@@ -22,6 +25,25 @@ type watermarkRegistry struct {
 	// nil ⇒ no clamp (a hand-built registry with no engine behind it, e.g. unit tests).
 	durableHi func() HLC
 	threshold HLC // T — persisted, monotone (advanced by phase-1b GC)
+
+	// pins is the LIVENESS set: every token that may still touch the engine's Pebble
+	// handle. It is a SUPERSET of live — every GC-floor token is also a pin, but a pin
+	// need not floor GC (see pin(), used by the time-travel read path and by the
+	// close-ordering outer pin). It exists for defect N4: Close must not hand the DB to
+	// pebble's Close while a reader is still holding a snapshot, because every later
+	// operation on that reader (Snapshot.NewIter → DB.newIter, db.go:1061-1062) PANICS
+	// unconditionally on a closed DB. The count of live readers is the only thing that
+	// tells Close when it is safe to proceed, and it must be observable WITHOUT taking
+	// the engine's closeMu (holding closeMu across the drain deadlocks — see Close).
+	//
+	// Keyed by token rather than counted, so a double Release/unpin is idempotent, the
+	// way delete(live, tok) already is. A counter would go negative and let Close race
+	// past a still-live reader.
+	pins map[ReaderToken]struct{}
+	// drained is poked (non-blocking, buffered 1) whenever pins empties, so waitDrained
+	// blocks instead of spinning. Buffered so a release that happens between the
+	// waiter's check and its select is not a lost wakeup.
+	drained chan struct{}
 }
 
 func newWatermarkRegistry(highWater func() HLC, persistedThreshold HLC) *watermarkRegistry {
@@ -29,6 +51,8 @@ func newWatermarkRegistry(highWater func() HLC, persistedThreshold HLC) *waterma
 		live:      make(map[ReaderToken]HLC),
 		highWater: highWater,
 		threshold: persistedThreshold,
+		pins:      make(map[ReaderToken]struct{}),
+		drained:   make(chan struct{}, 1),
 	}
 }
 
@@ -43,7 +67,75 @@ func (w *watermarkRegistry) Register() (ReaderToken, HLC, error) {
 	w.nextID++
 	tok := w.nextID
 	w.live[tok] = readTs
+	w.pins[tok] = struct{}{}
 	return tok, readTs, nil
+}
+
+// pin issues a LIVENESS-ONLY token: it counts against the close drain (N4) but does NOT
+// enter `live`, so it does not floor GC. Two callers need exactly that shape:
+//
+//   - the time-travel read path (snapshotAt), which deliberately reads BELOW the GC
+//     floor and must not be able to pull T back down or fail on ErrSnapshotTooOld;
+//   - the close-ordering outer pin (trackedReader), which is held ACROSS the inner
+//     reader's own Release so the drain cannot complete until the *pebble.Snapshot is
+//     actually closed, not merely until the GC token was handed back.
+//
+// Released by unpin (not Release — there is no `live` entry to delete).
+func (w *watermarkRegistry) pin() ReaderToken {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.nextID++
+	tok := w.nextID
+	w.pins[tok] = struct{}{}
+	return tok
+}
+
+// unpin drops a liveness pin. Idempotent.
+func (w *watermarkRegistry) unpin(tok ReaderToken) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.unpinLocked(tok)
+}
+
+func (w *watermarkRegistry) unpinLocked(tok ReaderToken) {
+	if _, ok := w.pins[tok]; !ok {
+		return
+	}
+	delete(w.pins, tok)
+	if len(w.pins) == 0 {
+		select {
+		case w.drained <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// waitDrained blocks until no reader is pinned, or until timeout elapses, and returns
+// the number of readers STILL pinned (0 ⇒ drained). It takes only w.mu — never the
+// engine's closeMu, which is the whole point: Close releases closeMu before calling
+// this, because every reader-release path runs through code that takes closeMu
+// (Txn.Commit → e.Commit → isClosed()), so a drain under the close lock would wait on
+// readers that are themselves waiting on the drain. See Close for the full argument.
+func (w *watermarkRegistry) waitDrained(timeout time.Duration) int {
+	deadline := time.Now().Add(timeout)
+	for {
+		w.mu.Lock()
+		n := len(w.pins)
+		w.mu.Unlock()
+		if n == 0 {
+			return 0
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return n
+		}
+		t := time.NewTimer(remaining)
+		select {
+		case <-w.drained: // a release emptied the set (or a stale poke) — re-check
+		case <-t.C:
+		}
+		t.Stop()
+	}
 }
 
 // RegisterAt records a token at an EXPLICIT readTs (the begin-snapshot path, §3.4). Unlike
@@ -59,6 +151,7 @@ func (w *watermarkRegistry) RegisterAt(readTs HLC) (ReaderToken, error) {
 	w.nextID++
 	tok := w.nextID
 	w.live[tok] = readTs
+	w.pins[tok] = struct{}{}
 	return tok, nil
 }
 
@@ -74,10 +167,13 @@ func (w *watermarkRegistry) Advance(tok ReaderToken, readTs HLC) error {
 	return nil
 }
 
+// Release retires a reader token: it stops flooring GC AND stops counting against the
+// close drain (N4). Idempotent in both halves.
 func (w *watermarkRegistry) Release(tok ReaderToken) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.live, tok)
+	w.unpinLocked(tok)
 }
 
 func (w *watermarkRegistry) Threshold() HLC {
