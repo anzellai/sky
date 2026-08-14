@@ -1,3 +1,3 @@
 PROBE gate=G2.6 state=FAIL root=<scratch-worktree>
-  fewer injection sites than the recorded manifest: 3 enumerated across 10 corpus file(s), 4 recorded
+  fewer injection sites than the recorded manifest: 4 enumerated across 10 corpus file(s), 5 recorded
   runtime-go/bluedb/audit_test.go::TestAuditN3SynchronousWalFaultStillErrorsTheAck is in the recorded manifest but constructs no errorfs.InjectorFunc( — the fault it injects (sync of the *.log WAL inside Apply — the fatal must be folded into the ack (C8)) is no longer exercised anywhere

@@ -1,0 +1,6 @@
+PROBE gate=G2.13i state=FAIL root=<scratch-worktree>
+  corrupt keys fail the operation closed rather than being skipped is not proven: 3/4 pinned fixture(s) reported a passing event
+  TestAuditS1ChangelogTailFailsClosedOnACorruptKey did not report a passing `go test -json` event (it FAILED)
+  TestAuditS1ChangelogTailFailsClosedOnACorruptKey: === RUN   TestAuditS1ChangelogTailFailsClosedOnACorruptKey
+  TestAuditS1ChangelogTailFailsClosedOnACorruptKey:     audit_test.go:2253: Tail walked the full window over a malformed changelog key and returned 3 entries with err = <nil>. A changelog key that does not parse must fail the read, never be skipped. Tail backs changelogTailChanges, the spill fallback that computes a transaction's SSI validation window, so a skipped key silently drops a COMMITTED change out of that window and the phantom that conflicts with it is never seen. That is under-rejection, i.e. a serializability break, and the truncated window is indistinguishable to the caller from a complete one. Failing closed is already plumbed: changelogTailChanges turns the error into ErrConflict and the driver re-Begins at a fresher readTs.
+  TestAuditS1ChangelogTailFailsClosedOnACorruptKey: --- FAIL: TestAuditS1ChangelogTailFailsClosedOnACorruptKey (0.17s)

@@ -3,8 +3,8 @@ PROBE gate=G2.13f state=FAIL root=<scratch-worktree>
   TestAuditN4CloseWaitsForLiveReaders did not report a passing `go test -json` event (it FAILED)
   TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs did not report a passing `go test -json` event (it FAILED)
   TestAuditN4CloseWaitsForLiveReaders: === RUN   TestAuditN4CloseWaitsForLiveReaders
-  TestAuditN4CloseWaitsForLiveReaders:     audit_test.go:736: Close returned (leaked snapshots: 1 open snapshots on DB 0xa3a71520508) while a reader was still pinned — it closed the Pebble handle underneath a live reader, whose next operation panics inside pebble
+  TestAuditN4CloseWaitsForLiveReaders:     audit_test.go:789: Close returned (leaked snapshots: 1 open snapshots on DB 0x543df2740508) while a reader was still pinned — it closed the Pebble handle underneath a live reader, whose next operation panics inside pebble
   TestAuditN4CloseWaitsForLiveReaders: --- FAIL: TestAuditN4CloseWaitsForLiveReaders (0.05s)
   TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs: === RUN   TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs
-  TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs:     audit_test.go:790: Close with a leaked reader = leaked snapshots: 1 open snapshots on DB 0xa3a71520f08, want ErrReadersLive — a bounded, named report is the whole point of the arm
+  TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs:     audit_test.go:843: Close with a leaked reader = leaked snapshots: 1 open snapshots on DB 0x543df2740a08, want ErrReadersLive — a bounded, named report is the whole point of the arm
   TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs: --- FAIL: TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs (0.05s)

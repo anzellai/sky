@@ -1,0 +1,9 @@
+PROBE gate=G2.13h state=FAIL root=<scratch-worktree>
+  the commit/validation route fails closed is not proven: 4/6 pinned fixture(s) reported a passing event
+  TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow did not report a passing `go test -json` event (it FAILED)
+  TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow/control/a-well-formed-payload-makes-the-later-txn-conflict did not report a passing `go test -json` event (it FAILED)
+  TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow: === RUN   TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow
+  TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow/control/a-well-formed-payload-makes-the-later-txn-conflict: === RUN   TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow/control/a-well-formed-payload-makes-the-later-txn-conflict
+  TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow/control/a-well-formed-payload-makes-the-later-txn-conflict:     audit_test.go:1321: control: the txn that READ "n6-key" committed (<nil>) even though a blind job in the SAME drain window changed it. `pending` + validate() do not detect this conflict at all, so the main arm below cannot distinguish a holed window from a broken validator — fix this before trusting either.
+  TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow/control/a-well-formed-payload-makes-the-later-txn-conflict: --- FAIL: TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow/control/a-well-formed-payload-makes-the-later-txn-conflict (0.10s)
+  TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow: --- FAIL: TestAuditN6UndecodablePayloadCannotHoleTheValidationWindow (0.19s)
