@@ -25,7 +25,12 @@
 //! 3. **The dev tree is checked for contamination** after every `git apply`:
 //!    the patch's declared `targets` must be exactly as clean as they were
 //!    before the run.
-//! 4. **The canary `G0.C`** — asserts `true`, paired with a no-op patch. A
+//! 4. **HEAD skew is refused up front** ([`head_skew`]). The worktree is HEAD,
+//!    so an uncommitted change to anything the probe compiles or reads is
+//!    invisible to it — while the parent, which classifies its output, is built
+//!    from exactly those files. The runner will not start against a tree that
+//!    disagrees with HEAD.
+//! 5. **The canary `G0.C`** — asserts `true`, paired with a no-op patch. A
 //!    correct verifier reports `VACUOUS`; `PROVEN` is a harness FAIL, because a
 //!    gate that cannot go red cannot have been proven. The canary's patch also
 //!    touches a sentinel path, so the runner can assert the *worktree* was
@@ -179,6 +184,95 @@ struct ProbeResult {
     root: String,
     output: String,
     exit_ok: bool,
+}
+
+/// The trees the probe compiles or reads. It takes ALL of them from the scratch
+/// worktree, and `git worktree add --detach HEAD` pins that to the last COMMIT.
+const MEASURED_FROM_HEAD: &[&str] = &[
+    "rust",
+    "runtime-go",
+    "sky-stdlib",
+    "examples",
+    "docs/bluedb",
+];
+
+/// The paths under [`MEASURED_FROM_HEAD`] that legitimately differ from HEAD
+/// during a run, because the runner reads or writes them in the DEVELOPER's
+/// tree by design:
+///
+/// * `gate-state.tsv` and `*.expected.txt` are the runner's own outputs — it
+///   writes them mid-run, so including them would make every second run refuse.
+/// * `mutations/*.patch` is read from the developer's tree and applied INTO the
+///   worktree, so an uncommitted patch is the one actually measured. There is
+///   no skew to warn about; that is the whole point of `--verify-mutations`
+///   while authoring a falsification.
+fn read_from_the_dev_tree(p: &str) -> bool {
+    p == "docs/bluedb/gate-state.tsv"
+        || p.ends_with(".expected.txt")
+        || (p.starts_with("docs/bluedb/mutations/") && p.ends_with(".patch"))
+}
+
+/// `XY <path>`, or `XY <orig> -> <new>` for a rename. The NEW path is the one
+/// that exists to be measured.
+fn porcelain_path(line: &str) -> Option<String> {
+    let rest = line.get(3..)?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(match rest.split_once(" -> ") {
+        Some((_, new)) => new.trim_matches('"').to_string(),
+        None => rest.trim_matches('"').to_string(),
+    })
+}
+
+/// **HEAD skew** — the working-tree changes the probe cannot see.
+///
+/// Everything the probe compiles or reads comes from the scratch worktree, and
+/// that worktree is HEAD. A change that exists only in the developer's working
+/// tree is therefore INVISIBLE to the child — while the PARENT, which applies
+/// the patch, classifies the output and decides PROVEN or VACUOUS, is the
+/// binary the developer just built FROM that working tree. The two run
+/// different code, silently, and the verdict describes a program nobody wrote.
+///
+/// This is not hypothetical. G0.3's falsification reported `VACUOUS` for a full
+/// session against a fix that was already written: `sky_compiler`'s
+/// `SKY_BLUEDB_COMPILER` support was uncommitted, so the parent lent the probe a
+/// compiler and the child — built from a HEAD that had never heard of the
+/// variable — found none in the pristine worktree and went red with "neither
+/// rust/target/release/sky nor sky-out/sky exists". Red for the wrong reason is
+/// exactly what the discriminating classifier is built to refuse, so it refused,
+/// correctly, and every attempt to debug it read the parent's source and found
+/// nothing wrong with it. Committing the fix — nothing else — turned it
+/// `PROVEN`.
+///
+/// The failure was silent in the direction that wastes a session, and the same
+/// skew in the other direction (an uncommitted gate body that cannot fail) would
+/// mint a `PROVEN` for code that is not in the repository. So the runner
+/// refuses to start rather than measure a tree that is not the one under the
+/// developer's cursor. An unrunnable `git status` counts as skew: unknown
+/// provenance is not evidence of freshness (cf. [`targets_moved`]).
+fn head_skew(root: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .args(["status", "--porcelain", "--"])
+        .args(MEASURED_FROM_HEAD)
+        .current_dir(root)
+        .output();
+    let o = match out {
+        Ok(o) if o.status.success() => o,
+        Ok(o) => {
+            return vec![format!(
+                "!! `git status` failed: {}",
+                String::from_utf8_lossy(&o.stderr).trim()
+            )]
+        }
+        Err(e) => return vec![format!("!! `git status` could not run: {e}")],
+    };
+    String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter(|l| porcelain_path(l).is_none_or(|p| !read_from_the_dev_tree(&p)))
+        .map(|l| l.trim_end().to_string())
+        .collect()
 }
 
 /// Does this mutation change the COMPILER, rather than the tree it compiles?
@@ -336,6 +430,25 @@ pub struct VerifyReport {
 /// Run every registered mutation. Returns the report; the caller writes the
 /// ledger and decides the exit code.
 pub fn verify_all(root: &Path, verbose: bool, only: Option<&str>) -> Result<VerifyReport, String> {
+    // The probe measures HEAD. Refuse before spending an hour measuring code
+    // the developer did not write — see `head_skew`.
+    let skew = head_skew(root);
+    if !skew.is_empty() {
+        return Err(format!(
+            "the working tree differs from HEAD in {} path(s) the mutation probe measures:\n{}\n\n\
+             The probe runs in a `git worktree add --detach HEAD`, so it compiles and reads \
+             the last COMMIT — none of the above. The parent process that classifies its \
+             output is the binary you just built from these files, so the two would run \
+             different code and the verdict would describe neither. Commit (or stash) them \
+             and re-run.",
+            skew.len(),
+            skew.iter()
+                .map(|l| format!("  {l}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
     let guard = WorktreeGuard::create(root)?;
     println!(
         "verify-mutations: scratch worktree {} (target dir {}/target)",
@@ -636,6 +749,57 @@ mod tests {
             "0000000000000000000000000000000000000000",
             &["docs"]
         ));
+    }
+
+    #[test]
+    fn porcelain_paths_survive_renames_quotes_and_untracked() {
+        assert_eq!(
+            porcelain_path(" M rust/crates/xtask/src/a.rs").unwrap(),
+            "rust/crates/xtask/src/a.rs"
+        );
+        assert_eq!(
+            porcelain_path("?? docs/bluedb/x.expected.txt").unwrap(),
+            "docs/bluedb/x.expected.txt"
+        );
+        assert_eq!(
+            porcelain_path("R  docs/a.md -> docs/b.md").unwrap(),
+            "docs/b.md"
+        );
+        assert_eq!(
+            porcelain_path("A  \"docs/with space.md\"").unwrap(),
+            "docs/with space.md"
+        );
+        assert_eq!(porcelain_path(""), None);
+    }
+
+    /// The runner writes `gate-state.tsv` and `*.expected.txt` into the dev tree
+    /// AS IT RUNS, and reads `*.patch` from there by design. If those counted as
+    /// skew, the first run would poison the second and `--verify-mutations`
+    /// could never be run twice.
+    #[test]
+    fn the_runners_own_artefacts_are_not_head_skew() {
+        assert!(read_from_the_dev_tree("docs/bluedb/gate-state.tsv"));
+        assert!(read_from_the_dev_tree(
+            "docs/bluedb/mutations/G0.3.persistglue-unconditional.expected.txt"
+        ));
+        assert!(read_from_the_dev_tree(
+            "docs/bluedb/mutations/G0.3.persistglue-unconditional.patch"
+        ));
+        // …but the gate bodies, the runtime, the stdlib and the witnesses are
+        // measured from HEAD, so a working-tree-only edit to any of them is the
+        // skew that made G0.3's proof read VACUOUS for a whole session.
+        assert!(!read_from_the_dev_tree(
+            "rust/crates/xtask/src/bluedb_gates/gates_g0.rs"
+        ));
+        assert!(!read_from_the_dev_tree("runtime-go/rt/rt.go"));
+        assert!(!read_from_the_dev_tree("docs/bluedb/v2-architecture.md"));
+    }
+
+    /// A `git status` we cannot run is skew, not freshness — the same rule
+    /// `targets_moved` applies to an unresolvable sha.
+    #[test]
+    fn an_unrunnable_git_status_counts_as_skew() {
+        assert!(!head_skew(Path::new("/nonexistent-bluedb-root")).is_empty());
     }
 
     #[test]

@@ -24,43 +24,46 @@ No phase table with ✅ marks exists anywhere on this branch. The prior branch's
 phase table is precisely the artefact that survived compaction while the
 evidence behind it evaporated.
 
-## OPEN — G0.3's falsification is VACUOUS in the mutation harness (2026-08-14)
+## CLOSED — G0.3's falsification is PROVEN (2026-08-14)
 
-**State:** G0.3 PASSes in the dev tree with all four arms measured. Its
-falsification does NOT work, and `--verify-mutations` correctly reports
-`VERIFY-MUTATIONS: FAIL` / `G0.3/persistglue-unconditional VACUOUS`. So the gate
-is green with no proof it can fail. That is visible, not hidden, and it must be
-closed before P1 is called done.
+`G0.3/persistglue-unconditional` reports `PROVEN`, the full
+`--verify-mutations` reports `PASS`, and the canary still reports `VACUOUS`.
+Two distinct causes had to be removed, and the second is the one worth
+remembering.
 
-**Diagnosis (verified, not theorised).** The mutation applies cleanly — it adds
-`import _ "sky-app/bluedb"` to `rt`, the exact defect shape the prior attempt
-shipped. The gate then fails, but for the WRONG reason, so the runner classifies
-it VACUOUS on the discriminating assertion:
+**Cause 1 — the worktree had no compiler.** `sky_compiler` resolved
+`rust/target/release/sky` / `sky-out/sky` under `ctx.root` only (correct, per
+the H3 invariant), and the runner's scratch worktree is a fresh `git worktree
+add` with no build artefacts. G0.3 therefore went red with "neither
+rust/target/release/sky nor sky-out/sky exists" — red for the WRONG reason, so
+the discriminating classifier refused to call it PROVEN. It was right to.
 
-  * `sky_compiler(ctx)` (gates_g0.rs) looks for `rust/target/release/sky` or
-    `sky-out/sky` **under `ctx.root` only** — correct, and required by the H3
-    invariant in `registry.rs`: "a gate body that reaches outside `ctx.root`
-    breaks the mutation runner's guarantee silently".
-  * The runner's scratch worktree is a fresh `git worktree add`. It contains no
-    build artefacts, so neither path exists.
-  * G0.3 returns "neither rust/target/release/sky nor sky-out/sky exists", which
-    does not contain its declared `expect` ("pebble symbols in a non-Persist
-    binary"). Red for the wrong reason = VACUOUS. The classifier worked.
+Fixed by lending the probe a prebuilt compiler through `SKY_BLUEDB_COMPILER`
+(option 2 of the three that were on the table): the TOOL comes from outside, the
+SUBJECT never does — `sky-stdlib/`, `runtime-go/` and the witness project all
+still resolve inside `ctx.root`. `mutations::mutation_touches_compiler` refuses
+to lend it for any mutation whose PATCH touches `rust/`, because a prebuilt
+binary would not contain such a mutation and the proof would be silently
+weakened. That question is answered from the patch, never from the declared
+`targets` — `targets` is deliberately broader (it drives `UNVERIFIED-SINCE`),
+and reading it here would have left G0.3 permanently vacuous.
 
-**Options, and the trade-off that has to be decided:**
+**Cause 2 — HEAD skew, which is why cause 1 looked unfixed after it was
+fixed.** With the fix written but not yet committed, `--verify-mutations` kept
+reporting `VACUOUS` against source that plainly contained the fix. The scratch
+worktree is `git worktree add --detach HEAD`: the probe compiles and reads the
+last COMMIT. The parent — which applies the patch, classifies the output and
+decides the verdict — is the binary you just built from the WORKING TREE. So the
+parent lent a compiler through an environment variable the child, built from
+HEAD, had never heard of; the child found no compiler, went red for the old
+wrong reason, and the classifier correctly said VACUOUS. Reading the parent's
+own source, and even its `--verbose` echo of a dev-tree run, showed a fix that
+was working. Committing it — changing nothing else — turned it `PROVEN`.
 
-1. Build the compiler inside the worktree (`cargo build --release -p sky`).
-   Honest and self-contained; a release build may not fit the 900s budget.
-2. Let the runner pass a compiler path explicitly (e.g. `SKY_BLUEDB_COMPILER`)
-   while ASSETS keep resolving from `ctx.root`. The subject stays inside the
-   worktree, so H3 holds for what is being certified, and the tool is external
-   BY DECLARATION rather than by accident. **Caveat that decides the design:**
-   for any mutation whose `targets` include compiler source
-   (`rust/crates/project/src/build.rs` — G0.5's does), a prebuilt external
-   compiler would NOT contain the mutation, silently weakening exactly those
-   proofs. So this must be gated on the mutation's declared targets.
-3. Re-point G0.3's mutation at a compiler-independent arm (arm (b), "ships no
-   `bluedb/`"). Cheapest, and weakest — arm (a) is the arm that matters.
-
-Recommendation: (2), scoped by `targets`, with (1) as the fallback for
-compiler-source mutations. Do NOT take (3) — arm (a) is the property.
+The skew is silent in both directions, and the other direction mints a `PROVEN`
+for an uncommitted gate body that is not in the repository. `mutations::head_skew`
+now refuses to start when the working tree differs from HEAD in anything the
+probe measures (`rust`, `runtime-go`, `sky-stdlib`, `examples`, `docs/bluedb`),
+excluding only what the runner itself reads or writes in the dev tree by design:
+`gate-state.tsv`, `*.expected.txt`, and `mutations/*.patch`. An unrunnable `git
+status` counts as skew — unknown provenance is not evidence of freshness.
