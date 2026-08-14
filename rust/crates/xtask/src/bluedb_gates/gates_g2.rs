@@ -79,10 +79,12 @@ const QUOTE_LINES: usize = 40;
 /// `every_pinned_leaf_is_reddened_by_a_recorded_mutation` could not confirm a
 /// leaf the run had plainly reddened.
 ///
-/// Filing such a mutation under `STRUCTURAL_MUTATIONS` would have been the
-/// available lie — that const is explicitly for mutations that redden BEFORE
-/// `go test` runs — so the honest fix is here: the budget bounds the noise, and
-/// nothing bounds the verdict.
+/// Filing such a mutation as one that reddens BEFORE `go test` runs would have
+/// been the available lie (the const that used to say so is now
+/// `gates_g2_13::GATE_WORDED_MUTATIONS`, narrowed to what remained true once
+/// every gate here started running its fixtures past a static finding), so the
+/// honest fix is here: the budget bounds the noise, and nothing bounds the
+/// verdict.
 fn is_verdict_line(output: &str) -> bool {
     let t = output.trim_start();
     t.starts_with("--- FAIL:") || t.starts_with("--- PASS:") || t.starts_with("--- SKIP:")
@@ -2313,6 +2315,76 @@ func TestTwo(t *testing.T) {\n\
         assert!(
             src.contains(expect),
             "G2.6 declares `{expect}`, which appears nowhere in the body that must emit it"
+        );
+    }
+
+    /// THE defect `614b1517` found, asserted directly on the merge that now
+    /// carries it for all four sites: a static finding must never REPLACE the
+    /// behavioural findings.
+    ///
+    /// If this ever regresses, every gate behind `run_file_gate`,
+    /// `run_audit_gate`, G2.6 and G2.9a becomes unfalsifiable from any tree
+    /// whose edit also moves a pinned string — red, but red on a string
+    /// comparison, which `--verify-mutations` correctly classifies VACUOUS.
+    #[test]
+    fn a_static_finding_never_replaces_the_behavioural_findings() {
+        let out = merge_static_and_behavioural(
+            "the pin drifted".into(),
+            vec!["static: a pinned string moved".into()],
+            "population reconciliation",
+            GateOutcome::fail(
+                "the fixtures are red",
+                vec!["behavioural: panicked on key ".into()],
+            ),
+        );
+        let GateOutcome::Fail { detail, findings } = out else {
+            panic!("a static finding plus red fixtures must FAIL");
+        };
+        assert!(detail.contains("the pin drifted"), "{detail}");
+        assert!(detail.contains("the fixtures are red"), "{detail}");
+        assert!(
+            findings.iter().any(|f| f.contains("a pinned string moved")),
+            "{findings:?}"
+        );
+        assert!(
+            findings.iter().any(|f| f.contains("panicked on key ")),
+            "the behavioural finding is the one the mutation runner matches on, and it is \
+             exactly what the early return used to swallow: {findings:?}"
+        );
+    }
+
+    /// The other half of the contract: green fixtures under a red pin still SAY
+    /// they were green, so the report distinguishes "red on its pin" from "red
+    /// and nobody looked". And a clean static half must not disturb the
+    /// behavioural verdict at all.
+    #[test]
+    fn the_merge_reports_which_half_is_red() {
+        let out = merge_static_and_behavioural(
+            "the pin drifted".into(),
+            vec!["static: a pinned string moved".into()],
+            "population reconciliation",
+            GateOutcome::pass("7 fixture(s) observed passing"),
+        );
+        let GateOutcome::Fail { findings, .. } = out else {
+            panic!("a static finding must FAIL even when the fixtures are green");
+        };
+        assert!(
+            findings.iter().any(|f| {
+                f.contains("the fixtures themselves are green")
+                    && f.contains("7 fixture(s) observed passing")
+            }),
+            "{findings:?}"
+        );
+
+        let clean = merge_static_and_behavioural(
+            "unused".into(),
+            vec![],
+            "population reconciliation",
+            GateOutcome::pass("7 fixture(s) observed passing"),
+        );
+        assert!(
+            matches!(clean, GateOutcome::Pass { detail } if detail == "7 fixture(s) observed passing"),
+            "an empty static half returns the behavioural outcome verbatim"
         );
     }
 

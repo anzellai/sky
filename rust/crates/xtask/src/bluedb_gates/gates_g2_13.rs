@@ -2362,28 +2362,53 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
         mutation: "G2.25/comparer-name-drifts",
         leaves: &["TestComparerName"],
     },
+    // G2.6 — this row could not exist until G2.6 ran its fixtures alongside its
+    // manifest reconciliation instead of returning on it. The patch deletes the
+    // WAL-fsync injector, which the manifest notices from the outside ("the
+    // fault it injects is no longer exercised anywhere") and the fixture
+    // notices from the inside: with nothing injecting, its own precondition
+    // guard fires — "the WAL-fsync injector fired ZERO times … so this test
+    // proves NOTHING". Two independent readings of one deletion, and until the
+    // early return went, only the first was ever recorded.
+    //
+    // It does not COVER that leaf (`m.expect` is the gate's manifest wording,
+    // not a string in the fixture's body, so the per-leaf rule counts it as
+    // radius); G2.6's leaves are covered by SOURCE_SIDE_FALSIFIERS. The row is
+    // here because a mutation that reddens a fixture records WHICH.
+    LeafCoverage {
+        mutation: "G2.6/disable-injection-point",
+        leaves: &["TestAuditN3SynchronousWalFaultStillErrorsTheAck"],
+    },
 ];
 
-/// Mutations that redden their gate **before it runs a single test**, and
-/// therefore carry no per-leaf evidence by construction.
+/// Mutations whose declared assertion is the **GATE's** own wording rather than
+/// a string any fixture emits.
 ///
-/// [`LEAF_COVERAGE`] reads `--- FAIL: <leaf>` lines out of a recorded transcript.
-/// A gate that fails its SOURCE-side reconciliation returns before `go test` is
-/// invoked, so its transcript has no such line to read — not because the proof is
-/// weak, but because the defect it reintroduces is not a defect in any fixture.
-/// `G2.6/disable-injection-point` deletes an `errorfs` injector; G2.6 answers
-/// "fewer injection sites than the recorded manifest" and stops.
+/// `every_declared_assertion_is_verbatim_in_the_fixture_that_emits_it` requires
+/// an `expect` to be copied from the failure the mutation produces, which for
+/// almost every mutation is a line in a `*_test.go`. G2.6 is the exception by
+/// design: its subject is the injection MANIFEST, so deleting an injector is
+/// answered by the gate's own reconciliation ("fewer injection sites than the
+/// recorded manifest"), and `the_declared_expect_string_is_the_gate_s_own_wording`
+/// in `gates_g2.rs` checks that string against the body that must emit it.
 ///
-/// This is a marker, not an excuse, and it is checked in the direction that
-/// matters: `a_structural_mutation_really_produced_no_per_test_failure` asserts the
-/// transcript contains NO `--- FAIL:` line at all. A mutation that DID redden a
-/// fixture cannot be filed here to avoid recording which one.
-#[allow(dead_code)] // read by `every_pinned_leaf_is_reddened_by_a_recorded_mutation`
-pub const STRUCTURAL_MUTATIONS: &[(&str, &str)] = &[(
+/// # This table used to claim more, and the claim stopped being true
+///
+/// It was `STRUCTURAL_MUTATIONS`, and it asserted the stronger thing: that such
+/// a mutation reddens its gate BEFORE a single test runs, so its transcript
+/// carries no `--- FAIL:` line at all. That was a description of the early
+/// return `614b1517` and its follow-up removed. G2.6 now runs its fixtures
+/// alongside the manifest reconciliation, and the deleted injector reddens
+/// `TestAuditN3SynchronousWalFaultStillErrorsTheAck` from the inside — the
+/// fixture's own "the WAL-fsync injector fired ZERO times" guard noticing the
+/// same deletion. That leaf is recorded in [`LEAF_COVERAGE`] like any other, and
+/// checked against the artefact there; what survives here is only the narrow
+/// exemption above.
+#[allow(dead_code)] // read by `every_declared_assertion_is_verbatim_in_the_fixture_that_emits_it`
+pub const GATE_WORDED_MUTATIONS: &[(&str, &str)] = &[(
     "G2.6/disable-injection-point",
-    "deleting an injection site fails G2.6's manifest reconciliation, which returns before \
-     `go test` runs — the recorded transcript is the manifest finding, with no per-test events \
-     in it",
+    "G2.6's subject is the injection manifest, so its declared assertion is the gate's own \
+     reconciliation wording; the fixture it ALSO reddens is recorded in LEAF_COVERAGE",
 )];
 
 // ---------------------------------------------------------------------------
@@ -3061,19 +3086,21 @@ mod tests {
     ///
     /// G2.9a's three mutations are held to the same rule against
     /// `crashsim_test.go`. G2.6's ONE mutation is not, and that exemption is
-    /// named rather than implied: its assertion is the GATE's own wording (a
-    /// manifest reconciliation finding, emitted before `go test` runs), and
+    /// named rather than implied: its assertion is the GATE's own manifest
+    /// reconciliation wording, and
     /// `the_declared_expect_string_is_the_gate_s_own_wording` in `gates_g2.rs`
     /// checks it against the body that must emit it. Requiring it to appear in a
     /// fixture would be requiring evidence the design says does not exist —
-    /// exactly the shape [`STRUCTURAL_MUTATIONS`] records.
+    /// exactly the shape [`GATE_WORDED_MUTATIONS`] records. The fixture that
+    /// mutation ALSO reddens is not exempt and is recorded in
+    /// [`LEAF_COVERAGE`].
     #[test]
     fn every_declared_assertion_is_verbatim_in_the_fixture_that_emits_it() {
         let corpus = governed_corpus_text();
         for (id, _) in governed_gates() {
             let g = super::super::registry::find(id).expect("registered");
             for m in g.mutations.as_slice() {
-                if STRUCTURAL_MUTATIONS.iter().any(|(mid, _)| *mid == m.id) {
+                if GATE_WORDED_MUTATIONS.iter().any(|(mid, _)| *mid == m.id) {
                     continue;
                 }
                 assert!(
@@ -3088,14 +3115,21 @@ mod tests {
         }
     }
 
-    /// A [`STRUCTURAL_MUTATIONS`] entry is a claim that the mutation's recorded
-    /// RED transcript carries no per-test failure at all. Checked against the
-    /// artefact, in the direction that can be abused: a mutation that DID redden
-    /// a fixture must record WHICH, not be filed here to avoid saying.
+    /// A [`GATE_WORDED_MUTATIONS`] entry exempts a mutation from having its
+    /// assertion live in a fixture. It does NOT exempt it from saying which
+    /// fixtures it reddened, and this checks that in the direction that can be
+    /// abused: every `--- FAIL: <leaf>` in the recorded transcript must appear
+    /// in the mutation's [`LEAF_COVERAGE`] row.
+    ///
+    /// The predecessor of this test asserted the opposite — that such a
+    /// transcript carries no `--- FAIL:` line at all — which was true only while
+    /// the gate returned on its manifest reconciliation before running `go
+    /// test`. It does not any more, so the honest rule is "record what you
+    /// reddened", not "you reddened nothing".
     #[test]
-    fn a_structural_mutation_really_produced_no_per_test_failure() {
+    fn a_gate_worded_mutation_still_records_every_leaf_it_reddened() {
         let root = repo();
-        for (id, why) in STRUCTURAL_MUTATIONS {
+        for (id, why) in GATE_WORDED_MUTATIONS {
             let m = super::super::registry::REGISTRY
                 .iter()
                 .flat_map(|g| g.mutations.as_slice())
@@ -3106,11 +3140,30 @@ mod tests {
                     .unwrap_or_else(|e| {
                         panic!("{id}: cannot read the recorded RED transcript: {e}")
                     });
-            assert!(
-                !transcript.contains("--- FAIL: "),
-                "{id} is recorded as structural ({why}), but its RED transcript DOES carry a \
-                 `--- FAIL:` line — record the leaves it reddened in LEAF_COVERAGE instead"
-            );
+            let recorded: BTreeSet<&str> = LEAF_COVERAGE
+                .iter()
+                .filter(|r| r.mutation == *id)
+                .flat_map(|r| r.leaves.iter().copied())
+                .collect();
+            // `--- FAIL: <leaf>` appears MID-LINE: the probe prefixes each
+            // captured line with the pinned name it came from, so a
+            // `strip_prefix` here silently matches nothing and the test passes
+            // by reading zero leaves. `every_pinned_leaf_is_reddened_by_a_recorded_mutation`
+            // searches the same marker as a substring for the same reason.
+            for line in transcript.lines() {
+                let Some(at) = line.find("--- FAIL: ") else {
+                    continue;
+                };
+                let rest = &line[at + "--- FAIL: ".len()..];
+                let leaf = rest.split_whitespace().next().unwrap_or(rest);
+                assert!(
+                    recorded.contains(leaf),
+                    "{id} ({why}) reddened {leaf} — its recorded RED transcript says so — but no \
+                     LEAF_COVERAGE row for it names that leaf. A mutation that reddens a fixture \
+                     records WHICH; the gate-worded exemption is about the assertion string, not \
+                     about the blast radius"
+                );
+            }
         }
     }
 
@@ -3279,9 +3332,9 @@ mod tests {
             // relabelled rule look closed.
             let mut reddened_elsewhere: Vec<String> = Vec::new();
             for m in g.mutations.as_slice() {
-                if STRUCTURAL_MUTATIONS.iter().any(|(mid, _)| *mid == m.id) {
-                    continue; // reddens the gate before `go test` runs; see the const's doc
-                }
+                // No exemption here any more. Every gate in this family now runs
+                // its fixtures even when its static half is unhappy, so every
+                // mutation has a transcript with per-test events to be held to.
                 let row = LEAF_COVERAGE
                     .iter()
                     .find(|r| r.mutation == m.id)
@@ -3289,7 +3342,7 @@ mod tests {
                         panic!(
                             "{} has no LEAF_COVERAGE row — every mutation of a gate under the \
                              per-leaf rule must record which pinned leaves its RED run actually \
-                             reddened (or be recorded in STRUCTURAL_MUTATIONS)",
+                             reddened",
                             m.id
                         )
                     });
