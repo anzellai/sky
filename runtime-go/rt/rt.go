@@ -9293,6 +9293,12 @@ func Server_listen(port any, routes any) any {
 		IdleTimeout:       httpEnvTimeout("SKY_HTTP_IDLE_TIMEOUT", serverIdleTimeout),
 		MaxHeaderBytes:    serverMaxHeaderBytes,
 	}
+	// Under `--embed` the supervisor in pg_embed.go owns the shutdown
+	// SEQUENCE, because the embedded database must be stopped strictly after
+	// the app has stopped accepting and drained. Handing it the listener is
+	// what makes its first phase real; it is a no-op registration when no
+	// cluster is being supervised.
+	RegisterAcceptStopper("http.Server", func() { _ = srv.Close() })
 	// v0.16.0: inline console runs in-process — no children to
 	// signal. Still install a SIGINT/SIGTERM/SIGHUP handler so the
 	// server closes gracefully (drains in-flight requests) rather
@@ -9311,6 +9317,11 @@ func Server_listen(port any, routes any) any {
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
 	err := srv.ListenAndServe()
 	signal.Stop(srvSigCh)
+	// If the listener closed because the embedded-PostgreSQL supervisor is
+	// mid-shutdown, returning here would let main exit and take the database
+	// down with a kill instead of a clean stop. It exits the process itself
+	// once PostgreSQL is down.
+	BlockIfEmbeddedShuttingDown()
 	if err != nil && err != http.ErrServerClosed {
 		if isAddrInUse(err) {
 			reportPortInUse(p, "pass a different port to Server.listen")

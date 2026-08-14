@@ -3921,6 +3921,11 @@ func liveAppRun(cfg any) any {
 	// Two-press escalation: a second SIGINT triggers os.Exit(130),
 	// which kills the process immediately even if something inside
 	// srv.Close is wedged. Familiar Ctrl-C-twice idiom.
+	// Under `--embed` the supervisor in pg_embed.go owns the shutdown
+	// SEQUENCE (stop accepting → drain → stop PostgreSQL). Handing it the
+	// listener is what makes its first phase real; a no-op when there is no
+	// embedded cluster.
+	RegisterAcceptStopper("live.Server", func() { _ = srv.Close() })
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
@@ -3967,6 +3972,9 @@ func liveAppRun(cfg any) any {
 	fmt.Printf("Sky.Live listening on :%d\n", port)
 	err := srv.ListenAndServe()
 	signal.Stop(sigCh)
+	// See the note in Server_listen: exiting here mid-shutdown would kill the
+	// embedded database instead of stopping it.
+	BlockIfEmbeddedShuttingDown()
 	if err != nil && err != http.ErrServerClosed {
 		// A port-already-bound failure is the common startup error — make it
 		// LOUD + actionable on stderr instead of a silent Task-Err exit.

@@ -31,9 +31,19 @@ import (
 type ShutdownHook func(ctx context.Context)
 
 var (
-	shutdownMu        sync.Mutex
-	shutdownHooks     []shutdownEntry
-	shutdownRan       bool
+	shutdownMu    sync.Mutex
+	shutdownHooks []shutdownEntry
+	shutdownRan   bool
+	// shutdownDone is closed when the hook chain has actually FINISHED.
+	//
+	// `shutdownRan` alone cannot answer "has the app drained": it is set by the
+	// first caller before the hooks run, so a second caller — and there is
+	// always a second caller, since each app shape installs its own signal
+	// handler — returns from RunShutdownHooks while the drain is still in
+	// flight. Anything that must happen strictly AFTER the drain (the embedded
+	// PostgreSQL supervisor stopping the database, in pg_embed.go) waits on
+	// this instead.
+	shutdownDone = make(chan struct{})
 )
 
 type shutdownEntry struct {
@@ -77,7 +87,10 @@ func RunShutdownHooks(deadline time.Duration) {
 	shutdownRan = true
 	hooks := make([]shutdownEntry, len(shutdownHooks))
 	copy(hooks, shutdownHooks)
+	done := shutdownDone
 	shutdownMu.Unlock()
+	// Only the goroutine that actually ran the chain closes the barrier.
+	defer close(done)
 
 	if len(hooks) == 0 {
 		return
@@ -120,6 +133,26 @@ func RunShutdownHooks(deadline time.Duration) {
 	}
 }
 
+// awaitShutdownHooks blocks until the hook chain has finished, or until the
+// budget expires, or returns at once if nothing ever started one.
+//
+// The waiting — rather than a second RunShutdownHooks call, which is a no-op
+// once the first caller has claimed the chain — is what lets a caller sequence
+// work strictly after the drain.
+func awaitShutdownHooks(budget time.Duration) {
+	shutdownMu.Lock()
+	started, done := shutdownRan, shutdownDone
+	shutdownMu.Unlock()
+	if !started {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(budget):
+		fmt.Fprintf(os.Stderr, "[sky.shutdown] drain did not finish within %s; continuing\n", budget)
+	}
+}
+
 // resetShutdownHooksForTesting — TEST-ONLY. Cabal / Go tests that
 // register hooks need a way to reset between cases.
 func resetShutdownHooksForTesting() {
@@ -127,4 +160,5 @@ func resetShutdownHooksForTesting() {
 	defer shutdownMu.Unlock()
 	shutdownHooks = nil
 	shutdownRan = false
+	shutdownDone = make(chan struct{})
 }

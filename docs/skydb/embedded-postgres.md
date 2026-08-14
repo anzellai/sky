@@ -92,6 +92,19 @@ quote, a `$` or a space cannot be made safe by quoting, so `sky db start`
 rejects it with the reason rather than passing it through. The two paths sky
 derives are safe by construction; the half that is not is `$XDG_RUNTIME_DIR`.
 
+> **The socket directory is not the only argument that goes through that
+> shell.** `start_postmaster` in `pg_ctl.c` interpolates the executable, the
+> `-D` data directory, the `-o` post-options *and* the `-l` log file into one
+> string and hands the lot to `/bin/sh -c`. P5 verified this against
+> PostgreSQL 14.21 by pointing each at a path containing `$(touch …)` and
+> watching the file appear: all three ran. P2 shell-checks only the socket
+> directory, so a project whose own path carries a `$(…)` or a backtick would
+> still have it executed through `-D` and `-l` — those two paths are derived
+> from the project directory, which is the user's, not sky's. Closing it is a
+> one-line reuse of `socket_dir_is_shell_safe` on the data dir and the log
+> path in `run_pg_ctl_start`. `pg_ctl stop` does **not** shell out; only
+> `start` does.
+
 Development clusters are tuned small (`shared_buffers` in the tens of MB), so
 several idle projects cost tens of megabytes each rather than hundreds. P2
 writes a marked, idempotent block into the generated `postgresql.conf`:
@@ -283,6 +296,33 @@ so a misconfigured project does not sit through a compile to be told.
    Ordering matters; stopping the database first turns a clean deploy into a
    page of errors.
 
+P5 ships this as `runtime-go/rt/pg_embed*.go`. Four details it settled on
+contact with the code:
+
+- **The postmaster is exec'd directly, not via `pg_ctl start`.** The app has to
+  be able to *observe* the database dying, and `pg_ctl` daemonises — leaving a
+  pid to poll rather than a child to `wait` for, and polling cannot tell a dead
+  postmaster from a recycled pid. Exec'ing it directly also removes `/bin/sh`
+  from the start path entirely (see the `pg_ctl` note above).
+- **Readiness is a connection, not a file.** The socket appears before crash
+  recovery finishes and `postmaster.pid`'s status line lags, so both would
+  report a database that immediately refuses queries. `pg_isready -d postgres`
+  when the distribution has it, a real connection otherwise. Without the
+  explicit `-d`, `pg_isready` defaults the database name to the OS user and
+  every boot writes a pair of `FATAL: database "<user>" does not exist` lines
+  into the server log before the app has run a query.
+- **The shutdown sequence needs a completion barrier, not just a call.** Each
+  app shape installs its own `SIGTERM` handler and calls `RunShutdownHooks`
+  too; whichever goroutine arrives second finds the chain already claimed and
+  returns *at once*, with the drain still in flight. `awaitShutdownHooks`
+  (`runtime-go/rt/shutdown.go`) is what makes "drained" true rather than
+  merely called. The listeners register with `RegisterAcceptStopper`, which is
+  what gives the first phase something to do.
+- **The data directory is refused if it is one the system may empty** —
+  `/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`, macOS's `/var/folders`. Under
+  `--embed` that directory holds the app's only copy of its data, and a cluster
+  that silently reinitialises looks exactly like an app that lost every row.
+
 ### Failure modes that must be handled, not discovered
 
 Three of these are not specific to `--embed` — they are properties of pointing
@@ -294,17 +334,31 @@ any postmaster at a data directory, so **P2 already closes them for
 | Double start | Sky-level message naming the data dir and offering `sky db stop`; PostgreSQL's raw "another server might be running" is translated, and an unrecognised failure is passed through verbatim rather than dressed up |
 | Already running | **Success no-op.** The verb states a desired end state, so a script that runs it before every task must not have to tell "started it" from "it was already up" |
 | Stale `postmaster.pid` after `SIGKILL` | Detected and cleared — but only once the named pid fails the two-legged liveness check above |
+| Orphaned postmaster after the APP is `SIGKILL`ed | Adopted, not refused. The postmaster is in its own process group and outlives its parent; it is the right server on the right data directory, and refusing to boot would need a human every time |
 | Major-version mismatch | Refused before any start, naming both majors and pointing at `pg_upgrade` or `SKY_POSTGRES_BIN` |
 | Half-finished `initdb` | A data dir with no `PG_VERSION` is reported as such; a failed `initdb` removes its own wreckage so the next run does not diagnose the wrong bug |
 
 `sky db stop` is idempotent for the same reason `start` is: stopping a cluster
 that is already down succeeds, so the verb is safe in a shell trap.
 
+> **What the stale-pid handling is actually for.** P5's first live gate for it
+> was vacuous, and the mutation that proved so is worth recording: PostgreSQL
+> clears a `postmaster.pid` naming a plainly-dead process *itself*
+> (`CreateLockFile` in `miscinit.c`), so deleting sky's own handling changed
+> nothing. The case that needs sky is the one the two-legged check exists for —
+> the pid has been **recycled** by an unrelated live process. PostgreSQL then
+> sees a live pid, concludes another postmaster is running, and refuses to
+> start *permanently*, accusing a process that has nothing to do with it. The
+> gate now stands up a live `sleep`, writes its pid into the lock file, and
+> asserts the cluster still boots.
+
 The remaining two are genuinely `--embed`-only:
 
-- **`--embed` together with an explicit `SKY_DB_URL` is an error**, not a
-  precedence puzzle. A deploy that silently ignores the operator's DSN and
-  writes to local disk instead must fail loudly at startup.
+- **`--embed` together with an explicit DSN is an error**, not a precedence
+  puzzle. A deploy that silently ignores the operator's DSN and writes to local
+  disk instead must fail loudly at startup. The names checked are the ones the
+  runtime actually reads — `<PREFIX>_DB_PATH` and `DATABASE_URL`, per the note
+  above; `SKY_DB_URL` is not one of them.
 - **A dead child.** If PostgreSQL exits, the app exits non-zero and lets the
   supervisor restart the tree. Restarting in place hides a failing disk until
   it is an outage.
@@ -450,5 +504,6 @@ Each phase ships its own commit and is verifiable in isolation.
 | **P2b** | CI bundle build: PostgreSQL from source per platform, pinned configure line, SBOM, the GPL/LGPL/AGPL link gate, `NOTICE.md` entry |
 | **P3** | `sky db provision --embed` — fetch Sky's own bundle, checksum, pin |
 | **P4** ✅ | `sky run` / `sky watch` integration: `[database] embedded`, DSN injection, the ref count — `rust/crates/sky/src/db_cluster.rs` + `main.rs`, gated by its unit tests + `tests/db_run_cluster_flow.rs` (two overlapping `sky run`s against a real PostgreSQL) |
-| **P5** | `sky build --embed` and `./app --embed`, including the failure modes above |
+| **P5a** ✅ | The runtime supervisor behind `./app --embed`: data-dir resolution, bundle extraction, `initdb`, RAM/CPU-derived tuning, a postmaster child in its own process group, readiness, the ordered `SIGTERM` sequence, and all five failure modes — `runtime-go/rt/pg_embed.go` + `pg_embed_bundle.go` + `pg_embed_conf.go`, gated by `pg_embed*_test.go` (including a live cycle against a real PostgreSQL and a subprocess that proves the app exits non-zero when its database dies) |
+| **P5b** | `sky build --embed`: the compiler flag, the `go:embed` of the platform bundle, and the two generated calls (`rt.EmbeddedPostgresBundle = …`, `rt.MaybeStartEmbeddedPostgres()` / `defer rt.StopEmbeddedPostgres()`) |
 | **P6** | Shared-cluster service mode: database-per-app, role-per-app, generated unit + backup timer |
