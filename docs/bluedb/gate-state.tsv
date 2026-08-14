@@ -2,11 +2,13 @@
 # full-tier<TAB>commit<TAB>ran<TAB>host
 # proof<TAB>mutation-id<TAB>outcome<TAB>commit
 full-tier	dd0a33c0	2026-08-14T09:15:00Z	macos/aarch64
-proof	G0.1/hand-edit-status	PROVEN	b6167c50
-proof	G0.2/rt-imports-bluedb	PROVEN	b6167c50
-proof	G0.3/persistglue-unconditional	PROVEN	b6167c50
-proof	G0.4/dead-key	PROVEN	b6167c50
-proof	G0.5/second-go-build-site	PROVEN	b6167c50
-proof	G0.6/corrupt-expected	PROVEN	b6167c50
-proof	G0.7/mutationless-gate	PROVEN	b6167c50
-proof	G0.C/noop	VACUOUS	b6167c50
+proof	G0.1/hand-edit-status	PROVEN	576ada26
+proof	G0.2/rt-imports-bluedb	PROVEN	576ada26
+proof	G0.3/persistglue-unconditional	PROVEN	576ada26
+proof	G0.4/dead-key	PROVEN	576ada26
+proof	G0.5/second-go-build-site	PROVEN	576ada26
+proof	G0.6/corrupt-expected	PROVEN	576ada26
+proof	G0.7/mutationless-gate	PROVEN	576ada26
+proof	G0.C/noop	VACUOUS	576ada26
+proof	G2.6/disable-injection-point	MUTATION-STALE	576ada26
+proof	G2.9a/ack-before-fsync	MUTATION-STALE	576ada26
