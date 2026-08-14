@@ -35,12 +35,31 @@ func (r *pebbleReader) ReadTs() HLC { return r.readTs }
 // absence, so every consumer of this reader must fail closed rather than act on it.
 func (r *pebbleReader) Err() error { return r.err }
 
+// Close releases this reader's pinned view. THE ORDER OF THE TWO STATEMENTS IS THE
+// CONTRACT (defect N4, residual arm): the *pebble.Snapshot is closed FIRST and the
+// watermark token released LAST.
+//
+// The token is what the close drain counts (watermark.go's pins set): waitDrained
+// returns the instant the last token goes back, and Close's phase 3 then calls
+// e.db.Close(). Releasing the token first opens a window — between the release and
+// snap.Close() — in which the engine believes no reader is live while a snapshot is
+// still registered with pebble. A transaction ending exactly as the drain completes
+// lands in it, and e.db.Close() then reports "leaked snapshots: N open snapshots"
+// (pebble db.go:1818). Releasing LAST makes the window unrepresentable: the release
+// happens-after snap.Close() returns, and the drain observing an empty pin set
+// happens-after the release.
+//
+// Begin()'s reader is the path that needs this. Snapshot()/snapshotAt() wrap their
+// reader in a trackedReader whose OUTER pin already spans the whole teardown, but
+// beginSnapshot hands its *pebbleReader straight to Txn, whose Commit/Abort call this
+// Close directly — so this ordering is that path's only guarantee.
 func (r *pebbleReader) Close() {
-	if r.reg != nil {
-		r.reg.Release(r.tok)
-	}
 	if r.snap != nil {
 		_ = r.snap.Close()
+	}
+	// LAST. Do not hoist: see the doc comment.
+	if r.reg != nil {
+		r.reg.Release(r.tok)
 	}
 }
 

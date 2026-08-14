@@ -28,15 +28,23 @@ var (
 	// Transact; returned typed after maxTxnAttempts. errors.Is-friendly so Phase 3 can
 	// branch on it (§5.2).
 	ErrConflict = errors.New("bluedb: transaction conflict")
+	// ErrReadersLive: Close's bounded drain expired with readers still pinned (defect
+	// N4). The engine is NOT closed in that case — the Pebble handle is deliberately
+	// left OPEN, because closing it would panic those readers' next operation — and
+	// Close is retryable once they are released.
+	ErrReadersLive = errors.New("bluedb: readers still live at close")
 )
 
 // Engine is the L1 substrate. One Engine == one open file == one committer (§3.1).
 type Engine interface {
-	// Snapshot atomically picks readTs := current HLC high-water AND registers its
-	// reader token in ONE critical section, then pins a lock-free consistent view
-	// (a Pebble snapshot seqnum). There is NO caller-supplied readTs (grill 2a):
-	// a caller must not be able to name a readTs below the GC threshold T.
-	// Reader.Close unregisters the token.
+	// Snapshot pins a lock-free consistent view (a Pebble snapshot seqnum) for an
+	// ad-hoc, transaction-less read. In ONE critical section it picks
+	// readTs := durableHi — the highest commitTs whose Apply(Sync) has RETURNED — pins
+	// the snapshot after that read, and registers the reader token at that same readTs
+	// (defect H1: the in-memory HLC high-water is bumped BEFORE the Apply, so it can
+	// name an assigned-but-not-yet-durable commitTs that no snapshot contains).
+	// There is NO caller-supplied readTs (grill 2a): a caller must not be able to name
+	// a readTs below the GC threshold T. Reader.Close unregisters the token.
 	Snapshot() (Reader, error)
 
 	// NowTs returns the current HLC high-water. Informational only (metadata,

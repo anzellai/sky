@@ -1,7 +1,6 @@
 package bluedb
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -291,18 +290,14 @@ func (e *pebbleEngine) leaseReaper() {
 // party), so Close's pending Lock() — which blocks new RLocks behind it — is never
 // starved and never waits on a reader.
 //
-// RESIDUAL, recorded rather than hidden. The reader returned here goes to Begin() and is
-// closed by Txn.Commit/Abort, so it carries only the watermark token as its liveness pin
-// — not the outer pin trackedReader adds on the Snapshot()/snapshotAt paths. Because
-// pebbleReader.Close() releases that token BEFORE it closes the *pebble.Snapshot, a
-// transaction ending at the exact instant the drain completes can still have an unclosed
-// snapshot when phase 3 runs. The consequence is bounded and cannot corrupt or panic:
-// e.db.Close() accumulates a "leaked snapshots" error (pebble db.go:1818 — the check is
-// the LAST statement, so the close itself completed), and the reader's subsequent
-// snap.Close() is safe against a closed DB (snapshot.go:133-141 only takes db.mu and
-// unlinks; maybeScheduleCompaction bails at compaction.go:2025 on d.closed). Closing it
-// properly means releasing the pin as pebbleReader.Close's LAST statement, which is an
-// edit to reader.go — owned by another workstream this commit does not touch.
+// The reader returned here goes to Begin() and is closed by Txn.Commit/Abort, so the
+// watermark token is its ONLY liveness pin — it gets no outer pin, unlike the
+// Snapshot()/snapshotAt paths (see trackedReader). That makes it wholly dependent on
+// pebbleReader.Close() releasing the token as its LAST statement, after snap.Close()
+// has returned; the previous order left a window in which a transaction ending exactly
+// as the drain completed still held an unclosed snapshot at phase 3. That is fixed in
+// reader.go and pinned by TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin — do not
+// reorder those two statements.
 func (e *pebbleEngine) beginSnapshot() (*pebbleReader, error) {
 	e.closeMu.RLock()
 	defer e.closeMu.RUnlock()
@@ -458,19 +453,20 @@ func (e *pebbleEngine) track(r *pebbleReader) *trackedReader {
 
 // trackedReader is a reader whose liveness pin outlives its own Close work.
 //
-// pebbleReader.Close() releases the watermark token BEFORE it closes the
-// *pebble.Snapshot. If that token were the only thing the close drain waited on, the
-// drain could complete in the gap between those two statements — Close would then run
-// e.db.Close() while a snapshot is still registered with pebble, which surfaces as a
-// "leaked snapshots" error out of DB.Close (db.go:1818). The outer pin is taken at
-// construction and dropped only AFTER the inner Close has returned, so a reader counts
-// as live for the whole of its teardown, not just up to its watermark release.
+// Its ORIGINAL job — bridging the gap pebbleReader.Close left between releasing the
+// watermark token and closing the *pebble.Snapshot — is now done one layer down, in
+// pebbleReader.Close's statement order. What remains is the job only this type can do:
+// snapshotAtChecked's time-travel reader takes NO watermark token at all (reg == nil,
+// deliberately, so a below-floor readTs cannot drag T down or fail on
+// ErrSnapshotTooOld), so without an outer pin it would be INVISIBLE to the close drain.
+// The pin is taken at construction and dropped only after the inner Close has returned,
+// which keeps that ordering guarantee true for this path as well.
 //
-// It exists because reader.go is owned by another workstream in this cycle; the
-// alternative — an engine handle on pebbleReader itself, dropped as its last
-// statement — is the same fix one layer down and should replace this when that file is
-// free. Everything Reader requires other than Close is promoted from the embedded
-// *pebbleReader, so there is no second implementation of the read path to keep in sync.
+// On the Snapshot() path the two mechanisms now overlap, and deliberately so: the outer
+// pin is strictly conservative (a reader counts as live for the whole of its teardown),
+// and one path with two independent reasons to be correct is cheaper than two
+// constructions. Everything Reader requires other than Close is promoted from the
+// embedded *pebbleReader, so there is no second implementation of the read path.
 type trackedReader struct {
 	*pebbleReader
 	reg   *watermarkRegistry
@@ -647,14 +643,6 @@ func (e *pebbleEngine) isClosed() bool {
 // closes its readers and its transactions — ever notices it; short enough that a leak is
 // a report at a human timescale rather than a hang.
 const defaultCloseDrain = 10 * time.Second
-
-// ErrReadersLive is returned by Close when live readers were still pinned after the
-// drain window. The engine is NOT closed in that case: the Pebble handle is still open
-// and Close can be called again once the readers are released.
-//
-// (It belongs in engine.go's sentinel block with the others; it is declared here because
-// that file is owned by another workstream in this cycle.)
-var ErrReadersLive = errors.New("bluedb: readers still live at close")
 
 // Close quiesces the engine in THREE phases, and the lock is RELEASED between them.
 // That structure is the fix for defect N4, and the obvious alternative is not merely

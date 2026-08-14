@@ -798,3 +798,97 @@ func TestAuditN4CloseWithLeakedReaderReportsRatherThanHangs(t *testing.T) {
 		t.Fatalf("third Close = %v, want the replayed nil verdict", err)
 	}
 }
+
+// TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin closes the residual arm of N4 that
+// C7 recorded rather than fixed: the ORDER of the two statements in pebbleReader.Close.
+//
+// The close drain counts watermark tokens (watermark.go's `pins`). waitDrained returns
+// the instant the last token comes back, and Close's phase 3 then calls e.db.Close().
+// pebbleReader.Close used to release the token BEFORE closing the *pebble.Snapshot,
+// which leaves a window where the engine believes no reader is live while a snapshot is
+// still registered with pebble.
+//
+// Begin() is the path that has no second line of defence: Snapshot()/snapshotAt() wrap
+// their reader in a trackedReader whose OUTER pin spans the whole teardown, but
+// beginSnapshot hands its bare *pebbleReader to Txn, and Txn.Commit/Abort call this Close
+// directly. So the statement order IS the guarantee there.
+//
+// HOW IT IS PROVEN, and why it is not the obvious race. The obvious test — Begin, close
+// the engine on a goroutine, Abort as the drain completes, assert Close returns nil — was
+// written first and DISCARDED: under the mis-ordered Close it passed 60/60 rounds in three
+// consecutive runs. The reader goroutine only has to execute one call (snap.Close) after
+// releasing the token, while the closer has to be woken from a channel, re-take the
+// registry lock, take closeMu and call db.Close; the reader wins essentially always. A
+// fixture that cannot demonstrate it reached the fault proves nothing (see the plan's rule
+// for injection fixtures), so it is not shipped merely because it is green.
+//
+// What is shipped is deterministic. The test takes the registry lock ITSELF, so the
+// reader's Release blocks on it. Everything sequenced BEFORE the Release has therefore
+// run by the time it parks; everything after has not. pebble's own open-snapshot count
+// (Metrics().Snapshots.Count) is read at that instant: 0 means the snapshot was closed
+// first — the token is about to be handed back with nothing outstanding — and 1 means the
+// engine was about to tell its close drain "no reader is live" while pebble still had the
+// snapshot registered, which is the whole defect. Close's phase 3 would then run
+// e.db.Close() under it and report "leaked snapshots: N open snapshots on DB"
+// (pebble db.go:1818). There is no timing luck in either direction: the sleep only gives
+// the goroutine time to REACH the blocking point, and a longer sleep can only strengthen
+// the conclusion.
+func TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(23000)
+	e := openDisk(t, clk.fn())
+	put(t, e, "n4-order", "v1")
+
+	r, err := e.beginSnapshot() // exactly what Begin() pins: a BARE pebbleReader
+	if err != nil {
+		t.Fatalf("beginSnapshot: %v", err)
+	}
+	// The premise: this reader's watermark token is its ONLY pin. If Begin ever grows a
+	// trackedReader wrapper the ordering stops being load-bearing here, and this fixture
+	// should be revisited rather than silently kept.
+	if r.reg == nil || r.snap == nil {
+		t.Fatalf("fixture: beginSnapshot returned reg=%v snap=%v — both must be set or the "+
+			"ordering under test does not exist", r.reg, r.snap)
+	}
+	if n := e.db.Metrics().Snapshots.Count; n != 1 {
+		t.Fatalf("fixture: %d open pebble snapshots after beginSnapshot, want exactly 1", n)
+	}
+
+	// Park the reader's Release on the registry lock.
+	e.reg.mu.Lock()
+	closeReturned := make(chan struct{})
+	go func() {
+		r.Close()
+		close(closeReturned)
+	}()
+	time.Sleep(100 * time.Millisecond) // reach the blocking point; longer only helps
+
+	select {
+	case <-closeReturned:
+		e.reg.mu.Unlock()
+		t.Fatalf("fixture: pebbleReader.Close() completed while the registry lock was held — " +
+			"it never took the lock, so this test observes nothing")
+	default:
+	}
+
+	open := e.db.Metrics().Snapshots.Count
+	e.reg.mu.Unlock()
+	<-closeReturned
+
+	if open != 0 {
+		t.Errorf("pebbleReader.Close() was about to hand its watermark token back with %d pebble "+
+			"snapshot(s) STILL OPEN. The token is what the close drain counts, so between that "+
+			"release and snap.Close() the engine believes no reader is live while pebble still "+
+			"has the snapshot registered — Close's phase 3 then runs e.db.Close() under it and "+
+			"reports \"leaked snapshots\". Close the snapshot FIRST; release the token LAST.", open)
+	}
+	if n := e.db.Metrics().Snapshots.Count; n != 0 {
+		t.Errorf("after pebbleReader.Close() returned, %d pebble snapshot(s) still open, want 0", n)
+	}
+	// And the drain agrees the reader is gone — the two halves are consistent, which is
+	// what "released LAST" is supposed to buy.
+	if live := e.reg.waitDrained(5 * time.Second); live != 0 {
+		t.Errorf("after pebbleReader.Close() returned, the close drain still counts %d live "+
+			"reader(s), want 0", live)
+	}
+}
