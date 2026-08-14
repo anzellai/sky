@@ -206,6 +206,24 @@ migrations, so `SKY_DB_OP=migrate ./app` self-migrates with no source tree.
 (Postgres), or `[database]` in `sky.toml`; `Db.connect ()` reads them. The handle
 is a **memoised top-level value** (`db = Task.run (Db.connect ())`) — never in Model.
 
+### A local PostgreSQL, so dev runs what production runs
+
+```bash
+sky db start        # initdb on first use + start; already running is a no-op
+sky db ps [--all]   # this project's cluster, or every one on the machine
+sky db stop [--all] # pg_ctl stop -m fast
+```
+
+One cluster per project in `.skydata/pg/` (gitignored), on a **unix socket** —
+no port to race over and nothing on the network. `sky db start` prints the DSN
+to put in `DATABASE_URL`. Tuned small (`shared_buffers = 32MB`), so an idle
+project cluster costs tens of megabytes. Needs PostgreSQL on `PATH`, or point
+`SKY_POSTGRES_BIN` at a `bin` directory holding `initdb`/`pg_ctl`/`postgres`.
+
+Worth reaching for the moment the app is headed for Postgres in production:
+developing on SQLite and deploying on Postgres is how dialect differences reach
+users. The app code does not change — only the DSN does.
+
 ## Effect boundary — Task everywhere
 
 Every observable side effect returns `Task Error a` (`File.*`, `Http.*`, `Db.*`,

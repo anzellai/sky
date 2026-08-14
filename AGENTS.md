@@ -201,6 +201,7 @@ sky fmt src/Main.sky             # opinionated formatter (idempotent)
 sky test tests/MyTest.sky        # Sky.Test runner (SKY_TEST_JSON=<path> → per-case JSON report)
 sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
+sky db start | stop [--all] | ps [--all]                       # local PostgreSQL cluster
 sky add <go/module> | remove | install | update                # Go FFI deps
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```

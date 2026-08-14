@@ -9,6 +9,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+mod db_cluster;
 mod db_migrate;
 use std::time::{Duration, Instant};
 
@@ -1149,7 +1150,11 @@ fn cmd_init(args: &[String]) -> ExitCode {
          import Std.Log exposing (println)\n\n\n\
          main =\n    println \"Hello from {name}!\"\n"
     );
-    let gitignore = "sky-out/\n.skycache/\n.skydeps/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
+    // `.skydata/` holds the local PostgreSQL cluster `sky db start` supervises —
+    // a whole data directory, WAL included. Committing it would put a binary
+    // database (and its `postmaster.pid`) into git.
+    let gitignore =
+        "sky-out/\n.skycache/\n.skydeps/\n.skydata/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
 
     // docker-compose.yml — always scaffolded so the production path is one command
     // away, whether or not you start on Postgres. Host port 5433 avoids clashing
@@ -2660,6 +2665,18 @@ fn cmd_db(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("init") {
         return cmd_db_init();
     }
+    // Cluster supervision (embedded-Postgres phase 2). These are the ONLY `sky db`
+    // verbs that do not build the project: they manage the PostgreSQL process the
+    // project talks to, not its schema. `start`/`stop`/`ps` rather than the
+    // obvious `status`, because `sky db status` and `sky db init` already belong
+    // to the migration engine above and quietly changing what they mean would
+    // break every project using them.
+    match args.first().map(String::as_str) {
+        Some("start") => return db_cluster::cmd_start(&args[1..]),
+        Some("stop") => return db_cluster::cmd_stop(&args[1..]),
+        Some("ps") => return db_cluster::cmd_ps(&args[1..]),
+        _ => {}
+    }
     let file_based = Path::new("db").join("migrations").is_dir();
     // `sky db migrate` in a file-based project (db/migrations/ present) → apply the
     // committed migration files.
@@ -2691,7 +2708,8 @@ fn cmd_db(args: &[String]) -> ExitCode {
         Some("migrate") => "migrate",
         _ => {
             eprintln!(
-                "usage: sky db <status|migrate [--gen [name]]|push|seed|reset [table]|drop [table]|init> [file.sky]"
+                "usage: sky db <status|migrate [--gen [name]]|push|seed|reset [table]|drop [table]|init> [file.sky]\n\
+                 \x20      sky db <start|stop [--all]|ps [--all]>    local PostgreSQL cluster"
             );
             return ExitCode::from(2);
         }
@@ -4455,6 +4473,7 @@ fn print_help() {
          \x20 console-serve [...]          run the Sky Console hub daemon\n\
          \x20 watch <file>     rebuild + restart on source change\n\
          \x20 db    <status|migrate> [file]  Std.Db migrations\n\
+         \x20 db    <start|stop|ps>          local PostgreSQL cluster (--all for ps/stop)\n\
          \x20 add    <import-path>  inspect a Go pkg → commit its FFI surface\n\
          \x20 remove <import-path>  drop a Go pkg's FFI surface + dep\n\
          \x20 install               regen/verify committed FFI surfaces\n\

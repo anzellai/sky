@@ -315,6 +315,60 @@ sequences, including ones Sky doesn't know about), use your database's own
 tooling — e.g. `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` on Postgres,
 or delete the SQLite file.
 
+### `sky db start` · `sky db stop` · `sky db ps` — the local PostgreSQL cluster
+
+Every verb above talks to a database. These three *are* the database: they
+supervise a local PostgreSQL cluster for the project you are standing in, so
+development runs the same engine production does instead of the SQLite that
+quietly diverges from it. The design is
+[`docs/skydb/embedded-postgres.md`](../skydb/embedded-postgres.md).
+
+```bash
+sky db start        # initdb on first use, then start; already running is a no-op
+sky db ps           # this project's cluster
+sky db ps --all     # every Sky-managed cluster on the machine
+sky db stop         # stop this project's cluster (pg_ctl stop -m fast)
+sky db stop --all   # stop all of them
+```
+
+```
+$ sky db start
+sky db start: PostgreSQL 16.3 running (pid 41277).
+  data:   /Users/dev/shop/.skydata/pg
+  socket: /tmp/sky-9f2c1a4b7e03d5c8
+  log:    /Users/dev/shop/.skydata/postgres.log
+
+Connect with:
+  psql -h /tmp/sky-9f2c1a4b7e03d5c8 postgres
+  DSN: postgresql:///postgres?host=/tmp/sky-9f2c1a4b7e03d5c8
+```
+
+- **One cluster per project**, in `.skydata/pg/` (gitignored by `sky init`).
+  `rm -rf .skydata` resets exactly one project, and two projects on different
+  PostgreSQL majors never fight.
+- **A unix socket, never a TCP port** — so two `sky db start`s cannot race over
+  a port and nothing is exposed to the network. The socket lives in a short
+  hashed directory *outside* the project (`$XDG_RUNTIME_DIR/sky/<hash>/`, else
+  `/tmp/sky-<hash>/`), because `sockaddr_un` caps a socket path at ~107 bytes
+  and a deeply nested project overflows it.
+- **Tuned small** — `shared_buffers = 32MB` against PostgreSQL's 128MB default,
+  so an idle project cluster costs tens of megabytes rather than hundreds. Only
+  resource knobs are set; nothing that changes what a query means.
+- **A machine-level registry** at `~/.sky/clusters.json` is what lets
+  `sky db ps --all` see clusters this shell did not start. It is reconciled on
+  every read: a dead pid is erased, and a vanished data dir is dropped.
+- **Idempotent by design.** Starting a running cluster and stopping a stopped
+  one both succeed, so both are safe in a script or a shell trap.
+
+The binaries are discovered, in order, from `SKY_POSTGRES_BIN`, then
+`~/.sky/postgres/<version>/bin`, then `PATH`; a directory must hold `initdb`,
+`pg_ctl` and `postgres` to count. `SKY_POSTGRES_BIN` set but incomplete is an
+error rather than a fall-through — silently using a different installation is
+worse than the typo. Set `SKY_HOME` to relocate the registry (tests and CI).
+
+> `sky db init` and `sky db status` belong to the migration engine documented
+> above and are unchanged. The cluster verbs are `start` / `stop` / `ps`.
+
 ### Running migrations as part of `sky run`
 
 `sky run` takes `--db-push`, `--db-migrate`, and `--db-seed` flags that run those

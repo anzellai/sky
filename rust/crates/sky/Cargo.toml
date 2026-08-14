@@ -19,6 +19,12 @@ notify = "8"
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+# `db_cluster_flow` reads back ~/.sky/clusters.json to assert what `sky db start`
+# recorded. The crate has no lib target, so an integration test cannot reach the
+# `serde_json` in [dependencies].
+serde_json.workspace = true
+
 [target.'cfg(unix)'.dependencies]
 # Safe SIGTERM wrapper for `sky watch --kill-timeout` graceful shutdown — the
 # crate forbids `unsafe`, so we use nix's safe `kill` rather than raw `libc`.
