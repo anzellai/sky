@@ -263,3 +263,54 @@ reasoning, not as a question.
   treat the first measured run as a check against them rather than as their
   source (seeding from measurement is the G-B10 anti-pattern the doc names).
   If a floor cannot be met, that is a finding to report, not a number to lower.
+
+## P1 state — 2026-08-14
+
+**Stage 1** (the irreversible key format) and **Stage 2** (the engine hub) are
+committed. `runtime-go/bluedb/` holds the ported engine; `comparer.go` and
+`keys.go` carry the frozen `skydb.mvcc.v1` format and are pinned by a Stage-1
+content sha256 in `rust/crates/xtask/src/bluedb_gates/frozen_stage1.rs` — a
+change to either fails `cargo test`, because changing them requires
+`skydb.mvcc.v2` and a full store rewrite.
+
+Nine pre-port defects found by an adversarial audit are fixed and each is
+falsified by a recorded mutation: N1 (cross-collection row leakage by
+collection-name length), N1b, N3 (a background MANIFEST fatal killed the app
+process), N4 (Close raced readers into a pebble panic), N5 (a mis-sized `hlc_hi`
+re-issued a committed commitTs), C1 (a commit against a closed engine acked
+success), H1, H3, N6 (a fail-open that holed the SSI validation window).
+
+An independent Judge then returned **NOT COMPLETE — 11 gaps**, including a real
+bug it reproduced on round 0 (`Changelog()` took no pin and no closed-check, the
+same N4 class the port claimed closed). All eleven are fixed.
+
+### What P1 does NOT cover — do not let a later phase assume otherwise
+
+* **Serializability covers point reads and `collWitness` only.** Excising
+  `Txn.Scan`/`ScanFallback` removed the only writers of `ReadSet.ranges` and
+  `indexWitness`, so `validate`'s range arms are structurally unreachable.
+  Pinned two-sided by `TestStage2ReadSetRangesHaveNoProducer`.
+* **Uniqueness is NOT enforced.** `backend.go` is not ported; `uniqUserKey` is a
+  key builder and the enforcement is `embedded.go`'s read-then-reserve pair,
+  which no phase has ported. It is net-new in P2 under G2.7.
+* **N2 is open**: `Descending(ColText)` is not order-preserving, so SSI
+  under-rejects. Unfixable in P1 (it lives in `index_key.go`, deliberately kept
+  out). Owned by **G2.12** in P2; the conservative fix — `rangeOptimized`
+  returns false for a descending non-fixed-width column — needs no encoding
+  change and over-rejects rather than under-rejects.
+* Goals 1, 3, 4, 5 are UNKNOWN because their substrate (P4–P8) does not exist.
+  That is the harness declining to certify what it cannot run.
+
+### The recurring defect class, for whoever reads this next
+
+Six separate times this phase, a test passed against the code it was written to
+catch: an errorfs fixture where caching meant zero filesystem ops occurred; a
+Begin/Close race that passed 60/60 against the broken ordering; a spin-then-Close
+shape that could not gate the GC arm; a crash test whose assertions all lived
+inside `if err == nil`; an H1 property test that inspected zero commits because
+the writer's first fsync outlived the whole loop; and a fired-count guard
+satisfiable by a comment.
+
+None was caught by reading the test. Every one was caught by running it against
+the unfixed code and watching it pass. **That is the only acceptable evidence
+that a test works.**
