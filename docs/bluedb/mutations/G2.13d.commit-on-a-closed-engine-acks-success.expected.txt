@@ -1,5 +1,5 @@
 PROBE gate=G2.13d state=FAIL root=<scratch-worktree>
-  a commit against a closed engine does not ack success is not proven: 0/1 pinned fixture(s) reported a passing event
+  a commit whose channel closed under it does not ack success is not proven: 0/1 pinned fixture(s) reported a passing event
   TestAuditC1CommitOnClosedChannelReturnsError did not report a passing `go test -json` event (it FAILED)
   TestAuditC1CommitOnClosedChannelReturnsError: === RUN   TestAuditC1CommitOnClosedChannelReturnsError
   TestAuditC1CommitOnClosedChannelReturnsError:     audit_test.go:288: Commit on a closed committer channel returned Err = nil (CommitTs {WallMs:0 Logical:0}) — a FALSE ACK: the write was never enqueued, never applied and is not durable, yet the caller is told it committed. The recover must assign the NAMED return, not send into the unread job.done

@@ -6,5 +6,5 @@ PROBE gate=G2.17 state=FAIL root=<scratch-worktree>
   TestHLCMonotonicRestartFloor:     engine_test.go:265: restart floor violated: persisted hi={WallMs:5000 Logical:1}, next={WallMs:1000 Logical:1} (must be strictly greater despite backward clock)
   TestMetadataInBatch: === RUN   TestMetadataInBatch
   TestMetadataInBatch:     engine_test.go:305: recovered hlc_hi={WallMs:3000 Logical:0}, want max data version={WallMs:3000 Logical:3}
-  TestHLCMonotonicRestartFloor: --- FAIL: TestHLCMonotonicRestartFloor (0.18s)
-  TestMetadataInBatch: --- FAIL: TestMetadataInBatch (0.11s)
+  TestHLCMonotonicRestartFloor: --- FAIL: TestHLCMonotonicRestartFloor (0.11s)
+  TestMetadataInBatch: --- FAIL: TestMetadataInBatch (0.12s)

@@ -3,4 +3,4 @@ PROBE gate=G2.13c state=FAIL root=<scratch-worktree>
   TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs did not report a passing `go test -json` event (it FAILED)
   TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs: === RUN   TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs
   TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs:     audit_test.go:243: openWith accepted a truncated "hlc_hi" (3 bytes, want 12) and the commit clock RESTARTED: the reopened high-water is {WallMs:5000 Logical:0} (IsZero=false — the fresh-store sentinel the corrupt read forged), so the next commitTs is {WallMs:5000 Logical:1}, NOT greater than the already-committed {WallMs:5000 Logical:1} — the next write to a shared key silently overwrites a committed version
-  TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs: --- FAIL: TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs (0.20s)
+  TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs: --- FAIL: TestAuditN5CorruptHlcHiRefusesOpenAndNeverReissuesTs (0.23s)

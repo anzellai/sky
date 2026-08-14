@@ -6,5 +6,5 @@ PROBE gate=G2.13e state=FAIL root=<scratch-worktree>
   TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot:     audit_test.go:547: Get(h1-key) = "",false at readTs {5000 1} — want v1; a readTs the snapshot cannot serve is the other half of H1
   TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs: === RUN   TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs
   TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs:     audit_test.go:642: reader at readTs {7000 1} cannot see key 0 committed at {7000 1} (<= readTs). Its readTs names a commit outside its own pinned snapshot — defect H1.
-  TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot: --- FAIL: TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot (0.09s)
-  TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs: --- FAIL: TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs (0.06s)
+  TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot: --- FAIL: TestAuditH1SnapshotReadTsIsPinnedWithItsSnapshot (0.08s)
+  TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs: --- FAIL: TestAuditH1SnapshotSeesEveryCommitAtOrBelowItsReadTs (0.05s)
