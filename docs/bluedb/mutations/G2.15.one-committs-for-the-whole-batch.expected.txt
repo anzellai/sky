@@ -6,5 +6,5 @@ PROBE gate=G2.15 state=FAIL root=<scratch-worktree>
   TestGroupCommitPerJobDistinctChangelog:     engine_test.go:114: per-job commitTs not strictly increasing: {WallMs:1000 Logical:1} then {WallMs:1000 Logical:1}
   TestGroupCommitPerJobSameKeyDistinctVersions: === RUN   TestGroupCommitPerJobSameKeyDistinctVersions
   TestGroupCommitPerJobSameKeyDistinctVersions:     engine_test.go:153: same-key jobs must get distinct increasing commitTs, got {WallMs:1000 Logical:1} then {WallMs:1000 Logical:1}
-  TestGroupCommitPerJobDistinctChangelog: --- FAIL: TestGroupCommitPerJobDistinctChangelog (0.06s)
-  TestGroupCommitPerJobSameKeyDistinctVersions: --- FAIL: TestGroupCommitPerJobSameKeyDistinctVersions (0.05s)
+  TestGroupCommitPerJobDistinctChangelog: --- FAIL: TestGroupCommitPerJobDistinctChangelog (0.11s)
+  TestGroupCommitPerJobSameKeyDistinctVersions: --- FAIL: TestGroupCommitPerJobSameKeyDistinctVersions (0.06s)
