@@ -74,9 +74,47 @@ race, and nothing is exposed to the network by accident.
 > overflows it and fails obscurely. Sockets therefore live in a short hashed
 > path (`$XDG_RUNTIME_DIR/sky/<hash>/`, falling back to `/tmp/sky-<hash>/`)
 > keyed to the project, never inside the project directory itself.
+>
+> Two details P2 found on contact with the code. The `XDG_RUNTIME_DIR` branch is
+> itself length-checked and degrades to `/tmp` when the user's runtime dir is
+> long — it is the *user's* value, and an unchecked branch just relocates the
+> overflow. And the fallback is the literal `/tmp`, not `std::env::temp_dir()`:
+> on macOS the latter is a ~49-byte per-user path under `/var/folders/`, which
+> spends half the budget before the hash is appended.
+>
+> The hash is FNV-1a/128 truncated to 64 bits, not `DefaultHasher`, because it is
+> *persisted*: `DefaultHasher`'s output is explicitly not stable across Rust
+> releases, and a compiler upgrade must not orphan every running cluster.
+
+`pg_ctl start` builds its command line and hands it to `/bin/sh`, so the socket
+directory is shell-interpreted on the way to the postmaster. A path carrying a
+quote, a `$` or a space cannot be made safe by quoting, so `sky db start`
+rejects it with the reason rather than passing it through. The two paths sky
+derives are safe by construction; the half that is not is `$XDG_RUNTIME_DIR`.
 
 Development clusters are tuned small (`shared_buffers` in the tens of MB), so
-several idle projects cost tens of megabytes each rather than hundreds.
+several idle projects cost tens of megabytes each rather than hundreds. P2
+writes a marked, idempotent block into the generated `postgresql.conf`:
+`shared_buffers = 32MB` (against PostgreSQL's own 128MB default, allocated up
+front whether or not a query is ever served), `max_connections = 50`,
+`work_mem = 4MB`, `maintenance_work_mem = 32MB`, `max_wal_size = 256MB`,
+`min_wal_size = 64MB`, `autovacuum_max_workers = 1`, `listen_addresses = ''`.
+A measured idle cluster on PostgreSQL 14 comes to ~36MB across the postmaster
+and its six auxiliary processes.
+
+Every one of those is a **resource** knob. Nothing that changes what a query
+means is set — not `fsync`, not `wal_level` — because a development cluster that
+behaves differently from production reintroduces, in a subtler form, exactly the
+divergence this feature exists to remove. `unix_socket_directories` is likewise
+absent: the hashed path is re-derived from the environment and passed as
+`-k` on every start, so it is never frozen into a file that a moved
+`XDG_RUNTIME_DIR` would silently invalidate.
+
+`initdb` runs with `--auth-local=trust --auth-host=reject`. Trust costs nothing
+here because the socket *is* the access control — a 0700 directory owned by the
+developer — and it spares every `psql` a password prompt; host auth is rejected
+outright as a second lock on a door that `listen_addresses = ''` has already
+bricked up.
 
 **Production, several apps on one host — one shared cluster.** Per-app clusters
 would mean a postmaster, a WAL, an autovacuum launcher, a backup job and a
@@ -88,13 +126,58 @@ enforced by PostgreSQL roles rather than by convention.
 ## The registry
 
 `sky db ps` needs to see clusters it did not start, so a machine-level registry
-(`~/.sky/clusters.json`) maps project path → data dir, socket path, pid, version.
-Entries are reaped when the process is gone, because processes die without
-deregistering.
+(`~/.sky/clusters.json`, or `$SKY_HOME/clusters.json`) maps project path → data
+dir, socket path, pid, version. Entries are reaped when the process is gone,
+because processes die without deregistering.
 
 `sky db status` is already taken by migration status, and `sky db init` by the
 migration scaffold. The cluster verbs are therefore `sky db start`,
 `sky db stop`, `sky db ps` (`--all` across projects).
+
+**Reaping is two-legged, and both legs matter.** `kill(pid, 0)` alone answers
+"is *a* process alive", not "is *my postmaster* alive": after a `SIGKILL` the
+stale `postmaster.pid` still names a number the kernel is free to hand to
+something else, and `sky db ps` would then report a database that is not there.
+So a pid is only believed when the process also *looks* like a postmaster
+(`ps -o command=`), and P2 clears a pid file only after that check fails —
+deleting a live postmaster's pid file would let a second postmaster open the
+same data directory, which is how a development database gets corrupted.
+
+What reaping does with an entry depends on what is gone:
+
+| Observation | Registry effect | `sky db ps` |
+|---|---|---|
+| Postmaster serving the data dir | pid adopted (even if restarted outside `sky`) | `running` |
+| Data dir present, nothing serving it | **pid zeroed** | `stopped` |
+| Data dir gone (`rm -rf .skydata`, project deleted) | entry dropped | absent |
+
+Zeroing rather than deleting is what makes "a dead pid is never *reported* as
+running" structural: the number is erased at reap time, so no later code path
+can print it. An idle-but-initialised cluster stays listed, which is the useful
+answer to "what does this machine have".
+
+## Where the binaries come from
+
+P2 *discovers*; P3 provisions. The order is fixed, and it is the order of
+decreasing explicitness:
+
+1. `SKY_POSTGRES_BIN` — an operator's or a test's deliberate choice.
+2. `~/.sky/postgres/<version>/bin` — the P3 cache, newest major first. It does
+   not exist yet, which is fine: it is simply skipped.
+3. `PATH` — a system PostgreSQL.
+
+A candidate counts only if it holds all of `initdb`, `pg_ctl` and `postgres`.
+`psql` is deliberately not required — it is a client convenience, and demanding
+it would reject a perfectly usable server-only distribution.
+
+`SKY_POSTGRES_BIN` set but incomplete is an **error, not a fall-through**.
+Quietly moving on to the next candidate would hand the user a cluster from an
+installation they did not choose, which is worse than the typo they made.
+
+When nothing is found, the message names all three lookups and gives a command
+for each way out (install, point `SKY_POSTGRES_BIN`, or the not-yet-built
+`sky db provision --embed`). "PostgreSQL not found" on its own sends the reader
+to the source to work out what was even looked for.
 
 ## Lifecycle
 
@@ -120,20 +203,29 @@ clusters:
 
 ### Failure modes that must be handled, not discovered
 
+Three of these are not specific to `--embed` — they are properties of pointing
+any postmaster at a data directory, so **P2 already closes them for
+`sky db start`** and P5 reuses the same handling:
+
+| Failure | P2 behaviour |
+|---|---|
+| Double start | Sky-level message naming the data dir and offering `sky db stop`; PostgreSQL's raw "another server might be running" is translated, and an unrecognised failure is passed through verbatim rather than dressed up |
+| Already running | **Success no-op.** The verb states a desired end state, so a script that runs it before every task must not have to tell "started it" from "it was already up" |
+| Stale `postmaster.pid` after `SIGKILL` | Detected and cleared — but only once the named pid fails the two-legged liveness check above |
+| Major-version mismatch | Refused before any start, naming both majors and pointing at `pg_upgrade` or `SKY_POSTGRES_BIN` |
+| Half-finished `initdb` | A data dir with no `PG_VERSION` is reported as such; a failed `initdb` removes its own wreckage so the next run does not diagnose the wrong bug |
+
+`sky db stop` is idempotent for the same reason `start` is: stopping a cluster
+that is already down succeeds, so the verb is safe in a shell trap.
+
+The remaining two are genuinely `--embed`-only:
+
 - **`--embed` together with an explicit `SKY_DB_URL` is an error**, not a
   precedence puzzle. A deploy that silently ignores the operator's DSN and
   writes to local disk instead must fail loudly at startup.
-- **Two instances against one data dir** must fail with a Sky-level message.
-  PostgreSQL's `postmaster.pid` will refuse; the user should not have to read
-  the raw error to understand it.
 - **A dead child.** If PostgreSQL exits, the app exits non-zero and lets the
   supervisor restart the tree. Restarting in place hides a failing disk until
   it is an outage.
-- **`SIGKILL`** leaves a stale `postmaster.pid`. The next `--embed` start must
-  detect and clear it rather than refusing to boot.
-- **Major-version mismatch** between the embedded binaries and an existing data
-  dir must be detected and reported, never attempted. This is where
-  `pg_upgrade` eventually lands.
 
 ## Licensing and distribution
 
@@ -226,25 +318,44 @@ Note that hosting is not distribution: running PostgreSQL on a server triggers
 no redistribution obligation under any of these licences. This section is about
 the `sky` toolchain and `--embed` binaries, which are distributed.
 
-## Related fixes this depends on
+## Related fixes this depends on — **closed in P1**
 
-Two live defects in the shipped runtime sit directly under this work.
+Two live defects in the shipped runtime sat directly under this work. Both are
+fixed in `runtime-go/rt/db_pool.go`; the user-facing surface is documented under
+[`sky.toml` `[database]`](../sky-toml.md#database).
 
-1. **No isolation level is ever set.** `Db_withTransaction` calls bare
+1. **No isolation level was ever set.** `Db_withTransaction` called bare
    `d.conn.Begin()`; a search of `runtime-go/rt/` for `SERIALIZABLE`,
-   `LevelSerializable`, `BEGIN IMMEDIATE` or `_txlock` returns nothing.
-   PostgreSQL's default is then READ COMMITTED, so `Store.transaction` provides
+   `LevelSerializable`, `BEGIN IMMEDIATE` or `_txlock` returned nothing.
+   PostgreSQL's default is then READ COMMITTED, so `Store.transaction` provided
    atomicity and no isolation guarantee beyond it.
-2. **The PostgreSQL connection pool is unconfigured.** The `SetMaxOpenConns(1)`
-   clamp is correctly SQLite-only, but the comment at the fall-through claims
+
+   **P1 makes isolation requestable, and deliberately does NOT change the
+   default.** `sql.TxOptions` is now threaded through `BeginTx`, driven by
+   `[database] isolation`; unset reproduces `Begin()` exactly. Raising the
+   default to SERIALIZABLE silently would surface `40001 serialization_failure`
+   to apps that have never seen one and have no retry — a breaking change in a
+   bug fix's clothing. Worse, a safe retry requires the transaction body to be
+   **replayable**, and a Sky `Task` body may have sent mail or charged a card
+   before the conflict was detected. That contract does not exist in the type
+   system yet, so `[database] txRetry` is opt-in, defaults to 0, and states the
+   requirement it imposes at the point of use.
+2. **The PostgreSQL connection pool was unconfigured.** The `SetMaxOpenConns(1)`
+   clamp was correctly SQLite-only, but the comment at the fall-through claimed
    "their connection pool defaults are already sane". Go's `database/sql`
    defaults are `MaxOpenConns = 0` (unlimited), `MaxIdleConns = 2`, and no
    connection lifetime — unlimited backends under burst against a server whose
    own default `max_connections` is 100, with constant reconnect churn below
-   that. Sizing should also be deployment-aware: the runtime already detects
-   serverless (`K_SERVICE`) and varies exporter cadence on it, and the same
-   signal should pick pool defaults, since many small instances each holding a
-   pool is how a connection storm happens.
+   that.
+
+   **P1 configures all four knobs, sized from the deployment.** The runtime
+   reuses the existing `IsServerless()` detector (`serverless.go` — the same
+   signal `exporter.go` varies its flush cadence on) rather than growing a
+   second one: VM gets 4 connections per CPU clamped 4–32 with a 5-minute idle
+   reap, serverless gets 2 per CPU clamped 2–8 with a 60-second one, because
+   many small instances each holding a pool is how a connection storm happens
+   and a frozen instance must give its backends back. The false comment is gone,
+   replaced by what is actually true.
 
 ## Phases
 
@@ -252,8 +363,8 @@ Each phase ships its own commit and is verifiable in isolation.
 
 | Phase | Deliverable |
 |---|---|
-| **P1** | Isolation levels + deployment-aware pool configuration (independent of everything below) |
-| **P2** | Cluster supervisor: data dir, `initdb`, hashed socket path, `sky db start` / `stop` / `ps`, the registry |
+| **P1** ✅ | Isolation levels + deployment-aware pool configuration (independent of everything below) — `runtime-go/rt/db_pool.go`, gated by `db_pool_test.go` |
+| **P2** ✅ | Cluster supervisor: data dir, `initdb`, hashed socket path, `sky db start` / `stop` / `ps`, the registry — `rust/crates/sky/src/db_cluster.rs`, gated by its unit tests + `tests/db_cluster_flow.rs` (a live cycle from a project path deep enough to overflow `sun_path`) |
 | **P2b** | CI bundle build: PostgreSQL from source per platform, pinned configure line, SBOM, the GPL/LGPL/AGPL link gate, `NOTICE.md` entry |
 | **P3** | `sky db provision --embed` — fetch Sky's own bundle, checksum, pin |
 | **P4** | `sky run` integration, ref-counted |
