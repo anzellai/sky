@@ -1,0 +1,3 @@
+PROBE gate=G0.8 state=FAIL root=<scratch-worktree>
+  1 of 17 non-test source(s) in runtime-go/bluedb are falsified by nothing
+  runtime-go/bluedb/recent_changes.go: no recorded mutation's patch touches this engine source, and it is not in DELIBERATELY_UNMUTATED. Nothing has shown that any line of it is load-bearing — which is the state `validate.go` was in when a four-line deletion of the SSI validator's collection-witness arm left every gate green. Author a mutation whose assertion lives in a gated test, or record it as deliberately-unmutated WITH the argument for why no honest revert reddens a gate

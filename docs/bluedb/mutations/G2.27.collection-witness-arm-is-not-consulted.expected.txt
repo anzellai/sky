@@ -1,0 +1,6 @@
+PROBE gate=G2.27 state=FAIL root=<scratch-worktree>
+  validate() REFUSES a phantom insert into a witnessed collection, and the collection id it matches on survives the wire is not proven: 1/2 pinned fixture(s) reported a passing event
+  TestValidateDetectsAPhantomInsertIntoAWitnessedCollection did not report a passing `go test -json` event (it FAILED)
+  TestValidateDetectsAPhantomInsertIntoAWitnessedCollection: === RUN   TestValidateDetectsAPhantomInsertIntoAWitnessedCollection
+  TestValidateDetectsAPhantomInsertIntoAWitnessedCollection:     validate_test.go:220: a transaction that SCANNED collection 7 and wrote a summary of what it found COMMITTED (err=<nil>) even though a concurrent transaction had inserted a new row into that same collection first. That is a PHANTOM: the committed summary says 1 row, the store holds 2, and no serial order explains the pair. The inserted key was never read by this transaction, so the point arm cannot see it: validate()'s collection-witness arm is the only thing that detects it
+  TestValidateDetectsAPhantomInsertIntoAWitnessedCollection: --- FAIL: TestValidateDetectsAPhantomInsertIntoAWitnessedCollection (0.11s)

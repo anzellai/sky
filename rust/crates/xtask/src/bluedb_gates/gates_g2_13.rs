@@ -1718,6 +1718,19 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
         mutation: "G2.13h/corrupt-cold-start-seed-leaves-the-floor-low",
         leaves: &["TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor"],
     },
+    // The same leaf, its SECOND assertion, and a different file: the row above
+    // reverts the SEED (pebble_engine.go) so the floor is never raised; this one
+    // leaves the floor correct and deletes the ring's own floor check
+    // (recent_changes.go), so the raised floor diverts nothing. Ordered by which
+    // assertion each reaches, and the transcripts show one `--- FAIL:` apiece.
+    //
+    // It exists because G0.8 asked which engine sources no mutation touches and
+    // `recent_changes.go` — the ring that IS the SSI validation window — was one
+    // of the eight.
+    LeafCoverage {
+        mutation: "G2.13h/ring-answers-for-a-range-it-does-not-hold",
+        leaves: &["TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor"],
+    },
     // -- G2.13i: two files, two doors, one mutation each.
     LeafCoverage {
         mutation: "G2.13i/gc-skips-corrupt-keys-without-bound",
@@ -1892,6 +1905,36 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
     LeafCoverage {
         mutation: "G2.14/scan-does-not-witness-its-collection",
         leaves: &["TestStage2ReadSetRangesHaveNoProducer"],
+    },
+    // G2.26 / G2.27 — `validate()` ITSELF, one gate per arm.
+    //
+    // Read the three transcripts together, because what each mutation did NOT
+    // redden is the evidence that the two gates are about two different things.
+    // Deleting the point arm reddens the point fixture and leaves both witness
+    // fixtures PASSING; deleting the witness arm reddens the phantom fixture and
+    // leaves the point fixture passing. That is the isolation each fixture buys
+    // with its own read-set assertion (no witnesses here / not a point read
+    // there), and without it one deletion would redden everything and neither
+    // proof would say which arm it was about.
+    LeafCoverage {
+        mutation: "G2.26/point-arm-is-not-consulted",
+        leaves: &["TestValidateDetectsAPointReadOverwrittenConcurrently"],
+    },
+    LeafCoverage {
+        mutation: "G2.27/collection-witness-arm-is-not-consulted",
+        leaves: &["TestValidateDetectsAPhantomInsertIntoAWitnessedCollection"],
+    },
+    // TWO leaves, and the pair is the point: dropping the collection id from the
+    // wire reddens the round-trip fixture that names the wire AND the phantom
+    // fixture one layer up, because the window is built from the decoded payload.
+    // The mutation is classified on the round-trip fixture's own assertion, so
+    // the proof belongs to the leaf that states the property.
+    LeafCoverage {
+        mutation: "G2.27/payload-drops-the-collection-id",
+        leaves: &[
+            "TestChangelogPayloadCarriesTheCollectionIdTheWitnessMatchesOn",
+            "TestValidateDetectsAPhantomInsertIntoAWitnessedCollection",
+        ],
     },
     // G2.15 — one commitTs for the whole batch. Both per-job fixtures redden;
     // `TestGroupCommitBasic` deliberately does NOT, because it asserts the
