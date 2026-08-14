@@ -2,6 +2,7 @@ package bluedb
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/cockroachdb/pebble/v2"
 )
@@ -71,9 +72,40 @@ func (r *pebbleReader) Get(userKey []byte) (value []byte, commitTs HLC, ok bool)
 // Iterate returns an ordered, snapshot-consistent cursor over distinct user-keys
 // sharing prefix (nil ⇒ whole data keyspace), taking the newest visible version
 // <= readTs at each and skipping tombstones (§2.5). O(log n + k).
+//
+// BOTH bounds MUST end in 0x00 (defect N1). skydbSplit reads a key's TRAILING byte
+// as a suffix length, so a bound of length L ending in byte v is misparsed as
+// prefix=bound[:L-v] iff 0 < v <= L-1. The naive `tagData ‖ prefix` ends in an
+// arbitrary user byte and detonates: with prefix = collName ‖ 0x1F, n <= 29 is
+// correct, n == 30 collapses the lower bound's prefix to [0x00] — the WHOLE data
+// keyspace, so another collection's rows are returned, decoded and predicate-matched
+// as if they belonged — and n >= 31 inverts lower > upper, which Pebble scans as
+// zero rows with no error. Content-independent failure begins at len(prefix) >= 255
+// for arbitrary bytes, or >= 127 for an ASCII tail.
+//
+// The fix is here, in the CALLER. It is NOT in skydbSplit: comparerName
+// "skydb.mvcc.v1" is frozen into every SSTable's metadata, and changing Split
+// changes SSTable ordering and breaks the leading-byte-stripping invariant
+// base.CheckComparer enforces — it would require skydb.mvcc.v2 plus a full store
+// rewrite. On-disk bytes are unaffected by this function: no bound built here is
+// ever persisted (the module's only persisted bound is gc.go's DeleteRange pair,
+// which is well-formed independently).
 func (r *pebbleReader) Iterate(prefix []byte) Cursor {
-	lower := append([]byte{tagData}, prefix...)
+	// tagData ‖ prefix ‖ 0x00 — ends in 0x00, so Split returns len and it is a bare
+	// prefix. It is <= every data key whose user-key begins with prefix (equal-prefix
+	// keys carry a 13-byte suffix, and the empty suffix sorts first).
+	lower := dataKeyPrefix(prefix)
 	upper := dataScanUpper(prefix)
+	// Structural check, not a cover-up: Pebble carries no production assertion on an
+	// inverted bound pair — it simply yields zero rows with Err() == nil, which is
+	// indistinguishable from an empty collection. That silence IS the second half of
+	// N1. With the bounds above it can never fire (succ differs from lower at an index
+	// inside lower, upward); it exists so any future bound-construction regression is
+	// loud instead of returning a wrong-but-plausible empty result.
+	if skydbCompare(lower, upper) >= 0 {
+		return &pebbleCursor{err: fmt.Errorf(
+			"bluedb: inverted data-scan bounds for prefix %x: [% x, % x)", prefix, lower, upper)}
+	}
 	iter, err := r.snap.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
 	if err != nil {
 		return &pebbleCursor{err: err}
@@ -84,12 +116,31 @@ func (r *pebbleReader) Iterate(prefix []byte) Cursor {
 // dataScanUpper returns the exclusive upper bound for a data-keyspace scan over
 // user-keys beginning with prefix. For an empty prefix it is the whole data
 // keyspace (up to the changelog tag).
+//
+// The returned bound always ends in 0x00 (or is a self-evidently bare one-byte tag),
+// so skydbSplit returns len and never mis-reads it as a suffix — see Iterate (N1).
 func dataScanUpper(prefix []byte) []byte {
-	base := append([]byte{tagData}, prefix...)
-	if succ := bytesSuccessor(base); succ != nil {
-		return succ
+	if len(prefix) == 0 {
+		// Whole data keyspace. []byte{tagChangelog} is the first key of the next
+		// namespace and is self-evidently bare (len 1, so Split's F2 guard returns
+		// len). [0x01, 0x00] — what the successor path below would produce — is also
+		// correct, but only by a non-obvious argument; prefer the evident form.
+		return []byte{tagChangelog}
 	}
-	return []byte{tagChangelog}
+	base := append([]byte{tagData}, prefix...)
+	succ := bytesSuccessor(base)
+	if succ == nil {
+		// UNREACHABLE: base[0] == tagData == 0x00 != 0xFF, so a successor always
+		// exists. Kept rather than dropped because falling through to
+		// append(nil, sentinel) would yield []byte{0x00} — an upper bound BELOW every
+		// data key, i.e. a silent zero-row scan.
+		return []byte{tagChangelog}
+	}
+	// succ's last byte is (non-0xFF)+1 ∈ [0x01, 0xFF], so succ never ends in 0x00
+	// while every stored key's Split-prefix always does. No valid prefix can equal
+	// succ, so [succ, succ‖0x00) contains no valid prefix and succ‖0x00 excludes
+	// exactly what bare succ would — while being a well-formed bare bound.
+	return append(succ, sentinel)
 }
 
 // bytesSuccessor returns the smallest byte string strictly greater than every

@@ -558,16 +558,30 @@ func (tx *Txn) ScanCollection(coll CollID, prefix []byte) Cursor {
 // userKey begins with prefix (read-your-writes over the collection). It records NOTHING — the
 // caller (ScanCollection) owns the read-set entry.
 func (tx *Txn) scanPrefixMaterialize(prefix []byte) Cursor {
+	return tx.materializeScan(prefix, tx.reader.Iterate(prefix))
+}
+
+// materializeScan drains cur, overlays the write-set and returns the ordered result.
+// Split out of scanPrefixMaterialize so the error path below is directly testable
+// with a cursor that fails (the base reader only fails on I/O the test cannot force).
+func (tx *Txn) materializeScan(prefix []byte, cur Cursor) Cursor {
 	rows := map[string][]byte{}
 	tsOf := map[string]HLC{}
 
-	cur := tx.reader.Iterate(prefix)
 	for cur.Next() {
 		k := append([]byte(nil), cur.Key()...)
 		rows[string(k)] = append([]byte(nil), cur.Value()...)
 		tsOf[string(k)] = cur.CommitTs()
 	}
+	// Defect N1b: a cursor that stopped on an error must NOT be reported as an empty
+	// (or, worse, write-set-only) collection. Overlaying buffered writes on a failed
+	// base read yields a plausible-looking partial collection that a predicate then
+	// treats as the truth. Surface the error and return no rows.
+	scanErr := cur.Err()
 	cur.Close()
+	if scanErr != nil {
+		return &sliceCursor{i: -1, err: scanErr}
+	}
 
 	// Overlay the write-set (only keys under this collection's prefix): a buffered put appears,
 	// a buffered delete masks.
@@ -603,16 +617,20 @@ type sliceCursor struct {
 	keys, vals [][]byte
 	tss        []HLC
 	i          int
+	err        error // N1b: a failed base scan, surfaced instead of an empty result
 }
 
 var _ Cursor = (*sliceCursor)(nil)
 
 func (c *sliceCursor) Next() bool {
+	if c.err != nil {
+		return false
+	}
 	c.i++
 	return c.i < len(c.keys)
 }
 func (c *sliceCursor) Key() []byte   { return c.keys[c.i] }
 func (c *sliceCursor) Value() []byte { return c.vals[c.i] }
 func (c *sliceCursor) CommitTs() HLC { return c.tss[c.i] }
-func (c *sliceCursor) Err() error    { return nil }
+func (c *sliceCursor) Err() error    { return c.err }
 func (c *sliceCursor) Close()        {}
