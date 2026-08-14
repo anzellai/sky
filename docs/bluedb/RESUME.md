@@ -160,3 +160,97 @@ Five mutations, and two points deliberately without one:
   the same fault wedges pebble entirely and `Open` never returns, so there is no
   verdict to observe. The check is defence-in-depth against a pebble contract
   that today does not need it.
+
+## CLOSED — the 38 tests we INHERITED are gated (2026-08-14)
+
+The harness gated the two Go test files P1 **wrote** — `audit_test.go` (23
+fixtures, G2.13a–m) and `crashsim_test.go` (7, G2.9a) — and none of the eight it
+**inherited**. 38 of the package's 68 `func Test` names appeared nowhere under
+`rust/crates/xtask/src/`: all 10 of `engine_test.go` (every group-commit test,
+snapshot isolation, the HLC restart floor, the changelog), all 11 of
+`gc_test.go` (watermark + GC + the Fix-3 clamp), the 9 comparer/key-format
+behaviour tests, both lock tests, the spill test, and `stage2_readset_test.go`.
+Under RULE ZERO that made group commit, GC, the watermark, the changelog and the
+key format **unproven**, however green `go test ./bluedb/` was: no gate ran them,
+no pin named them, no mutation targeted them, and nothing in the harness could
+tell a corpus that asserts them from one that had been deleted.
+
+**The cost was measured.** An adversarial Judge deleted four lines —
+`tx.WitnessCollection(coll)` from `ScanCollection` (`txn.go:604-610`) and the
+`if !rs.collWitness[coll]` assertion that is its only witness
+(`stage2_readset_test.go:93-95`) — and a scan-then-insert transaction that
+conflicts at HEAD **committed clean**. A phantom, with no serial order to explain
+it, while `go test`, `cargo test -p xtask`, `--tier=full` and
+`--verify-mutations` (20 mutations, 11 gates, all PROVEN) stayed green.
+`ScanCollection` recording `collWitness` is the ONLY live producer of the arm
+Stage 2's serializability claim rests on. A documented scope reduction had become
+an unguarded one.
+
+**G2.14–G2.25** (`bluedb_gates/gates_runtime.rs`) are that corpus's gates — one
+per PROPERTY, not one per file and not one per test:
+
+| Gate | Property | Leaves |
+|---|---|---|
+| G2.14 | the excised read-set arms have no producer; the live ones record | 1 |
+| G2.15 | every job in a drained batch gets its own commitTs | 3 |
+| G2.16 | a read resolves the newest version at or below its readTs | 5 |
+| G2.17 | the commit clock never re-issues a timestamp across a restart | 2 |
+| G2.18 | the changelog round-trips verbatim and tails strictly after | 1 |
+| G2.19 | GC never collects a version a live reader can still need | 4 |
+| G2.20 | the GC threshold is durable, monotone, never above durableHi | 5 |
+| G2.21 | a GC pass trims below T and writes no other logical state | 2 |
+| G2.22 | the key encoding satisfies Pebble's comparer contract | 4 |
+| G2.23 | the key-shortening hooks stay inside the contract | 4 |
+| G2.24 | every key parser rejects corrupt bytes without panicking | 4 |
+| G2.25 | a store admits one writer and one immutable format name | 3 |
+
+Each carries the four pins the G2.13* family carries: a population parsed from
+the Go source and reconciled **two-way** against `RUNTIME_OWNERSHIP` (and against
+the FILE each row names, so a fixture cannot move house silently); `-count=1`;
+`-json` parsed for a passing event per leaf under an anchored `^(…)$` pattern;
+and a `SourceAnchor` on **every** leaf's own property assertion, because an empty
+Go test emits `pass` and the first three prove only that a leaf RAN.
+
+Re-running the Judge's four-line attack now gives:
+
+```
+G2.14   FAIL   …::TestStage2ReadSetRangesHaveNoProducer no longer contains
+        `if !rs.collWitness[coll] {` in EXECUTING code — THE non-vacuity
+        assertion. ScanCollection's WitnessCollection call is the only live
+        producer of the arm Stage 2's serializability claim rests on …
+```
+
+Twelve mutations, one per gate, each a minimal revert of a named fix hunk
+(Fix-2's per-job `hlc.next()`, Fix-3's `minHLC(candidate, dur)`, §5.2's
+min-over-live floor, §3.3's restart seed, H3's tombstone arm, the F2/bounds
+guards, the format name). `G2.15`'s `expect` was authored against the
+changelog-loss message and **re-taken** against `per-job commitTs not strictly
+increasing`, because the fixture trips that assertion first and the original
+would have recorded VACUOUS.
+
+Two leaves are recorded in `SOURCE_SIDE_FALSIFIERS` as unreddenable by any honest
+revert, with the argument: `TestSecondOpenFailsSingleProcessLock` (the exclusive
+directory lock is Pebble's, relied on by design §6 rather than reimplemented) and
+`TestWrongComparerNameRefusesOpen` (dropping `Comparer: skydbComparer` from
+`openWith` does NOT redden it — the store is then created under Pebble's default
+name and the fixture's deliberately-wrong name still mismatches). Their live
+sibling `TestComparerName` IS reddenable, and `G2.25/comparer-name-drifts` proves
+it.
+
+A new `*_test.go` under `runtime-go/bluedb/` owned by no family is now a
+`cargo test` failure: the three families must partition the directory, discovered
+by `read_dir` rather than read from a list.
+
+**And one harness bug the exercise surfaced.** `--- FAIL: <name>` is the only
+line that says WHICH leaf failed, and Go emits it after that test's output — so
+the 40-line head-truncated quote dropped exactly it for any table-driven fixture
+with many sub-failures. `G2.24`'s transcript came back as thousands of
+`panicked on key …` lines and no verdict line, and the per-leaf rule could not
+confirm a leaf the run had plainly reddened. The budget now bounds the NOISE and
+nothing bounds the VERDICT.
+
+**G2.13d was retitled.** It said "a commit against a closed engine"; the fixture
+closes the commit CHANNEL and asserts the engine is neither closed nor sealed
+(`audit_test.go:271-281`) — that is what makes the send meet a closed channel at
+all. A reader checking STATUS.md against the corpus would have found no fixture
+for the old title.

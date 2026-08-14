@@ -3,4 +3,4 @@ PROBE gate=G2.13h state=FAIL root=<scratch-worktree>
   TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor did not report a passing `go test -json` event (it FAILED)
   TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor: === RUN   TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor
   TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor:     audit_test.go:1519: after a failed cold-start seed the ring floor is {WallMs:0 Logical:0}, want persistedHi {WallMs:53000 Logical:1}. A lower floor means after(readTs) answers `not spilled` for a range the ring does NOT hold, so a transaction validates against a window with a hole — under-rejection
-  TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor: --- FAIL: TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor (0.16s)
+  TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor: --- FAIL: TestAuditC6bCorruptColdStartSeedRaisesTheRingFloor (0.17s)

@@ -1,17 +1,4 @@
 PROBE gate=G0.6 state=FAIL root=<scratch-worktree>
-  15 mutation proof problem(s) (39 not authored yet)
+  2 mutation proof problem(s) (39 not authored yet)
   G0.2/rt-imports-bluedb: recorded expected output does not contain the declared assertion "forbidden edge rt -> bluedb"
-  G0.6/corrupt-expected: UNVERIFIED-SINCE c480db92 — a declared target moved
-  G0.7/mutationless-gate: UNVERIFIED-SINCE c480db92 — a declared target moved
-  G2.14/scan-does-not-witness-its-collection: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.15/one-committs-for-the-whole-batch: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.16/tombstone-resolves-as-a-present-row: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.17/reopen-does-not-floor-the-clock: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.18/tail-after-is-inclusive: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.19/gc-floor-ignores-live-readers: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.20/threshold-not-clamped-to-durablehi: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.21/retention-does-not-trim-below-t: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.22/version-suffix-not-inverted: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.23/successor-returns-its-input: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.24/decode-data-version-drops-its-bounds-guard: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
-  G2.25/comparer-name-drifts: recorded proof ledger is stale — no entry in docs/bluedb/gate-state.tsv
+  G0.7/mutationless-gate: UNVERIFIED-SINCE 1ed9829b — a declared target moved

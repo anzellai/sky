@@ -4,7 +4,7 @@ PROBE gate=G2.20 state=FAIL root=<scratch-worktree>
   TestGCThresholdClampSurvivesCrashNoReaderWedge did not report a passing `go test -json` event (it FAILED)
   TestAdvanceThresholdClampsToDurableHi: === RUN   TestAdvanceThresholdClampsToDurableHi
   TestAdvanceThresholdClampsToDurableHi:     gc_test.go:383: advanceThreshold must clamp candidate (tNew={WallMs:5000 Logical:0}) to durableHi (tOld={WallMs:1000 Logical:0}): got {WallMs:5000 Logical:0} advanced=true
-  TestAdvanceThresholdClampsToDurableHi: --- FAIL: TestAdvanceThresholdClampsToDurableHi (0.00s)
   TestGCThresholdClampSurvivesCrashNoReaderWedge: === RUN   TestGCThresholdClampSurvivesCrashNoReaderWedge
   TestGCThresholdClampSurvivesCrashNoReaderWedge:     gc_test.go:452: GC threshold must clamp to durableHi {WallMs:1000 Logical:1} (not the in-memory high-water {WallMs:1000 Logical:3}), got {WallMs:1000 Logical:3}
+  TestAdvanceThresholdClampsToDurableHi: --- FAIL: TestAdvanceThresholdClampsToDurableHi (0.00s)
   TestGCThresholdClampSurvivesCrashNoReaderWedge: --- FAIL: TestGCThresholdClampSurvivesCrashNoReaderWedge (0.05s)

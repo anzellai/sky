@@ -41,3 +41,4 @@ PROBE gate=G2.24 state=FAIL root=<scratch-worktree>
   TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00fffffffffffffff8ff (len=12): runtime error: slice bounds out of range [-1:]
   TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 006b00fffffffffffffff8ffff
   TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 006b00fffffffffffffff8ffffff
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic: --- FAIL: TestDecodeDataVersionRejectsCorruptKeysWithoutPanic (0.01s)

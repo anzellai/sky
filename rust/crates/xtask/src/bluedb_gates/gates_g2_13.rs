@@ -167,7 +167,7 @@ pub const AUDIT_OWNERSHIP: &[Owned] = &[
     Owned {
         test: "TestAuditC1CommitOnClosedChannelReturnsError",
         owner: "G2.13d",
-        property: "a commit against a closed engine does not ack success (C1)",
+        property: "a commit whose channel closed under it does not ack success (C1)",
     },
     Owned {
         test: "TestAuditH3ReaderGetSurfacesIoErrors",
@@ -572,7 +572,10 @@ pub fn g2_13c_corrupt_hlc_hi(ctx: &Ctx) -> GateOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// G2.13d — C1: a commit against a closed engine does not ack success
+// G2.13d — C1: a commit whose committer channel closed under it does not ack
+// success. NOT "a closed engine": the fixture asserts the engine is neither
+// closed nor sealed (audit_test.go:271-281), so the early-out guards cannot be
+// what returns the error and the send really does meet a closed channel.
 // ---------------------------------------------------------------------------
 
 pub const G2_13D_TESTS: &[&str] = &["TestAuditC1CommitOnClosedChannelReturnsError"];
@@ -590,7 +593,7 @@ pub fn g2_13d_no_false_ack(ctx: &Ctx) -> GateOutcome {
                 sites: 0,
             }],
             budget: Duration::from_secs(240),
-            property: "a commit against a closed engine does not ack success",
+            property: "a commit whose channel closed under it does not ack success",
         },
     )
 }
