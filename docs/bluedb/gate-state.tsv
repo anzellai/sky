@@ -58,3 +58,4 @@ proof	G2.6/disable-injection-point	PROVEN	52fbd70a
 proof	G2.9a/ack-before-fsync	PROVEN	52fbd70a
 proof	G2.9a/sealed-engine-still-runs-gc	PROVEN	52fbd70a
 proof	G2.9a/wal-fatal-never-reaches-the-ack	PROVEN	52fbd70a
+integrity	4f29fd2cd775a4c1a2ae809fc3621dcf46d5b3deda86c9bf658e248e028b78bc

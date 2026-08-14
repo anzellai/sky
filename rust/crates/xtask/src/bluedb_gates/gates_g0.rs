@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use super::registry::{Ctx, GateOutcome, REGISTRY};
 use super::sha256;
-use super::state::{GateState, ProofOutcome};
+use super::state::{GateState, Integrity, ProofOutcome};
 use super::status;
 use crate::harness::layer2;
 
@@ -1573,8 +1573,19 @@ fn go_build_sites(ctx: &Ctx) -> GoBuildScan {
 /// it never calls `git apply`, never builds, and never runs a gate. "The mutation
 /// still applies and still turns its gate red" is re-established only by
 /// `--verify-mutations`, which is why that takes about an hour and this takes
-/// under a second. Everything here is an audit of the LEDGER that run wrote —
-/// four checks per mutation:
+/// under a second. Everything here is an audit of the LEDGER that run wrote.
+///
+/// Two of the checks are about the ledger AS A WHOLE, and both exist because
+/// the per-mutation loop below is driven by the REGISTRY and reads the ledger as
+/// a lookup table — so anything in the file that no registry entry looks up is,
+/// to this gate, invisible:
+///
+/// * the file carries a matching integrity seal (`state::Integrity`), so a
+///   typed `PROVEN` is distinguishable from a recorded one;
+/// * every row belongs to a mutation some gate declares (`state::orphans`) —
+///   an id that has been retired leaves a live credential behind otherwise.
+///
+/// Then, per mutation:
 ///
 /// 1. the patch file is still on disk (and a ledger entry without one is a FAIL,
 ///    not a shrug; a patch-less mutation with no ledger entry is exempt ONLY
@@ -1583,8 +1594,15 @@ fn go_build_sites(ctx: &Ctx) -> GoBuildScan {
 /// 2. the ledger has an entry for it;
 /// 3. the entry records `PROVEN` — `VACUOUS` for the canary, and `VACUOUS`
 ///    anywhere else is a green lie;
-/// 4. the recorded RED transcript still contains the declared assertion, and no
-///    declared `target` has moved since the sha the proof was taken at.
+/// 4. the recorded RED transcript still contains the declared assertion; no
+///    declared `target` — nor the patch itself, which
+///    `mutations::effective_targets` derives rather than trusting an author to
+///    declare — has moved since the sha the proof was taken at; and
+/// 5. the GATE BODY that produced the verdict is byte-identical to what it was
+///    at that sha (`mutations::GateBodyIndex`). Checks 1–4 all watch the
+///    mutation's SUBJECT; a proof is equally invalidated by weakening the gate
+///    that caught the defect, and exactly one of the ninety registered
+///    mutations names anything under the gate directory in its `targets`.
 ///
 /// Point 4's second half is a HINT with known blind spots — see the note on the
 /// `G0.6` entry in `registry.rs` for why no mutation lists a `*_test.go` in
@@ -1593,6 +1611,46 @@ pub fn g0_6_mutations_verified(ctx: &Ctx) -> GateOutcome {
     let state = GateState::load(ctx.root());
     let mut findings = Vec::new();
     let mut unauthored = 0usize;
+    let mut bodies = super::mutations::GateBodyIndex::new(ctx.root());
+
+    // 5. the ledger is the harness's own output, and says so. `STATUS.md`
+    //    carries a body-sha256 and G0.1 checks it; the file that holds the word
+    //    `PROVEN` carried nothing at all, so a hand-written row was accepted
+    //    verbatim and re-committed by every full-tier run.
+    match &state.integrity {
+        Integrity::Sealed | Integrity::Absent => {}
+        Integrity::Broken { recorded, actual } => findings.push(format!(
+            "{}: integrity seal mismatch — recorded {recorded}, actual {actual}. The ledger was \
+             edited by something other than this harness; every row in it is now hearsay. \
+             Re-derive with `--verify-mutations`.",
+            super::state::STATE_PATH
+        )),
+        Integrity::Unsealed => findings.push(format!(
+            "{}: no `integrity` line — a ledger with no seal cannot distinguish a recorded proof \
+             from a typed one. Re-derive with `--verify-mutations`, or run `--tier=full` to \
+             reseal the rows as they stand.",
+            super::state::STATE_PATH
+        )),
+    }
+
+    // 6. every row belongs to a mutation some gate declares. Rows are the one
+    //    thing in this harness with no owner: nothing prunes them, and the
+    //    REGISTRY-driven loop below reads the ledger as a lookup table, so a row
+    //    nothing looks up is invisible. See `GateState::orphans`.
+    let registered: Vec<&str> = REGISTRY
+        .iter()
+        .flat_map(|g| g.mutations.as_slice().iter().map(|m| m.id))
+        .collect();
+    for id in state.orphans(registered) {
+        let (o, at) = &state.proofs[&id];
+        findings.push(format!(
+            "{id}: the ledger records {} @ {at} but no gate declares that mutation id — a proof \
+             for nothing, checked by nothing, re-committed by every run. Delete the row from {} \
+             by hand; the harness will not remove it for you.",
+            o.label(),
+            super::state::STATE_PATH
+        ));
+    }
 
     for gate in REGISTRY {
         for m in gate.mutations.as_slice() {
@@ -1669,10 +1727,27 @@ pub fn g0_6_mutations_verified(ctx: &Ctx) -> GateOutcome {
                     }
                 }
             }
-            if super::mutations::targets_moved(ctx.root(), sha, m.targets) {
+            // Declared targets PLUS the mutation's own patch — see
+            // `effective_targets` for why the patch is derived rather than
+            // declared, and for the G0.1 hole that closes.
+            let targets = super::mutations::effective_targets(m);
+            if super::mutations::targets_moved(ctx.root(), sha, &targets) {
                 findings.push(format!(
-                    "{}: UNVERIFIED-SINCE {sha} — a declared target moved",
+                    "{}: UNVERIFIED-SINCE {sha} — a declared target (or the patch itself) moved",
                     m.id
+                ));
+            }
+            // The other direction, which `targets` structurally cannot express:
+            // the SUBJECT is what the patch reintroduces a defect into, but the
+            // proof is a statement about the GATE BODY that caught it. Weaken
+            // that body and the recorded PROVEN describes code that is gone.
+            // Only one of the ninety mutations names anything under the gate
+            // directory, so nothing saw it. See `GateBodyIndex`.
+            if let Some(why) = bodies.moved(gate.id, sha) {
+                findings.push(format!(
+                    "{}: UNVERIFIED-SINCE {sha} — {why}. The recorded proof is a statement about \
+                     {}'s body as it was then; re-derive it with `--verify-mutations`.",
+                    m.id, gate.id
                 ));
             }
         }
@@ -1680,9 +1755,11 @@ pub fn g0_6_mutations_verified(ctx: &Ctx) -> GateOutcome {
 
     if findings.is_empty() {
         GateOutcome::pass(format!(
-            "every mutation of a gate that RUNS carries a current proof ({unauthored} unauthored, \
-             every one of them on a gate whose body reports NOT RUN — checked by executing that \
-             body, not by assuming it)"
+            "the ledger is sealed and carries no row for a mutation no gate declares; every \
+             mutation of a gate that RUNS carries a current proof — patch, entry, PROVEN, \
+             recorded assertion, unmoved targets (patch included) and an unchanged gate body \
+             ({unauthored} unauthored, every one of them on a gate whose body reports NOT RUN — \
+             checked by executing that body, not by assuming it)"
         ))
     } else {
         GateOutcome::fail(

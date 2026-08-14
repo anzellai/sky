@@ -231,6 +231,638 @@ pub fn targets_moved(root: &Path, sha: &str, targets: &[&str]) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Gate-body decay — the half of MAJOR-17 `targets` cannot express
+// ---------------------------------------------------------------------------
+
+/// Every gate body lives here. Derived from `file!()` rather than written out,
+/// so moving this module moves the scan with it.
+pub const GATES_DIR: &str = "rust/crates/xtask/src/bluedb_gates";
+
+/// A tiny Rust scanner: enough to skip the things a brace counter must not
+/// count. Comments (nesting, as Rust's do), strings, raw strings, byte strings
+/// and char literals — while NOT mistaking a lifetime (`'static`) for one.
+///
+/// It is not a parser and does not need to be. Every consumer below asks only
+/// two questions — "where does this brace close?" and "which identifiers appear
+/// in call position?" — and both are answered correctly by a lexer that knows
+/// where the literals are.
+struct Scan<'a> {
+    b: &'a [u8],
+    i: usize,
+}
+
+impl<'a> Scan<'a> {
+    fn new(s: &'a str) -> Scan<'a> {
+        Scan {
+            b: s.as_bytes(),
+            i: 0,
+        }
+    }
+
+    fn at(&self, off: usize) -> u8 {
+        *self.b.get(self.i + off).unwrap_or(&0)
+    }
+
+    /// Advance past one literal / comment if we are sitting at the start of
+    /// one. Returns true if something was skipped.
+    fn skip_trivia(&mut self) -> bool {
+        match (self.at(0), self.at(1)) {
+            (b'/', b'/') => {
+                while self.i < self.b.len() && self.b[self.i] != b'\n' {
+                    self.i += 1;
+                }
+                true
+            }
+            (b'/', b'*') => {
+                let mut depth = 0usize;
+                while self.i < self.b.len() {
+                    if self.at(0) == b'/' && self.at(1) == b'*' {
+                        depth += 1;
+                        self.i += 2;
+                    } else if self.at(0) == b'*' && self.at(1) == b'/' {
+                        depth -= 1;
+                        self.i += 2;
+                        if depth == 0 {
+                            break;
+                        }
+                    } else {
+                        self.i += 1;
+                    }
+                }
+                true
+            }
+            (b'"', _) => {
+                self.i += 1;
+                while self.i < self.b.len() {
+                    match self.b[self.i] {
+                        b'\\' => self.i += 2,
+                        b'"' => {
+                            self.i += 1;
+                            break;
+                        }
+                        _ => self.i += 1,
+                    }
+                }
+                true
+            }
+            (b'r', c) if c == b'"' || c == b'#' => {
+                // `r"…"` / `r#"…"#` — only when `r` starts a token, or the `r`
+                // of `for` would open a raw string.
+                if self.i > 0 && is_ident_byte(self.b[self.i - 1]) {
+                    return false;
+                }
+                let mut hashes = 0usize;
+                while self.at(1 + hashes) == b'#' {
+                    hashes += 1;
+                }
+                if self.at(1 + hashes) != b'"' {
+                    return false;
+                }
+                self.i += 2 + hashes;
+                loop {
+                    if self.i >= self.b.len() {
+                        break;
+                    }
+                    if self.b[self.i] == b'"' {
+                        let mut n = 0usize;
+                        while n < hashes && self.at(1 + n) == b'#' {
+                            n += 1;
+                        }
+                        if n == hashes {
+                            self.i += 1 + hashes;
+                            break;
+                        }
+                    }
+                    self.i += 1;
+                }
+                true
+            }
+            (b'\'', _) => {
+                // A char literal closes a fixed distance in; a LIFETIME does
+                // not, and consuming to the next `'` there would swallow real
+                // code. So the close is computed, never searched for.
+                //
+                // Both halves matter. `'{'` and `'}'` appear in this crate and
+                // would unbalance a brace counter that did not skip them; and
+                // `'"'` — `.trim_matches('"')` — opens a string literal in any
+                // scanner that gets the close position wrong by one, which
+                // silently swallows everything up to the next quote. That bug
+                // was here: it truncated the scan of `gates_g0.rs` and
+                // `gates_g2.rs` mid-file, and the gates defined after the
+                // truncation point reported "body is not defined".
+                let closes = if self.at(1) == b'\\' {
+                    // `'\n'`, `'\''`, `'\u{1F600}'`
+                    let mut j = 3usize;
+                    if self.at(2) == b'u' {
+                        while j < 14 && self.at(j) != b'}' {
+                            j += 1;
+                        }
+                        j += 1;
+                    }
+                    (self.at(j) == b'\'').then_some(j)
+                } else {
+                    // One UTF-8 scalar: a lead byte plus its continuations.
+                    let mut len = 1usize;
+                    while len < 4 && (self.at(1 + len) & 0xc0) == 0x80 {
+                        len += 1;
+                    }
+                    (self.at(1 + len) == b'\'').then_some(1 + len)
+                };
+                match closes {
+                    Some(n) => {
+                        self.i += n + 1;
+                        true
+                    }
+                    None => false,
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+fn is_ident_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_'
+}
+
+/// Byte offset just past the `}` that closes the `{` at `open`.
+fn matching_brace(src: &str, open: usize) -> Option<usize> {
+    let mut s = Scan::new(src);
+    s.i = open;
+    let mut depth = 0usize;
+    while s.i < s.b.len() {
+        if s.skip_trivia() {
+            continue;
+        }
+        match s.b[s.i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(s.i + 1);
+                }
+            }
+            _ => {}
+        }
+        s.i += 1;
+    }
+    None
+}
+
+/// Every **module-level** `fn` in one file, as
+/// `(name, signature-through-closing-brace)`.
+///
+/// The signature is deliberately part of the recorded text: changing a gate's
+/// return type or its parameters changes what it can assert just as surely as
+/// changing its statements.
+///
+/// # Why module level only
+///
+/// Calls are resolved by BARE NAME — the closure has no type information — and
+/// associated functions make that catastrophic. `new` is defined on `Ctx`,
+/// `Mutations`, `GateBodyIndex` and `Scan`; `load`, `save`, `label` and `parse`
+/// are each defined two or three times. Merging them into one bucket puts every
+/// `impl` in this directory inside every gate's closure, and the first
+/// measurement showed exactly that: adding one unrelated `fn new` moved all
+/// fifty-eight proofs at once. That is the signal-that-always-fires failure, and
+/// it arrives via a name nobody was thinking about.
+///
+/// Module-level functions do not have that problem, because a call to one is
+/// spelled with its own name. Every gate body is one; so is every helper they
+/// share. The cost is that a weakening hidden inside an `impl` method is not
+/// seen — `GateState::load` is the realistic example — and that is stated rather
+/// than papered over. Nothing in this harness decides a gate's verdict from an
+/// `impl` method today: they are constructors, accessors and the ledger
+/// codec, and the ledger has its own integrity seal.
+///
+/// `#[cfg(test)] mod tests` is excluded by the same rule, which is correct: a
+/// unit test is not part of the gate's decision.
+fn fn_bodies(src: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut s = Scan::new(src);
+    let mut depth = 0usize;
+    while s.i < s.b.len() {
+        if s.skip_trivia() {
+            continue;
+        }
+        match s.b[s.i] {
+            b'{' => {
+                depth += 1;
+                s.i += 1;
+                continue;
+            }
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                s.i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if !is_ident_byte(s.b[s.i]) || (s.i > 0 && is_ident_byte(s.b[s.i - 1])) {
+            s.i += 1;
+            continue;
+        }
+        let start = s.i;
+        while s.i < s.b.len() && is_ident_byte(s.b[s.i]) {
+            s.i += 1;
+        }
+        if &src[start..s.i] != "fn" || depth != 0 {
+            continue;
+        }
+        // `fn` <ws> NAME
+        while s.i < s.b.len() && s.b[s.i].is_ascii_whitespace() {
+            s.i += 1;
+        }
+        let ns = s.i;
+        while s.i < s.b.len() && is_ident_byte(s.b[s.i]) {
+            s.i += 1;
+        }
+        if ns == s.i {
+            continue;
+        }
+        let name = src[ns..s.i].to_string();
+        // The body's `{`. Nothing between the name and it can contain one in
+        // this crate (no const generics with block defaults), and a `where`
+        // clause holds only bounds.
+        let mut probe = Scan::new(src);
+        probe.i = s.i;
+        let mut open = None;
+        while probe.i < probe.b.len() {
+            if probe.skip_trivia() {
+                continue;
+            }
+            if probe.b[probe.i] == b'{' {
+                open = Some(probe.i);
+                break;
+            }
+            if probe.b[probe.i] == b';' {
+                break; // a trait method declaration, or `fn` in a fn-pointer type
+            }
+            probe.i += 1;
+        }
+        let Some(open) = open else { continue };
+        let Some(end) = matching_brace(src, open) else {
+            continue;
+        };
+        out.push((name, src[ns..end].to_string()));
+        s.i = end;
+    }
+    out
+}
+
+/// The identifiers appearing in call position in `body` — `foo(`, `.foo(`,
+/// `Type::foo(`. All three reduce to the same question the closure asks: does
+/// this name resolve to a function defined in the gate harness?
+///
+/// `format!(` and friends do not qualify: a macro's `!` sits between the name
+/// and the paren.
+fn called_names(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut s = Scan::new(body);
+    while s.i < s.b.len() {
+        if s.skip_trivia() {
+            continue;
+        }
+        if !is_ident_byte(s.b[s.i]) || (s.i > 0 && is_ident_byte(s.b[s.i - 1])) {
+            s.i += 1;
+            continue;
+        }
+        let start = s.i;
+        while s.i < s.b.len() && is_ident_byte(s.b[s.i]) {
+            s.i += 1;
+        }
+        let mut j = s.i;
+        while j < s.b.len() && s.b[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j < s.b.len() && s.b[j] == b'(' {
+            out.push(body[start..s.i].to_string());
+        }
+    }
+    out
+}
+
+/// The harness's own source, as one tree sees it.
+struct GateSources {
+    /// repo-relative path -> text
+    files: BTreeMap<String, String>,
+}
+
+impl GateSources {
+    /// name -> every body defined under that name, sorted, so the digest does
+    /// not depend on file order.
+    fn defs(&self) -> BTreeMap<String, Vec<String>> {
+        let mut defs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for text in self.files.values() {
+            for (name, body) in fn_bodies(text) {
+                defs.entry(name).or_default().push(body);
+            }
+        }
+        for v in defs.values_mut() {
+            v.sort();
+        }
+        defs
+    }
+
+    /// `run: gates_g0::g0_6_mutations_verified` for one gate id, read out of
+    /// `registry.rs`. Returns the function name.
+    ///
+    /// Parsed from source rather than declared on `Gate`, because a declared
+    /// field is a second place to be wrong: an author who weakens a body and
+    /// re-points the field would silence the very check this exists to make.
+    /// The `run` pointer is the one thing that cannot lie — it is what the
+    /// harness actually calls.
+    fn entry_fn(&self, gate_id: &str) -> Option<String> {
+        let reg = self.files.get(&format!("{GATES_DIR}/registry.rs"))?;
+        let needle = format!("id: \"{gate_id}\",");
+        let at = reg.find(&needle)?;
+        let rest = &reg[at + needle.len()..];
+        // Stop at the next gate, so a gate that somehow lost its `run` cannot
+        // borrow the next one's.
+        let block = match rest.find("\n        id: \"") {
+            Some(n) => &rest[..n],
+            None => rest,
+        };
+        let r = block.find("run: ")? + "run: ".len();
+        let path = block[r..].split(',').next()?.trim();
+        Some(path.rsplit("::").next()?.trim().to_string())
+    }
+}
+
+/// The digest of everything gate `gate_id` executes, and how many distinct
+/// function bodies that was.
+///
+/// The closure is transitive over calls *within the gate harness*: the entry
+/// function, everything it calls that this crate module defines, and so on. It
+/// stops at the crate boundary — `std`, `Command`, the compiler crates — which
+/// is the right stopping point, because those are not where a gate is weakened.
+fn body_digest(sources: &GateSources, gate_id: &str) -> Result<BTreeMap<String, String>, String> {
+    let entry = sources
+        .entry_fn(gate_id)
+        .ok_or_else(|| format!("no `run:` for {gate_id} in {GATES_DIR}/registry.rs"))?;
+    let defs = sources.defs();
+    if !defs.contains_key(&entry) {
+        return Err(format!("{gate_id}'s body `{entry}` is not defined in {GATES_DIR}"));
+    }
+
+    let mut seen: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut queue = vec![entry.clone()];
+    while let Some(name) = queue.pop() {
+        let Some(bodies) = defs.get(&name) else {
+            continue;
+        };
+        if seen.contains_key(&name) {
+            continue;
+        }
+        seen.insert(name.clone(), bodies.clone());
+        for body in bodies {
+            for callee in called_names(body) {
+                if !seen.contains_key(&callee) && defs.contains_key(&callee) {
+                    queue.push(callee);
+                }
+            }
+        }
+    }
+
+    Ok(seen
+        .into_iter()
+        .map(|(name, bodies)| {
+            let digest = super::sha256::hex(bodies.join("\0").as_bytes());
+            (name, digest)
+        })
+        .collect())
+}
+
+/// Reads the harness's own source out of one tree — the working tree, or a
+/// commit.
+fn sources_at(root: &Path, sha: Option<&str>) -> Result<GateSources, String> {
+    let mut files = BTreeMap::new();
+    match sha {
+        None => {
+            let rd = std::fs::read_dir(root.join(GATES_DIR))
+                .map_err(|e| format!("reading {GATES_DIR}: {e}"))?;
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) != Some("rs") {
+                    continue;
+                }
+                let Some(name) = p.file_name().and_then(|x| x.to_str()) else {
+                    continue;
+                };
+                let text = std::fs::read_to_string(&p)
+                    .map_err(|e| format!("reading {}: {e}", p.display()))?;
+                files.insert(format!("{GATES_DIR}/{name}"), text);
+            }
+        }
+        Some(sha) => {
+            let ls = Command::new("git")
+                .args(["ls-tree", "--name-only", sha, "--"])
+                .arg(format!("{GATES_DIR}/"))
+                .current_dir(root)
+                .output()
+                .map_err(|e| format!("git ls-tree: {e}"))?;
+            if !ls.status.success() {
+                return Err(format!("git ls-tree at {sha} failed"));
+            }
+            for path in String::from_utf8_lossy(&ls.stdout).lines() {
+                let path = path.trim();
+                if !path.ends_with(".rs") {
+                    continue;
+                }
+                let show = Command::new("git")
+                    .arg("show")
+                    .arg(format!("{sha}:{path}"))
+                    .current_dir(root)
+                    .output()
+                    .map_err(|e| format!("git show: {e}"))?;
+                if !show.status.success() {
+                    return Err(format!("git show {sha}:{path} failed"));
+                }
+                files.insert(
+                    path.to_string(),
+                    String::from_utf8_lossy(&show.stdout).to_string(),
+                );
+            }
+        }
+    }
+    if files.is_empty() {
+        return Err(format!(
+            "no gate source found under {GATES_DIR} at {}",
+            sha.unwrap_or("the working tree")
+        ));
+    }
+    Ok(files_into(files))
+}
+
+fn files_into(files: BTreeMap<String, String>) -> GateSources {
+    GateSources { files }
+}
+
+/// `a`, `b` and 3 more — a finding that lists forty names is a finding nobody
+/// reads either.
+fn name_list(names: &[&String]) -> String {
+    let shown: Vec<&str> = names.iter().take(4).map(|s| s.as_str()).collect();
+    if names.len() > shown.len() {
+        format!("`{}` and {} more", shown.join("`, `"), names.len() - shown.len())
+    } else {
+        format!("`{}`", shown.join("`, `"))
+    }
+}
+
+/// **The gate-body decay check** — MAJOR-17 at function granularity.
+///
+/// `targets_moved` asks whether the SUBJECT a mutation reintroduces a defect
+/// into has moved. It cannot ask the other question, and the other question is
+/// the dangerous one: *has the gate that caught the defect been changed since it
+/// caught it?* A proof is a statement about a gate body. Edit the body — make an
+/// assertion vacuous, drop a branch, widen a tolerance — and the recorded
+/// `PROVEN` describes code that no longer exists, while `G0.6` keeps rendering
+/// it. Only ONE of the ninety registered mutations names anything under
+/// `{GATES_DIR}` in its `targets`, so today that edit is invisible.
+///
+/// # Why this is not the signal that always fires
+///
+/// The repo has hit that counter-pressure twice, and the rule it wrote down —
+/// *a signal that always fires is a signal nobody reads* — rules out the two
+/// obvious implementations:
+///
+/// * **Naming the file** (`gates_g0.rs` in `targets`) decays all eight G0 proofs
+///   whenever any one of the eight gates is touched, and this file has grown by
+///   223 lines since the shas the current proofs were taken at. That is
+///   `audit_test.go`'s shape: one file, twenty mutations, noise on every edit.
+/// * **Diffing the whole harness** decays everything on every commit.
+///
+/// This compares the **transitive call closure of the gate's own `run`
+/// function**, byte for byte, between the sha the proof was taken at and the
+/// tree as it stands. Adding a new gate to `gates_g0.rs` does not touch the
+/// closure of any existing one, so it fires on nothing. Renaming a local in
+/// G0.2's body decays G0.2's proof and no other. Editing a helper that four
+/// gates share decays exactly those four — which is not noise: a helper four
+/// gates route their decision through is four gate bodies.
+///
+/// The signal therefore fires precisely when the code that produced a verdict
+/// has changed, and the remedy is the honest one: re-derive the proof with
+/// `--verify-mutations`. An unreadable tree at either end counts as moved —
+/// unknown provenance is not evidence of freshness (cf. [`targets_moved`]).
+pub struct GateBodyIndex {
+    root: PathBuf,
+    /// `None` = the tree could not be read; the reason is carried instead.
+    now: Result<GateSources, String>,
+    at_sha: BTreeMap<String, Result<GateSources, String>>,
+    digests: BTreeMap<(String, String), Result<BTreeMap<String, String>, String>>,
+}
+
+impl GateBodyIndex {
+    pub fn new(root: &Path) -> GateBodyIndex {
+        GateBodyIndex {
+            root: root.to_path_buf(),
+            now: sources_at(root, None),
+            at_sha: BTreeMap::new(),
+            digests: BTreeMap::new(),
+        }
+    }
+
+    fn digest_at(
+        &mut self,
+        gate_id: &str,
+        sha: Option<&str>,
+    ) -> Result<BTreeMap<String, String>, String> {
+        let key = (gate_id.to_string(), sha.unwrap_or("").to_string());
+        if let Some(v) = self.digests.get(&key) {
+            return v.clone();
+        }
+        let root = self.root.clone();
+        let v = match sha {
+            None => self
+                .now
+                .as_ref()
+                .map_err(|e| e.clone())
+                .and_then(|s| body_digest(s, gate_id)),
+            Some(sha) => {
+                let entry = self
+                    .at_sha
+                    .entry(sha.to_string())
+                    .or_insert_with(|| sources_at(&root, Some(sha)));
+                entry
+                    .as_ref()
+                    .map_err(|e| e.clone())
+                    .and_then(|s| body_digest(s, gate_id))
+            }
+        };
+        self.digests.insert(key, v.clone());
+        v
+    }
+
+    /// `None` = the gate's implementation is byte-identical to what it was when
+    /// the proof was taken. `Some(reason)` = it is not, or we cannot tell.
+    pub fn moved(&mut self, gate_id: &str, sha: &str) -> Option<String> {
+        let then = self.digest_at(gate_id, Some(sha));
+        let now = self.digest_at(gate_id, None);
+        match (then, now) {
+            (Ok(a), Ok(b)) => {
+                if a == b {
+                    return None;
+                }
+                let changed: Vec<&String> = a
+                    .keys()
+                    .filter(|k| b.get(*k).is_some_and(|v| v != &a[*k]))
+                    .collect();
+                let gone: Vec<&String> = a.keys().filter(|k| !b.contains_key(*k)).collect();
+                let new: Vec<&String> = b.keys().filter(|k| !a.contains_key(*k)).collect();
+                let mut parts = Vec::new();
+                if !changed.is_empty() {
+                    parts.push(format!("changed {}", name_list(&changed)));
+                }
+                if !gone.is_empty() {
+                    parts.push(format!("no longer called {}", name_list(&gone)));
+                }
+                if !new.is_empty() {
+                    parts.push(format!("now also calls {}", name_list(&new)));
+                }
+                Some(format!("the gate body {}", parts.join("; ")))
+            }
+            (Err(e), _) | (_, Err(e)) => Some(format!(
+                "the gate body could not be read, which is not evidence of freshness: {e}"
+            )),
+        }
+    }
+}
+
+/// The paths whose movement decays this mutation's proof: the ones its author
+/// declared, **plus its own patch file**.
+///
+/// The patch is not an optional extra. A proof is "this patch, applied to this
+/// gate, produced this RED output" — so the patch is the one input every proof
+/// depends on by construction, and `harness_generated` already refuses to filter
+/// `*.patch` for precisely that reason ("a patch is hand-authored evidence, not
+/// an output; editing one MUST decay the proof it belongs to"). But that refusal
+/// only ever mattered for a mutation whose declared `targets` happened to reach
+/// the patch directory, and most do not.
+///
+/// `G0.1/hand-edit-status` is the case where the gap was total. Its sole
+/// declared target is `docs/bluedb/STATUS.md`, which [`harness_generated`]
+/// filters **unconditionally** — the fast tier regenerates the file on every
+/// run with a fresh sha and timestamp, so it has no resting state and a target
+/// naming it would decay on the act of running. The consequence was that G0.1's
+/// proof could never decay through this route at all: rewrite the patch, and the
+/// ledger still said PROVEN.
+///
+/// Deriving the patch into the target set closes that without a registry entry
+/// to keep in sync, and without an exemption to argue for: after this, G0.1
+/// decays when its patch changes (here) and when its gate body changes
+/// ([`GateBodyIndex`]), which between them are the whole of what its proof
+/// asserts. `STATUS.md` itself stays filtered, and should: the gate does not
+/// read the file's CONTENT for the proof, it reads whether a hand edit is
+/// detectable, which is a property of the body and the patch.
+pub fn effective_targets(m: &Mutation) -> Vec<&'static str> {
+    let mut t: Vec<&'static str> = m.targets.to_vec();
+    if !t.contains(&m.patch) {
+        t.push(m.patch);
+    }
+    t
+}
+
 /// `git status --porcelain` restricted to the given paths.
 fn status_of(root: &Path, paths: &[&str]) -> String {
     Command::new("git")
@@ -581,6 +1213,29 @@ pub fn verify_all(root: &Path, verbose: bool, only: Option<&str>) -> Result<Veri
     for (id, o) in &report.outcomes {
         ledger.proofs.insert(id.clone(), (*o, sha.clone()));
     }
+
+    // A row for an id no gate declares is a live credential for a proof nobody
+    // can re-derive, and this loop is where it would otherwise be re-committed.
+    // Report it and fail; do NOT remove it. See `GateState::orphans` for why
+    // pruning here would make deleting a patch file a way to go green.
+    let registered: Vec<&str> = REGISTRY
+        .iter()
+        .flat_map(|g| g.mutations.as_slice().iter().map(|m| m.id))
+        .collect();
+    for id in ledger.orphans(registered) {
+        let (o, at) = ledger.proofs[&id].clone();
+        report.failures.push(format!(
+            "ORPHAN PROOF: {} records {} @ {at} but no gate in the REGISTRY declares that \
+             mutation id. It is checked by nothing, rendered by nothing, and re-committed by \
+             every run — and re-registering the id would resurrect it as a proof that was never \
+             re-derived. Delete the row from {} by hand (this run will not remove it: an \
+             auto-pruning ledger makes deleting a patch file a way to silence a PROVEN).",
+            id,
+            o.label(),
+            super::state::STATE_PATH
+        ));
+    }
+
     ledger
         .save(root)
         .map_err(|e| format!("writing the proof ledger: {e}"))?;
@@ -954,6 +1609,123 @@ mod tests {
     #[test]
     fn an_unrunnable_git_status_counts_as_skew() {
         assert!(!head_skew(Path::new("/nonexistent-bluedb-root")).is_empty());
+    }
+
+    /// `G0.1/hand-edit-status` is the mutation whose declared target set could
+    /// not decay AT ALL: its only entry is `STATUS.md`, which
+    /// [`harness_generated`] filters unconditionally. Deriving the patch into
+    /// the set is what closes it — and the derivation applies to every mutation,
+    /// so there is no per-gate exemption to keep true.
+    #[test]
+    fn a_mutations_own_patch_is_always_one_of_its_targets() {
+        let g0_1 = REGISTRY
+            .iter()
+            .flat_map(|g| g.mutations.as_slice())
+            .find(|m| m.id == "G0.1/hand-edit-status")
+            .expect("G0.1 declares its mutation");
+        assert_eq!(g0_1.targets, &["docs/bluedb/STATUS.md"]);
+        // Every declared target of G0.1 is filtered as a harness output, which
+        // is why the decay check was silent for it.
+        assert!(g0_1.targets.iter().all(|t| harness_generated(t)));
+
+        let effective = effective_targets(g0_1);
+        assert!(effective.contains(&g0_1.patch));
+        assert!(!harness_generated(g0_1.patch));
+        assert!(diff_moves_a_target(g0_1.patch));
+
+        // Declared targets are kept, never replaced, and the patch is not
+        // duplicated if an author has already named it.
+        for m in REGISTRY.iter().flat_map(|g| g.mutations.as_slice()) {
+            let e = effective_targets(m);
+            assert!(m.targets.iter().all(|t| e.contains(t)), "{}", m.id);
+            assert_eq!(e.iter().filter(|t| **t == m.patch).count(), 1, "{}", m.id);
+        }
+    }
+
+    // -- the gate-body decay scanner ------------------------------------
+
+    #[test]
+    fn the_scanner_skips_what_a_brace_counter_must_not_count() {
+        // Braces inside literals, the case that made this a lexer.
+        let src = "fn a() { let x = '{'; let y = \"}}}\"; let z = r#\"{\"#; }\nfn b() {}\n";
+        let names: Vec<String> = fn_bodies(src).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, vec!["a", "b"]);
+
+        // `'\"'` — the one that opened a string and swallowed the rest of the
+        // file, so every gate defined below it read as "not defined".
+        let src = "fn a() { s.trim_matches('\"'); }\nfn b() { }\nfn c() {}\n";
+        let names: Vec<String> = fn_bodies(src).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, vec!["a", "b", "c"]);
+
+        // A lifetime is not a char literal: consuming to the next `'` here
+        // would eat the following fn.
+        let src = "fn a<'x>(s: &'x str) -> &'x str { s }\nfn b() {}\n";
+        let names: Vec<String> = fn_bodies(src).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, vec!["a", "b"]);
+
+        // Comments (nesting), escapes, and a `fn` inside a string.
+        let src = "/* { /* } */ */ fn a() { /* } */ let s = \"fn nope() {\"; let c = '\\''; }\n";
+        let names: Vec<String> = fn_bodies(src).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, vec!["a"]);
+    }
+
+    /// Associated functions are excluded ON PURPOSE — see [`fn_bodies`]. `new`
+    /// alone is defined four times in this directory, and merging them by bare
+    /// name put every `impl` inside every gate's closure.
+    #[test]
+    fn only_module_level_fns_enter_the_closure() {
+        let src = "fn a() {}\nimpl X { fn new() -> X { X } }\n#[cfg(test)] mod t { fn helper() {} }\nfn b() {}\n";
+        let names: Vec<String> = fn_bodies(src).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn call_position_is_what_counts() {
+        let calls = called_names("fn a() { helper(1); format!(\"x\"); let f = other; s.trim(); }");
+        assert!(calls.contains(&"helper".to_string()));
+        assert!(calls.contains(&"trim".to_string()));
+        // A macro's `!` sits between the name and the paren.
+        assert!(!calls.contains(&"format".to_string()));
+        // A value mention is not a call.
+        assert!(!calls.contains(&"other".to_string()));
+    }
+
+    /// The regression that the truncation bug produced, as a standing check:
+    /// EVERY registered gate's body must resolve in the working tree. A scanner
+    /// that silently stops mid-file reports "the body could not be read", which
+    /// [`GateBodyIndex::moved`] treats as moved — so the failure mode of a
+    /// broken scanner is a decay signal on every proof at once, which is
+    /// precisely the noise this check exists to avoid.
+    #[test]
+    fn every_registered_gate_body_resolves() {
+        let root = crate::repo_root();
+        let sources = sources_at(&root, None).expect("the gate sources must be readable");
+        let mut broken = Vec::new();
+        for gate in REGISTRY {
+            if let Err(e) = body_digest(&sources, gate.id) {
+                broken.push(e);
+            }
+        }
+        assert!(broken.is_empty(), "{}", broken.join("\n"));
+    }
+
+    /// The closure must be the gate's own, not the directory's. If a helper
+    /// rename or a new `impl` could put every gate in every closure, the decay
+    /// check would fire on everything and be worthless.
+    #[test]
+    fn a_gates_closure_is_not_the_whole_directory() {
+        let root = crate::repo_root();
+        let sources = sources_at(&root, None).expect("the gate sources must be readable");
+        let all = sources.defs().len();
+        let one = body_digest(&sources, "G0.1").expect("G0.1 resolves");
+        assert!(
+            one.len() * 4 < all,
+            "G0.1's closure is {} of {all} module-level fns — the closure is not discriminating",
+            one.len()
+        );
+        // …and two unrelated gates must not have the same closure.
+        let other = body_digest(&sources, "G0.2").expect("G0.2 resolves");
+        assert_ne!(one, other);
     }
 
     #[test]
