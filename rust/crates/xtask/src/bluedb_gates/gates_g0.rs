@@ -979,8 +979,14 @@ pub fn g0_4_no_dead_config(ctx: &Ctx) -> GateOutcome {
     let read = runtime_env_literals(ctx);
 
     let mut findings = Vec::new();
+    // Kept apart so the PASS can say which arm proved which key. Collapsing
+    // them is how the old detail came to claim `runtime-go/` readership for
+    // keys whose only consumer is documented user code.
+    let mut in_runtime = 0usize;
+    let mut via_docs: Vec<String> = Vec::new();
     for (key, line) in &written {
         if read.contains_key(key) {
+            in_runtime += 1;
             continue;
         }
         // A key can have a legitimate consumer that is NOT `runtime-go/`: the
@@ -996,9 +1002,7 @@ pub fn g0_4_no_dead_config(ctx: &Ctx) -> GateOutcome {
         // only be silenced by writing a doc that shows the read, which is the
         // thing that would make it true.
         match user_facing_read_site(ctx, key) {
-            Some(site) => {
-                let _ = site; // documented consumer found; not a dead key
-            }
+            Some(site) => via_docs.push(format!("{key} ({site})")),
             None => findings.push(format!(
                 "dead config key {key}: written by the compiler at rust/crates/project/src/build.rs:{line}, \
                  read by nothing in runtime-go/ and shown to no user code in docs/"
@@ -1016,16 +1020,65 @@ pub fn g0_4_no_dead_config(ctx: &Ctx) -> GateOutcome {
     }
 
     if findings.is_empty() {
-        GateOutcome::pass(format!(
-            "{} compiler-written env keys, all read in runtime-go/",
-            written.len()
-        ))
+        // Two arms, named separately. The detail used to read "all read in
+        // runtime-go/", which was false for exactly the keys the docs exemption
+        // exists to cover — it asserted the proposition the exemption relaxes.
+        let detail = if via_docs.is_empty() {
+            format!(
+                "{} compiler-written env keys, all {in_runtime} read in runtime-go/",
+                written.len()
+            )
+        } else {
+            format!(
+                "{} compiler-written env keys: {in_runtime} read in runtime-go/, {} NOT read there \
+                 and proved live only by documented user code — {}",
+                written.len(),
+                via_docs.len(),
+                via_docs.join(", ")
+            )
+        };
+        GateOutcome::pass(detail)
     } else {
         GateOutcome::fail(
             format!("{} dead config key(s)", findings.len()),
             findings,
         )
     }
+}
+
+/// Does this documentation line CALL a `System.getenv`-family function on this
+/// exact env name?
+///
+/// The predicate used to be `line.contains(&prefixed) && line.contains("System.getenv")`,
+/// which is satisfied by prose. `docs/stdlib.md:717` is a single sentence
+/// containing both "`SKY_AUTH_TOKEN_TTL`" and "passed to `System.getenv`" while
+/// showing no read of anything — under the old test it proved `AUTH_TOKEN_TTL`
+/// live. That key does have a genuine call site two files away, so the verdict
+/// was right; it was right by luck, and a key whose only mention was a sentence
+/// like that one would have been exempted with no consumer at all.
+///
+/// So the name must be the call's FIRST ARGUMENT: `System.getenv` (any
+/// `getenvOr` / `getenvWith` tail), optional whitespace, then the quoted name.
+/// Prose fails because what follows the call in a sentence is a `)` or a word,
+/// never a quoted string equal to the key.
+fn line_reads_env(line: &str, prefixed: &str) -> bool {
+    const CALL: &str = "System.getenv";
+    let mut hay = line;
+    while let Some(i) = hay.find(CALL) {
+        let rest = &hay[i + CALL.len()..];
+        // consume the identifier tail: `getenv`, `getenvOr`, `getenvWithDefault`
+        let after_ident =
+            rest.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
+        if let Some(q) = after_ident.trim_start().strip_prefix('"') {
+            if let Some(end) = q.find('"') {
+                if &q[..end] == prefixed {
+                    return true;
+                }
+            }
+        }
+        hay = rest;
+    }
+    false
 }
 
 /// Does the live documentation show USER CODE reading this key's env var?
@@ -1051,7 +1104,7 @@ fn user_facing_read_site(ctx: &Ctx, key: &str) -> Option<String> {
             continue;
         };
         for (i, line) in text.lines().enumerate() {
-            if line.contains(&prefixed) && line.contains("System.getenv") {
+            if line_reads_env(line, &prefixed) {
                 return Some(format!("{rel_path}:{}", i + 1));
             }
         }
@@ -2196,6 +2249,57 @@ fn citation_scope(report: &CitationReport) -> String {
             report.total,
             report.skipped
         )
+    }
+}
+
+#[cfg(test)]
+mod env_read_tests {
+    use super::line_reads_env;
+
+    /// Verbatim `docs/sky-toml.md:161`. The real consumer, and it must keep passing.
+    #[test]
+    fn a_worked_example_counts() {
+        let l = r#"ttl    = System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400" |> String.toInt |> Result.withDefault 86400"#;
+        assert!(line_reads_env(l, "SKY_AUTH_TOKEN_TTL"));
+        assert!(line_reads_env(
+            r#"cookie = System.getenvOr "SKY_AUTH_COOKIE" "sky_auth""#,
+            "SKY_AUTH_COOKIE"
+        ));
+        assert!(line_reads_env(
+            r#"    x = System.getenv "SKY_DB_URL""#,
+            "SKY_DB_URL"
+        ));
+    }
+
+    /// Verbatim `docs/stdlib.md:717` — the line that defeated the old predicate.
+    /// It names the key and says the words `System.getenv`, and reads nothing.
+    #[test]
+    fn prose_naming_both_does_not_count() {
+        let l = "**Env-var namespace prefix (v0.11.5+).** Sky's internal runtime reads (Sky.Live, Std.Auth, Std.Log, Std.Db) use the `SKY_` prefix by default — `SKY_LIVE_PORT`, `SKY_AUTH_TOKEN_TTL`, etc. Set `[env] prefix = \"FENCE\"` in `sky.toml` to switch the binary's namespace to `FENCE_LIVE_PORT`, `FENCE_AUTH_TOKEN_TTL`, etc. Useful when running multiple Sky binaries on the same host. User-supplied env-var names (passed to `System.getenv`) are unaffected — only Sky's internal reads route through the prefix.";
+        assert!(
+            !line_reads_env(l, "SKY_AUTH_TOKEN_TTL"),
+            "prose that merely names the key and the function proved it live"
+        );
+    }
+
+    /// A table row — what a genuinely dead key looks like. `SKY_AUTH_DRIVER` had
+    /// exactly this and nothing else, and was deleted from the compiler.
+    #[test]
+    fn a_mention_without_a_call_does_not_count() {
+        assert!(!line_reads_env(
+            "| `SKY_AUTH_DRIVER` | selects the auth backend | `builtin` |",
+            "SKY_AUTH_DRIVER"
+        ));
+        // the call is present but reads a DIFFERENT key
+        assert!(!line_reads_env(
+            r#"other = System.getenvOr "SKY_AUTH_SECRET" "dev" -- see SKY_AUTH_DRIVER"#,
+            "SKY_AUTH_DRIVER"
+        ));
+        // a prefix of the key is not the key
+        assert!(!line_reads_env(
+            r#"x = System.getenv "SKY_AUTH_TOKEN_TTL_EXTRA""#,
+            "SKY_AUTH_TOKEN_TTL"
+        ));
     }
 }
 
