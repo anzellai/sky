@@ -49,13 +49,13 @@ use super::registry::{Ctx, GateOutcome};
 // ---------------------------------------------------------------------------
 
 /// Where the Go module lives, relative to `ctx.root()`.
-const GO_MODULE_DIR: &str = "runtime-go";
+pub(super) const GO_MODULE_DIR: &str = "runtime-go";
 /// The package under test.
-const GO_PACKAGE: &str = "./bluedb/";
+pub(super) const GO_PACKAGE: &str = "./bluedb/";
 
 /// The build tag every shipped BlueDB build carries (G0.5). Running the gates
 /// without it would certify a build configuration no app ever executes.
-const ZSTD_TAG: &str = "pebblegozstd";
+pub(super) const ZSTD_TAG: &str = "pebblegozstd";
 
 /// How many lines of a failing run are quoted into the findings. Bounded
 /// because an unbounded quote is not a report: one C8 fixture emitted 121,145
@@ -1427,6 +1427,12 @@ const G2_6_SOURCES: &[&str] = &[
     "keys_test.go",
     "lock_test.go",
     "stage2_readset_test.go",
+    // Landed in `ca4d5d1a` with G2.26/G2.27 and was never recorded here, so G2.6
+    // has been FAIL since — "a new test file is where a new injection site hides
+    // from a manifest", found by the gate's own reconciliation and left standing.
+    // It constructs no injector, so the manifest is unchanged; what was missing
+    // was the accounting the reconciliation asks for.
+    "validate_test.go",
 ];
 
 pub fn g2_6_injection_manifest(ctx: &Ctx) -> GateOutcome {

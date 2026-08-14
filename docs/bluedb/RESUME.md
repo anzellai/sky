@@ -24,6 +24,98 @@ No phase table with ✅ marks exists anywhere on this branch. The prior branch's
 phase table is precisely the artefact that survived compaction while the
 evidence behind it evaporated.
 
+## CLOSED — round 5: coverage measured FILING, and three "every" claims were hand lists (2026-08-14)
+
+Three findings, one root each.
+
+**1. An anchor is not "strictly stronger" than a mutation.** The
+`SOURCE_SIDE_FALSIFIERS` docstring said it was. It is stronger against GUTTING —
+checked every run, from the tree, naming the fixture — and that is the class the
+per-leaf rule is about. It is not stronger in general: an anchor is a
+SOURCE-SHAPE check (present, inside the braces, reachable, wired to a failing
+call — `gates_g2::SourceAnchor` states the limits), and it does not prove the
+fixture still DISCRIMINATES. An inverted guard, an assertion in a closure never
+invoked, a condition that can no longer hold: each satisfies its anchor while the
+property goes unchecked. Only re-introducing the defect and watching the fixture
+go RED proves that. Where a leaf has both, **the mutation is the stronger
+evidence and the anchor is the floor between mutation runs.**
+
+**2. `LEAF_COVERAGE` measured which gate a mutation was FILED under, not the
+defect's blast radius.** `probe` runs the patched tree under `--only={gate}`
+(`mutations.rs`), so a recorded transcript can only ever mention leaves of that
+gate — and the coverage test walked one gate's own `mutations` list. "No recorded
+mutation reddens leaf X" was therefore a statement about bookkeeping. Two fixes:
+
+* The measure is now **registry-wide**: every registered patch's transcript, for
+  every pinned leaf, wherever it is filed. That alone re-covered four G2.6
+  fixtures whose defects live on G2.9a / G2.13g / G2.13m.
+* Transcripts are gate-scoped, so they cannot refute an unreddenability claim at
+  all. `docs/bluedb/mutations/cross-gate-unreddenability-sweep.txt` is the
+  measurement that can: **every registered patch × every `SOURCE_SIDE_FALSIFIERS`
+  leaf**, one leaf per `go test` invocation (a patch that KILLS the binary must
+  not be recorded as reddening its neighbours). Reconciled two ways — a new
+  mutation or a new source-side row has no verdict and FAILS until the sweep is
+  re-taken.
+
+`SourceSideFalsifier` now carries a `FalsifierKind`, because the rows were making
+two different claims that both read as "unreddenable":
+`ReddenedUnderAnotherGate` (a registered patch DOES redden it; no mutation is
+filed here because that would mint a second `PROVEN` out of one defect) and
+`NoRegisteredPatchReddensIt`. Re-derived against the corrected measure,
+**`TestCrashDurablePrefixNoReorder`'s row was cover**:
+`G2.17/reopen-does-not-floor-the-clock` reddens it outright — under the fixture's
+`fakeClock` the reverted `newHLCClock(HLC{}, …)` recovers `{2000,0}` below the
+last surviving commit at `{2000,1}` and `crashsim_test.go:415` fires. What
+survives is the narrower claim about the PREFIX assertion at line 404, which no
+registered patch reaches; G2.9a's anchor over that line is that clause's
+falsifier.
+
+`TestWrongComparerNameRefusesOpen` was green for the wrong reason by
+construction: `if err == nil` never asked WHY the open failed, so leaking the
+Pebble handle in `Close` would make the second open fail on the DIRECTORY LOCK
+with the comparer check never reached. It now requires the error to name
+`comparer name` and both comparer names — only the manifest check produces that.
+And `TestSecondOpenFailsSingleProcessLock`'s argument was narrowed: the lock is
+Pebble's, but the guarantee holds only because `openWith` calls `pebble.Open`
+EAGERLY, which is BlueDB's code — `G2_25_EAGER_OPEN_PIN` now pins it, so a
+lazy-open refactor fails G2.25 rather than passing silently.
+
+**3. Three "every" claims were hand lists reconciled against nothing.** Each now
+reconciles two ways against the surface it names, so a new member FAILS:
+
+| Claim | Surface, read from source | Falsified by |
+|---|---|---|
+| G2.13j "the exported non-reader surface" | `type Engine interface` in `engine.go` → `G2_13J_SURFACE` | adding `Engine.Compact` ⇒ FAIL |
+| G2.13l "**every** exit that could claim success" | every `.Apply(` in the engine sources → `N3_APPLY_SITES` | adding an `e.db.Apply(…)` ⇒ FAIL |
+| G2.24 "**every** key parser" | every `[]byte`-taking `func` in the FROZEN `keys.go` + `comparer.go` → `G2_24_PARSERS` | adding `func tailByte(key []byte)` ⇒ FAIL |
+
+G2.13l's static half only ever fired on an EXCESS of latch READS, so an exit that
+claimed success *without consulting the latch* — exactly what its title forbids —
+moved no count and was invisible. `.Apply(` is the only way this package writes to
+Pebble, so the exits are now enumerated from the write side. The title is also
+made honest about what it excludes: the READ doors (`Snapshot`, `Begin`) claim no
+durability, so a fatal they do not consult cannot become a false ack.
+
+**`decodeHLC` (`keys.go:58`) slices `b[0:8]`/`b[8:12]` with no bounds guard, and
+it is UNREACHABLE with a short buffer** — assessed, not assumed. It has exactly
+three call sites and each establishes the length first: `decodeDataVersion`
+rejects anything shorter than `2+dataSuffixLen`, `changelogTsOf` requires
+`len(key) == 1+hlcEncodedLen+1` exactly, and `readMetaHLC` refuses any meta value
+whose length is not exactly `hlcEncodedLen`. That is the caller contract `keys.go`
+states, and it is now enforced: `DECODE_HLC_CALL_SITES` records all three with
+their guards, the count is taken across the whole non-test package (itself from
+`read_dir`), and a fourth call site is a FAIL. A guard inside `decodeHLC` was NOT
+added because `keys.go` is frozen behind a sha256 in `frozen_stage1.rs` — the
+format is baked into every SSTable already written, so changing it is a
+deliberate act with a re-taken pin, not a drive-by hardening.
+
+**And one gate was standing red on its own finding.** `G2.6` has been FAIL since
+`ca4d5d1a`: `validate_test.go` landed with G2.26/G2.27 and was never added to
+`G2_6_SOURCES`, so the gate's own two-way reconciliation said "a new test file is
+where a new injection site hides from a manifest" — correctly — and the file sat
+unaccounted. It constructs no injector, so the manifest is unchanged; only the
+accounting was missing. `G2.6` is PASS again (6 sites across 11 corpus files).
+
 ## CLOSED — G0.3's falsification is PROVEN (2026-08-14)
 
 `G0.3/persistglue-unconditional` reports `PROVEN`, the full
@@ -102,8 +194,9 @@ A falsifier must now be keyed on the leaf's own text, one of three ways:
    — otherwise a sibling arm satisfies it and the pin survives the gutting it
    exists to catch. This is the stronger form: it is checked on every gate run
    from the tree as it stands.
-3. **`SOURCE_SIDE_FALSIFIERS`**, unchanged: a pin the gate enforces by another
-   spelling, each row carrying its argument.
+3. **`SOURCE_SIDE_FALSIFIERS`**: a pin the gate enforces by another spelling,
+   each row carrying its argument. (Round 5 split its rows by `FalsifierKind` and
+   made each claim a measurement rather than an argument — see that section.)
 
 Three leaves were guttable with their gate PASS and their proof PROVEN, and each
 now goes RED naming the fixture and its assertion:
@@ -228,14 +321,16 @@ changelog-loss message and **re-taken** against `per-job commitTs not strictly
 increasing`, because the fixture trips that assertion first and the original
 would have recorded VACUOUS.
 
-Two leaves are recorded in `SOURCE_SIDE_FALSIFIERS` as unreddenable by any honest
-revert, with the argument: `TestSecondOpenFailsSingleProcessLock` (the exclusive
+Two leaves are recorded in `SOURCE_SIDE_FALSIFIERS` as reddened by no registered
+patch, with the argument: `TestSecondOpenFailsSingleProcessLock` (the exclusive
 directory lock is Pebble's, relied on by design §6 rather than reimplemented) and
 `TestWrongComparerNameRefusesOpen` (dropping `Comparer: skydbComparer` from
 `openWith` does NOT redden it — the store is then created under Pebble's default
 name and the fixture's deliberately-wrong name still mismatches). Their live
 sibling `TestComparerName` IS reddenable, and `G2.25/comparer-name-drifts` proves
-it.
+it. **Round 5 narrowed the first argument and MEASURED both** — see that section:
+the lock is Pebble's, but the guarantee depends on BlueDB opening eagerly, and
+"no honest revert" is now a sweep result rather than a claim.
 
 A new `*_test.go` under `runtime-go/bluedb/` owned by no family is now a
 `cargo test` failure: the three families must partition the directory, discovered

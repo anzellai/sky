@@ -1,6 +1,7 @@
 package bluedb
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cockroachdb/pebble/v2"
@@ -48,5 +49,19 @@ func TestWrongComparerNameRefusesOpen(t *testing.T) {
 	if err == nil {
 		_ = db.Close()
 		t.Fatalf("opening under a different Comparer.Name must be REFUSED")
+	}
+	// WHY it was refused, not merely THAT it was. A bare `err != nil` is green for
+	// the wrong reason by construction: leak the Pebble handle in Close and this
+	// second Open fails on the DIRECTORY LOCK instead, the comparer check is never
+	// reached, and the fixture reports PASS having exercised nothing. The manifest
+	// check names both comparers, so the error text distinguishes the two refusals.
+	if got := err.Error(); !strings.Contains(got, "comparer name") ||
+		!strings.Contains(got, skydbComparer.Name) || !strings.Contains(got, wrong.Name) {
+		t.Fatalf("the second Open was refused, but NOT by the comparer check: %v.\n"+
+			"Want an error naming `comparer name` and both %q (from the manifest) and %q (from "+
+			"Options). An open refused for any other reason — the directory lock a leaked handle "+
+			"leaves behind, a missing manifest — leaves the comparer-immutability contract (§7 G1, "+
+			"§2.4) UNEXERCISED while this test stays green",
+			err, skydbComparer.Name, wrong.Name)
 	}
 }

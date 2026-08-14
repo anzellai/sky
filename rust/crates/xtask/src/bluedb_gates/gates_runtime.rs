@@ -1175,7 +1175,385 @@ pub const G2_24_ANCHORS: &[SourceAnchor] = &[
     },
 ];
 
+// -- G2.24's population, reconciled against the source it claims -------------
+
+/// The two files that define the FROZEN key format. `keys.go`'s own package doc
+/// calls them frozen before the first SSTable is written, and between them they
+/// hold every function that turns bytes into a key or a key into its parts.
+///
+/// This is the surface G2.24's title — "**every** key parser" — names. It used to
+/// be reconciled against nothing: the gate ran four fixtures and pinned four
+/// anchors, and a parser that was not one of the four was invisible. `decodeHLC`
+/// was exactly that (see [`G2_24_PARSERS`]).
+pub const KEY_FORMAT_SOURCES: &[&str] = &[
+    "runtime-go/bluedb/keys.go",
+    "runtime-go/bluedb/comparer.go",
+];
+
+/// What a key-format function owes the corrupt-input contract.
+#[derive(PartialEq, Eq, Debug)]
+pub enum ParserDuty {
+    /// It reads structure out of an UNTRUSTED key and must refuse rather than
+    /// index out of range. `why` names the G2.24 fixture that proves it.
+    FailsClosed,
+    /// It is TOTAL: every index and slice bound it forms is guarded by an
+    /// explicit length test in its own body, on every path, so no input of any
+    /// length can panic. `why` says which guard.
+    Total,
+    /// It reads at FIXED offsets with no guard of its own, and is unexported, so
+    /// its safety is a contract on its callers. `why` states the contract; the
+    /// callers are enumerated and checked by
+    /// `every_decode_hlc_call_site_is_length_guarded`.
+    GuardedByEveryCaller,
+}
+
+/// One function in [`KEY_FORMAT_SOURCES`] that takes a `[]byte`, and what it owes.
+pub struct KeyParser {
+    pub func: &'static str,
+    pub file: &'static str,
+    pub duty: ParserDuty,
+    pub why: &'static str,
+}
+
+/// **Every `[]byte`-taking function in the two frozen key-format files.**
+///
+/// The population is not this list — it is read from the sources by
+/// [`key_format_byte_funcs`] and reconciled against this list BOTH ways on every
+/// gate run. A new parser is a FAILURE until it is recorded here with its duty,
+/// which is the property "every key parser" was asserting and nothing was
+/// checking.
+///
+/// The definition is deliberately syntactic (a top-level `func` in one of those
+/// two files whose parameter list mentions `[]byte`) rather than a judgement
+/// about which functions "really parse". A judgement is what a hand list is, and
+/// the whole finding here is that a hand list reconciled against nothing lets a
+/// member hide — `decodeHLC` sat outside the pinned set with two unguarded
+/// slices, `b[0:8]` and `b[8:12]`, and nothing in the gate could see it.
+pub const G2_24_PARSERS: &[KeyParser] = &[
+    // -- keys.go ------------------------------------------------------------
+    KeyParser {
+        func: "decodeHLC",
+        file: "runtime-go/bluedb/keys.go",
+        duty: ParserDuty::GuardedByEveryCaller,
+        why: "it slices b[0:8] and b[8:12] with NO guard of its own, so a buffer shorter than 12 \
+              bytes would panic. It is unexported and has exactly three call sites, and each one \
+              establishes the length BEFORE calling: decodeDataVersion rejects any key shorter \
+              than 2+dataSuffixLen and then slices exactly hlcEncodedLen bytes out of it; \
+              changelogTsOf requires len(key) == 1+hlcEncodedLen+1 EXACTLY; readMetaHLC refuses \
+              any meta value whose length is not exactly hlcEncodedLen. That is the caller \
+              contract keys.go states as `Callers guarantee len(b) >= 12`, and \
+              `every_decode_hlc_call_site_is_length_guarded` is what keeps it true",
+    },
+    KeyParser {
+        func: "invert12",
+        file: "runtime-go/bluedb/keys.go",
+        duty: ParserDuty::Total,
+        why: "`for i := range b` over a fresh `make([]byte, len(b))` — no fixed offset, so it is \
+              total on any length including zero",
+    },
+    KeyParser {
+        func: "encodeDataKey",
+        file: "runtime-go/bluedb/keys.go",
+        duty: ParserDuty::Total,
+        why: "append-only over the caller's userKey; it never reads at an offset",
+    },
+    KeyParser {
+        func: "dataKeyPrefix",
+        file: "runtime-go/bluedb/keys.go",
+        duty: ParserDuty::Total,
+        why: "append-only, same as encodeDataKey",
+    },
+    KeyParser {
+        func: "decodeDataVersion",
+        file: "runtime-go/bluedb/keys.go",
+        duty: ParserDuty::FailsClosed,
+        why: "TestDecodeDataVersionRejectsCorruptKeysWithoutPanic",
+    },
+    KeyParser {
+        func: "changelogTsOf",
+        file: "runtime-go/bluedb/keys.go",
+        duty: ParserDuty::FailsClosed,
+        why: "TestChangelogTsOfRejectsCorruptKeysWithoutPanic",
+    },
+    // -- comparer.go --------------------------------------------------------
+    KeyParser {
+        func: "skydbSplit",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::FailsClosed,
+        why: "TestSplitNeverPanicsOnCorruptKeys",
+    },
+    KeyParser {
+        func: "skydbCompare",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "every bound it forms comes from skydbSplit, which is proven to stay in [0, len] by \
+              TestSplitNeverPanicsOnCorruptKeys; bytes.Compare is total",
+    },
+    KeyParser {
+        func: "skydbEqual",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "delegates to skydbCompare and forms no bound of its own",
+    },
+    KeyParser {
+        func: "skydbComparePointSuffixes",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "guards both empties and then calls bytes.Compare, which is total",
+    },
+    KeyParser {
+        func: "skydbCompareRangeSuffixes",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "guards both empties and then compares through stripLenByte, itself guarded",
+    },
+    KeyParser {
+        func: "stripLenByte",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "returns s unchanged when len(s) == 0, so s[:len(s)-1] is only ever formed on a \
+              non-empty slice",
+    },
+    KeyParser {
+        func: "skydbAbbrev",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "key[:skydbSplit(key)] — the bound is skydbSplit's answer, which never leaves \
+              [0, len(key)]",
+    },
+    KeyParser {
+        func: "skydbSeparator",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "every read goes through keyPartNoSentinel, which returns ok=false rather than a bad \
+              bound; the rest is append",
+    },
+    KeyParser {
+        func: "skydbSuccessor",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "guards the empty input, then reads only through keyPartNoSentinel",
+    },
+    KeyParser {
+        func: "skydbImmediateSuccessor",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "append-only",
+    },
+    KeyParser {
+        func: "keyPartNoSentinel",
+        file: "runtime-go/bluedb/comparer.go",
+        duty: ParserDuty::Total,
+        why: "n := skydbSplit(key) is in [0, len(key)]; n < 1 returns ok=false, so key[:n-1] is \
+              only formed for n >= 1",
+    },
+];
+
+/// The three call sites of `decodeHLC`, and the length test each one establishes
+/// before it.
+///
+/// `decodeHLC` is [`ParserDuty::GuardedByEveryCaller`], which is only a safety
+/// argument while the callers are the recorded ones. Counted across the package's
+/// NON-test sources so a fourth call site cannot appear unrecorded.
+pub struct DecodeHlcCallSite {
+    pub file: &'static str,
+    /// The call, verbatim and unique in `file`.
+    pub call: &'static str,
+    /// The length test that dominates it, verbatim and unique in `file`.
+    pub guard: &'static str,
+}
+
+pub const DECODE_HLC_CALL_SITES: &[DecodeHlcCallSite] = &[
+    DecodeHlcCallSite {
+        file: "runtime-go/bluedb/keys.go",
+        call: "return decodeHLC(invert12(inv)), true",
+        guard: "if len(key) < 2+dataSuffixLen || key[len(key)-1] != dataLenByte {",
+    },
+    DecodeHlcCallSite {
+        file: "runtime-go/bluedb/keys.go",
+        call: "return decodeHLC(key[1 : 1+hlcEncodedLen]), true",
+        guard: "if len(key) != 1+hlcEncodedLen+1 || key[0] != tagChangelog || key[len(key)-1] != unversioned {",
+    },
+    DecodeHlcCallSite {
+        file: "runtime-go/bluedb/pebble_engine.go",
+        call: "return decodeHLC(v), nil",
+        guard: "if len(v) != hlcEncodedLen {",
+    },
+];
+
+/// Every non-test Go source in the package, for the `decodeHLC` call count. A
+/// call in a FIXTURE is a test choosing its own input, not the engine parsing an
+/// untrusted key.
+pub const DECODE_HLC_SEARCH_SOURCES: &[&str] = &[
+    "runtime-go/bluedb/changefeed.go",
+    "runtime-go/bluedb/changelog.go",
+    "runtime-go/bluedb/committer.go",
+    "runtime-go/bluedb/comparer.go",
+    "runtime-go/bluedb/engine.go",
+    "runtime-go/bluedb/gc.go",
+    "runtime-go/bluedb/hlc.go",
+    "runtime-go/bluedb/hotkey.go",
+    "runtime-go/bluedb/keychange.go",
+    "runtime-go/bluedb/keys.go",
+    "runtime-go/bluedb/pebble_engine.go",
+    "runtime-go/bluedb/reader.go",
+    "runtime-go/bluedb/readset.go",
+    "runtime-go/bluedb/recent_changes.go",
+    "runtime-go/bluedb/txn.go",
+    "runtime-go/bluedb/validate.go",
+    "runtime-go/bluedb/watermark.go",
+];
+
+/// Every top-level `func` in [`KEY_FORMAT_SOURCES`] whose parameter list mentions
+/// `[]byte`, as `(file, name)`.
+///
+/// Syntactic on purpose — see [`G2_24_PARSERS`]. Methods (a `func (r recv) …`) are
+/// skipped: there are none in these two files, and a method arriving is caught by
+/// the same reconciliation because it would not be in the list either way.
+pub fn key_format_byte_funcs(read: impl Fn(&str) -> Option<String>) -> Option<Vec<(&'static str, String)>> {
+    let mut out = Vec::new();
+    for file in KEY_FORMAT_SOURCES {
+        let text = read(file)?;
+        for line in super::gates_g2::strip_go_comments(&text).lines() {
+            let Some(rest) = line.strip_prefix("func ") else {
+                continue;
+            };
+            if rest.starts_with('(') {
+                continue; // a method; the receiver is not the parameter list
+            }
+            let Some(open) = rest.find('(') else { continue };
+            // The PARAMETER list only — balanced from `open`, so a `[]byte`
+            // RETURN type (encodeHLC, encodeMetaKey, …) does not make a builder
+            // look like a parser. Those are functions that produce keys; the
+            // surface here is the ones that consume them.
+            let bytes_after: Vec<char> = rest[open..].chars().collect();
+            let mut depth = 0i32;
+            let mut close = None;
+            for (i, c) in bytes_after.iter().enumerate() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(close) = close else { continue };
+            let params: String = bytes_after[1..close].iter().collect();
+            if !params.contains("[]byte") {
+                continue;
+            }
+            out.push((*file, rest[..open].trim().to_string()));
+        }
+    }
+    Some(out)
+}
+
+/// Reconcile the source against [`G2_24_PARSERS`] in BOTH directions.
+fn check_key_parser_population(read: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    let Some(found) = key_format_byte_funcs(&read) else {
+        return vec![format!(
+            "G2.24: cannot read {} — the key-format sources are the surface its title names",
+            KEY_FORMAT_SOURCES.join(", ")
+        )];
+    };
+    let mut findings = Vec::new();
+    for (file, name) in &found {
+        if !G2_24_PARSERS
+            .iter()
+            .any(|p| p.func == name && p.file == *file)
+        {
+            findings.push(format!(
+                "{file} declares `func {name}(… []byte …)`, which G2_24_PARSERS does not record. \
+                 G2.24's title is `every key parser`; a parser nobody recorded is a parser nobody \
+                 asked whether it fails closed — `decodeHLC` sat in exactly that state with two \
+                 unguarded slices"
+            ));
+        }
+    }
+    for p in G2_24_PARSERS {
+        if !found.iter().any(|(f, n)| *f == p.file && n == p.func) {
+            findings.push(format!(
+                "G2_24_PARSERS records `{}` in {}, which declares no such `[]byte`-taking \
+                 function — a row that answers for code that is gone reads as coverage while \
+                 being none",
+                p.func, p.file
+            ));
+        }
+        if p.duty == ParserDuty::FailsClosed && !G2_24_TESTS.contains(&p.why) {
+            findings.push(format!(
+                "`{}` is recorded as failing closed under fixture `{}`, which is not one of \
+                 G2.24's pinned tests",
+                p.func, p.why
+            ));
+        }
+    }
+    findings
+}
+
+/// Reconcile `decodeHLC`'s call sites against [`DECODE_HLC_CALL_SITES`], both
+/// ways: a new call site is a finding, and a recorded one that moved or lost its
+/// guard is a finding.
+fn check_decode_hlc_call_sites(read: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    let mut findings = Vec::new();
+    let mut calls = 0usize;
+    for file in DECODE_HLC_SEARCH_SOURCES {
+        let Some(text) = read(file) else {
+            findings.push(format!("G2.24: cannot read {file}"));
+            continue;
+        };
+        let code = super::gates_g2::strip_go_comments(&text);
+        calls += code.matches("decodeHLC(").count();
+        // The declaration itself is a `decodeHLC(` occurrence; discount it.
+        calls -= code.matches("func decodeHLC(").count();
+    }
+    if calls != DECODE_HLC_CALL_SITES.len() {
+        findings.push(format!(
+            "the engine sources carry {calls} call(s) to decodeHLC; DECODE_HLC_CALL_SITES records \
+             {}. decodeHLC slices b[0:8] and b[8:12] with no guard of its own, so an unrecorded \
+             call site is a potential index-out-of-range on a short buffer — and a call site that \
+             DISAPPEARED means this reconciliation is answering for code that no longer runs",
+            DECODE_HLC_CALL_SITES.len()
+        ));
+    }
+    for s in DECODE_HLC_CALL_SITES {
+        let Some(text) = read(s.file) else { continue };
+        let code = super::gates_g2::strip_go_comments(&text);
+        for (what, needle) in [("call", s.call), ("guard", s.guard)] {
+            if code.matches(needle).count() != 1 {
+                findings.push(format!(
+                    "{}: the recorded {what} `{needle}` is not present exactly once. decodeHLC is \
+                     safe only because every caller establishes the length first",
+                    s.file
+                ));
+            }
+        }
+    }
+    findings
+}
+
 pub fn g2_24_key_parsers_fail_closed(ctx: &Ctx) -> GateOutcome {
+    // ── The two-way reconciliation the title needs, BEFORE the fixtures ──
+    //
+    // Four fixtures prove four parsers fail closed. "Every key parser" is a
+    // claim about a POPULATION, and until this ran the population was a hand
+    // list checked against nothing.
+    let mut findings = check_key_parser_population(|f| ctx.read(f));
+    findings.extend(check_decode_hlc_call_sites(|f| ctx.read(f)));
+    if !findings.is_empty() {
+        return GateOutcome::fail(
+            format!(
+                "the key-format parser population does not match its pin ({} recorded)",
+                G2_24_PARSERS.len()
+            ),
+            findings,
+        );
+    }
+
     run_file_gate(
         ctx,
         &FileGate {
@@ -1212,6 +1590,15 @@ pub const G2_25_ANCHORS: &[SourceAnchor] = &[
               store will not open under a comparer it was not written with",
     },
     SourceAnchor {
+        func: "TestWrongComparerNameRefusesOpen",
+        needle: "the second Open was refused, but NOT by the comparer check",
+        why: "the fixture was green for the WRONG REASON without it: a bare `err != nil` is \
+              satisfied by ANY refusal, so leaking the Pebble handle in Close makes the second \
+              open fail on the DIRECTORY LOCK and the comparer check is never reached. This half \
+              requires the error to name `comparer name` and both names, which only the manifest \
+              check produces",
+    },
+    SourceAnchor {
         func: "TestComparerName",
         needle: "comparer name drifted: %q",
         why: "the name is the format's identity. It is what makes the refusal above possible, and \
@@ -1219,7 +1606,44 @@ pub const G2_25_ANCHORS: &[SourceAnchor] = &[
     },
 ];
 
+/// **The single-writer guarantee's BlueDB half.**
+///
+/// `TestSecondOpenFailsSingleProcessLock` is recorded in `SOURCE_SIDE_FALSIFIERS`
+/// as reddened by no registered patch, and the old argument for that was "the
+/// lock is Pebble's, so no revert of BlueDB source can make a second Open
+/// succeed". That is false, and a Judge round said so: Pebble takes the directory
+/// lock **inside `pebble.Open`** (v2.1.6 `open.go:128-132`, unconditional), so the
+/// guarantee holds only while BlueDB actually CALLS `pebble.Open` eagerly. A
+/// lazy-open refactor that deferred it to the first use would let two `Open`s of
+/// one directory both return, and it would redden that fixture for exactly the
+/// right reason — which makes the eagerness BlueDB's contract, not Pebble's.
+///
+/// So it is pinned. The needle is the eager call itself.
+const G2_25_EAGER_OPEN_PIN: (&str, &str) = (
+    "runtime-go/bluedb/pebble_engine.go",
+    "db, err := pebble.Open(cfg.dir, opts)",
+);
+
 pub fn g2_25_one_writer_one_format(ctx: &Ctx) -> GateOutcome {
+    let (file, needle) = G2_25_EAGER_OPEN_PIN;
+    let occurrences = ctx
+        .read(file)
+        .map(|s| super::gates_g2::strip_go_comments(&s).matches(needle).count());
+    if occurrences != Some(1) {
+        return GateOutcome::fail(
+            "the single-writer guarantee's own half is not where it is pinned".to_string(),
+            vec![format!(
+                "{file}: `{needle}` occurs {} time(s), want exactly 1. Pebble's exclusive \
+                 directory lock is taken INSIDE pebble.Open, so `a second Open of the same \
+                 directory fails` is BlueDB's guarantee only while openWith calls it EAGERLY. \
+                 Deferring it to first use would let two Opens of one directory both return, and \
+                 TestSecondOpenFailsSingleProcessLock is recorded as reddened by no registered \
+                 patch — so nothing else would notice",
+                occurrences.map(|n| n.to_string()).unwrap_or_else(|| "«unreadable»".into())
+            )],
+        );
+    }
+
     run_file_gate(
         ctx,
         &FileGate {
@@ -1686,6 +2110,67 @@ mod tests {
             "a `*_test.go` in runtime-go/bluedb is owned by no gate family (left = on disk, \
              right = owned). Add it to RUNTIME_SOURCES and record its tests in RUNTIME_OWNERSHIP, \
              or the tests in it run under no gate — the exact state this module was written to end"
+        );
+    }
+
+    /// **G2.24's population is the key-format source, both ways.**
+    ///
+    /// The gate body runs the same reconciliation; this runs it in `cargo test`
+    /// where no `go test` budget is in the way, so a new parser is caught by the
+    /// cheapest gate that can see it.
+    #[test]
+    fn every_key_format_byte_func_is_recorded_with_its_duty() {
+        let root = repo();
+        let read = |f: &str| std::fs::read_to_string(root.join(f)).ok();
+        let findings = super::check_key_parser_population(read);
+        assert!(findings.is_empty(), "{findings:#?}");
+    }
+
+    /// **`decodeHLC` is safe because of its callers, and these are its callers.**
+    ///
+    /// It slices `b[0:8]` and `b[8:12]` with no guard of its own — the one
+    /// [`ParserDuty::GuardedByEveryCaller`] row in [`G2_24_PARSERS`]. That is a
+    /// real argument only while the call sites are the recorded three and each
+    /// still establishes the length first, so both are checked, in both
+    /// directions: a fourth call site fails on the count, and a recorded site
+    /// that moved or lost its guard fails on the needle.
+    ///
+    /// This is what a [`ParserDuty::GuardedByEveryCaller`] row costs. The
+    /// alternative — a guard inside `decodeHLC` — is not available: `keys.go` is
+    /// FROZEN (its bytes are pinned by a sha256 in `frozen_stage1.rs`, because
+    /// `Comparer.Name` is baked into every SSTable already written), so changing
+    /// it is a deliberate act with a re-taken pin, not a drive-by hardening.
+    #[test]
+    fn every_decode_hlc_call_site_is_length_guarded() {
+        let root = repo();
+        let read = |f: &str| std::fs::read_to_string(root.join(f)).ok();
+        let findings = super::check_decode_hlc_call_sites(read);
+        assert!(findings.is_empty(), "{findings:#?}");
+    }
+
+    /// [`DECODE_HLC_SEARCH_SOURCES`] is every NON-test Go source in the package,
+    /// from `read_dir` — because a hand list is exactly where a new file with a
+    /// new `decodeHLC` call hides.
+    #[test]
+    fn decode_hlc_search_sources_are_the_whole_non_test_package() {
+        let dir = repo().join("runtime-go/bluedb");
+        let mut on_disk: BTreeSet<String> = BTreeSet::new();
+        for e in std::fs::read_dir(&dir).expect("read runtime-go/bluedb") {
+            let p = e.expect("dir entry").path();
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            if name.ends_with(".go") && !name.ends_with("_test.go") {
+                on_disk.insert(format!("runtime-go/bluedb/{name}"));
+            }
+        }
+        let recorded: BTreeSet<String> = DECODE_HLC_SEARCH_SOURCES
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            on_disk, recorded,
+            "DECODE_HLC_SEARCH_SOURCES is not the non-test package (left = on disk, right = \
+             recorded). decodeHLC's safety is a contract on its CALLERS; a source this list does \
+             not search is a source whose calls are not counted"
         );
     }
 

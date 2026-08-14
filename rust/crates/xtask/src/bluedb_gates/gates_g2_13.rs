@@ -1081,6 +1081,15 @@ const N4_GC_PIN_FUNC: &str = "TestAuditN4GCPassIsPinnedAgainstAConcurrentClose";
 /// unconditionally, on that goroutine, where no recover in the package can reach
 /// it.
 ///
+/// # The population half — added because "every" was a hand judgement
+///
+/// Two fixtures prove two operations are pinned. The title's claim is about the
+/// exported SURFACE, and which methods that is was decided by hand and reconciled
+/// against nothing: a new `Engine` method taking the Pebble handle would have
+/// arrived with no pin and no failure. [`G2_13J_SURFACE`] now records every
+/// member of the interface with what pins it, and the gate reads the interface
+/// out of `engine.go` and reconciles both ways before it runs a fixture.
+///
 /// **Two fixtures because the two defects need different shapes, and that is the
 /// finding, not an accident.** `isClosed()` DOES answer a call made after Close
 /// returned, so the spin-workers-then-Close shape passes against the broken GC
@@ -1088,6 +1097,176 @@ const N4_GC_PIN_FUNC: &str = "TestAuditN4GCPassIsPinnedAgainstAConcurrentClose";
 /// `…DoNotRaceCloseIntoAPanic` GREEN). The GC arm therefore puts Close INSIDE a
 /// pass whose length it measures first. One fixture could not have covered both.
 pub const G2_13J_TESTS: &[&str] = &[N4_LIFECYCLE_FUNC, N4_GC_PIN_FUNC];
+
+/// Where the exported surface is DECLARED — the one place a new exported
+/// operation can arrive.
+pub const ENGINE_INTERFACE_SOURCE: &str = "runtime-go/bluedb/engine.go";
+
+/// **Every method on the exported `Engine` interface**, read out of
+/// [`ENGINE_INTERFACE_SOURCE`].
+///
+/// Comment-stripped first, so a method named only in prose is not one. The shape
+/// is `type Engine interface {` … `}` and a member is a line whose first token is
+/// an identifier immediately followed by `(`.
+///
+/// This exists because both G2.13j and G2.13l make claims about "the exported
+/// surface" and neither had a way to enumerate it. A hand list cannot fail when a
+/// method is ADDED, which is the only direction that matters.
+pub fn engine_interface_methods(read: impl Fn(&str) -> Option<String>) -> Option<Vec<String>> {
+    let text = super::gates_g2::strip_go_comments(&read(ENGINE_INTERFACE_SOURCE)?);
+    let mut out = Vec::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if !inside {
+            if t.starts_with("type Engine interface") {
+                inside = true;
+            }
+            continue;
+        }
+        if t == "}" {
+            break;
+        }
+        let Some(open) = t.find('(') else { continue };
+        let name = &t[..open];
+        if !name.is_empty()
+            && name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            && name.chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            out.push(name.to_string());
+        }
+    }
+    Some(out)
+}
+
+/// How one exported `Engine` operation is pinned against a concurrent `Close`.
+#[derive(PartialEq, Eq, Debug)]
+pub enum LifecyclePin {
+    /// By a fixture of THIS gate.
+    Here,
+    /// By another gate's fixture — the reader path, and the commit door.
+    Elsewhere,
+    /// It touches no Pebble handle, so there is nothing for Close to race.
+    NoHandle,
+}
+
+/// One exported `Engine` operation and what pins it against Close.
+pub struct EngineDoor {
+    pub method: &'static str,
+    pub pin: LifecyclePin,
+    /// The fixture (for `Here`/`Elsewhere`) or the argument (for `NoHandle`).
+    pub why: &'static str,
+}
+
+/// **The exported surface G2.13j's title names, reconciled against
+/// [`ENGINE_INTERFACE_SOURCE`] both ways.**
+///
+/// The gate pins two fixtures and its title said "the exported non-reader
+/// surface". Which methods that IS was a hand judgement checked against nothing:
+/// a new `Engine` method that took the Pebble handle without a pin would have
+/// arrived silently, and the gate would have kept reporting the same PASS. Now the
+/// interface is read from source and every member must appear here — an added
+/// method is a FAIL until someone says which fixture pins it.
+///
+/// `Elsewhere` rows are not this gate's evidence and are not counted as such;
+/// they exist so the population is complete, which is the only way "every" can be
+/// checked.
+pub const G2_13J_SURFACE: &[EngineDoor] = &[
+    EngineDoor {
+        method: "Snapshot",
+        pin: LifecyclePin::Elsewhere,
+        why: "G2.13f — the READER path takes the check-and-pin (beginSnapshot / \
+              snapshotAtChecked) and Close's drain waits on the tokens",
+    },
+    EngineDoor {
+        method: "NowTs",
+        pin: LifecyclePin::NoHandle,
+        why: "reads the in-memory HLC high-water; it never touches e.db",
+    },
+    EngineDoor {
+        method: "Commit",
+        pin: LifecyclePin::Elsewhere,
+        why: "G2.13d — the commit door answers on a closed engine rather than racing it \
+              (TestAuditC1CommitOnClosedChannelReturnsError)",
+    },
+    EngineDoor {
+        method: "Changelog",
+        pin: LifecyclePin::Here,
+        why: "TestAuditN4ChangelogAndGCDoNotRaceCloseIntoAPanic",
+    },
+    EngineDoor {
+        method: "Readers",
+        pin: LifecyclePin::NoHandle,
+        why: "hands back the in-memory watermark registry; no Pebble operation",
+    },
+    EngineDoor {
+        method: "GC",
+        pin: LifecyclePin::Here,
+        why: "TestAuditN4GCPassIsPinnedAgainstAConcurrentClose",
+    },
+    EngineDoor {
+        method: "Close",
+        pin: LifecyclePin::NoHandle,
+        why: "Close IS the operation the others are pinned against; it is the drain, not a racer \
+              of it",
+    },
+    EngineDoor {
+        method: "Begin",
+        pin: LifecyclePin::Elsewhere,
+        why: "G2.13f — Begin's snapshot goes through the same check-and-pin as Snapshot \
+              (TestAuditN4BeginPathReaderClosesSnapshotBeforeItsPin)",
+    },
+    EngineDoor {
+        method: "Transact",
+        pin: LifecyclePin::Elsewhere,
+        why: "it is Begin + body + Txn.Commit in a retry loop, so it owns no handle op of its \
+              own; both ends are pinned by the rows above",
+    },
+];
+
+/// Reconcile the declared `Engine` interface against [`G2_13J_SURFACE`], both ways.
+fn check_exported_surface(read: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    let Some(methods) = engine_interface_methods(&read) else {
+        return vec![format!(
+            "G2.13j: cannot read {ENGINE_INTERFACE_SOURCE} — the exported surface is declared \
+             there and the gate's title is a claim about all of it"
+        )];
+    };
+    let mut findings = Vec::new();
+    if methods.is_empty() {
+        findings.push(format!(
+            "G2.13j: no `type Engine interface` member found in {ENGINE_INTERFACE_SOURCE}; a \
+             reconciliation that enumerates nothing passes vacuously"
+        ));
+    }
+    for m in &methods {
+        if !G2_13J_SURFACE.iter().any(|d| d.method == m) {
+            findings.push(format!(
+                "Engine.{m} is exported but G2_13J_SURFACE does not record what pins it against a \
+                 concurrent Close. Every exported operation that touches the Pebble handle needs \
+                 a check-and-pin — pebble panics unconditionally on a closed handle, on the \
+                 CALLER's goroutine, where no recover in the package can reach it"
+            ));
+        }
+    }
+    for d in G2_13J_SURFACE {
+        if !methods.iter().any(|m| m == d.method) {
+            findings.push(format!(
+                "G2_13J_SURFACE records Engine.{}, which the interface no longer declares — a row \
+                 for a method that is gone reads as coverage while being none",
+                d.method
+            ));
+        }
+        if d.pin == LifecyclePin::Here && !G2_13J_TESTS.contains(&d.why) {
+            findings.push(format!(
+                "Engine.{} is recorded as pinned by THIS gate's `{}`, which is not one of its \
+                 pinned fixtures",
+                d.method, d.why
+            ));
+        }
+    }
+    findings
+}
 
 /// One anchor per fixture, on its own property assertion — see
 /// [`super::gates_g2::SourceAnchor`]. Both fixtures END in a `t.Fatalf`/`t.Errorf`
@@ -1156,6 +1335,20 @@ const G2_13J_SITES: &[SubtestSites] = &[
 ];
 
 pub fn g2_13j_lifecycle_pins_the_exported_surface(ctx: &Ctx) -> GateOutcome {
+    // The population half. Two fixtures prove two operations are pinned; "the
+    // exported non-reader surface" is a claim about ALL of them, and until this
+    // ran it was a hand judgement reconciled against nothing.
+    let findings = check_exported_surface(|f| ctx.read(f));
+    if !findings.is_empty() {
+        return GateOutcome::fail(
+            format!(
+                "the exported surface does not match its pin ({} operation(s) recorded)",
+                G2_13J_SURFACE.len()
+            ),
+            findings,
+        );
+    }
+
     run_audit_gate(
         ctx,
         &AuditGate {
@@ -1375,6 +1568,72 @@ const N3_CONSUMPTION_POINTS: &[N3Point] = &[
     },
 ];
 
+/// One site where the engine durably APPLIES to Pebble, and the consumption
+/// point that stops it claiming success over a latched fatal.
+///
+/// # Why this table had to exist
+///
+/// [`N3_CONSUMPTION_POINTS`] enumerates the places the engine READS the latch,
+/// and the gate fails when a read appears that no row names. A fourth-round Judge
+/// pointed at the hole in that: the gate's static half fires only when the read
+/// COUNT EXCEEDS its pin, so *an exit that claims success without consulting the
+/// latch at all* — precisely what the gate's title forbids — is invisible by
+/// construction. A new `e.db.Apply(…); return nil` adds no latch read, so no
+/// count moves.
+///
+/// The exits are therefore enumerated from the other side. `.Apply(` is the only
+/// way this package writes to Pebble, and an Apply that returns to a caller
+/// without folding the latch is the defect. Reconciled BOTH ways
+/// (`every_n3_apply_site_is_covered_by_a_consumption_point`): a new Apply site
+/// fails, and a recorded one that vanished fails.
+#[allow(dead_code)] // read by the N3 reconciliation tests
+struct N3ApplySite {
+    file: &'static str,
+    /// The Apply call, verbatim and unique in `file` after comment stripping.
+    needle: &'static str,
+    /// The [`N3_CONSUMPTION_POINTS`] needle that covers it.
+    covered_by: &'static str,
+}
+
+const N3_APPLY_SITES: &[N3ApplySite] = &[
+    N3ApplySite {
+        file: "runtime-go/bluedb/committer.go",
+        needle: "err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the whole group",
+        covered_by: "// N3 consumption point 3/5 — BEFORE the branch below",
+    },
+    N3ApplySite {
+        file: "runtime-go/bluedb/committer.go",
+        needle: "err := e.db.Apply(b, pebble.Sync) // ONE fsync amortized over the group",
+        covered_by: "// N3 consumption point 4/5 — BEFORE the branch below",
+    },
+    N3ApplySite {
+        file: "runtime-go/bluedb/gc.go",
+        needle: "if err := e.foldFatal(e.db.Apply(batch, pebble.NoSync)); err != nil {",
+        covered_by: "if err := e.foldFatal(e.db.Apply(batch, pebble.NoSync)); err != nil {",
+    },
+    N3ApplySite {
+        file: "runtime-go/bluedb/gc.go",
+        needle: "if err := e.foldFatal(e.db.Apply(b, pebble.Sync)); err != nil {",
+        covered_by: "if err := e.foldFatal(e.db.Apply(b, pebble.Sync)); err != nil {",
+    },
+];
+
+/// How many `.Apply(` calls the engine sources carry. Exact in BOTH directions in
+/// `cargo test`; the GATE checks only the excess, for the reason its own doc
+/// gives about under-counts short-circuiting a mutation run.
+const N3_APPLY_OCCURRENCES: usize = 4;
+
+/// Count `.Apply(` across [`N3_SOURCES`], comment-blind.
+fn n3_apply_sites(read: impl Fn(&str) -> Option<String>) -> Option<usize> {
+    let mut n = 0usize;
+    for file in N3_SOURCES {
+        n += super::gates_g2::strip_go_comments(&read(file)?)
+            .matches(".Apply(")
+            .count();
+    }
+    Some(n)
+}
+
 /// The two spellings of "the engine reads the latch here", counted across
 /// [`N3_SOURCES`] so a NEW consumption point cannot appear unrecorded.
 ///
@@ -1470,15 +1729,28 @@ fn n3_latch_reads(read: impl Fn(&str) -> Option<String>) -> Option<(usize, usize
 
 /// **The N3 latch is consumed at every exit that could otherwise claim success.**
 ///
-/// Two halves, and neither is sufficient alone:
+/// Three halves, and none is sufficient alone:
 ///
 /// 1. **No UNRECORDED consumption point exists.** The latch reads are counted
 ///    across the engine sources and compared against the recorded totals; a count
 ///    ABOVE them means a read landed that [`N3_CONSUMPTION_POINTS`] does not name,
 ///    and therefore that nothing falsifies. That is the state five of the six
 ///    points were in.
-/// 2. **The six arms run**, under the corpus's three anti-vacuity assertions, each
+/// 2. **No UNCOVERED durable-write exit exists.** (1) counts latch READS, and a
+///    fourth-round Judge named what that cannot see: an exit that claims success
+///    *without consulting the latch* — the very thing the title forbids — adds no
+///    read, so no count moves and the gate stays green. `.Apply(` is the only way
+///    this package writes to Pebble, so the exits are enumerated from the WRITE
+///    side ([`N3_APPLY_SITES`]) and each must be covered by a recorded consumption
+///    point.
+/// 3. **The six arms run**, under the corpus's three anti-vacuity assertions, each
 ///    anchored on its OWN property assertion.
+///
+/// What the title still does NOT cover, said plainly rather than left implied:
+/// the READ doors (`Snapshot`, `Begin`) claim no durability, so a latched fatal
+/// they do not consult cannot turn into a false ack. "Every exit that could claim
+/// success" means every durably-writing exit plus the two exported doors that
+/// answer for one (`Commit`, `Close`), and those are the rows above.
 ///
 /// The asymmetry in (1) is deliberate. A count BELOW the pin means a consumption
 /// point was DELETED — which is what every mutation of this gate does, and what
@@ -1495,6 +1767,36 @@ pub fn g2_13l_latch_is_consumed_at_every_exit(ctx: &Ctx) -> GateOutcome {
             vec!["G2.13l reconciles the N3 consumption points against them".into()],
         );
     };
+    // The OTHER direction, and the one the read-count cannot see: an exit that
+    // claims success WITHOUT consulting the latch adds no latch read, so no count
+    // moves. `.Apply(` is the only way this package writes to Pebble, so the
+    // durable-write exits are enumerated from the write side and each must be
+    // covered by a recorded consumption point. An EXCESS here is a new Apply
+    // nobody folded; the under-count direction is checked in `cargo test` for the
+    // same reason the latch counts are.
+    let Some(applies) = n3_apply_sites(|f| ctx.read(f)) else {
+        return GateOutcome::fail(
+            "cannot read the N3 engine sources".to_string(),
+            vec!["G2.13l reconciles the durable-write exits against them".into()],
+        );
+    };
+    if applies > N3_APPLY_OCCURRENCES {
+        return GateOutcome::fail(
+            format!(
+                "a durable-write exit appeared that no N3 consumption point covers ({} recorded)",
+                N3_APPLY_SITES.len()
+            ),
+            vec![format!(
+                "the engine sources carry {applies} `.Apply(` call(s); the pin records \
+                 {N3_APPLY_OCCURRENCES}. This gate's title is `the latch is consumed at every exit \
+                 that could claim success`, and the latch-READ count cannot see this class: an \
+                 Apply that returns to its caller without folding the latch adds no read, so no \
+                 count moves. Record the new site in N3_APPLY_SITES against the consumption point \
+                 that covers it — or add one"
+            )],
+        );
+    }
+
     if take_fatal > N3_TAKE_FATAL_OCCURRENCES || fold_fatal > N3_FOLD_FATAL_OCCURRENCES {
         return GateOutcome::fail(
             format!(
@@ -1892,10 +2194,21 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
         mutation: "G2.9a/wal-fatal-never-reaches-the-ack",
         leaves: &["TestInjectedFaultsReopenConsistent"],
     },
-    // NO ROW REACHES `TestCrashDurablePrefixNoReorder`'s prefix assertion, and it
-    // is not for want of trying. The property — what survives a crash is a PREFIX
-    // of the commit history in commitTs order — is a consequence of two facts that
-    // no fix hunk in this package owns: Pebble writes one WAL, and the committer is
+    // NO ROW REACHES `TestCrashDurablePrefixNoReorder`'s PREFIX ASSERTION —
+    // and read that word, because an earlier revision of this note said no
+    // mutation reached the FIXTURE, which was false. `G2.17/reopen-does-not-
+    // floor-the-clock` reddens it outright: under the fixture's fakeClock the
+    // reverted `newHLCClock(HLC{}, …)` recovers a high-water of {2000,0} below the
+    // last surviving commit at {2000,1} and `crashsim_test.go:415` fires. That
+    // went unseen because the coverage measure walked one gate's own mutation
+    // list, and `probe` runs `--only={gate}` — so a transcript could only ever
+    // name leaves of the gate a patch was FILED under. Both halves are fixed:
+    // the measure is registry-wide, and [`CROSS_GATE_SWEEP`] runs every patch
+    // against every leaf claimed unreddenable.
+    //
+    // What survives is the narrower claim. The property — what survives a crash is
+    // a PREFIX of the commit history in commitTs order — is a consequence of two
+    // facts that no fix hunk in this package owns: Pebble writes one WAL, and the committer is
     // a single goroutine that assigns commitTs and Applies in the same order. A
     // HOLE requires commitTs order to differ from WAL order, so the only lever is
     // moving timestamp assignment out of the committer into the caller
@@ -1905,10 +2218,12 @@ pub const LEAF_COVERAGE: &[LeafCoverage] = &[
     // does not, which this file already refuses (see G2.13f's two deterministic
     // mutations).
     //
-    // Its falsifier is therefore the SOURCE-SIDE one — `G2_9A_ANCHORS` pins the
-    // `durable prefix has a HOLE` assertion itself, so gutting the fixture, or
-    // deleting the assertion out of it, turns G2.9a red on the next run. See
-    // [`SOURCE_SIDE_FALSIFIERS`].
+    // That CLAUSE's falsifier is therefore the SOURCE-SIDE one — `G2_9A_ANCHORS`
+    // pins the `durable prefix has a HOLE` assertion itself, so gutting the
+    // fixture, or deleting the assertion out of it, turns G2.9a red on the next
+    // run. The fixture as a whole is reddened by a registered patch; see
+    // [`SOURCE_SIDE_FALSIFIERS`] for which, and [`CROSS_GATE_SWEEP`] for the run
+    // that says so.
     //
     // ==== G2.14–G2.25 — the inherited engine corpus (`gates_runtime.rs`) ======
     //
@@ -2067,14 +2382,14 @@ pub const STRUCTURAL_MUTATIONS: &[(&str, &str)] = &[(
 /// A pinned leaf whose falsifier is a **source pin the gate enforces on every
 /// run**, rather than a recorded mutation transcript.
 ///
-/// # Why this is the same rule, not a weaker one
+/// # Why this satisfies the rule — and where it stops
 ///
 /// The rule [`LEAF_COVERAGE`] exists to enforce is: *an emptied fixture body must
 /// make something go RED*. An empty Go test function emits `pass`, so a leaf no
 /// falsifier reaches can be gutted with its gate green and its proof still
-/// `PROVEN`. A recorded mutation is one way to satisfy that. A source anchor on
-/// the leaf's own property assertion is another, and it is strictly stronger on
-/// both axes that matter:
+/// `PROVEN`. A recorded mutation is one way to satisfy that; a source anchor on
+/// the leaf's own property assertion is another. Against GUTTING — the class this
+/// rule is about — the anchor is stronger on both axes that matter:
 ///
 /// * **It is checked on every run**, from the tree as it is, rather than against
 ///   an artefact recorded once that must be re-taken to stay true.
@@ -2082,9 +2397,21 @@ pub const STRUCTURAL_MUTATIONS: &[(&str, &str)] = &[(
 ///   fixture and the assertion, instead of a falsification quietly turning
 ///   `VACUOUS` at the next `--verify-mutations`.
 ///
-/// # Why some leaves have no other option
+/// It is **NOT stronger in general**, and an earlier revision of this comment said
+/// it was. An anchor is a SOURCE-SHAPE check: it proves the assertion is present,
+/// inside the function's braces, reachable, and wired to a call that FAILS the
+/// test — see [`super::gates_g2::SourceAnchor`], which states the limits in full.
+/// It does NOT prove the fixture still DISCRIMINATES. An inverted guard
+/// (`if err != nil` → `if err == nil`), an assertion in a closure that is never
+/// invoked, or a condition that can no longer hold all satisfy their anchor while
+/// the property goes unchecked. Only re-introducing the defect and watching the
+/// fixture go RED proves that, which is exactly what a recorded mutation is. Where
+/// a leaf has both, the mutation is the stronger evidence and the anchor is the
+/// floor that holds between mutation runs.
 ///
-/// Two situations, both represented here:
+/// # Why some leaves have no mutation FILED ON THEIR GATE
+///
+/// Two situations, and a fourth-round Judge found the file was conflating them.
 ///
 /// 1. **G2.6.** Its property is "the fault-injection corpus is complete and
 ///    armed". The RUN outcome of each of its five fixtures is a statement about
@@ -2092,38 +2419,101 @@ pub const STRUCTURAL_MUTATIONS: &[(&str, &str)] = &[(
 ///    seal contract (G2.9a), N3's Fatalf latch — so a mutation registered on G2.6
 ///    that reddened one of them would mint a second `PROVEN` out of one defect.
 ///    That is precisely what the one-gate-per-property split and
-///    `expect_strings_are_pairwise_discriminating` exist to forbid. Its per-leaf
-///    falsifier is the pin it already enforces: the injector construction plus the
-///    three fired-count needles, in EXECUTING code. Empty any of the five bodies
-///    and G2.6 says so by name.
-/// 2. **`TestCrashDurablePrefixNoReorder`.** No honest revert reddens the prefix
-///    property — see the note at the end of [`LEAF_COVERAGE`].
+///    `expect_strings_are_pairwise_discriminating` exist to forbid. Nothing about
+///    that makes those fixtures UNREDDENABLE — four of the five are reddened by a
+///    patch filed under the gate that owns the defect, which is the correct place
+///    for it.
+/// 2. **A leaf no registered patch reddens at all.** A genuinely different claim,
+///    and the only one that needs an argument for why no honest revert reaches it.
+///
+/// [`FalsifierKind`] makes which claim a row is making explicit, because until it
+/// did, both read as "unreddenable" and the difference was invisible — see that
+/// type's doc for the measurement that now decides it.
 #[allow(dead_code)] // read by the source-side coverage tests
 pub struct SourceSideFalsifier {
     pub gate: &'static str,
     pub leaf: &'static str,
+    pub kind: FalsifierKind,
+    /// For [`FalsifierKind::ReddenedUnderAnotherGate`], the registered mutation
+    /// that reddens this leaf. Empty otherwise, and checked to BE empty.
+    pub reddened_by: &'static str,
     pub why: &'static str,
+}
+
+/// **Which claim a [`SourceSideFalsifier`] row is actually making.**
+///
+/// # The measurement this exists to fix
+///
+/// `every_pinned_leaf_is_reddened_by_a_recorded_mutation` used to walk one gate's
+/// own `mutations` list, and `probe` (`mutations.rs`) runs a patched tree under
+/// `--only={gate}`. So a recorded transcript can only ever mention leaves of the
+/// gate the patch is FILED under, and "no recorded mutation reddens leaf X"
+/// measured bookkeeping rather than the defect's blast radius. Under that measure
+/// every row here read as *unreddenable*, and three of them were cover:
+///
+/// * `TestCrashDurablePrefixNoReorder` is reddened by
+///   `G2.17/reopen-does-not-floor-the-clock` — under a `fakeClock` pinned at
+///   2000 ms the reverted `newHLCClock(HLC{}, …)` recovers `NowTs() = {2000,0}`,
+///   below the last surviving commit at `{2000,1}`, and `crashsim_test.go:415`
+///   fires. Measured, not argued: see [`CROSS_GATE_SWEEP`].
+/// * The four G2.6 rows whose fixtures another gate's patch reddens outright.
+///
+/// # How each variant is now decided
+///
+/// By running it. [`CROSS_GATE_SWEEP`] applies EVERY registered patch and re-runs
+/// EVERY leaf named here, one leaf per `go test` invocation so a patch that kills
+/// the binary cannot be mistaken for one that reddens its neighbours. The
+/// artefact plus the recorded transcripts are reconciled against these variants
+/// by `every_source_side_falsifier_matches_the_cross_gate_measurement`.
+#[derive(PartialEq, Eq, Debug)]
+#[allow(dead_code)] // read by the source-side coverage tests
+pub enum FalsifierKind {
+    /// **No registered patch anywhere reddens this leaf.** The `why` must say
+    /// which revert WOULD reach it and why no honest one exists.
+    NoRegisteredPatchReddensIt,
+    /// **A registered patch filed under another gate reddens it**, and
+    /// `reddened_by` names it. No mutation is filed on THIS gate because that
+    /// would mint a second `PROVEN` out of one defect.
+    ReddenedUnderAnotherGate,
 }
 
 #[allow(dead_code)] // read by `every_pinned_leaf_is_reddened_by_a_recorded_mutation`
 pub const SOURCE_SIDE_FALSIFIERS: &[SourceSideFalsifier] = &[
+    // RECLASSIFIED by the cross-gate measure. The old row read "no fix hunk's
+    // revert holes it", and as a statement about the LEAF that was cover:
+    // `G2.17/reopen-does-not-floor-the-clock` reddens this fixture outright, at
+    // `crashsim_test.go:415` (measured — see [`CROSS_GATE_SWEEP`]). What survives
+    // is the narrower, true claim about the PREFIX ASSERTION at line 404, which no
+    // registered patch reaches; its falsifier is G2.9a's anchor over that line.
     SourceSideFalsifier {
         gate: "G2.9a",
         leaf: "TestCrashDurablePrefixNoReorder",
-        why: "the prefix property follows from Pebble's single WAL plus a single-writer committer \
-              that assigns commitTs and Applies in one order; no fix hunk's revert holes it, and \
-              the one that could (moving assignment to the caller) is a redesign whose inversion \
-              is scheduler-dependent",
+        kind: FalsifierKind::ReddenedUnderAnotherGate,
+        reddened_by: "G2.17/reopen-does-not-floor-the-clock",
+        why: "seeding the clock from zero instead of the persisted high-water recovers NowTs() = \
+              {2000,0} under the fixture's fakeClock, below the last surviving commit at {2000,1}, \
+              and the metadata-lagged-the-data assertion fires. That is this leaf's OTHER \
+              assertion; the PREFIX assertion (crashsim_test.go:404) is reached by no registered \
+              patch — the property follows from Pebble's single WAL plus a single-writer committer \
+              that assigns commitTs and Applies in one order, and the only lever that could hole it \
+              (moving assignment to the caller) is a redesign whose inversion is \
+              scheduler-dependent. G2_9A_ANCHORS pins that line, which is the falsifier for that \
+              clause",
     },
     SourceSideFalsifier {
         gate: "G2.6",
         leaf: "TestAuditH3ReaderGetSurfacesIoErrors",
+        kind: FalsifierKind::ReddenedUnderAnotherGate,
+        reddened_by: "G2.13g/failed-point-read-reads-as-an-absent-row",
         why: "its RUN outcome is G2.13g's property (the reader surfaces an I/O fault as an error); \
-              a mutation here would mint a second PROVEN out of G2.13g's defect",
+              a mutation FILED HERE would mint a second PROVEN out of G2.13g's defect, so the \
+              patch lives on the gate that owns the property and reddens this leaf from there",
     },
     SourceSideFalsifier {
         gate: "G2.6",
         leaf: "TestAuditH3ScanSurfacesIoErrorsAtTheCommitBoundary",
+        kind: FalsifierKind::ReddenedUnderAnotherGate,
+        reddened_by: "G2.13m/scan-failure-never-reaches-the-commit-boundary",
         why: "its RUN outcome is the H3b property (a failed SCAN reaches the commit boundary), \
               which is G2.13m's. A mutation registered on G2.6 to redden it would mint a PROVEN \
               for the corpus gate out of the reader's defect, which is what the one-gate-per- \
@@ -2133,27 +2523,36 @@ pub const SOURCE_SIDE_FALSIFIERS: &[SourceSideFalsifier] = &[
     SourceSideFalsifier {
         gate: "G2.6",
         leaf: "TestAuditN3BackgroundFatalDoesNotKillTheProcess",
-        why: "reverting the Fatalf latch does not redden this fixture, it KILLS the test binary — \
-              there is no `--- FAIL:` line to record, and a gate cannot report on a process that \
-              no longer exists",
+        kind: FalsifierKind::NoRegisteredPatchReddensIt,
+        reddened_by: "",
+        why: "the only revert that reaches this fixture is the Fatalf latch itself, and that does \
+              not redden it — it KILLS the test binary, so there is no `--- FAIL:` line to record \
+              and a gate cannot report on a process that no longer exists. No such patch is \
+              registered, and the sweep confirms the 49 that are all leave this fixture green",
     },
     SourceSideFalsifier {
         gate: "G2.6",
         leaf: "TestAuditN3SynchronousWalFaultStillErrorsTheAck",
-        why: "the hunk that reddens it is N3 consumption point 3/5, which is already the subject \
-              of `G2.9a/wal-fatal-never-reaches-the-ack`; two mutations of one hunk are one proof \
-              counted twice",
+        kind: FalsifierKind::ReddenedUnderAnotherGate,
+        reddened_by: "G2.9a/wal-fatal-never-reaches-the-ack",
+        why: "the hunk that reddens it is N3 consumption point 3/5, which is already that \
+              mutation's subject; two mutations of one hunk are one proof counted twice. Its own \
+              gate's transcript does not show the line because the probe runs `--only=G2.9a` — \
+              the cross-gate sweep is where the reddening is recorded",
     },
     SourceSideFalsifier {
         gate: "G2.6",
         leaf: "TestInjectedFaultsReopenConsistent",
+        kind: FalsifierKind::ReddenedUnderAnotherGate,
+        reddened_by: "G2.9a/wal-fatal-never-reaches-the-ack",
         why: "its RUN outcome is G2.9a's arm (a); both of G2.9a's mutations already reach it",
     },
     SourceSideFalsifier {
         gate: "G2.6",
         leaf: "TestSealContractRefusesWrites",
-        why: "its RUN outcome is G2.9a's seal contract, reached by \
-              `G2.9a/sealed-engine-still-runs-gc`",
+        kind: FalsifierKind::ReddenedUnderAnotherGate,
+        reddened_by: "G2.9a/sealed-engine-still-runs-gc",
+        why: "its RUN outcome is G2.9a's seal contract, reached by that mutation",
     },
     // -- G2.25: the two refusals BlueDB does not implement --------------------
     //
@@ -2167,22 +2566,43 @@ pub const SOURCE_SIDE_FALSIFIERS: &[SourceSideFalsifier] = &[
     SourceSideFalsifier {
         gate: "G2.25",
         leaf: "TestSecondOpenFailsSingleProcessLock",
-        why: "the exclusive directory lock is Pebble's (a LOCK file, flock on unix, acquired in \
-              Open); BlueDB relies on it rather than reinventing a flock (design §6), so no revert \
-              of BlueDB source can make a second Open succeed. What CAN silently end the reliance \
-              is the assertion disappearing, and G2.25's anchor on it is checked on every run",
+        kind: FalsifierKind::NoRegisteredPatchReddensIt,
+        reddened_by: "",
+        why: "the exclusive directory lock is Pebble's (a LOCK file, flock on unix, taken \
+              UNCONDITIONALLY in v2.1.6 open.go:128-132), and no registered patch reddens it — \
+              measured, not argued. The old row went further and said no revert of BlueDB source \
+              COULD: that is false. The single-writer guarantee holds only because `Open` acquires \
+              the handle EAGERLY (pebble_engine.go), so a lazy-open refactor that deferred \
+              pebble.Open until the first use would let a second Open succeed and would redden \
+              this fixture for exactly the right reason. That eagerness is BlueDB's code and is \
+              pinned by `G2_25_EAGER_OPEN_PIN`",
     },
     SourceSideFalsifier {
         gate: "G2.25",
         leaf: "TestWrongComparerNameRefusesOpen",
+        kind: FalsifierKind::NoRegisteredPatchReddensIt,
+        reddened_by: "",
         why: "the refusal is Pebble's manifest check against the recorded Comparer.Name. Dropping \
               BlueDB's own `Comparer: skydbComparer` from openWith does NOT redden it — the store \
               is then created under Pebble's default name and the fixture's deliberately-wrong \
-              name still mismatches — so the fixture is honestly unreddenable from this side. Its \
-              live sibling `TestComparerName` IS reddenable, and `G2.25/comparer-name-drifts` \
-              proves it",
+              name still mismatches — so the fixture is honestly unreddenable from this side, and \
+              the sweep confirms it against every registered patch. It used to be green for the \
+              WRONG REASON as well: the assertion was a bare `if err == nil` that never asked WHY \
+              the open failed, so leaking the handle in Close made the second open fail on the DIR \
+              LOCK and the comparer refusal went unexercised. It now requires the error to name \
+              the comparer mismatch. Its live sibling `TestComparerName` IS reddenable, and \
+              `G2.25/comparer-name-drifts` proves it",
     },
 ];
+
+/// The cross-gate measurement artefact — see [`FalsifierKind`].
+///
+/// One line per (registered mutation × [`SOURCE_SIDE_FALSIFIERS`] leaf), written
+/// by `record_cross_gate_unreddenable_sweep` and reconciled two ways by
+/// `every_source_side_falsifier_matches_the_cross_gate_measurement`: a new
+/// mutation, or a new source-side row, has no verdict and FAILS until the sweep
+/// is re-taken.
+pub const CROSS_GATE_SWEEP: &str = "docs/bluedb/mutations/cross-gate-unreddenability-sweep.txt";
 
 /// The needles a gate enforces over one pinned fixture's EXECUTING body.
 ///
@@ -2341,6 +2761,32 @@ mod tests {
             .join("../../..")
             .canonicalize()
             .expect("repo root")
+    }
+
+    /// **Every registered mutation in the WHOLE registry**, paired with the RED
+    /// transcript `--verify-mutations` recorded for it.
+    ///
+    /// The unit the per-leaf rule cares about is a DEFECT and the fixtures it
+    /// reddens — never the gate a patch is filed under. Reading the registry flat
+    /// is what makes "no recorded mutation reddens this leaf" a claim about the
+    /// corpus instead of a claim about bookkeeping.
+    ///
+    /// A mutation with no recorded transcript is skipped here rather than
+    /// panicking: the canary `G0.C` has a patch and deliberately no transcript,
+    /// and the strict "every mutation of THIS gate has been run" requirement is
+    /// enforced per-gate in
+    /// `every_pinned_leaf_is_reddened_by_a_recorded_mutation`.
+    fn recorded_transcripts(root: &std::path::Path) -> Vec<(&'static str, &'static str, String)> {
+        super::super::registry::REGISTRY
+            .iter()
+            .flat_map(|g| g.mutations.as_slice().iter())
+            .filter_map(|m| {
+                let p = root.join(super::super::gates_g0::expected_path(m.patch));
+                std::fs::read_to_string(p)
+                    .ok()
+                    .map(|t| (m.id, m.expect, t))
+            })
+            .collect()
     }
 
     fn audit_src() -> String {
@@ -2881,6 +3327,40 @@ mod tests {
                 }
             }
 
+            // The SAME evidence kind, measured across the WHOLE registry rather
+            // than this gate's own mutation list.
+            //
+            // The loop above answers "does a mutation FILED HERE redden this
+            // leaf". That is not the question. `probe` runs the patched tree
+            // under `--only={gate}` (`mutations.rs`), so a transcript can only
+            // ever mention leaves of the gate the patch happens to be filed
+            // under — and a leaf that two gates pin (G2.6 re-pins five fixtures
+            // that G2.9a, G2.13g and G2.13m own) then reads as "reddened by
+            // nothing" purely because of where its defect was filed. The rule is
+            // about BLAST RADIUS, so the measure is every registered patch's
+            // transcript, wherever it lives.
+            for (mid, expect, transcript) in recorded_transcripts(&root) {
+                for leaf in &leaves {
+                    if !transcript.contains(&format!("--- FAIL: {leaf}")) {
+                        continue;
+                    }
+                    let Some(body) = leaf_body(&bodies, leaf) else {
+                        continue;
+                    };
+                    // Same bar as above: the patch must be classified on an
+                    // assertion that lives in THIS leaf, or it is evidence of
+                    // radius rather than of that leaf's own falsifiability.
+                    if body.contains(expect) {
+                        covered.insert(leaf);
+                    } else if !g.mutations.as_slice().iter().any(|m| m.id == mid) {
+                        reddened_elsewhere.push(format!(
+                            "{leaf} (reddened by {mid}, filed under another gate, whose assertion \
+                             {expect:?} is NOT in that leaf's own body)"
+                        ));
+                    }
+                }
+            }
+
             // The second evidence kind: an anchor on the leaf's own assertion,
             // enforced by the gate on every run. Uniqueness inside the enclosing
             // function is what makes gutting the leaf actually trip it — see
@@ -3017,6 +3497,86 @@ mod tests {
         }
     }
 
+    /// **Every durable-write exit is covered by a consumption point, and every
+    /// recorded exit is still there — exactly once.**
+    ///
+    /// The half `every_n3_consumption_point_is_present_and_uniquely_pinned`
+    /// cannot do. That test reconciles the latch READS; this one reconciles the
+    /// WRITES, because "an exit that claims success without consulting the latch"
+    /// is invisible from the read side — it adds no read, so no count moves.
+    /// Both directions here: a new `.Apply(` fails on the count, and a recorded
+    /// site that moved or lost its cover fails on the needle.
+    #[test]
+    fn every_n3_apply_site_is_covered_by_a_consumption_point() {
+        let root = repo();
+        let read = |f: &str| std::fs::read_to_string(root.join(f)).ok();
+
+        let applies = n3_apply_sites(read).expect("read the N3 engine sources");
+        assert_eq!(
+            applies, N3_APPLY_OCCURRENCES,
+            "the engine sources carry {applies} `.Apply(` call(s); N3_APPLY_SITES records \
+             {N3_APPLY_OCCURRENCES}. `.Apply(` is the only way this package writes to Pebble, so \
+             an unrecorded one is an exit that can ack a commit over a fatal nobody consumed — \
+             and a DISAPPEARED one means this reconciliation is answering for code that no longer \
+             runs"
+        );
+        assert_eq!(
+            N3_APPLY_SITES.len(),
+            N3_APPLY_OCCURRENCES,
+            "N3_APPLY_SITES has {} row(s) for {N3_APPLY_OCCURRENCES} counted call(s)",
+            N3_APPLY_SITES.len()
+        );
+
+        for s in N3_APPLY_SITES {
+            let src = std::fs::read_to_string(root.join(s.file)).expect("read");
+            // The two `committer.go` Apply calls are byte-identical once their
+            // trailing comments are removed, so those two needles CARRY the
+            // comment and are matched against the raw source — the same device
+            // N3_CONSUMPTION_POINTS uses for its two marker rows, and sound for
+            // the same reason: the COUNT above is comment-blind, so commenting an
+            // Apply out lowers it and fails there.
+            let hay = if s.needle.contains("//") {
+                src.clone()
+            } else {
+                super::super::gates_g2::strip_go_comments(&src)
+            };
+            assert_eq!(
+                hay.matches(s.needle).count(),
+                1,
+                "{}: the recorded durable-write exit `{}` is not present exactly once",
+                s.file,
+                s.needle
+            );
+            let point = N3_CONSUMPTION_POINTS
+                .iter()
+                .find(|p| p.needle == s.covered_by)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{}: `{}` is recorded as covered by `{}`, which is not an \
+                         N3_CONSUMPTION_POINTS row",
+                        s.file, s.needle, s.covered_by
+                    )
+                });
+            assert_eq!(
+                point.file, s.file,
+                "{}: its cover `{}` lives in {} — a consumption point in another file does not \
+                 dominate this Apply",
+                s.needle, s.covered_by, point.file
+            );
+        }
+    }
+
+    /// **The exported `Engine` surface is exactly what G2.13j records**, read from
+    /// `engine.go` rather than from the gate's own judgement about which methods
+    /// are "the non-reader surface".
+    #[test]
+    fn every_exported_engine_operation_records_what_pins_it_against_close() {
+        let root = repo();
+        let read = |f: &str| std::fs::read_to_string(root.join(f)).ok();
+        let findings = check_exported_surface(read);
+        assert!(findings.is_empty(), "{findings:#?}");
+    }
+
     /// Every N3 falsifier is either a registered mutation id or a recorded
     /// argument — never a bare gesture at one.
     ///
@@ -3056,6 +3616,427 @@ mod tests {
                 p.needle
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // The cross-gate measure — see `FalsifierKind`
+    // -----------------------------------------------------------------------
+
+    /// The verdict one registered patch produced for one source-side leaf.
+    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+    enum SweepVerdict {
+        /// The leaf ran and PASSED under the patch.
+        Green,
+        /// The leaf ran and FAILED under the patch — the leaf is reddened by it.
+        Red,
+        /// The patch touches nothing under `runtime-go/`, so it cannot change
+        /// what a Go fixture does. A sound prune, taken from the patch's own
+        /// `diff --git` paths rather than from a declaration.
+        NoGoHunks,
+        /// The mutation is REGISTERED but its patch has not been authored — the
+        /// P2+ gates declare theirs ahead of the work. Nothing to apply, so
+        /// nothing to measure. Re-checked against the filesystem at reconcile
+        /// time, so the day one of those patches lands the sweep goes stale
+        /// loudly rather than quietly.
+        PatchAbsent,
+    }
+
+    impl SweepVerdict {
+        fn parse(s: &str) -> Option<SweepVerdict> {
+            match s {
+                "green" => Some(SweepVerdict::Green),
+                "RED" => Some(SweepVerdict::Red),
+                "no-go-hunks" => Some(SweepVerdict::NoGoHunks),
+                "patch-absent" => Some(SweepVerdict::PatchAbsent),
+                _ => None,
+            }
+        }
+        fn as_str(self) -> &'static str {
+            match self {
+                SweepVerdict::Green => "green",
+                SweepVerdict::Red => "RED",
+                SweepVerdict::NoGoHunks => "no-go-hunks",
+                SweepVerdict::PatchAbsent => "patch-absent",
+            }
+        }
+    }
+
+    /// The leaves the sweep measures: every [`SOURCE_SIDE_FALSIFIERS`] leaf,
+    /// deduplicated and ordered.
+    fn source_side_leaves() -> Vec<&'static str> {
+        let mut v: Vec<&'static str> = SOURCE_SIDE_FALSIFIERS.iter().map(|r| r.leaf).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    /// Every registered mutation id, ordered — the population the sweep must
+    /// cover, read from the registry so a new mutation is a missing row rather
+    /// than a silent omission.
+    fn registered_mutations() -> Vec<(&'static str, &'static str)> {
+        let mut v: Vec<(&'static str, &'static str)> = super::super::registry::REGISTRY
+            .iter()
+            .flat_map(|g| g.mutations.as_slice().iter().map(|m| (m.id, m.patch)))
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    fn parse_sweep(text: &str) -> std::collections::BTreeMap<(String, String), SweepVerdict> {
+        let mut out = std::collections::BTreeMap::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut parts = line.split_whitespace();
+            let (Some(m), Some(leaf), Some(v), None) =
+                (parts.next(), parts.next(), parts.next(), parts.next())
+            else {
+                panic!("{CROSS_GATE_SWEEP}: cannot parse row {line:?} (want `<mutation> <leaf> <verdict>`)");
+            };
+            let v = SweepVerdict::parse(v)
+                .unwrap_or_else(|| panic!("{CROSS_GATE_SWEEP}: unknown verdict {v:?} in {line:?}"));
+            assert!(
+                out.insert((m.to_string(), leaf.to_string()), v).is_none(),
+                "{CROSS_GATE_SWEEP}: duplicate row for {m} × {leaf}"
+            );
+        }
+        out
+    }
+
+    /// **Every [`SOURCE_SIDE_FALSIFIERS`] row's claim is what the cross-gate
+    /// measurement actually says.**
+    ///
+    /// The measurement is the union of two artefacts: the per-gate RED
+    /// transcripts (which can only ever name leaves of the gate a patch is filed
+    /// under — that is the whole defect this test exists for) and
+    /// [`CROSS_GATE_SWEEP`], which applies every registered patch and re-runs
+    /// every leaf named here regardless of filing.
+    ///
+    /// Two-way, so neither a new mutation nor a new row can slip through:
+    ///
+    /// * every (registered mutation × source-side leaf) pair has a verdict, and
+    /// * no verdict names a mutation or a leaf that is not one of those.
+    ///
+    /// Then, per row: a [`FalsifierKind::NoRegisteredPatchReddensIt`] row must be
+    /// green under EVERY patch — one RED and the claim is cover — and a
+    /// [`FalsifierKind::ReddenedUnderAnotherGate`] row must name a registered
+    /// mutation, filed under a DIFFERENT gate, that the measurement shows
+    /// reddening this leaf.
+    #[test]
+    fn every_source_side_falsifier_matches_the_cross_gate_measurement() {
+        let root = repo();
+        let text = std::fs::read_to_string(root.join(CROSS_GATE_SWEEP)).unwrap_or_else(|e| {
+            panic!(
+                "cannot read {CROSS_GATE_SWEEP}: {e}. It is the measurement behind every \
+                 SOURCE_SIDE_FALSIFIERS row; re-take it with `cargo test -p xtask --bin xtask -- \
+                 --ignored --exact bluedb_gates::gates_g2_13::tests::record_cross_gate_unreddenable_sweep`"
+            )
+        });
+        let sweep = parse_sweep(&text);
+        let leaves = source_side_leaves();
+        let mutations = registered_mutations();
+
+        for (mid, _) in &mutations {
+            for leaf in &leaves {
+                assert!(
+                    sweep.contains_key(&(mid.to_string(), leaf.to_string())),
+                    "{CROSS_GATE_SWEEP} has no verdict for {mid} × {leaf}. A new mutation, or a \
+                     new source-side row, is not finished until the sweep has been re-taken — \
+                     otherwise `no registered patch reddens this leaf` silently stops covering \
+                     the patch that was just added"
+                );
+            }
+        }
+        // `patch-absent` is the one verdict that is a claim about the FILESYSTEM
+        // rather than about a run. Re-check it, so the day a P2+ patch is
+        // authored the sweep goes stale loudly.
+        for ((m, leaf), v) in &sweep {
+            if *v != SweepVerdict::PatchAbsent {
+                continue;
+            }
+            let patch = mutations
+                .iter()
+                .find(|(id, _)| id == m)
+                .map(|(_, p)| *p)
+                .unwrap_or("");
+            assert!(
+                !patch.is_empty() && !root.join(patch).is_file(),
+                "{CROSS_GATE_SWEEP} records {m} × {leaf} as `patch-absent`, but {patch} EXISTS. \
+                 The sweep has not measured that patch against this leaf; re-take it"
+            );
+        }
+
+        for (m, leaf) in sweep.keys() {
+            assert!(
+                mutations.iter().any(|(id, _)| id == m),
+                "{CROSS_GATE_SWEEP} records {m}, which is not a registered mutation"
+            );
+            assert!(
+                leaves.contains(&leaf.as_str()),
+                "{CROSS_GATE_SWEEP} records {leaf}, which no SOURCE_SIDE_FALSIFIERS row names"
+            );
+        }
+
+        let transcripts = recorded_transcripts(&root);
+        let reddens = |mid: &str, leaf: &str| -> bool {
+            sweep.get(&(mid.to_string(), leaf.to_string())) == Some(&SweepVerdict::Red)
+                || transcripts
+                    .iter()
+                    .any(|(id, _, t)| *id == mid && t.contains(&format!("--- FAIL: {leaf}")))
+        };
+
+        for r in SOURCE_SIDE_FALSIFIERS {
+            match r.kind {
+                FalsifierKind::NoRegisteredPatchReddensIt => {
+                    assert!(
+                        r.reddened_by.is_empty(),
+                        "{}::{} claims no registered patch reddens it, but names {} as one",
+                        r.gate,
+                        r.leaf,
+                        r.reddened_by
+                    );
+                    let culprits: Vec<&str> = mutations
+                        .iter()
+                        .map(|(id, _)| *id)
+                        .filter(|id| reddens(id, r.leaf))
+                        .collect();
+                    assert!(
+                        culprits.is_empty(),
+                        "{}::{} is recorded as reddened by NO registered patch, but {culprits:?} \
+                         redden(s) it. That claim is cover: reclassify the row as \
+                         ReddenedUnderAnotherGate naming the patch, or explain the reddening",
+                        r.gate,
+                        r.leaf
+                    );
+                }
+                FalsifierKind::ReddenedUnderAnotherGate => {
+                    let m = super::super::registry::REGISTRY
+                        .iter()
+                        .flat_map(|g| g.mutations.as_slice().iter().map(move |m| (g.id, m)))
+                        .find(|(_, m)| m.id == r.reddened_by)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{}::{} names {} as its falsifier, which is not a registered \
+                                 mutation",
+                                r.gate, r.leaf, r.reddened_by
+                            )
+                        });
+                    assert_ne!(
+                        m.0, r.gate,
+                        "{}::{} names {}, which is filed under {} — a row here is for a leaf whose \
+                         falsifier lives on ANOTHER gate; if it is on this one it belongs in \
+                         LEAF_COVERAGE",
+                        r.gate, r.leaf, r.reddened_by, m.0
+                    );
+                    assert!(
+                        reddens(r.reddened_by, r.leaf),
+                        "{}::{} claims {} reddens it, and neither that mutation's recorded \
+                         transcript nor {CROSS_GATE_SWEEP} shows it doing so",
+                        r.gate,
+                        r.leaf,
+                        r.reddened_by
+                    );
+                }
+            }
+        }
+    }
+
+    /// **The producer for [`CROSS_GATE_SWEEP`].** Ignored by default; re-take it
+    /// whenever a mutation or a source-side row is added.
+    ///
+    /// ```text
+    /// cargo test -p xtask --bin xtask -- --ignored --exact \
+    ///   bluedb_gates::gates_g2_13::tests::record_cross_gate_unreddenable_sweep
+    /// ```
+    ///
+    /// It copies `runtime-go/` — a self-contained Go module — into a scratch
+    /// directory, applies one patch at a time with `git apply --include`, and runs
+    /// ONE leaf per `go test` invocation. One leaf per invocation is not
+    /// fastidiousness: `TestAuditN3BackgroundFatalDoesNotKillTheProcess` exists
+    /// because the defect it guards KILLS the test binary, and a killed binary
+    /// takes every other leaf in the same invocation down with it — which would be
+    /// recorded as those leaves being reddened by a patch that never touched them.
+    ///
+    /// The subject is the WORKING TREE's `runtime-go/`, not `HEAD`: this runs
+    /// alongside edits to the Go corpus, and measuring HEAD would answer for code
+    /// the author did not write. Nothing here touches the developer's tree — the
+    /// copy is the subject and the patches are applied only inside it.
+    #[test]
+    #[ignore = "producer: applies every registered patch to a scratch copy of runtime-go and \
+                re-runs every source-side leaf; ~15 min"]
+    fn record_cross_gate_unreddenable_sweep() {
+        use std::collections::BTreeMap;
+        use std::process::Command;
+
+        let root = repo();
+        let scratch = std::env::temp_dir().join(format!(
+            "sky-bluedb-crossgate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&scratch).expect("scratch mkdir");
+
+        // ONE snapshot of the subject, taken before the first patch. Copying from
+        // the live tree per iteration would let an edit made half-way through the
+        // run land in some rows and not others, and the artefact would describe a
+        // corpus that never existed.
+        let pristine = scratch.join("pristine");
+        let snap = Command::new("cp")
+            .arg("-Rf")
+            .arg(root.join("runtime-go"))
+            .arg(&pristine)
+            .status()
+            .expect("cp runtime-go");
+        assert!(snap.success(), "snapshotting runtime-go into the scratch tree failed");
+
+        let leaves = source_side_leaves();
+        let mut rows: Vec<String> = Vec::new();
+
+        for (mid, patch) in registered_mutations() {
+            let patch_path = root.join(patch);
+            if !patch_path.is_file() {
+                for leaf in &leaves {
+                    rows.push(format!("{mid} {leaf} {}", SweepVerdict::PatchAbsent.as_str()));
+                }
+                continue;
+            }
+            let patch_text = std::fs::read_to_string(&patch_path)
+                .unwrap_or_else(|e| panic!("{mid}: cannot read {}: {e}", patch_path.display()));
+            // The sound prune: a patch with no `runtime-go/` hunk cannot change
+            // what a Go fixture does. Read off the diff's own paths.
+            if !patch_text
+                .lines()
+                .any(|l| l.starts_with("diff --git a/runtime-go/"))
+            {
+                for leaf in &leaves {
+                    rows.push(format!("{mid} {leaf} {}", SweepVerdict::NoGoHunks.as_str()));
+                }
+                continue;
+            }
+
+            let wt = scratch.join("wt");
+            let _ = std::fs::remove_dir_all(&wt);
+            std::fs::create_dir_all(&wt).expect("wt mkdir");
+            let cp = Command::new("cp")
+                .arg("-Rf")
+                .arg(&pristine)
+                .arg(wt.join("runtime-go"))
+                .status()
+                .expect("cp runtime-go");
+            assert!(cp.success(), "{mid}: copying runtime-go into the scratch tree failed");
+
+            let apply = Command::new("git")
+                .args(["apply", "-p1", "--include=runtime-go/*"])
+                .arg(&patch_path)
+                .current_dir(&wt)
+                .output()
+                .expect("git apply");
+            assert!(
+                apply.status.success(),
+                "{mid}: `git apply` of {} into the scratch copy failed — the sweep cannot report \
+                 on a patch it could not apply:\n{}",
+                patch_path.display(),
+                String::from_utf8_lossy(&apply.stderr)
+            );
+
+            // One invocation for the whole watchlist, then per-leaf isolation
+            // ONLY where the batch failed to produce a verdict. `-json` gives a
+            // terminal `pass`/`fail` action per test, so a leaf that produced one
+            // was decided on its own events; a leaf that produced NONE is the
+            // case isolation exists for — the binary died (which is precisely
+            // what `TestAuditN3BackgroundFatalDoesNotKillTheProcess` guards
+            // against), and its neighbours must not inherit that as a reddening.
+            let run = |pattern: String| -> (BTreeMap<String, bool>, bool, String) {
+                let out = Command::new("go")
+                    .args(["test", "-count=1", "-json", "-tags"])
+                    .arg(super::super::gates_g2::ZSTD_TAG)
+                    .arg("-run")
+                    .arg(pattern)
+                    .arg(super::super::gates_g2::GO_PACKAGE)
+                    .current_dir(wt.join(super::super::gates_g2::GO_MODULE_DIR))
+                    .env("GOTOOLCHAIN", "local")
+                    .env("CGO_ENABLED", "0")
+                    .output()
+                    .expect("go test");
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                let mut verdicts: BTreeMap<String, bool> = BTreeMap::new();
+                for line in text.lines() {
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                        continue;
+                    };
+                    let Some(test) = v.get("Test").and_then(|t| t.as_str()) else {
+                        continue;
+                    };
+                    match v.get("Action").and_then(|a| a.as_str()).unwrap_or("") {
+                        "pass" => {
+                            verdicts.insert(test.to_string(), true);
+                        }
+                        "fail" => {
+                            verdicts.insert(test.to_string(), false);
+                        }
+                        _ => {}
+                    }
+                }
+                (verdicts, out.status.success(), text)
+            };
+
+            let leaf_refs: Vec<&str> = leaves.clone();
+            let (batch, _ok, batch_text) =
+                run(super::super::gates_g2::run_pattern(&leaf_refs));
+
+            for leaf in &leaves {
+                let decided = match batch.get(*leaf) {
+                    Some(passed) => Some(*passed),
+                    // No terminal event in the batch: re-run this leaf ALONE, so
+                    // a neighbour's crash cannot be recorded as this leaf's
+                    // reddening.
+                    None => run(format!("^({leaf})$")).0.get(*leaf).copied(),
+                };
+                let verdict = match decided {
+                    Some(true) => SweepVerdict::Green,
+                    Some(false) => SweepVerdict::Red,
+                    None => panic!(
+                        "{mid} × {leaf}: neither the batch nor an isolated re-run produced a \
+                         terminal `go test -json` event for this leaf, so the sweep cannot say \
+                         whether it was reddened or the package simply did not build:\n{batch_text}"
+                    ),
+                };
+                println!("{mid} {leaf} {}", verdict.as_str());
+                rows.push(format!("{mid} {leaf} {}", verdict.as_str()));
+            }
+        }
+
+        rows.sort();
+        let body = format!(
+            "# cross-gate unreddenability sweep — the measurement behind every\n\
+             # SOURCE_SIDE_FALSIFIERS row (see `FalsifierKind`).\n\
+             #\n\
+             # Every registered patch × every source-side leaf. The leaves run in one\n\
+             # batch and any leaf the batch left without a terminal `go test -json`\n\
+             # event is re-run ALONE, so a patch that kills the binary cannot be\n\
+             # recorded as reddening its neighbours. `no-go-hunks` means the patch\n\
+             # touches nothing under runtime-go/ and so cannot change what a Go\n\
+             # fixture does; `patch-absent` means the mutation is registered but its\n\
+             # patch has not been authored yet.\n\
+             #\n\
+             # Re-take with:\n\
+             #   cargo test -p xtask --bin xtask -- --ignored --exact \\\n\
+             #     bluedb_gates::gates_g2_13::tests::record_cross_gate_unreddenable_sweep\n\
+             #\n\
+             # <mutation-id> <leaf> <verdict>\n{}\n",
+            rows.join("\n")
+        );
+        std::fs::write(root.join(CROSS_GATE_SWEEP), body).expect("write the sweep artefact");
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     /// No LEAF_COVERAGE row may name a mutation that is not registered — a
