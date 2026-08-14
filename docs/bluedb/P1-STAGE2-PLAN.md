@@ -516,6 +516,32 @@ asking "what else is on this path?":
   recording nothing, and unrecoverable by any window witness: the rows it failed
   to read are OLD, so they lie outside the `(readTs, commitTs]` window entirely.
 
+## A shared `rust/target` can fabricate a gate table
+
+When several agents work this repo at once they share `rust/target`, and a
+sibling's `cargo build` can replace the `xtask` binary **between the moment you
+build it and the moment you run it**. The symptom is not a crash. It is a
+plausible-looking G-table that is simply from another commit:
+
+```
+G0.2   PASS   341 rt files scanned, 0 bluedb files scanned   ← 26 files exist
+G2.6   NOT RUN  P1 (engine) substrate absent                 ← it landed hours ago
+G2.9   …                                                     ← the registry has G2.9a
+```
+
+Nothing was wrong with the tree. Every one of those rows was true of a commit
+from before the engine port.
+
+**So: build into `local-target`, copy the binary out, and run the copy.** A
+concurrent build cannot swap a file you already moved.
+
+And keep the heuristic, because it generalises past this repo: *if a gate table
+looks impossible, suspect the artefact before the code.* That is the same
+instinct that resolved `G0.3`'s false `VACUOUS` (a scratch worktree with no
+compiler for `dev_tree_compiler` to lend) and the `inRangeClosed` "undefined"
+that was a stale language-server index. Three times this phase, a tool lied
+about the tree rather than the tree being broken.
+
 ## Commit sequence
 
 `--verify-mutations` refuses to run against a tree that differs from HEAD
