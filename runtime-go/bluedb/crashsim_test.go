@@ -176,27 +176,244 @@ func TestCrashHLCNoReissue(t *testing.T) {
 }
 
 // TestSealContractRefusesWrites — the fail-loud seal contract (§7 "seal on
-// unrollbackable error"): once sealed, the engine refuses every write path loudly with
-// ErrSealed (Commit AND GC), never a silent partial write. The committer seals on a
-// durability fault: (a) an Apply(Sync) that returns an error, and (b) a synchronous
-// durability panic that unwinds through Apply on the committer goroutine (recovered →
-// seal + errored ack). See the harness note below on how Pebble v2.1.6 surfaces faults.
+// unrollbackable error"): once a durability fault has sealed the engine, every write
+// path refuses loudly with ErrSealed (Commit AND GC), never a silent partial write.
+//
+// THE PREMISE IS DRIVEN, NOT SIMULATED. This fixture used to open a healthy engine and
+// write `e.sealed.Store(true)` under a comment reading "simulate the post-fault state",
+// then assert the two refusals. That tests `if e.sealed.Load() { return ErrSealed }` —
+// two branches — and asserts NOTHING about the thing its own doc claimed: that a
+// durability fault seals the engine in the first place. It survived G2.9a's falsifier
+// for exactly that reason; a fixture that manufactures its own premise cannot be
+// falsified by a defect in what produces that premise.
+//
+// So the seal here comes from a REAL fault: an injected fsync failure on the WAL (*.log).
+// Under Apply(pebble.Sync) with !noSyncWait the WAL sync is synchronous, so the fault
+// reaches the committer goroutine, where BOTH of the committer's sealing routes live —
+// `foldFatal(Apply(...)) != nil → e.sealed.Store(true)` (committer.go:437-439) and the
+// `recover()` that turns a Fatalf-panic into a sealed engine plus an errored ack
+// (committer.go:183-195). Which of the two runs depends on how Pebble surfaces the fault
+// on the day; the contract under test — fault ⇒ sealed ⇒ every write path refuses — is
+// the same either way, and the assertions below do not care which door it came through.
+//
+// The injector COUNTS its invocations and the count-is-zero check comes FIRST, per the
+// corpus rule G2.6 enforces: a fixture that cannot prove it reached the fault proves
+// nothing, and at zero injections every assertion below would be about an engine that
+// was never faulted.
 func TestSealContractRefusesWrites(t *testing.T) {
 	clk := &fakeClock{}
 	clk.set(2000)
-	e := openDisk(t, clk.fn())
 
-	_ = put(t, e, "A", "a") // healthy commit
+	var armed atomic.Bool
+	var injected atomic.Int64
+	inj := errorfs.InjectorFunc(func(op errorfs.Op) error {
+		isSync := op.Kind == errorfs.OpFileSync || op.Kind == errorfs.OpFileSyncData || op.Kind == errorfs.OpFileSyncTo
+		if armed.Load() && isSync && strings.HasSuffix(op.Path, ".log") {
+			injected.Add(1)
+			return errorfs.ErrInjected
+		}
+		return nil
+	})
+	fs := errorfs.Wrap(vfs.NewCrashableMem(), inj)
 
-	// Simulate the post-fault state (a durability fault having sealed the engine).
-	e.sealed.Store(true)
+	e, err := openWith(config{dir: crashDir, fs: fs, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer e.Close() // horked-DB close; the error, if any, is not this test's subject
 
+	if r := e.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: []byte("A"), Op: OpPut, Value: []byte("a")}}}); r.Err != nil {
+		t.Fatalf("healthy commit before the fault: %v", r.Err)
+	}
+	if e.sealed.Load() {
+		t.Fatalf("fixture: the engine is sealed BEFORE any fault was armed — the refusals below " +
+			"would prove nothing about the fault")
+	}
+
+	// Arm the WAL-fsync fault and commit until the engine seals. Bounded: an unbounded
+	// loop against an engine that never seals is a hang, not a diagnosis.
+	armed.Store(true)
+	var sealErr error
+	for i := 0; i < 10 && !e.sealed.Load(); i++ {
+		r := e.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: []byte(fmt.Sprintf("f%d", i)), Op: OpPut, Value: []byte("x")}}})
+		if r.Err != nil {
+			sealErr = r.Err
+		}
+	}
+
+	if n := injected.Load(); n == 0 {
+		t.Fatalf("the WAL-fsync injector fired ZERO times — no commit in the armed window reached "+
+			"an fsync of a *.log file, so the engine below was never faulted and this test proves "+
+			"NOTHING about the seal contract. Fix the fixture, do not weaken the assertions. "+
+			"(sealed=%v lastErr=%v)", e.sealed.Load(), sealErr)
+	}
+	if !e.sealed.Load() {
+		t.Fatalf("a WAL-fsync fault was delivered %d time(s) and the engine did NOT seal (last ack "+
+			"err = %v) — an unrollbackable durability fault must seal, or the writes after it are "+
+			"accepted against a store whose last write is not durable", injected.Load(), sealErr)
+	}
+	if sealErr == nil {
+		t.Fatalf("the engine sealed but every commit in the armed window acked nil — the fault was " +
+			"swallowed on the way to the caller (acked⇒durable broken)")
+	}
+
+	// The contract itself, now standing on a real fault: both write paths refuse, with the
+	// bare sentinel a caller can compare against.
+	armed.Store(false) // the refusals must come from the SEAL, not from a live fault
 	r := e.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: []byte("B"), Op: OpPut, Value: []byte("b")}}})
 	if r.Err != ErrSealed {
 		t.Fatalf("sealed engine must refuse Commit with ErrSealed, got %v", r.Err)
 	}
+	if !r.CommitTs.IsZero() {
+		t.Fatalf("a refused commit carries commitTs %+v, want the zero value", r.CommitTs)
+	}
 	if _, err := e.GC(); err != ErrSealed {
 		t.Fatalf("sealed engine must refuse GC with ErrSealed, got %v", err)
+	}
+}
+
+// TestCrashDurablePrefixNoReorder — arm (c) of durability-on-ack, the "no reorder" clause
+// of G2.9a's title, which had no test at all: `grep -rn reorder runtime-go/bluedb/`
+// returned one comment. TestCrashHLCNoReissue asserts the restart FLOOR (a backward wall
+// clock cannot re-issue a commitTs) — monotonicity, not ordering — and it cannot observe
+// a reorder, because every commit in it is `Apply(pebble.Sync)`ed before the next begins.
+//
+// THE PROPERTY. What survives a crash is a PREFIX of the commit history in commitTs
+// order: if a commit at ts T is in the crash clone, every acked commit at ts < T is too.
+// A store that violates it has a HOLE — a durable commit whose predecessor is not durable
+// — and every reader after recovery sees a history that never existed. That is a
+// different failure from losing an acked write (TestCrashAckedWritesSurvive) and from
+// tearing one batch (TestCrashNoTornBatch), which is why it is a third test.
+//
+// HOW THE BOUNDARY IS MADE OBSERVABLE, DETERMINISTICALLY. A prefix assertion over a run
+// in which everything survived is vacuous, so the fixture pins BOTH ends itself rather
+// than hoping the timing obliges:
+//
+//   - `pre` is committed from this goroutine BEFORE the writers start, so it acked before
+//     the clone was taken and MUST be present (acked ⇒ synced ⇒ in the clone).
+//   - `post` is committed from this goroutine AFTER CrashClone RETURNED, so it cannot be
+//     in a filesystem image taken earlier and MUST be absent.
+//
+// Between them, G writers commit concurrently through the group committer while the clone
+// is taken, so the boundary falls inside a real concurrent window — which is the only
+// place a reorder can exist. Both guards are asserted; a run where everything survived,
+// or nothing did, FAILS as a fixture fault rather than passing as a green prefix.
+func TestCrashDurablePrefixNoReorder(t *testing.T) {
+	clk := &fakeClock{}
+	clk.set(2000)
+	fs := vfs.NewCrashableMem()
+	e1, err := openWith(config{dir: crashDir, fs: fs, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	type acked struct {
+		key string
+		ts  HLC
+	}
+	var mu sync.Mutex
+	var all []acked
+	record := func(key string, ts HLC) {
+		mu.Lock()
+		all = append(all, acked{key, ts})
+		mu.Unlock()
+	}
+	commit := func(key string) (HLC, error) {
+		r := e1.Commit(CommitReq{Writes: []VersionedWrite{{UserKey: []byte(key), Op: OpPut, Value: []byte(key)}}})
+		if r.Err == nil {
+			record(key, r.CommitTs)
+		}
+		return r.CommitTs, r.Err
+	}
+
+	// The guaranteed-present end of the boundary.
+	preTs, err := commit("pre")
+	if err != nil {
+		t.Fatalf("pre-clone commit: %v", err)
+	}
+
+	const g = 8
+	const per = 40
+	var wg sync.WaitGroup
+	for w := 0; w < g; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < per; i++ {
+				_, _ = commit(fmt.Sprintf("p%d-%03d", w, i)) // an errored commit is simply not acked
+			}
+		}(w)
+	}
+
+	// Mid-flight: exactly the last-synced image a power cut would leave.
+	crashed := fs.CrashClone(vfs.CrashCloneCfg{})
+	wg.Wait()
+
+	// The guaranteed-absent end: acked strictly after the image was taken.
+	postTs, err := commit("post")
+	if err != nil {
+		t.Fatalf("post-clone commit: %v", err)
+	}
+	if !preTs.Less(postTs) {
+		t.Fatalf("fixture: pre %+v is not below post %+v — the two ends of the boundary are not ordered", preTs, postTs)
+	}
+	_ = e1.Close()
+
+	e2, err := openWith(config{dir: crashDir, fs: crashed, wallClock: clk.fn()})
+	if err != nil {
+		t.Fatalf("reopen the crash clone: %v", err)
+	}
+	defer e2.Close()
+
+	sort.Slice(all, func(i, j int) bool { return all[i].ts.Less(all[j].ts) })
+	r := e2.snapshotAt(HLC{WallMs: 1 << 62})
+	defer r.Close()
+
+	present := make([]bool, len(all))
+	nPresent := 0
+	for i, a := range all {
+		if _, _, ok := r.Get([]byte(a.key)); ok {
+			present[i] = true
+			nPresent++
+		}
+	}
+
+	// ── The two fixture guards, FIRST: without them the prefix check below is
+	//    satisfied by a run that observed no boundary at all. ──
+	if nPresent == 0 {
+		t.Fatalf("not one of the %d acked commits survived the crash clone — the image observed no "+
+			"boundary, so the prefix property below was never exercised (and `pre` acking before the "+
+			"clone should have made this impossible)", len(all))
+	}
+	if nPresent == len(all) {
+		t.Fatalf("all %d acked commits survived, including `post`, which acked AFTER CrashClone "+
+			"returned — the image is not the point-in-time it claims to be, and a prefix assertion "+
+			"over an all-present run observes nothing", len(all))
+	}
+
+	// ── The property: presence is monotone in commitTs order. ──
+	firstAbsent := -1
+	for i := range all {
+		if !present[i] {
+			firstAbsent = i
+			break
+		}
+	}
+	for i := firstAbsent + 1; i < len(all); i++ {
+		if present[i] {
+			t.Fatalf("durable prefix has a HOLE: %q@%+v survived the crash while %q@%+v — acked "+
+				"EARLIER, at a strictly lower commitTs — did not. What a crash may leave is a prefix "+
+				"of the commit history; a store that recovers a later commit without its predecessor "+
+				"presents a history that never happened. (%d/%d acked commits recovered)",
+				all[i].key, all[i].ts, all[firstAbsent].key, all[firstAbsent].ts, nPresent, len(all))
+		}
+	}
+
+	// And the recovered high-water agrees with the recovered data: it is at or above the
+	// last surviving commit, and below the first that did not survive.
+	if hi := e2.NowTs(); hi.Less(all[firstAbsent-1].ts) {
+		t.Fatalf("recovered high-water %+v is BELOW the last surviving commit %+v — metadata lagged "+
+			"the data it describes", hi, all[firstAbsent-1].ts)
 	}
 }
 
@@ -358,6 +575,29 @@ func TestCrashConcurrentNoAckedLoss(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer e2.Close()
+
+	// ── The fixture rule, and it must come FIRST. ──
+	// `acked` is written only on `r.Err == nil`, and the ONLY assertion below
+	// ranges over `acked`. With every commit erroring — a sealed engine, a
+	// committer that never starts, a Commit that returns early — the map is
+	// empty, the loop body never executes, ZERO assertions run and the test
+	// PASSES. That is vacuity by construction, and it is the same shape
+	// `TestInjectedFaultsReopenConsistent` already guards against with its
+	// fired-count check: a fixture that cannot prove it reached the state under
+	// test proves nothing.
+	if len(acked) == 0 {
+		t.Fatalf("not one of the %d concurrent commits acked nil, so there is no acked write to look "+
+			"for after the crash and this test asserts NOTHING about acked⇒durable. Fix the fixture "+
+			"(or the engine that refused every write), do not weaken the assertions.", g*per)
+	}
+	if len(acked) != g*per {
+		// Not fatal: acked⇒durable is still the property, and it is still
+		// checkable over whatever acked. But a partial ack set means something
+		// refused writes under concurrency, which the reader of a green run
+		// should not have to infer.
+		t.Logf("note: %d/%d concurrent commits acked nil; the invariant below covers the %d that did",
+			len(acked), g*per, len(acked))
+	}
 
 	r := e2.snapshotAt(e2.NowTs())
 	defer r.Close()

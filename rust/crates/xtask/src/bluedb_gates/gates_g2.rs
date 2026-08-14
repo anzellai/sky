@@ -193,6 +193,112 @@ pub(super) fn go_test(ctx: &Ctx, tests: &[&str], budget: Duration) -> Result<GoT
     })
 }
 
+/// One Go source with every COMMENT removed and every string literal kept.
+///
+/// **Why this exists.** Every source-side pin in this file and in
+/// `gates_g2_13.rs` is a substring search over raw Go text — the fired-count
+/// needles below, the `t.Run(` site counts, the `SourceAnchor` needles, the
+/// `errorfs.InjectorFunc(` enumeration. A substring search over raw text is
+/// satisfied by a COMMENT, so every one of those pins could be held up by text
+/// that no longer executes. That is not hypothetical: an adversarial audit
+/// commented out `crashsim_test.go`'s fired-count guard and **G2.6 still
+/// reported PASS**, because the three needles were still present in the
+/// commented-out lines.
+///
+/// [`go_test_names`] was already strict about this (column-0 declarations only,
+/// with a unit test proving a `func Test…` in a comment does not count). The
+/// same rigour is applied here, once, to the text every other pin reads.
+///
+/// Newlines are preserved so line-oriented parsing downstream is unaffected;
+/// only comment CONTENT is dropped. String and rune literals are preserved
+/// verbatim, which matters because one of the needles (`fired ZERO times`)
+/// lives inside a `t.Fatalf` format string.
+pub(super) fn strip_go_comments(src: &str) -> String {
+    #[derive(Clone, Copy, PartialEq)]
+    enum S {
+        Code,
+        Line,
+        Block,
+        Str,
+        Raw,
+        Rune,
+    }
+    let mut out = String::with_capacity(src.len());
+    let mut state = S::Code;
+    let mut escaped = false;
+    let b: Vec<char> = src.chars().collect();
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        let next = b.get(i + 1).copied();
+        match state {
+            S::Code => match (c, next) {
+                ('/', Some('/')) => {
+                    state = S::Line;
+                    i += 2;
+                }
+                ('/', Some('*')) => {
+                    state = S::Block;
+                    i += 2;
+                }
+                _ => {
+                    state = match c {
+                        '"' => S::Str,
+                        '`' => S::Raw,
+                        '\'' => S::Rune,
+                        _ => S::Code,
+                    };
+                    out.push(c);
+                    i += 1;
+                }
+            },
+            S::Line => {
+                if c == '\n' {
+                    out.push('\n');
+                    state = S::Code;
+                }
+                i += 1;
+            }
+            S::Block => {
+                // A newline inside a block comment is kept: dropping it would
+                // splice two unrelated lines together and could manufacture a
+                // match that exists in neither.
+                if c == '\n' {
+                    out.push('\n');
+                }
+                if c == '*' && next == Some('/') {
+                    state = S::Code;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            S::Str | S::Rune => {
+                out.push(c);
+                let quote = if state == S::Str { '"' } else { '\'' };
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == quote || c == '\n' {
+                    // A newline terminates an interpreted literal in Go; treat
+                    // it as a close rather than swallowing the rest of the file.
+                    state = S::Code;
+                }
+                i += 1;
+            }
+            S::Raw => {
+                out.push(c);
+                if c == '`' {
+                    state = S::Code;
+                }
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 /// Parse the `func TestXxx(` declarations out of a Go test source.
 ///
 /// Deliberately syntactic and deliberately strict: it reads only declarations
@@ -311,15 +417,28 @@ pub const G2_9A_CRASH_TESTS: &[&str] = &[
     "TestCrashAckedWritesSurvive",
     // (b) + concurrency: nothing acked under concurrent writer load is lost.
     "TestCrashConcurrentNoAckedLoss",
-    // (c) no reorder: a backward wall clock cannot re-issue a commitTs, so no
-    //     key ever carries two versions at one timestamp across a restart.
+    // (c) no reorder: what survives a crash is a PREFIX of the commit history
+    //     in commitTs order — a durable commit whose predecessor is not durable
+    //     is a history that never happened. The boundary is pinned at both ends
+    //     by the fixture (a commit acked before the clone, one acked after), so
+    //     the prefix assertion is over a run that really straddles the image.
+    "TestCrashDurablePrefixNoReorder",
+    // (c) the restart FLOOR — a backward wall clock cannot re-issue a commitTs,
+    //     so no key ever carries two versions at one timestamp across a restart.
+    //     This is monotonicity, NOT the prefix property above: every commit in
+    //     it is `Apply(pebble.Sync)`ed before the next begins, so it could not
+    //     observe a reorder even in principle. The two together are arm (c).
     "TestCrashHLCNoReissue",
     // (b) atomicity: a multi-write commit is all-or-nothing on disk.
     "TestCrashNoTornBatch",
     // (a) fsync before ack: an injected WAL-fsync fault must produce an errored
     //     ack — a nil ack always means durable — and the engine must seal.
     "TestInjectedFaultsReopenConsistent",
-    // (a) the seal contract: once sealed, every write path refuses loudly.
+    // (a) the seal contract: a REAL injected WAL-fsync fault seals the engine,
+    //     and once sealed every write path refuses loudly. The premise used to
+    //     be manufactured (`e.sealed.Store(true)` under a comment reading
+    //     "simulate the post-fault state"), which is why this fixture survived
+    //     this gate's own falsifier — it is now driven by the fault.
     "TestSealContractRefusesWrites",
 ];
 
@@ -448,6 +567,12 @@ pub const INJECTION_MANIFEST: &[Injection] = &[
         sites: 1,
         fault: "sync of the *.log WAL — the fail-stop durability regression, the ONE injection site inherited from the prior art",
     },
+    Injection {
+        file: "runtime-go/bluedb/crashsim_test.go",
+        test: "TestSealContractRefusesWrites",
+        sites: 1,
+        fault: "sync of the *.log WAL — the fault that must SEAL the engine, so the seal contract stands on a real durability fault instead of a hand-set `sealed` flag",
+    },
 ];
 
 /// The substring each injection fixture must carry to prove the fault was
@@ -463,6 +588,12 @@ pub const INJECTION_MANIFEST: &[Injection] = &[
 /// required here. Two halves, both necessary: the counter must be incremented
 /// where the fault is returned, and the test must FAIL at zero. Requiring only
 /// the increment would accept a fixture that counts and never looks.
+///
+/// All three are searched for in a body that has been passed through
+/// [`strip_go_comments`], because the rule is about code that RUNS. Searching
+/// raw text made the rule satisfiable by a comment — commenting the guard out
+/// of `crashsim_test.go` left G2.6 green, which is the same shape of vacuity
+/// the rule exists to forbid, one level up.
 const FIRED_COUNTER_INCREMENT: &str = "injected.Add(1)";
 const FIRED_COUNTER_READ: &str = "injected.Load()";
 const FIRED_ZERO_GUARD: &str = "fired ZERO times";
@@ -483,8 +614,14 @@ pub(super) struct EnumeratedTest {
 /// Attribution matters: an injector constructed outside a test (a shared helper,
 /// a `var` at package scope) is not a site this gate can run, and counting it
 /// would let the manifest be satisfied by a construction no test executes.
+///
+/// The source is passed through [`strip_go_comments`] FIRST, so the bodies this
+/// returns — which every source-side pin in this file and in `gates_g2_13.rs`
+/// then greps — contain only text that executes. Commented-out code is text
+/// that does not, and a pin a comment can satisfy is not a pin.
 pub(super) fn enumerate_injections(src: &str) -> Vec<EnumeratedTest> {
     let mut out: Vec<EnumeratedTest> = Vec::new();
+    let src = strip_go_comments(src);
 
     for line in src.lines() {
         if let Some(rest) = line.strip_prefix("func ") {
@@ -615,10 +752,12 @@ pub fn g2_6_injection_manifest(ctx: &Ctx) -> GateOutcome {
                 ] {
                     if !t.body.contains(needle) {
                         findings.push(format!(
-                            "{}::{} is missing `{needle}` — {why}. An injection fixture that cannot \
-                             prove it injected is indistinguishable from one that passed because \
-                             nothing happened (C3: the first H3 fixture passed against the UNFIXED \
-                             reader because caching meant ZERO filesystem operations occurred).",
+                            "{}::{} is missing `{needle}` in EXECUTING code — {why}. An injection \
+                             fixture that cannot prove it injected is indistinguishable from one \
+                             that passed because nothing happened (C3: the first H3 fixture passed \
+                             against the UNFIXED reader because caching meant ZERO filesystem \
+                             operations occurred). Note the search is comment-blind: a guard that \
+                             is present but COMMENTED OUT is text, not an assertion.",
                             m.file, m.test
                         ));
                     }
@@ -867,6 +1006,88 @@ func TestNoInjection(t *testing.T) {\n\
         // what makes it visible as an UNRECORDED site rather than silently
         // satisfying a manifest row for a test that no longer injects.
         assert_eq!(with, vec![("helper", 1), ("TestOne", 1)]);
+    }
+
+    /// Comment content is dropped; string and rune literals — where one of the
+    /// three fired-count needles actually lives — are not.
+    #[test]
+    fn strip_go_comments_drops_comments_and_keeps_literals() {
+        let src = "\
+a := 1 // injected.Add(1)\n\
+/* injected.Load()\n\
+   still a comment */ b := 2\n\
+s := \"a // not a comment ‖ fired ZERO times\"\n\
+r := `raw // kept`\n\
+c := '\\'' // trailing\n";
+        let got = strip_go_comments(src);
+        assert!(!got.contains("injected.Add(1)"), "{got:?}");
+        assert!(!got.contains("injected.Load()"), "{got:?}");
+        assert!(!got.contains("still a comment"), "{got:?}");
+        assert!(got.contains("fired ZERO times"), "{got:?}");
+        assert!(got.contains("a // not a comment"), "{got:?}");
+        assert!(got.contains("raw // kept"), "{got:?}");
+        assert!(got.contains("b := 2"), "{got:?}");
+        assert!(got.contains("c := '\\''"), "{got:?}");
+        // Line structure survives, so the line-oriented parsers above are
+        // unaffected by the rewrite.
+        assert_eq!(got.lines().count(), src.lines().count(), "{got:?}");
+    }
+
+    /// **The reproduced defect.** An adversarial audit commented out
+    /// `crashsim_test.go`'s fired-count guard and G2.6 still reported PASS: the
+    /// three needles were searched for in RAW source, and commented-out text
+    /// contains them just as well as executing text does.
+    ///
+    /// `go_test_names` was already strict about exactly this — its own unit test
+    /// asserts a `func Test…` in a comment does not count — and the rigour was
+    /// simply not carried across to the needles. This asserts it now.
+    #[test]
+    fn a_commented_out_fired_count_guard_does_not_satisfy_the_pin() {
+        let armed = "\
+func TestArmed(t *testing.T) {\n\
+\tinj := errorfs.InjectorFunc(func(op errorfs.Op) error {\n\
+\t\tinjected.Add(1)\n\
+\t\treturn errorfs.ErrInjected\n\
+\t})\n\
+\tif n := injected.Load(); n == 0 {\n\
+\t\tt.Fatalf(\"the injector fired ZERO times\")\n\
+\t}\n\
+}\n";
+        // The mutation the audit performed: the guard is still THERE, in the
+        // source, as text — it just no longer runs.
+        let disarmed = "\
+func TestArmed(t *testing.T) {\n\
+\tinj := errorfs.InjectorFunc(func(op errorfs.Op) error {\n\
+\t\tinjected.Add(1)\n\
+\t\treturn errorfs.ErrInjected\n\
+\t})\n\
+\t// if n := injected.Load(); n == 0 {\n\
+\t// \tt.Fatalf(\"the injector fired ZERO times\")\n\
+\t// }\n\
+}\n";
+        let body_of = |src: &str| {
+            enumerate_injections(src)
+                .into_iter()
+                .find(|t| t.test == "TestArmed")
+                .expect("TestArmed")
+                .body
+        };
+        let armed = body_of(armed);
+        for needle in [FIRED_COUNTER_INCREMENT, FIRED_COUNTER_READ, FIRED_ZERO_GUARD] {
+            assert!(armed.contains(needle), "armed fixture is missing `{needle}`");
+        }
+        let disarmed = body_of(disarmed);
+        assert!(
+            disarmed.contains(FIRED_COUNTER_INCREMENT),
+            "the injector still counts, so that half must still be satisfied"
+        );
+        for needle in [FIRED_COUNTER_READ, FIRED_ZERO_GUARD] {
+            assert!(
+                !disarmed.contains(needle),
+                "`{needle}` is only present in a COMMENT, and a commented-out guard asserts \
+                 nothing — G2.6 must report the fixture as unable to prove it injected"
+            );
+        }
     }
 
     #[test]
