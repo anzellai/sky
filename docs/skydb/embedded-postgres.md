@@ -189,6 +189,88 @@ clusters:
 - **`sky db start`** is explicit and persistent — it stays up until stopped.
   This is the mode for running `./sky-out/app` repeatedly.
 
+### Opting in, and what P4 injects
+
+The opt-in is `sky.toml` **`[database] embedded = true`**. Earlier drafts of this
+document sketched a `[data]` section; `[database]` is what P1 actually landed —
+it already owns `driver`, `path`/`url`, the four pool knobs and `isolation` — and
+a second section describing the same subsystem would leave a reader two places to
+look and no rule for which wins. `embedded` is the one key in that section that
+seeds **no** environment variable: it is read by the toolchain, not by the app.
+
+What `sky run` injects is `<PREFIX>_DB_PATH` (the `[env] prefix` namespace, so a
+project with a private namespace gets its own name and not a variable nothing
+reads), carrying `postgresql:///postgres?host=<socket dir>`. The `postgresql://`
+prefix is load-bearing: it is the shape both `rt.detectDriver` and the compiler's
+`driver_for_dsn` classify as Postgres, and `?host=<dir>` is libpq's documented
+way to name a unix socket directory. No user and no password — local auth is
+`trust` and the client defaults the role to the OS user, which is the superuser
+`initdb` created. The database is `postgres`, the one `initdb` always makes;
+database-per-app is the shared-cluster problem and belongs to P6.
+
+The `--db-push` / `--db-migrate` / `--db-seed` steps run against the same DSN.
+They are separate `sky db …` processes, so the variable is passed to each of
+them explicitly — without that the app would boot onto an unmigrated cluster.
+
+### The reference count
+
+The registry entry gains two fields, both `#[serde(default)]` so a P2 registry
+still loads: `explicit` (a user asked for this cluster by name) and `refs` (the
+live `sky run` / `sky watch` invocations depending on it). A run's exit stops the
+postmaster only when `!explicit && refs.is_empty()`.
+
+**A pid is not a reference**, for the same reason `postmaster.pid` is not
+liveness. A `SIGKILL`ed `sky run` never releases, the kernel is free to hand its
+pid to something else, and a ref believed on pid alone pins that project's
+cluster up for the rest of the session — `sky run` would have created a database
+nothing can close. So each ref records the holder's own `ps -o command=` line at
+acquire time and is believed only while the pid is alive **and** still runs that
+command; with no `ps` at all, aliveness is enough, because dropping a ref we
+cannot verify tears a running app's database out from under it.
+
+Every registry writer prunes stale refs on the way through, so the corpse of a
+killed run is cleared by the next `sky run`, `sky db start`, `sky db stop` or
+`sky db ps` — and the *next* ordinary `sky run` then finds itself alone and takes
+the cluster down on its own way out.
+
+The release holds the registry lock **across** the `pg_ctl stop`. The decision
+"no one else needs this" and the shutdown acting on it have to be one step, or a
+`sky run` starting in the gap takes a reference to a postmaster already on its
+way down.
+
+> **What P4 does NOT close: `Ctrl-C`.** SIGINT is delivered to the whole
+> foreground process group, so `sky run` dies alongside the app and never runs
+> its release. Catching it needs either `unsafe` (the `sky` crate is
+> `#![forbid(unsafe_code)]`, and `nix`'s `sigaction` is unsafe) or a new
+> signal-handling dependency, and neither is worth spending here: the cluster is
+> left running with a stale reference, the reference is pruned by the next
+> registry read, and the next clean `sky run` in that project stops it. The end
+> state is the same as `sky db start`, and it self-heals. P5 needs a real signal
+> path for `--embed`'s drain-then-stop ordering; that is where the dependency
+> decision belongs.
+
+### An explicit DSN alongside `embedded = true`
+
+Refused, with the offending source named — the same rule this document already
+fixes for `./app --embed`, applied to the development path. Four sources are
+checked, and only the first is reported, because a stack of four complaints about
+one mistake is harder to act on than one:
+
+| Order | Source |
+|---|---|
+| 1 | `<PREFIX>_DB_PATH` in the environment |
+| 2 | `DATABASE_URL` in the environment |
+| 3 | `sky.toml` `[database] path` |
+| 4 | `sky.toml` `[database] url` |
+
+The environment is checked first because it is the more surprising of the two:
+nothing in the repository records it. The refusal happens **before the build**,
+so a misconfigured project does not sit through a compile to be told.
+
+> The design brief called this variable `SKY_DB_URL`. **No such variable exists**
+> — `runtime-go/rt/db_auth.go` reads `<PREFIX>_DB_PATH` and falls back to a bare
+> `DATABASE_URL`. P4 checks the two that are real.
+
 ### `./app --embed`
 
 1. Resolve the data dir (`--data-dir` / `SKY_DATA_DIR`). Never a temp path:
@@ -367,6 +449,6 @@ Each phase ships its own commit and is verifiable in isolation.
 | **P2** ✅ | Cluster supervisor: data dir, `initdb`, hashed socket path, `sky db start` / `stop` / `ps`, the registry — `rust/crates/sky/src/db_cluster.rs`, gated by its unit tests + `tests/db_cluster_flow.rs` (a live cycle from a project path deep enough to overflow `sun_path`) |
 | **P2b** | CI bundle build: PostgreSQL from source per platform, pinned configure line, SBOM, the GPL/LGPL/AGPL link gate, `NOTICE.md` entry |
 | **P3** | `sky db provision --embed` — fetch Sky's own bundle, checksum, pin |
-| **P4** | `sky run` integration, ref-counted |
+| **P4** ✅ | `sky run` / `sky watch` integration: `[database] embedded`, DSN injection, the ref count — `rust/crates/sky/src/db_cluster.rs` + `main.rs`, gated by its unit tests + `tests/db_run_cluster_flow.rs` (two overlapping `sky run`s against a real PostgreSQL) |
 | **P5** | `sky build --embed` and `./app --embed`, including the failure modes above |
 | **P6** | Shared-cluster service mode: database-per-app, role-per-app, generated unit + backup timer |

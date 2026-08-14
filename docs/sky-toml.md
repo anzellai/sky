@@ -218,6 +218,7 @@ driver = "sqlite"          # OPTIONAL assertion — must agree with the DSN abov
 | `path`   | `<PREFIX>_DB_PATH`       | (empty)   | File path or connection URL — **selects the driver** |
 | `url`    | `<PREFIX>_DB_PATH`       | (empty)   | Alias for `path` (postgres DSN)                  |
 | `driver` | *(none)*                 | (unset)   | Optional consistency assertion; see below        |
+| `embedded` | *(none)*               | `false`   | `sky run` supervises a local cluster and provisions the DSN — see [below](#embedded-postgresql) |
 
 `driver` does **not** select anything. It is checked against `path`/`url` at
 build time and a contradiction is reported — `driver = "postgres"` beside
@@ -315,6 +316,40 @@ seen one.
 Both keys are PostgreSQL-only. SQLite transactions already serialise on the
 single pooled connection, so there is no weaker level to ask for and no `40001`
 to retry; setting either alongside a SQLite DSN warns and changes nothing.
+
+### Embedded PostgreSQL
+
+```toml
+[database]
+embedded = true    # sky supervises a local cluster and provisions the DSN
+```
+
+| Key | Env var | Default | Meaning |
+|---|---|---|---|
+| `embedded` | *(none — a toolchain key)* | `false` | `sky run` / `sky watch` start a per-project PostgreSQL and inject its DSN |
+
+With `embedded = true`, `sky run` starts this project's cluster (`.skydata/pg/`,
+a unix socket outside the project — see
+[embedded PostgreSQL](skydb/embedded-postgres.md)) and hands the app
+`<PREFIX>_DB_PATH`. The app is unchanged: it calls `Db.connect ()` and reads a
+DSN, exactly as it does against a managed server. That is the point — the binary
+never learns which tier provisioned its database.
+
+The lifetime follows the verb. `sky run` is **ephemeral** and stops the cluster
+when it exits, ref-counted so two concurrent runs do not stop each other's
+database. `sky db start` is **persistent** and stays up until `sky db stop`,
+including across a `sky run` that used it — that is the mode for running
+`./sky-out/app` repeatedly.
+
+Unlike every other key here, `embedded` sets no environment variable. It is read
+by the `sky` toolchain, not by the app.
+
+> **`embedded = true` alongside `path` / `url` / `SKY_DB_PATH` / `DATABASE_URL`
+> is an error, not a precedence rule.** There is no safe answer: preferring the
+> cluster means the app writes to a throwaway local directory while you believe
+> it is talking to the server you named, and preferring the DSN means the opt-in
+> is a line of configuration that does nothing. `sky run` names the offending
+> source and both ways out, and refuses before it builds.
 
 ---
 

@@ -821,6 +821,18 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
+    // The configuration is judged BEFORE the build: a project whose
+    // `embedded = true` contradicts an explicit DSN is misconfigured, and making
+    // the user sit through a compile to be told so is a worse way to learn it.
+    // The cluster itself is started AFTER, so a project that does not compile
+    // does not cycle a PostgreSQL up and down on every attempt.
+    let embedded = match db_cluster::check_run_config(&project_dir, "sky run") {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
     let opts = BuildOptions {
         repo_root,
@@ -848,6 +860,23 @@ fn cmd_run(args: &[String]) -> ExitCode {
         eprintln!("sky run: go build {note}");
     }
     let mut envs: Vec<(String, String)> = Vec::new();
+    // The lease lives for the rest of this function — dropping it releases this
+    // run's reference and, if nothing else holds one, stops the cluster.
+    let cluster = if embedded {
+        match db_cluster::acquire_for_run(&project_dir) {
+            Ok(c) => {
+                println!("{}", c.banner("sky run:"));
+                envs.extend(c.envs());
+                Some(c)
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     if let Some(p) = &profile {
         // A relative dir resolves against the app's cwd (the project root, where
         // `run_app` runs it) → profiles land in `<project>/profile/` by default.
@@ -877,13 +906,18 @@ fn cmd_run(args: &[String]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        let ok = Command::new(&exe)
-            .arg("db")
-            .arg(op)
-            .current_dir(&project_dir)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let mut step = Command::new(&exe);
+        step.arg("db").arg(op).current_dir(&project_dir);
+        // The migrate/seed steps talk to the SAME database the app is about to,
+        // so they need the cluster's DSN too. Without this they would fall back
+        // to whatever `sky.toml` declares — which, under `embedded = true`, is
+        // nothing — and the app would boot onto an unmigrated cluster.
+        if let Some(c) = &cluster {
+            for (k, v) in c.envs() {
+                step.env(k, v);
+            }
+        }
+        let ok = step.status().map(|s| s.success()).unwrap_or(false);
         if !ok {
             eprintln!("sky run --db-{op}: DB step failed — not starting the app.");
             return ExitCode::FAILURE;
@@ -2795,6 +2829,26 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         eprintln!("sky watch: refusing to run from the Sky compiler repo root");
         return ExitCode::FAILURE;
     }
+    // ONE lease for the whole watch session, not one per rebuild: restarting the
+    // app must not cycle its database underneath it. Held until the loop ends.
+    // Unlike `sky run`, the cluster is taken before the first build, because a
+    // watch session survives a failing build and keeps watching.
+    let cluster = match db_cluster::check_run_config(&project_dir, "sky watch")
+        .and_then(|on| if on { db_cluster::acquire_for_run(&project_dir).map(Some) } else { Ok(None) })
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let app_envs: Vec<(String, String)> = cluster
+        .as_ref()
+        .map(|c| {
+            println!("{}", c.banner("[watch]"));
+            c.envs()
+        })
+        .unwrap_or_default();
 
     // Watched roots: the entry's directory, the project's tests/ (if present),
     // the project root (to catch sky.toml), plus any `--watch=PATH` extras.
@@ -2862,7 +2916,7 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         "[watch] watching {} for changes (Ctrl-C to stop)",
         entry_dir.display()
     );
-    let mut child = watch_build_and_spawn(&repo_root, &project_dir, file, no_run);
+    let mut child = watch_build_and_spawn(&repo_root, &project_dir, file, no_run, &app_envs);
 
     // Debounce loop: coalesce a burst of save events, rebuild once.
     loop {
@@ -2887,7 +2941,8 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         // Build-error policy: only replace the running child when the rebuild
         // produced a fresh binary. A failing rebuild returns None → the old
         // binary keeps running.
-        if let Some(fresh) = watch_build_and_spawn(&repo_root, &project_dir, file, no_run) {
+        if let Some(fresh) = watch_build_and_spawn(&repo_root, &project_dir, file, no_run, &app_envs)
+        {
             if let Some(old) = child.take() {
                 terminate_child(old, opts.kill_timeout_ms);
             }
@@ -2992,6 +3047,7 @@ fn watch_build_and_spawn(
     project_dir: &Path,
     file: &Path,
     no_run: bool,
+    app_envs: &[(String, String)],
 ) -> Option<std::process::Child> {
     let opts = BuildOptions {
         repo_root: repo_root.to_path_buf(),
@@ -3027,10 +3083,15 @@ fn watch_build_and_spawn(
     }
     let out_dir = project_dir.join("sky-out");
     let bin_name = project::configured_bin_name(project_dir);
-    match Command::new(format!("./{bin_name}"))
-        .current_dir(&out_dir)
-        .spawn()
-    {
+    let mut cmd = Command::new(format!("./{bin_name}"));
+    cmd.current_dir(&out_dir);
+    // The embedded cluster's DSN, when the project has one. EVERY respawn gets
+    // it: a rebuild replaces the process, and a replacement that lost its DSN
+    // would fail to connect while the cluster it was meant to use sat running.
+    for (k, v) in app_envs {
+        cmd.env(k, v);
+    }
+    match cmd.spawn() {
         Ok(child) => Some(child),
         Err(e) => {
             eprintln!("[watch] could not launch binary: {e}");

@@ -152,6 +152,76 @@ pub struct ClusterEntry {
     pub pg_version: String,
     #[serde(default)]
     pub started_at: u64,
+    /// True when a user asked for this cluster by name (`sky db start`). An
+    /// explicit cluster is PERSISTENT: `sky run` may use it, but must never take
+    /// it down on the way out. That distinction is the whole reason the two verbs
+    /// exist separately — one is ephemeral, one is the mode for running
+    /// `./sky-out/app` repeatedly.
+    #[serde(default)]
+    pub explicit: bool,
+    /// The live `sky run` / `sky watch` invocations currently depending on this
+    /// cluster. Empty *and* not explicit is the only state in which a `sky run`
+    /// exit stops the postmaster.
+    #[serde(default)]
+    pub refs: Vec<RunRef>,
+}
+
+/// One `sky run` (or `sky watch`) holding a project's cluster up.
+///
+/// A pid alone is not a reference. A `sky run` that is `SIGKILL`ed leaves its
+/// entry behind, the kernel is free to hand that pid to something else, and a
+/// ref believed on pid alone would then pin the cluster up for the rest of the
+/// session — the same failure P2 already solved for `postmaster.pid`, in a new
+/// place. So the holder's own `ps -o command=` line is recorded at acquire time
+/// and must still match at check time.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RunRef {
+    pub pid: i32,
+    /// The holder's command line as `ps` reported it when the ref was taken.
+    /// Empty when `ps` was unavailable, in which case aliveness is all we have.
+    #[serde(default)]
+    pub cmd: String,
+    #[serde(default)]
+    pub since: u64,
+}
+
+/// Drop every ref whose holder is gone — or whose pid now belongs to something
+/// else entirely.
+///
+/// The liveness predicate is injected so the recycled-pid case can be tested
+/// without arranging for the operating system to actually reuse a pid, which is
+/// not something a test can make happen on demand.
+pub fn prune_refs(refs: &[RunRef], live: &dyn Fn(&RunRef) -> bool) -> Vec<RunRef> {
+    refs.iter().filter(|r| live(r)).cloned().collect()
+}
+
+/// The real predicate behind [`prune_refs`]: both legs, in the same order and
+/// with the same degradation as [`is_postgres_process`].
+fn ref_is_live(r: &RunRef) -> bool {
+    if !process_alive(r.pid) {
+        return false;
+    }
+    match process_command(r.pid) {
+        // A different command at the same pid means the pid was recycled: the
+        // `sky run` that took this ref is gone.
+        Some(c) => r.cmd.is_empty() || c == r.cmd,
+        // No `ps` (a minimal container): fall back to bare aliveness rather than
+        // dropping a ref that is probably real and tearing a live app's database
+        // out from under it.
+        None => true,
+    }
+}
+
+/// This process, as a ref. Captured once at acquire time — reading it later
+/// would defeat the point, since the whole question is whether the pid still
+/// names *this* program.
+fn self_ref() -> RunRef {
+    let pid = std::process::id() as i32;
+    RunRef {
+        pid,
+        cmd: process_command(pid).unwrap_or_default(),
+        since: now_secs(),
+    }
 }
 
 /// `~/.sky/clusters.json`. A `BTreeMap` keyed by canonical project path: the key
@@ -724,20 +794,66 @@ pub fn cmd_start(args: &[String]) -> ExitCode {
 
 fn start_impl() -> Result<String, String> {
     let project = current_project_dir()?;
-    if project::is_compiler_repo_root(&project) {
-        return Err("sky db start: refusing to run from the Sky compiler repo root".to_string());
+    let started = start_cluster(&project)?;
+    // `sky db start` is the EXPLICIT verb, so the entry is marked persistent:
+    // from here on a `sky run` may lean on this cluster but must never stop it.
+    upsert(&project, &started, &|e| e.explicit = true)?;
+    if started.already_running {
+        return Ok(format!(
+            "sky db start: already running (pid {}).\n{}",
+            started.pid,
+            connection_hint(&started.socket_dir)
+        ));
+    }
+    Ok(format!(
+        "sky db start: PostgreSQL {} running (pid {}).\n\
+         \x20 data:   {}\n\
+         \x20 socket: {}\n\
+         \x20 log:    {}\n{}",
+        started.version,
+        started.pid,
+        started.data_dir.display(),
+        started.socket_dir.display(),
+        log_path_for(&project).display(),
+        connection_hint(&started.socket_dir)
+    ))
+}
+
+/// What a start left behind, whether or not this invocation was the one that
+/// caused it.
+pub struct Started {
+    pub pid: i32,
+    pub data_dir: PathBuf,
+    pub socket_dir: PathBuf,
+    pub version: String,
+    /// True when the cluster was already up and nothing was spawned.
+    pub already_running: bool,
+}
+
+/// Bring a project's cluster to "running", initialising it on first use.
+///
+/// Split out of [`start_impl`] so `sky run` reaches the same code — initdb, the
+/// tuned conf, the stale-pid interlock, the version check, the socket-path
+/// checks — rather than a second, subtly different implementation of it. It does
+/// NOT touch the registry: the caller decides what the resulting entry means
+/// (explicit and persistent, or ephemeral and ref-counted).
+fn start_cluster(project: &Path) -> Result<Started, String> {
+    if project::is_compiler_repo_root(project) {
+        return Err("sky db: refusing to run a cluster from the Sky compiler repo root".to_string());
     }
     let bins = discover_pg_bins()?;
-    let data_dir = data_dir_for(&project);
-    let socket_dir = socket_dir_real(&project);
+    let data_dir = data_dir_for(project);
+    let socket_dir = socket_dir_real(project);
 
     // Already up? Report it and stop — no initdb, no second postmaster.
     if let Liveness::Running(pid) = probe_data_dir(&data_dir) {
-        register(&project, &data_dir, &socket_dir, pid, &bins.version)?;
-        return Ok(format!(
-            "sky db start: already running (pid {pid}).\n{}",
-            connection_hint(&socket_dir)
-        ));
+        return Ok(Started {
+            pid,
+            data_dir,
+            socket_dir,
+            version: bins.version,
+            already_running: true,
+        });
     }
 
     if data_dir.join("PG_VERSION").is_file() {
@@ -771,28 +887,53 @@ fn start_impl() -> Result<String, String> {
     }
 
     prepare_socket_dir(&socket_dir)?;
-    let pid = run_pg_ctl_start(&bins, &project, &data_dir, &socket_dir)?;
-    register(&project, &data_dir, &socket_dir, pid, &bins.version)?;
-    Ok(format!(
-        "sky db start: PostgreSQL {} running (pid {pid}).\n\
-         \x20 data:   {}\n\
-         \x20 socket: {}\n\
-         \x20 log:    {}\n{}",
-        bins.version,
-        data_dir.display(),
-        socket_dir.display(),
-        log_path_for(&project).display(),
-        connection_hint(&socket_dir)
-    ))
+    let pid = match run_pg_ctl_start(&bins, project, &data_dir, &socket_dir) {
+        Ok(pid) => pid,
+        // Two `sky run`s racing on one project both see "stopped" and both call
+        // `pg_ctl start`; the loser is told another server might be running. The
+        // registry lock cannot close that window without holding it across a
+        // 60-second start and blocking every other project's `sky db ps`. So the
+        // loser re-probes, and adopts the winner's postmaster — which is the same
+        // "already running is a success no-op" rule the verb states everywhere
+        // else, applied to a race instead of to a second invocation.
+        Err(e) => match probe_data_dir(&data_dir) {
+            Liveness::Running(pid) => pid,
+            _ => return Err(e),
+        },
+    };
+    Ok(Started {
+        pid,
+        data_dir,
+        socket_dir,
+        version: bins.version,
+        already_running: false,
+    })
 }
 
 fn connection_hint(socket_dir: &Path) -> String {
     format!(
         "\nConnect with:\n\
          \x20 psql -h {sock} postgres\n\
-         \x20 DSN: postgresql:///postgres?host={sock}",
-        sock = socket_dir.display()
+         \x20 DSN: {dsn}",
+        sock = socket_dir.display(),
+        dsn = dsn_for_socket_dir(socket_dir)
     )
+}
+
+/// The DSN an app is handed for a socket-only development cluster.
+///
+/// `postgresql://` (not the libpq keyword form) because that is the shape both
+/// `rt.detectDriver` and the compiler's `driver_for_dsn` classify as Postgres
+/// from the prefix alone; `?host=<dir>` is libpq's documented way to name a unix
+/// socket DIRECTORY, and pgx honours it. No user and no password: local auth is
+/// `trust` and the client library defaults the role to the OS user, which is the
+/// superuser `initdb` created.
+///
+/// The database is `postgres` — the one `initdb` always creates. A
+/// database-per-app (and the role-per-app boundary that makes it worth having)
+/// is the shared-cluster problem, and it is P6's.
+pub fn dsn_for_socket_dir(socket_dir: &Path) -> String {
+    format!("postgresql:///postgres?host={}", socket_dir.display())
 }
 
 fn dir_is_nonempty(dir: &Path) -> bool {
@@ -831,7 +972,9 @@ fn run_initdb(bins: &PgBins, data_dir: &Path) -> Result<(), String> {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("sky db start: cannot create {}: {e}", parent.display()))?;
     }
-    println!("sky db start: initialising a PostgreSQL {} cluster in {}", bins.major, data_dir.display());
+    // Verb-neutral: `sky run` reaches this too, and a progress line announcing a
+    // command the user did not type reads as a bug in the tool.
+    println!("sky db: initialising a PostgreSQL {} cluster in {}", bins.major, data_dir.display());
     let out = Command::new(bins.tool("initdb"))
         .arg("-D")
         .arg(data_dir)
@@ -960,22 +1103,271 @@ fn run_pg_ctl_start(bins: &PgBins, project: &Path, data_dir: &Path, socket_dir: 
     })
 }
 
-fn register(project: &Path, data_dir: &Path, socket_dir: &Path, pid: i32, version: &str) -> Result<(), String> {
+/// Record what a start observed, then let the caller say what it MEANS.
+///
+/// The observed facts (data dir, socket, pid, version) are overwritten; the
+/// interpretation (`explicit`, `refs`) is merged, because it belongs to whoever
+/// set it. That is what keeps `sky db start` from clearing a `sky run`'s
+/// reference, and a `sky run` from clearing the persistence a `sky db start`
+/// asked for. Stale refs are pruned on the way through, so every writer to the
+/// registry is also a reaper of dead run-references.
+fn upsert(project: &Path, started: &Started, f: &dyn Fn(&mut ClusterEntry)) -> Result<(), String> {
     let home = sky_home();
     let _lock = acquire_registry_lock(&home)?;
     let mut reg = Registry::load(&home);
     reg.reap_with(&probe_entry);
-    reg.clusters.insert(
-        project.display().to_string(),
-        ClusterEntry {
-            data_dir: data_dir.display().to_string(),
-            socket_dir: socket_dir.display().to_string(),
-            pid,
-            pg_version: version.to_string(),
-            started_at: now_secs(),
-        },
-    );
+    let e = reg
+        .clusters
+        .entry(project.display().to_string())
+        .or_insert_with(|| ClusterEntry {
+            data_dir: String::new(),
+            socket_dir: String::new(),
+            pid: 0,
+            pg_version: String::new(),
+            started_at: 0,
+            explicit: false,
+            refs: Vec::new(),
+        });
+    e.data_dir = started.data_dir.display().to_string();
+    e.socket_dir = started.socket_dir.display().to_string();
+    e.pid = started.pid;
+    e.pg_version = started.version.clone();
+    e.started_at = now_secs();
+    e.refs = prune_refs(&e.refs, &ref_is_live);
+    f(e);
     reg.save(&home)
+}
+
+// ---- `sky run` integration: ref-counted, ephemeral clusters ---------------
+
+/// A `sky run` / `sky watch` invocation's claim on a project's cluster.
+///
+/// Held for as long as the app is running. Dropping it releases the reference
+/// and — only if nothing else holds one and no `sky db start` asked for
+/// persistence — stops the cluster.
+pub struct RunLease {
+    project: PathBuf,
+    pid: i32,
+    /// The DSN to inject into the app's environment, under `env_name`.
+    pub dsn: String,
+    pub env_name: String,
+    pub socket_dir: PathBuf,
+    pub version: String,
+    pub already_running: bool,
+}
+
+/// Bring this project's cluster up for a `sky run`, and take a reference to it.
+///
+/// The reference is what makes concurrency safe: a second `sky run` on the same
+/// project adds its own, and the first one's exit then finds the list non-empty
+/// and leaves the postmaster alone.
+pub fn acquire_for_run(project: &Path) -> Result<RunLease, String> {
+    let started = start_cluster(project)?;
+    let me = self_ref();
+    upsert(project, &started, &|e| {
+        // Replace rather than append when this pid is somehow already listed: a
+        // ref list is a set keyed on the holder, and a double-acquire must not
+        // need a double-release.
+        e.refs.retain(|r| r.pid != me.pid);
+        e.refs.push(me.clone());
+    })?;
+    Ok(RunLease {
+        project: project.to_path_buf(),
+        pid: me.pid,
+        dsn: dsn_for_socket_dir(&started.socket_dir),
+        env_name: dsn_env_name(project),
+        socket_dir: started.socket_dir,
+        version: started.version,
+        already_running: started.already_running,
+    })
+}
+
+impl Drop for RunLease {
+    fn drop(&mut self) {
+        if let Err(e) = release_run_ref(&self.project, self.pid) {
+            // A failed release leaves a cluster up, which is recoverable
+            // (`sky db stop`) and must not change the app's exit code.
+            eprintln!("sky run: could not release the embedded cluster: {e}");
+        }
+    }
+}
+
+/// Drop this process's reference, and stop the cluster if that was the last
+/// thing keeping it up.
+///
+/// The registry lock is held ACROSS the `pg_ctl stop`. That is deliberate: the
+/// decision "no one else needs this" and the shutdown that acts on it have to be
+/// one atomic step, or a `sky run` starting in the gap would take a reference to
+/// a postmaster that is already on its way down. A fast shutdown of an idle
+/// development cluster is sub-second, so the window a concurrent `sky db ps`
+/// waits on is nothing like the lock's five-second patience.
+fn release_run_ref(project: &Path, pid: i32) -> Result<(), String> {
+    let home = sky_home();
+    let _lock = acquire_registry_lock(&home)?;
+    let mut reg = Registry::load(&home);
+    let key = project.display().to_string();
+    let Some(entry) = reg.clusters.get_mut(&key) else {
+        return Ok(());
+    };
+    entry.refs = prune_refs(&entry.refs, &ref_is_live)
+        .into_iter()
+        .filter(|r| r.pid != pid)
+        .collect();
+    let data_dir = PathBuf::from(&entry.data_dir);
+    let socket_dir = PathBuf::from(&entry.socket_dir);
+    // `sky db start` said "keep this up"; an ephemeral run does not get to
+    // overrule that, however it was that the cluster came to be running.
+    let keep = entry.explicit || !entry.refs.is_empty();
+    if keep || !matches!(probe_data_dir(&data_dir), Liveness::Running(_)) {
+        return reg.save(&home);
+    }
+    let bins = discover_pg_bins()?;
+    let out = Command::new(bins.tool("pg_ctl"))
+        .arg("-D")
+        .arg(&data_dir)
+        .args(["-m", "fast", "-w", "-t", "20", "stop"])
+        .output()
+        .map_err(|e| format!("cannot run pg_ctl: {e}"))?;
+    if !out.status.success() {
+        reg.save(&home)?;
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    if let Some(e) = reg.clusters.get_mut(&key) {
+        e.pid = 0;
+    }
+    remove_socket_dir_if_empty(&socket_dir);
+    reg.save(&home)
+}
+
+// ---- opting a project in, and refusing to guess -------------------------
+
+/// Does this project want `sky run` to supervise a cluster for it?
+///
+/// The opt-in is `[database] embedded = true`, in the section that already owns
+/// `driver` / `path` / `url` / the pool knobs / `isolation`. The design brief
+/// sketched a `[data]` section; `[database]` is what P1 actually landed, and a
+/// second section describing the same subsystem would leave a reader with two
+/// places to look and no rule for which wins.
+pub fn project_uses_embedded(project: &Path) -> bool {
+    project::sky_toml_flag(project, "database", "embedded")
+}
+
+/// The environment variable an app reads its DSN from — `SKY_DB_PATH`, or the
+/// project's own namespace when `sky.toml` declares `[env] prefix`. Injecting
+/// the unprefixed name into a prefixed app would set a variable nothing reads,
+/// and the app would then fail with "no path given" while the cluster it was
+/// meant to use sat there running.
+pub fn dsn_env_name(project: &Path) -> String {
+    let prefix = project::sky_toml_section_key(project, "env", "prefix")
+        .map(|p| p.trim().trim_end_matches('_').to_string())
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "SKY".to_string());
+    format!("{prefix}_DB_PATH")
+}
+
+/// An explicit DSN alongside `embedded = true` is an ambiguity, and it is
+/// reported rather than resolved — the same rule the design brief fixes for
+/// `./app --embed`.
+///
+/// There is no defensible precedence here. Preferring the cluster means an app
+/// silently writes to a throwaway local data directory while its author believes
+/// it is talking to the server they named. Preferring the DSN means
+/// `embedded = true` is a line of configuration that does nothing. Both are worse
+/// than stopping.
+///
+/// Sources are checked in the order a reader would suspect them, and only the
+/// first is reported: a stack of four complaints about the same mistake is
+/// harder to act on than one.
+pub fn embedded_dsn_conflict(verb: &str, sources: &[(String, Option<String>)]) -> Option<String> {
+    let (name, value) = sources
+        .iter()
+        .find_map(|(n, v)| v.as_ref().filter(|v| !v.trim().is_empty()).map(|v| (n, v)))?;
+    // "unset" is the verb for an environment variable and nonsense for a config
+    // line; a fix instruction the reader has to translate is half an instruction.
+    let clear = if name.starts_with("sky.toml") {
+        format!("delete `{name}`")
+    } else {
+        format!("unset {name}")
+    };
+    Some(format!(
+        "{verb}: this project is configured for an embedded PostgreSQL cluster\n\
+         (sky.toml `[database] embedded = true`) and also carries an explicit\n\
+         connection string:\n\
+         \n\
+         \x20 {name} = {value}\n\
+         \n\
+         Sky will not choose between them. Starting the cluster anyway would write\n\
+         to a local data directory while you believed the app was talking to the\n\
+         database you named — the failure that only shows up once the data is in\n\
+         the wrong place.\n\
+         \n\
+         Pick one:\n\
+         \x20 • use the connection string: remove `embedded = true` from sky.toml\n\
+         \x20 • use the cluster:           {clear}"
+    ))
+}
+
+/// The pre-build half of the `sky run` / `sky watch` entry point: is this
+/// project opted in, and is its configuration coherent?
+///
+/// Split from [`acquire_for_run`] on purpose. The refusal has to come BEFORE the
+/// compile, so a misconfigured project is not made to sit through one; the
+/// *start* has to come after it, so a project with a syntax error does not cycle
+/// a PostgreSQL up and back down on every failed build.
+///
+/// `Ok(false)` means "not opted in" — the overwhelmingly common case, and it
+/// costs one read of the `sky.toml` the build is about to read anyway: no
+/// registry, no `pg_ctl --version`, no filesystem probe.
+pub fn check_run_config(project: &Path, verb: &str) -> Result<bool, String> {
+    if !project_uses_embedded(project) {
+        return Ok(false);
+    }
+    let dsn_env = dsn_env_name(project);
+    let sources = vec![
+        (dsn_env.clone(), std::env::var(&dsn_env).ok()),
+        // Not namespaced: `rt.Db_connect` falls back to a bare `DATABASE_URL`
+        // whatever the prefix, so it is just as capable of pointing the app
+        // somewhere else.
+        ("DATABASE_URL".to_string(), std::env::var("DATABASE_URL").ok()),
+        (
+            "sky.toml [database] path".to_string(),
+            project::sky_toml_section_key(project, "database", "path"),
+        ),
+        (
+            "sky.toml [database] url".to_string(),
+            project::sky_toml_section_key(project, "database", "url"),
+        ),
+    ];
+    if let Some(msg) = embedded_dsn_conflict(verb, &sources) {
+        return Err(msg);
+    }
+    Ok(true)
+}
+
+impl RunLease {
+    /// The environment the app is launched with. One variable: the app consumes
+    /// a DSN and never learns which tier provisioned it.
+    pub fn envs(&self) -> Vec<(String, String)> {
+        vec![(self.env_name.clone(), self.dsn.clone())]
+    }
+
+    /// What to tell the user, so a cluster appearing in `sky db ps` is never a
+    /// surprise and the socket is copy-pasteable into `psql`.
+    ///
+    /// `prefix` is used VERBATIM — `sky run:` and `[watch]` are punctuated
+    /// differently, and appending a colon to the second produced `[watch]:`.
+    pub fn banner(&self, prefix: &str) -> String {
+        format!(
+            "{prefix} embedded PostgreSQL {} {} — {}",
+            self.version,
+            if self.already_running {
+                "already running"
+            } else {
+                "started"
+            },
+            self.socket_dir.display()
+        )
+    }
 }
 
 /// `sky db stop [--all]` — `pg_ctl stop -m fast`: refuse new connections, roll
@@ -1021,6 +1413,8 @@ fn stop_impl(all: bool) -> Result<String, String> {
                     pid,
                     pg_version: String::new(),
                     started_at: 0,
+                    explicit: false,
+                    refs: Vec::new(),
                 });
                 vec![(key, entry)]
             }
@@ -1052,6 +1446,13 @@ fn stop_impl(all: bool) -> Result<String, String> {
             Ok(o) if o.status.success() => {
                 if let Some(e) = reg.clusters.get_mut(&project) {
                     e.pid = 0;
+                    // The user stopped it by hand, so neither the persistence a
+                    // `sky db start` asked for nor any `sky run` reference
+                    // survives. Leaving `explicit` set would make the NEXT
+                    // cluster — the one a later `sky run` starts — permanent by
+                    // inheritance, and leaving refs would make it unstoppable.
+                    e.explicit = false;
+                    e.refs.clear();
                 }
                 remove_socket_dir_if_empty(Path::new(&entry.socket_dir));
                 stopped.push(project);
@@ -1139,6 +1540,8 @@ fn ps_impl(all: bool) -> Result<String, String> {
                         pid: if let Liveness::Running(p) = l { p } else { 0 },
                         pg_version: String::new(),
                         started_at: 0,
+                        explicit: false,
+                        refs: Vec::new(),
                     },
                     l,
                 )]),
@@ -1311,7 +1714,13 @@ mod tests {
             pid,
             pg_version: "16.2".to_string(),
             started_at: 1_700_000_000,
+            explicit: false,
+            refs: Vec::new(),
         }
+    }
+
+    fn run_ref(pid: i32, cmd: &str) -> RunRef {
+        RunRef { pid, cmd: cmd.to_string(), since: 1_700_000_000 }
     }
 
     #[test]
@@ -1400,6 +1809,186 @@ mod tests {
         let table = render_table(&rows);
         assert!(table.contains("stopped"), "{table}");
         assert!(!table.contains("31337"), "a reaped pid leaked into `ps` output:\n{table}");
+    }
+
+    // --- run references (the `sky run` ref count) ---
+
+    /// The headline invariant P4 exists for. Two `sky run`s hold refs; the first
+    /// one's exit removes ITS ref and finds the list still non-empty, so the
+    /// second one's database is not stopped underneath it.
+    #[test]
+    fn a_second_runs_ref_survives_the_first_runs_exit() {
+        let mut e = entry("/p/app/.skydata/pg", 4242);
+        e.refs = vec![run_ref(101, "sky run src/Main.sky"), run_ref(202, "sky run src/Main.sky")];
+
+        // pid 101 exits: prune (both still alive) then drop its own ref.
+        let remaining: Vec<RunRef> = prune_refs(&e.refs, &|_| true)
+            .into_iter()
+            .filter(|r| r.pid != 101)
+            .collect();
+
+        assert_eq!(remaining.len(), 1, "the second run's reference was lost: {remaining:?}");
+        assert_eq!(remaining[0].pid, 202);
+        assert!(
+            !(e.explicit || remaining.is_empty()),
+            "with a live reference outstanding the cluster must be kept"
+        );
+    }
+
+    /// And the other half: the LAST run's exit does stop it, or `sky run` would
+    /// leak a cluster per project for the rest of the session.
+    #[test]
+    fn the_last_ref_leaving_releases_the_cluster() {
+        let mut e = entry("/p/app/.skydata/pg", 4242);
+        e.refs = vec![run_ref(202, "sky run src/Main.sky")];
+        let remaining: Vec<RunRef> = prune_refs(&e.refs, &|_| true)
+            .into_iter()
+            .filter(|r| r.pid != 202)
+            .collect();
+        assert!(remaining.is_empty());
+        assert!(!e.explicit && remaining.is_empty(), "nothing is holding it: it must stop");
+    }
+
+    /// A cluster a user asked for by name stays up whatever `sky run` does with
+    /// it. This is the documented difference between the two verbs, and it is
+    /// checked BEFORE the ref list — an explicit cluster with no refs at all
+    /// must still survive.
+    #[test]
+    fn an_explicitly_started_cluster_is_never_stopped_by_a_run_exit() {
+        let mut e = entry("/p/app/.skydata/pg", 4242);
+        e.explicit = true;
+        e.refs = vec![run_ref(303, "sky run src/Main.sky")];
+        let remaining: Vec<RunRef> = prune_refs(&e.refs, &|_| true)
+            .into_iter()
+            .filter(|r| r.pid != 303)
+            .collect();
+        assert!(remaining.is_empty(), "the run's own ref should have gone");
+        assert!(
+            e.explicit || !remaining.is_empty(),
+            "`sky db start` asked for persistence and a `sky run` exit overrode it"
+        );
+    }
+
+    /// A `SIGKILL`ed `sky run` never releases its reference. If a dead pid
+    /// counted, that project's cluster would be pinned up for the rest of the
+    /// session and `sky run` would have created an unstoppable database — the
+    /// stale-`postmaster.pid` failure, one layer up.
+    #[test]
+    fn a_dead_or_recycled_ref_holder_does_not_pin_the_cluster() {
+        let refs = vec![
+            run_ref(101, "sky run src/Main.sky"), // gone
+            run_ref(202, "sky run src/Main.sky"), // pid recycled by something else
+            run_ref(303, "sky run src/Main.sky"), // genuinely still running
+        ];
+        // The probe mirrors `ref_is_live`: aliveness first, then identity.
+        let alive = |r: &RunRef| r.pid != 101;
+        let command = |pid: i32| match pid {
+            202 => Some("/bin/zsh -l".to_string()),
+            _ => Some("sky run src/Main.sky".to_string()),
+        };
+        let live = |r: &RunRef| alive(r) && command(r.pid).is_none_or(|c| c == r.cmd);
+
+        let kept = prune_refs(&refs, &live);
+        assert_eq!(kept.len(), 1, "stale refs survived: {kept:?}");
+        assert_eq!(kept[0].pid, 303);
+    }
+
+    /// [`prune_refs`] takes its predicate as a parameter, so the tests above
+    /// prove the arithmetic and nothing about the predicate the product uses.
+    /// This one drives the real [`ref_is_live`] against real pids.
+    #[test]
+    fn the_real_liveness_predicate_checks_identity_and_not_just_the_pid() {
+        // This process, recorded as it actually is: a reference that must hold.
+        assert!(ref_is_live(&self_ref()), "a live holder's own reference was dropped");
+        // Same pid, different program — the recycled-pid case, forged by
+        // recording a command line this process does not have.
+        let impostor = RunRef {
+            pid: std::process::id() as i32,
+            cmd: "/bin/zsh -l".to_string(),
+            since: 0,
+        };
+        assert!(
+            !ref_is_live(&impostor) || process_command(impostor.pid).is_none(),
+            "a recycled pid counted as a live reference; only aliveness was checked"
+        );
+        assert!(!ref_is_live(&run_ref(0, "sky run")), "pid 0 is never a reference");
+        assert!(!ref_is_live(&run_ref(-1, "sky run")));
+    }
+
+    /// Where there is no `ps` to ask, a live pid is believed. Dropping refs we
+    /// cannot verify would tear a running app's database out from under it,
+    /// which is a far worse outcome than keeping a cluster up too long.
+    #[test]
+    fn without_ps_a_live_pid_is_still_a_reference() {
+        let refs = vec![run_ref(303, "sky run src/Main.sky")];
+        let live = |r: &RunRef| r.pid > 0 && Option::<String>::None.is_none_or(|c| c == r.cmd);
+        assert_eq!(prune_refs(&refs, &live).len(), 1);
+    }
+
+    /// An entry written by P2 has neither field. It must load, not be discarded
+    /// — a registry that fails to parse orphans every cluster listed in it.
+    #[test]
+    fn a_pre_p4_registry_entry_loads_with_no_refs_and_no_persistence() {
+        let json = r#"{"version":1,"clusters":{"/p/app":{"data_dir":"/p/app/.skydata/pg",
+            "socket_dir":"/tmp/sky-abc","pid":4242,"pg_version":"14.21","started_at":1700000000}}}"#;
+        let reg: Registry = serde_json::from_str(json).expect("a P2 registry must still load");
+        let e = &reg.clusters["/p/app"];
+        assert_eq!(e.pid, 4242);
+        assert!(!e.explicit, "an entry with no recorded intent must not be treated as persistent");
+        assert!(e.refs.is_empty());
+    }
+
+    // --- opting in, and the DSN ---
+
+    #[test]
+    fn the_injected_dsn_is_one_the_runtime_routes_to_postgres() {
+        let dsn = dsn_for_socket_dir(Path::new("/tmp/sky-0123456789abcdef"));
+        assert_eq!(dsn, "postgresql:///postgres?host=/tmp/sky-0123456789abcdef");
+        // The compiler and the runtime both classify by prefix; if this ever
+        // stopped starting with `postgresql://` the app would open SQLite at a
+        // path named after a DSN and "work" until the first Postgres-only query.
+        assert_eq!(project::driver_for_dsn(&dsn), "pgx");
+    }
+
+    #[test]
+    fn an_explicit_dsn_alongside_embedded_is_refused_and_names_its_source() {
+        let sources = vec![
+            ("SKY_DB_PATH".to_string(), None),
+            ("DATABASE_URL".to_string(), Some("postgres://prod/db".to_string())),
+            ("sky.toml [database] path".to_string(), Some("./app.db".to_string())),
+        ];
+        let m = embedded_dsn_conflict("sky run", &sources).expect("an explicit DSN must be refused");
+        assert!(m.starts_with("sky run:"), "{m}");
+        // The FIRST set source, and only it: four complaints about one mistake
+        // are harder to act on than one.
+        assert!(m.contains("DATABASE_URL = postgres://prod/db"), "{m}");
+        assert!(!m.contains("./app.db"), "every source was reported at once:\n{m}");
+        // Both ways out are named, because either may be the intended one.
+        assert!(m.contains("remove `embedded = true`"), "{m}");
+        assert!(m.contains("unset DATABASE_URL"), "{m}");
+
+        // A sky.toml source is fixed by editing a file, not by unsetting it.
+        let toml_only = vec![(
+            "sky.toml [database] path".to_string(),
+            Some("./app.db".to_string()),
+        )];
+        let m = embedded_dsn_conflict("sky run", &toml_only).unwrap();
+        assert!(m.contains("delete `sky.toml [database] path`"), "{m}");
+        assert!(!m.contains("unset"), "a config line cannot be unset:\n{m}");
+    }
+
+    #[test]
+    fn no_declared_dsn_is_no_conflict_and_a_blank_one_is_not_a_dsn() {
+        assert_eq!(
+            embedded_dsn_conflict("sky run", &[("SKY_DB_PATH".to_string(), None)]),
+            None
+        );
+        // Exported-but-empty is how a shell profile clears a variable; treating
+        // it as "set" would refuse to run for a value that configures nothing.
+        assert_eq!(
+            embedded_dsn_conflict("sky run", &[("SKY_DB_PATH".to_string(), Some("  ".into()))]),
+            None
+        );
     }
 
     // --- process identity ---

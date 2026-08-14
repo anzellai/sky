@@ -949,6 +949,18 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
                 cfg.extra_defaults.push(("DB_ISOLATION".into(), val))
             }
             ("database", "txRetry") => cfg.extra_defaults.push(("DB_TX_RETRY".into(), val)),
+            // `embedded` opts the project into the `sky db start` cluster
+            // supervisor (docs/skydb/embedded-postgres.md). It is a TOOLCHAIN
+            // key, not a runtime one: `sky run` reads it, starts the cluster and
+            // injects the DSN as `<PREFIX>_DB_PATH` into the app's environment.
+            // The binary itself must never learn which tier provisioned its DSN,
+            // so nothing is emitted for it here.
+            //
+            // It is matched rather than left to the fall-through arm because that
+            // arm reports every unmatched key in a recognised section as
+            // honoured-by-nothing — which is exactly what `embedded` would look
+            // like, while being the one key that opts the project in.
+            ("database", "embedded") => {}
             // `[analytics] dbPath` → the Std.Analytics store override
             // (SKY_ANALYTICS_DB_PATH). Unset → analytics reuses the console DB
             // (SKY_CONSOLE_DB_PATH). See analytics_store.go.
@@ -1056,6 +1068,7 @@ fn accepted_config_keys(section: &str) -> &'static [&'static str] {
             "connMaxIdleTime",
             "isolation",
             "txRetry",
+            "embedded",
         ],
         "auth" => &["cookieName", "tokenTtl", "driver"],
         "log" => &["format", "level"],
@@ -1155,6 +1168,58 @@ pub fn sky_toml_project_key(project_dir: &Path, key: &str, default: &str) -> Str
         }
     }
     default.to_string()
+}
+
+/// Read a scalar key out of a named `sky.toml` section — `[database] embedded`,
+/// `[env] prefix`, and anything else a *toolchain* verb needs to see.
+///
+/// [`sky_toml_project_key`] cannot serve this: it only ever looks at the
+/// top-level / `[project]` / `[source]` scope, and it sanitises the value to a
+/// single path segment (a DSN would come back as the default). The parsing rules
+/// here are the ones [`read_sky_toml_config`] already applies to every runtime
+/// key — same section tracking, same [`parse_toml_scalar`] — so a value read by a
+/// verb and a value seeded into the app's environment cannot disagree about what
+/// the file says.
+///
+/// Returns `None` when the file, the section or the key is absent. A key present
+/// with an empty value returns `Some("")`, which is a *set* key: callers that
+/// treat "declared" as meaningful (the embedded/DSN ambiguity check) must be able
+/// to tell it from "absent".
+pub fn sky_toml_section_key(project_dir: &Path, section: &str, key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(project_dir.join("sky.toml")).ok()?;
+    let mut cur = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            if let Some(end) = line.find(']') {
+                cur = line[1..end].trim().trim_matches('"').to_string();
+                continue;
+            }
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        if cur == section && k.trim() == key {
+            return Some(parse_toml_scalar(v));
+        }
+    }
+    None
+}
+
+/// A `sky.toml` boolean. TOML's own spelling is bare `true`/`false`; `"true"`
+/// and `yes`/`on`/`1` are accepted because a config file is written by hand and
+/// an opt-in that silently reads as "off" is the worst possible failure — the
+/// project looks configured and behaves as if it were not.
+pub fn sky_toml_flag(project_dir: &Path, section: &str, key: &str) -> bool {
+    matches!(
+        sky_toml_section_key(project_dir, section, key)
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("true" | "yes" | "on" | "1")
+    )
 }
 
 /// Output binary name (`bin` key, default `app`) — the file `go build -o`
@@ -1692,7 +1757,8 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 mod sky_toml_tests {
     use super::{
         accepted_config_keys, configured_bin_name, configured_source_root, db_driver_conflict,
-        driver_for_dsn, read_sky_toml_config, sky_build_goflags_from, unknown_config_keys,
+        driver_for_dsn, read_sky_toml_config, sky_build_goflags_from, sky_toml_flag,
+        sky_toml_section_key, unknown_config_keys,
     };
 
     #[test]
@@ -1851,6 +1917,78 @@ mod sky_toml_tests {
             "{:?}",
             cfg.unknown_config_keys
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[database] embedded` is the embedded-PostgreSQL opt-in
+    /// (docs/skydb/embedded-postgres.md). It is read by `sky run`, not by the
+    /// app, so it must seed NO runtime default — and it must not be reported as
+    /// a key Sky ignores, because the one key that opts a project in cannot also
+    /// be the one key that warns it has no effect.
+    #[test]
+    fn the_embedded_opt_in_is_a_toolchain_key_that_seeds_nothing_and_warns_nothing() {
+        let dir = std::env::temp_dir().join("sky-embedded-toml-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(&path, "name = \"x\"\n[database]\nembedded = true\n").unwrap();
+
+        let cfg = read_sky_toml_config(&path);
+        assert!(
+            !cfg.extra_defaults.iter().any(|(s, _)| s.starts_with("DB_")),
+            "`embedded` must not reach the app's environment: {:?}",
+            cfg.extra_defaults
+        );
+        assert!(
+            cfg.unknown_config_keys.is_empty(),
+            "the opt-in key reports itself as honoured by nothing: {:?}",
+            cfg.unknown_config_keys
+        );
+        assert!(sky_toml_flag(&dir, "database", "embedded"));
+        assert!(!sky_toml_flag(&dir, "database", "isolation"));
+
+        // Bare TOML `false`, the quoted spellings, and the absent case.
+        for (text, want) in [
+            ("[database]\nembedded = false\n", false),
+            ("[database]\nembedded = \"true\"\n", true),
+            ("[database]\nembedded = true  # dev only\n", true),
+            ("[database]\npath = \"a.db\"\n", false),
+            // Right key, wrong section: the flag is scoped, or a `[live]
+            // embedded` would silently start a PostgreSQL.
+            ("[live]\nembedded = true\n", false),
+        ] {
+            std::fs::write(&path, text).unwrap();
+            assert_eq!(sky_toml_flag(&dir, "database", "embedded"), want, "{text:?}");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `sky_toml_section_key` must read a DSN back VERBATIM. The older
+    /// `sky_toml_project_key` sanitises its value to a single path segment, so a
+    /// `postgres://…` URL comes back as the default — a caller that used it for
+    /// the embedded/DSN ambiguity check would see "no DSN declared" and start a
+    /// cluster over the top of the operator's database.
+    #[test]
+    fn section_keys_come_back_verbatim_and_distinguish_empty_from_absent() {
+        let dir = std::env::temp_dir().join("sky-section-key-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"x\"\n[env]\nprefix = \"FENCE\"\n\
+             [database]\nurl = \"postgres://u:p@host/db\"\npath = \"\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            sky_toml_section_key(&dir, "database", "url").as_deref(),
+            Some("postgres://u:p@host/db")
+        );
+        assert_eq!(sky_toml_section_key(&dir, "env", "prefix").as_deref(), Some("FENCE"));
+        // Set-but-empty is not the same as absent.
+        assert_eq!(sky_toml_section_key(&dir, "database", "path").as_deref(), Some(""));
+        assert_eq!(sky_toml_section_key(&dir, "database", "driver"), None);
+        assert_eq!(sky_toml_section_key(&dir, "nosuch", "url"), None);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
