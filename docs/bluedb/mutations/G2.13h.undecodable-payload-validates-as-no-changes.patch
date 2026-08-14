@@ -1,0 +1,21 @@
+diff --git a/runtime-go/bluedb/committer.go b/runtime-go/bluedb/committer.go
+index 7548ae81..4b7d83e7 100644
+--- a/runtime-go/bluedb/committer.go
++++ b/runtime-go/bluedb/committer.go
+@@ -475,7 +475,15 @@ func decodePayload(payload []byte) ([]KeyChange, error) {
+ 	if len(payload) == 0 {
+ 		return nil, nil
+ 	}
+-	return DecodeChangelogPayload(payload)
++	// MUTATION G2.13h (N6): the pre-fix fail-open. A payload that does not DECODE is
++	// laundered into "no changes for this job", so the job commits while contributing
++	// nothing to `pending` / the recent-changes ring, and a later txn in the same window
++	// validates against a hole.
++	chg, err := DecodeChangelogPayload(payload)
++	if err != nil {
++		return nil, nil
++	}
++	return chg, nil
+ }
+ 
+ // changelogTailChanges decodes the durable Changelog.Tail(after) into a flat KeyChange list —

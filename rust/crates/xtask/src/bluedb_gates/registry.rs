@@ -702,13 +702,13 @@ pub static REGISTRY: &[Gate] = &[
             targets: &["runtime-go/bluedb"],
         }]),
     },
-    // G2.13a–g — the audit corpus, ONE GATE PER PROPERTY.
+    // G2.13a–h — the audit corpus, ONE GATE PER PROPERTY.
     //
-    // Seven gates rather than one gate with seven mutations, because
+    // Eight gates rather than one gate with eight mutations, because
     // `mutations.rs` classifies with `red.exit_ok || !red.output.contains(
     // m.expect)`: it checks only that THIS mutation's assertion fired, never
-    // that the other six did not. Seven mutations on one gate would let a
-    // single defect that broke several properties mint seven PROVENs out of one
+    // that the others did not. Eight mutations on one gate would let a
+    // single defect that broke several properties mint eight PROVENs out of one
     // undifferentiated failure. See `gates_g2_13.rs`'s module doc and
     // `expect_strings_are_pairwise_discriminating` below, which closes the
     // other half of that hole for the whole registry.
@@ -834,6 +834,47 @@ pub static REGISTRY: &[Gate] = &[
             // failing closed) still runs; both fire under this patch.
             expect: "Get swallowed an injected SSTable read fault: ok=false with Err() == nil",
             targets: &["runtime-go/bluedb/reader.go"],
+        }]),
+    },
+    Gate {
+        id: "G2.13h",
+        goal: 2,
+        // The FAIL-OPEN class, as a property: an error on the commit/validation
+        // route must fail the operation CLOSED rather than return a plausible
+        // zero a later transaction then validates against. Four fixtures, four
+        // doors — `pending`, the recent-changes ring, the watermark registry,
+        // the ring's cold-start seed — all ending in under-rejection.
+        //
+        // Until this gate existed those four were recorded in AUDIT_OWNERSHIP
+        // as run by NO gate: CI's `go test ./bluedb/...` executed them and
+        // nothing else did, so they were invisible to --verify-mutations, to
+        // STATUS.md and to every goal verdict. This is the class that produced
+        // N6 *and* a second instance in the same file.
+        title: "the commit/validation route fails closed",
+        // Measured at 0.39s wall for all four fixtures — no timed arm, unlike
+        // G2.13f's drains.
+        tier: Tier::Fast,
+        run: gates_g2_13::g2_13h_commit_route_fails_closed,
+        budget_s: 300,
+        mutations: Mutations::new(&[Mutation {
+            id: "G2.13h/undecodable-payload-validates-as-no-changes",
+            patch: "docs/bluedb/mutations/G2.13h.undecodable-payload-validates-as-no-changes.patch",
+            // Verbatim from the observed failure of the N6 arm under the
+            // reverted decodePayload: the blind job committed at
+            // {WallMs:41000 Logical:2} and the txn that had read the key
+            // committed at Logical:3, in one drain window.
+            //
+            // Chosen from the CONSEQUENCE assertion (audit_test.go:1280), not
+            // from the remedy assertion below it: "an undecodable payload
+            // returns an error" would also be satisfied by a fix that returns
+            // the error and then ignores it. It is one Go string-literal
+            // segment, so it survives `every_declared_assertion_is_verbatim_
+            // in_the_fixture_that_emits_it`.
+            expect: "did not decode, so it contributed NOTHING to `pending`, and the txn validated",
+            // committer.go only. The N6 fix and C6b's blind-path decode both
+            // route through decodePayload there; reader.go / txn.go /
+            // pebble_engine.go — G2.13a–g's targets — are untouched.
+            targets: &["runtime-go/bluedb/committer.go"],
         }]),
     },
     // -- Goal 3 — easy + simple (P4) ---------------------------------------
