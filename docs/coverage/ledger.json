@@ -4030,6 +4030,16 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:fleet (gate `apps-fleet`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:ledger (gate `apps-ledger`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
@@ -11235,10 +11245,9 @@
           ]
         },
         "Std.Money": {
-          "count": 10,
+          "count": 9,
           "symbols": [
             "amount",
-            "compare",
             "currency",
             "currencyName",
             "gt",
@@ -11559,8 +11568,8 @@
           ]
         }
       },
-      "count": 699,
-      "pct_of_denominator": 39.4
+      "count": 698,
+      "pct_of_denominator": 39.3
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -12358,10 +12367,9 @@
           ]
         },
         "Std.Money": {
-          "count": 10,
+          "count": 9,
           "symbols": [
             "amount",
-            "compare",
             "currency",
             "currencyName",
             "gt",
@@ -12683,7 +12691,7 @@
           ]
         }
       },
-      "count": 778,
+      "count": 777,
       "pct_of_denominator": 43.8
     }
   },
@@ -12751,10 +12759,10 @@
       ],
       "gate": "apps-fleet",
       "id": "apps:fleet",
-      "modules_imported": 31,
+      "modules_imported": 32,
       "path": "apps/ledger",
-      "refs_generous": 142,
-      "refs_qualified": 125,
+      "refs_generous": 144,
+      "refs_qualified": 127,
       "role": "Layer2",
       "sky_files": 11,
       "sky_toml_sections": [
@@ -12769,10 +12777,10 @@
       ],
       "gate": "apps-ledger",
       "id": "apps:ledger",
-      "modules_imported": 31,
+      "modules_imported": 32,
       "path": "apps/ledger",
-      "refs_generous": 142,
-      "refs_qualified": 125,
+      "refs_generous": 144,
+      "refs_qualified": 127,
       "role": "Layer2",
       "sky_files": 11,
       "sky_toml_sections": [
@@ -13772,8 +13780,8 @@
       "id": "tests/conformance",
       "modules_imported": 34,
       "path": "tests/conformance",
-      "refs_generous": 401,
-      "refs_qualified": 395,
+      "refs_generous": 403,
+      "refs_qualified": 397,
       "role": "Conformance",
       "sky_files": 23,
       "sky_toml_sections": []
