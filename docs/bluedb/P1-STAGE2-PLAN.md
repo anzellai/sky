@@ -476,6 +476,43 @@ rather than shipped green. What ships holds the registry lock so the reader's
 `Release` parks on it, then reads pebble's own `Metrics().Snapshots.Count` at
 that instant.
 
+## An injection fixture can be defeated by an ALREADY-FIXED path
+
+Found in H3b (the scan-path sibling). Arming the errorfs injector for the whole
+transaction would have made the test **pass against the unfixed scan path** —
+because `Txn.Put` reads a pre-image through `reader.Get`, which latches via
+H3's already-corrected point-read route. The txn would have failed for the right
+reason by the wrong mechanism, and the scan fix would have looked verified.
+
+The fixture arms the fault for the **scan window only**, which is also the
+realistic model of a transient I/O error. The pre-image read then succeeds, the
+read-set is well-formed, `validate()` passes it, and nothing stops the commit
+but the scan's own latched error.
+
+Generalised: **when a fixture exercises a path adjacent to one you already
+fixed, the earlier fix can satisfy the assertion.** Scope the fault to the
+window under test, and confirm by mutation that reverting *only* the new fix
+turns it red.
+
+That is the seventh occasion in this phase where a test would have passed
+against the code it was written to catch.
+
+## Two defects found only by fixing the sibling
+
+Neither was in the audit, the grills, or the Judge's report; both surfaced from
+asking "what else is on this path?":
+
+* **`pebbleCursor.Next`'s value arm was unchecked.** `Get` checks
+  `iter.Error()` after `Value()`; the cursor did not. A failed lazy value-block
+  read returns an empty slice, which `len(v)==0` treats as a tombstone — so the
+  row is silently skipped. That launders "unreadable block" into "deleted row",
+  one row at a time, with **no cursor error at all**.
+* **`ScanCollection` witnessed the collection BEFORE scanning it.** A failed
+  scan left `collWitness[coll]=true` — an empty collection recorded as a
+  witnessed fact, which `validate()` then finds satisfied. Strictly worse than
+  recording nothing, and unrecoverable by any window witness: the rows it failed
+  to read are OLD, so they lie outside the `(readTs, commitTs]` window entirely.
+
 ## Commit sequence
 
 `--verify-mutations` refuses to run against a tree that differs from HEAD
