@@ -1,0 +1,6 @@
+PROBE gate=G2.21 state=FAIL root=<scratch-worktree>
+  a GC pass trims the changelog below T and writes no other logical state is not proven: 1/2 pinned fixture(s) reported a passing event
+  TestGCChangelogRetentionTrimsBelowT did not report a passing `go test -json` event (it FAILED)
+  TestGCChangelogRetentionTrimsBelowT: === RUN   TestGCChangelogRetentionTrimsBelowT
+  TestGCChangelogRetentionTrimsBelowT:     gc_test.go:238: expected retention trim at T={WallMs:1000 Logical:3}, got trimmed=false T={WallMs:1000 Logical:3}
+  TestGCChangelogRetentionTrimsBelowT: --- FAIL: TestGCChangelogRetentionTrimsBelowT (0.07s)

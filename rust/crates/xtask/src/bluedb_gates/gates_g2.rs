@@ -60,7 +60,33 @@ const ZSTD_TAG: &str = "pebblegozstd";
 /// How many lines of a failing run are quoted into the findings. Bounded
 /// because an unbounded quote is not a report: one C8 fixture emitted 121,145
 /// lines, which is the same as emitting none.
+///
+/// The budget applies to DIAGNOSTIC lines only — see [`is_verdict_line`].
 const QUOTE_LINES: usize = 40;
+
+/// Is this a per-test VERDICT line (`--- FAIL: TestX (0.01s)`) rather than a
+/// diagnostic one?
+///
+/// Verdict lines are exempt from [`QUOTE_LINES`], and the reason is a bug this
+/// exemption fixes rather than a preference. `--- FAIL: <name>` is the only line
+/// that says WHICH leaf failed, and Go emits it AFTER that test's output. A
+/// head-truncated quote therefore drops exactly it for any table-driven fixture
+/// that reports many sub-failures — and those are the fixtures where per-leaf
+/// evidence matters most. `G2.24/decode-data-version-drops-its-bounds-guard`
+/// was the case: deleting `decodeDataVersion`'s bounds guard panics on every
+/// short key in a 2000+ entry corpus, so its recorded RED transcript carried
+/// thousands of `panicked on key …` lines, no verdict line at all, and
+/// `every_pinned_leaf_is_reddened_by_a_recorded_mutation` could not confirm a
+/// leaf the run had plainly reddened.
+///
+/// Filing such a mutation under `STRUCTURAL_MUTATIONS` would have been the
+/// available lie — that const is explicitly for mutations that redden BEFORE
+/// `go test` runs — so the honest fix is here: the budget bounds the noise, and
+/// nothing bounds the verdict.
+fn is_verdict_line(output: &str) -> bool {
+    let t = output.trim_start();
+    t.starts_with("--- FAIL:") || t.starts_with("--- PASS:") || t.starts_with("--- SKIP:")
+}
 
 pub(super) struct GoTestRun {
     /// Tests that reported `Action:"pass"` — the only evidence that counts.
@@ -176,12 +202,22 @@ pub(super) fn go_test(ctx: &Ctx, tests: &[&str], budget: Duration) -> Result<GoT
         }
     }
 
-    let failure_log = output_by_test
-        .into_iter()
-        .filter(|(t, _)| !passed.contains(t))
-        .map(|(t, o)| format!("{t}: {o}"))
-        .take(QUOTE_LINES)
-        .collect();
+    // Diagnostics are budgeted; verdict lines are not (see `is_verdict_line`).
+    // The verdicts are appended rather than interleaved so the head of the quote
+    // still reads as the failure's own narrative.
+    let mut diagnostics: Vec<String> = Vec::new();
+    let mut verdicts: Vec<String> = Vec::new();
+    for (t, o) in output_by_test {
+        if passed.contains(&t) {
+            continue;
+        }
+        if is_verdict_line(&o) {
+            verdicts.push(format!("{t}: {o}"));
+        } else if diagnostics.len() < QUOTE_LINES {
+            diagnostics.push(format!("{t}: {o}"));
+        }
+    }
+    let failure_log: Vec<String> = diagnostics.into_iter().chain(verdicts).collect();
 
     Ok(GoTestRun {
         passed,

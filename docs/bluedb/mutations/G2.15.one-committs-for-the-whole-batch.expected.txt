@@ -1,0 +1,10 @@
+PROBE gate=G2.15 state=FAIL root=<scratch-worktree>
+  every job in a drained batch commits at its own strictly-increasing commitTs is not proven: 1/3 pinned fixture(s) reported a passing event
+  TestGroupCommitPerJobDistinctChangelog did not report a passing `go test -json` event (it FAILED)
+  TestGroupCommitPerJobSameKeyDistinctVersions did not report a passing `go test -json` event (it FAILED)
+  TestGroupCommitPerJobDistinctChangelog: === RUN   TestGroupCommitPerJobDistinctChangelog
+  TestGroupCommitPerJobDistinctChangelog:     engine_test.go:114: per-job commitTs not strictly increasing: {WallMs:1000 Logical:1} then {WallMs:1000 Logical:1}
+  TestGroupCommitPerJobDistinctChangelog: --- FAIL: TestGroupCommitPerJobDistinctChangelog (0.09s)
+  TestGroupCommitPerJobSameKeyDistinctVersions: === RUN   TestGroupCommitPerJobSameKeyDistinctVersions
+  TestGroupCommitPerJobSameKeyDistinctVersions:     engine_test.go:153: same-key jobs must get distinct increasing commitTs, got {WallMs:1000 Logical:1} then {WallMs:1000 Logical:1}
+  TestGroupCommitPerJobSameKeyDistinctVersions: --- FAIL: TestGroupCommitPerJobSameKeyDistinctVersions (0.05s)

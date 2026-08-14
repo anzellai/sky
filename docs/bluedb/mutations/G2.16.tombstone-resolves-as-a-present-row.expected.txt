@@ -1,0 +1,6 @@
+PROBE gate=G2.16 state=FAIL root=<scratch-worktree>
+  a read resolves the newest version at or below its readTs, from memtable or SSTable is not proven: 4/5 pinned fixture(s) reported a passing event
+  TestTombstone did not report a passing `go test -json` event (it FAILED)
+  TestTombstone: === RUN   TestTombstone
+  TestTombstone:     engine_test.go:231: Get(K,t2 after delete)="",true want absent
+  TestTombstone: --- FAIL: TestTombstone (0.06s)

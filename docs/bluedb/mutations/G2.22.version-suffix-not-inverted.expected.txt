@@ -1,0 +1,6 @@
+PROBE gate=G2.22 state=FAIL root=<scratch-worktree>
+  the on-disk key encoding satisfies Pebble's comparer contract is not proven: 3/4 pinned fixture(s) reported a passing event
+  TestVersionOrderingNewestFirst did not report a passing `go test -json` event (it FAILED)
+  TestVersionOrderingNewestFirst: === RUN   TestVersionOrderingNewestFirst
+  TestVersionOrderingNewestFirst:     comparer_test.go:98: expected newer < older under Compare (newest first); got 1
+  TestVersionOrderingNewestFirst: --- FAIL: TestVersionOrderingNewestFirst (0.00s)

@@ -3,4 +3,4 @@ PROBE gate=G2.13f state=FAIL root=<scratch-worktree>
   TestAuditN4CloseDoesNotPanicConcurrentSnapshot did not report a passing `go test -json` event (it FAILED)
   TestAuditN4CloseDoesNotPanicConcurrentSnapshot: === RUN   TestAuditN4CloseDoesNotPanicConcurrentSnapshot
   TestAuditN4CloseDoesNotPanicConcurrentSnapshot:     audit_test.go:754: snapshotAt() after Close reports Err() = <nil>, want ErrClosed
-  TestAuditN4CloseDoesNotPanicConcurrentSnapshot: --- FAIL: TestAuditN4CloseDoesNotPanicConcurrentSnapshot (0.13s)
+  TestAuditN4CloseDoesNotPanicConcurrentSnapshot: --- FAIL: TestAuditN4CloseDoesNotPanicConcurrentSnapshot (0.09s)

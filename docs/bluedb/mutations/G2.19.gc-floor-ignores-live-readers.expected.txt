@@ -1,0 +1,6 @@
+PROBE gate=G2.19 state=FAIL root=<scratch-worktree>
+  GC never collects a version a live reader can still need is not proven: 3/4 pinned fixture(s) reported a passing event
+  TestGC2aReaderProtected did not report a passing `go test -json` event (it FAILED)
+  TestGC2aReaderProtected: === RUN   TestGC2aReaderProtected
+  TestGC2aReaderProtected:     gc_test.go:126: GC floor must be pinned to live reader readTs {WallMs:1000 Logical:1}, got {WallMs:1000 Logical:3}
+  TestGC2aReaderProtected: --- FAIL: TestGC2aReaderProtected (10.06s)

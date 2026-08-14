@@ -1,0 +1,6 @@
+PROBE gate=G2.23 state=FAIL root=<scratch-worktree>
+  the comparer's key-shortening hooks stay inside Pebble's contract is not proven: 3/4 pinned fixture(s) reported a passing event
+  TestSuccessorProperties did not report a passing `go test -json` event (it FAILED)
+  TestSuccessorProperties: === RUN   TestSuccessorProperties
+  TestSuccessorProperties:     comparer_property_test.go:184: Successor(0000) returned its input unchanged; a strictly greater shortened key exists (key-part 00)
+  TestSuccessorProperties: --- FAIL: TestSuccessorProperties (0.00s)

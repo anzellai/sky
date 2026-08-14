@@ -1,0 +1,43 @@
+PROBE gate=G2.24 state=FAIL root=<scratch-worktree>
+  every key parser rejects corrupt bytes without panicking and still accepts well-formed ones is not proven: 3/4 pinned fixture(s) reported a passing event
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic did not report a passing `go test -json` event (it FAILED)
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic: === RUN   TestDecodeDataVersionRejectsCorruptKeysWithoutPanic
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key  (len=0): runtime error: slice bounds out of range [:-1]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key  (len=0): runtime error: slice bounds out of range [:-1]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key  (len=0): runtime error: slice bounds out of range [:-1]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 00 (len=1): runtime error: slice bounds out of range [-12:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000 (len=2): runtime error: slice bounds out of range [-11:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000ff (len=3): runtime error: slice bounds out of range [-10:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000ffff (len=4): runtime error: slice bounds out of range [-9:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000ffffff (len=5): runtime error: slice bounds out of range [-8:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000ffffffff (len=6): runtime error: slice bounds out of range [-7:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000ffffffffff (len=7): runtime error: slice bounds out of range [-6:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000ffffffffffff (len=8): runtime error: slice bounds out of range [-5:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000ffffffffffffff (len=9): runtime error: slice bounds out of range [-4:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000fffffffffffffffe (len=10): runtime error: slice bounds out of range [-3:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000fffffffffffffffeff (len=11): runtime error: slice bounds out of range [-2:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 0000fffffffffffffffeffff (len=12): runtime error: slice bounds out of range [-1:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 0000fffffffffffffffeffffff
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 0000fffffffffffffffefffffffe
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 0000fffffffffffffffefffffffe00
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 0000fffffffffffffffefffffffe01
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 0000fffffffffffffffefffffffe0c
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 0000fffffffffffffffefffffffe0e
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 0000fffffffffffffffefffffffe7f
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 0000fffffffffffffffefffffffeff
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 0000fffffffffffffffefffffffe0daabb
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key  (len=0): runtime error: slice bounds out of range [:-1]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 00 (len=1): runtime error: slice bounds out of range [-12:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b (len=2): runtime error: slice bounds out of range [-11:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00 (len=3): runtime error: slice bounds out of range [-10:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00ff (len=4): runtime error: slice bounds out of range [-9:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00ffff (len=5): runtime error: slice bounds out of range [-8:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00ffffff (len=6): runtime error: slice bounds out of range [-7:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00ffffffff (len=7): runtime error: slice bounds out of range [-6:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00ffffffffff (len=8): runtime error: slice bounds out of range [-5:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00ffffffffffff (len=9): runtime error: slice bounds out of range [-4:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00ffffffffffffff (len=10): runtime error: slice bounds out of range [-3:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00fffffffffffffff8 (len=11): runtime error: slice bounds out of range [-2:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:19: decodeDataVersion panicked on key 006b00fffffffffffffff8ff (len=12): runtime error: slice bounds out of range [-1:]
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 006b00fffffffffffffff8ffff
+  TestDecodeDataVersionRejectsCorruptKeysWithoutPanic:     keys_test.go:91: decodeDataVersion accepted malformed key 006b00fffffffffffffff8ffffff

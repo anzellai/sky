@@ -1,0 +1,10 @@
+PROBE gate=G2.17 state=FAIL root=<scratch-worktree>
+  the commit clock never re-issues a timestamp across a restart is not proven: 0/2 pinned fixture(s) reported a passing event
+  TestHLCMonotonicRestartFloor did not report a passing `go test -json` event (it FAILED)
+  TestMetadataInBatch did not report a passing `go test -json` event (it FAILED)
+  TestHLCMonotonicRestartFloor: === RUN   TestHLCMonotonicRestartFloor
+  TestHLCMonotonicRestartFloor:     engine_test.go:265: restart floor violated: persisted hi={WallMs:5000 Logical:1}, next={WallMs:1000 Logical:1} (must be strictly greater despite backward clock)
+  TestHLCMonotonicRestartFloor: --- FAIL: TestHLCMonotonicRestartFloor (0.16s)
+  TestMetadataInBatch: === RUN   TestMetadataInBatch
+  TestMetadataInBatch:     engine_test.go:305: recovered hlc_hi={WallMs:3000 Logical:0}, want max data version={WallMs:3000 Logical:3}
+  TestMetadataInBatch: --- FAIL: TestMetadataInBatch (0.10s)

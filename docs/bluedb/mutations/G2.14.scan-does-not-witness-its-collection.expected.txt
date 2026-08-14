@@ -1,0 +1,6 @@
+PROBE gate=G2.14 state=FAIL root=<scratch-worktree>
+  the excised Stage-2 read-set arms have no producer and the live arms do record is not proven: 0/1 pinned fixture(s) reported a passing event
+  TestStage2ReadSetRangesHaveNoProducer did not report a passing `go test -json` event (it FAILED)
+  TestStage2ReadSetRangesHaveNoProducer: === RUN   TestStage2ReadSetRangesHaveNoProducer
+  TestStage2ReadSetRangesHaveNoProducer:     stage2_readset_test.go:94: ReadSet.collWitness missing coll 7: ScanCollection must record it
+  TestStage2ReadSetRangesHaveNoProducer: --- FAIL: TestStage2ReadSetRangesHaveNoProducer (0.10s)

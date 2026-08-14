@@ -1,0 +1,6 @@
+PROBE gate=G2.25 state=FAIL root=<scratch-worktree>
+  a store admits one writer and one immutable format name is not proven: 2/3 pinned fixture(s) reported a passing event
+  TestComparerName did not report a passing `go test -json` event (it FAILED)
+  TestComparerName: === RUN   TestComparerName
+  TestComparerName:     comparer_test.go:58: comparer name drifted: "skydb.mvcc.v1v2"
+  TestComparerName: --- FAIL: TestComparerName (0.00s)
