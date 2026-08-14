@@ -378,7 +378,14 @@ pub static REGISTRY: &[Gate] = &[
     Gate {
         id: "G0.5",
         goal: 0,
-        title: "every go build site under rust/crates carries -tags pebblegozstd; a Persist binary links no cgo DataDog zstd",
+        // TITLE NARROWED TO THE BODY. Arm (c) is quantified over the EMPTY SET
+        // today — no project imports `Std.Persist`, and `sky-stdlib/Std/Persist.sky`
+        // does not exist — which the body reports honestly in its PASS detail and
+        // ratchets on (gates_g0.rs, `persist_witness`). The title asserted the
+        // Persist property flatly, as though a binary had been examined. The tell
+        // is in the clock: G0.5 finishes in 0.1s, and arm (c) builds a project and
+        // runs `go tool nm`.
+        title: "every go build site under rust/crates carries -tags pebblegozstd; and once a Std.Persist project exists, its binary links no cgo DataDog zstd",
         tier: Tier::Fast,
         run: gates_g0::g0_5_zstd_tag,
         budget_s: 30,
@@ -439,7 +446,14 @@ pub static REGISTRY: &[Gate] = &[
         // author-granted. All 39 sit on `pending::*` substrate probes today —
         // verified by the check, not asserted here — and an unauthored mutation
         // on a gate that runs is now a FINDING.
-        title: "every mutation of a gate that RUNS has a current ledger proof: it exists, records PROVEN, carries its RED output, and has not decayed",
+        // TITLE NARROWED ONCE MORE: two of its four conjuncts were false for the
+        // CANARY, which runs. G0.C must record VACUOUS rather than PROVEN, and it
+        // declares `expect: "<never>"` so it has no RED output to carry. The body
+        // has always been right about both — it picks `want` by gate id — so this
+        // is the title catching up with a distinction the code already draws. A
+        // universal whose stated exception is the one gate built to violate it
+        // reads as an oversight rather than a design.
+        title: "every mutation of a gate that RUNS has a current ledger proof: it exists, records the verdict its gate must reach, carries the RED output where one exists, and has not decayed",
         tier: Tier::Full,
         run: gates_g0::g0_6_mutations_verified,
         budget_s: 3600,
