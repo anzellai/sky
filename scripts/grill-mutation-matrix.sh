@@ -252,6 +252,31 @@ trap 'revert_all' EXIT
 echo "[0/11] baseline (unmutated)"
 run_suite baseline
 
+# A non-green baseline invalidates everything downstream, so stop here rather
+# than emit a report hedged with a caveat nobody reads. The usual cause on this
+# machine is not the code: it is another live suite running at the same time.
+# Two of these suites at once exhaust the SysV shared-memory IDs PostgreSQL
+# needs to bootstrap —
+#
+#   FATAL: could not create shared memory segment: No space left on device
+#   HINT:  ...all available shared memory IDs have been taken...
+#
+# — and every live gate then fails for a reason that has nothing to do with any
+# mutation. Wait for the other run, reap orphaned segments whose NATTCH is 0
+# (`ipcs -mo`, `ipcrm -m <id>`), and start again.
+if [[ -n "$(all_failing baseline)" ]]; then
+  echo "grill-mutation-matrix: the UNMUTATED baseline is not green:" >&2
+  all_failing baseline | sed 's/^/  - /' >&2
+  echo >&2
+  infra="$(infra_failures baseline)"
+  if [[ -n "$infra" ]]; then
+    echo "  Of those, these look like infrastructure rather than gates:" >&2
+    echo "$infra" | sed 's/^/    * /' >&2
+    echo "  Is another live suite running? Check \`ipcs -mo\` for leaked segments." >&2
+  fi
+  die "refusing to run the experiment against a red baseline — every count would be meaningless"
+fi
+
 echo "[1/11] all nine mutations at once"
 for id in "${MUT_IDS[@]}"; do apply_checked "$id"; done
 run_suite all-nine

@@ -583,11 +583,24 @@ func childFakeDeadPostmaster() {
 }
 
 func childLiveDeadPostmaster() {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		os.Exit(9)
+	// The same isolation durableTestDir provides, spelled out because this runs
+	// in a re-exec'd CHILD with no *testing.T to hand.
+	//
+	// It is the last place that built this path by hand, and it survived the fix
+	// to durableTestDir for exactly that reason — one helper corrected, one
+	// open-coded copy left behind, and the copy is what collided. It cost a
+	// mutation-matrix run whose baseline came back with 19 failures. Route new
+	// live-cluster paths through durableTestDir, or through this env var when
+	// there is no test context.
+	root := os.Getenv("SKY_LIVE_TEST_ROOT")
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			os.Exit(9)
+		}
+		root = filepath.Join(home, ".sky", "p5-live-test")
 	}
-	root := filepath.Join(home, ".sky", "p5-live-test", "deadchild")
+	root = filepath.Join(root, fmt.Sprintf("deadchild-%d", os.Getpid()))
 	_ = os.RemoveAll(root)
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		os.Exit(9)
