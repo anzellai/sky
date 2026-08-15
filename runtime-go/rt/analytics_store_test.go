@@ -15,7 +15,16 @@ func resetAnalyticsStore() {
 		analyticsWriterInst.shutdown(context.Background())
 		analyticsWriterInst = nil
 	}
-	if analyticsStoreDB != nil {
+	// On PostgreSQL the handle is a REFERENCE into the shared registry, so it
+	// is released rather than closed — closing the *sql.DB directly would
+	// take the pool from any other consumer holding it and leave a stale
+	// registry entry pointing at a closed pool. On SQLite there is no handle
+	// and the store owns its file outright.
+	if analyticsPool != nil {
+		analyticsPool.Close()
+		analyticsPool = nil
+		analyticsStoreDB = nil
+	} else if analyticsStoreDB != nil {
 		analyticsStoreDB.Close()
 		analyticsStoreDB = nil
 	}

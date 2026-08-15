@@ -195,6 +195,22 @@ func acquireShared(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
 	return h.DB(), h, nil
 }
 
+// persistTx is the subset of a transaction writeBatch uses, so the capped and
+// uncapped paths are interchangeable.
+type persistTx interface {
+	Prepare(string) (*sql.Stmt, error)
+	Exec(string, ...any) (sql.Result, error)
+	Commit() error
+	Rollback() error
+}
+
+func (p *persistence) begin() (persistTx, error) {
+	if p.pool != nil {
+		return p.pool.Begin()
+	}
+	return p.db.Begin()
+}
+
 // closeTelemetryPool releases this consumer's claim on the pool.
 //
 // On PostgreSQL that is a refcount decrement, NOT a close: another consumer
@@ -455,7 +471,12 @@ func (p *persistence) flusher(s *Store) {
 // Splits by kind so each table sees one prepared statement reused
 // across its share of the batch.
 func (p *persistence) writeBatch(batch []persistEntry) error {
-	tx, err := p.db.Begin()
+	// Begun through the CAPPED handle when there is one, so this consumer's
+	// slot is held for the whole transaction. A transaction pins its
+	// connection for its lifetime, so a cap released at BEGIN would bound
+	// nothing — and a cap that is created but never taken is a bulkhead that
+	// exists only in the comment above it.
+	tx, err := p.begin()
 	if err != nil {
 		return err
 	}

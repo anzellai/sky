@@ -325,7 +325,7 @@ func TestLiveAnalyticsBatchingSendsFewStatementsToTheServer(t *testing.T) {
 	}
 	defer wdb.Close()
 
-	w := newAnalyticsWriter(wdb, "pgx")
+	w := newAnalyticsWriter(wdb, "pgx", nil)
 	t.Cleanup(func() { w.shutdown(context.Background()) })
 
 	wCount.Store(0)

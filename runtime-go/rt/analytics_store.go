@@ -223,7 +223,7 @@ func analyticsStore() *sql.DB {
 			}
 		}
 		analyticsStoreDB = db
-		analyticsWriterInst = newAnalyticsWriter(db, driver)
+		analyticsWriterInst = newAnalyticsWriter(db, driver, handle)
 		analyticsStartRetention(db)
 	})
 	return analyticsStoreDB

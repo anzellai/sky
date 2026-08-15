@@ -96,6 +96,15 @@ type Handle struct {
 	// shared records whether any other consumer held this pool when this
 	// handle was issued, or took it afterwards. Gate surface.
 	shared *atomic.Bool
+	// acquisitions counts how many times this consumer's slot has been taken.
+	//
+	// It exists because "the cap is configured" and "the cap is USED" are
+	// different claims, and only the second one is a bulkhead. Acquiring a
+	// capped handle and then writing through `Handle.DB()` builds the
+	// semaphore and never touches it — the cap reads as enforced in review
+	// and enforces nothing. This counter is what lets a gate tell the two
+	// apart.
+	acquisitions atomic.Int64
 }
 
 // ErrClosed is returned by a Handle used after Close.
@@ -182,6 +191,7 @@ func (h *Handle) acquire(ctx context.Context) (func(), error) {
 	}
 	select {
 	case h.sem <- struct{}{}:
+		h.acquisitions.Add(1)
 		return func() { <-h.sem }, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -278,6 +288,10 @@ func (h *Handle) InFlight() int {
 	}
 	return len(h.sem)
 }
+
+// Acquisitions reports how many times this consumer's slot has been taken —
+// i.e. how much work actually went THROUGH the cap rather than around it.
+func (h *Handle) Acquisitions() int64 { return h.acquisitions.Load() }
 
 // Cap reports this consumer's configured ceiling (0 = uncapped).
 func (h *Handle) Cap() int {

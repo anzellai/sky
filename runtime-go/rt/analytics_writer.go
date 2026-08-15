@@ -61,6 +61,8 @@ package rt
 import (
 	"context"
 	"database/sql"
+
+	"sky-app/rt/dbshare"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,7 +131,16 @@ type analyticsRow struct {
 
 // analyticsWriter owns the queue, the flusher goroutine and the counters.
 type analyticsWriter struct {
-	db     *sql.DB
+	db *sql.DB
+	// pool is the capped view of a possibly-shared pool (nil on SQLite,
+	// which has its own handle). Writes go through THIS, not through `db`.
+	//
+	// The distinction is the whole bulkhead: acquiring a handle with a cap
+	// and then writing through `handle.DB()` creates the semaphore and never
+	// touches it, so the cap is declared and not enforced. That is how this
+	// was first written, and it would have shipped a bulkhead that existed
+	// only in the comments.
+	pool   *dbshare.Handle
 	driver string // "sqlite" | "pgx"
 
 	queue    chan analyticsRow
@@ -222,9 +233,10 @@ func skyEnvSynchronousCommitOff(suffix string) bool {
 
 // newAnalyticsWriter starts the flusher for an open store and registers its
 // shutdown flush.
-func newAnalyticsWriter(db *sql.DB, driver string) *analyticsWriter {
+func newAnalyticsWriter(db *sql.DB, driver string, pool *dbshare.Handle) *analyticsWriter {
 	w := &analyticsWriter{
 		db:            db,
+		pool:          pool,
 		driver:        driver,
 		queue:         make(chan analyticsRow, analyticsQueueCap),
 		flushReq:      make(chan chan struct{}),
@@ -354,9 +366,12 @@ func (w *analyticsWriter) writeBatch(batch []analyticsRow) {
 	}
 	stmt, args := analyticsInsertStatement(w.driver, batch)
 	var err error
-	if w.syncCommitOff {
+	switch {
+	case w.syncCommitOff:
 		err = w.execSyncCommitOff(stmt, args)
-	} else {
+	case w.pool != nil:
+		_, err = w.pool.Exec(stmt, args...)
+	default:
 		_, err = w.db.Exec(stmt, args...)
 	}
 	w.statements.Add(1)
@@ -387,19 +402,33 @@ func (w *analyticsWriter) writeBatch(batch []analyticsRow) {
 // borrower of it. A bare `SET` on a pooled connection would silently make
 // somebody else's writes non-durable — including the app's, once Phase D lets
 // consumers share a pool.
+// The transaction is begun through the CAPPED handle when there is one, so the
+// consumer's slot is held for the whole transaction — a transaction pins its
+// connection for its lifetime, so a cap released at BEGIN would bound nothing.
 func (w *analyticsWriter) execSyncCommitOff(stmt string, args []any) error {
-	tx, err := w.db.Begin()
+	type tx interface {
+		Exec(string, ...any) (sql.Result, error)
+		Commit() error
+		Rollback() error
+	}
+	var t tx
+	var err error
+	if w.pool != nil {
+		t, err = w.pool.Begin()
+	} else {
+		t, err = w.db.Begin()
+	}
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback() //nolint:errcheck — the Commit below supersedes it
-	if _, err := tx.Exec(`SET LOCAL synchronous_commit = off`); err != nil {
+	defer t.Rollback() //nolint:errcheck — the Commit below supersedes it
+	if _, err := t.Exec(`SET LOCAL synchronous_commit = off`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(stmt, args...); err != nil {
+	if _, err := t.Exec(stmt, args...); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return t.Commit()
 }
 
 // publishMetrics republishes the writer's counters so an operator sees them

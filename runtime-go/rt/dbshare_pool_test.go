@@ -324,3 +324,46 @@ func TestTelemetryShareMatchesThePoolArithmetic(t *testing.T) {
 	}
 	_ = fmt.Sprint()
 }
+
+// TestTheAnalyticsWriterActuallyGoesThroughItsCap closes the gap between "a
+// cap is configured" and "a cap is used".
+//
+// The first version of the shared-pool wiring acquired a capped handle and
+// then wrote through `Handle.DB()`. Every existing gate stayed green: the pool
+// was shared, the backends collapsed, the semaphore existed and had the right
+// size — and the bulkhead did nothing at all, because no write ever took a
+// slot. It was found by reading the code, which is not a mechanism. This is.
+func TestTheAnalyticsWriterActuallyGoesThroughItsCap(t *testing.T) {
+	dsn := liveAnalyticsCluster(t, "analytics-cap-used")
+	dbshare.ResetForTesting()
+	t.Cleanup(dbshare.ResetForTesting)
+
+	t.Cleanup(resetAnalyticsStore)
+	resetAnalyticsStore()
+	t.Setenv("SKY_ANALYTICS_DB_PATH", dsn)
+	if db := analyticsStore(); db == nil {
+		t.Fatal("analytics store did not open against the live cluster")
+	}
+	if analyticsPool == nil {
+		t.Fatal("the analytics store on PostgreSQL did not take a shared-pool handle")
+	}
+	if got := analyticsPool.Cap(); got != dbAnalyticsShare {
+		t.Fatalf("the analytics handle is capped at %d, want %d", got, dbAnalyticsShare)
+	}
+
+	before := analyticsPool.Acquisitions()
+	for i := 0; i < 300; i++ {
+		analyticsStoreInsert(map[string]any{
+			"ts": int64(i), "event": "capped", "anonymous_id": "anon",
+		})
+	}
+	analyticsFlushPending()
+
+	if f := analyticsWriterInst.failures.Load(); f > 0 {
+		t.Fatalf("the writer failed %d batches; last error: %v", f, analyticsWriterInst.lastErr.Load())
+	}
+	if got := analyticsPool.Acquisitions() - before; got == 0 {
+		t.Fatal("the analytics writer wrote 300 events without ever taking a slot from its " +
+			"own cap — it is going around the semaphore, so the bulkhead is decorative")
+	}
+}
