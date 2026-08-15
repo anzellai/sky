@@ -133,6 +133,31 @@ fn an_ephemeral_state_directory_is_refused_by_the_binary() {
     assert!(!Path::new("/tmp/sky-shared").exists());
 }
 
+/// The account that ran `--shared` is the cluster's bootstrap superuser, and its
+/// name is not a constant, so it cannot sit in the reserved list with `postgres`
+/// and `template1`. `--app deploy` on a host provisioned by `deploy` used to
+/// print a DSN whose role was superuser. The refusal is at parse time, which is
+/// the only place it can be reached before a connection — so it is asked of the
+/// binary rather than of the function.
+#[test]
+fn provisioning_an_app_named_after_this_account_is_refused_by_the_binary() {
+    let out = Command::new("id").arg("-un").output().expect("id -un");
+    let me = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if me.is_empty()
+        || !me.starts_with(|c: char| c.is_ascii_lowercase())
+        || !me.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
+        // A name already refused by the charset rule proves nothing about this one.
+        return;
+    }
+    let state = scratch("self");
+    let out = sky(&["--shared", "--app", &me], &state);
+    let t = text(&out);
+    assert!(t.contains("bootstrap superuser"), "{t}");
+    assert_eq!(out.status.code(), Some(2), "{t}");
+    assert!(!state.exists(), "a refused invocation created {}", state.display());
+}
+
 #[test]
 fn provisioning_an_app_before_the_cluster_says_so() {
     let state = scratch("noclu");
