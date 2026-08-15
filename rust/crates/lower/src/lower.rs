@@ -2369,14 +2369,31 @@ impl<'a> Ctx<'a> {
     /// - `defer rt.StopEmbeddedPostgres()` is deferred SECOND, so it runs
     ///   BEFORE the panic handler: a panicking app still stops its database
     ///   before the process reports and exits.
+    /// - `rt.MaybeApplyEmbeddedMigrationsAndExit()` runs LAST of the four, and
+    ///   in `main` rather than in the generated `embedded_migrations.go`
+    ///   `init()` that used to carry it (`write_embedded_migrations` in
+    ///   `rust/crates/project/src/build.rs`). Go runs every `init()` before
+    ///   `main`, so from there a self-migrating `SKY_DB_OP=migrate ./app
+    ///   --embed` tried to migrate BEFORE its database existed — it could not
+    ///   work at all. The migration needs a started cluster, so it has to
+    ///   follow the start call; and the start call cannot move into an `init()`
+    ///   to meet it, because `[database] path`/`url` arrive as
+    ///   `rt.SetSkyDefault` in the prologue `init()` and the `--embed`
+    ///   ambiguity check would stop seeing them (filename order would decide).
+    ///   `main`, after the start, is the only placement that satisfies both.
+    ///   The generated file still sets `rt.SkyEmbeddedMigrations` from its
+    ///   `init()` — a variable assignment has no such ordering requirement, and
+    ///   the value must be in place before `main` reads it.
     ///
-    /// Both calls are emitted for every program, embedded bundle or not. A
-    /// build without `--embed` links no bundle, `MaybeStartEmbeddedPostgres`
-    /// returns on the first line unless `--embed` was actually passed, and
+    /// All four are emitted for every program, embedded bundle or not. A build
+    /// without `--embed` links no bundle, `MaybeStartEmbeddedPostgres` returns
+    /// on the first line unless `--embed` was actually passed,
     /// `StopEmbeddedPostgres` is a nil check on a supervisor that was never
-    /// created. Emitting them conditionally would buy nothing and would make
-    /// `./app --embed` on an ordinary build ignore the flag in silence, which is
-    /// the failure mode this whole feature exists to refuse.
+    /// created, and `MaybeApplyEmbeddedMigrationsAndExit` returns immediately
+    /// unless `SKY_DB_OP` is set AND the project baked migrations in. Emitting
+    /// them conditionally would buy nothing and would make `./app --embed` on
+    /// an ordinary build ignore the flag in silence, which is the failure mode
+    /// this whole feature exists to refuse.
     fn lower_main(&mut self, _name: &str, _module: &str) -> GoItem {
         let mut stmts = vec![
             GoStmt::Expr(GoExpr::new(
@@ -2389,6 +2406,10 @@ impl<'a> Ctx<'a> {
             )),
             GoStmt::Expr(GoExpr::new(
                 GoExprKind::Ident("defer rt.StopEmbeddedPostgres()".into()),
+                GoTy::Unit,
+            )),
+            GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("rt.MaybeApplyEmbeddedMigrationsAndExit()".into()),
                 GoTy::Unit,
             )),
         ];

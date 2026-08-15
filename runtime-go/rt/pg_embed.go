@@ -100,10 +100,30 @@ func MaybeStartEmbeddedPostgres() {
 // It exists for the ordinary exit path (generated `main`'s defer). The SIGTERM
 // path does not need it: the supervisor installs its own handler so it can run
 // the phases in the required order, which a defer cannot express.
+//
+// A cluster this process ADOPTED is not stopped — see stopPostgres.
 func StopEmbeddedPostgres() {
 	if s := activeSupervisor(); s != nil {
 		s.stopPostgres()
 	}
+}
+
+// ExitProcess ends the process the way generated `main` would have, for the code
+// paths that exit from underneath its defers.
+//
+// `os.Exit` does not run deferred functions, so any `os.Exit` reached from
+// inside `main` skips `defer rt.StopEmbeddedPostgres()` and leaves the embedded
+// postmaster running with nothing left to stop it. That is not hypothetical:
+// `SKY_DB_OP=migrate ./app --embed` is a one-shot deploy step whose whole job is
+// to exit, and Db_migrateApply exits the process itself. Without this, the
+// deploy sequence "migrate, then serve" would orphan a postmaster on the first
+// half and adopt it forever on the second.
+//
+// A no-op-plus-exit when no cluster was ever started, which is every ordinary
+// build.
+func ExitProcess(code int) {
+	StopEmbeddedPostgres()
+	os.Exit(code)
 }
 
 // EmbeddedPostgresActive reports whether this process is supervising a cluster.
@@ -784,15 +804,41 @@ func (s *pgSupervisor) shutdown(budget time.Duration) {
 	s.stopPostgres()
 }
 
-// stopPostgres asks the postmaster for a fast shutdown and waits for it.
+// stopPostgres asks the postmaster for a fast shutdown and waits for it — but
+// only for a cluster this process actually started.
 //
 // `-m fast` (refuse new connections, roll back what is in flight, exit) rather
 // than `-m smart`, which waits for every client to disconnect and would turn a
 // stop into a hang behind one idle connection. Idempotent: an app that stops
 // via its normal exit path and an app that stops via SIGTERM both end up here.
+//
+// The `adopted` early return is the ownership rule, and it is the rule the rest
+// of the toolchain already keeps. `sky db start` is contracted as EXPLICIT and
+// PERSISTENT — it stays up until `sky db stop` — and `sky run` honours that by
+// ref-counting (`ClusterEntry.explicit` / `RunRef` in
+// `rust/crates/sky/src/db_cluster.rs`): a `sky run` exit never takes down a
+// cluster it did not start. Without this, `./app --embed` was the one path that
+// broke the contract: it found the live postmaster, adopted it, connected, and
+// then stopped it on the way out — so a developer who ran `sky db start` and
+// then their own built binary got their persistent cluster taken away, silently
+// and once per run.
+//
+// "Stop only what you started" is the whole rule, deliberately, rather than a Go
+// re-implementation of the registry: see the note on ExitProcess and
+// `docs/skydb/embedded-postgres.md`. It costs one orphaned postmaster in the
+// case where an app is SIGKILLed and its successor adopts the leftover — which
+// is exactly the state `sky db ps` / `sky db stop` exist to resolve, and a
+// running database is the cheaper of the two mistakes.
 func (s *pgSupervisor) stopPostgres() {
 	s.stopOnce.Do(func() {
 		s.stopping.Store(true)
+		if s.adopted {
+			fmt.Fprintf(os.Stderr,
+				"[sky.pg] leaving the adopted PostgreSQL server running — this process did not\n"+
+					"[sky.pg] start it. Stop it with `sky db stop`, or `pg_ctl -D %s stop`.\n",
+				s.cfg.dataDir)
+			return
+		}
 		if s.stopFn != nil {
 			if err := s.stopFn(); err != nil {
 				fmt.Fprintf(os.Stderr, "[sky.pg] stop failed: %v\n", err)

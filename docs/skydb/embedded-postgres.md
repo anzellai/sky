@@ -102,12 +102,29 @@ and two generated calls.
   `[database] path = "notes.db"` *and* `--embed` started a cluster and wrote to
   it, exit 0. Restored, the same binary refuses with the conflict named and
   exits 1.
-- **Both calls are emitted for every program, `--embed` or not.** A build
+- **The migration call goes in `main` too — and after the start.** A project
+  with `db/migrations/` gets a generated `embedded_migrations.go`, and P5b
+  emitted `rt.MaybeApplyEmbeddedMigrationsAndExit()` from *its* `init()`. By the
+  rule directly above, that made `SKY_DB_OP=migrate ./app --embed` impossible by
+  construction: the migration ran before `main`, so before the cluster existed,
+  and the binary exited with `could not open database for embedded migrations`.
+  The two constraints pull in opposite directions — the start call cannot move
+  into an `init()` to meet the migration, because that re-opens the ambiguity
+  hole — and `main`, immediately after the start, is the only placement that
+  satisfies both. The generated `init()` now only ASSIGNS
+  `rt.SkyEmbeddedMigrations`, which has no ordering requirement beyond "before
+  `main` reads it". Gated by
+  `rust/crates/project/tests/embedded_main_prologue.rs` (the emitted order) and
+  `TestOwnershipLiveEmbedMigrateAppliesAgainstTheStartedCluster` (a real
+  migration against a real embedded cluster).
+- **All four calls are emitted for every program, `--embed` or not.** A build
   without the flag links no bundle, so `MaybeStartEmbeddedPostgres` returns on
-  its first line and `StopEmbeddedPostgres` is a nil check. Emitting them
-  conditionally would buy nothing measurable and would make `./app --embed` on
-  an ordinary build ignore the flag in silence. As shipped, an ordinary binary
-  asked to `--embed` says so, and names every place it looked.
+  its first line, `StopEmbeddedPostgres` is a nil check, and
+  `MaybeApplyEmbeddedMigrationsAndExit` returns unless `SKY_DB_OP` is set and
+  the project baked migrations in. Emitting them conditionally would buy nothing
+  measurable and would make `./app --embed` on an ordinary build ignore the flag
+  in silence. As shipped, an ordinary binary asked to `--embed` says so, and
+  names every place it looked.
 
 **Where the bundle comes from, and the decision behind it: `sky build --embed`
 provisions on demand.** It does not require a prior `sky db provision --embed`.
@@ -497,10 +514,14 @@ so a misconfigured project does not sit through a compile to be told.
 2. First run: extract, `initdb`, write a `postgresql.conf` tuned from detected
    RAM and CPU — the app and the database now share a machine.
 3. Start PostgreSQL as a child in its own process group, on a unix socket.
-4. Wait for readiness, connect, boot the app.
+4. Wait for readiness. If `SKY_DB_OP=migrate` / `status` is set and the binary
+   carries embedded migrations, apply or report them against the cluster just
+   started, and exit — a deployed binary self-migrates with no source tree and
+   no `sky` on the host. Otherwise connect and boot the app.
 5. On `SIGTERM`: stop accepting → drain → **then** `pg_ctl stop -m fast`.
    Ordering matters; stopping the database first turns a clean deploy into a
-   page of errors.
+   page of errors. The last step is skipped for a cluster this process adopted
+   rather than started.
 
 P5 ships this as `runtime-go/rt/pg_embed*.go`. Four details it settled on
 contact with the code:
@@ -528,6 +549,40 @@ contact with the code:
   `/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`, macOS's `/var/folders`. Under
   `--embed` that directory holds the app's only copy of its data, and a cluster
   that silently reinitialises looks exactly like an app that lost every row.
+- **An app stops only the cluster it STARTED.** Adoption (the row below) made
+  `./app --embed` connect to a live postmaster it did not own — and then stop it
+  on the way out, because `StopEmbeddedPostgres` did not consult `adopted`. So a
+  developer who ran `sky db start` and then their own built binary lost the
+  cluster the moment the binary exited: silently, once per run, and against the
+  contract `sky db start` states ("explicit and persistent — it stays up until
+  stopped"), which `sky run` already honours by ref-counting. `stopPostgres`
+  now returns early for an adopted cluster, naming it and how to stop it.
+
+  > **The registry is deliberately NOT written from Go.** `sky run`'s
+  > ref-counting lives in `~/.sky/clusters.json` (`ClusterEntry.explicit`,
+  > `RunRef`, `prune_refs`), and a Go writer could in principle join it. It
+  > would have to reproduce the lock protocol with its stale-lock rule, the
+  > tmp-and-rename write, the canonical project-path key, the `ps -o command=`
+  > capture and the two-legged ref liveness — exactly, and with no shared test
+  > holding the two implementations together, so the next format change breaks
+  > a binary rather than a build. And it would be writing a file that does not
+  > apply where `--embed` actually runs: a deployed binary on a server has no
+  > project directory, no `sky` toolchain, and nothing that reads `~/.sky`.
+  > "Stop only what you started" needs no shared state at all, and it gets the
+  > `sky db start` case right, which is the reported one. What it gives up is
+  > reaping: an app that is `SIGKILL`ed leaves an orphan, its successor adopts
+  > it, and nothing takes it down until `sky db stop`. A database left running
+  > is the cheaper of the two mistakes, and it is the state `sky db ps` and
+  > `sky db stop` exist for.
+  >
+  > One case remains open and is NOT closed by this rule: two concurrent
+  > `./app --embed` processes on the same data directory, where the one that
+  > started the cluster exits first and stops it under the one that adopted it.
+  > The adopter does not lose data silently — `watchAdopted` sees the
+  > postmaster go, prints it, and exits non-zero so a supervisor restarts the
+  > tree — but it is an avoidable exit. Closing it needs the shared ref count,
+  > i.e. the registry, i.e. a decision about whether `--embed` participates in
+  > it at all.
 
 ### Failure modes that must be handled, not discovered
 

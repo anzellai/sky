@@ -1539,7 +1539,7 @@ func Db_migrateApply(dbA, pairsA any) any {
 			fail := func(msg string, e any) any {
 				if op == "migrate" {
 					fmt.Fprintln(os.Stderr, "db: "+msg)
-					os.Exit(1)
+					ExitProcess(1)
 				}
 				return e
 			}
@@ -1578,7 +1578,7 @@ func Db_migrateApply(dbA, pairsA any) any {
 			// status — read-only report, then exit.
 			if op == "status" {
 				dbPrintMigrationStatus(applied, pairs)
-				os.Exit(0)
+				ExitProcess(0)
 			}
 
 			out := []any{}
@@ -1633,7 +1633,7 @@ func Db_migrateApply(dbA, pairsA any) any {
 					}
 					fmt.Printf("db: applied %d migration(s): %s\n", len(out), strings.Join(names, ", "))
 				}
-				os.Exit(0)
+				ExitProcess(0)
 			}
 			return Ok[any, any](out)
 		})
@@ -1683,7 +1683,7 @@ func dbPrintMigrationStatus(applied map[string]appliedMigration, pairs []any) {
 		fmt.Fprintln(os.Stderr,
 			"\ndb: drift detected — an applied migration's SQL was edited. "+
 				"Restore its original text, or ship a new compensating migration.")
-		os.Exit(1)
+		ExitProcess(1)
 	}
 }
 
