@@ -115,8 +115,36 @@ trap 'log "stopping (signal)"; exit 0' INT TERM
 
 log "starting (proc=${PROC_LIMIT_MB}MB panic=${PANIC_LIMIT_MB}MB sys_floor=${SYS_FLOOR_MB}MB swap_pct=${SWAP_PCT}% poll=${INTERVAL}s dry=${DRY:-no})"
 
+# Every probe below forks (vm_stat, sysctl, ps, awk). Under process-table
+# exhaustion — a condition this guard exists to survive, and which a runaway
+# build reaches — fork() fails, `set -euo pipefail` fires, and the watchdog
+# exits. That has happened twice in one day here, both times during a cargo
+# peak, and both times SILENTLY: the guard was simply gone when it was next
+# needed, and nothing said so.
+#
+# A degraded guard beats a dead one. A failed probe skips the tick and retries;
+# it never exits. When fork is failing we could not kill anything anyway — the
+# kill path needs ps to find a target — so retrying is the whole of the correct
+# behaviour. Consecutive failures are logged with a backstop rate limit, so a
+# persistent outage is visible without spamming the log every 2 seconds.
+probe_fails=0
+probe_reported=0
+
 while :; do
-    free=$(free_mb)
+    if ! free=$(free_mb 2>/dev/null) || [[ -z "$free" ]]; then
+        probe_fails=$(( probe_fails + 1 ))
+        if (( probe_fails == 1 || probe_fails == 30 || probe_fails % 300 == 0 )); then
+            log "DEGRADED: memory probe failed ${probe_fails}x consecutively (fork exhaustion?) — still watching, cannot act until it recovers"
+            probe_reported=1
+        fi
+        sleep "$INTERVAL"
+        continue
+    fi
+    if (( probe_fails > 0 )); then
+        (( probe_reported )) && log "recovered after ${probe_fails} failed probe(s)"
+        probe_fails=0
+        probe_reported=0
+    fi
 
     # Swap does not trigger a kill on its own — macOS never reclaims swap
     # eagerly, so utilisation is a high-water mark and reads high on a
@@ -146,7 +174,9 @@ while :; do
 
     # Snapshot watched processes by RSS desc. ps RSS is in KB.
     # We strip directory prefix from comm so /Applications/Ghostty.app/.../ghostty matches "ghostty".
-    snap=$(ps -A -o pid=,rss=,comm= | awk '
+    # Tolerant for the same reason as the memory probe above: ps is a fork, and
+    # a failed snapshot must skip the tick rather than kill the watchdog.
+    if ! snap=$(ps -A -o pid=,rss=,comm= 2>/dev/null | awk '
         {
             pid = $1; rss = $2;
             comm = $3;
@@ -154,7 +184,15 @@ while :; do
             base = parts[n];
             print pid, rss, base
         }
-    ' | sort -k2 -rn)
+    ' | sort -k2 -rn); then
+        probe_fails=$(( probe_fails + 1 ))
+        if (( probe_fails == 1 || probe_fails == 30 || probe_fails % 300 == 0 )); then
+            log "DEGRADED: process snapshot failed ${probe_fails}x consecutively (fork exhaustion?) — cannot identify a target"
+            probe_reported=1
+        fi
+        sleep "$INTERVAL"
+        continue
+    fi
 
     while read -r pid rss comm; do
         [[ -z "${pid:-}" ]] && continue

@@ -99,6 +99,37 @@ else
     [[ "$got" == "GUARD_DIED" ]] && printf '        under set -euo pipefail the watchdog exits — no guard at all\n'
 fi
 
+# A guard that dies under load is worse than no guard, because the absence is
+# silent. This has happened twice in one day here, both times during a cargo
+# peak: fork() failed, `set -euo pipefail` fired, and the watchdog exited
+# without a word. Every probe in the loop is a fork, so a failing probe must
+# skip the tick and retry — it must never exit.
+echo "survives a failing probe"
+probe_stub="$(mktemp -d)"
+printf '#!/bin/sh\nexit 1\n' > "$probe_stub/vm_stat"
+chmod +x "$probe_stub/vm_stat"
+guard_log="$(mktemp)"
+
+MEM_GUARD_DRY=1 MEM_GUARD_INTERVAL=1 MEM_GUARD_LOG="$guard_log" \
+    PATH="$probe_stub:$PATH" "$GUARD" >/dev/null 2>&1 &
+guard_pid=$!
+sleep 4
+
+if kill -0 "$guard_pid" 2>/dev/null; then
+    pass=$(( pass + 1 )); printf '  ok    %-38s still running after 4s\n' "vm_stat fails on every tick"
+else
+    fail=$(( fail + 1 )); printf '  FAIL  %-38s the watchdog exited — silently, as in the real incident\n' "vm_stat fails on every tick"
+fi
+kill -TERM "$guard_pid" 2>/dev/null || true
+wait "$guard_pid" 2>/dev/null || true
+
+if grep -q 'DEGRADED' "$guard_log" 2>/dev/null; then
+    pass=$(( pass + 1 )); printf '  ok    %-38s logged\n' "the degradation is visible"
+else
+    fail=$(( fail + 1 )); printf '  FAIL  %-38s nothing logged; a silent degradation is the defect\n' "the degradation is visible"
+fi
+rm -rf "$probe_stub" "$guard_log"
+
 echo
 if (( fail )); then
     echo "GATE FAIL — ${pass} passed, ${fail} failed"
