@@ -1935,9 +1935,18 @@ renderNodeAs : String -> LayoutContext -> List (Attribute msg) -> List (Attribut
 renderNodeAs tag ctx extraAttrs attrs children =
     let
         allAttrs = extraAttrs ++ attrs
-        renderCtx = layoutContextFor allAttrs
+        -- One traversal answers the four layout-context markers here
+        -- and, below, the two style markers -- six independent
+        -- `List.any` scans before. The style side re-scans
+        -- `propagatedAttrs` rather than reusing these flags because
+        -- `propagateFillToContainer` may prepend an attribute; two
+        -- passes over the two DIFFERENT lists is the honest fuse, and
+        -- it does not depend on what that function injects.
+        layoutFlags = markerFlags allAttrs
+        renderCtx = layoutContextFromFlags layoutFlags
         propagatedAttrs =
             propagateFillToContainer renderCtx allAttrs children
+        styleFlags = markerFlags propagatedAttrs
         nearbyChildren = collectNearby propagatedAttrs
         positionPrefix =
             if List.isEmpty nearbyChildren then
@@ -1948,7 +1957,8 @@ renderNodeAs tag ctx extraAttrs attrs children =
         isReplaced = tag == "img" || tag == "input"
         styleStr =
             positionPrefix
-                ++ buildStyleString
+                ++ buildStyleStringWith
+                       styleFlags
                        (not isReplaced)
                        ctx
                        renderCtx
@@ -2458,22 +2468,124 @@ kernelAttr key value =
 -- the Sky.Live integration. The constructor stays in the ADT so
 -- user code can already use `Ui.onClick MyMsg` even though it
 -- currently no-ops at the static layer.
-layoutContextFor : List (Attribute msg) -> LayoutContext
-layoutContextFor attrs =
-    if hasMarker "__row" attrs then
+-- The six layout markers an element can carry, answered in ONE pass.
+--
+-- `layoutContextFor` used to ask four independent `hasMarker`
+-- questions and `buildStyleString` two more — six full `List.any`
+-- traversals of the same attribute list per element per render, each
+-- dispatching its predicate through the higher-order-call adapter
+-- (`rt.Coerce[func(any) bool]` + `rt.AsListT[any]`, i.e. a re-typed
+-- COPY of the attribute slice per call). Measured at 13.5% of all
+-- server CPU on `26-ui-showcase`
+-- (`docs/perf/skylive-interaction-cost.md`, "The attribution").
+--
+-- `markerFlags` answers all six in one explicit recursion — no
+-- lambda, so no reflective dispatch and no slice re-typing — and the
+-- callers below apply exactly the same precedence to the result, so
+-- the rendered bytes are unchanged.
+type alias MarkerFlags =
+    { row : Bool
+    , col : Bool
+    , paragraph : Bool
+    , textcolumn : Bool
+    , grid : Bool
+    , wrap : Bool
+    }
+
+
+noMarkerFlags : MarkerFlags
+noMarkerFlags =
+    { row = False
+    , col = False
+    , paragraph = False
+    , textcolumn = False
+    , grid = False
+    , wrap = False
+    }
+
+
+-- `List.foldl` with a TOP-LEVEL step function, deliberately — not a
+-- lambda, and not an explicit `a :: rest` recursion.
+--
+-- Both alternatives are worse here, and measurably so:
+--
+--   * A lambda allocates a closure per call and is dispatched through
+--     the higher-order adapter, which is the cost this change exists
+--     to remove.
+--   * Recursing on the tail of a TYPED list is quadratic. `List.any`
+--     and `List.foldl` take `[]any`, so the `SkyTailSlice` in their
+--     loop is a free re-slice; a `List (Attribute msg)` recursion
+--     lowers to `SkyTailSlice` on a `[]Std_Ui_Attribute`, and
+--     `rt.AsList` then reflect-boxes the whole remaining tail into a
+--     fresh `[]any` on EVERY step (`rt.go:2222`), which the caller
+--     converts straight back with `rt.AsListT` (`rt.go:2321`). The
+--     first cut of this function did exactly that and raised
+--     bytes-per-interaction by 8% while lowering the allocation
+--     count — measured, then rewritten to this shape.
+--
+-- One `foldl` costs ONE `[]any` widening of the attribute list; the
+-- six `hasMarker` scans it replaces cost six.
+markerFlags : List (Attribute msg) -> MarkerFlags
+markerFlags attrs =
+    List.foldl markerFlagStep noMarkerFlags attrs
+
+
+markerFlagStep : Attribute msg -> MarkerFlags -> MarkerFlags
+markerFlagStep a acc =
+    case a of
+
+        AttrStyle k _ ->
+            if k == "__row" then
+                { acc | row = True }
+
+            else if k == "__col" then
+                { acc | col = True }
+
+            else if k == "__paragraph" then
+                { acc | paragraph = True }
+
+            else if k == "__textcolumn" then
+                { acc | textcolumn = True }
+
+            else if k == "__grid" then
+                { acc | grid = True }
+
+            else if k == "__wrap" then
+                { acc | wrap = True }
+
+            else
+                acc
+
+        _ ->
+            acc
+
+
+-- The precedence `layoutContextFor` has always applied, over flags
+-- gathered in one pass instead of four short-circuiting scans. The
+-- scans were independent predicates, so evaluating all four and then
+-- applying the same if-chain returns the same constructor for every
+-- input.
+layoutContextFromFlags : MarkerFlags -> LayoutContext
+layoutContextFromFlags flags =
+    if flags.row then
         AsRow
 
-    else if hasMarker "__col" attrs then
+    else if flags.col then
         AsColumn
 
-    else if hasMarker "__paragraph" attrs then
+    else if flags.paragraph then
         AsParagraph
 
-    else if hasMarker "__textcolumn" attrs then
+    else if flags.textcolumn then
         AsTextColumn
 
     else
         AsEl
+
+
+layoutContextFor : List (Attribute msg) -> LayoutContext
+layoutContextFor attrs =
+    layoutContextFromFlags (markerFlags attrs)
 
 
 hasMarker : String -> List (Attribute msg) -> Bool
@@ -2497,8 +2609,17 @@ isMarker name a =
 -- sizing + object-fit, so they keep their native display.
 buildStyleString : Bool -> LayoutContext -> LayoutContext -> List (Attribute msg) -> String
 buildStyleString emitDisplay parentCtx myCtx attrs =
+    buildStyleStringWith (markerFlags attrs) emitDisplay parentCtx myCtx attrs
+
+
+-- `buildStyleString` with the marker scan already done. The hot
+-- caller (`renderNodeAs`) has the flags in hand; `buildStyleString`
+-- keeps its original signature for every other caller.
+buildStyleStringWith :
+    MarkerFlags -> Bool -> LayoutContext -> LayoutContext -> List (Attribute msg) -> String
+buildStyleStringWith flags emitDisplay parentCtx myCtx attrs =
     let
-        gridOn = hasMarker "__grid" attrs
+        gridOn = flags.grid
         baseDisplay =
             if not emitDisplay then
                 ""
@@ -2509,7 +2630,7 @@ buildStyleString emitDisplay parentCtx myCtx attrs =
             else
                 displayIn parentCtx myCtx
         wrapPart =
-            if not gridOn && hasMarker "__wrap" attrs then
+            if not gridOn && flags.wrap then
                 " flex-wrap: wrap;"
 
             else
