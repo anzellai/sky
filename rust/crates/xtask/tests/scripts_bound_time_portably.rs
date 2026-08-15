@@ -541,6 +541,47 @@ fn the_shim_refuses_rather_than_running_unbounded_or_pretending() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A script that fans out through `xargs -P` into fresh `bash -c` shells has
+/// to carry the shim across that boundary: an exported worker function calling
+/// an unexported `with_timeout` is `command not found` in every worker, and
+/// `example-sweep.sh` builds every example that way. The old code exported
+/// `run_with_timeout` and `TIMEOUT_CMD` for exactly this reason; the
+/// replacement must not lose it.
+#[test]
+fn a_script_that_forks_workers_exports_the_shim_to_them() {
+    for (rel, text) in shell_scripts() {
+        // `xargs -P` only. An earlier version also matched the word
+        // "parallel", and flagged `test-ci.sh` for a COMMENT reading "every
+        // parallel step reads MAX_WORKERS" — a gate inventing a failure is a
+        // gate people learn to ignore. GNU `parallel` is not used in this
+        // repository; if it ever is, add it here.
+        let forks = text.contains("xargs -P");
+        let calls = text
+            .lines()
+            .any(|l| !l.trim_start().starts_with('#') && l.contains("with_timeout "));
+        if !(forks && calls) {
+            continue;
+        }
+        assert!(
+            text.contains("export -f") && text.contains("with_timeout"),
+            "{rel} fans out through `xargs -P` into fresh shells AND calls with_timeout, \
+             but does not `export -f with_timeout`. Every worker would get `command not \
+             found` and bound nothing."
+        );
+        assert!(
+            text.contains("_sky_with_timeout_resolve"),
+            "{rel} exports `with_timeout` but not its resolver \
+             `_sky_with_timeout_resolve`, which the function calls on first use."
+        );
+        assert!(
+            text.contains("_SKY_WITH_TIMEOUT_PERL_PROG"),
+            "{rel} exports the shim's functions but not \
+             `_SKY_WITH_TIMEOUT_PERL_PROG`, so a worker on a host with no `timeout` \
+             binary would have an empty fallback program."
+        );
+    }
+}
+
 #[test]
 fn the_shim_exists_and_this_gate_names_it_correctly() {
     // A rule whose subject has moved is a rule that passes vacuously.
