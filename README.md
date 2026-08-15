@@ -213,7 +213,7 @@ A short tour. Full reference at `sky doc --serve` or
 | `Std.Live`             | Sky.Live runtime — TEA app + SSE patches + session stores (memory / sqlite / redis / postgres / firestore) + routing + cookies + auth gates. |
 | `Sky.Http.Server`      | HTTP server with typed routes, middleware (CORS / logging / rate-limit / basic-auth), streaming responses, WebSocket upgrade. |
 | `Std.Auth`             | bcrypt password hashing, HS256 / RS256 JWT, register / login / roles. Typed secrets — never `fmt.Sprintf("%v", token)`. |
-| `Std.Db`               | SQLite + PostgreSQL via one interface. Connection pool, prepared statements, versioned migrations, `Db.RowDecoder`, `withTransaction`. |
+| `Std.Db`               | SQLite + PostgreSQL via one interface. Connection pool, prepared statements, versioned migrations, `Db.RowDecoder`, `withTransaction`. Sky can also ship and supervise the PostgreSQL itself — see below. |
 | `Std.Db.Schema`        | Typed, dialect-safe schema DSL — define tables as values; `createTable` emits the correct `CREATE TABLE` for SQLite **and** Postgres from one definition (no `INTEGER`-overflow / `AUTOINCREMENT`-vs-`BIGSERIAL` drift). |
 | `Std.Money` + `Std.Decimal` | Arbitrary-precision Decimal + currency-typed Money (50+ ISO 4217 codes + crypto) with `allocate` for fair splits and conversion rates. |
 | `Std.Cache`            | LRU + TTL in-memory cache, parametric on key + value, monotone stats. |
@@ -223,6 +223,33 @@ A short tour. Full reference at `sky doc --serve` or
 | `Sky.Core.WebSocket`   | Client + server bidirectional sockets. |
 | `Sky.Core.Crypto`      | SHA-256 / 512, HMAC, RSA sign/verify, AES-GCM, ChaCha20, scrypt password derivation, AEAD constants. |
 | `Std.Webview`          | Native desktop window (macOS in v0.1; Linux / Windows in v0.2). |
+
+## PostgreSQL, without the setup
+
+Developing on SQLite and deploying on Postgres is how dialect differences reach
+users. So `sky` ships and supervises PostgreSQL itself, across four tiers:
+
+```bash
+sky db start | stop | ps                 # a per-project dev cluster, on a unix socket
+sky db provision --embed                 # fetch + pin a PostgreSQL bundle
+sky build --embed src/Main.sky           # bundle it INTO the binary → ./sky-out/app --embed
+sky db provision --shared --app myapp    # one host cluster; a database + role per app
+```
+
+**The app binary never knows which tier it is in.** It consumes a DSN — only the
+provisioner changes, so the same binary runs against a dev cluster, its own
+embedded PostgreSQL, or a managed database, with no code change. Bundles are
+built from source in CI (PostgreSQL 18.6, pinned) with an SBOM and a
+GPL/LGPL/AGPL link gate.
+
+A Sky app process opens four PostgreSQL-facing pools, and on a shared server
+their sum is the binding constraint — the arithmetic is worked through in
+**[docs/skydb/embedded-postgres.md](docs/skydb/embedded-postgres.md)**, along
+with the full design and the tier-by-tier trade-offs.
+
+> No `postgres-bundle-v*` release has been cut yet, so `sky db provision
+> --embed` has nothing to fetch. `sky db start` works today against
+> `SKY_POSTGRES_BIN`, a local bundle, or a system PostgreSQL.
 
 ## Observability — built in
 
@@ -314,6 +341,8 @@ same content in the repo.
   window.
 - **[Std.Auth](docs/skyauth/overview.md)** — sessions + JWT + roles.
 - **[Std.Db](docs/skydb/overview.md)** — SQLite + PostgreSQL.
+- **[Embedded PostgreSQL](docs/skydb/embedded-postgres.md)** — the four
+  tiers, from a per-project dev cluster to a shared host one.
 - **[`sky.toml`](docs/sky-toml.md)** — every config key.
 - **[CLI](docs/tooling/cli.md) / [LSP](docs/tooling/lsp.md) /
   [Testing](docs/tooling/testing.md)**.

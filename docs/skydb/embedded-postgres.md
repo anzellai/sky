@@ -902,6 +902,77 @@ The remaining two are genuinely `--embed`-only:
   supervisor restart the tree. Restarting in place hides a failing disk until
   it is an outage.
 
+## Connections and capacity
+
+The pool sizing in [`sky.toml`](../sky-toml.md#connection-pool-postgresql) says
+what each pool is. This section says what they add up to, because the number
+that matters to a server is the sum.
+
+### The arithmetic
+
+One Sky app process opens **four PostgreSQL-facing pools**: app data
+(`db_auth.go`), analytics (`analytics_store.go`), the Sky.Live session store
+(`live_store.go`, the `pgx` path) and telemetry (`telemetry/persist.go`). The
+app pool is 4 × CPU clamped 4–32; the three aux pools take a quarter-share of
+it, clamped 2–8 (`dbAuxPoolConfig`).
+
+| Cores | App pool | 3 aux pools | Total per process |
+|---|---|---|---|
+| 2 | 8 | 6 | **14** |
+| 4 | 16 | 12 | **28** |
+| 8+ | 32 | 24 | **56** |
+
+Against PostgreSQL's default `max_connections = 100`: one 8-core instance takes
+56 and is fine. **Two of them take 112, and the second is refused.** On a host
+running several Sky apps this is the binding constraint long before CPU or disk
+is.
+
+Say the improvement honestly next to that. Before the pool change these were
+**unlimited** — a burst opened one backend per concurrent request and reached
+`FATAL: sorry, too many clients already` under exactly the load you had scaled
+up to serve. Bounded is much better than unbounded. It is not the same as
+tuned: the quarter-share exists to stop three helpers each asking for a full
+app pool, not because 56 is a target.
+
+### Write characteristics, as they are today
+
+- **Analytics writes are row-at-a-time.** One
+  `INSERT INTO analytics_events (…) VALUES (…)` per event — pgx's simple
+  protocol does not batch `;`-separated statements, and a source comment in
+  `analytics_store.go` records that. Row-at-a-time is fsync-bound: order
+  5–10k inserts/s, against the 100k–500k rows/s that `COPY` or multi-row
+  inserts reach on the same hardware.
+- **Telemetry is bounded by construction.** A single buffered flusher goroutine
+  does all the writing, which is why it does not open a backend per concurrent
+  flush.
+- **Nothing splits analytics or metrics onto a separate database
+  automatically.** Each takes a DSN. The same DSN means the same database; a
+  different one means a different database. The split is available and
+  unopinionated.
+
+### Guidance — NOT IMPLEMENTED
+
+Everything in this subsection is a recommendation for an operator, or for a
+later change to Sky. **None of it is shipped behaviour**, and nothing in Sky
+does any of it for you today:
+
+1. **Batch the analytics inserts** (`COPY`, or multi-row `VALUES`). The single
+   biggest lever available — 10–50×.
+2. **`synchronous_commit = off` on the analytics/telemetry connection only.**
+   It is a per-transaction setting, so app data keeps full durability while
+   telemetry trades a few hundred milliseconds of loss-on-crash for throughput.
+3. **Time-partition the event tables**, BRIN on the timestamp, and `DROP` old
+   partitions rather than `DELETE` them. A drop is instant; a delete leaves
+   dead tuples that autovacuum then fights the app for.
+4. **Reach for a connection pooler earlier than instinct suggests.** By the
+   table above, PgBouncer earns its place at *two 8-core instances* — not at
+   some distant scale.
+
+At small-to-medium traffic all of this is comfortably fine. The failure mode to
+watch for is not latency in the thing being written: at real analytics volume
+the per-row inserts compete with OLTP for the same WAL and shared buffers, so
+you would feel it as slow **transactional** queries rather than slow analytics.
+
 ## Licensing and distribution
 
 Sky is Apache-2.0 and ships a `NOTICE.md`. Bundling a database engine into a
