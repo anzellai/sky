@@ -242,17 +242,19 @@ embedded PostgreSQL, or a managed database, with no code change. Bundles are
 built from source in CI (PostgreSQL 18.6, pinned) with an SBOM and a
 GPL/LGPL/AGPL link gate.
 
-**It fits in 1 GB.** A Sky.Live app plus its own PostgreSQL measures ~390 MB —
-~250 MB of Linux, ~40 MB of app, **36 MB of PostgreSQL**, and the rest in
-connection backends and sessions. So a free-tier or entry-level cloud instance
-runs a real app with a real database, and the managed-database line disappears
-from the bill.
+**It fits in 1 GB.** A Sky.Live app plus its own PostgreSQL is ~380 MB before
+sessions — ~250 MB of Linux, ~40 MB of app, and **36 MB of PostgreSQL**. So a
+free-tier or entry-level cloud instance runs a real app with a real database,
+and the managed-database line disappears from the bill.
 
-The constraint that catches people is **CPU, not RAM**: Sky.Live renders and
-diffs views on the server, so a burstable instance runs out of baseline CPU
-before memory. And a single instance has no replica — `--shared` generates a
-backup timer, a lone `--embed` app does not, so schedule a `pg_dump`. Full
-sizing: [docs/skydb/embedded-postgres.md](docs/skydb/embedded-postgres.md).
+Sizing is measured rather than guessed
+([docs/perf/](docs/perf/skylive-interaction-cost.md)): a Sky.Live session costs
+**~1.1 MB**, so 1 GB carries roughly 400–500 concurrent sessions. Actively
+interacting users are CPU-bound at about **100 per CPU**; idle-but-connected
+users are bound by that 1.1 MB. A single instance has no replica — `--shared`
+generates a backup timer, a lone `--embed` app does not, so schedule a
+`pg_dump`. Full sizing:
+[docs/skydb/embedded-postgres.md](docs/skydb/embedded-postgres.md).
 
 A Sky app process opens four PostgreSQL-facing pools, and on a shared server
 their sum is the binding constraint — the arithmetic is worked through in

@@ -141,14 +141,26 @@ non-obvious ones as questions:
    | Sky app binary (Go, idle) | ~30–40 MB |
    | PostgreSQL base (`shared_buffers = 32MB`) | ~36 MB |
    | PG backends, ~5–10 MB each | ~40–70 MB at 6–10 active |
-   | Sky.Live sessions, ~10–100 KB each | ~10 MB at 200 concurrent |
-   | **Total** | **~390 MB** |
+   | Sky.Live sessions, **~1.1 MB each (measured)** | ~110 MB at 100 concurrent |
+   | **Base, before sessions** | **~380 MB** |
 
-   Two things worth telling the user rather than letting them discover:
-   **CPU, not RAM, is the binding constraint** — Sky.Live renders and diffs
-   views server-side, so a burstable instance exhausts its baseline CPU
-   allowance long before its memory, and a 0.25-vCPU-baseline instance is a
-   demo host whatever its RAM says. And **a single instance has no replica**:
+   **Sessions are the number that decides the instance**, at ~1.1 MB each — so
+   1 GB carries roughly 400–500 concurrent sessions, 2 GB roughly triple that.
+   Measured, not inferred: an earlier version of this table guessed 10–100 KB
+   from the Model gob and was wrong by 11–110×.
+
+   Which resource binds depends on what the users are doing, and both numbers
+   are measured (`docs/perf/skylive-interaction-cost.md`): **actively
+   interacting** users are CPU-bound at **~100 per CPU** (the server saturates
+   at 88–92 interactions/sec, ~11 ms each, with the knee between 100 and 500
+   sessions); **connected-but-idle** users are memory-bound at 1.1 MB each. A
+   burstable instance makes the first worse, since sustained load gets the
+   baseline allowance rather than the burst.
+
+   Do **not** tell a user to simplify their view to go faster: the render →
+   diff → serialize path is ~128 ns per VNode, so a 384-element view costs
+   86 µs — **under 1%** of an interaction. And **a single instance has no
+   replica**:
    `sky db provision --shared` generates a backup timer, a single `--embed` app
    does not, so a `pg_dump` schedule is the operator's to add. Sizing detail:
    `docs/skydb/embedded-postgres.md`.

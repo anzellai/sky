@@ -939,17 +939,71 @@ small cloud instance. Measured components:
 | Sky app binary (Go, idle) | ~30–40 MB |
 | PostgreSQL base — postmaster + 6 auxiliaries at `shared_buffers = 32MB` | **36 MB** (measured) |
 | PG backends — one process per *active* connection, ~5–10 MB each | ~40–70 MB at 6–10 active |
-| Sky.Live sessions — one Model gob per session, ~10–100 KB typical | ~10 MB at 200 concurrent |
-| **Total** | **~390 MB** |
+| Sky.Live sessions — **~1.1 MB RSS each, measured** | ~110 MB at 100 concurrent |
+| **Base, before sessions** | **~380 MB** |
 
-**1 GB is comfortable.** The pool ceiling (14 on 2 cores, see below) is a
-ceiling and not an allocation — `database/sql` opens lazily, so a host pays for
-what is in flight.
+**Sessions dominate above a hundred or so, and they are the number that decides
+your instance.** An earlier version of this table guessed 10–100 KB per session
+from the Model gob's size; the measured figure is **~1.1 MB RSS**, three
+independent measurements, an 11–110× underestimate. The Model is not the cost —
+the per-session goroutines, buffers and connection state are.
 
-**RAM is not the binding constraint; CPU is.** Sky.Live renders views on the
-server and diffs them per update, so on a burstable instance the baseline CPU
-allowance runs out before the memory does. A 0.25-vCPU-baseline instance is a
-demo host, whatever its RAM says.
+| Concurrent sessions | Sessions | Total | Fits in 1 GB? |
+|---|---|---|---|
+| 100 | 110 MB | ~490 MB | yes |
+| 300 | 330 MB | ~710 MB | yes |
+| 500 | 550 MB | ~930 MB | at the edge |
+| 700 | 770 MB | ~1.15 GB | no |
+
+So **1 GB carries roughly 400–500 concurrent sessions** and 2 GB roughly triple
+that. The pool ceiling is a ceiling and not an allocation — `database/sql` opens
+lazily, so a host pays for what is in flight.
+
+### Which resource binds first, measured
+
+**Both, at different points, and the crossover is the useful part.** On one CPU
+the server saturates at **88–92 interactions/sec**, i.e. **~11 ms of server CPU
+per interaction**. So:
+
+- **Actively interacting users** are CPU-bound: ~100 per CPU before latency
+  climbs. Measured p50 goes 8 ms at 100 sessions → 70 ms at 500 → 659 ms at
+  1,000, with the knee **between 100 and 500**.
+- **Connected-but-idle users** are memory-bound: ~1.1 MB each, so the ceilings
+  above apply.
+
+A burstable instance makes the first one worse, because the baseline allowance
+is what a sustained load actually gets.
+
+### The cost is NOT in the view diff — do not optimise there
+
+This document previously said the per-interaction cost "scales with view size".
+**It does not**, and the measurement is unambiguous. The render → diff →
+serialize path costs:
+
+```
+≈ 0.4 µs + 128 ns × VNodes     (text/attribute change — the common case)
+≈         370 ns × VNodes      (child-count change — subtree re-render)
+```
+
+linear to within 2% across a 370× range. In practice:
+
+| View | VNodes | Diff cost |
+|---|---|---|
+| `19-skyforum` (94 elements) | 159 | **21 µs** |
+| `26-ui-showcase` (384 elements) | 670 | **86 µs** |
+
+So the diff is **under 1%** of an 11 ms interaction, and quadrupling the view —
+94 to 384 elements — adds 0.6%. Optimising the differ would buy nothing; at
+saturation the entire diff path is under 4% of a core. **Where the other ~11 ms
+goes has not been measured**, and that is the open question worth answering
+before anyone tunes anything.
+
+> **These figures are ARM-on-Apple-silicon**, from `docs/perf/skylive-interaction-cost.md`.
+> They are sound for relative comparisons and for locating the knee. They are
+> **not** a claim about any particular cloud instance: a fractional-CPU baseline
+> could not be reproduced (Apple's `container` takes only integer `--cpus`), so
+> the constrained runs are an *optimistic* stand-in at twice an e2-small's
+> entitlement.
 
 Three things that bite, in the order they bite:
 
