@@ -2014,16 +2014,27 @@ mod tests {
     fn the_dev_clusters_socket_directory_is_private_however_it_was_found() {
         use std::os::unix::fs::PermissionsExt;
 
+        // Removed however the test leaves, including the panic of a failing
+        // assertion — which is the path that matters, since a gate is expected
+        // to fail while it is being proved able to.
+        struct Scratch(PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
         // Short, shell-safe, and well inside sun_path: the other refusals in
         // prepare_socket_dir must not be what this test is measuring.
-        let base = PathBuf::from(format!(
+        let scratch = Scratch(PathBuf::from(format!(
             "/tmp/sky-sockmode-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ));
+        )));
+        let base = &scratch.0;
 
         for (case, pre) in [("a fresh directory", None), ("a directory left at 0777", Some(0o777))] {
             let dir = base.join(case.replace(' ', "-"));
@@ -2050,7 +2061,6 @@ mod tests {
                 mode & 0o7777
             );
         }
-        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
