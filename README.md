@@ -210,7 +210,7 @@ A short tour. Full reference at `sky doc --serve` or
 | Module                 | What it gives you                                                                 |
 |------------------------|-----------------------------------------------------------------------------------|
 | `Std.Ui`               | Typed no-CSS layout DSL (`row`/`column`/`el`/`button`/`input` + `Background`/`Border`/`Font`/`Region` subs). Renders to inline-styled HTML, ANSI cells, or native Webview from the same source. |
-| `Std.Live`             | Sky.Live runtime — TEA app + SSE patches + session stores (memory / sqlite / redis / postgres / firestore) + routing + cookies + auth gates. |
+| `Std.Live`             | Sky.Live runtime — TEA app + SSE patches + session stores (memory / sqlite / redis / postgres) + routing + cookies + auth gates. |
 | `Sky.Http.Server`      | HTTP server with typed routes, middleware (CORS / logging / rate-limit / basic-auth), streaming responses, WebSocket upgrade. |
 | `Std.Auth`             | bcrypt password hashing, HS256 / RS256 JWT, register / login / roles. Typed secrets — never `fmt.Sprintf("%v", token)`. |
 | `Std.Db`               | SQLite + PostgreSQL via one interface. Connection pool, prepared statements, versioned migrations, `Db.RowDecoder`, `withTransaction`. Sky can also ship and supervise the PostgreSQL itself — see below. |
@@ -284,7 +284,7 @@ entry = "src/Main.sky"
 
 [live]
 port = 8000
-store = "sqlite"          # memory / sqlite / redis / postgres / firestore
+store = "sqlite"          # memory / sqlite / redis / postgres
 storePath = "sessions.db"
 ttl = "30m"
 
