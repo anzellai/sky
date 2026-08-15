@@ -202,6 +202,23 @@ jobs:
           cp "$BUNDLE/sbom.json" "${TMP}/sbom-${PLATFORM}.json"
           echo "bundle=$BUNDLE" >> "$GITHUB_OUTPUT"
 
+      # The gate-self-test job above proved the gate can fail — against
+      # FIXTURES, in a temp directory, ~11 stub objects. That is not the same
+      # claim as "it can fail against THIS artifact", which is ~600 real
+      # objects with real soname chains and a real contrib set. `--bundle` runs
+      # the two cases that need one: C8 (the bundle we would publish, accepted)
+      # and C9 (the same bundle with one GPL-linked extension planted in lib/,
+      # rejected). Without C9, the step above is satisfied by a gate that
+      # accepts everything.
+      #
+      # It runs on a COPY of the artifact's directory — test-licence-gate.sh
+      # copies the bundle before planting anything — so the tree archived below
+      # is the one the gate accepted, untouched.
+      - name: Prove the gate discriminates ON this artifact (C8 + C9)
+        env:
+          BUNDLE: ${{ steps.gate.outputs.bundle }}
+        run: bash scripts/skydb/test-licence-gate.sh --bundle "$BUNDLE"
+
       - name: Archive
         env:
           BUNDLE: ${{ steps.gate.outputs.bundle }}

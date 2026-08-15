@@ -387,6 +387,35 @@ ln -sf "libpq.5.18.${DL}" "$C13/lib/libpq.5.${DL}"
 ln -sf "libpq.5.${DL}" "$C13/lib/libpq.${DL}"
 expect_accept "C13 in-bundle soname chain (relative, two hops)" "$C13"
 
+# C14. A STATIC ARCHIVE IS PART OF WHAT WE SHIP. `is_object` kept only Mach-O
+#      and ELF magic, so an `.a` was outside the walk entirely: not classified,
+#      not allowlisted, not counted. This exact fixture — the C6 GNU readline,
+#      one `ar rcs` apart — reported `GATE PASS — no GPL, LGPL or AGPL
+#      component is shipped or linked`.
+#
+#      It is not a contrived shape. build-postgres-bundle.sh deletes archives
+#      (`find "${BUNDLE}/lib" -name '*.a' -delete`), which is an intention in a
+#      build script with nothing checking it, scoped to lib/ and matched on the
+#      extension — the same class of "the flag records what we meant" that
+#      makes this gate read binaries rather than the configure line.
+C14="${WORK}/c14"; make_base_bundle "$C14"
+make_archive() {
+  local out="$1" src="${WORK}/arch.c" obj="${WORK}/arch.o"
+  echo 'int sky_arch_symbol(void) { return 0; }' >| "$src"
+  $CC -c -o "$obj" "$src" 2>/dev/null
+  rm -f "$out"; ar rcs "$out" "$obj"
+}
+make_archive "$C14/lib/libreadline.a"
+expect_reject "C14 GPL component shipped as a static archive" "$C14" "libreadline.a" "COPYLEFT"
+
+# C15. The other half of the same widening: an archive nobody reviewed is an
+#      object nobody reviewed. Without this, C14 could be satisfied by a rule
+#      that only ever looks at names already in the licence table, and an
+#      unrecognised `.a` would still ride along unclassified.
+C15="${WORK}/c15"; make_base_bundle "$C15"
+make_archive "$C15/lib/libsomethingnobodyreviewed.a"
+expect_reject "C15 unreviewed static archive" "$C15" "libsomethingnobodyreviewed" "UNKNOWN"
+
 # ─────────────────────────────────────────────────────────────────────
 if [ -n "$REAL_BUNDLE" ]; then
   hdr "Gate discrimination — REAL built bundle"
