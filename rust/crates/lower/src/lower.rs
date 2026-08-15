@@ -2350,11 +2350,48 @@ impl<'a> Ctx<'a> {
         name
     }
 
+    /// `func main()`.
+    ///
+    /// The three fixed statements at the top are ordered, and the order is the
+    /// content:
+    ///
+    /// - `defer rt.LogPanicAndExit()` is deferred FIRST, so it runs LAST. It is
+    ///   the panic recovery for everything below it.
+    /// - `rt.MaybeStartEmbeddedPostgres()` runs in `main`, never from an
+    ///   `init()`. `[database] path` / `url` reach the runtime as
+    ///   `rt.SetSkyDefault("DB_PATH", …)` in the prologue `init()` above, and Go
+    ///   runs every `init()` before `main` — so calling from `main` is exactly
+    ///   what makes those two config sources visible to `--embed`'s ambiguity
+    ///   check. From a second `init()` the two run in filename order, and an app
+    ///   with `[database] path` plus `--embed` could start a cluster anyway.
+    ///   `runtime-go/rt/pg_embed_test.go`'s
+    ///   `TestASkyTomlDatabasePathIsSeenAsAConflict` is the gate.
+    /// - `defer rt.StopEmbeddedPostgres()` is deferred SECOND, so it runs
+    ///   BEFORE the panic handler: a panicking app still stops its database
+    ///   before the process reports and exits.
+    ///
+    /// Both calls are emitted for every program, embedded bundle or not. A
+    /// build without `--embed` links no bundle, `MaybeStartEmbeddedPostgres`
+    /// returns on the first line unless `--embed` was actually passed, and
+    /// `StopEmbeddedPostgres` is a nil check on a supervisor that was never
+    /// created. Emitting them conditionally would buy nothing and would make
+    /// `./app --embed` on an ordinary build ignore the flag in silence, which is
+    /// the failure mode this whole feature exists to refuse.
     fn lower_main(&mut self, _name: &str, _module: &str) -> GoItem {
-        let mut stmts = vec![GoStmt::Expr(GoExpr::new(
-            GoExprKind::Ident("defer rt.LogPanicAndExit()".into()),
-            GoTy::Unit,
-        ))];
+        let mut stmts = vec![
+            GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("defer rt.LogPanicAndExit()".into()),
+                GoTy::Unit,
+            )),
+            GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("rt.MaybeStartEmbeddedPostgres()".into()),
+                GoTy::Unit,
+            )),
+            GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("defer rt.StopEmbeddedPostgres()".into()),
+                GoTy::Unit,
+            )),
+        ];
         let root = self.body.root;
         if let Some(r) = root {
             self.lower_main_body(r, &mut stmts);

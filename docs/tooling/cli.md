@@ -26,7 +26,39 @@ Pipeline:
 3. Resolve modules, type-check, lower to Go under `sky-out/`.
 4. Invoke `go build` → `sky-out/app` (or the `bin` name set in `sky.toml`).
 
+**`--embed`** bundles a PostgreSQL distribution into the binary, so
+`./sky-out/app --embed` is a self-contained app *and* database on a bare host —
+one file, no system PostgreSQL, no `DATABASE_URL`.
+
+```bash
+sky build --embed src/Main.sky
+./sky-out/app --embed                       # starts its own cluster
+./sky-out/app --embed --data-dir /var/lib/myapp
+```
+
+- **What it costs.** The binary grows by the compressed bundle — about 25–30 MB
+  — and becomes platform-specific. A build *without* the flag pays nothing: no
+  bundle is linked, and any archive an earlier `--embed` build staged is removed.
+- **Where the bundle comes from.** The pin is `[database] postgresVersion`.
+  `sky build --embed` uses `$SKY_HOME/postgres-bundles/`, else re-packs an
+  existing `sky db provision --embed` cache (no network), else fetches and
+  checksum-verifies the release. A prior `sky db provision` is **not** required.
+- **Cross-compiling.** `GOOS` / `GOARCH` select the target's bundle, so
+  `GOOS=linux GOARCH=arm64 sky build --embed …` embeds Linux/arm64 PostgreSQL.
+  A target Sky publishes no bundle for is refused before the build starts — the
+  host's binaries are never embedded into another platform's binary.
+- **`--embed` plus an explicit DSN is an error**, at app startup, naming the
+  source. There is no precedence that does not either ignore the operator's
+  database or make the flag inert.
+
+`--embed` belongs on `sky build`, not on `sky run` — see below.
+
 ### `sky run [path]`
+
+For development you do not need `--embed` (and `sky run --embed` is refused with
+a pointer): set `[database] embedded = true` in `sky.toml` and `sky run` starts a
+local cluster, injects the DSN, and stops it on exit. See
+[`sky db start`](#sky-db-start--sky-db-stop--sky-db-ps--the-local-postgresql-cluster).
 
 `sky build` + execute the resulting binary.
 

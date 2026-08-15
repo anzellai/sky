@@ -12,6 +12,7 @@ package rt
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"io/fs"
@@ -295,12 +296,24 @@ func parsePgVersion(out string) (string, int, bool) {
 // re-doing it on every boot would add seconds to every restart. It records the
 // bundle's identity, so a binary rebuilt with a different PostgreSQL extracts
 // over the top rather than running the old server against a new data directory.
+//
+// "Identity" is the archive's CONTENT DIGEST, not its name. P5b found the
+// marker keyed on EmbeddedPostgresBundleName — and `sky build --embed` embeds
+// every bundle under one stable name (`postgres-bundle.tar.gz`), because a
+// `go:embed` directive takes a literal path. So the one thing that changes the
+// bundle left the key untouched: a rebuild onto a new PostgreSQL major matched
+// the old marker, skipped extraction, and ran the PREVIOUS server against a
+// data directory the new build had just been told to expect. Hashing the
+// embedded archive costs one sha256 over ~25MB (tens of milliseconds) on the
+// starts that skip extraction, which is the cheap side of that trade.
 func ensureBundleExtracted(dest string) (string, error) {
 	marker := filepath.Join(dest, ".sky-bundle")
 	want := EmbeddedPostgresBundleName
-	if got, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(got)) == want {
-		if dir, err := bundleBinDir(dest); err == nil {
-			return dir, nil
+	if got, err := os.ReadFile(marker); err == nil {
+		if id, err := bundleIdentity(want); err == nil && strings.TrimSpace(string(got)) == id {
+			if dir, err := bundleBinDir(dest); err == nil {
+				return dir, nil
+			}
 		}
 	}
 	f, err := EmbeddedPostgresBundle.Open(want)
@@ -311,6 +324,10 @@ func ensureBundleExtracted(dest string) (string, error) {
 				"go:embed did not include.", want, err)
 	}
 	defer f.Close()
+	id, err := bundleIdentity(want)
+	if err != nil {
+		return "", err
+	}
 
 	// A partial extraction left by a killed process must not be mistaken for a
 	// complete one, so unpack into a sibling and rename into place.
@@ -327,10 +344,30 @@ func ensureBundleExtracted(dest string) (string, error) {
 	if err := os.Rename(staging, dest); err != nil {
 		return "", fmt.Errorf("sky --embed: cannot install the unpacked bundle at %s: %w", dest, err)
 	}
-	if err := os.WriteFile(marker, []byte(want+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(marker, []byte(id+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("sky --embed: cannot write %s: %w", marker, err)
 	}
 	return bundleBinDir(dest)
+}
+
+// bundleIdentity is what the extraction marker records: the archive's name AND
+// a sha256 of its bytes. The name alone is not an identity — see
+// ensureBundleExtracted — and the digest alone would re-extract needlessly if a
+// build ever carried two archives, so both are in the key.
+func bundleIdentity(name string) (string, error) {
+	f, err := EmbeddedPostgresBundle.Open(name)
+	if err != nil {
+		return "", fmt.Errorf(
+			"sky --embed: this binary carries an embedded-PostgreSQL bundle but %q is not\n"+
+				"in it (%v). The build set rt.EmbeddedPostgresBundleName to a name the\n"+
+				"go:embed did not include.", name, err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("sky --embed: cannot read the embedded bundle %q: %w", name, err)
+	}
+	return fmt.Sprintf("%s sha256:%x", name, h.Sum(nil)), nil
 }
 
 // bundleBinDir finds `bin/` in an extracted bundle, at the top or one level
@@ -488,7 +525,49 @@ const pgSocketBasename = ".s.PGSQL.5432"
 // the machine that wrote it and fails on a host with a longer prefix.
 const maxSocketPath = 92
 
+// resolvedPath resolves symlinks as far as the path exists, then re-appends the
+// components that do not.
+//
+// The socket-directory hash is taken over a path that is often only partly on
+// disk — `.skydata/pg` does not exist until the first initdb — so a plain
+// EvalSymlinks cannot be used. This mirrors `resolved_path` in
+// `rust/crates/sky/src/db_cluster.rs`: on macOS `/tmp/x` and `/private/tmp/x`
+// are the same directory and hash differently, and the Rust side canonicalises
+// its project path, so without this the two sides name different sockets for
+// one cluster.
+func resolvedPath(p string) string {
+	var tail []string
+	cur := p
+	for {
+		if c, err := filepath.EvalSymlinks(cur); err == nil {
+			out := c
+			for i := len(tail) - 1; i >= 0; i-- {
+				out = filepath.Join(out, tail[i])
+			}
+			return out
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+	}
+}
+
 // socketDirFor derives a short, stable socket directory for a data directory.
+//
+// **The hash input is the PostgreSQL DATA DIRECTORY**, and that is the single
+// input both implementations use — see `socket_dir_for_data_dir` in
+// `rust/crates/sky/src/db_cluster.rs`. Until P5b the Rust side hashed the
+// PROJECT path and this side hashed `<dataRoot>/pg`, so `./app --embed` in a
+// project whose cluster `sky db start` had already brought up adopted the live
+// postmaster and then probed a socket directory that did not exist: 60 seconds
+// of waitReady, then exit 1, with a healthy database running the whole time.
+// The hash FUNCTION was identical; the INPUT was not, and nothing checked the
+// input. `TestTheSocketDirectoryForAPinnedProjectIsAPinnedConstant` and its
+// Rust twin both assert a literal, because two implementations compared only to
+// each other can drift together.
 //
 // It is deliberately OUTSIDE the data directory. A data directory is meant to
 // be somewhere durable and explicit — `/var/lib/something-with-a-long-name` —
@@ -502,7 +581,7 @@ const maxSocketPath = 92
 // literal /tmp rather than os.TempDir(), which on macOS is a ~49-byte per-user
 // path under /var/folders that spends half the budget before the hash.
 func socketDirFor(dataDir, xdg, fallbackBase string) string {
-	hash := pathHash(dataDir)
+	hash := pathHash(resolvedPath(dataDir))
 	if x := strings.TrimSpace(xdg); x != "" && filepath.IsAbs(x) {
 		cand := filepath.Join(x, "sky", hash)
 		if socketPathLen(cand) <= maxSocketPath {

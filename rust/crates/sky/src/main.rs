@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 mod db_cluster;
+mod db_embed;
 mod db_migrate;
 mod db_provision;
 use std::time::{Duration, Instant};
@@ -709,6 +710,7 @@ fn entry_module_name(file: &Path) -> Option<String> {
 
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let (positional, out_override) = parse_out(args);
+    let embed = args.iter().any(|a| a == "--embed");
     let file = match resolve_entry_arg(
         &positional,
         &format!(
@@ -737,6 +739,28 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // `--embed` is resolved BEFORE anything is compiled. Acquiring the bundle
+    // can mean a download, and finding out at the far end of a build that the
+    // target platform has no PostgreSQL published for it is the wrong end.
+    let embed_bundle = if embed {
+        let platform = match db_embed::target_platform() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match db_embed::resolve_bundle_archive(&project_dir, platform) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+
     let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
     let opts = BuildOptions {
         repo_root,
@@ -747,6 +771,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         stdin: None,
         entry_module: entry_module_name(file),
         progress: true,
+        embed_bundle,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -800,6 +825,25 @@ fn cmd_run(args: &[String]) -> ExitCode {
     // subcommands, so they reuse the exact migrate/seed logic + env inheritance).
     // Order: db push/migrate, then seed, then serve — the container-entrypoint
     // "migrate-then-serve" shape.
+    // `--embed` is a BUILD flag, and `parse_out` swallows anything it does not
+    // recognise — so without this it would be accepted in silence and do
+    // nothing, which is the exact failure mode `--embed` exists to refuse. Say
+    // what to use instead rather than just rejecting.
+    if args.iter().any(|a| a == "--embed") {
+        eprintln!(
+            "sky run: --embed is a `sky build` flag, not a `sky run` one.\n\
+             \n\
+             `sky run` already supervises a development cluster: set\n\
+             \x20 [database]\n\
+             \x20 embedded = true\n\
+             in sky.toml and it starts one, injects the DSN and stops it on exit.\n\
+             \n\
+             To produce a binary that carries its own PostgreSQL, build it:\n\
+             \x20 sky build --embed src/Main.sky\n\
+             \x20 ./sky-out/app --embed"
+        );
+        return ExitCode::from(2);
+    }
     let db_push = args.iter().any(|a| a == "--db-push");
     let db_migrate = args.iter().any(|a| a == "--db-migrate");
     let db_seed = args.iter().any(|a| a == "--db-seed");
@@ -844,6 +888,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         stdin: None,
         entry_module: entry_module_name(file),
         progress: true,
+        embed_bundle: None,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -2151,6 +2196,7 @@ fn build_temp_db_entry(
         stdin: None,
         entry_module: Some(module.to_string()),
         progress: false,
+        embed_bundle: None,
     };
     let report = build_project(&opts, &[scratch.clone()], Some(module));
     if !(report.emitted && report.go_build_ok) {
@@ -2778,6 +2824,7 @@ fn cmd_db(args: &[String]) -> ExitCode {
         stdin: None,
         entry_module: entry_module_name(file),
         progress: false,
+        embed_bundle: None,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -3065,6 +3112,7 @@ fn watch_build_and_spawn(
         stdin: None,
         entry_module: entry_module_name(file),
         progress: false,
+        embed_bundle: None,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -3842,6 +3890,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
             stdin: None,
             entry_module: None,
             progress: false,
+            embed_bundle: None,
         };
         let report = build_example(&opts);
         if !report.emitted {
@@ -3956,6 +4005,7 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
         stdin: None,
         entry_module: None,
         progress: false,
+        embed_bundle: None,
     };
     let report = build_example(&opts);
     if report.emitted && report.go_build_ok {
@@ -4579,7 +4629,7 @@ fn print_help() {
         "sky — the Sky compiler CLI (rust bring-up)\n\n\
          USAGE:\n  sky <command> [args]\n\n\
          WIRED COMMANDS:\n\
-         \x20 build <file>     compile → sky-out/ + go build\n\
+         \x20 build <file>     compile → sky-out/ + go build (--embed bundles PostgreSQL)\n\
          \x20 check <file>     type-check + go build (no binary run)\n\
          \x20 run   <file>     build + execute\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\

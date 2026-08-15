@@ -158,8 +158,16 @@ func TestBundleIsExtractedOnceAndAgainWhenTheBundleChanges(t *testing.T) {
 		t.Error("the bundle was unpacked a second time for no reason")
 	}
 
-	// A new bundle name means a new PostgreSQL: unpack over the top.
-	withBundle(t, "postgres-19.1-darwin-arm64.tar.gz", makeTarGz(t, []tarEntry{
+	// ── The case that matters, and the one this test used to miss. ──────────
+	//
+	// It changed the NAME as well as the content, so it passed against a marker
+	// keyed on the name alone. `sky build --embed` embeds every bundle as
+	// `postgres-bundle.tar.gz` — a `go:embed` path is a literal and cannot carry
+	// a version — so under the real compiler the name NEVER changes and the
+	// content always does. Keep the name fixed here and change only the bytes:
+	// that is a rebuild onto a new PostgreSQL, and the old server must not
+	// survive it against a data directory the new build expects.
+	withBundle(t, "postgres-18.6-darwin-arm64.tar.gz", makeTarGz(t, []tarEntry{
 		{name: "bin/initdb", body: "v2", mode: 0o755},
 		{name: "bin/pg_ctl", body: "v2", mode: 0o755},
 		{name: "bin/postgres", body: "v2", mode: 0o755},
@@ -168,7 +176,20 @@ func TestBundleIsExtractedOnceAndAgainWhenTheBundleChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dest, "bin", "postgres")); string(b) != "v2" {
-		t.Errorf("the new bundle was not unpacked (got %q)", b)
+		t.Errorf("a bundle with new CONTENT under the SAME name was not unpacked (got %q)", b)
+	}
+
+	// And a renamed bundle is still a new bundle.
+	withBundle(t, "postgres-19.1-darwin-arm64.tar.gz", makeTarGz(t, []tarEntry{
+		{name: "bin/initdb", body: "v3", mode: 0o755},
+		{name: "bin/pg_ctl", body: "v3", mode: 0o755},
+		{name: "bin/postgres", body: "v3", mode: 0o755},
+	}))
+	if _, err := ensureBundleExtracted(dest); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dest, "bin", "postgres")); string(b) != "v3" {
+		t.Errorf("a renamed bundle was not unpacked (got %q)", b)
 	}
 }
 

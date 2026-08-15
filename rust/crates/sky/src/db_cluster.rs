@@ -81,17 +81,72 @@ fn fnv1a128(bytes: &[u8]) -> u128 {
     h
 }
 
-/// A stable 16-hex-character digest of a project's canonical path. 64 bits of a
-/// 128-bit hash: a machine would need on the order of 4 billion concurrent Sky
-/// projects before two shared a socket directory.
-pub fn project_hash(project: &Path) -> String {
-    let h = fnv1a128(project.as_os_str().as_encoded_bytes());
+/// A stable 16-hex-character digest of a path. 64 bits of a 128-bit hash: a
+/// machine would need on the order of 4 billion concurrent Sky projects before
+/// two shared a socket directory.
+///
+/// Named `path_hash` rather than `project_hash` because the *project* is not
+/// what is hashed. See [`socket_dir_for_data_dir`].
+pub fn path_hash(p: &Path) -> String {
+    let h = fnv1a128(p.as_os_str().as_encoded_bytes());
     format!("{:016x}", (h >> 64) as u64)
+}
+
+/// Resolve symlinks as far as the path exists, then re-append the components
+/// that do not.
+///
+/// The socket-directory hash is taken over a path that is often only partly on
+/// disk — `.skydata/pg` does not exist until the first `initdb` — so plain
+/// `canonicalize` cannot be used. Both this and the Go side
+/// (`resolvedPath` in `runtime-go/rt/pg_embed_bundle.go`) must agree, because
+/// on macOS `/tmp/x` and `/private/tmp/x` are the same directory and hash
+/// differently.
+pub fn resolved_path(p: &Path) -> PathBuf {
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = p.to_path_buf();
+    loop {
+        if let Ok(c) = cur.canonicalize() {
+            let mut out = c;
+            for t in tail.iter().rev() {
+                out.push(t);
+            }
+            return out;
+        }
+        let Some(name) = cur.file_name().map(|f| f.to_os_string()) else {
+            return p.to_path_buf();
+        };
+        let Some(parent) = cur.parent().map(Path::to_path_buf) else {
+            return p.to_path_buf();
+        };
+        if parent.as_os_str().is_empty() || parent == cur {
+            return p.to_path_buf();
+        }
+        tail.push(name);
+        cur = parent;
+    }
 }
 
 // ---- socket path derivation ---------------------------------------------
 
-/// Where this project's cluster listens.
+/// Where the cluster serving `data_dir` listens.
+///
+/// **The hash input is the PostgreSQL DATA DIRECTORY, not the project.** This is
+/// the one input, and the reason it is that one: `./app --embed --data-dir
+/// /var/lib/app` has no project at all, so a project-keyed derivation cannot be
+/// computed on the runtime side. Keying on the data directory also gives the
+/// property that actually matters — one postmaster per data directory, one
+/// socket per postmaster — which a project key loses the moment two data
+/// directories live under one project.
+///
+/// P5b found the two sides disagreeing: Rust hashed the project path while Go
+/// hashed `<dataRoot>/pg`, so `./app --embed` in a project whose cluster
+/// `sky db start` had already brought up probed a socket directory that did not
+/// exist, spent 60s in `waitReady` and exited 1 with a healthy postmaster
+/// running throughout. The pinned-constant gates on both sides
+/// (`the_socket_directory_for_a_pinned_project_is_a_pinned_constant` here,
+/// `TestTheSocketDirectoryForAPinnedProjectIsAPinnedConstant` in Go) exist
+/// because a test that compares the two implementations to each other can drift
+/// together; a literal cannot.
 ///
 /// `xdg_runtime_dir` and `fallback_base` are parameters rather than reads of the
 /// ambient environment so the derivation — including the pathological-depth case
@@ -101,8 +156,12 @@ pub fn project_hash(project: &Path) -> String {
 /// value, it is frequently a long per-session path, and a runtime dir that
 /// cannot host a socket must degrade to `/tmp` rather than produce a cluster
 /// that fails to bind.
-pub fn socket_dir_for(project: &Path, xdg_runtime_dir: Option<&str>, fallback_base: &Path) -> PathBuf {
-    let hash = project_hash(project);
+pub fn socket_dir_for_data_dir(
+    data_dir: &Path,
+    xdg_runtime_dir: Option<&str>,
+    fallback_base: &Path,
+) -> PathBuf {
+    let hash = path_hash(&resolved_path(data_dir));
     if let Some(xdg) = xdg_runtime_dir.map(str::trim).filter(|x| !x.is_empty()) {
         let base = Path::new(xdg);
         if base.is_absolute() {
@@ -123,10 +182,22 @@ pub fn socket_path_len(socket_dir: &Path) -> usize {
     socket_dir.join(SOCKET_BASENAME).as_os_str().as_encoded_bytes().len()
 }
 
-/// The ambient-environment version of [`socket_dir_for`]. `/tmp` is hard-coded
-/// as the fallback rather than `std::env::temp_dir()` because on macOS the
-/// latter is a ~49-byte per-user `$TMPDIR` under `/var/folders/`, which spends
-/// half the socket budget before the hash is even appended.
+/// The project-shaped entry point: `sky db start` / `sky run` know a project,
+/// and the data directory they derive from it (`<project>/.skydata/pg`) is the
+/// same one `./app --embed` resolves from its own cwd. Funnelling both through
+/// [`socket_dir_for_data_dir`] is what makes the two agree.
+pub fn socket_dir_for_project(
+    project: &Path,
+    xdg_runtime_dir: Option<&str>,
+    fallback_base: &Path,
+) -> PathBuf {
+    socket_dir_for_data_dir(&data_dir_for(project), xdg_runtime_dir, fallback_base)
+}
+
+/// The ambient-environment version of [`socket_dir_for_project`]. `/tmp` is
+/// hard-coded as the fallback rather than `std::env::temp_dir()` because on
+/// macOS the latter is a ~49-byte per-user `$TMPDIR` under `/var/folders/`,
+/// which spends half the socket budget before the hash is even appended.
 fn socket_dir_real(project: &Path) -> PathBuf {
     let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
     let fallback = if cfg!(unix) {
@@ -134,7 +205,7 @@ fn socket_dir_real(project: &Path) -> PathBuf {
     } else {
         std::env::temp_dir()
     };
-    socket_dir_for(project, xdg.as_deref(), &fallback)
+    socket_dir_for_project(project, xdg.as_deref(), &fallback)
 }
 
 // ---- registry ------------------------------------------------------------
@@ -1722,18 +1793,116 @@ mod tests {
 
     // --- socket path derivation ---
 
+    /// THE cross-implementation gate. Its twin is
+    /// `TestTheSocketDirectoryForAPinnedProjectIsAPinnedConstant` in
+    /// `runtime-go/rt/pg_embed_socket_test.go`, and both assert this same
+    /// literal rather than comparing the two implementations to each other —
+    /// two implementations compared only to each other can drift together, and
+    /// that is precisely what they did. This side hashed the PROJECT path while
+    /// the Go side hashed `<dataRoot>/pg`, so `./app --embed` in a project whose
+    /// cluster was already up probed a socket directory that did not exist.
+    ///
+    /// `/sky/pinned/project` does not exist, so `resolved_path` is an identity
+    /// here and the constant holds on any machine.
+    #[test]
+    fn the_socket_directory_for_a_pinned_project_is_a_pinned_constant() {
+        let d = socket_dir_for_project(Path::new("/sky/pinned/project"), None, Path::new("/tmp"));
+        assert_eq!(
+            d,
+            PathBuf::from("/tmp/sky-3b7c436bcb7e1ee0"),
+            "if this changed deliberately, the Go twin in pg_embed_socket_test.go must \
+             change in the same commit — the two name one directory for one cluster"
+        );
+        // And the input really is the data directory, not the project.
+        assert_eq!(
+            d,
+            socket_dir_for_data_dir(
+                Path::new("/sky/pinned/project/.skydata/pg"),
+                None,
+                Path::new("/tmp")
+            )
+        );
+    }
+
+    /// A project reached through a symlink is one project. `current_project_dir`
+    /// canonicalises before hashing; the Go side resolves too, and this asserts
+    /// the derivation itself does not depend on which name the caller used.
+    #[test]
+    fn a_symlinked_data_directory_hashes_as_its_real_path() {
+        let real = std::env::temp_dir().join(format!("sky-p5b-real-{}", std::process::id()));
+        let link = std::env::temp_dir().join(format!("sky-p5b-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&real);
+        let _ = std::fs::remove_file(&link);
+        std::fs::create_dir_all(&real).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let via_link = socket_dir_for_data_dir(&link.join("pg"), None, Path::new("/tmp"));
+        let via_real = socket_dir_for_data_dir(&real.join("pg"), None, Path::new("/tmp"));
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir_all(&real);
+        assert_eq!(via_link, via_real, "a symlinked data dir hashed differently");
+    }
+
+    /// `.skydata/pg` does not exist until the first `initdb`, so the resolver
+    /// must keep components that are not on disk. One that gave up on a missing
+    /// leaf would hash the parent and put every project in one socket directory.
+    #[test]
+    fn resolved_path_keeps_components_that_do_not_exist_yet() {
+        let root = std::env::temp_dir();
+        let got = resolved_path(&root.join("sky-p5b-nope").join("deeper"));
+        assert!(got.ends_with("sky-p5b-nope/deeper"), "{}", got.display());
+        assert_ne!(
+            socket_dir_for_data_dir(&root.join("one").join("pg"), None, Path::new("/tmp")),
+            socket_dir_for_data_dir(&root.join("two").join("pg"), None, Path::new("/tmp")),
+        );
+    }
+
+    /// `dsn_env_name` had no test, and every flow fixture used the default
+    /// prefix — so it could be reduced to a hard-coded `"SKY_DB_PATH"` with the
+    /// whole suite green. On a project with `[env] prefix = "FENCE"` that means
+    /// `sky run` injects `SKY_DB_PATH` while the app reads `FENCE_DB_PATH`: the
+    /// app fails to connect with its database healthy, and the `--embed`
+    /// ambiguity check inspects the wrong variable into the bargain.
+    #[test]
+    fn the_injected_dsn_variable_follows_the_projects_env_prefix() {
+        let dir = std::env::temp_dir().join(format!("sky-p5b-prefix-{}-{}", std::process::id(), now_secs()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        std::fs::write(dir.join("sky.toml"), "[database]\nembedded = true\n").unwrap();
+        assert_eq!(dsn_env_name(&dir), "SKY_DB_PATH");
+
+        std::fs::write(
+            dir.join("sky.toml"),
+            "[env]\nprefix = \"FENCE\"\n\n[database]\nembedded = true\n",
+        )
+        .unwrap();
+        assert_eq!(dsn_env_name(&dir), "FENCE_DB_PATH");
+
+        // A prefix written with the separator already on it must not double it.
+        std::fs::write(dir.join("sky.toml"), "[env]\nprefix = \"FENCE_\"\n").unwrap();
+        assert_eq!(dsn_env_name(&dir), "FENCE_DB_PATH");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn socket_dir_is_stable_and_project_specific() {
         let a = Path::new("/Users/dev/projects/alpha");
         let b = Path::new("/Users/dev/projects/beta");
-        assert_eq!(socket_dir_for(a, None, Path::new("/tmp")), socket_dir_for(a, None, Path::new("/tmp")));
-        assert_ne!(socket_dir_for(a, None, Path::new("/tmp")), socket_dir_for(b, None, Path::new("/tmp")));
+        assert_eq!(
+            socket_dir_for_project(a, None, Path::new("/tmp")),
+            socket_dir_for_project(a, None, Path::new("/tmp"))
+        );
+        assert_ne!(
+            socket_dir_for_project(a, None, Path::new("/tmp")),
+            socket_dir_for_project(b, None, Path::new("/tmp"))
+        );
     }
 
     #[test]
     fn socket_dir_uses_xdg_runtime_dir_when_it_fits() {
         let p = Path::new("/Users/dev/app");
-        let d = socket_dir_for(p, Some("/run/user/1000"), Path::new("/tmp"));
+        let d = socket_dir_for_project(p, Some("/run/user/1000"), Path::new("/tmp"));
         assert!(d.starts_with("/run/user/1000/sky"), "{}", d.display());
         assert!(socket_path_len(&d) <= MAX_SOCKET_PATH);
     }
@@ -1742,7 +1911,7 @@ mod tests {
     fn socket_dir_ignores_a_relative_or_blank_xdg_runtime_dir() {
         let p = Path::new("/Users/dev/app");
         for xdg in [Some(""), Some("   "), Some("relative/run"), None] {
-            let d = socket_dir_for(p, xdg, Path::new("/tmp"));
+            let d = socket_dir_for_project(p, xdg, Path::new("/tmp"));
             // String prefix, not `Path::starts_with`: the latter compares whole
             // components, so `/tmp/sky-abc` does NOT start with `/tmp/sky-`.
             assert!(d.to_string_lossy().starts_with("/tmp/sky-"), "{xdg:?} → {}", d.display());
@@ -1753,7 +1922,7 @@ mod tests {
     fn socket_dir_falls_back_when_xdg_runtime_dir_is_itself_too_long() {
         // A real shape: a per-session runtime dir on a host with a long hostname.
         let xdg = format!("/run/user/1000/{}", "verylongsessiondirectory".repeat(4));
-        let d = socket_dir_for(Path::new("/Users/dev/app"), Some(&xdg), Path::new("/tmp"));
+        let d = socket_dir_for_project(Path::new("/Users/dev/app"), Some(&xdg), Path::new("/tmp"));
         assert!(d.to_string_lossy().starts_with("/tmp/sky-"), "{}", d.display());
         assert!(socket_path_len(&d) <= MAX_SOCKET_PATH);
     }
@@ -1776,7 +1945,7 @@ mod tests {
         );
 
         for xdg in [None, Some("/run/user/1000")] {
-            let d = socket_dir_for(&deep, xdg, Path::new("/tmp"));
+            let d = socket_dir_for_project(&deep, xdg, Path::new("/tmp"));
             assert!(
                 socket_path_len(&d) <= MAX_SOCKET_PATH,
                 "deep project produced a {}-byte socket path: {}",
@@ -1784,7 +1953,7 @@ mod tests {
                 d.join(SOCKET_BASENAME).display()
             );
             // And it is still specific to this project, not a shared bucket.
-            assert!(d.to_string_lossy().contains(&project_hash(&deep)));
+            assert!(d.to_string_lossy().contains(&path_hash(&data_dir_for(&deep))));
         }
     }
 

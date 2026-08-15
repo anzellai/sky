@@ -573,7 +573,7 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
     Ok(o)
 }
 
-fn sky_home() -> PathBuf {
+pub fn sky_home() -> PathBuf {
     if let Some(h) = std::env::var_os("SKY_HOME").filter(|h| !h.is_empty()) {
         return PathBuf::from(h);
     }
@@ -604,6 +604,76 @@ pub fn bundle_is_complete(bin_dir: &Path) -> bool {
             }
         }
         true
+    })
+}
+
+/// Fetch the release archive for `version`/`platform` and verify it against the
+/// release's own `SHA256SUMS`, leaving it at `dest`.
+///
+/// This is the verb's download-and-verify half with the extract-and-install half
+/// removed, because `sky build --embed` needs the **archive**, not the
+/// extracted tree: `go:embed` forces mode 0444 on every file and cannot
+/// represent a symlink at all, so an embedded directory tree yields a
+/// non-executable `postgres` and no `libpq.5.dylib`. The tar has to survive
+/// intact all the way into the binary.
+///
+/// The order is the verb's order and for the verb's reason: the manifest is
+/// fetched first so nothing is downloaded without something to check it
+/// against, and the digest is taken from the bytes that landed rather than the
+/// ones we meant to write. `dest` is written only after the comparison passes.
+pub fn fetch_verified_archive(
+    version: &str,
+    platform: &str,
+    dest: &Path,
+    base_url_override: Option<&str>,
+) -> Result<(), String> {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| format!("sky build --embed: {} has no parent", dest.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("sky build --embed: cannot create {}: {e}", parent.display()))?;
+    check_free_space(parent)?;
+
+    let asset = asset_name(version, platform);
+    let base = base_url(version, base_url_override.or(env_base().as_deref()));
+    let tmp = parent.join(format!(".{asset}.{}.part", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+
+    let sums_url = format!("{base}/{CHECKSUM_FILE}");
+    let sums_path = parent.join(format!(".{CHECKSUM_FILE}.{}.part", std::process::id()));
+    let _ = std::fs::remove_file(&sums_path);
+    let sums_result = fetch(&sums_url, &sums_path, true).and_then(|()| {
+        std::fs::read_to_string(&sums_path)
+            .map_err(|e| format!("sky build --embed: cannot read {}: {e}", sums_path.display()))
+    });
+    let _ = std::fs::remove_file(&sums_path);
+    let sums = sums_result.map_err(|e| {
+        format!("{e}\n(the checksum manifest is fetched first — nothing is downloaded unverified)")
+    })?;
+    let expected = parse_sha256sums(&sums, &asset).ok_or_else(|| {
+        format!(
+            "sky build --embed: {sums_url} does not list {asset}.\n\
+             That release does not carry a bundle for {platform}."
+        )
+    })?;
+
+    let url = format!("{base}/{asset}");
+    println!("sky build --embed: fetching {url}");
+    fetch(&url, &tmp, false)?;
+    let actual = match sha256_file(&tmp) {
+        Ok(a) => a,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+    if actual != expected.to_ascii_lowercase() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(checksum_mismatch_message(&url, &expected, &actual));
+    }
+    std::fs::rename(&tmp, dest).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("sky build --embed: cannot install {}: {e}", dest.display())
     })
 }
 

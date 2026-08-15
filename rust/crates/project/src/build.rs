@@ -42,6 +42,18 @@ pub struct BuildOptions {
     /// interactive `sky build`/`run`/`check` UX, mirroring the Haskell oracle.
     /// Batch gates + synthesised-entry verbs leave it `false` for quiet builds.
     pub progress: bool,
+    /// `sky build --embed`: the PostgreSQL bundle archive to compile into the
+    /// binary, already resolved and verified by the CLI (see
+    /// `rust/crates/sky/src/db_embed.rs`). `None` — the ordinary build — links
+    /// no bundle at all and actively REMOVES any archive a previous `--embed`
+    /// build left in the out dir, so a binary never carries 25MB of PostgreSQL
+    /// because of a flag someone passed yesterday.
+    ///
+    /// The path is resolved by the CLI rather than here because acquiring it can
+    /// mean a network fetch and a checksum verification, and `project` is the
+    /// library every gate and harness builds through — none of which should be
+    /// able to reach the network as a side effect of compiling.
+    pub embed_bundle: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -552,6 +564,20 @@ fn build_inner(
     // failure warns, never fails the build).
     if let Err(e) = write_embedded_migrations(&opts.example_dir, &out_dir) {
         report.warnings.push(format!("embed migrations: {e}"));
+    }
+
+    // `sky build --embed`: stage the PostgreSQL bundle and the `go:embed` that
+    // links it. NOT best-effort — a `--embed` build that quietly produced a
+    // binary with no database in it is the one outcome this flag must never
+    // have, so a failure here fails the build before `go build` runs.
+    if let Err(e) = write_postgres_bundle(opts.embed_bundle.as_deref(), &out_dir) {
+        // `emitted` is cleared as well as noted: the Go is on disk, but the
+        // binary this build would have produced is not the one that was asked
+        // for, and the CLI's "emitted" path goes on to report `go build`
+        // results. A `--embed` build that cannot stage its bundle has failed.
+        report.emitted = false;
+        report.note = e;
+        return report;
     }
 
     // ---- go build (two-phase cgo detection + bounded) ----
@@ -1493,6 +1519,131 @@ fn write_embedded_migrations(example_dir: &Path, out_dir: &Path) -> Result<(), S
     std::fs::write(&target, go).map_err(|e| e.to_string())
 }
 
+/// The archive `sky build --embed` stages in the out dir, and the literal the
+/// generated `//go:embed` directive is written against. Fixed, because a
+/// `go:embed` path is a literal and cannot carry a version or a platform — see
+/// `EMBEDDED_BUNDLE_FILENAME` in `rust/crates/sky/src/db_embed.rs`, and
+/// `bundleIdentity` in `runtime-go/rt/pg_embed_bundle.go` for why the runtime's
+/// extraction marker therefore keys on the archive's CONTENT and not this name.
+pub const EMBEDDED_BUNDLE_FILENAME: &str = "postgres-bundle.tar.gz";
+/// The generated file holding the `//go:embed` and the two assignments.
+const EMBEDDED_BUNDLE_GO: &str = "pg_embed_bundle_gen.go";
+/// Records which archive the staged copy came from, so a rebuild that changes
+/// nothing does not re-copy 25MB.
+const EMBEDDED_BUNDLE_STAMP: &str = ".sky-postgres-bundle";
+
+/// Stage the PostgreSQL bundle for `sky build --embed`, or remove every trace of
+/// a previous one.
+///
+/// Three properties, each of which has a way of going wrong that is invisible
+/// until the binary is on a server:
+///
+/// - **The archive is embedded AS A TAR.** `go:embed` forces mode 0444 on every
+///   file it carries and cannot represent a symlink at all, so embedding the
+///   *extracted* tree yields a `postgres` that cannot be executed and a
+///   `libpq.5.dylib` that does not exist. The tar has to survive intact into the
+///   binary and be unpacked by the runtime.
+/// - **`None` actively cleans up.** A build without `--embed` deletes the staged
+///   archive, the generated Go and the stamp. Leaving them would keep 25MB of
+///   PostgreSQL — and a `go:embed` of it — in every subsequent ordinary build of
+///   that project, which is the "non-embed builds pay nothing" property failing
+///   silently and expensively.
+/// - **Re-staging is skipped when nothing changed.** The stamp records the
+///   source path, length and mtime; a matching stamp with the archive still in
+///   place means the copy is a no-op. This is what makes `sky build --embed`
+///   twice cost one copy rather than two.
+fn write_postgres_bundle(archive: Option<&Path>, out_dir: &Path) -> Result<(), String> {
+    let staged = out_dir.join(EMBEDDED_BUNDLE_FILENAME);
+    let generated = out_dir.join(EMBEDDED_BUNDLE_GO);
+    let stamp = out_dir.join(EMBEDDED_BUNDLE_STAMP);
+
+    let Some(archive) = archive else {
+        for p in [&staged, &generated, &stamp] {
+            let _ = std::fs::remove_file(p);
+        }
+        return Ok(());
+    };
+
+    let meta = std::fs::metadata(archive).map_err(|e| {
+        format!(
+            "sky build --embed: cannot read the PostgreSQL bundle {}: {e}",
+            archive.display()
+        )
+    })?;
+    if meta.len() == 0 {
+        return Err(format!(
+            "sky build --embed: the PostgreSQL bundle {} is empty.\n\
+             An interrupted download or pack leaves exactly this, and embedding it \
+             would produce a binary whose only failure is at first start.",
+            archive.display()
+        ));
+    }
+    let want = bundle_stamp(archive, &meta);
+    let fresh = staged.is_file()
+        && std::fs::read_to_string(&stamp).map(|s| s.trim() == want).unwrap_or(false);
+    if !fresh {
+        // Copy through a sibling and rename: a `go build` racing a half-written
+        // 25MB archive embeds a truncated one, and gzip only notices at the far
+        // end of the deploy.
+        let tmp = out_dir.join(format!(".{EMBEDDED_BUNDLE_FILENAME}.part"));
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::copy(archive, &tmp).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!(
+                "sky build --embed: cannot stage {} into {}: {e}",
+                archive.display(),
+                out_dir.display()
+            )
+        })?;
+        std::fs::rename(&tmp, &staged)
+            .map_err(|e| format!("sky build --embed: cannot stage {}: {e}", staged.display()))?;
+        std::fs::write(&stamp, format!("{want}\n"))
+            .map_err(|e| format!("sky build --embed: cannot write {}: {e}", stamp.display()))?;
+    }
+
+    let go = format!(
+        "package main\n\n\
+         // Generated by `sky build --embed` — do not edit.\n\
+         //\n\
+         // The bundle stays a TAR inside the embedded filesystem. `go:embed` forces\n\
+         // mode 0444 on every file and cannot represent a symlink, so an embedded\n\
+         // directory tree would give this binary a `postgres` it cannot execute and\n\
+         // no `libpq.5.dylib` at all. rt unpacks it once, on first start.\n\n\
+         import (\n\
+         \t\"embed\"\n\n\
+         \trt \"sky-app/rt\"\n\
+         )\n\n\
+         //go:embed {name}\n\
+         var skyEmbeddedPostgresBundle embed.FS\n\n\
+         func init() {{\n\
+         \trt.EmbeddedPostgresBundle = skyEmbeddedPostgresBundle\n\
+         \trt.EmbeddedPostgresBundleName = {lit}\n\
+         }}\n",
+        name = EMBEDDED_BUNDLE_FILENAME,
+        lit = go_string_literal(EMBEDDED_BUNDLE_FILENAME),
+    );
+    // Only the assignment of the bundle lives in an `init()`. The two calls that
+    // START and STOP a cluster are emitted into `func main()` (lower.rs
+    // `lower_main`), because `[database] path`/`url` arrive as
+    // `rt.SetSkyDefault` in the prologue `init()` and `--embed`'s ambiguity check
+    // has to be able to see them.
+    if std::fs::read_to_string(&generated).map(|s| s == go).unwrap_or(false) {
+        return Ok(());
+    }
+    std::fs::write(&generated, go)
+        .map_err(|e| format!("sky build --embed: cannot write {}: {e}", generated.display()))
+}
+
+fn bundle_stamp(archive: &Path, meta: &std::fs::Metadata) -> String {
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{} {} {}", archive.display(), meta.len(), mtime)
+}
+
 /// Copy `rt/` wholesale, skipping `*_test.go` and testdata (doc 09 §A.1). Copies
 /// recursively (the runtime has a `console_app/` subtree).
 ///
@@ -1757,6 +1908,132 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|e| e.to_str()) == Some("sky") {
             out.push(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod embed_bundle_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("sky-p5b-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// The `go:embed` directive, the `EmbeddedPostgresBundleName` assignment and
+    /// the staged file must all name one literal. They are three separate
+    /// strings in the generated Go; if they drift, the binary carries an archive
+    /// under a name nothing opens, and the failure is at first start on the
+    /// deployed host rather than here.
+    #[test]
+    fn the_generated_go_names_the_staged_archive_three_times_consistently() {
+        let root = scratch("gen");
+        let src = root.join("bundle.tar.gz");
+        std::fs::write(&src, b"pretend gzip").unwrap();
+        let out = root.join("sky-out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        write_postgres_bundle(Some(&src), &out).unwrap();
+
+        let staged = out.join(EMBEDDED_BUNDLE_FILENAME);
+        assert!(staged.is_file(), "the archive was not staged");
+        assert_eq!(std::fs::read(&staged).unwrap(), b"pretend gzip");
+
+        let go = std::fs::read_to_string(out.join(EMBEDDED_BUNDLE_GO)).unwrap();
+        assert!(go.contains(&format!("//go:embed {EMBEDDED_BUNDLE_FILENAME}")), "{go}");
+        assert!(
+            go.contains(&format!(
+                "rt.EmbeddedPostgresBundleName = \"{EMBEDDED_BUNDLE_FILENAME}\""
+            )),
+            "{go}"
+        );
+        assert!(go.contains("rt.EmbeddedPostgresBundle = skyEmbeddedPostgresBundle"), "{go}");
+        // The two calls that START a cluster belong in `func main()`, never here:
+        // `[database] path`/`url` arrive as rt.SetSkyDefault in the prologue
+        // `init()`, and from a second `init()` the ambiguity check cannot see
+        // them (filename order decides which runs first).
+        assert!(
+            !go.contains("MaybeStartEmbeddedPostgres"),
+            "the start call must not be emitted into an init(): {go}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A build without `--embed` must leave nothing behind. Otherwise the first
+    /// `--embed` build in a project silently makes every later ordinary build
+    /// 25MB heavier, which is the "non-embed builds pay nothing" property
+    /// failing in the most expensive possible way.
+    #[test]
+    fn a_build_without_embed_removes_what_an_earlier_embed_build_left() {
+        let root = scratch("clean");
+        let src = root.join("bundle.tar.gz");
+        std::fs::write(&src, b"pretend gzip").unwrap();
+        let out = root.join("sky-out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        write_postgres_bundle(Some(&src), &out).unwrap();
+        assert!(out.join(EMBEDDED_BUNDLE_FILENAME).exists());
+
+        write_postgres_bundle(None, &out).unwrap();
+        for f in [EMBEDDED_BUNDLE_FILENAME, EMBEDDED_BUNDLE_GO, EMBEDDED_BUNDLE_STAMP] {
+            assert!(!out.join(f).exists(), "{f} survived a non-embed build");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Two `--embed` builds with nothing changed copy the archive once.
+    #[test]
+    fn re_staging_an_unchanged_bundle_is_a_no_op() {
+        let root = scratch("idem");
+        let src = root.join("bundle.tar.gz");
+        std::fs::write(&src, b"pretend gzip").unwrap();
+        let out = root.join("sky-out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        write_postgres_bundle(Some(&src), &out).unwrap();
+        let staged = out.join(EMBEDDED_BUNDLE_FILENAME);
+        let first = std::fs::metadata(&staged).unwrap().modified().unwrap();
+
+        // Scribble on the staged copy: if it is re-copied, the scribble is gone.
+        std::fs::write(&staged, b"scribbled").unwrap();
+        write_postgres_bundle(Some(&src), &out).unwrap();
+        assert_eq!(
+            std::fs::read(&staged).unwrap(),
+            b"scribbled",
+            "an unchanged bundle was staged a second time"
+        );
+        let _ = first;
+
+        // A CHANGED source is re-staged, though — that is the whole point of the
+        // stamp carrying length and mtime rather than just the path.
+        std::fs::write(&src, b"a different pretend gzip").unwrap();
+        write_postgres_bundle(Some(&src), &out).unwrap();
+        assert_eq!(std::fs::read(&staged).unwrap(), b"a different pretend gzip");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An interrupted download or pack leaves a zero-length archive. Embedding
+    /// it produces a binary whose only failure is at first start, on the host.
+    #[test]
+    fn an_empty_or_missing_archive_fails_the_build_rather_than_being_embedded() {
+        let root = scratch("empty");
+        let out = root.join("sky-out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        let empty = root.join("empty.tar.gz");
+        std::fs::write(&empty, b"").unwrap();
+        let e = write_postgres_bundle(Some(&empty), &out).unwrap_err();
+        assert!(e.contains("empty"), "{e}");
+        assert!(!out.join(EMBEDDED_BUNDLE_FILENAME).exists());
+
+        let e = write_postgres_bundle(Some(&root.join("nope.tar.gz")), &out).unwrap_err();
+        assert!(e.contains("cannot read"), "{e}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

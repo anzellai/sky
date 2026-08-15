@@ -311,3 +311,37 @@ fn unknown_verb_exits_two() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------------------
+// `--embed` is a build flag
+// ---------------------------------------------------------------------------
+
+/// `parse_out` swallows every flag it does not recognise, "for forward
+/// compatibility". That makes a misplaced `--embed` on `sky run` a silent
+/// no-op — the user asks for a self-contained database and gets an ordinary
+/// build, with nothing said. Silently ignoring `--embed` is the precise failure
+/// mode the flag exists to refuse, so `sky run` names the two things that do
+/// work instead.
+#[test]
+fn embed_on_run_is_refused_and_points_at_what_does_work() {
+    let dir = scratch("embed-on-run");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("sky.toml"), "name = \"x\"\nentry = \"src/Main.sky\"\n").unwrap();
+    std::fs::write(
+        dir.join("src").join("Main.sky"),
+        "module Main exposing (main)\n\nmain = ()\n",
+    )
+    .unwrap();
+
+    let (code, out) = run_sky(&dir, &["run", "--embed", "src/Main.sky"]);
+    assert_eq!(code, 2, "a misplaced --embed must not be swallowed; got:\n{out}");
+    assert!(
+        out.contains("embedded = true"),
+        "the refusal must name the sky.toml key that does work; got:\n{out}"
+    );
+    assert!(
+        out.contains("sky build --embed"),
+        "the refusal must name the verb that does take --embed; got:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

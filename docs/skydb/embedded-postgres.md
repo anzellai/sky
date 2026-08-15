@@ -51,9 +51,104 @@ under test locally is byte-identical to the one in production.
 the Sky stdlib. The result is genuinely self-contained: one file on a bare host
 gives an app and its database.
 
-The costs are real and stated up front: the binary grows by roughly 150–250 MB,
-and it becomes platform-specific, so cross-compilation needs the target's
-PostgreSQL bundle present.
+The costs are real and stated up front: the binary grows by roughly the size of
+the compressed bundle — call it **25–30 MB** — and it becomes platform-specific,
+so cross-compilation needs the target's PostgreSQL bundle present.
+
+> **The original "150–250 MB" was ~3× too high**, and P5b measured the real
+> figure rather than re-estimating it. The archive is embedded *compressed* (it
+> has to stay a tar inside the embedded FS — see below), so what the binary
+> carries is the gzip, not the ~77 MB tree. Measured on a
+> `postgres-14.21-darwin-arm64` bundle of 7,543,905 bytes: the `--embed` binary
+> came to 39,937,538 bytes against 32,306,818 for the same program without the
+> flag. That is a delta of 7,630,720 — the archive plus **86,815 bytes** of
+> `embed.FS` metadata and section alignment. Embedding costs the archive's own
+> size and essentially nothing else, so a real ~25 MB release bundle lands at
+> ~25 MB.
+
+### `sky build --embed` (P5b)
+
+Three moving parts: the flag, the archive staged beside the emitted `main.go`,
+and two generated calls.
+
+- **The bundle is embedded AS A TAR, and unpacked at first start.** `go:embed`
+  forces mode 0444 on every file it carries and cannot represent a symlink at
+  all. Embedding the *extracted* tree therefore yields a `postgres` that cannot
+  be executed and no `libpq.5.dylib` — a binary that builds, ships, and fails on
+  the deployed host. `sky build --embed` writes
+  `sky-out/postgres-bundle.tar.gz` plus a generated
+  `sky-out/pg_embed_bundle_gen.go` holding the `//go:embed` and the two
+  assignments (`rt.EmbeddedPostgresBundle`, `rt.EmbeddedPostgresBundleName`).
+  The archive is embedded under a **fixed** name (`postgres-bundle.tar.gz`): a
+  `go:embed` path is a literal and cannot carry a version or a platform. That
+  fixed name is why P5b also had to change what the runtime's extraction marker
+  records. It keyed on the archive's *name*, which is the one thing a rebuild
+  never changes — so a binary rebuilt onto a different PostgreSQL matched the
+  existing marker, skipped extraction, and ran the **previous** server against a
+  data directory the new build expected. The marker now records a sha256 of the
+  archive's bytes. (The test that was supposed to catch this changed the name as
+  well as the content, so it passed; it now holds the name fixed, which is what
+  the compiler actually does.)
+- **The start and stop calls go in `func main()`, never in an `init()`.** They
+  are emitted by the lowerer (`lower_main`), directly under
+  `defer rt.LogPanicAndExit()`. This is not a style preference: `[database]
+  path` / `url` reach the runtime as `rt.SetSkyDefault("DB_PATH", …)` in the
+  prologue `init()`, Go runs every `init()` before `main`, and calling from
+  `main` is what makes those two config sources visible to `--embed`'s
+  ambiguity check. **P5b proved this by mutation rather than asserting it.**
+  With the calls moved into a generated `init()` in a file named
+  `embedded_postgres_gen.go` — which sorts before `main.go`, and is exactly the
+  filename a maintainer would reach for — a project carrying
+  `[database] path = "notes.db"` *and* `--embed` started a cluster and wrote to
+  it, exit 0. Restored, the same binary refuses with the conflict named and
+  exits 1.
+- **Both calls are emitted for every program, `--embed` or not.** A build
+  without the flag links no bundle, so `MaybeStartEmbeddedPostgres` returns on
+  its first line and `StopEmbeddedPostgres` is a nil check. Emitting them
+  conditionally would buy nothing measurable and would make `./app --embed` on
+  an ordinary build ignore the flag in silence. As shipped, an ordinary binary
+  asked to `--embed` says so, and names every place it looked.
+
+**Where the bundle comes from, and the decision behind it: `sky build --embed`
+provisions on demand.** It does not require a prior `sky db provision --embed`.
+The rule this document sets is "no runtime fetch on a *production* path", and a
+build is not a production path — it happens on a developer's machine or a CI
+runner, both of which already fetch Go modules and Sky dependencies. Refusing to
+build until a second command had been run would make the first
+`sky build --embed` on a clean checkout fail with an instruction instead of a
+binary. The property the rule protects — that a *deployed* `./app --embed` never
+reaches the network — is untouched, because by then everything is inside it.
+
+Resolution order is most-local-first, and only the last step needs a network:
+
+1. `$SKY_HOME/postgres-bundles/postgres-<version>-<platform>.tar.gz` — a bundle
+   cache kept *beside* `postgres/`, never inside it, because that directory is
+   what `sky db start`'s discovery enumerates.
+2. For the **host** platform only: `$SKY_HOME/postgres/<version>/` re-tarred.
+   P3's provision cache holds the extracted tree and `go:embed` cannot take a
+   tree, so the tree is re-packed rather than re-downloaded — which means a
+   machine that has provisioned once builds `--embed` offline forever after.
+3. The release, fetched and checksum-verified through P3's own
+   manifest-first machinery (`fetch_verified_archive`).
+
+The version is `[database] postgresVersion` when the project pins one, read
+through P3's reader, so a project cannot be developed against one major and
+shipped carrying another.
+
+**Cross-compilation asks for the target's bundle by name.** `GOOS` / `GOARCH`
+are the cross-compilation lever for the whole `sky build` pipeline (`go build`
+inherits this process's environment), so `--embed` reads the same two variables.
+A target Sky publishes a bundle for is fetched; a target it does not
+(`GOOS=windows`) is refused up front, before anything is compiled, naming the
+four platforms that exist. What it never does is embed the host's binaries into
+another platform's binary — that failure would surface at first start on the
+deployed host, hours after the build that caused it.
+
+Two smaller properties, both gated: a `--embed` build that cannot stage its
+bundle **fails** rather than quietly producing a database-less binary; and a
+build *without* `--embed` **deletes** the staged archive, the generated Go and
+the stamp, so one `--embed` build does not make every later ordinary build of
+that project 25 MB heavier.
 
 For development, `sky db provision --embed` fetches a platform bundle once into
 a versioned, checksum-verified cache (`~/.sky/postgres/<version>/`) and records
@@ -85,6 +180,32 @@ race, and nothing is exposed to the network by accident.
 > The hash is FNV-1a/128 truncated to 64 bits, not `DefaultHasher`, because it is
 > *persisted*: `DefaultHasher`'s output is explicitly not stable across Rust
 > releases, and a compiler upgrade must not orphan every running cluster.
+>
+> **What is hashed is the PostgreSQL DATA DIRECTORY, not the project — and P5b
+> found the two implementations disagreeing about exactly that.** Rust hashed
+> the project path; Go hashed `<dataRoot>/pg`. The hash *function* was identical
+> and a docstring claimed the two "name the same socket directory for the same
+> path"; nothing checked the input. The consequence landed squarely on
+> `--embed`: an app run in a project whose cluster `sky db start` or `sky run`
+> had already brought up found the live `postmaster.pid`, adopted it, then
+> probed a socket directory that did not exist — 60 seconds of `waitReady`, then
+> `PostgreSQL did not accept connections within 1m0s` and exit 1, with a healthy
+> postmaster running the whole time. In the other direction `sky db start`
+> printed a `psql -h …` hint pointing at a socket that was not there.
+>
+> The data directory is the input both sides now use, and it is the right one
+> rather than the convenient one: `./app --embed --data-dir /var/lib/app` has no
+> project to hash, and one-socket-per-data-directory is the property that
+> actually matters. Both sides also resolve symlinks as far as the path exists
+> before hashing (`resolved_path` / `resolvedPath`) — `.skydata/pg` does not
+> exist until the first `initdb`, so plain canonicalisation cannot be used, and
+> on macOS `/tmp/x` and `/private/tmp/x` are one directory that hashes two ways.
+>
+> The gate is **one pinned literal per side**, not a comparison of the two
+> implementations: `the_socket_directory_for_a_pinned_project_is_a_pinned_constant`
+> (Rust) and `TestTheSocketDirectoryForAPinnedProjectIsAPinnedConstant` (Go) both
+> assert `/sky/pinned/project` → `/tmp/sky-3b7c436bcb7e1ee0`. Two implementations
+> compared only to each other can drift together, which is what they did.
 
 `pg_ctl start` builds its command line and hands it to `/bin/sh`, so the socket
 directory is shell-interpreted on the way to the postmaster. A path carrying a
@@ -603,5 +724,5 @@ Each phase ships its own commit and is verifiable in isolation.
 | **P3** ✅ | `sky db provision --embed` — fetch Sky's own bundle, checksum-before-extract, atomic install, the `[database] postgresVersion` pin, the offline `--from` route and the `sky doctor --fix` pre-warm — `rust/crates/sky/src/db_provision.rs`, gated by its unit tests + `tests/db_provision_flow.rs` (a real download over a local HTTP server, a corrupt archive, an interrupted extract, and a `SIGKILL`ed provision) |
 | **P4** ✅ | `sky run` / `sky watch` integration: `[database] embedded`, DSN injection, the ref count — `rust/crates/sky/src/db_cluster.rs` + `main.rs`, gated by its unit tests + `tests/db_run_cluster_flow.rs` (two overlapping `sky run`s against a real PostgreSQL) |
 | **P5a** ✅ | The runtime supervisor behind `./app --embed`: data-dir resolution, bundle extraction, `initdb`, RAM/CPU-derived tuning, a postmaster child in its own process group, readiness, the ordered `SIGTERM` sequence, and all five failure modes — `runtime-go/rt/pg_embed.go` + `pg_embed_bundle.go` + `pg_embed_conf.go`, gated by `pg_embed*_test.go` (including a live cycle against a real PostgreSQL and a subprocess that proves the app exits non-zero when its database dies) |
-| **P5b** | `sky build --embed`: the compiler flag, the `go:embed` of the platform bundle, and the two generated calls (`rt.EmbeddedPostgresBundle = …`, `rt.MaybeStartEmbeddedPostgres()` / `defer rt.StopEmbeddedPostgres()`) |
+| **P5b** ✅ | `sky build --embed`: the compiler flag, the `go:embed` of the platform bundle, on-demand provisioning with an offline re-pack of P3's cache, the cross-compilation refusal, and the two calls emitted into `func main()` — `rust/crates/sky/src/db_embed.rs` + `project/src/build.rs` (`write_postgres_bundle`) + `lower/src/lower.rs` (`lower_main`), gated by their unit tests plus the pinned socket-derivation literals on both sides |
 | **P6** | Shared-cluster service mode: database-per-app, role-per-app, generated unit + backup timer |
