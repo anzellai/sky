@@ -65,10 +65,19 @@ func TestSqliteStoreOpensUnderConcurrentHandle(t *testing.T) {
 // No server is needed: `sql.Open` does not dial, and the pool config is
 // readable from Stats() straight away.
 func TestPostgresSessionPoolHasACeiling(t *testing.T) {
-	want := dbSharedAuxPoolConfig().MaxOpenConns
+	// Via the connection-demand table rather than `dbSharedAuxPoolConfig()`:
+	// the acquire site evaluates that expression, so comparing the pool with it
+	// asserts an identity. The demand table is the number the cluster's
+	// max_connections is derived from, and it is pinned by a fixture the Rust
+	// sizing reproduces independently.
+	want, ok := dbAuxPoolConsumerMaxOpen("live-sessions")
+	if !ok {
+		t.Fatal(`"live-sessions" is not in dbAuxPoolConsumers — the session store's pool is ` +
+			`not counted in the connection demand any cluster is sized from`)
+	}
 	if want <= 0 {
-		t.Fatalf("dbSharedAuxPoolConfig().MaxOpenConns is %d — this gate would assert "+
-			"'unlimited == unlimited' and prove nothing", want)
+		t.Fatalf("the demand table attributes %d connections to the session store — this "+
+			"gate would assert 'unlimited == unlimited' and prove nothing", want)
 	}
 	dbshare.ResetForTesting()
 	t.Cleanup(dbshare.ResetForTesting)

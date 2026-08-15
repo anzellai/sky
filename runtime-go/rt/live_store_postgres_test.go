@@ -108,13 +108,18 @@ func TestPostgresStore_PingHealthy(t *testing.T) {
 // offline gate and still ship an unlimited pool.
 func TestPostgresStore_PoolHasACeiling(t *testing.T) {
 	dsn := requirePostgresDSN(t)
-	// The SHARED sizing, not the bare auxiliary one: the session store draws
-	// on a pool it may share with analytics and telemetry, sized as its own
-	// former pool plus their caps so that sharing costs the request path
-	// nothing. See dbSharedAuxPoolSizeFor.
-	want := dbSharedAuxPoolConfig().MaxOpenConns
+	// Read through the connection-demand table, NOT from
+	// `dbSharedAuxPoolConfig()` — the expression the acquire site evaluates.
+	// Comparing a pool with the config it was built from is an identity; what
+	// has to hold is that the pool matches the size the CLUSTER was sized for.
+	want, ok := dbAuxPoolConsumerMaxOpen("live-sessions")
+	if !ok {
+		t.Fatal(`"live-sessions" is not in dbAuxPoolConsumers — the session store's pool is ` +
+			`not counted in the connection demand any cluster is sized from`)
+	}
 	if want <= 0 {
-		t.Fatalf("dbSharedAuxPoolConfig().MaxOpenConns is %d — this gate would prove nothing", want)
+		t.Fatalf("the demand table attributes %d connections to the session store — "+
+			"this gate would prove nothing", want)
 	}
 	s, err := newPostgresStore(dsn, 30*time.Minute, 0)
 	if err != nil {

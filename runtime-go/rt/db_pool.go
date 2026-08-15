@@ -212,6 +212,26 @@ var dbAuxPoolConsumers = []dbAuxPoolConsumer{
 	{"telemetry", func(int, bool) int { return telemetry.PoolMaxConns }}, // telemetry/persist.go
 }
 
+// dbAuxPoolConsumerMaxOpen returns the pool size the connection-demand
+// arithmetic attributes to a named consumer on THIS machine.
+//
+// It is what a pool-ceiling gate should compare a live pool against. Asking
+// `dbSharedAuxPoolConfig()` — the expression the acquire site itself
+// evaluates — makes the gate an identity: it checks that the pool was built
+// from the config, which is true by construction at the call site, and says
+// nothing about whether the SERVER was sized for that pool. Routed through the
+// demand table, the expected value is the same number the cluster's
+// `max_connections` is derived from, and that number is pinned by a fixture a
+// second implementation reproduces.
+func dbAuxPoolConsumerMaxOpen(name string) (int, bool) {
+	for _, c := range dbAuxPoolConsumers {
+		if c.name == name {
+			return c.maxOpen(runtime.GOMAXPROCS(0), IsServerless()), true
+		}
+	}
+	return 0, false
+}
+
 // dbAuxPoolConsumerNames is the list as bare names, for the gates and the
 // diagnostics that report which pools were counted.
 func dbAuxPoolConsumerNames() []string {
@@ -312,7 +332,7 @@ func dbAuxPoolMaxOpenFor(cpus int, serverless bool) int {
 // pool would be capping the app itself for no benefit. The two BACKGROUND
 // writers are capped instead, and capping them is what guarantees the session
 // store cannot be starved: analytics and telemetry together can hold at most
-// `dbAnalyticsShare + dbTelemetryShare` of the pool, so the session store
+// `dbAnalyticsShare + telemetry.Share` of the pool, so the session store
 // always has the rest.
 //
 // Both background writers are single-goroutine batchers after the buffered

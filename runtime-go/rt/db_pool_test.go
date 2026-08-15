@@ -74,7 +74,13 @@ func TestDbPoolPostgresIsConfiguredAtConnect(t *testing.T) {
 		t.Fatalf("driver: want pgx, got %q (DSN routing changed)", db.driver)
 	}
 
-	want := clampInt(runtime.GOMAXPROCS(0)*4, 4, 32)
+	// From the sizing function, not restated as `clampInt(GOMAXPROCS*4, 4, 32)`.
+	// What this gate is for is that the config REACHED the live pool; a second
+	// copy of the formula adds nothing to that and goes stale silently. The
+	// numbers themselves are pinned per core count by
+	// runtime-go/rt/testdata/db_pool_sizing.tsv, which the Rust cluster sizing
+	// reproduces independently.
+	want := defaultPostgresPoolConfigFor(runtime.GOMAXPROCS(0), false).MaxOpenConns
 	got := db.conn.Stats().MaxOpenConnections
 	if got == 0 {
 		t.Fatalf("MaxOpenConnections is 0 — the pool is UNLIMITED, which is the defect")

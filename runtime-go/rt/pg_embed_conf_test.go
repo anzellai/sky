@@ -77,7 +77,11 @@ func TestMaxConnectionsClearsTheAppsOwnPoolCeiling(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		appPool := clampInt(4*cpus, 4, 32)
+		// Asked of the pool sizing, not restated as `clampInt(4*cpus, 4, 32)`.
+		// A restatement keeps testing the formula it was written against: raise
+		// the app pool's multiplier and this gate goes on comparing the server
+		// with the OLD ceiling and passing while the cluster is undersized.
+		appPool := defaultPostgresPoolConfigFor(cpus, false).MaxOpenConns
 		if maxConn <= appPool {
 			t.Errorf("%d CPUs: max_connections=%d does not clear the app's pool of %d", cpus, maxConn, appPool)
 		}
