@@ -247,13 +247,15 @@ sessions — ~250 MB of Linux, ~40 MB of app, and **36 MB of PostgreSQL**. So a
 free-tier or entry-level cloud instance runs a real app with a real database,
 and the managed-database line disappears from the bill.
 
-Sizing is measured rather than guessed
+Sizing is measured on real GCE instances, not guessed
 ([docs/perf/](docs/perf/skylive-interaction-cost.md)): a Sky.Live session costs
-**~1.1 MB**, so 1 GB carries roughly 400–500 concurrent sessions. Actively
-interacting users are CPU-bound at about **100 per CPU**; idle-but-connected
-users are bound by that 1.1 MB. A single instance has no replica — `--shared`
-generates a backup timer, a lone `--embed` app does not, so schedule a
-`pg_dump`. Full sizing:
+**~1.35 MB**, but **CPU runs out roughly 12× before memory does**. An e2-micro
+*holds* ~450 sessions and is comfortable up to about **25–50**; an e2-small up
+to **50–100**. Size on the knee, not the RAM — and on a burstable instance plan
+with the sustained figure, since repeated runs decline as credits drain.
+
+A single instance has no replica — `--shared` generates a backup timer, a lone
+`--embed` app does not, so schedule a `pg_dump`. Full sizing:
 [docs/skydb/embedded-postgres.md](docs/skydb/embedded-postgres.md).
 
 A Sky app process opens four PostgreSQL-facing pools, and on a shared server

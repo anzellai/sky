@@ -940,14 +940,28 @@ small cloud instance. Measured components:
 | Observability agent, if you run one | **~87 MB** — see below |
 | PostgreSQL base — postmaster + 6 auxiliaries at `shared_buffers = 32MB` | **36 MB** (measured) |
 | PG backends — one process per *active* connection, ~5–10 MB each | ~40–70 MB at 6–10 active |
-| Sky.Live sessions — **~1.1 MB RSS each, measured** | ~110 MB at 100 concurrent |
+| Sky.Live sessions — **~1.35–1.42 MB each on x86, measured** | ~135 MB at 100 concurrent |
 | **Base, before sessions** | **~380 MB** |
 
-**Sessions dominate above a hundred or so, and they are the number that decides
-your instance.** An earlier version of this table guessed 10–100 KB per session
-from the Model gob's size; the measured figure is **~1.1 MB RSS**, three
-independent measurements, an 11–110× underestimate. The Model is not the cost —
-the per-session goroutines, buffers and connection state are.
+**The per-session figure has now been measured twice and corrected twice.** The
+original table guessed 10–100 KB from the Model gob's size. A local ARM run gave
+1.05 MB. Regression against real GCE hardware gives **1,379 kB on e2-micro and
+1,450 kB on e2-small** — so x86 is ~30% dearer than ARM, and the original guess
+was wrong by 14–140×. The Model is not the cost; the per-session goroutines,
+buffers and connection state are.
+
+The regression is trustworthy for a reason worth stating: its **intercept
+independently recovers the separately-measured idle RSS** on both machines
+(24.4 MB fitted vs 22.72 measured; 21.2 vs 21.96) — a number nothing in the fit
+had access to.
+
+> **Measuring this correctly needs one non-obvious step.** A sweep that raises
+> concurrency in stages does *not* start each stage from zero: sessions live for
+> the full 30-minute TTL after their SSE closes, so a 15-second "drain" drains
+> nothing and the regression silently runs against *cumulative* sessions. The
+> app must be restarted between levels. The divisor is also sessions
+> **established**, not requested — at a requested 500 the e2-micro established
+> only 447.
 
 | Concurrent sessions | Sessions | Total | Fits in 1 GB? |
 |---|---|---|---|
@@ -967,28 +981,47 @@ binary at **55 MB RSS** — higher than the 30–40 MB this table previously
 guessed — and averages **0.09% CPU** over 40 hours, i.e. nowhere near any
 ceiling at its real traffic.
 
-> **The monitoring can cost more than the app.** On that instance:
-> `otelopscol` **87 MB**, the Sky app **55 MB**, caddy 28 MB, journald 23 MB.
-> The observability agent is 2.5× the thing it observes, and on a 1 GB host the
-> four together are ~190 MB — a fifth of the machine, before a single session
-> exists. If you are sizing an e2-micro, budget for the agent or do not run one;
-> `deploy/setup-remote.sh` in the sky-lang.org repo already skips the embedded
-> console on this tier for the same reason.
+> **The monitoring costs 86 MB — and that turns out not to matter.** A
+> within-boot A/B on `MemAvailable` puts the Ops Agent at **86.4 MB**, not the
+> 190 MB its RSS suggests: RSS double-counts shared pages and would have
+> overstated it 2.2×. At 1.35 MB/session that is ~64 sessions of headroom on an
+> e2-micro — **and approximately none of it is usable, because the box
+> saturates on CPU at a fifth of that.** Per-session cost is unchanged by the
+> agent, which is what makes the arithmetic valid.
+>
+> So: run the agent if you want the observability. On a CPU-bound tier its
+> memory is not what is stopping you. (Note the agent is installed by
+> `deploy/setup-remote.sh`, not by the GCE image — a fresh instance does not
+> have it, and comparisons that ignore this flatter the fresh box by ~9%.)
 
-### Which resource binds first, measured
+### Which resource binds first — measured on real e2 instances
 
-**Both, at different points, and the crossover is the useful part.** On one CPU
-the server saturates at **88–92 interactions/sec**, i.e. **~11 ms of server CPU
-per interaction**. So:
+**CPU, by an order of magnitude, and it is not close.** Measured on throwaway
+`e2-micro` and `e2-small` instances in `us-central1-a`:
 
-- **Actively interacting users** are CPU-bound: ~100 per CPU before latency
-  climbs. Measured p50 goes 8 ms at 100 sessions → 70 ms at 500 → 659 ms at
-  1,000, with the knee **between 100 and 500**.
-- **Connected-but-idle users** are memory-bound: ~1.1 MB each, so the ceilings
-  above apply.
+| | throughput knee | peak interactions/sec | memory ceiling | CPU binds earlier by |
+|---|---|---|---|---|
+| **e2-micro** | **25–50 sessions** | ~18/s | ~450 sessions | **~12×** |
+| **e2-small** | **50–100 sessions** | ~35–42/s | ~1,000 sessions | ~12× |
 
-A burstable instance makes the first one worse, because the baseline allowance
-is what a sustained load actually gets.
+An `e2-micro` will *hold* about 450 sessions in RAM and is **unusable past
+about 50**. Sizing on memory alone would overstate its capacity twelvefold.
+Past 250 sessions both machines fail 79–96% of interactions — those are numbers
+describing a failing server, not a capacity.
+
+**Earlier versions of this table were badly optimistic here**, and the reason is
+worth recording. They came from a container CPU *quota* on Apple silicon, which
+put the knee at 100–500 sessions and 88–92 interactions/sec. Against real
+hardware that was optimistic by **2.5× on e2-small and 5× on e2-micro**. The
+local run flagged itself as an optimistic stand-in; it was right to, and the
+size of the error is the argument for measuring on the target.
+
+> **Burst credits drain, and a single run will lie to you.** Repeated runs at
+> the same concurrency decline monotonically — on `e2-micro` at 100 sessions:
+> **17.5 → 9.6 → 9.5 interactions/sec**. A first run against a rested instance
+> overstates sustained capacity by roughly 2×. That spread is a *trend*, not a
+> confidence interval: **plan with the low end**, because that is what a busy
+> instance actually delivers.
 
 ### The cost is NOT in the view diff — do not optimise there
 

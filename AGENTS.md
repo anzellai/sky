@@ -138,24 +138,28 @@ non-obvious ones as questions:
    | | RAM |
    |---|---|
    | Minimal Linux | ~250 MB |
-   | Sky app binary (Go, idle) | ~30–40 MB |
+   | Sky app binary (Go) | **~22 MB fresh, ~56 MB settled** (measured) |
    | PostgreSQL base (`shared_buffers = 32MB`) | ~36 MB |
    | PG backends, ~5–10 MB each | ~40–70 MB at 6–10 active |
-   | Sky.Live sessions, **~1.1 MB each (measured)** | ~110 MB at 100 concurrent |
+   | Sky.Live sessions, **~1.35–1.42 MB on x86 (measured)** | ~140 MB at 100 concurrent |
    | **Base, before sessions** | **~380 MB** |
 
-   **Sessions are the number that decides the instance**, at ~1.1 MB each — so
-   1 GB carries roughly 400–500 concurrent sessions, 2 GB roughly triple that.
+   **Sessions are the number that decides the instance**, at ~1.35–1.42 MB each on x86 — so an
+   e2-micro HOLDS ~450 and an e2-small ~1,000. But see below: memory is not what runs out first.
    Measured, not inferred: an earlier version of this table guessed 10–100 KB
    from the Model gob and was wrong by 11–110×.
 
-   Which resource binds depends on what the users are doing, and both numbers
-   are measured (`docs/perf/skylive-interaction-cost.md`): **actively
-   interacting** users are CPU-bound at **~100 per CPU** (the server saturates
-   at 88–92 interactions/sec, ~11 ms each, with the knee between 100 and 500
-   sessions); **connected-but-idle** users are memory-bound at 1.1 MB each. A
-   burstable instance makes the first worse, since sustained load gets the
-   baseline allowance rather than the burst.
+   **CPU binds ~12× before memory, measured on real GCE instances.** An
+   e2-micro *holds* ~450 sessions and is **unusable past ~50** (knee 25–50,
+   peak ~18 interactions/sec); an e2-small knees at **50–100** (~35–42/s).
+   Sizing on memory alone overstates an e2-micro twelvefold. Past 250 sessions
+   both fail 79–96% of interactions.
+
+   Two things to tell a user picking a burstable instance: **repeated runs
+   decline** (e2-micro at 100 sessions: 17.5 → 9.6 → 9.5/s as burst credits
+   drain, so plan with the low end, not the first number they see), and a
+   figure measured under a container CPU quota was optimistic against real
+   hardware by **2.5–5×**.
 
    Do **not** tell a user to simplify their view to go faster: the render →
    diff → serialize path is ~128 ns per VNode, so a 384-element view costs
