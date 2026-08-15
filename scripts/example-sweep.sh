@@ -31,6 +31,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 cd "$ROOT"
 
 # shellcheck source=lib/concurrency.sh
@@ -173,51 +177,6 @@ mirror_back_to_intree() {
     fi
 }
 
-# Cross-platform `timeout`. macOS doesn't ship GNU coreutils, so the
-# bare `timeout` binary is missing on default GitHub `macos-latest`
-# runners — without this shim the CLI sweep step would fail every
-# example with exit 127 ("command not found") interpreted as a
-# non-zero app exit. Order: GNU `timeout` (Linux + nix Macs) →
-# Homebrew `gtimeout` → portable bg-pid + sleep + kill fallback.
-if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="gtimeout"
-else
-    TIMEOUT_CMD=""
-fi
-
-run_with_timeout() {
-    # run_with_timeout SECONDS CMD [ARGS...]
-    local secs="$1"; shift
-    if [[ -n "$TIMEOUT_CMD" ]]; then
-        "$TIMEOUT_CMD" "$secs" "$@"
-        return $?
-    fi
-    # No GNU timeout available → portable fallback. Spawn the command
-    # in the background, race a sleeping killer against it, surface
-    # the command's real exit on natural completion or 124 (matching
-    # GNU timeout's convention) on enforced kill.
-    "$@" &
-    local cmd_pid=$!
-    ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) &
-    local killer_pid=$!
-    local rc=0
-    wait "$cmd_pid" 2>/dev/null; rc=$?
-    # If the killer fired, the wait above sees the killed status.
-    # We can't reliably distinguish "killed by us" vs "user killed"
-    # from rc alone, so check whether killer is still alive: if it
-    # has already exited it likely fired (rc=124 convention).
-    if ! kill -0 "$killer_pid" 2>/dev/null; then
-        # killer already exited → either fired (and killed us), or
-        # raced with natural completion. Conservative: report 124
-        # only when rc indicates a kill signal.
-        if [[ $rc -gt 128 ]]; then rc=124; fi
-    fi
-    kill -KILL "$killer_pid" 2>/dev/null
-    wait "$killer_pid" 2>/dev/null
-    return $rc
-}
 
 # Examples are classified by runtime behaviour.
 # server examples: start a listener; probe HTTP; kill after probe.
@@ -354,9 +313,9 @@ run_example() {
         # 20 min for install: 13-skyshop introspects 76k Stripe/Firebase
         # symbols and the repo documents that at 15+ min.
         if [[ -f sky.toml ]] && grep -qE '^\["?go\.dependencies"?\]' sky.toml; then
-            run_with_timeout 1200 "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
+            with_timeout 1200 "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
         fi
-        run_with_timeout 900 "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1
+        with_timeout 900 "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1
     ) || { printf 'FAIL build failed — /tmp/sky-build-%s.log\n' "$name" > "$result_file"; return; }
 
     if [[ $BUILD_ONLY -eq 1 || "$kind" == "gui" ]]; then
@@ -375,7 +334,7 @@ run_example() {
             # the sweep budget and flakes on slow upstreams (httpbin
             # was the trigger). 5s is plenty for a healthy connection
             # and surfaces a graceful Err on a wedged one.
-            out=$( (cd "$dir" && SKY_HTTP_CLIENT_TIMEOUT=5s run_with_timeout 10 "$bin") 2>&1 ) || rc=$?
+            out=$( (cd "$dir" && with_timeout 10 env SKY_HTTP_CLIENT_TIMEOUT=5s "$bin") 2>&1 ) || rc=$?
             if [[ $rc -ne 0 ]]; then
                 printf 'FAIL cli non-zero exit (rc=%s) — last 20 lines: %s\n' "$rc" "$(printf '%s' "$out" | tail -20 | tr '\n' ' | ')" > "$result_file"
                 return
@@ -478,9 +437,13 @@ sweep_worker() {
 }
 
 # Export the worker + helper functions + env for xargs subshells.
-export -f run_example sweep_worker run_with_timeout
+# with_timeout + its resolver + the perl program travel to the xargs workers.
+# A worker that could not bound its example would be a worker that ran it
+# unbounded, or (before this shim existed) reported a pass for not running it.
+export -f run_example sweep_worker with_timeout _sky_with_timeout_resolve
+export _SKY_WITH_TIMEOUT_PERL_PROG SKY_WITH_TIMEOUT_KILL_AFTER
 export EXAMPLES_ROOT SKY SKY_RUNTIME_DIR CLEAN BUILD_ONLY
-export RESULTS_DIR SKIP_GUI_LINUX TIMEOUT_CMD
+export RESULTS_DIR SKIP_GUI_LINUX
 
 # Display banner + parallel summary.
 echo

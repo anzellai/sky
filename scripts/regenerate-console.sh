@@ -54,6 +54,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 cd "$ROOT"
 
 # ANSI colours for the script's own diagnostics — only when stderr
@@ -156,7 +160,7 @@ fi
     # symbol IS in the binary.
     SKY_RUNTIME_DIR="$ROOT/runtime-go" \
         SKY_BUILD_IS_INLINE_CONSOLE=1 \
-        timeout 600 "$SKY" build src/Main.sky
+        with_timeout 600 "$SKY" build src/Main.sky
 )
 
 GENERATED="$CONSOLE_SRC/sky-out/main.go"

@@ -24,6 +24,10 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$REPO_ROOT/scripts/lib/with-timeout.sh"
 ARTEFACT_DIR="$REPO_ROOT/.skycache/verify"
 
 JSON_OUT=""
@@ -125,13 +129,13 @@ run_test() {
         # old build-only-if-missing behaviour a stale binary hid this; forcing a
         # rebuild exposed it on 03-tea-external (github.com/google/uuid +
         # joho/godotenv). It is a no-op for examples whose deps are Go stdlib.
-        if ! ( cd "$REPO_ROOT/examples/$name" && timeout 900 "$REPO_ROOT/sky-out/sky" install >/dev/null 2>&1 ); then
+        if ! ( cd "$REPO_ROOT/examples/$name" && with_timeout 900 "$REPO_ROOT/sky-out/sky" install >/dev/null 2>&1 ); then
             echo "✗ $name — sky install failed (see: cd examples/$name && sky install)"
             fail=$((fail+1)); FAILS+=("$name")
             record "$name" "$mode" "fail" "install-failed"
             return
         fi
-        if ! ( cd "$REPO_ROOT/examples/$name" && timeout 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky >/dev/null 2>&1 ); then
+        if ! ( cd "$REPO_ROOT/examples/$name" && with_timeout 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky >/dev/null 2>&1 ); then
             echo "✗ $name — build failed (see: cd examples/$name && sky build src/Main.sky)"
             fail=$((fail+1)); FAILS+=("$name")
             record "$name" "$mode" "fail" "build-failed"
@@ -151,17 +155,17 @@ run_test() {
 
     case "$mode" in
         cli)
-            out=$( ( cd "$REPO_ROOT/examples/$name" && timeout 10 "$bin" 2>"$errfile" ) || echo "__EXIT_$?")
+            out=$( ( cd "$REPO_ROOT/examples/$name" && with_timeout 10 "$bin" 2>"$errfile" ) || echo "__EXIT_$?")
             ;;
         cli-stdin)
-            out=$( ( cd "$REPO_ROOT/examples/$name" && echo "$input" | timeout 10 "$bin" 2>"$errfile" ) || echo "__EXIT_$?")
+            out=$( ( cd "$REPO_ROOT/examples/$name" && echo "$input" | with_timeout 10 "$bin" 2>"$errfile" ) || echo "__EXIT_$?")
             ;;
         cli-args)
-            out=$( ( cd "$REPO_ROOT/examples/$name" && timeout 10 "$bin" $input 2>"$errfile" ) || echo "__EXIT_$?")
+            out=$( ( cd "$REPO_ROOT/examples/$name" && with_timeout 10 "$bin" $input 2>"$errfile" ) || echo "__EXIT_$?")
             ;;
         tui-start)
             # Spawn briefly; the runtime should exit cleanly on non-TTY stdin.
-            out=$( ( cd "$REPO_ROOT/examples/$name" && timeout 3 "$bin" 2>"$errfile" </dev/null || true) )
+            out=$( ( cd "$REPO_ROOT/examples/$name" && with_timeout 3 "$bin" 2>"$errfile" </dev/null || true) )
             ;;
         skip-gui)
             echo "⊘ $name — GUI app, skipped (needs X11)"

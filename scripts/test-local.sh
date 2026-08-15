@@ -35,6 +35,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 cd "$ROOT"
 
 # shellcheck source=lib/concurrency.sh
@@ -67,7 +71,7 @@ phase_behavioral() {
     # suites — the int64-class "compiles-clean, behaves-wrong" gate). Also run on
     # both platforms in CI's codegen-build / macos-determinism jobs.
     local t0; t0=$(date +%s)
-    ( cd "$ROOT/rust" && timeout 1500 bash -c '
+    ( cd "$ROOT/rust" && with_timeout 1500 bash -c '
         cargo run -q -p xtask -- build-run --shape cli --run --golden || exit 1
         cargo build --release -p sky --locked || exit 1
         SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh || exit 1
@@ -132,7 +136,7 @@ phase_release_parity() {
     # corpus. Needs the oracle (NOT available in CI); the gate self-skips (exit 0)
     # when the oracle binary is absent, so this phase is safe everywhere.
     local t0; t0=$(date +%s)
-    ( cd "$ROOT/rust" && timeout 900 cargo run -q -p xtask -- welltyped )
+    ( cd "$ROOT/rust" && with_timeout 900 cargo run -q -p xtask -- welltyped )
     local rc=$?
     local t1; t1=$(date +%s)
     echo "  $(( t1 - t0 ))s (exit $rc)"

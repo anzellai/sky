@@ -37,6 +37,13 @@
 # reported as "build failed"), but non-zero. Loud-and-wrong is a bug; quiet-and-
 # green is the bug that ships.
 #
+# The opposite failure is not hypothetical either, and is why this file never
+# silently runs a command unbounded. `scripts/conformance.sh` used to fall
+# through with no bound when it found no `timeout`, on the reasoning that "the
+# CI job still has its own outer timeout". The macos-determinism job that runs
+# it declares no `timeout-minutes`, so a wedged `sky test` burned GitHub's
+# 6-hour default at the macOS minute multiplier.
+#
 # Six scripts had already open-coded a fallback, in four subtly different
 # variants: two returned 137 where GNU `timeout` returns 124, one tried to map
 # to 124 and documented that it could not do so reliably, none escalated

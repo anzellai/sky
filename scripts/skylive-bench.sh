@@ -29,6 +29,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 cd "$ROOT"
 
 COUNT="${COUNT:-5}"
@@ -94,7 +98,7 @@ echo "load_gate        passed (load $load1 <= $MAX_LOAD)" >> "$OUTDIR/env.txt"
 # Non-vacuity gate: the fixtures must still exercise what they claim
 # ---------------------------------------------------------------------
 echo "==> proving the benchmark fixtures are non-vacuous"
-if ! (cd runtime-go && timeout 600 go test ./rt \
+if ! (cd runtime-go && with_timeout 600 go test ./rt \
       -run 'TestBenchFixturesAreNonVacuous|TestBenchTreeSizesMatchReferenceApps' \
       -count 1) ; then
   echo "REFUSING TO MEASURE: fixture gates failed. The benchmark is not" >&2
@@ -110,7 +114,7 @@ echo
 # Measure
 # ---------------------------------------------------------------------
 echo "==> running $BENCH x$COUNT (benchtime=$BENCHTIME)"
-(cd runtime-go && timeout "$TIMEOUT_SECS" go test ./rt \
+(cd runtime-go && with_timeout "$TIMEOUT_SECS" go test ./rt \
    -run '^$' -bench "$BENCH" -benchtime "$BENCHTIME" -count "$COUNT" -benchmem) \
   | tee "$OUTDIR/raw.txt"
 

@@ -52,6 +52,10 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$REPO/scripts/lib/with-timeout.sh"
 OUT="$REPO/docs/history/embedded-postgres"
 KEEP_LOGS=0
 WITH_CARGO=0
@@ -159,7 +163,7 @@ apply_checked() {
 run_suite() {
   local label="$1"
   ( cd "$REPO/runtime-go" && \
-    SKY_POSTGRES_BIN="$SKY_POSTGRES_BIN" timeout 1800 go test -v ./rt/... -count=1 ) \
+    with_timeout 1800 env SKY_POSTGRES_BIN="$SKY_POSTGRES_BIN" go test -v ./rt/... -count=1 ) \
     > "$LOGDIR/$label.log" 2>&1 || true
 }
 
@@ -210,7 +214,7 @@ run_cargo() {
   local label="$1"
   [[ $WITH_CARGO -eq 1 ]] || return 0
   ( cd "$REPO/rust" && CARGO_TARGET_DIR="$REPO/rust/local-target" \
-      timeout 3000 cargo test --workspace ) > "$LOGDIR/$label-cargo.log" 2>&1 \
+      with_timeout 3000 cargo test --workspace ) > "$LOGDIR/$label-cargo.log" 2>&1 \
     && echo 0 > "$LOGDIR/$label-cargo.exit" \
     || echo $? > "$LOGDIR/$label-cargo.exit"
 }

@@ -37,6 +37,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 cd "$ROOT"
 
 # shellcheck source=lib/concurrency.sh
@@ -69,7 +73,7 @@ phase_compiler_build() {
         # Not `cp "$ROOT/rust/target/release/sky"` — cargo honours
         # CARGO_TARGET_DIR, so that path can name an older binary and this
         # phase's whole purpose is freshness. See scripts/lib/cargo-target.sh.
-        ( cd "$ROOT/rust" && timeout 900 cargo build --release --locked -p sky ) \
+        ( cd "$ROOT/rust" && with_timeout 900 cargo build --release --locked -p sky ) \
             && install_binary "$(cargo_bin_path "$ROOT/rust" sky --release)" "$ROOT/sky-out/sky"
     else
         echo "  sky-out/sky exists (set SKY_REBUILD=1 to force rebuild)"
@@ -90,7 +94,7 @@ phase_rust_gates() {
     # runtime-correctness gates — `golden` + the behavioral `conformance` suites —
     # live in scripts/test-local.sh (the pre-tag gate) and CI's codegen-build job,
     # NOT here, to keep the pre-push gate from ballooning past its budget.
-    ( cd "$ROOT/rust" && timeout 2400 bash -c '
+    ( cd "$ROOT/rust" && with_timeout 2400 bash -c '
         cargo test --workspace --locked || exit 1
         for g in roundtrip resolve infer reject fuzz coerce-floor repro fmt s8 divergences lsp; do
             cargo run -q -p xtask -- "$g" || exit 1

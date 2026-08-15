@@ -16,6 +16,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 APP_DIR="$ROOT/examples/26-ui-showcase"
 RUNNER="$ROOT/scripts/verify-ui-showcase.mjs"
 SKY="$ROOT/sky-out/sky"
@@ -32,27 +36,6 @@ for arg in "$@"; do
     esac
 done
 
-# Cross-platform timeout shim (mirrors example-sweep.sh).
-if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="gtimeout"
-else
-    TIMEOUT_CMD=""
-fi
-bounded() {
-    local secs="$1"; shift
-    if [[ -n "$TIMEOUT_CMD" ]]; then "$TIMEOUT_CMD" "$secs" "$@"; return $?; fi
-    "$@" &
-    local cmd_pid=$!
-    ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) &
-    local killer_pid=$!
-    local rc=0
-    wait "$cmd_pid" 2>/dev/null; rc=$?
-    kill -KILL "$killer_pid" 2>/dev/null
-    wait "$killer_pid" 2>/dev/null
-    return $rc
-}
 
 # Build if binary is missing or older than the source tree.
 need_build=0
@@ -71,7 +54,7 @@ fi
 if [[ $need_build -eq 1 ]]; then
     echo "[build] $APP_DIR"
     ( cd "$APP_DIR" && rm -rf sky-out/main.go sky-out/app && \
-        TMPDIR=/tmp bounded 90 "$SKY" build src/Main.sky ) || {
+        with_timeout 90 env TMPDIR=/tmp "$SKY" build src/Main.sky ) || {
             echo "FAIL — sky build failed" >&2
             exit 1
         }
@@ -92,7 +75,7 @@ export TMPDIR="${TMPDIR:-/tmp}"
 mkdir -p "$TMPDIR" 2>/dev/null || TMPDIR=/tmp
 
 echo "[run] node $RUNNER (port $PORT, timeout 120s, TMPDIR=$TMPDIR)"
-bounded 120 env ${env_args[@]+"${env_args[@]}"} SKY_UI_SHOWCASE_PORT="$PORT" \
+with_timeout 120 env ${env_args[@]+"${env_args[@]}"} SKY_UI_SHOWCASE_PORT="$PORT" \
     TMPDIR="$TMPDIR" \
     node "$RUNNER"
 rc=$?

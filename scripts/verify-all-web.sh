@@ -8,33 +8,13 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$REPO_ROOT/scripts/lib/with-timeout.sh"
 RESULTS_DIR="$REPO_ROOT/.skycache/verify"
 mkdir -p "$RESULTS_DIR"
 
-# Cross-platform timeout shim (mirrors verify-ui-showcase.sh). Every node
-# verifier below is a browser driver: a Playwright wait that never settles
-# would otherwise wedge the release gate with no ceiling. macOS runners ship
-# neither `timeout` nor `gtimeout`, hence the pure-bash fallback.
-if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then
-    TIMEOUT_CMD="gtimeout"
-else
-    TIMEOUT_CMD=""
-fi
-bounded() {
-    local secs="$1"; shift
-    if [ -n "$TIMEOUT_CMD" ]; then "$TIMEOUT_CMD" "$secs" "$@"; return $?; fi
-    "$@" &
-    local cmd_pid=$!
-    ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) &
-    local killer_pid=$!
-    local rc=0
-    wait "$cmd_pid" 2>/dev/null; rc=$?
-    kill -KILL "$killer_pid" 2>/dev/null
-    wait "$killer_pid" 2>/dev/null
-    return $rc
-}
 
 # Print a sub-gate's captured output: a short tail when it PASSED, all of it
 # when it FAILED.
@@ -121,10 +101,10 @@ for entry in "${TESTS[@]}"; do
                 echo "--- sky install ---"
                 # 20 min: the same ceiling example-sweep.sh uses, for the same
                 # reason (13-skyshop introspects 76k Stripe/Firebase symbols).
-                bounded 1200 "$REPO_ROOT/sky-out/sky" install 2>&1 || exit 2
+                with_timeout 1200 "$REPO_ROOT/sky-out/sky" install 2>&1 || exit 2
             fi
             echo "--- sky build ---"
-            bounded 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky 2>&1
+            with_timeout 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky 2>&1
         ) >"$buildlog" 2>&1
         # Deliberately NOT `|| exit`: a build failure is not the verdict here.
         # The verdict is the browser run below, which reports "binary missing"
@@ -136,7 +116,7 @@ for entry in "${TESTS[@]}"; do
     # Kill any process on this port pre-flight
     pid=$(lsof -ti ":$port" 2>/dev/null || true)
     [ -n "$pid" ] && kill -9 $pid 2>/dev/null || true
-    out=$(bounded 300 node "$REPO_ROOT/scripts/verify-live-app.mjs" "$name" "$port" "$scenario" 2>&1)
+    out=$(with_timeout 300 node "$REPO_ROOT/scripts/verify-live-app.mjs" "$name" "$port" "$scenario" 2>&1)
     if echo "$out" | grep -q "^PASS "; then
         pass=$((pass+1))
         echo "✓ $name (port $port, $scenario)"
@@ -181,7 +161,7 @@ if [ "${SKY_VERIFY_SKIP_CONSOLE_E2E:-0}" != "1" ]; then
     # the gate's. console-e2e was left on the broken form, so it printed
     # "✓ console-e2e" unconditionally — including on ERR_MODULE_NOT_FOUND, a
     # missing binary, or every assertion failing. Capture, then tail.
-    ce_out=$(bounded 600 node "$REPO_ROOT/scripts/verify-console-e2e.mjs" 2>&1)
+    ce_out=$(with_timeout 600 node "$REPO_ROOT/scripts/verify-console-e2e.mjs" 2>&1)
     ce_rc=$?
     gate_output "$ce_rc" 8 "$ce_out"
     if [ "$ce_rc" -eq 0 ]; then
@@ -205,7 +185,7 @@ if [ "${SKY_VERIFY_SKIP_UI_SHOWCASE:-0}" != "1" ]; then
     # NOTE: run the gate, capture its exit, THEN tail its output. Piping the gate
     # straight into `tail` in the `if` condition tests tail's exit status (always
     # 0), not the gate's — which silently swallowed real snapshot failures.
-    ui_out=$(bounded 900 bash "$REPO_ROOT/scripts/verify-ui-showcase.sh" 2>&1)
+    ui_out=$(with_timeout 900 bash "$REPO_ROOT/scripts/verify-ui-showcase.sh" 2>&1)
     ui_rc=$?
     gate_output "$ui_rc" 15 "$ui_out"
     if [ "$ui_rc" -eq 0 ]; then
@@ -232,7 +212,7 @@ if [ "${SKY_VERIFY_SKIP_RESILIENCE:-0}" != "1" ]; then
     # stale handler id must return X-Sky-Status: desync + a fresh inline
     # re-render, and the NEXT interaction must round-trip (no strand, no
     # full reload). This is a hard gate.
-    res_out=$(bounded 300 node "$REPO_ROOT/scripts/verify-live-resilience.mjs" desync 2>&1)
+    res_out=$(with_timeout 300 node "$REPO_ROOT/scripts/verify-live-resilience.mjs" desync 2>&1)
     res_rc=$?
     gate_output "$res_rc" 4 "$res_out"
     if [ "$res_rc" -eq 0 ]; then
@@ -253,7 +233,7 @@ if [ "${SKY_VERIFY_SKIP_RESILIENCE:-0}" != "1" ]; then
     # ~80s (must cross the 60s memory-store cleanup tick); the idle hold is a
     # fixed wait + a deterministic POST-200 assertion, so it is not timing-flaky.
     echo "--- resilience idle-survival (~80s) ---"
-    idle_out=$(bounded 300 node "$REPO_ROOT/scripts/verify-live-resilience.mjs" idle 2>&1)
+    idle_out=$(with_timeout 300 node "$REPO_ROOT/scripts/verify-live-resilience.mjs" idle 2>&1)
     idle_rc=$?
     gate_output "$idle_rc" 6 "$idle_out"
     if [ "$idle_rc" -eq 0 ]; then

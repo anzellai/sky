@@ -30,6 +30,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 cd "$ROOT"
 
 SKY="$ROOT/sky-out/sky"
@@ -149,8 +153,12 @@ run_fixture() {
                     # indefinitely.  10 s is generous for the
                     # fixtures' workload; exit code 124 = timed out.
                     local run_rc=0
-                    timeout 10 "$bin" > /dev/null 2>&1 || run_rc=$?
-                    if (( run_rc == 124 )); then
+                    with_timeout 10 "$bin" > /dev/null 2>&1 || run_rc=$?
+                    # 124 = the bound fired and SIGTERM was enough; 137 = the
+                    # binary ignored SIGTERM and had to be SIGKILLed. Both are
+                    # "it did not finish", and a spin-loop that masks signals
+                    # is the more alarming of the two, not a panic.
+                    if (( run_rc == 124 || run_rc == 137 )); then
                         failures+=("runtime timed out — infinite loop / TCO miscompile")
                     elif (( run_rc != 0 )); then
                         failures+=("runtime exit $run_rc — likely panic")

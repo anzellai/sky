@@ -17,6 +17,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 SKY="${SKY_BIN:-$ROOT/sky-out/sky}"
 [ -x "$SKY" ] || SKY="$(command -v sky 2>/dev/null || true)"
 if [ -z "${SKY:-}" ] || [ ! -x "$SKY" ]; then
@@ -27,22 +31,6 @@ VERBOSE=0; [ "${1:-}" = "-v" ] && VERBOSE=1
 BLOCKS="$(mktemp -d)"; PROJ="$(mktemp -d)"
 trap 'rm -rf "$BLOCKS" "$PROJ"' EXIT
 
-# Timeout shim — macOS runners ship neither `timeout` nor `gtimeout`, so
-# resolve what exists and fall back to a bash watchdog. A `sky check` that
-# fails to terminate must not wedge the gate (AGENTS.md: timeout-bound every
-# long command).
-if command -v timeout >/dev/null 2>&1; then TIMEOUT_CMD=timeout
-elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_CMD=gtimeout
-else TIMEOUT_CMD=""; fi
-run_bounded() {
-  local secs="$1"; shift
-  if [ -n "$TIMEOUT_CMD" ]; then "$TIMEOUT_CMD" "$secs" "$@"; return $?; fi
-  "$@" & local cmd_pid=$!
-  ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) & local killer=$!
-  local rc=0; wait "$cmd_pid" 2>/dev/null; rc=$?
-  kill -KILL "$killer" 2>/dev/null; wait "$killer" 2>/dev/null
-  return $rc
-}
 
 # Anti-vacuity floor. `total` is derived from a text scan of docs/, so any
 # drift in fence syntax, a docs/ reorg, or a change to the `find` path can
@@ -102,7 +90,7 @@ while IFS=$'\t' read -r file rel startln; do
   rm -rf "$PROJ"; mkdir -p "$PROJ/src"
   printf 'name = "docexamples"\nversion = "0.1.0"\nentry = "src/%s.sky"\n' "$last" > "$PROJ/sky.toml"
   cp "$file" "$PROJ/src/$last.sky"
-  if out="$( ( cd "$PROJ" && run_bounded 300 "$SKY" check "src/$last.sky" ) 2>&1 )"; then
+  if out="$( ( cd "$PROJ" && with_timeout 300 "$SKY" check "src/$last.sky" ) 2>&1 )"; then
     pass=$((pass + 1))
     [ "$VERBOSE" = 1 ] && printf '  ok    %s:%s (%s)\n' "$rel" "$startln" "$modname"
   else
