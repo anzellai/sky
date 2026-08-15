@@ -473,6 +473,63 @@ jobs:
       - name: Gate — fuzz (robustness + determinism, L7 + L4)
         run: cargo run -q -p xtask -- fuzz
 
+  # ── The PostgreSQL bundle licence gate, proven able to fail ────────────────
+  #
+  # scan-bundle-licences.sh is the only thing standing between a GPL-linked
+  # object and an Apache-2.0 release artifact, and test-licence-gate.sh is the
+  # only evidence it still rejects what it exists to reject.
+  #
+  # IT LIVES HERE, NOT IN postgres-bundle.yml, AND THAT IS THE WHOLE POINT.
+  # It ran there first, on a bare `pull_request:` trigger — so it reported on
+  # every PR and could not block one: `ci-green`, the required check, fans in
+  # THIS file only. A gate whose red verdict nobody is required to honour has
+  # the same shape as a gate that does not run, and this one guards a legal
+  # obligation. `rust/crates/xtask/tests/workflows_parse.rs` asserts the
+  # property in general; this job is how it is satisfied for the licence gate.
+  # postgres-bundle.yml keeps its own copy of the self-test as the precondition
+  # of its build matrix, where it gates publication rather than merge.
+  #
+  # BOTH OSes, because the dependency-enumeration paths are entirely different
+  # code — objdump/DT_NEEDED against otool/Mach-O load commands. A gate proven
+  # on one is unproven on the other, and the macOS half also carries the one
+  # path-sensitive rule in the licence table (Apple's LGPL libiconv is
+  # PLATFORM; anyone else's is COPYLEFT).
+  #
+  # No Rust, no `needs: setup`, no cargo cache: a C compiler, the two scripts,
+  # and about a minute. The macOS leg bills at 10x for that minute; the thing
+  # it protects is the licence of every artifact this project publishes.
+  licence-gate-linux:
+    runs-on: ubuntu-latest
+    # Compiles ~30 tiny fixture objects and runs the scanner over each; well
+    # under a minute observed locally. 5 is a runaway bound, not an estimate.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # A real GNU readline lets the suite include one rejection driven by a
+      # genuine GPL library rather than a stub carrying its name. The suite
+      # skips that case when readline is absent, so this is fidelity, not a
+      # hard dependency — and a skipped case is green, which is why it is
+      # installed rather than hoped for.
+      - name: Install GNU readline (fidelity fixture)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreadline-dev
+      - name: Prove the licence gate rejects what it must
+        working-directory: .
+        run: bash scripts/skydb/test-licence-gate.sh
+
+  licence-gate-macos:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GNU readline (fidelity fixture)
+        run: brew install readline || true
+      - name: Prove the licence gate rejects what it must
+        working-directory: .
+        run: bash scripts/skydb/test-licence-gate.sh
+
   # ── Real-Postgres session-store integration (the store prod shops run on) ───
   # The per-push rt tests cover memory/sqlite round-trip + the postgres fail-loud
   # branch; the happy-path postgresStore (Get/Set/Delete/TTL/cross-instance
@@ -687,6 +744,8 @@ jobs:
       - build-corpus
       - behaviour-docs
       - lsp-fuzz
+      - licence-gate-linux
+      - licence-gate-macos
       - integration-postgres
       - macos-determinism
       - macos-behaviour
@@ -730,10 +789,17 @@ jobs:
           # at all, `macos-determinism` is a different OS with its own cache a
           # Linux `setup` cannot prime, and `build-corpus` consumes none of
           # setup's OUTPUT (it runs its own `cargo build --workspace`, restoring
-          # the shared cargo cache by `restore-keys` like every other job).
+          # the shared cargo cache by `restore-keys` like every other job), and
+          # the two `licence-gate-*` jobs compile C fixtures and run two shell
+          # scripts — no Rust at all.
           # They start alongside `setup`, so charging them its time would
           # overstate the tier.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-behaviour build-corpus'
+          #
+          # These names are SPACE-SEPARATED and matched whole, so a job whose
+          # REST-API name contains a space (a `matrix` leg reports as
+          # `name (leg)`) could never match one. That is why the licence gate is
+          # two explicitly-named jobs rather than one two-legged matrix.
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-behaviour build-corpus licence-gate-linux licence-gate-macos'
         run: |
           set -euo pipefail
           gh api \

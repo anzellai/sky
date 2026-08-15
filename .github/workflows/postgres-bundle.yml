@@ -11,15 +11,23 @@ name: PostgreSQL bundle
 # So it is compiled here, from a pinned tarball with a pinned checksum, and
 # every artifact is put through a licence gate before it can be published.
 #
-# TRIGGERS, and why they differ:
+# TRIGGERS: workflow_dispatch and a `postgres-bundle-v*` tag. Both run the full
+# four-platform build; PostgreSQL takes 10-20 minutes per platform, so this is a
+# per-release job, not a per-commit one.
 #
-#   pull_request  — runs the GATE SELF-TEST ONLY (seconds). Any change to the
-#                   scanner or the build script must re-prove that the gate
-#                   still rejects the bundles it exists to reject. A gate is
-#                   only evidence while it is still observed failing.
-#   workflow_dispatch / tag — runs the full four-platform build. PostgreSQL
-#                   takes 10-20 minutes per platform, so this is a per-release
-#                   job, not a per-commit one.
+# THERE IS DELIBERATELY NO `pull_request:` TRIGGER, and its removal was a fix.
+# This workflow used to run the gate self-test on every PR touching
+# scripts/skydb/** — which reported on the PR and could not BLOCK it, because
+# `ci-green`, the single required status check, fans in rust-ci.yml and nothing
+# else. The one gate guarding a legal obligation was advisory. The per-commit
+# self-test now lives in rust-ci.yml (`licence-gate-linux` /
+# `licence-gate-macos`), inside the fan-in, and
+# `rust/crates/xtask/tests/workflows_parse.rs` fails the build if any workflow
+# regains a per-commit trigger without that coverage.
+#
+# The `gate-self-test` job below stays, unchanged in purpose: here it is the
+# precondition of the build matrix, so a gate that cannot be shown to fail
+# blocks PUBLICATION. There it blocks the merge. Both are wanted.
 
 on:
   workflow_dispatch:
@@ -30,10 +38,6 @@ on:
         default: false
   push:
     tags: ['postgres-bundle-v*']
-  pull_request:
-    paths:
-      - 'scripts/skydb/**'
-      - '.github/workflows/postgres-bundle.yml'
 
 permissions:
   contents: read
@@ -107,7 +111,10 @@ jobs:
   build:
     name: Build ${{ matrix.platform }}
     needs: gate-self-test
-    if: github.event_name != 'pull_request'
+    # No `if:` guard on the event — with `pull_request` gone from the triggers,
+    # every event that reaches this workflow is one that should build. A guard
+    # naming an event that can no longer fire reads like a live condition and
+    # verifies nothing.
     strategy:
       fail-fast: false
       matrix:
