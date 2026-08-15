@@ -84,13 +84,16 @@ echo
 echo "==> building load generator"
 (cd tools/skyliveload && go build -o "$OUTDIR/skyliveload" .)
 
-SKY_BIN="${SKY_BIN:-$ROOT/rust/target/release/sky}"
-if [ ! -x "$SKY_BIN" ]; then
-  echo "no sky binary at $SKY_BIN; set SKY_BIN=/path/to/sky" >&2
-  exit 66
-fi
-
+# The compiler is only needed when the app is not already built. A
+# worktree that has the example built but no local cargo target should
+# still be able to run the harness.
 if [ ! -x "$ROOT/$APP/sky-out/app" ]; then
+  SKY_BIN="${SKY_BIN:-$ROOT/rust/target/release/sky}"
+  if [ ! -x "$SKY_BIN" ]; then
+    echo "$APP is not built and there is no sky binary at $SKY_BIN." >&2
+    echo "Either build the app first, or set SKY_BIN=/path/to/sky." >&2
+    exit 66
+  fi
   echo "==> building $APP"
   (cd "$ROOT/$APP" && "$SKY_BIN" build src/Main.sky)
 fi
@@ -153,7 +156,7 @@ printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
   sessions rep throughput p50_ms p95_ms p99_ms err_rate rss_mb pg_backends valid > "$SUMMARY"
 
 OBS_SUMMARY="$OUTDIR/observer.tsv"
-printf "%s\t%s\t%s\t%s\t%s\n" synthetic_sessions browser_p50_ms browser_p95_ms browser_p99_ms samples > "$OBS_SUMMARY"
+printf "%s\t%s\t%s\t%s\t%s\t%s\n" synthetic_sessions browser_p50_ms browser_p95_ms browser_p99_ms samples valid > "$OBS_SUMMARY"
 
 for n in $CONCURRENCY; do
   for rep in $(seq 1 "$REPEATS"); do
@@ -185,12 +188,19 @@ for n in $CONCURRENCY; do
   # NOT running -- a steady-state reading would need the load held, so
   # we re-raise it in the background for the observation window.
   if [ "$OBSERVER" = "1" ] && command -v node >/dev/null 2>&1; then
-    echo "==> observing with a real browser under $n synthetic sessions"
+    # The load must outlast the observation, or the browser ends up
+    # measuring an idle server and the run reports a handful of samples
+    # taken after the load stopped. Budget generously: each sample costs
+    # its think time plus up to the 5s patch timeout, plus ramp and
+    # settle. (An earlier version reused $DURATION here and collected
+    # 1 of 15 samples at 200 sessions.)
+    obs_budget=$(( OBS_SAMPLES * 6 + 30 ))
+    echo "==> observing with a real browser under $n synthetic sessions (load held ${obs_budget}s)"
     "$OUTDIR/skyliveload" -url "http://127.0.0.1:$PORT" -sessions "$n" \
-      -duration "$DURATION" -think "$THINK" -ramp 2s \
+      -duration "${obs_budget}s" -think "$THINK" -ramp 2s \
       -json "$OUTDIR/load-during-observe-n${n}.json" >/dev/null 2>&1 &
     LOADPID=$!
-    sleep 4   # let the synthetic load reach steady state
+    sleep 6   # let the synthetic load reach steady state
     node scripts/skylive-observer.mjs \
       --url "http://127.0.0.1:$PORT" --samples "$OBS_SAMPLES" --think 200 \
       --label "under-${n}-sessions" \
@@ -198,12 +208,17 @@ for n in $CONCURRENCY; do
     wait "$LOADPID" 2>/dev/null || true
 
     if [ -f "$OUTDIR/observer-n${n}.json" ]; then
+      # `valid` is carried through deliberately: a row with a handful of
+      # samples is a broken observation, not a fast one, and must not be
+      # read as a latency figure.
       awk -v n="$n" '
         /"p50_ms"/ { gsub(/[",]/,""); p50=$2 }
         /"p95_ms"/ { gsub(/[",]/,""); p95=$2 }
         /"p99_ms"/ { gsub(/[",]/,""); p99=$2 }
         /"samples_observed"/ { gsub(/[",]/,""); s=$2 }
-        END { printf "%s\t%.2f\t%.2f\t%.2f\t%s\n", n, p50, p95, p99, s }
+        /"samples_requested"/ { gsub(/[",]/,""); req=$2 }
+        /"valid"/ { gsub(/[",]/,""); v=$2 }
+        END { printf "%s\t%.2f\t%.2f\t%.2f\t%s/%s\t%s\n", n, p50, p95, p99, s, req, v }
       ' "$OUTDIR/observer-n${n}.json" >> "$OBS_SUMMARY"
     fi
   fi

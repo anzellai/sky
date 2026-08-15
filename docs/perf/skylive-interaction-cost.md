@@ -26,6 +26,96 @@ CONCURRENCY="100 500 1000" DURATION=60s scripts/skylive-load.sh
 scripts/skylive-load-constrained.sh --profiles "1x2g 2x2g 1x1g"
 ```
 
+## The answer
+
+**The runtime's share of a Sky.Live interaction costs about 128 ns per
+VNode**, for the ordinary case of a text or attribute change:
+
+```
+cost ≈ 0.4 µs + 128 ns × nodes          (text / attribute change)
+cost ≈          370 ns × nodes          (child-count change: subtree re-render)
+```
+
+Applied to the two reference apps:
+
+| View | VNodes | Text/attr change | Row added to a list |
+|---|---|---|---|
+| `19-skyforum` (94 elements) | 159 | **21 µs** | 59 µs |
+| `26-ui-showcase` (384 elements) | 670 | **86 µs** | 244 µs |
+
+**The "2–10 ms per interaction" figure was pessimistic by roughly 25–100×
+for the path it named.** The heaviest view in the repo costs 0.086 ms of
+diff, render-id assignment and JSON encoding — not 2–10 ms.
+
+Measured as the minimum of 15 repetitions (see *Conditions* below);
+linearity holds to within 2% across a 370× range of node counts, from 19
+to 7,012 nodes.
+
+Where that time goes, at 670 nodes:
+
+| Component | Cost | Share |
+|---|---|---|
+| `diffTrees` | 66.7 µs | 78% |
+| `assignSkyIDs` | 21.6 µs | 25% |
+| JSON encode (1 patch) | negligible | — |
+
+### But end-to-end interactions really are milliseconds
+
+This is the part that matters for sizing, and it is why the original
+figure was not simply wrong. Measured against the same app with the
+Phase 2 harness:
+
+| Measurement | 1 session | 100 sessions |
+|---|---|---|
+| Server-side diff path (Phase 1) | 0.086 ms | 0.086 ms |
+| POST round-trip, Go client (Phase 2) | ~12 ms | 8.1 ms |
+| Click-to-DOM-updated, real browser | 27 ms | ~24 ms |
+
+So an interaction *does* cost milliseconds end to end — but **the
+render/diff path is about 1% of it**. The remaining ~99% is HTTP
+handling, session locking, SSE bookkeeping, the user's compiled-Sky
+`update`/`view`, the network, and client-side patch application.
+
+The practical consequence: **sizing CPU capacity on the diff cost
+over-provisions massively, and optimising the differ would buy almost
+nothing.** At the saturation throughput measured below (~430
+interactions/sec), the entire diff path accounts for under 4% of one
+core.
+
+## Capacity, measured
+
+Bare host, 8-core M1, heavy 384-node view, 1 s think time:
+
+| Concurrent sessions | Throughput | p50 | p95 | p99 |
+|---|---|---|---|---|
+| 100 | 93/s | 8.1 ms | 12.3 ms | 14.8 ms |
+| 500 | 404/s | 70 ms | 637 ms | 1,233 ms |
+| 1,000 | 433/s | 659 ms | 3,927 ms | 6,364 ms |
+
+**The knee is between 100 and 500 concurrent sessions.** At 100 the
+server keeps up with demand (93/s against a 100/s offered load) and
+latency is flat. By 1,000 the throughput has plateaued at ~430/s while
+p50 latency has grown 80× — the queue, not the work, dominates.
+
+The load generator used 0.25–1.6% of the machine throughout, so none of
+this describes the generator.
+
+### Memory is the constraint that binds first
+
+Three independent measurements, each the RSS delta from adding that many
+live sessions:
+
+| Sessions added | RSS delta | Per session |
+|---|---|---|
+| 100 | 132.5 MB | 1,357 KB |
+| 500 | 511.1 MB | 1,047 KB |
+| 1,000 | 1,259.2 MB | 1,289 KB |
+
+**About 1.1 MB of server RSS per live session** holding a 384-node view.
+On a 2 GB instance that is roughly 1,700 sessions before memory alone
+exhausts — but the throughput knee arrives far earlier, at a few
+hundred. Memory sets the hard ceiling; latency sets the useful one.
+
 ## What is measured, and what is not
 
 The server-side per-interaction path, as `dispatch` runs it
@@ -105,6 +195,40 @@ it never did. The guards:
   `noop` (which produces zero patches) as *slower* than `text_one`, and
   2000 nodes as faster than 1000. Both impossible; both would have read
   as plausible numbers in isolation.
+
+## Conditions
+
+Every figure above was taken on:
+
+| | |
+|---|---|
+| Host | Apple M1, 8 cores, 16 GB, macOS 26.5.2 (arm64) |
+| Commit | `85ded8ef` on `perf/skylive-benchmark` |
+| Go | 1.26.1 |
+| App | `examples/26-ui-showcase` (384 elements) unless stated |
+| Container | none — bare host |
+
+**The machine was contended.** This repo is routinely worked by several
+agents at once, and the 1-minute load average sat between 6 and 18 on 8
+cores throughout. That is why Phase 1 is reported as the **minimum of 15
+repetitions** rather than a mean: contention only ever *adds* time, so
+the minimum is the best available estimator of the uncontended cost and
+is an upper bound on the truth. The estimator's validity is visible in
+the data — run-to-run spread is 1.0–1.1× for most points, and the
+`noop`/`text_one`/`attr_one` classes agree to within 2% as they must,
+since they do nearly identical work.
+
+For contrast, the *first* attempt at this measurement, taken as a single
+run at load average 15.8, reported `noop` (which produces zero patches)
+as **slower** than `text_one`, and 2,000 nodes as **faster** than 1,000.
+Both impossible. Neither would have looked wrong quoted on its own.
+`scripts/skylive-bench.sh` now refuses to summarise above a load
+threshold for this reason.
+
+**The Phase 2 numbers are more affected by contention than Phase 1**,
+because they include queueing. Treat the knee's *location* and the
+per-session memory as sound, and the absolute throughput ceiling
+(~430/s) as a floor — a quiet machine would do better.
 
 ## Limits of the constrained runs
 

@@ -1,0 +1,5 @@
+sessions	rss_mb_idle	rss_mb_loaded	delta_mb	kb_per_session
+100	34.2	166.7	132.5	1357
+500	166.7	677.8	511.1	1047
+1000	677.8	1937.0	1259.2	1289
+FINISHED

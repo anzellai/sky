@@ -1,0 +1,4 @@
+synthetic_sessions	browser_p50_ms	browser_p95_ms	browser_p99_ms	samples
+1	27.40	33.30	33.30	15
+50	23.90	31.50	31.50	15
+200	79.60	79.60	79.60	1
