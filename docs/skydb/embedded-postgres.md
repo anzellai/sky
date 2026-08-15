@@ -402,7 +402,23 @@ shell-unsafe is refused up front.
   run, every database sky did not create is byte-identical — owner, ACL and the
   `public` schema's owner.
 
-Both are gated by attempt, not by inspection: `an_apps_credentials_cannot_reach_another_apps_database`
+- **`--app <name>` will not issue credentials against a cluster nobody hardened.**
+  Its only guard was that `PG_VERSION` exists, so it ran none of what `--shared`
+  runs — not the check that the server reads sky's files, not the `pg_hba.conf`
+  reload, not the hardening SQL — and then printed a DSN and the sentence below
+  about every database sky provisioned. Against a cluster still carrying
+  `initdb`'s `local all all trust` that sentence is false in the way that
+  matters: any local process may connect as any role by claiming to be it, and
+  every `REVOKE` behind it is decoration. Reachable by pointing `--state-dir` at
+  an existing cluster instead of running `--shared` first, which is exactly the
+  deviation an operator makes when they already have a PostgreSQL and take
+  `--app` for the part they need. The question is asked by attempt like the rest:
+  a connection as the app's own role, over the app's own DSN, with a password
+  that is deliberately not the app's, is required to fail with `28P01`. A
+  connection means `trust`; any other refusal means a method under which the
+  printed DSN would not work either.
+
+All three are gated by attempt, not by inspection: `an_apps_credentials_cannot_reach_another_apps_database`
 provisions two apps against a live cluster, has each write a row, then connects
 **as app A with app A's own password to app B's database** and requires SQLSTATE
 `42501`, and connects **as app B with app A's password** and requires `28P01`.
