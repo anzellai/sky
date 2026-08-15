@@ -15,6 +15,7 @@ mod db_migrate;
 mod db_pool_sizing;
 mod db_provision;
 mod db_shared;
+mod pg_managed_conf;
 mod pg_wire;
 use std::time::{Duration, Instant};
 

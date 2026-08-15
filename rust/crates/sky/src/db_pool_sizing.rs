@@ -363,11 +363,6 @@ pub fn aux_pool_size_from(app: u32) -> u32 {
     clamp(app / 4, 2, 8)
 }
 
-/// [`aux_pool_size_from`] for a set of inputs.
-pub fn aux_pool_size(i: &PoolInputs) -> u32 {
-    aux_pool_size_from(app_pool_size(i))
-}
-
 /// The size the two large runtime consumers ACTUALLY ask for: the unshared
 /// ceiling plus both background caps.
 ///
@@ -414,7 +409,7 @@ pub fn process_connection_demand(i: &PoolInputs) -> u32 {
 /// It exists so the cluster sizings can clamp what they derive without clamping
 /// what the operator explicitly asked for.
 pub fn derived_process_connection_demand(cpus: u32) -> u32 {
-    process_connection_demand_from(default_app_pool_size(cpus))
+    process_connection_demand(&PoolInputs::derived(cpus))
 }
 
 /// How much the operator's knob adds to the demand over what sky would derive.
@@ -805,7 +800,11 @@ mod tests {
                  asked for an UNLIMITED pool, so one of the two generated files describes a \
                  cluster the other would not have written"
             );
-            assert_eq!(aux_pool_size(&i), aux, "cpus={cpus} knob={knob:?}: unshared aux pool");
+            assert_eq!(
+                aux_pool_size_from(app),
+                aux,
+                "cpus={cpus} knob={knob:?}: unshared aux pool"
+            );
             assert_eq!(
                 shared_aux_pool_size(app),
                 shared,

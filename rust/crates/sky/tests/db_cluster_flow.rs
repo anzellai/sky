@@ -626,6 +626,213 @@ fn a_major_version_mismatch_is_reported_and_never_attempted() {
     std::fs::write(fx.data_dir().join("PG_VERSION"), real).unwrap();
 }
 
+// ---- the managed block follows the machine, on EVERY start ---------------
+
+/// The PostgreSQL `bin` for a gate that is NOT allowed to skip.
+///
+/// The rest of this file's live tests early-return with a visible note when the
+/// machine has no PostgreSQL, and that is a deliberate convenience. This gate
+/// does not get it. Its whole subject is a start that is NOT the first one, and
+/// the only way to exercise a second start is against a real cluster — so
+/// "PostgreSQL is missing" and "the retune is broken" produce the same `... ok`
+/// line, and this branch has already shipped `integration-postgres` green for
+/// months on exactly that equivalence.
+///
+/// Absence therefore has to be DECLARED, not inferred: set
+/// `SKY_ALLOW_MISSING_POSTGRES=1` and the run says so on the process's own
+/// stderr and still fails, so no CI job can be green having asserted nothing.
+fn require_pg_bin() -> PathBuf {
+    if let Some(d) = find_pg_bin() {
+        return d;
+    }
+    panic!(
+        "no PostgreSQL binaries (initdb / pg_ctl / postgres) on this machine.\n\
+         This gate cannot be satisfied without one: it exists to prove that a SECOND\n\
+         `sky db start` re-tunes the managed block, and a second start needs a real\n\
+         cluster. Skipping it would report `ok` having asserted nothing — which is how\n\
+         the defect it covers survived.\n\
+         Point SKY_POSTGRES_BIN at a PostgreSQL bin directory, or install one\n\
+         (apt: postgresql-16, brew: postgresql@16)."
+    )
+}
+
+/// `psql`, from the same installation. Read the number off the SERVER, not off
+/// the file we just wrote.
+fn psql(pg_bin: &Path, socket_dir: &Path, sql: &str) -> String {
+    let bin = pg_bin.join("psql");
+    assert!(
+        bin.is_file(),
+        "no psql at {} — this gate reads `max_connections` from the RUNNING server, \
+         because a conf file the tool wrote and then read back proves only that the \
+         tool can write a file",
+        bin.display()
+    );
+    let out = Command::new(&bin)
+        .args(["-h"])
+        .arg(socket_dir)
+        .args(["-d", "postgres", "-tAc", sql])
+        .output()
+        .unwrap_or_else(|e| panic!("psql: {e}"));
+    assert!(
+        out.status.success(),
+        "psql {sql:?} failed:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// The effective `max_connections` in a conf file — last occurrence wins, as
+/// PostgreSQL itself does.
+fn conf_max_connections(conf: &str) -> Option<u32> {
+    let mut found = None;
+    for line in conf.lines() {
+        let t = line.trim();
+        if !t.starts_with("max_connections") {
+            continue;
+        }
+        let Some((_, v)) = t.split_once('=') else { continue };
+        let v = v.split('#').next().unwrap_or("").trim();
+        if let Ok(n) = v.parse::<u32>() {
+            found = Some(n);
+        }
+    }
+    found
+}
+
+/// A second `sky db start` must RE-TUNE the managed block, not leave it frozen
+/// at whatever machine ran `initdb`.
+///
+/// # Why this is not a unit test of `ensure_sky_conf`
+///
+/// Because a unit test of `ensure_sky_conf` is what let the defect ship. The
+/// function was called from exactly one place — the tail of `run_initdb` — so
+/// the managed block was written ONCE, at cluster creation, and frozen there,
+/// while the connection pools re-read the machine on every boot. Every unit
+/// gate over the derivation stayed green; the property lives one call further
+/// out, at the start path, and nothing was looking there.
+///
+/// The Go side reached the same conclusion the hard way and its gate
+/// (`TestASecondBootRetunesTheManagedBlock`) asserts the re-tune at `boot()`.
+/// This is the same assertion for `sky db start`.
+///
+/// # What "the right number" is, without restating the arithmetic
+///
+/// The expectation is taken from the FIRST start — the path that was already
+/// known to tune — and the second start must reproduce it on a data directory
+/// carrying a stale value. Restating `dev_cluster_max_connections` here would be
+/// computing the expectation with the expression production evaluates, which is
+/// the other way these gates have failed.
+///
+/// The final read is from the RUNNING SERVER over psql, because the file being
+/// right and the server running with it are two different claims: the first
+/// version of this fix wrote the file after `pg_ctl start`, so every assertion
+/// about the file passed while the live cluster still served the stale number.
+#[test]
+fn a_second_start_retunes_the_managed_block() {
+    let pg_bin = require_pg_bin();
+    let fx = Fixture {
+        project: deep_scratch_project("retune"),
+        sky_home: std::env::temp_dir().join(unique("retune-home")),
+        pg_bin,
+    };
+
+    // --- first start: the path that already tuned ---
+    let out = fx.sky(&["db", "start"]);
+    assert!(out.status.success(), "first start failed:\n{}", both(&out));
+    let conf_path = fx.data_dir().join("postgresql.conf");
+    let first = std::fs::read_to_string(&conf_path).unwrap();
+    let want = conf_max_connections(&first)
+        .unwrap_or_else(|| panic!("the first start wrote no max_connections:\n{first}"));
+
+    let reg = fx.registry();
+    let key = fx.project.canonicalize().unwrap().display().to_string();
+    let socket_dir = PathBuf::from(reg["clusters"][&key]["socket_dir"].as_str().unwrap());
+    assert_eq!(
+        psql(&fx.pg_bin, &socket_dir, "SHOW max_connections"),
+        want.to_string(),
+        "the running server does not agree with the conf the first start wrote"
+    );
+
+    let stop = fx.sky(&["db", "stop"]);
+    assert!(stop.status.success(), "stop failed:\n{}", both(&stop));
+
+    // --- plant a block sized for a machine this data directory no longer runs
+    //     on, and an operator setting AFTER it that must survive ---
+    const STALE: u32 = 25; // PostgreSQL's own minimum-ish; below every sky derivation
+    const MINE: &str = "log_min_duration_statement = 250  # mine, not sky's";
+    assert_ne!(
+        want, STALE,
+        "the planted value equals the derived one, so this gate would pass without \
+         any retune happening at all"
+    );
+    let planted: String = first
+        .lines()
+        .map(|l| {
+            if l.trim().starts_with("max_connections") {
+                format!("max_connections = {STALE}  # sized for the machine this data dir came from")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let planted = format!("{planted}\n{MINE}\n");
+    std::fs::write(&conf_path, &planted).unwrap();
+    assert_eq!(
+        conf_max_connections(&planted),
+        Some(STALE),
+        "the gate failed to plant a stale value — it would prove nothing"
+    );
+
+    // --- second start: NOT an initdb, which is the whole point ---
+    let again = fx.sky(&["db", "start"]);
+    assert!(again.status.success(), "second start failed:\n{}", both(&again));
+
+    let after = std::fs::read_to_string(&conf_path).unwrap();
+    assert_eq!(
+        conf_max_connections(&after),
+        Some(want),
+        "after a second `sky db start` the conf still carries max_connections = {:?}, \
+         want {want}. The managed block is frozen at initdb while the app's connection \
+         pools re-read the machine on every boot, so a resized host — or a data \
+         directory restored onto a different one — runs a cluster too small for the \
+         app it serves.\n{after}",
+        conf_max_connections(&after),
+    );
+
+    // The number the SERVER is running with, which is the claim that matters.
+    let reg = fx.registry();
+    let socket_dir = PathBuf::from(reg["clusters"][&key]["socket_dir"].as_str().unwrap());
+    assert_eq!(
+        psql(&fx.pg_bin, &socket_dir, "SHOW max_connections"),
+        want.to_string(),
+        "the conf on disk was retuned but the running server still serves the stale \
+         value — the retune happened after the postmaster had already read the file"
+    );
+
+    // Idempotence, the other half of the requirement: re-tuning must REPLACE,
+    // never append, and must not eat what the operator wrote outside the block.
+    assert_eq!(
+        after.matches(SKY_CONF_MARKER).count(),
+        1,
+        "a second start left {} managed blocks in the conf, want 1:\n{after}",
+        after.matches(SKY_CONF_MARKER).count()
+    );
+    assert!(
+        after.contains(MINE),
+        "the retune deleted the operator's own setting, which the block's header \
+         invites them to add:\n{after}"
+    );
+
+    let _ = fx.sky(&["db", "stop"]);
+}
+
+/// The marker the dev cluster's managed block opens with. Restated here because
+/// the `sky` crate is a binary, not a library, so an integration test cannot
+/// import it — a mismatch shows up as the block-count assertion above failing.
+const SKY_CONF_MARKER: &str = "# --- sky db: development cluster tuning (managed by sky) ---";
+
 // ---- no-server paths (always run) ---------------------------------------
 
 /// With nothing discoverable, the failure must tell the reader every place that

@@ -330,35 +330,27 @@ pub fn tuning_block(h: &HostFacts, max_connections: u32, listen: &Listen, socket
 
 /// Replace the managed block, or append it when the file has none.
 ///
-/// Replacement rather than `db_cluster::ensure_sky_conf`'s "append unless a
-/// marker is present": a shared cluster is **re-tuned** when the host changes or
-/// `--max-connections` moves, and an append-only block would leave the old
-/// values in the file above the new ones. (PostgreSQL takes the last occurrence,
-/// so that would happen to work — and would leave a file no operator could read.)
+/// A shared cluster is **re-tuned** when the host changes or `--max-connections`
+/// moves, and an append-only block would leave the old values in the file above
+/// the new ones. (PostgreSQL takes the last occurrence, so that would happen to
+/// work — and would leave a file no operator could read.)
+///
+/// The splice itself is `pg_managed_conf`'s, shared with the development
+/// cluster. It was not, and the development cluster's copy was the one that
+/// never replaced — three implementations of one operation, of which exactly
+/// one was wrong, for as long as nothing compared them.
 pub fn apply_managed_block(conf: &str, block: &str) -> String {
-    let Some(start) = conf.find(CONF_BEGIN) else {
-        let mut out = conf.to_string();
-        if !out.ends_with('\n') && !out.is_empty() {
-            out.push('\n');
-        }
-        out.push('\n');
-        out.push_str(block);
-        return out;
-    };
-    let end = match conf[start..].find(CONF_END) {
-        Some(e) => start + e + CONF_END.len(),
+    crate::pg_managed_conf::replace_managed_block(
+        conf,
+        block,
+        CONF_BEGIN,
+        CONF_END,
         // A truncated block (an interrupted write) is replaced to end-of-file
-        // rather than left to merge with the new one.
-        None => conf.len(),
-    };
-    let mut out = String::with_capacity(conf.len());
-    out.push_str(&conf[..start]);
-    out.push_str(block.trim_end_matches('\n'));
-    out.push_str(conf[end..].trim_start_matches('\n'));
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out
+        // rather than left to merge with the new one: this file is generated
+        // whole by `sky db provision --shared`, so a begin marker with no end is
+        // wreckage, not an older format.
+        crate::pg_managed_conf::LegacyExtent::ToEndOfFile,
+    )
 }
 
 // ---- pg_hba --------------------------------------------------------------
