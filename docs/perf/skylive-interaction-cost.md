@@ -26,6 +26,11 @@ CONCURRENCY="100 500 1000" DURATION=60s scripts/skylive-load.sh
 scripts/skylive-load-constrained.sh --profiles "1x2g 2x2g 1x1g"
 ```
 
+Phase 1 needs only Go. Phase 2's browser observer needs the repo's
+existing Playwright (`npm install` at the repo root, as
+`scripts/verify-examples.sh` expects); run `scripts/skylive-load.sh
+--no-observer` to skip it. Phase 3 needs Apple's `container` CLI.
+
 ## The answer
 
 **The runtime's share of a Sky.Live interaction costs about 128 ns per
