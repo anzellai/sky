@@ -71,8 +71,32 @@
 #     after a grace period. A child that ignores TERM still dies.
 #
 # Resolution order: `timeout` → `gtimeout` → a `perl` fork/exec supervisor.
-# If none of the three exists the shim FAILS, naming what to install. It never
-# runs the command unbounded, and it never pretends to have run it.
+# A candidate counts only if it resolves to an ABSOLUTE PATH to an executable
+# file AND survives a functional probe. If none of the three exists the shim
+# FAILS, naming what to install. It never runs the command unbounded, and it
+# never pretends to have run it.
+#
+# Shell portability
+# -----------------
+# This file is sourced by bash scripts AND typed at an interactive prompt, and
+# the prompt here is zsh. Two bash-isms made it unrunnable there — both fixed,
+# both gated by `rust/crates/xtask/tests/scripts_bound_time_portably.rs`:
+#
+#   * `command -v NAME` answers "is this name runnable", not "which executable
+#     file is it". Under zsh it prints an ALIAS DEFINITION for an alias
+#     (~/.zshrc here has `alias timeout=gtimeout`), and under BOTH shells it
+#     prints a bare name for a shell function. Exec'ing either fails — the
+#     alias with `command not found`, the function by recursing into itself.
+#     Only an absolute path to an executable file is accepted.
+#   * an unquoted `$VAR` holding `-k 10` splits into two words in bash and
+#     stays ONE word in zsh. This one is LATENT, not a bug anyone has hit: GNU
+#     `timeout` accepts the single argument, because getopt hands it the optarg
+#     " 10" and the duration parser skips leading whitespace (verified against
+#     coreutils 9.8 — `gtimeout "-k 10" 1 sleep 5` returns 124, same as
+#     `gtimeout -k 10 1 sleep 5`). A busybox/toybox `timeout` with a stricter
+#     parser need not be so forgiving, and correctness here should not rest on
+#     a coincidence between one shell's splitting rules and one implementation's
+#     leniency. So no expansion in this file depends on word splitting.
 
 # Idempotent: several scripts source more than one lib, and libs may source
 # each other.
@@ -161,6 +185,40 @@ exit(128 + $sig) if $sig;
 exit($status >> 8);
 '
 
+# Resolve NAME to an executable FILE, printing its path. Nothing, status 1, if
+# there isn't one.
+#
+# `command -v` answers "is this name runnable here", NOT "which executable file
+# is it", and this file learned the difference the hard way. The user's login
+# shell is zsh with `alias timeout=gtimeout` in ~/.zshrc, and under zsh
+# `command -v` on an alias prints the alias DEFINITION:
+#
+#     % source scripts/lib/with-timeout.sh; with_timeout 5 echo HELLO
+#     with_timeout:20: command not found: alias timeout=gtimeout
+#     rc=127
+#
+# The shim that exists so gates are bounded rather than silently unrun was
+# itself unrunnable in the shell the repository is driven from — and it failed
+# with 127, the status GNU `timeout` uses for "the command could not be
+# executed", so a caller would read it as the BOUNDED command being missing
+# rather than the bound. Bash hides this: bash's `command -v` ignores aliases
+# and returns the real path, which is why it survived review.
+#
+# The alias is not the only non-executable answer. BOTH shells print a bare
+# name for a shell function, and `with_timeout` would then exec that name and
+# recurse into the function. So the rule is not "skip aliases", it is: only an
+# absolute path to an executable file is usable.
+_sky_with_timeout_which() {
+    local _c
+    _c=$(command -v "$1" 2>/dev/null) || return 1
+    case "$_c" in
+        /*) ;;                  # the only shape that can be exec'd
+        *) return 1 ;;          # alias text, a function name, a builtin
+    esac
+    [ -f "$_c" ] && [ -x "$_c" ] || return 1
+    printf '%s\n' "$_c"
+}
+
 # Resolve once per shell. `SKY_WITH_TIMEOUT_IMPL` forces an implementation so
 # the gate can exercise the fallback on a host that has the binary; it is a
 # test hook, not a tuning knob.
@@ -168,7 +226,10 @@ _sky_with_timeout_resolve() {
     [ -n "${_SKY_WITH_TIMEOUT_RESOLVED:-}" ] && return 0
 
     _SKY_WITH_TIMEOUT_BIN=""
-    _SKY_WITH_TIMEOUT_KFLAG=""
+    # Whether the resolved binary supports `-k`. A yes/no flag, NOT the option
+    # text: see the call site for why this file never relies on an unquoted
+    # expansion splitting into words.
+    _SKY_WITH_TIMEOUT_HAS_K=""
 
     case "${SKY_WITH_TIMEOUT_IMPL:-}" in
         perl)
@@ -177,18 +238,25 @@ _sky_with_timeout_resolve() {
             ;;
     esac
 
-    if command -v timeout >/dev/null 2>&1; then
-        _SKY_WITH_TIMEOUT_BIN="$(command -v timeout)"
-    elif command -v gtimeout >/dev/null 2>&1; then
-        _SKY_WITH_TIMEOUT_BIN="$(command -v gtimeout)"
-    fi
+    local _cand _bin
+    for _cand in timeout gtimeout; do
+        _bin=$(_sky_with_timeout_which "$_cand") || continue
+        # A path that resolves is not yet a bound. Probe that it actually
+        # behaves like `timeout` before trusting it with a gate's wall clock;
+        # otherwise a same-named unrelated binary earlier on PATH would be
+        # "resolved" and every bounded command would fail for the wrong reason.
+        if "$_bin" 1 true >/dev/null 2>&1; then
+            _SKY_WITH_TIMEOUT_BIN="$_bin"
+            break
+        fi
+    done
 
     # `-k` is GNU; a busybox/toybox `timeout` may not have it. Probe rather
     # than assume, so the escalation behaviour matches the perl path wherever
     # it can and degrades to plain TERM where it cannot.
     if [ -n "$_SKY_WITH_TIMEOUT_BIN" ]; then
         if "$_SKY_WITH_TIMEOUT_BIN" -k 1 1 true >/dev/null 2>&1; then
-            _SKY_WITH_TIMEOUT_KFLAG="-k $SKY_WITH_TIMEOUT_KILL_AFTER"
+            _SKY_WITH_TIMEOUT_HAS_K=1
         fi
     fi
 
@@ -207,16 +275,30 @@ with_timeout() {
     _sky_with_timeout_resolve
 
     if [ -n "$_SKY_WITH_TIMEOUT_BIN" ]; then
-        # $_SKY_WITH_TIMEOUT_KFLAG is deliberately unquoted: it is either empty
-        # or the two words `-k N`.
+        # The `-k N` option words are passed literally, never by letting an
+        # unquoted expansion split. This file previously held `-k 10` in one
+        # variable and expanded it unquoted, which behaves differently per
+        # shell — measured:
+        #
+        #     K="-k 10"; probe $K 5 true
+        #     bash -> argc=4  [-k] [10] [5] [true]
+        #     zsh  -> argc=3  [-k 10] [5] [true]
+        #
+        # GNU `timeout` happens to accept the zsh form, so nothing was visibly
+        # broken; that is a coincidence between one shell's splitting rules and
+        # one implementation's lenient duration parser, not a contract. Two
+        # branches cost nothing and depend on neither.
         #
         # On the KILL path `timeout -k` re-raises SIGKILL on itself to report
         # 137, so bash prints `Killed: 9` naming the line below. That is bash
         # accurately reporting the status, not a fault in this file; it cannot
         # be suppressed without also swallowing the command's own stderr, and a
         # subshell does not help (bash execs a single-command subshell).
-        # shellcheck disable=SC2086
-        "$_SKY_WITH_TIMEOUT_BIN" $_SKY_WITH_TIMEOUT_KFLAG "$secs" "$@"
+        if [ -n "$_SKY_WITH_TIMEOUT_HAS_K" ]; then
+            "$_SKY_WITH_TIMEOUT_BIN" -k "$SKY_WITH_TIMEOUT_KILL_AFTER" "$secs" "$@"
+        else
+            "$_SKY_WITH_TIMEOUT_BIN" "$secs" "$@"
+        fi
         return $?
     fi
 

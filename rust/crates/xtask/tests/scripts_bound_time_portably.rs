@@ -582,6 +582,130 @@ fn a_script_that_forks_workers_exports_the_shim_to_them() {
     }
 }
 
+/// Run `script` under a shell, with the repo's real PATH left intact.
+///
+/// `-i` is deliberate for zsh: the alias that breaks resolution lives in
+/// `~/.zshrc`, and a non-interactive zsh does not read it. A probe that could
+/// not see the alias would pass on the broken shim, which is the failure mode
+/// this whole file exists to prevent. The alias is injected explicitly below
+/// instead, so the probe does not depend on whose machine it runs on.
+fn shell_script(shell: &str, script: &str) -> (i32, String) {
+    let out = Command::new(shell)
+        .args(["-c", script])
+        .current_dir(repo())
+        .output()
+        .unwrap_or_else(|e| panic!("run {shell}: {e}"));
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.code().unwrap_or(-1), text)
+}
+
+/// `command -v NAME` answers "is this name runnable", not "which executable
+/// FILE is it". The shim used to exec whatever it returned, and both shells can
+/// return something unexec'able:
+///
+///   * zsh prints the ALIAS DEFINITION for an alias. The user's `~/.zshrc` has
+///     `alias timeout=gtimeout`, so at their prompt the shim died with
+///     `command not found: alias timeout=gtimeout` and returned **127** — the
+///     status GNU `timeout` uses for "the command could not be executed", so
+///     the failure read as the BOUNDED command being missing rather than the
+///     bound. A shim whose whole purpose is that gates are bounded rather than
+///     silently unrun, unrunnable in the shell the repository is driven from.
+///   * BOTH shells print a bare name for a shell FUNCTION, which the shim would
+///     then exec — recursing into the function rather than bounding anything.
+///
+/// Bash hides the alias case (its `command -v` ignores aliases), which is why
+/// this survived review. Both shapes are asserted here, in both shells, so
+/// neither can come back.
+#[test]
+fn the_shim_survives_a_shadowed_timeout_name() {
+    // A shell function named `timeout`, in whichever shells exist. `command -v`
+    // returns the bare name `timeout` for this in bash AND zsh.
+    for shell in ["/bin/bash", "/bin/zsh"] {
+        if !Path::new(shell).is_file() {
+            continue;
+        }
+        let script = format!(
+            "timeout() {{ echo SHADOW-FUNCTION-RAN; return 99; }}; \
+             source {SHIM}; with_timeout 5 echo BOUNDED; echo rc=$?"
+        );
+        let (_, out) = shell_script(shell, &script);
+        assert!(
+            out.contains("BOUNDED") && out.contains("rc=0"),
+            "{shell}: a shell function named `timeout` broke the shim.\n{out}"
+        );
+        assert!(
+            !out.contains("SHADOW-FUNCTION-RAN"),
+            "{shell}: the shim exec'd the shell FUNCTION `timeout` rather than an \
+             executable file — `command -v` returned the bare name and it was \
+             trusted as a path.\n{out}"
+        );
+    }
+
+    // An alias named `timeout`. Only zsh's `command -v` reports these, and only
+    // this shape produced the user's `rc=127`.
+    if Path::new("/bin/zsh").is_file() {
+        let script = format!(
+            "alias timeout=/definitely/not/a/real/binary; \
+             source {SHIM}; with_timeout 5 echo BOUNDED; echo rc=$?"
+        );
+        let (_, out) = shell_script("/bin/zsh", &script);
+        assert!(
+            out.contains("BOUNDED") && out.contains("rc=0"),
+            "zsh: an `alias timeout=…` broke the shim — `command -v` returned the \
+             alias DEFINITION and it was trusted as a path. This is the exact \
+             failure reported from the user's prompt (rc=127).\n{out}"
+        );
+    }
+}
+
+/// The shim is sourced by bash scripts and typed at a zsh prompt, so its
+/// contract — status passthrough, 124 on expiry — must hold in both. Asserted
+/// against the observable behaviour rather than the internals implementing it.
+///
+/// # What this does NOT catch
+///
+/// The shim's other shell-dependency was an unquoted `$VAR` holding `-k 10`,
+/// which bash splits into two words and zsh does not:
+///
+///     K="-k 10"; probe $K 5 true
+///     bash -> argc=4  [-k] [10] [5] [true]
+///     zsh  -> argc=3  [-k 10] [5] [true]
+///
+/// This test passes with that fault reinstated, and would on any host with GNU
+/// coreutils. Measured: `gtimeout "-k 10" 1 sleep 5` returns 124 exactly as
+/// `gtimeout -k 10 1 sleep 5` does, because getopt hands the parser the optarg
+/// `" 10"` and it skips leading whitespace. The fault is real but LATENT — it
+/// needs a `timeout` with a stricter parser (busybox/toybox) to surface, and
+/// this repository's CI has none. The shim was fixed anyway, because resting on
+/// a coincidence between a shell's splitting rules and an implementation's
+/// leniency is not a contract; but no gate here proves it stays fixed, and
+/// saying so is better than implying coverage that does not exist.
+#[test]
+fn the_shim_honours_its_contract_in_every_shell_present() {
+    let mut ran = 0;
+    for shell in ["/bin/bash", "/bin/zsh", "/bin/sh"] {
+        if !Path::new(shell).is_file() {
+            continue;
+        }
+        ran += 1;
+        let (rc, out) = shell_script(
+            shell,
+            &format!("source {SHIM}; with_timeout 5 /bin/sh -c 'exit 42'"),
+        );
+        assert_eq!(rc, 42, "{shell}: exit status must pass through unchanged.\n{out}");
+
+        let (rc, out) =
+            shell_script(shell, &format!("source {SHIM}; with_timeout 1 sleep 30"));
+        assert_eq!(rc, 124, "{shell}: expiry must report 124.\n{out}");
+
+        let (rc, out) =
+            shell_script(shell, &format!("source {SHIM}; with_timeout 5 /bin/sh -c 'exit 0'"));
+        assert_eq!(rc, 0, "{shell}: success must report 0.\n{out}");
+    }
+    assert!(ran > 0, "no shell was found to probe, so this gate proved nothing");
+}
+
 #[test]
 fn the_shim_exists_and_this_gate_names_it_correctly() {
     // A rule whose subject has moved is a rule that passes vacuously.
