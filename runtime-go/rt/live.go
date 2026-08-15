@@ -831,7 +831,7 @@ func applyMarkerAsFirstChild(n *VNode, spec styleMarkerSpec) {
 // retains (`docs/perf/skylive-interaction-cost.md`, "The attribution").
 // A hoist is rare: it needs a VOID child carrying a live marker.
 //
-// `spec.recurse(child)` mutates through the pointer either way, so when
+// The recursive call mutates through the pointer either way, so when
 // nothing is hoisted the input slice already holds exactly the values
 // the old code copied out, and returning it is the same result.
 func walkChildrenWithVoidSiblingHoist(children []VNode, spec styleMarkerSpec) []VNode {
