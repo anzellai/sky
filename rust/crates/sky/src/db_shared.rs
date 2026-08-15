@@ -44,6 +44,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use crate::db_cluster::{self, PgBins};
+use crate::db_pool_sizing;
 use crate::pg_wire::{self, Conn};
 
 /// The default port. A shared cluster is socket-only unless `--listen` is given,
@@ -1083,9 +1084,31 @@ pub struct Opts {
     pub dry_run: bool,
     pub rotate: bool,
     pub listen: Listen,
-    pub max_connections: u32,
+    /// `None` means "derive it from this host" — see
+    /// [`Opts::resolved_max_connections`]. `Some(n)` is an operator who passed
+    /// `--max-connections n` and means it.
+    ///
+    /// The distinction is the point of the `Option`: a default expressed as a
+    /// plain `200` is indistinguishable from an operator who typed `200`, so
+    /// the derivation can never be applied without silently overriding them.
+    pub max_connections: Option<u32>,
     pub backup_keep_days: u32,
     pub backup_at: (u32, u32),
+}
+
+impl Opts {
+    /// The `max_connections` this cluster is actually provisioned with:
+    /// whatever the operator stated, or the host-derived default.
+    ///
+    /// The default is [`db_pool_sizing::shared_cluster_max_connections`],
+    /// which counts all four pools an app process opens, multiplies by the
+    /// apps this host is sized to serve, and pays for the restart-overlap
+    /// window. It replaces a flat `200` that was derived from nothing — the
+    /// only knob in the generated tuning block that did not read the host.
+    pub fn resolved_max_connections(&self, host: &HostFacts) -> u32 {
+        self.max_connections
+            .unwrap_or_else(|| db_pool_sizing::shared_cluster_max_connections(host.cpus))
+    }
 }
 
 impl Default for Opts {
@@ -1099,7 +1122,7 @@ impl Default for Opts {
             dry_run: false,
             rotate: false,
             listen: Listen::default(),
-            max_connections: 200,
+            max_connections: None,
             backup_keep_days: 14,
             backup_at: (3, 30),
         }
@@ -1122,6 +1145,11 @@ pub const USAGE: &str = "usage: sky db provision --shared [--state-dir <dir>] [-
      \x20 --start           leave the cluster running when provisioning finishes\n\
      \x20 --listen <addr>   also accept TCP on this address (default: socket only)\n\
      \x20 --app <name>      create a database + role for one app and print its DSN\n\
+     \x20 --max-connections <n>  override the derived ceiling. The default is read from\n\
+     \x20                   this host: every pool an app process opens (its own plus\n\
+     \x20                   analytics, sessions and telemetry), times the apps a host\n\
+     \x20                   this size is sized to serve, times the restart-overlap\n\
+     \x20                   window, plus the reserved and operator slots.\n\
      \x20 --rotate-password issue a new password for an app that already exists\n\
      \x20 --dry-run         print what would be written and executed, change nothing\n\
      \n\
@@ -1150,11 +1178,12 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
                     .map_err(|_| "--port must be a number".to_string())?
             }
             "--max-connections" => {
-                o.max_connections = it
-                    .next()
-                    .ok_or("--max-connections needs a number")?
-                    .parse()
-                    .map_err(|_| "--max-connections must be a number".to_string())?
+                o.max_connections = Some(
+                    it.next()
+                        .ok_or("--max-connections needs a number")?
+                        .parse()
+                        .map_err(|_| "--max-connections must be a number".to_string())?,
+                )
             }
             "--backup-keep" => {
                 o.backup_keep_days = it
@@ -1178,8 +1207,12 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
             other => return Err(format!("unknown argument: {other}")),
         }
     }
-    if o.max_connections < 10 || o.max_connections > 10_000 {
-        return Err("--max-connections must be between 10 and 10000".into());
+    // Validated only when it was STATED. The derived default is bounded by its
+    // own clamp and cannot land outside this range.
+    if let Some(n) = o.max_connections {
+        if !(10..=10_000).contains(&n) {
+            return Err("--max-connections must be between 10 and 10000".into());
+        }
     }
     // The retention window becomes `find -mtime "+$KEEP_DAYS"`. At 0 that reads
     // "older than 24 hours" and the nightly job deletes every dump but the one
@@ -1557,7 +1590,8 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
     let bins = db_cluster::discover_pg_bins()?;
     let host = detect_host();
     let spec = spec_for(&layout, &bins, &user, o);
-    let conf_block = tuning_block(&host, o.max_connections, &o.listen, &layout.socket_dir);
+    let max_connections = o.resolved_max_connections(&host);
+    let conf_block = tuning_block(&host, max_connections, &o.listen, &layout.socket_dir);
     let hba = pg_hba(&user, &o.listen);
 
     if o.dry_run {
@@ -1692,7 +1726,7 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
         layout.socket_dir.display(),
         host.mem_bytes / (1024 * 1024),
         host.cpus,
-        o.max_connections,
+        max_connections,
     );
 
     if o.service {

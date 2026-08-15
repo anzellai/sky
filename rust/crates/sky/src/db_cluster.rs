@@ -798,7 +798,20 @@ pub fn probe_data_dir(data_dir: &Path) -> Liveness {
 /// clusters cost tens of megabytes each" and "hundreds": PostgreSQL's own
 /// default is 128MB, and it is allocated up front whether or not the cluster
 /// ever serves a query.
+///
+/// `max_connections` is the one number here that is NOT pinned, because it is
+/// the one number an app can exhaust. It used to be a flat `50`, which on an
+/// 8-core machine was less than the 56 backends a single app process demands —
+/// the app's `Db.connect` pool plus the runtime's analytics, session and
+/// telemetry pools. See [`crate::db_pool_sizing`].
 pub fn sky_conf_block() -> String {
+    sky_conf_block_for(std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(2))
+}
+
+/// [`sky_conf_block`] with the core count passed in, so the derivation can be
+/// gated for any host rather than only the one the test happens to run on.
+pub fn sky_conf_block_for(cpus: u32) -> String {
+    let max_connections = crate::db_pool_sizing::dev_cluster_max_connections(cpus);
     format!(
         "\n{SKY_CONF_MARKER}\n\
          # Resource sizing only — no setting here changes query semantics, so a\n\
@@ -807,7 +820,10 @@ pub fn sky_conf_block() -> String {
          # socket path is re-derived from the environment and must not be frozen here.\n\
          listen_addresses = ''\n\
          shared_buffers = 32MB\n\
-         max_connections = 50\n\
+         # Covers everything ONE app process opens on a {cpus}-core host — its own pool\n\
+         # plus the runtime's analytics, session and telemetry pools — with the\n\
+         # superuser's reserved slots and a few left for psql on top.\n\
+         max_connections = {max_connections}\n\
          work_mem = 4MB\n\
          maintenance_work_mem = 32MB\n\
          max_wal_size = 256MB\n\
@@ -2649,11 +2665,51 @@ mod tests {
         let b = sky_conf_block();
         assert!(b.contains("shared_buffers = 32MB"), "{b}");
         assert!(b.contains("listen_addresses = ''"), "nothing may be exposed on TCP:\n{b}");
-        // Semantics-affecting settings are deliberately absent: a development
-        // cluster must behave exactly as production does.
-        assert!(!b.contains("fsync"), "fsync=off would make dev diverge from prod:\n{b}");
-        assert!(!b.contains("wal_level"), "{b}");
         assert!(!b.contains("unix_socket_directories"), "the socket dir is passed per start, not frozen:\n{b}");
+    }
+
+    /// The development profile's rule: nothing here may change what a query
+    /// MEANS, or an app tested against this cluster is not tested against the
+    /// production one. A whitelist, so a future setting has to be considered
+    /// rather than slipping in.
+    #[test]
+    fn the_development_tuning_block_sets_no_semantic_setting() {
+        for cpus in [1u32, 2, 8, 64] {
+            let b = sky_conf_block_for(cpus);
+            for forbidden in ["fsync", "synchronous_commit", "wal_level", "full_page_writes"] {
+                assert!(
+                    !b.contains(forbidden),
+                    "cpus={cpus}: `{forbidden}` changes what a query means — a development cluster \
+                     that sets it stops being a rehearsal of production:\n{b}"
+                );
+            }
+        }
+    }
+
+    /// The number this cluster can actually be exhausted through, gated as a
+    /// PROPERTY of the app it serves rather than as a pinned literal: one app
+    /// process's whole demand — all four pools — must fit alongside the slots
+    /// PostgreSQL reserves for the superuser.
+    ///
+    /// The flat `50` this replaces satisfied the property up to 7 cores and
+    /// failed from 8 up, which is the most common instance size there is.
+    #[test]
+    fn the_development_cluster_is_sized_for_the_process_it_serves() {
+        use crate::db_pool_sizing::{dev_cluster_max_connections, process_connection_demand, SUPERUSER_RESERVED};
+        for cpus in 1u32..=64 {
+            let b = sky_conf_block_for(cpus);
+            let want = dev_cluster_max_connections(cpus);
+            assert!(
+                b.contains(&format!("max_connections = {want}")),
+                "cpus={cpus}: the block must carry the derived ceiling {want}:\n{b}"
+            );
+            assert!(
+                process_connection_demand(cpus) + SUPERUSER_RESERVED <= want,
+                "cpus={cpus}: one app process demands {} backends plus {SUPERUSER_RESERVED} \
+                 reserved, and `sky db start` offers {want}.",
+                process_connection_demand(cpus)
+            );
+        }
     }
 
     #[test]

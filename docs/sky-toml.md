@@ -363,6 +363,48 @@ it, and a pin with nothing provisioned for it is skipped — pin, then run
 > is a line of configuration that does nothing. `sky run` names the offending
 > source and both ways out, and refuses before it builds.
 
+The cluster's `postgresql.conf` is generated from the machine it is starting on
+and **re-rendered on every start**, immediately before the postmaster spawns.
+That matters because `max_connections` and `shared_buffers` need a restart
+rather than a reload, and a restart is exactly what is about to happen — so
+resizing the host from 2 vCPU to 8, or restoring a data directory onto a
+different machine, retunes the cluster on the next boot instead of leaving it
+sized for the machine it was created on while the app's pools track the new one.
+
+Only resource and planner-cost knobs are set; nothing that changes what a query
+means or how durable it is. Settings you add **outside** the managed block are
+preserved, and since PostgreSQL takes the last occurrence of a setting, anything
+after the block's end marker wins.
+
+`max_connections` is sized from what one app process can actually demand — the
+app's own pool *and* the runtime's pools for analytics, Sky.Live sessions and
+telemetry — doubled to cover the window where a restarting process overlaps the
+one it replaces, plus PostgreSQL's reserved superuser slots and headroom for a
+psql session. You should not need to set it; `--max-connections` on
+`sky db provision` is there when you do.
+
+A **shared** cluster (`sky db provision --shared`) is sized the same way with
+one extra factor: it serves every app on the host rather than one, so the
+per-process demand is multiplied by the apps a machine that size is expected to
+carry — one per four cores, capped at four, because a Sky process asks for four
+connections per core and expects to use several of them. Passing
+`--max-connections` overrides the derivation entirely; the flag is how an
+operator who genuinely runs a fleet states the number.
+
+### Analytics and telemetry writes
+
+These sinks are batched behind a single buffered writer and trade a bounded
+crash-loss window for throughput. The full behaviour — the bounded queue, the
+drop policy and its counter, the shutdown flush, and connection sharing — is in
+[observability](observability.md#how-analytics-and-telemetry-reach-the-database).
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `SKY_ANALYTICS_SYNCHRONOUS_COMMIT` | `off` | `on` makes analytics writes wait for the WAL fsync at commit. The default trades a few hundred ms of server-crash loss for throughput. Per-transaction (`SET LOCAL`) — never cluster-wide, and never applied to the app's own pool. |
+| `SKY_TELEMETRY_SYNCHRONOUS_COMMIT` | `off` | The same, for the console's log / metric / span writes. |
+| `SKY_ANALYTICS_DB_PATH` | `.sky/analytics.db` | Where analytics persists. A `postgres://` value puts it in that database; anything else is a local SQLite file. Falls back to `SKY_CONSOLE_DB_PATH`, then `DATABASE_URL` when that is a PostgreSQL DSN. |
+| `SKY_ANALYTICS_RETENTION` | (unset — keep everything) | Delete events older than this. Go duration (`720h`) or a day form (`90d`). |
+
 ---
 
 ## `[jobs]` *(v0.19.14+)*

@@ -12,6 +12,7 @@ use std::process::{Command, ExitCode, Stdio};
 mod db_cluster;
 mod db_embed;
 mod db_migrate;
+mod db_pool_sizing;
 mod db_provision;
 mod db_shared;
 mod pg_wire;

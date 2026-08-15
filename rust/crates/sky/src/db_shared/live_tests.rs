@@ -105,7 +105,7 @@ fn provision_fixture(tag: &str) -> Option<(Fixture, String, String, String, Stri
         service: true,
         backup: true,
         start: true,
-        max_connections: 30,
+        max_connections: Some(30),
         ..Opts::default()
     };
     let out = provision_cluster(&opts).unwrap_or_else(|e| panic!("provision failed:\n{e}"));
@@ -704,7 +704,7 @@ fn the_socket_is_reachable_by_an_app_running_as_another_account() {
     provision_cluster(&Opts {
         state_dir: Some(state.clone()),
         start: true,
-        max_connections: 20,
+        max_connections: Some(20),
         ..Opts::default()
     })
     .unwrap_or_else(|e| panic!("provision failed:\n{e}"));
@@ -1091,7 +1091,7 @@ fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
     let opts = Opts {
         state_dir: Some(state.clone()),
         service: true,
-        max_connections: 20,
+        max_connections: Some(20),
         ..Opts::default()
     };
     provision_cluster(&opts).unwrap_or_else(|e| panic!("provision failed:\n{e}"));

@@ -141,6 +141,56 @@ fn the_tuning_block_sets_no_semantic_setting() {
     }
 }
 
+/// `max_connections` was the ONE knob in the tuning block that read nothing at
+/// all: a flat `200`, simultaneously an over-commitment on a 2-core VM (where
+/// it also squeezes `work_mem`, which is `mem / (max_connections * 8)`) and a
+/// ceiling a 32-core host can reach.
+///
+/// Gated as a PROPERTY, not a pinned number: the derived default must cover
+/// every app the host is sized for — all four pools each — through a restart,
+/// with the superuser's reserved slots on top.
+#[test]
+fn the_shared_default_covers_the_apps_the_host_is_sized_for() {
+    use crate::db_pool_sizing::{expected_apps_per_host, process_connection_demand, SUPERUSER_RESERVED};
+    for cpus in 1u32..=64 {
+        let o = Opts::default();
+        assert_eq!(o.max_connections, None, "the default must not pin a number");
+        let derived = o.resolved_max_connections(&facts(16, cpus));
+        let apps = expected_apps_per_host(cpus);
+        let demand = process_connection_demand(cpus);
+        assert!(
+            demand * apps + SUPERUSER_RESERVED <= derived,
+            "cpus={cpus}: {apps} app(s) demand {} backends plus {SUPERUSER_RESERVED} reserved, and \
+             the cluster defaults to max_connections = {derived}",
+            demand * apps
+        );
+        // The block generated from it must carry it, or the derivation is
+        // computed and thrown away.
+        let block = tuning_block(&facts(16, cpus), derived, &Listen::default(), Path::new("/var/lib/sky/run"));
+        assert!(block.contains(&format!("max_connections = {derived}")), "{block}");
+    }
+    // …and it must actually MOVE with the host, which a flat 200 did not.
+    let small = Opts::default().resolved_max_connections(&facts(2, 2));
+    let large = Opts::default().resolved_max_connections(&facts(128, 32));
+    assert!(small < large, "the default is flat: {small} on 2 cores, {large} on 32");
+}
+
+/// The derivation is a DEFAULT, not a policy. An operator who states a number
+/// gets that number, and the `Option` is what makes the two distinguishable —
+/// a default written as a plain `200` cannot be told apart from an operator
+/// who typed `200`.
+#[test]
+fn an_explicit_max_connections_overrides_the_derivation() {
+    let o = parse_args(&["--shared".into(), "--max-connections".into(), "137".into()]).unwrap();
+    assert_eq!(o.max_connections, Some(137));
+    assert_eq!(o.resolved_max_connections(&facts(16, 8)), 137);
+    assert_eq!(o.resolved_max_connections(&facts(2, 1)), 137, "the host must not touch a stated value");
+    // The stated value is still validated; the derived one is bounded by its
+    // own clamp and never reaches this check.
+    let e = parse_args(&["--shared".into(), "--max-connections".into(), "9".into()]).unwrap_err();
+    assert!(e.contains("between 10 and 10000"), "{e}");
+}
+
 /// Re-tuning replaces the block. An append-only block would leave the previous
 /// values above the new ones — which PostgreSQL happens to resolve correctly
 /// (last occurrence wins) and no operator can read.
