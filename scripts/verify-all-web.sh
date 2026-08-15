@@ -12,6 +12,14 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
 source "$REPO_ROOT/scripts/lib/with-timeout.sh"
+# `require_tool <name> <hint>` — a gate whose prerequisite is missing fails
+# naming what to install. See scripts/lib/require-tool.sh.
+source "$REPO_ROOT/scripts/lib/require-tool.sh"
+
+# Every sub-gate below drives a browser through a Node verifier. Without node
+# each one returns 127 and reports itself as a product failure; the truth is
+# that nothing ran.
+require_tool node "install Node 20+ — the Playwright verifiers under scripts/*.mjs are Node programs"
 RESULTS_DIR="$REPO_ROOT/.skycache/verify"
 mkdir -p "$RESULTS_DIR"
 

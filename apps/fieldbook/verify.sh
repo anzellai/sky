@@ -9,6 +9,9 @@ cd "$(dirname "$0")" || exit 1
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
 . ../../scripts/lib/with-timeout.sh
+# `require_tool <name> <hint>` — see scripts/lib/require-tool.sh.
+. ../../scripts/lib/require-tool.sh
+require_tool curl "install curl — the Sky.Live arm probes the running app over HTTP"
 
 APP=./sky-out/app
 FAIL=0

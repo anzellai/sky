@@ -379,6 +379,67 @@ fn every_script_that_calls_with_timeout_sources_the_shim() {
     );
 }
 
+/// A `source` line that names a path which does not exist is worse than no
+/// `source` line: the script still LOOKS wired, and `with_timeout` is still
+/// `command not found` at run time.
+///
+/// This is not hypothetical. A search-and-replace while writing these very
+/// changes emitted `source "/scripts/lib/with-timeout.sh"` into two scripts —
+/// the leading `$REPO_ROOT` eaten by the tool doing the edit. The rule above
+/// passed on both, because the text does contain "with-timeout.sh". So the
+/// path is resolved, not just matched.
+#[test]
+fn every_lib_source_line_names_a_file_that_exists() {
+    let root = repo();
+    let mut offenders = Vec::new();
+    for (rel, text) in shell_scripts() {
+        // `.sh` only. A workflow `run:` block resolves relative paths against
+        // the job's `working-directory`, not against the YAML file, so the
+        // same arithmetic would be wrong there — and wrong in the direction
+        // that invents failures.
+        if !rel.ends_with(".sh") {
+            continue;
+        }
+        let script_dir = root.join(&rel).parent().unwrap().to_path_buf();
+        for (n, line) in text.lines().enumerate() {
+            let t = line.trim_start();
+            if t.starts_with('#') {
+                continue;
+            }
+            if !(t.starts_with("source ") || t.starts_with(". ")) {
+                continue;
+            }
+            if !t.contains("scripts/lib/") {
+                continue;
+            }
+            // The path, with surrounding quotes stripped.
+            let arg = t.splitn(2, char::is_whitespace).nth(1).unwrap_or("").trim();
+            let arg = arg.trim_matches('"').trim_matches('\'');
+            // A leading `$VAR` / `${VAR}` is the repo root in every current
+            // spelling ($ROOT / $REPO / $REPO_ROOT). Anything else stays as
+            // written and is resolved relative to the script's directory.
+            let resolved = if let Some(rest) = arg.strip_prefix('$') {
+                let rest = rest.trim_start_matches('{');
+                match rest.find('/') {
+                    Some(slash) => root.join(&rest[slash + 1..]),
+                    None => continue,
+                }
+            } else {
+                script_dir.join(arg)
+            };
+            if !resolved.is_file() {
+                offenders.push(format!("{rel}:{}: {} -> {}", n + 1, t, resolved.display()));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these `source` lines name a file that does not exist. The script reads as \
+         wired and is not:\n  {}",
+        offenders.join("\n  ")
+    );
+}
+
 /// Build a PATH directory holding only the tools named, so a probe can run
 /// with `timeout` provably absent. Returns the directory; it is cleaned up by
 /// the caller going out of scope only if the test passes, which is fine —

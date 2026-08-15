@@ -85,9 +85,13 @@ phase_behavioral() {
 phase_web_verify() {
     echo
     echo "--- phase 3/6: Playwright web verify ---"
+    # NOT a skip. This is the pre-tag gate: a tier that cannot run is a tier
+    # whose claim is unproven, and `return 0` published that as a pass. A gate
+    # script missing or un-executable is a repository fault — `chmod +x` it.
     if [ ! -x "$ROOT/scripts/verify-all-web.sh" ]; then
-        echo "  scripts/verify-all-web.sh missing or not executable — SKIP"
-        return 0
+        echo "  FAIL — $ROOT/scripts/verify-all-web.sh is missing or not executable." >&2
+        echo "         This tier proves nothing without it; chmod +x or restore it." >&2
+        return 1
     fi
     local t0; t0=$(date +%s)
     bash "$ROOT/scripts/verify-all-web.sh"
@@ -100,9 +104,13 @@ phase_web_verify() {
 phase_cli_verify() {
     echo
     echo "--- phase 4/6: CLI / Tui / Webview verify ---"
+    # NOT a skip. This is the pre-tag gate: a tier that cannot run is a tier
+    # whose claim is unproven, and `return 0` published that as a pass. A gate
+    # script missing or un-executable is a repository fault — `chmod +x` it.
     if [ ! -x "$ROOT/scripts/verify-cli.sh" ]; then
-        echo "  scripts/verify-cli.sh missing or not executable — SKIP"
-        return 0
+        echo "  FAIL — $ROOT/scripts/verify-cli.sh is missing or not executable." >&2
+        echo "         This tier proves nothing without it; chmod +x or restore it." >&2
+        return 1
     fi
     local t0; t0=$(date +%s)
     bash "$ROOT/scripts/verify-cli.sh"
@@ -115,9 +123,13 @@ phase_cli_verify() {
 phase_ui_showcase() {
     echo
     echo "--- phase 5/6: UI showcase visual regression ---"
+    # NOT a skip. This is the pre-tag gate: a tier that cannot run is a tier
+    # whose claim is unproven, and `return 0` published that as a pass. A gate
+    # script missing or un-executable is a repository fault — `chmod +x` it.
     if [ ! -x "$ROOT/scripts/verify-ui-showcase.sh" ]; then
-        echo "  scripts/verify-ui-showcase.sh missing or not executable — SKIP"
-        return 0
+        echo "  FAIL — $ROOT/scripts/verify-ui-showcase.sh is missing or not executable." >&2
+        echo "         This tier proves nothing without it; chmod +x or restore it." >&2
+        return 1
     fi
     local t0; t0=$(date +%s)
     bash "$ROOT/scripts/verify-ui-showcase.sh"

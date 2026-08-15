@@ -20,6 +20,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
 source "$ROOT/scripts/lib/with-timeout.sh"
+# `require_tool <name> <hint>` — see scripts/lib/require-tool.sh.
+source "$ROOT/scripts/lib/require-tool.sh"
+require_tool node "install Node 20+ — scripts/verify-ui-showcase.mjs is a Playwright program"
 APP_DIR="$ROOT/examples/26-ui-showcase"
 RUNNER="$ROOT/scripts/verify-ui-showcase.mjs"
 SKY="$ROOT/sky-out/sky"
