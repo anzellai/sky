@@ -477,8 +477,21 @@ REPORT="$OUT/mutation-matrix.md"
 } > "$REPORT"
 
 if [[ $KEEP_LOGS -eq 1 ]]; then
-  cp -f "$LOGDIR"/*.log "$OUT/" 2>/dev/null || true
-  echo "grill-mutation-matrix: logs copied to $OUT"
+  # Summaries, not the raw logs. `go test -v` over this package is ~250 kB a
+  # run and there are eleven of them; 2.8 MB of scrollback in the repository
+  # would be checked in once and read by nobody. The verdict lines are what a
+  # later reader needs, and the assertion text is already quoted in the report.
+  for f in "$LOGDIR"/*.log; do
+    b="$(basename "$f" .log)"
+    {
+      echo "# $b — verdict lines only, from scripts/grill-mutation-matrix.sh."
+      echo "# The full verbose log is ~250 kB and is deliberately not checked in;"
+      echo "# re-run the script to regenerate it."
+      echo
+      grep -E '^(--- (FAIL|SKIP)|[[:space:]]+--- (FAIL|SKIP)|ok |FAIL|PASS|test result:)' "$f" || true
+    } > "$OUT/$b.summary.txt"
+  done
+  echo "grill-mutation-matrix: run summaries written to $OUT"
 fi
 
 echo "grill-mutation-matrix: wrote $REPORT"
