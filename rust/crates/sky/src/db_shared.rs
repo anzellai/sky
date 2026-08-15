@@ -863,12 +863,14 @@ pub fn backup_script(spec: &ServiceSpec) -> String {
          \x20 # compressed. A plain-SQL dump is only restorable by psql, which sky's\n\
          \x20 # bundle deliberately does not ship.\n\
          \x20 #\n\
-         \x20 # --create: without it the dump carries no DATABASE-level ACL, so a\n\
-         \x20 # restore into a hand-made database produces one with PUBLIC's default\n\
-         \x20 # CONNECT - readable by every app role on the cluster. Recovery would\n\
-         \x20 # then undo the boundary the cluster was provisioned to draw. Restore\n\
-         \x20 # with:  pg_restore --create --dbname postgres <dump>\n\
-         \x20 \"$PG_DUMP\" --host \"$SOCKET_DIR\" --port \"$PORT\" --format=custom --create --file \"$tmp\" -- \"$db\"\n\
+         \x20 # RESTORE WITH --create:\n\
+         \x20 #   pg_restore --create --dbname postgres <dump>\n\
+         \x20 # The archive carries the database's own ACL - the REVOKE that keeps\n\
+         \x20 # every other app role out - as a DATABASE-section entry, and\n\
+         \x20 # pg_restore applies that section ONLY with --create. Restored into a\n\
+         \x20 # database made by hand instead, the result carries PUBLIC's default\n\
+         \x20 # CONNECT and every app role on this cluster can read it.\n\
+         \x20 \"$PG_DUMP\" --host \"$SOCKET_DIR\" --port \"$PORT\" --format=custom --file \"$tmp\" -- \"$db\"\n\
          \x20 mv \"$tmp\" \"$OUT/$db-$ts.dump\"\n\
          done < \"$APPS\"\n\
          \n\

@@ -500,16 +500,18 @@ fn the_backup_script_dumps_roles_when_it_can_and_says_so_when_it_cannot() {
     assert!(s.contains("role definitions are NOT in this backup"), "{s}");
 }
 
-/// A `--format=custom` dump of one database carries no database-level ACL, so a
-/// restore into a hand-made database yields a database with `PUBLIC`'s default
-/// `CONNECT` — readable by every app role on the cluster. That is the
-/// cross-tenant read the whole phase exists to prevent, reintroduced by the
-/// recovery path. `--create` puts the `CREATE DATABASE` and its ACL in the dump,
-/// so `pg_restore --create` rebuilds the database hardened.
+/// The dump is only half a recovery; the other half is the command that reads
+/// it, and one of the two ways to write that command produces a database every
+/// app role on the cluster can read. `pg_restore` applies the DATABASE-section
+/// entries — where the `REVOKE … FROM PUBLIC` lives — only with `--create`.
+/// Restored into a database made by hand, the result carries `PUBLIC`'s default
+/// `CONNECT`. Nothing in sky runs the restore, so the script is where an
+/// operator will look for how.
 #[test]
-fn the_dump_carries_the_databases_own_acl_so_a_restore_is_hardened() {
+fn the_backup_script_says_how_to_restore_without_undoing_the_boundary() {
     let s = backup_script(&spec());
-    assert!(s.contains("--create"), "the dump carries no database ACL:\n{s}");
+    assert!(s.contains("pg_restore --create --dbname postgres"), "{s}");
+    assert!(s.contains("PUBLIC's default"), "the reason is not stated, only the command:\n{s}");
 }
 
 #[test]

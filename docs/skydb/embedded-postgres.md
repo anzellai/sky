@@ -430,7 +430,7 @@ That claim is gated live — a real postmaster, a client connection held open, a
 With the wrapper sending `SIGTERM` instead, it is not: the gate fails at 31s with
 the smart shutdown still waiting on that one connection.
 
-**The backup is `pg_dump --format=custom --create` on a timer**, into
+**The backup is `pg_dump --format=custom` on a timer**, into
 `<state>/backups`, renamed into place so a `.part` from an interrupted run is
 never mistaken for a backup, with a retention `find`. The app list is read at
 **run time** from the file `--app` maintains, so an app provisioned after the
@@ -440,13 +440,18 @@ dropped, the file still exists and still holds the data, and `pg_restore` says
 `input file appears to be a text format dump. Please use psql.`, which is the
 whole difference between a file and a backup.
 
-`--create` is there for the boundary rather than for convenience. Without it the
-dump carries no **database-level ACL**, so restoring into a database made by hand
-— which is what a recovery does — yields one with `PUBLIC`'s default `CONNECT`,
-readable by every app role on the cluster: the cross-tenant read the phase exists
-to prevent, reintroduced by the recovery path. So restore with
-`pg_restore --create --dbname postgres <dump>`, which rebuilds the database with
-its `REVOKE … FROM PUBLIC` intact. Retention is `find -mtime "+$KEEP_DAYS"`, and
+**Restore with `pg_restore --create --dbname postgres <dump>`**, and the flag is
+the boundary rather than a convenience. The archive does carry the database's own
+ACL — the `REVOKE … FROM PUBLIC` that keeps every other app out — but as a
+DATABASE-section entry, and `pg_restore` applies that section *only* with
+`--create`. Restored into a database made by hand instead, the recovered database
+carries `PUBLIC`'s default `CONNECT` and every app role on the cluster can read
+it: the cross-tenant read this phase exists to prevent, reintroduced by the
+recovery of the app it protects. Sky runs no restore itself, so the command and
+its reason are written into the generated script, and the live gate performs the
+recovery for real — it drops `alpha` as a disaster would, rebuilds it with
+`--create`, reads the row back, and requires `42501` when `beta` tries the same.
+Retention is `find -mtime "+$KEEP_DAYS"`, and
 `--backup-keep` is range-checked (1-3650) because `0` reads as "older than 24
 hours" and would have the nightly job delete every dump but the newest.
 

@@ -474,7 +474,7 @@ fn the_socket_is_reachable_by_an_app_running_as_another_account() {
 /// and read back.
 #[test]
 fn the_generated_backup_produces_a_restorable_dump() {
-    let Some((fx, _a_dsn, a_pw, _b_dsn, _b_pw)) = provision_fixture("bak") else {
+    let Some((fx, _a_dsn, a_pw, _b_dsn, b_pw)) = provision_fixture("bak") else {
         return;
     };
     let mut c = connect_as(&fx.layout, "alpha", "alpha", &a_pw).expect("alpha");
@@ -547,38 +547,6 @@ fn the_generated_backup_produces_a_restorable_dump() {
     }
     assert!(checked >= 3, "expected two dumps and a globals file, checked {checked}");
 
-    // --- the dump carries the database's own ACL -----------------------------
-    // `pg_dump --format=custom` of one database, without `--create`, has no
-    // database-level ACL in it. Restored into a hand-made database — which is
-    // what a recovery does, and what the block below does — the result is a
-    // database carrying `PUBLIC`'s default `CONNECT`, readable by every app role
-    // on the cluster.
-    let acl = Command::new(fx.bins.tool("pg_restore"))
-        .args(["--create", "--schema-only", "--file", "-"])
-        .arg(&dumps[0])
-        .output()
-        .expect("pg_restore --create");
-    assert!(
-        acl.status.success(),
-        "pg_restore --create could not read the dump:\n{}",
-        String::from_utf8_lossy(&acl.stderr)
-    );
-    let toc = String::from_utf8_lossy(&acl.stdout).to_string();
-    assert!(
-        toc.contains("CREATE DATABASE alpha"),
-        "the dump cannot rebuild its own database:\n{toc}"
-    );
-    let acl_lines: Vec<&str> = toc
-        .lines()
-        .filter(|l| l.contains("ON DATABASE alpha") && (l.contains("REVOKE") || l.contains("GRANT")))
-        .collect();
-    assert!(
-        acl_lines.iter().any(|l| l.trim_start().starts_with("REVOKE") && l.contains("FROM PUBLIC")),
-        "a restore from this dump would leave PUBLIC's default CONNECT in place, so every \
-         app role on the cluster could read the restored database. The dump's database-level \
-         ACL is {acl_lines:?}"
-    );
-
     // Restore into a database that has never seen this data.
     let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
     admin.execute("CREATE DATABASE restored").unwrap();
@@ -604,6 +572,51 @@ fn the_generated_backup_produces_a_restorable_dump() {
     );
     drop(r);
     drop(admin);
+
+    // --- the recovery an operator actually performs ---------------------------
+    // The restore above is the one that proves the dump holds the data, and it
+    // is also the shape that quietly undoes the boundary: `pg_restore --dbname
+    // <a database made by hand>` skips the archive's DATABASE-section entries,
+    // where the `REVOKE … FROM PUBLIC` lives. The recovered database then
+    // carries `PUBLIC`'s default `CONNECT` and every app role on the cluster can
+    // read it — the cross-tenant read this phase exists to prevent, reintroduced
+    // by the recovery of the app it protects.
+    //
+    // So the documented path is run against the real thing: alpha is dropped as
+    // a disaster would drop it, rebuilt with `pg_restore --create`, and beta is
+    // then asked. The falsifying mutation is `app_cluster_sql`'s `REVOKE ALL ON
+    // DATABASE … FROM PUBLIC` — with it deleted there is no ACL in the archive
+    // to carry, and beta reads the recovered database.
+    let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
+    admin.execute("DROP DATABASE alpha").expect("alpha could not be dropped");
+    let out = Command::new(fx.bins.tool("pg_restore"))
+        .args([
+            "--create",
+            "--dbname",
+            &format!("postgresql:///postgres?host={}", fx.layout.socket_dir.display()),
+        ])
+        .arg(&dumps[0])
+        .output()
+        .expect("pg_restore --create");
+    assert!(
+        out.status.success(),
+        "the documented restore failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut a = connect_as(&fx.layout, "alpha", "alpha", &a_pw).expect("alpha after the restore");
+    assert_eq!(
+        a.scalar("SELECT note FROM ledger WHERE id = 1").unwrap().as_deref(),
+        Some("the row that must survive"),
+        "the recovered database does not hold the row"
+    );
+    drop(a);
+    match connect_as(&fx.layout, "beta", "alpha", &b_pw) {
+        Err(e) => assert_eq!(e.sqlstate(), Some("42501"), "expected insufficient_privilege, got: {e}"),
+        Ok(mut c) => {
+            let seen = c.query("SELECT note FROM ledger");
+            panic!("beta read the RECOVERED alpha and got {seen:?}: the restore lost the REVOKE");
+        }
+    }
 }
 
 /// The generated launchd jobs are handed to `plutil -lint`, Apple's own parser.
