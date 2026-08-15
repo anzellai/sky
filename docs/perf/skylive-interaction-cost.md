@@ -411,8 +411,14 @@ what makes the diff protocol work — and it is now costed.
 
 ### Is any of it avoidable?
 
-Measured, not implemented. Each of these is a separate reviewed change
-and the estimates are what they are worth arguing about:
+**Items 1–3 have since been implemented and re-measured; the results are
+in ["What items 1–3 actually bought"](#what-items-13-actually-bought)
+below, and two of the three estimates in this table were wrong.** The
+table is left as written so the estimates can be compared against what
+happened.
+
+Each of these is a separate reviewed change and the estimates are what
+they are worth arguing about:
 
 | # | Change | Buys | Cost / risk |
 |---|---|---|---|
@@ -436,6 +442,64 @@ static and dynamic segments and re-evaluates only the dynamic ones.
 Whether Sky should do the same is a design question this measurement
 does not answer — but it is now the question, and it is no longer
 guesswork which part of the pipeline it is about.
+
+### What items 1–3 actually bought
+
+Implemented and re-measured with the same harness, same app, same
+config (N=50 closed loop, `GOMAXPROCS=1`, three runs each), on a
+machine shared with other work — so the allocation figures, which are
+load-independent, carry the argument and the CPU figures are quoted
+with the load average they were taken at.
+
+| | allocations / interaction | bytes / interaction | live heap / session |
+|---|---|---|---|
+| Baseline | 133,084 (±0.3%) | 5,634 kB | 336.5 kB |
+| **+ item 1** — one marker pass | **111,525** (−16.2%) | 5,126 kB (−9.0%) | — |
+| + item 2 — lazy `Attrs`/`Events` | 111,672 (+0.1%) | 4,950 kB (−3.4%) | — |
+| **+ item 3** — style-pass allocation | **108,080** (−3.2%) | 4,836 kB (−2.3%) | 337.4 kB |
+| **Total** | **−18.8%** | **−14.2%** | **+0.3%** |
+
+**Item 1 delivered, and by a different mechanism than the table above
+predicted.** The estimate said "up to 1.24 ms/interaction (~13% of
+CPU)"; measured, CPU per interaction fell 9.51 → 8.88 ms, **−6.7%**,
+about half the estimate. The saving is not the six scans' loop
+overhead: it is that each `hasMarker` call widened the typed attribute
+list to `[]any` (`rt.AsListT`), boxing every element, and one fold does
+that once instead of six times.
+
+**Item 2 did not move the headline number, and the table's ~98 kB/session
+estimate did not survive contact.** `Std.Ui` gives nearly every element an
+inline `style` attribute, so the `Attrs` map is allocated regardless; only
+the `Events` map on event-less elements is saved. It is retained because the
+eager pair was indefensible, not because it paid.
+
+**Item 3's real cost was somewhere else entirely.** The estimate blamed
+the four tree-copies. The four tree-copies were 0.015 allocations per
+element. What actually cost 11.03 per element was that each pass built
+its `styleMarkerSpec` — a slice and a closure — *inside* the function
+the walk recursed through, so every node rebuilt it, four times per
+render. Hoisting the four specs to package level took one
+`applyStyleInjections` over a 389-element tree from **4,290
+allocations to 6**. The four passes were NOT fused: once that was
+fixed, what remained of the extra three walks was 0.015 allocations
+per element, and fusing them would have had to reproduce the
+`[anim][transition][pseudo][mq]` prepend ordering by construction for
+no measurable gain.
+
+**Retention did not improve; it rose 0.9 kB/session (+0.3%).** The
+estimate had items 2+3 removing 47% of it. Two reasons it did not.
+Item 2's maps are mostly populated, per above. And item 3's
+copy-on-write walk removed an *accidental* compaction: the old code
+rebuilt each children slice at exactly `len(children)`, discarding the
+spare capacity `append` had grown while the tree was built, and the
+new code keeps the original slice and its slack. That is a real trade —
+less churn per interaction, slightly more held per session — and it is
+recorded here rather than presented as a clean win.
+
+`runtime-go/rt/live_alloc_gate_test.go` ratchets items 2 and 3 so they
+cannot silently come back. It cannot see item 1, which is compiled Sky
+above the boundary its fixtures start at; that hole is stated in the
+file.
 
 ### What this does not cover
 
@@ -470,6 +534,14 @@ p50 latency has grown 80× — the queue, not the work, dominates.
 
 The load generator used 0.25–1.6% of the machine throughout, so none of
 this describes the generator.
+
+**Every throughput figure in this document is for a specific view
+size, and does not transfer to a different one.** The rows above are a
+384-element view. The same harness on a 94-element view sustains
+249–267/s against this app's 108–110/s — **2.4× the throughput for
+4.1× fewer elements** (see the view-size table above). Capacity
+guidance quoted without the view size it was measured at is not usable;
+scale it by element count, not by session count alone.
 
 ### Memory is the constraint that binds first
 
@@ -552,7 +624,18 @@ Go struct, `diffTrees` takes two of them, and the whole path below the
 Sky boundary is ordinary Go. No app needs to be stood up to benchmark
 it — which is why Phase 1 needs no container, network or database.
 
-## The finding that matters most: mutation class, not node count
+## Mutation class decides what the DIFF costs
+
+> **This section was published as "the finding that matters most:
+> mutation class, not node count". That framing is retired.** It was
+> true of `diffTrees` and was generalised to the interaction — the same
+> error, from the same measurement, as the "roughly constant in view
+> size" paragraph corrected above. Attribution settled it: mutation
+> class decides the cost of `diffTrees`, which is **1.3% of an
+> interaction**; node count decides the cost of `view(model)`, which is
+> **84% of the handler**. Both regimes below are real and still worth
+> knowing — but the variable that sets a server's capacity is node
+> count, not mutation class.
 
 `diffNodes` (`live.go:1301`) is a non-keyed positional walk with two
 very different cost regimes:
@@ -564,10 +647,10 @@ very different cost regimes:
   (`live.go:1419-1461`). Cost is proportional to the *subtree*, not to
   the size of the change, and allocates heavily.
 
-So "the cost of an interaction" is not one number. Adding a row to a
-list costs far more than editing a label in that same list, at the same
-node count. Any sizing figure that does not say which regime it is in
-is unusable — which is the specific defect in "2–10 ms".
+So "the cost of a diff" is not one number. Adding a row to a list costs
+far more than editing a label in that same list, at the same node
+count. Any sizing figure that does not say which regime it is in is
+unusable — which is the specific defect in "2–10 ms".
 
 ## Reference view sizes (measured, not assumed)
 
