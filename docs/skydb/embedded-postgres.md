@@ -194,6 +194,18 @@ race, and nothing is exposed to the network by accident.
 > on macOS the latter is a ~49-byte per-user path under `/var/folders/`, which
 > spends half the budget before the hash is appended.
 >
+> **The budget is measured on the socket FILE, not the directory** — and the
+> limit is not 107 everywhere. `sizeof(sun_path) - 1` is 107 on Linux and
+> **103 on macOS**. PostgreSQL then appends `.s.PGSQL.<port>` (14 bytes) and
+> creates a `.lock` five bytes longer, so a check against the *directory* path
+> is ~19 bytes optimistic. Both implementations budget **92** bytes, which sits
+> under the smaller platform limit with room for the lock file
+> (`maxSocketPath` in Go, `MAX_SOCKET_PATH` in Rust — one number, two sides,
+> pinned by `TestSocketBudgetIsMeasuredOnTheSocketFile`).
+>
+> Nineteen bytes is exactly the size of a bug that passes on a developer's
+> machine and fails on a host with a longer prefix.
+>
 > The hash is FNV-1a/128 truncated to 64 bits, not `DefaultHasher`, because it is
 > *persisted*: `DefaultHasher`'s output is explicitly not stable across Rust
 > releases, and a compiler upgrade must not orphan every running cluster.
@@ -912,8 +924,8 @@ Three widely-used extensions are **excluded, on licence grounds, deliberately**:
 | Citus | AGPL-3.0 | network copyleft |
 
 This table exists so the question stays settled. Anyone needing them points
-`SKY_DB_URL` at an external PostgreSQL, which costs nothing architecturally —
-the app only ever consumes a DSN.
+`<PREFIX>_DB_PATH` (or `DATABASE_URL`) at an external PostgreSQL, which costs
+nothing architecturally — the app only ever consumes a DSN.
 
 Shipping an extension makes it *available*; `CREATE EXTENSION` is still
 per-database.
