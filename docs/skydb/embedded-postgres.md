@@ -280,11 +280,27 @@ Development clusters are tuned small (`shared_buffers` in the tens of MB), so
 several idle projects cost tens of megabytes each rather than hundreds. P2
 writes a marked, idempotent block into the generated `postgresql.conf`:
 `shared_buffers = 32MB` (against PostgreSQL's own 128MB default, allocated up
-front whether or not a query is ever served), `max_connections = 50`,
+front whether or not a query is ever served),
 `work_mem = 4MB`, `maintenance_work_mem = 32MB`, `max_wal_size = 256MB`,
 `min_wal_size = 64MB`, `autovacuum_max_workers = 1`, `listen_addresses = ''`.
 A measured idle cluster on PostgreSQL 14 comes to ~36MB across the postmaster
 and its six auxiliary processes.
+
+**`max_connections` is the one setting here that is NOT a fixed number**, and
+that is deliberate. It used to be a flat `50`, which is smaller than what an
+8-core machine's own pools demand — the app would have exhausted the database it
+had just started, having configured nothing to deserve it. It is now derived
+from `dev_cluster_max_connections(cpus)`, which calls the same function that
+sizes the pools (`process_connection_demand`), so the server's grant and the
+client's demand cannot drift. Roughly: the 50 floor holds to 6 cores, 57 at 7,
+64 at 8 and above.
+
+The general lesson is worth stating because this document got it wrong twice:
+**a server limit and the client demand it must cover have to be computed by one
+function.** Two numbers maintained by hand agree only until someone changes a
+clamp. The gate is therefore a property over 1..64 cores — demand plus reserved
+connections must not exceed the limit — and the historical formulas are kept in
+the test asserted to *violate* it.
 
 Every one of those is a **resource** knob. Nothing that changes what a query
 means is set — not `fsync`, not `wal_level` — because a development cluster that
