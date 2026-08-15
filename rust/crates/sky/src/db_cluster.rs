@@ -1203,9 +1203,43 @@ fn prepare_socket_dir(socket_dir: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        // The socket is the access control: anything that can reach it can talk to
-        // the database as its superuser, because local auth is trust.
-        let _ = std::fs::set_permissions(socket_dir, std::fs::Permissions::from_mode(0o700));
+        // The socket is the access control: anything that can reach it can talk
+        // to the database as its superuser, because `sky db start` runs
+        // `initdb --auth-local=trust` and sets no `unix_socket_permissions`.
+        // Nothing else stands between another local account and the developer's
+        // database, so the mode is not set on a best-effort basis — it is read
+        // back and the group and other bits have to be clear. `set_permissions`
+        // failing (a directory owned by someone else, on a filesystem that does
+        // not carry modes) used to be swallowed, which is the one case where
+        // this matters and the one case where it said nothing.
+        std::fs::set_permissions(socket_dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
+            format!(
+                "sky db start: cannot make the socket directory {} private: {e}\n\
+                 Local connections authenticate with `trust`, so anything that can reach the\n\
+                 socket is the database's superuser. Sky will not start a cluster it cannot\n\
+                 put behind a 0700 directory.",
+                socket_dir.display()
+            )
+        })?;
+        let mode = std::fs::metadata(socket_dir)
+            .map_err(|e| {
+                format!(
+                    "sky db start: cannot read back the mode of the socket directory {}: {e}",
+                    socket_dir.display()
+                )
+            })?
+            .permissions()
+            .mode();
+        if mode & 0o077 != 0 {
+            return Err(format!(
+                "sky db start: the socket directory {} is mode {:o} after being set to 0700.\n\
+                 Local connections authenticate with `trust`, so every account that can\n\
+                 traverse into it is the database's superuser. Sky will not start a cluster\n\
+                 behind it.",
+                socket_dir.display(),
+                mode & 0o7777
+            ));
+        }
     }
     if !socket_dir_is_shell_safe(socket_dir) {
         return Err(format!(
@@ -1955,6 +1989,68 @@ mod tests {
             // And it is still specific to this project, not a shared bucket.
             assert!(d.to_string_lossy().contains(&path_hash(&data_dir_for(&deep))));
         }
+    }
+
+    /// The dev cluster's socket directory is the whole of its access control,
+    /// and nothing observed its mode.
+    ///
+    /// `sky db start` runs `initdb --auth-local=trust` and sets no
+    /// `unix_socket_permissions`, so anything that can traverse into the socket
+    /// directory is the database's superuser — every table in the developer's
+    /// project, readable and writable by any account on the machine.
+    /// `prepare_socket_dir`'s 0700 could be changed to 0755 with all 338 tests
+    /// still green.
+    ///
+    /// The `--embed` tier's identical property has been gated since it shipped
+    /// (`assertSocketDirIsPrivate`, `runtime-go/rt/pg_embed_test.go`). This is
+    /// its Rust twin, asserted the same way: the mode bits ARE the kernel's
+    /// check, so reading them is exact and not a proxy.
+    ///
+    /// Both entry states matter. A directory sky creates is the common one; a
+    /// directory that is already there and already world-writable is the one
+    /// that goes wrong quietly, since `create_dir_all` succeeds on an existing
+    /// path and leaves its mode exactly as it found it.
+    #[test]
+    fn the_dev_clusters_socket_directory_is_private_however_it_was_found() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Short, shell-safe, and well inside sun_path: the other refusals in
+        // prepare_socket_dir must not be what this test is measuring.
+        let base = PathBuf::from(format!(
+            "/tmp/sky-sockmode-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        for (case, pre) in [("a fresh directory", None), ("a directory left at 0777", Some(0o777))] {
+            let dir = base.join(case.replace(' ', "-"));
+            let _ = std::fs::remove_dir_all(&dir);
+            if let Some(mode) = pre {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+                // The fixture is only worth having if it is really open.
+                assert_ne!(
+                    std::fs::metadata(&dir).unwrap().permissions().mode() & 0o077,
+                    0,
+                    "{case}: the fixture did not produce an open directory"
+                );
+            }
+
+            prepare_socket_dir(&dir).unwrap_or_else(|e| panic!("{case}: {e}"));
+
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(
+                mode & 0o077,
+                0,
+                "{case}: the socket directory is {:o}, so another local account can traverse \
+                 into it — and local auth is trust, which makes it the superuser",
+                mode & 0o7777
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -550,12 +550,46 @@ pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
 /// without `/dev/urandom` is one sky must refuse to generate a credential on,
 /// so this panics rather than degrading — it is called only from paths that are
 /// about to write a credential.
+/// The one source every credential in this phase is drawn from: app passwords
+/// and SCRAM client nonces alike.
+///
+/// Named rather than inlined so the gate can assert the SOURCE and not merely
+/// that two draws differ — which any counter satisfies. See [`RANDOM_DRAW`].
+const RANDOM_SOURCE: &str = "/dev/urandom";
+
+// RANDOM_DRAW: what the last `random_bytes` actually read, recorded at the read
+// itself — the device and inode it came from, and how many bytes.
+//
+// This exists because the property that matters here is unobservable from the
+// output. A generated password is 32 characters whatever produced it, and
+// `assert_ne!(random_bytes(32), random_bytes(32))` — the whole of the previous
+// gate — is satisfied by an incrementing counter. Swap this function's body for
+// an xorshift seeded on the pid and the draw index and every app password and
+// every SCRAM nonce in the cluster collapses to about seventeen bits, with the
+// suite still green.
+//
+// So the gate asks where the bytes came from, and the answer is taken from the
+// file descriptor that supplied them rather than from a constant it could read
+// back. A body that does not read the kernel's entropy source leaves this
+// `None`, which is the failure.
+#[cfg(test)]
+thread_local! {
+    static RANDOM_DRAW: std::cell::Cell<Option<(u64, u64, usize)>> =
+        const { std::cell::Cell::new(None) };
+}
+
 pub fn random_bytes(n: usize) -> Vec<u8> {
     let mut buf = vec![0u8; n];
-    let mut f = std::fs::File::open("/dev/urandom")
+    let mut f = std::fs::File::open(RANDOM_SOURCE)
         .expect("/dev/urandom is required to generate a credential");
     f.read_exact(&mut buf)
         .expect("/dev/urandom is required to generate a credential");
+    #[cfg(test)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let m = f.metadata().expect("the source of a credential must be stat-able");
+        RANDOM_DRAW.with(|c| c.set(Some((m.dev(), m.ino(), n))));
+    }
     buf
 }
 
@@ -708,8 +742,62 @@ mod tests {
         assert_eq!(e.message, "permission denied for database alpha");
     }
 
+    /// Every credential this phase issues comes from the kernel's entropy
+    /// source — asserted at the source, then at the distribution.
+    ///
+    /// The gate this replaces was `assert_ne!(random_bytes(32),
+    /// random_bytes(32))`, and a counter passes it. So does an xorshift64 seeded
+    /// on `(pid, draw index)`, which is roughly seventeen bits of entropy for
+    /// every app password and every SCRAM nonce in the cluster — enough that an
+    /// attacker who knows when a host provisioned an app can enumerate the
+    /// password space in seconds. That mutation left all 338 tests green.
+    ///
+    /// Two independent assertions, because either alone is weak:
+    ///
+    /// * **The source.** The device and inode the bytes were read from must be
+    ///   `/dev/urandom`'s. A body that generates rather than reads records
+    ///   nothing and fails here. This is the assertion that kills the mutation.
+    /// * **The distribution.** 32 draws of 32 bytes: at least 200 of the 256
+    ///   byte values must appear (a uniform 1024 bytes yields ~251, and a
+    ///   generator with a short period or a narrow range does not), and no two
+    ///   draws may share a four-byte prefix (which a counter, or a PRNG reseeded
+    ///   identically per call, does on every draw). This is what catches a
+    ///   source that is `/dev/urandom` by name and something else in substance.
     #[test]
-    fn random_bytes_are_not_a_constant() {
-        assert_ne!(random_bytes(32), random_bytes(32));
+    fn credentials_are_drawn_from_the_kernel_and_not_from_a_generator() {
+        use std::os::unix::fs::MetadataExt;
+
+        let kernel = std::fs::metadata(RANDOM_SOURCE).expect("/dev/urandom");
+        RANDOM_DRAW.with(|c| c.set(None));
+        let first = random_bytes(32);
+        assert_eq!(first.len(), 32);
+        let (dev, ino, read) = RANDOM_DRAW.with(|c| c.get()).expect(
+            "random_bytes returned 32 bytes without reading the kernel's entropy source — \
+             whatever produced them, it was not /dev/urandom, and they are an app's password",
+        );
+        assert_eq!(
+            (dev, ino),
+            (kernel.dev(), kernel.ino()),
+            "the credential was read from a different file than {RANDOM_SOURCE}"
+        );
+        assert_eq!(read, 32, "fewer bytes were read from the source than were returned");
+
+        let draws: Vec<Vec<u8>> = (0..32).map(|_| random_bytes(32)).collect();
+        let values: std::collections::BTreeSet<u8> = draws.iter().flatten().copied().collect();
+        assert!(
+            values.len() >= 200,
+            "32 draws of 32 bytes produced only {} distinct byte values of 256; a uniform \
+             source yields about 251, so this one has a narrow range",
+            values.len()
+        );
+        let prefixes: std::collections::BTreeSet<[u8; 4]> =
+            draws.iter().map(|d| [d[0], d[1], d[2], d[3]]).collect();
+        assert_eq!(
+            prefixes.len(),
+            draws.len(),
+            "two of {} draws share a four-byte prefix — a counter or a per-call reseed does \
+             this, an entropy source does not",
+            draws.len()
+        );
     }
 }
