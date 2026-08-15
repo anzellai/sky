@@ -105,6 +105,13 @@ func TestHubExporterHasNoWriteOnlyFlags(t *testing.T) {
 	// 1. Collect the atomic-typed fields of HubExporter.
 	fields := map[string]token.Position{}
 	for _, f := range rtPkg.Files {
+		// Resolve `sync/atomic`'s qualifier from THIS file's imports rather
+		// than assuming it is spelled `atomic`. Matching the spelling made an
+		// `import a "sync/atomic"` invisible: no field would be tracked, and
+		// the gate's own "found no atomic fields" self-check only fires when
+		// EVERY file is aliased, so one aliased file dropped its fields
+		// silently and the gate still reported clean.
+		atomicQ, atomicDot := importQualifiers(f, "sync/atomic", "atomic")
 		ast.Inspect(f, func(n ast.Node) bool {
 			ts, ok := n.(*ast.TypeSpec)
 			if !ok || ts.Name.Name != "HubExporter" {
@@ -115,7 +122,7 @@ func TestHubExporterHasNoWriteOnlyFlags(t *testing.T) {
 				return false
 			}
 			for _, fld := range st.Fields.List {
-				if !isAtomicType(fld.Type) {
+				if !isAtomicType(fld.Type, atomicQ, atomicDot) {
 					continue
 				}
 				for _, name := range fld.Names {
@@ -197,15 +204,26 @@ func TestHubExporterHasNoWriteOnlyFlags(t *testing.T) {
 	}
 }
 
+// atomicWrapperNames are sync/atomic's exported wrapper types. Needed only for
+// the dot-import case, where `atomic.Bool` is written as a bare `Bool` and
+// there is no qualifier left to resolve.
+var atomicWrapperNames = map[string]bool{
+	"Bool": true, "Int32": true, "Int64": true, "Uint32": true,
+	"Uint64": true, "Uintptr": true, "Pointer": true, "Value": true,
+}
+
 // isAtomicType reports whether the field type is one of the sync/atomic
-// wrapper types (atomic.Bool / Int32 / Int64 / Uint64 / Pointer[T] / Value).
-func isAtomicType(expr ast.Expr) bool {
+// wrapper types (atomic.Bool / Int32 / Int64 / Uint64 / Pointer[T] / Value),
+// under whatever local name the declaring file imports `sync/atomic` by.
+func isAtomicType(expr ast.Expr, atomicQ map[string]bool, dotted bool) bool {
 	switch t := expr.(type) {
 	case *ast.SelectorExpr:
 		pkg, ok := t.X.(*ast.Ident)
-		return ok && pkg.Name == "atomic"
+		return ok && atomicQ[pkg.Name]
+	case *ast.Ident: // `import . "sync/atomic"` — the qualifier is gone
+		return dotted && atomicWrapperNames[t.Name]
 	case *ast.IndexExpr: // atomic.Pointer[T]
-		return isAtomicType(t.X)
+		return isAtomicType(t.X, atomicQ, dotted)
 	}
 	return false
 }

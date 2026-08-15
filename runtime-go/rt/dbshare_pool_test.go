@@ -649,14 +649,32 @@ func TestTheConnectionDemandMatchesWhatTheConsumersAcquire(t *testing.T) {
 // Parsed rather than grepped so that a call spread over several lines, or one
 // whose name is spelled with a constant, is handled honestly: a non-literal
 // first argument fails the gate with an explanation instead of being skipped.
+//
+// It resolves the SYMBOL, not the spelling. The first version of this gate
+// matched an `*ast.CallExpr` whose `Fun` was an `*ast.SelectorExpr` with
+// `Sel.Name == "Acquire"` and `X` an `*ast.Ident` spelled literally
+// `"dbshare"`, and three one-line evasions walked past it, each compiling
+// clean and each opening a real pool the cluster sizing never sees:
+//
+//	import ds "sky-app/rt/dbshare"; ds.Acquire("evader", …)   → 3 sites, PASS
+//	acq := dbshare.Acquire; acq("evader", …)                  → 3 sites, PASS
+//	import . "sky-app/rt/dbshare"; Acquire("evader", …)        → 3 sites, PASS
+//
+// The first and third are import spellings; the second is the same
+// indirection-between-selector-and-call that let `log.Fatalf` taken as a value
+// past the exit audit (see pg_embed_exit_audit_test.go). All three are closed
+// the way that audit closed its own: the qualifier is resolved from the FILE's
+// import declarations — Go imports are file-scoped, so this is exact for an
+// alias and for a dot import — and the matcher reads REFERENCES rather than
+// calls, so a reference that is not being called is reported instead of
+// looked through.
 func TestEveryDbsharePoolIsAccountedFor(t *testing.T) {
 	counted := map[string]bool{}
 	for _, name := range dbAuxPoolConsumerNames() {
 		counted[name] = true
 	}
 
-	type site struct{ name, where string }
-	var sites []site
+	var sites []dbshareAcquireRef
 	fset := token.NewFileSet()
 	root := ".." // runtime-go/rt → runtime-go
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -670,41 +688,30 @@ func TestEveryDbsharePoolIsAccountedFor(t *testing.T) {
 		if perr != nil {
 			return fmt.Errorf("parse %s: %w", path, perr)
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "Acquire" {
-				return true
-			}
-			pkg, ok := sel.X.(*ast.Ident)
-			if !ok || pkg.Name != "dbshare" || len(call.Args) == 0 {
-				return true
-			}
-			where := fset.Position(call.Pos()).String()
-			lit, ok := call.Args[0].(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				sites = append(sites, site{"", where + " (consumer name is not a string literal)"})
-				return true
-			}
-			name, _ := strconv.Unquote(lit.Value)
-			sites = append(sites, site{name, where})
-			return true
-		})
+		sites = append(sites, dbshareAcquireRefs(fset, f)...)
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walking the runtime source: %v", err)
 	}
 	if len(sites) == 0 {
-		t.Fatal("no dbshare.Acquire call sites found in the runtime source — the gate is " +
+		t.Fatal("no dbshare.Acquire references found in the runtime source — the gate is " +
 			"looking in the wrong place and would pass whatever the code did")
 	}
 
 	seen := map[string]bool{}
 	for _, s := range sites {
+		if s.reason != "" {
+			// The reference exists and the consumer name is not readable from
+			// it. Reporting that is the honest verdict: the accounting cannot
+			// establish what this pool costs, so it must not report a total.
+			t.Errorf("%s references dbshare.Acquire but %s — the connection demand "+
+				"cannot attribute this pool to a consumer, so every cluster Sky sizes "+
+				"is short by whatever it opens. Call dbshare.Acquire directly with a "+
+				"string-literal consumer name that dbAuxPoolConsumers counts.",
+				s.where, s.reason)
+			continue
+		}
 		seen[s.name] = true
 		if !counted[s.name] {
 			t.Errorf("%s acquires a shared pool as %q, which dbAuxPoolConsumers does not "+
@@ -724,6 +731,257 @@ func TestEveryDbsharePoolIsAccountedFor(t *testing.T) {
 		t.Errorf("dbAuxPoolConsumers counts %v, but no dbshare.Acquire call site names them — "+
 			"the cluster sizing is paying for pools that are not opened", missing)
 	}
-	t.Logf("dbshare.Acquire call sites in the runtime: %d, all accounted for by %v",
-		len(sites), dbAuxPoolConsumerNames())
+	// Guarded: the previous version logged "all accounted for" unconditionally,
+	// so a failing run still printed a sentence saying the accounting was
+	// complete. A verdict line that reads clean on a red run is the same defect
+	// class this gate exists to close.
+	if !t.Failed() {
+		t.Logf("dbshare.Acquire references in the runtime: %d, all accounted for by %v",
+			len(sites), dbAuxPoolConsumerNames())
+	}
+}
+
+// dbsharePkgPath is the package whose `Acquire` the connection-demand
+// arithmetic accounts for. The gate keys on the IMPORT PATH, never on the
+// local name a file happens to give it.
+const dbsharePkgPath = "sky-app/rt/dbshare"
+
+// dbshareAcquireRef is one reference to that package's `Acquire` in the
+// runtime source. `reason` is empty when the consumer name was readable; when
+// it is set the reference was found but its consumer could not be established,
+// which is a gate failure rather than something to skip.
+type dbshareAcquireRef struct {
+	name   string
+	where  string
+	reason string
+}
+
+// dbshareQualifiers resolves, for ONE file, how `sky-app/rt/dbshare` is
+// reachable in it: the local names it is qualified by (so an aliased
+// `import ds "…/dbshare"` is still caught) and whether it is DOT-imported (so a
+// bare `Acquire(…)`, which is an `*ast.Ident` and not a selector at all, is
+// still caught).
+//
+// Imports are file-scoped in Go, so reading the file's own import block is an
+// exact resolution of the qualifier — not an approximation of one. What it does
+// NOT model is a local identifier that SHADOWS the import name inside some
+// function body; that direction produces a false positive (a reviewable red),
+// never a false negative.
+func dbshareQualifiers(f *ast.File) (locals map[string]bool, dotted bool) {
+	return importQualifiers(f, dbsharePkgPath, "dbshare")
+}
+
+// importQualifiers is the same resolution for any import path: the local names
+// the package is reachable by in THIS file, and whether it is dot-imported.
+// Shared with exporter_drain_gate_test.go, whose atomic-field gate had the
+// identical weakness — it matched the qualifier `atomic` by spelling, so an
+// `import a "sync/atomic"` made every atomic field on HubExporter invisible and
+// the gate reported clean with nothing to look at.
+func importQualifiers(f *ast.File, path, pkgName string) (locals map[string]bool, dotted bool) {
+	locals = map[string]bool{}
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, `"`) != path {
+			continue
+		}
+		switch {
+		case imp.Name == nil:
+			locals[pkgName] = true // the package's own name
+		case imp.Name.Name == ".":
+			dotted = true
+		case imp.Name.Name == "_":
+			// A blank import cannot name anything in the package.
+		default:
+			locals[imp.Name.Name] = true
+		}
+	}
+	return locals, dotted
+}
+
+// dbshareAcquireRefs reports every reference to `dbshare.Acquire` in one file —
+// whether it is being called, assigned, passed or merely mentioned.
+//
+// References rather than calls, because the indirection between the selector
+// and the call is the whole hole: `acq := dbshare.Acquire` followed by `acq(…)`
+// is not an `*ast.CallExpr` with a matching `Fun` anywhere, so a call-shaped
+// matcher reports the package clean while a fourth pool is opened at runtime.
+func dbshareAcquireRefs(fset *token.FileSet, f *ast.File) []dbshareAcquireRef {
+	locals, dotted := dbshareQualifiers(f)
+	if len(locals) == 0 && !dotted {
+		// The file cannot name the package at all. A value obtained from it
+		// elsewhere is still caught, at the reference in the file that DID
+		// import it — which is the site the gate wants named anyway.
+		return nil
+	}
+
+	// The `Sel` half of a selector is an *ast.Ident too. Collected first so the
+	// dot-import rule below does not read `foo.Acquire` a second time as a bare
+	// identifier.
+	selNames := map[*ast.Ident]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			selNames[sel.Sel] = true
+		}
+		return true
+	})
+
+	isRef := func(n ast.Node) bool {
+		switch e := n.(type) {
+		case *ast.SelectorExpr:
+			id, ok := e.X.(*ast.Ident)
+			return ok && locals[id.Name] && e.Sel.Name == "Acquire"
+		case *ast.Ident:
+			return dotted && e.Name == "Acquire" && !selNames[e]
+		}
+		return false
+	}
+
+	var out []dbshareAcquireRef
+	called := map[ast.Node]bool{}
+
+	// Pass 1 — references in callee position, which is where a consumer name
+	// can be read.
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !isRef(call.Fun) {
+			return true
+		}
+		called[call.Fun] = true
+		where := fset.Position(call.Pos()).String()
+		if len(call.Args) == 0 {
+			out = append(out, dbshareAcquireRef{where: where, reason: "it is called with no arguments"})
+			return true
+		}
+		lit, ok := call.Args[0].(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			out = append(out, dbshareAcquireRef{
+				where:  where,
+				reason: "its consumer name is not a string literal",
+			})
+			return true
+		}
+		name, _ := strconv.Unquote(lit.Value)
+		out = append(out, dbshareAcquireRef{name: name, where: where})
+		return true
+	})
+
+	// Pass 2 — every other reference. The function has been taken as a value;
+	// the call that uses it is somewhere the consumer name cannot be read from,
+	// so the gate says so rather than reporting the package clean.
+	ast.Inspect(f, func(n ast.Node) bool {
+		if !isRef(n) || called[n] {
+			return true
+		}
+		out = append(out, dbshareAcquireRef{
+			where:  fset.Position(n.Pos()).String(),
+			reason: "the function is taken as a VALUE rather than called here",
+		})
+		return true
+	})
+	return out
+}
+
+// TestTheDbshareAccountingSeesTheShapesNameMatchingMisses pins the matcher
+// against the evasions that walked past the previous one, and against the
+// shapes it must NOT fire on. Each row is one file's source; `want` is the
+// number of references the matcher reports, and `named` how many of those
+// yielded a consumer name.
+//
+// The three PASS-ing evasions from the gate's own history are rows 2, 3 and 4.
+func TestTheDbshareAccountingSeesTheShapesNameMatchingMisses(t *testing.T) {
+	const p = "sky-app/rt/dbshare"
+	cases := []struct {
+		label       string
+		src         string
+		want, named int
+	}{
+		{"plain call", `package p
+import "` + p + `"
+func f() { _, _ = dbshare.Acquire("analytics", "pgx", "", dbshare.Config{}, 0) }`, 1, 1},
+
+		{"ALIASED import", `package p
+import ds "` + p + `"
+func f() { _, _ = ds.Acquire("alias-evader", "pgx", "", ds.Config{}, 0) }`, 1, 1},
+
+		{"taken as a VALUE", `package p
+import "` + p + `"
+func f() { acq := dbshare.Acquire; _, _ = acq("value-evader", "pgx", "", dbshare.Config{}, 0) }`, 1, 0},
+
+		{"DOT import", `package p
+import . "` + p + `"
+func f() { _, _ = Acquire("dot-evader", "pgx", "", Config{}, 0) }`, 1, 1},
+
+		{"aliased AND taken as a value at package scope", `package p
+import ds "` + p + `"
+var acq = ds.Acquire`, 1, 0},
+
+		{"passed as an argument", `package p
+import "` + p + `"
+func g(any) {}
+func f() { g(dbshare.Acquire) }`, 1, 0},
+
+		{"call spread over several lines", `package p
+import "` + p + `"
+func f() {
+	_, _ = dbshare.Acquire(
+		"telemetry",
+		"pgx", "", dbshare.Config{}, 0,
+	)
+}`, 1, 1},
+
+		{"consumer name via a constant", `package p
+import "` + p + `"
+const n = "sneaky"
+func f() { _, _ = dbshare.Acquire(n, "pgx", "", dbshare.Config{}, 0) }`, 1, 0},
+
+		// The negatives. A gate that fired on these would be turned off.
+		{"a different package's Acquire", `package p
+import "sync"
+func f() { var m sync.Mutex; m.Lock() }`, 0, 0},
+
+		{"an unrelated type with an Acquire method", `package p
+type T struct{}
+func (T) Acquire(string) {}
+func f() { var dbshare T; dbshare.Acquire("x") }`, 0, 0},
+
+		{"the name in a string", `package p
+import "` + p + `"
+func f() { _ = "dbshare.Acquire(\"x\")"; _ = dbshare.Config{} }`, 0, 0},
+
+		{"the name in a comment", `package p
+import "` + p + `"
+// dbshare.Acquire("x") would need accounting
+func f() { _ = dbshare.Config{} }`, 0, 0},
+
+		{"a non-Acquire member of the package", `package p
+import "` + p + `"
+func f() { dbshare.ResetForTesting() }`, 0, 0},
+
+		{"a bare Acquire with no dot import", `package p
+func Acquire(string) {}
+func f() { Acquire("x") }`, 0, 0},
+
+		{"a blank import cannot name anything", `package p
+import _ "` + p + `"
+func Acquire(string) {}
+func f() { Acquire("x") }`, 0, 0},
+	}
+
+	for _, c := range cases {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "x.go", c.src, 0)
+		if err != nil {
+			t.Fatalf("%s: the FIXTURE does not parse: %v", c.label, err)
+		}
+		refs := dbshareAcquireRefs(fset, f)
+		named := 0
+		for _, r := range refs {
+			if r.reason == "" {
+				named++
+			}
+		}
+		if len(refs) != c.want || named != c.named {
+			t.Errorf("%s: matcher saw %d reference(s) (%d named); want %d (%d named)",
+				c.label, len(refs), named, c.want, c.named)
+		}
+	}
 }
