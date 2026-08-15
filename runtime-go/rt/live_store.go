@@ -623,7 +623,13 @@ func newSQLiteStore(path string, ttl, idleEvict time.Duration) (*sqliteStore, er
 			// rejects WAL (NFS/SMB, :memory:) still works in rollback-journal
 			// mode. Warn and carry on; only a genuine open/CREATE failure below
 			// falls back to memory.
-			Log_warn("live session store: " + pragma + " failed: " + pErr.Error())
+			// rtWarn, not Log_warn: the kernel returns a Task (a `func() any`),
+			// so as a bare statement this message was built and dropped. The
+			// loop deliberately carries on, so that dead warning was the only
+			// thing standing between an operator and a session store running
+			// silently without the concurrency configuration above — the exact
+			// configuration v0.17.10 added to stop it stalling under load.
+			rtWarn("live session store: " + pragma + " failed: " + pErr.Error())
 		}
 	}
 	if _, err := db.Exec(`

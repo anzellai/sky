@@ -38,6 +38,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sky-app/rt/telemetry"
 )
@@ -95,6 +96,28 @@ func TestTheRuntimesOwnWarningsReachTheLog(t *testing.T) {
 			},
 		},
 		{
+			// The eleventh site, and the one the class gate below was carrying as
+			// its single exemption. Same defect, and the same consequence: the
+			// pragma loop deliberately does NOT fail the store when a pragma is
+			// rejected — a filesystem that refuses WAL still works in rollback-
+			// journal mode — so the warning was the only thing that said the
+			// session store is running without the concurrency configuration
+			// v0.17.10 added to stop it stalling under navigation load.
+			name: "a session-store pragma the backing file rejects",
+			want: "live session store: PRAGMA",
+			run: func(t *testing.T) {
+				// A DIRECTORY is not a database file. `sql.Open` is lazy, so the
+				// first thing to touch it is the pragma loop and every pragma
+				// fails; `newSQLiteStore` then returns an error at CREATE TABLE.
+				// The error is not what is under test — the warnings emitted
+				// before it are, and this is the path that reaches them.
+				if _, err := newSQLiteStore(t.TempDir(), time.Minute, 0); err == nil {
+					t.Fatal("precondition: opening a session store on a directory should fail; " +
+						"without a failing pragma the loop never warns and this case proves nothing")
+				}
+			},
+		},
+		{
 			name: "an unrecognised isolation level",
 			want: "not a recognised isolation level",
 			run: func(t *testing.T) {
@@ -132,23 +155,16 @@ func TestNoRuntimeSourceDropsALogKernelThunk(t *testing.T) {
 		"Log_debug": true, "Log_info": true, "Log_warn": true, "Log_error": true,
 		"Log_debugWith": true, "Log_infoWith": true, "Log_warnWith": true, "Log_errorWith": true,
 	}
-	// EXACTLY ONE file is exempt, and not because the defect is acceptable
-	// there.
+	// NOTHING is exempt, and the empty map is deliberate rather than left over.
 	//
-	// `live_store.go:589` carries the same dead `Log_warn` (a SQLite pragma that
-	// failed on the session store), and the fix is the same one-line swap to
-	// `rtWarn`. It is not made here because this branch has another agent
-	// holding that file in this cycle and a one-line drive-by would collide with
-	// their work; it is recorded so it cannot be forgotten rather than left to
-	// be rediscovered.
-	//
-	// The list is asserted to be EXACTLY this, so it can neither grow silently
-	// nor rot: when the file is free, make the swap and delete the entry, and
-	// this gate turns red until you do the second half.
-	pending := map[string]string{
-		"live_store.go": "the session store's failed-pragma warning; swap to rtWarn " +
-			"when the file is not held by another agent",
-	}
+	// It carried exactly one entry — `live_store.go`'s failed-pragma warning,
+	// deferred because another agent held that file in this cycle. That swap has
+	// now been made and the entry deleted in the SAME change, which is what this
+	// list's reverse check below demands: it is asserted in both directions, so a
+	// fixed file left on the list turns the gate red rather than quietly
+	// narrowing it. The map stays, and stays documented, so the next deferral has
+	// somewhere to go that comes with the same expiry.
+	pending := map[string]string{}
 	var offenders []string
 	var sawPending []string
 	roots := []string{".", "telemetry", "dbshare", "hub", "jobs"}
