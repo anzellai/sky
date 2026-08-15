@@ -131,11 +131,23 @@ func HtmlToVNode(node any) VNode {
 		if len(fields) < 3 {
 			return vtext("")
 		}
+		// Attrs/Events are deliberately left nil here and created on
+		// first write by applyHtmlAttr. Two maps were being allocated
+		// for EVERY element whether or not it had any attribute or
+		// event, and both are retained for the lifetime of the session
+		// inside prevTree (`docs/perf/skylive-interaction-cost.md`,
+		// "The attribution").
+		//
+		// Every reader is nil-safe by construction: an index read, a
+		// comma-ok read, `range`, `len` and `delete` all behave on a nil
+		// map exactly as they do on an empty one. Text and raw nodes
+		// have shipped with nil Attrs/Events through this same pipeline
+		// since `vtext` was written, so the nil case is not a new one.
+		// The only nil-unsafe operation is a map ASSIGN, and every
+		// assign lives in applyHtmlAttr below.
 		vn := VNode{
-			Kind:   "element",
-			Tag:    AsString(fields[0]),
-			Attrs:  map[string]string{},
-			Events: map[string]any{},
+			Kind: "element",
+			Tag:  AsString(fields[0]),
 		}
 		for _, a := range asList(fields[1]) {
 			applyHtmlAttr(&vn, a)
@@ -147,6 +159,23 @@ func HtmlToVNode(node any) VNode {
 	default:
 		return vtext("")
 	}
+}
+
+// setAttr writes one attribute, creating the map on first use.
+// HtmlToVNode leaves Attrs nil; this is the only place it is filled.
+func (vn *VNode) setAttr(k, v string) {
+	if vn.Attrs == nil {
+		vn.Attrs = make(map[string]string, 1)
+	}
+	vn.Attrs[k] = v
+}
+
+// setEvent writes one event binding, creating the map on first use.
+func (vn *VNode) setEvent(name string, msg any) {
+	if vn.Events == nil {
+		vn.Events = make(map[string]any, 1)
+	}
+	vn.Events[name] = msg
 }
 
 // applyHtmlAttr folds one Sky `Attribute` ADT value into a VNode.
@@ -179,23 +208,23 @@ func applyHtmlAttr(vn *VNode, a any) {
 			if existing, ok := vn.Attrs[k]; ok && existing != "" {
 				switch k {
 				case "class":
-					vn.Attrs[k] = existing + " " + v
+					vn.setAttr(k, existing+" "+v)
 					return
 				case "style":
 					sep := "; "
 					if strings.HasSuffix(existing, ";") {
 						sep = " "
 					}
-					vn.Attrs[k] = existing + sep + v
+					vn.setAttr(k, existing+sep+v)
 					return
 				}
 			}
-			vn.Attrs[k] = v
+			vn.setAttr(k, v)
 		}
 	case "BoolAttr":
 		if len(fields) >= 2 && AsBool(fields[1]) {
 			k := AsString(fields[0])
-			vn.Attrs[k] = k
+			vn.setAttr(k, k)
 		}
 	case "EventAttr":
 		if len(fields) >= 1 {
@@ -203,7 +232,7 @@ func applyHtmlAttr(vn *VNode, a any) {
 			if _, _, evFields, ok := unwrapADTShape(ev); ok && len(evFields) >= 2 {
 				// OnMsg / OnString / OnBool: Fields[0] = event name,
 				// Fields[1] = Msg value (OnMsg) or handler fn.
-				vn.Events[AsString(evFields[0])] = evFields[1]
+				vn.setEvent(AsString(evFields[0]), evFields[1])
 			}
 		}
 	case "NoAttr":
