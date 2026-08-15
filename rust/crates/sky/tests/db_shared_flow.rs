@@ -12,17 +12,12 @@
 //! So this file spends a real `sky` process on each claim, and asks a real
 //! `pg_dump` — not sky's own client — whether the boundary holds.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// Say — VISIBLY — that a live test did not run. `eprintln!` would go through
-/// libtest's output capture, which is printed only for a test that FAILED, so a
-/// skipped live test would report `... ok` and say nothing about having skipped.
-fn skip(reason: &str) {
-    let mut e = std::io::stderr();
-    let _ = writeln!(e, "SKIPPED (live): {reason}");
-}
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -188,7 +183,7 @@ fn provisioning_an_app_before_the_cluster_says_so() {
 #[test]
 fn the_binary_provisions_a_cluster_whose_apps_cannot_read_each_other() {
     let Some(bin) = find_pg_bin() else {
-        skip("no PostgreSQL discoverable — the live shared-cluster flow did not run");
+        required(Need::Postgres, false);
         return;
     };
     let state = scratch("live");

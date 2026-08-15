@@ -25,6 +25,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn have_go() -> bool {
@@ -110,8 +114,7 @@ fn run_test(dir: &Path, suite: &Path) -> (i32, String, Option<serde_json::Value>
 /// "0 passed, 0 failed (0 total)" and exited 0.
 #[test]
 fn suite_whose_header_differs_from_its_path_actually_runs() {
-    if !have_go() {
-        eprintln!("skipping: no `go` on PATH");
+    if !required(Need::Go, have_go()) {
         return;
     }
     let (dir, suite) = project("modea", "tests/Nested/FooTest.sky", "FooTest");
@@ -141,8 +144,7 @@ fn suite_whose_header_differs_from_its_path_actually_runs() {
 /// derived".
 #[test]
 fn dotted_header_suite_at_the_project_root_is_runnable() {
-    if !have_go() {
-        eprintln!("skipping: no `go` on PATH");
+    if !required(Need::Go, have_go()) {
         return;
     }
     let (dir, suite) = project("modeb", "Std/ThingTest.sky", "Std.ThingTest");
@@ -167,8 +169,7 @@ fn dotted_header_suite_at_the_project_root_is_runnable() {
 /// non-zero, so the fix cannot "pass" by making everything green.
 #[test]
 fn failing_case_still_fails_the_run() {
-    if !have_go() {
-        eprintln!("skipping: no `go` on PATH");
+    if !required(Need::Go, have_go()) {
         return;
     }
     let dir = scratch("redcase");

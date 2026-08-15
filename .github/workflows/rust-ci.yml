@@ -160,7 +160,16 @@ jobs:
     # Not separately measured. Reasoned: clippy --all-targets (~6 min debug) +
     # workspace-minus-ty tests incl. `project`'s real `go build` integration
     # tests (~10 min) + doctests (~2 min) ≈ 20 min. 1.5x = 30.
-    timeout-minutes: 30
+    #
+    # Raised to 45 when this job started PROVISIONING PostgreSQL: the live
+    # cluster tests used to return immediately here and now start real
+    # postmasters, serialised one at a time (macOS allows 32 SysV shared-memory
+    # ids in total and thirteen concurrent clusters exhausts them, so the
+    # fixtures hold a mutex). Measured locally at 47 s for the fourteen
+    # shared-cluster tests alone, plus the `db_*_flow` suites which each
+    # provision and, in `db_run_cluster_flow`'s case, `go build` a real app —
+    # all of which were skipping. ~10 min added; 1.5x of ~30 is 45.
+    timeout-minutes: 45
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -188,6 +197,30 @@ jobs:
             ${{ github.workspace }}/.gomodcache
           key: go-test-rest-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
           restore-keys: go-test-rest-
+
+      # PROVISION THE LIVE ENVIRONMENT. This is the only job that runs
+      # `cargo test --workspace`, and it had no PostgreSQL — so the fourteen
+      # tests in `crates/sky/src/db_shared/live_tests.rs` that stand behind the
+      # shared-cluster security boundary ("app A's credentials cannot reach app
+      # B's database", "a cluster that does not ask for a password is refused")
+      # reported `ok. 14 passed` here having asserted nothing, every run, for as
+      # long as they have existed. Run with and without a cluster they printed
+      # byte-identical verdict lines, differing only in the wall clock.
+      #
+      # `integration-postgres` installs these binaries too, and cannot help:
+      # its own first comment is "No Rust build at all" — it runs `go test`.
+      - name: PostgreSQL + sqlite3 for the live tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 sqlite3
+          # Fail here, loudly, rather than at the first live test: an absent
+          # binary and a test that decided not to run are indistinguishable in
+          # a verdict line, which is the whole defect being closed.
+          for b in initdb pg_ctl postgres; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+          done
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -196,6 +229,15 @@ jobs:
       - name: Clippy (report only)
         run: cargo clippy --workspace --all-targets || true
       - name: Tests — workspace except ty
+        env:
+          # Debian's PostgreSQL binaries are NOT on PATH — they live under
+          # /usr/lib/postgresql/<major>/bin — so this is set explicitly rather
+          # than left to discovery.
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          # The default, stated anyway: an unmet live environment must fail this
+          # job rather than let a test return. The opt-out is `skip`, and no CI
+          # job sets it.
+          SKY_LIVE_TESTS: require
         run: cargo test --workspace --exclude ty --locked
       - name: Doctests
         run: cargo test --workspace --locked --doc

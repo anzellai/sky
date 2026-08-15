@@ -26,6 +26,10 @@ use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 /// The ceiling on any single blocking `sky` invocation in this file.
@@ -489,17 +493,6 @@ fn wait_until(limit: Duration, cond: impl Fn() -> bool, msg: impl Fn() -> String
     }
 }
 
-/// Say — VISIBLY — that a live test did not run.
-///
-/// Deliberately NOT `eprintln!`: that goes through libtest's output capture,
-/// and capture is only ever printed for a test that FAILED. A skipped live test
-/// would report `... ok` and say nothing, which is how a green job can contain
-/// no live coverage at all. The process's own stderr bypasses the capture.
-fn skip(reason: &str) {
-    let mut e = std::io::stderr();
-    let _ = writeln!(e, "SKIPPED (live): {reason}");
-}
-
 /// One live cluster at a time.
 ///
 /// Every test below drives a REAL PostgreSQL and a REAL `go build`, and libtest
@@ -544,7 +537,11 @@ fn both(o: &Output) -> String {
 fn sky_run_starts_a_cluster_injects_the_dsn_and_stops_it_on_exit() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-basic") else {
-        skip("no PostgreSQL and/or no go toolchain");
+        // Two calls rather than one, so the failure names WHICH of the two
+        // `Fixture::new` folds into an Option is missing: the first passes when
+        // Go is present and the second then reports PostgreSQL.
+        required(Need::Go, have_go());
+        required(Need::Postgres, false);
         return;
     };
     fx.warm_build();
@@ -583,7 +580,8 @@ fn sky_run_starts_a_cluster_injects_the_dsn_and_stops_it_on_exit() {
 fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-refs") else {
-        skip("no PostgreSQL and/or no go toolchain");
+        required(Need::Go, have_go());
+        required(Need::Postgres, false);
         return;
     };
     fx.warm_build();
@@ -649,7 +647,8 @@ fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
 fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-explicit") else {
-        skip("no PostgreSQL and/or no go toolchain");
+        required(Need::Go, have_go());
+        required(Need::Postgres, false);
         return;
     };
     fx.warm_build();
@@ -694,7 +693,8 @@ fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
 fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-stale") else {
-        skip("no PostgreSQL and/or no go toolchain");
+        required(Need::Go, have_go());
+        required(Need::Postgres, false);
         return;
     };
     fx.warm_build();
@@ -751,7 +751,8 @@ fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
 fn sky_watch_hands_the_same_cluster_to_the_app_it_spawns() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-watch") else {
-        skip("no PostgreSQL and/or no go toolchain");
+        required(Need::Go, have_go());
+        required(Need::Postgres, false);
         return;
     };
     fx.warm_build();
@@ -856,7 +857,8 @@ fn an_explicit_dsn_alongside_embedded_refuses_to_run() {
 fn a_build_failure_never_starts_a_cluster() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-badbuild") else {
-        skip("no PostgreSQL and/or no go toolchain");
+        required(Need::Go, have_go());
+        required(Need::Postgres, false);
         return;
     };
     std::fs::write(
@@ -891,7 +893,7 @@ fn a_build_failure_never_starts_a_cluster() {
 #[test]
 fn a_project_without_the_opt_in_gets_no_cluster_at_all() {
     if !have_go() {
-        skip("no go toolchain");
+        required(Need::Go, false);
         return;
     }
     let project = std::env::temp_dir().join(unique("p4-optout"));

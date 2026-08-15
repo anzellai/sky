@@ -15,6 +15,11 @@ mod db_migrate;
 mod db_pool_sizing;
 mod db_provision;
 mod db_shared;
+/// Test-only: the one place a live test is allowed to not run. Also `#[path]`-
+/// included by the integration tests under `tests/`, which cannot import from a
+/// binary crate.
+#[cfg(test)]
+mod live_gate;
 mod pg_wire;
 use std::time::{Duration, Instant};
 

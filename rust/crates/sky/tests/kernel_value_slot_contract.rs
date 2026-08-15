@@ -41,6 +41,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn scratch(tag: &str) -> PathBuf {
@@ -154,8 +158,7 @@ fn point_free_kernel_alias_is_not_emitted_as_a_bare_runtime_symbol() {
 /// Build leg — the contract itself: it type-checks, so it must `go build`.
 #[test]
 fn point_free_kernel_alias_go_builds() {
-    if !have_go() {
-        eprintln!("skipping build leg: no `go` on PATH (emission leg still asserts)");
+    if !required(Need::Go, have_go()) {
         return;
     }
     let dir = project("pointfree-build", POINT_FREE);
@@ -219,8 +222,7 @@ fn nullary_kernel_in_task_slot_is_coerced_not_returned_raw() {
 /// Build leg — the contract itself.
 #[test]
 fn nullary_kernel_in_task_slot_go_builds() {
-    if !have_go() {
-        eprintln!("skipping build leg: no `go` on PATH (emission leg still asserts)");
+    if !required(Need::Go, have_go()) {
         return;
     }
     let dir = project("nullary-build", NULLARY_TASK);
@@ -314,8 +316,7 @@ fn hof_callback_kernel_keeps_the_bare_symbol() {
 /// Build + behavioural leg for the boundary shapes — they must keep working.
 #[test]
 fn guard_boundary_shapes_still_build_and_behave() {
-    if !have_go() {
-        eprintln!("skipping build leg: no `go` on PATH (emission leg still asserts)");
+    if !required(Need::Go, have_go()) {
         return;
     }
     let dir = project("boundaries-run", BOUNDARIES);
@@ -344,8 +345,7 @@ fn guard_boundary_shapes_still_build_and_behave() {
 /// panics is the same class of defect.
 #[test]
 fn kernel_value_slots_behave_at_runtime() {
-    if !have_go() {
-        eprintln!("skipping behavioural leg: no `go` on PATH");
+    if !required(Need::Go, have_go()) {
         return;
     }
     let src = "module Main exposing (main)\n\n\

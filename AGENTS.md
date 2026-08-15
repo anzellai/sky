@@ -277,6 +277,24 @@ are necessary but **not sufficient**: a change is not verified until it also
 passes the full example sweep + a real app (see
 `docs/rust-rewrite/13-change-verification-and-edge-cases.md`).
 
+**Live tests fail rather than skip.** Some tests need a real environment — a
+PostgreSQL installation, a Go toolchain, the `sqlite3` client — and `cargo test`
+**fails** when one is missing, naming what to install. That is deliberate:
+fourteen tests covering the shared-cluster security boundary used to end their
+probe with `eprintln!(…); return;`, and with and without a cluster they printed
+byte-identical verdict lines (`ok. 14 passed`), so CI — which installed no
+PostgreSQL in the only job that ran them — had never run one of them. If you
+genuinely cannot provide the environment, say so out loud:
+
+```bash
+SKY_LIVE_TESTS=skip cargo test --workspace   # the ONLY way to skip a live test
+```
+
+New live tests gate through `rust/crates/sky/src/live_gate.rs`
+(`live_gate::required(Need::Postgres, <your probe>)`), and
+`rust/crates/xtask/tests/live_tests_are_not_silently_skipped.rs` fails the build
+on the shapes that used to be written instead.
+
 `cargo run --release -p xtask -- harness` runs the registered gates through the
 gate harness, which enforces each gate's budget by `killpg`, requires an exact
 assertion count, and refuses to report PASS when it cannot establish a verdict

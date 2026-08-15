@@ -15,15 +15,60 @@
 //!   itself, handed the DSN exactly as sky printed it. If sky's own client were
 //!   wrong about what happened, that probe would disagree.
 //!
-//! These run only when a PostgreSQL is discoverable; otherwise they return with
-//! a note, the convention `db_flow.rs` and `db_cluster_flow.rs` already use.
+//! These need a PostgreSQL on the machine, and they go through
+//! [`crate::live_gate`] to say so. Until 2026-08-15 they each ended their probe
+//! with `eprintln!(…); return;` — and libtest prints captured output only for
+//! tests that FAILED, so with and without a cluster they reported the same
+//! line:
+//!
+//! ```text
+//! test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 167 filtered out; finished in 0.02s
+//! test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 167 filtered out; finished in 18.29s
+//! ```
+//!
+//! `test-rest` is the only CI job that runs `cargo test --workspace` and it
+//! installed no PostgreSQL, so the fourteen tests standing behind the P6
+//! security boundary had never run there. An unmet need is now a failure that
+//! names what is missing; `SKY_LIVE_TESTS=skip` is the way to say "not on this
+//! machine", out loud.
 
 use super::*;
 use crate::pg_wire::{Conn, Target};
 
+/// One live cluster at a time, the mechanism `db_run_cluster_flow.rs` already
+/// uses for the same reason.
+///
+/// libtest runs these on as many threads as the machine has cores, and each one
+/// starts a real postmaster. macOS allows **32** SysV shared-memory ids in
+/// total, so thirteen concurrent clusters plus whatever else is on the machine
+/// exhausts them, and `initdb` fails with
+///
+/// ```text
+/// FATAL:  could not create shared memory segment: No space left on device
+/// ```
+///
+/// — which reads exactly like a defect in the code under test. It was harmless
+/// while every one of these tests returned without starting anything; turning
+/// them on in CI is what makes it reachable. Serialising costs a little wall
+/// clock and buys a failure that means what it says.
+static ONE_LIVE_CLUSTER_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Hold the live-cluster lock for the rest of the caller's scope. A test that
+/// panics while holding a `Mutex` poisons it, and every later `lock()` then
+/// fails on the lock rather than on its own claim — so the first real failure
+/// would be the hardest one to find.
+fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    ONE_LIVE_CLUSTER_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// One cluster per run, torn down whatever happens: a leaked postmaster holds a
 /// SysV shared-memory id, and this machine has 32 of them.
+///
+/// The lock guard is a FIELD so it is released by the same `Drop` that stops the
+/// postmaster, in that order — releasing it earlier would let the next test's
+/// `initdb` run against a cluster this one has not torn down yet.
 struct Fixture {
+    _live: std::sync::MutexGuard<'static, ()>,
     layout: Layout,
     bins: PgBins,
     user: String,
@@ -87,9 +132,12 @@ fn pg_dump(bins: &PgBins, dsn: &str, extra: &[&str]) -> std::process::Output {
 
 fn provision_fixture(tag: &str) -> Option<(Fixture, String, String, String, String)> {
     let Ok(bins) = db_cluster::discover_pg_bins() else {
-        eprintln!("no PostgreSQL discoverable — skipping the live shared-cluster gate");
+        crate::live_gate::required(crate::live_gate::Need::Postgres, false);
         return None;
     };
+    // Taken BEFORE initdb, released by `Fixture`'s drop after the postmaster is
+    // stopped.
+    let live = one_at_a_time();
     // Small enough to be a good neighbour to whatever else is on this machine.
     // The variable exists for containers, where /proc/meminfo is the host's.
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
@@ -111,6 +159,7 @@ fn provision_fixture(tag: &str) -> Option<(Fixture, String, String, String, Stri
     let out = provision_cluster(&opts).unwrap_or_else(|e| panic!("provision failed:\n{e}"));
     assert!(out.contains("cluster ready"), "{out}");
     let fx = Fixture {
+        _live: live,
         layout: Layout::new(&state),
         bins,
         user: user.clone(),
@@ -273,9 +322,10 @@ fn an_apps_credentials_cannot_reach_another_apps_database() {
 #[test]
 fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
     let Ok(bins) = db_cluster::discover_pg_bins() else {
-        eprintln!("no PostgreSQL discoverable — skipping the adopted-cluster gate");
+        crate::live_gate::required(crate::live_gate::Need::Postgres, false);
         return;
     };
+    let live = one_at_a_time();
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
     let state = scratch_state_dir("adopt");
     let layout = Layout::new(&state);
@@ -303,7 +353,7 @@ fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
     ));
     std::fs::write(&conf, text).unwrap();
 
-    let fx = Fixture { layout, bins, user: user.clone() };
+    let fx = Fixture { _live: live, layout, bins, user: user.clone() };
     start_postmaster(&fx.bins, &fx.layout).expect("the operator's cluster did not start");
     assert!(cluster_running(&fx.layout));
     // Precondition: it really is a `trust` cluster. Without this the test could
@@ -696,9 +746,10 @@ fn an_app_run_does_not_take_over_a_database_sky_did_not_create() {
 #[test]
 fn the_socket_is_reachable_by_an_app_running_as_another_account() {
     let Ok(bins) = db_cluster::discover_pg_bins() else {
-        eprintln!("no PostgreSQL discoverable — skipping the socket-mode gate");
+        crate::live_gate::required(crate::live_gate::Need::Postgres, false);
         return;
     };
+    let live = one_at_a_time();
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
     let state = scratch_state_dir("sock");
     provision_cluster(&Opts {
@@ -708,7 +759,7 @@ fn the_socket_is_reachable_by_an_app_running_as_another_account() {
         ..Opts::default()
     })
     .unwrap_or_else(|e| panic!("provision failed:\n{e}"));
-    let fx = Fixture { layout: Layout::new(&state), bins, user: os_user().unwrap() };
+    let fx = Fixture { _live: live, layout: Layout::new(&state), bins, user: os_user().unwrap() };
     assert!(cluster_running(&fx.layout), "--start left no cluster running");
 
     use std::os::unix::fs::PermissionsExt;
@@ -1032,11 +1083,14 @@ fn a_reload_that_cannot_be_proved_to_have_taken_is_refused() {
 /// The generated launchd jobs are handed to `plutil -lint`, Apple's own parser.
 /// The systemd unit has no equivalent validator on this platform, which is why
 /// `tests.rs` checks its structure instead — and why the report says so.
+/// `#[cfg]`, not a runtime `if` that returns. A launchd job is a macOS concept
+/// and `plutil` is a macOS binary, so on Linux there is nothing here to run —
+/// and a test that returns on Linux reports `ok`, adding one to a count that
+/// says fourteen security tests passed. Compiled out, the count says thirteen,
+/// which is true.
+#[cfg(target_os = "macos")]
 #[test]
 fn the_generated_launchd_jobs_pass_apples_own_parser() {
-    if !cfg!(target_os = "macos") {
-        return;
-    }
     let dir = scratch_state_dir("plist");
     std::fs::create_dir_all(&dir).unwrap();
     let spec = ServiceSpec {
@@ -1083,9 +1137,10 @@ fn the_generated_launchd_jobs_pass_apples_own_parser() {
 #[test]
 fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
     let Ok(bins) = db_cluster::discover_pg_bins() else {
-        eprintln!("no PostgreSQL discoverable — skipping the wrapper shutdown gate");
+        crate::live_gate::required(crate::live_gate::Need::Postgres, false);
         return;
     };
+    let live = one_at_a_time();
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
     let state = scratch_state_dir("wrap");
     let opts = Opts {
@@ -1095,7 +1150,7 @@ fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
         ..Opts::default()
     };
     provision_cluster(&opts).unwrap_or_else(|e| panic!("provision failed:\n{e}"));
-    let fx = Fixture { layout: Layout::new(&state), bins, user: os_user().unwrap() };
+    let fx = Fixture { _live: live, layout: Layout::new(&state), bins, user: os_user().unwrap() };
     assert!(!cluster_running(&fx.layout), "the fixture wanted a stopped cluster");
 
     let wrapper = fx.layout.service_dir.join("sky-postgres-run.sh");

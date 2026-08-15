@@ -21,6 +21,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 /// Run `sky <args...>` in `dir` with stdin closed, so any interactive prompt
@@ -274,7 +278,7 @@ fn upgrade_refuses_to_replace_a_dev_build() {
         || out.contains("network is unreachable")
         || out.contains("Temporary failure in name resolution")
     {
-        eprintln!("skipping upgrade assertions — network unavailable:\n{out}");
+        required(Need::Network, false);
         let _ = std::fs::remove_dir_all(&dir);
         return;
     }
