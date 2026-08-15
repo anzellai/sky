@@ -29,7 +29,7 @@
 // (live.go:4666). So request->response time is the complete, correct
 // interaction latency, and no cross-stream correlation is needed.
 //
-// PROVING THE GENERATOR IS ACTUALLY LOADING
+// # PROVING THE GENERATOR IS ACTUALLY LOADING
 //
 // A client that silently fails to connect produces beautiful numbers.
 // Every run therefore asserts, and reports:
@@ -476,29 +476,29 @@ type sample struct {
 }
 
 type Result struct {
-	Label            string         `json:"label"`
-	URL              string         `json:"url"`
-	Sessions         int            `json:"sessions_requested"`
-	SessionsLive     int            `json:"sessions_established"`
-	Duration         string         `json:"duration"`
-	ThinkTime        string         `json:"think_time"`
-	Interactions     int            `json:"interactions_counted"`
-	Throughput       float64        `json:"interactions_per_sec"`
-	P50ms            float64        `json:"p50_ms"`
-	P95ms            float64        `json:"p95_ms"`
-	P99ms            float64        `json:"p99_ms"`
-	MaxMs            float64        `json:"max_ms"`
-	Outcomes         map[string]int `json:"outcomes"`
-	ErrorRate        float64        `json:"error_rate"`
-	SSEFramesTotal   int64          `json:"sse_frames_total"`
-	SSEStillOpen     int            `json:"sse_still_open_at_end"`
-	GeneratorCPUPct  float64        `json:"generator_cpu_percent_of_machine"`
-	GeneratorSaturated bool         `json:"generator_possibly_saturated"`
-	Valid            bool           `json:"valid"`
-	InvalidReason    string         `json:"invalid_reason,omitempty"`
-	Host             string         `json:"host"`
-	GoMaxProcs       int            `json:"gomaxprocs"`
-	StartedAt        string         `json:"started_at"`
+	Label              string         `json:"label"`
+	URL                string         `json:"url"`
+	Sessions           int            `json:"sessions_requested"`
+	SessionsLive       int            `json:"sessions_established"`
+	Duration           string         `json:"duration"`
+	ThinkTime          string         `json:"think_time"`
+	Interactions       int            `json:"interactions_counted"`
+	Throughput         float64        `json:"interactions_per_sec"`
+	P50ms              float64        `json:"p50_ms"`
+	P95ms              float64        `json:"p95_ms"`
+	P99ms              float64        `json:"p99_ms"`
+	MaxMs              float64        `json:"max_ms"`
+	Outcomes           map[string]int `json:"outcomes"`
+	ErrorRate          float64        `json:"error_rate"`
+	SSEFramesTotal     int64          `json:"sse_frames_total"`
+	SSEStillOpen       int            `json:"sse_still_open_at_end"`
+	GeneratorCPUPct    float64        `json:"generator_cpu_percent_of_machine"`
+	GeneratorSaturated bool           `json:"generator_possibly_saturated"`
+	Valid              bool           `json:"valid"`
+	InvalidReason      string         `json:"invalid_reason,omitempty"`
+	Host               string         `json:"host"`
+	GoMaxProcs         int            `json:"gomaxprocs"`
+	StartedAt          string         `json:"started_at"`
 }
 
 func run(cfg config) (*Result, error) {
