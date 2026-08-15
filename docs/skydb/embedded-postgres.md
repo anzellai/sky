@@ -309,7 +309,13 @@ Everything lives under one **state directory** — `/var/lib/sky` on Linux,
 a *sibling* of the data directory rather than a child, and that is not tidiness:
 PostgreSQL requires the data directory to be 0700, so a socket inside it is
 unreachable by every user except the one running the postmaster — which is every
-app on a shared host. A state directory that is relative, ephemeral (`/tmp`,
+app on a shared host. For the same reason the socket directory is `0755` and
+`unix_socket_permissions` is `0777`: those two numbers *are* the mechanism for
+"several apps, under several accounts, on one host", the access control here
+being authentication rather than file modes. Tightened to `0700` every generated
+artefact still reads correctly and every app under another account fails at
+connect with `Permission denied`, so the live gate `stat`s both. A state
+directory that is relative, ephemeral (`/tmp`,
 `/var/tmp`, `/dev/shm`, `$TMPDIR`, `/var/folders`), inside a Sky project, or
 shell-unsafe is refused up front.
 
@@ -332,6 +338,32 @@ shell-unsafe is refused up front.
   behind that would be decoration. The superuser keeps `peer` — the kernel's own
   answer to "which uid connected" — so sky administers the cluster with no
   password stored anywhere.
+- **And the running cluster is made to *read* that file.** Writing
+  `pg_hba.conf` is not applying it: the postmaster reads it at startup and on
+  SIGHUP, so a cluster that was **already up** — the adopted case, which is the
+  primary one — goes on enforcing whatever it read then, indefinitely, while the
+  file on disk reviews correctly. That is silent in exactly the case where
+  silence is fatal: an adopted `md5` cluster fails loudly at the next connection,
+  and a cluster sky started reads the new file, but an adopted `trust` cluster
+  keeps accepting any password from anyone. So a provision that finds the cluster
+  running reloads it, and **proves the reload took** — `pg_conf_load_time()` must
+  advance and `pg_hba_file_rules` must report no parse error, since `pg_ctl
+  reload` reports success for a reload the postmaster then discards. Sky also
+  asks the server for its `hba_file` and `config_file` and refuses when they are
+  not the files it wrote: a distribution package keeps both under
+  `/etc/postgresql`, where a hardened file in the data directory is inert.
+- **`--app <name>` will not take over a role it did not create.** The
+  pre-existing branch used to `ALTER ROLE … PASSWORD` and print the result as the
+  app's DSN. For the account that ran `--shared` — the bootstrap superuser, whose
+  name is not a constant and so cannot be in the reserved list — that handed one
+  app every other app's data, and gave the operator's own account a password it
+  did not choose. For an operator's `analytics` or a previous tenant's role it
+  handed the new app the old one's identity and took the old one's password away.
+  Two questions are now asked of any role that already exists, and either one is a
+  refusal: does it hold `SUPERUSER` / `CREATEROLE` / `CREATEDB` / `REPLICATION` /
+  `BYPASSRLS`, and did sky create it — recorded as a comment on the role itself,
+  so the answer survives a state directory that was restored or lost.
+  `validate_app_name` refuses the current account outright, before any connection.
 
 Both are gated by attempt, not by inspection: `an_apps_credentials_cannot_reach_another_apps_database`
 provisions two apps against a live cluster, has each write a row, then connects
@@ -357,8 +389,10 @@ on licence grounds, `createdb`/`createuser` are not shipped either and could not
 run the `REVOKE`s, and `postgres --single` needs the cluster *stopped* — which on
 a shared host means taking every other app down to add one. It is ~450 lines: a
 startup packet, SCRAM-SHA-256 (RFC 7677, carrying the RFC's own vectors as unit
-tests), and simple queries. `md5` is deliberately unimplemented so a mis-edited
-`pg_hba.conf` cannot downgrade the cluster in silence.
+tests), and simple queries. `md5` and **cleartext** are deliberately
+unimplemented so a mis-edited `pg_hba.conf` cannot downgrade the cluster in
+silence — cleartext being the weaker of the two, since answering it puts an app's
+password on the wire as it stands.
 
 **Tuning is derived from the host** — `shared_buffers` at a quarter of RAM
 capped at 8GB, `effective_cache_size`, `work_mem` divided by `max_connections`,
@@ -396,15 +430,32 @@ That claim is gated live — a real postmaster, a client connection held open, a
 With the wrapper sending `SIGTERM` instead, it is not: the gate fails at 31s with
 the smart shutdown still waiting on that one connection.
 
-**The backup is `pg_dump --format=custom` on a timer**, into `<state>/backups`,
-renamed into place so a `.part` from an interrupted run is never mistaken for a
-backup, with a retention `find`. The app list is read at **run time** from the
-file `--app` maintains, so an app provisioned after the timer was generated is
-backed up without regenerating anything. The gate restores the dump into a fresh
-database and reads the row back — with `--format=custom` dropped, the file still
-exists and still holds the data, and `pg_restore` says
+**The backup is `pg_dump --format=custom --create` on a timer**, into
+`<state>/backups`, renamed into place so a `.part` from an interrupted run is
+never mistaken for a backup, with a retention `find`. The app list is read at
+**run time** from the file `--app` maintains, so an app provisioned after the
+timer was generated is backed up without regenerating anything. The gate restores
+the dump into a fresh database and reads the row back — with `--format=custom`
+dropped, the file still exists and still holds the data, and `pg_restore` says
 `input file appears to be a text format dump. Please use psql.`, which is the
 whole difference between a file and a backup.
+
+`--create` is there for the boundary rather than for convenience. Without it the
+dump carries no **database-level ACL**, so restoring into a database made by hand
+— which is what a recovery does — yields one with `PUBLIC`'s default `CONNECT`,
+readable by every app role on the cluster: the cross-tenant read the phase exists
+to prevent, reintroduced by the recovery path. So restore with
+`pg_restore --create --dbname postgres <dump>`, which rebuilds the database with
+its `REVOKE … FROM PUBLIC` intact. Retention is `find -mtime "+$KEEP_DAYS"`, and
+`--backup-keep` is range-checked (1-3650) because `0` reads as "older than 24
+hours" and would have the nightly job delete every dump but the newest.
+
+The backups are also protected as *files*: the script runs `umask 077` and the
+directory is `0700`. A dump is every row of an app's database and
+`globals-*.sql` is every role's SCRAM verifier, so world-readable backups are a
+cross-tenant read taken from the filesystem, needing no authentication, no
+`CONNECT` and no SQL at all. The gate `stat`s the directory and every dump it
+produced.
 
 > **Roles are cluster-wide, and `pg_dumpall` is not in Sky's bundle.** A
 > `pg_dump` of one database restores into a cluster with no `orders` role by

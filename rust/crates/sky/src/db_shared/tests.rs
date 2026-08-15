@@ -292,6 +292,46 @@ fn app_names_that_cannot_be_a_database_a_role_and_a_filename_are_refused() {
     }
 }
 
+/// The account that ran `sky db provision --shared` is the cluster's bootstrap
+/// SUPERUSER (`initdb --username=…`), and it is not in `RESERVED` because it is
+/// not a fixed name. Provisioning an app of that name finds the role present,
+/// resets its password, and prints it as an app DSN — handing an app the keys to
+/// every other app's data, and giving the operator's superuser a password it did
+/// not have. `--app deploy` on a host provisioned by `deploy` is the realistic
+/// shape of it.
+#[test]
+fn the_account_that_provisioned_the_cluster_is_not_a_usable_app_name() {
+    let me = os_user().expect("id -un");
+    // Only meaningful if the name could otherwise pass; a user called `Anzel` or
+    // `postgres` is already refused by the charset rule or by RESERVED.
+    if me.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        && me.starts_with(|c: char| c.is_ascii_lowercase())
+        && !RESERVED.contains(&me.as_str())
+    {
+        let e = validate_app_name(&me).expect_err(&format!("{me:?} was accepted as an app name"));
+        assert!(e.contains("bootstrap superuser"), "{e}");
+        // And through the parser the user actually types.
+        let e = parse_args(&["--shared".into(), "--app".into(), me.clone()]).unwrap_err();
+        assert!(e.contains("bootstrap superuser"), "{e}");
+    }
+    // A name that is not this account is unaffected.
+    validate_app_name("alpha").unwrap();
+}
+
+/// `--backup-keep 0` makes the retention line `find -mtime +0`, which deletes
+/// every dump older than 24 hours — i.e. everything but the one taken minutes
+/// ago, on a schedule, unattended. `--max-connections` is range-checked; this
+/// was not.
+#[test]
+fn a_retention_window_that_deletes_the_backups_is_refused() {
+    let e = parse_args(&["--shared".into(), "--backup-keep".into(), "0".into()]).unwrap_err();
+    assert!(e.contains("--backup-keep"), "{e}");
+    assert!(e.contains("delete"), "the message does not say what 0 would do:\n{e}");
+    assert!(parse_args(&["--shared".into(), "--backup-keep".into(), "1".into()]).is_ok());
+    assert!(parse_args(&["--shared".into(), "--backup-keep".into(), "3650".into()]).is_ok());
+    assert!(parse_args(&["--shared".into(), "--backup-keep".into(), "3651".into()]).is_err());
+}
+
 #[test]
 fn identifiers_and_literals_are_quoted() {
     assert_eq!(quote_ident("a\"b"), "\"a\"\"b\"");
@@ -320,6 +360,45 @@ fn the_dsn_is_the_shape_the_runtime_classifies_as_postgres() {
     assert_eq!(tcp, "postgresql://alpha:pw@127.0.0.1:6000/alpha");
     let odd_port = app_dsn("alpha", "pw", Path::new("/x"), &Listen { addr: None, port: 6000 });
     assert_eq!(odd_port, "postgresql://alpha:pw@/alpha?host=/x&port=6000");
+    // An IPv6 address MUST be bracketed. Unbracketed, libpq reads everything
+    // after the first colon as the port and refuses the DSN with `invalid
+    // integer value ":1:5432" for connection option "port"` — an error that
+    // names the port, so the operator debugs the wrong thing entirely. `pg_hba`
+    // emits a `::1/128` rule whenever `--listen` is given, so this address is
+    // one sky explicitly supports.
+    let v6 = app_dsn("alpha", "pw", Path::new("/x"), &Listen { addr: Some("::1".into()), port: DEFAULT_PORT });
+    assert_eq!(v6, "postgresql://alpha:pw@[::1]:5432/alpha");
+    // Already bracketed by the operator is not bracketed twice.
+    let v6b = app_dsn("alpha", "pw", Path::new("/x"), &Listen { addr: Some("[::1]".into()), port: 6000 });
+    assert_eq!(v6b, "postgresql://alpha:pw@[::1]:6000/alpha");
+}
+
+/// `listen_addresses` states what the SERVER binds. `*`, `0.0.0.0` and `::` are
+/// not addresses a client can dial, so a DSN carrying one names nowhere — and
+/// the IPv6 wildcard has to become the IPv6 loopback, not the IPv4 one: a
+/// postmaster bound to `::` on a host without an IPv4 mapping is not reachable
+/// at 127.0.0.1 at all.
+#[test]
+fn a_wildcard_bind_address_becomes_an_address_a_client_can_dial() {
+    let dir = std::env::temp_dir().join(format!("sky-p6-listen-{}", std::process::id()));
+    let l = Layout::new(&dir);
+    std::fs::create_dir_all(&l.data_dir).unwrap();
+    let write = |addr: &str| {
+        std::fs::write(
+            l.data_dir.join("postgresql.conf"),
+            format!("listen_addresses = '{addr}'\nport = 5432\n"),
+        )
+        .unwrap()
+    };
+    for wildcard in ["*", "0.0.0.0"] {
+        write(wildcard);
+        assert_eq!(effective_listen(&l).addr.as_deref(), Some("127.0.0.1"), "{wildcard}");
+    }
+    write("::");
+    assert_eq!(effective_listen(&l).addr.as_deref(), Some("::1"));
+    write("::1");
+    assert_eq!(effective_listen(&l).addr.as_deref(), Some("::1"));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ---- service units -------------------------------------------------------
@@ -419,6 +498,18 @@ fn the_backup_script_dumps_roles_when_it_can_and_says_so_when_it_cannot() {
     assert!(s.contains("if [ -x \"$PG_DUMPALL\" ]"), "{s}");
     assert!(s.contains("--globals-only"), "{s}");
     assert!(s.contains("role definitions are NOT in this backup"), "{s}");
+}
+
+/// A `--format=custom` dump of one database carries no database-level ACL, so a
+/// restore into a hand-made database yields a database with `PUBLIC`'s default
+/// `CONNECT` — readable by every app role on the cluster. That is the
+/// cross-tenant read the whole phase exists to prevent, reintroduced by the
+/// recovery path. `--create` puts the `CREATE DATABASE` and its ACL in the dump,
+/// so `pg_restore --create` rebuilds the database hardened.
+#[test]
+fn the_dump_carries_the_databases_own_acl_so_a_restore_is_hardened() {
+    let s = backup_script(&spec());
+    assert!(s.contains("--create"), "the dump carries no database ACL:\n{s}");
 }
 
 #[test]

@@ -434,6 +434,23 @@ pub fn validate_app_name(name: &str) -> Result<(), String> {
              built-in databases and roles."
         ));
     }
+    // The one reserved name that cannot be a constant: the account that ran
+    // `--shared` is the cluster's BOOTSTRAP SUPERUSER (`initdb --username=…`),
+    // and its name is whatever that account is called. Provisioning an app of
+    // that name finds the role present and — before this refusal — reset its
+    // password and printed it as an app DSN: an app handed superuser, every
+    // other app's data with it, and the operator's own account given a password
+    // it did not choose. `--app deploy` on a host provisioned by `deploy` is the
+    // realistic shape.
+    if os_user().map(|u| u == name).unwrap_or(false) {
+        return Err(format!(
+            "sky db provision --shared --app: {name:?} is this account, and this account is\n\
+             the cluster's bootstrap superuser — the role `initdb --username` created.\n\
+             An app of that name would be handed the superuser's credentials, which read\n\
+             every other app's database. Name the app after the app:\n\
+             \x20 sky db provision --shared --app {name}_app"
+        ));
+    }
     Ok(())
 }
 
@@ -479,14 +496,33 @@ pub fn generate_password() -> String {
 /// `rt.detectDriver` and the compiler's `driver_for_dsn` classify as Postgres
 /// from the prefix alone. Over a socket the host goes in the query string, which
 /// is libpq's documented way to name a socket **directory**.
+///
+/// An IPv6 address is bracketed, per RFC 3986 — and this is not cosmetic.
+/// `postgresql://alpha:pw@::1:5432/alpha` is not a DSN libpq can parse: it reads
+/// everything after the first colon as the port and refuses with `invalid
+/// integer value ":1:5432" for connection option "port"`. The error names the
+/// PORT, so an operator handed that DSN debugs the listener rather than the
+/// string — and `pg_hba` emits a `::1/128` rule whenever `--listen` is given, so
+/// this is an address sky explicitly supports.
 pub fn app_dsn(app: &str, password: &str, socket_dir: &Path, listen: &Listen) -> String {
     match &listen.addr {
-        Some(addr) => format!("postgresql://{app}:{password}@{addr}:{}/{app}", listen.port),
+        Some(addr) => format!("postgresql://{app}:{password}@{}:{}/{app}", uri_host(addr), listen.port),
         None => format!(
             "postgresql://{app}:{password}@/{app}?host={}{}",
             socket_dir.display(),
             if listen.port == DEFAULT_PORT { String::new() } else { format!("&port={}", listen.port) }
         ),
+    }
+}
+
+/// The host component of a URI: an IPv6 literal has to be bracketed, anything
+/// else is written as-is. Idempotent, so an operator who passed
+/// `--listen '[::1]'` does not get double brackets.
+fn uri_host(addr: &str) -> String {
+    if addr.contains(':') && !addr.starts_with('[') {
+        format!("[{addr}]")
+    } else {
+        addr.to_string()
     }
 }
 
@@ -542,11 +578,22 @@ pub fn app_cluster_sql(app: &str, password: &str) -> Vec<String> {
             "CREATE ROLE {id} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
             quote_literal(password)
         ),
+        // Sky's mark on the roles it owns. A later `--app` run of the same name
+        // has to tell its own role from an operator's `analytics`, a previous
+        // tenant's, or the bootstrap superuser — and the answer must live in the
+        // cluster, next to the role, so that it survives a state directory that
+        // was restored, copied or lost. See [`provision_app_inner`], which
+        // refuses to touch a role that does not carry it.
+        format!("COMMENT ON ROLE {id} IS {}", quote_literal(ROLE_MARKER)),
         format!("CREATE DATABASE {id} OWNER {id}"),
         format!("REVOKE ALL ON DATABASE {id} FROM PUBLIC"),
         format!("GRANT CONNECT, TEMPORARY ON DATABASE {id} TO {id}"),
     ]
 }
+
+/// The comment sky puts on every role it creates. Ownership, recorded in the
+/// cluster rather than only in `apps_file`.
+pub const ROLE_MARKER: &str = "sky shared-cluster app role";
 
 /// The statements run **inside** the app's own database, once it exists.
 ///
@@ -815,7 +862,13 @@ pub fn backup_script(spec: &ServiceSpec) -> String {
          \x20 # --format=custom: pg_restore can select objects out of it, and it is\n\
          \x20 # compressed. A plain-SQL dump is only restorable by psql, which sky's\n\
          \x20 # bundle deliberately does not ship.\n\
-         \x20 \"$PG_DUMP\" --host \"$SOCKET_DIR\" --port \"$PORT\" --format=custom --file \"$tmp\" -- \"$db\"\n\
+         \x20 #\n\
+         \x20 # --create: without it the dump carries no DATABASE-level ACL, so a\n\
+         \x20 # restore into a hand-made database produces one with PUBLIC's default\n\
+         \x20 # CONNECT - readable by every app role on the cluster. Recovery would\n\
+         \x20 # then undo the boundary the cluster was provisioned to draw. Restore\n\
+         \x20 # with:  pg_restore --create --dbname postgres <dump>\n\
+         \x20 \"$PG_DUMP\" --host \"$SOCKET_DIR\" --port \"$PORT\" --format=custom --create --file \"$tmp\" -- \"$db\"\n\
          \x20 mv \"$tmp\" \"$OUT/$db-$ts.dump\"\n\
          done < \"$APPS\"\n\
          \n\
@@ -1110,6 +1163,16 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
     if o.max_connections < 10 || o.max_connections > 10_000 {
         return Err("--max-connections must be between 10 and 10000".into());
     }
+    // The retention window becomes `find -mtime "+$KEEP_DAYS"`. At 0 that reads
+    // "older than 24 hours" and the nightly job deletes every dump but the one
+    // it has just taken — unattended, and discovered during a restore.
+    if o.backup_keep_days < 1 || o.backup_keep_days > 3650 {
+        return Err(
+            "--backup-keep must be between 1 and 3650 days. 0 would make the nightly job\n\
+             delete every dump older than 24 hours, which is all of them but the newest."
+                .into(),
+        );
+    }
     if o.rotate && o.app.is_none() {
         return Err("--rotate-password names one app: pass --app <name>".into());
     }
@@ -1172,16 +1235,24 @@ pub fn cmd_shared(args: &[String]) -> ExitCode {
 
 // ---- execution -----------------------------------------------------------
 
+/// The account this process runs as — the cluster's bootstrap superuser, and
+/// therefore a name [`validate_app_name`] has to refuse. Answered once: it
+/// cannot change while the process lives, and `validate_app_name` is on the
+/// argument-parsing path.
 fn os_user() -> Result<String, String> {
-    let out = Command::new("id")
-        .arg("-un")
-        .output()
-        .map_err(|e| format!("sky db provision --shared: cannot determine the current user: {e}"))?;
-    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if name.is_empty() {
-        return Err("sky db provision --shared: `id -un` returned nothing".into());
-    }
-    Ok(name)
+    static USER: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    USER.get_or_init(|| {
+        let out = Command::new("id")
+            .arg("-un")
+            .output()
+            .map_err(|e| format!("sky db provision --shared: cannot determine the current user: {e}"))?;
+        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if name.is_empty() {
+            return Err("sky db provision --shared: `id -un` returned nothing".into());
+        }
+        Ok(name)
+    })
+    .clone()
 }
 
 fn refuse_root() -> Result<(), String> {
@@ -1384,10 +1455,14 @@ fn effective_listen(layout: &Layout) -> Listen {
     let port = conf_setting(&conf, "port").and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT);
     let addr = conf_setting(&conf, "listen_addresses")
         .filter(|a| !a.is_empty())
-        // `*` and `0.0.0.0` say what the SERVER binds; neither is an address a
-        // client can dial, and a DSN carrying one connects nowhere.
+        // `*`, `0.0.0.0` and `::` say what the SERVER binds; none is an address a
+        // client can dial, and a DSN carrying one connects nowhere. `::` becomes
+        // the IPv6 loopback rather than the IPv4 one: a postmaster bound only to
+        // `::` is not reachable at 127.0.0.1 on a host without v4-mapped
+        // addresses, which is the case this substitution exists to get right.
         .map(|a| match a.as_str() {
-            "*" | "0.0.0.0" | "::" => "127.0.0.1".to_string(),
+            "*" | "0.0.0.0" => "127.0.0.1".to_string(),
+            "::" => "::1".to_string(),
             other => other.split(',').next().unwrap_or(other).trim().to_string(),
         });
     Listen { addr, port }
@@ -1483,12 +1558,35 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
 
     let was_running = cluster_running(&layout);
     let mut guard = ensure_running(&bins, &layout)?;
+    // The cluster must be reading the files sky just wrote. On a distribution
+    // package they live in /etc and the data directory's copies are inert, so
+    // this would otherwise be a provision that hardened nothing and said
+    // "cluster ready".
+    verify_the_server_reads_skys_files(&layout, o.listen.port, &user)?;
+    if was_running {
+        // `pg_hba.conf` is read by the postmaster at startup and on SIGHUP. A
+        // cluster that was ALREADY UP therefore keeps enforcing whatever it read
+        // then — indefinitely — while the file on disk reviews correctly. That
+        // is silent in exactly the case where silence is fatal: an adopted `md5`
+        // cluster fails loudly at the next connection (`pg_wire` refuses md5),
+        // and a cluster sky started reads the new file, but an adopted `trust`
+        // or `peer` cluster goes on letting any local process claim to be any
+        // app's role, with every REVOKE behind it decoration.
+        //
+        // Adoption is the documented primary case ("a shared cluster may be an
+        // operator's existing server, so it is applied rather than assumed"), so
+        // this is the common path, not the corner.
+        reload_hba(&layout, o.listen.port, &user)?;
+    }
     if was_running && conf_changed {
-        // shared_buffers, max_connections and listen_addresses need a restart;
-        // saying so is better than a reload that silently applies half of it.
+        // The reload above applies pg_hba.conf and every reloadable setting.
+        // shared_buffers, max_connections and listen_addresses need a RESTART;
+        // saying so is better than letting the operator read "ready" and assume
+        // the tuning took.
         eprintln!(
             "sky db provision --shared: the cluster was already running and its tuning changed.\n\
-             Restart it for shared_buffers / max_connections / listen_addresses to take effect."
+             pg_hba.conf and the reloadable settings are in effect now. Restart it for\n\
+             shared_buffers / max_connections / listen_addresses to take effect."
         );
     }
 
@@ -1579,6 +1677,126 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
     }
     out.push_str("\nNext:  sky db provision --shared --app <name>\n");
     Ok(out)
+}
+
+/// Confirm the running cluster reads the two files sky writes.
+///
+/// A cluster can be told where its configuration lives — `postgres -c
+/// config_file=…`, or an `hba_file` line inside `postgresql.conf`. Distribution
+/// packages do exactly that: on Debian both files are under `/etc/postgresql`,
+/// and the copies in the data directory are inert. Sky would then write a
+/// hardened `pg_hba.conf` nobody reads, reload successfully, and report a
+/// cluster ready whose authentication it had not changed at all — the same
+/// end state as not reloading, and just as quiet.
+///
+/// So it is asked, and a mismatch is a refusal rather than a warning: there is
+/// no partial version of this boundary.
+fn verify_the_server_reads_skys_files(layout: &Layout, port: u16, superuser: &str) -> Result<(), String> {
+    let mut c = admin_conn(layout, port, superuser, "postgres")?;
+    for (setting, ours) in [
+        ("hba_file", layout.data_dir.join("pg_hba.conf")),
+        ("config_file", layout.data_dir.join("postgresql.conf")),
+    ] {
+        let theirs = c
+            .scalar(&format!("SHOW {setting}"))
+            .map_err(|e| format!("sky db provision --shared: cannot read {setting}: {e}"))?
+            .unwrap_or_default();
+        let same = std::fs::canonicalize(&theirs).ok() == std::fs::canonicalize(&ours).ok()
+            && !theirs.is_empty();
+        if !same {
+            return Err(format!(
+                "sky db provision --shared: this cluster reads its {setting} from\n\
+                 \x20 {theirs}\n\
+                 but sky writes\n\
+                 \x20 {}\n\
+                 \n\
+                 Provisioning would harden a file the server never reads, and report a\n\
+                 cluster ready whose authentication had not changed. This is what a\n\
+                 distribution package looks like (Debian keeps both files under\n\
+                 /etc/postgresql). Either point sky at a cluster it owns, or move the\n\
+                 configuration back into the data directory.",
+                ours.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Make a cluster that was already running enforce the `pg_hba.conf` just
+/// written — and prove that it did.
+///
+/// `pg_ctl reload` reports success for a reload the postmaster then REJECTS: a
+/// `pg_hba.conf` it cannot parse is logged and the previous rules are kept, so a
+/// caller that only checks the exit status has learned nothing. Both halves are
+/// therefore asserted:
+///
+/// * `pg_conf_load_time()` advances — the SIGHUP was delivered and processed,
+///   rather than sent to a postmaster that had gone away;
+/// * `pg_hba_file_rules` reports no parse error — the file the server would load
+///   is loadable, which is the condition under which a reload is kept.
+///
+/// A reload sent through SQL rather than `pg_ctl` on purpose: the same
+/// connection then answers whether it took, with no window in between.
+fn reload_hba(layout: &Layout, port: u16, superuser: &str) -> Result<(), String> {
+    let mut c = admin_conn(layout, port, superuser, "postgres")?;
+    let before = c
+        .scalar("SELECT pg_conf_load_time()::text")
+        .map_err(|e| format!("sky db provision --shared: cannot read pg_conf_load_time: {e}"))?
+        .unwrap_or_default();
+
+    // Parse errors first: a file the postmaster cannot read is a reload that
+    // will be discarded, and saying so names the actual problem.
+    match c.scalar("SELECT count(*) FROM pg_hba_file_rules WHERE error IS NOT NULL") {
+        Ok(n) if n.as_deref() != Some("0") => {
+            let detail = c
+                .scalar("SELECT error FROM pg_hba_file_rules WHERE error IS NOT NULL LIMIT 1")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            return Err(format!(
+                "sky db provision --shared: the pg_hba.conf just written does not parse\n\
+                 ({detail}). The cluster would keep the rules it started with, so it is\n\
+                 refused rather than reloaded."
+            ));
+        }
+        Ok(_) => {}
+        // `pg_hba_file_rules` arrived in PostgreSQL 10. On anything older the
+        // load-time proof below still stands on its own.
+        Err(e) if e.sqlstate() == Some("42P01") => {}
+        Err(e) => return Err(format!("sky db provision --shared: cannot read pg_hba_file_rules: {e}")),
+    }
+
+    c.scalar("SELECT pg_reload_conf()")
+        .map_err(|e| format!("sky db provision --shared: cannot reload the cluster: {e}"))?;
+
+    // The postmaster signals its children; this backend picks the new
+    // configuration up at a command boundary, so it is polled rather than read
+    // once.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        let took = c
+            .scalar(&format!(
+                "SELECT pg_conf_load_time() > {}::timestamptz",
+                quote_literal(&before)
+            ))
+            .map_err(|e| format!("sky db provision --shared: cannot read pg_conf_load_time: {e}"))?;
+        if took.as_deref() == Some("t") {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "sky db provision --shared: the cluster was already running, and the reload of\n\
+                 pg_hba.conf did not take within 15s — its configuration load time is still\n\
+                 {before}.\n\
+                 \n\
+                 It is therefore still enforcing the authentication rules it started with,\n\
+                 whatever they were, and the hardened file on disk is not in effect. This is\n\
+                 refused rather than reported as ready: under `trust` every REVOKE behind it\n\
+                 is decoration. Restart the cluster and run this again."
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 fn run_initdb(bins: &PgBins, layout: &Layout, user: &str) -> Result<(), String> {
@@ -1684,6 +1902,10 @@ fn provision_app_inner(
         .map_err(|e| format!("sky db provision --shared: cannot read pg_database: {e}"))?
         .is_some();
 
+    if role_exists {
+        refuse_a_role_sky_does_not_own(&mut c, layout, app)?;
+    }
+
     let mut password: Option<String> = None;
     if !role_exists || !db_exists {
         let pw = generate_password();
@@ -1748,6 +1970,80 @@ fn provision_app_inner(
              \x20 sky db provision --shared --app {app} --rotate-password\n"
         )),
     }
+}
+
+/// Refuse `--app <name>` when a role of that name is already there and is not
+/// one sky made.
+///
+/// The pre-existing branch of [`provision_app_inner`] used to ROTATE: it found
+/// the role, `ALTER ROLE … PASSWORD`ed it, and printed the result as the app's
+/// DSN. For an operator's `analytics`, `replication`, or a previous tenant's
+/// role that hands the new app the old one's identity — and takes the old one's
+/// password away in the same statement. For the bootstrap superuser it hands one
+/// app every other app's data. Neither is recoverable by the operator noticing:
+/// the run prints success.
+///
+/// Two questions, and either one is a refusal:
+///
+/// 1. **May the role do more than its own database?** `SUPERUSER`,
+///    `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` each reach outside
+///    the boundary this phase draws, so no such role may be issued as an app's
+///    credentials — including one sky created and an operator has since
+///    promoted.
+/// 2. **Did sky create it?** Answered by the role comment
+///    ([`ROLE_MARKER`]), with `apps_file` accepted as well so a cluster
+///    provisioned before the marker existed still converges.
+fn refuse_a_role_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> Result<(), String> {
+    let lit = quote_literal(app);
+    let elevated = c
+        .scalar(&format!(
+            "SELECT concat_ws(', ', \
+               CASE WHEN rolsuper THEN 'SUPERUSER' END, \
+               CASE WHEN rolcreaterole THEN 'CREATEROLE' END, \
+               CASE WHEN rolcreatedb THEN 'CREATEDB' END, \
+               CASE WHEN rolreplication THEN 'REPLICATION' END, \
+               CASE WHEN rolbypassrls THEN 'BYPASSRLS' END) \
+             FROM pg_roles WHERE rolname = {lit}"
+        ))
+        .map_err(|e| format!("sky db provision --shared --app {app}: cannot read pg_roles: {e}"))?
+        .filter(|s| !s.is_empty());
+    if let Some(attrs) = elevated {
+        return Err(format!(
+            "sky db provision --shared --app {app}: the role {app:?} already exists and holds\n\
+             {attrs}, so it can reach outside its own database. sky will not hand an app\n\
+             credentials for it, and will not change its password.\n\
+             \n\
+             If this is the account that provisioned the cluster, it is the bootstrap\n\
+             superuser; name the app something else. If it is an operator's role, either\n\
+             pick another name or drop the role first."
+        ));
+    }
+    let owned_by_sky = c
+        .scalar(&format!(
+            "SELECT 1 FROM pg_roles WHERE rolname = {lit} \
+             AND shobj_description(oid, 'pg_authid') = {}",
+            quote_literal(ROLE_MARKER)
+        ))
+        .map_err(|e| format!("sky db provision --shared --app {app}: cannot read the role's comment: {e}"))?
+        .is_some();
+    let recorded = std::fs::read_to_string(&layout.apps_file)
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l.trim() == app);
+    if !owned_by_sky && !recorded {
+        return Err(format!(
+            "sky db provision --shared --app {app}: sky did not create the role {app:?}.\n\
+             It already exists, and carries neither sky's role comment nor an entry in\n\
+             {}.\n\
+             \n\
+             Provisioning it would reset its password and print the result as this app's\n\
+             DSN: the app would inherit whatever that role can already reach, and whatever\n\
+             uses the role today would stop authenticating. Pick another name, or drop the\n\
+             role if it is genuinely unused.",
+            layout.apps_file.display()
+        ));
+    }
+    Ok(())
 }
 
 fn redact(stmt: &str, password: &str) -> String {

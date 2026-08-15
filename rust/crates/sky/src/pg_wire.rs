@@ -36,7 +36,12 @@
 //! `md5` is deliberately not implemented: PostgreSQL has deprecated it, sky's
 //! own `pg_hba.conf` never asks for it, and a client that quietly supported it
 //! would let a mis-edited `pg_hba.conf` downgrade the whole cluster in silence.
-//! The refusal names the method instead.
+//! The refusal names the method instead. **Cleartext** (`AuthenticationCleartext
+//! Password`, a `password` line in `pg_hba.conf`) is refused on the same ground
+//! and with more reason, being strictly weaker than md5: it puts an app's
+//! credentials on the wire in the clear. This client answered it until the
+//! remediation of phase 6 — an inconsistency, since the weaker of the two
+//! methods was the one that was accepted.
 
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -187,14 +192,19 @@ impl Conn {
                     match code {
                         0 => {} // AuthenticationOk — keep reading to ReadyForQuery.
                         3 => {
-                            let pw = password.ok_or_else(|| {
-                                Error::Protocol(format!(
-                                    "the server asked {user} for a password and none was supplied"
-                                ))
-                            })?;
-                            let mut m = pw.as_bytes().to_vec();
-                            m.push(0);
-                            self.send(b'p', &m)?;
+                            // Cleartext, refused for the same reason as md5
+                            // below and more so: it is strictly weaker. A
+                            // `password` line in pg_hba.conf puts every app's
+                            // credentials on the wire in the clear, and
+                            // answering it would let a mis-edited pg_hba.conf
+                            // downgrade the whole cluster in silence — the file
+                            // would read as a downgrade nobody's client
+                            // complained about.
+                            return Err(Error::Protocol(format!(
+                                "the server asked {user} for a CLEARTEXT password, which sky does \
+                                 not send — a shared cluster's pg_hba.conf must ask for \
+                                 scram-sha-256"
+                            )));
                         }
                         10 => {
                             let pw = password.ok_or_else(|| {
@@ -552,6 +562,67 @@ pub fn random_bytes(n: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The weaker of the two password methods was the one this client answered.
+    /// `md5` was refused with the reasoning that a client which quietly supports
+    /// a weaker method lets a mis-edited `pg_hba.conf` downgrade the cluster in
+    /// silence — and cleartext, which sends the password itself, was answered.
+    ///
+    /// Asserted against a socket that speaks the protocol far enough to ask, so
+    /// the evidence is what sky put on the wire: the failing branch sends the
+    /// password, and the server half counts the bytes.
+    #[test]
+    fn a_cleartext_password_request_is_refused_and_no_password_is_sent() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
+
+        let dir = std::env::temp_dir().join(format!("sky-pgwire-clear-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = UnixListener::bind(socket_file(&dir, 5432)).unwrap();
+
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            // The startup packet: the one message with no type byte.
+            let mut head = [0u8; 4];
+            s.read_exact(&mut head).unwrap();
+            let len = i32::from_be_bytes(head) as usize;
+            s.read_exact(&mut vec![0u8; len - 4]).unwrap();
+            // AuthenticationCleartextPassword.
+            let mut msg = vec![b'R'];
+            msg.extend_from_slice(&8i32.to_be_bytes());
+            msg.extend_from_slice(&3i32.to_be_bytes());
+            s.write_all(&msg).unwrap();
+            s.flush().unwrap();
+            // Whatever comes back. A client that answers sends a 'p' message
+            // carrying the password; one that refuses closes the socket.
+            s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut got = Vec::new();
+            let mut buf = [0u8; 256];
+            if let Ok(n) = s.read(&mut buf) {
+                got.extend_from_slice(&buf[..n]);
+            }
+            got
+        });
+
+        let e = match Conn::connect(
+            &Target::Unix(dir.clone(), 5432),
+            "alpha",
+            "alpha",
+            Some("a-password-that-must-not-be-sent"),
+        ) {
+            Err(e) => e,
+            Ok(_) => panic!("sky accepted cleartext authentication"),
+        };
+        assert!(format!("{e}").contains("CLEARTEXT"), "refused for another reason: {e}");
+
+        let on_the_wire = server.join().unwrap();
+        assert!(
+            !String::from_utf8_lossy(&on_the_wire).contains("a-password-that-must-not-be-sent"),
+            "sky put the password on the wire in the clear: {on_the_wire:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// RFC 4231 test case 2, the one every HMAC implementation is checked
     /// against. A wrong HMAC would make SCRAM fail as "invalid password", which
