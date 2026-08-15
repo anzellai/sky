@@ -592,16 +592,33 @@ pub fn sky_home() -> PathBuf {
     home.join(".sky")
 }
 
-/// Every required binary present (and, on unix, executable). Also the
+/// Every required binary present, executable, and NON-EMPTY. Also the
 /// idempotency predicate: a cache entry counts as provisioned only when it is
 /// complete, so a truncated one is re-provisioned rather than trusted.
+///
+/// The length is the part the docstring used to promise and the code did not
+/// do. It checked existence, `is_file` and the exec bit, so a bin/ holding
+/// three ZERO-BYTE files at mode 0755 returned `true` — and that is precisely
+/// the shape a killed provision leaves behind, because `tar` creates each file
+/// with its recorded mode and writes the content afterwards. `sky db provision`
+/// then reported `AlreadyPresent`, reached no network, and handed back a bin
+/// directory with nothing in it.
+///
+/// It does not ask whether the binaries RUN. That question is asked one layer
+/// up and deliberately kept separate: `db_cluster::discover_pg_bins`
+/// interrogates with `pg_ctl --version` precisely because "a directory can hold
+/// all three binaries and still refuse to run … deserves a different message
+/// than 'not found'". Asking it here would spawn three processes on every
+/// `--embed` build, and would turn a transient exec failure into a re-download.
+/// Where the answer must be certain — the gate that decides whether a freshly
+/// extracted tree is INSTALLED — [`bundle_runs`] asks it.
 pub fn bundle_is_complete(bin_dir: &Path) -> bool {
     REQUIRED_BINS.iter().all(|b| {
         let p = bin_dir.join(b);
         let Ok(m) = std::fs::metadata(&p) else {
             return false;
         };
-        if !m.is_file() {
+        if !m.is_file() || m.len() == 0 {
             return false;
         }
         #[cfg(unix)]
@@ -613,6 +630,27 @@ pub fn bundle_is_complete(bin_dir: &Path) -> bool {
         }
         true
     })
+}
+
+/// Does the extracted bundle actually run? Asked of `postgres --version`.
+///
+/// The file that matters is one that runs, and neither a mode nor a length
+/// establishes that: a binary truncated part-way through, or built for another
+/// architecture, is present, executable, non-empty and useless. This is the
+/// question worth spending three milliseconds and one process on at the moment
+/// a tree is about to be installed into the cache — after which every later run
+/// trusts it.
+pub fn bundle_runs(bin_dir: &Path) -> Result<(), String> {
+    let exe = bin_dir.join("postgres");
+    match Command::new(&exe).arg("--version").output() {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(format!(
+            "{} exited {} without reporting a version",
+            exe.display(),
+            o.status.code().map(|c| c.to_string()).unwrap_or_else(|| "on a signal".into())
+        )),
+        Err(e) => Err(format!("cannot run {}: {e}", exe.display())),
+    }
 }
 
 /// Fetch the release archive for `version`/`platform` and verify it against the
@@ -803,6 +841,15 @@ pub fn provision(opts: &Opts) -> Result<Outcome, String> {
             "sky db provision: the archive did not contain a usable bundle \
              (need bin/{}).\nThe cache is untouched — nothing was installed.",
             REQUIRED_BINS.join(", bin/")
+        ));
+    }
+    // Present, executable and non-empty is still not "runs". This is the last
+    // moment anything checks: after the rename below, every later provision
+    // takes the cache entry's existence as the answer.
+    if let Err(why) = bundle_runs(&tree.join("bin")) {
+        return Err(format!(
+            "sky db provision: the extracted bundle does not run — {why}.\n\
+             The cache is untouched — nothing was installed."
         ));
     }
 
@@ -1154,5 +1201,91 @@ mod tests {
         let o = parse_args(&a(&["--embed", "--version", "18.6", "--force"])).unwrap();
         assert_eq!(o.version.as_deref(), Some("18.6"));
         assert!(o.force);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod bundle_completeness_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn scratch(tag: &str) -> Scratch {
+        let d = std::env::temp_dir().join(format!(
+            "sky-bundlecomplete-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(d.join("bin")).unwrap();
+        Scratch(d)
+    }
+
+    fn put(bin: &Path, name: &str, body: &[u8], mode: u32) {
+        let p = bin.join(name);
+        std::fs::write(&p, body).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// `bundle_is_complete`'s docstring says "a truncated one is re-provisioned
+    /// rather than trusted". It checked existence, `is_file` and the exec bit
+    /// and never a length, so this bundle — every required binary present, mode
+    /// 0755, zero bytes — was TRUSTED. `sky db provision` returned
+    /// `AlreadyPresent`, reached no network, and handed back an empty bin
+    /// directory.
+    ///
+    /// It is the shape a killed provision leaves: `tar` creates each file with
+    /// its recorded mode and writes the content afterwards, so a provision that
+    /// dies mid-extract leaves exactly this. The verb's own gate proves that
+    /// path is reachable — `db_provision_flow.rs` covers "an interrupted
+    /// extract" and "a SIGKILLed provision".
+    #[test]
+    fn a_bundle_of_empty_executables_is_not_a_complete_bundle() {
+        let s = scratch("empty");
+        let bin = s.0.join("bin");
+        for b in REQUIRED_BINS {
+            put(&bin, b, b"", 0o755);
+        }
+        assert!(
+            !bundle_is_complete(&bin),
+            "three zero-byte files at mode 0755 were accepted as a provisioned PostgreSQL"
+        );
+
+        // One byte each is enough to pass this predicate — the question of
+        // whether they RUN belongs to bundle_runs, below.
+        for b in REQUIRED_BINS {
+            put(&bin, b, b"\x7fELF", 0o755);
+        }
+        assert!(bundle_is_complete(&bin), "a non-empty, executable bundle was rejected");
+
+        // The pre-existing arms still hold, so the length check did not replace
+        // them: not executable, and missing entirely.
+        put(&bin, "postgres", b"\x7fELF", 0o644);
+        assert!(!bundle_is_complete(&bin), "a non-executable postgres was accepted");
+        std::fs::remove_file(bin.join("postgres")).unwrap();
+        assert!(!bundle_is_complete(&bin), "a missing postgres was accepted");
+    }
+
+    /// And "non-empty" is still not "runs" — which is why the install gate asks
+    /// the stronger question of a tree it is about to put in the cache, where
+    /// every later provision will take its existence as the answer.
+    #[test]
+    fn a_bundle_that_cannot_run_is_not_a_runnable_bundle() {
+        let s = scratch("runs");
+        let bin = s.0.join("bin");
+        for b in REQUIRED_BINS {
+            put(&bin, b, b"\x7fELF not really an executable", 0o755);
+        }
+        assert!(bundle_is_complete(&bin), "the fixture should pass the cheap predicate");
+        let e = bundle_runs(&bin).expect_err("a file of junk was reported as a working postgres");
+        assert!(e.contains("postgres"), "the refusal does not name what it tried to run:\n{e}");
+
+        // A real one runs. `true` stands in for postgres: what is under test is
+        // that a process which reports success is accepted, and this test must
+        // not require a PostgreSQL to be installed.
+        std::fs::copy("/usr/bin/true", bin.join("postgres")).unwrap();
+        std::fs::set_permissions(&bin.join("postgres"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        bundle_runs(&bin).expect("a binary that exits 0 was rejected");
     }
 }
