@@ -804,14 +804,35 @@ pub fn probe_data_dir(data_dir: &Path) -> Liveness {
 /// 8-core machine was less than the 56 backends a single app process demands —
 /// the app's `Db.connect` pool plus the runtime's analytics, session and
 /// telemetry pools. See [`crate::db_pool_sizing`].
-pub fn sky_conf_block() -> String {
-    sky_conf_block_for(std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(2))
+pub fn sky_conf_block(project: Option<&Path>) -> String {
+    let cpus = std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(2);
+    sky_conf_block_for(&crate::db_pool_sizing::PoolInputs::resolve(cpus, project))
 }
 
-/// [`sky_conf_block`] with the core count passed in, so the derivation can be
-/// gated for any host rather than only the one the test happens to run on.
-pub fn sky_conf_block_for(cpus: u32) -> String {
-    let max_connections = crate::db_pool_sizing::dev_cluster_max_connections(cpus);
+/// [`sky_conf_block`] with the sizing inputs passed in, so the derivation can be
+/// gated for any host — and any pool knob — rather than only the one the test
+/// happens to run on.
+pub fn sky_conf_block_for(i: &crate::db_pool_sizing::PoolInputs) -> String {
+    let (app, unlimited) = crate::db_pool_sizing::app_pool_size_resolved(i);
+    let max_connections = crate::db_pool_sizing::dev_cluster_max_connections(i);
+    let cpus = i.cpus;
+    // The comment NAMES the app-pool term, because that term is no longer a
+    // function of the machine — it follows `<PREFIX>_DB_MAX_OPEN_CONNS` /
+    // `sky.toml [database] maxOpenConns` — and a reader deciding whether to
+    // override the number cannot check a claim that hides its inputs.
+    let covers = if unlimited {
+        "# The app pool is UNLIMITED (<PREFIX>_DB_MAX_OPEN_CONNS = 0), which no\n\
+         # max_connections can cover. Sized for the default app pool plus the runtime's\n\
+         # analytics, session and telemetry pools, with the superuser's reserved slots\n\
+         # and a few left for psql on top.\n"
+            .to_string()
+    } else {
+        format!(
+            "# Covers everything ONE app process opens on a {cpus}-core host — its own pool of\n\
+             # {app} plus the runtime's analytics, session and telemetry pools — with the\n\
+             # superuser's reserved slots and a few left for psql on top.\n"
+        )
+    };
     format!(
         "\n{SKY_CONF_MARKER}\n\
          # Resource sizing only — no setting here changes query semantics, so a\n\
@@ -820,9 +841,7 @@ pub fn sky_conf_block_for(cpus: u32) -> String {
          # socket path is re-derived from the environment and must not be frozen here.\n\
          listen_addresses = ''\n\
          shared_buffers = 32MB\n\
-         # Covers everything ONE app process opens on a {cpus}-core host — its own pool\n\
-         # plus the runtime's analytics, session and telemetry pools — with the\n\
-         # superuser's reserved slots and a few left for psql on top.\n\
+         {covers}\
          max_connections = {max_connections}\n\
          work_mem = 4MB\n\
          maintenance_work_mem = 32MB\n\
@@ -835,11 +854,15 @@ pub fn sky_conf_block_for(cpus: u32) -> String {
 /// Append the tuning block unless it is already there. Returns `None` when the
 /// file is already tuned, so a re-run neither duplicates settings nor grows the
 /// file without bound.
-pub fn ensure_sky_conf(conf: &str) -> Option<String> {
+///
+/// The block is passed IN rather than rendered here, because rendering it needs
+/// the project (the pool knob lives in its `sky.toml` / `.env`) and this
+/// function is about the file, not about the sizing.
+pub fn ensure_sky_conf(conf: &str, block: &str) -> Option<String> {
     if conf.contains(SKY_CONF_MARKER) {
         return None;
     }
-    Some(format!("{conf}{}", sky_conf_block()))
+    Some(format!("{conf}{block}"))
 }
 
 // ---- error translation ---------------------------------------------------
@@ -1033,7 +1056,7 @@ fn start_cluster(project: &Path) -> Result<Started, String> {
             data_dir.display()
         ));
     } else {
-        run_initdb(&bins, &data_dir)?;
+        run_initdb(&bins, project, &data_dir)?;
     }
 
     prepare_socket_dir(&socket_dir)?;
@@ -1117,7 +1140,7 @@ fn clear_stale_pidfile(data_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_initdb(bins: &PgBins, data_dir: &Path) -> Result<(), String> {
+fn run_initdb(bins: &PgBins, project: &Path, data_dir: &Path) -> Result<(), String> {
     if let Some(parent) = data_dir.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("sky db start: cannot create {}: {e}", parent.display()))?;
@@ -1146,14 +1169,14 @@ fn run_initdb(bins: &PgBins, data_dir: &Path) -> Result<(), String> {
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    tune_conf(data_dir)
+    tune_conf(project, data_dir)
 }
 
-fn tune_conf(data_dir: &Path) -> Result<(), String> {
+fn tune_conf(project: &Path, data_dir: &Path) -> Result<(), String> {
     let conf_path = data_dir.join("postgresql.conf");
     let conf = std::fs::read_to_string(&conf_path)
         .map_err(|e| format!("sky db start: cannot read {}: {e}", conf_path.display()))?;
-    if let Some(tuned) = ensure_sky_conf(&conf) {
+    if let Some(tuned) = ensure_sky_conf(&conf, &sky_conf_block(Some(project))) {
         std::fs::write(&conf_path, tuned)
             .map_err(|e| format!("sky db start: cannot write {}: {e}", conf_path.display()))?;
     }
@@ -2662,7 +2685,7 @@ mod tests {
 
     #[test]
     fn the_tuning_block_keeps_a_development_cluster_small() {
-        let b = sky_conf_block();
+        let b = sky_conf_block(None);
         assert!(b.contains("shared_buffers = 32MB"), "{b}");
         assert!(b.contains("listen_addresses = ''"), "nothing may be exposed on TCP:\n{b}");
         assert!(!b.contains("unix_socket_directories"), "the socket dir is passed per start, not frozen:\n{b}");
@@ -2675,7 +2698,7 @@ mod tests {
     #[test]
     fn the_development_tuning_block_sets_no_semantic_setting() {
         for cpus in [1u32, 2, 8, 64] {
-            let b = sky_conf_block_for(cpus);
+            let b = sky_conf_block_for(&crate::db_pool_sizing::PoolInputs::derived(cpus));
             for forbidden in ["fsync", "synchronous_commit", "wal_level", "full_page_writes"] {
                 assert!(
                     !b.contains(forbidden),
@@ -2695,29 +2718,43 @@ mod tests {
     /// failed from 8 up, which is the most common instance size there is.
     #[test]
     fn the_development_cluster_is_sized_for_the_process_it_serves() {
-        use crate::db_pool_sizing::{dev_cluster_max_connections, process_connection_demand, SUPERUSER_RESERVED};
+        use crate::db_pool_sizing::{
+            dev_cluster_max_connections, process_connection_demand, PoolInputs, SUPERUSER_RESERVED,
+        };
+        // The pool knob is an AXIS here, not a footnote. Sweeping `cpus` alone
+        // is what let the app term stop following the documented knob while
+        // every gate in this file stayed green.
         for cpus in 1u32..=64 {
-            let b = sky_conf_block_for(cpus);
-            let want = dev_cluster_max_connections(cpus);
-            assert!(
-                b.contains(&format!("max_connections = {want}")),
-                "cpus={cpus}: the block must carry the derived ceiling {want}:\n{b}"
-            );
-            assert!(
-                process_connection_demand(cpus) + SUPERUSER_RESERVED <= want,
-                "cpus={cpus}: one app process demands {} backends plus {SUPERUSER_RESERVED} \
-                 reserved, and `sky db start` offers {want}.",
-                process_connection_demand(cpus)
-            );
+            for knob in [None, Some("1"), Some("23"), Some("64"), Some("200"), Some("0")] {
+                let i = PoolInputs { cpus, app_max_open: knob.map(str::to_string) };
+                let b = sky_conf_block_for(&i);
+                let want = dev_cluster_max_connections(&i);
+                assert!(
+                    b.contains(&format!("max_connections = {want}")),
+                    "cpus={cpus} knob={knob:?}: the block must carry the derived ceiling \
+                     {want}:\n{b}"
+                );
+                assert!(
+                    process_connection_demand(&i) + SUPERUSER_RESERVED <= want,
+                    "cpus={cpus} knob={knob:?}: one app process demands {} backends plus \
+                     {SUPERUSER_RESERVED} reserved, and `sky db start` offers {want}.",
+                    process_connection_demand(&i)
+                );
+            }
         }
     }
 
     #[test]
     fn tuning_a_conf_file_is_idempotent() {
         let base = "# PostgreSQL configuration file\nmax_connections = 100\n";
-        let once = ensure_sky_conf(base).expect("first pass must tune");
+        let block = sky_conf_block(None);
+        let once = ensure_sky_conf(base, &block).expect("first pass must tune");
         assert!(once.contains(SKY_CONF_MARKER));
-        assert_eq!(ensure_sky_conf(&once), None, "a second pass must not duplicate the block");
+        assert_eq!(
+            ensure_sky_conf(&once, &block),
+            None,
+            "a second pass must not duplicate the block"
+        );
         assert_eq!(once.matches("shared_buffers").count(), 1);
     }
 

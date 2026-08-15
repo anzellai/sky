@@ -290,10 +290,19 @@ and its six auxiliary processes.
 that is deliberate. It used to be a flat `50`, which is smaller than what an
 8-core machine's own pools demand — the app would have exhausted the database it
 had just started, having configured nothing to deserve it. It is now derived
-from `dev_cluster_max_connections(cpus)`, which calls the same function that
+from `dev_cluster_max_connections(inputs)`, which calls the same function that
 sizes the pools (`process_connection_demand`), so the server's grant and the
 client's demand cannot drift. Roughly: the 50 floor holds to 5 cores, 56 at 6,
 62 at 7, 68 at 8 and above.
+
+Those `inputs` are the machine **and** `[database] maxOpenConns` /
+`<PREFIX>_DB_MAX_OPEN_CONNS`, because the app's pool is the term the other three
+are shares of. Sizing from cores alone was wrong the moment an operator used the
+documented knob: at `maxOpenConns = 64` a 1-core process opens 92 backends while
+the arithmetic reported 20. `sky db start` resolves the knob from the same three
+sources the app's runtime does — its own environment, the project's `.env`, then
+`sky.toml` — so the cluster is sized for the process it is about to serve, and
+the derived clamps bound only what Sky derives, never a number you stated.
 
 The general lesson is worth stating because this document got it wrong twice:
 **a server limit and the client demand it must cover have to be computed by one

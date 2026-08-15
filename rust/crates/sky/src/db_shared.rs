@@ -1105,9 +1105,17 @@ impl Opts {
     /// apps this host is sized to serve, and pays for the restart-overlap
     /// window. It replaces a flat `200` that was derived from nothing — the
     /// only knob in the generated tuning block that did not read the host.
+    /// A shared cluster serves apps whose `sky.toml` this command never sees —
+    /// `--app <name>` exists precisely because several live on one host — so the
+    /// pool knob is resolved from the PROVISIONING process's environment alone.
+    /// An operator who sets it per-app in a systemd unit states the cluster's
+    /// size with `--max-connections`, which is why that flag remains.
     pub fn resolved_max_connections(&self, host: &HostFacts) -> u32 {
-        self.max_connections
-            .unwrap_or_else(|| db_pool_sizing::shared_cluster_max_connections(host.cpus))
+        self.max_connections.unwrap_or_else(|| {
+            db_pool_sizing::shared_cluster_max_connections(&db_pool_sizing::PoolInputs::resolve(
+                host.cpus, None,
+            ))
+        })
     }
 }
 

@@ -193,9 +193,17 @@ type dbAuxPoolConsumer struct {
 	// runtime's source, so a pool added without a line here fails the build's
 	// gates rather than silently under-sizing every cluster.
 	name string
-	// maxOpen is the MaxOpenConns this consumer hands to dbshare.Acquire on a
-	// machine with `cpus` cores.
-	maxOpen func(cpus int, serverless bool) int
+	// maxOpen is the MaxOpenConns this consumer hands to dbshare.Acquire when
+	// the APP's pool ceiling is `app`.
+	//
+	// The parameter is the app pool, not `cpus`, and that is the second frame
+	// error this type has been fixed for. Every runtime pool is a share of the
+	// app's, and the app's is `defaults + env` — so a per-consumer size stated
+	// as `f(cpus)` is only correct on a process whose operator set no pool
+	// knob. Taking the app pool makes the whole arithmetic a function of the
+	// one input that actually determines it, and leaves `cpus` entering in
+	// exactly one place: the default.
+	maxOpen func(app int) int
 }
 
 // dbAuxPoolConsumers names every PostgreSQL pool the RUNTIME opens for its
@@ -207,9 +215,9 @@ type dbAuxPoolConsumer struct {
 // cluster's `max_connections` was derived from the app pool alone and left the
 // process short by three pools' worth of backends at 6–9 cores.
 var dbAuxPoolConsumers = []dbAuxPoolConsumer{
-	{"analytics", dbSharedAuxPoolMaxOpenFor},                             // analytics_store.go
-	{"live-sessions", dbSharedAuxPoolMaxOpenFor},                         // live_store.go (pgx path)
-	{"telemetry", func(int, bool) int { return telemetry.PoolMaxConns }}, // telemetry/persist.go
+	{"analytics", dbSharedAuxPoolSizeFrom},                         // analytics_store.go
+	{"live-sessions", dbSharedAuxPoolSizeFrom},                     // live_store.go (pgx path)
+	{"telemetry", func(int) int { return telemetry.PoolMaxConns }}, // telemetry/persist.go
 }
 
 // dbAuxPoolConsumerMaxOpen returns the pool size the connection-demand
@@ -224,9 +232,10 @@ var dbAuxPoolConsumers = []dbAuxPoolConsumer{
 // `max_connections` is derived from, and that number is pinned by a fixture a
 // second implementation reproduces.
 func dbAuxPoolConsumerMaxOpen(name string) (int, bool) {
+	app, _ := dbAppPoolMaxOpenFor(runtime.GOMAXPROCS(0), IsServerless())
 	for _, c := range dbAuxPoolConsumers {
 		if c.name == name {
-			return c.maxOpen(runtime.GOMAXPROCS(0), IsServerless()), true
+			return c.maxOpen(app), true
 		}
 	}
 	return 0, false
@@ -259,12 +268,67 @@ func dbAuxPoolConsumerNames() []string {
 // already been fixed for once, one level down: it under-reported by ten
 // backends at 1 core and by four at 8, so the restart-overlap claim printed
 // into every generated conf was false at every core count.
+//
+// # The app term follows the documented knob
+//
+// The app pool is read from `dbAppPoolMaxOpenFor`, which resolves it exactly as
+// `Db_connect` does — deployment-aware default THEN the
+// `<PREFIX>_DB_MAX_OPEN_CONNS` / `sky.toml [database] maxOpenConns` override.
+// This function used to read `defaultPostgresPoolConfigFor` instead, i.e. the
+// defaults with the operator's knob discarded, while the three aux terms
+// already routed through the resolver. At `maxOpenConns = 64` on one core the
+// process opened 92 backends and this reported 32. That the knob is documented
+// (`docs/sky-toml.md`) and first-class made it worse, not better: setting it is
+// how an operator tells Sky how big the process will be, and it was the one
+// input the sizing ignored.
 func dbProcessConnectionDemand(cpus int, serverless bool) int {
-	n := defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns
+	app, _ := dbAppPoolMaxOpenFor(cpus, serverless)
+	return dbProcessConnectionDemandFrom(app)
+}
+
+// dbDerivedProcessConnectionDemand is the demand sky DERIVES from the machine
+// alone — the operator's pool knob deliberately ignored.
+//
+// It exists so the cluster sizings can clamp what they derive without clamping
+// what the operator explicitly asked for. See `embeddedMaxConnections`.
+func dbDerivedProcessConnectionDemand(cpus int, serverless bool) int {
+	return dbProcessConnectionDemandFrom(defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns)
+}
+
+// dbProcessConnectionDemandFrom is the arithmetic itself: the whole process's
+// demand as a function of the APP pool's ceiling.
+//
+// Stating it this way is what keeps the frame honest. Every runtime pool is a
+// share of the app's, so the app pool is the only independent input; `cpus`
+// reaches the sum solely through the default the resolver starts from. A
+// function of `cpus` alone can only be right for a process whose operator set
+// no knob, and every gate that swept `cpus` was blind to precisely that.
+func dbProcessConnectionDemandFrom(app int) int {
+	n := app
 	for _, c := range dbAuxPoolConsumers {
-		n += c.maxOpen(cpus, serverless)
+		n += c.maxOpen(app)
 	}
 	return n
+}
+
+// dbAppPoolMaxOpenFor is the app's own `Db.connect` pool ceiling on a machine
+// with `cpus` cores, resolved the way PRODUCTION resolves it —
+// `resolveDbPoolConfigFor`, the function `Db_connect` calls (db_auth.go:344).
+//
+// `unlimited` reports that the operator asked for an unbounded pool
+// (`<PREFIX>_DB_MAX_OPEN_CONNS=0`, or a negative value, which the resolver
+// folds to the same thing). NO finite `max_connections` covers an unbounded
+// pool, so the sizing substitutes the deployment-aware default and the callers
+// SAY SO in the conf they generate rather than printing a coverage claim that
+// cannot be true. The operator has already been warned at connect time that a
+// burst can exhaust the server; what must not happen is a generated file
+// asserting otherwise.
+func dbAppPoolMaxOpenFor(cpus int, serverless bool) (n int, unlimited bool) {
+	c := resolveDbPoolConfigFor("pgx", cpus, serverless)
+	if c.MaxOpenConns == 0 {
+		return defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns, true
+	}
+	return c.MaxOpenConns, false
 }
 
 // sqlitePoolConfig is the single-connection clamp. See the file header
@@ -302,17 +366,19 @@ func dbAuxPoolConfig() dbPoolConfig {
 // second derivation of the quarter-share to disagree with it.
 func dbAuxPoolConfigFor(cpus int, serverless bool) dbPoolConfig {
 	c := resolveDbPoolConfigFor("pgx", cpus, serverless)
-	if c.MaxOpenConns == 0 {
-		// The app pool was explicitly set to unlimited. The runtime's own
-		// pools do not follow it there — an unbounded session-store pool
-		// is a connection storm with no upside.
-		c.MaxOpenConns = defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns
-	}
-	n := clampInt(c.MaxOpenConns/4, 2, 8)
+	// The app pool may be unlimited; the runtime's own pools do not follow it
+	// there — an unbounded session-store pool is a connection storm with no
+	// upside — and `dbAppPoolMaxOpenFor` is the single place that substitution
+	// is made, so the sizing and the pools cannot disagree about it.
+	app, _ := dbAppPoolMaxOpenFor(cpus, serverless)
+	n := dbAuxPoolSizeFrom(app)
 	c.MaxOpenConns = n
 	c.MaxIdleConns = n
 	return c
 }
+
+// dbAuxPoolSizeFrom is the quarter-share itself, as a function of the app pool.
+func dbAuxPoolSizeFrom(app int) int { return clampInt(app/4, 2, 8) }
 
 // dbAuxPoolMaxOpenFor is the per-aux-pool ceiling on a given machine — the
 // pool size a consumer would get if it did NOT share.
@@ -381,6 +447,13 @@ func dbSharedAuxPoolConfigFor(cpus int, serverless bool) dbPoolConfig {
 	c.MaxOpenConns = n
 	c.MaxIdleConns = n
 	return c
+}
+
+// dbSharedAuxPoolSizeFrom is that size as a function of the app pool — the
+// form the demand table consumes, so the acquire sites and the server sizing
+// read one derivation rather than two.
+func dbSharedAuxPoolSizeFrom(app int) int {
+	return dbAuxPoolSizeFrom(app) + dbAnalyticsShare + telemetry.Share
 }
 
 // dbSharedAuxPoolMaxOpenFor is the shared pool's size on a given machine — a

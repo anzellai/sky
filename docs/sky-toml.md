@@ -383,6 +383,25 @@ one it replaces, plus PostgreSQL's reserved superuser slots and headroom for a
 psql session. You should not need to set it; `--max-connections` on
 `sky db provision` is there when you do.
 
+**`maxOpenConns` moves that number.** The app's pool is the term every other one
+is a share of, so raising it raises the whole process's demand and the cluster
+follows: `maxOpenConns = 64` on a 1-core host takes the process from 20 backends
+to 92, and the generated `max_connections` grows to cover it. The clamps above
+(a dev cluster's 100, a shared cluster's 500) bound what Sky *derives* from the
+machine; they do not overrule a number you stated, because a cluster smaller
+than the pool it was told about is an app strangling itself on its own
+configuration. The generated conf names the app-pool term it was sized for, so
+the arithmetic can be checked from the file. Setting `maxOpenConns = 0`
+(UNLIMITED) is the one case no `max_connections` can cover — the cluster is
+sized for the default pool instead and the conf says so.
+
+For this to work the knob has to be visible to the command that provisions the
+cluster, not only to the app: `sky db start` and `sky run` read `sky.toml`, the
+project's `.env` and their own environment, in the runtime's own precedence
+(environment, then `.env`, then `sky.toml`). A knob exported for the app's
+service unit alone is invisible to a `sky db provision --shared` run on the same
+host — state the cluster's size with `--max-connections` there.
+
 A **shared** cluster (`sky db provision --shared`) is sized the same way with
 one extra factor: it serves every app on the host rather than one, so the
 per-process demand is multiplied by the apps a machine that size is expected to

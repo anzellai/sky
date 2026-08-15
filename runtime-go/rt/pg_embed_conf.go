@@ -204,7 +204,7 @@ func tuningFor(m machine) []confSetting {
 		{"effective_cache_size", memUnit(effectiveCache), "a planner hint about the OS page cache; costs no memory"},
 		{"maintenance_work_mem", memUnit(maintenance), "vacuum and index builds; one or two at a time, so it can be larger than work_mem"},
 		{"work_mem", memUnit(work), "per sort/hash node, so budgeted across max_connections rather than per machine"},
-		{"max_connections", strconv.Itoa(maxConn), "covers every pool this process opens (app + analytics + sessions + telemetry), twice over for restart overlap, plus the reserved superuser slots"},
+		{"max_connections", strconv.Itoa(maxConn), embeddedMaxConnectionsReason(cpus)},
 		{"max_worker_processes", strconv.Itoa(workers), "one per CPU"},
 		{"max_parallel_workers", strconv.Itoa(workers), "cannot exceed max_worker_processes"},
 		{"max_parallel_workers_per_gather", strconv.Itoa(parallel), "half the CPUs: the app needs the other half"},
@@ -274,13 +274,56 @@ const (
 // The demand is now read from `dbProcessConnectionDemand`, which is the same
 // function the pools themselves are sized by, so the two cannot drift. If a
 // fifth pool is added, `dbAuxPoolConsumers` grows and this number follows.
+//
+// # The clamps bound what sky DERIVES, not what the operator asked for
+//
+// `pgMaxConnectionsCeiling` exists to stop a very large HOST being handed a
+// number whose per-backend memory stops being a rounding error. It was never
+// meant to overrule an operator who states the process's size with
+// `<PREFIX>_DB_MAX_OPEN_CONNS` / `sky.toml [database] maxOpenConns` — and once
+// the demand follows that knob, a flat clamp would do exactly that: at
+// `maxOpenConns = 200` the process demands 228 backends and a cluster clamped
+// to 200 strangles it, silently, having been told the number.
+//
+// So the clamp is applied to the machine-derived demand, and the EXCESS the
+// operator asked for passes through it. A generated cluster is therefore never
+// smaller than the process it serves, and the sentence written next to the
+// number stays true. An operator who asks for a pool no PostgreSQL can serve
+// gets a cluster that refuses to start with PostgreSQL's own diagnosis, which
+// is a better failure than an app that cannot get a connection and no file
+// anywhere admitting why.
 func embeddedMaxConnections(cpus int) int {
 	// The embedded cluster serves a long-lived process on this machine; the
 	// serverless sizing is for a platform that runs many small instances and
 	// does not use an embedded cluster at all.
-	demand := dbProcessConnectionDemand(cpus, false)
-	n := demand*pgRestartOverlapFactor + pgSuperuserReserved + pgOperatorHeadroom
-	return clampInt(n, pgMaxConnectionsFloor, pgMaxConnectionsCeiling)
+	derived := dbDerivedProcessConnectionDemand(cpus, false)
+	n := derived*pgRestartOverlapFactor + pgSuperuserReserved + pgOperatorHeadroom
+	n = clampInt(n, pgMaxConnectionsFloor, pgMaxConnectionsCeiling)
+	if excess := dbProcessConnectionDemand(cpus, false) - derived; excess > 0 {
+		n += excess * pgRestartOverlapFactor
+	}
+	return n
+}
+
+// embeddedMaxConnectionsReason is the comment written beside `max_connections`
+// in the generated conf.
+//
+// It NAMES the app-pool term it was sized for, because that term is no longer a
+// function of the machine alone — it follows the documented pool knob — and a
+// reader deciding whether to override the number cannot check a claim that
+// hides its inputs. When the app pool is UNLIMITED the sentence says so instead
+// of asserting a coverage that no finite number can provide.
+func embeddedMaxConnectionsReason(cpus int) string {
+	app, unlimited := dbAppPoolMaxOpenFor(cpus, false)
+	if unlimited {
+		return "the app pool is UNLIMITED (" + skyEnvName("DB_MAX_OPEN_CONNS") +
+			"=0), which no max_connections can cover — sized for the default app pool of " +
+			strconv.Itoa(app) + " plus the runtime's analytics, session and telemetry pools, " +
+			"twice over for restart overlap, plus the reserved superuser slots"
+	}
+	return "covers every pool this process opens (app " + strconv.Itoa(app) +
+		" + analytics + sessions + telemetry), twice over for restart overlap, " +
+		"plus the reserved superuser slots"
 }
 
 func clampBytes(v, lo, hi uint64) uint64 {

@@ -108,7 +108,7 @@ fn production_tuning_is_derived_from_the_host_not_pinned_small() {
     assert!(big.contains("max_worker_processes = 16"));
     assert!(small.contains("max_worker_processes = 8"));
     assert!(!big.contains("shared_buffers = 32MB"));
-    assert!(db_cluster::sky_conf_block().contains("shared_buffers = 32MB"));
+    assert!(db_cluster::sky_conf_block(None).contains("shared_buffers = 32MB"));
 }
 
 /// The development profile's rule, restated: nothing here may change what a
@@ -151,13 +151,15 @@ fn the_tuning_block_sets_no_semantic_setting() {
 /// with the superuser's reserved slots on top.
 #[test]
 fn the_shared_default_covers_the_apps_the_host_is_sized_for() {
-    use crate::db_pool_sizing::{expected_apps_per_host, process_connection_demand, SUPERUSER_RESERVED};
+    use crate::db_pool_sizing::{
+        expected_apps_per_host, process_connection_demand, PoolInputs, SUPERUSER_RESERVED,
+    };
     for cpus in 1u32..=64 {
         let o = Opts::default();
         assert_eq!(o.max_connections, None, "the default must not pin a number");
         let derived = o.resolved_max_connections(&facts(16, cpus));
         let apps = expected_apps_per_host(cpus);
-        let demand = process_connection_demand(cpus);
+        let demand = process_connection_demand(&PoolInputs::resolve(cpus, None));
         assert!(
             demand * apps + SUPERUSER_RESERVED <= derived,
             "cpus={cpus}: {apps} app(s) demand {} backends plus {SUPERUSER_RESERVED} reserved, and \
