@@ -500,6 +500,14 @@ const USAGE: &str = "usage: sky db provision --embed [--version <v>] [--from <ar
      \x20 $SKY_POSTGRES_BUNDLE_URL overrides the release URL the bundle is fetched from.";
 
 pub fn cmd_provision(args: &[String]) -> ExitCode {
+    // `--shared` provisions a CLUSTER (phase 6), not the binaries this file
+    // fetches. Routed here rather than at `cmd_db` so the two halves of "make the
+    // PostgreSQL this machine needs exist" keep one verb, and so `--embed` and
+    // `--shared` together can be refused by one arg parser instead of silently
+    // doing whichever was checked first.
+    if args.iter().any(|a| a == "--shared") {
+        return crate::db_shared::cmd_shared(args);
+    }
     let opts = match parse_args(args) {
         Ok(o) => o,
         Err(e) => {

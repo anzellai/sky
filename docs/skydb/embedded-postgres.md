@@ -285,6 +285,136 @@ role-per-app**. The role boundary is load-bearing, not hygiene — an app's
 credentials must not be able to read another app's database, and that is
 enforced by PostgreSQL roles rather than by convention.
 
+### `sky db provision --shared` (P6)
+
+The verb is `sky db provision` because that verb already means "make the
+PostgreSQL this machine needs exist": `--embed` provisions the *binaries*,
+`--shared` provisions the *cluster* they run, and `--shared --app <name>`
+provisions one app's slice of it. A new top-level verb would have split one
+operator story across two nouns, and the cluster verbs (`sky db start` / `stop` /
+`ps`) are spoken for by the per-project development supervisor — reusing them
+for a machine-wide service would make `sky db stop` mean "my project's cluster"
+in one directory and "every app on this host" in another. `--app` is separate
+from the cluster provision because apps arrive one at a time, long after the
+cluster was tuned, and adding the fifth must not restart the four serving
+traffic.
+
+```bash
+sky db provision --shared --service --backup --start   # once per host
+sky db provision --shared --app orders                 # once per app; prints its DSN
+```
+
+Everything lives under one **state directory** — `/var/lib/sky` on Linux,
+`/usr/local/var/sky` on macOS, `--state-dir` to move it. The socket directory is
+a *sibling* of the data directory rather than a child, and that is not tidiness:
+PostgreSQL requires the data directory to be 0700, so a socket inside it is
+unreachable by every user except the one running the postmaster — which is every
+app on a shared host. A state directory that is relative, ephemeral (`/tmp`,
+`/var/tmp`, `/dev/shm`, `$TMPDIR`, `/var/folders`), inside a Sky project, or
+shell-unsafe is refused up front.
+
+**The security property, and the two things that actually enforce it.**
+
+- **`REVOKE ALL ON DATABASE … FROM PUBLIC`.** `PUBLIC` is an implicit member of
+  every role and may **connect to every database** by default, so
+  database-per-app plus role-per-app buys nothing on its own — app A connects to
+  app B's database as a matter of course. `template1` is hardened too, and for a
+  second reason: before PostgreSQL 15 `PUBLIC` also holds `CREATE` on every
+  `public` schema, and `template1`'s is **copied into every database created
+  after it**. The bundle pins 18.6, where that default is already closed, but a
+  shared cluster may be an operator's existing server, so it is applied rather
+  than assumed.
+- **`scram-sha-256` in a `pg_hba.conf` sky generates WHOLE.** The file is
+  first-match-wins and `initdb` writes `local all all trust` near the top; a
+  `scram-sha-256` rule *appended* below it is never reached. The file would look
+  right in review, every app would authenticate with `trust`, any local process
+  could connect as any role simply by claiming to be it, and every `REVOKE`
+  behind that would be decoration. The superuser keeps `peer` — the kernel's own
+  answer to "which uid connected" — so sky administers the cluster with no
+  password stored anywhere.
+
+Both are gated by attempt, not by inspection: `an_apps_credentials_cannot_reach_another_apps_database`
+provisions two apps against a live cluster, has each write a row, then connects
+**as app A with app A's own password to app B's database** and requires SQLSTATE
+`42501`, and connects **as app B with app A's password** and requires `28P01`.
+Every probe reads on its failing branch, so the mutation evidence is the leaked
+data itself: deleting the `REVOKE` yields `alpha connected to beta's database and
+read Ok([[Some("secrets")]])`, and turning the hba line to `trust` yields
+`alpha's password authenticated as beta, which then read Ok(Some("beta-secret"))`.
+The same two questions are put to **`pg_dump`** — a real libpq client that knows
+nothing about sky's own protocol client — using the DSN exactly as printed.
+
+**Sky speaks the PostgreSQL protocol itself** (`rust/crates/sky/src/pg_wire.rs`),
+because there is nothing in the shipped set to speak it with: `psql` is excluded
+on licence grounds, `createdb`/`createuser` are not shipped either and could not
+run the `REVOKE`s, and `postgres --single` needs the cluster *stopped* — which on
+a shared host means taking every other app down to add one. It is ~450 lines: a
+startup packet, SCRAM-SHA-256 (RFC 7677, carrying the RFC's own vectors as unit
+tests), and simple queries. `md5` is deliberately unimplemented so a mis-edited
+`pg_hba.conf` cannot downgrade the cluster in silence.
+
+**Tuning is derived from the host** — `shared_buffers` at a quarter of RAM
+capped at 8GB, `effective_cache_size`, `work_mem` divided by `max_connections`,
+parallel workers from the CPU count — and it is a *replaceable* marked block, not
+the append-only one the development profile uses, because a shared cluster is
+re-tuned when the host changes. `SKY_PG_TUNE_MEM_MB` states the budget for
+containers, where `/proc/meminfo` reports the host's RAM and not the cgroup
+limit. The development profile's rule holds unchanged: resource and planner-cost
+knobs only, nothing that changes what a query means.
+
+> **`effective_io_concurrency` cannot be set unconditionally, and P6 found this
+> by starting a cluster rather than by reading a manual.** On a platform without
+> `posix_fadvise` — macOS is one — a non-zero value is a configuration ERROR, not
+> a hint: `FATAL: configuration file … contains errors`, and the postmaster never
+> accepts a connection. A generated block carrying `200` therefore produces a
+> cluster that cannot start, on the machine most likely to try it first. It is
+> now omitted where the platform lacks the call, and `HostFacts` carries that as
+> a fact about the host alongside RAM and CPU.
+
+**The service unit exists so the cluster's lifecycle is the OS's**, and the
+signal is the whole of it. PostgreSQL reads `SIGTERM` as *smart* shutdown — wait
+for every client to disconnect, with no timeout — and `SIGINT` as *fast*. systemd
+sends `SIGTERM` by default, so the unit sets **`KillSignal=SIGINT`**; without it
+a cluster with one live app connection never stops, hits `TimeoutStopSec`, takes
+a `SIGKILL`, and performs crash recovery on **every reboot**. `Type=exec` rather
+than `notify`, because the bundle is built `--without-systemd` and cannot send
+`READY=1`.
+
+launchd has no `KillSignal` at all, so the plist runs a generated wrapper that
+traps `SIGTERM` and sends the postmaster `SIGINT`. The wrapper waits **twice**:
+POSIX `wait` returns the moment a trapped signal is handled, with the postmaster
+still checkpointing, so a single `wait` would let launchd reap the job mid-flush.
+That claim is gated live — a real postmaster, a client connection held open, a
+`SIGTERM` to the wrapper, and an assertion that it is down within 30 seconds.
+With the wrapper sending `SIGTERM` instead, it is not: the gate fails at 31s with
+the smart shutdown still waiting on that one connection.
+
+**The backup is `pg_dump --format=custom` on a timer**, into `<state>/backups`,
+renamed into place so a `.part` from an interrupted run is never mistaken for a
+backup, with a retention `find`. The app list is read at **run time** from the
+file `--app` maintains, so an app provisioned after the timer was generated is
+backed up without regenerating anything. The gate restores the dump into a fresh
+database and reads the row back — with `--format=custom` dropped, the file still
+exists and still holds the data, and `pg_restore` says
+`input file appears to be a text format dump. Please use psql.`, which is the
+whole difference between a file and a backup.
+
+> **Roles are cluster-wide, and `pg_dumpall` is not in Sky's bundle.** A
+> `pg_dump` of one database restores into a cluster with no `orders` role by
+> failing on every `OWNER TO`. The script uses `pg_dumpall --globals-only` when
+> the installation has it and **says so in its log when it does not**, rather
+> than producing a backup that cannot be restored unattended. Adding
+> `pg_dumpall` to `SHIPPED_BINARIES` in `scripts/skydb/build-postgres-bundle.sh`
+> would close this; it links libpq and not readline, so it costs nothing on
+> licence grounds.
+
+Sky writes the unit files into `<state>/service` and prints the `sudo` lines to
+install them. It does not install them itself: that means writing under `/etc` or
+`/Library`, and a tool that silently acquires privileges is worse than one that
+prints two lines. `sky db provision --shared` also **refuses to run as root** —
+`initdb` refuses too, and for the same reason: the data directory would be owned
+by root while the service ran the postmaster as somebody else.
+
 ## The registry
 
 `sky db ps` needs to see clusters it did not start, so a machine-level registry
@@ -780,4 +910,4 @@ Each phase ships its own commit and is verifiable in isolation.
 | **P4** ✅ | `sky run` / `sky watch` integration: `[database] embedded`, DSN injection, the ref count — `rust/crates/sky/src/db_cluster.rs` + `main.rs`, gated by its unit tests + `tests/db_run_cluster_flow.rs` (two overlapping `sky run`s against a real PostgreSQL) |
 | **P5a** ✅ | The runtime supervisor behind `./app --embed`: data-dir resolution, bundle extraction, `initdb`, RAM/CPU-derived tuning, a postmaster child in its own process group, readiness, the ordered `SIGTERM` sequence, and all five failure modes — `runtime-go/rt/pg_embed.go` + `pg_embed_bundle.go` + `pg_embed_conf.go`, gated by `pg_embed*_test.go` (including a live cycle against a real PostgreSQL and a subprocess that proves the app exits non-zero when its database dies) |
 | **P5b** ✅ | `sky build --embed`: the compiler flag, the `go:embed` of the platform bundle, on-demand provisioning with an offline re-pack of P3's cache, the cross-compilation refusal, and the two calls emitted into `func main()` — `rust/crates/sky/src/db_embed.rs` + `project/src/build.rs` (`write_postgres_bundle`) + `lower/src/lower.rs` (`lower_main`), gated by their unit tests plus the pinned socket-derivation literals on both sides |
-| **P6** | Shared-cluster service mode: database-per-app, role-per-app, generated unit + backup timer |
+| **P6** ✅ | Shared-cluster service mode: `sky db provision --shared` (+ `--app`, `--service`, `--backup`), the host-derived production tuning, the whole-file `pg_hba.conf`, the `REVOKE … FROM PUBLIC` boundary, the systemd unit / launchd job + shutdown wrapper, and the backup timer — `rust/crates/sky/src/db_shared.rs` + `pg_wire.rs` (a minimal SCRAM-SHA-256 protocol client, because the shipped bundle has none), gated by their unit tests, `src/db_shared/live_tests.rs` (two apps on a live cluster, a cross-tenant read attempted as app A and refused, a dump restored into a fresh database, and a SIGTERM'd wrapper) and `tests/db_shared_flow.rs` (the real binary, with `pg_dump` asked the same question) |

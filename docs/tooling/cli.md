@@ -440,6 +440,52 @@ darwin-amd64 and darwin-arm64; `psql` is deliberately excluded (GNU readline is
 GPL-3.0). Windows is out of scope — use a system PostgreSQL and
 `SKY_POSTGRES_BIN`.
 
+### `sky db provision --shared` — one cluster for every app on a host
+
+The production counterpart to `sky db start`. `--embed` provisions the
+*binaries*; `--shared` provisions the *cluster* they run, at a stable state
+directory (`/var/lib/sky`, `/usr/local/var/sky` on macOS, `--state-dir` to move
+it), tuned from the host's real RAM and CPU rather than from the small
+development profile.
+
+```bash
+sky db provision --shared --service --backup --start   # once per host
+sky db provision --shared --app orders                 # once per app, prints its DSN
+sky db provision --shared --app orders --rotate-password
+sky db provision --shared --dry-run                    # show the conf, hba, SQL and units
+```
+
+```
+$ sky db provision --shared --app orders
+sky db provision --shared: app orders is ready.
+  database: orders
+  role:     orders  (may connect to orders and to nothing else)
+
+DSN — sky does not write this anywhere; put it in your secret store:
+  postgresql://orders:<generated>@/orders?host=/var/lib/sky/run
+```
+
+- **A database and a role per app**, the role granted `CONNECT` on its own
+  database and `PUBLIC`'s implicit access revoked. App A's credentials are
+  refused by PostgreSQL — not by an application check — when pointed at app B.
+- **Socket-only by default.** `--listen <addr>` adds a TCP listener with
+  `scram-sha-256` on loopback; without it nothing is exposed to the network.
+- **An OS service unit** with `--service`, generated into `<state>/service` with
+  the `sudo` lines to install it: a systemd unit on Linux, a launchd job plus a
+  shutdown wrapper on macOS. Both stop PostgreSQL with `SIGINT` (fast shutdown);
+  a `SIGTERM` means *smart* shutdown, which waits for every client for ever.
+- **A backup timer** with `--backup`: `pg_dump --format=custom` per app on a
+  daily schedule (`--backup-at HH:MM`, `--backup-keep <days>`), reading the app
+  list at run time so an app added later is included.
+- **Run it as the account the cluster will run as** — `sudo -u postgres sky db
+  provision --shared`. Running as root is refused, as `initdb` refuses.
+- **Re-running `--app` is idempotent** and prints no DSN: the password is stored
+  as a SCRAM verifier and cannot be read back, so a printed one would be
+  invented. `--rotate-password` issues a new one.
+
+`SKY_PG_TUNE_MEM_MB` states the RAM the cluster may use, for containers where
+`/proc/meminfo` reports the host's total rather than the cgroup limit.
+
 > `sky db init` and `sky db status` belong to the migration engine documented
 > above and are unchanged. The cluster verbs are `start` / `stop` / `ps` /
 > `provision`.

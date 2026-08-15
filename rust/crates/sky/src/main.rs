@@ -13,6 +13,8 @@ mod db_cluster;
 mod db_embed;
 mod db_migrate;
 mod db_provision;
+mod db_shared;
+mod pg_wire;
 use std::time::{Duration, Instant};
 
 use fmt::{format_source, is_formatted};
@@ -2796,7 +2798,9 @@ fn cmd_db(args: &[String]) -> ExitCode {
             eprintln!(
                 "usage: sky db <status|migrate [--gen [name]]|push|seed|reset [table]|drop [table]|init> [file.sky]\n\
                  \x20      sky db <start|stop [--all]|ps [--all]>    local PostgreSQL cluster\n\
-                 \x20      sky db provision --embed                  fetch PostgreSQL into ~/.sky"
+                 \x20      sky db provision --embed                  fetch PostgreSQL into ~/.sky\n\
+                 \x20      sky db provision --shared [--service]     one shared cluster for this host\n\
+                 \x20      sky db provision --shared --app <name>    a database + role for one app"
             );
             return ExitCode::from(2);
         }

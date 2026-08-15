@@ -604,7 +604,7 @@ pub fn postgres_is_discoverable(project: &Path) -> bool {
 /// interrogation are separate steps because a directory can hold all three
 /// binaries and still refuse to run (wrong architecture, missing libs), and that
 /// deserves a different message than "not found".
-fn discover_pg_bins() -> Result<PgBins, String> {
+pub fn discover_pg_bins() -> Result<PgBins, String> {
     let home = sky_home();
     let env_override = std::env::var("SKY_POSTGRES_BIN").ok();
     let path_var = std::env::var("PATH").ok();
@@ -775,7 +775,7 @@ fn probe_entry(_project: &str, entry: &ClusterEntry) -> Liveness {
     probe_data_dir(Path::new(&entry.data_dir))
 }
 
-fn probe_data_dir(data_dir: &Path) -> Liveness {
+pub fn probe_data_dir(data_dir: &Path) -> Liveness {
     if !data_dir.join("PG_VERSION").is_file() {
         return Liveness::Vanished;
     }
