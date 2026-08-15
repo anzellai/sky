@@ -36,12 +36,14 @@
 package telemetry
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver "pgx" (one-DB-for-everything)
@@ -247,6 +249,40 @@ const persistEnvVar = "SKY_CONSOLE_DB_PATH"
 // the in-RAM log ring (no panic, no block).
 const persistQueueCap = 1024
 
+// persistBatchSize is the entry count that triggers a flush on size.
+const persistBatchSize = 128
+
+// persistFlushWait caps how long a caller of FlushPersistence waits for the
+// writer to drain before proceeding anyway. A caller that blocked indefinitely
+// on a wedged writer would turn a degraded telemetry store into a hung test or
+// a hung console page.
+const persistFlushWait = 5 * time.Second
+
+// persistFlushInterval is the flush-on-time half of "size or interval,
+// whichever comes first". It bounds how long an entry can sit unwritten on an
+// app that is not busy enough to fill a batch.
+//
+// It is a function over a var, rather than a const, for one reason: it is the
+// knob that proves FlushPersistence is a real synchronisation and not a race
+// that happens to be won. Until this commit the helper polled for an empty
+// queue and then slept 250 ms, which was correct only while this interval
+// stayed BELOW that sleep — two unrelated constants in different functions,
+// neither documenting its dependence on the other. Raising this to 300 ms
+// turned three tests red with exactly the counts CI reported (86/85/85, and 0
+// of 1), because an empty queue means the flusher has taken the entries, not
+// that it has committed them. `TestPersistence_FlushIsSynchronisedNotTimed`
+// now pins the interval to an hour and still expects every row, so a
+// regression to any interval-dependent flush fails immediately and locally
+// rather than intermittently on a loaded runner.
+var persistFlushIntervalOverride atomic.Int64
+
+func persistFlushInterval() time.Duration {
+	if d := persistFlushIntervalOverride.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	return 200 * time.Millisecond
+}
+
 // persistEntry — a single record queued for the flusher goroutine.
 // The `kind` field discriminates the variant; only the matching
 // payload field is populated per entry.
@@ -278,8 +314,14 @@ type persistence struct {
 	// has no such setting.
 	syncCommitOff bool
 	queue         chan persistEntry
-	stop          chan struct{}
-	wg            sync.WaitGroup
+	// flushReq carries a caller's request for a synchronous drain. The flusher
+	// closes the handed-in channel once every entry that was queued before the
+	// request has been COMMITTED, which is the happens-before edge the old
+	// poll-and-sleep helper never established. Unbuffered on purpose: the
+	// rendezvous is what guarantees the writer has seen the request.
+	flushReq chan chan struct{}
+	stop     chan struct{}
+	wg       sync.WaitGroup
 	// onceClose protects Close() against double-close from test
 	// teardown + the eventual process-exit hook.
 	onceClose sync.Once
@@ -337,6 +379,7 @@ func (s *Store) EnablePersistence(path string) error {
 		driver:        driver,
 		syncCommitOff: driver == "pgx" && SynchronousCommitOff(),
 		queue:         make(chan persistEntry, persistQueueCap),
+		flushReq:      make(chan chan struct{}),
 		stop:          make(chan struct{}),
 	}
 	s.persist = p
@@ -365,10 +408,26 @@ func (s *Store) EnablePersistenceFromEnv() error {
 	return s.EnablePersistence(path)
 }
 
-// ClosePersistence stops the flusher + pruner and closes the DB
-// handle.  Test-only; production code lets the goroutines run for
-// the process lifetime.
+// ClosePersistence stops the flusher + pruner, waits for the queue to be
+// committed, and closes the DB handle. It blocks until the drain is complete.
 func (s *Store) ClosePersistence() {
+	s.closePersistence(context.Background())
+}
+
+// ClosePersistenceContext is ClosePersistence bounded by a shutdown budget.
+//
+// The drain itself is unchanged and is genuinely synchronous — the flusher's
+// stop branch commits everything still queued, and the WaitGroup below is what
+// makes "flushed on shutdown" a fact rather than a hope. What the context adds
+// is the ability to REPORT a drain that did not finish. Without it, a shutdown
+// whose budget expired mid-drain lost the tail of the queue silently, which is
+// the one fact an operator needs after a deploy and cannot recover afterwards.
+// This mirrors `analyticsWriter.shutdown`.
+func (s *Store) ClosePersistenceContext(ctx context.Context) {
+	s.closePersistence(ctx)
+}
+
+func (s *Store) closePersistence(ctx context.Context) {
 	s.persistMu.Lock()
 	p := s.persist
 	s.persist = nil
@@ -376,12 +435,31 @@ func (s *Store) ClosePersistence() {
 	if p == nil {
 		return
 	}
-	p.onceClose.Do(func() {
-		close(p.stop)
-	})
-	p.wg.Wait()
-	if p.db != nil {
-		closeTelemetryPool(p.db, p.pool)
+	// Cleared from the store BEFORE the stop is signalled, so a concurrent
+	// record call sees a nil persistence and no-ops rather than sending to a
+	// queue nobody will drain again.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.onceClose.Do(func() {
+			close(p.stop)
+		})
+		p.wg.Wait()
+		if p.db != nil {
+			closeTelemetryPool(p.db, p.pool)
+		}
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		if n := len(p.queue); n > 0 {
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "telemetry persistence shutdown incomplete: the budget expired before the queue drained",
+				Fields:  map[string]string{"unwritten": strconv.Itoa(n)},
+			})
+		}
 	}
 }
 
@@ -407,7 +485,9 @@ func (s *Store) enqueuePersist(e persistEntry) {
 				Level:   "warn",
 				Message: "telemetry persistence queue full; dropping write-through",
 				Fields: map[string]string{
-					"queue_cap": "1024",
+					// Derived, not a literal: a hand-copied "1024" here would
+					// report the wrong capacity the first time the const moved.
+					"queue_cap": strconv.Itoa(persistQueueCap),
 				},
 			})
 		}
@@ -418,12 +498,28 @@ func (s *Store) enqueuePersist(e persistEntry) {
 // transaction every 200 ms (or when 128 entries accumulate).  This
 // keeps SQLite write amplification low without delaying log
 // visibility for the console operator beyond a fraction of a second.
+//
+// Three things end a batch: the size cap, the interval, and an explicit
+// synchronous flush request. The last is what gives callers read-your-writes
+// against an asynchronous writer — see FlushPersistence.
 func (p *persistence) flusher(s *Store) {
 	defer p.wg.Done()
-	const batchSize = 128
-	tick := time.NewTicker(200 * time.Millisecond)
+	tick := time.NewTicker(persistFlushInterval())
 	defer tick.Stop()
-	batch := make([]persistEntry, 0, batchSize)
+	batch := make([]persistEntry, 0, persistBatchSize)
+	// coalesce pulls everything already queued into the current batch, up to
+	// the size cap — a burst of N entries becomes ceil(N/128) transactions
+	// rather than N.
+	coalesce := func() {
+		for len(batch) < persistBatchSize {
+			select {
+			case e := <-p.queue:
+				batch = append(batch, e)
+			default:
+				return
+			}
+		}
+	}
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -438,29 +534,41 @@ func (p *persistence) flusher(s *Store) {
 		}
 		batch = batch[:0]
 	}
+	// drainAll writes everything currently queued, not merely one batch.
+	drainAll := func() {
+		for {
+			coalesce()
+			flush()
+			if len(p.queue) == 0 {
+				return
+			}
+		}
+	}
 	for {
 		select {
 		case <-p.stop:
-			// Drain remaining queued entries on shutdown so tests
-			// observing the file see every write that landed in the
-			// queue before Close.
-			for {
-				select {
-				case e := <-p.queue:
-					batch = append(batch, e)
-					if len(batch) >= batchSize {
-						flush()
-					}
-				default:
-					flush()
-					return
-				}
-			}
+			// Final drain. Everything that reached the queue before the stop is
+			// committed before this goroutine returns, and ClosePersistence
+			// waits on the WaitGroup — so "telemetry is flushed on shutdown" is
+			// a guarantee the caller can rely on rather than a signal and a
+			// hope.
+			drainAll()
+			return
+
+		case done := <-p.flushReq:
+			// A caller is waiting. Drain to empty before closing `done`: every
+			// entry enqueued before the request must be committed by the time
+			// the caller observes the close.
+			drainAll()
+			close(done)
+
 		case e := <-p.queue:
 			batch = append(batch, e)
-			if len(batch) >= batchSize {
+			coalesce()
+			if len(batch) >= persistBatchSize {
 				flush()
 			}
+
 		case <-tick.C:
 			flush()
 		}
@@ -659,9 +767,33 @@ func (p *persistence) runPrune() error {
 	return nil
 }
 
-// FlushPersistence is a test-only helper that waits for the flusher
-// to drain the queue and commit.  Production code never calls this —
-// the 200 ms tick is fast enough for the console UI.
+// FlushPersistence asks the writer to drain synchronously and waits for it.
+// When it returns, every telemetry entry enqueued by the calling goroutine
+// before the call has been committed and is visible to any other reader of the
+// database — including a freshly opened handle.
+//
+// # Why this is a rendezvous and not a sleep
+//
+// It used to poll until `len(p.queue) == 0` and then sleep 250 ms. Both halves
+// were wrong, and together they produced a test suite that was green on a quiet
+// laptop and red on a loaded CI runner:
+//
+//   - An EMPTY QUEUE IS NOT A COMMITTED WRITE. The flusher moves entries out of
+//     the channel into a local batch and commits them later, so the queue
+//     reaches zero at the moment the data is least durable — in one goroutine's
+//     stack, in no transaction.
+//
+//   - The 250 ms sleep was covering that gap by out-waiting the flusher's
+//     200 ms tick. That is not synchronisation, it is a race with a handicap:
+//     it holds only while those two unrelated constants keep their accidental
+//     ordering, and only while the runner schedules the flusher promptly. CI
+//     lost it and reported 86 of 100 rows — two full batches committed, the
+//     44-entry remainder still in the flusher's hands.
+//
+// The flusher now answers an explicit request and closes the caller's channel
+// only after the drain has COMMITTED, which is a happens-before edge rather
+// than a probability. `persistFlushWait` bounds the wait so a wedged writer
+// degrades the caller instead of hanging it.
 func (s *Store) FlushPersistence() {
 	s.persistMu.RLock()
 	p := s.persist
@@ -669,17 +801,22 @@ func (s *Store) FlushPersistence() {
 	if p == nil {
 		return
 	}
-	// Poll-drain.  Cheap because the channel has a known capacity
-	// and we just wait for the count to hit zero plus one tick.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(p.queue) == 0 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	done := make(chan struct{})
+	timer := time.NewTimer(persistFlushWait)
+	defer timer.Stop()
+	select {
+	case p.flushReq <- done:
+	case <-p.stop:
+		// Already shutting down; the stop drain commits the queue and
+		// ClosePersistence is what waits for it.
+		return
+	case <-timer.C:
+		return
 	}
-	// One extra tick to let an in-flight batch commit.
-	time.Sleep(250 * time.Millisecond)
+	select {
+	case <-done:
+	case <-timer.C:
+	}
 }
 
 // SynchronousCommitOff reports whether telemetry's flush transactions should

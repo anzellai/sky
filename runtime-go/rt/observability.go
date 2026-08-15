@@ -83,8 +83,12 @@ func init() {
 	// looks at when a deploy goes wrong. A correct flush that nothing calls is
 	// not a flush. This is the same wiring the analytics writer gets, and under
 	// `--embed` it likewise runs before PostgreSQL is stopped.
-	RegisterShutdownHook("telemetry-persistence", func(context.Context) {
-		telemetry.Default().ClosePersistence()
+	//
+	// The hook's context is PASSED THROUGH rather than discarded, so a drain
+	// that outruns the shutdown budget says so in the log instead of dropping
+	// the tail of the queue in silence.
+	RegisterShutdownHook("telemetry-persistence", func(ctx context.Context) {
+		telemetry.Default().ClosePersistenceContext(ctx)
 	})
 }
 
