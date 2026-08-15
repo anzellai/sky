@@ -977,7 +977,7 @@ An SBOM is generated per bundle in CI, listing every linked library and its
 licence, and **a gate fails the build if a bundle carries anything GPL, LGPL or
 AGPL**.
 
-Three properties of that gate are load-bearing:
+Four properties of that gate are load-bearing:
 
 1. **It runs against the actual binaries, not the configure line.** A configure
    flag records an intention; the built artifact records what happened.
@@ -995,6 +995,21 @@ Three properties of that gate are load-bearing:
    links: it is assembled with `cp -Rf`, which preserves PostgreSQL's soname
    chains. Links are enumerated, classified by their own name *and* their
    target's, and one whose chain leaves the bundle is unvendored by definition.
+4. **A fixture has to prove it planted what it claims to plant.** The fixtures
+   link libraries they never call, because the gate classifies a dependency by
+   its recorded NAME — and GNU ld on Debian/Ubuntu links `--as-needed` by
+   default, which drops an unreferenced library from `DT_NEEDED` altogether. So
+   on Linux the planted library was never recorded, `objdump -p` found one
+   dependency in the whole bundle (`libc`), and the gate returned `GATE PASS` on
+   a bundle built to carry GNU readline. The suite read 11/11 on macOS, where
+   the load command is recorded unconditionally, and 6/11 on Linux at the same
+   commit. Fixtures now link with `-Wl,--no-as-needed` AND assert the record
+   exists before asserting anything about the verdict, so a broken fixture says
+   "the FIXTURE is broken, not the gate" instead of looking like a gate that
+   stopped rejecting. Relatedly, the scanner now refuses to report a verdict at
+   all when `objdump` / `otool` is missing: a dependency reader that is absent
+   and an object with no dependencies are otherwise the same observation, and
+   the second one reads as a clean bundle.
 
 Each of the three rejection causes — copyleft, unclassified, unvendored — has a
 fixture in `scripts/skydb/test-licence-gate.sh` that isolates it, and the suite

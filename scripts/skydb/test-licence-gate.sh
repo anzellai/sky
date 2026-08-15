@@ -59,6 +59,52 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 # Fixture construction
 # ─────────────────────────────────────────────────────────────────────
 
+# Linker flags every fixture link needs, ahead of the libraries.
+#
+# GNU ld links `--as-needed` BY DEFAULT on Debian and Ubuntu: a shared library
+# the translation unit references no symbol from is dropped from DT_NEEDED
+# ENTIRELY. Every fixture below links a library it deliberately never calls —
+# the gate classifies a dependency by its RECORDED NAME, so calling into one
+# would be beside the point — which under that default meant the name was never
+# recorded, and the scanner had nothing to classify.
+#
+# That is not a subtle degradation. It silently deleted the five dep-driven
+# cases (C2, C3, C4, C7, C10) on Linux: `objdump -p` reported one dependency in
+# the whole bundle (libc, kept because `main` really does call into it), so the
+# gate could not reject ANY planted library and reported `GATE PASS — no GPL,
+# LGPL or AGPL component is shipped or linked` on a bundle built to carry GNU
+# readline. macOS records the load command unconditionally, so the suite was
+# 11/11 there and 6/11 here, on the same commit.
+ld_keep() {
+  if [ "$HOST_OS" = linux ]; then printf '%s' '-Wl,--no-as-needed'; fi
+}
+
+# The dependency records an object actually carries, read the same way the
+# scanner reads them. Deliberately a second copy rather than a shared helper:
+# it is what lets a fixture prove ITSELF, independently of the code under test.
+recorded_deps() {
+  if [ "$HOST_OS" = darwin ]; then
+    otool -L "$1" 2>/dev/null | tail -n +2 | awk '{print $1}'
+  else
+    objdump -p "$1" 2>/dev/null | awk '/NEEDED/ {print $2}'
+  fi
+}
+
+# A fixture that does not RECORD the dependency it was built to plant proves
+# nothing about the gate. Worse, it fails as "the gate did not reject", which
+# sends the next reader to the scanner — the one thing here that was working.
+# So every dep-driven case asserts its own premise first, and a broken fixture
+# says so in those words.
+requires_dep() {
+  local obj="$1" want="$2"
+  if recorded_deps "$obj" | command grep -q "$want"; then
+    return 0
+  fi
+  bad "fixture $(basename "$obj") records NO dependency on '${want}' — the FIXTURE is \
+broken, not the gate. Recorded: [$(recorded_deps "$obj" | tr '\n' ' ')]"
+  return 1
+}
+
 # A shared library with a chosen SONAME/install_name and no real content. The
 # gate classifies dependencies by recorded name; content is irrelevant to it.
 make_stub_lib() {
@@ -77,13 +123,13 @@ make_object() {
   local src="${WORK}/obj.c"
   if [ "$kind" = exe ]; then
     echo 'int main(void) { return 0; }' >| "$src"
-    $CC -o "$out" "$src" "$@" 2>/dev/null
+    $CC -o "$out" "$src" $(ld_keep) "$@" 2>/dev/null
   else
     echo 'int sky_mod_symbol(void) { return 0; }' >| "$src"
     if [ "$HOST_OS" = darwin ]; then
       $CC -dynamiclib -o "$out" "$src" "$@" 2>/dev/null
     else
-      $CC -shared -fPIC -o "$out" "$src" "$@" 2>/dev/null
+      $CC -shared -fPIC -o "$out" "$src" $(ld_keep) "$@" 2>/dev/null
     fi
   fi
 }
@@ -219,7 +265,9 @@ expect_accept "C1 clean bundle" "$C1"
 C2="${WORK}/c2"; make_base_bundle "$C2"
 make_stub_lib "${WORK}/libreadline.8.${DL}" "libreadline.8.${DL}"
 make_object "$C2/bin/postgres" exe "${WORK}/libreadline.8.${DL}"
-expect_reject "C2 GPL dep on bin/postgres" "$C2" "readline" "COPYLEFT UNVENDORED"
+if requires_dep "$C2/bin/postgres" readline; then
+  expect_reject "C2 GPL dep on bin/postgres" "$C2" "readline" "COPYLEFT UNVENDORED"
+fi
 
 # C3. THE LOAD-BEARING CASE.
 #     bin/postgres is clean; the GPL linkage is on an extension module only.
@@ -230,14 +278,18 @@ expect_reject "C2 GPL dep on bin/postgres" "$C2" "readline" "COPYLEFT UNVENDORED
 #     has silently regressed to inspecting the main executable alone.
 C3="${WORK}/c3"; make_base_bundle "$C3"
 make_object "$C3/lib/pg_trgm.$DL" lib "${WORK}/libreadline.8.${DL}"
-expect_reject "C3 GPL dep on an EXTENSION only, server binary clean" "$C3" "pg_trgm" "COPYLEFT UNVENDORED"
+if requires_dep "$C3/lib/pg_trgm.$DL" readline; then
+  expect_reject "C3 GPL dep on an EXTENSION only, server binary clean" "$C3" "pg_trgm" "COPYLEFT UNVENDORED"
+fi
 
 # C4. Fail closed. An unclassified dependency is rejected, not waved through:
 #     the dangerous dependency is by definition the one nobody anticipated.
 C4="${WORK}/c4"; make_base_bundle "$C4"
 make_stub_lib "${WORK}/libmysteryware.1.${DL}" "libmysteryware.1.${DL}"
 make_object "$C4/lib/pgcrypto.$DL" lib "${WORK}/libmysteryware.1.${DL}"
-expect_reject "C4 unclassified dependency (fail closed)" "$C4" "libmysteryware" "UNKNOWN UNVENDORED"
+if requires_dep "$C4/lib/pgcrypto.$DL" mysteryware; then
+  expect_reject "C4 unclassified dependency (fail closed)" "$C4" "libmysteryware" "UNKNOWN UNVENDORED"
+fi
 
 # C5. A shipped module nobody reviewed. PostGIS is GPL-2.0 and is excluded on
 #     licence grounds by docs/skydb/embedded-postgres.md; planting it in lib/
@@ -266,7 +318,9 @@ done
 if [ -n "$REAL_RL" ]; then
   C7="${WORK}/c7"; make_base_bundle "$C7"
   if make_object "$C7/lib/vector.$DL" lib "$REAL_RL"; then
-    expect_reject "C7 extension linked against the REAL GNU readline (${REAL_RL})" "$C7" "readline" "COPYLEFT UNVENDORED"
+    if requires_dep "$C7/lib/vector.$DL" readline; then
+      expect_reject "C7 extension linked against the REAL GNU readline (${REAL_RL})" "$C7" "readline" "COPYLEFT UNVENDORED"
+    fi
   else
     printf '  \033[1;33mskip\033[0m C7 — could not link against %s\n' "$REAL_RL"
   fi
@@ -290,7 +344,9 @@ fi
 C10="${WORK}/c10"; make_base_bundle "$C10"
 make_stub_lib "${WORK}/libzstd.1.${DL}" "libzstd.1.${DL}"
 make_object "$C10/bin/postgres" exe "${WORK}/libzstd.1.${DL}"
-expect_reject "C10 permissive dependency living OUTSIDE the bundle" "$C10" "libzstd" "UNVENDORED"
+if requires_dep "$C10/bin/postgres" libzstd; then
+  expect_reject "C10 permissive dependency living OUTSIDE the bundle" "$C10" "libzstd" "UNVENDORED"
+fi
 
 # C11. A SYMLINK IS PART OF WHAT WE SHIP — the C6 fixture, one `ln -s` apart.
 #      `find -type f` does not match a symbolic link, so lib/ was enumerated
@@ -311,9 +367,13 @@ expect_reject "C11 libreadline in lib/ as a SYMLINK, unlinked" "$C11" "readline"
 C12="${WORK}/c12"; make_base_bundle "$C12"
 make_object "$C12/bin/postgres" exe "${WORK}/libreadline.8.${DL}"
 ln -s "${WORK}/libreadline.8.${DL}" "$C12/lib/libreadline.8.${DL}"
-expect_reject "C12 symlink launders an out-of-bundle dependency" "$C12" "escapes:" "COPYLEFT UNVENDORED"
-if [ -n "${LAST_OUT:-}" ] && command grep -q "bundle:lib/libreadline" "$LAST_OUT"; then
-  bad "C12: the dependency is still reported as bundle:lib/libreadline — a link out of the bundle is being counted as vendored"
+# The laundering check below reads a DEPENDENCY resolution, so an unrecorded
+# dependency would make it pass by having nothing to look at.
+if requires_dep "$C12/bin/postgres" readline; then
+  expect_reject "C12 symlink launders an out-of-bundle dependency" "$C12" "escapes:" "COPYLEFT UNVENDORED"
+  if [ -n "${LAST_OUT:-}" ] && command grep -q "bundle:lib/libreadline" "$LAST_OUT"; then
+    bad "C12: the dependency is still reported as bundle:lib/libreadline — a link out of the bundle is being counted as vendored"
+  fi
 fi
 
 # C13. THE OTHER DIRECTION, and the reason C11/C12 cannot simply reject every
@@ -343,7 +403,9 @@ if [ -n "$REAL_BUNDLE" ]; then
   command cp -Rf "$REAL_BUNDLE" "$C9"
   chmod -R u+w "$C9"
   make_object "$C9/lib/pg_trgm.$DL" lib "${WORK}/libreadline.8.${DL}"
-  expect_reject "C9 real bundle + GPL-linked extension planted in lib/" "$C9" "readline" "COPYLEFT UNVENDORED"
+  if requires_dep "$C9/lib/pg_trgm.$DL" readline; then
+    expect_reject "C9 real bundle + GPL-linked extension planted in lib/" "$C9" "readline" "COPYLEFT UNVENDORED"
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────

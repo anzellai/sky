@@ -68,6 +68,32 @@ case "$(uname -s)" in
   *) echo "licence scanning is only implemented for Linux and macOS" >&2; exit 2 ;;
 esac
 
+# ── The verdict rests on being able to READ a dependency record ──────────
+#
+# `deps_of` swallows the reader's failure (`2>/dev/null`) so that an object with
+# no dependencies is not an error. The cost of that is a tool which is ABSENT
+# looks exactly like an object with nothing to report: every object enumerates
+# zero dependencies, no dependency is ever classified, and the scanner announces
+# `GATE PASS — no GPL, LGPL or AGPL component is shipped or linked` over a bundle
+# that links GNU readline into every binary in it.
+#
+# A missing tool is not a clean bundle. Refuse to report a verdict, with the
+# exit status that means "internal error", never the one that means "clean".
+case "$HOST_OS" in
+  darwin)
+    command -v otool >/dev/null 2>&1 || {
+      echo "otool not found — it reads the Mach-O load commands this gate classifies." >&2
+      echo "Install the Xcode command line tools: xcode-select --install" >&2
+      exit 2
+    } ;;
+  linux)
+    command -v objdump >/dev/null 2>&1 || {
+      echo "objdump not found — it reads the DT_NEEDED entries this gate classifies." >&2
+      echo "Install binutils (apt-get install binutils)." >&2
+      exit 2
+    } ;;
+esac
+
 # ─────────────────────────────────────────────────────────────────────
 # THE LICENCE TABLE
 #
