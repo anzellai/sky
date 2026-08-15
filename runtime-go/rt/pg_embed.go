@@ -370,13 +370,50 @@ type pgSupervisor struct {
 	stopping atomic.Bool
 	stopOnce sync.Once
 
+	// childState is how the postmaster's exit reaches the boot goroutine.
+	//
+	// waitReady used to consult `s.cmd.ProcessState` directly, which is a data
+	// race and an `os/exec` contract violation in one: `Cmd.Wait` WRITES that
+	// field, watchChild is the goroutine that calls Wait, and the package
+	// documents ProcessState as invalid until Wait returns. `go test -race`
+	// reports it on every live boot. Publishing through an atomic makes the
+	// value both safe to read and actually valid when it is read.
+	childState atomic.Pointer[os.ProcessState]
+
 	// stopFn replaces the leaf action of the last shutdown phase. It exists so
 	// a test can observe WHEN the database is stopped relative to the other
-	// phases without a live cluster. Deliberately the only seam: the sequencer
-	// narrating its own phases would make an ordering test tautological, so the
-	// test observes the real leaves instead (a registered accept-stopper, a
-	// registered shutdown hook, and this).
+	// phases without a live cluster. The sequencer narrating its own phases
+	// would make an ordering test tautological, so the test observes the real
+	// leaves instead (a registered accept-stopper, a registered shutdown hook,
+	// and this).
 	stopFn func() error
+
+	// exitFn replaces the OTHER leaf of the signal path: the os.Exit that ends
+	// the process once the phases are done.
+	//
+	// Without it the ordering gate could only ever call s.shutdown directly,
+	// leaving installSignalHandler — the goroutine every real SIGTERM actually
+	// goes through — covered by nothing. A mistake made in the handler rather
+	// than in shutdown (stopping the database before delegating, say) is
+	// invisible to a test that calls shutdown itself, and it is the handler
+	// that runs on every `kubectl rollout`, Cloud Run revision swap and
+	// `systemctl restart`. With this seam the gate sends a real signal and
+	// watches the real goroutine run.
+	exitFn func(int)
+
+	// sigCh is the handler's notify channel, kept so a test can detach the
+	// handler again — signal.Notify is process-wide, and a live registration
+	// left behind would make the NEXT test's signal reach a supervisor that is
+	// no longer under test.
+	sigCh chan os.Signal
+}
+
+func (s *pgSupervisor) exit(code int) {
+	if s.exitFn != nil {
+		s.exitFn(code)
+		return
+	}
+	os.Exit(code)
 }
 
 func startEmbeddedPostgres() error {
@@ -547,6 +584,9 @@ func (s *pgSupervisor) watchChild() {
 		return
 	}
 	err := s.cmd.Wait()
+	// Publish the verdict for waitReady, which runs on the boot goroutine and
+	// must not touch `s.cmd.ProcessState` itself — see childState.
+	s.childState.Store(s.cmd.ProcessState)
 	if s.stopping.Load() {
 		return
 	}
@@ -592,10 +632,10 @@ func (s *pgSupervisor) waitReady(budget time.Duration) error {
 	delay := 25 * time.Millisecond
 	var last error
 	for {
-		if s.cmd != nil && s.cmd.ProcessState != nil {
+		if st := s.childState.Load(); st != nil {
 			return fmt.Errorf(
 				"sky --embed: the PostgreSQL server exited during startup (%s).\n%s",
-				s.cmd.ProcessState, logTail(s.cfg.logPath, 30))
+				st, logTail(s.cfg.logPath, 30))
 		}
 		if err := s.probeReady(); err == nil {
 			return nil
@@ -695,11 +735,21 @@ const embeddedDrainBudget = 8 * time.Second
 func (s *pgSupervisor) installSignalHandler() {
 	ch := make(chan os.Signal, 2)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	s.sigCh = ch
 	go func() {
 		<-ch
 		s.shutdown(embeddedDrainBudget)
-		os.Exit(0)
+		s.exit(0)
 	}()
+}
+
+// detachSignalHandler — TEST-ONLY. Stops delivery to this supervisor's channel
+// and parks its goroutine, so a test that raised a signal does not leave a
+// handler that the next one's signal would also reach.
+func (s *pgSupervisor) detachSignalHandler() {
+	if s.sigCh != nil {
+		signal.Stop(s.sigCh)
+	}
 }
 
 // shutdown runs the three phases in the one order that does not turn a routine

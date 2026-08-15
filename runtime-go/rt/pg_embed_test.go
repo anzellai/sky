@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -105,6 +106,67 @@ func TestShutdownWaitsForADrainStartedByTheAppsOwnHandler(t *testing.T) {
 	mu.Unlock()
 	if got != "drain → stop-postgres" {
 		t.Fatalf("the database was stopped while the app was still draining\n  got: %s", got)
+	}
+}
+
+// The two tests above call s.shutdown directly, which leaves the goroutine
+// installSignalHandler starts — the one EVERY production SIGTERM goes through —
+// covered by nothing. That is not a theoretical hole: a `s.stopPostgres()`
+// inserted into the handler before it delegates makes stopOnce turn shutdown's
+// third phase into a no-op, so the real order becomes
+// `stop-postgres → stop-accepting → drain` while both tests above stay green.
+// Every rollout would then take the database away with requests in flight.
+//
+// So this drives the REAL handler with a REAL signal: install it, raise
+// SIGTERM at this process, and assert the same leaf sequence.
+func TestTheSignalHandlerRunsThePhasesInOrder(t *testing.T) {
+	resetShutdownHooksForTesting()
+	resetAcceptStoppersForTesting()
+	t.Cleanup(func() {
+		resetShutdownHooksForTesting()
+		resetAcceptStoppersForTesting()
+	})
+
+	var mu sync.Mutex
+	var seq []string
+	note := func(s string) {
+		mu.Lock()
+		seq = append(seq, s)
+		mu.Unlock()
+	}
+
+	RegisterAcceptStopper("listener", func() { note("stop-accepting") })
+	RegisterShutdownHook("drain", func(context.Context) {
+		time.Sleep(150 * time.Millisecond)
+		note("drain")
+	})
+
+	exited := make(chan int, 1)
+	s := &pgSupervisor{
+		stopFn: func() error { note("stop-postgres"); return nil },
+		exitFn: func(code int) { exited <- code },
+	}
+	s.installSignalHandler()
+	t.Cleanup(s.detachSignalHandler)
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("cannot signal this process: %v", err)
+	}
+	select {
+	case code := <-exited:
+		if code != 0 {
+			t.Errorf("the handler exited %d, want 0", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("SIGTERM did not reach the supervisor's handler")
+	}
+
+	mu.Lock()
+	got := strings.Join(seq, " → ")
+	mu.Unlock()
+	const want = "stop-accepting → drain → stop-postgres"
+	if got != want {
+		t.Fatalf("the SIGTERM path ran in the wrong order\n  got:  %s\n  want: %s", got, want)
 	}
 }
 
@@ -400,6 +462,80 @@ func TestPrepareSocketDirRefusesAnOverlongPath(t *testing.T) {
 	}
 	if _, statErr := os.Stat(dir); statErr == nil {
 		t.Error("the directory was created before the length was checked")
+	}
+}
+
+// The socket directory's mode is not hygiene — it is the ONLY access control
+// the embedded cluster has.
+//
+// initdb is run with `--auth-local=trust` (initCluster), and PostgreSQL's
+// `unix_socket_permissions` defaults to 0777, so the socket file itself is
+// world-writable by design. What stops a second local user from connecting is
+// that they cannot TRAVERSE the directory the socket sits in. At 0755 the
+// directory is world-traversable and `psql -h <dir> -d postgres` connects as a
+// SUPERUSER — no password, no prompt, full read/write over every table in the
+// app's database.
+//
+// Both the mode on MkdirAll and the Chmod that follows it are asserted,
+// because they close different halves: MkdirAll only sets the mode when it
+// CREATES the directory, so an already-present 0777 directory — a re-boot into
+// a socket path a previous run or another tool left behind — is tightened only
+// by the Chmod.
+func TestPrepareSocketDirIsPrivateToThisUser(t *testing.T) {
+	// Not t.TempDir(): on macOS that is a long /var/folders path which
+	// prepareSocketDir would (correctly) refuse for exceeding sun_path.
+	base := filepath.Join("/tmp", "sky-mode-"+strconv.Itoa(os.Getpid()))
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+
+	// (a) a directory prepareSocketDir CREATES.
+	fresh := filepath.Join(base, "fresh")
+	if err := prepareSocketDir(fresh); err != nil {
+		t.Fatalf("prepareSocketDir(%s): %v", fresh, err)
+	}
+	assertSocketDirIsPrivate(t, fresh, "created")
+
+	// (b) a directory that ALREADY exists, world-writable. MkdirAll is a no-op
+	// on it; only the Chmod tightens it.
+	stale := filepath.Join(base, "stale")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stale, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if got := statPerm(t, stale); got != 0o777 {
+		t.Fatalf("the test could not create a 0777 directory (got %04o); the rest of "+
+			"this case is vacuous", got)
+	}
+	if err := prepareSocketDir(stale); err != nil {
+		t.Fatalf("prepareSocketDir(%s): %v", stale, err)
+	}
+	assertSocketDirIsPrivate(t, stale, "pre-existing")
+}
+
+func statPerm(t *testing.T, dir string) os.FileMode {
+	t.Helper()
+	st, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat %s: %v", dir, err)
+	}
+	if !st.IsDir() {
+		t.Fatalf("%s is not a directory", dir)
+	}
+	return st.Mode().Perm()
+}
+
+func assertSocketDirIsPrivate(t *testing.T, dir, which string) {
+	t.Helper()
+	got := statPerm(t, dir)
+	if got != 0o700 {
+		t.Errorf("the %s socket directory %s is mode %04o, want 0700.\n"+
+			"Local auth is `trust` and unix_socket_permissions defaults to 0777, so this\n"+
+			"directory's mode is the only thing between any local user and superuser on\n"+
+			"the app's database: `psql -h %s -d postgres` would connect.", which, dir, got, dir)
+	}
+	if got&0o077 != 0 {
+		t.Errorf("the %s socket directory %s grants group/other %04o", which, dir, got&0o077)
 	}
 }
 

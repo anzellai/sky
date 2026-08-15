@@ -229,7 +229,23 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 		}
 	}()
 
-	third.shutdown(10 * time.Second)
+	// Through the REAL signal path, not a direct s.shutdown call: the goroutine
+	// installSignalHandler starts is what a `kubectl rollout`, a Cloud Run
+	// revision swap and a `systemctl restart` all go through, and a phase
+	// mistake made there rather than in shutdown is invisible to a test that
+	// calls shutdown itself.
+	exited := make(chan int, 1)
+	third.exitFn = func(code int) { exited <- code }
+	third.installSignalHandler()
+	defer third.detachSignalHandler()
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("cannot signal this process: %v", err)
+	}
+	select {
+	case <-exited:
+	case <-time.After(60 * time.Second):
+		t.Fatal("SIGTERM never completed the supervisor's shutdown sequence")
+	}
 
 	mu.Lock()
 	got := strings.Join(seq, " → ")
@@ -248,6 +264,78 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 	}
 	if fileExists(filepath.Join(third.cfg.dataDir, "postmaster.pid")) {
 		t.Error("pg_ctl stop left a pid file behind")
+	}
+}
+
+// The DSN handoff is the whole point of `--embed`, and nothing called
+// startEmbeddedPostgres: the unit gates stop at embeddedDSNConflict and the
+// lifecycle test above drives s.boot() directly. Deleting either os.Setenv left
+// the entire suite green.
+//
+// Losing `DATABASE_URL` in particular does not look like an `--embed` bug from
+// the outside. `Db.connect ()` reads `<PREFIX>_DB_PATH` first, so the app's own
+// queries keep working; it is the Sky.Live session store, the analytics store
+// and Std.Jobs that fall back to `DATABASE_URL`, find nothing, and SILENTLY
+// degrade to their non-Postgres defaults. Sessions land in memory, a restart
+// loses every one of them, and the embedded cluster sits there running
+// perfectly — which reads as a Sky.Live bug for as long as it takes someone to
+// check what the session store actually opened.
+func TestLiveEmbeddedStartHandsTheDSNToBothNamesTheRuntimeReads(t *testing.T) {
+	binDir := livePgBinDir()
+	if binDir == "" {
+		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
+	}
+	t.Setenv("SKY_POSTGRES_BIN", binDir)
+	root := durableTestDir(t, "dsn-handoff")
+	t.Setenv("SKY_DATA_DIR", root)
+	// startEmbeddedPostgres refuses to run alongside either name, so both are
+	// cleared here — through t.Setenv, which also puts the caller's values back
+	// after the os.Setenv the function under test performs.
+	t.Setenv(skyEnvName("DB_PATH"), "")
+	t.Setenv("DATABASE_URL", "")
+
+	prev := activeSupervisor()
+	t.Cleanup(func() { setActiveSupervisor(prev) })
+
+	if err := startEmbeddedPostgres(); err != nil {
+		t.Fatalf("startEmbeddedPostgres: %v", err)
+	}
+	s := activeSupervisor()
+	if s == nil {
+		t.Fatal("startEmbeddedPostgres registered no supervisor")
+	}
+	t.Cleanup(func() {
+		// Detach FIRST: installSignalHandler's registration is process-wide, and
+		// a handler left live here would also catch the signal a later test
+		// raises — and take the test binary down with os.Exit.
+		s.detachSignalHandler()
+		s.stopPostgres()
+		_ = os.RemoveAll(s.cfg.socketDir)
+	})
+
+	want := s.dsn
+	if !strings.Contains(want, "host="+s.cfg.socketDir) {
+		t.Fatalf("the supervisor's own DSN does not name its socket directory: %s", want)
+	}
+	for _, name := range []string{skyEnvName("DB_PATH"), "DATABASE_URL"} {
+		if got := os.Getenv(name); got != want {
+			t.Errorf("%s = %q, want the embedded cluster's DSN %q.\n"+
+				"Everything that reads this name — Db.connect for the first, and the "+
+				"Sky.Live session store, Std.Analytics and Std.Jobs for the second — "+
+				"silently falls back to a non-Postgres default when it is missing.",
+				name, got, want)
+		}
+	}
+
+	// …and the value is a working DSN, not merely a matching string.
+	db, err := sql.Open("pgx", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("the exported DSN does not open: %v", err)
+	}
+	defer db.Close()
+	var one int
+	if err := db.QueryRow("select 1").Scan(&one); err != nil || one != 1 {
+		t.Fatalf("the exported DSN does not answer a query: %v", err)
 	}
 }
 

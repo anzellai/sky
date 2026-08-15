@@ -47,3 +47,39 @@ func TestSqliteStoreOpensUnderConcurrentHandle(t *testing.T) {
 		t.Error("session written via the hardened sqlite store was not read back")
 	}
 }
+
+// The Postgres session store needs the same assertion, and did not have it.
+//
+// `TestDbAuxPoolIsASmallShareOfTheAppPool` checks the arithmetic of
+// `dbAuxPoolConfig` and stops there: it never asks whether the number reaches a
+// pool. Deleting the `applyTo` call from the store's open path therefore left
+// the whole suite green while `MaxOpenConns` went back to Go's zero value,
+// which means UNLIMITED — on what live_store.go's own comment calls the
+// HOTTEST pool in a Sky.Live app. A spike then opens one backend per concurrent
+// request until `FATAL: sorry, too many clients already`, and because every
+// request begins with a session lookup, that fails EVERY request rather than
+// the excess ones.
+//
+// No server is needed: `sql.Open` does not dial, and the pool config is
+// readable from Stats() straight away.
+func TestPostgresSessionPoolHasACeiling(t *testing.T) {
+	want := dbAuxPoolConfig().MaxOpenConns
+	if want <= 0 {
+		t.Fatalf("dbAuxPoolConfig().MaxOpenConns is %d — this gate would assert "+
+			"'unlimited == unlimited' and prove nothing", want)
+	}
+
+	// Port 1 is deliberately dead; nothing here connects.
+	db, err := openPostgresSessionPool("postgres://sky:sky@127.0.0.1:1/sky?sslmode=disable")
+	if err != nil {
+		t.Fatalf("openPostgresSessionPool: %v", err)
+	}
+	defer db.Close()
+
+	if got := db.Stats().MaxOpenConnections; got != want {
+		t.Errorf("the Sky.Live postgres session pool has MaxOpenConnections = %d, want %d.\n"+
+			"0 means UNLIMITED: a traffic spike opens one backend per concurrent request "+
+			"until the server answers `FATAL: sorry, too many clients already`, which fails "+
+			"the session lookup on EVERY request.", got, want)
+	}
+}

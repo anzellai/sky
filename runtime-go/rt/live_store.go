@@ -868,7 +868,16 @@ func (s *postgresStore) Ping() error {
 	return s.db.PingContext(ctx)
 }
 
-func newPostgresStore(connStr string, ttl, idleEvict time.Duration) (*postgresStore, error) {
+// openPostgresSessionPool opens the session store's pool with its ceiling
+// already applied.
+//
+// Split out from newPostgresStore for a testability reason worth stating: the
+// CREATE TABLE below needs a live engine, so ANY gate that goes through
+// newPostgresStore can only run under `-tags integration` against a real
+// server — and that is exactly how the `applyTo` line came to be deletable with
+// the whole default suite green. `sql.Open` does not dial, so the sizing IS
+// assertable offline, but only if it is reachable without the DDL.
+func openPostgresSessionPool(connStr string) (*sql.DB, error) {
 	db, err := sql.Open("pgx", connStr)
 	if err != nil {
 		return nil, err
@@ -887,6 +896,14 @@ func newPostgresStore(connStr string, ttl, idleEvict time.Duration) (*postgresSt
 	// session read/write is sub-millisecond work that a handful of
 	// connections saturates.
 	dbAuxPoolConfig().applyTo(db)
+	return db, nil
+}
+
+func newPostgresStore(connStr string, ttl, idleEvict time.Duration) (*postgresStore, error) {
+	db, err := openPostgresSessionPool(connStr)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS sky_sessions (
 			sid        TEXT PRIMARY KEY,

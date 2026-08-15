@@ -395,6 +395,31 @@ func TestDbIsRetryableTxError(t *testing.T) {
 			t.Errorf("SQLSTATE %s must NOT be retryable", code)
 		}
 	}
+
+	// …and the message text must not be consulted even when it CONTAINS the
+	// codes, which is the failure a `strings.Contains(err.Error(), "40001")`
+	// fallback produces. `sql.ErrNoRows` above cannot catch it: its message
+	// mentions neither code, so a text-matching implementation passes that
+	// case and every other negative here.
+	//
+	// The consequence is not a spurious retry. With SKY_DB_TX_RETRY set, the
+	// retry loop REPLAYS the whole Task body — which, per this function's own
+	// docstring, may already have sent the mail and charged the card. An order
+	// reference, an invoice number or an account id that happens to read
+	// `40001` is enough, and a unique-constraint violation on it is a
+	// permanent error that would then be replayed ten times.
+	for _, msg := range []string{
+		`pq: duplicate key value violates unique constraint "orders_ref_key" ` +
+			`DETAIL: Key (ref)=(40001) already exists.`,
+		"app: refusing to import row 40001",
+		"http 500: upstream reported deadlock detected in the billing queue",
+		"serialization_failure while rendering the report",
+	} {
+		if dbIsRetryableTxError(errors.New(msg)) {
+			t.Errorf("classified by MESSAGE TEXT, not SQLSTATE — a replayable-body "+
+				"retry would re-run a body that has already charged a card:\n  %s", msg)
+		}
+	}
 	if dbIsRetryableTxError(errWrap{newPgError("40001")}) == false {
 		t.Error("a wrapped PgError must still be classified (errors.As, not a type assert)")
 	}
