@@ -1,0 +1,40 @@
+### rendered postgresql.conf — sky-authored block ###
+listen_addresses = ''  # no TCP listener at all: the app talks over a 0700 unix socket, and a port would expose the database to the network by accident
+shared_buffers = 296MB  # 15% of RAM, not the 25% a dedicated server gets — the app is on this machine too
+effective_cache_size = 790MB  # a planner hint about the OS page cache; costs no memory
+maintenance_work_mem = 98MB  # vacuum and index builds; one or two at a time, so it can be larger than work_mem
+work_mem = 13MB  # per sort/hash node, so budgeted across max_connections rather than per machine
+max_connections = 36  # covers every pool this process opens (app + analytics + sessions + telemetry), twice over for restart overlap, plus the reserved superuser slots
+max_worker_processes = 2  # one per CPU
+max_parallel_workers = 2  # cannot exceed max_worker_processes
+max_parallel_workers_per_gather = 1  # half the CPUs: the app needs the other half
+autovacuum_max_workers = 1  # autovacuum competes with the app for the same cores
+max_wal_size = 512MB  # checkpoint spacing; larger means fewer, bigger checkpoints
+min_wal_size = 128MB  # keeps recycled WAL segments rather than re-creating them
+
+### full process tree RSS, config C under idle ###
+    PID    PPID   RSS COMMAND         COMMAND
+ 125146       1 180732 app            /opt/skybench/app --embed --data-dir /var/lib/skybench/data
+    397       1 45640 google_osconfig /usr/bin/google_osconfig_agent
+ 125157  125146 35596 postgres        /usr/lib/postgresql/15/bin/postgres -D /var/lib/skybench/data/pg -k /tmp/sky-b5c107ad4fbf1900 -c listen_addresses=
+    229       1 34660 systemd-journal /lib/systemd/systemd-journald
+    655       1 24692 google_guest_ag /usr/bin/google_guest_agent_manager
+    745     655 24276 guest_telemetry /usr/lib/google/guest_agent/GuestTelemetryExtension/guest_telemetry --protocol=unix --address=/run/google-guest-agent/plugin-connections/GuestTelemetryExtension_1.0.sock --errorlogfile=/var/lib/google-guest-agent/3131079235375842171/agent_state/plugins/GuestTelemetryExtension/plugin.log
+    728     655 24076 core_plugin     /usr/lib/google/guest_agent/GuestAgentCorePlugin/core_plugin --protocol=unix --address=/run/google-guest-agent/plugin-connections/GuestAgentCorePlugin_20260715.00.sock --errorlogfile=/var/lib/google-guest-agent/3131079235375842171/agent_state/plugins/GuestAgentCorePlugin/plugin.log
+    414       1 21472 unattended-upgr /usr/bin/python3 /usr/share/unattended-upgrades/unattended-upgrade-shutdown --wait-for-signal
+    399       1 20484 networkd-dispat /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+    664       1 19516 google_guest_co /usr/bin/google_guest_compat_manager
+    663       1 17960 exim4           /usr/sbin/exim4 -bd -q30m
+ 126354     810 16912 sshd            sshd: sa_110834362067503751664 [priv]
+ 125858  125157 16904 postgres        postgres: skybench postgres [local] idle
+
+### meminfo ###
+MemTotal:        2023888 kB
+MemFree:         1093280 kB
+MemAvailable:    1346376 kB
+Shmem:             21256 kB
+
+### versions ###
+postgres (PostgreSQL) 15.19 (Debian 15.19-0+deb12u1)
+Linux 6.1.0-52-cloud-amd64 x86_64
+2

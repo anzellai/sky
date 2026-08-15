@@ -131,11 +131,23 @@ func HtmlToVNode(node any) VNode {
 		if len(fields) < 3 {
 			return vtext("")
 		}
+		// Attrs/Events are deliberately left nil here and created on
+		// first write by applyHtmlAttr. Two maps were being allocated
+		// for EVERY element whether or not it had any attribute or
+		// event, and both are retained for the lifetime of the session
+		// inside prevTree — 30% of the 336 kB a session holds
+		// (`docs/perf/skylive-interaction-cost.md`, "The attribution").
+		//
+		// Every reader is nil-safe by construction: an index read, a
+		// comma-ok read, `range`, `len` and `delete` all behave on a nil
+		// map exactly as they do on an empty one. Text and raw nodes
+		// have shipped with nil Attrs/Events through this same pipeline
+		// since `vtext` was written, so the nil case is not a new one.
+		// The only nil-unsafe operation is a map ASSIGN, and every
+		// assign lives in applyHtmlAttr below.
 		vn := VNode{
-			Kind:   "element",
-			Tag:    AsString(fields[0]),
-			Attrs:  map[string]string{},
-			Events: map[string]any{},
+			Kind: "element",
+			Tag:  AsString(fields[0]),
 		}
 		for _, a := range asList(fields[1]) {
 			applyHtmlAttr(&vn, a)
@@ -147,6 +159,23 @@ func HtmlToVNode(node any) VNode {
 	default:
 		return vtext("")
 	}
+}
+
+// setAttr writes one attribute, creating the map on first use.
+// HtmlToVNode leaves Attrs nil; this is the only place it is filled.
+func (vn *VNode) setAttr(k, v string) {
+	if vn.Attrs == nil {
+		vn.Attrs = make(map[string]string, 1)
+	}
+	vn.Attrs[k] = v
+}
+
+// setEvent writes one event binding, creating the map on first use.
+func (vn *VNode) setEvent(name string, msg any) {
+	if vn.Events == nil {
+		vn.Events = make(map[string]any, 1)
+	}
+	vn.Events[name] = msg
 }
 
 // applyHtmlAttr folds one Sky `Attribute` ADT value into a VNode.
@@ -179,23 +208,23 @@ func applyHtmlAttr(vn *VNode, a any) {
 			if existing, ok := vn.Attrs[k]; ok && existing != "" {
 				switch k {
 				case "class":
-					vn.Attrs[k] = existing + " " + v
+					vn.setAttr(k, existing+" "+v)
 					return
 				case "style":
 					sep := "; "
 					if strings.HasSuffix(existing, ";") {
 						sep = " "
 					}
-					vn.Attrs[k] = existing + sep + v
+					vn.setAttr(k, existing+sep+v)
 					return
 				}
 			}
-			vn.Attrs[k] = v
+			vn.setAttr(k, v)
 		}
 	case "BoolAttr":
 		if len(fields) >= 2 && AsBool(fields[1]) {
 			k := AsString(fields[0])
-			vn.Attrs[k] = k
+			vn.setAttr(k, k)
 		}
 	case "EventAttr":
 		if len(fields) >= 1 {
@@ -203,7 +232,7 @@ func applyHtmlAttr(vn *VNode, a any) {
 			if _, _, evFields, ok := unwrapADTShape(ev); ok && len(evFields) >= 2 {
 				// OnMsg / OnString / OnBool: Fields[0] = event name,
 				// Fields[1] = Msg value (OnMsg) or handler fn.
-				vn.Events[AsString(evFields[0])] = evFields[1]
+				vn.setEvent(AsString(evFields[0]), evFields[1])
 			}
 		}
 	case "NoAttr":
@@ -618,26 +647,39 @@ func assignSkyIDs(n *VNode, path string) {
 // Pre-condition: assignSkyIDs has already stamped n.SkyID on every
 // element. Post-condition: marker attrs removed; style child
 // prepended where present.
+// mediaQuerySpec and its three siblings are package-level values, built
+// once, NOT struct literals rebuilt inside the walk.
+//
+// They used to be constructed inside the inject* function -- which is also
+// the function the walk recursed through, so every element in the tree
+// re-allocated a `markerAttrs` slice and a `build` closure, on each of the
+// four passes. That, not the children-slice rebuild, was the dominant
+// per-element allocation in style injection: 7.0 allocations per element
+// against the 0.02 the slice rebuild costs.
+//
+// None of the four `build` funcs captures anything, so hoisting them is a
+// pure lifetime change. The walk is byte-for-byte the same walk.
+var mediaQuerySpec = styleMarkerSpec{
+	markerAttrs: []string{"data-sky-mq-q", "data-sky-mq-rules"},
+	styleAttr:   "data-sky-mq",
+	build: func(skyID string, attrs map[string]string) string {
+		query := attrs["data-sky-mq-q"]
+		rules := attrs["data-sky-mq-rules"]
+		if query == "" || rules == "" {
+			return ""
+		}
+		selector := `[sky-id="` + skyID + `"]`
+		safeRules := strings.ReplaceAll(rules, "</style", "")
+		safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
+		safeQuery := strings.ReplaceAll(query, "</style", "")
+		safeQuery = strings.ReplaceAll(safeQuery, "</STYLE", "")
+		return "@media " + safeQuery + " { " + selector +
+			" { " + safeRules + " } }"
+	},
+}
+
 func injectMediaQueryStyles(n *VNode) {
-	injectStyleMarker(n, styleMarkerSpec{
-		markerAttrs: []string{"data-sky-mq-q", "data-sky-mq-rules"},
-		styleAttr:   "data-sky-mq",
-		build: func(skyID string, attrs map[string]string) string {
-			query := attrs["data-sky-mq-q"]
-			rules := attrs["data-sky-mq-rules"]
-			if query == "" || rules == "" {
-				return ""
-			}
-			selector := `[sky-id="` + skyID + `"]`
-			safeRules := strings.ReplaceAll(rules, "</style", "")
-			safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
-			safeQuery := strings.ReplaceAll(query, "</style", "")
-			safeQuery = strings.ReplaceAll(safeQuery, "</STYLE", "")
-			return "@media " + safeQuery + " { " + selector +
-				" { " + safeRules + " } }"
-		},
-		recurse: injectMediaQueryStyles,
-	})
+	injectStyleMarker(n, mediaQuerySpec)
 }
 
 // injectPseudoClassStyles walks the tree after assignSkyIDs and
@@ -674,15 +716,16 @@ func injectMediaQueryStyles(n *VNode) {
 // Pre-condition: assignSkyIDs has already stamped n.SkyID on every
 // element. Post-condition: marker attr removed; style child
 // prepended where present.
+var pseudoClassSpec = styleMarkerSpec{
+	markerAttrs: []string{"data-sky-pc-rules"},
+	styleAttr:   "data-sky-pc",
+	build: func(skyID string, attrs map[string]string) string {
+		return buildPseudoClassStyleText(skyID, attrs["data-sky-pc-rules"])
+	},
+}
+
 func injectPseudoClassStyles(n *VNode) {
-	injectStyleMarker(n, styleMarkerSpec{
-		markerAttrs: []string{"data-sky-pc-rules"},
-		styleAttr:   "data-sky-pc",
-		build: func(skyID string, attrs map[string]string) string {
-			return buildPseudoClassStyleText(skyID, attrs["data-sky-pc-rules"])
-		},
-		recurse: injectPseudoClassStyles,
-	})
+	injectStyleMarker(n, pseudoClassSpec)
 }
 
 // styleMarkerSpec describes one style-injection pass. All four passes
@@ -708,10 +751,14 @@ type styleMarkerSpec struct {
 	// build builds the CSS body. Returns "" if there's nothing to
 	// emit (the marker was empty / malformed).
 	build func(skyID string, attrs map[string]string) string
-	// recurse is the entry point used to recursively walk children
-	// (passed in so each pass keeps its own identity for tracing).
-	recurse func(*VNode)
 }
+
+// The struct carried no `recurse func(*VNode)` field after the specs became
+// package-level values. It had held each pass's own entry point, which for
+// all four was exactly `injectStyleMarker(n, thatSameSpec)` -- so recursing
+// through `injectStyleMarker` directly walks the identical tree in the
+// identical order, and removes the reason the spec had to be rebuilt per
+// node.
 
 // injectStyleMarker applies a single style-injection spec to a VNode
 // + its descendants. Handles both the non-void case (attach style as
@@ -776,11 +823,22 @@ func applyMarkerAsFirstChild(n *VNode, spec styleMarkerSpec) {
 // walkChildrenWithVoidSiblingHoist recurses into each child + splices
 // a sibling <style> immediately after any VOID child whose marker
 // survived the self-handler's bail. See #409.
+// It rebuilds the slice ONLY when a hoist actually happens. The
+// previous version allocated `make([]VNode, 0, len(children))` and
+// re-copied every child for every element, on each of the four
+// injection passes, whether or not the tree contained a single style
+// marker — 4 full tree-copies per render, and 17% of what a session
+// retains (`docs/perf/skylive-interaction-cost.md`, "The attribution").
+// A hoist is rare: it needs a VOID child carrying a live marker.
+//
+// The recursive call mutates through the pointer either way, so when
+// nothing is hoisted the input slice already holds exactly the values
+// the old code copied out, and returning it is the same result.
 func walkChildrenWithVoidSiblingHoist(children []VNode, spec styleMarkerSpec) []VNode {
-	out := make([]VNode, 0, len(children))
+	var out []VNode // nil until the first hoist forces a rebuild
 	for i := range children {
 		child := &children[i]
-		spec.recurse(child)
+		injectStyleMarker(child, spec)
 		// Capture the void-child's marker BEFORE we append (the recurse
 		// call may have stripped non-void markers from deep descendants
 		// but a void child's marker still sits on the child).
@@ -810,10 +868,25 @@ func walkChildrenWithVoidSiblingHoist(children []VNode, spec styleMarkerSpec) []
 				}
 			}
 		}
-		out = append(out, *child)
-		if hoist != nil {
-			out = append(out, *hoist)
+		if hoist == nil {
+			if out != nil {
+				out = append(out, *child)
+			}
+			continue
 		}
+		if out == nil {
+			// First hoist in this child list: materialise the prefix
+			// (already recursed, so these are the same values the old
+			// code would have copied) and switch to the rebuilt slice.
+			out = make([]VNode, 0, len(children)+1)
+			out = append(out, children[:i+1]...)
+		} else {
+			out = append(out, *child)
+		}
+		out = append(out, *hoist)
+	}
+	if out == nil {
+		return children
 	}
 	return out
 }
@@ -974,28 +1047,29 @@ func applyStyleInjections(n *VNode) {
 // further coordination.
 //
 // Pre-condition: assignSkyIDs has already stamped n.SkyID.
+var transitionSpec = styleMarkerSpec{
+	markerAttrs: []string{"data-sky-tr-rules", "data-sky-tr-respect"},
+	styleAttr:   "data-sky-tr",
+	build: func(skyID string, attrs map[string]string) string {
+		rules := attrs["data-sky-tr-rules"]
+		respectRaw := attrs["data-sky-tr-respect"]
+		if rules == "" {
+			return ""
+		}
+		respect := respectRaw != "0"
+		safeRules := strings.ReplaceAll(rules, "</style", "")
+		safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
+		selector := `[sky-id="` + skyID + `"]`
+		if respect {
+			return "@media (prefers-reduced-motion: no-preference) { " +
+				selector + " { transition: " + safeRules + "; } }"
+		}
+		return selector + " { transition: " + safeRules + "; }"
+	},
+}
+
 func injectTransitionStyles(n *VNode) {
-	injectStyleMarker(n, styleMarkerSpec{
-		markerAttrs: []string{"data-sky-tr-rules", "data-sky-tr-respect"},
-		styleAttr:   "data-sky-tr",
-		build: func(skyID string, attrs map[string]string) string {
-			rules := attrs["data-sky-tr-rules"]
-			respectRaw := attrs["data-sky-tr-respect"]
-			if rules == "" {
-				return ""
-			}
-			respect := respectRaw != "0"
-			safeRules := strings.ReplaceAll(rules, "</style", "")
-			safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
-			selector := `[sky-id="` + skyID + `"]`
-			if respect {
-				return "@media (prefers-reduced-motion: no-preference) { " +
-					selector + " { transition: " + safeRules + "; } }"
-			}
-			return selector + " { transition: " + safeRules + "; }"
-		},
-		recurse: injectTransitionStyles,
-	})
+	injectStyleMarker(n, transitionSpec)
 }
 
 // injectAnimationStyles walks the tree after assignSkyIDs and
@@ -1027,15 +1101,16 @@ func injectTransitionStyles(n *VNode) {
 // with DIFFERENT keyframes don't collide globally. The sky-id is
 // already structurally unique within a page; we strip the
 // non-CSS-ident chars to produce a safe @keyframes name suffix.
+var animationSpec = styleMarkerSpec{
+	markerAttrs: []string{"data-sky-anim-rules"},
+	styleAttr:   "data-sky-anim",
+	build: func(skyID string, attrs map[string]string) string {
+		return buildAnimationStyleText(skyID, attrs["data-sky-anim-rules"])
+	},
+}
+
 func injectAnimationStyles(n *VNode) {
-	injectStyleMarker(n, styleMarkerSpec{
-		markerAttrs: []string{"data-sky-anim-rules"},
-		styleAttr:   "data-sky-anim",
-		build: func(skyID string, attrs map[string]string) string {
-			return buildAnimationStyleText(skyID, attrs["data-sky-anim-rules"])
-		},
-		recurse: injectAnimationStyles,
-	})
+	injectStyleMarker(n, animationSpec)
 }
 
 // skyIDToCSSIdent rewrites a sky-id (`r.0.2#div`) into a CSS-safe
