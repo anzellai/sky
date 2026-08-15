@@ -36,6 +36,11 @@ const SKY: &str = env!("CARGO_BIN_EXE_sky");
 /// case — the one that does not fail, it just consumes the job.
 const SKY_LIMIT: Duration = Duration::from_secs(300);
 
+/// The ceiling on the one-off warm-up compile, which is a whole `go build` of
+/// the runtime and stdlib from an empty cache and is legitimately the slowest
+/// thing in the file.
+const BUILD_LIMIT: Duration = Duration::from_secs(900);
+
 /// The app under test. It prints the DSN it was handed, opens it, runs a query,
 /// and then holds the process open for `SKY_P4_HOLD` milliseconds.
 ///
@@ -195,6 +200,27 @@ impl Fixture {
 
     fn sky(&self, args: &[&str]) -> Output {
         self.sky_within(args, SKY_LIMIT)
+    }
+
+    /// Compile the app BEFORE anything timed begins.
+    ///
+    /// `wait_for_connected` gives a spawned `sky run` 180 seconds to print
+    /// `ANSWER=42` — and a `sky run` compiles through a real `go build` first,
+    /// so on a cold Go cache that deadline is spent mostly on compilation. The
+    /// test then fails as "never connected to the cluster" while the log it
+    /// prints shows a build that had got as far as `Sky lowering succeeded`:
+    /// a timing assertion reporting a compile time. Measured on a 2-core Linux
+    /// container, the first build in this file takes longer than the whole
+    /// deadline, and under libtest's default parallelism several tests paid
+    /// that cost at once, each on its own clock.
+    ///
+    /// `a_second_concurrent_run_keeps_its_database_when_the_first_one_exits`
+    /// already did this by hand, with exactly this reasoning — "so the timing
+    /// below is about process lifetimes, not about how long `go build` takes".
+    /// It is every live test that needs it, not one.
+    fn warm_build(&self) {
+        let out = self.sky_within(&["build", "src/Main.sky"], BUILD_LIMIT);
+        assert!(out.status.success(), "warm-up build failed:\n{}", both(&out));
     }
 
     /// Run `sky` to completion — but never for longer than `limit`.
@@ -521,6 +547,7 @@ fn sky_run_starts_a_cluster_injects_the_dsn_and_stops_it_on_exit() {
         skip("no PostgreSQL and/or no go toolchain");
         return;
     };
+    fx.warm_build();
 
     let mut run = fx.spawn_run("basic", 0);
     run.wait_for_connected("sky run");
@@ -559,10 +586,7 @@ fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
         skip("no PostgreSQL and/or no go toolchain");
         return;
     };
-    // Warm the build cache so the timing below is about process lifetimes, not
-    // about how long `go build` takes.
-    let warm = fx.sky(&["build", "src/Main.sky"]);
-    assert!(warm.status.success(), "warm-up build failed:\n{}", both(&warm));
+    fx.warm_build();
 
     // First run: short-lived. Second: long enough to outlive it comfortably.
     let mut first = fx.spawn_run("first", 4_000);
@@ -628,6 +652,7 @@ fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
         skip("no PostgreSQL and/or no go toolchain");
         return;
     };
+    fx.warm_build();
 
     let start = fx.sky(&["db", "start"]);
     assert!(start.status.success(), "sky db start failed:\n{}", both(&start));
@@ -672,6 +697,7 @@ fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
         skip("no PostgreSQL and/or no go toolchain");
         return;
     };
+    fx.warm_build();
 
     // The hold only has to outlive the SIGKILL below and the two assertions
     // after it — a couple of milliseconds. It used to be two MINUTES, which
@@ -728,6 +754,7 @@ fn sky_watch_hands_the_same_cluster_to_the_app_it_spawns() {
         skip("no PostgreSQL and/or no go toolchain");
         return;
     };
+    fx.warm_build();
 
     // As in the SIGKILL case: long enough to still be running when the session
     // is killed, no longer. See the note there.
