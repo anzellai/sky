@@ -346,21 +346,42 @@ fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
     );
 }
 
-/// `--app <name>` over a role that already exists must REFUSE, not rotate.
+/// `--app <name>` must never ISSUE CREDENTIALS for a role that is not sky's
+/// alone — whoever created it.
 ///
-/// `RESERVED` names the cluster's built-in furniture; it cannot name the account
-/// that ran `--shared`, which is the bootstrap superuser, nor an operator's
-/// `analytics` / `replication` / previous tenant's role. For all of them the
-/// pre-existing branch does the same thing: `ALTER ROLE … PASSWORD`, then prints
-/// the result as an app DSN. The superuser case hands one app every other app's
-/// data; the general case hands the new app the old one's identity, and gives
-/// the operator's role a password it did not choose.
+/// Three shapes, and the test carries all three because the code answers them
+/// in three different ways:
 ///
-/// The falsifying mutation is restoring the `ALTER ROLE` on the pre-existing
-/// branch: the `rolpassword` comparison below then fails, having been rotated.
+/// 1. **A role sky did not create.** `RESERVED` names the cluster's built-in
+///    furniture; it cannot name the account that ran `--shared`, which is the
+///    bootstrap superuser, nor an operator's `analytics` / previous tenant's
+///    role. For all of them the pre-existing branch used to `ALTER ROLE …
+///    PASSWORD` and print the result as an app DSN — handing the new app the
+///    old one's identity and giving the operator's role a password it did not
+///    choose.
+/// 2. **A role holding an elevated ATTRIBUTE.** All five are exercised, one
+///    role each. Three of them — `CREATEDB`, `REPLICATION`, `BYPASSRLS` — had
+///    no test at all: their arms could be deleted from the refusal with every
+///    gate still green, and a pre-existing `REPLICATION` role handed out as an
+///    app credential streams the whole cluster's WAL, which is every app's
+///    data. The role sky CREATES is then asserted to hold none of them, in the
+///    general form (every boolean column of `pg_roles` bar the two an app needs)
+///    so that a sixth attribute in a future PostgreSQL is covered without an
+///    edit here.
+/// 3. **A role holding privilege by MEMBERSHIP.** `GRANT beta TO alpha` leaves
+///    all five attributes false. `--app alpha --rotate-password` then succeeded
+///    and printed a DSN that reads beta's private data. Membership is the other
+///    half of "may this role do more than its own database", and the refusal
+///    read only `rol*` columns. Asserted at the moment credentials are ISSUED —
+///    a re-provision — because creation-time is not when this arises: the grant
+///    happens to a role that already exists.
+///
+/// The falsifying mutations: restoring the `ALTER ROLE` on the pre-existing
+/// branch (the `rolpassword` comparisons fail, having been rotated); deleting
+/// any one of the five attribute arms; deleting the `pg_auth_members` query.
 #[test]
 fn provisioning_an_app_over_a_role_sky_did_not_create_is_refused() {
-    let Some((fx, _a_dsn, _a_pw, _b_dsn, _b_pw)) = provision_fixture("adopt-role") else {
+    let Some((fx, _a_dsn, a_pw, _b_dsn, b_pw)) = provision_fixture("adopt-role") else {
         return;
     };
     let app_opts = |name: &str| Opts {
@@ -420,6 +441,248 @@ fn provisioning_an_app_over_a_role_sky_did_not_create_is_refused() {
     let out = provision_app(&app_opts("gamma")).expect("a fresh app name was refused");
     let (_, pw) = dsn_and_password(&out, "gamma");
     connect_as(&fx.layout, "gamma", "gamma", &pw).expect("the fresh app's DSN does not work");
+
+    // --- shape 2: every elevated attribute ------------------------------------
+    // `ops` above covers CREATEROLE and the superuser covers SUPERUSER, but
+    // CREATEDB, REPLICATION and BYPASSRLS had nothing observing them at all.
+    //
+    // The PROMOTED case comes first because it is the one where deleting an arm
+    // is exploitable rather than merely differently-worded. Everything else
+    // about alpha is sky's own — sky's role comment, an apps_file entry — so
+    // every ownership question says yes and the attribute check is the only
+    // thing between `--rotate-password` and a DSN for a role that reads the
+    // whole cluster. With an arm deleted the refusal does not happen at all.
+    for attr in ["SUPERUSER", "CREATEROLE", "CREATEDB", "REPLICATION", "BYPASSRLS"] {
+        let before = verifier(&mut admin, "alpha");
+        admin.execute(&format!("ALTER ROLE alpha {attr}")).unwrap();
+        let e = provision_app(&Opts { rotate: true, ..app_opts("alpha") }).expect_err(&format!(
+            "alpha was rotated after being promoted to {attr}; the DSN reads every database"
+        ));
+        panic_if_not_refused(&e, attr);
+        assert_eq!(
+            verifier(&mut admin, "alpha"),
+            before,
+            "alpha's password was rotated despite holding {attr}"
+        );
+        admin.execute(&format!("ALTER ROLE alpha NO{attr}")).unwrap();
+    }
+
+    // And the same five held by a role sky did NOT create, which is the shape
+    // an operator's `analytics` or `replication` account has.
+    for (attr, role) in [
+        ("SUPERUSER", "elev_super"),
+        ("CREATEROLE", "elev_createrole"),
+        ("CREATEDB", "elev_createdb"),
+        ("REPLICATION", "elev_replication"),
+        ("BYPASSRLS", "elev_bypassrls"),
+    ] {
+        let pw = generate_password();
+        admin
+            .execute(&format!(
+                "CREATE ROLE {} LOGIN PASSWORD {} {attr}",
+                quote_ident(role),
+                quote_literal(&pw)
+            ))
+            .unwrap();
+        let before = verifier(&mut admin, role);
+        let e = provision_app(&app_opts(role))
+            .expect_err(&format!("a {attr} role was provisioned as an app"));
+        panic_if_not_refused(&e, attr);
+        assert_eq!(
+            verifier(&mut admin, role),
+            before,
+            "the {attr} role was given a new password"
+        );
+    }
+
+    // The other side of the same claim: the role sky CREATES holds none of
+    // them. Read generically out of the catalog rather than from a list here,
+    // so a boolean attribute added in a future PostgreSQL is covered without an
+    // edit. `rolcanlogin` and `rolinherit` are excluded because an app role
+    // needs both.
+    let attrs = admin
+        .scalar(
+            "SELECT string_agg(column_name, ' OR ' ORDER BY column_name) \
+             FROM information_schema.columns \
+             WHERE table_schema = 'pg_catalog' AND table_name = 'pg_roles' \
+               AND data_type = 'boolean' \
+               AND column_name NOT IN ('rolcanlogin', 'rolinherit')",
+        )
+        .unwrap()
+        .expect("pg_roles has no boolean columns; the query is wrong, not the code");
+    assert!(
+        attrs.split(" OR ").count() >= 5,
+        "only {} elevated attribute(s) found ({attrs}) — the catalog query is not reading pg_roles",
+        attrs.split(" OR ").count()
+    );
+    assert_eq!(
+        admin
+            .scalar(&format!(
+                "SELECT ({attrs})::text FROM pg_roles WHERE rolname = 'alpha'"
+            ))
+            .unwrap()
+            .as_deref(),
+        Some("false"),
+        "the role sky created holds an elevated attribute ({attrs})"
+    );
+
+    // --- shape 3: privilege by membership, at the moment credentials issue ----
+    // alpha is sky's own role, carries sky's marker, is in apps_file, and holds
+    // no elevated attribute. Every question the refusal used to ask says yes.
+    let alpha_before = verifier(&mut admin, "alpha");
+    for grant in ["beta", "pg_monitor"] {
+        admin.execute(&format!("GRANT {} TO alpha", quote_ident(grant))).unwrap();
+        let e = provision_app(&Opts { rotate: true, ..app_opts("alpha") }).expect_err(&format!(
+            "alpha was re-provisioned while a member of {grant}; the DSN reads its data"
+        ));
+        assert!(
+            e.contains("member of"),
+            "refused for the wrong reason after GRANT {grant}:\n{e}"
+        );
+        assert_eq!(
+            verifier(&mut admin, "alpha"),
+            alpha_before,
+            "alpha's password was rotated despite the refusal"
+        );
+        admin.execute(&format!("REVOKE {} FROM alpha", quote_ident(grant))).unwrap();
+    }
+    // Positive control: with the membership gone, the same call works. Without
+    // this the refusal above could be a rotate path that is simply broken.
+    let out = provision_app(&Opts { rotate: true, ..app_opts("alpha") })
+        .expect("alpha could not be rotated even with no membership");
+    let (_, rotated) = dsn_and_password(&out, "alpha");
+    assert_ne!(rotated, a_pw);
+    connect_as(&fx.layout, "alpha", "alpha", &rotated).expect("the rotated DSN does not work");
+    connect_as(&fx.layout, "beta", "beta", &b_pw).expect("beta was disturbed");
+}
+
+/// A refusal has to name the reason. Asserting only `is_err()` passes against a
+/// cluster that has fallen over, and asserting the whole message pins prose.
+fn panic_if_not_refused(err: &str, attr: &str) {
+    assert!(
+        err.contains(attr) || err.contains("more than its own database"),
+        "a {attr} role was refused, but for some other reason:\n{err}"
+    );
+}
+
+/// `--app <name>` must not take over a DATABASE sky did not create — and the
+/// case that reached the operator's data is the one where the role is ABSENT.
+///
+/// The role refusal is reached only when a role of that name exists. An
+/// operator's server routinely has the other combination: a `metrics` database
+/// created by hand, owned by whatever account made it, with no `metrics` login
+/// role at all. That skipped the refusal, skipped `CREATE DATABASE` (it exists),
+/// and ran the rest against their data — `REVOKE ALL ON DATABASE metrics FROM
+/// PUBLIC`, which takes their own role's `CONNECT` away, and `ALTER SCHEMA
+/// public OWNER TO metrics`, which hands the schema to the new app whose DSN the
+/// same command prints. An outage and a handover, reported as success. Adopting
+/// an operator's existing server is the documented primary case for `--shared`,
+/// so this is reachable by design.
+///
+/// The assertion is the GENERAL form rather than a list of the two statements
+/// that did the damage: every database sky did not create is byte-identical
+/// afterwards — owner, ACL, and (for the one under attack) the `public` schema's
+/// owner. A different statement doing the same thing is caught by the same test.
+///
+/// The falsifying mutation is deleting the `refuse_a_database_sky_does_not_own`
+/// call from `provision_app_inner`, or the `COMMENT ON DATABASE` from
+/// `app_cluster_sql` that makes the question answerable.
+#[test]
+fn an_app_run_does_not_take_over_a_database_sky_did_not_create() {
+    let Some((fx, _a_dsn, _a_pw, _b_dsn, _b_pw)) = provision_fixture("adopt-db") else {
+        return;
+    };
+    let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
+
+    // The operator's server, as `--shared` finds it: a database with no role of
+    // the same name, owned by an ordinary account of theirs.
+    let ops_pw = generate_password();
+    admin
+        .execute(&format!("CREATE ROLE opsowner LOGIN PASSWORD {}", quote_literal(&ops_pw)))
+        .unwrap();
+    admin.execute("CREATE DATABASE metrics OWNER opsowner").unwrap();
+    assert!(
+        admin
+            .scalar("SELECT 1 FROM pg_roles WHERE rolname = 'metrics'")
+            .unwrap()
+            .is_none(),
+        "the fixture created a metrics ROLE; then this is the case the role refusal already covers"
+    );
+
+    // Positive control: the operator's app works right now. Without this the
+    // refusal below could be satisfied by a database that never worked.
+    connect_as(&fx.layout, "opsowner", "metrics", &ops_pw)
+        .expect("the fixture's own role cannot reach its own database; the test is wrong");
+
+    let databases = |c: &mut Conn| {
+        c.query(
+            "SELECT datname, pg_get_userbyid(datdba), coalesce(datacl::text, '<default>') \
+             FROM pg_database ORDER BY datname",
+        )
+        .unwrap()
+    };
+    let before = databases(&mut admin);
+    let public_owner = |fx: &Fixture| {
+        admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "metrics")
+            .unwrap()
+            .scalar("SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'public'")
+            .unwrap()
+    };
+    let nspowner_before = public_owner(&fx);
+
+    let e = provision_app(&Opts {
+        state_dir: Some(fx.layout.state_dir.clone()),
+        app: Some("metrics".into()),
+        ..Opts::default()
+    })
+    .expect_err("an operator's existing database was provisioned as an app");
+    assert!(
+        e.contains("did not create the database"),
+        "refused for the wrong reason:\n{e}"
+    );
+
+    let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
+    assert_eq!(
+        databases(&mut admin),
+        before,
+        "a database sky did not create had its owner or ACL changed by a run that failed"
+    );
+    assert_eq!(
+        public_owner(&fx),
+        nspowner_before,
+        "the public schema of a database sky did not create changed owner"
+    );
+    // The outage, asked directly: the operator's own role still connects.
+    connect_as(&fx.layout, "opsowner", "metrics", &ops_pw)
+        .expect("the operator's role lost CONNECT on its own database");
+    assert!(
+        admin
+            .scalar("SELECT 1 FROM pg_roles WHERE rolname = 'metrics'")
+            .unwrap()
+            .is_none(),
+        "a role was created for an app whose provision was refused"
+    );
+
+    // The refusal is not a blanket one. A database sky DID create re-provisions,
+    // which is the property the marker has to carry — and it is the marker that
+    // carries it, not `apps_file`: the entry is removed first.
+    std::fs::write(&fx.layout.apps_file, "").unwrap();
+    provision_app(&Opts {
+        state_dir: Some(fx.layout.state_dir.clone()),
+        app: Some("alpha".into()),
+        ..Opts::default()
+    })
+    .expect("sky refused a database it created itself, with only the marker to go on");
+    assert_eq!(
+        admin
+            .scalar(&format!(
+                "SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = 'alpha'"
+            ))
+            .unwrap()
+            .as_deref(),
+        Some(DB_MARKER),
+        "the database sky created carries no marker, so the refusal above rests on apps_file alone"
+    );
 }
 
 /// `unix_socket_permissions = 0777` and the 0755 on the socket directory are the
@@ -617,6 +880,153 @@ fn the_generated_backup_produces_a_restorable_dump() {
             panic!("beta read the RECOVERED alpha and got {seen:?}: the restore lost the REVOKE");
         }
     }
+}
+
+/// Re-running `--app` must CONVERGE a database whose ACL has drifted back to
+/// the PUBLIC default — that is what `app_regrant_sql` is for, and nothing named
+/// it, by text or by effect.
+///
+/// The drift is not hypothetical and the repo already documents the way in: a
+/// `pg_restore` into a rebuilt database, which is precisely what the backup
+/// test's own recovery path does. `CREATE DATABASE` gives `PUBLIC` `CONNECT`
+/// and `TEMPORARY` by default, so a database recreated from a dump has every
+/// app role able to connect to it again until something takes them away. The
+/// documented remedy is to re-run `--app`, and `app_regrant_sql` is the two
+/// statements that make that true.
+///
+/// Asserted by EFFECT, not by matching the SQL: the ACL is reset to the default,
+/// beta is shown to reach alpha (the positive control — without it the refusal
+/// afterwards proves nothing), `--app alpha` is re-run, and beta is refused with
+/// `42501` again.
+///
+/// The falsifying mutation is deleting the `REVOKE` from `app_regrant_sql`.
+#[test]
+fn re_provisioning_converges_a_database_acl_that_drifted_back_to_the_default() {
+    let Some((fx, _a_dsn, _a_pw, _b_dsn, b_pw)) = provision_fixture("regrant") else {
+        return;
+    };
+    let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
+
+    // Precondition: the boundary is up. This is the state the whole phase claims.
+    match connect_as(&fx.layout, "beta", "alpha", &b_pw) {
+        Err(e) => assert_eq!(e.sqlstate(), Some("42501"), "expected insufficient_privilege: {e}"),
+        Ok(_) => panic!("beta reached alpha's database before the ACL was even touched"),
+    }
+
+    // The drift: what `CREATE DATABASE` leaves behind, which is what a database
+    // rebuilt from a dump has.
+    admin.execute("GRANT CONNECT, TEMPORARY ON DATABASE alpha TO PUBLIC").unwrap();
+    // Positive control: the reset really did open it. Without this, a re-run
+    // that did nothing at all would still pass the assertion below.
+    let opened = connect_as(&fx.layout, "beta", "alpha", &b_pw)
+        .expect("the ACL reset did not open the database; the fixture is wrong, not the code");
+    drop(opened);
+
+    provision_app(&Opts {
+        state_dir: Some(fx.layout.state_dir.clone()),
+        app: Some("alpha".into()),
+        ..Opts::default()
+    })
+    .expect("re-provisioning alpha failed");
+
+    match connect_as(&fx.layout, "beta", "alpha", &b_pw) {
+        Err(e) => assert_eq!(
+            e.sqlstate(),
+            Some("42501"),
+            "beta was refused, but not for want of privilege: {e}"
+        ),
+        Ok(mut c) => {
+            let seen = c.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
+            panic!(
+                "beta still reaches alpha's database after a re-provision, and read {seen:?}: \
+                 the convergence path does not converge"
+            );
+        }
+    }
+    // And alpha itself still works — the REVOKE did not take the owner with it.
+    let out = provision_app(&Opts {
+        state_dir: Some(fx.layout.state_dir.clone()),
+        app: Some("alpha".into()),
+        rotate: true,
+        ..Opts::default()
+    })
+    .expect("--rotate-password after the re-provision failed");
+    let (_, pw) = dsn_and_password(&out, "alpha");
+    connect_as(&fx.layout, "alpha", "alpha", &pw).expect("alpha lost access to its own database");
+}
+
+/// `reload_hba` claims to PROVE the reload took. The proof needs one test in
+/// which it did not.
+///
+/// The existing adopted-cluster gate observes the OUTCOME — a wrong password is
+/// refused afterwards — and against a cluster where the reload genuinely
+/// happens, that passes whatever the proof does. So the proof itself was
+/// unobserved, and it is one character from vacuous: `pg_conf_load_time() >
+/// before` compares a monotonic clock against its own earlier reading, and with
+/// `>=` the first poll returns true unconditionally. The 15-second loop and the
+/// refusal it guards become dead code, and an adopted cluster that silently kept
+/// its `trust` rules would be reported ready.
+///
+/// Driving the failure needs a cluster where `pg_reload_conf()` succeeds and the
+/// load time does NOT advance — killing the postmaster would give an `Err` for
+/// the wrong reason, proving only that a dead server errors. So
+/// `pg_conf_load_time` is shadowed with a constant: `search_path` names
+/// `pg_catalog` explicitly and puts a schema of sky's own in front of it, which
+/// is the one way to get in front of a built-in. Every backend then reads the
+/// same frozen value, `before` included, and `frozen > frozen` is false while
+/// `frozen >= frozen` is true. That is exactly the mutation, and nothing else
+/// about the cluster is disturbed.
+///
+/// Generalising, since this is a class rather than one helper: every "and prove
+/// it took" needs one test in which the thing did not take.
+#[test]
+fn a_reload_that_cannot_be_proved_to_have_taken_is_refused() {
+    let Some((fx, _a_dsn, _a_pw, _b_dsn, _b_pw)) = provision_fixture("reload") else {
+        return;
+    };
+    // Positive control first: against the cluster as it stands, the proof
+    // succeeds. Without this the refusal below could be a reload_hba that never
+    // returns Ok at all.
+    reload_hba(&fx.layout, DEFAULT_PORT, &fx.user).expect("a real reload could not be proved");
+
+    let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
+    admin.execute("CREATE SCHEMA sky_frozen_clock").unwrap();
+    admin
+        .execute(
+            "CREATE FUNCTION sky_frozen_clock.pg_conf_load_time() RETURNS timestamptz \
+             LANGUAGE sql IMMUTABLE AS $$ SELECT '2001-01-01 00:00:00+00'::timestamptz $$",
+        )
+        .unwrap();
+    // pg_catalog is searched FIRST unless it is named, so naming it is what puts
+    // the shadow in front of it.
+    admin
+        .execute("ALTER DATABASE postgres SET search_path = sky_frozen_clock, pg_catalog, public")
+        .unwrap();
+
+    // The fixture works: a NEW connection reads the frozen value.
+    let frozen = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres")
+        .unwrap()
+        .scalar("SELECT pg_conf_load_time()::text")
+        .unwrap()
+        .expect("no load time");
+    assert!(
+        frozen.starts_with("2001-01-01"),
+        "the shadow is not in effect ({frozen}); the test is wrong, not the code"
+    );
+
+    let e = reload_hba(&fx.layout, DEFAULT_PORT, &fx.user)
+        .expect_err("a reload that cannot be shown to have taken was reported as having taken");
+    assert!(
+        e.contains("did not take within 15s"),
+        "refused for the wrong reason:\n{e}"
+    );
+
+    // Restore, and prove the restoration: the same call succeeds again, so the
+    // refusal above was the shadow and not some state the test left behind.
+    admin.execute("ALTER DATABASE postgres RESET search_path").unwrap();
+    admin.execute("DROP SCHEMA sky_frozen_clock CASCADE").unwrap();
+    reload_hba(&fx.layout, DEFAULT_PORT, &fx.user)
+        .expect("reload_hba stayed broken after the shadow was removed");
 }
 
 /// The generated launchd jobs are handed to `plutil -lint`, Apple's own parser.

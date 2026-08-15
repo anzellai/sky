@@ -586,6 +586,12 @@ pub fn app_cluster_sql(app: &str, password: &str) -> Vec<String> {
         // refuses to touch a role that does not carry it.
         format!("COMMENT ON ROLE {id} IS {}", quote_literal(ROLE_MARKER)),
         format!("CREATE DATABASE {id} OWNER {id}"),
+        // The database's half of the same mark. Without it the ownership
+        // question could only be asked about the ROLE, and `--app` over an
+        // operator's existing DATABASE — the one case where the role is absent
+        // and the database is not — walked straight past the refusal and
+        // re-owned it. See [`refuse_a_database_sky_does_not_own`].
+        format!("COMMENT ON DATABASE {id} IS {}", quote_literal(DB_MARKER)),
         format!("REVOKE ALL ON DATABASE {id} FROM PUBLIC"),
         format!("GRANT CONNECT, TEMPORARY ON DATABASE {id} TO {id}"),
     ]
@@ -594,6 +600,16 @@ pub fn app_cluster_sql(app: &str, password: &str) -> Vec<String> {
 /// The comment sky puts on every role it creates. Ownership, recorded in the
 /// cluster rather than only in `apps_file`.
 pub const ROLE_MARKER: &str = "sky shared-cluster app role";
+
+/// The comment sky puts on every database it creates, and the answer to "is
+/// this database mine to re-own?".
+///
+/// A role marker on its own is not enough, because a role and a database of the
+/// same name are two independent objects and an operator's host routinely has
+/// one without the other. `shobj_description(oid, 'pg_database')` reads it back;
+/// like [`ROLE_MARKER`] it lives in the cluster rather than in `apps_file` so
+/// that it survives a state directory that was restored, copied or lost.
+pub const DB_MARKER: &str = "sky shared-cluster app database";
 
 /// The statements run **inside** the app's own database, once it exists.
 ///
@@ -1909,8 +1925,16 @@ fn provision_app_inner(
         .map_err(|e| format!("sky db provision --shared: cannot read pg_database: {e}"))?
         .is_some();
 
+    // Both refusals run before ANY statement is executed. The order matters
+    // less than the position: everything below this point either creates the
+    // app's objects or re-owns them, and `REVOKE ALL ON DATABASE … FROM PUBLIC`
+    // against a database that is not sky's is an outage for whatever was using
+    // it — taken while reporting success.
     if role_exists {
         refuse_a_role_sky_does_not_own(&mut c, layout, app)?;
+    }
+    if db_exists {
+        refuse_a_database_sky_does_not_own(&mut c, layout, app)?;
     }
 
     let mut password: Option<String> = None;
@@ -1990,16 +2014,32 @@ fn provision_app_inner(
 /// app every other app's data. Neither is recoverable by the operator noticing:
 /// the run prints success.
 ///
-/// Two questions, and either one is a refusal:
+/// Three questions, and any one of them is a refusal:
 ///
-/// 1. **May the role do more than its own database?** `SUPERUSER`,
-///    `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` each reach outside
-///    the boundary this phase draws, so no such role may be issued as an app's
-///    credentials — including one sky created and an operator has since
-///    promoted.
-/// 2. **Did sky create it?** Answered by the role comment
+/// 1. **May the role do more than its own database, by ATTRIBUTE?**
+///    `SUPERUSER`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` each
+///    reach outside the boundary this phase draws, so no such role may be
+///    issued as an app's credentials.
+/// 2. **May it do more than its own database, by MEMBERSHIP?** This is the
+///    other half of the same question and it was missing. Privilege in
+///    PostgreSQL is held two ways, and only one of them is an `rol*` column:
+///    `GRANT pg_read_all_data TO alpha`, or `GRANT beta TO alpha`, leaves every
+///    attribute in question 1 false while giving alpha everything the granted
+///    role may do. `--app alpha --rotate-password` then printed a DSN that read
+///    beta's private data, and every attribute check above said the role was
+///    ordinary. The creation-time gate already asserts the right general form —
+///    an app role is a member of NO role (`live_tests.rs`, probe 5) — and this
+///    is that same assertion moved to where credentials are ISSUED, which is
+///    the moment that matters. A count over `pg_auth_members` is the general
+///    form on purpose: it does not enumerate which grants are dangerous, so a
+///    predefined role added in a future PostgreSQL is covered without an edit.
+/// 3. **Did sky create it?** Answered by the role comment
 ///    ([`ROLE_MARKER`]), with `apps_file` accepted as well so a cluster
 ///    provisioned before the marker existed still converges.
+///
+/// Questions 1 and 2 are asked of a role sky DID create as well, and that is
+/// the point of asking them first: a role sky made and an operator has since
+/// promoted or granted into is exactly the case the marker cannot see.
 fn refuse_a_role_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> Result<(), String> {
     let lit = quote_literal(app);
     let elevated = c
@@ -2025,6 +2065,35 @@ fn refuse_a_role_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> R
              pick another name or drop the role first."
         ));
     }
+
+    // The membership half. `::regrole` resolves the name against the same
+    // catalog the grant is recorded in, so a role that does not exist would
+    // raise rather than silently count zero — and it cannot not exist, this
+    // function being reached only when it does.
+    let granted = c
+        .scalar(&format!(
+            "SELECT string_agg(g.rolname, ', ' ORDER BY g.rolname) \
+             FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid \
+             WHERE m.member = {lit}::regrole"
+        ))
+        .map_err(|e| format!("sky db provision --shared --app {app}: cannot read pg_auth_members: {e}"))?
+        .filter(|s| !s.is_empty());
+    if let Some(roles) = granted {
+        return Err(format!(
+            "sky db provision --shared --app {app}: the role {app:?} already exists and is a\n\
+             member of {roles}, so it may do whatever those roles may do — which is not\n\
+             bounded by its own database. sky will not hand an app credentials for it, and\n\
+             will not change its password.\n\
+             \n\
+             A membership holds no `rol*` attribute, so this is invisible to the check\n\
+             above: `GRANT pg_read_all_data TO {app}` or `GRANT someapp TO {app}` leaves the\n\
+             role looking entirely ordinary while the DSN this command would print reads\n\
+             the other role's data.\n\
+             \n\
+             Either REVOKE the membership, or pick another name for the app."
+        ));
+    }
+
     let owned_by_sky = c
         .scalar(&format!(
             "SELECT 1 FROM pg_roles WHERE rolname = {lit} \
@@ -2033,11 +2102,7 @@ fn refuse_a_role_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> R
         ))
         .map_err(|e| format!("sky db provision --shared --app {app}: cannot read the role's comment: {e}"))?
         .is_some();
-    let recorded = std::fs::read_to_string(&layout.apps_file)
-        .unwrap_or_default()
-        .lines()
-        .any(|l| l.trim() == app);
-    if !owned_by_sky && !recorded {
+    if !owned_by_sky && !recorded_in_apps_file(layout, app) {
         return Err(format!(
             "sky db provision --shared --app {app}: sky did not create the role {app:?}.\n\
              It already exists, and carries neither sky's role comment nor an entry in\n\
@@ -2051,6 +2116,76 @@ fn refuse_a_role_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> R
         ));
     }
     Ok(())
+}
+
+/// Refuse `--app <name>` when a DATABASE of that name is already there and is
+/// not one sky made.
+///
+/// The role refusal above does not cover this, and the gap was not academic: a
+/// role and a database are independent objects, and the case where the database
+/// exists WITHOUT the role is the ordinary shape of an operator's server —
+/// `metrics` created by hand years ago, owned by whatever account made it, with
+/// no `metrics` login role at all. That combination skipped
+/// [`refuse_a_role_sky_does_not_own`] entirely (it is reached only when the role
+/// exists), skipped `CREATE DATABASE` (it exists), and then ran the rest against
+/// the operator's data:
+///
+/// * `REVOKE ALL ON DATABASE metrics FROM PUBLIC` — the operator's own role
+///   loses `CONNECT` the moment the statement commits, so their running app
+///   starts failing with `permission denied for database "metrics"`, which is an
+///   outage taken by a command that reports success;
+/// * `ALTER SCHEMA public OWNER TO metrics` — the new app now owns the schema,
+///   and the DSN sky prints in the same breath is a working credential for it.
+///
+/// Adopting an operator's existing server is the DOCUMENTED primary case for
+/// `--shared`, so this is reachable by design rather than by mishap.
+///
+/// The question is the same one the role refusal asks, and it is answered the
+/// same way: sky's own [`DB_MARKER`] comment, with an `apps_file` entry accepted
+/// as well so a cluster provisioned before the marker existed still converges.
+/// There is deliberately no attribute half here — a database has no `rolsuper`
+/// analogue, and "did sky create it" is the whole question.
+fn refuse_a_database_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> Result<(), String> {
+    let lit = quote_literal(app);
+    let owned_by_sky = c
+        .scalar(&format!(
+            "SELECT 1 FROM pg_database WHERE datname = {lit} \
+             AND shobj_description(oid, 'pg_database') = {}",
+            quote_literal(DB_MARKER)
+        ))
+        .map_err(|e| format!("sky db provision --shared --app {app}: cannot read the database's comment: {e}"))?
+        .is_some();
+    if owned_by_sky || recorded_in_apps_file(layout, app) {
+        return Ok(());
+    }
+    let owner = c
+        .scalar(&format!(
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = {lit}"
+        ))
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "another role".to_string());
+    Err(format!(
+        "sky db provision --shared --app {app}: sky did not create the database {app:?}.\n\
+         It already exists, is owned by {owner}, and carries neither sky's database comment\n\
+         nor an entry in {}.\n\
+         \n\
+         Provisioning it would REVOKE ALL ON DATABASE {app} FROM PUBLIC and hand the public\n\
+         schema to a new role: whatever connects to it today would stop being able to, and\n\
+         the DSN printed by this command would be a working credential for their data. Pick\n\
+         another name, or drop the database if it is genuinely unused.",
+        layout.apps_file.display()
+    ))
+}
+
+/// Whether `apps_file` names this app — the pre-marker record of ownership,
+/// accepted by both refusals so a cluster provisioned by an older sky converges
+/// rather than locking its own apps out.
+fn recorded_in_apps_file(layout: &Layout, app: &str) -> bool {
+    std::fs::read_to_string(&layout.apps_file)
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l.trim() == app)
 }
 
 fn redact(stmt: &str, password: &str) -> String {

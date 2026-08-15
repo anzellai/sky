@@ -371,11 +371,36 @@ shell-unsafe is refused up front.
   app every other app's data, and gave the operator's own account a password it
   did not choose. For an operator's `analytics` or a previous tenant's role it
   handed the new app the old one's identity and took the old one's password away.
-  Two questions are now asked of any role that already exists, and either one is a
-  refusal: does it hold `SUPERUSER` / `CREATEROLE` / `CREATEDB` / `REPLICATION` /
-  `BYPASSRLS`, and did sky create it — recorded as a comment on the role itself,
-  so the answer survives a state directory that was restored or lost.
+  Three questions are asked of any role that already exists, and any one of them
+  is a refusal: does it hold `SUPERUSER` / `CREATEROLE` / `CREATEDB` /
+  `REPLICATION` / `BYPASSRLS`; **is it a member of any role** (`pg_auth_members`);
+  and did sky create it — recorded as a comment on the role itself, so the answer
+  survives a state directory that was restored or lost.
   `validate_app_name` refuses the current account outright, before any connection.
+
+  The membership question is the other half of the first, and it is asked because
+  attributes are only one of the two ways PostgreSQL holds privilege. `GRANT beta
+  TO alpha` leaves every `rol*` column false, so a refusal that reads attributes
+  alone sees an ordinary role — and `--app alpha --rotate-password` then prints a
+  DSN that reads beta's data. All three questions are asked of a role **sky
+  itself created**, too: sky's comment says who made the role, not what an
+  operator has done to it since.
+
+- **`--app <name>` will not take over a DATABASE it did not create either.** A
+  role and a database of the same name are independent objects, and the
+  combination that reaches an operator's data is the one where the *role* is
+  absent: a `metrics` database made by hand years ago, with no `metrics` login
+  role. That skipped the role refusal entirely (it is reached only when the role
+  exists), skipped `CREATE DATABASE` (it exists), and ran the rest against their
+  data — `REVOKE ALL ON DATABASE metrics FROM PUBLIC`, which takes the operator's
+  own role's `CONNECT` away while the command reports success, and `ALTER SCHEMA
+  public OWNER TO metrics`, which hands the schema to the new app whose DSN is
+  printed in the same breath. Since adopting an operator's existing server is the
+  documented primary case for `--shared`, this was reachable by design rather than
+  by mishap. Databases now carry sky's comment exactly as roles do, and one
+  without it is refused. The gate is the general form: after a refused `--app`
+  run, every database sky did not create is byte-identical — owner, ACL and the
+  `public` schema's owner.
 
 Both are gated by attempt, not by inspection: `an_apps_credentials_cannot_reach_another_apps_database`
 provisions two apps against a live cluster, has each write a row, then connects
