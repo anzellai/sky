@@ -239,6 +239,17 @@ run_cargo() {
       with_timeout 3000 cargo test --workspace ) > "$LOGDIR/$label-cargo.log" 2>&1 \
     && echo 0 > "$LOGDIR/$label-cargo.exit" \
     || echo $? > "$LOGDIR/$label-cargo.exit"
+
+  # The report below turns this log into a sentence in a committed document
+  # ("exited N over M test binaries"). A run that never started cargo produces
+  # M=0, and "0 test binaries, 0 of them FAILED" reads like a clean sweep. The
+  # log must contain at least one `test result:` line before it may be quoted.
+  if ! grep -q '^test result:' "$LOGDIR/$label-cargo.log"; then
+    echo "FATAL: the '$label' cargo run produced no 'test result:' line — no test" >&2
+    echo "  binary reached a verdict, so there is nothing here to report. First lines:" >&2
+    head -5 "$LOGDIR/$label-cargo.log" | sed 's/^/    /' >&2
+    exit 3
+  fi
 }
 
 # failing_subtests <label> — nested failures, "Parent/Sub" form.
