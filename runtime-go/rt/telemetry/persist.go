@@ -46,6 +46,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver "pgx" (one-DB-for-everything)
 	_ "modernc.org/sqlite"
+
+	"sky-app/rt/dbshare"
 )
 
 // Connection-pool bounds for the telemetry persistence handle. Small and
@@ -137,6 +139,88 @@ func consoleDBSchemaStmts(driver string) []string {
 	}
 }
 
+// openTelemetryPool opens the persistence handle.
+//
+// On PostgreSQL it goes through the shared registry (dbshare), so when the
+// telemetry DSN resolves to the same string as the app's analytics or session
+// store — the normal case, since this store's own fallback is the shared
+// `DATABASE_URL` — the consumers draw on ONE set of backends instead of
+// three. Before this, the telemetry writer opened its own pool against the
+// same server and competed with the app's queries for the same
+// `max_connections` budget: observability taking down the thing it observes.
+//
+// The cap (`telemetryShare`) is what preserves the bulkhead that separate
+// pools used to provide: a telemetry burst can hold at most that many of the
+// shared pool, so it cannot starve the session store on the request path.
+//
+// On SQLite it keeps its own handle with the small plural pool it has always
+// had. That is deliberate and it is NOT the single-connection clamp used
+// elsewhere: this store is read by the console mini-app while being written
+// here, and a one-connection pool turns any read issued while another query's
+// rows are still open into a self-deadlock. Bounded-but-plural was the fix;
+// unbounded was the defect. It also means the SQLite handle cannot be shared
+// with analytics, which wants the single-connection clamp — one handle cannot
+// be both.
+func openTelemetryPool(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
+	if driver != "pgx" {
+		db, err := sql.Open(driver, dsn)
+		if err != nil {
+			return nil, nil, err
+		}
+		db.SetMaxOpenConns(telemetryPoolMaxConns)
+		db.SetMaxIdleConns(telemetryPoolMaxConns)
+		db.SetConnMaxLifetime(telemetryPoolLifetime)
+		db.SetConnMaxIdleTime(telemetryPoolIdleTime)
+		return db, nil, nil
+	}
+	// The deployment-aware sizing lives in `rt` (db_pool.go), which imports
+	// THIS package, so it cannot be called from here without an import cycle.
+	// The registry is a leaf package precisely so both sides can reach it;
+	// `rt` passes its sizing in when IT acquires, and whichever consumer gets
+	// there first sizes the shared pool. The fixed numbers below are the
+	// floor this package can justify alone.
+	return acquireShared(driver, dsn)
+}
+
+func acquireShared(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
+	h, err := dbshare.Acquire(driver, dsn, dbshare.Config{
+		MaxOpenConns:    telemetryPoolMaxConns,
+		MaxIdleConns:    telemetryPoolMaxConns,
+		ConnMaxLifetime: telemetryPoolLifetime,
+		ConnMaxIdleTime: telemetryPoolIdleTime,
+	}, telemetryShare)
+	if err != nil {
+		return nil, nil, err
+	}
+	return h.DB(), h, nil
+}
+
+// closeTelemetryPool releases this consumer's claim on the pool.
+//
+// On PostgreSQL that is a refcount decrement, NOT a close: another consumer
+// may be serving requests through the same pool, and closing it under them
+// would surface as `sql: database is closed` in a subsystem nobody asked to
+// stop. On SQLite the handle is this store's alone, so it really does close.
+func closeTelemetryPool(db *sql.DB, h *dbshare.Handle) {
+	if h != nil {
+		_ = h.Close()
+		return
+	}
+	if db != nil {
+		_ = db.Close()
+	}
+}
+
+// telemetryShare bounds how much of a SHARED pool this writer may hold at
+// once. It mirrors `dbTelemetryShare` in rt/db_pool.go, which is where the
+// bulkhead arithmetic lives; the duplication is forced by the import
+// direction (rt imports telemetry, so telemetry cannot import rt) and the
+// gate `TestTelemetryShareMatchesThePoolArithmetic` fails if they drift.
+//
+// Two is enough because the writer is a single batching goroutine: one slot
+// for the flush, one for the hourly prune.
+const telemetryShare = 2
+
 // persistEnvVar is the env var SkyDeploy injects on Pro+ tenants.
 // When set + non-empty, the store dual-writes to the SQLite file.
 const persistEnvVar = "SKY_CONSOLE_DB_PATH"
@@ -167,11 +251,19 @@ type persistMetric struct {
 // persistence wraps the DB handle + writer goroutine.  One per Store.
 // nil when SKY_CONSOLE_DB_PATH is unset (in-RAM-only).
 type persistence struct {
-	db     *sql.DB
+	db *sql.DB
+	// pool is this consumer's reference into the shared registry (nil on
+	// SQLite, which keeps its own handle). Closing it releases the reference;
+	// the pool closes only when the last consumer lets go.
+	pool   *dbshare.Handle
 	driver string // "sqlite" or "pgx" — drives placeholder style
-	queue  chan persistEntry
-	stop   chan struct{}
-	wg     sync.WaitGroup
+	// syncCommitOff asks PostgreSQL not to wait for the WAL fsync when this
+	// writer's batches commit. See writeBatch. Always false on SQLite, which
+	// has no such setting.
+	syncCommitOff bool
+	queue         chan persistEntry
+	stop          chan struct{}
+	wg            sync.WaitGroup
 	// onceClose protects Close() against double-close from test
 	// teardown + the eventual process-exit hook.
 	onceClose sync.Once
@@ -196,37 +288,14 @@ func (s *Store) EnablePersistence(path string) error {
 		return nil
 	}
 	driver, dsn := telemetryBackend(path)
-	db, err := sql.Open(driver, dsn)
+	db, handle, err := openTelemetryPool(driver, dsn)
 	if err != nil {
 		return err
 	}
-	// Bound the pool. Go's `database/sql` zero value for MaxOpenConns is
-	// UNLIMITED, so before this the telemetry writer could open a
-	// PostgreSQL backend per concurrent flush and compete with the app's
-	// own queries for the server's max_connections budget — observability
-	// taking down the thing it observes.
-	//
-	// The deployment-aware sizing lives in `rt` (db_pool.go), which imports
-	// THIS package, so it cannot be called from here without an import
-	// cycle. That costs nothing in practice: this is a batched background
-	// writer, so a small fixed pool is the right answer on a VM and on
-	// serverless alike, and the short idle timeout is the conservative
-	// choice in both (a re-dial on a background flush is invisible).
-	//
-	// Deliberately the same small pool on SQLite rather than the
-	// single-connection clamp used elsewhere. This store is read
-	// concurrently by the console mini-app while being written here, and a
-	// one-connection pool turns any read issued while rows from another
-	// query are still open into a self-deadlock. Bounded-but-plural is the
-	// safe change; unbounded was the defect.
-	db.SetMaxOpenConns(telemetryPoolMaxConns)
-	db.SetMaxIdleConns(telemetryPoolMaxConns)
-	db.SetConnMaxLifetime(telemetryPoolLifetime)
-	db.SetConnMaxIdleTime(telemetryPoolIdleTime)
 	if driver == "sqlite" {
 		// WAL mode → console mini-app can read concurrently with our writes.
 		if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-			db.Close()
+			closeTelemetryPool(db, handle)
 			return err
 		}
 	}
@@ -236,21 +305,23 @@ func (s *Store) EnablePersistence(path string) error {
 		// checkpoint / a second writer briefly holding the write lock. Postgres
 		// handles concurrency natively — no PRAGMA.
 		if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
-			db.Close()
+			closeTelemetryPool(db, handle)
 			return err
 		}
 	}
 	for _, stmt := range consoleDBSchemaStmts(driver) {
 		if _, err := db.Exec(stmt); err != nil {
-			db.Close()
+			closeTelemetryPool(db, handle)
 			return err
 		}
 	}
 	p := &persistence{
-		db:     db,
-		driver: driver,
-		queue:  make(chan persistEntry, persistQueueCap),
-		stop:   make(chan struct{}),
+		db:            db,
+		pool:          handle,
+		driver:        driver,
+		syncCommitOff: driver == "pgx" && SynchronousCommitOff(),
+		queue:         make(chan persistEntry, persistQueueCap),
+		stop:          make(chan struct{}),
 	}
 	s.persist = p
 	p.wg.Add(2)
@@ -294,7 +365,7 @@ func (s *Store) ClosePersistence() {
 	})
 	p.wg.Wait()
 	if p.db != nil {
-		_ = p.db.Close()
+		closeTelemetryPool(p.db, p.pool)
 	}
 }
 
@@ -389,6 +460,25 @@ func (p *persistence) writeBatch(batch []persistEntry) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck — Commit below supersedes
+
+	// Telemetry takes the same durability trade as analytics: acknowledge the
+	// commit without waiting for the WAL fsync, at the cost of losing a few
+	// hundred milliseconds of it if the SERVER crashes. Logs, metrics and
+	// spans are already a sampled, lossy, best-effort surface — the queue in
+	// front of this transaction drops entries under overflow by design — so
+	// paying an fsync per batch to protect them is spending the app's write
+	// throughput on the wrong thing.
+	//
+	// `SET LOCAL`, so it reverts at the end of THIS transaction and cannot
+	// reach the next borrower of the connection. That matters more here than
+	// it looks: this pool is now SHARED with the session store and with
+	// analytics, and a bare `SET` would quietly make somebody else's writes
+	// non-durable.
+	if p.syncCommitOff {
+		if _, err := tx.Exec(`SET LOCAL synchronous_commit = off`); err != nil {
+			return err
+		}
+	}
 
 	var (
 		insLog    *sql.Stmt
@@ -570,3 +660,27 @@ func (s *Store) FlushPersistence() {
 	// One extra tick to let an in-flight batch commit.
 	time.Sleep(250 * time.Millisecond)
 }
+
+// SynchronousCommitOff reports whether telemetry's flush transactions should
+// skip the WAL fsync at commit. Default ON (i.e. the setting is `off`); an
+// operator who wants durable telemetry sets:
+//
+//	SKY_TELEMETRY_SYNCHRONOUS_COMMIT=on
+//
+// Parsed here rather than in `rt` because this package cannot import `rt`; the
+// spelling deliberately matches PostgreSQL's own vocabulary and the analytics
+// knob, so the two cannot mean different things.
+func SynchronousCommitOff() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SKY_TELEMETRY_SYNCHRONOUS_COMMIT"))) {
+	case "on", "true", "1", "remote_write", "remote_apply":
+		return false
+	default:
+		return true
+	}
+}
+
+// ShareForTesting exposes this package's shared-pool cap so the arithmetic in
+// rt/db_pool.go can be gated against it. The two constants are necessarily
+// separate — `rt` imports this package, so this package cannot import `rt` —
+// and a gate is what keeps them from drifting.
+func ShareForTesting() int { return telemetryShare }

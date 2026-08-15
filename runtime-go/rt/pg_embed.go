@@ -579,6 +579,25 @@ func (s *pgSupervisor) bringUp() error {
 	if err := prepareSocketDir(s.cfg.socketDir); err != nil {
 		return err
 	}
+	// Re-tune for the machine THIS boot is running on, immediately before the
+	// postmaster starts.
+	//
+	// The managed block used to be written only by initCluster, i.e. once, at
+	// initdb — while the connection pools re-read the CPU count on every
+	// start. Resize a host from 2 vCPU to 8 and pool demand goes 14 → 56
+	// while `max_connections` stays sized for the old machine; restore a data
+	// directory onto a different host and the same divergence happens with no
+	// warning at all.
+	//
+	// Here is the right place for it because `max_connections` and
+	// `shared_buffers` need a RESTART rather than a reload, and a restart is
+	// exactly what is about to happen — so the new values take effect on this
+	// very boot with no second restart and no reload plumbing. The block is
+	// marked and idempotent, so when nothing has changed this rewrites
+	// nothing (see ensureSkyConf).
+	if err := writeTunedConf(s.cfg.dataDir, detectMachine()); err != nil {
+		return err
+	}
 	if err := s.spawn(); err != nil {
 		return err
 	}

@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"sky-app/rt/dbshare"
 )
 
 // The Sky.Live sqlite session store must open with the same concurrency
@@ -63,18 +65,21 @@ func TestSqliteStoreOpensUnderConcurrentHandle(t *testing.T) {
 // No server is needed: `sql.Open` does not dial, and the pool config is
 // readable from Stats() straight away.
 func TestPostgresSessionPoolHasACeiling(t *testing.T) {
-	want := dbAuxPoolConfig().MaxOpenConns
+	want := dbSharedAuxPoolConfig().MaxOpenConns
 	if want <= 0 {
-		t.Fatalf("dbAuxPoolConfig().MaxOpenConns is %d — this gate would assert "+
+		t.Fatalf("dbSharedAuxPoolConfig().MaxOpenConns is %d — this gate would assert "+
 			"'unlimited == unlimited' and prove nothing", want)
 	}
+	dbshare.ResetForTesting()
+	t.Cleanup(dbshare.ResetForTesting)
 
 	// Port 1 is deliberately dead; nothing here connects.
-	db, err := openPostgresSessionPool("postgres://sky:sky@127.0.0.1:1/sky?sslmode=disable")
+	h, err := openPostgresSessionPool("postgres://sky:sky@127.0.0.1:1/sky?sslmode=disable")
 	if err != nil {
 		t.Fatalf("openPostgresSessionPool: %v", err)
 	}
-	defer db.Close()
+	defer h.Close()
+	db := h.DB()
 
 	if got := db.Stats().MaxOpenConnections; got != want {
 		t.Errorf("the Sky.Live postgres session pool has MaxOpenConnections = %d, want %d.\n"+

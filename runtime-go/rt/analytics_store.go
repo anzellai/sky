@@ -31,6 +31,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"sky-app/rt/dbshare"
 	"time"
 )
 
@@ -48,6 +50,10 @@ var (
 	// created alongside the store inside analyticsStoreOnce. See
 	// analytics_writer.go.
 	analyticsWriterInst *analyticsWriter
+	// analyticsPool is the shared-pool handle on PostgreSQL, nil on SQLite.
+	// Held so the reference can be released; the pool itself closes when the
+	// last consumer lets go.
+	analyticsPool *dbshare.Handle
 )
 
 // analyticsDriverName is "sqlite" or "pgx", set when the store opens. It drives
@@ -140,6 +146,45 @@ func analyticsStorePath() string {
 	return analyticsDefaultStorePath
 }
 
+// analyticsOpenPool opens the analytics store's connection pool.
+//
+// On PostgreSQL it goes through the shared registry (see the dbshare
+// package), so when the analytics DSN resolves to the same string as the
+// session store's or telemetry's — the normal case, since "one database for
+// everything" is what `DATABASE_URL` and `sky db provision --embed` both
+// produce — the three consumers share ONE pool rather than opening three sets
+// of backends against the same server. The cap keeps the bulkhead: analytics
+// can hold at most `dbAnalyticsShare` of that pool at once, so an analytics
+// burst cannot take connections the session store needs.
+//
+// On SQLite it opens its own handle, deliberately. The connection-count
+// problem is a PostgreSQL problem — a SQLite "connection" is a file handle,
+// not a server process — and the consumers want genuinely different SQLite
+// pools: analytics is pinned to one connection under the global write lock,
+// while telemetry deliberately runs a small plural pool so the console can
+// read while it writes. Sharing one handle would have to pick one of those.
+func analyticsOpenPool(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
+	if driver != "pgx" {
+		db, err := sql.Open(driver, dsn)
+		if err != nil {
+			return nil, nil, err
+		}
+		sqlitePoolConfig().applyTo(db)
+		return db, nil, nil
+	}
+	c := dbSharedAuxPoolConfig()
+	h, err := dbshare.Acquire(driver, dsn, dbshare.Config{
+		MaxOpenConns:    c.MaxOpenConns,
+		MaxIdleConns:    c.MaxIdleConns,
+		ConnMaxLifetime: c.ConnMaxLifetime,
+		ConnMaxIdleTime: c.ConnMaxIdleTime,
+	}, dbAnalyticsShare)
+	if err != nil {
+		return nil, nil, err
+	}
+	return h.DB(), h, nil
+}
+
 // analyticsStore lazily opens (once) the analytics store, or nil when no path is
 // configured / the open fails.
 func analyticsStore() *sql.DB {
@@ -156,25 +201,11 @@ func analyticsStore() *sql.DB {
 				_ = os.MkdirAll(dir, 0o755)
 			}
 		}
-		db, err := sql.Open(driver, dsn)
+		db, handle, err := analyticsOpenPool(driver, dsn)
 		if err != nil {
 			return
 		}
-		// Pool sizing for both drivers. SQLite is pinned to one connection;
-		// Postgres gets the auxiliary sizing (a quarter of the app pool) —
-		// see db_pool.go.
-		//
-		// The comment this replaces said "Postgres handles concurrency
-		// natively — no single-conn cap", which conflated two things.
-		// Postgres does handle concurrency natively; that is not a reason to
-		// leave `MaxOpenConns` at Go's zero value, which means UNLIMITED and
-		// makes a burst of analytics writes able to exhaust the same
-		// `max_connections` budget the app's own queries need.
-		if driver == "sqlite" {
-			sqlitePoolConfig().applyTo(db)
-		} else {
-			dbAuxPoolConfig().applyTo(db)
-		}
+		analyticsPool = handle
 		if driver == "sqlite" {
 			// SQLite is single-file: WAL so the console reader coexists with
 			// this process's writes.

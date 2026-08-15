@@ -28,6 +28,7 @@ package rt
 //                     verification + dashboards.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -71,6 +72,20 @@ func init() {
 			Fields:  map[string]string{"error": err.Error()},
 		})
 	}
+	// Drain the telemetry queue on shutdown.
+	//
+	// `ClosePersistence` has always done the right thing — stop the flusher,
+	// let it drain, close the handle — and it documented itself as "test-only;
+	// production code lets the goroutines run for the process lifetime". The
+	// consequence was that in production, whatever sat in the 1024-deep queue
+	// at SIGTERM was dropped: the last fraction of a second of logs, metrics
+	// and spans before every deploy, which is exactly the window an operator
+	// looks at when a deploy goes wrong. A correct flush that nothing calls is
+	// not a flush. This is the same wiring the analytics writer gets, and under
+	// `--embed` it likewise runs before PostgreSQL is stopped.
+	RegisterShutdownHook("telemetry-persistence", func(context.Context) {
+		telemetry.Default().ClosePersistence()
+	})
 }
 
 // RegisterReadinessProbe adds a health check to the readyz endpoint.
@@ -328,7 +343,6 @@ func productionFromEnv() bool {
 	}
 	return true
 }
-
 
 // hasAdminAuth checks for a valid Std.Auth admin session on the
 // request. v1.0 implementation: looks for a session cookie holding

@@ -29,6 +29,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"sky-app/rt/dbshare"
 	"sky-app/rt/telemetry"
 	"strconv"
 	"strings"
@@ -847,7 +848,14 @@ func (s *sqliteStore) runIdleEvictOnce(now time.Time) {
 // ═════════════════════════════════════════════════════════════════════
 
 type postgresStore struct {
-	db   *sql.DB
+	db *sql.DB
+	// pool is this store's reference into the shared registry. Closing the
+	// store releases the reference; the underlying pool closes only when the
+	// LAST consumer does. Closing `db` directly would take the pool out from
+	// under analytics and telemetry, and the symptom — `sql: database is
+	// closed` from a subsystem nobody asked to stop — would point at the
+	// victim rather than at the cause.
+	pool *dbshare.Handle
 	ttl  time.Duration
 	stop chan struct{}
 	// idleEvict — tiered-session-cache idle-evict window (0 disables). See
@@ -877,44 +885,54 @@ func (s *postgresStore) Ping() error {
 // server — and that is exactly how the `applyTo` line came to be deletable with
 // the whole default suite green. `sql.Open` does not dial, so the sizing IS
 // assertable offline, but only if it is reachable without the DDL.
-func openPostgresSessionPool(connStr string) (*sql.DB, error) {
-	db, err := sql.Open("pgx", connStr)
-	if err != nil {
-		return nil, err
-	}
-	// The session store is the HOTTEST pool in a Sky.Live app — every
-	// request reads and writes its session — and until v0.20.3 it was the
-	// only one with no ceiling at all: Go's `MaxOpenConns` zero value is
-	// unlimited, so a traffic spike opened one PostgreSQL backend per
-	// concurrent request until the server answered `FATAL: sorry, too many
-	// clients already`, which fails the session lookup and therefore every
-	// request, not just the excess ones.
-	//
-	// It takes the AUXILIARY sizing (a quarter of the app's own pool, see
-	// db_pool.go) rather than a full share, because it shares one server's
-	// max_connections budget with `Db.connect` in the same process, and a
-	// session read/write is sub-millisecond work that a handful of
-	// connections saturates.
-	dbAuxPoolConfig().applyTo(db)
-	return db, nil
+// The session store is the HOTTEST pool in a Sky.Live app — every request
+// reads and writes its session — and until v0.20.3 it was the only one with no
+// ceiling at all: Go's `MaxOpenConns` zero value is unlimited, so a traffic
+// spike opened one PostgreSQL backend per concurrent request until the server
+// answered `FATAL: sorry, too many clients already`, which fails the session
+// lookup and therefore every request, not just the excess ones.
+//
+// It now takes its pool from the shared registry (see the dbshare package):
+// when the session DSN resolves to the same string as the analytics or
+// telemetry store's — the normal case under one `DATABASE_URL` — all three
+// draw on ONE set of backends instead of three.
+//
+// UNCAPPED (`dbSessionShare` is 0), and that asymmetry is the design. This
+// store is on the request path, so throttling it would be throttling the app.
+// The two BACKGROUND writers carry the caps instead, and the shared pool is
+// sized so that what those caps leave over is exactly the pool this store used
+// to own outright (see dbSharedAuxPoolSizeFor). Sharing therefore costs the
+// request path nothing, and it still cannot be starved.
+func openPostgresSessionPool(connStr string) (*dbshare.Handle, error) {
+	c := dbSharedAuxPoolConfig()
+	return dbshare.Acquire("pgx", connStr, dbshare.Config{
+		MaxOpenConns:    c.MaxOpenConns,
+		MaxIdleConns:    c.MaxIdleConns,
+		ConnMaxLifetime: c.ConnMaxLifetime,
+		ConnMaxIdleTime: c.ConnMaxIdleTime,
+	}, dbSessionShare)
 }
 
 func newPostgresStore(connStr string, ttl, idleEvict time.Duration) (*postgresStore, error) {
-	db, err := openPostgresSessionPool(connStr)
+	handle, err := openPostgresSessionPool(connStr)
 	if err != nil {
 		return nil, err
 	}
+	db := handle.DB()
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS sky_sessions (
 			sid        TEXT PRIMARY KEY,
 			blob       BYTEA NOT NULL,
 			last_seen  BIGINT NOT NULL
 		)`); err != nil {
-		db.Close()
+		// Release THIS consumer's reference, not the pool: another consumer
+		// may already be serving requests through it.
+		handle.Close()
 		return nil, err
 	}
 	s := &postgresStore{
 		db:        db,
+		pool:      handle,
 		ttl:       ttl,
 		idleEvict: idleEvict,
 		stop:      make(chan struct{}),
@@ -1014,7 +1032,7 @@ func (s *postgresStore) NewID() string { return generateSkySessionID() }
 
 func (s *postgresStore) Close() error {
 	close(s.stop)
-	return s.db.Close()
+	return s.pool.Close()
 }
 
 func (s *postgresStore) cleanupLoop() {

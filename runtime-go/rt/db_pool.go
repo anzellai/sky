@@ -140,8 +140,23 @@ const (
 // idle below open is what produces connect churn: the pool grows under
 // load and then immediately throws the connections away.
 func defaultPostgresPoolConfig() dbPoolConfig {
-	cpus := runtime.GOMAXPROCS(0)
-	if IsServerless() {
+	return defaultPostgresPoolConfigFor(runtime.GOMAXPROCS(0), IsServerless())
+}
+
+// defaultPostgresPoolConfigFor is defaultPostgresPoolConfig with the machine
+// passed in.
+//
+// The seam exists so the SERVER's `max_connections` can be sized from the
+// same arithmetic that sizes the pools, for any core count, without a second
+// copy of the numbers. A comment asserting that "4×CPU+20 keeps the app's
+// ceiling below the server's" was how the two came to disagree: it reasoned
+// about the app's pool while the process opened four. See
+// dbProcessConnectionDemand.
+func defaultPostgresPoolConfigFor(cpus int, serverless bool) dbPoolConfig {
+	if cpus < 1 {
+		cpus = 1
+	}
+	if serverless {
 		n := clampInt(cpus*2, 2, 8)
 		return dbPoolConfig{
 			MaxOpenConns:    n,
@@ -157,6 +172,43 @@ func defaultPostgresPoolConfig() dbPoolConfig {
 		ConnMaxLifetime: dbPoolLifetime,
 		ConnMaxIdleTime: dbPoolIdleTimeVM,
 	}
+}
+
+// dbAuxPoolConsumers names every PostgreSQL pool the RUNTIME opens for its
+// own purposes, as distinct from the app's `Db.connect`.
+//
+// It is a list rather than a constant `3` so that adding a fifth pool is a
+// change to this line, and the server sizing that reads `len()` of it moves
+// with it. The failure this guards against has already happened once: the
+// embedded cluster's `max_connections` was derived from the app pool alone
+// and left the process short by three pools' worth of backends at 6–9 cores.
+var dbAuxPoolConsumers = []string{
+	"analytics",     // analytics_store.go
+	"live-sessions", // live_store.go (pgx path)
+	"telemetry",     // telemetry/persist.go
+}
+
+// dbProcessConnectionDemand returns the maximum number of PostgreSQL backends
+// ONE Sky app process can hold open at once, on a machine with `cpus` cores.
+//
+// This is the WORST case, deliberately: it assumes every runtime pool
+// resolves to a different DSN and therefore does NOT share (see the dbshare
+// package). When they do share — the normal case, since "one database for
+// everything" is what `DATABASE_URL` and `sky db provision --embed` both
+// produce — real demand is `app + aux`, well inside this. Sizing a server for
+// the worst case its client can produce is the right direction to be wrong
+// in; the alternative is a cluster that works until someone points telemetry
+// at a second database.
+func dbProcessConnectionDemand(cpus int, serverless bool) int {
+	app := defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns
+	aux := dbAuxPoolSizeFor(cpus, serverless)
+	return app + aux*len(dbAuxPoolConsumers)
+}
+
+// dbAuxPoolSizeFor is the per-aux-pool ceiling: a quarter of the app pool,
+// floored at 2 and capped at 8. See dbAuxPoolConfig for why a quarter.
+func dbAuxPoolSizeFor(cpus int, serverless bool) int {
+	return clampInt(defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns/4, 2, 8)
 }
 
 // sqlitePoolConfig is the single-connection clamp. See the file header
@@ -194,6 +246,75 @@ func dbAuxPoolConfig() dbPoolConfig {
 	c.MaxOpenConns = n
 	c.MaxIdleConns = n
 	return c
+}
+
+// ── how much of a shared pool each consumer may hold ───────────────
+//
+// When the runtime's pools resolve to the same DSN they share one `*sql.DB`
+// (see the dbshare package), which is what takes an 8-core process from 56
+// backends to 40. Sharing on its own would lose the bulkhead the separate
+// pools provided, so each consumer carries a cap.
+//
+// The caps are asymmetric on purpose. The session store is on the REQUEST
+// path — every request reads and writes its session — so capping it below the
+// pool would be capping the app itself for no benefit. The two BACKGROUND
+// writers are capped instead, and capping them is what guarantees the session
+// store cannot be starved: analytics and telemetry together can hold at most
+// `dbAnalyticsShare + dbTelemetryShare` of the pool, so the session store
+// always has the rest.
+//
+// Both background writers are single-goroutine batchers after the buffered
+// writer landed, so a cap of 2 costs them nothing: one slot for the flusher,
+// one for a concurrent read (the console tab, an erase, a prune).
+const (
+	dbAnalyticsShare = 2
+	dbTelemetryShare = 2
+	// dbSessionShare is 0, meaning uncapped — the hot path draws on the whole
+	// pool, and the caps above are what keep it from being consumed.
+	dbSessionShare = 0
+)
+
+// dbSharedAuxPoolSizeFor is the size of the ONE pool the runtime's consumers
+// share when their DSNs resolve alike.
+//
+// It is the session store's own former pool size PLUS the two background
+// caps, and that addition is the whole bulkhead argument. Sizing the shared
+// pool at merely `aux` and capping the background writers inside it would
+// take connections AWAY from the session store to give them to telemetry: on
+// a small machine `aux` is 2, two caps of 2 consume the entire pool, and the
+// request path is guaranteed nothing. A gate caught exactly that
+// (TestTheBackgroundWritersCannotStarveTheSessionStore) before this shipped.
+//
+// With the addition, the session store can always obtain `aux` connections —
+// precisely what it had when it owned a pool outright — so sharing costs it
+// nothing, while the process opens `aux + 4` backends instead of `3 × aux`.
+// That is a strict improvement at every core count, since `aux + 4 ≤ 3 × aux`
+// for all `aux ≥ 2`, and `aux` is floored at 2.
+func dbSharedAuxPoolSizeFor(cpus int, serverless bool) int {
+	return dbAuxPoolSizeFor(cpus, serverless) + dbAnalyticsShare + dbTelemetryShare
+}
+
+// dbSharedAuxPoolConfig is dbAuxPoolConfig sized for sharing.
+func dbSharedAuxPoolConfig() dbPoolConfig {
+	c := dbAuxPoolConfig()
+	n := c.MaxOpenConns + dbAnalyticsShare + dbTelemetryShare
+	c.MaxOpenConns = n
+	c.MaxIdleConns = n
+	return c
+}
+
+// dbGuaranteedSessionShare returns the number of connections the session
+// store is guaranteed to be able to obtain from a shared pool of `poolSize`,
+// however hard the background writers are working.
+//
+// Stated as a function so a gate can assert the bulkhead as a PROPERTY rather
+// than by re-deriving the arithmetic and agreeing with itself.
+func dbGuaranteedSessionShare(poolSize int) int {
+	n := poolSize - dbAnalyticsShare - dbTelemetryShare
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // dbPoolEnvSuffixes are the pool knobs, in the Sky-prefixed namespace

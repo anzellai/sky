@@ -34,6 +34,12 @@ func runCapture(name string, args ...string) (string, error) {
 // idempotent across restarts.
 const skyConfMarker = "# --- sky --embed: cluster tuning (managed by sky) ---"
 
+// skyConfEndMarker closes the managed block, so it can be REPLACED on a later
+// boot rather than only appended once. Clusters initialised before this marker
+// existed have an un-delimited block; see replaceManagedBlock for how its
+// extent is recovered without eating an operator's own settings.
+const skyConfEndMarker = "# --- end sky --embed ---"
+
 type machine struct {
 	ramBytes uint64 // 0 when RAM could not be detected
 	cpus     int
@@ -181,11 +187,7 @@ func tuningFor(m machine) []confSetting {
 	effectiveCache := clampBytes(ram*40/100, 128*mb, 32768*mb)
 	maintenance := clampBytes(ram*5/100, 32*mb, 1024*mb)
 
-	// max_connections must cover the app's own pool with room to spare. P1
-	// sizes that pool at 4 connections per CPU clamped to 4–32 on a VM
-	// (db_pool.go), so 4×CPU+20 keeps the app's ceiling below the server's
-	// even before autovacuum workers and a maintenance session are counted.
-	maxConn := clampInt(4*cpus+20, 25, 200)
+	maxConn := embeddedMaxConnections(cpus)
 
 	// work_mem is per sort/hash NODE, not per connection: the worst case is
 	// several nodes in each of max_connections sessions. Budgeting a quarter of
@@ -202,7 +204,7 @@ func tuningFor(m machine) []confSetting {
 		{"effective_cache_size", memUnit(effectiveCache), "a planner hint about the OS page cache; costs no memory"},
 		{"maintenance_work_mem", memUnit(maintenance), "vacuum and index builds; one or two at a time, so it can be larger than work_mem"},
 		{"work_mem", memUnit(work), "per sort/hash node, so budgeted across max_connections rather than per machine"},
-		{"max_connections", strconv.Itoa(maxConn), "above the app's own pool ceiling (4 per CPU, clamped 4-32) with room for maintenance"},
+		{"max_connections", strconv.Itoa(maxConn), "covers every pool this process opens (app + analytics + sessions + telemetry), twice over for restart overlap, plus the reserved superuser slots"},
 		{"max_worker_processes", strconv.Itoa(workers), "one per CPU"},
 		{"max_parallel_workers", strconv.Itoa(workers), "cannot exceed max_worker_processes"},
 		{"max_parallel_workers_per_gather", strconv.Itoa(parallel), "half the CPUs: the app needs the other half"},
@@ -210,6 +212,75 @@ func tuningFor(m machine) []confSetting {
 		{"max_wal_size", memUnit(clampBytes(ram/8, 512*mb, 4096*mb)), "checkpoint spacing; larger means fewer, bigger checkpoints"},
 		{"min_wal_size", memUnit(clampBytes(ram/32, 128*mb, 1024*mb)), "keeps recycled WAL segments rather than re-creating them"},
 	}
+}
+
+// PostgreSQL's own reservations, which come off the top of max_connections
+// before an app gets any.
+const (
+	// pgSuperuserReserved is `superuser_reserved_connections`, whose default
+	// is 3. Those slots are NOT available to an ordinary role, so a cluster
+	// with `max_connections = 52` can serve 49 app connections. Leaving them
+	// out of the arithmetic is a three-connection error in the direction that
+	// produces an outage.
+	pgSuperuserReserved = 3
+
+	// pgOperatorHeadroom keeps a few slots for the human: a psql session, a
+	// backup, a migration, a monitoring agent. Without it the first thing an
+	// operator does when the app is struggling — connect and look — is the
+	// thing that cannot be done.
+	pgOperatorHeadroom = 5
+
+	// pgRestartOverlapFactor covers the window in which TWO copies of the app
+	// hold pools against this cluster.
+	//
+	// That window is not exotic, it is every restart: `sky watch` rebuilding
+	// and relaunching, a rolling deploy bringing the new process up before
+	// the old one has finished draining, a supervisor restarting a crashed
+	// app while its connections are still being reaped. Sizing for exactly
+	// one process means every restart under load is a `too many clients`
+	// incident, and the arithmetic that produced it looks correct in
+	// isolation.
+	pgRestartOverlapFactor = 2
+
+	// pgMaxConnectionsFloor / Ceiling bound the result. The floor keeps a
+	// tiny machine usable at all; the ceiling stops a very large host from
+	// being handed a number whose per-backend memory is no longer a rounding
+	// error.
+	pgMaxConnectionsFloor   = 25
+	pgMaxConnectionsCeiling = 200
+)
+
+// embeddedMaxConnections sizes the embedded cluster's `max_connections` from
+// what the process this cluster serves will actually demand.
+//
+// # The defect this replaces
+//
+// It used to be `clampInt(4*cpus+20, 25, 200)`, under a comment reasoning
+// about "the app's own pool". The process opens FOUR pools, not one — the
+// app's plus analytics, sessions and telemetry — and the aux pools are a
+// quarter-share each, clamped 2–8. Counting only the app's pool left the
+// cluster short across a whole band of ordinary machines:
+//
+//	cpus  old max_conn  demand  usable (−3 reserved)  verdict
+//	   6            44      42                    41  EXHAUSTS ITS OWN DB
+//	   7            48      49                    45  EXHAUSTS ITS OWN DB
+//	   8            52      56                    49  EXHAUSTS ITS OWN DB
+//	   9            56      56                    53  EXHAUSTS ITS OWN DB
+//
+// Eight cores is the most common instance size there is. Under load the app
+// exhausted the database it had just started, and the user had configured
+// nothing to deserve it.
+//
+// The demand is now read from `dbProcessConnectionDemand`, which is the same
+// function the pools themselves are sized by, so the two cannot drift. If a
+// fifth pool is added, `dbAuxPoolConsumers` grows and this number follows.
+func embeddedMaxConnections(cpus int) int {
+	// The embedded cluster serves a long-lived process on this machine; the
+	// serverless sizing is for a platform that runs many small instances and
+	// does not use an embedded cluster at all.
+	demand := dbProcessConnectionDemand(cpus, false)
+	n := demand*pgRestartOverlapFactor + pgSuperuserReserved + pgOperatorHeadroom
+	return clampInt(n, pgMaxConnectionsFloor, pgMaxConnectionsCeiling)
 }
 
 func clampBytes(v, lo, hi uint64) uint64 {
@@ -244,10 +315,15 @@ func renderConfBlock(m machine) string {
 		humanRAM(m.ramBytes), max(m.cpus, 1))
 	b.WriteString("# Resource sizing only — nothing here changes what a query means, so an\n")
 	b.WriteString("# embedded cluster stays a faithful rehearsal of a managed one.\n")
-	b.WriteString("# Edits below this marker are preserved; sky only appends the block once.\n")
+	b.WriteString("# This block is REGENERATED on every start, from the machine detected on\n")
+	b.WriteString("# that start, so the cluster follows the host when it is resized. Edits\n")
+	b.WriteString("# INSIDE the block are overwritten; put your own settings OUTSIDE it and\n")
+	b.WriteString("# they are preserved. PostgreSQL takes the last occurrence of a setting,\n")
+	b.WriteString("# so anything you write after the end marker wins.\n")
 	for _, s := range tuningFor(m) {
 		fmt.Fprintf(&b, "%s = %s  # %s\n", s.key, s.value, s.reason)
 	}
+	b.WriteString(skyConfEndMarker + "\n")
 	return b.String()
 }
 
@@ -261,16 +337,88 @@ func humanRAM(b uint64) string {
 	return fmt.Sprintf("%dMB", b/mb)
 }
 
-// ensureSkyConf appends the managed block unless it is already present.
-// Returns the new contents and whether anything changed, so a restart neither
-// duplicates settings nor grows the file without bound.
+// ensureSkyConf REPLACES the managed block, or appends it when the file has
+// none. Returns the new contents and whether anything changed, so a restart
+// that needs no retune does not rewrite the file at all.
+//
+// # Why this replaces rather than appends-once
+//
+// It used to return `(conf, false)` the moment the marker was present, and it
+// was called only from `initCluster`. The managed block was therefore written
+// ONCE, at initdb, and frozen at whatever the machine was on the day the data
+// directory was created — while the connection pools call `runtime.NumCPU()`
+// on every boot.
+//
+// The two diverge on exactly the event a user expects to help. Resize a host
+// from 2 vCPU to 8: pool demand goes from 14 to 56 at the next start, and
+// `max_connections` stays sized for the 2-vCPU machine. The app strangles
+// itself on the upgrade. Restoring a data directory onto a different host does
+// the same thing with no warning at all, and a changed container memory limit
+// leaves `shared_buffers` sized for the old one.
+//
+// Vertical scaling on one server is a first-class use of an embedded cluster,
+// so this is the main path, not an edge.
 func ensureSkyConf(conf, block string) (string, bool) {
-	if strings.Contains(conf, skyConfMarker) {
-		return conf, false
-	}
-	return conf + block, true
+	out := replaceManagedBlock(conf, block)
+	return out, out != conf
 }
 
+// replaceManagedBlock swaps the managed block for a freshly rendered one,
+// leaving everything an operator wrote outside it untouched.
+//
+// # Finding the end of the block
+//
+// New blocks are delimited (`skyConfMarker` … `skyConfEndMarker`). Blocks
+// written before the end marker existed are not, and they ran to the end of
+// the file — so for those the extent is inferred instead: from the start
+// marker, consume comments, blanks and assignments to keys this file MANAGES,
+// and stop at the first line that is none of those.
+//
+// That inference matters. Treating an un-delimited block as "everything to
+// EOF" would silently delete any setting an operator appended after it, which
+// is the one edit the header comment invites them to make.
+func replaceManagedBlock(conf, block string) string {
+	start := strings.Index(conf, skyConfMarker)
+	if start < 0 {
+		if conf != "" && !strings.HasSuffix(conf, "\n") {
+			conf += "\n"
+		}
+		return conf + block
+	}
+	head := conf[:start]
+	rest := conf[start:]
+
+	if i := strings.Index(rest, skyConfEndMarker); i >= 0 {
+		tail := rest[i+len(skyConfEndMarker):]
+		return head + strings.TrimPrefix(block, "\n") + strings.TrimPrefix(tail, "\n")
+	}
+
+	// Legacy, un-delimited block: consume only what we recognise as ours.
+	managed := map[string]bool{}
+	for _, s := range tuningFor(machine{}) {
+		managed[s.key] = true
+	}
+	lines := strings.Split(rest, "\n")
+	end := 0
+	for i, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") {
+			end = i + 1
+			continue
+		}
+		key := strings.TrimSpace(strings.SplitN(t, "=", 2)[0])
+		if managed[key] {
+			end = i + 1
+			continue
+		}
+		break
+	}
+	tail := strings.Join(lines[end:], "\n")
+	return head + strings.TrimPrefix(block, "\n") + tail
+}
+
+// writeTunedConf renders the managed block for the machine it is given and
+// writes it, when it differs from what is already there.
 func writeTunedConf(dataDir string, m machine) error {
 	path := filepath.Join(dataDir, "postgresql.conf")
 	b, err := os.ReadFile(path)
