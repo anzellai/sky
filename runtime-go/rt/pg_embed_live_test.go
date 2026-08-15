@@ -16,6 +16,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,13 +52,42 @@ func livePgBinDir() string {
 
 // durableTestDir hands back a directory the supervisor will accept — i.e. one
 // the operating system is not entitled to empty.
+//
+// # Why the path carries the pid
+//
+// It used to be exactly `~/.sky/p5-live-test/<name>`, which is the same path in
+// every checkout on the machine. Two test binaries running these gates at once
+// — two worktrees, two agents, a rerun started before the last one finished —
+// therefore shared a data directory, and the first line of this function is
+// `os.RemoveAll`. The loser sees its cluster deleted from under `initdb`:
+//
+//	FATAL: could not open file "global/2676": No such file or directory
+//	PANIC: could not open file ".../global/pg_control": No such file or directory
+//	initdb: error: failed to remove data directory
+//
+// which reads as a broken embedded-Postgres path and is nothing of the kind.
+// That is the worst shape a flake can have: it accuses the code under test, and
+// it is the victim who investigates. It cost this branch one contaminated
+// mutation-matrix run (`docs/history/embedded-postgres/mutation-matrix.md`),
+// where two gates failed for reasons that had nothing to do with the defect
+// being injected.
+//
+// The pid keeps it unique per test binary while staying SHORT, which is the
+// reason this lives under `$HOME` rather than in `t.TempDir()`: macOS caps a
+// unix socket path at 104 bytes and the per-test `TMPDIR` blows straight
+// through it. `SKY_LIVE_TEST_ROOT` overrides the parent for a harness that
+// wants to place it somewhere explicit.
 func durableTestDir(t *testing.T, name string) string {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no home directory to put a durable data directory in")
+	root := os.Getenv("SKY_LIVE_TEST_ROOT")
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Skip("no home directory to put a durable data directory in")
+		}
+		root = filepath.Join(home, ".sky", "p5-live-test")
 	}
-	dir := filepath.Join(home, ".sky", "p5-live-test", name)
+	dir := filepath.Join(root, fmt.Sprintf("%s-%d", name, os.Getpid()))
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
 	}
