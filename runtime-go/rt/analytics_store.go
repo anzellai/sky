@@ -153,9 +153,16 @@ func analyticsStorePath() string {
 // session store's or telemetry's — the normal case, since "one database for
 // everything" is what `DATABASE_URL` and `sky db provision --embed` both
 // produce — the three consumers share ONE pool rather than opening three sets
-// of backends against the same server. The cap keeps the bulkhead: analytics
-// can hold at most `dbAnalyticsShare` of that pool at once, so an analytics
-// burst cannot take connections the session store needs.
+// of backends against the same server.
+//
+// The cap keeps the bulkhead, and it is worth being exact about what it
+// covers. It bounds the buffered WRITER, which is the only high-volume
+// analytics user: one goroutine, batching, so `dbAnalyticsShare` slots are
+// more than it can occupy. The read paths — the console's Analytics tab,
+// `erase`, `openStore` — use the pool directly and are NOT capped, because
+// they are admin-facing and already bounded by request concurrency, and
+// because routing them through the semaphore would let a slow write stall an
+// operator trying to look at why it is slow.
 //
 // On SQLite it opens its own handle, deliberately. The connection-count
 // problem is a PostgreSQL problem — a SQLite "connection" is a file handle,
