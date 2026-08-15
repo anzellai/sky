@@ -21,6 +21,17 @@
 #      check precisely that. Every ELF/Mach-O object under the bundle is
 #      enumerated and its dependency list read individually.
 #
+#   3. A SYMBOLIC LINK IS PART OF WHAT WE SHIP.
+#      `find -type f` does not match one; `[ -f ]` follows one. Those two facts
+#      together meant the same GNU readline was a `GATE FAIL` as a regular file
+#      in lib/ and a `GATE PASS` as a symlink — and a symlink to the build
+#      machine's copy also laundered every dependency on it into
+#      "bundle:lib/…", i.e. `unvendored deps: 0`. Bundles carry these links by
+#      construction: build-postgres-bundle.sh copies the staged tree with `cp
+#      -Rf`, preserving PostgreSQL's soname chains. Links are now enumerated,
+#      classified by their own name AND their target's, and a link whose chain
+#      leaves the bundle is unvendored by definition.
+#
 # Usage:
 #   scan-bundle-licences.sh <bundle-dir> [--sbom-out FILE] [--bless-modules]
 #
@@ -177,10 +188,48 @@ normalise() {
 }
 
 is_object() {
+  # `file -bL` FOLLOWS a symbolic link; plain `file -b` reports "symbolic link
+  # to …" and would answer "not an object" for a link pointing straight at one.
+  # The linux arm already follows, because open(2) does. A dangling link is not
+  # an object either way, and is caught by the escape check instead.
   case "$HOST_OS" in
-    darwin) file -b "$1" 2>/dev/null | command grep -q 'Mach-O' ;;
+    darwin) file -bL "$1" 2>/dev/null | command grep -q 'Mach-O' ;;
     linux)  [ "$(head -c 4 "$1" 2>/dev/null | od -An -c | tr -d ' \n')" = '177ELF' ] ;;
   esac
+}
+
+# The physical path a bundle entry resolves to, following a chain of symbolic
+# links. Prints nothing and returns 1 when the chain dangles.
+#
+# Written by hand rather than with `readlink -f` / `realpath`: neither is
+# portable to the macOS runners (BSD `readlink` has no -f, and `realpath` is a
+# recent arrival), and this gate must behave identically on both platforms or
+# the platform it behaves differently on is ungated.
+resolve_path() {
+  local p="$1" d b t i=0
+  d="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 1
+  b="${p##*/}"
+  while [ -L "$d/$b" ] && [ "$i" -lt 40 ]; do
+    t="$(readlink "$d/$b")"
+    case "$t" in
+      /*) d="$(cd "$(dirname "$t")" 2>/dev/null && pwd -P)" || return 1 ;;
+      *)  d="$(cd "$d/$(dirname "$t")" 2>/dev/null && pwd -P)" || return 1 ;;
+    esac
+    b="${t##*/}"
+    i=$((i+1))
+  done
+  [ -e "$d/$b" ] || return 1
+  printf '%s' "$d/$b"
+}
+
+# Is an absolute physical path inside the bundle we are about to redistribute?
+# `$BUNDLE` is already `cd`-ed + `pwd`-ed above, but not necessarily `pwd -P`,
+# so it is re-resolved once here — comparing a logical prefix against a physical
+# path is how a bundle reached through a symlinked parent would test "outside"
+# and fail its own gate.
+BUNDLE_PHYS="$(cd "$BUNDLE" && pwd -P)"
+inside_bundle() {
+  case "$1" in "$BUNDLE_PHYS"/*|"$BUNDLE_PHYS") return 0 ;; *) return 1 ;; esac
 }
 
 # Direct dependency records of one object, one per line.
@@ -201,8 +250,22 @@ deps_of() {
 # Where a dependency record actually resolves. Used only for reporting and for
 # the libiconv path split — never to decide PLATFORM membership.
 resolve_dep() {
-  local dep="$1" base; base="${dep##*/}"
-  if [ -f "${BUNDLE}/lib/${base}" ]; then echo "bundle:lib/${base}"; return; fi
+  local dep="$1" base phys; base="${dep##*/}"
+  # `bundle:` means WE SHIP THE FILE. A name that exists in lib/ only as a
+  # symbolic link to something outside the bundle is not a shipped file — it is
+  # a pointer at the build machine's copy, and calling it `bundle:` launders the
+  # dependency into "vendored" and zeroes the unvendored count. That is not
+  # hypothetical: `[ -f ]` FOLLOWS symlinks, so before this check existed a
+  # bundle whose lib/libreadline.8.dylib pointed at Homebrew's readline reported
+  # `unvendored deps: 0`.
+  if [ -e "${BUNDLE}/lib/${base}" ] || [ -L "${BUNDLE}/lib/${base}" ]; then
+    if phys="$(resolve_path "${BUNDLE}/lib/${base}")" && inside_bundle "$phys"; then
+      echo "bundle:lib/${base}"; return
+    fi
+    # Deliberately NOT `bundle:` — the caller counts anything else as
+    # unvendored, which is exactly what a link out of the bundle is.
+    echo "escapes:lib/${base}"; return
+  fi
   # macOS 11+ ships its system libraries inside the dyld shared cache, so
   # /usr/lib/libiconv.2.dylib is a perfectly valid, loadable dependency that
   # does NOT exist as a file on disk. Testing -f and calling it "absent" makes
@@ -222,13 +285,41 @@ PLATFORM="$(sed -n 's/.*"platform": *"\([^"]*\)".*/\1/p' "${BUNDLE}/BUNDLE.json"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-: >| "$TMP/objects"; : >| "$TMP/deps"; : >| "$TMP/shipped"
+: >| "$TMP/objects"; : >| "$TMP/deps"; : >| "$TMP/shipped"; : >| "$TMP/links"
 
 # ── Enumerate every object in the bundle ─────────────────────────────
+#
+# `-type f -o -type l`. `find -type f` alone does NOT match a symbolic link, and
+# a bundle's lib/ is FULL of them — build-postgres-bundle.sh copies the staged
+# tree with `cp -Rf`, which preserves PostgreSQL's soname chains verbatim. Every
+# one of those was previously unscanned, and the difference was total: the same
+# GNU readline shipped as a regular file in lib/ produced `GATE FAIL —
+# copyleft violations: 1`, and shipped as a symlink produced `GATE PASS — no
+# GPL, LGPL or AGPL component is shipped or linked`.
+#
+# A link is put on the LINKS list, not the objects list, and is judged by its
+# own name AND its target's name. Its dependencies are not re-walked: a link
+# into the bundle points at an object this loop already enumerated, and a link
+# out of the bundle points at a file we do not ship and whose dependency
+# closure is therefore not ours to describe — what matters about it is that it
+# escapes, which is recorded as a violation in its own right.
 while IFS= read -r f; do
+  rel="${f#"$BUNDLE"/}"
+  if [ -L "$f" ]; then
+    # Only library-shaped links are in scope. `share/` is full of links to
+    # documentation and sample configuration; classifying those by name would
+    # make every real bundle fail as "unclassified" and the gate would be
+    # turned off within the day.
+    case "${f##*/}" in
+      *.so|*.so.*|*.dylib) ;;
+      *) is_object "$f" || continue ;;
+    esac
+    printf '%s\n' "$rel" >> "$TMP/links"
+    continue
+  fi
   is_object "$f" || continue
-  printf '%s\n' "${f#"$BUNDLE"/}" >> "$TMP/objects"
-done < <(find "$BUNDLE" -type f | sort)
+  printf '%s\n' "$rel" >> "$TMP/objects"
+done < <(find "$BUNDLE" \( -type f -o -type l \) | sort)
 
 OBJ_COUNT="$(wc -l < "$TMP/objects" | tr -d ' ')"
 [ "$OBJ_COUNT" -gt 0 ] || { echo "no ELF/Mach-O objects found under ${BUNDLE} — refusing to report a verdict" >&2; exit 2; }
@@ -342,6 +433,78 @@ while IFS= read -r rel; do
   done < <(deps_of "$obj")
 done < "$TMP/objects"
 
+# ── Walk the symbolic links ──────────────────────────────────────────
+#
+# A link in lib/ is TWO claims at once, and both are the gate's business:
+#
+#   1. a NAME we ship. `lib/libreadline.8.dylib` announces GNU readline to
+#      every loader that walks this bundle, whatever it points at. Classified
+#      exactly like a shipped object — the file-vs-link distinction is
+#      invisible to the loader and must be invisible here.
+#   2. a claim about a FILE. If the chain leaves the bundle, we do not ship
+#      that file: the bundle resolves against whatever the build machine
+#      happened to have, which is the definition of unvendored. If it dangles,
+#      we ship a name backed by nothing.
+#
+# A link INTO the bundle is neither — its target is enumerated above and
+# already carries the shipped-object verdict, so it adds a name to the SBOM and
+# no violation.
+while IFS= read -r rel; do
+  [ -n "$rel" ] || continue
+  lnk="${BUNDLE}/${rel}"
+  n="$(normalise "$rel")"
+  raw_target="$(readlink "$lnk")"
+
+  # (1) the link's own name
+  IFS='|' read -r lic cls note <<< "$(classify "$n" "$lnk")"
+  if [ "$cls" = UNKNOWN ] && in_allowlist "$n"; then
+    lic="PostgreSQL"; cls="PERMISSIVE"; note="reviewed module of the pinned build"
+  fi
+
+  # (2) the target's name, which need not classify the same way: a link named
+  #     for something innocuous can point at something that is not.
+  tn="$(normalise "$raw_target")"
+  if [ "$tn" != "$n" ]; then
+    IFS='|' read -r tlic tcls tnote <<< "$(classify "$tn" "$raw_target")"
+    if [ "$tcls" = UNKNOWN ] && in_allowlist "$tn"; then
+      tlic="PostgreSQL"; tcls="PERMISSIVE"; tnote="reviewed module of the pinned build"
+    fi
+    # Whichever end is worse decides. PERMISSIVE -> COPYLEFT is the direction
+    # that matters; the reverse cannot launder anything.
+    case "$tcls" in
+      COPYLEFT|UNKNOWN)
+        if [ "$cls" != COPYLEFT ] && [ "$cls" != UNKNOWN ]; then
+          n="$tn"; lic="$tlic"; cls="$tcls"
+          note="via symlink ${rel} -> ${raw_target}; ${tnote}"
+        fi ;;
+    esac
+  fi
+
+  printf '%s\t%s\t%s\t%s\n' "$rel" "$lic" "$cls" "$note" >> "$TMP/shipped"
+  case "$cls" in
+    COPYLEFT) COPYLEFT=$((COPYLEFT+1))
+      printf 'COPYLEFT  shipped symlink %s -> %s — %s (%s)\n' "$rel" "$raw_target" "$lic" "$note" >> "$TMP/violations" ;;
+    UNKNOWN)  UNKNOWN=$((UNKNOWN+1))
+      printf 'UNKNOWN   shipped symlink %s -> %s — unclassified; add it to the licence table or to %s\n' \
+        "$rel" "$raw_target" "${MODULE_ALLOWLIST##*/}" >> "$TMP/violations" ;;
+  esac
+
+  # (2) where it actually goes
+  if phys="$(resolve_path "$lnk")"; then
+    inside_bundle "$phys" || {
+      UNVENDORED=$((UNVENDORED+1))
+      printf 'UNVENDORED %s is a symlink to %s, which is outside the bundle [escapes:%s]\n' \
+        "$rel" "$phys" "$raw_target" >> "$TMP/violations"
+    }
+  else
+    UNVENDORED=$((UNVENDORED+1))
+    printf 'UNVENDORED %s is a symlink to %s, which does not resolve [dangling:%s]\n' \
+      "$rel" "$raw_target" "$raw_target" >> "$TMP/violations"
+  fi
+done < "$TMP/links"
+
+LINK_COUNT="$(wc -l < "$TMP/links" | tr -d ' ')"
+
 # ── SBOM ─────────────────────────────────────────────────────────────
 STATUS=PASS
 if [ "$COPYLEFT" -gt 0 ] || [ "$UNKNOWN" -gt 0 ] || [ "$UNVENDORED" -gt 0 ]; then
@@ -357,6 +520,7 @@ emit_sbom() {
   printf '  "generated_at": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf '  "generator": "scripts/skydb/scan-bundle-licences.sh",\n'
   printf '  "objects_scanned": %s,\n' "$OBJ_COUNT"
+  printf '  "symlinks_scanned": %s,\n' "$LINK_COUNT"
   printf '  "shipped": [\n'
   first=1
   while IFS=$'\t' read -r p l c nt; do
@@ -387,6 +551,7 @@ fi
 echo
 echo "licence gate — $(basename "$BUNDLE") (${PLATFORM})"
 echo "  objects scanned      : ${OBJ_COUNT}"
+echo "  symlinks scanned     : ${LINK_COUNT}"
 echo "  distinct dependencies: $(sort -u "$TMP/deps" | wc -l | tr -d ' ')"
 echo
 

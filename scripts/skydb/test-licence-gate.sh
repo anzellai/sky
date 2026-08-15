@@ -114,9 +114,25 @@ run_gate() {
   echo "$rc"
 }
 
-# Assert the gate REJECTED, and that its output names the expected reason.
+# Assert the gate REJECTED, that its output names the expected reason, and that
+# it rejected for EXACTLY the expected cause or causes.
+#
+#   expect_reject <label> <bundle> <needle> "<CAUSE> [<CAUSE> …]"
+#
+# The cause set is not decoration. The scanner counts three independent
+# rejection causes — COPYLEFT, UNKNOWN, UNVENDORED — and before this argument
+# existed the suite asserted only "exit 1 and the output mentions readline".
+# Every fixture's planted library tripped COPYLEFT or UNKNOWN as well as
+# UNVENDORED, so UNVENDORED was never the SOLE cause of any rejection: the
+# entire arm could be deleted (`if false && …`) and the suite still reported
+# 7 passed, 0 failed. A gate arm that no fixture isolates is not tested, it is
+# merely present.
+#
+# So the named causes must each be non-zero AND the unnamed ones must each be
+# ZERO. That direction matters as much: it is what makes a fixture pin down
+# which arm did the rejecting rather than merely that something did.
 expect_reject() {
-  local label="$1" bundle="$2" needle="$3" out="${WORK}/out.$$"
+  local label="$1" bundle="$2" needle="$3" causes="$4" out="${WORK}/out.$$"
   local rc; rc="$(run_gate "$bundle" "$out")"
   if [ "$rc" -ne 1 ]; then
     bad "${label}: expected exit 1 (REJECTED), got ${rc}"
@@ -131,7 +147,47 @@ expect_reject() {
     sed 's/^/       | /' "$out" | head -20
     return
   fi
-  ok "${label} — rejected, citing '${needle}'"
+
+  local c u v cause
+  c="$(sed -n 's/^ *copyleft violations *: *//p' "$out")"
+  u="$(sed -n 's/^ *unclassified *: *//p' "$out")"
+  v="$(sed -n 's/^ *unvendored deps *: *//p' "$out")"
+  if [ -z "$c" ] || [ -z "$u" ] || [ -z "$v" ]; then
+    bad "${label}: could not read the violation counters from the verdict — the \
+report format changed and every cause assertion below is now blind"
+    sed 's/^/       | /' "$out" | head -20
+    return
+  fi
+
+  local want_c=0 want_u=0 want_v=0
+  for cause in $causes; do
+    case "$cause" in
+      COPYLEFT)   want_c=1 ;;
+      UNKNOWN)    want_u=1 ;;
+      UNVENDORED) want_v=1 ;;
+      *) bad "${label}: '${cause}' is not a rejection cause — typo in the fixture"; return ;;
+    esac
+  done
+  [ "$want_c$want_u$want_v" != "000" ] || { bad "${label}: no cause named"; return; }
+
+  # Written as `if` blocks, not as `[ … ] && why=…` one-liners: under `set -e` a
+  # standalone `&&` list whose LAST command fails aborts the script, so the
+  # terse form would have made a satisfied assertion look like a crash.
+  local why=""
+  if [ "$want_c" -eq 1 ] && [ "$c" -eq 0 ]; then why="${why} expected COPYLEFT but the count is 0;"; fi
+  if [ "$want_c" -eq 0 ] && [ "$c" -ne 0 ]; then why="${why} unexpected COPYLEFT (${c});"; fi
+  if [ "$want_u" -eq 1 ] && [ "$u" -eq 0 ]; then why="${why} expected UNKNOWN but the count is 0;"; fi
+  if [ "$want_u" -eq 0 ] && [ "$u" -ne 0 ]; then why="${why} unexpected UNKNOWN (${u});"; fi
+  if [ "$want_v" -eq 1 ] && [ "$v" -eq 0 ]; then why="${why} expected UNVENDORED but the count is 0;"; fi
+  if [ "$want_v" -eq 0 ] && [ "$v" -ne 0 ]; then why="${why} unexpected UNVENDORED (${v});"; fi
+  if [ -n "$why" ]; then
+    bad "${label}: rejected, but not for the stated cause(s) [${causes}] —${why} \
+(counted copyleft=${c} unclassified=${u} unvendored=${v})"
+    sed 's/^/       | /' "$out" | head -20
+    return
+  fi
+
+  ok "${label} — rejected as ${causes}, citing '${needle}'"
   LAST_OUT="$out"
 }
 
@@ -157,10 +213,13 @@ C1="${WORK}/c1"; make_base_bundle "$C1"
 expect_accept "C1 clean bundle" "$C1"
 
 # C2. GPL dependency on the main server binary — the obvious case.
+#     Two causes, not one: the library is GPL (COPYLEFT) and it lives outside
+#     the bundle (UNVENDORED). Naming both is the point — a fixture that trips
+#     two arms cannot be evidence for either one alone.
 C2="${WORK}/c2"; make_base_bundle "$C2"
 make_stub_lib "${WORK}/libreadline.8.${DL}" "libreadline.8.${DL}"
 make_object "$C2/bin/postgres" exe "${WORK}/libreadline.8.${DL}"
-expect_reject "C2 GPL dep on bin/postgres" "$C2" "readline"
+expect_reject "C2 GPL dep on bin/postgres" "$C2" "readline" "COPYLEFT UNVENDORED"
 
 # C3. THE LOAD-BEARING CASE.
 #     bin/postgres is clean; the GPL linkage is on an extension module only.
@@ -171,27 +230,27 @@ expect_reject "C2 GPL dep on bin/postgres" "$C2" "readline"
 #     has silently regressed to inspecting the main executable alone.
 C3="${WORK}/c3"; make_base_bundle "$C3"
 make_object "$C3/lib/pg_trgm.$DL" lib "${WORK}/libreadline.8.${DL}"
-expect_reject "C3 GPL dep on an EXTENSION only, server binary clean" "$C3" "pg_trgm"
+expect_reject "C3 GPL dep on an EXTENSION only, server binary clean" "$C3" "pg_trgm" "COPYLEFT UNVENDORED"
 
 # C4. Fail closed. An unclassified dependency is rejected, not waved through:
 #     the dangerous dependency is by definition the one nobody anticipated.
 C4="${WORK}/c4"; make_base_bundle "$C4"
 make_stub_lib "${WORK}/libmysteryware.1.${DL}" "libmysteryware.1.${DL}"
 make_object "$C4/lib/pgcrypto.$DL" lib "${WORK}/libmysteryware.1.${DL}"
-expect_reject "C4 unclassified dependency (fail closed)" "$C4" "libmysteryware"
+expect_reject "C4 unclassified dependency (fail closed)" "$C4" "libmysteryware" "UNKNOWN UNVENDORED"
 
 # C5. A shipped module nobody reviewed. PostGIS is GPL-2.0 and is excluded on
 #     licence grounds by docs/skydb/embedded-postgres.md; planting it in lib/
 #     must be caught as a shipped object, independent of what it links.
 C5="${WORK}/c5"; make_base_bundle "$C5"
 make_object "$C5/lib/postgis-3.$DL" lib
-expect_reject "C5 unreviewed GPL extension planted in lib/" "$C5" "postgis"
+expect_reject "C5 unreviewed GPL extension planted in lib/" "$C5" "postgis" "COPYLEFT"
 
 # C6. A vendored copy of readline sitting in lib/ — caught as a shipped object
 #     even if nothing in the bundle links it.
 C6="${WORK}/c6"; make_base_bundle "$C6"
 make_stub_lib "$C6/lib/libreadline.8.${DL}" "libreadline.8.${DL}"
-expect_reject "C6 vendored libreadline in lib/, unlinked" "$C6" "readline"
+expect_reject "C6 vendored libreadline in lib/, unlinked" "$C6" "readline" "COPYLEFT"
 
 # C7. Full fidelity: link against the host's REAL GNU readline where one is
 #     installed, so at least one rejection is driven by a genuine GPL library
@@ -207,13 +266,66 @@ done
 if [ -n "$REAL_RL" ]; then
   C7="${WORK}/c7"; make_base_bundle "$C7"
   if make_object "$C7/lib/vector.$DL" lib "$REAL_RL"; then
-    expect_reject "C7 extension linked against the REAL GNU readline (${REAL_RL})" "$C7" "readline"
+    expect_reject "C7 extension linked against the REAL GNU readline (${REAL_RL})" "$C7" "readline" "COPYLEFT UNVENDORED"
   else
     printf '  \033[1;33mskip\033[0m C7 — could not link against %s\n' "$REAL_RL"
   fi
 else
   printf '  \033[1;33mskip\033[0m C7 — no GNU readline installed on this host\n'
 fi
+
+# C10. THE UNVENDORED ARM, ISOLATED — the one cause no other fixture proves.
+#      Every case above plants something that is ALSO copyleft or ALSO
+#      unclassified, so each of them would still be rejected with the
+#      unvendored arm deleted outright; the suite scored 7/7 with `if false &&`
+#      in front of it. Here bin/postgres links a PERMISSIVE library (zstd, in
+#      the licence table, no copyleft anywhere in sight) that simply is not in
+#      the bundle. Nothing but the unvendored arm can reject this.
+#
+#      It is also the realistic case, not a contrived one: a bundle that links
+#      the BUILD MACHINE's OpenSSL, ICU or zstd is what happens when the
+#      rpath/@loader_path relocation in build-postgres-bundle.sh silently stops
+#      covering a library. It runs on the machine that built it and fails on
+#      every other machine — or worse, resolves against a different version.
+C10="${WORK}/c10"; make_base_bundle "$C10"
+make_stub_lib "${WORK}/libzstd.1.${DL}" "libzstd.1.${DL}"
+make_object "$C10/bin/postgres" exe "${WORK}/libzstd.1.${DL}"
+expect_reject "C10 permissive dependency living OUTSIDE the bundle" "$C10" "libzstd" "UNVENDORED"
+
+# C11. A SYMLINK IS PART OF WHAT WE SHIP — the C6 fixture, one `ln -s` apart.
+#      `find -type f` does not match a symbolic link, so lib/ was enumerated
+#      with every link in it skipped. The same GNU readline that made C6 read
+#      `GATE FAIL — copyleft violations: 1` made this bundle read `GATE PASS —
+#      no GPL, LGPL or AGPL component is shipped or linked`. Bundles carry
+#      these links by construction: build-postgres-bundle.sh copies the staged
+#      tree with `cp -Rf`, which preserves PostgreSQL's soname chains.
+C11="${WORK}/c11"; make_base_bundle "$C11"
+ln -s "${WORK}/libreadline.8.${DL}" "$C11/lib/libreadline.8.${DL}"
+expect_reject "C11 libreadline in lib/ as a SYMLINK, unlinked" "$C11" "readline" "COPYLEFT UNVENDORED"
+
+# C12. THE LAUNDERING HALF of the same defect. `resolve_dep` tested `[ -f
+#      "$BUNDLE/lib/$base" ]`, which FOLLOWS a link — so a dependency on the
+#      build machine's readline, reached through a link in lib/, resolved to
+#      `bundle:lib/libreadline.8.dylib` and reported `unvendored deps: 0`. The
+#      bundle claimed to vendor a file it did not contain.
+C12="${WORK}/c12"; make_base_bundle "$C12"
+make_object "$C12/bin/postgres" exe "${WORK}/libreadline.8.${DL}"
+ln -s "${WORK}/libreadline.8.${DL}" "$C12/lib/libreadline.8.${DL}"
+expect_reject "C12 symlink launders an out-of-bundle dependency" "$C12" "escapes:" "COPYLEFT UNVENDORED"
+if [ -n "${LAST_OUT:-}" ] && command grep -q "bundle:lib/libreadline" "$LAST_OUT"; then
+  bad "C12: the dependency is still reported as bundle:lib/libreadline — a link out of the bundle is being counted as vendored"
+fi
+
+# C13. THE OTHER DIRECTION, and the reason C11/C12 cannot simply reject every
+#      link: a real bundle's lib/ is mostly soname chains pointing WITHIN
+#      itself. `libpq.5.dylib -> libpq.5.18.dylib` is how shared libraries are
+#      shipped, and a gate that failed on it would be turned off within the day.
+#      A link whose chain stays inside the bundle is a name, not a violation.
+C13="${WORK}/c13"; make_base_bundle "$C13"
+make_object "$C13/lib/libpq.5.18.${DL}" lib
+ln -sf "libpq.5.18.${DL}" "$C13/lib/libpq.5.${DL}"
+ln -sf "libpq.5.${DL}" "$C13/lib/libpq.${DL}"
+expect_accept "C13 in-bundle soname chain (relative, two hops)" "$C13"
 
 # ─────────────────────────────────────────────────────────────────────
 if [ -n "$REAL_BUNDLE" ]; then
@@ -231,7 +343,7 @@ if [ -n "$REAL_BUNDLE" ]; then
   command cp -Rf "$REAL_BUNDLE" "$C9"
   chmod -R u+w "$C9"
   make_object "$C9/lib/pg_trgm.$DL" lib "${WORK}/libreadline.8.${DL}"
-  expect_reject "C9 real bundle + GPL-linked extension planted in lib/" "$C9" "readline"
+  expect_reject "C9 real bundle + GPL-linked extension planted in lib/" "$C9" "readline" "COPYLEFT UNVENDORED"
 fi
 
 # ─────────────────────────────────────────────────────────────────────

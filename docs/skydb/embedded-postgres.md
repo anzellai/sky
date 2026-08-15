@@ -961,7 +961,7 @@ An SBOM is generated per bundle in CI, listing every linked library and its
 licence, and **a gate fails the build if a bundle carries anything GPL, LGPL or
 AGPL**.
 
-Two properties of that gate are load-bearing:
+Three properties of that gate are load-bearing:
 
 1. **It runs against the actual binaries, not the configure line.** A configure
    flag records an intention; the built artifact records what happened.
@@ -970,6 +970,27 @@ Two properties of that gate are load-bearing:
    the server binary. A gate that inspected only the main executable would pass
    a bundle containing a GPL extension in `lib/`, while appearing to check
    exactly the thing it missed.
+3. **A symbolic link is part of what the bundle ships.** `find -type f` does
+   not match one and `[ -f ]` follows one, and those two facts together made
+   the same GNU readline a `GATE FAIL` as a regular file in `lib/` and a `GATE
+   PASS` as a link — while a link pointing at the build machine's copy also
+   resolved every dependency on it to `bundle:lib/…`, reporting `unvendored
+   deps: 0` for a file the bundle did not contain. A bundle's `lib/` is mostly
+   links: it is assembled with `cp -Rf`, which preserves PostgreSQL's soname
+   chains. Links are enumerated, classified by their own name *and* their
+   target's, and one whose chain leaves the bundle is unvendored by definition.
+
+Each of the three rejection causes — copyleft, unclassified, unvendored — has a
+fixture in `scripts/skydb/test-licence-gate.sh` that isolates it, and the suite
+asserts *which* cause fired rather than only that the exit code was 1. Without
+that, the unvendored arm could be deleted outright and the suite still reported
+7 passed, 0 failed.
+
+The suite runs per-commit as `licence-gate-linux` / `licence-gate-macos` in
+`rust-ci.yml`, inside the `ci-green` fan-in, so a red verdict blocks a merge; it
+runs again in `postgres-bundle.yml` ahead of the build matrix, where it blocks
+publication. It ran only in the latter to begin with, on a `pull_request`
+trigger — reporting on every PR and able to block none of them.
 
 `NOTICE.md` carries the PostgreSQL copyright and licence text.
 

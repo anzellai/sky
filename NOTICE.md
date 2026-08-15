@@ -306,8 +306,9 @@ readline (GPL-3.0), which would place a GPL-linked binary inside this
 Apache-2.0 distribution. `--embed` does not need an interactive
 client. This exclusion is enforced against the built artifacts by
 `scripts/skydb/scan-bundle-licences.sh`, which walks every ELF/Mach-O
-object in a bundle and fails the build on any GPL, LGPL or AGPL
-component. PostGIS (GPL-2.0), TimescaleDB (TSL) and Citus (AGPL-3.0)
+object *and every symbolic link* in a bundle and fails the build on any
+GPL, LGPL or AGPL component — a link is a name we ship, and one that
+points outside the bundle is a library we do not ship at all. PostGIS (GPL-2.0), TimescaleDB (TSL) and Citus (AGPL-3.0)
 are excluded on the same grounds.
 
 ### PostgreSQL
