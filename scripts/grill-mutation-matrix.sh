@@ -171,7 +171,11 @@ apply_checked() {
 run_suite() {
   local label="$1"
   ( cd "$REPO/runtime-go" && \
-    with_timeout 1800 env SKY_POSTGRES_BIN="$SKY_POSTGRES_BIN" go test -v ./rt/... -count=1 ) \
+    # `-timeout` inside so an expiry names the hung test in the log the
+    # analysis below reads; with_timeout outside as the backstop, since
+    # `-timeout` does not cover compile, link or module download.
+    with_timeout 1860 env SKY_POSTGRES_BIN="$SKY_POSTGRES_BIN" \
+      go test -timeout 1800s -v ./rt/... -count=1 ) \
     > "$LOGDIR/$label.log" 2>&1 || true
 
   # `go test -v` ends every package with `ok`, `FAIL` or `no test files`, and

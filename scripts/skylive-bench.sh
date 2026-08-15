@@ -98,7 +98,12 @@ echo "load_gate        passed (load $load1 <= $MAX_LOAD)" >> "$OUTDIR/env.txt"
 # Non-vacuity gate: the fixtures must still exercise what they claim
 # ---------------------------------------------------------------------
 echo "==> proving the benchmark fixtures are non-vacuous"
-if ! (cd runtime-go && with_timeout 600 go test ./rt \
+# Both bounds on purpose. `go test -timeout` is the INNER one: it panics the
+# test binary and dumps every goroutine stack, which names the hung test —
+# far more useful than an external SIGKILL. It does not cover compile, link
+# or module download, so with_timeout stays as the outer backstop at a larger
+# budget, sized so the inner one always fires first.
+if ! (cd runtime-go && with_timeout 660 go test -timeout 600s ./rt \
       -run 'TestBenchFixturesAreNonVacuous|TestBenchTreeSizesMatchReferenceApps' \
       -count 1) ; then
   echo "REFUSING TO MEASURE: fixture gates failed. The benchmark is not" >&2
@@ -114,7 +119,9 @@ echo
 # Measure
 # ---------------------------------------------------------------------
 echo "==> running $BENCH x$COUNT (benchtime=$BENCHTIME)"
-(cd runtime-go && with_timeout "$TIMEOUT_SECS" go test ./rt \
+# Inner `-timeout` for the stack dump, outer with_timeout as the backstop —
+# see the note above the vacuity gate.
+(cd runtime-go && with_timeout "$(( TIMEOUT_SECS + 60 ))" go test -timeout "${TIMEOUT_SECS}s" ./rt \
    -run '^$' -bench "$BENCH" -benchtime "$BENCHTIME" -count "$COUNT" -benchmem) \
   | tee "$OUTDIR/raw.txt"
 
