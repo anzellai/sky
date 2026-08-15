@@ -791,6 +791,45 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         assert_eq!(c.total, 6);
     }
 
+    // ── The defect this gate has, stated as a test. ────────────────────────
+    //
+    // A raw token count cannot tell a cheap narrowing from an expensive one, and
+    // the two are not interchangeable. `rt.Coerce[func(…)…]` applied to a func of
+    // a different shape can NEVER satisfy its own `v.(T)` fast path — Go function
+    // types are nominal in their parameters — so it falls to `makeFuncAdapter` →
+    // `adaptFuncValueWithCapture`, a `reflect.MakeFunc` thunk that allocates on
+    // every INVOCATION (`runtime-go/rt/rt.go:5899-5907`, arch doc §5.3 as
+    // corrected 2026-08-15). A `rt.Coerce[Concrete]` is a single `v.(T)`
+    // assertion that succeeds.
+    //
+    // So eta-expanding an N-ary callback into its slot's shape trades ONE
+    // never-succeeding token for N succeeding ones. Runtime narrowing cost falls;
+    // the raw count RISES. The census, asked which emission is cheaper, gets it
+    // backwards — and the ratchet built on it fails a change that improved the
+    // very property it exists to protect.
+    #[test]
+    fn the_raw_total_rates_the_reflect_adapter_form_as_cheaper() {
+        // BEFORE: a 2-ary Sky callback reaching an erased `func(any, any) any`
+        // slot, emitted as one coarse func-shape coerce.
+        let with_adapter = "rt.Coerce[func(any, any) any](step)";
+        // AFTER: eta-expanded at the slot's shape. No func-shape coerce survives;
+        // each parameter is narrowed precisely, once per invocation, by assertion.
+        let without_adapter = "func(_e0 any, _e1 any) any { \
+             return step(rt.Coerce[Acc](_e0), rt.Coerce[Item](_e1)) }";
+
+        let (a, b) = (count_tokens(with_adapter), count_tokens(without_adapter));
+        assert!(
+            a.total > b.total,
+            "the census rates the reflect-adapter emission at {} token(s) and the \
+             adapter-free emission at {} — i.e. it calls the form that allocates a \
+             []reflect.Value per element visit CHEAPER than the form that does not. \
+             The count has stopped tracking the property it proxies. Classify the \
+             tokens by cost class and ratchet each class on its own terms.",
+            a.total,
+            b.total
+        );
+    }
+
     // Counting is a pure function of the source text → identical on repeat.
     #[test]
     fn count_is_deterministic() {
