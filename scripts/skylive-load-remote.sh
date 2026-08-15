@@ -148,6 +148,19 @@ fi
 # Load path
 # ---------------------------------------------------------------------
 BIN="$OUTDIR/skyliveload"
+
+# Run the target guards' own tests before building the thing that can send
+# traffic. tools/skyliveload is a standalone Go module and is NOT part of
+# the cargo workspace, so nothing else in this repo compiles or exercises
+# it on a normal change -- a broken guard would otherwise be discovered by
+# a production outage rather than by a test. It costs about a second.
+echo "==> verifying the target guards"
+if ! ( cd tools/skyliveload && go test ./... ); then
+    echo "ERROR: the target guards failed their own tests. Refusing to load" >&2
+    echo "       anything until tools/skyliveload/guard_test.go is green." >&2
+    exit 1
+fi
+
 echo "==> building generator"
 ( cd tools/skyliveload && go build -o "$BIN" . )
 
