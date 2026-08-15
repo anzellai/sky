@@ -230,6 +230,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The tag IS the URL. `sky db provision --embed` builds its default
+      # download URL as `postgres-bundle-v<PG_VERSION>` from the version pinned
+      # in build-postgres-bundle.sh, and `tag_name` below is `github.ref_name`
+      # verbatim — so a tag carrying a build suffix (`…-v18.6-1`) publishes a
+      # release no client will ever look for, and every provision 404s against
+      # a release that visibly exists. The two are checked against each other
+      # here rather than left to whoever cuts the tag remembering the rule.
+      - name: The tag must name the pinned PostgreSQL version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016  # the ${PG_VERSION:-…} here is the literal
+          # text being matched in the build script, not an expansion we want.
+          pinned="$(sed -n 's/^PG_VERSION="\${PG_VERSION:-\(.*\)}"$/\1/p' \
+            scripts/skydb/build-postgres-bundle.sh)"
+          [ -n "$pinned" ] || {
+            echo "could not read PG_VERSION from scripts/skydb/build-postgres-bundle.sh —" \
+                 "the pin moved and this check is now blind" >&2
+            exit 1
+          }
+          want="postgres-bundle-v${pinned}"
+          got="${GITHUB_REF_NAME}"
+          if [ "$got" != "$want" ]; then
+            echo "release tag '${got}' does not match the pinned PostgreSQL version." >&2
+            echo "expected exactly '${want}'." >&2
+            echo >&2
+            echo "sky db provision --embed derives its download URL from the pin," \
+                 "so publishing under '${got}' produces a release that clients" \
+                 "cannot resolve. Retag, or move the pin in" \
+                 "scripts/skydb/build-postgres-bundle.sh first." >&2
+            exit 1
+          fi
+          echo "tag '${got}' matches the pinned version ${pinned}"
+
       - uses: actions/download-artifact@v4
         with:
           path: staging
