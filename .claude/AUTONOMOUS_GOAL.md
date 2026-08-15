@@ -119,3 +119,68 @@ rounds have run and ALL SEVEN breached; round 7 was still finding LIVE defects,
 two of them in code an earlier round had specifically remediated. The rounds
 stop when a round comes back empty against real effort — not when I run out of
 appetite for them.
+
+## Performance target (2026-08-15, verbatim)
+
+> as a reminder, the goal must include to optimise and improve sky.live apps
+> performance, with embedded postgresql as base line, single dB for all
+> sessions, dB, analytics and metrics, to be able to serve 3-500 concurrent
+> users with 1k+ interactions per second in a small instance -- or very close
+> to this.
+> this is technically achievable so we need to fix and optimise where current
+> implementation is the culprit
+
+This is a NUMERIC acceptance criterion, not a direction of travel. It is met
+when a small instance (e2-small class) serves **300-500 concurrent sessions at
+1,000+ interactions/sec**, or demonstrably close, with **ONE embedded
+PostgreSQL carrying sessions + application data + analytics + metrics** — not a
+tuned topology, not four stores, not a stripped-down view.
+
+### The measured gap at capture
+
+| | measured | target | gap |
+|---|---|---|---|
+| concurrent sessions | knee 50-100 (e2-small) | 300-500 | ~5x |
+| interactions/sec | ~35-42 peak (e2-small) | 1,000+ | **~25x** |
+
+Sessions are NOT the hard part: live heap is 336 kB/session (measured idle,
+post-GC), so 500 sessions is ~168 MB. The earlier 1.4 MB/session figure was an
+RSS regression that charged a fixed allocator pool to sessions and was wrong in
+the pessimistic direction.
+
+Throughput is the work. The headroom is real and measured: **~2% of self-time
+is compiled Sky logic**; the rest is GC (42-46%), reflect (12-15%) and
+interface boxing. A minimal Go SSE control on identical hardware costs 0.021 ms
+and 3.13 kB per interaction against Sky's 9.15 ms and 5.66 MB / 133,628 objects
+— to emit an 86-byte patch. The user's judgement that this is achievable is
+supported by the profile, not merely optimistic.
+
+### Known levers, and their state
+
+1. **DONE, 1.36x** — eta-expand func-to-func coercion (`rt.Coerce[func...]` →
+   closure at target shape), killing the `reflect.MakeFunc` adapter.
+2. **IN FLIGHT** — typed `SkyLen`/`SkyElem`/`SkyTailSlice`; the residual 126
+   allocations per scan are list erasure, not the adapter.
+3. **NOT STARTED — the other reflect route.** `rt.SkyCall`-in-loop calls
+   `reflect.Value.Call` PER ELEMENT inside `List_mapAny`, `List_filterMap`,
+   `List_filterAny`, `List_foldlAnyT`, `List_foldr`, `List_indexedMap`,
+   `List_find`. 15 sites in emitted `26-ui-showcase` alone. The eta fix did not
+   touch this.
+4. **NOT STARTED — allocation volume.** 133,628 objects/interaction against a
+   control's ~50. ~200 allocations per rendered element.
+5. **OPEN ARCHITECTURAL QUESTION** — Sky re-runs the ENTIRE `view` through
+   reflective dispatch to produce a diff costing 1.3% of the total, which is
+   why cost tracks view size (+139% for a 4x view). A static/dynamic template
+   split is the LiveView-shaped answer. Purity makes hoisting sound by
+   construction: any subexpression not mentioning `model` is constant and the
+   compiler can prove it. Earlier I judged this likely moot once the constant
+   factor dropped; at 1.36x that judgement no longer holds and it must be
+   re-costed against the 25x target.
+
+### Falsifiable, and it must stay so
+
+If the target proves unreachable, the honest close is a measured statement of
+what a small instance DOES serve with the full single-DB topology, and the
+named architectural reason for the ceiling — with the numbers to support it.
+"We improved it" is not a close. Neither is quoting a figure from a tuned
+configuration the user did not ask for.
