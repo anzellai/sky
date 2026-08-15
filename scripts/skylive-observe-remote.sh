@@ -56,6 +56,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
+
 PROJECT="${SKYLANG_GCP_PROJECT:-}"
 ACCOUNT="${SKYLANG_GCP_ACCOUNT:-}"
 INSTANCE="${INSTANCE:-sky-lang-org}"
@@ -224,7 +228,7 @@ RAW="$OUTDIR/samples.tsv"
 # rather than losing the whole run to `set -e`.
 set +e
 printf '%s\n' "$REMOTE_SCRIPT" \
-    | timeout $(( DURATION + 180 )) gcloud compute ssh "$INSTANCE" "${GC[@]}" --command 'bash -s' \
+    | with_timeout $(( DURATION + 180 )) gcloud compute ssh "$INSTANCE" "${GC[@]}" --command 'bash -s' \
     > "$RAW" 2> "$OUTDIR/ssh.err"
 SSH_RC=$?
 set -e

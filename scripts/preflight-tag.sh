@@ -23,6 +23,10 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$REPO_ROOT/scripts/lib/with-timeout.sh"
 cd "$REPO_ROOT"
 
 SKIP_WEB=0
@@ -79,7 +83,7 @@ step "3/6 — rust gate suite"
 # finish inside the 60-minute ceiling at all — two release attempts died with no
 # error text, just a kill, after every gate had actually passed. Optimizing the
 # harness is the honest fix; raising the ceiling would only have hidden it.
-( cd rust && timeout 3600 bash -c 'cargo test --workspace --locked && for g in roundtrip resolve infer reject fuzz coerce-floor repro; do cargo run --release -q -p xtask -- "$g" || exit 1; done && cargo run --release -q -p xtask -- build-run --all && cargo run --release -q -p xtask -- build-run --shape cli --run --golden' ) || fail "rust gate suite had failures"
+( cd rust && with_timeout 3600 bash -c 'cargo test --workspace --locked && for g in roundtrip resolve infer reject fuzz coerce-floor repro; do cargo run --release -q -p xtask -- "$g" || exit 1; done && cargo run --release -q -p xtask -- build-run --all && cargo run --release -q -p xtask -- build-run --shape cli --run --golden' ) || fail "rust gate suite had failures"
 
 step "4/6 — Example sweep (build-only, all 19+ examples)"
 # Run the sweep ONCE. It used to run twice — once piped to `tail -5` for

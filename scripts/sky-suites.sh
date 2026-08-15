@@ -26,6 +26,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 PROJ="$ROOT/tests"
 
 FILTER=""
@@ -50,25 +54,6 @@ if [ -z "$SKY" ]; then
     if [ -x "$ROOT/sky-out/sky" ]; then SKY="$ROOT/sky-out/sky"; else SKY="sky"; fi
 fi
 
-# Portable per-suite timeout. GNU coreutils `timeout` is NOT on macOS runners by
-# default (only `gtimeout` via `brew install coreutils`), so a bare `timeout`
-# fails with "command not found" and every suite errors.
-TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
-run_suite() { # run_suite <secs> <cmd...>
-    local secs="$1"; shift
-    if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$secs" "$@"; return $?; fi
-    # No GNU timeout — do NOT fall through unbounded. Race a killer against the
-    # command instead (the same portable fallback conformance.sh uses).
-    "$@" &
-    local cmd_pid=$!
-    ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) &
-    local killer_pid=$!
-    local rc=0
-    wait "$cmd_pid" 2>/dev/null; rc=$?
-    kill -KILL "$killer_pid" 2>/dev/null
-    wait "$killer_pid" 2>/dev/null
-    return $rc
-}
 
 if [ ! -f "$PROJ/sky.toml" ]; then
     echo "sky-suites: no Sky project at $PROJ" >&2
@@ -118,7 +103,7 @@ for suite in $SUITES; do
     # silently-unset SKY_TEST_JSON would produce an empty manifest that the
     # caller would have to treat as a failure.
     export SKY_TEST_JSON="$report"
-    run_suite 300 "$SKY" test "$suite" --out "$out" 2>&1 \
+    with_timeout 300 "$SKY" test "$suite" --out "$out" 2>&1 \
         | tee "/tmp/sky-suite-$slug.log" | tail -30
     rc=${PIPESTATUS[0]}
     unset SKY_TEST_JSON

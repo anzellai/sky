@@ -52,6 +52,10 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$REPO/scripts/lib/with-timeout.sh"
 OUT="$REPO/docs/history/embedded-postgres"
 KEEP_LOGS=0
 WITH_CARGO=0
@@ -156,11 +160,33 @@ apply_checked() {
 }
 
 # run_suite <label> — full rt suite, verbose, into the log dir.
+#
+# `|| true` is deliberate: a mutation is SUPPOSED to make the suite fail, and
+# the failure set is read back out of the log. What it must never absorb is the
+# suite not running. With `timeout` missing from PATH this wrote a one-line log
+# reading `timeout: command not found`, from which `all_failing` extracted zero
+# names — and the matrix concluded every gate was green under every mutation,
+# having run nothing. A run that produced no verdict is not a green verdict, so
+# the log is required to carry proof that `go test` reached a conclusion.
 run_suite() {
   local label="$1"
   ( cd "$REPO/runtime-go" && \
-    SKY_POSTGRES_BIN="$SKY_POSTGRES_BIN" timeout 1800 go test -v ./rt/... -count=1 ) \
+    # `-timeout` inside so an expiry names the hung test in the log the
+    # analysis below reads; with_timeout outside as the backstop, since
+    # `-timeout` does not cover compile, link or module download.
+    with_timeout 1860 env SKY_POSTGRES_BIN="$SKY_POSTGRES_BIN" \
+      go test -timeout 1800s -v ./rt/... -count=1 ) \
     > "$LOGDIR/$label.log" 2>&1 || true
+
+  # `go test -v` ends every package with `ok`, `FAIL` or `no test files`, and
+  # names each test with `=== RUN`. A log with neither did not run the suite.
+  if ! grep -qE '^(ok|FAIL|---|=== RUN)' "$LOGDIR/$label.log"; then
+    echo "FATAL: the '$label' suite produced no verdict — $LOGDIR/$label.log has no" >&2
+    echo "  'ok'/'FAIL'/'=== RUN' line, so nothing ran. Counting zero failures from" >&2
+    echo "  this would credit every gate with surviving the mutation. First lines:" >&2
+    head -5 "$LOGDIR/$label.log" | sed 's/^/    /' >&2
+    exit 3
+  fi
 }
 
 # all_failing <label> — every top-level failing test name, one per line.
@@ -210,9 +236,20 @@ run_cargo() {
   local label="$1"
   [[ $WITH_CARGO -eq 1 ]] || return 0
   ( cd "$REPO/rust" && CARGO_TARGET_DIR="$REPO/rust/local-target" \
-      timeout 3000 cargo test --workspace ) > "$LOGDIR/$label-cargo.log" 2>&1 \
+      with_timeout 3000 cargo test --workspace ) > "$LOGDIR/$label-cargo.log" 2>&1 \
     && echo 0 > "$LOGDIR/$label-cargo.exit" \
     || echo $? > "$LOGDIR/$label-cargo.exit"
+
+  # The report below turns this log into a sentence in a committed document
+  # ("exited N over M test binaries"). A run that never started cargo produces
+  # M=0, and "0 test binaries, 0 of them FAILED" reads like a clean sweep. The
+  # log must contain at least one `test result:` line before it may be quoted.
+  if ! grep -q '^test result:' "$LOGDIR/$label-cargo.log"; then
+    echo "FATAL: the '$label' cargo run produced no 'test result:' line — no test" >&2
+    echo "  binary reached a verdict, so there is nothing here to report. First lines:" >&2
+    head -5 "$LOGDIR/$label-cargo.log" | sed 's/^/    /' >&2
+    exit 3
+  fi
 }
 
 # failing_subtests <label> — nested failures, "Parent/Sub" form.

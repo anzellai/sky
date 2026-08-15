@@ -330,8 +330,23 @@ These apply to any Sky code you write or any compiler change you make:
   failing test is the discovery artefact. Compile-time behaviour → cargo/`hspec`
   specs; runtime helpers → `runtime-go/rt/*_test.go`; stdlib semantics →
   `tests/**/*Test.sky`; behaviour → `tests/conformance/`.
-- **Timeout-bound every long command.** `cargo test` / xtask gates run under
-  `timeout` (60 min ceiling). A test that hangs is a bug to bisect, not wait out.
+- **Timeout-bound every long command — through the shim, never a bare
+  `timeout`.** `cargo test` / xtask gates run under a 60 min ceiling. A test
+  that hangs is a bug to bisect, not wait out. In a script,
+  `source scripts/lib/with-timeout.sh` and call `with_timeout <secs> <cmd...>`;
+  `rust/crates/xtask/tests/scripts_bound_time_portably.rs` fails the build on a
+  bare `timeout`. GNU coreutils `timeout` is absent on stock macOS and was
+  absent here when the nix shell supplying it went away — at which point
+  `timeout 1200 go test -race ./rt/... | tail -8` printed `command not found`
+  to stderr, took `tail`'s status, and reported **exit 0 having run nothing**.
+  Where the bound only wraps `go test`, prefer its own `-timeout` (it dumps
+  stacks and names the hung test) with `with_timeout` outside as the backstop.
+- **A gate whose prerequisite is missing FAILS, naming what to install.** Never
+  skip, never pass. Shell gates use `require_tool <name> <hint>` from
+  `scripts/lib/require-tool.sh`; Rust live tests use
+  `rust/crates/sky/src/live_gate.rs`. Both take the same opt-out —
+  `SKY_LIVE_TESTS=skip` — and both treat any other value as an error rather
+  than guessing.
 - **Disk hygiene.** `scripts/build.sh` + `scripts/example-sweep.sh` auto-prune the
   Go build cache at a 5 GB threshold; the `xtask build-run` gate self-guards
   disk before the sweep. Reclaim manually (`go clean -cache`, worktree cleanup)

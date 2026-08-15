@@ -37,6 +37,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 cd "$ROOT"
 
 # shellcheck source=lib/concurrency.sh
@@ -69,8 +73,21 @@ phase_compiler_build() {
         # Not `cp "$ROOT/rust/target/release/sky"` — cargo honours
         # CARGO_TARGET_DIR, so that path can name an older binary and this
         # phase's whole purpose is freshness. See scripts/lib/cargo-target.sh.
-        ( cd "$ROOT/rust" && timeout 900 cargo build --release --locked -p sky ) \
-            && install_binary "$(cargo_bin_path "$ROOT/rust" sky --release)" "$ROOT/sky-out/sky"
+        # `cmd && install_binary` was the whole phase, under `set -uo pipefail`
+        # with no `-e`. When `timeout` went missing from PATH the build
+        # returned 127, `&&` short-circuited, the install was skipped, the
+        # phase returned 0 — and every later phase ran against whatever stale
+        # `sky-out/sky` happened to be on disk, or none at all. A build phase
+        # that produces no binary has not succeeded.
+        if ! ( cd "$ROOT/rust" && with_timeout 900 cargo build --release --locked -p sky ); then
+            echo "  FAIL — cargo build did not complete (see above)" >&2
+            return 1
+        fi
+        install_binary "$(cargo_bin_path "$ROOT/rust" sky --release)" "$ROOT/sky-out/sky" || return 1
+        if [ ! -x "$ROOT/sky-out/sky" ]; then
+            echo "  FAIL — phase claims a fresh compiler but $ROOT/sky-out/sky is not executable" >&2
+            return 1
+        fi
     else
         echo "  sky-out/sky exists (set SKY_REBUILD=1 to force rebuild)"
     fi
@@ -90,7 +107,7 @@ phase_rust_gates() {
     # runtime-correctness gates — `golden` + the behavioral `conformance` suites —
     # live in scripts/test-local.sh (the pre-tag gate) and CI's codegen-build job,
     # NOT here, to keep the pre-push gate from ballooning past its budget.
-    ( cd "$ROOT/rust" && timeout 2400 bash -c '
+    ( cd "$ROOT/rust" && with_timeout 2400 bash -c '
         cargo test --workspace --locked || exit 1
         for g in roundtrip resolve infer reject fuzz coerce-floor repro fmt s8 divergences lsp; do
             cargo run -q -p xtask -- "$g" || exit 1
@@ -118,7 +135,14 @@ phase_summary() {
 
 main() {
     local t_start; t_start=$(date +%s)
-    phase_compiler_build
+    # Called bare, its status was discarded — so even after the phase learned
+    # to return 1, `main` would have carried on into the gates with no
+    # compiler. There is no useful gate run on a binary that was not built.
+    if ! phase_compiler_build; then
+        echo
+        echo "FAIL: test-ci has no compiler to test with"
+        exit 1
+    fi
     if ! phase_rust_gates; then
         phase_summary
         echo

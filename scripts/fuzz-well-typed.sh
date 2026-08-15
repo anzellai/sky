@@ -34,6 +34,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 SKY="${SKY:-$ROOT/sky-out/sky}"
 
 ITERS=10000
@@ -280,7 +284,7 @@ run_iter() {
     local runlog="$iterdir/run.log"
 
     # sky build
-    if ! ( cd "$iterdir" && timeout "$BUILD_TIMEOUT" \
+    if ! ( cd "$iterdir" && with_timeout "$BUILD_TIMEOUT" \
             "$SKY" build src/Main.sky >"$buildlog" 2>&1 ); then
         local rc=$?
         echo "BUILD-FAILED rc=$rc kind=$kind"
@@ -288,7 +292,7 @@ run_iter() {
     fi
 
     # ./sky-out/app — assert exit 0 + no panic markers in stderr
-    if ! ( cd "$iterdir" && timeout "$RUN_TIMEOUT" \
+    if ! ( cd "$iterdir" && with_timeout "$RUN_TIMEOUT" \
             ./sky-out/app >"$runlog" 2>&1 ); then
         local rc=$?
         echo "RUN-FAILED rc=$rc kind=$kind"
