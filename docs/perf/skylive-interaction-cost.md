@@ -24,8 +24,14 @@ CONCURRENCY="100 500 1000" DURATION=60s scripts/skylive-load.sh
 
 # Phase 3 — constrained runs (read the caveats in the script header)
 scripts/skylive-load-constrained.sh --profiles "1x2g 2x2g 1x1g"
+
+# Phase 4 — a real x86 GCP target (see skylive-remote-validation.md)
+scripts/skylive-observe-remote.sh --project <id> --instance sky-lang-org
+scripts/skylive-load-remote.sh --url http://<bench-ip>:8000   # preflight
 ```
 
+Phase 4 needs `gcloud` authenticated against the target's project, which
+is always passed explicitly — never taken from `gcloud`'s active config.
 Phase 1 needs only Go. Phase 2's browser observer needs the repo's
 existing Playwright (`npm install` at the repo root, as
 `scripts/verify-examples.sh` expects); run `scripts/skylive-load.sh
@@ -150,6 +156,18 @@ live sessions:
 On a 2 GB instance that is roughly 1,700 sessions before memory alone
 exhausts — but the throughput knee arrives far earlier, at a few
 hundred. Memory sets the hard ceiling; latency sets the useful one.
+
+> **Still ARM-only.** An attempt to validate this against a real x86 GCP
+> e2-micro is recorded in
+> [`skylive-remote-validation.md`](skylive-remote-validation.md). It
+> established the base RSS on x86 (~56 MB for a real app) but **could
+> not** validate the per-session figure: over a 45-minute window that
+> instance served 6 requests and dispatched **zero** Sky.Live
+> interactions, so there were no concurrent sessions to divide by and
+> the divisor simply does not exist. The 1.1 MB
+> figure is therefore neither confirmed nor falsified on x86. Closing it
+> needs load against a throwaway instance, which that document specifies
+> and does not run.
 
 ## What is measured, and what is not
 
@@ -348,3 +366,22 @@ here because it is the easiest thing in this document to misuse:
    real VM.
 4. **The VM's virtual NIC adds a latency floor**, so constrained runs
    compare with each other, not with bare-host runs.
+
+## Where the GCP validation got to
+
+Caveat 1 above says only a run on real GCP settles the hardware
+question. That work is recorded in
+[`skylive-remote-validation.md`](skylive-remote-validation.md), against
+the live e2-micro serving sky-lang.org. In short:
+
+- **Base RSS on x86 is measured** — a real Sky.Live app idles at ~56 MB
+  on an e2-micro, well inside its 768 MB unit cap.
+- **Per-session memory is not**, because that instance has no concurrent
+  sessions to divide by. The harness detects this and refuses to print a
+  slope rather than dividing by an absent divisor.
+- **A blocking discovery**: the runtime exposes **no session-count and no
+  memory metric at all**. `sky_live_sessions_active` is declared in the
+  Prometheus help table and never recorded, and `SessionStore` has no
+  `Count()`. Any future capacity instrumentation has to add these first.
+- Remote load is now supported, defaults to passive, and structurally
+  refuses production targets.
