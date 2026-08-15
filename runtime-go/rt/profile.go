@@ -125,12 +125,16 @@ func init() {
 			timer = time.After(timeout)
 		}
 		select {
+		// ExitProcess, not os.Exit: this goroutine ends the process from
+		// underneath main's `defer rt.StopEmbeddedPostgres()`, and a profiling
+		// run that orphaned the app's database would leave a postmaster the
+		// next run adopts forever.
 		case s := <-sigCh:
 			writeProfilesOnce(fmt.Sprintf("signal %v", s))
-			os.Exit(130)
+			ExitProcess(130)
 		case <-timer:
 			writeProfilesOnce(fmt.Sprintf("hang — no exit after %s", timeout))
-			os.Exit(1)
+			ExitProcess(1)
 		}
 	}()
 }

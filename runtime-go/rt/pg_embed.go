@@ -421,11 +421,30 @@ type pgSupervisor struct {
 	// watches the real goroutine run.
 	exitFn func(int)
 
+	// readyFn replaces the last leaf of the START path: "did the cluster begin
+	// accepting connections". It exists so the boot-failed-after-spawn case can
+	// be driven with a REAL postmaster running.
+	//
+	// That case cannot be reached any other way in a test. It needs a live
+	// postmaster that does not become ready inside pgReadyTimeout — a minute of
+	// waiting, and then only if the machine can be made slow enough on cue —
+	// and the property under test (nothing is left running) is precisely about
+	// the process that IS running. Shortening the budget instead would make the
+	// gate a race against how fast this machine starts PostgreSQL.
+	readyFn func(time.Duration) error
+
 	// sigCh is the handler's notify channel, kept so a test can detach the
 	// handler again — signal.Notify is process-wide, and a live registration
 	// left behind would make the NEXT test's signal reach a supervisor that is
 	// no longer under test.
 	sigCh chan os.Signal
+}
+
+func (s *pgSupervisor) ready(budget time.Duration) error {
+	if s.readyFn != nil {
+		return s.readyFn(budget)
+	}
+	return s.waitReady(budget)
 }
 
 func (s *pgSupervisor) exit(code int) {
@@ -476,15 +495,39 @@ func startEmbeddedPostgres() error {
 	return nil
 }
 
-// boot brings the cluster to "accepting connections".
+// boot brings the cluster to "accepting connections", and takes back down
+// anything it started if it cannot.
+//
+// The failure that matters happens AFTER spawn: the postmaster is running and
+// then readiness never arrives — a cluster replaying a long WAL past the
+// budget, a postgresql.conf an operator edited into refusing connections, a
+// full disk. The postmaster is in its own process group, so it survives the
+// non-zero exit MaybeStartEmbeddedPostgres is about to take; nothing has been
+// registered yet, so StopEmbeddedPostgres finds no supervisor and main's defer
+// has nothing to do. The process that could NOT talk to its database therefore
+// leaves it running — and the operator's retry adopts that postmaster and,
+// correctly per the ownership rule in stopPostgres, never stops it either. One
+// failed start becomes a postmaster that outlives every subsequent run.
+//
+// Adopted clusters are exempt, because stopPostgres owns that distinction: a
+// boot that failed while adopting must leave the other process's cluster alone.
 func (s *pgSupervisor) boot() error {
+	if err := s.bringUp(); err != nil {
+		s.stopPostgres()
+		return err
+	}
+	return nil
+}
+
+// bringUp is boot without the failure cleanup — the sequence itself.
+func (s *pgSupervisor) bringUp() error {
 	// Already serving? Adopt it. This is the SIGKILL-of-the-app case: the
 	// postmaster is in its own process group and outlived its parent, and it is
 	// the correct database with the correct data directory.
 	if pid, ok := runningPostmaster(s.cfg.dataDir); ok {
 		s.adopted = true
 		s.watchAdopted(pid)
-		return s.waitReady(pgReadyTimeout)
+		return s.ready(pgReadyTimeout)
 	}
 
 	switch st, err := inspectDataDir(s.cfg.dataDir); {
@@ -517,7 +560,7 @@ func (s *pgSupervisor) boot() error {
 	if err := s.spawn(); err != nil {
 		return err
 	}
-	return s.waitReady(pgReadyTimeout)
+	return s.ready(pgReadyTimeout)
 }
 
 const pgReadyTimeout = 60 * time.Second

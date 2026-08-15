@@ -17,9 +17,12 @@ import (
 	"database/sql"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,39 +35,100 @@ import (
 // `stopFn` is the leaf action of the last shutdown phase, so "was the database
 // stopped" is exactly "was stopFn called". An adopted supervisor must reach the
 // end of stopPostgres without touching it.
+//
+// The table is over the ENTRY POINTS as well as the ownership flag, and that is
+// the point of it. Ownership is not a property of stopPostgres; it is a property
+// of every route that ends a process holding a cluster. Driving only the leaf
+// leaves the two routes that actually run in production — `s.shutdown`, and the
+// goroutine `installSignalHandler` starts, which is what a `kubectl rollout`, a
+// Cloud Run revision swap and a `systemctl restart` all deliver into — proven by
+// nothing. A phase 3 that called `pgCtlStop` / `signalPostmaster` directly
+// instead of delegating to `stopPostgres` would bypass the ownership check
+// entirely and leave a leaf-only gate green, while `sky db start` → `./app
+// --embed` → any rollout took the developer's persistent cluster away.
 func TestOwnershipAnAdoptedClusterIsNotStopped(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		adopted  bool
-		wantStop bool
-	}{
-		{"started by this process", false, true},
-		{"adopted from another", true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			stopped := false
-			s := &pgSupervisor{
-				adopted: tc.adopted,
-				stopFn:  func() error { stopped = true; return nil },
+	// via drives one supervisor to its stop, by one of the three routes that
+	// reach it. Each returns once the stop has either happened or been refused.
+	type via struct {
+		name string
+		run  func(t *testing.T, s *pgSupervisor)
+	}
+	routes := []via{
+		{"stopPostgres", func(_ *testing.T, s *pgSupervisor) { s.stopPostgres() }},
+		{"shutdown", func(_ *testing.T, s *pgSupervisor) { s.shutdown(5 * time.Second) }},
+		{"SIGTERM", func(t *testing.T, s *pgSupervisor) {
+			exited := make(chan int, 1)
+			s.exitFn = func(code int) { exited <- code }
+			s.installSignalHandler()
+			// Detach before returning: signal.Notify is process-wide, and a
+			// registration left live would also catch the NEXT subtest's signal.
+			defer s.detachSignalHandler()
+			if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+				t.Fatalf("cannot signal this process: %v", err)
 			}
-			s.stopPostgres()
-			if stopped != tc.wantStop {
-				if tc.adopted {
-					t.Fatal("the app stopped a cluster it did not start.\n" +
-						"`sky db start` is contracted as persistent — it stays up until " +
-						"`sky db stop` — and `sky run` honours that by ref-counting. An " +
-						"`--embed` binary that stops what it adopted takes a developer's " +
-						"cluster away every time they run their own build.")
+			select {
+			case <-exited:
+			case <-time.After(15 * time.Second):
+				t.Fatal("SIGTERM never reached the supervisor's handler")
+			}
+		}},
+	}
+
+	for _, r := range routes {
+		for _, tc := range []struct {
+			name     string
+			adopted  bool
+			wantStop bool
+		}{
+			{"started by this process", false, true},
+			{"adopted from another", true, false},
+		} {
+			t.Run(r.name+"/"+tc.name, func(t *testing.T) {
+				resetShutdownHooksForTesting()
+				resetAcceptStoppersForTesting()
+				t.Cleanup(func() {
+					resetShutdownHooksForTesting()
+					resetAcceptStoppersForTesting()
+				})
+
+				var mu sync.Mutex
+				stopped := false
+				s := &pgSupervisor{
+					adopted: tc.adopted,
+					stopFn: func() error {
+						mu.Lock()
+						stopped = true
+						mu.Unlock()
+						return nil
+					},
 				}
-				t.Fatal("the app did not stop the cluster it started — the postmaster is orphaned")
-			}
-			// Whether or not the database went down, the supervisor is out of
-			// service: watchAdopted must not go on to announce that a postmaster
-			// it is no longer responsible for has "gone" and exit the process.
-			if !s.stopping.Load() {
-				t.Error("stopPostgres left the supervisor un-stopped; its watcher is still armed")
-			}
-		})
+				r.run(t, s)
+
+				mu.Lock()
+				got := stopped
+				mu.Unlock()
+				if got != tc.wantStop {
+					if tc.adopted {
+						t.Fatal("the app stopped a cluster it did not start.\n" +
+							"`sky db start` is contracted as persistent — it stays up until " +
+							"`sky db stop` — and `sky run` honours that by ref-counting. An " +
+							"`--embed` binary that stops what it adopted takes a developer's " +
+							"cluster away every time they run their own build.")
+					}
+					t.Fatal("the app did not stop the cluster it started — the postmaster is " +
+						"orphaned.\nIf this route stops PostgreSQL by some path OTHER than " +
+						"stopPostgres (pgCtlStop or signalPostmaster called directly), it has " +
+						"also bypassed the adopted check, and the adopted case above is passing " +
+						"for the wrong reason.")
+				}
+				// Whether or not the database went down, the supervisor is out of
+				// service: watchAdopted must not go on to announce that a postmaster
+				// it is no longer responsible for has "gone" and exit the process.
+				if !s.stopping.Load() {
+					t.Error("the stop left the supervisor un-stopped; its watcher is still armed")
+				}
+			})
+		}
 	}
 }
 
@@ -250,6 +314,150 @@ func childEmbedMigrate() {
 	MaybeApplyEmbeddedMigrationsAndExit()
 
 	os.Stderr.WriteString("child: the migration returned instead of exiting\n")
+	os.Exit(9)
+}
+
+// ---------------------------------------------------------------------------
+// The FAILING exits — the ones a deploy actually hits
+// ---------------------------------------------------------------------------
+
+// A migration that fails is the NORMAL failure of a deploy step: a typo in a
+// column name, a NOT NULL added to a table with rows, a constraint the data
+// violates. The gate above proves only the SUCCESS exit, so reverting
+// Db_migrateApply's `fail` path from ExitProcess back to os.Exit(1) leaves it
+// green — and every failed deploy then leaves a postmaster running on the host.
+// The retry adopts it and, by the ownership rule, never stops it; so does every
+// run after that. The cluster the operator eventually finds belongs to a process
+// that exited days ago.
+//
+// The whole property is "a non-zero exit stops the database too", so both halves
+// are asserted: the child must fail, and it must leave nothing behind.
+func TestOwnershipLiveEmbedMigrateFailureStopsItsClusterToo(t *testing.T) {
+	if mode := os.Getenv("SKY_PG_OWNERSHIP_CHILD"); mode != "" {
+		if mode == "migrate-fail" {
+			childEmbedMigrateFailure()
+		}
+		return
+	}
+	binDir := livePgBinDir()
+	if binDir == "" {
+		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
+	}
+	t.Setenv("SKY_POSTGRES_BIN", binDir)
+	root := durableTestDir(t, "ownership-migrate-fail")
+	dataDir := filepath.Join(root, "pg")
+
+	out, err := runEmbedChild(t, "migrate-fail", root, binDir, []string{"SKY_DB_OP=migrate"})
+	t.Cleanup(func() {
+		// Belt and braces: if the property under test is broken, the postmaster
+		// this child left is still running and would outlive the whole suite.
+		if pid, ok := runningPostmaster(dataDir); ok {
+			_ = syscall.Kill(pid, syscall.SIGQUIT)
+		}
+	})
+
+	// Vacuity guard: the child must actually have STARTED a cluster and then hit
+	// the failure. A child that skipped the migration, or never started
+	// PostgreSQL, would satisfy "no postmaster left" for the wrong reason.
+	if !strings.Contains(out, "embedded PostgreSQL") {
+		t.Fatalf("the child never started a cluster — this gate proves nothing:\n%s", out)
+	}
+	if err == nil {
+		t.Fatalf("a migration against a table that does not exist exited 0:\n%s", out)
+	}
+	if !strings.Contains(out, "db: migration") {
+		t.Errorf("the child did not report the migration failure:\n%s", out)
+	}
+
+	if pid, ok := runningPostmaster(dataDir); ok {
+		t.Errorf("the FAILED migrate left its cluster running (pid %d).\n"+
+			"os.Exit skips generated main's `defer rt.StopEmbeddedPostgres()`, so a failure\n"+
+			"exit that does not route through rt.ExitProcess orphans the database. The next\n"+
+			"deploy attempt adopts it and — correctly, per the ownership rule — never stops\n"+
+			"it, so one bad migration leaves a postmaster on the host indefinitely.\n"+
+			"child output:\n%s", pid, out)
+	}
+}
+
+// childEmbedMigrateFailure is childEmbedMigrate with a migration that cannot
+// apply. `raw` is used deliberately: the SQL reaches PostgreSQL verbatim, so the
+// failure happens in the server rather than in the renderer, which is where a
+// real bad migration fails.
+func childEmbedMigrateFailure() {
+	SkyEmbeddedMigrations = `[{"id":"0001_boom","ops":[` +
+		`{"kind":"raw","sql":"ALTER TABLE a_table_that_does_not_exist ADD COLUMN x text"}]}]`
+
+	defer LogPanicAndExit()
+	MaybeStartEmbeddedPostgres()
+	defer StopEmbeddedPostgres()
+	if s := activeSupervisor(); s != nil {
+		s.detachSignalHandler()
+	}
+	MaybeApplyEmbeddedMigrationsAndExit()
+
+	os.Stderr.WriteString("child: the failing migration returned instead of exiting\n")
+	os.Exit(9)
+}
+
+// `Std.System.exit` is the ordinary way a `Sky.Cli` job ends — and "background
+// job / cron" is a first-class app shape, so `--embed` plus a one-shot job is
+// exactly what ExitProcess exists for. It called os.Exit directly, which skips
+// generated main's `defer rt.StopEmbeddedPostgres()`: the job printed its
+// summary, exited 0, and left a PostgreSQL running behind it. Reproduced on an
+// unmutated tree before this gate existed.
+//
+// The source audit in pg_embed_exit_audit_test.go keeps every OTHER exit honest.
+// This one is behavioural because System.exit is the site the symptom was
+// reported from, and a live cluster is the only thing that can say the database
+// really went down rather than merely that the right function was called.
+func TestOwnershipLiveSystemExitStopsTheEmbeddedCluster(t *testing.T) {
+	if mode := os.Getenv("SKY_PG_OWNERSHIP_CHILD"); mode != "" {
+		if mode == "sysexit" {
+			childSystemExit()
+		}
+		return
+	}
+	binDir := livePgBinDir()
+	if binDir == "" {
+		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
+	}
+	t.Setenv("SKY_POSTGRES_BIN", binDir)
+	root := durableTestDir(t, "ownership-system-exit")
+	dataDir := filepath.Join(root, "pg")
+
+	out, err := runEmbedChild(t, "sysexit", root, binDir, nil)
+	t.Cleanup(func() {
+		if pid, ok := runningPostmaster(dataDir); ok {
+			_ = syscall.Kill(pid, syscall.SIGQUIT)
+		}
+	})
+	if err != nil {
+		t.Fatalf("the child failed (%v):\n%s", err, out)
+	}
+	if !strings.Contains(out, "embedded PostgreSQL") {
+		t.Fatalf("the child never started a cluster — this gate proves nothing:\n%s", out)
+	}
+	if pid, ok := runningPostmaster(dataDir); ok {
+		t.Errorf("`Std.System.exit` left the embedded cluster running (pid %d).\n"+
+			"System.exit is how a Sky.Cli job ends; os.Exit skips main's\n"+
+			"`defer rt.StopEmbeddedPostgres()`, so every cron run of an `--embed` job\n"+
+			"orphans a postmaster and the next run adopts one it will never stop.\n"+
+			"child output:\n%s", pid, out)
+	}
+}
+
+// childSystemExit is a one-shot `--embed` job that ends the way Sky code ends
+// one: `Std.System.exit 0`.
+func childSystemExit() {
+	defer LogPanicAndExit()
+	MaybeStartEmbeddedPostgres()
+	defer StopEmbeddedPostgres()
+	if s := activeSupervisor(); s != nil {
+		s.detachSignalHandler()
+	}
+	System_exit(0)
+
+	os.Stderr.WriteString("child: System.exit returned instead of exiting\n")
 	os.Exit(9)
 }
 

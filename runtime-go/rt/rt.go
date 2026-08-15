@@ -6839,7 +6839,11 @@ func System_getcwd(unit any) any { return System_cwd(unit) }
 // state is nil and the call returns immediately.
 func System_exit(code any) any {
 	tuiTeardown()
-	os.Exit(AsInt(code))
+	// ExitProcess, not os.Exit: `Std.System.exit` is the ordinary way a
+	// `Sky.Cli` job ends, and os.Exit skips generated main's
+	// `defer rt.StopEmbeddedPostgres()`. A one-shot job built with `--embed`
+	// would leave its own database running with nothing left to stop it.
+	ExitProcess(AsInt(code))
 	return struct{}{}
 }
 
@@ -9325,7 +9329,7 @@ func Server_listen(port any, routes any) any {
 	if err != nil && err != http.ErrServerClosed {
 		if isAddrInUse(err) {
 			reportPortInUse(p, "pass a different port to Server.listen")
-			os.Exit(1)
+			ExitProcess(1)
 		}
 		return Err[any, any](ErrFfi(err.Error()))
 	}

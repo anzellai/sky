@@ -682,6 +682,25 @@ contact with the code:
   (`runtime-go/rt/shutdown.go`) is what makes "drained" true rather than
   merely called. The listeners register with `RegisterAcceptStopper`, which is
   what gives the first phase something to do.
+- **Every exit routes through `rt.ExitProcess`, and a failed start cleans up
+  after itself.** `os.Exit` does not run deferred functions, so any exit reached
+  after `rt.MaybeStartEmbeddedPostgres()` skips generated `main`'s
+  `defer rt.StopEmbeddedPostgres()` and leaves the postmaster running with
+  nothing left to stop it — which the *next* run adopts and, by the rule below,
+  never stops either. One such exit is therefore not one orphaned database; it
+  is a database that outlives every subsequent run. `Std.System.exit` — the
+  ordinary way a `Sky.Cli` job ends, and a one-shot job under `--embed` is
+  exactly the case — was one of nine such sites; so were the port-in-use paths,
+  the profiler watchdog, the console invariant and three terminal-runtime
+  handlers. All of them now call `rt.ExitProcess`, and
+  `runtime-go/rt/pg_embed_exit_audit_test.go` reads the package's syntax tree to
+  keep the list honest: only `pg_embed.go` (which defines `ExitProcess`, and
+  whose other exits fire when the database has already gone) and
+  `panic_recover.go` (which runs as `main`'s *first* defer, so the stop —
+  registered second — has already run) may call `os.Exit` directly. Separately,
+  `boot()` stops what it spawned when it fails *after* `spawn` — a readiness
+  timeout leaves a live postmaster the exiting process is the last one able to
+  stop.
 - **The data directory is refused if it is one the system may empty** —
   `/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`, macOS's `/var/folders`. Under
   `--embed` that directory holds the app's only copy of its data, and a cluster

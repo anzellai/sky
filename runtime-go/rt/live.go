@@ -3966,7 +3966,10 @@ func liveAppRun(cfg any) any {
 		go func() {
 			<-sigCh
 			fmt.Fprintln(os.Stderr, "Sky.Live: forcing exit (second SIGINT)")
-			os.Exit(130) // 128 + SIGINT(2)
+			// ExitProcess, not os.Exit: this runs from a goroutine, so main's
+			// `defer rt.StopEmbeddedPostgres()` never fires. Forcing past a
+			// wedged HTTP shutdown must not also force past the database.
+			ExitProcess(130) // 128 + SIGINT(2)
 		}()
 	}()
 	fmt.Printf("Sky.Live listening on :%d\n", port)
@@ -3980,7 +3983,7 @@ func liveAppRun(cfg any) any {
 		// LOUD + actionable on stderr instead of a silent Task-Err exit.
 		if isAddrInUse(err) {
 			reportPortInUse(port, "set SKY_LIVE_PORT, or [live] port in sky.toml")
-			os.Exit(1)
+			ExitProcess(1)
 		}
 		return Err[any, any](ErrFfi(err.Error()))
 	}
