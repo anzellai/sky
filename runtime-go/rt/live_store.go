@@ -379,6 +379,18 @@ type SessionStore interface {
 	Set(sid string, sess *liveSession)
 	Delete(sid string)
 	NewID() string
+	// Close tears the store down: it stops the background cleanup /
+	// idle-evict goroutines and releases the backing handle.
+	//
+	// IDEMPOTENT. Close has more than one plausible caller — a shutdown
+	// hook, an explicit teardown in the app that owns the store, a test
+	// harness swapping a store out — and a teardown method that panics
+	// the second time it is called is a process kill in the window where
+	// the process is supposed to be exiting cleanly. Every backend gates
+	// its channel close behind a sync.Once and returns the FIRST close's
+	// error to every caller. `TestSessionStoreCloseIsIdempotent` proves
+	// the behaviour and `TestLiveStoreClosesLifecycleChannelsUnderOnce`
+	// proves no future backend can drop the guard.
 	Close() error
 	// Broker returns the pub/sub broker bound to this store. v0.15.x
 	// default: in-process *topicRegistry. Future cross-process
@@ -402,6 +414,9 @@ type memoryStore struct {
 	sessions map[string]*liveSession
 	ttl      time.Duration
 	stop     chan struct{}
+	// closeOnce guards `stop` so a second Close cannot panic. Same
+	// mechanism as jobs.Worker.Stop. See SessionStore.Close.
+	closeOnce sync.Once
 	// broker — pub/sub registry. Cycle 3 P46. Default in-process
 	// *topicRegistry; future cross-process tiers swap the pointer.
 	// Stored as the Broker interface so test fixtures + memory-store
@@ -465,7 +480,7 @@ func (s *memoryStore) Delete(sid string) {
 func (s *memoryStore) NewID() string { return generateSkySessionID() }
 
 func (s *memoryStore) Close() error {
-	close(s.stop)
+	s.closeOnce.Do(func() { close(s.stop) })
 	return nil
 }
 
@@ -509,6 +524,11 @@ type sqliteStore struct {
 	db   *sql.DB
 	ttl  time.Duration
 	stop chan struct{}
+	// closeOnce + closeErr make Close idempotent: the channel is closed
+	// once and every caller gets the FIRST db.Close()'s verdict, not a
+	// panic and not a second driver-level error. See SessionStore.Close.
+	closeOnce sync.Once
+	closeErr  error
 	// idleEvict — tiered-session-cache idle-evict window (0 disables). When
 	// 0 < idleEvict < ttl, cleanupLoop drops a session's live memCache pointer
 	// after this idle window with no active SSE while KEEPING its blob on disk
@@ -707,8 +727,11 @@ func (s *sqliteStore) Delete(sid string) {
 func (s *sqliteStore) NewID() string { return generateSkySessionID() }
 
 func (s *sqliteStore) Close() error {
-	close(s.stop)
-	return s.db.Close()
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		s.closeErr = s.db.Close()
+	})
+	return s.closeErr
 }
 
 // idleEvictPass performs one tiered-session-cache idle-evict sweep over a
@@ -858,6 +881,10 @@ type postgresStore struct {
 	pool *dbshare.Handle
 	ttl  time.Duration
 	stop chan struct{}
+	// closeOnce + closeErr — see SessionStore.Close. dbshare.Handle.Close
+	// is already idempotent (refcounted); the bare channel close was not.
+	closeOnce sync.Once
+	closeErr  error
 	// idleEvict — tiered-session-cache idle-evict window (0 disables). See
 	// sqliteStore.idleEvict + docs/skylive/tiered-session-cache.md.
 	idleEvict time.Duration
@@ -1031,8 +1058,11 @@ func (s *postgresStore) Delete(sid string) {
 func (s *postgresStore) NewID() string { return generateSkySessionID() }
 
 func (s *postgresStore) Close() error {
-	close(s.stop)
-	return s.pool.Close()
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		s.closeErr = s.pool.Close()
+	})
+	return s.closeErr
 }
 
 func (s *postgresStore) cleanupLoop() {
@@ -1105,6 +1135,12 @@ type redisStore struct {
 	// override this field to use `redis.PSubscribe` for cross-process
 	// fan-out (design doc §11.2.5 tier 1).
 	broker Broker
+	// closeOnce + closeErr — see SessionStore.Close. `cancel` is already
+	// idempotent, but redis.Client.Close is not: a second call answers
+	// "redis: client is closed", which reads to a caller as a teardown
+	// FAILURE rather than as a teardown that already happened.
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (s *redisStore) Broker() Broker { return s.broker }
@@ -1265,15 +1301,18 @@ func (s *redisStore) Delete(sid string) {
 func (s *redisStore) NewID() string { return generateSkySessionID() }
 
 func (s *redisStore) Close() error {
-	s.cancel()
-	// Close the broker BEFORE the client — the cross-instance broker's
-	// Pub/Sub connection rides this client; tearing it down first stops
-	// the receive loop cleanly. The broker shares the client
-	// (ownsClient=false) so it won't double-close it.
-	if s.broker != nil {
-		_ = s.broker.Close()
-	}
-	return s.client.Close()
+	s.closeOnce.Do(func() {
+		s.cancel()
+		// Close the broker BEFORE the client — the cross-instance broker's
+		// Pub/Sub connection rides this client; tearing it down first stops
+		// the receive loop cleanly. The broker shares the client
+		// (ownsClient=false) so it won't double-close it.
+		if s.broker != nil {
+			_ = s.broker.Close()
+		}
+		s.closeErr = s.client.Close()
+	})
+	return s.closeErr
 }
 
 // idleEvictLoop runs the tiered-session-cache idle-evict pass every 60s until
