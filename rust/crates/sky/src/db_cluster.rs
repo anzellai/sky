@@ -52,9 +52,18 @@ pub const SOCKET_BASENAME: &str = ".s.PGSQL.5432";
 /// cannot silently push a working configuration over the edge.
 pub const MAX_SOCKET_PATH: usize = 92;
 
-/// Marker for the tuning block appended to a generated `postgresql.conf`.
-/// Its presence is what makes `ensure_sky_conf` idempotent.
+/// Marker for the tuning block spliced into a generated `postgresql.conf`.
 pub const SKY_CONF_MARKER: &str = "# --- sky db: development cluster tuning (managed by sky) ---";
+
+/// Where that block ENDS.
+///
+/// Without it the block's extent had to be inferred, and the only safe
+/// inference was "do not touch it at all" — which is how the block came to be
+/// written once, at `initdb`, and frozen there. Clusters created before this
+/// marker existed have no end marker, and
+/// [`pg_managed_conf::LegacyExtent::ManagedKeys`] is what retunes those without
+/// eating whatever the operator appended below.
+pub const SKY_CONF_END_MARKER: &str = "# --- end sky db tuning ---";
 
 const REGISTRY_FILE: &str = "clusters.json";
 const LOCK_FILE: &str = "clusters.lock";
@@ -804,42 +813,98 @@ pub fn probe_data_dir(data_dir: &Path) -> Liveness {
 /// 8-core machine was less than the 56 backends a single app process demands —
 /// the app's `Db.connect` pool plus the runtime's analytics, session and
 /// telemetry pools. See [`crate::db_pool_sizing`].
-pub fn sky_conf_block() -> String {
-    sky_conf_block_for(std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(2))
+pub fn sky_conf_block(project: Option<&Path>) -> String {
+    let cpus = std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(2);
+    sky_conf_block_for(&crate::db_pool_sizing::PoolInputs::resolve(cpus, project))
 }
 
-/// [`sky_conf_block`] with the core count passed in, so the derivation can be
-/// gated for any host rather than only the one the test happens to run on.
-pub fn sky_conf_block_for(cpus: u32) -> String {
-    let max_connections = crate::db_pool_sizing::dev_cluster_max_connections(cpus);
+/// [`sky_conf_block`] with the sizing inputs passed in, so the derivation can be
+/// gated for any host — and any pool knob — rather than only the one the test
+/// happens to run on.
+pub fn sky_conf_block_for(i: &crate::db_pool_sizing::PoolInputs) -> String {
+    let (app, unlimited) = crate::db_pool_sizing::app_pool_size_resolved(i);
+    let max_connections = crate::db_pool_sizing::dev_cluster_max_connections(i);
+    let cpus = i.cpus;
+    // The comment NAMES the app-pool term, because that term is no longer a
+    // function of the machine — it follows `<PREFIX>_DB_MAX_OPEN_CONNS` /
+    // `sky.toml [database] maxOpenConns` — and a reader deciding whether to
+    // override the number cannot check a claim that hides its inputs.
+    let covers = if unlimited {
+        "# The app pool is UNLIMITED (<PREFIX>_DB_MAX_OPEN_CONNS = 0), which no\n\
+         # max_connections can cover. Sized for the default app pool plus the runtime's\n\
+         # analytics, session and telemetry pools, with the superuser's reserved slots\n\
+         # and a few left for psql on top.\n"
+            .to_string()
+    } else {
+        format!(
+            "# Covers everything ONE app process opens on a {cpus}-core host — its own pool of\n\
+             # {app} plus the runtime's analytics, session and telemetry pools — with the\n\
+             # superuser's reserved slots and a few left for psql on top.\n"
+        )
+    };
     format!(
-        "\n{SKY_CONF_MARKER}\n\
+        "{SKY_CONF_MARKER}\n\
          # Resource sizing only — no setting here changes query semantics, so a\n\
          # development cluster behaves exactly as production does.\n\
          # `sky db start` passes -k <socket dir> on every start, because the hashed\n\
          # socket path is re-derived from the environment and must not be frozen here.\n\
+         # This block is REGENERATED on every start, from the machine and the pool\n\
+         # knob detected on that start, so the cluster follows the host when it is\n\
+         # resized. Edits INSIDE the block are overwritten; put your own settings\n\
+         # OUTSIDE it and they are preserved. PostgreSQL takes the last occurrence of\n\
+         # a setting, so anything you write after the end marker wins.\n\
          listen_addresses = ''\n\
          shared_buffers = 32MB\n\
-         # Covers everything ONE app process opens on a {cpus}-core host — its own pool\n\
-         # plus the runtime's analytics, session and telemetry pools — with the\n\
-         # superuser's reserved slots and a few left for psql on top.\n\
+         {covers}\
          max_connections = {max_connections}\n\
          work_mem = 4MB\n\
          maintenance_work_mem = 32MB\n\
          max_wal_size = 256MB\n\
          min_wal_size = 64MB\n\
-         autovacuum_max_workers = 1\n"
+         autovacuum_max_workers = 1\n\
+         {SKY_CONF_END_MARKER}\n"
     )
 }
 
-/// Append the tuning block unless it is already there. Returns `None` when the
-/// file is already tuned, so a re-run neither duplicates settings nor grows the
-/// file without bound.
-pub fn ensure_sky_conf(conf: &str) -> Option<String> {
-    if conf.contains(SKY_CONF_MARKER) {
-        return None;
-    }
-    Some(format!("{conf}{}", sky_conf_block()))
+/// REPLACE the managed block, or append it when the file has none. `None` means
+/// the file already says exactly this, so a start that needs no retune does not
+/// rewrite it at all.
+///
+/// # Why this replaces rather than appends-once
+///
+/// It used to return `None` the moment the marker was present, and it was
+/// reached from exactly one place — the tail of `run_initdb`. The managed block
+/// was therefore written ONCE, at cluster creation, and frozen at whatever
+/// machine the data directory was made on, while the app's connection pools
+/// call `available_parallelism` on every boot and the pool knob is read on every
+/// boot too.
+///
+/// The two diverge on exactly the event a user expects to help. Resize a host
+/// from 2 vCPU to 8: the process's demand goes from 24 backends to 60 at the
+/// next start and `max_connections` stays sized for the 2-vCPU machine. The app
+/// strangles itself on the upgrade. Restoring a data directory onto a different
+/// host does the same thing with no warning at all. Vertical scaling on one
+/// server is a first-class use of a local cluster, so this is the main path, not
+/// an edge — which is what `runtime-go/rt/pg_embed_conf.go:340` concluded for
+/// the embedded cluster, and `db_shared::apply_managed_block` for the shared
+/// one. This was the third implementation and the one that had not followed.
+///
+/// The block is passed IN rather than rendered here, because rendering it needs
+/// the project (the pool knob lives in its `sky.toml` / `.env`) and this
+/// function is about the file, not about the sizing.
+pub fn ensure_sky_conf(conf: &str, block: &str) -> Option<String> {
+    // The managed keys are read OUT OF the block, so a setting added to
+    // `sky_conf_block_for` cannot fall out of the legacy-extent inference and be
+    // orphaned above the new block on a cluster old enough to need inferring.
+    let keys = crate::pg_managed_conf::managed_keys(block);
+    let out = crate::pg_managed_conf::replace_managed_block(
+        conf,
+        block,
+        SKY_CONF_MARKER,
+        SKY_CONF_END_MARKER,
+        crate::pg_managed_conf::LegacyExtent::ManagedKeys(&keys),
+    );
+    (out != conf).then_some(out)
 }
 
 // ---- error translation ---------------------------------------------------
@@ -1036,6 +1101,14 @@ fn start_cluster(project: &Path) -> Result<Started, String> {
         run_initdb(&bins, &data_dir)?;
     }
 
+    // EVERY start, not just the one that created the cluster — and BEFORE
+    // `pg_ctl start`, because `max_connections` and `shared_buffers` need a
+    // restart rather than a reload and a restart is exactly what is about to
+    // happen. Tuning only at `initdb` froze the block at whatever machine made
+    // the data directory while the app's pools re-read the machine on every
+    // boot: resize 2 vCPU → 8 and the app strangles itself on the upgrade.
+    tune_conf(project, &data_dir)?;
+
     prepare_socket_dir(&socket_dir)?;
     let pid = match run_pg_ctl_start(&bins, project, &data_dir, &socket_dir) {
         Ok(pid) => pid,
@@ -1117,6 +1190,9 @@ fn clear_stale_pidfile(data_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Create the cluster. It does NOT tune the conf: `start_cluster` does that on
+/// every start, and having initdb do it too would put the one call site that
+/// matters back inside the one path that only ever runs once.
 fn run_initdb(bins: &PgBins, data_dir: &Path) -> Result<(), String> {
     if let Some(parent) = data_dir.parent() {
         std::fs::create_dir_all(parent)
@@ -1146,14 +1222,14 @@ fn run_initdb(bins: &PgBins, data_dir: &Path) -> Result<(), String> {
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    tune_conf(data_dir)
+    Ok(())
 }
 
-fn tune_conf(data_dir: &Path) -> Result<(), String> {
+fn tune_conf(project: &Path, data_dir: &Path) -> Result<(), String> {
     let conf_path = data_dir.join("postgresql.conf");
     let conf = std::fs::read_to_string(&conf_path)
         .map_err(|e| format!("sky db start: cannot read {}: {e}", conf_path.display()))?;
-    if let Some(tuned) = ensure_sky_conf(&conf) {
+    if let Some(tuned) = ensure_sky_conf(&conf, &sky_conf_block(Some(project))) {
         std::fs::write(&conf_path, tuned)
             .map_err(|e| format!("sky db start: cannot write {}: {e}", conf_path.display()))?;
     }
@@ -2662,7 +2738,7 @@ mod tests {
 
     #[test]
     fn the_tuning_block_keeps_a_development_cluster_small() {
-        let b = sky_conf_block();
+        let b = sky_conf_block(None);
         assert!(b.contains("shared_buffers = 32MB"), "{b}");
         assert!(b.contains("listen_addresses = ''"), "nothing may be exposed on TCP:\n{b}");
         assert!(!b.contains("unix_socket_directories"), "the socket dir is passed per start, not frozen:\n{b}");
@@ -2675,7 +2751,7 @@ mod tests {
     #[test]
     fn the_development_tuning_block_sets_no_semantic_setting() {
         for cpus in [1u32, 2, 8, 64] {
-            let b = sky_conf_block_for(cpus);
+            let b = sky_conf_block_for(&crate::db_pool_sizing::PoolInputs::derived(cpus));
             for forbidden in ["fsync", "synchronous_commit", "wal_level", "full_page_writes"] {
                 assert!(
                     !b.contains(forbidden),
@@ -2695,30 +2771,102 @@ mod tests {
     /// failed from 8 up, which is the most common instance size there is.
     #[test]
     fn the_development_cluster_is_sized_for_the_process_it_serves() {
-        use crate::db_pool_sizing::{dev_cluster_max_connections, process_connection_demand, SUPERUSER_RESERVED};
+        use crate::db_pool_sizing::{
+            dev_cluster_max_connections, process_connection_demand, PoolInputs, SUPERUSER_RESERVED,
+        };
+        // The pool knob is an AXIS here, not a footnote. Sweeping `cpus` alone
+        // is what let the app term stop following the documented knob while
+        // every gate in this file stayed green.
         for cpus in 1u32..=64 {
-            let b = sky_conf_block_for(cpus);
-            let want = dev_cluster_max_connections(cpus);
-            assert!(
-                b.contains(&format!("max_connections = {want}")),
-                "cpus={cpus}: the block must carry the derived ceiling {want}:\n{b}"
-            );
-            assert!(
-                process_connection_demand(cpus) + SUPERUSER_RESERVED <= want,
-                "cpus={cpus}: one app process demands {} backends plus {SUPERUSER_RESERVED} \
-                 reserved, and `sky db start` offers {want}.",
-                process_connection_demand(cpus)
-            );
+            for knob in [None, Some("1"), Some("23"), Some("64"), Some("200"), Some("0")] {
+                let i = PoolInputs { cpus, app_max_open: knob.map(str::to_string) };
+                let b = sky_conf_block_for(&i);
+                let want = dev_cluster_max_connections(&i);
+                assert!(
+                    b.contains(&format!("max_connections = {want}")),
+                    "cpus={cpus} knob={knob:?}: the block must carry the derived ceiling \
+                     {want}:\n{b}"
+                );
+                assert!(
+                    process_connection_demand(&i) + SUPERUSER_RESERVED <= want,
+                    "cpus={cpus} knob={knob:?}: one app process demands {} backends plus \
+                     {SUPERUSER_RESERVED} reserved, and `sky db start` offers {want}.",
+                    process_connection_demand(&i)
+                );
+            }
         }
     }
 
+    /// The requirement has TWO halves, and this test used to assert only one of
+    /// them — in the form that made the other impossible.
+    ///
+    /// It read `assert_eq!(ensure_sky_conf(&once), None, "a second pass must
+    /// not duplicate the block")`, which is satisfied by returning `None` the
+    /// moment the marker is present. That is exactly what the implementation
+    /// did, so the block was written once at `initdb` and frozen there while
+    /// the pools re-read the machine on every boot. The test was pinning the
+    /// defect as the requirement.
+    ///
+    /// Both halves are gated here: a second pass must NOT duplicate the block,
+    /// and a second pass with different sizing MUST update it.
     #[test]
-    fn tuning_a_conf_file_is_idempotent() {
+    fn re_tuning_replaces_the_block_rather_than_duplicating_or_freezing_it() {
+        use crate::db_pool_sizing::PoolInputs;
         let base = "# PostgreSQL configuration file\nmax_connections = 100\n";
-        let once = ensure_sky_conf(base).expect("first pass must tune");
+        let small = sky_conf_block_for(&PoolInputs::derived(1));
+        let once = ensure_sky_conf(base, &small).expect("first pass must tune");
         assert!(once.contains(SKY_CONF_MARKER));
-        assert_eq!(ensure_sky_conf(&once), None, "a second pass must not duplicate the block");
+        assert!(once.contains(SKY_CONF_END_MARKER));
+
+        // Half one: the SAME block again is a no-op, so a start that needs no
+        // retune does not rewrite the file at all.
+        assert_eq!(
+            ensure_sky_conf(&once, &small),
+            None,
+            "a second pass with unchanged sizing must not rewrite the file"
+        );
         assert_eq!(once.matches("shared_buffers").count(), 1);
+
+        // Half two: a DIFFERENT block must land, and replace rather than stack.
+        let large = sky_conf_block_for(&PoolInputs::derived(16));
+        assert_ne!(small, large, "the fixture is not exercising a change in sizing");
+        let grown = ensure_sky_conf(&once, &large)
+            .expect("the host grew from 1 to 16 cores and the block did not change");
+        assert_eq!(
+            grown.matches(SKY_CONF_MARKER).count(),
+            1,
+            "the retune stacked a second block:\n{grown}"
+        );
+        assert_eq!(grown.matches("shared_buffers").count(), 1);
+        for line in small.lines().filter(|l| l.trim().starts_with("max_connections")) {
+            assert!(!grown.contains(line), "the stale sizing survived the retune:\n{grown}");
+        }
+        // …and it is a fixed point.
+        assert_eq!(ensure_sky_conf(&grown, &large), None);
+    }
+
+    /// A conf written before the end marker existed has no delimiter, and the
+    /// only thing that stops the retune from eating the operator's own settings
+    /// is the managed-key inference. Clusters in that state are on disk today.
+    #[test]
+    fn a_cluster_created_before_the_end_marker_is_retuned_without_eating_operator_settings() {
+        use crate::db_pool_sizing::PoolInputs;
+        const MINE: &str = "log_min_duration_statement = 250  # mine, not sky's";
+        let legacy = format!(
+            "# stock\n\n{SKY_CONF_MARKER}\n\
+             # Resource sizing only.\n\
+             listen_addresses = ''\n\
+             shared_buffers = 32MB\n\
+             max_connections = 50  # the old flat value\n\
+             work_mem = 4MB\n\
+             {MINE}\n"
+        );
+        let out = ensure_sky_conf(&legacy, &sky_conf_block_for(&PoolInputs::derived(16)))
+            .expect("a legacy block was not retuned");
+        assert!(out.contains(MINE), "the retune ate the operator's setting:\n{out}");
+        assert!(out.contains("# stock"), "the stock conf above the block was deleted:\n{out}");
+        assert!(!out.contains("max_connections = 50"), "the stale value survived:\n{out}");
+        assert_eq!(out.matches(SKY_CONF_MARKER).count(), 1, "{out}");
     }
 
     // --- error translation ---

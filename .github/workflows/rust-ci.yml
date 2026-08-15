@@ -195,6 +195,31 @@ jobs:
           save-if: 'false'
       - name: Clippy (report only)
         run: cargo clippy --workspace --all-targets || true
+
+      # PostgreSQL binaries, DECLARED rather than inherited from the runner
+      # image. `db_cluster_flow::a_second_start_retunes_the_managed_block` is a
+      # live gate that REFUSES to skip: its whole subject is a start that is not
+      # the first one, so without a real cluster "PostgreSQL is missing" and
+      # "the retune is broken" produce the same green line — which is how the
+      # frozen managed block survived. The rest of that file's live tests do
+      # skip, and did so silently on any runner image that dropped PostgreSQL.
+      - name: PostgreSQL binaries for the live cluster gates
+        run: |
+          set -euo pipefail
+          dir=""
+          for v in 17 16 15 14; do
+            if [ -x "/usr/lib/postgresql/$v/bin/initdb" ]; then dir="/usr/lib/postgresql/$v/bin"; break; fi
+          done
+          if [ -z "$dir" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-16
+            dir=/usr/lib/postgresql/16/bin
+          fi
+          for b in initdb pg_ctl postgres psql; do
+            [ -x "$dir/$b" ] || { echo "missing $dir/$b — the live cluster gates cannot run" >&2; exit 1; }
+          done
+          echo "SKY_POSTGRES_BIN=$dir" >> "$GITHUB_ENV"
+
       - name: Tests — workspace except ty
         run: cargo test --workspace --exclude ty --locked
       - name: Doctests

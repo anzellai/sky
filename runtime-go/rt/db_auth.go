@@ -292,7 +292,7 @@ func Db_connect(path any) any {
 			// ACCEPT connections). Instead: keep the live pool and warn — the
 			// next query after the database comes up connects transparently, and
 			// /_sky/readyz reports the outage window via the probe below.
-			Log_warn(fmt.Sprintf("db.connect: %s not reachable at boot (%v); connection pool "+
+			rtWarn(fmt.Sprintf("db.connect: %s not reachable at boot (%v); connection pool "+
 				"is live and will (re)connect on demand once the database is available", driver, err))
 		}
 		// v0.17.10 — SQLite concurrency defaults. Without these, any
@@ -353,7 +353,7 @@ func Db_connect(path any) any {
 					// :memory: DB rejects some PRAGMAs, and NFS-mounted
 					// paths reject WAL). Emit a warn via Std.Log —
 					// visible in dev + prod but doesn't break.
-					Log_warn("db.connect: " + pragma + " failed: " + pErr.Error())
+					rtWarn("db.connect: " + pragma + " failed: " + pErr.Error())
 				}
 			}
 		}

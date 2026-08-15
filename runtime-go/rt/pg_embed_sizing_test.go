@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -120,11 +121,11 @@ func TestPoolDemandCountsEveryPoolNotJustTheApps(t *testing.T) {
 		t.Fatal("dbAuxPoolConsumers is empty — the runtime opens pools that nothing accounts for")
 	}
 	for _, cpus := range coreCountsToCheck() {
-		app := defaultPostgresPoolConfigFor(cpus, false).MaxOpenConns
+		app, _ := dbAppPoolMaxOpenFor(cpus, false)
 		demand := dbProcessConnectionDemand(cpus, false)
 		want := app
 		for _, c := range dbAuxPoolConsumers {
-			want += c.maxOpen(cpus, false)
+			want += c.maxOpen(app)
 		}
 		if demand != want {
 			t.Errorf("cpus=%d: demand = %d, want %d (the app pool of %d plus what each of "+
@@ -134,6 +135,93 @@ func TestPoolDemandCountsEveryPoolNotJustTheApps(t *testing.T) {
 			t.Errorf("cpus=%d: demand (%d) does not exceed the app pool (%d) — "+
 				"the runtime's own pools are not being counted", cpus, demand, app)
 		}
+	}
+}
+
+// TestTheClusterIsSizedForThePoolTheProcessActuallyOPENS is the gate on WHICH
+// INPUTS the demand arithmetic reads.
+//
+// Every other gate in this file sweeps `cpus` and nothing else, so a term that
+// is a function of something OTHER than `cpus` is outside all of their frames.
+// One was: the app term routed through `defaultPostgresPoolConfigFor`
+// (defaults only) while `Db_connect` opens its pool from `resolveDbPoolConfig`
+// (defaults + env). With `<PREFIX>_DB_MAX_OPEN_CONNS=64` on one core the
+// process opened 64 + 12 + 12 + 4 = 92 backends and the arithmetic that sized
+// its cluster reported 32.
+//
+// So the app term is not read from any sizing function here. It is MEASURED on
+// the `*sql.DB` the production connect path built — `Stats().MaxOpenConnections`
+// is what the pool will actually enforce — and the demand must equal that plus
+// what each runtime consumer asks dbshare for. A gate that computed the
+// expectation from `resolveDbPoolConfigFor` would agree with any implementation
+// that called the same function, which is the shape of failure this branch
+// keeps repeating.
+func TestTheClusterIsSizedForThePoolTheProcessActuallyOpens(t *testing.T) {
+	// The documented range of `[database] maxOpenConns` plus the two values
+	// that mean "unlimited" (0 and negative — see resolveDbPoolConfigFor) and
+	// one that is not a number at all.
+	for _, override := range []string{"", "1", "8", "32", "64", "200", "0", "-4", "lots"} {
+		name := override
+		if name == "" {
+			name = "unset"
+		}
+		t.Run(name, func(t *testing.T) {
+			withServerlessEnv(t, nil)
+			if override != "" {
+				t.Setenv("SKY_DB_MAX_OPEN_CONNS", override)
+			}
+			// A DSN per case: `Db_connect` memoises by DSN, so reusing one
+			// would hand back a pool configured under a previous override and
+			// the sweep would silently collapse to a single case.
+			dsn := fmt.Sprintf("postgres://sky:sky@127.0.0.1:1/skysizing%s?sslmode=disable",
+				strings.ReplaceAll(name, "-", "neg"))
+			db := connectPgForPoolTest(t, dsn)
+
+			// What the app's pool will ACTUALLY enforce, read off the live
+			// handle rather than recomputed.
+			cpus := runtime.GOMAXPROCS(0)
+			app := db.conn.Stats().MaxOpenConnections
+			conf := renderConfBlock(machine{ramBytes: 16 * 1024 * mb, cpus: cpus})
+			if app == 0 {
+				// `database/sql` for UNLIMITED. The operator asked for it and was
+				// warned at connect time; what the sizing must not do is print a
+				// coverage claim no finite number can honour. It substitutes the
+				// default and the generated file says so.
+				if !strings.Contains(conf, "UNLIMITED") {
+					t.Errorf("%s=%q makes the app pool unbounded, and the generated conf "+
+						"still claims to cover every pool the process opens:\n%s",
+						skyEnvName("DB_MAX_OPEN_CONNS"), override, conf)
+				}
+				app = defaultPostgresPoolConfigFor(cpus, false).MaxOpenConns
+			}
+			aux := 0
+			for _, c := range dbAuxPoolConsumers {
+				aux += c.maxOpen(app)
+			}
+			want := app + aux
+			if got := dbProcessConnectionDemand(cpus, false); got != want {
+				t.Errorf("%s=%q: the process opens an app pool of %d plus %d for %v = %d "+
+					"backends, but dbProcessConnectionDemand reports %d — every cluster "+
+					"sized from that arithmetic is short by %d",
+					skyEnvName("DB_MAX_OPEN_CONNS"), override, app, aux,
+					dbAuxPoolConsumerNames(), want, got, want-got)
+			}
+
+			// …and the sentence the generated conf prints about that number
+			// must be true. Read from the rendered FILE, not from
+			// embeddedMaxConnections, so this also covers a conf that stops
+			// carrying the value it was sized with.
+			maxConn := confMaxConnections(t, conf)
+			usable := maxConn - pgSuperuserReserved
+			if want*pgRestartOverlapFactor > usable {
+				t.Errorf("%s=%q: two overlapping processes demand %d connections, %d of the "+
+					"cluster's %d are usable — the conf's \"twice over for restart overlap\" "+
+					"claim is false, and every restart under load is a `too many clients` "+
+					"incident",
+					skyEnvName("DB_MAX_OPEN_CONNS"), override,
+					want*pgRestartOverlapFactor, usable, maxConn)
+			}
+		})
 	}
 }
 

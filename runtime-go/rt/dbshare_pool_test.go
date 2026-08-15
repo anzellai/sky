@@ -581,6 +581,15 @@ func TestTheConnectionDemandMatchesWhatTheConsumersAcquire(t *testing.T) {
 	t.Cleanup(resetAnalyticsStore)
 	resetAnalyticsStore()
 
+	// The pool knob is SET, and set to a value no core count can produce (the
+	// default is 4×CPU clamped to 4..32, so never 23). Leaving it unset would
+	// let a demand function that ignores it agree with this gate exactly — which
+	// is how the app term came to route through `defaultPostgresPoolConfigFor`
+	// while `Db_connect` opened its pool from `resolveDbPoolConfig`. It is set
+	// FIRST so the aux pools opened below are sized under it too.
+	const appOverride = 23
+	t.Setenv("SKY_DB_MAX_OPEN_CONNS", strconv.Itoa(appOverride))
+
 	// Every runtime consumer, opened the way production opens it.
 	t.Setenv("SKY_ANALYTICS_DB_PATH", dsn)
 	if db := analyticsStore(); db == nil {
@@ -607,8 +616,22 @@ func TestTheConnectionDemandMatchesWhatTheConsumersAcquire(t *testing.T) {
 		asked[r.Consumer] = r.Config.MaxOpenConns
 	}
 
+	// The APP's own pool, opened through the production connect path and
+	// measured on the live handle. Reading it from a sizing function instead is
+	// the hole this gate had: it started its sum at
+	// `defaultPostgresPoolConfigFor` — the defaults with the operator's knob
+	// discarded — so the one term that was wrong was the one term it did not
+	// measure.
+	appDb := connectPgForPoolTest(t, dsn)
+	app := appDb.conn.Stats().MaxOpenConnections
+	if app != appOverride {
+		t.Fatalf("the app pool opened at %d with %s=%d — the override did not reach the "+
+			"pool, so this gate is not measuring the env axis at all",
+			app, skyEnvName("DB_MAX_OPEN_CONNS"), appOverride)
+	}
+
 	cpus := runtime.GOMAXPROCS(0)
-	total := defaultPostgresPoolConfigFor(cpus, false).MaxOpenConns
+	total := app
 	for _, c := range dbAuxPoolConsumers {
 		got, ok := asked[c.name]
 		if !ok {
@@ -616,7 +639,7 @@ func TestTheConnectionDemandMatchesWhatTheConsumersAcquire(t *testing.T) {
 				"(acquired: %v) — the demand is counting a pool that does not exist",
 				c.name, asked)
 		}
-		if want := c.maxOpen(cpus, false); got != want {
+		if want := c.maxOpen(app); got != want {
 			t.Errorf("%q acquired a pool of %d but the demand arithmetic attributes %d to it "+
 				"— every cluster sized from that arithmetic is wrong by %d for this consumer",
 				c.name, got, want, got-want)
