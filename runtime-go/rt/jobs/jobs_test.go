@@ -500,3 +500,74 @@ func TestEncodeDecodePayload_RoundTrip(t *testing.T) {
 		t.Errorf("round-trip lost field: %+v", out)
 	}
 }
+
+// ─── Worker lifecycle ─────────────────────────────────────────
+
+// Stop must be safe to call concurrently.
+//
+// The previous guard was `if w.stopped.Load() { return }` followed by
+// `close(w.stop)`: two goroutines that both read `stopped == false` both
+// reached the close, and the second panicked on an already-closed channel —
+// taking the process down on the shutdown path, which is the worst possible
+// moment for it. This test panics rather than fails against that version.
+func TestWorker_StopIsSafeConcurrently(t *testing.T) {
+	s := NewMemoryStore()
+	w := NewWorker(s, "default")
+	w.Start()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w.Stop(2 * time.Second)
+		}()
+	}
+	wg.Wait()
+}
+
+// Stop must wait for the worker goroutine, not poll a proxy flag, and must
+// report whether it made it inside the budget.
+func TestWorker_StopWaitsAndReports(t *testing.T) {
+	s := NewMemoryStore()
+	w := NewWorker(s, "default")
+	w.Start()
+
+	if ok := w.Stop(5 * time.Second); !ok {
+		t.Fatal("Stop reported it did not finish inside a 5s budget")
+	}
+	// The goroutine is genuinely gone by the time Stop returns.
+	select {
+	case <-w.done:
+	default:
+		t.Fatal("Stop returned while the worker goroutine was still running")
+	}
+}
+
+// Stop on a worker that was never started must return rather than block on a
+// `done` channel that nothing will ever close.
+func TestWorker_StopWithoutStartDoesNotHang(t *testing.T) {
+	w := NewWorker(NewMemoryStore(), "default")
+	fin := make(chan bool, 1)
+	go func() { fin <- w.Stop(2 * time.Second) }()
+	select {
+	case ok := <-fin:
+		if !ok {
+			t.Fatal("Stop on an unstarted worker should report success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop hung on a worker that was never started")
+	}
+}
+
+// Start must be idempotent — a second Start would otherwise run a second loop
+// claiming from the same queue against the same stop channel.
+func TestWorker_StartIsIdempotent(t *testing.T) {
+	s := NewMemoryStore()
+	w := NewWorker(s, "default")
+	w.Start()
+	w.Start()
+	if ok := w.Stop(5 * time.Second); !ok {
+		t.Fatal("Stop did not complete; a second goroutine likely outlived it")
+	}
+}
