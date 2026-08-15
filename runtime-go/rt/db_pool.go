@@ -503,7 +503,7 @@ func resolveDbPoolConfigFor(driver string, cpus int, serverless bool) dbPoolConf
 		// unknown-key warning exists to prevent.
 		for _, suffix := range dbPoolEnvSuffixes {
 			if skyGetenv(suffix) != "" {
-				Log_warn("db.connect: " + skyEnvName(suffix) +
+				rtWarn("db.connect: " + skyEnvName(suffix) +
 					" is ignored on SQLite — SQLite has a single global writer lock, " +
 					"so the pool is pinned to one connection (raising it reintroduces SQLITE_BUSY)")
 			}
@@ -522,7 +522,7 @@ func resolveDbPoolConfigFor(driver string, cpus int, serverless bool) dbPoolConf
 	// explicit request for it but say what it means, because it is the
 	// default this file exists to replace.
 	if c.MaxOpenConns == 0 {
-		Log_warn("db.connect: " + skyEnvName("DB_MAX_OPEN_CONNS") +
+		rtWarn("db.connect: " + skyEnvName("DB_MAX_OPEN_CONNS") +
 			"=0 means UNLIMITED connections — a burst can exhaust the server's max_connections")
 	} else if c.MaxIdleConns > c.MaxOpenConns {
 		c.MaxIdleConns = c.MaxOpenConns
@@ -578,11 +578,11 @@ func resolveDbTxConfig(driver string) dbTxConfig {
 			// SQLite serialises every transaction on the single pooled
 			// connection under its global write lock, so there is no
 			// weaker level to ask for and no stronger one to grant.
-			Log_warn("db.connect: " + skyEnvName("DB_ISOLATION") +
+			rtWarn("db.connect: " + skyEnvName("DB_ISOLATION") +
 				" is ignored on SQLite — its transactions already serialise on the " +
 				"single pooled connection")
 		} else if level, ok := parseIsolationLevel(raw); !ok {
-			Log_warn("db.connect: " + skyEnvName("DB_ISOLATION") + "=" + raw +
+			rtWarn("db.connect: " + skyEnvName("DB_ISOLATION") + "=" + raw +
 				" is not a recognised isolation level (read uncommitted / read committed / " +
 				"repeatable read / serializable) — using the driver default")
 		} else {
@@ -591,7 +591,7 @@ func resolveDbTxConfig(driver string) dbTxConfig {
 	}
 	if n := dbEnvInt("DB_TX_RETRY", 0); n > 0 {
 		if driver != "pgx" {
-			Log_warn("db.connect: " + skyEnvName("DB_TX_RETRY") +
+			rtWarn("db.connect: " + skyEnvName("DB_TX_RETRY") +
 				" is ignored on SQLite — SQLite does not raise 40001/40P01")
 		} else {
 			cfg.Retries = clampInt(n, 0, 10)
@@ -719,7 +719,7 @@ func dbEnvInt(suffix string, def int) int {
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
-		Log_warn("db.connect: " + skyEnvName(suffix) + "=" + raw +
+		rtWarn("db.connect: " + skyEnvName(suffix) + "=" + raw +
 			" is not an integer — using " + strconv.Itoa(def))
 		return def
 	}
@@ -741,7 +741,7 @@ func dbEnvDuration(suffix string, def time.Duration) time.Duration {
 	if secs, err := strconv.Atoi(raw); err == nil {
 		return time.Duration(secs) * time.Second
 	}
-	Log_warn("db.connect: " + skyEnvName(suffix) + "=" + raw +
+	rtWarn("db.connect: " + skyEnvName(suffix) + "=" + raw +
 		" is not a duration (e.g. \"30m\", \"90s\", or a bare integer of seconds) — using " +
 		def.String())
 	return def

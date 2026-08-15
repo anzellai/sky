@@ -237,7 +237,7 @@ func skyEnvSynchronousCommitOff(suffix string) bool {
 	case "on", "true", "1", "remote_write", "remote_apply":
 		return false
 	default:
-		Log_warn("analytics: " + skyEnvName(suffix) +
+		rtWarn("analytics: " + skyEnvName(suffix) +
 			" must be `on` or `off` — using `off` (the default: analytics trades a " +
 			"few hundred ms of crash-loss for throughput)")
 		return true
