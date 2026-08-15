@@ -177,6 +177,34 @@ Counted from the HTML the apps actually serve at this commit:
 these counts and fails if they drift more than 10%. It caught a 36%
 drift the first time it ran.
 
+## Known weaknesses in this measurement
+
+Stated so they are not discovered later as surprises:
+
+1. **The Phase 1 tree is a calibrated model, not a captured one.** The
+   fixture is pinned to the reference apps' *element counts*, and its
+   shape (2–3 attributes per element, one event per row, shallow
+   nesting) is modelled on what `Std.Ui` emits — but it is not the
+   actual rendered tree of either app. Attribute density and nesting
+   depth both affect per-node cost. Capturing a real `VNode` tree and
+   replaying it would close this; the seam exists (`HtmlToVNode`) but
+   is not yet wired to a fixture.
+2. **`HtmlToVNode` is not in the measured path.** The Sky `Html` ADT to
+   `VNode` lowering runs on every render and is not counted in the
+   128 ns/node figure.
+3. **The analytics on/off comparison was not run.** Analytics is driven
+   by app code calling `Std.Analytics`, not a global switch, so it needs
+   `examples/52-blog-analytics` rather than the showcase app used
+   throughout here. The harness supports it (`--app`, `--label`); the
+   run was not performed.
+4. **Postgres backend counts were not collected** — the reference app
+   uses no database, so `pg_backends` reads `n/a` throughout. Point
+   `PGURL` at a real cluster and use a Postgres-backed app to populate
+   that column.
+5. **Phase 2 and 3 numbers were taken on a contended host** and are
+   floors rather than ceilings. Phase 1 is protected against this by the
+   min-of-15 estimator; queueing measurements cannot be.
+
 ## Guarding against measuring nothing
 
 A benchmark can be wrong quietly, reporting a confident `ns/op` for work
