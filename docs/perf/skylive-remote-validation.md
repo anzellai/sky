@@ -402,7 +402,26 @@ Two things to hold on to when that run happens:
   did not have — so remote p50/p95 are **not** comparable to the local
   table, only to each other.
 
-## Postgres: still entirely underived
+## Postgres: no longer underived — but read the next paragraph
+
+**This section has been superseded.** Embedded PostgreSQL was subsequently
+measured on an e2-small, and the results — idle footprint, the derived
+`max_connections` as actually rendered, backends under load, per-session
+cost and the load curve — are in
+[`skylive-interaction-cost.md`](skylive-interaction-cost.md), "Embedded
+PostgreSQL, measured", with raw data under
+`runs/gcp-embed-postgres-20260815/`.
+
+Two headline corrections from that run, since they bear directly on the
+recipe below: the `SKY_POSTGRES_BIN` route **works exactly as described
+here** and exercises the whole runtime path, so the recipe was sound; but
+the **bundle** path it works around is still untested on real hardware, and
+the sizing table's "36 MB at `shared_buffers = 32MB`" turned out to describe
+the *development* cluster profile, not the `--embed` one, which derives
+`shared_buffers = 296MB` on a 2 GB host.
+
+What follows is the original, pre-execution recipe, kept because it is what
+was actually followed and because the run confirmed its reasoning.
 
 Every PostgreSQL figure in the sizing table is inferred; none has been
 observed on target hardware. This instance cannot help — it runs SQLite.
@@ -875,10 +894,12 @@ neither of which this run did.
 
 ### What still could not be measured — stated, not manufactured
 
-1. **The `--embed` (embedded-PostgreSQL) variant was not run.** It needs
-   a third instance and instance creation was not available to this run.
-   Every embedded-Postgres figure remains **underived**, exactly as the
-   section above leaves it.
+1. ~~**The `--embed` (embedded-PostgreSQL) variant was not run.**~~ —
+   **closed by a later run.** It was executed on a third instance
+   (`sky-bench-embed`, e2-small) and is written up in
+   [`skylive-interaction-cost.md`](skylive-interaction-cost.md), "Embedded
+   PostgreSQL, measured". What remains underived there is the *bundle*
+   delivery path, not the runtime.
 2. **The Ops Agent's CPU cost at the knee is not separated from
    burst-credit drain** — see §6. Its idle CPU is measured (1.87% of one
    core) and its memory cost is a clean within-boot A/B, but the

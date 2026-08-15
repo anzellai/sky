@@ -28,6 +28,14 @@ scripts/skylive-load-constrained.sh --profiles "1x2g 2x2g 1x1g"
 # Phase 4 — a real x86 GCP target (see skylive-remote-validation.md)
 scripts/skylive-observe-remote.sh --project <id> --instance sky-lang-org
 scripts/skylive-load-remote.sh --url http://<bench-ip>:8000   # preflight
+
+# Phase 5 — embedded PostgreSQL on that target. The app is ONE binary run in
+# three configurations; the scripts that drove it are archived beside the data.
+#   A: ./app                                     memory sessions, no database
+#   B: ./app --embed --data-dir /var/lib/<app>   memory sessions, PG idle
+#   C: B + SKY_LIVE_STORE=postgres               sessions written to PG
+# with SKY_POSTGRES_BIN=/usr/lib/postgresql/15/bin on a Debian target.
+ls docs/perf/runs/gcp-embed-postgres-20260815/{sweep,counterbalance}.sh
 ```
 
 Phase 4 needs `gcloud` authenticated against the target's project, which
@@ -36,6 +44,73 @@ Phase 1 needs only Go. Phase 2's browser observer needs the repo's
 existing Playwright (`npm install` at the repo root, as
 `scripts/verify-examples.sh` expects); run `scripts/skylive-load.sh
 --no-observer` to skip it. Phase 3 needs Apple's `container` CLI.
+
+## Every measurement in this work, in one table
+
+This is the sizing answer. Each row is a machine someone might actually
+buy, with the conditions that make its numbers mean something; the rest of
+this document and
+[`skylive-remote-validation.md`](skylive-remote-validation.md) are the
+derivations.
+
+| # | Machine · arch | Database | Per session | Knee | Peak (burst) | Sustained | Idle floor | Ops Agent | Commit |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | **local container**, 1 CPU quota · **ARM64** | none | 1,047 kB | 100–500 | 88–92/s | 88/s | 34.2 MB app | n/a | `85ded8ef` |
+| 2 | **e2-micro** (970 MB, 2 shared vCPU, 0.25 base) · x86 | SQLite | **1,379 kB** | **25–50** | ~18/s | ~9.5/s | 22.7 MB app | absent | `ba3c3b1d` |
+| 3 | **e2-small** (1.98 GB, 2 shared vCPU, 0.5 base) · x86 | SQLite | **1,450 kB** | **50–100** | 35–42/s | ~26/s | 22.0 MB app | absent | `ba3c3b1d` |
+| 4 | **e2-small** · x86 — *control for rows 5–6* | SQLite | **1,338 kB** | **25–50** | 41.0/s | ~21/s | 21.2 MB app | absent | `8e166eaf` |
+| 5 | **e2-small** · x86 | **embedded PostgreSQL**, `memory` sessions | **1,395 kB** | **25–50** | not isolated | ~21/s | 21.2 + **21.9 MB** | absent | `8e166eaf` |
+| 6 | **e2-small** · x86 | **embedded PostgreSQL**, `postgres` sessions | **1,764 kB** | **25–50** | 39.9/s | ~19/s | 21.2 + **28.4 MB** | absent | `8e166eaf` |
+| 7 | **e2-micro**, sky-lang.org · x86 — *production reference, idle* | SQLite | not measurable | — | — | — | **56.1 MB** app | **present, 86 MB** | live |
+
+**Row 1 is kept only as evidence for why on-target measurement is
+required.** Apple's `container` rejects fractional `--cpus`, so its 1-CPU
+profile is *twice* an e2-small's entitlement and has no burst-credit model
+at all. It was **optimistic by ~2.5× on e2-small and ~5× on e2-micro**, and
+it put the knee 4–10× too late. Its per-session figure is the only part
+that came close, and it was still 30% light. Do not size from row 1.
+
+**Rows 3 and 4 are the same machine type and the same application at two
+commits**, and they agree to 8% on per-session memory (1,450 vs 1,338 kB)
+and to within measurement noise on unsaturated throughput (21.5 vs
+21.4/s at n=25, p50 142 vs 141 ms). That agreement is what licenses
+comparing rows 5 and 6 — measured months apart from row 3 — against
+the SQLite baseline at all.
+
+### Which resource binds, and where
+
+| Instance | Memory ceiling | **Usable** ceiling | Binds on |
+|---|---|---|---|
+| e2-micro, SQLite | ~450 sessions (measured: 447 established, 43 MB left) | **~25–50** | **CPU, ~10× before memory** |
+| e2-small, SQLite | ~1,300 sessions (1.98 GB, ~1.4 MB each) | **~50** | **CPU, ~25× before memory** |
+| e2-small, embedded PostgreSQL | ~1,100 sessions | **~50** | **CPU** |
+
+On every x86 instance measured, **CPU binds an order of magnitude before
+memory does.** Sizing either e2 machine from its RAM overstates capacity by
+10–25×. Memory sets the hard ceiling; latency sets the useful one, and the
+useful one arrives first by a wide margin.
+
+### What embedded PostgreSQL costs
+
+| | At the floor (idle) | Per session | At 100 sessions, system-wide |
+|---|---|---|---|
+| SQLite / no database (row 4) | — | 1,338 kB | 158 MB consumed |
+| **+ embedded PostgreSQL, `memory` sessions** (row 5) | **+21.9 MB** | +57 kB (1,395) | 161 MB — **+4 MB** |
+| **+ embedded PostgreSQL, `postgres` sessions** (row 6) | **+28.4 MB** | +426 kB (1,764) | 244 MB — **+86 MB** |
+
+So embedding the database costs **~22 MB and essentially nothing per
+session** while the session store stays in memory, and **~28 MB plus
+~426 kB/session** once sessions are actually written through it. On a
+2 GB instance whose usable ceiling is ~50 sessions, both are affordable:
+the worst case is ~28 MB of floor plus ~21 MB of session overhead at the
+knee, against 1.5 GB free.
+
+**PostgreSQL's own memory does not grow with sessions.** Regressed against
+established sessions, the postgres process tree's RSS slope is −10 kB
+(config B) and +22 kB (config C) per session — zero within noise, because
+the pool caps backends at 6 no matter how many sessions exist. Embedded
+PostgreSQL is a **fixed block**, not a per-session tax; the +426 kB/session
+in row 6 is paid in the *app*, not the database.
 
 ## The answer
 
@@ -253,10 +328,13 @@ Stated so they are not discovered later as surprises:
    `examples/52-blog-analytics` rather than the showcase app used
    throughout here. The harness supports it (`--app`, `--label`); the
    run was not performed.
-4. **Postgres backend counts were not collected** — the reference app
-   uses no database, so `pg_backends` reads `n/a` throughout. Point
-   `PGURL` at a real cluster and use a Postgres-backed app to populate
-   that column.
+4. ~~**Postgres backend counts were not collected**~~ — **closed.** They
+   were collected on an e2-small running embedded PostgreSQL: a flat **6
+   backends** at 25, 50 and 100 concurrent sessions, against a derived
+   `max_connections` of 36. See "Embedded PostgreSQL, measured" below. The
+   *local* harness still reads `n/a`, because the reference app uses no
+   database; the measurement was taken by switching the app's session
+   store to `postgres` rather than by pointing `PGURL` anywhere.
 5. **Phase 2 and 3 numbers were taken on a contended host** and are
    floors rather than ceilings. Phase 1 is protected against this by the
    min-of-15 estimator; queueing measurements cannot be.
@@ -393,3 +471,283 @@ the live e2-micro serving sky-lang.org. In short:
   `Count()`. Any future capacity instrumentation has to add these first.
 - Remote load is now supported, defaults to passive, and structurally
   refuses production targets.
+
+## Embedded PostgreSQL, measured
+
+Every PostgreSQL figure in `docs/skydb/embedded-postgres.md` was derived and
+none had been observed on target hardware. This section is the observation.
+Raw data: [`runs/gcp-embed-postgres-20260815/`](runs/gcp-embed-postgres-20260815/).
+
+### Conditions, attached to every number below
+
+| | |
+|---|---|
+| Target | `sky-bench-embed`, **e2-small**, `us-central1-a`, project `settleby` |
+| | Debian 12, `Linux 6.1.0-52-cloud-amd64` **x86_64**, 2 shared-core vCPU, 20 GB |
+| MemTotal | **2,023,888 kB (1.98 GB)** — identical to the `sky-bench-small` of the SQLite run |
+| Application | **`examples/26-ui-showcase`**, cross-compiled `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`, Go 1.26.1 |
+| Commit | **`8e166eaf`** (`feat/embedded-postgres`) — *not* the `ba3c3b1d` of the SQLite run; row 4 of the table above is the control that bridges them |
+| PostgreSQL | **15.19** (Debian `15.19-0+deb12u1`) via `SKY_POSTGRES_BIN=/usr/lib/postgresql/15/bin` |
+| systemd | unit `skybench`, user `skybench`, **no `MemoryMax`**, `TasksMax=4096`, `LimitNOFILE=65535` |
+| Ops Agent | **ABSENT** |
+| Generator | `tools/skyliveload`, macOS arm64, 8 cores, **in the UK** — off-box, across the public internet |
+| ICMP RTT | **109.8–112.0 ms, mean 111.3, stddev 0.66, 0% loss** (n=20) |
+| Think time | 1 s, jitter 0.3 · ramp 20 s · hold 60 s · warmup 5 s |
+| Runs | **27** main (3 levels × 3 configs × 3 repeats) + 4 counterbalance; **all 27 `valid=true`** |
+| Generator load | **max 0.309%** of the 8-core generator, mean 0.180% — never the bottleneck |
+
+Each level **restarts the app first**, because the memory store holds a
+session for the full 30-minute TTL after its SSE closes and a "drain" sleep
+drains nothing. The divisor is `sessions_established`, never the number
+requested.
+
+### The bundle delivery path is UNTESTED
+
+`SKY_POSTGRES_BIN` was pointed at Debian's `postgresql-15`. This exercises
+everything downstream of "PostgreSQL binaries exist" — supervisor,
+`initdb`, the tuned conf, pool sizing, the `max_connections` derivation,
+lifecycle — because `discoverPgBins` ranks the override *first*
+(`runtime-go/rt/pg_embed_bundle.go:114`), above the `go:embed`ed bundle.
+
+What it does **not** test is the bundle itself: `sky build --embed`,
+`scripts/skydb/build-postgres-bundle.sh`, bundle extraction into
+`<dataRoot>/runtime`, and the version pinning that a bundle carries. A
+linux-amd64 bundle cannot be built on Apple silicon and no
+`postgres-bundle-v*` release is cut, so that path remains unexercised on
+real hardware. **No number here should be read as validating bundle
+delivery.**
+
+It also means the cluster is **PostgreSQL 15**, where `postgresVersion`
+defaults to `18.6`. Nothing in the runtime objected, which is itself worth
+knowing.
+
+### 1. Idle footprint — the 36 MB claim survives, its derivation does not
+
+`embedded-postgres.md` bills **"PostgreSQL base — postmaster + 6
+auxiliaries at `shared_buffers = 32MB` — 36 MB (measured)"**. Two separate
+methods, over 9 cold restarts per configuration:
+
+| | config A (no PG) | config B (PG, `memory` sessions) | config C (PG, `postgres` sessions) |
+|---|---|---|---|
+| App RSS, idle | **21.24 MB** | 22.89 MB | 24.17 MB |
+| PostgreSQL tree, **RSS sum** | 0 | 76.29 MB | 90.08 MB |
+| PostgreSQL tree, **PSS sum** | 0 | **29.46 MB** | **32.24 MB** |
+| `MemAvailable` | 1,594.7 MB | 1,572.8 MB | 1,566.3 MB |
+| **MemAvailable cost of PG** | — | **21.9 MB** | **28.4 MB** |
+| postgres processes | 0 | 6 | 7 |
+
+**The number is approximately right and slightly conservative.** Measured
+29.5 MB of PSS, or 21.9 MB of `MemAvailable`, against a claimed 36 MB, for
+the postmaster plus its auxiliaries — the same six processes the doc names.
+
+**The stated derivation is falsified.** The `--embed` path does not run at
+`shared_buffers = 32MB`. Tuning is derived from the host at every boot
+(`runtime-go/rt/pg_embed_conf.go`), and what actually landed on this
+2 GB instance was:
+
+```
+shared_buffers        = 296MB   # 15% of RAM
+effective_cache_size  = 790MB
+work_mem              = 13MB
+maintenance_work_mem  = 98MB
+max_connections       = 36
+listen_addresses      = ''
+```
+
+`shared_buffers` is **296 MB, not 32 MB — 9× the assumed value.** The
+32 MB figure belongs to the *development* cluster profile (`sky db start`),
+which uses fixed small constants; the sizing table quotes it for the
+embedded profile, which does not.
+
+The footprint is nevertheless ~30 MB because a shared-memory mapping costs
+what is *touched*, not what is reserved: `/proc/meminfo` `Shmem` read
+**20.8 MB** against the 296 MB segment. So **36 MB is an idle floor, not a
+ceiling**, and the headroom above it is an order of magnitude larger than
+the row implies. A working set that exercises the buffer pool can pull
+resident memory toward 296 MB, and nothing in the sizing table says so.
+
+**RSS is the wrong metric here and by a known factor.** Summing RSS across
+the tree counts `shared_buffers` once per process and reads 76–90 MB — an
+overstatement of **2.6×**, the same trap the Ops Agent measurement hit at
+2.2×.
+
+### 2. The derived `max_connections` holds up
+
+The conf is re-rendered every boot. On this 2-vCPU box it landed at **36**,
+and `SHOW max_connections` on the running cluster agreed. That is exactly
+what the source derives:
+
+```
+app_pool_size(2)              = clamp(2×4, 4, 32)        =  8
+aux_pool_size(2)              = clamp(8/4, 2, 8)         =  2
+process_connection_demand(2)  = 8 + 2×3 aux consumers    = 14
+embeddedMaxConnections(2)     = 14×2 + 3 reserved + 5 headroom = 36
+```
+
+(`rust/crates/sky/src/db_pool_sizing.rs:101-127`,
+`runtime-go/rt/pg_embed_conf.go:277-284`.)
+
+Checked against demand on the deployed cluster:
+
+| | |
+|---|---|
+| `max_connections` | **36** |
+| `superuser_reserved_connections` | **3** |
+| Usable by the app | **33** |
+| Worst-case demand, one process (`process_connection_demand`) | 14 |
+| Demand with restart overlap (2 processes) | 28 ≤ 33 ✔ |
+| **Peak actually observed, 100 concurrent sessions** | **6** |
+
+The property gate passes, and it is not vacuous: its own falsification
+witness — `TestTheHistoricalSizingViolatesTheProperty`, which asserts the
+old flat `50` *fails* the property — passes too.
+
+```
+runtime-go$ go test ./rt/ -run 'GrantsEveryPool|PoolDemandCounts|HistoricalSizingViolates'
+--- PASS: TestEmbeddedClusterGrantsEveryPoolThisProcessOpens
+--- PASS: TestPoolDemandCountsEveryPoolNotJustTheApps
+--- PASS: TestTheHistoricalSizingViolatesTheProperty
+```
+
+**Deployed reality matches the property.** 36 covers 14 of demand twice
+over plus the 3 reserved slots, and the app never came within 5× of it.
+
+### 3. Backends under load — the ceiling holds; sharing is not decidable here
+
+`pg_stat_activity`, sampled at 1 Hz, while 100 concurrent Sky.Live sessions
+were driving the app with its session store in PostgreSQL:
+
+```
+ backend_type                 | state  | count
+------------------------------+--------+-------
+ client backend               | idle   |     6      <- the app's pool
+ client backend               | active |     1      <- the psql doing the counting
+ checkpointer / bgwriter / walwriter / autovacuum / logical repl |  1 each
+```
+
+**6 backends for 100 sessions.** The pool does not open one connection per
+session, and `pg_backends_max` was a flat 6 across every run at 25, 50 and
+100 sessions. Against 33 usable connections that is **18% utilisation** —
+5.5× headroom at a concurrency already past the machine's knee.
+
+Six is exactly `dbSharedAuxPoolSizeFor(2) = aux(2) + analyticsShare(2) +
+telemetryShare(2)` (`runtime-go/rt/db_pool.go:293`).
+
+**But this instance cannot prove the pools share.** The sharing claim is
+that the process opens `aux + 4` backends instead of `3 × aux`. At `aux = 2`
+those are **both 6** — the comment at `db_pool.go:290` claims a "strict
+improvement at every core count", and at the floor it is an equality, not a
+strict improvement. So the observed 6 is *consistent* with sharing and
+equally consistent with three unshared pools of 2. Discriminating them
+needs `aux ≥ 3`, i.e. ≥ 3 vCPU. **The "12 backends → 4" result stands on
+`TestLiveSameDsnConsumersShareOneConnectionSet`, not on this run**, and
+this run should not be cited for it.
+
+Sessions really were persisted: `sky_sessions` held **500** rows, the
+cumulative total across runs — itself a demonstration of the 30-minute TTL
+that makes per-level restarts mandatory.
+
+### 4. Per-session cost with the database
+
+OLS slope of app RSS against *established* sessions, 9 points per
+configuration spanning 25–100:
+
+| config | slope | intercept | measured idle |
+|---|---|---|---|
+| **A** — SQLite/no DB (control) | **1,338 kB/session** | 29.62 MB | 21.24 MB |
+| **B** — embedded PG, `memory` sessions | **1,395 kB/session** | 24.72 MB | 22.89 MB |
+| **C** — embedded PG, `postgres` sessions | **1,764 kB/session** | 19.65 MB | 24.17 MB |
+
+Against the e2-small SQLite figure of **1,450 kB/session**, the control
+here reads 1,338 kB — 8% lower, at a different commit, which is the
+honest size of the run-to-run uncertainty on this measurement.
+
+- **Embedded PostgreSQL with a memory session store adds ~57 kB/session**
+  (1,338 → 1,395), which is inside that uncertainty. Call it **free per
+  session**; its cost is the fixed ~22 MB floor.
+- **A PostgreSQL session store adds ~426 kB/session** (1,338 → 1,764), a
+  real **+32%**. This is paid in the app — codec buffers and pool state —
+  not in the database, whose own footprint is flat in session count.
+
+**The intercept check is weaker here than in the SQLite run and is not
+quoted as corroboration.** That run fitted 6 levels and recovered idle RSS
+to within 1.7 MB. This one fits 3, and the intercepts land 8.4 MB high
+(A), 1.8 MB high (B) and 4.5 MB low (C). Only B's is a clean recovery.
+
+**One caveat that bounds row 6.** The `postgres` store logs
+`idleEvict=5m0s`, and every measurement window here is 60 s. No session was
+ever evicted, so sessions were resident in the app's cache *and* in
+PostgreSQL simultaneously. **1,764 kB/session is therefore the un-evicted
+worst case**; a steady state longer than the eviction interval should be
+cheaper in the app, and this run cannot say by how much.
+
+System-wide, from `MemAvailable` consumed at 100 sessions (median of 3):
+
+| config | consumed | per session, system-wide |
+|---|---|---|
+| A | 157.8 MB | 1,578 kB |
+| B | 161.4 MB | 1,614 kB |
+| C | 243.6 MB | 2,436 kB |
+
+### 5. The load curve — and a spread that was not what it looked like
+
+Sustained throughput, interactions/sec, all three repeats shown because the
+spread is a trend rather than an interval:
+
+| sessions | A (SQLite) | B (PG, mem) | C (PG, pg) |
+|---|---|---|---|
+| 25 | 21.4 · 21.4 · 21.5 | 21.5 · 21.4 · 21.4 | 21.3 · 21.4 · 21.2 |
+| 50 | **41.0** · 21.5 · 21.9 | 26.6 · 20.0 · 21.9 | 19.3 · 19.3 · 19.2 |
+| 100 | 18.3 · 18.3 · 17.0 | 18.2 · 18.5 · 16.5 | 18.0 · 18.2 · 17.2 |
+
+p50 latency (includes the 111 ms wire): 140–145 ms at n=25 for all three;
+176–328 ms at n=50; **1,440–2,256 ms at n=100**.
+
+**The knee is between 25 and 50 sessions**, on all three configurations. At
+25 the server meets the full offered load (21.4/s against 25/s demanded)
+with flat latency; at 50 it delivers ~20/s against 50/s demanded and p95
+crosses 5 s. That is *earlier* than the 50–100 the SQLite e2-small run
+reported, and the reason is visible in the first row: 41.0/s is a
+first-run-on-a-rested-instance number, and the earlier run's 35–42/s peak
+was the same kind of number.
+
+**The apparent config ranking at n=50 is an artifact of run order, and the
+counterbalance proves it.** In `sweep.tsv` the configs always run A, B, C
+within a level, so A always spends the freshest burst credits. Re-running
+n=50 with the order **reversed**:
+
+| order | first run | second | third |
+|---|---|---|---|
+| forward (A,B,C) | **A 41.0/s** | B 26.6/s | C 19.3/s |
+| reversed (C,B,A) | **C 39.9/s** | B 24.8/s | A 21.4/s |
+
+Whichever configuration runs first gets ~40/s; whichever runs third gets
+~21/s. **The spread is position, not configuration.** Config C — embedded
+PostgreSQL with every session written through it — reaches the same 40/s
+burst as bare SQLite when it is given the same credit state.
+
+So the honest statement is: **embedded PostgreSQL has no measurable
+throughput cost on this hardware.** Sustained capacity is ~17–22/s for all
+three configurations at and past the knee, and any single benchmark run
+against a rested e2 instance overstates it by ~2×.
+
+### What could not be measured
+
+1. **Bundle delivery is untested** — see above. The measurements are valid
+   for everything downstream of "PostgreSQL binaries exist".
+2. **Aux-pool sharing is not decidable at 2 vCPU**, because `aux + 4` and
+   `3 × aux` are both 6 there. Needs ≥ 3 vCPU.
+3. **The `postgres` session store's steady state past `idleEvict=5m`** —
+   every window was 60 s, so row 6's per-session figure is the un-evicted
+   worst case.
+4. **PostgreSQL 15, not 18.6.** The distro's version was used;
+   `postgresVersion` defaults to 18.6 and no bundle exists to test it.
+5. **No PSS sample under load.** PSS was taken at idle only, so the
+   postgres tree's true resident cost *under* load is bounded (RSS sum
+   168 MB, `Shmem` 20.8 MB, so most of the gap is double-counting) but not
+   measured. `MemAvailable` covers the system-level question instead.
+6. **Sessions above 100 were not run.** The machine is well past its knee
+   at 100; 250 and 500 would describe a failing server, as they did on the
+   SQLite run.
+7. **No same-region client**, so sub-knee latencies remain UK-specific;
+   subtract ~111 ms.
