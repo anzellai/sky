@@ -531,15 +531,42 @@ Neither has been authorised by the user.
 
 ### 8.3 TEA reflect.MakeFunc dispatch (category 4)
 
+**Scope — read this before citing this section as floor.** What is
+irreducible here is the TEA dispatch itself: the ONE `sky_call(app.view,
+model)` per interaction at `runtime-go/rt/live.go`, where the runtime
+holds a `func(any) any` and the user's `view`/`update` has a concrete
+signature the runtime cannot name. That call is category 4 and it is
+genuinely floor. Measured, it is one reflect call per interaction, not a
+per-element cost.
+
+`rt.SkyCall` is ALSO reached on the per-element path inside the erased
+list helpers (`List_mapAny`, `List_filterMap`, `List_foldlAnyT`,
+`List_indexedMap`, `List_find`). **That path is NOT this section.** §6
+files it as **category 6, "Polymorphic kernel-fn arg"**, closing via the
+§7.4 per-instance kernel σ lever — a call site where the element type
+and the callback shape are statically known can emit a typed loop
+directly. Because the prose below names `rt.SkyCall` without that
+distinction, this section has been mis-cited as floor for a closeable
+category. When establishing floor, cite §6's table, not this heading.
+
 `rt.SkyCall` uses `reflect.MakeFunc` for the `func(any) any` ↔
 `func(T) U` impedance. The MakeFunc closure box-and-unbox is type-erased
-by construction. Closing requires monomorphising every HOF call site
-into a generated typed dispatcher (Go binary size explodes; Sky's
-"one emit per def" principle breaks).
+by construction **at the TEA boundary**, where the runtime genuinely
+cannot know the user's type.
 
-**Floor estimate**: 35-50 sites across a representative example sweep
-(`examples/26-ui-showcase`, `examples/13-skyshop`). The exact count
-moves with example surface area; the architectural ratio is stable.
+**Monomorphisation is not the only route, and the claim that it was is
+disproved.** This section previously said closing requires
+"monomorphising every HOF call site into a generated typed dispatcher
+(Go binary size explodes)". Eta-expanding a func value into a closure at
+the target shape closes the adapter half with **one emit per def, no
+monomorphisation and no binary growth** — measured 1.36×, with the
+adapter census across 56 projects falling 269 → 24 (−91%, 24 projects to
+zero). The "one emit per def" principle is intact.
+
+**Floor estimate**: the category-4 TEA dispatch is **one site per app**,
+exercised once per interaction. The 35-50 figure previously given here
+counted the category-6 per-element sites as well and therefore
+overstated the floor.
 
 ---
 
