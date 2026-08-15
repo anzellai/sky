@@ -94,7 +94,25 @@ func main() {
 	flag.StringVar(&cfg.label, "label", "", "label recorded in the output (e.g. analytics=on)")
 	flag.DurationVar(&cfg.warmup, "warmup", 3*time.Second, "discard interactions from this initial window")
 	flag.BoolVar(&cfg.selfCheckOnly, "self-check", false, "establish one session, do one interaction, print the exchange, exit")
+
+	// Target guards -- see guard.go. Load against anything but loopback is
+	// opt-in, production is refused outright, and the resolved target is
+	// confirmed before the first request.
+	var remoteLoad, assumeYes, prodOverride bool
+	flag.BoolVar(&remoteLoad, "remote-load", false,
+		"permit generating load against a non-loopback target (default: refuse)")
+	flag.BoolVar(&assumeYes, "assume-yes", false,
+		"skip the interactive target confirmation (throwaway targets only)")
+	flag.BoolVar(&prodOverride, "yes-i-will-take-down-production", false,
+		"override the production-host refusal; do not use")
 	flag.Parse()
+
+	// Before ANY request, including -self-check, which is still a real
+	// session against a real server.
+	if err := checkTarget(cfg.baseURL, remoteLoad, prodOverride, assumeYes); err != nil {
+		fmt.Fprintf(os.Stderr, "\n%v\n", err)
+		os.Exit(3)
+	}
 
 	if cfg.selfCheckOnly {
 		if err := selfCheck(cfg); err != nil {
