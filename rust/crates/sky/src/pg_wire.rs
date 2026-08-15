@@ -610,9 +610,7 @@ mod tests {
         use std::io::{Read, Write};
         use std::os::unix::net::UnixListener;
 
-        let dir = std::env::temp_dir().join(format!("sky-pgwire-clear-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = socket_dir("clear");
         let listener = UnixListener::bind(socket_file(&dir, 5432)).unwrap();
 
         let server = std::thread::spawn(move || {
@@ -654,6 +652,208 @@ mod tests {
         assert!(
             !String::from_utf8_lossy(&on_the_wire).contains("a-password-that-must-not-be-sent"),
             "sky put the password on the wire in the clear: {on_the_wire:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A scratch directory short enough to hold a PostgreSQL socket.
+    ///
+    /// `sockaddr_un.sun_path` is 104 bytes on macOS, and `bind` fails with
+    /// "path must be shorter than SUN_LEN" rather than truncating. `TMPDIR` on
+    /// a mac is already ~50 characters and longer than that inside a nix-shell
+    /// or a CI sandbox, so a test that composes its directory name onto it is
+    /// one environment away from a red that has nothing to do with the code.
+    /// Falls back to `/tmp`, which every unix has and which costs 4 characters.
+    fn socket_dir(tag: &str) -> std::path::PathBuf {
+        let name = format!("sky-pgw-{tag}-{}", std::process::id());
+        let base = std::env::temp_dir();
+        // dir + "/" + ".s.PGSQL.65535" (14) + the NUL bind() needs.
+        let dir = if base.as_os_str().len() + name.len() + 16 > 104 {
+            std::path::PathBuf::from("/tmp").join(&name)
+        } else {
+            base.join(&name)
+        };
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Read one typed backend/frontend message, returning its body.
+    fn read_typed(s: &mut std::os::unix::net::UnixStream) -> Vec<u8> {
+        use std::io::Read;
+        let mut t = [0u8; 1];
+        s.read_exact(&mut t).unwrap();
+        let mut head = [0u8; 4];
+        s.read_exact(&mut head).unwrap();
+        let len = i32::from_be_bytes(head) as usize;
+        let mut body = vec![0u8; len - 4];
+        s.read_exact(&mut body).unwrap();
+        body
+    }
+
+    /// An `R` message: the 4-byte auth code followed by whatever it carries.
+    fn auth_msg(code: i32, rest: &[u8]) -> Vec<u8> {
+        let mut m = vec![b'R'];
+        m.extend_from_slice(&((8 + rest.len()) as i32).to_be_bytes());
+        m.extend_from_slice(&code.to_be_bytes());
+        m.extend_from_slice(rest);
+        m
+    }
+
+    /// SCRAM's mutual authentication, driven by a server that cannot prove it
+    /// holds the secret.
+    ///
+    /// This is the half of SCRAM that protects the CLIENT, and the branch that
+    /// enforces it — comparing the server's signature against the one derived
+    /// from the password we hold — had no test at all: `if false && v != expect`
+    /// left the whole crate green. Which is to say the code carried a comment
+    /// reading "skipping this would accept an impostor server" over an assertion
+    /// nothing observed.
+    ///
+    /// What makes it worth a live fake server rather than a recomputed vector:
+    /// `db_shared` runs `ALTER ROLE … PASSWORD` over this connection moments
+    /// after it returns. A server that survives the handshake is handed the
+    /// app's freshly generated password. The impostor here behaves exactly like
+    /// a real PostgreSQL that knows a DIFFERENT password — every field
+    /// well-formed, the signature correctly computed, computed from the wrong
+    /// secret — because a check that only rejects garbage would pass a test
+    /// built from garbage and fail against this.
+    #[test]
+    fn an_impostor_server_that_cannot_prove_the_secret_is_refused() {
+        use std::io::Write;
+        use std::os::unix::net::UnixListener;
+
+        const REAL: &str = "the-password-sky-actually-holds";
+        const GUESS: &str = "a-password-the-impostor-guessed";
+
+        let dir = socket_dir("imp");
+        let listener = UnixListener::bind(socket_file(&dir, 5432)).unwrap();
+
+        let server = std::thread::spawn(move || {
+            use std::io::Read;
+            let (mut s, _) = listener.accept().unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+            // Startup packet — the one message with no type byte.
+            let mut head = [0u8; 4];
+            s.read_exact(&mut head).unwrap();
+            let len = i32::from_be_bytes(head) as usize;
+            s.read_exact(&mut vec![0u8; len - 4]).unwrap();
+
+            // AuthenticationSASL, offering the one mechanism sky implements.
+            s.write_all(&auth_msg(10, b"SCRAM-SHA-256\0\0")).unwrap();
+            s.flush().unwrap();
+
+            // client-first: "SCRAM-SHA-256\0" + i32 length + "n,,n=,r=<nonce>".
+            let body = read_typed(&mut s);
+            let text = String::from_utf8_lossy(&body).to_string();
+            let bare = text[text.find("n=").unwrap()..].to_string();
+            let cnonce = bare.split("r=").nth(1).unwrap().to_string();
+
+            // server-first. The salt is fixed; only the SECRET differs.
+            let salt = *b"0123456789abcdef";
+            let server_first = format!(
+                "r={cnonce}impostor-nonce,s={},i=4096",
+                b64_encode(&salt)
+            );
+            s.write_all(&auth_msg(11, server_first.as_bytes())).unwrap();
+            s.flush().unwrap();
+
+            // client-final: "c=biws,r=…,p=<proof>". The proof is not checked —
+            // an impostor cannot check it either.
+            let body = read_typed(&mut s);
+            let client_final = String::from_utf8_lossy(&body).to_string();
+            let client_final_bare =
+                client_final[..client_final.find(",p=").unwrap()].to_string();
+
+            // A correctly assembled SASLFinal for the WRONG password.
+            let auth_message = format!("{bare},{server_first},{client_final_bare}");
+            let salted = pbkdf2_sha256(GUESS.as_bytes(), &salt, 4096);
+            let server_key = hmac_sha256(&salted, b"Server Key");
+            let v = b64_encode(&hmac_sha256(&server_key, auth_message.as_bytes()));
+            s.write_all(&auth_msg(12, format!("v={v}").as_bytes())).unwrap();
+            s.flush().unwrap();
+
+            // Anything sky says after being told to trust this server. There
+            // must be nothing: the next thing db_shared sends on a connection
+            // it trusts is `ALTER ROLE … PASSWORD`.
+            let mut after = Vec::new();
+            let mut buf = [0u8; 512];
+            while let Ok(n) = s.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                after.extend_from_slice(&buf[..n]);
+            }
+            after
+        });
+
+        let e = match Conn::connect(&Target::Unix(dir.clone(), 5432), "alpha", "alpha", Some(REAL)) {
+            Err(e) => e,
+            Ok(_) => panic!("sky authenticated against a server that never proved it holds the secret"),
+        };
+        assert!(
+            format!("{e}").contains("SCRAM signature did not verify"),
+            "refused, but for another reason: {e}"
+        );
+
+        let after = server.join().unwrap();
+        assert!(
+            after.is_empty(),
+            "sky kept talking to an unverified server: {:?}",
+            String::from_utf8_lossy(&after)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The md5 refusal, asserted the same way as the cleartext one above.
+    ///
+    /// Both are claims about a peer that asks for something weaker than
+    /// scram-sha-256, and only one of them had a peer that asks. md5 is the more
+    /// likely of the two in practice — it is what a `pg_hba.conf` inherited from
+    /// an older cluster still says — and answering it would let that file
+    /// downgrade the cluster without a single client complaining.
+    #[test]
+    fn an_md5_password_request_is_refused_and_no_password_is_sent() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
+
+        let dir = socket_dir("md5");
+        let listener = UnixListener::bind(socket_file(&dir, 5432)).unwrap();
+
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut head = [0u8; 4];
+            s.read_exact(&mut head).unwrap();
+            let len = i32::from_be_bytes(head) as usize;
+            s.read_exact(&mut vec![0u8; len - 4]).unwrap();
+            // AuthenticationMD5Password carries a 4-byte salt.
+            s.write_all(&auth_msg(5, b"salt")).unwrap();
+            s.flush().unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut got = Vec::new();
+            let mut buf = [0u8; 256];
+            if let Ok(n) = s.read(&mut buf) {
+                got.extend_from_slice(&buf[..n]);
+            }
+            got
+        });
+
+        let e = match Conn::connect(
+            &Target::Unix(dir.clone(), 5432),
+            "alpha",
+            "alpha",
+            Some("a-password-that-must-not-be-hashed-either"),
+        ) {
+            Err(e) => e,
+            Ok(_) => panic!("sky accepted md5 authentication"),
+        };
+        assert!(format!("{e}").contains("md5"), "refused for another reason: {e}");
+
+        let on_the_wire = server.join().unwrap();
+        assert!(
+            on_the_wire.is_empty(),
+            "sky answered an md5 challenge: {on_the_wire:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
