@@ -23,6 +23,7 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
@@ -473,6 +474,29 @@ fn skip(reason: &str) {
     let _ = writeln!(e, "SKIPPED (live): {reason}");
 }
 
+/// One live cluster at a time.
+///
+/// Every test below drives a REAL PostgreSQL and a REAL `go build`, and libtest
+/// runs them on as many threads as the machine has cores — so a 4-core CI runner
+/// was starting four clusters and four Go builds at once while asserting things
+/// about process lifetimes under exactly that load. On 2026-08-15 the first four
+/// passed and the last two are the ones `test-rest` was cancelled for.
+///
+/// Serialising costs little that matters: the work was contending for four cores
+/// rather than parallelising across them. What it buys is that the timing these
+/// tests measure is the timing of the thing under test, not of five siblings.
+static ONE_LIVE_CLUSTER_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+/// Hold the live-cluster lock for the rest of the caller's scope.
+///
+/// A test that panics while holding a `Mutex` poisons it, and the next `lock()`
+/// then returns `Err` — so without this the FIRST failure would be followed by
+/// five tests failing on the lock instead of on their own claims, and the real
+/// one would be the hardest of the six to find.
+fn one_at_a_time() -> MutexGuard<'static, ()> {
+    ONE_LIVE_CLUSTER_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).to_string()
 }
@@ -492,6 +516,7 @@ fn both(o: &Output) -> String {
 /// in" principle, observed rather than asserted.
 #[test]
 fn sky_run_starts_a_cluster_injects_the_dsn_and_stops_it_on_exit() {
+    let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-basic") else {
         skip("no PostgreSQL and/or no go toolchain");
         return;
@@ -529,6 +554,7 @@ fn sky_run_starts_a_cluster_injects_the_dsn_and_stops_it_on_exit() {
 /// second app is mid-transaction when its server is shut down underneath it.
 #[test]
 fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
+    let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-refs") else {
         skip("no PostgreSQL and/or no go toolchain");
         return;
@@ -597,6 +623,7 @@ fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
 /// only reason the two verbs are separate.
 #[test]
 fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
+    let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-explicit") else {
         skip("no PostgreSQL and/or no go toolchain");
         return;
@@ -640,6 +667,7 @@ fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
 /// stops the cluster on its own way out.
 #[test]
 fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
+    let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-stale") else {
         skip("no PostgreSQL and/or no go toolchain");
         return;
@@ -695,6 +723,7 @@ fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
 /// app it is replacing.
 #[test]
 fn sky_watch_hands_the_same_cluster_to_the_app_it_spawns() {
+    let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-watch") else {
         skip("no PostgreSQL and/or no go toolchain");
         return;
@@ -798,6 +827,7 @@ fn an_explicit_dsn_alongside_embedded_refuses_to_run() {
 /// for, in a project they cannot run yet.
 #[test]
 fn a_build_failure_never_starts_a_cluster() {
+    let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-badbuild") else {
         skip("no PostgreSQL and/or no go toolchain");
         return;
