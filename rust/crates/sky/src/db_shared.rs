@@ -1703,8 +1703,13 @@ fn verify_the_server_reads_skys_files(layout: &Layout, port: u16, superuser: &st
             .scalar(&format!("SHOW {setting}"))
             .map_err(|e| format!("sky db provision --shared: cannot read {setting}: {e}"))?
             .unwrap_or_default();
-        let same = std::fs::canonicalize(&theirs).ok() == std::fs::canonicalize(&ours).ok()
-            && !theirs.is_empty();
+        // Both sides must RESOLVE and agree. Comparing `canonicalize(..).ok()`
+        // would call two unreadable paths equal on `None == None`, which is the
+        // one answer this check must never give.
+        let same = match (std::fs::canonicalize(&theirs), std::fs::canonicalize(&ours)) {
+            (Ok(theirs), Ok(ours)) => theirs == ours,
+            _ => false,
+        };
         if !same {
             return Err(format!(
                 "sky db provision --shared: this cluster reads its {setting} from\n\
