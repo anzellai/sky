@@ -528,29 +528,375 @@ Nothing from the instance's `.env`, and no credential, appears in this
 repository. The admin token is read on the box, used on the box for the
 localhost metrics scrape, and never transmitted or written down.
 
-## What was not run, and why
+## The active result — load against two throwaway x86 instances
 
-Stated plainly so none of it is mistaken for measured:
+Everything above this heading was passive. What follows was measured by
+applying load to instances created for the purpose and deleted
+afterwards, and it settles the question the passive run could not.
 
-1. **No instance was created, and no load was applied anywhere.**
-   `scripts/skylive-bench-gcp.sh up` was attempted and **denied by the
-   permission system**. Its name guards, its `verify` path and both
-   refusal paths were exercised; `up` and `down` were not. Until they
-   are, treat the lifecycle as unproven code, and run `verify` after the
-   first real `up` regardless of what `down` reports.
-   `verify` was run and reported `VERIFIED CLEAN` — no `sky-bench-*`
-   instance or disk exists in the project, so nothing is billing.
-2. **Per-session RSS on x86 is unmeasured.** It needs load against a
-   bench instance. Everything required is built and cross-compiled
-   (`examples/26-ui-showcase` and `skyliveload`, both linux/amd64) but
-   nothing was deployed.
-3. **The e2-small tier-up curve, the Ops-Agent delta as a session
-   count, and every embedded-PostgreSQL figure** are likewise
-   unmeasured. The embed recipe above is read from source, not from a
-   running system.
-4. **The 45-minute passive window is the only measurement here**, and
-   its own verdict is that it was too quiet to settle the session
-   figure.
+### Conditions, attached to every number below
 
-The benchmark that would settle all of it is specified above and blocked
-only on authorisation to create instances.
+| | |
+|---|---|
+| Targets | `sky-bench-micro` (**e2-micro**) and `sky-bench-small` (**e2-small**), `us-central1-a`, project `settleby` |
+| Both | Debian 12, `Linux 6.1.0-52-cloud-amd64` **x86_64**, 2 shared-core vCPU, 20 GB pd-standard |
+| MemTotal | micro **993,232 kB (970 MB)** · small **2,023,888 kB (1.98 GB)** |
+| Application | **`examples/26-ui-showcase`**, cross-compiled `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`, Go 1.26.1 |
+| `[live]` | `port = 8000`, store defaults to **`memory`**, TTL defaults to **30 min** |
+| systemd | unit `skybench`, **no `MemoryMax`** (see below), `TasksMax=4096`, `LimitNOFILE=65535` |
+| Ops Agent | **ABSENT** for every figure unless the row says `AGENT` |
+| Generator | `tools/skyliveload`, on **macOS arm64, 8 cores, in the UK** — off-box, across the public internet |
+| Think time | 1 s, jitter 0.3 · ramp 20 s · hold 75 s · warmup 5 s |
+| Commit | `ba3c3b1d`, branch `perf/skylive-benchmark` |
+| Raw data | `docs/perf/runs/gcp-x86-20260815/` |
+
+The app was chosen to match the ARM runs. `examples/26-ui-showcase` is
+what `docs/perf/runs/phase2-rss.tsv` measured, so the ARM and x86 numbers
+here are the **same application** — which is exactly what the earlier
+sky-lang.org comparison could not claim, and why that comparison was
+refused above.
+
+**The generator was never the bottleneck, and this is checked rather than
+assumed.** Across all **29 load runs** the generator's own accounting
+reports a maximum of **0.292% of the 8-core generator machine**, and
+`generator_possibly_saturated` is `false` in every one of the 29 result
+files. A saturated generator measures itself; these runs measure the
+server.
+
+**`MemoryMax` is deliberately unset.** Production caps the app at 768 M.
+A cap turns the high-concurrency levels into an OOM cliff, and the
+per-session slope would then be measured against a ceiling rather than
+against demand. Its absence is a stated condition, not an oversight —
+and one consequence of removing it is recorded below, where the e2-micro
+exhausted the whole machine instead.
+
+### Method: why each level restarts the app
+
+`scripts/skylive-load-remote.sh` sweeps 1…500 continuously and sleeps 15 s
+between levels "so sessions drain". **They do not drain.** The memory
+store holds a session until the TTL sweep reaps it and the default TTL is
+30 minutes (`runtime-go/rt/live_store.go:16`, `:489`); the SSE stream
+closes, the session object stays. Over a 5-level × 3-repeat sweep that is
+~2,700 sessions created and essentially none released, so RSS climbs with
+*cumulative sessions created* and any regression against *concurrent*
+sessions is confounded.
+
+Each measurement here therefore restarts `skybench` first, so every level
+starts from a genuinely empty store. The divisor is
+`sessions_established` as the generator counted them, never the number
+requested — at 500 on the e2-micro those differ (447 established), and
+dividing by the request would have understated the per-session cost by
+12%.
+
+### Idle baselines
+
+Sampled for 300 s at 5 s, `/proc/<pid>/status`, zero connections and zero
+`sky_live_msg_total` throughout — genuinely idle, and recorded as such.
+
+| | e2-micro | e2-small |
+|---|---|---|
+| App RSS idle | **22.72 MB** (spread 0.00 MB, n=42) | **21.96 MB** (21.87–23.87, n=42) |
+| MemAvailable | 579 MB | 1,588 MB |
+| Ops Agent | absent | absent |
+
+The e2-micro's zero spread is worth a note against the production
+observation above, which saw a 5.1 MB sawtooth: that sawtooth is the Go
+heap cycling *under traffic*. With no traffic at all there is nothing to
+collect, and RSS is a flat line.
+
+For contrast the same app on ARM idled at **34.2 MB**
+(`phase2-rss.tsv`). Same application, same version, so this one **is** a
+fair ARM-vs-x86 comparison, and x86 idles ~34% lower.
+
+### 1. Per-session RSS on x86 — **~1.4 MB, and 1.1 MB is falsified**
+
+This is the deliverable. RSS was regressed against *established* sessions
+over 26 (micro) and 30 (small) points spanning 1–500 sessions, each with
+its own idle anchor:
+
+| | slope | intercept | measured idle |
+|---|---|---|---|
+| **e2-micro** | **1,378.9 kB/session = 1.35 MB** | 24.4 MB | 22.72 MB |
+| **e2-small** | **1,449.7 kB/session = 1.42 MB** | 21.2 MB | 21.96 MB |
+
+**The intercept is an independent check, and it passes.** Nothing in the
+fit knows the idle baseline, yet the fitted zero-session cost lands
+within 1.7 MB of the separately measured idle RSS on both machines. A
+linear model with a spurious slope would not recover it.
+
+Per level, so the linearity can be inspected rather than taken on trust:
+
+| sessions | e2-micro kB/sess | e2-small kB/sess |
+|---|---|---|
+| 1 | 13,128 | 11,076 |
+| 25 | 1,671 (1,481–1,862) | 1,487 (1,386–1,588) |
+| 50 | 1,430 (1,351–1,508) | 1,393 (1,259–1,527) |
+| 100 | 1,383 (1,105–1,536) | 1,390 (1,350–1,419) |
+| 250 | 1,498 (1,400–1,571) | 1,428 (1,402–1,459) |
+| 500 | 1,291 (447 established) | 1,458 (1,444–1,481) |
+
+**The n=1 row is not a per-session cost and must not be read as one.**
+13 MB for one session is the fixed cost of the first request — arena
+warm-up, buffers, GC headroom — divided by one. It is the clearest
+argument for quoting the slope rather than a ratio at any single level:
+a ratio charges the app's fixed load-time growth to the sessions and
+overstates what the *next* session costs.
+
+**Verdict on ~1.1 MB.** The ARM figure was 1,047 kB at 500 sessions
+(1,047–1,357 across levels). On x86 the slope is **1,379–1,450 kB**, so
+the per-session cost on real GCE hardware is **~30% higher than the ARM
+measurement**, consistently on both machine types and at every level
+above 25. Taken literally, **1.1 MB/session is falsified on x86; the
+figure to size with is ~1.4 MB.**
+
+Taken as the correction it was made to support, it survives easily. The
+sizing docs had guessed 10–100 KB from the size of the Model gob; the
+true cost is **~14–140× that**, and the ARM run's error was in the
+conservative direction.
+
+Restated as capacity, which is what the sizing table actually needs:
+
+| | 1 GB of session budget |
+|---|---|
+| Docs' original guess (10–100 KB) | 10,000–100,000 sessions |
+| ARM measurement (1.1 MB) | ~950 sessions |
+| **x86 measurement (1.4 MB)** | **~730 sessions** |
+
+### 2. The load curves, and where the knee actually falls
+
+Throughput is interactions/sec; each interaction is one
+`POST /_sky/event` returning a real patch set. Every outcome in these
+runs was `ok` — no zero-patch replies inflating the count, which the
+earlier microbenchmark had to discard and re-run for.
+
+**e2-micro (970 MB, 2 shared-core vCPU, 0.25 baseline):**
+
+| sessions | tput/s | p50 ms | p95 ms | p99 ms | err |
+|---|---|---|---|---|---|
+| 1 | 0.9 | 137 | 145 | 150 | 0 |
+| 25 | 17.9 | 143 | 2,087 | 2,897 | 0 |
+| 50 | 11.8 | 214 | 11,693 | 14,405 | 0 |
+| 100 | 12.2 | 3,901 | 22,668 | 27,343 | 1.3% |
+| 250 | 7.6 | 19,498 | 29,027 | 29,506 | **84%** |
+| 500 | 12.9 | 17,245 | 26,741 | 29,201 | **96%** |
+
+**e2-small (1.98 GB, 2 shared-core vCPU, 0.5 baseline):**
+
+| sessions | tput/s | p50 ms | p95 ms | p99 ms | err |
+|---|---|---|---|---|---|
+| 1 | 0.9 | 137 | 146 | 150 | 0 |
+| 25 | 21.5 | 142 | 184 | 216 | 0 |
+| 50 | 35.3 | 179 | 2,027 | 2,821 | 0 |
+| 100 | 29.9 | 1,059 | 8,606 | 12,252 | 0 |
+| 250 | 21.4 | 5,830 | 24,570 | 27,901 | 1.8% |
+| 500 | 16.0 | 17,217 | 28,495 | 29,596 | **79%** |
+
+**The knee is far earlier than the ARM runs suggested.** The ARM 1-CPU
+container knee sat between 100 and 500 sessions and saturated at 88–92
+interactions/sec. On GCE:
+
+- **e2-micro knees between 25 and 50 sessions** and never exceeds
+  ~18/s. That is **5× lower throughput and a 4–10× earlier knee** than
+  the ARM stand-in predicted.
+- **e2-small knees between 50 and 100 sessions**, peaking ~35–42/s.
+
+The ARM run said plainly that its 1-CPU profile was an *optimistic*
+stand-in for the e2-small baseline, being twice the entitlement. That
+caution is now quantified: it was optimistic by roughly **2.5× on
+e2-small and 5× on e2-micro**.
+
+At 250 sessions and above, both machines are past collapse — 79–96% of
+interactions fail. Those throughput figures describe a failing server and
+should not be read as capacity.
+
+### 3. Burst-credit drain — visible, and it makes "variance" the wrong word
+
+The instruction to run three repeats and report variance rather than a
+mean turned out to matter for a reason other than noise. Repeats at a
+fixed level **decline monotonically**:
+
+| | r1 | r2 | r3 |
+|---|---|---|---|
+| e2-micro, n=100 | 17.5/s | 9.6/s | 9.5/s |
+| e2-small, n=100 | 37.6/s | 25.8/s | 26.4/s |
+| e2-micro, n=25 | 21.5/s | 14.3/s | — |
+| e2-small, n=50 | 41.6/s | 28.9/s | — |
+
+This is the **e2 burstable CPU credit model**, which the ARM container
+explicitly could not reproduce — a fixed vCPU allocation has no such
+dynamics. The first run against a rested instance spends accrued credits
+and overstates sustained capacity by **~1.5–2×**.
+
+The operational consequence is blunt: **a single benchmark run against a
+fresh e2 instance measures the burst, not the service.** Sustained
+capacity is the *later* repeats — ~9.5/s on e2-micro and ~26/s on
+e2-small at 100 sessions. Any capacity plan built on a first run will be
+roughly twice as optimistic as the machine can hold.
+
+It also means the spread in the tables above is **not** a confidence
+interval. Where a level's repeats decline in order, the range is a trend,
+and the low end is the number to plan with.
+
+### 4. Network latency — measured, and it dominates only before the knee
+
+The generator ran in the UK against `us-central1-a`, so the wire is in
+every latency figure. It was measured rather than assumed:
+
+| | |
+|---|---|
+| ICMP RTT to both instances | **110.4–113.6 ms, mean 112.0 / 110.7 ms**, 0% loss, stddev 0.9 ms |
+| p50 at n=1 (unsaturated) | **136.8 ms** on both machines |
+| **Implied server time** | **~26 ms** |
+
+So at the bottom of the curve the network is **~81% of p50 and ~74% of
+p99**. Any latency figure at n=1–25 in the tables above is mostly the
+Atlantic.
+
+**It does not dominate p99, because p99 is where queueing lives.** At
+n=50 and beyond, p99 is 2.8–29.6 s against a fixed 111 ms wire — the
+network is **under 1%** and everything else is the server queueing.
+
+The clean split: **network dominates below the knee, queueing dominates
+at and above it.** The knee itself is unaffected, and so are all the
+memory figures. The absolute latencies at n≤25 should be read as
+"UK→us-central1"; subtract ~111 ms for a same-region client.
+
+### 5. The e2-micro ran out of memory before it ran out of sessions
+
+At n=500 the e2-micro established only **447** of 500 sessions, and the
+sampler recorded `MemAvailable` falling from 617 MB to **43.5 MB** with
+app RSS at 591 MB. The following repeat pushed it over: the instance
+stopped answering SSH on both the direct and IAP paths while still
+reporting `RUNNING`, and had to be `reset`.
+
+The arithmetic that predicts it: 500 × 1.4 MB ≈ 700 MB of sessions, plus
+~22 MB of app baseline and ~180 MB of OS, against 970 MB total.
+
+**This is honestly a partially-evidenced claim and is flagged as such.**
+No `oom-kill` line was recoverable — journald stopped writing at the
+onset, which is itself consistent with memory exhaustion but is not the
+kernel saying so. What *is* directly measured is the `MemAvailable`
+collapse to 43.5 MB. The e2-small under the identical run never dropped
+below **870 MB** free.
+
+The practical ceiling therefore differs by resource:
+
+| e2-micro | limit |
+|---|---|
+| **Memory** ceiling | ~450 sessions (measured: 447 established, 43 MB left) |
+| **Usable** ceiling | **~25–50 sessions** (CPU; beyond it, latency is seconds) |
+
+**CPU binds roughly 10× before memory does.** Sizing an e2-micro from
+RAM alone overstates its capacity by an order of magnitude.
+
+### 6. The Ops Agent's cost, in sessions
+
+Both instances started without the agent — it is installed by
+`sky-lang.org/deploy/setup-remote.sh`, not by the GCE image — so this is
+a true A/B rather than a comparison against a differently-configured box.
+It was then installed on `sky-bench-micro` alone, with production's exact
+config (journald logging, the authenticated `/_sky/metrics` scrape, the
+OTLP receiver).
+
+**RSS overstates the cost, so RSS is the wrong number.** Resident:
+
+| process | RSS |
+|---|---|
+| `otelopscol` | 151–156 MB |
+| `fluent-bit` | 31–33 MB |
+| total | **~190 MB** |
+
+But an A/B on `MemAvailable` **within a single boot** — stop the agent,
+wait, re-read — puts the real cost far lower:
+
+| | MemAvailable |
+|---|---|
+| Agent running | 513.1 MB (mean of 5) |
+| Agent stopped | 599.5 MB (mean of 5) |
+| **Cost** | **86.4 MB** |
+
+The 104 MB gap between the two methods is shared and file-backed pages
+that RSS counts and the machine does not lose. Quoting agent RSS would
+have overstated its cost by **2.2×**.
+
+At the measured 1.35 MB/session on this machine, 86.4 MB is:
+
+> **The Ops Agent costs an e2-micro ~64 concurrent sessions of memory
+> headroom.**
+
+**And that is the wrong thing to worry about.** The e2-micro's usable
+ceiling is 25–50 sessions on CPU, so the 64 sessions of memory it gives
+up are sessions the machine could never have served. The honest
+statement is:
+
+> On an e2-micro the Ops Agent costs **~86 MB, ~64 sessions of memory
+> headroom, and approximately nothing you can use** — because the box
+> saturates on CPU at roughly a fifth of that.
+
+This also answers the assumption production made and never checked. The
+embedded console was skipped on this tier as too expensive, and the Ops
+Agent adopted in its place. On memory the swap is defensible; the agent's
+86 MB is real but lands in headroom this machine cannot spend.
+
+**Per-session cost is unchanged by the agent**, which is the result that
+makes the headroom arithmetic above legitimate — the agent takes a fixed
+block, it does not make each session more expensive:
+
+| e2-micro | kB/session, no agent | kB/session, `AGENT` |
+|---|---|---|
+| 25 | 1,481 / 1,862 | 1,541 / 1,954 |
+| 50 | 1,508 / 1,351 | 1,488 / 1,412 |
+| 100 | 1,105–1,536 | 1,252 / 1,261 |
+
+#### The throughput difference is NOT attributed to the agent
+
+Throughput with the agent installed was markedly lower — at n=100,
+**~5.0/s against ~9.5/s** for the sustained (post-credit-drain) runs
+without it. It would be easy, and wrong, to publish that as the agent's
+CPU cost.
+
+Two things prevent that claim:
+
+1. **The runs are not credit-comparable.** The with-agent runs
+   necessarily followed the without-agent runs on the same instance, and
+   e2 burst credits do not reset between them (§3). Credit state is a
+   confound of the same order as the effect.
+2. **The agent's measured CPU is far too small to explain it.** Sampled
+   directly from `/proc/<pid>/stat` over a 30 s window with the app
+   stopped, `otelopscol` + `fluent-bit` together consume **1.87% of one
+   core** (0.93% of the 2-core box). Even several times that under load
+   does not account for halving the throughput of the machine.
+
+So the honest verdict is that **the agent's CPU cost at the knee was not
+measured**, and the throughput gap above is reported as unattributed.
+Separating it needs the two configurations run in alternation on
+credit-matched instances, or two instances measured simultaneously — 
+neither of which this run did.
+
+### What still could not be measured — stated, not manufactured
+
+1. **The `--embed` (embedded-PostgreSQL) variant was not run.** It needs
+   a third instance and instance creation was not available to this run.
+   Every embedded-Postgres figure remains **underived**, exactly as the
+   section above leaves it.
+2. **The Ops Agent's CPU cost at the knee is not separated from
+   burst-credit drain** — see §6. Its idle CPU is measured (1.87% of one
+   core) and its memory cost is a clean within-boot A/B, but the
+   throughput gap is left unattributed rather than credited to it.
+3. **`sky_live_sessions_active` is still never recorded**, so the session
+   count is still the generator's count and not the server's. Everything
+   in the gap analysis above stands; nothing here fixed it.
+4. **No same-region client was measured.** The ~111 ms wire is
+   characterised and subtractable, but a us-central1 generator was not
+   run, so the sub-knee latencies are UK-specific.
+5. **The e2-micro OOM is inferred from `MemAvailable`, not from a kernel
+   message** — see §5.
+
+### Teardown
+
+Both instances carried `maxRunDuration=14400s` with
+`instanceTerminationAction=DELETE` as a backstop, and were additionally
+deleted explicitly. The temporary firewall rule opened for the generator
+(`sky-bench-load-8000`, scoped to a single source address) was deleted
+with them. Verification output is recorded in
+`docs/perf/runs/gcp-x86-20260815/teardown.txt`.

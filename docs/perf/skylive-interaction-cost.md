@@ -157,17 +157,25 @@ On a 2 GB instance that is roughly 1,700 sessions before memory alone
 exhausts — but the throughput knee arrives far earlier, at a few
 hundred. Memory sets the hard ceiling; latency sets the useful one.
 
-> **Still ARM-only.** An attempt to validate this against a real x86 GCP
-> e2-micro is recorded in
-> [`skylive-remote-validation.md`](skylive-remote-validation.md). It
-> established the base RSS on x86 (~56 MB for a real app) but **could
-> not** validate the per-session figure: over a 45-minute window that
-> instance served 6 requests and dispatched **zero** Sky.Live
-> interactions, so there were no concurrent sessions to divide by and
-> the divisor simply does not exist. The 1.1 MB
-> figure is therefore neither confirmed nor falsified on x86. Closing it
-> needs load against a throwaway instance, which that document specifies
-> and does not run.
+> **Superseded on x86: the figure is ~1.4 MB, not ~1.1 MB.** This 1.1 MB
+> was measured on ARM64 under Apple's `container`. It has since been
+> measured on real GCE hardware — the *same* application, under load,
+> with RSS regressed against established session count over 1–500
+> sessions — and the slope is **1,379 kB/session on an e2-micro and
+> 1,450 kB/session on an e2-small**, roughly **30% higher**. See
+> [`skylive-remote-validation.md`](skylive-remote-validation.md), "The
+> active result".
+>
+> Size with **~1.4 MB/session** on x86; ~1 GB of session budget carries
+> **~730** sessions, not ~950. The ARM figure erred in the conservative
+> direction, and the correction this table exists to make — that the
+> docs' original 10–100 KB guess was wrong by one to two orders of
+> magnitude — is unaffected and now stronger.
+>
+> The throughput knee moved much further. On GCE it arrives at **25–50
+> sessions (e2-micro)** and **50–100 (e2-small)**, not the few hundred
+> this ARM run suggested, and an e2-micro's *usable* ceiling is CPU-bound
+> roughly 10× below its memory ceiling.
 
 ## What is measured, and what is not
 
