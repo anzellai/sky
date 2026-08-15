@@ -507,6 +507,13 @@ pub fn app_dsn(app: &str, password: &str, socket_dir: &Path, listen: &Listen) ->
 /// bundle pins 18.6, where the schema default is already closed, but a shared
 /// cluster may be an operator's existing server of any version, so this is
 /// applied rather than assumed.
+///
+/// The scope of the guarantee is exactly the databases sky provisions plus the
+/// two it hardens here. A database an operator creates by hand in this cluster
+/// keeps `PUBLIC`'s default `CONNECT`, and every app role may therefore reach
+/// it — `REVOKE ALL ON DATABASE … FROM PUBLIC` is per-database and there is no
+/// cluster-wide default to set. Sky says "refused by every database sky
+/// provisioned" rather than "and nothing else" for that reason.
 pub fn cluster_hardening_sql(db: &str) -> Vec<String> {
     let mut v = vec![
         "REVOKE ALL ON SCHEMA public FROM PUBLIC".to_string(),
@@ -1726,7 +1733,7 @@ fn provision_app_inner(
         Some(pw) => Ok(format!(
             "sky db provision --shared: app {app} is ready.\n\
              \x20 database: {app}\n\
-             \x20 role:     {app}  (may connect to {app} and to nothing else)\n\
+             \x20 role:     {app}  (refused by every database sky provisioned but {app})\n\
              \n\
              DSN — sky does not write this anywhere; put it in your secret store:\n\
              \x20 {}\n",

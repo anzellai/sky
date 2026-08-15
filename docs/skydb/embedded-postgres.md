@@ -344,6 +344,13 @@ read Ok([[Some("secrets")]])`, and turning the hba line to `trust` yields
 The same two questions are put to **`pg_dump`** — a real libpq client that knows
 nothing about sky's own protocol client — using the DSN exactly as printed.
 
+> **The scope of the guarantee is the databases sky provisions**, plus `postgres`
+> and `template1`, which it hardens. `REVOKE … FROM PUBLIC` is per-database and
+> PostgreSQL has no cluster-wide default to set, so a database an operator
+> creates by hand in this cluster keeps `PUBLIC`'s `CONNECT` and every app role
+> can reach it. `sky db provision --shared --app` therefore says "refused by
+> every database sky provisioned but `<app>`", which is what is true.
+
 **Sky speaks the PostgreSQL protocol itself** (`rust/crates/sky/src/pg_wire.rs`),
 because there is nothing in the shipped set to speak it with: `psql` is excluded
 on licence grounds, `createdb`/`createuser` are not shipped either and could not
