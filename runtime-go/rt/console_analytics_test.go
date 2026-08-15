@@ -19,6 +19,9 @@ func TestAnalyticsRecentEventsPath(t *testing.T) {
 	analyticsStoreInsert(map[string]any{"ts": int64(2), "event": "page_view", "props": map[string]any{"path": "/shop/necklaces", "referrer": "/shop"}})
 	analyticsStoreInsert(map[string]any{"ts": int64(3), "event": "signup", "props": map[string]any{"plan": "pro"}}) // no path
 
+	// Buffered writer — drain before reading the handle directly.
+	analyticsFlushPending()
+
 	recent := analyticsRecentEvents(db)
 	if len(recent) != 3 {
 		t.Fatalf("want 3 recent events, got %d: %+v", len(recent), recent)

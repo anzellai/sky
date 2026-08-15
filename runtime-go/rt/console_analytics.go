@@ -86,6 +86,9 @@ func HandleConsoleAnalytics(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, out)
 		return
 	}
+	// Drain the buffered writer first, so the console shows the events the
+	// app has just emitted rather than the ones from a quarter-second ago.
+	analyticsFlushPending()
 
 	_ = db.QueryRow(`SELECT count(*) FROM analytics_events`).Scan(&out.Total)
 	_ = db.QueryRow(

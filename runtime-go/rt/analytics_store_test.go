@@ -1,17 +1,26 @@
 package rt
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"testing"
 )
 
 func resetAnalyticsStore() {
+	// Stop the buffered writer BEFORE closing the handle it writes through:
+	// the flusher goroutine holds `db`, and closing underneath it would race
+	// an in-flight batch against `sql.DB.Close`.
+	if analyticsWriterInst != nil {
+		analyticsWriterInst.shutdown(context.Background())
+		analyticsWriterInst = nil
+	}
 	if analyticsStoreDB != nil {
 		analyticsStoreDB.Close()
 		analyticsStoreDB = nil
 	}
 	analyticsStoreOnce = sync.Once{}
+	analyticsWriteErrWarnOnce = sync.Once{}
 }
 
 // TestAnalyticsStore — events persist to the resolved SQLite store with
@@ -34,6 +43,10 @@ func TestAnalyticsStore(t *testing.T) {
 		"ts": int64(456), "event": "e2", "anonymous_id": "anon_x",
 		"user_id": "u9", "context": map[string]any{"ip": "1.2.3.0"},
 	})
+	// Writes are buffered (analytics_writer.go). This test reads the handle
+	// directly rather than through a read path that flushes for itself, so it
+	// asks the writer to drain — the same call console_analytics.go makes.
+	analyticsFlushPending()
 
 	var n int
 	if err := db.QueryRow(`SELECT count(*) FROM analytics_events`).Scan(&n); err != nil {
