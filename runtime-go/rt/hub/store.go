@@ -99,8 +99,38 @@ CREATE INDEX IF NOT EXISTS idx_span_time
 
 const timeFormat = "2006-01-02 15:04:05.000"
 
-// flushInterval governs how often the batcher commits.
-const flushInterval = 200 * time.Millisecond
+// defaultFlushInterval governs how often the batcher commits on time —
+// the "or interval" half of "size or interval, whichever comes first".
+// It bounds how long an item can sit unwritten on a hub that is not busy
+// enough to fill a batch.
+const defaultFlushInterval = 200 * time.Millisecond
+
+// flushInterval reads the batcher's tick through an override, and is a
+// function over a var rather than a const for one reason: it is the knob that
+// proves FlushSync is a real synchronisation and not a race that happens to be
+// won.
+//
+// Until this was fixed, FlushSync polled for an empty queue and then slept
+// `flushInterval + 50ms`. Raising this interval out of reach — a tuning change
+// nobody would look at twice — turned EIGHTEEN tests in this package red,
+// including `logs=384, want 500`: the exact count CI reported. Seventeen of
+// them reported zero rows, because an empty queue means the batcher has TAKEN
+// the items, not that it has committed them; only the 500-row test had enough
+// entries for the size trigger to commit three batches (3 x 128 = 384) before
+// the read. Every one of those tests was passing on the ticker rather than on
+// the flush they called.
+//
+// `TestMain` pins this to an hour for the whole package, so any regression to
+// an interval-dependent flush fails immediately and locally rather than
+// intermittently on a loaded runner.
+func flushInterval() time.Duration {
+	if d := flushIntervalOverride.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	return defaultFlushInterval
+}
+
+var flushIntervalOverride atomic.Int64
 
 // flushBatchSize triggers an early commit when the in-RAM batch
 // fills up before flushInterval elapses.
@@ -121,9 +151,21 @@ type Store struct {
 	opts storeOptions
 
 	queue chan pendingItem
-	stop  chan struct{}
-	wg    sync.WaitGroup
-	ready atomic.Bool
+	// flushReq carries a caller's request for a synchronous drain. The batcher
+	// closes the handed-in channel once every item queued before the request
+	// has been COMMITTED, which is the happens-before edge the old
+	// poll-and-sleep FlushSync never established. Unbuffered on purpose: the
+	// rendezvous is what guarantees the batcher has seen the request.
+	flushReq chan chan struct{}
+	stop     chan struct{}
+	wg       sync.WaitGroup
+	ready    atomic.Bool
+
+	// closeOnce + closed make Close a real barrier for EVERY caller, not only
+	// the one that wins the race to start the drain. See Close.
+	closeOnce sync.Once
+	closed    chan struct{}
+	closeErr  error
 
 	insertedTotal atomic.Uint64
 	droppedTotal  atomic.Uint64
@@ -169,11 +211,13 @@ func newStore(dataDir string, opts storeOptions) (*Store, error) {
 	}
 
 	s := &Store{
-		db:    db,
-		path:  path,
-		opts:  opts,
-		queue: make(chan pendingItem, HubBufferCap),
-		stop:  make(chan struct{}),
+		db:       db,
+		path:     path,
+		opts:     opts,
+		queue:    make(chan pendingItem, HubBufferCap),
+		flushReq: make(chan chan struct{}),
+		stop:     make(chan struct{}),
+		closed:   make(chan struct{}),
 	}
 	s.ready.Store(true)
 	s.wg.Add(2)
@@ -207,25 +251,58 @@ func (s *Store) Insert(items []pendingItem) {
 	}
 }
 
-// Close drains the queue and shuts down the batcher + pruner. Idempotent.
+// Close drains the queue and shuts down the batcher + pruner. Idempotent, and
+// idempotent in the sense that matters: EVERY caller blocks until the drain has
+// committed, not only the first one.
+//
+// The previous guard was `ready.CompareAndSwap(true, false)`, which returned
+// nil immediately to a second caller while the first was still draining. That
+// made "Close returned, so the data is on disk" true for one goroutine and
+// false for the other — the same defect as the old FlushSync, one layer up,
+// and the version of it that costs real data rather than a red test.
 func (s *Store) Close() error {
-	if !s.ready.CompareAndSwap(true, false) {
-		return nil
-	}
-	close(s.stop)
-	s.wg.Wait()
-	return s.db.Close()
+	s.closeOnce.Do(func() {
+		s.ready.Store(false)
+		close(s.stop)
+		// The batcher's stop branch commits everything queued before it
+		// returns; waiting on the WaitGroup is what turns that into a promise
+		// the caller can rely on.
+		s.wg.Wait()
+		s.closeErr = s.db.Close()
+		close(s.closed)
+	})
+	<-s.closed
+	return s.closeErr
 }
 
 // batcher drains queue, flushes every flushInterval (or every
 // flushBatchSize items, whichever first). On stop, fully drains
 // the channel before exiting so a Close() right after Insert
 // doesn't lose entries.
+//
+// Three things end a batch: the size cap, the interval, and an explicit
+// synchronous flush request. The last is what gives callers read-your-writes
+// against an asynchronous writer — see FlushSync. This is the same shape as
+// `analyticsWriter.run` and `telemetry.persistence.flusher`, reused rather
+// than reinvented.
 func (s *Store) batcher() {
 	defer s.wg.Done()
-	tick := time.NewTicker(flushInterval)
+	tick := time.NewTicker(flushInterval())
 	defer tick.Stop()
 	batch := make([]pendingItem, 0, flushBatchSize)
+	// coalesce pulls everything already queued into the current batch, up to
+	// the size cap — a burst of N items becomes ceil(N/128) transactions
+	// rather than N.
+	coalesce := func() {
+		for len(batch) < flushBatchSize {
+			select {
+			case item := <-s.queue:
+				batch = append(batch, item)
+			default:
+				return
+			}
+		}
+	}
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -235,28 +312,40 @@ func (s *Store) batcher() {
 		}
 		batch = batch[:0]
 	}
+	// drainAll commits everything currently queued, not merely one batch.
+	drainAll := func() {
+		for {
+			coalesce()
+			flush()
+			if len(s.queue) == 0 {
+				return
+			}
+		}
+	}
 	for {
 		select {
 		case <-s.stop:
-			// Drain pending items so an in-flight burst at the
-			// moment of shutdown reaches disk before Close.
-			for {
-				select {
-				case item := <-s.queue:
-					batch = append(batch, item)
-					if len(batch) >= flushBatchSize {
-						flush()
-					}
-				default:
-					flush()
-					return
-				}
-			}
+			// Final drain. Everything that reached the queue before the stop
+			// is committed before this goroutine returns, and Close waits on
+			// the WaitGroup — so "the hub store is flushed on shutdown" is a
+			// guarantee the caller can rely on rather than a signal and a hope.
+			drainAll()
+			return
+
+		case done := <-s.flushReq:
+			// A caller is waiting. Drain to empty before closing `done`: every
+			// item enqueued before the request must be committed by the time
+			// the caller observes the close.
+			drainAll()
+			close(done)
+
 		case item := <-s.queue:
 			batch = append(batch, item)
+			coalesce()
 			if len(batch) >= flushBatchSize {
 				flush()
 			}
+
 		case <-tick.C:
 			flush()
 		}
@@ -716,18 +805,50 @@ func (s *Store) Stats() (inserted, dropped uint64) {
 	return s.insertedTotal.Load(), s.droppedTotal.Load()
 }
 
-// FlushSync waits for any in-flight queue entries to commit. Tests
-// only — production code lets the 200 ms tick handle latency.
+// FlushSync asks the batcher to drain synchronously and waits for it. When it
+// returns, every item enqueued by the calling goroutine before the call has
+// been committed and is visible to any reader of the database.
+//
+// # Why this is a rendezvous and not a sleep
+//
+// It used to poll until `len(s.queue) == 0` and then sleep one flush interval
+// plus 50 ms. Both halves were wrong, and together they produced a package
+// that was green on a quiet laptop and red on a loaded CI runner:
+//
+//   - AN EMPTY QUEUE IS NOT A COMMITTED WRITE. The batcher moves items out of
+//     the channel into a local slice and commits them later, so the queue
+//     reaches zero at the moment the data is LEAST durable — in one
+//     goroutine's stack, in no transaction.
+//
+//   - The trailing sleep was covering that gap by out-waiting the batcher's
+//     own ticker. That is not synchronisation, it is a race with a handicap:
+//     it holds only while the runner schedules the batcher promptly and the
+//     three SQLite transactions it still owes finish inside 250 ms. Under
+//     `-race` they did not, and CI reported `logs=384, want 500` — three
+//     size-triggered batches committed, the 116-item remainder still in the
+//     batcher's hands.
+//
+// The batcher now answers an explicit request and closes the caller's channel
+// only after the drain has COMMITTED, which is a happens-before edge rather
+// than a probability. `timeout` bounds the wait so a wedged batcher degrades
+// the caller instead of hanging it.
 func (s *Store) FlushSync(timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if len(s.queue) == 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	done := make(chan struct{})
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case s.flushReq <- done:
+	case <-s.stop:
+		// Already shutting down; the stop drain commits the queue and Close is
+		// what waits for it.
+		return
+	case <-timer.C:
+		return
 	}
-	// One extra tick for the in-flight batch.
-	time.Sleep(flushInterval + 50*time.Millisecond)
+	select {
+	case <-done:
+	case <-timer.C:
+	}
 }
 
 // RunPruneNow triggers the prune sweep synchronously. Tests use

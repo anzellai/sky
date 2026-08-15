@@ -35,6 +35,17 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// The batcher's timer is pinned out of reach for the WHOLE package.
+	//
+	// Every test here that writes and then reads calls FlushSync, and until
+	// that helper became a real rendezvous, every one of them was passing on
+	// this ticker instead — raising it to an hour turned eighteen tests red,
+	// seventeen of them reporting zero rows and one reporting the 384-of-500
+	// that CI reported. A test that needs the timer to fire is asserting that
+	// it won a race; with the pin in place, a passing test is asserting
+	// synchronisation. See `flushInterval` in store.go.
+	flushIntervalOverride.Store(int64(time.Hour))
+
 	dir, err := os.MkdirTemp("", "sky-hub-mount-test-")
 	if err != nil {
 		panic(err)
