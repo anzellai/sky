@@ -162,3 +162,88 @@ func resetShutdownHooksForTesting() {
 	shutdownRan = false
 	shutdownDone = make(chan struct{})
 }
+
+// ---------------------------------------------------------------------------
+// The release phase — resources the drain was still using
+// ---------------------------------------------------------------------------
+
+// A resource closer is NOT a shutdown hook, and the distinction is the whole
+// point of having a second registry.
+//
+// A hook DRAINS: it flushes telemetry, pushes the last batch, persists what is
+// buffered. Hooks are the things that still WRITE while the process is on its
+// way out. A resource closer RELEASES the thing they were writing to — a pooled
+// database handle, a session store's cleanup goroutine, a Redis client. Put a
+// release on the hook chain and its LIFO position decides whether it lands
+// before or after the writers, which is a coin flip nobody wants to be
+// depending on. Give it its own phase and the ordering is a property of the
+// sequence instead of a property of registration order.
+//
+// This is the same phase separation pg_embed.go's supervisor already applies to
+// the embedded database: stop accepting → drain → stop PostgreSQL. The database
+// is a resource, and the reason it is stopped last is the reason these run after
+// the drain.
+var (
+	releaseMu       sync.Mutex
+	resourceClosers []namedStopper
+)
+
+// RegisterResourceCloser records something to release AFTER the drain. Called
+// by whatever OWNS the resource, at the point it creates it (chooseStore for a
+// Sky.Live session store), so there is no second wiring step for a caller to
+// forget.
+func RegisterResourceCloser(name string, fn func()) {
+	if fn == nil {
+		return
+	}
+	releaseMu.Lock()
+	resourceClosers = append(resourceClosers, namedStopper{name, fn})
+	releaseMu.Unlock()
+}
+
+// runResourceClosers releases every registered resource, LIFO, and drains the
+// registry so a second termination path cannot double-release. A panicking
+// closer is contained: the process is exiting, and one broken teardown must not
+// skip the rest.
+func runResourceClosers() {
+	releaseMu.Lock()
+	list := append([]namedStopper(nil), resourceClosers...)
+	resourceClosers = nil
+	releaseMu.Unlock()
+	for i := len(list) - 1; i >= 0; i-- {
+		func(s namedStopper) {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "[sky.shutdown] resource closer %q panicked: %v\n", s.name, r)
+				}
+			}()
+			s.fn()
+		}(list[i])
+	}
+}
+
+func resetResourceClosersForTesting() {
+	releaseMu.Lock()
+	resourceClosers = nil
+	releaseMu.Unlock()
+}
+
+// drainAndRelease is the tail every app shape's termination sequence shares:
+// drain, stop accepting, WAIT for the drain to have actually finished, then
+// release. closeListener may be nil when the caller has already stopped
+// accepting (the embedded-PostgreSQL supervisor runs its accept-stoppers first).
+//
+// The await is not belt-and-braces. Each app shape installs its own signal
+// handler and they all call RunShutdownHooks; the first caller claims the chain
+// and every later caller returns IMMEDIATELY, with the hooks still in flight.
+// Releasing on that return would take the store away from the drain that is
+// still writing — the defect this whole phase exists to avoid, arrived at from
+// the other direction.
+func drainAndRelease(budget time.Duration, closeListener func()) {
+	RunShutdownHooks(budget)
+	if closeListener != nil {
+		closeListener()
+	}
+	awaitShutdownHooks(budget)
+	runResourceClosers()
+}

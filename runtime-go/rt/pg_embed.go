@@ -880,9 +880,12 @@ func (s *pgSupervisor) shutdown(budget time.Duration) {
 	// Phase 1 — stop accepting.
 	runAcceptStoppers()
 
-	// Phase 2 — drain, and WAIT for it, whoever started it.
-	RunShutdownHooks(budget)
-	awaitShutdownHooks(budget)
+	// Phase 2 — drain, and WAIT for it, whoever started it. Then release the
+	// resources the drain was using (the session store's pooled handle among
+	// them) — still BEFORE the database, since those handles point AT it and a
+	// pool released cleanly is a pool `pg_ctl -m fast` has nothing to roll back.
+	// The listener is already closed by phase 1, so no closeListener here.
+	drainAndRelease(budget, nil)
 
 	// Phase 3 — and only now, the database.
 	s.stopPostgres()

@@ -9313,9 +9313,11 @@ func Server_listen(port any, routes any) any {
 		// v0.16.1: drain HubExporter (and any other shutdown
 		// hook) BEFORE srv.Close so pending telemetry pushes
 		// reach the hub within Cloud Run / k8s grace windows.
-		// 8 s budget matches Sky.Live's signal handler.
-		RunShutdownHooks(8 * time.Second)
-		_ = srv.Close()
+		// 8 s budget matches Sky.Live's signal handler. The
+		// release phase that follows the drain closes whatever
+		// registered a resource closer (a mounted sub-app's
+		// session store, on this shape).
+		drainAndRelease(8*time.Second, func() { _ = srv.Close() })
 	}()
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
 	err := srv.ListenAndServe()

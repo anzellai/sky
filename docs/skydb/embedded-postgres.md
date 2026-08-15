@@ -790,10 +790,21 @@ so a misconfigured project does not sit through a compile to be told.
    carries embedded migrations, apply or report them against the cluster just
    started, and exit — a deployed binary self-migrates with no source tree and
    no `sky` on the host. Otherwise connect and boot the app.
-5. On `SIGTERM`: stop accepting → drain → **then** `pg_ctl stop -m fast`.
-   Ordering matters; stopping the database first turns a clean deploy into a
-   page of errors. The last step is skipped for a cluster this process adopted
-   rather than started.
+5. On `SIGTERM`: stop accepting → drain → release → **then**
+   `pg_ctl stop -m fast`. Ordering matters; stopping the database first turns a
+   clean deploy into a page of errors. The last step is skipped for a cluster
+   this process adopted rather than started.
+
+   "Release" is its own phase, not an entry on the drain's hook chain. Hooks are
+   the things that still *write* on the way out (the hub exporter, the analytics
+   writer, telemetry-persistence); a release closes the thing they were writing
+   to — a pooled handle, the Sky.Live session store, a Redis client. On the hook
+   chain a release's LIFO position would decide whether it landed before or after
+   the writers; in its own phase the ordering is a property of the sequence.
+   Register with `rt.RegisterResourceCloser` at the point the resource is
+   created; `drainAndRelease` (`runtime-go/rt/shutdown.go`) is the shared tail
+   every app shape runs, so a Sky.Live app gets the same order with or without an
+   embedded cluster.
 
 P5 ships this as `runtime-go/rt/pg_embed*.go`. Four details it settled on
 contact with the code:

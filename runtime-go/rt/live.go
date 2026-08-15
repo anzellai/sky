@@ -3951,14 +3951,21 @@ func liveAppRun(cfg any) any {
 		// LIFO order — HubExporter (registered last, during boot)
 		// runs first; future v0.17+ hooks fan out from here. No-op
 		// when no exporter / no hooks are registered.
-		RunShutdownHooks(8 * time.Second)
+		//
 		// v0.16.0: the inline console runs in-process, so there's
 		// no child to tear down. Pre-v0.16.0 this section closed
 		// srv.Close() FIRST (to drain in-flight reverse-proxy
 		// requests) then ShutdownSubApps() to signal the console
 		// child. Now the console handler runs on the same mux, so
 		// closing the server is sufficient.
-		_ = srv.Close()
+		//
+		// The release phase then closes the session store — which
+		// until v0.20.4 NOTHING did, so its cleanup goroutine and
+		// its backing handle were left to process exit. It runs
+		// after the drain deliberately: a store closed while the
+		// hook chain is still flushing telemetry is a store taken
+		// away from a writer. See drainAndRelease.
+		drainAndRelease(8*time.Second, func() { _ = srv.Close() })
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,
 		// a second Ctrl-C escapes via os.Exit. Without this watchdog,

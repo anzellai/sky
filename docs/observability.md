@@ -42,6 +42,31 @@ Auto-instrumented (Tier 1 — always on):
   that collector (Tempo / Jaeger / Honeycomb / Datadog / Cloud
   Trace — anything that speaks OTLP).
 
+### Watching the hub itself
+
+The console hub is a collector, so the usual question — "is anything being
+lost?" — has to be answerable *about the hub*, not only about the apps pushing
+into it. Its HTTP surface:
+
+| Endpoint | Auth | What it is for |
+|---|---|---|
+| `POST /v1/traces`, `/v1/metrics`, `/v1/logs` | bearer (`token`/`app` modes) | OTLP ingest |
+| `GET /_hub/healthz` | open | liveness — reveals nothing beyond "up", so probes reach it without a token |
+| `GET /_hub/readyz` | open | 503 while the store is not ready |
+| `GET /_hub/metrics` | bearer | the hub's own counters, Prometheus text exposition |
+
+`/_hub/metrics` reports `sky_hub_items_inserted_total` and
+`sky_hub_items_dropped_total`. The second is the one to alert on: the hub drops
+at its queue boundary when the batcher falls behind the receiver, and a drop is
+the one event it cannot recover from. A saturated burst also writes one warn
+line per minute naming the cap and the count, but a log line is not a rate — the
+counter is what a dashboard can graph and an alert can fire on.
+
+It is auth-gated where the two probes are not, because ingest volume and loss
+are operational facts about the deployment while liveness is not. Under
+`auth = "off"` the gate is a pass-through, so a single-operator hub scrapes it
+with no configuration.
+
 ## Opt-in: application-level spans
 
 When you want a named, logical span that groups the auto-spans
