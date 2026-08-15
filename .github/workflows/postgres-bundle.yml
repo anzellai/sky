@@ -237,8 +237,19 @@ jobs:
       # release no client will ever look for, and every provision 404s against
       # a release that visibly exists. The two are checked against each other
       # here rather than left to whoever cuts the tag remembering the rule.
-      - name: The tag must name the pinned PostgreSQL version
-        if: startsWith(github.ref, 'refs/tags/')
+      # NO `if:` HERE. The first version of this step carried
+      # `if: startsWith(github.ref, 'refs/tags/')` while the job itself runs on
+      # `… || inputs.publish` — so a workflow_dispatch from a branch ran the
+      # job, SKIPPED the guard, and published a release tagged with the branch
+      # name. That is exactly the unresolvable release the guard exists to
+      # prevent, reachable through the one path the guard did not cover.
+      #
+      # The tag is now DERIVED from the pin and exported, and `tag_name:` below
+      # consumes that value rather than `github.ref_name`. A tag push must match
+      # it; a manual dispatch publishes under it. Either way the published tag
+      # is the one `sky db provision --embed` computes.
+      - name: Derive the release tag from the pinned PostgreSQL version
+        id: tag
         run: |
           set -euo pipefail
           # shellcheck disable=SC2016  # the ${PG_VERSION:-…} here is the literal
@@ -251,18 +262,24 @@ jobs:
             exit 1
           }
           want="postgres-bundle-v${pinned}"
-          got="${GITHUB_REF_NAME}"
-          if [ "$got" != "$want" ]; then
-            echo "release tag '${got}' does not match the pinned PostgreSQL version." >&2
+
+          # On a tag push the tag is the operator's assertion about what this
+          # release is; if it disagrees with the pin, one of the two is wrong
+          # and guessing which would be the mistake.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "$want" ]; then
+            echo "release tag '${GITHUB_REF_NAME}' does not match the pinned" \
+                 "PostgreSQL version." >&2
             echo "expected exactly '${want}'." >&2
             echo >&2
             echo "sky db provision --embed derives its download URL from the pin," \
-                 "so publishing under '${got}' produces a release that clients" \
-                 "cannot resolve. Retag, or move the pin in" \
+                 "so publishing under '${GITHUB_REF_NAME}' produces a release that" \
+                 "clients cannot resolve. Retag, or move the pin in" \
                  "scripts/skydb/build-postgres-bundle.sh first." >&2
             exit 1
           fi
-          echo "tag '${got}' matches the pinned version ${pinned}"
+
+          echo "release tag: ${want} (pinned PostgreSQL ${pinned}, ref ${GITHUB_REF_NAME})"
+          echo "tag=${want}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
         with:
@@ -323,7 +340,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          # The DERIVED tag, never github.ref_name — on a manual dispatch that
+          # is a branch name, and a release published under one is invisible to
+          # every client.
+          tag_name: ${{ steps.tag.outputs.tag }}
           files: release/*
           body: |
             PostgreSQL bundles for `sky build --embed` and `sky db provision --embed`.
