@@ -336,7 +336,21 @@ mkdir -p "$BUNDLE/bin" "$BUNDLE/lib" "$BUNDLE/share"
 #   │ so a psql added here would link cleanly and ship a binary we     │
 #   │ never decided to ship.                                           │
 #   └──────────────────────────────────────────────────────────────────┘
-SHIPPED_BINARIES=(postgres initdb pg_ctl pg_dump pg_restore)
+# `pg_dumpall` is here because roles are CLUSTER-wide while `pg_dump` is
+# per-database. On a shared cluster (database-per-app, role-per-app) a pg_dump
+# of one database restores into a cluster that has none of its roles, and fails
+# on the first `OWNER TO` — an un-restorable backup, which is the worst kind,
+# because it looks like a backup right up until you need it. `pg_dumpall
+# --roles-only` is what makes the dump restorable.
+#
+# It links libpq, not readline, so it costs nothing on licence grounds — and
+# the gate walks it either way rather than taking that on trust.
+#
+# `psql` is NOT here and must not be added: it links GNU readline (GPL-3.0),
+# and the licence gate does NOT backstop that decision — under
+# `--without-readline` psql links cleanly and would pass. This list is the
+# enforcement. See docs/skydb/embedded-postgres.md.
+SHIPPED_BINARIES=(postgres initdb pg_ctl pg_dump pg_dumpall pg_restore)
 for b in "${SHIPPED_BINARIES[@]}"; do
   [ -x "${STAGED}/bin/${b}" ] || die "expected binary missing from install: ${b}"
   command cp -f "${STAGED}/bin/${b}" "${BUNDLE}/bin/${b}"
