@@ -14,6 +14,8 @@
 #   MEM_GUARD_PROC_MB        per-process RSS kill threshold (MB).      default 6000
 #   MEM_GUARD_PANIC_MB       claude/ghostty kill threshold (MB).        default 10000
 #   MEM_GUARD_SYS_FLOOR_MB   free+inactive memory floor (MB).           default 1200
+#   MEM_GUARD_SWAP_PCT       swap-utilisation ceiling (percent).        default 80
+#                            0 disables the swap signal.
 #   MEM_GUARD_INTERVAL       poll interval (seconds).                   default 2
 #   MEM_GUARD_LOG            log file path.                             default /tmp/mem-guard.log
 #   MEM_GUARD_DRY            set to 1 to log only, never kill.          default unset
@@ -35,6 +37,7 @@ set -euo pipefail
 PROC_LIMIT_MB="${MEM_GUARD_PROC_MB:-6000}"
 PANIC_LIMIT_MB="${MEM_GUARD_PANIC_MB:-10000}"
 SYS_FLOOR_MB="${MEM_GUARD_SYS_FLOOR_MB:-1200}"
+SWAP_PCT="${MEM_GUARD_SWAP_PCT:-80}"
 INTERVAL="${MEM_GUARD_INTERVAL:-2}"
 LOG="${MEM_GUARD_LOG:-/tmp/mem-guard.log}"
 DRY="${MEM_GUARD_DRY:-}"
@@ -60,6 +63,38 @@ free_mb() {
     '
 }
 
+# Swap utilisation, as a whole percent of the current swap total.
+#
+# free_mb() alone cannot see the failure this script exists to prevent. macOS
+# compresses aggressively, so free+inactive keeps reading healthy while the
+# machine pages itself to a standstill: measured during a real incident,
+# free ran 33-59% for the whole episode while swap climbed to 11.4G of 12.3G
+# and the host had to be hard-killed. SYS_FLOOR_MB was never breached, so the
+# guard could not have fired. Swap utilisation is the signal that moved.
+#
+# Percent-of-total rather than an absolute floor, because macOS grows the swap
+# file on demand — an absolute "free swap" number is meaningless when the
+# denominator moves. Prints 0 when swap is absent or unparseable, so an
+# unexpected sysctl format degrades to "no swap pressure" rather than to a
+# kill storm.
+swap_pct() {
+    # `|| true` is load-bearing: this script runs under `set -euo pipefail`, so
+    # a failing sysctl would fail the pipeline, fail the `swap=$(swap_pct)`
+    # substitution, and take the whole watchdog down — turning a missing
+    # reading into no guard at all. Degrade to "no swap pressure" instead.
+    local raw
+    raw="$(sysctl -n vm.swapusage 2>/dev/null || true)"
+    printf '%s\n' "$raw" | awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "total")     { gsub(/[^0-9.]/, "", $(i+2)); total = $(i+2) + 0 }
+                else if ($i == "used") { gsub(/[^0-9.]/, "", $(i+2)); used  = $(i+2) + 0 }
+            }
+        }
+        END { if (total > 0) printf "%d\n", (used * 100) / total; else print 0 }
+    '
+}
+
 kill_proc() {
     local pid="$1" rss_mb="$2" comm="$3" reason="$4"
     if [[ -n "$DRY" ]]; then
@@ -78,12 +113,36 @@ kill_proc() {
 
 trap 'log "stopping (signal)"; exit 0' INT TERM
 
-log "starting (proc=${PROC_LIMIT_MB}MB panic=${PANIC_LIMIT_MB}MB sys_floor=${SYS_FLOOR_MB}MB poll=${INTERVAL}s dry=${DRY:-no})"
+log "starting (proc=${PROC_LIMIT_MB}MB panic=${PANIC_LIMIT_MB}MB sys_floor=${SYS_FLOOR_MB}MB swap_pct=${SWAP_PCT}% poll=${INTERVAL}s dry=${DRY:-no})"
 
 while :; do
     free=$(free_mb)
+
+    # Swap does not trigger a kill on its own — macOS never reclaims swap
+    # eagerly, so utilisation is a high-water mark and reads high on a
+    # perfectly healthy machine (88% here, right now, with 76% memory free).
+    # What a full swap file DOES mean is that the usual floor is too late:
+    # there is no longer anywhere to page to, so the margin between "floor
+    # breached" and "machine unusable" has gone. So swap raises the floor
+    # rather than firing.
+    #
+    # Against the real incident: free+inactive held ~1500MB — above the
+    # 1200MB floor, so the guard stayed silent — while swap ran 93% and the
+    # host had to be hard-killed. A doubled floor of 2400MB fires there, and
+    # does not fire in today's healthy 88%-swap state.
+    floor=$SYS_FLOOR_MB
+    swap=0
+    if (( SWAP_PCT > 0 )); then
+        swap=$(swap_pct)
+        (( swap >= SWAP_PCT )) && floor=$(( SYS_FLOOR_MB * 2 ))
+    fi
+
     pressure=0
-    (( free < SYS_FLOOR_MB )) && pressure=1
+    pressure_why=""
+    if (( free < floor )); then
+        pressure=1
+        pressure_why="system free=${free}MB below floor=${floor}MB (swap ${swap}% of total)"
+    fi
 
     # Snapshot watched processes by RSS desc. ps RSS is in KB.
     # We strip directory prefix from comm so /Applications/Ghostty.app/.../ghostty matches "ghostty".
@@ -107,7 +166,7 @@ while :; do
                 continue
             fi
             if (( pressure )); then
-                kill_proc "$pid" "$rss_mb" "$comm" "system free=${free}MB below floor=${SYS_FLOOR_MB}MB (heaviest watched)"
+                kill_proc "$pid" "$rss_mb" "$comm" "${pressure_why} (heaviest watched)"
                 pressure=0  # one kill per pass; recheck next iteration
                 continue
             fi
