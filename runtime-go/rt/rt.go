@@ -8584,6 +8584,48 @@ func SkyTailSlice(x any) []any {
 	return l[1:]
 }
 
+// ── Typed counterparts, for a subject whose Go type is statically []T ────
+//
+// The three helpers above take `x any`, so the emitted destructuring boxed the
+// slice header on every call. That understates the cost. `AsList` fast-paths a
+// `[]any`, but a `[]T` for any other T MISSES that assertion and falls to the
+// reflect arm, which allocates a fresh `[]any` of length n and boxes every
+// element into it. On a typed list each call is therefore O(n) allocation, and
+// a cons loop rebuilt the entire list on every iteration — quadratic in n, for
+// a walk that is O(n).
+//
+// When the lowerer knows the subject's Go type is a slice (`Pattern::Cons` /
+// `Pattern::List` in rust/crates/lower/src/lower.rs) it emits these instead.
+// They compile to `len(xs)`, `xs[i]` and `xs[1:]`, allocate nothing, and Go
+// infers T from the argument so the call site needs no type argument.
+//
+// The bounds guards are kept even though the pattern's length test has already
+// run. That test is a claim about the CALLER; a helper that panics when the
+// claim is wrong converts a lowering bug into a runtime panic, and "no runtime
+// panic from well-typed Sky" is not a property to leave resting on an
+// invariant asserted in a comment. Out of range yields T's zero value, exactly
+// as the `any` versions yield nil.
+
+// SkyLenT is the element count of a statically-typed Sky list.
+func SkyLenT[T any](xs []T) int { return len(xs) }
+
+// SkyElemT is the i-th element (bounds-guarded; T's zero when out of range).
+func SkyElemT[T any](xs []T, i int) T {
+	if i < 0 || i >= len(xs) {
+		var zero T
+		return zero
+	}
+	return xs[i]
+}
+
+// SkyTailSliceT is the list minus its head (empty when already empty).
+func SkyTailSliceT[T any](xs []T) []T {
+	if len(xs) == 0 {
+		return xs
+	}
+	return xs[1:]
+}
+
 func List_indexedMap(fn any, list any) any {
 	items := asList(list)
 	result := make([]any, len(items))

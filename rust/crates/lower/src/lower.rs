@@ -6178,28 +6178,22 @@ impl<'a> Ctx<'a> {
             Pattern::Cons(h, t) => {
                 let (h, t) = (*h, *t);
                 let elem = subj_ty.elem_ty();
+                let (len_fn, elem_fn, tail_fn, head_ty, tail_ty) = destructure_ops(subj);
                 // guard: at least one element.
                 let cond = GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Ge,
-                        Box::new(call_rt(
-                            "rt.SkyLen",
-                            vec![subj.clone()],
-                            GoTy::Bare(Prim::Int),
-                        )),
+                        Box::new(call_rt(len_fn, vec![subj.clone()], GoTy::Bare(Prim::Int))),
                         Box::new(int_lit(1)),
                     ),
                     GoTy::Bare(Prim::Bool),
                 );
-                let head_raw = call_rt("rt.SkyElem", vec![subj.clone(), int_lit(0)], GoTy::Any);
+                let head_raw = call_rt(elem_fn, vec![subj.clone(), int_lit(0)], head_ty);
                 let head = self.coerce_if_needed(head_raw, &elem);
-                // `rt.SkyTailSlice` returns `[]any`; type it as such so a use
-                // in a `[]T` slot narrows via `rt.AsListT`.
-                let tail = call_rt(
-                    "rt.SkyTailSlice",
-                    vec![subj.clone()],
-                    GoTy::Slice(Box::new(GoTy::Any)),
-                );
+                // The tail keeps the subject's own element type, so a use in a
+                // `[]T` slot needs no narrowing. On the untyped path it is
+                // `[]any` and a `[]T` slot narrows it via `rt.AsListT`.
+                let tail = call_rt(tail_fn, vec![subj.clone()], tail_ty);
                 let (ch, mut binds) = self.pattern_test(&head, &elem, h);
                 let (ct, tb) = self.pattern_test(&tail, subj_ty, t);
                 binds.extend(tb);
@@ -6208,15 +6202,12 @@ impl<'a> Ctx<'a> {
             Pattern::List(pats) => {
                 let pats = pats.clone();
                 let elem = subj_ty.elem_ty();
+                let (len_fn, elem_fn, _, head_ty, _) = destructure_ops(subj);
                 // guard: exact length match.
                 let mut cond = Some(GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Eq,
-                        Box::new(call_rt(
-                            "rt.SkyLen",
-                            vec![subj.clone()],
-                            GoTy::Bare(Prim::Int),
-                        )),
+                        Box::new(call_rt(len_fn, vec![subj.clone()], GoTy::Bare(Prim::Int))),
                         Box::new(int_lit(pats.len() as i64)),
                     ),
                     GoTy::Bare(Prim::Bool),
@@ -6224,9 +6215,9 @@ impl<'a> Ctx<'a> {
                 let mut binds = Vec::new();
                 for (i, sp) in pats.iter().enumerate() {
                     let raw = call_rt(
-                        "rt.SkyElem",
+                        elem_fn,
                         vec![subj.clone(), int_lit(i as i64)],
-                        GoTy::Any,
+                        head_ty.clone(),
                     );
                     let el = self.coerce_if_needed(raw, &elem);
                     let (c, b) = self.pattern_test(&el, &elem, *sp);
@@ -6908,6 +6899,46 @@ fn any_task_run(expr: GoExpr) -> GoExpr {
         ),
         GoTy::Any,
     )
+}
+
+/// The list-destructuring runtime helpers to use for `subj`, as
+/// `(len, elem, tail, elem-result-ty, tail-result-ty)`.
+///
+/// The `any`-taking `rt.SkyLen` / `rt.SkyElem` / `rt.SkyTailSlice` route through
+/// `rt.AsList`. That fast-paths a `[]any`, but a `[]T` for any other T misses
+/// the assertion and falls to the reflect arm, which allocates a fresh `[]any`
+/// and boxes EVERY element into it. Measured on a 16-element `[]struct{…}`
+/// (`runtime-go/rt/sky_destructure_typed_test.go`): **18 allocations per call**,
+/// each — so a cons loop rebuilt the whole list once per iteration, quadratic in
+/// n for an O(n) walk.
+///
+/// When the subject's Go type is already a slice, the typed `…T` helpers compile
+/// to `len(xs)` / `xs[i]` / `xs[1:]` and allocate nothing. Go infers the type
+/// argument from the slice, so the call sites need no explicit one.
+///
+/// The decision keys on `subj.ty` — the Go type of the EXPRESSION being emitted
+/// — and not on the `subj_ty` type-context the caller threads alongside it.
+/// Those two can disagree, and it is `subj.ty` that decides whether the emitted
+/// Go actually type-checks: passing a non-slice to `rt.SkyLenT` is a `go build`
+/// failure, whereas an over-conservative fall back to the `any` path is only a
+/// missed optimisation.
+fn destructure_ops(subj: &GoExpr) -> (&'static str, &'static str, &'static str, GoTy, GoTy) {
+    match &subj.ty {
+        GoTy::Slice(t) => (
+            "rt.SkyLenT",
+            "rt.SkyElemT",
+            "rt.SkyTailSliceT",
+            (**t).clone(),
+            GoTy::Slice(t.clone()),
+        ),
+        _ => (
+            "rt.SkyLen",
+            "rt.SkyElem",
+            "rt.SkyTailSlice",
+            GoTy::Any,
+            GoTy::Slice(Box::new(GoTy::Any)),
+        ),
+    }
 }
 
 fn call_rt(name: &str, args: Vec<GoExpr>, ty: GoTy) -> GoExpr {
