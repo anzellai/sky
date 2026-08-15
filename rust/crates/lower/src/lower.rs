@@ -2727,6 +2727,12 @@ impl<'a> Ctx<'a> {
         if &x.ty == expected || *expected == GoTy::Any {
             return x;
         }
+        // A func VALUE landing in a func SLOT of a different shape is not a
+        // narrowing at all — it is an ADAPTATION, and it has a static answer.
+        // See `func_shape_eta`.
+        if let Some(eta) = self.func_shape_eta(&x, expected) {
+            return eta;
+        }
         let reason = if x.ty == GoTy::Any {
             CoerceReason::FfiReturn
         } else {
@@ -2741,6 +2747,218 @@ impl<'a> Ctx<'a> {
             },
             expected.clone(),
         )
+    }
+
+    /// The narrowing performed INSIDE an eta wrapper, categorised honestly.
+    ///
+    /// [`Self::coerce_if_needed`] infers a [`CoerceReason`] from the shape alone,
+    /// and any `any → T` narrowing it sees is attributed to `FfiReturn`. Inside an
+    /// eta wrapper that attribution is wrong: the `any` did not come back from Go
+    /// FFI, it is the erased HOF slot (`func(any) bool`) being un-erased at the
+    /// boundary the wrapper exists to create. Reusing the generic inference here
+    /// would file every one of these under "FFI return" and quietly corrupt the
+    /// doc-08 §6 origin catalogue — the same catalogue that decides which
+    /// categories are lowering-closeable and which are floor. So name the reason
+    /// at the site that knows it: [`CoerceReason::GenericErase`].
+    ///
+    /// Delegates to `coerce_if_needed` for the no-op cases (`x.ty == to`, or a
+    /// widening into `any`, which Go performs implicitly) so the two paths cannot
+    /// disagree about when a narrowing is needed at all.
+    fn eta_narrow(&mut self, x: GoExpr, to: &GoTy) -> GoExpr {
+        if &x.ty == to || *to == GoTy::Any {
+            return self.coerce_if_needed(x, to);
+        }
+        GoExpr::new(
+            GoExprKind::Coerce {
+                inner: Box::new(x.clone()),
+                from: x.ty.clone(),
+                to: to.clone(),
+                reason: CoerceReason::GenericErase,
+            },
+            to.clone(),
+        )
+    }
+
+    /// A func VALUE flowing into a func SLOT of a different Go shape — doc 08
+    /// §5.3 category 6, "polymorphic kernel-fn arg". Eta-expand at the SLOT's
+    /// shape instead of emitting `rt.Coerce[func(…)…]`.
+    ///
+    /// WHY this is not a coercion. Go function types are nominal in their
+    /// parameters and result, so `rt.Coerce[func(any) bool]` applied to a
+    /// `func(Attr) bool` can never satisfy its own `v.(T)` fast path
+    /// (`runtime-go/rt/rt.go`, `Coerce`). It falls through to `makeFuncAdapter`
+    /// → `adaptFuncValueWithCapture`, a `reflect.MakeFunc` thunk that on EVERY
+    /// invocation allocates a `[]reflect.Value`, re-boxes each argument through
+    /// `reflect.ValueOf(a.Interface())`, concatenates the captured args and
+    /// `reflect.Value.Call`s. The wrapper is built once per enclosing call; the
+    /// reflect dispatch is paid once per ELEMENT. `Std.Ui`'s marker scan —
+    /// `List.any (\a -> isMarker name a) attrs` — pays it six times per element
+    /// of every layout.
+    ///
+    /// The shape is fully known HERE: `from` and `to` are both concrete `GoTy`s
+    /// at this point. So emit the adaptation the compiler can already prove —
+    /// a closure at the target shape whose params narrow inward and whose
+    /// result widens back — reusing the same eta-expansion
+    /// [`Self::kernel_value_eta`] (kernels) and [`Self::lower_ctor_value`]
+    /// (constructors) already perform for their own shape mismatches. The ABI
+    /// stays fully erased: one emit per definition, no monomorphisation, no
+    /// binary growth.
+    ///
+    /// Returns `None` — leaving the runtime coerce in place — when the bridge
+    /// is NOT statically expressible:
+    ///
+    ///   * the source is not itself a Go func (an `any`-typed thunk in a func
+    ///     slot IS a genuine runtime narrowing);
+    ///   * the ARITIES differ. That is precisely what
+    ///     `adaptFuncValueWithCapture`'s "uncurried-to-curried adaptation"
+    ///     branch exists for: Sky curries, Go does not, and a partially-applied
+    ///     N-ary function reaching an M-ary slot is finished by the runtime.
+    ///     Eta-expanding to the wrong arity would emit a call `go build`
+    ///     rejects;
+    ///   * the source expression is not a func literal, a plain identifier or a
+    ///     selector. The eta wrapper CALLS the source once per invocation, so a
+    ///     source that is itself a call (`mkPredicate cfg`) would be
+    ///     re-evaluated per element — trading a reflect dispatch for a rebuilt
+    ///     closure. Those keep the once-per-slot coerce.
+    fn func_shape_eta(&mut self, x: &GoExpr, expected: &GoTy) -> Option<GoExpr> {
+        let (GoTy::Func(from_ps, from_r), GoTy::Func(to_ps, to_r)) = (&x.ty, expected) else {
+            return None;
+        };
+        if from_ps.len() != to_ps.len() {
+            return None;
+        }
+        let (from_ps, from_r) = (from_ps.clone(), (**from_r).clone());
+        let (to_ps, to_r) = (to_ps.clone(), (**to_r).clone());
+        // A narrowing into a SLICE or a MAP is not a type assertion — codegen
+        // renders it `rt.AsListT[T]` / `rt.AsMapT[V]`, both of which REBUILD the
+        // container element-by-element. Inside an eta closure that rebuild is
+        // paid per INVOCATION, so a `List.foldl` whose accumulator is a `Dict`
+        // would copy the whole accumulator on every element — O(n·k) where the
+        // reflect adapter hands the same map through in O(1). Never trade an
+        // O(1) reflect box for an O(n) copy: leave those to the runtime coerce.
+        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_) | GoTy::Map(_, _));
+        if from_ps
+            .iter()
+            .zip(to_ps.iter())
+            .any(|(f, t)| f != t && rebuilds(f))
+            || (to_r != from_r && rebuilds(&to_r))
+        {
+            return None;
+        }
+
+        // ── Source is a func LITERAL: retype it in place. ──────────────────
+        // Wrapping a literal in a second closure would build the inner closure
+        // on every call unless Go's inliner happens to fold the direct call, so
+        // rewrite the literal's own params instead: declare them at the SLOT's
+        // types under fresh names and bind the body's original names to the
+        // narrowed values. Measured (M1, Go 1.26, six probes × six attributes):
+        // in-place ~1.8-4.2 µs/op vs ~4.3-9.0 µs/op for the wrapper form, at
+        // identical allocation counts.
+        if let GoExprKind::FuncLit(ps, _, body) = &x.kind {
+            if ps.len() == to_ps.len() {
+                let (ps, body) = (ps.clone(), body.clone());
+                let mut gparams: Vec<GoParam> = Vec::new();
+                let mut prelude: Vec<GoStmt> = Vec::new();
+                for (i, p) in ps.iter().enumerate() {
+                    if p.ty == to_ps[i] {
+                        gparams.push(p.clone());
+                        continue;
+                    }
+                    let fresh = format!("_e{}", self.local_counter);
+                    self.local_counter += 1;
+                    gparams.push(GoParam {
+                        name: fresh.clone(),
+                        ty: to_ps[i].clone(),
+                    });
+                    // A blank param binds nothing, so there is nothing to
+                    // narrow — and `_ := …` is not Go.
+                    if p.name == "_" {
+                        continue;
+                    }
+                    let src = GoExpr::new(GoExprKind::Ident(fresh), to_ps[i].clone());
+                    let narrowed = self.eta_narrow(src, &p.ty);
+                    prelude.push(GoStmt::Short(p.name.clone(), narrowed));
+                    // The original param may be unused; a Go LOCAL may not be.
+                    prelude.push(GoStmt::Discard(GoExpr::new(
+                        GoExprKind::Ident(p.name.clone()),
+                        p.ty.clone(),
+                    )));
+                }
+                // Result: widening to `any` is implicit at a Go `return`, so an
+                // `any` slot needs only the declared result type changed. A
+                // CONCRETE slot needs each tail return coerced.
+                let mut body = body;
+                if to_r != from_r && to_r != GoTy::Any {
+                    body = self.coerce_tail_returns(body, &to_r);
+                }
+                prelude.extend(body);
+                return Some(GoExpr::new(
+                    GoExprKind::FuncLit(gparams, to_r, prelude),
+                    expected.clone(),
+                ));
+            }
+        }
+
+        // ── Source is a symbol: wrap it. ──────────────────────────────────
+        if !matches!(
+            &x.kind,
+            GoExprKind::Ident(_) | GoExprKind::Selector(_, _)
+        ) {
+            return None;
+        }
+        let mut gparams: Vec<GoParam> = Vec::new();
+        let mut args: Vec<GoExpr> = Vec::new();
+        for (i, to_p) in to_ps.iter().enumerate() {
+            let fresh = format!("_e{}", self.local_counter);
+            self.local_counter += 1;
+            gparams.push(GoParam {
+                name: fresh.clone(),
+                ty: to_p.clone(),
+            });
+            let a = GoExpr::new(GoExprKind::Ident(fresh), to_p.clone());
+            args.push(self.eta_narrow(a, &from_ps[i]));
+        }
+        let call = GoExpr::new(
+            GoExprKind::Call(Box::new(x.clone()), args),
+            from_r.clone(),
+        );
+        let ret = self.eta_narrow(call, &to_r);
+        Some(GoExpr::new(
+            GoExprKind::FuncLit(gparams, to_r, vec![GoStmt::Return(Some(ret))]),
+            expected.clone(),
+        ))
+    }
+
+    /// Coerce every TAIL return of a statement list to `to`. Descends only into
+    /// STATEMENT containers — an IIFE (`GoExprKind::Block`) nested in an
+    /// expression carries its own returns, which belong to that IIFE's result
+    /// type, not to this function's.
+    fn coerce_tail_returns(&mut self, body: Vec<GoStmt>, to: &GoTy) -> Vec<GoStmt> {
+        body.into_iter()
+            .map(|s| match s {
+                GoStmt::Return(Some(e)) => GoStmt::Return(Some(self.eta_narrow(e, to))),
+                GoStmt::If(c, t, e) => GoStmt::If(
+                    c,
+                    self.coerce_tail_returns(t, to),
+                    self.coerce_tail_returns(e, to),
+                ),
+                GoStmt::IfTypeAssert {
+                    binder,
+                    ok,
+                    subj,
+                    ty,
+                    then,
+                } => GoStmt::IfTypeAssert {
+                    binder,
+                    ok,
+                    subj,
+                    ty,
+                    then: self.coerce_tail_returns(then, to),
+                },
+                GoStmt::Loop(b) => GoStmt::Loop(self.coerce_tail_returns(b, to)),
+                other => other,
+            })
+            .collect()
     }
 
     fn lower_expr_inner(&mut self, e: ExprId, actual: &GoTy, expected: &GoTy) -> GoExpr {

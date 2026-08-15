@@ -285,10 +285,8 @@ fn allocs_per_scan(tag: &str) -> f64 {
 ///
 /// With the `reflect.MakeFunc` adapter in place each of the 36 element visits
 /// allocates a `[]reflect.Value` plus a re-boxed argument; without it the scan
-/// pays only the list erasure (`rt.AsListT[any]`, once per `List.any` call).
-/// The budget below sits an order of magnitude clear of BOTH measurements, so
-/// it fails loudly on a regression and does not flake on a rounding change in
-/// the runtime's list helpers.
+/// pays only the list erasure (`rt.AsListT[any]`, once per `List.any` call, plus
+/// the runtime's `any`-taking `SkyLen`/`SkyElem`). Measured: 318 → 126.
 ///
 /// What this leg does NOT catch: a change that preserves the allocation count
 /// while costing time elsewhere, and any shape this one fixture omits.
@@ -309,11 +307,21 @@ fn hof_callback_costs_no_reflect_allocation_per_element() {
     );
 }
 
-/// Measured on this fixture (M1, Go 1.25): ~250 allocations per scan with the
-/// adapter, ~25 without it. The budget is set between them with a wide margin
-/// on both sides — a regression restores an order of magnitude, so detecting it
-/// does not need a tight bound.
-const ALLOC_BUDGET_PER_SCAN: f64 = 80.0;
+/// Measured on this fixture, M1, Go 1.25, and stable to the unit across repeat
+/// runs: **318** allocations per scan with the `reflect.MakeFunc` adapter, **126**
+/// without it.
+///
+/// 126 is not zero, and the gap is not a rounding error — it is the OTHER
+/// erasure on this path, which the eta-expansion deliberately does not touch:
+/// `rt.AsListT[any]` rebuilds the six-element list on each of the six
+/// `List.any` calls, and the runtime's `SkyLen`/`SkyElem` helpers take `x any`,
+/// so the slice header is re-boxed per access. Assert what was actually fixed.
+///
+/// The budget sits between the two measurements with ~1.6× clearance on each
+/// side: comfortably above the honest cost so a runtime tweak to the list
+/// helpers cannot flake it, and comfortably below the adapter's cost so the
+/// regression it exists to catch cannot slip under it.
+const ALLOC_BUDGET_PER_SCAN: f64 = 200.0;
 
 /// EMISSION LEG — the defect verbatim, checkable with no Go toolchain. A func
 /// value whose Go shape differs from its slot's ONLY in the params/result (same
