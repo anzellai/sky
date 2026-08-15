@@ -936,7 +936,8 @@ small cloud instance. Measured components:
 | | RAM |
 |---|---|
 | Minimal Linux | ~250 MB |
-| Sky app binary (Go, idle) | ~30–40 MB |
+| Sky app binary (Go, idle) | **~55 MB** (measured on a live e2-micro) |
+| Observability agent, if you run one | **~87 MB** — see below |
 | PostgreSQL base — postmaster + 6 auxiliaries at `shared_buffers = 32MB` | **36 MB** (measured) |
 | PG backends — one process per *active* connection, ~5–10 MB each | ~40–70 MB at 6–10 active |
 | Sky.Live sessions — **~1.1 MB RSS each, measured** | ~110 MB at 100 concurrent |
@@ -958,6 +959,21 @@ the per-session goroutines, buffers and connection state are.
 So **1 GB carries roughly 400–500 concurrent sessions** and 2 GB roughly triple
 that. The pool ceiling is a ceiling and not an allocation — `database/sql` opens
 lazily, so a host pays for what is in flight.
+
+**Cross-checked against a live e2-micro** (sky-lang.org, `us-central1-a`,
+969 MB usable, 9 days uptime): 516 MB available ÷ 1.1 MB per session ≈ **470
+sessions**, which lands inside the range above. The same box measures the Sky
+binary at **55 MB RSS** — higher than the 30–40 MB this table previously
+guessed — and averages **0.09% CPU** over 40 hours, i.e. nowhere near any
+ceiling at its real traffic.
+
+> **The monitoring can cost more than the app.** On that instance:
+> `otelopscol` **87 MB**, the Sky app **55 MB**, caddy 28 MB, journald 23 MB.
+> The observability agent is 2.5× the thing it observes, and on a 1 GB host the
+> four together are ~190 MB — a fifth of the machine, before a single session
+> exists. If you are sizing an e2-micro, budget for the agent or do not run one;
+> `deploy/setup-remote.sh` in the sky-lang.org repo already skips the embedded
+> console on this tier for the same reason.
 
 ### Which resource binds first, measured
 
