@@ -87,6 +87,36 @@ nothing.** At the saturation throughput measured below (~430
 interactions/sec), the entire diff path accounts for under 4% of one
 core.
 
+### So was "2–10 ms" right or wrong? Both, and the distinction matters
+
+Reconciling Phase 1 against the saturation throughput measured in Phase
+3 settles this.
+
+One CPU saturates at **88–92 interactions/sec** (1-CPU container, 500
+sessions). That is **~11 ms of server CPU per interaction** — squarely
+in the 2–10 ms range the guidance quoted, if slightly above it.
+
+So:
+
+- **As a figure for total per-interaction server cost, "2–10 ms" is
+  about right** — very slightly optimistic. Capacity numbers derived
+  from it are broadly sound.
+- **As a claim about the view render and diff, it is wrong by ~100×.**
+  That path costs 0.086 ms on the heaviest view in the repo: under 1%
+  of the 11 ms.
+
+The consequence is the actionable part. The guidance implies that a
+*more complex view* costs more per interaction, so capacity planning
+should scale with view size. **It essentially does not.** Going from
+`19-skyforum` (94 elements) to `26-ui-showcase` (384 elements) — a 4×
+heavier view — adds 65 µs to an 11 ms interaction, or **0.6%**.
+
+For sizing, treat per-interaction cost as **roughly constant in view
+size** and driven by the per-request machinery instead: HTTP handling,
+session locking, SSE bookkeeping, the app's own `update`/`view`, and GC.
+A team worried that their view is "too complex to scale" is worrying
+about the wrong variable.
+
 ## Capacity, measured
 
 Bare host, 8-core M1, heavy 384-node view, 1 s think time:
