@@ -833,6 +833,68 @@ fn a_second_start_retunes_the_managed_block() {
 /// import it — a mismatch shows up as the block-count assertion above failing.
 const SKY_CONF_MARKER: &str = "# --- sky db: development cluster tuning (managed by sky) ---";
 
+/// The cluster `sky db start` creates is sized for the pool the PROJECT asks
+/// for, not for the machine alone.
+///
+/// The unit gates prove `PoolInputs::resolve` reads `sky.toml` when it is handed
+/// the project directory. They cannot prove `sky db start` hands it the right
+/// directory — a regression that passed the data directory, or the current
+/// working directory of some other verb, would leave every one of them green and
+/// every generated cluster sized for a knob nobody set. That gap is the whole
+/// reason this file exists, so the assertion is made against a real `sky.toml`,
+/// a real `initdb`, and the resulting file on disk.
+///
+/// `23` is chosen because no core count can produce it: the default is 4×CPU
+/// clamped to 4..32, so a conf carrying 23 cannot have come from the machine.
+#[test]
+fn the_cluster_is_sized_for_the_pool_the_project_asks_for() {
+    let pg_bin = require_pg_bin();
+    let fx = Fixture {
+        project: deep_scratch_project("knob"),
+        sky_home: std::env::temp_dir().join(unique("knob-home")),
+        pg_bin,
+    };
+    const KNOB: u32 = 23;
+    std::fs::write(
+        fx.project.join("sky.toml"),
+        format!(
+            "name = \"cluster-flow\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\
+             [database]\nmaxOpenConns = {KNOB}\n"
+        ),
+    )
+    .unwrap();
+
+    let out = fx.sky(&["db", "start"]);
+    assert!(out.status.success(), "start failed:\n{}", both(&out));
+    let conf = std::fs::read_to_string(fx.data_dir().join("postgresql.conf")).unwrap();
+
+    // The generated file NAMES the term it was sized for, so the arithmetic can
+    // be checked by the operator reading it rather than taken on trust.
+    assert!(
+        conf.contains(&format!("# {KNOB} plus the runtime's")),
+        "the managed block does not say it was sized for the project's pool of {KNOB}, so \
+         `sky db start` did not read the knob out of this project's sky.toml:\n{conf}"
+    );
+
+    let got = conf_max_connections(&conf).expect("no max_connections in the generated conf");
+    // The floor of the whole derivation: the app's own pool, the three runtime
+    // pools it is a share of, and PostgreSQL's reserved superuser slots. Stated
+    // as a bound rather than the exact number, because the exact number IS the
+    // expression production evaluates and asserting it here would be the gate
+    // agreeing with itself.
+    let aux = (KNOB / 4).clamp(2, 8);
+    let floor = KNOB + (aux + 2 + 2) * 2 + 4 + 3;
+    assert!(
+        got >= floor,
+        "sky.toml asks for a pool of {KNOB}; with the runtime's analytics, session and \
+         telemetry pools that is at least {floor} backends including the reserved superuser \
+         slots, and the cluster was given max_connections = {got}. The app would exhaust the \
+         database sky just started for it, having been told the number.\n{conf}"
+    );
+
+    let _ = fx.sky(&["db", "stop"]);
+}
+
 // ---- no-server paths (always run) ---------------------------------------
 
 /// With nothing discoverable, the failure must tell the reader every place that
