@@ -421,6 +421,44 @@ mod tests {
                 .unwrap();
         assert_eq!(again, got);
 
+        // …and the SAME provisioned cache must NOT satisfy a cross-build.
+        //
+        // This is the other half of the same call, and until now nothing asserted
+        // it: every case above passes `host`, so dropping the `target_is_host`
+        // guard leaves the suite green while `GOOS=linux GOARCH=amd64` on this
+        // darwin machine resolves to a bundle packed from the darwin tree. That
+        // binary does not fail here. It builds, ships, deploys, and fails to exec
+        // its own database on the first start on the target host — hours later,
+        // in the one place there is no toolchain to diagnose it with.
+        let foreign = if host.starts_with("darwin") {
+            "linux-amd64"
+        } else {
+            "darwin-arm64"
+        };
+        assert_ne!(foreign, host, "the cross-build case must not be the host");
+        let err = resolve_bundle_archive_in(
+            &home,
+            &project,
+            foreign,
+            Some("file:///nonexistent-sky-p5b"),
+        )
+        .expect_err(
+            "a provisioned cache for THIS machine was re-packed into a bundle for \
+             another platform; the deployed binary would carry a PostgreSQL it \
+             cannot exec",
+        );
+        // And the refusal explains itself: an operator who hits this needs to know
+        // it is a cross-build and where to put the right bundle, not that a
+        // download failed.
+        assert!(
+            err.contains("cross-build") && err.contains(foreign),
+            "the cross-build refusal does not say what went wrong:\n{err}"
+        );
+        assert!(
+            !cache_archive_path(&home, "18.6", foreign).exists(),
+            "a bundle for {foreign} was left in the cache for the next build to embed"
+        );
+
         let _ = std::fs::remove_dir_all(&home);
     }
 }

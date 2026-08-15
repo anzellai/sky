@@ -193,6 +193,119 @@ func TestTheManagedBlockIsWrittenOnceAndPreservesEdits(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Detection — the half the conf gates above never reach
+// ---------------------------------------------------------------------------
+
+// Every gate above drives `tuningFor`, which takes a `machine`. None of them
+// says where that machine comes from, and until this file a search for
+// `cgroup`, `detectRAMBytes` or `detectMachine` across the whole test suite
+// returned nothing: the arithmetic was pinned and its INPUT was not.
+//
+// The input is the half that fails silently. `/proc/meminfo` is not namespaced —
+// a container reads the HOST's MemTotal — so in a 512MB container on a 64GB node
+// the meminfo path answers 64GB. shared_buffers is then sized to the 8GB clamp,
+// PostgreSQL allocates it up front, and the container is OOM-killed at the first
+// checkpoint. Every setting in the file looks reasonable; the machine it was
+// sized for simply is not this one.
+//
+// So the ORDER is the assertion, and it is made on both the raw byte count and
+// on the setting the byte count produces — the second is what an operator would
+// actually notice.
+func TestACgroupLimitOutranksTheHostsMemTotal(t *testing.T) {
+	const (
+		containerLimit = 512 * mb
+		hostTotal      = 64 * 1024 * mb
+	)
+	// A reader for a memory-limited container on a very large host: cgroup v2
+	// says 512MB, and /proc/meminfo — unnamespaced — says 64GB.
+	inContainer := func(path string) ([]byte, error) {
+		switch path {
+		case "/sys/fs/cgroup/memory.max":
+			return []byte("536870912\n"), nil
+		case "/proc/meminfo":
+			return []byte("MemTotal:       67108864 kB\nMemFree:  100 kB\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	noSysctl := func() (uint64, bool) { return 0, false }
+
+	// Vacuity guard: the two sources must genuinely disagree, or "the cgroup
+	// won" is indistinguishable from "either would have done".
+	if got := parseMemTotal("MemTotal:       67108864 kB\n"); got != hostTotal {
+		t.Fatalf("the fixture's MemTotal parses to %d, not the intended %d", got, hostTotal)
+	}
+
+	got := detectRAMBytesFrom(inContainer, false, noSysctl)
+	if got != containerLimit {
+		t.Fatalf("detected %d bytes, want the cgroup limit %d.\n"+
+			"/proc/meminfo is NOT namespaced: in a memory-limited container it reports the\n"+
+			"HOST's total, so reading it first sizes this 512MB container from a 64GB\n"+
+			"number. The cgroup limit is the only figure the kernel will honour.",
+			got, containerLimit)
+	}
+
+	// …and the consequence, which is what actually kills the container.
+	sized := settingsOf(machine{ramBytes: got, cpus: 2})
+	if sb := mbOf(t, sized["shared_buffers"]); sb > 128 {
+		t.Errorf("shared_buffers = %s in a 512MB container — PostgreSQL allocates that up "+
+			"front and the container is OOM-killed at the first checkpoint", sized["shared_buffers"])
+	}
+	unlimited := settingsOf(machine{ramBytes: hostTotal, cpus: 2})
+	if mbOf(t, unlimited["shared_buffers"]) <= 128 {
+		t.Fatal("the 64GB profile is not distinguishable from the 512MB one — this gate " +
+			"cannot tell the two sources apart and is vacuous")
+	}
+}
+
+// The sources, one at a time. Each of these is a real deployment: cgroup v1 is
+// still what a lot of Kubernetes runs on, "max" is an unlimited v2 container,
+// the v1 sentinel is unlimited v1, and macOS has neither /proc nor cgroups.
+func TestRAMDetectionFallsThroughItsSourcesInOrder(t *testing.T) {
+	reader := func(files map[string]string) fileRead {
+		return func(path string) ([]byte, error) {
+			if v, ok := files[path]; ok {
+				return []byte(v), nil
+			}
+			return nil, os.ErrNotExist
+		}
+	}
+	noSysctl := func() (uint64, bool) { return 0, false }
+	sysctl16G := func() (uint64, bool) { return 16 * 1024 * mb, true }
+
+	cases := []struct {
+		name   string
+		files  map[string]string
+		darwin bool
+		sysctl func() (uint64, bool)
+		want   uint64
+	}{
+		{"cgroup v2", map[string]string{"/sys/fs/cgroup/memory.max": "536870912"}, false, noSysctl, 512 * mb},
+		{"cgroup v1", map[string]string{
+			"/sys/fs/cgroup/memory/memory.limit_in_bytes": "268435456"}, false, noSysctl, 256 * mb},
+		{"v2 unlimited falls through to meminfo", map[string]string{
+			"/sys/fs/cgroup/memory.max": "max",
+			"/proc/meminfo":             "MemTotal:       1048576 kB\n"}, false, noSysctl, 1024 * mb},
+		{"v1 sentinel falls through to meminfo", map[string]string{
+			"/sys/fs/cgroup/memory/memory.limit_in_bytes": "9223372036854771712",
+			"/proc/meminfo": "MemTotal:       1048576 kB\n"}, false, noSysctl, 1024 * mb},
+		{"macOS: no proc, no cgroup", nil, true, sysctl16G, 16 * 1024 * mb},
+		{"nothing answers", nil, false, noSysctl, 0},
+		// Undetectable RAM must stay 0 rather than becoming a guess: tuningFor
+		// turns 0 into the deliberately small profile, and under-configuring
+		// costs throughput while over-configuring costs the process.
+		{"unparseable meminfo is not a guess", map[string]string{
+			"/proc/meminfo": "MemTotal: not-a-number kB\n"}, false, noSysctl, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := detectRAMBytesFrom(reader(c.files), c.darwin, c.sysctl); got != c.want {
+				t.Errorf("detected %d bytes, want %d", got, c.want)
+			}
+		})
+	}
+}
+
 func TestEnsureSkyConfIsIdempotent(t *testing.T) {
 	block := renderConfBlock(machine{ramBytes: 2048 * mb, cpus: 2})
 	out, changed := ensureSkyConf("port = 5432\n", block)

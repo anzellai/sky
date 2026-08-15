@@ -15,6 +15,7 @@ package rt
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,6 +134,37 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 		t.Errorf("cannot read the postmaster's process group: %v", err)
 	} else if pgid == syscall.Getpgrp() {
 		t.Error("the postmaster shares the app's process group")
+	}
+
+	// --- the mode of the socket directory of the RUNNING cluster ------------
+	//
+	// TestPrepareSocketDirIsPrivateToThisUser asserts what prepareSocketDir
+	// leaves behind, which is a property of that function and not of the
+	// cluster. One `os.Chmod(s.cfg.socketDir, 0o711)` anywhere AFTER it returns
+	// — in boot, in spawn, in a future "make the socket reachable from a
+	// sidecar" change — leaves that gate green and opens the database: at 0711
+	// the directory is world-traversable, `unix_socket_permissions` defaults to
+	// 0777, and local auth is `trust`, so any local user runs
+	// `psql -h <dir> -d postgres` as a SUPERUSER.
+	//
+	// So the assertion is made here instead, on the directory a live postmaster
+	// is actually listening in.
+	assertSocketDirIsPrivate(t, s.cfg.socketDir, "live cluster's")
+
+	// …and the socket file inside it really is the thing that would be reached.
+	// This is the vacuity guard: if PostgreSQL had created a private socket the
+	// directory's mode would be belt-and-braces rather than the only lock, and
+	// the assertion above would prove nothing about access.
+	socks, _ := filepath.Glob(filepath.Join(s.cfg.socketDir, ".s.PGSQL.*"))
+	if len(socks) == 0 {
+		t.Fatalf("no socket in %s — the mode assertion above is about an empty directory",
+			s.cfg.socketDir)
+	}
+	if st, err := os.Stat(socks[0]); err != nil {
+		t.Errorf("cannot stat the socket: %v", err)
+	} else if st.Mode().Perm()&0o077 == 0 {
+		t.Logf("note: the socket itself is %04o, tighter than PostgreSQL's 0777 default; "+
+			"the directory mode is still the documented control", st.Mode().Perm())
 	}
 
 	// --- readiness means a query answers, not that a socket exists ---------
@@ -264,6 +296,115 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 	}
 	if fileExists(filepath.Join(third.cfg.dataDir, "postmaster.pid")) {
 		t.Error("pg_ctl stop left a pid file behind")
+	}
+
+	// --- and the stop was CLEAN, which only the next boot can say ------------
+	//
+	// "the postmaster is gone" is true of `pg_ctl stop -m immediate`, of
+	// SIGQUIT, and of SIGKILL. All three skip the shutdown checkpoint, and
+	// PostgreSQL then replays WAL on the next start — so switching `-m fast` to
+	// `-m immediate` leaves every assertion above green while turning every
+	// deploy restart into crash recovery. On a large cluster that is the
+	// difference between a restart and an outage, and the only place it is
+	// visible is the server's own log the FOLLOWING time it starts.
+	//
+	// The log is truncated first: this test has already SIGKILLed one postmaster
+	// on purpose, and the recovery line that produced is still in the file.
+	if err := os.Truncate(third.cfg.logPath, 0); err != nil {
+		t.Fatalf("cannot truncate the server log: %v", err)
+	}
+	fourth := liveSupervisor(t, root)
+	if err := fourth.boot(); err != nil {
+		t.Fatalf("boot after a clean stop: %v", err)
+	}
+	t.Cleanup(func() {
+		detach(fourth)
+		fourth.stopPostgres()
+		if pid, ok := runningPostmaster(fourth.cfg.dataDir); ok {
+			_ = syscall.Kill(pid, syscall.SIGQUIT)
+		}
+	})
+	logAfter, err := os.ReadFile(fourth.cfg.logPath)
+	if err != nil {
+		t.Fatalf("cannot read the server log: %v", err)
+	}
+	if len(strings.TrimSpace(string(logAfter))) == 0 {
+		t.Fatal("the server logged nothing on the boot after the stop — this gate cannot " +
+			"tell a clean shutdown from a crash and is vacuous")
+	}
+	for _, crash := range []string{
+		"was not properly shut down",
+		"automatic recovery in progress",
+		"database system was interrupted",
+	} {
+		if strings.Contains(string(logAfter), crash) {
+			t.Errorf("the previous shutdown was not clean — the next boot logged %q.\n"+
+				"`pg_ctl stop -m fast` runs a shutdown checkpoint; `-m immediate`, SIGQUIT and\n"+
+				"SIGKILL do not, and PostgreSQL replays WAL instead. Every deploy restart pays\n"+
+				"for that, and on a large cluster it is the difference between a restart and an\n"+
+				"outage.\nlog:\n%s", crash, logAfter)
+		}
+	}
+}
+
+// A boot that fails AFTER the spawn is the one that leaves something behind.
+//
+// Every failure gate so far fails BEFORE a postmaster exists — a bad data
+// directory, a major-version mismatch, an over-long socket path, no binaries —
+// so "the start failed" and "nothing is running" have never had to be two
+// different facts. They are: `waitReady` can time out on a cluster still
+// replaying WAL, on a postgresql.conf edited into refusing connections, or on a
+// disk that filled during startup, and by then the postmaster is up and in its
+// own process group.
+//
+// What follows is not one leaked process. `MaybeStartEmbeddedPostgres` exits
+// non-zero, so nothing is registered for `StopEmbeddedPostgres` to find and
+// generated main's defer has nothing to do; the operator retries; the retry
+// ADOPTS the postmaster the first attempt left, and — correctly, per the
+// ownership rule — never stops it either. The cluster outlives every run after
+// the one that failed.
+func TestLiveABootThatFailsAfterTheSpawnStopsWhatItStarted(t *testing.T) {
+	binDir := livePgBinDir()
+	if binDir == "" {
+		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
+	}
+	t.Setenv("SKY_POSTGRES_BIN", binDir)
+	root := durableTestDir(t, "boot-fails-after-spawn")
+
+	s := liveSupervisor(t, root)
+	t.Cleanup(func() {
+		s.stopping.Store(true)
+		if pid, ok := runningPostmaster(s.cfg.dataDir); ok {
+			_ = syscall.Kill(pid, syscall.SIGQUIT)
+		}
+		_ = os.RemoveAll(s.cfg.socketDir)
+	})
+	// The real initdb, the real spawn, and then the one thing that goes wrong.
+	s.readyFn = func(time.Duration) error {
+		return errors.New("sky --embed: PostgreSQL did not accept connections in time")
+	}
+
+	err := s.boot()
+	if err == nil {
+		t.Fatal("boot reported success although readiness failed")
+	}
+	// Vacuity guard: a boot that failed before spawning would satisfy the
+	// assertion below without proving anything. The postmaster must have EXISTED.
+	if s.cmd == nil || s.cmd.Process == nil {
+		t.Fatalf("no postmaster was ever spawned, so 'nothing was left running' is "+
+			"true for the wrong reason: %v", err)
+	}
+	spawned := s.cmd.Process.Pid
+
+	if pid, ok := runningPostmaster(s.cfg.dataDir); ok {
+		t.Errorf("the failed boot left a postmaster running (spawned %d, still serving %d).\n"+
+			"MaybeStartEmbeddedPostgres exits non-zero from here and nothing is registered\n"+
+			"for StopEmbeddedPostgres to find, so this process is the last one that could\n"+
+			"have stopped it. The operator's retry adopts it and never stops it either.",
+			spawned, pid)
+	}
+	if processAlive(spawned) && isPostgresProcess(spawned) {
+		t.Errorf("pid %d is still a live postgres after the failed boot", spawned)
 	}
 }
 

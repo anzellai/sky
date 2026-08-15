@@ -45,32 +45,63 @@ func detectMachine() machine {
 	return machine{ramBytes: detectRAMBytes(), cpus: runtime.NumCPU()}
 }
 
-// detectRAMBytes reads physical memory, returning 0 when it cannot.
+// fileRead is the filesystem seam for machine detection, and it exists for the
+// same reason tuningFor takes a `machine` rather than reading one: the ORDER of
+// the sources below is the part with consequences, and a function that reads
+// ambient files can only be tested on the machine the test happens to run on.
+//
+// Detection had no seam at all, and the whole half was therefore untested —
+// which is how the ordering below could have been reversed without anything
+// noticing. See TestACgroupLimitOutranksTheHostsMemTotal.
+type fileRead func(string) ([]byte, error)
+
+// detectRAMBytes reads the memory this process may actually use, returning 0
+// when it cannot.
 //
 // Zero is a real answer and it is handled: tuningFor falls back to a
 // deliberately small profile rather than guessing large. Guessing large on a
 // machine whose size is unknown is how a container with a 512MB limit gets an
 // OOM kill at the first checkpoint.
 func detectRAMBytes() uint64 {
-	// A cgroup limit outranks the host's physical memory: in a container the
-	// host number is a lie the kernel will not honour, and sizing shared_buffers
-	// from it is the classic way to be OOM-killed on a machine that looks huge.
-	if n := cgroupMemoryLimit(); n > 0 {
+	return detectRAMBytesFrom(os.ReadFile, isDarwin(), sysctlMemsize)
+}
+
+// detectRAMBytesFrom is detectRAMBytes with its three sources injected.
+//
+// The cgroup limit is consulted FIRST and that is the whole point of the
+// function. `/proc/meminfo` is NOT namespaced: inside a memory-limited container
+// it reports the HOST's total, so a 512MB container on a 64GB node reads 64GB,
+// sizes shared_buffers to the 8GB clamp, and is OOM-killed at the first
+// checkpoint. Reversing these two lines is a one-line edit that no cluster-level
+// gate can see, because every setting it produces is individually plausible.
+func detectRAMBytesFrom(read fileRead, darwin bool, sysctl func() (uint64, bool)) uint64 {
+	if n := cgroupMemoryLimitFrom(read); n > 0 {
 		return n
 	}
-	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
+	if b, err := read("/proc/meminfo"); err == nil {
 		if n := parseMemTotal(string(b)); n > 0 {
 			return n
 		}
 	}
-	if isDarwin() {
-		if out, err := runCapture("sysctl", "-n", "hw.memsize"); err == nil {
-			if n, err := strconv.ParseUint(strings.TrimSpace(out), 10, 64); err == nil {
-				return n
-			}
+	if darwin {
+		if n, ok := sysctl(); ok {
+			return n
 		}
 	}
 	return 0
+}
+
+// sysctlMemsize is the macOS source: there is no /proc, and no cgroup either.
+func sysctlMemsize() (uint64, bool) {
+	out, err := runCapture("sysctl", "-n", "hw.memsize")
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(out), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // parseMemTotal reads `MemTotal:  16316948 kB` out of /proc/meminfo.
@@ -96,11 +127,11 @@ func parseMemTotal(meminfo string) uint64 {
 	return 0
 }
 
-// cgroupMemoryLimit reads the container memory limit, v2 then v1. "max" (v2) and
-// the v1 sentinel (a number close to 2^63) both mean unlimited.
-func cgroupMemoryLimit() uint64 {
+// cgroupMemoryLimitFrom reads the container memory limit, v2 then v1. "max" (v2)
+// and the v1 sentinel (a number close to 2^63) both mean unlimited.
+func cgroupMemoryLimitFrom(read fileRead) uint64 {
 	for _, p := range []string{"/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"} {
-		b, err := os.ReadFile(p)
+		b, err := read(p)
 		if err != nil {
 			continue
 		}

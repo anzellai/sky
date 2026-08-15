@@ -228,6 +228,16 @@ func TestBundleMissingTheNamedArchiveSaysSo(t *testing.T) {
 	}
 }
 
+// pgWriteExecutable writes a stand-in binary discovery can actually RUN.
+// `interrogate` execs `postgres --version`, so a 0600 file would make every
+// candidate fail identically and turn a preference test into a fall-through one.
+func pgWriteExecutable(t *testing.T, p, body string) {
+	t.Helper()
+	if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func withBundle(t *testing.T, name string, archive []byte) {
 	t.Helper()
 	prevFS, prevName := EmbeddedPostgresBundle, EmbeddedPostgresBundleName
@@ -287,6 +297,65 @@ func TestNoPostgresAnywhereNamesEveryPlaceItLooked(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the message does not mention %q:\n%v", want, err)
 		}
+	}
+}
+
+// `--embed` means "this binary carries its database". discoverPgBins says so in
+// its own docstring — the bundle outranks the provision cache and PATH — but
+// nothing asserted it: every discovery gate so far sets up exactly ONE
+// candidate, so moving the `cachedPgBinDirs()` loop above the
+// `EmbeddedPostgresBundle` check leaves the whole suite green while contradicting
+// the documented order.
+//
+// The consequence is not a preference. It is that a binary built to be
+// self-contained silently runs whatever PostgreSQL the deployment host happens
+// to have — a different major, patched on a different schedule, sometimes absent
+// on the next host — which is the host dependency `--embed` exists to remove.
+// The failure is a major-version refusal (or worse, a subtle behavioural
+// difference) on a machine the build never saw.
+//
+// So both candidates are present and BOTH WORK. Falling through because the
+// bundle failed would be a different bug with a different message; this asserts
+// the CHOICE.
+func TestTheBundleOutranksAPerfectlyGoodPostgresOnTheHost(t *testing.T) {
+	t.Setenv("SKY_POSTGRES_BIN", "")
+
+	// (1) the host's provision cache — complete, executable, and it runs.
+	home := t.TempDir()
+	cacheBin := filepath.Join(home, "postgres", "14.9", "bin")
+	pgMkdirAll(t, cacheBin)
+	for _, b := range requiredPgBins {
+		pgWriteExecutable(t, filepath.Join(cacheBin, b),
+			"#!/bin/sh\necho 'postgres (PostgreSQL) 14.9 (host cache)'\n")
+	}
+	t.Setenv("SKY_HOME", home)
+	if _, err := interrogate(cacheBin); err != nil {
+		t.Fatalf("the stand-in host PostgreSQL does not run, so 'the bundle won' would be "+
+			"true for the wrong reason: %v", err)
+	}
+
+	// (2) the bundle compiled into this binary, reporting a different version so
+	// the winner is identifiable by more than its path.
+	withBundle(t, "b.tar.gz", makeTarGz(t, []tarEntry{
+		{name: "bin/initdb", body: "#!/bin/sh\nexit 0\n", mode: 0o755},
+		{name: "bin/pg_ctl", body: "#!/bin/sh\nexit 0\n", mode: 0o755},
+		{name: "bin/postgres", body: "#!/bin/sh\necho 'postgres (PostgreSQL) 18.6 (bundle)'\n", mode: 0o755},
+	}))
+
+	runtimeIn := filepath.Join(t.TempDir(), "runtime")
+	bins, err := discoverPgBins(embedConfig{runtimeIn: runtimeIn})
+	if err != nil {
+		t.Fatalf("discovery failed with both a bundle and a host cache available: %v", err)
+	}
+	if !strings.HasPrefix(bins.binDir, runtimeIn) {
+		t.Errorf("discovery chose %s, which is not the extracted bundle under %s.\n"+
+			"`--embed` means the binary carries its database; picking up the host's\n"+
+			"PostgreSQL makes the deployed version depend on the host after all — which is\n"+
+			"the dependency the flag exists to remove.", bins.binDir, runtimeIn)
+	}
+	if bins.version != "18.6" {
+		t.Errorf("the chosen PostgreSQL reports %q, want the bundle's 18.6 (the host cache "+
+			"reports 14.9)", bins.version)
 	}
 }
 
