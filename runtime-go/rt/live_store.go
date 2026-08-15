@@ -1640,7 +1640,38 @@ func failDurableStore(kind string, err error, ttl time.Duration) SessionStore {
 	return newMemoryStore(ttl)
 }
 
+// chooseStore selects the backend and registers its teardown, in that order and
+// in ONE place.
+//
+// The registration lives here rather than at the two call sites (the main app in
+// live.go, a mounted sub-app in subapp_inprocess.go) because this is the only
+// function that produces a session store: every branch of selectStore, including
+// all four fail-loud fallbacks to memory, returns through this line. A caller
+// that obtains a store cannot obtain one that nothing will close.
+//
+// The closer runs in the release phase — after the drain, after the listener has
+// stopped accepting — see RegisterResourceCloser. What it settles is small and
+// worth stating precisely, because it is NOT lost data: session writes are
+// synchronous, so a bare process exit loses no session (a fresh handle reads the
+// row straight back out of the un-checkpointed WAL). What a close settles is the
+// WAL checkpoint itself (the `-wal`/`-shm` sidecars are folded into the main file
+// and removed, and under `synchronous=NORMAL` that checkpoint is what makes the
+// last sessions durable against a HOST crash rather than merely a process exit),
+// the cleanup / idle-evict goroutine, the `dbshare` refcount the Postgres store
+// holds on a shared pool, and the Redis client's connections. At process exit
+// most of those are moot; in-process — a mounted sub-app, a test harness, any
+// store swapped out while the process lives — they are leaks.
 func chooseStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
+	store := selectStore(kind, path, ttl, idleEvict)
+	RegisterResourceCloser("live.sessionStore", func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[sky.live] session store close: %v", err)
+		}
+	})
+	return store
+}
+
+func selectStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 	if kind == "" {
 		kind = skyGetenv("LIVE_STORE")
 	}
