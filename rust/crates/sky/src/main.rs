@@ -11,6 +11,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 mod db_cluster;
 mod db_migrate;
+mod db_provision;
 use std::time::{Duration, Instant};
 
 use fmt::{format_source, is_formatted};
@@ -2709,6 +2710,11 @@ fn cmd_db(args: &[String]) -> ExitCode {
         Some("start") => return db_cluster::cmd_start(&args[1..]),
         Some("stop") => return db_cluster::cmd_stop(&args[1..]),
         Some("ps") => return db_cluster::cmd_ps(&args[1..]),
+        // `sky db provision --embed` — fetch the PostgreSQL bundle into
+        // ~/.sky/postgres/<version>, which is the middle entry of the discovery
+        // order above. It is grouped with the cluster verbs, not the migration
+        // ones, for the same reason: it manages the SERVER, not the schema.
+        Some("provision") => return db_provision::cmd_provision(&args[1..]),
         _ => {}
     }
     let file_based = Path::new("db").join("migrations").is_dir();
@@ -2743,7 +2749,8 @@ fn cmd_db(args: &[String]) -> ExitCode {
         _ => {
             eprintln!(
                 "usage: sky db <status|migrate [--gen [name]]|push|seed|reset [table]|drop [table]|init> [file.sky]\n\
-                 \x20      sky db <start|stop [--all]|ps [--all]>    local PostgreSQL cluster"
+                 \x20      sky db <start|stop [--all]|ps [--all]>    local PostgreSQL cluster\n\
+                 \x20      sky db provision --embed                  fetch PostgreSQL into ~/.sky"
             );
             return ExitCode::from(2);
         }
@@ -3252,6 +3259,11 @@ struct Finding {
 enum Fix {
     RemoveDir(PathBuf),
     Install,
+    /// Pre-warm `~/.sky/postgres/<version>` for a project that has opted into an
+    /// embedded cluster. Network-touching, like `Install` (which fetches Go
+    /// modules); source-preserving, unlike an edit to `sky.toml` — the pin is
+    /// deliberately not written by a `--fix`.
+    ProvisionPostgres,
 }
 
 /// `sky doctor [--fix] [--verbose|-v]` — port of `Sky.Cli.Doctor.runDoctor`.
@@ -3361,7 +3373,38 @@ fn run_all_checks(root: &Path) -> Vec<Finding> {
     out.extend(check_stale_build(root));
     out.extend(check_missing_ffi(root));
     out.extend(check_auth_secret(root));
+    out.extend(check_embedded_postgres(root));
     out
+}
+
+/// A project opted into `[database] embedded = true` needs a PostgreSQL the
+/// toolchain can supervise. Reporting that at `doctor` time — where the reader is
+/// already asking "is this machine set up" — beats discovering it at the first
+/// `sky run`, and the `--fix` pre-warms the cache so the first run is not also
+/// the first download.
+///
+/// The fix deliberately does NOT record the pin: `Fix` is contracted to leave
+/// user source and `sky.toml` alone, and pinning a version is a decision the
+/// project makes, not a remediation.
+fn check_embedded_postgres(root: &Path) -> Vec<Finding> {
+    if !project::sky_toml_flag(root, "database", "embedded") {
+        return Vec::new();
+    }
+    if db_cluster::postgres_is_discoverable(root) {
+        return Vec::new();
+    }
+    let version = db_provision::pinned_version(root)
+        .unwrap_or_else(|| db_provision::DEFAULT_PG_VERSION.to_string());
+    vec![Finding {
+        check: "embedded-postgres-missing",
+        severity: Severity::Warn,
+        message: format!(
+            "[database] embedded = true, but no PostgreSQL {version} is available to \
+             supervise (nothing at $SKY_POSTGRES_BIN, in ~/.sky/postgres, or on PATH)"
+        ),
+        hint: "run `sky db provision --embed` (or `sky doctor --fix`) to fetch one".into(),
+        fix: Some(Fix::ProvisionPostgres),
+    }]
 }
 
 /// sky.toml exists (root guarantees it) AND is non-empty / readable.
@@ -3624,6 +3667,22 @@ fn apply_fix(root: &Path, check: &str, fix: &Fix) -> String {
             }
             None => format!("✗ {check}: could not resolve assets to run `sky install`"),
         },
+        Fix::ProvisionPostgres => {
+            let opts = db_provision::Opts {
+                version: db_provision::pinned_version(root),
+                no_pin: true,
+                ..Default::default()
+            };
+            match db_provision::provision(&opts) {
+                Ok(db_provision::Outcome::Installed { version, .. }) => {
+                    format!("✓ {check}: provisioned PostgreSQL {version}")
+                }
+                Ok(db_provision::Outcome::AlreadyPresent { version, .. }) => {
+                    format!("✓ {check}: PostgreSQL {version} was already provisioned")
+                }
+                Err(e) => format!("✗ {check}: {e}"),
+            }
+        }
     }
 }
 
@@ -4535,6 +4594,7 @@ fn print_help() {
          \x20 watch <file>     rebuild + restart on source change\n\
          \x20 db    <status|migrate> [file]  Std.Db migrations\n\
          \x20 db    <start|stop|ps>          local PostgreSQL cluster (--all for ps/stop)\n\
+         \x20 db    provision --embed        fetch PostgreSQL into ~/.sky/postgres\n\
          \x20 add    <import-path>  inspect a Go pkg → commit its FFI surface\n\
          \x20 remove <import-path>  drop a Go pkg's FFI surface + dep\n\
          \x20 install               regen/verify committed FFI surfaces\n\

@@ -361,13 +361,56 @@ Connect with:
   one both succeed, so both are safe in a script or a shell trap.
 
 The binaries are discovered, in order, from `SKY_POSTGRES_BIN`, then
-`~/.sky/postgres/<version>/bin`, then `PATH`; a directory must hold `initdb`,
-`pg_ctl` and `postgres` to count. `SKY_POSTGRES_BIN` set but incomplete is an
-error rather than a fall-through — silently using a different installation is
-worse than the typo. Set `SKY_HOME` to relocate the registry (tests and CI).
+`~/.sky/postgres/<version>/bin` (pinned version first, then newest), then
+`PATH`; a directory must hold `initdb`, `pg_ctl` and `postgres` to count.
+`SKY_POSTGRES_BIN` set but incomplete is an error rather than a fall-through —
+silently using a different installation is worse than the typo. Set `SKY_HOME`
+to relocate the registry (tests and CI).
+
+### `sky db provision --embed` — fetch PostgreSQL, no system install needed
+
+Populates the middle entry of that discovery order with Sky's own build of
+PostgreSQL, so a machine with no PostgreSQL at all can still run
+`sky db start`.
+
+```bash
+sky db provision --embed                 # fetch, verify, install, pin
+sky db provision --embed --force         # re-install over an existing cache
+sky db provision --embed --from ./postgres-18.6-linux-amd64.tar.gz \
+                        --checksum <sha256>   # offline, from a local file
+```
+
+```
+$ sky db provision --embed
+sky db provision: fetching https://github.com/anzellai/sky/releases/download/…
+sky db provision: PostgreSQL 18.6 installed.
+  /Users/dev/.sky/postgres/18.6/bin
+  pinned in sky.toml ([database] postgresVersion = "18.6")
+
+Next: sky db start
+```
+
+- **Verified before it is trusted.** The release's `SHA256SUMS` is fetched
+  first, the downloaded archive is hashed on disk, and a mismatch installs
+  nothing and says so. A corrupt or truncated download never reaches the cache.
+- **Installed atomically** — extracted to scratch and renamed into place, so an
+  interrupted provision leaves no half-populated `bin/` for discovery to find.
+- **Idempotent.** Already provisioned is a fast success with no request made.
+- **Pinned** in `sky.toml` as `[database] postgresVersion`, and discovery
+  prefers that version, so a checkout on another machine gets the PostgreSQL the
+  project states.
+- **Offline-capable** via `--from` (with `--checksum`, or a `SHA256SUMS` beside
+  the archive). `sky doctor --fix` pre-warms the cache for a project with
+  `[database] embedded = true`. `SKY_POSTGRES_BUNDLE_URL` points at a mirror.
+
+Bundles are built from source in Sky's CI for linux-amd64, linux-arm64,
+darwin-amd64 and darwin-arm64; `psql` is deliberately excluded (GNU readline is
+GPL-3.0). Windows is out of scope — use a system PostgreSQL and
+`SKY_POSTGRES_BIN`.
 
 > `sky db init` and `sky db status` belong to the migration engine documented
-> above and are unchanged. The cluster verbs are `start` / `stop` / `ps`.
+> above and are unchanged. The cluster verbs are `start` / `stop` / `ps` /
+> `provision`.
 
 ### Running migrations as part of `sky run`
 

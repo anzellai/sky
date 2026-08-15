@@ -961,6 +961,12 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             // honoured-by-nothing — which is exactly what `embedded` would look
             // like, while being the one key that opts the project in.
             ("database", "embedded") => {}
+            // `postgresVersion` is the pin `sky db provision --embed` records, so
+            // a project states which PostgreSQL it is developed against and gets
+            // that one back on another machine. Toolchain-only for the same
+            // reason as `embedded`: the app binary must never learn which tier
+            // provisioned its DSN, let alone which build of the server it is.
+            ("database", "postgresVersion") => {}
             // `[analytics] dbPath` → the Std.Analytics store override
             // (SKY_ANALYTICS_DB_PATH). Unset → analytics reuses the console DB
             // (SKY_CONSOLE_DB_PATH). See analytics_store.go.
@@ -1069,6 +1075,7 @@ fn accepted_config_keys(section: &str) -> &'static [&'static str] {
             "isolation",
             "txRetry",
             "embedded",
+            "postgresVersion",
         ],
         "auth" => &["cookieName", "tokenTtl", "driver"],
         "log" => &["format", "level"],

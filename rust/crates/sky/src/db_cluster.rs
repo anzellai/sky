@@ -414,20 +414,33 @@ impl PgBins {
 /// `cache_versions` is passed in rather than read off the disk so the ordering
 /// rule — newest cached major first — is testable, and so this function stays
 /// pure.
+///
+/// `pin` is the project's `sky.toml` `[database] postgresVersion`, which
+/// `sky db provision --embed` records. It orders the CACHE GROUP only: a pinned
+/// version that is provisioned wins over a newer one, because otherwise the pin
+/// would be decorative — a project that states which PostgreSQL it is developed
+/// against would still get whichever the machine provisioned last. It does not
+/// jump the explicit `SKY_POSTGRES_BIN` override, and a pin with nothing
+/// provisioned for it simply is not a candidate.
 pub fn bin_dir_candidates(
     env_override: Option<&str>,
     cache_versions: &[String],
     sky_home: &Path,
     path_var: Option<&str>,
+    pin: Option<&str>,
 ) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(o) = env_override.map(str::trim).filter(|o| !o.is_empty()) {
         out.push(PathBuf::from(o));
     }
+    let pin = pin.map(str::trim).filter(|p| !p.is_empty());
     let mut versions: Vec<&String> = cache_versions.iter().collect();
     // Newest first, so a project that has provisioned 16 alongside an old 14 gets
     // 16. Compared numerically per component: "9.6" must not sort above "14".
     versions.sort_by_key(|v| std::cmp::Reverse(version_key(v)));
+    if let Some(p) = pin {
+        versions.sort_by_key(|v| v.as_str() != p);
+    }
     for v in versions {
         out.push(sky_home.join("postgres").join(v).join("bin"));
     }
@@ -489,11 +502,31 @@ pub fn no_binaries_message(sky_home: &Path) -> String {
          \x20     Debian: apt install postgresql\n\
          \x20 • point sky at an existing installation:\n\
          \x20     SKY_POSTGRES_BIN=/opt/homebrew/opt/postgresql@16/bin sky db start\n\
-         \x20 • let sky fetch one (not yet implemented — phase 3):\n\
+         \x20 • let sky fetch its own build of PostgreSQL:\n\
          \x20     sky db provision --embed",
         REQUIRED_BINS.join(", "),
         sky_home.display(),
     )
+}
+
+/// Is there anything for the supervisor to run at all?
+///
+/// The same candidate list [`discover_pg_bins`] walks, without the `pg_ctl
+/// --version` interrogation — `sky doctor` wants the cheap answer to "is this
+/// machine set up", and takes the project explicitly rather than off the cwd.
+pub fn postgres_is_discoverable(project: &Path) -> bool {
+    let home = sky_home();
+    let env_override = std::env::var("SKY_POSTGRES_BIN").ok();
+    let path_var = std::env::var("PATH").ok();
+    let pin = crate::db_provision::pinned_version(project);
+    let cands = bin_dir_candidates(
+        env_override.as_deref(),
+        &cached_versions(&home),
+        &home,
+        path_var.as_deref(),
+        pin.as_deref(),
+    );
+    pick_bin_dir(&cands, &dir_has_required_bins).is_some()
 }
 
 /// Locate a usable installation, then ask it its version. Discovery and
@@ -504,11 +537,15 @@ fn discover_pg_bins() -> Result<PgBins, String> {
     let home = sky_home();
     let env_override = std::env::var("SKY_POSTGRES_BIN").ok();
     let path_var = std::env::var("PATH").ok();
+    let pin = current_project_dir()
+        .ok()
+        .and_then(|p| crate::db_provision::pinned_version(&p));
     let cands = bin_dir_candidates(
         env_override.as_deref(),
         &cached_versions(&home),
         &home,
         path_var.as_deref(),
+        pin.as_deref(),
     );
 
     // An explicit override that does not hold the binaries is a typo, not a
@@ -547,7 +584,12 @@ pub fn parse_pg_version(out: &str) -> Option<(String, u32)> {
     let tok = out
         .split_whitespace()
         .find(|t| t.chars().next().is_some_and(|c| c.is_ascii_digit()))?;
-    let tok = tok.trim_end_matches(|c: char| !c.is_ascii_digit() && c != '.');
+    // Take the LEADING digit/dot run rather than trimming the trailing junk:
+    // trimming leaves `18beta1` and `17rc1` intact (the `1` is a digit), and the
+    // parse then fails — a pre-release server would be rejected with a message
+    // about an unparseable version rather than simply working.
+    let tok: String = tok.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    let tok = tok.trim_end_matches('.');
     let major = tok.split('.').next()?.parse().ok()?;
     Some((tok.to_string(), major))
 }
@@ -602,9 +644,23 @@ fn process_alive(pid: i32) -> bool {
 /// number to something else; `kill(pid, 0)` then says "alive" about a shell.
 /// Checking the command line closes that, and it is the difference between
 /// `sky db ps` reporting a database that is not there and reporting the truth.
+/// Matched on the EXECUTABLE, not on a substring of the whole command line. A
+/// substring test says yes to `./app --embed --data-dir /var/lib/postgres-data`
+/// and to `go test -run TestStopPostgresOnSignal` — P5a's own test process was
+/// classified as a postmaster that way. Since this is the second leg of the
+/// two-legged liveness check, the consequences are not cosmetic: `sky db ps`
+/// reports a database that is not there, and a start refuses for as long as the
+/// recycled pid lives.
 pub fn command_looks_like_postgres(cmd: &str) -> bool {
-    let c = cmd.to_ascii_lowercase();
-    c.contains("postgres") || c.contains("postmaster")
+    let argv0 = cmd.split_whitespace().next().unwrap_or("");
+    let base = argv0.rsplit('/').next().unwrap_or("");
+    // A postmaster that has rewritten its process title shows up as
+    // `postgres: …`; the trailing colon is part of the title, not the name.
+    let base = base
+        .trim_end_matches(':')
+        .trim_end_matches(".exe")
+        .to_ascii_lowercase();
+    matches!(base.as_str(), "postgres" | "postmaster")
 }
 
 fn process_command(pid: i32) -> Option<String> {
@@ -845,6 +901,13 @@ fn start_cluster(project: &Path) -> Result<Started, String> {
     let data_dir = data_dir_for(project);
     let socket_dir = socket_dir_real(project);
 
+    // Refuse BEFORE initdb. A project whose path cannot be handed to pg_ctl can
+    // never be started, and initialising a cluster first would leave the user a
+    // 40MB data directory for a database they will never be able to run.
+    if let Some(msg) = pg_ctl_shell_safety_error(&data_dir, &log_path_for(project), &socket_dir) {
+        return Err(msg);
+    }
+
     // Already up? Report it and stop — no initdb, no second postmaster.
     if let Liveness::Running(pid) = probe_data_dir(&data_dir) {
         return Ok(Started {
@@ -1010,16 +1073,53 @@ fn tune_conf(data_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// `pg_ctl start` builds a command string and hands it to `/bin/sh` (see
-/// `start_postmaster` in `pg_ctl.c`), so `-o "-k <dir>"` is shell-interpreted.
-/// The two paths this code derives — `/tmp/sky-<hex>` and
-/// `$XDG_RUNTIME_DIR/sky/<hex>` — are safe by construction, but the second half
-/// of that is the user's environment variable, and a path carrying a quote or a
-/// `$` would either break the start or execute something. Rejecting it is the
-/// only honest option; quoting cannot make it safe.
+/// `pg_ctl start` builds ONE command string and hands it to `/bin/sh -c` (see
+/// `start_postmaster` in `pg_ctl.c`), so every path it interpolates is
+/// shell-interpreted. A path carrying a quote, a `$(…)` or a backtick would
+/// either break the start or execute something. Rejecting it is the only honest
+/// option; quoting cannot make it safe.
 pub fn socket_dir_is_shell_safe(dir: &Path) -> bool {
     !dir.to_string_lossy()
         .contains(['\'', '"', '`', '$', '\\', ' ', '\t', '\n', ';', '&', '|', '(', ')', '<', '>', '*', '?'])
+}
+
+/// The socket directory is NOT the only argument that goes through that shell.
+/// `start_postmaster` interpolates the executable, `-D`, the `-o` post-options
+/// **and** `-l` into the single string it passes to `/bin/sh -c`; P5a verified
+/// against PostgreSQL 14.21 that pointing each of the three at a path containing
+/// `$(touch …)` runs it. All three fired.
+///
+/// The socket path is derived by sky and is safe by construction (bar
+/// `$XDG_RUNTIME_DIR`); `-D` and `-l` are derived from the **project directory**,
+/// which is the user's — and, for anyone who checks out a repository, someone
+/// else's. So the same predicate has to cover all three, and a failure has to be
+/// a refusal naming the offending path rather than an attempt to quote it.
+///
+/// `pg_ctl stop` does not shell out; only `start` does.
+pub fn pg_ctl_shell_safety_error(data_dir: &Path, log: &Path, socket_dir: &Path) -> Option<String> {
+    let (path, role) = [
+        (data_dir, "the data directory, passed as pg_ctl -D"),
+        (log, "the server log, passed as pg_ctl -l"),
+        (socket_dir, "the socket directory, passed as -o \"-k …\""),
+    ]
+    .into_iter()
+    .find(|(p, _)| !socket_dir_is_shell_safe(p))?;
+    Some(format!(
+        "sky db start: refusing to start — a path sky must hand to pg_ctl contains\n\
+         characters that a shell would interpret:\n\
+         \x20 {}\n\
+         \x20 ({role})\n\
+         \n\
+         pg_ctl runs the postmaster through `/bin/sh -c`, building one command line\n\
+         out of the executable, -D, -o and -l (start_postmaster in pg_ctl.c), so a\n\
+         `$(…)`, a backtick or a quote in any of them would be EXECUTED. That cannot\n\
+         be made safe by quoting, so sky refuses instead.\n\
+         \n\
+         Move the project to a path without any of  ' \" ` $ \\ ; & | ( ) < > * ? space\n\
+         (or, if the offending path is the socket directory, set XDG_RUNTIME_DIR to a\n\
+         plain path) and retry.",
+        path.display()
+    ))
 }
 
 fn prepare_socket_dir(socket_dir: &Path) -> Result<(), String> {
@@ -1060,6 +1160,11 @@ fn prepare_socket_dir(socket_dir: &Path) -> Result<(), String> {
 
 fn run_pg_ctl_start(bins: &PgBins, project: &Path, data_dir: &Path, socket_dir: &Path) -> Result<i32, String> {
     let log = log_path_for(project);
+    // The guarantee belongs at the call site, not only at the caller that happens
+    // to reach it today: this is the one place a path crosses into `/bin/sh`.
+    if let Some(msg) = pg_ctl_shell_safety_error(data_dir, &log, socket_dir) {
+        return Err(msg);
+    }
     let out = Command::new(bins.tool("pg_ctl"))
         .arg("-D")
         .arg(data_dir)
@@ -1699,6 +1804,30 @@ mod tests {
         }
     }
 
+    /// `-D` and `-l` go through the SAME `/bin/sh -c` as `-o "-k …"`, and unlike
+    /// the socket path they are derived from the project directory — the user's
+    /// path, and for anyone who checks out a repository, someone else's.
+    #[test]
+    fn every_path_pg_ctl_shells_out_is_checked_not_just_the_socket() {
+        let safe = Path::new("/tmp/plain/pg");
+        let log = Path::new("/tmp/plain/postgres.log");
+        let sock = Path::new("/tmp/sky-0123456789abcdef");
+        assert!(pg_ctl_shell_safety_error(safe, log, sock).is_none());
+
+        let hostile = Path::new("/tmp/x$(touch /tmp/pwned)/.skydata/pg");
+        let m = pg_ctl_shell_safety_error(hostile, log, sock).expect("-D was not checked");
+        assert!(m.contains("pg_ctl -D"), "{m}");
+        assert!(m.contains("$(touch /tmp/pwned)"), "{m}");
+
+        let hostile_log = Path::new("/tmp/x`id`/.skydata/postgres.log");
+        let m = pg_ctl_shell_safety_error(safe, hostile_log, sock).expect("-l was not checked");
+        assert!(m.contains("pg_ctl -l"), "{m}");
+
+        let hostile_sock = Path::new("/run/user/$(id -u)/sky/abc");
+        let m = pg_ctl_shell_safety_error(safe, log, hostile_sock).expect("-k was not checked");
+        assert!(m.contains("-k"), "{m}");
+    }
+
     #[test]
     fn socket_path_len_measures_the_socket_file_not_the_directory() {
         let d = Path::new("/tmp/sky-0123456789abcdef");
@@ -1999,9 +2128,29 @@ mod tests {
             "/opt/homebrew/opt/postgresql@16/bin/postgres -D /p/.skydata/pg"
         ));
         assert!(command_looks_like_postgres("postmaster -D /var/lib/pgsql"));
+        // A postmaster that has rewritten its process title.
+        assert!(command_looks_like_postgres("postgres: checkpointer"));
         // The pid-reuse case: same number, entirely different program.
         assert!(!command_looks_like_postgres("/bin/zsh -l"));
         assert!(!command_looks_like_postgres("node server.js"));
+
+        // A SUBSTRING test says yes to every one of these, and each is a real
+        // process someone runs on a machine that also runs `sky db ps`. The
+        // consequence is not cosmetic: a recycled pid matching one of them makes
+        // `ps` report a database that is not there, and makes `sky db start`
+        // refuse for as long as that process lives.
+        for impostor in [
+            "./app --embed --data-dir /var/lib/postgres-data",
+            "go test -run TestStopPostgresOnSignal ./rt",
+            "/usr/bin/tail -f /var/log/postgres.log",
+            "/bin/sh -c pg_ctl start -D /x/postgres",
+            "vim runtime-go/rt/pg_embed.go",
+        ] {
+            assert!(
+                !command_looks_like_postgres(impostor),
+                "classified as a postmaster: {impostor}"
+            );
+        }
     }
 
     #[test]
@@ -2031,6 +2180,7 @@ mod tests {
             &["14.21".to_string(), "16.2".to_string()],
             home,
             Some("/usr/bin:/usr/local/bin"),
+            None,
         );
         assert_eq!(
             cands,
@@ -2053,6 +2203,7 @@ mod tests {
             &["9.6".to_string(), "14".to_string(), "16".to_string()],
             home,
             None,
+            None,
         );
         assert_eq!(
             cands,
@@ -2067,8 +2218,38 @@ mod tests {
 
     #[test]
     fn an_absent_override_and_empty_cache_leave_only_path() {
-        let cands = bin_dir_candidates(Some("   "), &[], Path::new("/h/.sky"), Some("/usr/bin"));
+        let cands = bin_dir_candidates(Some("   "), &[], Path::new("/h/.sky"), Some("/usr/bin"), None);
         assert_eq!(cands, vec![PathBuf::from("/usr/bin")]);
+    }
+
+    /// The pin `sky db provision --embed` writes into `sky.toml` has to CHOOSE,
+    /// or it is decoration: a project that states which PostgreSQL it is
+    /// developed against would otherwise still get whichever one the machine
+    /// happened to provision last.
+    #[test]
+    fn a_pinned_version_wins_inside_the_cache_but_never_over_the_override() {
+        let home = Path::new("/h/.sky");
+        let cached = ["14.21".to_string(), "16.2".to_string(), "18.6".to_string()];
+        let cands = bin_dir_candidates(None, &cached, home, Some("/usr/bin"), Some("14.21"));
+        assert_eq!(
+            cands,
+            vec![
+                PathBuf::from("/h/.sky/postgres/14.21/bin"),
+                // The rest keep the newest-first order.
+                PathBuf::from("/h/.sky/postgres/18.6/bin"),
+                PathBuf::from("/h/.sky/postgres/16.2/bin"),
+                PathBuf::from("/usr/bin"),
+            ]
+        );
+        // SKY_POSTGRES_BIN is the operator's deliberate choice and outranks a pin.
+        let over = bin_dir_candidates(Some("/opt/pg/bin"), &cached, home, None, Some("14.21"));
+        assert_eq!(over[0], PathBuf::from("/opt/pg/bin"));
+        assert_eq!(over[1], PathBuf::from("/h/.sky/postgres/14.21/bin"));
+        // A pin with nothing provisioned for it is simply not a candidate — it
+        // must not synthesise a directory that does not exist.
+        let absent = bin_dir_candidates(None, &cached, home, None, Some("17.0"));
+        assert_eq!(absent[0], PathBuf::from("/h/.sky/postgres/18.6/bin"));
+        assert_eq!(absent.len(), 3);
     }
 
     #[test]
@@ -2105,6 +2286,13 @@ mod tests {
         assert_eq!(parse_pg_version("initdb (PostgreSQL) 9.6.24"), Some(("9.6.24".into(), 9)));
         assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 16.3 (Debian 16.3-1.pgdg120+1)"), Some(("16.3".into(), 16)));
         assert_eq!(parse_pg_version("pg_ctl: command not found"), None);
+        // Pre-releases. Trimming the TRAILING non-digits leaves `18beta1` whole
+        // (its last character is a digit) and the parse then fails, so anyone
+        // testing against a beta got "sky cannot parse this version" instead of a
+        // working cluster.
+        assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 18beta1"), Some(("18".into(), 18)));
+        assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 17rc1"), Some(("17".into(), 17)));
+        assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 16.3-1.pgdg120+1"), Some(("16.3".into(), 16)));
     }
 
     #[test]

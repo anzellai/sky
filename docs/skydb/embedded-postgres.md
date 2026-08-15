@@ -104,6 +104,17 @@ derives are safe by construction; the half that is not is `$XDG_RUNTIME_DIR`.
 > one-line reuse of `socket_dir_is_shell_safe` on the data dir and the log
 > path in `run_pg_ctl_start`. `pg_ctl stop` does **not** shell out; only
 > `start` does.
+>
+> **Closed in P3.** `run_pg_ctl_start` now runs the same predicate over `-D` and
+> `-l`, and `start_cluster` runs it again *before* `initdb` — a project whose
+> path cannot be handed to pg_ctl can never be started, and initialising a
+> cluster first would leave the user a data directory for a database they will
+> never be able to run. The gate is a project directory literally named
+> `inj$(touch pwned)dir` driven against a stand-in `pg_ctl` that reproduces
+> `start_postmaster`'s one behaviour — build a single string, hand it to
+> `/bin/sh -c` — and it asserts the marker file does not appear. With the
+> refusal removed it does appear, and the shell's own error then names the
+> directory with the substitution already expanded away.
 
 Development clusters are tuned small (`shared_buffers` in the tens of MB), so
 several idle projects cost tens of megabytes each rather than hundreds. P2
@@ -156,6 +167,16 @@ So a pid is only believed when the process also *looks* like a postmaster
 deleting a live postmaster's pid file would let a second postmaster open the
 same data directory, which is how a development database gets corrupted.
 
+> **"Looks like a postmaster" is the EXECUTABLE, not a substring of the command
+> line.** P2 matched `postgres` anywhere in the `ps` output, which says yes to
+> `./app --embed --data-dir /var/lib/postgres-data` and to
+> `go test -run TestStopPostgresOnSignal` — P5a's own test process was
+> classified that way. Since this is the second leg of the two-legged check, the
+> consequences are the ones the leg exists to prevent: `sky db ps` reports a
+> database that is not there, and a start refuses for as long as the recycled pid
+> lives. P3 matches `argv[0]`'s basename against `postgres`/`postmaster`
+> (tolerating the trailing colon of a rewritten process title).
+
 What reaping does with an entry depends on what is gone:
 
 | Observation | Registry effect | `sky db ps` |
@@ -175,8 +196,8 @@ P2 *discovers*; P3 provisions. The order is fixed, and it is the order of
 decreasing explicitness:
 
 1. `SKY_POSTGRES_BIN` — an operator's or a test's deliberate choice.
-2. `~/.sky/postgres/<version>/bin` — the P3 cache, newest major first. It does
-   not exist yet, which is fine: it is simply skipped.
+2. `~/.sky/postgres/<version>/bin` — the P3 cache. **Pinned version first, then
+   newest major.** An empty or absent cache is simply skipped.
 3. `PATH` — a system PostgreSQL.
 
 A candidate counts only if it holds all of `initdb`, `pg_ctl` and `postgres`.
@@ -188,9 +209,73 @@ Quietly moving on to the next candidate would hand the user a cluster from an
 installation they did not choose, which is worse than the typo they made.
 
 When nothing is found, the message names all three lookups and gives a command
-for each way out (install, point `SKY_POSTGRES_BIN`, or the not-yet-built
+for each way out (install, point `SKY_POSTGRES_BIN`, or
 `sky db provision --embed`). "PostgreSQL not found" on its own sends the reader
 to the source to work out what was even looked for.
+
+> **The pin has to choose, or it is decoration.** P3 records
+> `[database] postgresVersion` in `sky.toml`, and step 2 orders the cache by it
+> before falling back to newest-first — otherwise a project that states which
+> PostgreSQL it is developed against would still get whichever one the machine
+> provisioned last, and "explicit and reproducible" would be a claim about a
+> file nothing reads. The pin orders the CACHE GROUP only: it never outranks
+> `SKY_POSTGRES_BIN`, which is someone deliberately overriding, and a pin with
+> nothing provisioned for it is not a candidate rather than a synthesised path.
+
+### `sky db provision --embed` (P3)
+
+Fetches the platform bundle P2b built, into `~/.sky/postgres/<version>/`
+(`$SKY_HOME` overrides the root), and records the pin. Four properties are
+load-bearing, and each has a gate that has been observed failing:
+
+- **The checksum is verified against the bytes on disk, before anything is
+  extracted.** The release's `SHA256SUMS` is fetched *first*, so the archive is
+  never downloaded without something to check it against, and the digest is
+  taken from the file that landed rather than from the bytes we meant to write —
+  a truncated transfer is exactly what would otherwise pass. A mismatch names
+  both digests and installs nothing.
+- **The install is atomic.** The archive is extracted into a staging directory
+  **outside** `~/.sky/postgres/` and renamed into place. Staging *inside* it
+  would be worse than useless: the cache directory is what discovery enumerates,
+  so a half-extracted tree there is a *candidate* — a `bin/` holding a truncated
+  `postgres` that `sky db start` would select and fail on, much later and much
+  more confusingly than at the point of the interrupted download.
+- **Provisioning what is already provisioned is a fast success** that makes no
+  request at all. A cache entry counts as provisioned only when every required
+  binary is present *and executable*: `go:embed` yields mode 0444 and a
+  file-exists check would accept a `postgres` that cannot be run.
+- **An unsupported platform is refused with a way out**, never a download of
+  something that cannot execute. Windows is named as out of scope rather than
+  reported as an unknown platform.
+
+Offline installs are first-class, because the machine that needs a database is
+not always the machine with a network:
+
+```bash
+sky db provision --embed                          # fetch + verify + pin
+sky db provision --embed --from ./postgres-18.6-linux-amd64.tar.gz \
+                        --checksum <sha256>       # from a local file
+sky doctor --fix                                  # pre-warm the cache
+```
+
+`--from` takes the checksum from `--checksum`, or from a `SHA256SUMS` sitting
+beside the archive (so "copy the release directory across" just works). With
+neither, it **refuses** — an air-gapped copy is where a corrupted file is most
+likely and least visible. When the network is unreachable, the failure names the
+`--from` route and `SKY_POSTGRES_BIN` rather than a curl exit code.
+
+`sky doctor` reports a project with `[database] embedded = true` and no
+reachable PostgreSQL, and `--fix` pre-warms the cache. That fix deliberately
+does **not** write the pin: `doctor --fix` is contracted to leave `sky.toml`
+alone, and pinning a version is a decision the project makes.
+
+The bundle contract is P2b's, consumed rather than re-invented: release tag
+`postgres-bundle-v<version>`, asset `postgres-<version>-<platform>.tar.gz`
+holding one top-level directory, and a `sha256sum`-format `SHA256SUMS` listing
+every asset. `$SKY_POSTGRES_BUNDLE_URL` overrides the release URL for a mirror
+or an internal host. The version sky asks for is checked against the build
+script's `PG_VERSION` by a unit test — the two files are the only places the
+number lives, and a bump to one and not the other is a 404 for every user.
 
 ## Lifecycle
 
@@ -351,6 +436,19 @@ that is already down succeeds, so the verb is safe in a shell trap.
 > start *permanently*, accusing a process that has nothing to do with it. The
 > gate now stands up a live `sleep`, writes its pid into the lock file, and
 > asserts the cluster still boots.
+>
+> **P2's Rust gate had the identical defect, and P3 proved it by mutation.**
+> `a_sigkilled_postmaster_leaves_a_stale_pidfile_that_the_next_start_clears`
+> passed with `clear_stale_pidfile` deleted — it was asserting PostgreSQL's
+> behaviour, not sky's. Rewritten around a recycled pid, the same mutation makes
+> it red with PostgreSQL's own refusal ("another PostgreSQL server is already
+> using this data directory"). The impostor is a script named `postgres-helper`,
+> so the one fixture also gates the executable-versus-substring check above; it
+> must **not** be a copy of `/bin/sleep`, because on macOS a copied platform
+> binary fails its code-signature check and is killed at exec — which silently
+> returns the gate to the dead-pid case it was rewritten to escape. The test now
+> asserts the impostor is alive and carries `postgres` in its command line
+> before it asserts anything about sky.
 
 The remaining two are genuinely `--embed`-only:
 
@@ -502,7 +600,7 @@ Each phase ships its own commit and is verifiable in isolation.
 | **P1** ✅ | Isolation levels + deployment-aware pool configuration (independent of everything below) — `runtime-go/rt/db_pool.go`, gated by `db_pool_test.go` |
 | **P2** ✅ | Cluster supervisor: data dir, `initdb`, hashed socket path, `sky db start` / `stop` / `ps`, the registry — `rust/crates/sky/src/db_cluster.rs`, gated by its unit tests + `tests/db_cluster_flow.rs` (a live cycle from a project path deep enough to overflow `sun_path`) |
 | **P2b** | CI bundle build: PostgreSQL from source per platform, pinned configure line, SBOM, the GPL/LGPL/AGPL link gate, `NOTICE.md` entry |
-| **P3** | `sky db provision --embed` — fetch Sky's own bundle, checksum, pin |
+| **P3** ✅ | `sky db provision --embed` — fetch Sky's own bundle, checksum-before-extract, atomic install, the `[database] postgresVersion` pin, the offline `--from` route and the `sky doctor --fix` pre-warm — `rust/crates/sky/src/db_provision.rs`, gated by its unit tests + `tests/db_provision_flow.rs` (a real download over a local HTTP server, a corrupt archive, an interrupted extract, and a `SIGKILL`ed provision) |
 | **P4** ✅ | `sky run` / `sky watch` integration: `[database] embedded`, DSN injection, the ref count — `rust/crates/sky/src/db_cluster.rs` + `main.rs`, gated by its unit tests + `tests/db_run_cluster_flow.rs` (two overlapping `sky run`s against a real PostgreSQL) |
 | **P5a** ✅ | The runtime supervisor behind `./app --embed`: data-dir resolution, bundle extraction, `initdb`, RAM/CPU-derived tuning, a postmaster child in its own process group, readiness, the ordered `SIGTERM` sequence, and all five failure modes — `runtime-go/rt/pg_embed.go` + `pg_embed_bundle.go` + `pg_embed_conf.go`, gated by `pg_embed*_test.go` (including a live cycle against a real PostgreSQL and a subprocess that proves the app exits non-zero when its database dies) |
 | **P5b** | `sky build --embed`: the compiler flag, the `go:embed` of the platform bundle, and the two generated calls (`rt.EmbeddedPostgresBundle = …`, `rt.MaybeStartEmbeddedPostgres()` / `defer rt.StopEmbeddedPostgres()`) |

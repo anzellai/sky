@@ -219,6 +219,7 @@ driver = "sqlite"          # OPTIONAL assertion — must agree with the DSN abov
 | `url`    | `<PREFIX>_DB_PATH`       | (empty)   | Alias for `path` (postgres DSN)                  |
 | `driver` | *(none)*                 | (unset)   | Optional consistency assertion; see below        |
 | `embedded` | *(none)*               | `false`   | `sky run` supervises a local cluster and provisions the DSN — see [below](#embedded-postgresql) |
+| `postgresVersion` | *(none)*        | (unset)   | The PostgreSQL `sky db provision --embed` fetched and `sky db start` prefers |
 
 `driver` does **not** select anything. It is checked against `path`/`url` at
 build time and a contradiction is reported — `driver = "postgres"` beside
@@ -321,12 +322,14 @@ to retry; setting either alongside a SQLite DSN warns and changes nothing.
 
 ```toml
 [database]
-embedded = true    # sky supervises a local cluster and provisions the DSN
+embedded = true             # sky supervises a local cluster and provisions the DSN
+postgresVersion = "18.6"    # written by `sky db provision --embed`
 ```
 
 | Key | Env var | Default | Meaning |
 |---|---|---|---|
 | `embedded` | *(none — a toolchain key)* | `false` | `sky run` / `sky watch` start a per-project PostgreSQL and inject its DSN |
+| `postgresVersion` | *(none — a toolchain key)* | (unset) | The PostgreSQL major/minor this project is developed against |
 
 With `embedded = true`, `sky run` starts this project's cluster (`.skydata/pg/`,
 a unix socket outside the project — see
@@ -341,8 +344,17 @@ database. `sky db start` is **persistent** and stays up until `sky db stop`,
 including across a `sky run` that used it — that is the mode for running
 `./sky-out/app` repeatedly.
 
-Unlike every other key here, `embedded` sets no environment variable. It is read
-by the `sky` toolchain, not by the app.
+Unlike every other key here, `embedded` and `postgresVersion` set no environment
+variable. They are read by the `sky` toolchain, not by the app.
+
+`postgresVersion` is written by `sky db provision --embed`, which fetches Sky's
+own PostgreSQL build into `~/.sky/postgres/<version>/` (checksum-verified,
+installed atomically) so the project needs no system PostgreSQL. The pin is not
+decoration: binary discovery prefers the pinned version over a newer cached one,
+so a checkout on another machine gets the PostgreSQL the project states rather
+than whichever that machine provisioned last. `SKY_POSTGRES_BIN` still outranks
+it, and a pin with nothing provisioned for it is skipped — pin, then run
+`sky db provision --embed` (or `sky doctor --fix`) to fetch it.
 
 > **`embedded = true` alongside `path` / `url` / `SKY_DB_PATH` / `DATABASE_URL`
 > is an error, not a precedence rule.** There is no safe answer: preferring the

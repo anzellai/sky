@@ -300,11 +300,24 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
     assert!(stop2.status.success(), "a second stop must be a no-op:\n{}", both(&stop2));
 }
 
-/// A `SIGKILL`ed postmaster leaves `postmaster.pid` behind. The next start must
-/// recognise it as stale and clear it — refusing to boot here is the failure
-/// mode the design brief names.
+/// A `SIGKILL`ed postmaster leaves `postmaster.pid` behind, naming a pid the
+/// kernel is free to hand to something else. The next start must recognise that
+/// as stale and clear it.
+///
+/// **This gate was vacuous in its first form, and the mutation that proved so is
+/// worth recording.** PostgreSQL clears a pid file naming a plainly-dead process
+/// *itself* (`CreateLockFile` in `miscinit.c`), so a test that SIGKILLs the
+/// postmaster and stops there passes with sky's handling deleted — it is
+/// asserting PostgreSQL's behaviour, not sky's. The case that genuinely needs
+/// sky is the **recycled** pid: a live, unrelated process wearing the dead
+/// postmaster's number. PostgreSQL then sees a live pid, concludes another
+/// postmaster is running, and refuses to start *permanently*.
+///
+/// The impostor is deliberately named `postgres-helper`, so this also gates the
+/// second leg of the liveness check: a substring test on the command line calls
+/// that a postmaster, and sky would then refuse to clear the pid file at all.
 #[test]
-fn a_sigkilled_postmaster_leaves_a_stale_pidfile_that_the_next_start_clears() {
+fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
     let Some(fx) = fixture("stale") else {
         eprintln!("skipping: no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
         return;
@@ -324,15 +337,72 @@ fn a_sigkilled_postmaster_leaves_a_stale_pidfile_that_the_next_start_clears() {
         assert!(std::time::Instant::now() < deadline, "SIGKILLed postmaster never went away");
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+    let pidfile = fx.data_dir().join("postmaster.pid");
     assert!(
-        fx.data_dir().join("postmaster.pid").is_file(),
+        pidfile.is_file(),
         "fixture invalid: SIGKILL did not leave a stale pid file, so this test proves nothing"
     );
 
-    // With the postmaster gone, `ps` must report stopped — NOT running off the
-    // stale pid file.
+    // Recycle the pid: a live process, not a postmaster, whose name would fool a
+    // substring test.
+    let helper_bin = std::env::temp_dir().join(unique("postgres-helper")).join("postgres-helper");
+    std::fs::create_dir_all(helper_bin.parent().unwrap()).unwrap();
+    // A script, NOT a copy of /bin/sleep: on macOS a copied platform binary
+    // fails its code-signature check and is killed the moment it execs, which
+    // would leave this test asserting the plainly-dead-pid case — the vacuous
+    // one PostgreSQL handles by itself. `sleep` is a child rather than an
+    // `exec`, so the process holding the pid keeps the impostor's name.
+    std::fs::write(&helper_bin, "#!/bin/sh\nsleep 120\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&helper_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // stdio nulled: the `sleep` grandchild would otherwise inherit the test
+    // harness's captured stdout and hold it open for its whole lifetime, which
+    // stalls the run long after this test has finished.
+    let mut helper = Command::new(&helper_bin)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let helper_pid = helper.id();
+    // The fixture is only a fixture while the impostor is ALIVE and wears a name
+    // a substring test would fall for. Both are asserted, because either one
+    // silently failing turns this gate back into the vacuous version.
+    let impostor_cmd = String::from_utf8_lossy(
+        &Command::new("ps")
+            .args(["-o", "command=", "-p", &helper_pid.to_string()])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    assert!(
+        !impostor_cmd.is_empty(),
+        "the impostor process died immediately; this test would then be asserting \
+         the dead-pid case PostgreSQL already handles, and would prove nothing"
+    );
+    assert!(
+        impostor_cmd.contains("postgres"),
+        "the impostor ({impostor_cmd}) does not carry `postgres` in its command line, \
+         so it no longer exercises the substring-versus-executable check"
+    );
+    let stale = std::fs::read_to_string(&pidfile).unwrap();
+    let mut lines: Vec<String> = stale.lines().map(str::to_string).collect();
+    lines[0] = helper_pid.to_string();
+    std::fs::write(&pidfile, format!("{}\n", lines.join("\n"))).unwrap();
+
+    // With a live impostor holding the number, `ps` must still report stopped —
+    // NOT running off the recycled pid.
     let ps = fx.sky(&["db", "ps"]);
-    assert!(stdout(&ps).contains("stopped"), "stale pid reported as running:\n{}", stdout(&ps));
+    assert!(
+        stdout(&ps).contains("stopped"),
+        "a recycled pid was reported as a running database:\n{}",
+        stdout(&ps)
+    );
 
     // And a start must clear it and come back up, giving out shared memory a
     // moment if the auxiliary processes are still detaching.
@@ -346,13 +416,113 @@ fn a_sigkilled_postmaster_leaves_a_stale_pidfile_that_the_next_start_clears() {
     }
     assert!(
         restart.status.success(),
-        "start after a SIGKILL must clear the stale pid file and boot:\n{}",
+        "start after a SIGKILL with a RECYCLED pid must clear the stale pid file \
+         and boot — PostgreSQL will not, it refuses while that pid is alive:\n{}",
         both(&restart)
     );
     let new_pid = fx.postmaster_pid().expect("no postmaster.pid after restart");
     assert_ne!(new_pid, pid);
+    assert_ne!(new_pid, helper_pid as i32);
 
     let _ = fx.sky(&["db", "stop"]);
+    // The impostor's own `sleep` child too — scoped to this test's pid, never a
+    // pattern that could reach another agent's or another test's processes.
+    let _ = Command::new("pkill").args(["-P", &helper_pid.to_string()]).status();
+    let _ = helper.kill();
+    let _ = helper.wait();
+    let _ = std::fs::remove_dir_all(helper_bin.parent().unwrap());
+}
+
+/// `pg_ctl start` hands ONE command string to `/bin/sh -c` — the executable, the
+/// `-D` data directory, the `-o` post-options and the `-l` log file, all
+/// interpolated into it (`start_postmaster`, `pg_ctl.c`). P5a verified against
+/// PostgreSQL 14.21 that a `$(…)` in ANY of the three is executed.
+///
+/// `-D` and `-l` are derived from the PROJECT PATH, which is the user's — and,
+/// for anyone who checks out a repository, someone else's. So the gate is a
+/// project directory whose name carries a command substitution, and the
+/// assertion is that the command did not run.
+///
+/// The stand-in `pg_ctl` here reproduces exactly that one mechanism, so the test
+/// needs no PostgreSQL and still fails if sky ever stops refusing: with the check
+/// removed, sky reaches this `pg_ctl`, the marker appears, and the assertion
+/// below is what catches it.
+#[test]
+fn a_project_path_carrying_a_command_substitution_is_refused_not_executed() {
+    let root = std::env::temp_dir().join(unique("inject"));
+    // `pwned` is relative: the shell pg_ctl spawns inherits sky's cwd, which is
+    // the project directory, and a directory name cannot contain a slash.
+    let project = root.join("inj$(touch pwned)dir");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join("sky.toml"), "name = \"inj\"\nentry = \"src/Main.sky\"\n").unwrap();
+
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let exec = |p: PathBuf, body: &str| {
+        std::fs::write(&p, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    };
+    // A faithful stand-in for start_postmaster(): build ONE string out of the
+    // executable, -o, -D and -l, and hand it to `/bin/sh -c`. Double quotes are
+    // what pg_ctl.c uses, and they do not stop `$(…)` from running.
+    exec(
+        bin.join("pg_ctl"),
+        "#!/bin/sh\n\
+         DATA=; LOG=; OPTS=\n\
+         while [ $# -gt 0 ]; do\n\
+         \x20 case \"$1\" in\n\
+         \x20   --version) echo 'pg_ctl (PostgreSQL) 14.21'; exit 0 ;;\n\
+         \x20   -D) DATA=$2; shift 2 ;;\n\
+         \x20   -l) LOG=$2; shift 2 ;;\n\
+         \x20   -o) OPTS=$2; shift 2 ;;\n\
+         \x20   *) shift ;;\n\
+         \x20 esac\n\
+         done\n\
+         CMD=\"\\\"postgres\\\" $OPTS -D \\\"$DATA\\\" >> \\\"$LOG\\\" 2>&1\"\n\
+         /bin/sh -c \"$CMD\"\n\
+         exit 1\n",
+    );
+    // Enough of an initdb that, WITHOUT the refusal, the start path reaches
+    // pg_ctl — otherwise a passing test could just mean initdb failed first.
+    exec(
+        bin.join("initdb"),
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do case \"$1\" in -D) D=$2; shift 2 ;; *) shift ;; esac; done\n\
+         mkdir -p \"$D\" && echo 14 > \"$D/PG_VERSION\" && echo '# stub' > \"$D/postgresql.conf\"\n",
+    );
+    exec(bin.join("postgres"), "#!/bin/sh\necho 'postgres (PostgreSQL) 14.21'\n");
+
+    let home = root.join("home");
+    let out = Command::new(SKY)
+        .args(["db", "start"])
+        .current_dir(&project)
+        .env("SKY_HOME", &home)
+        .env("SKY_POSTGRES_BIN", &bin)
+        .output()
+        .unwrap();
+
+    assert!(
+        !project.join("pwned").exists(),
+        "COMMAND INJECTION: a `$(…)` in the project path was executed through \
+         pg_ctl's /bin/sh.\n{}",
+        both(&out)
+    );
+    assert!(!out.status.success(), "the start should have been refused:\n{}", both(&out));
+    let msg = stderr(&out);
+    assert!(msg.contains("/bin/sh"), "the refusal must say why:\n{msg}");
+    assert!(msg.contains("$(touch pwned)"), "the refusal must name the path:\n{msg}");
+    // Refused BEFORE initdb: a cluster that can never be started must not have
+    // been created.
+    assert!(
+        !project.join(".skydata").join("pg").join("PG_VERSION").exists(),
+        "a data directory was initialised for a cluster that can never start"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// A data directory from a different PostgreSQL major must be reported, never
