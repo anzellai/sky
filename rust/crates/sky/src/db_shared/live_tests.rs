@@ -1336,3 +1336,74 @@ fn a_pg_hba_conf_that_does_not_parse_is_refused_rather_than_reloaded() {
     reload_hba(&fx.layout, port, &fx.user)
         .expect("reload_hba stayed broken after the bad line was removed");
 }
+
+/// `--app` against a cluster nobody hardened.
+///
+/// Its only guard was that `PG_VERSION` exists. It ran none of what `--shared`
+/// runs — not `verify_the_server_reads_skys_files`, not `reload_hba`, not the
+/// hardening SQL — and then printed a DSN and the sentence "refused by every
+/// database sky provisioned but alpha". Against a cluster still carrying
+/// `initdb`'s `local all all trust`, that sentence is false in the way that
+/// matters: any local process may connect as any role by claiming to be it, and
+/// every REVOKE behind it is decoration.
+///
+/// Reachable by operator deviation from the documented `--shared`-first flow —
+/// a `--state-dir` pointed at an existing cluster — which is exactly the
+/// deviation an operator makes when they already have a PostgreSQL and think
+/// `--app` is the part they need.
+///
+/// The refusal is by ATTEMPT, so this test drives it the same way: put the
+/// cluster back on `trust`, reload, and require `--app` to refuse. Reading the
+/// file back would prove what the file says; a running postmaster enforces what
+/// it read at startup, which is why the file is not the question.
+#[test]
+fn an_app_is_refused_against_a_cluster_that_does_not_ask_for_a_password() {
+    let Some((fx, _a_dsn, _a_pw, _b_dsn, _b_pw)) = provision_fixture("unhardened") else {
+        return;
+    };
+    let hba = fx.layout.data_dir.join("pg_hba.conf");
+    let hardened = std::fs::read_to_string(&hba).expect("pg_hba.conf");
+
+    // Positive control: as hardened, --app works.
+    provision_app(&Opts {
+        state_dir: Some(fx.layout.state_dir.clone()),
+        app: Some("gamma".into()),
+        ..Opts::default()
+    })
+    .expect("--app failed against the cluster sky hardened");
+
+    // initdb's own file, which is what an operator's un-provisioned cluster is
+    // running: first match wins, and this one matches everything.
+    std::fs::write(
+        &hba,
+        "local   all             all                                     trust\n\
+         host    all             all             127.0.0.1/32            trust\n",
+    )
+    .unwrap();
+    let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
+    admin.scalar("SELECT pg_reload_conf()").unwrap();
+    // The fixture works: the cluster really is on trust now.
+    connect_as(&fx.layout, "gamma", "gamma", "not-gammas-password")
+        .expect("the fixture did not put the cluster on trust; the test is wrong, not the code");
+
+    let e = provision_app(&Opts {
+        state_dir: Some(fx.layout.state_dir.clone()),
+        app: Some("delta".into()),
+        ..Opts::default()
+    })
+    .expect_err("sky issued app credentials, and the boundary claim, against a `trust` cluster");
+    assert!(
+        e.contains("accepted a connection as") && e.contains("password that is not delta's"),
+        "refused for the wrong reason:\n{e}"
+    );
+
+    // Restore, and prove the restoration.
+    std::fs::write(&hba, &hardened).unwrap();
+    admin.scalar("SELECT pg_reload_conf()").unwrap();
+    provision_app(&Opts {
+        state_dir: Some(fx.layout.state_dir.clone()),
+        app: Some("delta".into()),
+        ..Opts::default()
+    })
+    .expect("--app stayed broken after the cluster was hardened again");
+}

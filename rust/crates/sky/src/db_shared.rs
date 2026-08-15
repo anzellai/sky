@@ -1433,6 +1433,70 @@ fn ensure_running<'a>(bins: &'a PgBins, layout: &'a Layout) -> Result<TempStart<
     Ok(TempStart { bins, layout, started_here: true })
 }
 
+/// Ask the cluster, BY ATTEMPT, whether it authenticates app roles at all.
+///
+/// `--app` never asked. Its only guard was that `PG_VERSION` exists, so an
+/// operator who pointed `--state-dir` at a cluster sky had not provisioned got
+/// a role, a database, a DSN, and the sentence "refused by every database sky
+/// provisioned but {app}" — against a cluster still running `initdb`'s `local
+/// all all trust`, where any local process may connect as any role by claiming
+/// to be it and every REVOKE behind that is decoration. `--shared` runs
+/// [`verify_the_server_reads_skys_files`], [`reload_hba`] and the hardening SQL;
+/// `--app` ran none of them.
+///
+/// The question is asked the way the rest of this phase asks its questions —
+/// by attempt, not by inspection. Reading `pg_hba.conf` back and finding
+/// `scram-sha-256` in it proves the file says so, not that the postmaster is
+/// enforcing it: a running cluster keeps whatever it read at startup. So this
+/// connects as the app's own role, over the app's own DSN, with a password
+/// that is deliberately not the app's, and requires PostgreSQL to refuse it:
+///
+///   * `28P01` — the password was checked and rejected. This is the only
+///     acceptable answer, and it can only come from a cluster asking for one.
+///   * a CONNECTION — `trust`. The cluster does not check passwords, the DSN's
+///     password is decoration, and so is the boundary.
+///   * anything else — `peer`, `ident`, a method whose failure is not a
+///     password failure. The printed DSN would not work either.
+fn refuse_a_cluster_that_does_not_authenticate(
+    layout: &Layout,
+    listen: &Listen,
+    app: &str,
+) -> Result<(), String> {
+    let target = pg_wire::Target::Unix(layout.socket_dir.clone(), listen.port);
+    // Not a generated password: this one must never be right, and it is never
+    // stored, printed or reused.
+    let wrong = "sky-hardening-probe-this-is-not-the-password";
+    let refusal = match Conn::connect(&target, app, app, Some(wrong)) {
+        Ok(_) => {
+            return Err(format!(
+                "sky db provision --shared --app {app}: this cluster accepted a connection as\n\
+                 {app} with a password that is not {app}'s. It is not asking for one — an\n\
+                 unhardened `pg_hba.conf` says `local all all trust` — so any local process\n\
+                 can connect as any app's role by claiming to be it, and every REVOKE behind\n\
+                 that is decoration.\n\
+                 \n\
+                 Harden the cluster first, then re-run this:\n\
+                 \x20 sky db provision --shared --state-dir {}",
+                layout.state_dir.display()
+            ))
+        }
+        Err(e) => e,
+    };
+    if refusal.sqlstate() == Some("28P01") {
+        return Ok(());
+    }
+    Err(format!(
+        "sky db provision --shared --app {app}: this cluster did not refuse a wrong password\n\
+         as a password failure — it answered:\n\
+         \x20 {refusal}\n\
+         \n\
+         sky's pg_hba.conf authenticates app roles with scram-sha-256, and the DSN printed\n\
+         by this command is only usable against a cluster that does. Harden it first:\n\
+         \x20 sky db provision --shared --state-dir {}",
+        layout.state_dir.display()
+    ))
+}
+
 fn admin_conn(layout: &Layout, port: u16, superuser: &str, database: &str) -> Result<Conn, String> {
     Conn::connect_socket(&layout.socket_dir, port, superuser, database).map_err(|e| {
         format!(
@@ -1911,7 +1975,11 @@ fn provision_app(o: &Opts) -> Result<String, String> {
     let bins = db_cluster::discover_pg_bins()?;
     let listen = effective_listen(&layout);
     let mut guard = ensure_running(&bins, &layout)?;
-    let result = provision_app_inner(o, &layout, &listen, &user, &app);
+    // The same guard `--shared` runs, for the same reason: a cluster reading
+    // its configuration from /etc is one sky's hardening never reached, and
+    // `--app` would otherwise issue credentials against it and say so.
+    let result = verify_the_server_reads_skys_files(&layout, listen.port, &user)
+        .and_then(|()| provision_app_inner(o, &layout, &listen, &user, &app));
     let stopped = guard.stop_if_ours();
     let msg = result?;
     stopped?;
@@ -1980,6 +2048,11 @@ fn provision_app_inner(
             .map_err(|e| format!("sky db provision --shared --app {app}: cannot rotate the password: {e}"))?;
         password = Some(pw);
     }
+
+    // Now that the role exists, ask the cluster whether it authenticates it.
+    // After the role and before the DSN: the probe needs a role to attempt as,
+    // and what it guards is the claim printed at the end.
+    refuse_a_cluster_that_does_not_authenticate(layout, listen, app)?;
 
     for stmt in app_regrant_sql(app) {
         c.execute(&stmt)
