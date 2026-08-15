@@ -16,6 +16,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
+
+	"sky-app/rt/telemetry"
 )
 
 // openAnalyticsTestStore points the analytics store at a fresh SQLite file and
@@ -456,5 +459,214 @@ func TestAnalyticsSynchronousCommitIsConfigurable(t *testing.T) {
 				t.Fatalf("synchronousCommitOff = %v, want %v", got, tc.wantOff)
 			}
 		})
+	}
+}
+
+// ── conservation: every emitted event is written or counted ─────────────
+
+// TestNoEventIsLostWithoutBeingCounted is the conservation gate, and it is the
+// one that ties the whole overflow design together.
+//
+// The design's claim is not "no event is ever lost" — it is "an event is either
+// written or COUNTED as dropped". Every gate before this one asserted a piece
+// of that: the queue is bounded, overflow increments `dropped`, the queue is
+// flushed on shutdown. None of them asserted the claim itself, and the gap they
+// left between them was the shutdown WINDOW: once the writer had drained and
+// returned, `enqueue` still accepted rows into a channel nothing would read,
+// and `dropped` did not move. Ten events emitted after a drain reached neither
+// the disk nor the counter.
+//
+// That window is not rare. In-flight requests emit page views for the whole of
+// a graceful shutdown, so it was silent, correlated loss on every deploy.
+func TestNoEventIsLostWithoutBeingCounted(t *testing.T) {
+	db, path := openAnalyticsTestStore(t)
+	_ = db
+
+	const before = 120
+	for i := 0; i < before; i++ {
+		analyticsStoreInsert(map[string]any{
+			"ts": int64(i), "event": "before_shutdown", "anonymous_id": "anon",
+		})
+	}
+	w := analyticsWriterInst
+	w.shutdown(context.Background())
+
+	// The deploy window: requests still in flight when the hook ran.
+	const during = 10
+	for i := 0; i < during; i++ {
+		analyticsStoreInsert(map[string]any{
+			"ts": int64(1000 + i), "event": "during_shutdown", "anonymous_id": "anon",
+		})
+	}
+
+	reopened, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	var written int64
+	if err := reopened.QueryRow(`SELECT count(*) FROM analytics_events`).Scan(&written); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	dropped := w.dropped.Load()
+
+	if written+dropped < before+during {
+		t.Fatalf("%d events were emitted; %d reached disk and %d were counted as dropped — "+
+			"%d vanished, uncounted. Events emitted during the shutdown window are accepted "+
+			"by a queue nothing will read, so this is silent loss on every deploy",
+			before+during, written, dropped, before+during-written-dropped)
+	}
+	// The events emitted BEFORE the hook must have been written, not counted
+	// away — otherwise this gate would pass on a writer that drops everything.
+	if written < before {
+		t.Fatalf("only %d of the %d events emitted before the shutdown reached disk — "+
+			"the drain is not draining", written, before)
+	}
+	if dropped < during {
+		t.Fatalf("%d events were emitted after the drain; only %d drops were counted",
+			during, dropped)
+	}
+	t.Logf("emitted %d (%d before the hook, %d during), written %d, counted as dropped %d",
+		before+during, before, during, written, dropped)
+}
+
+// TestAFailedBatchIsCountedAndRepublished is the observability half of the same
+// claim.
+//
+// A batch that fails to write is never retried — `flush` clears it either
+// way — so those events are lost. They used to be recorded as a `failures`
+// count that was exported nowhere, `dropped` did not move, and `writeBatch`
+// returned BEFORE `publishMetrics`, so while writes were failing the metric
+// store was never touched at all.
+//
+// The result was an operator watching exactly the right series through exactly
+// the right incident and seeing a flat line: docs/observability.md tells them a
+// rising `sky_analytics_events_dropped_total` means the store cannot keep up,
+// and a store that is DOWN left it at zero.
+func TestAFailedBatchIsCountedAndRepublished(t *testing.T) {
+	// A pool whose statements always fail: opened against a database file in a
+	// directory that does not exist, so every Exec errors at the driver.
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "no-such-dir", "x.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	// A fresh process-wide store, because publishMetrics publishes to
+	// telemetry.Default() — the same store /_sky/metrics scrapes.
+	telemetry.ResetDefault()
+	t.Cleanup(telemetry.ResetDefault)
+	store := telemetry.Default()
+
+	w := &analyticsWriter{db: db, driver: "sqlite"}
+	const rows = 7
+	batch := make([]analyticsRow, rows)
+	for i := range batch {
+		batch[i] = analyticsRow{ts: int64(i), event: "doomed"}
+	}
+	w.writeBatch(batch)
+
+	if got := w.failures.Load(); got != 1 {
+		t.Fatalf("failures = %d, want 1 — the gate is not exercising a failing write", got)
+	}
+	if got := w.dropped.Load(); got != rows {
+		t.Errorf("a batch of %d rows failed to persist and dropped = %d — a batch that is "+
+			"never retried is lost, and a lost event must be counted", rows, got)
+	}
+	counter := func(name string) float64 {
+		for _, m := range store.Snapshot() {
+			if m.Name == name && m.Type == "counter" {
+				return m.Value
+			}
+		}
+		return -1
+	}
+	if published := counter("sky_analytics_events_dropped_total"); published != float64(rows) {
+		t.Errorf("sky_analytics_events_dropped_total = %v after a failed batch of %d "+
+			"(-1 means the series does not exist) — the series an operator watches through a "+
+			"store outage does not move while the outage is happening", published, rows)
+	}
+	if got := counter("sky_analytics_write_failures_total"); got != 1 {
+		t.Errorf("sky_analytics_write_failures_total = %v, want 1 (-1 means the series does "+
+			"not exist) — write failures are counted internally and exported nowhere, so an "+
+			"outage is indistinguishable from back-pressure", got)
+	}
+}
+
+// TestTheProductionQueueHasTheDocumentedBound closes the gap between the
+// overflow POLICY gate and the queue production actually allocates.
+//
+// `TestAnalyticsWriterDropsNewestAndCountsIt` builds its own channel from
+// `analyticsQueueCap` and asserts the policy against that. It therefore proves
+// the policy, and proves nothing about the writer the store opens: multiply the
+// cap at the one `make(chan …)` in `newAnalyticsWriter` and every existing gate
+// stays green while the process allocates a ring buffer three orders of
+// magnitude larger than the documented one — 352 MB, at open, on a machine that
+// may have 512 MB.
+func TestTheProductionQueueHasTheDocumentedBound(t *testing.T) {
+	openAnalyticsTestStore(t)
+	w := analyticsWriterInst
+	if w == nil {
+		t.Fatal("the store opened no writer")
+	}
+	rowBytes := int(unsafe.Sizeof(analyticsRow{}))
+	if got := cap(w.queue); got != analyticsQueueCap {
+		t.Fatalf("the writer's queue holds %d rows, want %d — the bound the overflow policy "+
+			"is documented and gated against is not the bound production runs with "+
+			"(%.1f MB of ring buffer, allocated when the store opens)",
+			got, analyticsQueueCap, float64(got*rowBytes)/(1024*1024))
+	}
+	t.Logf("queue cap = %d rows (%d bytes/row → %.1f MB of ring buffer at open)",
+		cap(w.queue), rowBytes, float64(cap(w.queue)*rowBytes)/(1024*1024))
+}
+
+// TestLiveSyncCommitDoesNotLeakToTheNextBorrower asserts the `SET LOCAL` half
+// of the durability argument from the BORROWER's side.
+//
+// `TestLiveAnalyticsUsesSynchronousCommitOffAndOnlyForItself` issues its own
+// `BEGIN; SET LOCAL …` and inspects that. It is therefore a test of PostgreSQL's
+// `SET LOCAL` semantics — which are not in doubt — and not of the writer:
+// change `execSyncCommitOff` to issue a bare `SET` and it stays green.
+//
+// A bare `SET` on a pooled connection persists for the connection's life, so
+// the next borrower — the app, once consumers share a pool — commits without
+// waiting for the WAL to reach disk. That is the app's own orders and payments
+// acknowledged before they are durable. So this drives the real `writeBatch`
+// through a ONE-connection pool, guaranteeing the next borrower is handed the
+// very connection the flush ran on, and asks what that connection now believes.
+func TestLiveSyncCommitDoesNotLeakToTheNextBorrower(t *testing.T) {
+	dsn := liveAnalyticsCluster(t, "analytics-syncleak")
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	analyticsLiveSchema(t, db)
+
+	var before string
+	if err := db.QueryRow(`SHOW synchronous_commit`).Scan(&before); err != nil {
+		t.Fatalf("SHOW before: %v", err)
+	}
+	if before != "on" {
+		t.Fatalf("the connection did not start durable: %q — the gate would prove nothing", before)
+	}
+
+	w := &analyticsWriter{db: db, driver: "pgx", syncCommitOff: true}
+	w.writeBatch([]analyticsRow{{ts: 1, anonID: "a", event: "probe"}})
+	if f := w.failures.Load(); f > 0 {
+		t.Fatalf("the flush failed: %v", w.lastErr.Load())
+	}
+
+	var after string
+	if err := db.QueryRow(`SHOW synchronous_commit`).Scan(&after); err != nil {
+		t.Fatalf("SHOW after: %v", err)
+	}
+	if after != "on" {
+		t.Fatalf("synchronous_commit = %q on the pooled connection AFTER the analytics flush — "+
+			"the setting leaked, so the next user of this connection (the app, on a shared "+
+			"pool) has its writes acknowledged before the WAL reaches disk", after)
 	}
 }

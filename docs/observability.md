@@ -130,9 +130,22 @@ dropped rather than blocking the caller, because blocking would apply a stalled
 disk's back-pressure to every request handler — analytics must never be able to
 take the app down. Dropping is correct for this data; dropping *silently* is
 not, so drops increment `sky_analytics_events_dropped_total`, are warned about
-once per process with a running total, and are visible at `/_sky/console`. A
-non-zero and rising counter means the store cannot keep up — check its disk or
-its server.
+once per process with a running total, and are visible at `/_sky/console`.
+
+Three things count as a drop, and the counter covers all three: an event
+rejected by a full queue, a **batch that failed to persist** (it is not
+retried, so those events are lost), and an event emitted after the shutdown
+drain has finished. A store that is *down* therefore raises the counter just as
+a store that cannot keep up does — the two used to be distinguishable only by
+the second leaving the counter at zero, which is the wrong way round for the
+series an operator alerts on.
+
+To tell the two apart, read `sky_analytics_write_failures_total` alongside it.
+Rising drops with **zero** failures is back-pressure: the store is up and
+cannot keep up — check its disk or its server. Rising drops **with** failures is
+an outage: the writes are being rejected, and the most recent error is in the
+`analytics.write_failed` log line. Both counters are republished on every flush
+attempt, including the failing ones.
 
 The policy is **drop-newest**. Drop-oldest would cost a lock on the hot path to
 buy a property this data does not want: under sustained overload it discards the
@@ -195,7 +208,18 @@ session store's own pool *plus* those caps — so however hard the background
 writers work, the request path can still obtain everything it could before.
 
 If you point a sink at a different database, it gets its own pool, and the
-cluster sizing already assumes that worst case.
+cluster sizing assumes that worst case: the `max_connections` Sky generates
+covers the app's pool plus **what each runtime consumer actually asks for** —
+the shared size for analytics and the session store, telemetry's own fixed
+four — doubled for the restart-overlap window, plus the superuser and operator
+slots. It is not one "aux pool size" multiplied by the number of consumers;
+that under-counted by ten backends on a single-core host, and by four at eight
+cores, which made the restart-overlap claim printed into the generated
+`postgresql.conf` false at every core count.
+
+That arithmetic lives in `runtime-go/rt/db_pool.go` and is mirrored — under a
+gate, not a comment — by `rust/crates/sky/src/db_pool_sizing.rs`, which sizes
+clusters before any Go has run.
 
 ### Retention
 

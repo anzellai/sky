@@ -148,6 +148,17 @@ type analyticsWriter struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
+	// stopped is set BEFORE `stop` is closed, and it is what makes the writer
+	// refuse rows it can no longer write.
+	//
+	// Without it the queue kept accepting throughout and after the drain — a
+	// bounded channel with room in it accepts whether or not anything is
+	// reading — and every one of those rows was lost with `dropped` still
+	// reading zero. In-flight requests emit page views for the whole of a
+	// shutdown, so that was silent, correlated loss on EVERY deploy: precisely
+	// the failure the shutdown flush exists to prevent, reintroduced one step
+	// later in the same sequence.
+	stopped atomic.Bool
 
 	// syncCommitOff records whether this writer asks PostgreSQL to skip the
 	// WAL fsync at commit. See analyticsSynchronousCommitOff.
@@ -170,6 +181,7 @@ type analyticsWriter struct {
 	lastErr atomic.Value // error
 
 	dropWarnOnce sync.Once
+	lateWarnOnce sync.Once
 
 	// Last values handed to the metrics store. Touched ONLY by the writer
 	// goroutine (from publishMetrics, called from writeBatch), so they need
@@ -179,6 +191,7 @@ type analyticsWriter struct {
 	pubRows       int64
 	pubDropped    int64
 	pubStatements int64
+	pubFailures   int64
 }
 
 // analyticsSynchronousCommitOff reports whether the analytics writer should
@@ -256,7 +269,22 @@ func newAnalyticsWriter(db *sql.DB, driver string, pool *dbshare.Handle) *analyt
 
 // enqueue is the hot path's non-blocking send. Reports whether the row was
 // accepted; a false return has already been counted as a drop.
+//
+// EVERY rejection is counted. That is the contract the whole overflow design
+// rests on — "dropping is correct for this data; dropping silently is not" —
+// and it has to hold for the shutdown window as much as for a full queue,
+// because the shutdown window is the one that recurs on a schedule.
 func (w *analyticsWriter) enqueue(r analyticsRow) bool {
+	if w.stopped.Load() {
+		n := w.dropped.Add(1)
+		w.lateWarnOnce.Do(func() {
+			logStructured("warn", "analytics.dropped_after_shutdown",
+				"detail", "events were emitted after the analytics writer drained and stopped",
+				"dropped", itoa64(n),
+				"fix", "these arrived during the shutdown window; nothing is left to write them")
+		})
+		return false
+	}
 	select {
 	case w.queue <- r:
 		return true
@@ -377,6 +405,13 @@ func (w *analyticsWriter) writeBatch(batch []analyticsRow) {
 	w.statements.Add(1)
 	if err != nil {
 		w.failures.Add(1)
+		// The batch is not retried — `flush` clears it whether the write
+		// succeeded or not — so these rows are LOST, and a lost row is a drop.
+		// Counting them only as a "failure" left the documented meaning of
+		// `sky_analytics_events_dropped_total` false in the one case an
+		// operator is watching for: a store that cannot keep up raises the
+		// counter, and a store that is DOWN used to leave it at zero.
+		w.dropped.Add(int64(len(batch)))
 		w.lastErr.Store(err)
 		// Warn once per process — a broken store (disk full, permissions,
 		// server down) must be diagnosable, but a failing writer retrying
@@ -387,6 +422,11 @@ func (w *analyticsWriter) writeBatch(batch []analyticsRow) {
 				"rows", itoa64(int64(len(batch))),
 				"error", err.Error())
 		})
+		// Published on the FAILURE path too. It used to return here, so while
+		// writes were failing nothing was ever republished — the one-shot
+		// warning had already fired, the counters stood still, and the
+		// series an operator alerts on stayed flat through the whole incident.
+		w.publishMetrics()
 		return
 	}
 	w.rows.Add(int64(len(batch)))
@@ -454,6 +494,11 @@ func (w *analyticsWriter) publishMetrics() {
 	pub("sky_analytics_events_written_total", w.rows.Load(), &w.pubRows)
 	pub("sky_analytics_events_dropped_total", w.dropped.Load(), &w.pubDropped)
 	pub("sky_analytics_write_batches_total", w.statements.Load(), &w.pubStatements)
+	// Failures are exported as their own series, because "events were dropped"
+	// and "the store rejected a write" call for different responses: the first
+	// is back-pressure, the second is an outage. `failures` was counted and
+	// never published at all, so the second was invisible outside the log.
+	pub("sky_analytics_write_failures_total", w.failures.Load(), &w.pubFailures)
 }
 
 // flushNow asks the writer to drain synchronously and waits for it.
@@ -477,7 +522,13 @@ func (w *analyticsWriter) flushNow() {
 // shutdown drains the queue and stops the writer, inside whatever budget the
 // shutdown chain has left.
 func (w *analyticsWriter) shutdown(ctx context.Context) {
-	w.stopOnce.Do(func() { close(w.stop) })
+	w.stopOnce.Do(func() {
+		// Stop ACCEPTING before stopping the writer, so the window in which a
+		// row can be taken by a queue nothing will read is as small as the
+		// scheduler allows — and whatever still lands in it is swept below.
+		w.stopped.Store(true)
+		close(w.stop)
+	})
 	drained := make(chan struct{})
 	go func() {
 		w.wg.Wait()
@@ -485,14 +536,46 @@ func (w *analyticsWriter) shutdown(ctx context.Context) {
 	}()
 	select {
 	case <-drained:
+		// The writer goroutine has returned, so anything left in the queue
+		// raced the stop and will never be written. Count it: an event that
+		// vanishes uncounted is the one outcome this design forbids.
+		if n := w.sweepUnwritten(); n > 0 {
+			logStructured("warn", "analytics.dropped_after_shutdown",
+				"detail", "events reached the queue as the analytics writer was stopping",
+				"dropped", itoa64(n))
+		}
 	case <-ctx.Done():
 		// Budget exhausted. The events still queued are lost; say so rather
 		// than exiting quietly, because "we lost events on this deploy" is
 		// exactly the fact an operator needs and cannot otherwise recover.
+		//
+		// Counted, not merely logged. They are NOT drained here: the writer is
+		// still running and draining would steal rows it may yet write, so the
+		// count is a ceiling on the loss rather than an exact figure — which is
+		// the right direction to be wrong in for a number that says "we lost
+		// events".
 		if n := len(w.queue); n > 0 {
+			w.dropped.Add(int64(n))
 			logStructured("warn", "analytics.shutdown_incomplete",
 				"detail", "the shutdown budget expired before the analytics queue drained",
 				"unwritten", itoa64(int64(n)))
+		}
+	}
+}
+
+// sweepUnwritten empties the queue and counts what it found as dropped. Called
+// only AFTER the writer goroutine has returned, so nothing is stolen from it.
+func (w *analyticsWriter) sweepUnwritten() int64 {
+	var n int64
+	for {
+		select {
+		case <-w.queue:
+			n++
+		default:
+			if n > 0 {
+				w.dropped.Add(n)
+			}
+			return n
 		}
 	}
 }
