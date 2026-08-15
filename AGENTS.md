@@ -202,9 +202,31 @@ sky test tests/MyTest.sky        # Sky.Test runner (SKY_TEST_JSON=<path> → per
 sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
 sky db start | stop [--all] | ps [--all]                       # local PostgreSQL cluster
+sky db provision --embed                                       # fetch + pin a PostgreSQL bundle
+sky db provision --shared [--service] [--app <name>]           # one host cluster, role-per-app
+sky build --embed src/Main.sky   # bundle PostgreSQL INTO the binary; ./sky-out/app --embed
 sky add <go/module> | remove | install | update                # Go FFI deps
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```
+
+**Embedded PostgreSQL — dev/prod engine parity.** `Std.Db` is dialect-safe
+across SQLite and Postgres, and that gap is a real tax: `Codec.auto` cannot
+encode `Money`/`Decimal`, and there is no `NUMERIC` DDL kind, while `Std.Money`
+is the pinned currency default. Running the same engine in development that you
+run in production is now the easy path.
+
+The rule that makes it work: **the app never knows which tier it is in.** It
+consumes a DSN (`<PREFIX>_DB_PATH`, or `DATABASE_URL`) — only the provisioner
+changes. `sky run` supervises a per-project cluster; `./app --embed` runs its
+own; an operator sets a DSN; a shared host cluster issues one per app. Opt in
+with `[database] embedded = true`. `--embed` alongside an explicit DSN is an
+**error**, not a precedence rule.
+
+> **Bundles are not published yet.** `sky db provision --embed` resolves a
+> release built by `.github/workflows/postgres-bundle.yml`, and no
+> `postgres-bundle-v*` tag has been cut — so it 404s until one is, unless
+> pointed at a local bundle. `SKY_POSTGRES_BIN` or a system PostgreSQL works
+> today for `sky db start`. Full design: `docs/skydb/embedded-postgres.md`.
 
 **Never run `sky build` from the repo root** — it overwrites the compiler binary
 in `sky-out/`. Always `cd` into the example/project dir first.
