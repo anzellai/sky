@@ -936,12 +936,53 @@ small cloud instance. Measured components:
 | | RAM |
 |---|---|
 | Minimal Linux | ~250 MB |
-| Sky app binary (Go, idle) | **~55 MB** (measured on a live e2-micro) |
+| Sky app binary (Go, idle) | **~55 MB** (measured on a live e2-micro) · **21 MB** for a plain app on a bench e2-small |
 | Observability agent, if you run one | **~87 MB** — see below |
-| PostgreSQL base — postmaster + 6 auxiliaries at `shared_buffers = 32MB` | **36 MB** (measured) |
-| PG backends — one process per *active* connection, ~5–10 MB each | ~40–70 MB at 6–10 active |
+| PostgreSQL base — postmaster + 6 auxiliaries | **~22–29 MB** (measured under `--embed` on an e2-small) |
+| PG backends — one process per *active* connection | **6 backends total**, measured, at any session count — see below |
 | Sky.Live sessions — **~1.35–1.42 MB each on x86, measured** | ~135 MB at 100 concurrent |
 | **Base, before sessions** | **~380 MB** |
+
+### The embedded cluster, measured on an e2-small
+
+The rows above were derived until 2026-08-15, when `--embed` was run under
+load on a throwaway e2-small. Full analysis and raw data:
+[`docs/perf/skylive-interaction-cost.md`](../perf/skylive-interaction-cost.md),
+"Embedded PostgreSQL, measured".
+
+| | measured |
+|---|---|
+| PostgreSQL tree at idle — **PSS** | **29.5 MB** (postmaster + 5 auxiliaries) |
+| PostgreSQL tree at idle — **`MemAvailable` cost** | **21.9 MB** |
+| PostgreSQL tree at idle — RSS sum | 76.3 MB — **do not use this**, it counts `shared_buffers` once per process and overstates by 2.6× |
+| `max_connections` rendered on 2 vCPU | **36** (= demand 14 × 2 + 3 reserved + 5 headroom), matching the derivation exactly |
+| Backends held under **100 concurrent sessions** | **6** — 18% of the 33 usable |
+| Per-session cost added, `memory` session store | **~57 kB** — free, within run-to-run noise |
+| Per-session cost added, `postgres` session store | **~426 kB** (+32%), paid in the app, not in PostgreSQL |
+| Throughput cost | **none measurable** |
+
+Three corrections the run forces:
+
+1. **The 36 MB figure was quoted "at `shared_buffers = 32MB`", and that is
+   the wrong profile.** 32 MB is the *development* cluster's fixed constant
+   (`sky db start`). The `--embed` path derives tuning from the host at every
+   boot, and on this 2 GB instance it rendered **`shared_buffers = 296MB`** —
+   9× the assumed value. The footprint is small anyway because a shared
+   mapping costs what is *touched*: `Shmem` read 20.8 MB against the 296 MB
+   segment. **Read the base row as an idle floor, not a ceiling** — a working
+   set that exercises the buffer pool can pull resident memory far above it.
+2. **"One process per active connection, ~5–10 MB each, 6–10 active" is the
+   wrong shape.** The pool caps backends at
+   `dbSharedAuxPoolSizeFor(cpus)`, and the count did not move between 25 and
+   100 concurrent sessions: **6, flat**. PostgreSQL's memory does not grow
+   with sessions — its RSS slope against established sessions is zero within
+   noise. Embedded PostgreSQL is a **fixed block**, not a per-session tax.
+3. **The bundle delivery path is still unmeasured.** That run used
+   `SKY_POSTGRES_BIN` against Debian's `postgresql-15`, which exercises the
+   supervisor, `initdb`, the tuned conf, pool sizing and the
+   `max_connections` derivation — everything downstream of "the binaries
+   exist" — and none of `sky build --embed`, bundle extraction, or version
+   pinning.
 
 **The per-session figure has now been measured twice and corrected twice.** The
 original table guessed 10–100 KB from the Model gob's size. A local ARM run gave
