@@ -369,10 +369,61 @@ Used by the lowerer to know which Go names are "really" Sky-typed so
 
 ### 5.3 `rt.SkyCall` + `reflect.MakeFunc`
 
-Generic HOF dispatcher. ~100 ns per element. Bounded. Closes the
-"Sky `func(any) any` ↔ Go `func(T) U`" impedance mismatch. Cannot be
-elided without monomorphising every HOF call site (massive Go binary
-size cost + breaks Sky's principle of single emit per def).
+Generic HOF dispatcher. Closes the "Sky `func(any) any` ↔ Go
+`func(T) U`" impedance mismatch.
+
+> **Corrected 2026-08-15.** This section previously read "~100 ns per
+> element. Bounded." and "Cannot be elided without monomorphising every
+> HOF call site (massive Go binary size cost + breaks Sky's principle
+> of single emit per def)". **Both halves were wrong, and together they
+> are why this category was filed as irreducible.** Neither claim had a
+> measurement behind it.
+
+**The cost was understated.** A `func(Attr) bool` passed to `List.any`'s
+erased `func(any) bool` slot was emitted as `rt.Coerce[func(any) bool]`.
+Go function types are nominal in their parameters, so that assertion can
+never satisfy its own `v.(T)` fast path — *every* such call falls through
+to `makeFuncAdapter` → `adaptFuncValueWithCapture`, a `reflect.MakeFunc`
+thunk allocating a `[]reflect.Value` and re-boxing each argument. That is
+paid **per element visit**, not per call. Measured on the `Std.Ui` marker
+scan (`hasMarker name attrs = List.any (\a -> isMarker name a) attrs`),
+six probes over six attributes = 36 visits: **318 allocations with the
+adapter, 126 without** — 5.3 allocations per element visit that the
+"bounded" framing did not account for. `Std.Ui` runs this scan six times
+per element of every layout, so it sat on the hot path of every rendered
+view.
+
+**The dichotomy was false.** Eliding the dispatch does *not* require
+monomorphisation. Both shapes are fully known at `coerce_if_needed`
+(`rust/crates/lower/src/lower.rs`), so the adaptation is statically
+derivable: eta-expand into a closure **at the slot's shape** with the
+coercions pushed inside —
+`func(_e0 any) bool { return isMarker(name, rt.Coerce[Attr](_e0)) }`.
+The ABI is unchanged: still one emit per definition, still fully erased,
+no binary growth. Measured end to end on `examples/26-ui-showcase`
+(384 elements, `GOMAXPROCS=1`, closed loop, 25 sessions, 20 s, three runs
+per arm, the two compilers differing *only* by this branch):
+
+| | interactions/s | p95 |
+|---|---|---|
+| adapter (before) | 132.2 / 137.1 / 137.2 | ~580 ms |
+| eta-expanded (after) | 184.9 / 184.9 / 184.9 | ~362 ms |
+
+**1.36× throughput**, with the two arms' ranges not overlapping. Note
+this is the closed-loop, CPU-bound regime; traffic with real think time
+moves less, and the per-element microbenchmark ratio does **not**
+extrapolate to a whole request — a large share of an interaction is
+network syscall no compiler change touches.
+
+**This category is therefore lowering-closeable, not floor.** Do not
+confuse it with **§8.3's TEA `reflect.MakeFunc` dispatch (category 4)**,
+which *is* genuinely irreducible: there the callee's shape is known only
+at runtime, so there is no static target shape to eta-expand to. The two
+were described in near-identical prose, and that similarity is what
+caused this one to be mis-filed. The distinguishing test is simple —
+**if both the value's Go shape and the slot's Go shape are known at emit
+time, it is closeable; if the shape only exists at runtime, it is
+floor.**
 
 ### 5.4 Panic recovery floor
 
