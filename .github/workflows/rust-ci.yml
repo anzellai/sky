@@ -481,8 +481,11 @@ jobs:
   integration-postgres:
     runs-on: ubuntu-latest
     # No Rust build at all: checkout + setup-go + postgres:16 service health-wait
-    # + one `go test -run Postgres` over the rt package ≈ 5 min. 1.5x ≈ 8.
-    timeout-minutes: 8
+    # + one `go test -run Postgres` over the rt package ≈ 5 min. The apt install
+    # of the PostgreSQL binaries and the full `-race` pass over rt add roughly
+    # 4 more (race is ~2-3x, and the live supervisor tests now actually run
+    # instead of skipping). ≈ 9 min. 1.5x ≈ 14.
+    timeout-minutes: 14
     services:
       postgres:
         image: postgres:16
@@ -508,6 +511,42 @@ jobs:
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
         run: CGO_ENABLED=0 go test -tags integration ./rt/ -run Postgres -v
+
+      # Two things made a whole defect class unreachable in CI, and it took a
+      # local run to find one: a data race between `waitReady` reading
+      # `cmd.ProcessState` and `watchChild`'s `Wait()` writing it — also an
+      # os/exec contract violation, since ProcessState is invalid until Wait
+      # returns. CI could not have caught it, because
+      #
+      #   1. every Go step here runs CGO_ENABLED=0, and `-race` needs cgo; and
+      #   2. the embedded-PostgreSQL supervisor needs real initdb/pg_ctl/postgres
+      #      binaries ON THE RUNNER. The service container above is a server on
+      #      a port — it puts nothing on PATH — so every live test SKIPPED, and
+      #      a skipped test is green.
+      #
+      # Both are closed below. The binaries also make the live supervisor tests
+      # (socket permissions, drain-then-stop ordering, DSN handoff) actually run
+      # rather than skip.
+      - name: PostgreSQL binaries for the embedded supervisor
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16
+          # Fail here, loudly, rather than letting SKY_POSTGRES_BIN point at
+          # nothing and every live test skip its way to a green run.
+          for b in initdb pg_ctl postgres; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "missing /usr/lib/postgresql/16/bin/$b — the live tests would" \
+                   "have skipped silently" >&2
+              exit 1
+            }
+          done
+
+      - name: rt tests under the race detector, with a live PostgreSQL
+        working-directory: runtime-go
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+        run: CGO_ENABLED=1 go test -race ./rt/... -count=1
 
   # ── macOS: platform-determinism subset only (the reason for a 2nd OS) ───────
   # Byte-stable codegen (repro) + coerce floor + runtime behaviour must hold on a
