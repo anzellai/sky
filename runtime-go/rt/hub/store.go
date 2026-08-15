@@ -169,6 +169,31 @@ type Store struct {
 
 	insertedTotal atomic.Uint64
 	droppedTotal  atomic.Uint64
+
+	// Saturation-warning epoch state. See warnSaturated.
+	//
+	// dropWarnWindowNanos is an override rather than a constructor
+	// parameter so a Store built as a literal behaves exactly like one
+	// built by newStore — there is no wiring for a caller to forget. Same
+	// shape as flushIntervalOverride.
+	dropWarnMu          sync.Mutex
+	dropWarnAt          time.Time
+	dropWarnReported    uint64
+	dropWarnWindowNanos atomic.Int64
+}
+
+// defaultDropWarnWindow bounds saturation warnings to one line per window.
+// A saturated hub drops thousands of items a second; a line each would bury
+// the one line an operator needs to see.
+const defaultDropWarnWindow = time.Minute
+
+// dropWarnWindow reads the epoch through its override, supplying the default
+// itself so a zero-valued Store cannot silently disable the rate limit.
+func (s *Store) dropWarnWindow() time.Duration {
+	if d := s.dropWarnWindowNanos.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	return defaultDropWarnWindow
 }
 
 // newStore opens / creates the hot DB under dataDir, runs the
@@ -240,15 +265,51 @@ func (s *Store) Path() string {
 // Insert is the receiver-facing entry point. Non-blocking: enqueues
 // each item, dropping at the channel boundary when the writer is
 // saturated. A burst that fills the channel surfaces as a single
-// warn log line per epoch so the operator notices without a flood.
+// warn log line per epoch so the operator notices without a flood —
+// see warnSaturated, and TestHubStoreSaturationWarnsOncePerEpoch for
+// the gate that holds this sentence to it.
 func (s *Store) Insert(items []pendingItem) {
+	var dropped uint64
 	for i := range items {
 		select {
 		case s.queue <- items[i]:
 		default:
-			s.droppedTotal.Add(1)
+			dropped++
 		}
 	}
+	if dropped == 0 {
+		return
+	}
+	s.warnSaturated(s.droppedTotal.Add(dropped))
+}
+
+// warnSaturated emits at most one line per epoch, reporting every drop since
+// the previous line.
+//
+// The counter alone was not enough, and saying so is the point of this
+// function. `droppedTotal` is readable only through `Stats()`, which on the
+// hub nothing scrapes — so telemetry the hub was asked to keep disappeared
+// with nothing anywhere saying it had. Dropping is a legitimate response to
+// saturation; dropping in silence is not.
+//
+// The count is "since the last line", not "in this burst": the drops the rate
+// limit suppressed inside the epoch are carried into the next line, so the
+// rate limit cannot become a second way to lose data quietly.
+func (s *Store) warnSaturated(total uint64) {
+	s.dropWarnMu.Lock()
+	now := time.Now()
+	if !s.dropWarnAt.IsZero() && now.Sub(s.dropWarnAt) < s.dropWarnWindow() {
+		s.dropWarnMu.Unlock()
+		return
+	}
+	since := total - s.dropWarnReported
+	s.dropWarnAt = now
+	s.dropWarnReported = total
+	s.dropWarnMu.Unlock()
+
+	log.Printf("[sky.hub] store queue saturated (cap=%d): dropped %d telemetry "+
+		"item(s) since the last warning, %d in this process; the batcher is not "+
+		"keeping up with the receiver", cap(s.queue), since, total)
 }
 
 // Close drains the queue and shuts down the batcher + pruner. Idempotent, and

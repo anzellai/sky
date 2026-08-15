@@ -194,7 +194,17 @@ type HubExporter struct {
 	stopOnce  sync.Once
 	stopCh    chan struct{}
 	doneCh    chan struct{}
-	draining  atomic.Bool
+	// drained records that the drainer has left: `queue` has no reader and,
+	// because Start is startOnce-guarded, never will again. Submit consults
+	// it — an item enqueued past this point would be neither pushed nor
+	// counted, which is the one outcome the drop counters exist to prevent.
+	//
+	// This replaces a `draining` flag that was set by Flush and by
+	// StopContext, read NOWHERE, and described by StopContext as the gate
+	// Submit consults. It could not have been that gate: Flush also set it,
+	// and a Flush is not a shutdown — gating Submit on it would have thrown
+	// away telemetry the still-running drainer was about to push.
+	drained atomic.Bool
 	// started records whether the drainer goroutine actually exists, so Stop
 	// can wait on doneCh without hanging forever on an exporter that was
 	// constructed but never started.
@@ -401,6 +411,16 @@ func (e *HubExporter) Submit(kind TelemetryKind, payload []byte, level Severity)
 	if e == nil {
 		return
 	}
+	// The drainer is gone: a send would be accepted into a channel with no
+	// reader, so the item would be lost without ever appearing in the drop
+	// total. Count it instead. The shutdown-hook chain is LIFO and the
+	// exporter registers late, so hooks that log AFTER it has drained land
+	// here — as does anything the process emits between the last hook and
+	// exit.
+	if e.drained.Load() {
+		e.recordDrop(level)
+		return
+	}
 	// Priority drop-at-source — when the queue is at >80% capacity,
 	// drop DEBUG immediately; at >95%, drop INFO + fast spans too.
 	// Errors + metrics ALWAYS pass through.
@@ -543,6 +563,11 @@ func (e *HubExporter) Start(ctx context.Context) {
 					fmt.Fprintf(os.Stderr,
 						"[sky.hub-exporter] drainer panicked: %v\n", r)
 				}
+				// Before doneCh, so a Stop that returns on doneCh cannot
+				// observe a queue that still looks live. Ordered after the
+				// recover so a panicking drainer also stops pretending to
+				// accept work.
+				e.markDrained()
 				close(e.doneCh)
 			}()
 			e.drain(ctx)
@@ -625,7 +650,6 @@ func (e *HubExporter) StopContext(ctx context.Context) {
 		return
 	}
 	e.stopOnce.Do(func() {
-		e.draining.Store(true)
 		close(e.stopCh)
 	})
 	// Wait for the drainer's final push before tearing down the spool. Skipped
@@ -637,11 +661,20 @@ func (e *HubExporter) StopContext(ctx context.Context) {
 			// Budget exhausted. Say so rather than exiting quietly: "we lost
 			// this deploy's telemetry tail" is exactly the fact an operator
 			// needs and cannot recover afterwards.
+			//
+			// `drained` stays false here on purpose: the drainer is still
+			// alive and may yet push what is queued. It flips when that
+			// goroutine actually exits.
 			if n := len(e.queue); n > 0 {
 				fmt.Fprintf(os.Stderr,
 					"[sky.hub-exporter] shutdown budget expired with %d items unpushed\n", n)
 			}
 		}
+	} else {
+		// No drainer exists and none ever will, so nothing can push what is
+		// queued. Close the books here — the drainer's own exit path is
+		// otherwise the only place that does.
+		e.markDrained()
 	}
 	// Close the spool — releases the SQLite handle (file mode)
 	// or zeroes the RAM buffer (memory mode). Best-effort; a
@@ -653,11 +686,33 @@ func (e *HubExporter) StopContext(ctx context.Context) {
 	if sp != nil {
 		_ = sp.Close()
 	}
-	// Don't clear activeHubExporter — Stop is typically called
-	// during shutdown, after which the runtime exits. Leaving
-	// the singleton in place keeps any in-flight Submit() calls
-	// no-op-safe (they'll select+default into a closed channel,
-	// which panics — handled below by gating on e.draining).
+	// Don't clear activeHubExporter — Stop is typically called during
+	// shutdown, after which the runtime exits. Leaving the singleton in
+	// place keeps late Submit() calls safe: the queue is never closed, so
+	// nothing panics, and `drained` turns what would be a silent enqueue
+	// into a counted drop.
+}
+
+// markDrained closes the books on the queue: it records that no reader
+// remains and counts whatever is still sitting there as dropped.
+//
+// The count matters as much as the flag. `drained` is set by the drainer on
+// its way out, so a Submit that had already passed the check can still land an
+// item behind it. That item is unpushable, and leaving it uncounted would make
+// the drop total wrong by however many callers were mid-Submit — the exact
+// "empty queue is not a committed write" error the Flush rewrite removed one
+// layer up.
+func (e *HubExporter) markDrained() {
+	e.drained.Store(true)
+	for {
+		select {
+		case it := <-e.queue:
+			e.queueBytes.Add(-int64(len(it.payload)))
+			e.recordDrop(it.severity)
+		default:
+			return
+		}
+	}
 }
 
 // Flush blocks until everything queued at the time of the call has been
@@ -686,14 +741,16 @@ func (e *HubExporter) StopContext(ctx context.Context) {
 // The drainer now answers an explicit request and closes the caller's channel
 // only after the drain has been pushed.
 //
-// The `draining` flag is still set for the benefit of external readers, but
-// note it does NOT short-circuit Submit — the old comment claimed it did, and
-// `Submit` has never read it.
+// Flush does NOT close Submit. It used to set a `draining` flag here, which
+// StopContext described as the gate Submit consults; Submit never read it, and
+// could not have — a flush is not a shutdown, so a Submit arriving during one
+// is destined for the drainer that is running right now, not for the drop
+// counter. The gate Submit does consult is `drained`, and only the drainer's
+// exit sets that.
 func (e *HubExporter) Flush(deadline time.Duration) error {
 	if e == nil {
 		return nil
 	}
-	e.draining.Store(true)
 	done := make(chan struct{})
 	timer := time.NewTimer(deadline)
 	defer timer.Stop()
