@@ -1,0 +1,11 @@
+session established
+  sky_sid      157335d771e9f0ed4655394f0d9c4151
+  __sky_csrf   18e39673...
+  tab          t0-1912484932985489179
+  handlerId    r.1#div.7#div.1#div.0#button.click   (scraped from data-sky-hid)
+  SSE open     true (1 frames so far)
+
+interaction 1: ok in 14.915667ms, 86 bytes of reply
+interaction 2: ok in 8.13ms, 86 bytes of reply
+
+SELF-CHECK PASSED: the server is doing real per-interaction work.

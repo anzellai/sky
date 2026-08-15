@@ -196,6 +196,36 @@ it never did. The guards:
   2000 nodes as faster than 1000. Both impossible; both would have read
   as plausible numbers in isolation.
 
+### Constrained runs
+
+App inside an Apple `container` VM, generator on the host, 384-node
+view, 1 s think time. **Read the four caveats at the end of this
+document before quoting any of this** — in particular, `--cpus 1` is an
+*optimistic* stand-in for an e2-small baseline, not a match for it.
+
+| Profile | Sessions | Throughput | p50 | p95 |
+|---|---|---|---|---|
+| 1 CPU / 2 GB | 100 | 92 /s | 14–18 ms | 75–95 ms |
+| 1 CPU / 2 GB | 500 | 88 /s | **4,100–4,200 ms** | 8,700–9,500 ms |
+| 2 CPU / 2 GB | 100 | 94 /s | 8.3–8.5 ms | 23–25 ms |
+| 2 CPU / 2 GB | 500 | 188–194 /s | 1,390–1,430 ms | 2,400–3,100 ms |
+
+Three things read straight off this:
+
+- **One core serves ~100 concurrent sessions comfortably** at 1 s think
+  time — it meets the full 100/s offered load at 14 ms p50.
+- **500 sessions is far past the knee on both profiles.** On 1 CPU
+  throughput *falls* (92 → 88/s) while latency reaches 4.2 s: the
+  server is not just saturated, it is queueing. Since 1 CPU is twice
+  the e2-small baseline entitlement, the real baseline would be worse.
+- **Throughput scales with cores at saturation** (88 → 188/s from 1 to
+  2 CPUs), which confirms the ceiling is CPU-bound rather than lock- or
+  IO-bound at that point.
+
+RSS inside the container reached 1.26 GB against the 2 GB limit during
+the 500-session runs, so memory and CPU exhaust at roughly the same
+concurrency on a 2 GB machine.
+
 ## Conditions
 
 Every figure above was taken on:

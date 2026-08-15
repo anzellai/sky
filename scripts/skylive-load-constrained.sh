@@ -48,6 +48,41 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Printed after every sweep, so the caveats travel with the numbers even
+# when someone pastes only the tail of the output. Held in a heredoc
+# rather than parsed back out of this file: an earlier version used
+# `sed -n '/READ THIS/,/^# ===/p' "$0"`, whose own pattern line contained
+# the opening marker, so the range re-opened on itself and dumped the
+# rest of the script.
+print_caveats() {
+  cat <<'CAVEATS'
+================= WHAT THESE NUMBERS ARE NOT =================
+1. NOT a GCP e2-small. Apple's `container` runs an ARM64 Linux VM on
+   Apple silicon; e2-small is a shared-core x86 instance. Good for
+   RELATIVE comparisons -- before/after, where the knee sits, memory
+   per session. Never publish as "you will serve N users on e2-small";
+   only a run on real GCP settles that.
+
+2. NOT GCP's burstable credit model. An e2-small has a baseline CPU
+   entitlement and accrues credits to burst above it; sustained load
+   drains them back to the floor. A fixed vCPU allocation has no such
+   dynamics. These runs bracket a floor and a ceiling; real behaviour
+   moves between them over time.
+
+3. NOT the fractional quotas asked for. container v1.0.0 accepts only
+   INTEGER --cpus -- whole vCPUs to a VM, not a CFS quota like Docker's
+   --cpus 0.5, which it rejects outright. The e2-small baseline (0.5)
+   and e2-micro baseline (0.25) cannot be reproduced with this tool.
+   The 1-CPU run is an OPTIMISTIC stand-in at twice the e2-small
+   baseline entitlement. The real floor needs Docker, cgroup v2
+   cpu.max, or a real VM.
+
+4. The VM's virtual NIC adds a latency floor. Compare constrained runs
+   with each other, not against bare-host runs.
+==============================================================
+CAVEATS
+}
+
 APP="${APP:-examples/26-ui-showcase}"
 IMAGE="${IMAGE:-alpine:3.19}"
 HOST_PORT="${HOST_PORT:-8500}"
@@ -185,5 +220,5 @@ echo
 echo "==> constrained sweep"
 column -t -s "$(printf '\t')" "$SUMMARY" 2>/dev/null || cat "$SUMMARY"
 echo
-sed -n '/READ THIS/,/^# ====/p' "$0" | sed 's/^# \{0,1\}//'
+print_caveats
 echo "==> results in $OUTDIR"
