@@ -90,6 +90,25 @@ unanchored number.
   own app had died on bind — every number would have described the wrong
   process. That failure is now structurally impossible rather than remembered.
 
+## Reading the archived profiles
+
+The `.pprof` files are self-symbolising — Go writes function names into the
+profile — so they open without the binary that produced them, which is
+gitignored build output and will not survive:
+
+```bash
+go tool pprof -top -cum  docs/perf/runs/attribution-20260815/cpuprof/closed-r2/cpu.pprof
+go tool pprof -http=:    docs/perf/runs/attribution-20260815/cpuprof/closed-r2/cpu.pprof
+
+# the per-session retention attribution is a DIFF of two heap profiles
+go tool pprof -sample_index=inuse_space -top -cum \
+  -base docs/perf/runs/attribution-20260815/mem/sky-n100-r1/heap-p0.pprof \
+        docs/perf/runs/attribution-20260815/mem/sky-n100-r1/heap-p1.pprof
+```
+
+`harness/ms.sh <memstats.json> <field>` pulls any `MemStats` field out of the
+snapshots (awk only — `jq` is not assumed and `python3` does not run here).
+
 ## Known limits
 
 1. **One app dominates the CPU result, and that is the finding, not a flaw** —
