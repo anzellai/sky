@@ -365,7 +365,7 @@ sky db stop --all   # stop all of them
 
 ```
 $ sky db start
-sky db start: PostgreSQL 16.3 running (pid 41277).
+sky db start: PostgreSQL 18.6 running (pid 41277).
   data:   /Users/dev/shop/.skydata/pg
   socket: /tmp/sky-9f2c1a4b7e03d5c8
   log:    /Users/dev/shop/.skydata/postgres.log

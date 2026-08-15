@@ -1,7 +1,17 @@
 # Embedded PostgreSQL
 
-> **Status: in progress.** This document is the scope decision and the design.
-> Phases are listed at the end; each ships its own commit.
+> **Status: shipped in v0.20.3.** This document is the design and the record of
+> how it was reached — the scope decision, what was deliberately not built, and
+> what each phase found on contact with the code. The phase table at the end is
+> kept as history rather than as a plan.
+>
+> Two things a reader should know before relying on it. **The PostgreSQL version
+> pinned for bundles is 18.6** (`scripts/skydb/build-postgres-bundle.sh`); where
+> this document quotes a measurement taken against 14.21, that is the version
+> the measurement was actually run on and the figure is left as measured rather
+> than restated. And **no `postgres-bundle-v*` release is cut yet**, so
+> `sky db provision --embed` cannot fetch one — `SKY_POSTGRES_BIN`, a local
+> bundle, or a system PostgreSQL are the working paths today.
 
 Sky's data story has a seam in it. `Std.Db` is dialect-safe across SQLite and
 Postgres, which means every feature must be designed twice and the differences
@@ -901,6 +911,47 @@ The remaining two are genuinely `--embed`-only:
 - **A dead child.** If PostgreSQL exits, the app exits non-zero and lets the
   supervisor restart the tree. Restarting in place hides a failing disk until
   it is an outage.
+
+## Sizing a host — what this actually costs to run
+
+The common deployment is one Sky.Live app plus its embedded PostgreSQL on one
+small cloud instance. Measured components:
+
+| | RAM |
+|---|---|
+| Minimal Linux | ~250 MB |
+| Sky app binary (Go, idle) | ~30–40 MB |
+| PostgreSQL base — postmaster + 6 auxiliaries at `shared_buffers = 32MB` | **36 MB** (measured) |
+| PG backends — one process per *active* connection, ~5–10 MB each | ~40–70 MB at 6–10 active |
+| Sky.Live sessions — one Model gob per session, ~10–100 KB typical | ~10 MB at 200 concurrent |
+| **Total** | **~390 MB** |
+
+**1 GB is comfortable.** The pool ceiling (14 on 2 cores, see below) is a
+ceiling and not an allocation — `database/sql` opens lazily, so a host pays for
+what is in flight.
+
+**RAM is not the binding constraint; CPU is.** Sky.Live renders views on the
+server and diffs them per update, so on a burstable instance the baseline CPU
+allowance runs out before the memory does. A 0.25-vCPU-baseline instance is a
+demo host, whatever its RAM says.
+
+Three things that bite, in the order they bite:
+
+1. **Backups are the operator's.** A single instance has no replica.
+   `sky db provision --shared` generates a backup timer; a single `--embed` app
+   does not get one. "I lost everything" is the failure mode of exactly this
+   setup, and it is not one the tooling currently prevents.
+2. **Idle sessions evict after 5 minutes** (`defaultIdleEvict`, disableable
+   with `SKY_LIVE_IDLE_EVICT=0`). Active SSE-connected sessions do not evict and
+   there is **no hard count or byte cap**. For typical Models that is ~10 MB at
+   200 concurrent and irrelevant; an app whose Model carries a large list or a
+   cached dataset is the one way many active sessions exhaust a small host.
+3. **Disk.** Data, WAL and the extracted bundle (~77 MB) — ample on a 30 GB
+   volume, tight on a 10 GB one.
+
+The economic argument for `--embed` is here rather than in the ergonomics: a
+managed PostgreSQL instance typically costs as much again as a small VM, so
+embedding turns a two-line bill into one, and costs 36 MB.
 
 ## Connections and capacity
 
