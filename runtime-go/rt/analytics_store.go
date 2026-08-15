@@ -180,7 +180,7 @@ func analyticsOpenPool(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
 		return db, nil, nil
 	}
 	c := dbSharedAuxPoolConfig()
-	h, err := dbshare.Acquire(driver, dsn, dbshare.Config{
+	h, err := dbshare.Acquire("analytics", driver, dsn, dbshare.Config{
 		MaxOpenConns:    c.MaxOpenConns,
 		MaxIdleConns:    c.MaxIdleConns,
 		ConnMaxLifetime: c.ConnMaxLifetime,

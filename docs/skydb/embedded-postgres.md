@@ -292,8 +292,8 @@ that is deliberate. It used to be a flat `50`, which is smaller than what an
 had just started, having configured nothing to deserve it. It is now derived
 from `dev_cluster_max_connections(cpus)`, which calls the same function that
 sizes the pools (`process_connection_demand`), so the server's grant and the
-client's demand cannot drift. Roughly: the 50 floor holds to 6 cores, 57 at 7,
-64 at 8 and above.
+client's demand cannot drift. Roughly: the 50 floor holds to 5 cores, 56 at 6,
+62 at 7, 68 at 8 and above.
 
 The general lesson is worth stating because this document got it wrong twice:
 **a server limit and the client demand it must cover have to be computed by one
@@ -955,7 +955,7 @@ load on a throwaway e2-small. Full analysis and raw data:
 | PostgreSQL tree at idle — **PSS** | **29.5 MB** (postmaster + 5 auxiliaries) |
 | PostgreSQL tree at idle — **`MemAvailable` cost** | **21.9 MB** |
 | PostgreSQL tree at idle — RSS sum | 76.3 MB — **do not use this**, it counts `shared_buffers` once per process and overstates by 2.6× |
-| `max_connections` rendered on 2 vCPU | **36** (= demand 14 × 2 + 3 reserved + 5 headroom), matching the derivation exactly |
+| `max_connections` rendered on 2 vCPU | **36** (= demand 14 × 2 + 3 reserved + 5 headroom) on the day of the run, matching the derivation exactly. The *derivation* has since been corrected — the demand was counting one aux-pool size per consumer rather than what each consumer asks for — so the same host renders **56** today (= demand 24 × 2 + 3 + 5). The measurement stands; the number it matched moved. |
 | Backends held under **100 concurrent sessions** | **6** — 18% of the 33 usable |
 | Per-session cost added, `memory` session store | **~57 kB** — free, within run-to-run noise |
 | Per-session cost added, `postgres` session store | **~426 kB** (+32%), paid in the app, not in PostgreSQL |
@@ -973,7 +973,7 @@ Three corrections the run forces:
    set that exercises the buffer pool can pull resident memory far above it.
 2. **"One process per active connection, ~5–10 MB each, 6–10 active" is the
    wrong shape.** The pool caps backends at
-   `dbSharedAuxPoolSizeFor(cpus)`, and the count did not move between 25 and
+   `dbSharedAuxPoolConfigFor(cpus, …)`, and the count did not move between 25 and
    100 concurrent sessions: **6, flat**. PostgreSQL's memory does not grow
    with sessions — its RSS slope against established sessions is zero within
    noise. Embedded PostgreSQL is a **fixed block**, not a per-session tax.
@@ -1124,19 +1124,37 @@ that matters to a server is the sum.
 One Sky app process opens **four PostgreSQL-facing pools**: app data
 (`db_auth.go`), analytics (`analytics_store.go`), the Sky.Live session store
 (`live_store.go`, the `pgx` path) and telemetry (`telemetry/persist.go`). The
-app pool is 4 × CPU clamped 4–32; the three aux pools take a quarter-share of
-it, clamped 2–8 (`dbAuxPoolConfig`).
+app pool is 4 × CPU clamped 4–32. The quarter-share of it, clamped 2–8, is what
+one aux pool would be *on its own* (`dbAuxPoolConfig`) — but the two large
+consumers do not ask for that. They ask for the SHARED size
+(`dbSharedAuxPoolConfig`): the quarter-share plus both background caps, so that
+when they do share, the caps cannot take connections away from the session
+store. Telemetry asks for its own fixed 4.
 
-| Cores | App pool | 3 aux pools | Total per process |
-|---|---|---|---|
-| 2 | 8 | 6 | **14** |
-| 4 | 16 | 12 | **28** |
-| 8+ | 32 | 24 | **56** |
+The worst case — every consumer on a different DSN, so nothing shares — is
+therefore:
+
+| Cores | App pool | analytics | sessions | telemetry | Total per process |
+|---|---|---|---|---|---|
+| 2 | 8 | 6 | 6 | 4 | **24** |
+| 4 | 16 | 8 | 8 | 4 | **36** |
+| 8+ | 32 | 12 | 12 | 4 | **60** |
+
+In the normal case — one `DATABASE_URL`, always under `--embed` — the three
+collapse onto one shared pool and the process holds `app + shared`: 44 at 8
+cores, not 60.
 
 Against PostgreSQL's default `max_connections = 100`: one 8-core instance takes
-56 and is fine. **Two of them take 112, and the second is refused.** On a host
-running several Sky apps this is the binding constraint long before CPU or disk
-is.
+60 in the worst case and is fine. **Two of them take 120, and the second is
+refused.** On a host running several Sky apps this is the binding constraint
+long before CPU or disk is.
+
+The table above was `14 / 28 / 56` until 2026-08-15, computed as one aux size
+times three consumers. That is the shape of the number the *demand* function
+returned, and it was short by 10 backends at one core — so the "twice over for
+restart overlap" sentence in the generated conf was not true of the pools the
+runtime opens. Both languages now sum what each consumer actually asks for, and
+a fixture (`runtime-go/rt/testdata/db_pool_sizing.tsv`) keeps them agreeing.
 
 Say the improvement honestly next to that. Before the pool change these were
 **unlimited** — a burst opened one backend per concurrent request and reached

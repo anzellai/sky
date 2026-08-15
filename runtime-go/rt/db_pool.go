@@ -66,6 +66,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"sky-app/rt/telemetry"
 )
 
 // ── Pool sizing ────────────────────────────────────────────────
@@ -174,18 +176,50 @@ func defaultPostgresPoolConfigFor(cpus int, serverless bool) dbPoolConfig {
 	}
 }
 
+// dbAuxPoolConsumer is one PostgreSQL pool the RUNTIME opens for its own
+// purposes, as distinct from the app's `Db.connect`.
+//
+// `maxOpen` is not a restatement of how big that pool is — it is the SAME
+// function the consumer's `dbshare.Acquire` call site passes. That matters more
+// than it looks. The demand arithmetic used to multiply one per-pool size by
+// the number of consumers, while the two large consumers actually acquired with
+// `dbSharedAuxPoolConfig()` (a quarter-share PLUS both background caps) and
+// telemetry acquired with its own fixed four. The sum was short by up to ten
+// backends at every core count, and the shortfall was invisible because the
+// gate compared the arithmetic with a second copy of the arithmetic.
+type dbAuxPoolConsumer struct {
+	// name matches the string passed to dbshare.Acquire at the call site.
+	// TestEveryDbsharePoolIsAccountedFor ties the two together by parsing the
+	// runtime's source, so a pool added without a line here fails the build's
+	// gates rather than silently under-sizing every cluster.
+	name string
+	// maxOpen is the MaxOpenConns this consumer hands to dbshare.Acquire on a
+	// machine with `cpus` cores.
+	maxOpen func(cpus int, serverless bool) int
+}
+
 // dbAuxPoolConsumers names every PostgreSQL pool the RUNTIME opens for its
-// own purposes, as distinct from the app's `Db.connect`.
+// own purposes.
 //
 // It is a list rather than a constant `3` so that adding a fifth pool is a
-// change to this line, and the server sizing that reads `len()` of it moves
-// with it. The failure this guards against has already happened once: the
-// embedded cluster's `max_connections` was derived from the app pool alone
-// and left the process short by three pools' worth of backends at 6–9 cores.
-var dbAuxPoolConsumers = []string{
-	"analytics",     // analytics_store.go
-	"live-sessions", // live_store.go (pgx path)
-	"telemetry",     // telemetry/persist.go
+// change to this line, and the server sizing that reads it moves with it. The
+// failure this guards against has already happened once: the embedded
+// cluster's `max_connections` was derived from the app pool alone and left the
+// process short by three pools' worth of backends at 6–9 cores.
+var dbAuxPoolConsumers = []dbAuxPoolConsumer{
+	{"analytics", dbSharedAuxPoolMaxOpenFor},                             // analytics_store.go
+	{"live-sessions", dbSharedAuxPoolMaxOpenFor},                         // live_store.go (pgx path)
+	{"telemetry", func(int, bool) int { return telemetry.PoolMaxConns }}, // telemetry/persist.go
+}
+
+// dbAuxPoolConsumerNames is the list as bare names, for the gates and the
+// diagnostics that report which pools were counted.
+func dbAuxPoolConsumerNames() []string {
+	out := make([]string, 0, len(dbAuxPoolConsumers))
+	for _, c := range dbAuxPoolConsumers {
+		out = append(out, c.name)
+	}
+	return out
 }
 
 // dbProcessConnectionDemand returns the maximum number of PostgreSQL backends
@@ -195,20 +229,22 @@ var dbAuxPoolConsumers = []string{
 // resolves to a different DSN and therefore does NOT share (see the dbshare
 // package). When they do share — the normal case, since "one database for
 // everything" is what `DATABASE_URL` and `sky db provision --embed` both
-// produce — real demand is `app + aux`, well inside this. Sizing a server for
-// the worst case its client can produce is the right direction to be wrong
-// in; the alternative is a cluster that works until someone points telemetry
-// at a second database.
+// produce — real demand is `app + one shared pool`, well inside this. Sizing a
+// server for the worst case its client can produce is the right direction to be
+// wrong in; the alternative is a cluster that works until someone points
+// telemetry at a second database.
+//
+// The sum is taken over what each consumer ACTUALLY asks dbshare for. Deriving
+// it from a single "aux pool size" instead is the frame error this function has
+// already been fixed for once, one level down: it under-reported by ten
+// backends at 1 core and by four at 8, so the restart-overlap claim printed
+// into every generated conf was false at every core count.
 func dbProcessConnectionDemand(cpus int, serverless bool) int {
-	app := defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns
-	aux := dbAuxPoolSizeFor(cpus, serverless)
-	return app + aux*len(dbAuxPoolConsumers)
-}
-
-// dbAuxPoolSizeFor is the per-aux-pool ceiling: a quarter of the app pool,
-// floored at 2 and capped at 8. See dbAuxPoolConfig for why a quarter.
-func dbAuxPoolSizeFor(cpus int, serverless bool) int {
-	return clampInt(defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns/4, 2, 8)
+	n := defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns
+	for _, c := range dbAuxPoolConsumers {
+		n += c.maxOpen(cpus, serverless)
+	}
+	return n
 }
 
 // sqlitePoolConfig is the single-connection clamp. See the file header
@@ -235,17 +271,33 @@ func sqlitePoolConfig() dbPoolConfig {
 // `<PREFIX>_DB_MAX_OPEN_CONNS` raises these proportionally, so one knob
 // still controls the process's whole footprint.
 func dbAuxPoolConfig() dbPoolConfig {
-	c := resolveDbPoolConfig("pgx")
+	return dbAuxPoolConfigFor(runtime.GOMAXPROCS(0), IsServerless())
+}
+
+// dbAuxPoolConfigFor is dbAuxPoolConfig with the machine passed in.
+//
+// The seam exists so a gate — and the server-sizing arithmetic — can ask for
+// the config at any core count WITHOUT restating how it is computed. Every
+// per-core "size" function below is a projection of this one; there is no
+// second derivation of the quarter-share to disagree with it.
+func dbAuxPoolConfigFor(cpus int, serverless bool) dbPoolConfig {
+	c := resolveDbPoolConfigFor("pgx", cpus, serverless)
 	if c.MaxOpenConns == 0 {
 		// The app pool was explicitly set to unlimited. The runtime's own
 		// pools do not follow it there — an unbounded session-store pool
 		// is a connection storm with no upside.
-		c.MaxOpenConns = defaultPostgresPoolConfig().MaxOpenConns
+		c.MaxOpenConns = defaultPostgresPoolConfigFor(cpus, serverless).MaxOpenConns
 	}
 	n := clampInt(c.MaxOpenConns/4, 2, 8)
 	c.MaxOpenConns = n
 	c.MaxIdleConns = n
 	return c
+}
+
+// dbAuxPoolMaxOpenFor is the per-aux-pool ceiling on a given machine — the
+// pool size a consumer would get if it did NOT share.
+func dbAuxPoolMaxOpenFor(cpus int, serverless bool) int {
+	return dbAuxPoolConfigFor(cpus, serverless).MaxOpenConns
 }
 
 // ── how much of a shared pool each consumer may hold ───────────────
@@ -266,41 +318,55 @@ func dbAuxPoolConfig() dbPoolConfig {
 // Both background writers are single-goroutine batchers after the buffered
 // writer landed, so a cap of 2 costs them nothing: one slot for the flusher,
 // one for a concurrent read (the console tab, an erase, a prune).
+// dbAnalyticsShare is the analytics writer's cap. dbSessionShare is 0, meaning
+// uncapped — the hot path draws on the whole pool, and the background caps are
+// what keep it from being consumed.
+//
+// Telemetry's cap is NOT restated here. It lives in `telemetry.Share`, because
+// telemetry is the package that passes it to dbshare.Acquire, and rt reads it
+// from there. It used to be declared in both places under a gate asserting the
+// two agreed — which is a gate proving a copy. One definition needs no gate.
 const (
 	dbAnalyticsShare = 2
-	dbTelemetryShare = 2
-	// dbSessionShare is 0, meaning uncapped — the hot path draws on the whole
-	// pool, and the caps above are what keep it from being consumed.
-	dbSessionShare = 0
+	dbSessionShare   = 0
 )
 
-// dbSharedAuxPoolSizeFor is the size of the ONE pool the runtime's consumers
-// share when their DSNs resolve alike.
+// dbSharedAuxPoolConfig sizes the ONE pool the runtime's consumers share when
+// their DSNs resolve alike. It is the config the acquire sites pass, so it is
+// also the config every gate about that pool must ask.
+func dbSharedAuxPoolConfig() dbPoolConfig {
+	return dbSharedAuxPoolConfigFor(runtime.GOMAXPROCS(0), IsServerless())
+}
+
+// dbSharedAuxPoolConfigFor is dbSharedAuxPoolConfig with the machine passed in.
 //
-// It is the session store's own former pool size PLUS the two background
+// The size is the session store's own former pool size PLUS the two background
 // caps, and that addition is the whole bulkhead argument. Sizing the shared
-// pool at merely `aux` and capping the background writers inside it would
-// take connections AWAY from the session store to give them to telemetry: on
-// a small machine `aux` is 2, two caps of 2 consume the entire pool, and the
-// request path is guaranteed nothing. A gate caught exactly that
-// (TestTheBackgroundWritersCannotStarveTheSessionStore) before this shipped.
+// pool at merely `aux` and capping the background writers inside it would take
+// connections AWAY from the session store to give them to telemetry: on a small
+// machine `aux` is 2, two caps of 2 consume the entire pool, and the request
+// path is guaranteed nothing. A gate caught exactly that
+// (TestTheBackgroundWritersCannotStarveTheSessionStore) before this shipped —
+// though only after that gate was pointed at THIS function instead of at a
+// parallel one that the acquire sites never call.
 //
 // With the addition, the session store can always obtain `aux` connections —
 // precisely what it had when it owned a pool outright — so sharing costs it
 // nothing, while the process opens `aux + 4` backends instead of `3 × aux`.
 // That is a strict improvement at every core count, since `aux + 4 ≤ 3 × aux`
 // for all `aux ≥ 2`, and `aux` is floored at 2.
-func dbSharedAuxPoolSizeFor(cpus int, serverless bool) int {
-	return dbAuxPoolSizeFor(cpus, serverless) + dbAnalyticsShare + dbTelemetryShare
-}
-
-// dbSharedAuxPoolConfig is dbAuxPoolConfig sized for sharing.
-func dbSharedAuxPoolConfig() dbPoolConfig {
-	c := dbAuxPoolConfig()
-	n := c.MaxOpenConns + dbAnalyticsShare + dbTelemetryShare
+func dbSharedAuxPoolConfigFor(cpus int, serverless bool) dbPoolConfig {
+	c := dbAuxPoolConfigFor(cpus, serverless)
+	n := c.MaxOpenConns + dbAnalyticsShare + telemetry.Share
 	c.MaxOpenConns = n
 	c.MaxIdleConns = n
 	return c
+}
+
+// dbSharedAuxPoolMaxOpenFor is the shared pool's size on a given machine — a
+// projection of the config above, never a second derivation of it.
+func dbSharedAuxPoolMaxOpenFor(cpus int, serverless bool) int {
+	return dbSharedAuxPoolConfigFor(cpus, serverless).MaxOpenConns
 }
 
 // dbGuaranteedSessionShare returns the number of connections the session
@@ -310,7 +376,7 @@ func dbSharedAuxPoolConfig() dbPoolConfig {
 // Stated as a function so a gate can assert the bulkhead as a PROPERTY rather
 // than by re-deriving the arithmetic and agreeing with itself.
 func dbGuaranteedSessionShare(poolSize int) int {
-	n := poolSize - dbAnalyticsShare - dbTelemetryShare
+	n := poolSize - dbAnalyticsShare - telemetry.Share
 	if n < 0 {
 		return 0
 	}
@@ -330,6 +396,14 @@ var dbPoolEnvSuffixes = []string{
 // resolveDbPoolConfig returns the pool config for a driver: the
 // deployment-aware default, then any explicit env override on top.
 func resolveDbPoolConfig(driver string) dbPoolConfig {
+	return resolveDbPoolConfigFor(driver, runtime.GOMAXPROCS(0), IsServerless())
+}
+
+// resolveDbPoolConfigFor is resolveDbPoolConfig with the machine passed in, so
+// the server-sizing arithmetic can ask what the pools would be on any host
+// without a second copy of the resolution rules (defaults, env overrides,
+// clamps and all).
+func resolveDbPoolConfigFor(driver string, cpus int, serverless bool) dbPoolConfig {
 	if driver != "pgx" {
 		// SQLite. Warn rather than silently ignore — a knob that looks
 		// set and does nothing is the failure mode sky.toml's
@@ -343,7 +417,7 @@ func resolveDbPoolConfig(driver string) dbPoolConfig {
 		}
 		return sqlitePoolConfig()
 	}
-	c := defaultPostgresPoolConfig()
+	c := defaultPostgresPoolConfigFor(cpus, serverless)
 	c.MaxOpenConns = dbEnvInt("DB_MAX_OPEN_CONNS", c.MaxOpenConns)
 	c.MaxIdleConns = dbEnvInt("DB_MAX_IDLE_CONNS", c.MaxIdleConns)
 	c.ConnMaxLifetime = dbEnvDuration("DB_CONN_MAX_LIFETIME", c.ConnMaxLifetime)

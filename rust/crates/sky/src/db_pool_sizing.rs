@@ -24,27 +24,65 @@
 //! it. Adding a fifth runtime pool is a change to [`AUX_POOL_CONSUMERS`], and
 //! every cluster's ceiling moves with it.
 //!
-//! # The Go side is the original
+//! # The Go side is the original, and a FIXTURE ties the two together
 //!
 //! `runtime-go/rt/db_pool.go` sizes the pools themselves, and this module
-//! MIRRORS it exactly — `defaultPostgresPoolConfigFor` (VM profile) and
-//! `dbAuxPoolSizeFor`. If the Go arithmetic changes, this must follow; the
-//! property gates below assert the shape of the relationship, not pinned
-//! numbers, so a drift shows up as a cluster that no longer covers its client
-//! rather than as a diff in a golden file.
+//! mirrors it. Two implementations of one number is one too many, and here it
+//! is unavoidable — the Go runtime cannot be called from the Rust CLI that
+//! writes a cluster's `postgresql.conf` before any Go has run.
+//!
+//! What is avoidable is mirroring by ASSERTION. This module used to open with a
+//! sentence claiming it mirrored the Go "exactly"; the claim was prose, nothing
+//! checked it, and the two did diverge. They are now tied by
+//! `runtime-go/rt/testdata/db_pool_sizing.tsv`: the Go gate
+//! (`TestThePoolSizingFixtureMatchesTheGoArithmetic`) and the Rust gate
+//! (`the_fixture_matches_the_go_arithmetic`) each assert their own
+//! implementation reproduces every row of it. A change on either side that the
+//! other has not followed turns one of the two red.
 
-/// Every PostgreSQL pool the Sky RUNTIME opens for its own purposes, as
-/// distinct from the app's `Db.connect`.
+/// One PostgreSQL pool the Sky RUNTIME opens for its own purposes, as distinct
+/// from the app's `Db.connect`.
+///
+/// `max_open` is the size that consumer asks for — NOT one shared "aux pool
+/// size" applied to all of them. The two large consumers acquire the shared
+/// pool (a quarter-share plus both background caps) while telemetry acquires
+/// its own fixed four, and flattening that into `aux × 3` under-counted the
+/// process's real demand by ten backends at one core.
+pub struct AuxPoolConsumer {
+    pub name: &'static str,
+    pub max_open: fn(u32) -> u32,
+}
+
+/// Every PostgreSQL pool the Sky RUNTIME opens for its own purposes.
 ///
 /// This is a list rather than a literal `3` so that adding a fourth runtime
-/// pool is a change to THIS line, and every server sizing that reads its
-/// length moves with it. Mirrors `dbAuxPoolConsumers` in
-/// `runtime-go/rt/db_pool.go`.
-pub const AUX_POOL_CONSUMERS: [&str; 3] = [
-    "analytics",     // runtime-go/rt/analytics_store.go
-    "live-sessions", // runtime-go/rt/live_store.go (pgx path)
-    "telemetry",     // runtime-go/rt/telemetry/persist.go
+/// pool is a change to THIS line, and every server sizing that reads it moves
+/// with it. Mirrors `dbAuxPoolConsumers` in `runtime-go/rt/db_pool.go`.
+pub const AUX_POOL_CONSUMERS: [AuxPoolConsumer; 3] = [
+    AuxPoolConsumer {
+        name: "analytics", // runtime-go/rt/analytics_store.go
+        max_open: shared_aux_pool_size,
+    },
+    AuxPoolConsumer {
+        name: "live-sessions", // runtime-go/rt/live_store.go (pgx path)
+        max_open: shared_aux_pool_size,
+    },
+    AuxPoolConsumer {
+        name: "telemetry", // runtime-go/rt/telemetry/persist.go
+        max_open: telemetry_pool_size,
+    },
 ];
+
+/// The consumer names, for the diagnostics and the fixture.
+pub fn aux_pool_consumer_names() -> Vec<&'static str> {
+    AUX_POOL_CONSUMERS.iter().map(|c| c.name).collect()
+}
+
+/// The analytics writer's cap on a shared pool. Mirrors `dbAnalyticsShare`.
+pub const ANALYTICS_SHARE: u32 = 2;
+
+/// The telemetry writer's cap on a shared pool. Mirrors `telemetry.Share`.
+pub const TELEMETRY_SHARE: u32 = 2;
 
 /// `superuser_reserved_connections`, whose PostgreSQL default is 3.
 ///
@@ -103,10 +141,29 @@ pub fn app_pool_size(cpus: u32) -> u32 {
     clamp(cpus * 4, 4, 32)
 }
 
-/// One runtime pool's ceiling: a quarter of the app pool, floored at 2 and
-/// capped at 8. Mirrors `dbAuxPoolSizeFor(cpus, false)`.
+/// One runtime pool's ceiling when it does NOT share: a quarter of the app
+/// pool, floored at 2 and capped at 8. Mirrors `dbAuxPoolMaxOpenFor(cpus,
+/// false)`.
 pub fn aux_pool_size(cpus: u32) -> u32 {
     clamp(app_pool_size(cpus) / 4, 2, 8)
+}
+
+/// The size the two large runtime consumers ACTUALLY ask for: the unshared
+/// ceiling plus both background caps.
+///
+/// The addition is the bulkhead argument. Sizing the shared pool at merely
+/// `aux` and capping the background writers inside it would take connections
+/// away from the session store: on a small machine `aux` is 2, two caps of 2
+/// consume the whole pool, and the request path is guaranteed nothing. Mirrors
+/// `dbSharedAuxPoolMaxOpenFor(cpus, false)`.
+pub fn shared_aux_pool_size(cpus: u32) -> u32 {
+    aux_pool_size(cpus) + ANALYTICS_SHARE + TELEMETRY_SHARE
+}
+
+/// Telemetry's pool is a fixed small size, not a share of the app's — it is a
+/// single batching goroutine. Mirrors `telemetry.PoolMaxConns`.
+pub fn telemetry_pool_size(_cpus: u32) -> u32 {
+    4
 }
 
 /// The maximum number of PostgreSQL backends ONE Sky app process can hold open
@@ -121,9 +178,19 @@ pub fn aux_pool_size(cpus: u32) -> u32 {
 /// in; the alternative is a cluster that works until someone points telemetry
 /// at a second database.
 ///
+/// The sum is taken over what each consumer actually asks for. Deriving it from
+/// one `aux_pool_size` multiplied by the consumer count — which is what this
+/// function did — under-reported by 10 backends at 1 core and 4 at 8, so the
+/// "twice over for restart overlap" claim printed into every generated conf was
+/// false at every core count.
+///
 /// Mirrors `dbProcessConnectionDemand(cpus, false)`.
 pub fn process_connection_demand(cpus: u32) -> u32 {
-    app_pool_size(cpus) + aux_pool_size(cpus) * AUX_POOL_CONSUMERS.len() as u32
+    app_pool_size(cpus)
+        + AUX_POOL_CONSUMERS
+            .iter()
+            .map(|c| (c.max_open)(cpus))
+            .sum::<u32>()
 }
 
 /// How many Sky apps a shared cluster on this host is sized to serve by
@@ -268,12 +335,14 @@ mod tests {
                  the {} runtime pool(s) ({}) have stopped being counted, which is exactly the \
                  defect this module exists to prevent.",
                 AUX_POOL_CONSUMERS.len(),
-                AUX_POOL_CONSUMERS.join(", "),
+                aux_pool_consumer_names().join(", "),
             );
+            let per_consumer: u32 = AUX_POOL_CONSUMERS.iter().map(|c| (c.max_open)(cpus)).sum();
             assert_eq!(
                 demand,
-                app + aux_pool_size(cpus) * AUX_POOL_CONSUMERS.len() as u32,
-                "cpus={cpus}: the demand no longer equals app + one aux pool per consumer"
+                app + per_consumer,
+                "cpus={cpus}: the demand no longer equals the app pool plus what each \
+                 consumer asks for"
             );
         }
     }
@@ -313,6 +382,84 @@ mod tests {
                 "cpus={cpus}: the historical formula fails here and the replacement does too"
             );
         }
+    }
+
+    // ---- gate 5: the two languages agree ----------------------------------
+
+    /// The table the Go runtime generates from ITS arithmetic, embedded at
+    /// compile time so this gate cannot run against a stale copy.
+    const GO_FIXTURE: &str = include_str!("../../../../runtime-go/rt/testdata/db_pool_sizing.tsv");
+
+    /// This module sizes clusters the Go runtime will later connect to, and it
+    /// used to claim — in prose, checked by nothing — that it "MIRRORS"
+    /// `runtime-go/rt/db_pool.go` "exactly". It did not: the Go side sizes the
+    /// two large runtime pools as a quarter-share PLUS both background caps,
+    /// and this side multiplied one quarter-share by the consumer count. Every
+    /// cluster the CLI sized was short, and the "twice over for restart
+    /// overlap" sentence in the generated conf was false.
+    ///
+    /// This is the gate that makes the mirroring a fact. Regenerate the fixture
+    /// with `cd runtime-go && go test ./rt/ -run TestThePoolSizingFixture
+    /// -update-pool-fixture` and follow the change here.
+    #[test]
+    fn the_fixture_matches_the_go_arithmetic() {
+        let mut rows = 0usize;
+        let mut saw_consumers = false;
+        for line in GO_FIXTURE.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let cols: Vec<&str> = line.split('\t').collect();
+            if cols[0] == "consumers" {
+                saw_consumers = true;
+                let go_names: Vec<&str> = cols[1].split(',').collect();
+                assert_eq!(
+                    go_names,
+                    aux_pool_consumer_names(),
+                    "the Go runtime opens pools {go_names:?} but this module counts {:?} — \
+                     every cluster sized here is wrong by the difference",
+                    aux_pool_consumer_names(),
+                );
+                continue;
+            }
+            let n = |i: usize| -> u32 {
+                cols[i]
+                    .parse()
+                    .unwrap_or_else(|e| panic!("column {i} of {line:?}: {e}"))
+            };
+            let (cpus, app, aux, shared, tel, demand) = (n(0), n(1), n(2), n(3), n(4), n(5));
+            assert_eq!(app_pool_size(cpus), app, "cpus={cpus}: app pool");
+            assert_eq!(aux_pool_size(cpus), aux, "cpus={cpus}: unshared aux pool");
+            assert_eq!(
+                shared_aux_pool_size(cpus),
+                shared,
+                "cpus={cpus}: the shared pool the analytics and session stores acquire"
+            );
+            assert_eq!(
+                telemetry_pool_size(cpus),
+                tel,
+                "cpus={cpus}: telemetry's own pool"
+            );
+            assert_eq!(
+                process_connection_demand(cpus),
+                demand,
+                "cpus={cpus}: this module would size a cluster for {} backends while the Go \
+                 runtime opens pools totalling {demand}",
+                process_connection_demand(cpus),
+            );
+            rows += 1;
+        }
+        assert!(
+            saw_consumers,
+            "the fixture carries no consumer list — it is not the file this gate expects"
+        );
+        assert_eq!(
+            rows,
+            CPUS.count(),
+            "the fixture covers {rows} core counts; this gate sweeps {}",
+            CPUS.count()
+        );
     }
 
     // ---- the sizing must actually track the host ---------------------------

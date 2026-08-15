@@ -80,7 +80,31 @@ type entry struct {
 var (
 	mu       sync.Mutex
 	registry = map[string]*entry{}
+	requests []Request
 )
+
+// Request records one call to Acquire: WHICH consumer asked, and what it asked
+// for.
+//
+// It exists because the process's connection demand is arithmetic over the
+// consumers, and that arithmetic was previously written down a second time —
+// once in the sizing function and once, implicitly, in whatever each consumer
+// happened to pass here. The two disagreed by up to ten backends. Recording the
+// request at the only place it is made lets a gate compare the arithmetic with
+// the call sites instead of with a copy of itself.
+type Request struct {
+	Consumer string
+	Config   Config
+	Cap      int
+}
+
+// Requests returns the acquisitions recorded since the last reset, in order.
+// Gate surface.
+func Requests() []Request {
+	mu.Lock()
+	defer mu.Unlock()
+	return append([]Request(nil), requests...)
+}
 
 // Handle is one consumer's view of a pool that may be shared with others.
 //
@@ -113,6 +137,11 @@ var ErrClosed = errors.New("dbshare: handle is closed")
 // Acquire returns a Handle over the pool for (driver, dsn), opening it if this
 // is the first consumer.
 //
+// `consumer` names the subsystem taking the pool, and it is not decoration: the
+// name is recorded (see Request) so that the connection-demand arithmetic in
+// rt/db_pool.go can be checked against the pools that are actually opened,
+// rather than against a second statement of the same numbers.
+//
 // `cap` bounds this consumer's concurrent in-flight statements through the
 // semaphore-wrapped methods. A cap of 0 means "no cap" — appropriate for the
 // one consumer on the request hot path, whose share should not be throttled;
@@ -127,11 +156,12 @@ var ErrClosed = errors.New("dbshare: handle is closed")
 // configuration difference into a stall under load. Growing is safe in the
 // direction that matters — the server's budget is checked when the cluster is
 // sized (see the pool-demand arithmetic in rt/db_pool.go), not here.
-func Acquire(driver, dsn string, cfg Config, cap int) (*Handle, error) {
+func Acquire(consumer, driver, dsn string, cfg Config, cap int) (*Handle, error) {
 	key := driver + "\x00" + dsn
 
 	mu.Lock()
 	defer mu.Unlock()
+	requests = append(requests, Request{Consumer: consumer, Config: cfg, Cap: cap})
 
 	e, ok := registry[key]
 	if !ok {
@@ -309,7 +339,8 @@ func PoolCount() int {
 	return len(registry)
 }
 
-// ResetForTesting drops every registered pool. Test-only.
+// ResetForTesting drops every registered pool and forgets the recorded
+// requests. Test-only.
 func ResetForTesting() {
 	mu.Lock()
 	defer mu.Unlock()
@@ -317,4 +348,5 @@ func ResetForTesting() {
 		_ = e.db.Close()
 		delete(registry, k)
 	}
+	requests = nil
 }

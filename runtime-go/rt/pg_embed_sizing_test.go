@@ -11,8 +11,11 @@ package rt
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -104,18 +107,28 @@ func TestEmbeddedClusterGrantsEveryPoolThisProcessOpens(t *testing.T) {
 // made `dbProcessConnectionDemand` return the app pool's size would satisfy
 // the property above (it would just size the server smaller to match) and
 // reintroduce the original bug; this is what stops that.
+//
+// The per-consumer term is read from the consumer's OWN sizing function — the
+// one its `dbshare.Acquire` call site passes — and never re-derived here. An
+// earlier version of this gate restated the arithmetic as `aux × len(consumers)`
+// and therefore agreed with a demand function that was short by ten backends at
+// 1 core; see TestTheConnectionDemandMatchesWhatTheConsumersAcquire, which
+// compares it with what the consumers actually ask dbshare for.
 func TestPoolDemandCountsEveryPoolNotJustTheApps(t *testing.T) {
+	withServerlessEnv(t, nil)
 	if len(dbAuxPoolConsumers) == 0 {
 		t.Fatal("dbAuxPoolConsumers is empty — the runtime opens pools that nothing accounts for")
 	}
-	for _, cpus := range []int{1, 2, 4, 6, 8, 16, 64} {
+	for _, cpus := range coreCountsToCheck() {
 		app := defaultPostgresPoolConfigFor(cpus, false).MaxOpenConns
-		aux := dbAuxPoolSizeFor(cpus, false)
 		demand := dbProcessConnectionDemand(cpus, false)
-		want := app + aux*len(dbAuxPoolConsumers)
+		want := app
+		for _, c := range dbAuxPoolConsumers {
+			want += c.maxOpen(cpus, false)
+		}
 		if demand != want {
-			t.Errorf("cpus=%d: demand = %d, want %d (app %d + %d aux pools of %d)",
-				cpus, demand, want, app, len(dbAuxPoolConsumers), aux)
+			t.Errorf("cpus=%d: demand = %d, want %d (the app pool of %d plus what each of "+
+				"%v asks dbshare for)", cpus, demand, want, app, dbAuxPoolConsumerNames())
 		}
 		if demand <= app {
 			t.Errorf("cpus=%d: demand (%d) does not exceed the app pool (%d) — "+
@@ -175,10 +188,18 @@ func TestTheHistoricalSizingViolatesTheProperty(t *testing.T) {
 // caps in db_pool.go are what put it back: analytics and telemetry are capped,
 // the session store is not, so however hard the two background writers work,
 // the request path keeps the rest of the pool.
+//
+// The pool size is read from `dbSharedAuxPoolConfigFor` — the function the
+// acquire sites in analytics_store.go and live_store.go call. It used to be
+// read from a separate `dbSharedAuxPoolSizeFor`, so collapsing the shared
+// sizing back to a bare quarter-share at the CALL SITES left this gate green
+// while, at four cores or fewer, the two background caps consumed the entire
+// pool and the session store was guaranteed nothing at all.
 func TestTheBackgroundWritersCannotStarveTheSessionStore(t *testing.T) {
+	withServerlessEnv(t, nil)
 	for _, cpus := range coreCountsToCheck() {
-		owned := dbAuxPoolSizeFor(cpus, false) // what it had with a pool to itself
-		shared := dbSharedAuxPoolSizeFor(cpus, false)
+		owned := dbAuxPoolMaxOpenFor(cpus, false) // what it had with a pool to itself
+		shared := dbSharedAuxPoolConfigFor(cpus, false).MaxOpenConns
 		guaranteed := dbGuaranteedSessionShare(shared)
 		if guaranteed < owned {
 			t.Errorf("cpus=%d: sharing left the session store %d guaranteed connections "+
@@ -321,4 +342,73 @@ func TestEveryTunedSettingIsAResourceKnob(t *testing.T) {
 		}
 	}
 	_ = fmt.Sprint()
+}
+
+// TestASecondBootRetunesTheManagedBlock asserts the re-tune where the property
+// actually lives: at `boot()`.
+//
+// `TestTheTunedConfFollowsTheMachineAcrossARestart` proves `ensureSkyConf`
+// re-renders when it is called. That holds whether or not any boot after the
+// first one calls it — which is precisely the defect this whole arrangement
+// replaced: the managed block was written once, by `initCluster`, and frozen at
+// initdb while the connection pools re-read the machine on every start. Delete
+// the `writeTunedConf` line from `bringUp` and the round-trip gate stays green.
+//
+// So: initialise a cluster, plant a `max_connections` from a machine this data
+// directory no longer runs on, boot again, and read the file.
+func TestASecondBootRetunesTheManagedBlock(t *testing.T) {
+	binDir := livePgBinDir()
+	if binDir == "" {
+		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
+	}
+	t.Setenv("SKY_POSTGRES_BIN", binDir)
+	root := durableTestDir(t, "retune-on-boot")
+	s := liveSupervisor(t, root)
+	if err := s.boot(); err != nil {
+		t.Fatalf("first boot: %v", err)
+	}
+	confPath := filepath.Join(s.cfg.dataDir, "postgresql.conf")
+	detach := func(sup *pgSupervisor) {
+		sup.stopping.Store(true)
+		if pid, ok := runningPostmaster(sup.cfg.dataDir); ok {
+			_ = syscall.Kill(pid, syscall.SIGQUIT)
+		}
+		_ = os.RemoveAll(sup.cfg.socketDir)
+	}
+	detach(s)
+
+	b, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read conf: %v", err)
+	}
+	stale := strings.Split(string(b), "\n")
+	for i, line := range stale {
+		if strings.HasPrefix(strings.TrimSpace(line), "max_connections") {
+			stale[i] = "max_connections = 25  # sized for the machine this data dir came from"
+		}
+	}
+	if err := os.WriteFile(confPath, []byte(strings.Join(stale, "\n")), 0o600); err != nil {
+		t.Fatalf("write stale conf: %v", err)
+	}
+	if got := confMaxConnections(t, strings.Join(stale, "\n")); got != 25 {
+		t.Fatalf("the gate failed to plant a stale value (%d) — it would prove nothing", got)
+	}
+
+	s2 := liveSupervisor(t, root)
+	if err := s2.boot(); err != nil {
+		t.Fatalf("second boot: %v", err)
+	}
+	t.Cleanup(func() { detach(s2) })
+
+	after, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("re-read conf: %v", err)
+	}
+	want := confMaxConnections(t, renderConfBlock(detectMachine()))
+	if got := confMaxConnections(t, string(after)); got != want {
+		t.Fatalf("after a second boot max_connections = %d, want %d — the managed block is "+
+			"frozen at initdb while the pools re-read the machine on every start, so a "+
+			"resized host (or a data directory restored onto a different one) runs a "+
+			"cluster too small for the app it serves", got, want)
+	}
 }

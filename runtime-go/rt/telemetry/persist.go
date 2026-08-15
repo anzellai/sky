@@ -57,8 +57,14 @@ import (
 // pool exists to survive a burst and to bound the damage, not to scale.
 // See EnsurePersistence for why the deployment-aware sizing in
 // `rt/db_pool.go` cannot be reached from this package.
+//
+// `PoolMaxConns` is EXPORTED because it is a term in the process's
+// connection-demand arithmetic (`dbProcessConnectionDemand`), which sizes every
+// cluster Sky generates. That arithmetic reads this constant rather than
+// restating it: telemetry is the package that hands the number to
+// `dbshare.Acquire`, so this is where the number lives.
 const (
-	telemetryPoolMaxConns = 4
+	PoolMaxConns          = 4
 	telemetryPoolLifetime = 30 * time.Minute
 	telemetryPoolIdleTime = 60 * time.Second
 )
@@ -151,7 +157,7 @@ func consoleDBSchemaStmts(driver string) []string {
 // same server and competed with the app's queries for the same
 // `max_connections` budget: observability taking down the thing it observes.
 //
-// The cap (`telemetryShare`) is what preserves the bulkhead that separate
+// The cap (`Share`) is what preserves the bulkhead that separate
 // pools used to provide: a telemetry burst can hold at most that many of the
 // shared pool, so it cannot starve the session store on the request path.
 //
@@ -169,8 +175,8 @@ func openTelemetryPool(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		db.SetMaxOpenConns(telemetryPoolMaxConns)
-		db.SetMaxIdleConns(telemetryPoolMaxConns)
+		db.SetMaxOpenConns(PoolMaxConns)
+		db.SetMaxIdleConns(PoolMaxConns)
 		db.SetConnMaxLifetime(telemetryPoolLifetime)
 		db.SetConnMaxIdleTime(telemetryPoolIdleTime)
 		return db, nil, nil
@@ -185,12 +191,12 @@ func openTelemetryPool(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
 }
 
 func acquireShared(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
-	h, err := dbshare.Acquire(driver, dsn, dbshare.Config{
-		MaxOpenConns:    telemetryPoolMaxConns,
-		MaxIdleConns:    telemetryPoolMaxConns,
+	h, err := dbshare.Acquire("telemetry", driver, dsn, dbshare.Config{
+		MaxOpenConns:    PoolMaxConns,
+		MaxIdleConns:    PoolMaxConns,
 		ConnMaxLifetime: telemetryPoolLifetime,
 		ConnMaxIdleTime: telemetryPoolIdleTime,
-	}, telemetryShare)
+	}, Share)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -229,15 +235,19 @@ func closeTelemetryPool(db *sql.DB, h *dbshare.Handle) {
 	}
 }
 
-// telemetryShare bounds how much of a SHARED pool this writer may hold at
-// once. It mirrors `dbTelemetryShare` in rt/db_pool.go, which is where the
-// bulkhead arithmetic lives; the duplication is forced by the import
-// direction (rt imports telemetry, so telemetry cannot import rt) and the
-// gate `TestTelemetryShareMatchesThePoolArithmetic` fails if they drift.
+// Share bounds how much of a SHARED pool this writer may hold at once, and it
+// is the ONLY definition of that number.
+//
+// It used to be declared twice — here and as `dbTelemetryShare` in
+// rt/db_pool.go, where the bulkhead arithmetic lives — with a gate asserting
+// the two agreed. A gate that compares two copies proves the copies, not the
+// property: the shared pool's size is `aux + analyticsShare + telemetryShare`,
+// and rt now reads this constant to compute it, so there is nothing left to
+// drift. The import direction permits it: rt imports telemetry.
 //
 // Two is enough because the writer is a single batching goroutine: one slot
 // for the flush, one for the hourly prune.
-const telemetryShare = 2
+const Share = 2
 
 // persistEnvVar is the env var SkyDeploy injects on Pro+ tenants.
 // When set + non-empty, the store dual-writes to the SQLite file.
@@ -836,9 +846,3 @@ func SynchronousCommitOff() bool {
 		return true
 	}
 }
-
-// ShareForTesting exposes this package's shared-pool cap so the arithmetic in
-// rt/db_pool.go can be gated against it. The two constants are necessarily
-// separate — `rt` imports this package, so this package cannot import `rt` —
-// and a gate is what keeps them from drifting.
-func ShareForTesting() int { return telemetryShare }

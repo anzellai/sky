@@ -905,7 +905,7 @@ func (s *postgresStore) Ping() error {
 // request path nothing, and it still cannot be starved.
 func openPostgresSessionPool(connStr string) (*dbshare.Handle, error) {
 	c := dbSharedAuxPoolConfig()
-	return dbshare.Acquire("pgx", connStr, dbshare.Config{
+	return dbshare.Acquire("live-sessions", "pgx", connStr, dbshare.Config{
 		MaxOpenConns:    c.MaxOpenConns,
 		MaxIdleConns:    c.MaxIdleConns,
 		ConnMaxLifetime: c.ConnMaxLifetime,
