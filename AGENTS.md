@@ -132,6 +132,26 @@ non-obvious ones as questions:
    *Required even when the primary DB differs.* Shared store the moment there is
    more than one replica.
 5. **Deployment target** — local binary / Docker / Cloud Run / Kubernetes / VM.
+   Ask what the host *is*, because a Sky.Live app plus its own embedded
+   PostgreSQL fits comfortably in **1 GB**, and most people over-provision:
+
+   | | RAM |
+   |---|---|
+   | Minimal Linux | ~250 MB |
+   | Sky app binary (Go, idle) | ~30–40 MB |
+   | PostgreSQL base (`shared_buffers = 32MB`) | ~36 MB |
+   | PG backends, ~5–10 MB each | ~40–70 MB at 6–10 active |
+   | Sky.Live sessions, ~10–100 KB each | ~10 MB at 200 concurrent |
+   | **Total** | **~390 MB** |
+
+   Two things worth telling the user rather than letting them discover:
+   **CPU, not RAM, is the binding constraint** — Sky.Live renders and diffs
+   views server-side, so a burstable instance exhausts its baseline CPU
+   allowance long before its memory, and a 0.25-vCPU-baseline instance is a
+   demo host whatever its RAM says. And **a single instance has no replica**:
+   `sky db provision --shared` generates a backup timer, a single `--embed` app
+   does not, so a `pg_dump` schedule is the operator's to add. Sizing detail:
+   `docs/skydb/embedded-postgres.md`.
 6. **Observability** — local logs + embedded console / central console hub /
    OTel collector (Honeycomb / Tempo / Datadog).
 
