@@ -1,0 +1,43 @@
+# all-nine — verdict lines only, from scripts/grill-mutation-matrix.sh.
+# The full verbose log is ~250 kB and is deliberately not checked in;
+# re-run the script to regenerate it.
+
+--- FAIL: TestTheProductionQueueHasTheDocumentedBound (0.00s)
+--- FAIL: TestLiveSyncCommitDoesNotLeakToTheNextBorrower (1.10s)
+--- FAIL: TestTheConsoleEndpointDrainsBeforeItReads (0.01s)
+--- SKIP: TestHelper_RunInvariant (0.00s)
+--- FAIL: TestTheSharedPoolReservesTelemetrysActualCap (0.00s)
+--- FAIL: TestAPoolGrowsForALaterConsumerThatNeedsMore (0.00s)
+--- FAIL: TestATransactionHoldsItsConsumerSlotUntilItEnds (0.96s)
+--- FAIL: TestTheLastConsumerReleasesTheBackendsOnTheServer (6.04s)
+--- FAIL: TestTheAnalyticsWriterActuallyGoesThroughItsCap (1.60s)
+    --- FAIL: TestTheAnalyticsWriterActuallyGoesThroughItsCap/SKY_ANALYTICS_SYNCHRONOUS_COMMIT=on (0.76s)
+    --- SKIP: TestIdentityKeyIsInjectiveWhereSprintfIsNot/record_of_strings (0.00s)
+    --- SKIP: TestIdentityKeyIsInjectiveWhereSprintfIsNot/pipe_inside_a_string (0.00s)
+    --- SKIP: TestSessionStoreCloseIsIdempotent/postgres (0.00s)
+    --- SKIP: TestSessionStoreCloseIsIdempotent/redis (0.00s)
+--- FAIL: TestTheHistoricalSizingViolatesTheProperty (0.00s)
+--- FAIL: TestTheBackgroundWritersCannotStarveTheSessionStore (0.00s)
+--- FAIL: TestASecondBootRetunesTheManagedBlock (0.99s)
+--- FAIL: TestThePoolSizingFixtureMatchesTheGoArithmetic (0.00s)
+FAIL
+FAIL	sky-app/rt	67.619s
+PASS
+ok  	sky-app/rt/console_app	0.039s
+PASS
+ok  	sky-app/rt/hub	0.444s
+--- SKIP: TestPostgresStore_EnqueueAndClaim (0.00s)
+--- SKIP: TestPostgresStore_SkipsClaimedRowsConcurrently (0.00s)
+--- SKIP: TestPostgresStore_LeaseExpiryReclaim (0.00s)
+--- SKIP: TestPostgresStore_Complete (0.00s)
+--- SKIP: TestPostgresStore_Reschedule (0.00s)
+--- SKIP: TestPostgresStore_DeadLetterChainsError (0.00s)
+--- SKIP: TestPostgresStore_DeadLetterIdempotent (0.00s)
+--- SKIP: TestPostgresStore_Cancel (0.00s)
+--- SKIP: TestPostgresStore_CancelClaimedJobFails (0.00s)
+--- SKIP: TestPostgresStore_QueueDepth (0.00s)
+PASS
+ok  	sky-app/rt/jobs	0.343s
+PASS
+ok  	sky-app/rt/telemetry	0.434s
+FAIL
