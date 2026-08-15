@@ -165,7 +165,23 @@ run_test() {
             ;;
         tui-start)
             # Spawn briefly; the runtime should exit cleanly on non-TTY stdin.
-            out=$( ( cd "$REPO_ROOT/examples/$name" && with_timeout 3 "$bin" 2>"$errfile" </dev/null || true) )
+            #
+            # The `|| true` tolerates the app's own exit status on purpose —
+            # a TUI handed a non-TTY may exit non-zero and that is not the
+            # claim under test. It must NOT tolerate the harness failing to
+            # start the app at all: with `timeout` missing from PATH, this
+            # line printed "✓ (no panic)" for all five tui-start examples
+            # while the binary never ran. No panic is easy when nothing runs.
+            local tui_rc=0
+            out=$( ( cd "$REPO_ROOT/examples/$name" && with_timeout 3 "$bin" 2>"$errfile" </dev/null ) ) || tui_rc=$?
+            # 125/127 are with_timeout's own: unusable arguments, or no way to
+            # bound and therefore no run. Neither is a verdict about the app.
+            if [ "$tui_rc" -eq 125 ] || [ "$tui_rc" -eq 127 ]; then
+                echo "✗ $name — harness could not launch the binary (rc=$tui_rc); see stderr above"
+                fail=$((fail+1)); FAILS+=("$name")
+                record "$name" "$mode" "fail" "harness-could-not-launch"
+                return
+            fi
             ;;
         skip-gui)
             echo "⊘ $name — GUI app, skipped (needs X11)"

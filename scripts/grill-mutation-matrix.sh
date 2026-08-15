@@ -160,11 +160,29 @@ apply_checked() {
 }
 
 # run_suite <label> — full rt suite, verbose, into the log dir.
+#
+# `|| true` is deliberate: a mutation is SUPPOSED to make the suite fail, and
+# the failure set is read back out of the log. What it must never absorb is the
+# suite not running. With `timeout` missing from PATH this wrote a one-line log
+# reading `timeout: command not found`, from which `all_failing` extracted zero
+# names — and the matrix concluded every gate was green under every mutation,
+# having run nothing. A run that produced no verdict is not a green verdict, so
+# the log is required to carry proof that `go test` reached a conclusion.
 run_suite() {
   local label="$1"
   ( cd "$REPO/runtime-go" && \
     with_timeout 1800 env SKY_POSTGRES_BIN="$SKY_POSTGRES_BIN" go test -v ./rt/... -count=1 ) \
     > "$LOGDIR/$label.log" 2>&1 || true
+
+  # `go test -v` ends every package with `ok`, `FAIL` or `no test files`, and
+  # names each test with `=== RUN`. A log with neither did not run the suite.
+  if ! grep -qE '^(ok|FAIL|---|=== RUN)' "$LOGDIR/$label.log"; then
+    echo "FATAL: the '$label' suite produced no verdict — $LOGDIR/$label.log has no" >&2
+    echo "  'ok'/'FAIL'/'=== RUN' line, so nothing ran. Counting zero failures from" >&2
+    echo "  this would credit every gate with surviving the mutation. First lines:" >&2
+    head -5 "$LOGDIR/$label.log" | sed 's/^/    /' >&2
+    exit 3
+  fi
 }
 
 # all_failing <label> — every top-level failing test name, one per line.
