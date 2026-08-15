@@ -18,9 +18,12 @@
 //! The tests that need no server (discovery failure, `ps` on an unknown project)
 //! always run.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -239,19 +242,6 @@ fn fixture(tag: &str) -> Option<Fixture> {
     })
 }
 
-/// Say — VISIBLY — that a live test did not run.
-///
-/// `eprintln!`, which this replaces, goes through libtest's output capture, and
-/// capture is only ever printed for a test that FAILED. A skipped live test
-/// therefore reported `... ok` and said nothing at all, which is the exact
-/// shape this branch keeps finding: `integration-postgres` was green for months
-/// while every live supervisor test in it skipped. Writing to the process's
-/// own stderr bypasses the capture, so the reason appears in the job log.
-fn skip(reason: &str) {
-    let mut e = std::io::stderr();
-    let _ = writeln!(e, "SKIPPED (live): {reason}");
-}
-
 fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).to_string()
 }
@@ -269,7 +259,7 @@ fn both(o: &Output) -> String {
 #[test]
 fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
     let Some(fx) = fixture("cluster") else {
-        skip("no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
+        required(Need::Postgres, false);
         return;
     };
 
@@ -387,7 +377,7 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
 #[test]
 fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
     let Some(fx) = fixture("stale") else {
-        skip("no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
+        required(Need::Postgres, false);
         return;
     };
 
@@ -599,7 +589,7 @@ fn a_project_path_carrying_a_command_substitution_is_refused_not_executed() {
 #[test]
 fn a_major_version_mismatch_is_reported_and_never_attempted() {
     let Some(fx) = fixture("mismatch") else {
-        skip("no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
+        required(Need::Postgres, false);
         return;
     };
 

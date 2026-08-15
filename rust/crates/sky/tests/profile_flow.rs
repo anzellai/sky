@@ -13,6 +13,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn go_on_path() -> bool {
@@ -52,7 +56,7 @@ fn scratch_project() -> PathBuf {
 #[test]
 fn run_profile_writes_all_artifacts() {
     if !go_on_path() {
-        eprintln!("profile_flow: skipping — needs `go` on PATH");
+        required(Need::Go, false);
         return;
     }
     let dir = scratch_project();

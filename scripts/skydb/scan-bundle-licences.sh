@@ -32,6 +32,28 @@
 #      classified by their own name AND their target's, and a link whose chain
 #      leaves the bundle is unvendored by definition.
 #
+#   4. A STATIC ARCHIVE IS ALSO PART OF WHAT WE SHIP.
+#      build-postgres-bundle.sh ends with `find "${BUNDLE}/lib" -name '*.a'
+#      -delete  # static archives are not shipped`. That is an INTENTION
+#      recorded in a build script, and nothing checked it: the scanner's
+#      `is_object` kept only Mach-O/ELF magic, so an `.a` was outside the walk
+#      entirely — invisible to the module allowlist and to the licence table
+#      alike. A fixture bundle shipping `lib/libreadline.a` reported
+#      `GATE PASS — no GPL, LGPL or AGPL component is shipped or linked`. The
+#      deletion covers `lib/` only, matches on the extension only, and is one
+#      edit away from not happening; the same reasoning that makes this gate
+#      read binaries rather than the configure line applies to it.
+#
+#      Archives are now enumerated as shipped objects, so the name
+#      classification and the module allowlist both apply to them. Their
+#      CONTENTS are deliberately NOT extracted: a relocatable object records no
+#      DT_NEEDED / LC_LOAD_DYLIB, so the dependency walk has nothing to read
+#      from one, and what the gate must decide about an archive — may we
+#      redistribute this file at all — is decided by its identity. The residual
+#      is stated plainly: GPL source compiled into an archive under a
+#      permissive name is not detected by content. Nothing here opens object
+#      files to attribute code.
+#
 # Usage:
 #   scan-bundle-licences.sh <bundle-dir> [--sbom-out FILE] [--bless-modules]
 #
@@ -209,8 +231,26 @@ classify() {
 
 # Strip version decoration so `libssl.so.3`, `libicuuc.78.dylib` and
 # `libreadline.8.3.dylib` all reduce to a stable identity.
+#
+# `.a` is stripped for the same reason: GNU readline shipped as
+# `lib/libreadline.a` is the same component as `lib/libreadline.8.dylib`, and
+# the licence table's `libreadline` arm must recognise it as such. Without the
+# strip the archive still failed the gate, but as UNKNOWN ("unclassified; add
+# it to the licence table") rather than COPYLEFT ("GPL-3.0-or-later, GNU
+# readline") — a verdict that reads like a missing table entry and invites
+# exactly the edit the gate's own closing paragraph forbids.
 normalise() {
-  printf '%s' "${1##*/}" | sed -E 's/\.(so|dylib)(\.[0-9]+)*$//; s/(\.[0-9]+)+$//'
+  printf '%s' "${1##*/}" | sed -E 's/\.(so|dylib)(\.[0-9]+)*$//; s/\.a$//; s/(\.[0-9]+)+$//'
+}
+
+# A static archive. `!<arch>\n` is the ar magic on GNU ar, BSD ar and Darwin's
+# libtool alike, so one magic test covers both platforms — no `file` parsing,
+# and no dependence on how a given `file` release words "current ar archive".
+# Read through `od` rather than comparing the bytes directly: a command
+# substitution over a binary file drops NUL bytes and warns about it on every
+# object in the bundle. Same idiom as the ELF arm below.
+is_archive() {
+  [ "$(head -c 8 "$1" 2>/dev/null | od -An -c | tr -d ' \n')" = '!<arch>\n' ]
 }
 
 is_object() {
@@ -218,10 +258,15 @@ is_object() {
   # to …" and would answer "not an object" for a link pointing straight at one.
   # The linux arm already follows, because open(2) does. A dangling link is not
   # an object either way, and is caught by the escape check instead.
+  #
+  # Archives count. See header note 4: they are shipped files subject to the
+  # same allowlist and licence table, and excluding them is what let a
+  # `lib/libreadline.a` through a GATE PASS.
   case "$HOST_OS" in
-    darwin) file -bL "$1" 2>/dev/null | command grep -q 'Mach-O' ;;
-    linux)  [ "$(head -c 4 "$1" 2>/dev/null | od -An -c | tr -d ' \n')" = '177ELF' ] ;;
+    darwin) file -bL "$1" 2>/dev/null | command grep -q 'Mach-O' && return 0 ;;
+    linux)  [ "$(head -c 4 "$1" 2>/dev/null | od -An -c | tr -d ' \n')" = '177ELF' ] && return 0 ;;
   esac
+  is_archive "$1"
 }
 
 # The physical path a bundle entry resolves to, following a chain of symbolic
@@ -261,6 +306,13 @@ inside_bundle() {
 # Direct dependency records of one object, one per line.
 deps_of() {
   local obj="$1"
+  # An archive is a container of RELOCATABLE objects, which record no
+  # DT_NEEDED / LC_LOAD_DYLIB — linking one into a binary is what creates a
+  # dependency, and that binary is itself walked. Asking otool/objdump anyway
+  # would print per-member headers and nothing usable, so say so instead.
+  if is_archive "$obj"; then
+    return 0
+  fi
   if [ "$HOST_OS" = darwin ]; then
     # otool -L line 1 is the object itself; the rest are LC_LOAD_DYLIB entries.
     otool -L "$obj" 2>/dev/null | tail -n +2 | awk '{print $1}'

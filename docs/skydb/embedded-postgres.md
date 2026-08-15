@@ -1297,7 +1297,7 @@ An SBOM is generated per bundle in CI, listing every linked library and its
 licence, and **a gate fails the build if a bundle carries anything GPL, LGPL or
 AGPL**.
 
-Four properties of that gate are load-bearing:
+Six properties of that gate are load-bearing:
 
 1. **It runs against the actual binaries, not the configure line.** A configure
    flag records an intention; the built artifact records what happened.
@@ -1330,6 +1330,36 @@ Four properties of that gate are load-bearing:
    all when `objdump` / `otool` is missing: a dependency reader that is absent
    and an object with no dependencies are otherwise the same observation, and
    the second one reads as a clean bundle.
+5. **A static archive is part of what the bundle ships.** The scanner's object
+   test kept only Mach-O and ELF magic, so a `.a` was outside the walk
+   entirely — not classified, not allowlisted, not counted. A fixture bundle
+   carrying `lib/libreadline.a` reported `GATE PASS — no GPL, LGPL or AGPL
+   component is shipped or linked`. `build-postgres-bundle.sh` does delete
+   archives (`find "$BUNDLE/lib" -name '*.a' -delete`), but that is an
+   intention recorded in a build script, scoped to `lib/`, matched on the
+   extension, and one edit from not happening — the same class as trusting
+   `--without-readline`, which is property 1. Archives are now enumerated as
+   shipped objects, so both the licence table and the module allowlist apply to
+   them, and `.a` normalises away so `libreadline.a` is recognised as GNU
+   readline rather than as an unclassified name. Their **contents are not
+   extracted**: a relocatable object records no `DT_NEEDED` / `LC_LOAD_DYLIB`,
+   so the dependency walk has nothing to read from one, and the question an
+   archive raises — may this file be redistributed at all — is answered by its
+   identity. The residual, stated rather than papered over: GPL source
+   compiled into an archive under a permissive name is not detected by
+   content. Nothing here attributes code.
+6. **The gate has to have met a real bundle.** Every fixture is built by `cc`
+   in a temp directory — five stub executables, a few stub libraries, ~11
+   objects. A real bundle is ~600 objects with real soname chains, real rpath
+   relocation, real ICU/OpenSSL/LZ4/zstd/libxml2 linkage and a real contrib
+   module set, which is the surface the module allowlist and the unvendored arm
+   were actually written against. The only caller that passed one was
+   `postgres-bundle.yml`, which fires on `workflow_dispatch` and a
+   `postgres-bundle-v*` tag — and no such tag has been cut, so the answer to
+   "what happens when this gate meets a real bundle" was unknown. A nightly
+   `postgres-bundle-licence` job now builds one linux-amd64 bundle and runs
+   both the scanner and the two real-bundle discrimination cases against it, so
+   the first cut cannot be the first meeting.
 
 Each of the three rejection causes — copyleft, unclassified, unvendored — has a
 fixture in `scripts/skydb/test-licence-gate.sh` that isolates it, and the suite
@@ -1342,6 +1372,14 @@ The suite runs per-commit as `licence-gate-linux` / `licence-gate-macos` in
 runs again in `postgres-bundle.yml` ahead of the build matrix, where it blocks
 publication. It ran only in the latter to begin with, on a `pull_request`
 trigger — reporting on every PR and able to block none of them.
+
+Those two per-commit jobs pass no `--bundle`, so the suite's two real-bundle
+cases — C8 (the unmodified artifact is accepted) and C9 (the same artifact with
+one GPL-linked extension planted in `lib/` is rejected) — skip there. They run
+nightly in `postgres-bundle-licence`, and again in `postgres-bundle.yml`'s build
+job against the artifact it is about to archive. C9 is the half that matters:
+"the gate accepted the bundle we are publishing" is also what a gate that
+accepts everything reports.
 
 `NOTICE.md` carries the PostgreSQL copyright and licence text.
 

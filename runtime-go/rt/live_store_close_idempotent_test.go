@@ -94,10 +94,65 @@ func TestLiveStoreClosesLifecycleChannelsUnderOnce(t *testing.T) {
 		t.Fatalf("parse %s: %v", src, err)
 	}
 
+	// The names declared `sync.Once` in this file. The barrier used to be
+	// matched as "any call whose selector is spelled `.Do`", which is the same
+	// name-vs-symbol weakness the dbshare accounting gate had, with the sign
+	// reversed: an unrelated `.Do` (an http client, a rate limiter, a queue)
+	// would have marked every close inside its function literal as guarded and
+	// the gate would report clean over an unguarded close. `Do` is a common
+	// enough method name that this is not a shape somebody would have to
+	// invent.
+	syncQ, syncDot := importQualifiers(f, "sync", "sync")
+	onceNames := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		var typ ast.Expr
+		var names []*ast.Ident
+		switch d := n.(type) {
+		case *ast.Field:
+			typ, names = d.Type, d.Names
+		case *ast.ValueSpec:
+			typ, names = d.Type, d.Names
+		default:
+			return true
+		}
+		isOnce := false
+		switch t := typ.(type) {
+		case *ast.SelectorExpr:
+			id, ok := t.X.(*ast.Ident)
+			isOnce = ok && syncQ[id.Name] && t.Sel.Name == "Once"
+		case *ast.Ident:
+			isOnce = syncDot && t.Name == "Once"
+		}
+		if isOnce {
+			for _, nm := range names {
+				onceNames[nm.Name] = true
+			}
+		}
+		return true
+	})
+	if len(onceNames) == 0 {
+		t.Fatalf("%s declares no sync.Once — the gate cannot recognise the barrier it "+
+			"is written against and would report whatever the file did", src)
+	}
+
+	// isOnceDo reports whether a call is `<a sync.Once>.Do(…)`.
+	isOnceDo := func(call *ast.CallExpr) bool {
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Do" {
+			return false
+		}
+		switch recv := sel.X.(type) {
+		case *ast.Ident:
+			return onceNames[recv.Name]
+		case *ast.SelectorExpr: // s.closeOnce.Do(…)
+			return onceNames[recv.Sel.Name]
+		}
+		return false
+	}
+
 	var bare []string
-	// walk descends n, flipping inOnce when it crosses a `<something>.Do(...)`
-	// call — the sync.Once barrier. A close() reached with inOnce false is
-	// unguarded.
+	// walk descends n, flipping inOnce when it crosses a sync.Once `.Do(...)`
+	// call — the barrier. A close() reached with inOnce false is unguarded.
 	var walk func(n ast.Node, inOnce bool)
 	walk = func(n ast.Node, inOnce bool) {
 		if n == nil {
@@ -111,7 +166,7 @@ func TestLiveStoreClosesLifecycleChannelsUnderOnce(t *testing.T) {
 			if !ok {
 				return true
 			}
-			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Do" {
+			if isOnceDo(call) {
 				for _, arg := range call.Args {
 					walk(arg, true)
 				}
