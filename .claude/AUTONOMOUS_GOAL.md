@@ -83,3 +83,39 @@ Two user decisions are locked and must not be re-litigated:
   exactly the defect it exists to prevent.
 - **No `Co-Authored-By`.** No commits of build artefacts. Explicit pathspecs on
   every commit, because several agents share this branch.
+
+## Closing mandate (2026-08-15, verbatim)
+
+Restated by the user after the benchmarking and profiling work:
+
+> remember to run in autonomos + grill + agent + PIV mode to complete the
+> benchmark findings: what to fix, optimise, and ensure embedded postgresql
+> works are done e2e + re-benchmarked, ci green + ready to merge the PR.
+
+This does not replace the goals above; it names the remaining path to "ready
+to review/merge/pr". Five things must all be true, and each is checked against
+the user's words, not a narrower reading:
+
+1. **The benchmark findings are completed** — every finding either fixed,
+   measured-and-dropped with the measurement recorded, or explicitly carried
+   with a reason. "Profiled it" is not "completed it".
+2. **Fix + optimise** — the reflective-HOF dispatch (§6 category 6, NOT the
+   §8 floor) and the allocation costs it drives. A change that cannot be shown
+   to pay for itself against the committed attribution harness is dropped, and
+   the null result is recorded.
+3. **Embedded PostgreSQL works E2E** — `sky db provision --embed` through
+   `sky build --embed` to `./sky-out/app --embed` serving real traffic, proven
+   end to end. At checkpoint no `postgres-bundle-v*` release existed, so the
+   DELIVERY path had never run. Unproven is not done.
+4. **Re-benchmarked** — after the fixes land, against the same harness, and
+   every capacity figure downstream of it corrected in the same pass:
+   `docs/skydb/embedded-postgres.md`, `README.md`, `AGENTS.md`, and the
+   unpushed sky-lang.org blog post. Numbers the profiling falsified must not
+   ship.
+5. **CI green + PR ready** — green on the real workflows, not locally only.
+
+Grill applies to every phase of this closing mandate too. Seven adversarial
+rounds have run and ALL SEVEN breached; round 7 was still finding LIVE defects,
+two of them in code an earlier round had specifically remediated. The rounds
+stop when a round comes back empty against real effort — not when I run out of
+appetite for them.
