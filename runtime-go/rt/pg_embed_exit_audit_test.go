@@ -103,6 +103,61 @@ var exitAuditBannedMethods = map[string]bool{
 	"Panic": true, "Panicf": true, "Panicln": true,
 }
 
+// exitAuditSignalSenders are the operations by which a process ends ITSELF with
+// a signal rather than by returning or calling an exit function.
+//
+// SIGKILL runs no deferred functions and cannot be caught, so
+// `syscall.Kill(os.Getpid(), SIGKILL)` skips generated main's `defer
+// rt.StopEmbeddedPostgres()` exactly as `os.Exit` does — and the runtime
+// already imports `syscall` and already calls `syscall.Kill`, so a future
+// force-exit written this way is not a shape somebody would have to invent.
+//
+// What is banned is a SELF-DIRECTED signal, not signalling. Sending a signal to
+// a CHILD is what the postmaster supervisor exists to do (`syscall.Kill(pid,
+// SIGINT)` in pg_embed.go, `syscall.Kill(pid, 0)` as a liveness probe in
+// pg_embed_bundle.go), and a rule that fired on those would be turned off
+// within the week. The discriminator is the target: an argument naming
+// `Getpid` is this process, whoever it is qualified by.
+//
+// `FindProcess` is here because `os.FindProcess(os.Getpid())` is how the same
+// thing is written without `syscall`: the handle is obtained in one statement
+// and signalled in another, so the Getpid is not in the `Signal` call to be
+// seen. Taking a handle on THIS process is the reviewable act.
+var exitAuditSignalSenders = map[string]bool{
+	"Kill": true, "Signal": true, "FindProcess": true,
+}
+
+// exitAuditImports resolves the file's import set: qualified locals (so an
+// aliased `import xos "os"` is still caught) and DOT imports.
+//
+// The dot import is the hole this closes. `import . "os"` puts `Exit` in the
+// file's own scope, and the audit read only `*ast.SelectorExpr` — so
+// `Exit(1)`, which is a bare `*ast.Ident`, was invisible. Confirmed against
+// the audit's own matcher: `import . "os"; Exit(1)` scored 0 offences, and so
+// did `import . "log"; Fatalf("x")`. Neither is Go anyone would write on
+// purpose. Both compile, both end the process, and an audit that reports clean
+// on a file it cannot read is worse than one that is absent.
+func exitAuditImports(file *ast.File) (locals map[string]string, dotted map[string]bool) {
+	locals = map[string]string{}
+	dotted = map[string]bool{}
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if _, banned := exitAuditBanned[path]; !banned {
+			continue
+		}
+		if imp.Name != nil && imp.Name.Name == "." {
+			dotted[path] = true
+			continue
+		}
+		local := path
+		if imp.Name != nil {
+			local = imp.Name.Name
+		}
+		locals[local] = path
+	}
+	return locals, dotted
+}
+
 // exitAuditMatch reports the banned name a selector NAMES — whether it is being
 // called, assigned, passed or merely referenced. The audit reads references
 // rather than calls because a reference is how the ninth site arrived: a
@@ -126,22 +181,82 @@ func exitAuditMatch(sel *ast.SelectorExpr, locals map[string]string) (string, bo
 	return "", false
 }
 
-// exitAuditImportLocals maps each banned import's local name to its path, so an
-// aliased `import xos "os"` is still caught.
-func exitAuditImportLocals(file *ast.File) map[string]string {
-	locals := map[string]string{}
-	for _, imp := range file.Imports {
-		path := strings.Trim(imp.Path.Value, `"`)
-		if _, banned := exitAuditBanned[path]; !banned {
-			continue
-		}
-		local := path
-		if imp.Name != nil {
-			local = imp.Name.Name
-		}
-		locals[local] = path
+// exitAuditTerminalName is the member a callee names, through however many
+// qualifiers: `Kill` for both `syscall.Kill` and a bare dot-imported `Kill`.
+func exitAuditTerminalName(fun ast.Expr) string {
+	switch f := fun.(type) {
+	case *ast.Ident:
+		return f.Name
+	case *ast.SelectorExpr:
+		return f.Sel.Name
 	}
-	return locals
+	return ""
+}
+
+// exitAuditNamesGetpid reports whether an expression asks the kernel for THIS
+// process's id, however it is qualified or aliased.
+func exitAuditNamesGetpid(e ast.Expr) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == "Getpid" {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// exitAuditOffences is THE matcher, over one file: what the whole-tree audit
+// runs and what the falsification cases below run, so the two cannot disagree
+// about what the rule is. Each entry is `line:<n> names <what>`.
+func exitAuditOffences(fset *token.FileSet, file *ast.File) []string {
+	locals, dotted := exitAuditImports(file)
+
+	// The `Sel` half of a selector is an *ast.Ident too. Collected first so the
+	// dot-import rule below does not count `os.Exit` a second time as a bare
+	// `Exit`.
+	selNames := map[*ast.Ident]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			selNames[sel.Sel] = true
+		}
+		return true
+	})
+
+	var out []string
+	at := func(p token.Pos, what string) {
+		out = append(out, "line:"+strconv.Itoa(fset.Position(p).Line)+" names "+what)
+	}
+
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.SelectorExpr:
+			if named, banned := exitAuditMatch(node, locals); banned {
+				at(node.Pos(), named)
+			}
+		case *ast.Ident:
+			if selNames[node] {
+				return true
+			}
+			for path := range dotted {
+				if exitAuditBanned[path][node.Name] {
+					at(node.Pos(), ". "+path+"."+node.Name)
+				}
+			}
+		case *ast.CallExpr:
+			if !exitAuditSignalSenders[exitAuditTerminalName(node.Fun)] {
+				return true
+			}
+			for _, arg := range node.Args {
+				if exitAuditNamesGetpid(arg) {
+					at(node.Pos(), "a self-directed "+exitAuditTerminalName(node.Fun))
+					break
+				}
+			}
+		}
+		return true
+	})
+	return out
 }
 
 func TestNoRuntimeCodeExitsWithoutStoppingTheEmbeddedDatabase(t *testing.T) {
@@ -192,25 +307,16 @@ func TestNoRuntimeCodeExitsWithoutStoppingTheEmbeddedDatabase(t *testing.T) {
 		// NOT skipped when the file imports neither os nor syscall nor log: the
 		// method rule reaches a process-ending call through a value, whose
 		// import may be in another file entirely.
-		locals := exitAuditImportLocals(file)
-
-		ast.Inspect(file, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			named, banned := exitAuditMatch(sel, locals)
-			if !banned {
-				return true
-			}
-			if _, allowed := exitAuditAllowed[name]; allowed {
+		found := exitAuditOffences(fset, file)
+		if _, allowed := exitAuditAllowed[name]; allowed {
+			if len(found) > 0 {
 				allowedSeen[name] = true
-				return true
 			}
-			pos := fset.Position(sel.Pos())
-			offences = append(offences, name+":"+strconv.Itoa(pos.Line)+" names "+named)
-			return true
-		})
+			continue
+		}
+		for _, f := range found {
+			offences = append(offences, name+":"+strings.TrimPrefix(f, "line:"))
+		}
 	}
 
 	// The floor is deliberately ABOVE the number of files in this directory
@@ -284,6 +390,52 @@ func TestTheExitAuditMatcherSeesTheShapesTextSearchMisses(t *testing.T) {
 		{"a *log.Logger method as a value", "package p\nimport \"log\"\nvar lg = log.New(nil, \"\", 0)\nvar fatalf = lg.Fatalln\n", 1},
 		{"log's other members are not exits", "package p\nimport \"log\"\nfunc f() { log.Printf(\"x\"); log.SetFlags(0) }\n", 0},
 		{"the word in a string", "package p\nimport \"log\"\nfunc f() { log.Printf(\"log.Fatalf is banned\") }\n", 0},
+
+		// DOT IMPORTS. The exit is not a selector at all, so the whole matcher
+		// looked straight through it. Both of these scored 0.
+		{"dot-imported os.Exit", "package p\nimport . \"os\"\nfunc f() { Exit(1) }\n", 1},
+		{"dot-imported log.Fatalf", "package p\nimport . \"log\"\nfunc f() { Fatalf(\"x\") }\n", 1},
+		{"dot-imported os.Exit as a value", "package p\nimport . \"os\"\nvar bye = Exit\n", 1},
+		{"a dot import's other members are not exits", "package p\nimport . \"os\"\nfunc f() { _ = Getenv(\"X\") }\n", 0},
+		{"the same name without the dot import", "package p\nfunc Exit(int) {}\nfunc f() { Exit(1) }\n", 0},
+
+		// SELF-DIRECTED SIGNALS. SIGKILL runs no defers and cannot be caught,
+		// and the runtime already imports syscall and already calls
+		// syscall.Kill — so this is the shape a future force-exit takes.
+		{
+			"syscall.Kill on this process",
+			"package p\nimport (\"os\"\n\"syscall\")\nfunc f() { _ = syscall.Kill(os.Getpid(), syscall.SIGKILL) }\n",
+			1,
+		},
+		{
+			"a handle taken on this process",
+			"package p\nimport \"os\"\nfunc f() { p, _ := os.FindProcess(os.Getpid()); _ = p.Signal(os.Interrupt) }\n",
+			1,
+		},
+		// …and the reason the rule is about the TARGET and not about signalling:
+		// the postmaster supervisor's whole job is signalling a child.
+		{
+			"signalling a child is not an exit",
+			"package p\nimport \"syscall\"\nfunc f(pid int) { _ = syscall.Kill(pid, syscall.SIGINT) }\n",
+			0,
+		},
+		{
+			"a liveness probe on a foreign pid",
+			"package p\nimport \"syscall\"\nfunc f(pid int) bool { return syscall.Kill(pid, 0) == nil }\n",
+			0,
+		},
+		{
+			"finding another process",
+			"package p\nimport \"os\"\nfunc f(pid int) { p, _ := os.FindProcess(pid); _ = p.Kill() }\n",
+			0,
+		},
+		// Getpid on its own is not an exit — it is in three live paths here,
+		// building fallback token strings.
+		{
+			"Getpid in a formatted string",
+			"package p\nimport (\"fmt\"\n\"os\")\nfunc f() string { return fmt.Sprintf(\"x-%d\", os.Getpid()) }\n",
+			0,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -299,8 +451,10 @@ func TestTheExitAuditMatcherSeesTheShapesTextSearchMisses(t *testing.T) {
 	}
 }
 
-// countBannedExits is the audit's matcher, over one file. Kept beside the audit
-// so the two cannot drift.
+// countBannedExits runs the audit's matcher — literally the same function the
+// whole-tree audit runs — over one file. Not a reimplementation of it: the
+// previous version was a second copy of the walk, and a second copy is a second
+// rule that can be right about the package while the real one is wrong.
 func countBannedExits(t *testing.T, path string) int {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -308,17 +462,5 @@ func countBannedExits(t *testing.T, path string) int {
 	if err != nil {
 		t.Fatalf("parse %s: %v", path, err)
 	}
-	locals := exitAuditImportLocals(file)
-	n := 0
-	ast.Inspect(file, func(node ast.Node) bool {
-		sel, ok := node.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if _, banned := exitAuditMatch(sel, locals); banned {
-			n++
-		}
-		return true
-	})
-	return n
+	return len(exitAuditOffences(fset, file))
 }
