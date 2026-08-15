@@ -38,6 +38,7 @@ package rt
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -124,6 +125,27 @@ func StopEmbeddedPostgres() {
 func ExitProcess(code int) {
 	StopEmbeddedPostgres()
 	os.Exit(code)
+}
+
+// fatalfAndExit is `log.Fatalf` with the database stopped first: log the line,
+// then leave through ExitProcess.
+//
+// It exists because `log.Fatalf` is `log.Output` followed by `os.Exit(1)`, and
+// the second half is the one that matters here — it runs no defers, so it skips
+// generated main's `defer rt.StopEmbeddedPostgres()` exactly as a bare os.Exit
+// does. The two callers are the fail-loud branches that refuse to start when a
+// configured session or jobs store is unreachable in production, and their
+// timing is the worst possible: `MaybeStartEmbeddedPostgres` has already run, so
+// the postmaster this process just started is orphaned on the way out. The next
+// boot adopts it and, by the ownership rule in stopPostgres, never stops it
+// either — so a production `--embed` app pointed at an unreachable store leaked
+// a cluster on EVERY boot attempt, which is to say on every restart of a crash
+// loop.
+//
+// Never returns.
+func fatalfAndExit(format string, v ...any) {
+	log.Printf(format, v...)
+	ExitProcess(1)
 }
 
 // EmbeddedPostgresActive reports whether this process is supervising a cluster.

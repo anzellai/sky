@@ -58,112 +58,194 @@ var exitAuditAllowed = map[string]string{
 	"panic_recover.go": "runs as main's FIRST defer, so StopEmbeddedPostgres (registered second) has already run",
 }
 
-// exitAuditBanned are the process-ending calls that skip deferred functions.
-// syscall.Exit is here too: it is the same primitive one import away, and a
-// gate that named only os.Exit would be closed by spelling.
-var exitAuditBanned = map[string]string{
-	"os":      "Exit",
-	"syscall": "Exit",
+// exitAuditBanned are the process-ending members, per package. syscall.Exit is
+// here because it is the same primitive one import away, and a gate that named
+// only os.Exit would be closed by spelling.
+//
+// `log` is here for the same reason and it is not a theoretical one. Every
+// `log.Fatal*` ends with `os.Exit(1)` and every `log.Panic*` ends with a panic
+// that no recover in the runtime is positioned to catch; both skip generated
+// main's `defer rt.StopEmbeddedPostgres()` exactly as a bare os.Exit does. Two
+// production paths reached the process this way — `failDurableStore` and
+// `jobsStoreDegrade`, the fail-loud branches that fire when an `--embed` app's
+// session or jobs store is unreachable. That is precisely the boot in which the
+// postmaster has just been started, so an app misconfigured in production
+// orphaned a cluster on EVERY boot attempt.
+var exitAuditBanned = map[string]map[string]bool{
+	"os":      {"Exit": true},
+	"syscall": {"Exit": true},
+	"log": {
+		"Fatal": true, "Fatalf": true, "Fatalln": true,
+		"Panic": true, "Panicf": true, "Panicln": true,
+	},
+}
+
+// exitAuditBannedMethods is the same set of process-ending operations reached
+// through a VALUE rather than through the package qualifier: the `*log.Logger`
+// methods (`lg.Fatalf(…)`), and — the shape that actually got past the previous
+// audit — a package function taken as a function value and stored in a
+// variable (`var storeFatalf = log.Fatalf`).
+//
+// Matching on the member name alone, without resolving the receiver's type, is
+// deliberate. `go/parser` has no type information, and importing the whole
+// type-checker to decide whether one identifier is a `*log.Logger` would buy
+// nothing here: there is no other `Fatal*` or `Panic*` in this package, and a
+// runtime type that acquired a method by one of these names would be worth
+// looking at anyway. A false positive costs one line on this list; a false
+// negative cost an orphaned database per boot.
+//
+// `Exit` is deliberately NOT in this set. It is a package function in both
+// `os` and `syscall` and never a method of either, so banning the bare name
+// would fire on any unrelated type with an `Exit` method while catching
+// nothing the package rule above misses.
+var exitAuditBannedMethods = map[string]bool{
+	"Fatal": true, "Fatalf": true, "Fatalln": true,
+	"Panic": true, "Panicf": true, "Panicln": true,
+}
+
+// exitAuditMatch reports the banned name a selector NAMES — whether it is being
+// called, assigned, passed or merely referenced. The audit reads references
+// rather than calls because a reference is how the ninth site arrived: a
+// function value assigned at package scope is not an `*ast.CallExpr` anywhere
+// the assignment can be seen, so a call-shaped matcher looks straight through
+// it and reports the package clean.
+func exitAuditMatch(sel *ast.SelectorExpr, locals map[string]string) (string, bool) {
+	if id, ok := sel.X.(*ast.Ident); ok {
+		if path, isImport := locals[id.Name]; isImport {
+			if exitAuditBanned[path][sel.Sel.Name] {
+				return path + "." + sel.Sel.Name, true
+			}
+			// A non-banned member of a banned import (`os.Getenv`, `log.Printf`)
+			// is not reconsidered as a method: the qualifier is the package.
+			return "", false
+		}
+	}
+	if exitAuditBannedMethods[sel.Sel.Name] {
+		return "(value)." + sel.Sel.Name, true
+	}
+	return "", false
+}
+
+// exitAuditImportLocals maps each banned import's local name to its path, so an
+// aliased `import xos "os"` is still caught.
+func exitAuditImportLocals(file *ast.File) map[string]string {
+	locals := map[string]string{}
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if _, banned := exitAuditBanned[path]; !banned {
+			continue
+		}
+		local := path
+		if imp.Name != nil {
+			local = imp.Name.Name
+		}
+		locals[local] = path
+	}
+	return locals
 }
 
 func TestNoRuntimeCodeExitsWithoutStoppingTheEmbeddedDatabase(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("cannot read the package directory: %v", err)
-	}
-
-	fset := token.NewFileSet()
-	var offences []string
-	scanned, allowedSeen := 0, map[string]bool{}
-
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") {
-			continue
+	// The whole runtime tree, not just this directory. rt/jobs, rt/hub,
+	// rt/telemetry and rt/console_app are separate packages but they are linked
+	// into the same app binary, so an exit in any of them skips generated main's
+	// defers exactly as one here would. The previous audit read `os.ReadDir(".")`
+	// and skipped every directory, which left 35 files of runtime code — including
+	// the jobs and hub packages, which have their own store-connect failure paths —
+	// entirely unexamined.
+	var files []string
+	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
 		}
 		// Test files are excluded deliberately: the child-process helpers in
 		// pg_embed_live_test.go and pg_embed_ownership_test.go signal failure to
 		// their parent with an exit code, which IS the observation the parent
 		// makes. They are not app code and no generated main defers anything
 		// around them.
-		if strings.HasSuffix(name, "_test.go") {
-			continue
+		if strings.HasSuffix(path, "_test.go") {
+			return nil
 		}
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("cannot walk the runtime tree: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	var offences []string
+	scanned, allowedSeen := 0, map[string]bool{}
+
+	for _, name := range files {
 		scanned++
 
 		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatalf("cannot parse %s: %v", name, err)
 		}
-		// Track the local name of each banned import, so an aliased
-		// `import xos "os"` is still caught.
-		locals := map[string]string{} // local ident → package path
-		for _, imp := range file.Imports {
-			path := strings.Trim(imp.Path.Value, `"`)
-			if _, banned := exitAuditBanned[path]; !banned {
-				continue
-			}
-			local := path
-			if imp.Name != nil {
-				local = imp.Name.Name
-			}
-			locals[local] = path
-		}
-		if len(locals) == 0 {
-			continue
-		}
+		// NOT skipped when the file imports neither os nor syscall nor log: the
+		// method rule reaches a process-ending call through a value, whose
+		// import may be in another file entirely.
+		locals := exitAuditImportLocals(file)
 
 		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
+			sel, ok := n.(*ast.SelectorExpr)
 			if !ok {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			pkgIdent, ok := sel.X.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			path, ok := locals[pkgIdent.Name]
-			if !ok || sel.Sel.Name != exitAuditBanned[path] {
+			named, banned := exitAuditMatch(sel, locals)
+			if !banned {
 				return true
 			}
 			if _, allowed := exitAuditAllowed[name]; allowed {
 				allowedSeen[name] = true
 				return true
 			}
-			pos := fset.Position(call.Pos())
-			offences = append(offences, name+":"+strconv.Itoa(pos.Line)+" calls "+path+".Exit")
+			pos := fset.Position(sel.Pos())
+			offences = append(offences, name+":"+strconv.Itoa(pos.Line)+" names "+named)
 			return true
 		})
 	}
 
-	if scanned < 10 {
-		t.Fatalf("the audit only scanned %d files — it is not looking at the package "+
-			"and would pass on anything", scanned)
+	// The floor is deliberately ABOVE the number of files in this directory
+	// alone (82 of the 117), so an audit that silently stopped walking into the
+	// sub-packages fails here rather than passing on a fraction of the tree. A
+	// floor low enough for `rt` on its own to clear would not be a floor.
+	if scanned < 100 {
+		t.Fatalf("the audit only scanned %d files — it is not looking at the whole runtime "+
+			"tree (rt plus rt/jobs, rt/hub, rt/telemetry, rt/console_app) and would pass "+
+			"on anything it missed", scanned)
 	}
 
 	if len(offences) > 0 {
 		sort.Strings(offences)
 		t.Errorf("%d runtime exit(s) bypass rt.ExitProcess:\n  %s\n\n"+
-			"os.Exit does not run deferred functions, so each of these skips generated\n"+
-			"main's `defer rt.StopEmbeddedPostgres()` and leaves an `--embed` app's\n"+
-			"PostgreSQL running with nothing left to stop it — which the NEXT run adopts\n"+
-			"and, by the ownership rule, never stops either.\n"+
-			"Call rt.ExitProcess(code) instead. If a site genuinely cannot (the database\n"+
-			"is already gone, or a defer ordering proves the stop has run), add the FILE\n"+
-			"to exitAuditAllowed with the reason.",
+			"os.Exit does not run deferred functions, and log.Fatal*/log.Panic* end in\n"+
+			"os.Exit and an unrecovered panic respectively, so each of these skips\n"+
+			"generated main's `defer rt.StopEmbeddedPostgres()` and leaves an `--embed`\n"+
+			"app's PostgreSQL running with nothing left to stop it — which the NEXT run\n"+
+			"adopts and, by the ownership rule, never stops either.\n"+
+			"A REFERENCE counts, not only a call: `var f = log.Fatalf` is the same exit\n"+
+			"one indirection away, and is how two of these arrived.\n"+
+			"Call rt.ExitProcess(code) instead — or, where a message has to be logged\n"+
+			"first, rt.fatalfAndExit. If a site genuinely cannot (the database is already\n"+
+			"gone, or a defer ordering proves the stop has run), add the FILE to\n"+
+			"exitAuditAllowed with the reason.",
 			len(offences), strings.Join(offences, "\n  "))
 	}
 
-	// The allowlist is checked back: an entry whose file no longer calls
-	// os.Exit is a stale exemption, and a stale exemption is how the next
+	// The allowlist is checked back: an entry whose file no longer names a
+	// banned exit is a stale exemption, and a stale exemption is how the next
 	// bypass gets waved through.
 	for file, why := range exitAuditAllowed {
 		if !allowedSeen[file] {
-			t.Errorf("exitAuditAllowed names %s (%q) but it no longer calls os.Exit — "+
+			t.Errorf("exitAuditAllowed names %s (%q) but it no longer names a banned exit — "+
 				"drop the entry rather than leaving a file permanently exempt", file, why)
 		}
 	}
@@ -172,8 +254,10 @@ func TestNoRuntimeCodeExitsWithoutStoppingTheEmbeddedDatabase(t *testing.T) {
 // The audit is only worth having if it can see a violation. This proves the
 // matcher on synthetic sources rather than trusting that the real package is
 // representative: an aliased import and a call inside a nested closure are the
-// two shapes a text search misses, and a mention in a comment or a string is
-// the shape a text search wrongly reports.
+// two shapes a text search misses, a mention in a comment or a string is the
+// shape a text search wrongly reports — and a package function taken as a
+// VALUE is the shape a call-shaped AST matcher misses, which is the one that
+// let two live sites through.
 func TestTheExitAuditMatcherSeesTheShapesTextSearchMisses(t *testing.T) {
 	cases := []struct {
 		name string
@@ -188,6 +272,18 @@ func TestTheExitAuditMatcherSeesTheShapesTextSearchMisses(t *testing.T) {
 		{"in a comment", "package p\nimport \"os\"\n// os.Exit(1) would be wrong here\nfunc f() { _ = os.Getenv(\"X\") }\n", 0},
 		{"in a string", "package p\nimport \"os\"\nfunc f() { _ = os.Getenv(\"os.Exit(1)\") }\n", 0},
 		{"a method of the same name", "package p\nimport \"os\"\ntype T struct{}\nfunc (T) Exit(int) {}\nfunc f() { var os2 T; os2.Exit(1); _ = os.Getenv(\"\") }\n", 0},
+
+		// The reference shapes — none of these is an *ast.CallExpr at the site
+		// that matters, and every one of them ends the process.
+		{"log.Fatalf called", "package p\nimport \"log\"\nfunc f() { log.Fatalf(\"x\") }\n", 1},
+		{"log.Fatalf as a package-scope value", "package p\nimport \"log\"\nvar fatalf = log.Fatalf\n", 1},
+		{"os.Exit as a value", "package p\nimport \"os\"\nvar bye = os.Exit\n", 1},
+		{"log.Fatal passed as an argument", "package p\nimport \"log\"\nfunc g(func(...any)) {}\nfunc f() { g(log.Fatal) }\n", 1},
+		{"log.Panicf", "package p\nimport \"log\"\nfunc f() { log.Panicf(\"x\") }\n", 1},
+		{"a *log.Logger method", "package p\nimport \"log\"\nvar lg = log.New(nil, \"\", 0)\nfunc f() { lg.Fatalf(\"x\") }\n", 1},
+		{"a *log.Logger method as a value", "package p\nimport \"log\"\nvar lg = log.New(nil, \"\", 0)\nvar fatalf = lg.Fatalln\n", 1},
+		{"log's other members are not exits", "package p\nimport \"log\"\nfunc f() { log.Printf(\"x\"); log.SetFlags(0) }\n", 0},
+		{"the word in a string", "package p\nimport \"log\"\nfunc f() { log.Printf(\"log.Fatalf is banned\") }\n", 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -212,33 +308,14 @@ func countBannedExits(t *testing.T, path string) int {
 	if err != nil {
 		t.Fatalf("parse %s: %v", path, err)
 	}
-	locals := map[string]string{}
-	for _, imp := range file.Imports {
-		p := strings.Trim(imp.Path.Value, `"`)
-		if _, banned := exitAuditBanned[p]; !banned {
-			continue
-		}
-		local := p
-		if imp.Name != nil {
-			local = imp.Name.Name
-		}
-		locals[local] = p
-	}
+	locals := exitAuditImportLocals(file)
 	n := 0
 	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
+		sel, ok := node.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		id, ok := sel.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		if p, ok := locals[id.Name]; ok && sel.Sel.Name == exitAuditBanned[p] {
+		if _, banned := exitAuditMatch(sel, locals); banned {
 			n++
 		}
 		return true

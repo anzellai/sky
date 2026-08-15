@@ -1525,7 +1525,12 @@ var (
 	storeConnectMaxWait  = 4 * time.Second
 	// storeFatalf is the fail-loud action; overridable in tests so the
 	// production path can be asserted without exiting the test process.
-	storeFatalf = log.Fatalf
+	//
+	// NOT log.Fatalf. That ends in os.Exit(1), which runs no deferred
+	// functions and so skips generated main's `defer rt.StopEmbeddedPostgres()`
+	// — and this branch fires AFTER MaybeStartEmbeddedPostgres, orphaning the
+	// postmaster this process had just started. See fatalfAndExit.
+	storeFatalf = fatalfAndExit
 	// storeSleep is the retry backoff sleep; overridable in tests.
 	storeSleep = time.Sleep
 )

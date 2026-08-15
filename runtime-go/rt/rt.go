@@ -8608,7 +8608,6 @@ func List_find(fn any, list any) any {
 var _ = bufio.NewReader
 var _ = io.EOF
 var _ = exec.Command
-var _ = os.Exit
 var _ = time.Now
 var _ = mrand.Intn
 var _ = sha256.Sum256
