@@ -553,3 +553,52 @@ fn backup_at_takes_hh_mm() {
     assert!(parse_hh_mm("24:00").is_err());
     assert!(parse_hh_mm("0330").is_err());
 }
+
+/// The comparison behind "this cluster reads its configuration from somewhere
+/// else", including the arm that exists so two paths sky cannot resolve are
+/// never called equal.
+///
+/// `_ => false` was written deliberately — `canonicalize(..).ok() ==
+/// canonicalize(..).ok()` returns true on `None == None`, and "sky cannot see
+/// either file" would then read as "sky is hardening the file the server
+/// reads". Nothing observed it: the arm could be `_ => true` and every test in
+/// the crate stayed green, because a live cluster whose `hba_file` does not
+/// resolve does not start, so no live gate can reach it.
+#[test]
+fn two_paths_sky_cannot_resolve_are_not_the_same_file() {
+    let dir = std::env::temp_dir().join(format!("sky-cfgpaths-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let ours = dir.join("pg_hba.conf");
+    let theirs = dir.join("etc").join("pg_hba.conf");
+    std::fs::create_dir_all(dir.join("etc")).unwrap();
+    std::fs::write(&ours, "# ours\n").unwrap();
+    std::fs::write(&theirs, "# theirs\n").unwrap();
+
+    // The same file, however it is spelled.
+    assert!(configuration_paths_agree(ours.to_str().unwrap(), &ours));
+    assert!(configuration_paths_agree(
+        dir.join(".").join("pg_hba.conf").to_str().unwrap(),
+        &ours
+    ));
+
+    // The Debian shape: two real files, in two directories.
+    assert!(
+        !configuration_paths_agree(theirs.to_str().unwrap(), &ours),
+        "a cluster reading /etc/postgresql was called equal to one reading its data directory"
+    );
+
+    // THE ARM. Neither side resolves, and the answer is still `false`.
+    let gone_a = dir.join("nowhere").join("pg_hba.conf");
+    let gone_b = dir.join("also-nowhere").join("pg_hba.conf");
+    assert!(
+        !configuration_paths_agree(gone_a.to_str().unwrap(), &gone_b),
+        "two unresolvable paths were called the same file — sky would report a cluster \
+         hardened whose configuration it never saw"
+    );
+    // One side resolving is not enough either, in both directions.
+    assert!(!configuration_paths_agree(gone_a.to_str().unwrap(), &ours));
+    assert!(!configuration_paths_agree(ours.to_str().unwrap(), &gone_b));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

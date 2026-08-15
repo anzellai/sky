@@ -1709,6 +1709,23 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
 ///
 /// So it is asked, and a mismatch is a refusal rather than a warning: there is
 /// no partial version of this boundary.
+/// Do the path the server reports and the path sky writes name the same file?
+///
+/// Both sides must RESOLVE and agree. `canonicalize(..).ok() == canonicalize(..).ok()`
+/// would call two unreadable paths equal on `None == None`, which is the one
+/// answer this check must never give — "sky cannot see either file" would read
+/// as "sky is hardening the file the server reads".
+///
+/// Split out of the caller so that arm is reachable without a server: it needs
+/// a path the process cannot resolve, and a live cluster whose `hba_file` does
+/// not resolve does not start.
+fn configuration_paths_agree(theirs: &str, ours: &Path) -> bool {
+    match (std::fs::canonicalize(theirs), std::fs::canonicalize(ours)) {
+        (Ok(theirs), Ok(ours)) => theirs == ours,
+        _ => false,
+    }
+}
+
 fn verify_the_server_reads_skys_files(layout: &Layout, port: u16, superuser: &str) -> Result<(), String> {
     let mut c = admin_conn(layout, port, superuser, "postgres")?;
     for (setting, ours) in [
@@ -1719,14 +1736,7 @@ fn verify_the_server_reads_skys_files(layout: &Layout, port: u16, superuser: &st
             .scalar(&format!("SHOW {setting}"))
             .map_err(|e| format!("sky db provision --shared: cannot read {setting}: {e}"))?
             .unwrap_or_default();
-        // Both sides must RESOLVE and agree. Comparing `canonicalize(..).ok()`
-        // would call two unreadable paths equal on `None == None`, which is the
-        // one answer this check must never give.
-        let same = match (std::fs::canonicalize(&theirs), std::fs::canonicalize(&ours)) {
-            (Ok(theirs), Ok(ours)) => theirs == ours,
-            _ => false,
-        };
-        if !same {
+        if !configuration_paths_agree(&theirs, &ours) {
             return Err(format!(
                 "sky db provision --shared: this cluster reads its {setting} from\n\
                  \x20 {theirs}\n\

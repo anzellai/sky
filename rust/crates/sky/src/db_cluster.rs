@@ -1193,6 +1193,37 @@ pub fn pg_ctl_shell_safety_error(data_dir: &Path, log: &Path, socket_dir: &Path)
     ))
 }
 
+/// The judgement half of the socket directory's privacy check, taking the
+/// OBSERVED mode as a parameter.
+///
+/// It is split from the observation deliberately. The check exists for the case
+/// where `set_permissions` reports success and the mode is not what was asked
+/// for — a filesystem that does not carry unix modes, an exported share, a
+/// container mount with a fixed umask — and on any filesystem a test can
+/// actually create, `set_permissions(0o700)` produces 0o700 and the branch is
+/// unreachable. A test that asserted the RESULTING mode would therefore be
+/// asserting what `set_permissions` does, not what this code does, and the
+/// refusal could be deleted with every test still green.
+///
+/// Passing the mode in makes the unreachable arm reachable: 0o755 is a
+/// filesystem that ignored the request, expressed as an argument. That is the
+/// general shape for "prove it took" checks whose failure needs hardware nobody
+/// has — separate what is observed from what is decided, and test the decision.
+#[cfg(unix)]
+fn refuse_unless_private(socket_dir: &Path, mode: u32) -> Result<(), String> {
+    if mode & 0o077 != 0 {
+        return Err(format!(
+            "sky db start: the socket directory {} is mode {:o} after being set to 0700.\n\
+             Local connections authenticate with `trust`, so every account that can\n\
+             traverse into it is the database's superuser. Sky will not start a cluster\n\
+             behind it.",
+            socket_dir.display(),
+            mode & 0o7777
+        ));
+    }
+    Ok(())
+}
+
 fn prepare_socket_dir(socket_dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(socket_dir).map_err(|e| {
         format!(
@@ -1230,16 +1261,7 @@ fn prepare_socket_dir(socket_dir: &Path) -> Result<(), String> {
             })?
             .permissions()
             .mode();
-        if mode & 0o077 != 0 {
-            return Err(format!(
-                "sky db start: the socket directory {} is mode {:o} after being set to 0700.\n\
-                 Local connections authenticate with `trust`, so every account that can\n\
-                 traverse into it is the database's superuser. Sky will not start a cluster\n\
-                 behind it.",
-                socket_dir.display(),
-                mode & 0o7777
-            ));
-        }
+        refuse_unless_private(socket_dir, mode)?;
     }
     if !socket_dir_is_shell_safe(socket_dir) {
         return Err(format!(
@@ -1988,6 +2010,38 @@ mod tests {
             );
             // And it is still specific to this project, not a shared bucket.
             assert!(d.to_string_lossy().contains(&path_hash(&data_dir_for(&deep))));
+        }
+    }
+
+    /// The read-back is the claim; this is the test of it.
+    ///
+    /// `prepare_socket_dir`'s comment says the mode "is not set on a
+    /// best-effort basis — it is read back and the group and other bits have to
+    /// be clear". Nothing observed that. The sibling test below asserts the
+    /// RESULTING mode, which `set_permissions` produces on its own: `if false
+    /// && mode & 0o077 != 0` left every test in the crate green, because on
+    /// every filesystem a test can create a directory on, the mode that comes
+    /// back is the mode that was asked for.
+    ///
+    /// The branch exists for the filesystems where it does not — a mount that
+    /// carries no unix modes, a fixed-umask container mount, an exported share.
+    /// Since the judgement now takes the observed mode as an argument, that
+    /// filesystem is expressible as `0o755` and the refusal is reachable.
+    #[test]
+    fn a_socket_directory_whose_mode_did_not_take_is_refused() {
+        let dir = Path::new("/tmp/sky-sockmode-judgement");
+
+        refuse_unless_private(dir, 0o700).expect("0700 is what the check is for");
+        refuse_unless_private(dir, 0o500).expect("owner-only bits are not the check's business");
+
+        for open in [0o755, 0o777, 0o701, 0o710, 0o070, 0o007] {
+            let e = refuse_unless_private(dir, open).expect_err(
+                "an open mode was accepted for a directory that is the whole access control",
+            );
+            assert!(
+                e.contains(&format!("is mode {:o}", open & 0o7777)),
+                "the refusal for {open:o} does not name the mode it saw:\n{e}"
+            );
         }
     }
 

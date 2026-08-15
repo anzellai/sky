@@ -1190,3 +1190,149 @@ fn re_provisioning_an_app_is_idempotent_and_prints_no_invented_dsn() {
     let apps = std::fs::read_to_string(&fx.layout.apps_file).unwrap();
     assert_eq!(apps.lines().filter(|l| *l == "alpha").count(), 1, "{apps}");
 }
+
+/// `verify_the_server_reads_skys_files` is the guard on the whole hardening
+/// story, and nothing drove it.
+///
+/// `if false && !configuration_paths_agree(…)` left the crate at 342 passed, 0
+/// failed. What it guards is not exotic: a cluster can be told where its
+/// configuration lives, and every Debian-family package does exactly that —
+/// both files under `/etc/postgresql`, the copies in the data directory inert.
+/// **Adoption of an existing cluster is the documented primary case.** Without
+/// this check sky writes a hardened `pg_hba.conf` nobody reads, reloads it
+/// successfully, and reports a cluster ready whose authentication it never
+/// changed.
+///
+/// Both settings are driven, because they need different mechanisms and a test
+/// of one says nothing about the other:
+///
+/// * `hba_file` is settable in `postgresql.conf`;
+/// * `config_file` is not — it only exists on the postmaster's command line,
+///   which is why this phase restarts through `pg_ctl -o`. `hba_file` has to be
+///   pinned back to the data directory in that phase, or it would move with
+///   `config_file` (it defaults to the config file's directory) and the first
+///   arm would fire before the second was ever reached.
+#[test]
+fn a_cluster_that_reads_its_configuration_from_elsewhere_is_refused() {
+    let Some((fx, _a_dsn, _a_pw, _b_dsn, _b_pw)) = provision_fixture("cfgpath") else {
+        return;
+    };
+    let port = DEFAULT_PORT;
+    let conf = fx.layout.data_dir.join("postgresql.conf");
+    let original_conf = std::fs::read_to_string(&conf).expect("postgresql.conf");
+
+    // Positive control: as provisioned, sky and the server agree.
+    verify_the_server_reads_skys_files(&fx.layout, port, &fx.user)
+        .expect("the cluster sky just provisioned does not read sky's files");
+
+    // The distribution-package shape, minus the distribution: a second copy of
+    // pg_hba.conf somewhere else, and a cluster told to read that one.
+    let etc = fx.layout.state_dir.join("etc");
+    std::fs::create_dir_all(&etc).unwrap();
+    let shadow_hba = etc.join("pg_hba.conf");
+    std::fs::copy(fx.layout.data_dir.join("pg_hba.conf"), &shadow_hba).unwrap();
+
+    // ── phase 1: hba_file elsewhere ────────────────────────────────
+    std::fs::write(
+        &conf,
+        format!("{original_conf}\nhba_file = '{}'\n", shadow_hba.display()),
+    )
+    .unwrap();
+    stop_postmaster(&fx.bins, &fx.layout).expect("stop");
+    start_postmaster(&fx.bins, &fx.layout).expect("restart with a shadowed hba_file");
+
+    let e = verify_the_server_reads_skys_files(&fx.layout, port, &fx.user).expect_err(
+        "sky would have hardened a pg_hba.conf this cluster does not read, and reported it ready",
+    );
+    assert!(
+        e.contains("reads its hba_file from") && e.contains(shadow_hba.to_str().unwrap()),
+        "refused, but not for the shadowed hba_file:\n{e}"
+    );
+
+    // ── phase 2: config_file elsewhere, hba_file pinned back ───────
+    let shadow_conf = etc.join("postgresql.conf");
+    std::fs::write(
+        &shadow_conf,
+        format!(
+            "{original_conf}\ndata_directory = '{}'\nhba_file = '{}'\n",
+            fx.layout.data_dir.display(),
+            fx.layout.data_dir.join("pg_hba.conf").display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(&conf, &original_conf).unwrap();
+    stop_postmaster(&fx.bins, &fx.layout).expect("stop");
+    let out = Command::new(fx.bins.tool("pg_ctl"))
+        .arg("-D")
+        .arg(&fx.layout.data_dir)
+        .arg("-l")
+        .arg(fx.layout.log_file())
+        .arg("-o")
+        .arg(format!("-c config_file={}", shadow_conf.display()))
+        .args(["-w", "-t", "60", "start"])
+        .output()
+        .expect("pg_ctl");
+    assert!(
+        out.status.success(),
+        "the cluster did not restart with an external config_file:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let e = verify_the_server_reads_skys_files(&fx.layout, port, &fx.user)
+        .expect_err("an external config_file was accepted");
+    assert!(
+        e.contains("reads its config_file from") && e.contains(shadow_conf.to_str().unwrap()),
+        "refused, but not for the shadowed config_file:\n{e}"
+    );
+
+    // Restore, and prove the restoration — otherwise both refusals above could
+    // be some state the test left behind rather than the shadowing.
+    stop_postmaster(&fx.bins, &fx.layout).expect("stop");
+    std::fs::write(&conf, &original_conf).unwrap();
+    start_postmaster(&fx.bins, &fx.layout).expect("restart unshadowed");
+    verify_the_server_reads_skys_files(&fx.layout, port, &fx.user)
+        .expect("the check stayed broken after the shadowing was removed");
+}
+
+/// `reload_hba`'s OTHER half. The existing gate drives the load-time proof; the
+/// parse arm in front of it was never reached.
+///
+/// `if false &&` on the `pg_hba_file_rules` branch left the crate green, and
+/// what it protects is the reason the load-time proof is not sufficient on its
+/// own: a `pg_hba.conf` the postmaster cannot parse is logged and DISCARDED,
+/// the previous rules are kept, and `pg_conf_load_time()` advances anyway —
+/// because the reload did happen, it just kept nothing. So the load-time proof
+/// alone would report a cluster hardened that is still running whatever rules
+/// it started with, which on an adopted cluster means `trust`.
+#[test]
+fn a_pg_hba_conf_that_does_not_parse_is_refused_rather_than_reloaded() {
+    let Some((fx, _a_dsn, _a_pw, _b_dsn, _b_pw)) = provision_fixture("hbaparse") else {
+        return;
+    };
+    let port = DEFAULT_PORT;
+    let hba = fx.layout.data_dir.join("pg_hba.conf");
+    let good = std::fs::read_to_string(&hba).expect("pg_hba.conf");
+
+    // Positive control, so the refusal below cannot be a reload_hba that never
+    // returns Ok at all.
+    reload_hba(&fx.layout, port, &fx.user).expect("a real reload could not be proved");
+
+    // A line PostgreSQL parses and rejects — `pg_hba_file_rules.error` carries
+    // the reason. A syntactically absent field would be reported the same way,
+    // but naming a method that does not exist is what a hand-edited file
+    // actually looks like.
+    std::fs::write(&hba, format!("{good}\nlocal all all not-an-auth-method\n")).unwrap();
+
+    let e = reload_hba(&fx.layout, port, &fx.user)
+        .expect_err("a pg_hba.conf the server cannot parse was reloaded and reported as taken");
+    assert!(
+        e.contains("does not parse") && e.contains("keep the rules it started with"),
+        "refused for the wrong reason:\n{e}"
+    );
+
+    // Restore, and prove it: the same call succeeds again.
+    std::fs::write(&hba, &good).unwrap();
+    reload_hba(&fx.layout, port, &fx.user)
+        .expect("reload_hba stayed broken after the bad line was removed");
+}
