@@ -1,0 +1,27 @@
+{
+  "label": "cpu-n50-rep1",
+  "url": "http://127.0.0.1:8531",
+  "sessions_requested": 50,
+  "sessions_established": 50,
+  "duration": "20s",
+  "think_time": "0s",
+  "interactions_counted": 5394,
+  "interactions_per_sec": 267.2068062922454,
+  "p50_ms": 177.979,
+  "p95_ms": 453.452,
+  "p99_ms": 536.763,
+  "max_ms": 652.664,
+  "outcomes": {
+    "ok_no_patches": 5394
+  },
+  "error_rate": 0,
+  "sse_frames_total": 150,
+  "sse_still_open_at_end": 50,
+  "generator_cpu_percent_of_machine": 0.3053465653299685,
+  "generator_possibly_saturated": false,
+  "valid": false,
+  "invalid_reason": "no interaction produced a single patch: the server never ran the diff path, so this measures an empty exchange",
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-15T18:41:17Z"
+}

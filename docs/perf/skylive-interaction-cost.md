@@ -36,6 +36,12 @@ scripts/skylive-load-remote.sh --url http://<bench-ip>:8000   # preflight
 #   C: B + SKY_LIVE_STORE=postgres               sessions written to PG
 # with SKY_POSTGRES_BIN=/usr/lib/postgresql/15/bin on a Debian target.
 ls docs/perf/runs/gcp-embed-postgres-20260815/{sweep,counterbalance}.sh
+
+# Phase 6 — attribution: WHERE the CPU and the memory go. Needs only Go;
+# the generated sky-out/ tree builds standalone, so no Rust compiler and
+# no change to runtime-go/rt/. Harness + instrumentation are archived
+# beside the data.
+ls docs/perf/runs/attribution-20260815/harness/
 ```
 
 Phase 4 needs `gcloud` authenticated against the target's project, which
@@ -62,6 +68,17 @@ derivations.
 | 5 | **e2-small** · x86 | **embedded PostgreSQL**, `memory` sessions | **1,395 kB** | **25–50** | not isolated | ~21/s | 21.2 + **21.9 MB** | absent | `8e166eaf` |
 | 6 | **e2-small** · x86 | **embedded PostgreSQL**, `postgres` sessions | **1,764 kB** | **25–50** | 39.9/s | ~19/s | 21.2 + **28.4 MB** | absent | `8e166eaf` |
 | 7 | **e2-micro**, sky-lang.org · x86 — *production reference, idle* | SQLite | not measurable | — | — | — | **56.1 MB** app | **present, 86 MB** | live |
+
+> **Read the "Per session" column with
+> ["The attribution"](#the-attribution--what-the-11-ms-and-the-14-mb-actually-are)
+> beside it.** Every figure in that column is an RSS slope measured under
+> load. RSS is a high-water mark, and the slope is dominated by allocator
+> headroom that does not belong to any session: on the same build it reads
+> 2,118 kB/session at N=25 and 1,367 kB/session at N=100. The **retained**
+> cost, measured idle after a forced GC, is **336 kB/session and flat**.
+> The column is still the right input for "how much RSS will this
+> instance show at this concurrency"; it is the wrong input for "what
+> does one more session cost".
 
 **Row 1 is kept only as evidence for why on-target measurement is
 required.** Apple's `container` rejects fractional `--cpus`, so its 1-CPU
@@ -186,17 +203,255 @@ So:
   That path costs 0.086 ms on the heaviest view in the repo: under 1%
   of the 11 ms.
 
-The consequence is the actionable part. The guidance implies that a
-*more complex view* costs more per interaction, so capacity planning
-should scale with view size. **It essentially does not.** Going from
-`19-skyforum` (94 elements) to `26-ui-showcase` (384 elements) — a 4×
-heavier view — adds 65 µs to an 11 ms interaction, or **0.6%**.
+> **The paragraph that stood here was wrong, and the correction is the
+> most useful thing on this page.** It read: per-interaction cost is
+> "roughly constant in view size"; a 4× heavier view "adds 65 µs to an
+> 11 ms interaction, or 0.6%"; a team worried their view is too complex
+> to scale "is worrying about the wrong variable."
+>
+> That generalised a measurement of the **diff** to the whole
+> interaction. The diff is indeed near-constant. The interaction is
+> **dominated by re-running `view(model)`**, which is proportional to
+> the view. Measured directly, same config, same method:
+>
+> | App | Elements | CPU per interaction | Throughput, 1 core |
+> |---|---|---|---|
+> | `19-skyforum` | 94 | 4.41 / 4.47 / 4.77 ms | 249–267/s |
+> | `26-ui-showcase` | 384 | 10.68 / 10.81 / 10.93 ms | 108–110/s |
+>
+> **4.1× the elements costs 2.4× the interaction** — +139%, not +0.6%.
+> View complexity is very much the right variable to worry about. See
+> "The attribution" below for why.
 
-For sizing, treat per-interaction cost as **roughly constant in view
-size** and driven by the per-request machinery instead: HTTP handling,
-session locking, SSE bookkeeping, the app's own `update`/`view`, and GC.
-A team worried that their view is "too complex to scale" is worrying
-about the wrong variable.
+## The attribution — what the 11 ms and the 1.4 MB actually are
+
+The sections above measured *how much*. Neither said *what*. This
+section names the functions and the retentions, against a control that
+makes the numbers mean something. Raw data + harness:
+[`runs/attribution-20260815/`](runs/attribution-20260815/).
+
+Conditions: Apple M1 (**arm64**), 8 cores, Go 1.26.1, commit `4f3da18e`,
+`examples/26-ui-showcase`, `memory` session store, `GOMAXPROCS=1` to
+model one core, closed-loop load at 50 sessions, load average 3.1–5.6 on
+a shared machine. Three repeats everywhere; ranges are shown, not means
+alone. Profiling cost **2.3% of throughput** (106.5/s profiled vs
+109.0/s unprofiled), so the profiled breakdown describes very nearly the
+unprofiled system.
+
+### The control: what this costs in Go with none of the machinery
+
+A minimal Go SSE server — holds a connection, keeps a per-session model,
+answers a POST with a small JSON patch — speaking enough of the wire
+protocol that **the same load generator drives it unmodified**. It is a
+floor, not a fair-featured rival: no VDOM, no diff, no reflective
+dispatch, no session store.
+
+| | Sky.Live | control | ratio |
+|---|---|---|---|
+| **Server CPU per interaction** | **9.15 ms** (8.69 / 9.28 / 9.47) | **0.021 ms** (0.018 / 0.019 / 0.024) | **~450×** (bounds 360–530) |
+| **Live heap retained per session** | **336 kB** (336.2–336.8) | **26.2 kB** | **12.8×** |
+| Goroutine stacks per session | 35.5 kB (4 goroutines) | 21.4 kB (3) | 1.7× |
+| **Allocated per interaction** | **5,658 kB** | **3.13 kB** | **~1,800×** |
+| **Allocations per interaction** | **133,628** | (not recorded) | — |
+
+The control's *throughput* is not quoted as a server capability: driving
+it consumed 28–53% of the 8-core host, so those runs are
+generator-bound. Server-side CPU per interaction is unaffected by that
+and is the honest comparison.
+
+### Throughput scales with cores — there is no global lock
+
+The first thing to rule out, because it would decouple per-interaction
+cost from capacity:
+
+| GOMAXPROCS | Throughput (3 repeats) | CPU per interaction |
+|---|---|---|
+| 1 | 108.6 / 108.1 / 110.4 /s | 10.93 / 10.68 / 10.81 ms |
+| 2 | 204.1 / 210.7 / 214.9 /s | 11.09 / 10.96 / 10.79 ms |
+| 4 | 389.6 / 374.7 / 379.6 /s | 11.71 / 12.10 / 11.98 ms |
+| 8 | 445.7 / 433.7 / 468.0 /s | 17.04 / 16.97 / 16.07 ms |
+
+Throughput scales cleanly to 4 cores at flat per-interaction cost. **No
+lock serialises interactions.** The ceiling is the work itself. (The
+per-interaction figures in this table divide whole-run CPU — including
+ramp and startup — by measurement-window interactions, so they run ~15%
+high; the 9.15 ms above is the steady-state-window measurement. Both
+bracket the original ~11 ms estimate, which was sound.)
+
+### Where the 9.15 ms goes
+
+Shares are of total server CPU, mean of three runs, converted at
+9.15 ms/interaction. `handleEvent` is the interaction handler.
+
+| Component | Share of CPU | ms/interaction | |
+|---|---|---|---|
+| **`handleEvent`** — the whole interaction | **61.7%** | **5.65** | |
+| ↳ **`view(model)` re-render** | **51.9%** | **4.75** | **84% of the handler** |
+| ↳ `Std.Ui.buildStyleString` | 11.9% | 1.08 | |
+| ↳ `Std.Ui.layoutContextFor` | 7.5% | 0.68 | |
+| ↳ *(`Std.Ui.hasMarker`, inside both)* | *13.5%* | *1.24* | |
+| ↳ `HtmlToVNode` | 5.8% | 0.53 | |
+| ↳ `renderVNode` | 4.8% | 0.44 | |
+| ↳ `applyStyleInjections` | 2.4% | 0.22 | |
+| ↳ **`diffTrees`** | **1.3%** | **0.12** | |
+| Everything else (SSE, HTTP, netpoll, GC bg) | 38.3% | 3.50 | |
+| *of which GC (background + assist)* | *12.8%* | *1.17* | *assist runs inside the handler, so it overlaps the rows above* |
+
+**`diffTrees` costs 0.12 ms** — independently consistent with the 86 µs
+the Phase 1 microbenchmark measured for the same path, from a completely
+different method. That agreement is the strongest validity signal in
+this document, and it confirms the earlier conclusion that optimising
+the differ buys nothing.
+
+Every other hypothesis on the table was **refuted by the profile**, and
+they are listed because each was plausible and each was wrong:
+
+| Suspect | Measured share | Verdict |
+|---|---|---|
+| gob-encoding the Model per interaction | **absent** (0%) | Not on the `memory`-store path at all; the earlier memory-vs-postgres gap bounds it at ~10% |
+| `hashAny` — two full reflect+SHA-256 Model walks per dispatch, to decide whether to log | **absent** (0%) | Real code, cheap here because this app's Model is small |
+| Session store `Set` | **absent** (0%) | |
+| JSON encode/decode of the wire envelope | **absent** (0%) | |
+| `msgDisplayName` reflection | **absent** (0%) | |
+| OTel Msg span per interaction | 0.75% | Real, negligible |
+| Session locking | — | Refuted by core scaling |
+
+Self-time by layer tells the same story from another angle: **Go runtime
+and GC 42–46%**, reflection machinery 11–12%, Sky runtime 3–4%, and the
+compiled Sky logic itself **~2%**. Almost nothing is computing; the
+machine is allocating.
+
+### Why: 133,628 allocations to produce an 86-byte patch
+
+That is the number that explains everything else. Per interaction the
+app allocates **5.66 MB across 133,628 objects** — roughly **200
+allocations per rendered element** — and the reply on the wire is 86
+bytes.
+
+The mechanism is visible in the source. `Std.Ui.layoutContextFor`
+([`sky-stdlib/Std/Ui.sky:2461`](../../sky-stdlib/Std/Ui.sky)) asks up to
+four independent questions of every element:
+
+```elm
+layoutContextFor attrs =
+    if hasMarker "__row" attrs then AsRow
+    else if hasMarker "__col" attrs then AsColumn
+    else if hasMarker "__paragraph" attrs then AsParagraph
+    else if hasMarker "__textcolumn" attrs then AsTextColumn
+    else AsEl
+
+hasMarker name attrs =
+    List.any (\a -> isMarker name a) attrs
+```
+
+`buildStyleString` asks two more (`__grid`, `__wrap`). So **six full
+`List.any` scans of the attribute list, per element, per render** — and
+every predicate call goes through `reflect.Value.Call` via the
+higher-order-call adapter, allocating as it goes. `hasMarker` alone is
+**13.5% of all server CPU**.
+
+The runtime adds its own share of the churn: `HtmlToVNode` allocates a
+`map[string]string` *and* a `map[string]any` for **every element whether
+or not it has any attributes or events** (`live.go:137-138`), and
+`applyStyleInjections` makes **four full-tree passes, each reallocating
+every node's children slice** (`live.go:942-947`), whether or not any
+style marker exists.
+
+### Where the 1.4 MB goes — and why that figure is not a per-session cost
+
+**The published ~1.4 MB reproduces exactly, and it is the wrong
+measure.** RSS is a high-water mark; Go returns memory to the OS lazily.
+Measuring sessions **idle** (established, then quiescent, after two
+forced GCs) separates retention from allocator headroom:
+
+| N sessions | RSS / session | **live heap / session** | `HeapIdle` / session | stacks / session |
+|---|---|---|---|---|
+| 25 | **2,118 kB** | **336.8 kB** | 1,240 kB | 34.6 kB |
+| 50 | **1,601 kB** | **336.7 kB** | 791 kB | 35.2 kB |
+| 100 (r1/r2/r3) | **1,367 / 1,436 / 1,398 kB** | **336.4 / 336.3 / 336.2 kB** | 588 / 664 / 616 kB | 35.5 kB |
+
+**RSS per session falls as sessions rise — 2,118 → 1,367 kB — while live
+heap holds at 336 kB to within 0.2%.** A genuine per-session cost cannot
+depend on how many sessions you divide by. The RSS regression was
+measuring a largely fixed allocator pool, sized by peak allocation churn,
+and charging it to sessions. At N=100 it reports 1.4 MB; at N=25 the same
+method reports 2.1 MB.
+
+Decomposing one session's 1,367 kB of RSS at N=100:
+
+| Term | kB/session | Share |
+|---|---|---|
+| **Live heap (`HeapAlloc`) — the real retention** | **336** | **25%** |
+| `HeapIdle` — free spans the runtime kept, not returned | 602 | 44% |
+| Span fragmentation (`HeapInuse` − `HeapAlloc`) | 275 | 20% |
+| Goroutine stacks (4 per session) | 36 | 3% |
+| GC metadata + `mspan` | 41 | 3% |
+
+The 64% that is headroom and fragmentation is a **consequence of the
+5.66 MB-per-interaction churn**, not a property of a session. It is also
+why RSS never came back: after load stopped and the heap was collected
+(248 → 140 MB of `HeapInuse`), RSS stayed at 365 MB.
+
+And the 336 kB that *is* retained, attributed by heap profile (3 repeats;
+sampled totals agree with `MemStats` to 6%):
+
+| Retention | kB/session | Share | Where |
+|---|---|---|---|
+| **`prevTree` — the previous VNode tree, held for diffing** | **132** | **40%** | `HtmlToVNode` |
+| ↳ *of which the eager per-element `Attrs`+`Events` maps* | *98* | *30%* | `applyHtmlAttr`, `live.go:137-138` |
+| **Rendered HTML bodies** (`lastComputedBody` + `lastShippedBody`) | **80** | **24%** | `strings.Builder` |
+| **Style-injection tree copies** | **57** | **17%** | `walkChildrenWithVoidSiblingHoist` |
+| `net/http` per-connection read+write buffers | 18 | 6% | `bufio` |
+| `assignSkyIDs` path strings | 10 | 3% | |
+
+**The Model does not appear.** ~84% of what a session retains is the
+previous VDOM tree plus the rendered HTML kept to diff and to suppress
+no-op frames. That is a design decision — server-held previous state is
+what makes the diff protocol work — and it is now costed.
+
+### Is any of it avoidable?
+
+Measured, not implemented. Each of these is a separate reviewed change
+and the estimates are what they are worth arguing about:
+
+| # | Change | Buys | Cost / risk |
+|---|---|---|---|
+| 1 | **Fold `Std.Ui`'s six marker scans into one pass** over the attribute list, producing a flags record | up to **1.24 ms/interaction (~13% of CPU)** and a large share of the 133k allocations | Contained to `layoutContextFor` + `buildStyleString` in `Std/Ui.sky`. Behaviour-preserving; needs `26-ui-showcase` + `19-skyforum` render goldens |
+| 2 | **Allocate `VNode.Attrs`/`Events` lazily** instead of unconditionally per element | **~98 kB/session (30% of retention)** + 2 allocations per element per render | `live.go:137-138` plus every reader. Go reads nil maps safely; only writes need a guard. Small but touches a hot struct |
+| 3 | **Fuse `applyStyleInjections`' four tree passes into one**, and skip entirely when no style markers exist | **~57 kB/session (17%)** + 4 tree-copies of churn per render | `live.go:942-947`. Moderate; the four passes have distinct semantics |
+| 4 | **Stop retaining two HTML bodies** where they are byte-identical | up to **80 kB/session (24%)** | They usually alias already; the win is only in the diverged case. Needs care — the split exists to keep a suppression invariant honest (`live.go:2110-2141`) |
+| 5 | **Direct dispatch instead of `reflect.Value.Call`** for Sky higher-order calls | 11–12% of CPU is reflection self-time; more is the allocation it forces | Codegen-level, large, and the highest-leverage item here |
+| 6 | Tune `GOGC` / `SetMemoryLimit` | trades RSS headroom against GC CPU — moves the 64%, not the 336 kB | Config only; a sizing lever, not a fix |
+
+Items 1–3 are the cheap ones and together address roughly **13% of the
+per-interaction CPU and 47% of per-session retention**. None of them
+touches the architecture.
+
+The architectural item is item 5 plus the shape it serves: **Sky
+re-runs the entire `view` function on every interaction, through
+reflective dispatch, to produce a diff that is 1.3% of the cost.** That
+is why per-interaction cost tracks view size, and it is the difference
+between this and a LiveView-style design that compiles a template into
+static and dynamic segments and re-evaluates only the dynamic ones.
+Whether Sky should do the same is a design question this measurement
+does not answer — but it is now the question, and it is no longer
+guesswork which part of the pipeline it is about.
+
+### What this does not cover
+
+1. **`arm64` only.** The GCE work found x86 differs ~30% on memory.
+   Ratios should travel; milliseconds should not.
+2. **`memory` session store only**, so the gob path is absent from these
+   profiles by construction. The earlier ~21/s vs ~19/s comparison
+   bounds it at ~10%.
+3. **Two apps.** The CPU breakdown is `26-ui-showcase`'s; `19-skyforum`
+   supplies only the second point on view size. An app with a heavy
+   `update` rather than a heavy `view` would profile differently — the
+   method here is the transferable part.
+4. **The control is a floor, not a target.** It does no diffing and
+   holds no VDOM; some of the 440× is work Sky.Live genuinely does.
+5. **No same-region or cross-machine client** — everything is loopback,
+   so no network term is included.
 
 ## Capacity, measured
 
@@ -251,6 +506,20 @@ hundred. Memory sets the hard ceiling; latency sets the useful one.
 > sessions (e2-micro)** and **50–100 (e2-small)**, not the few hundred
 > this ARM run suggested, and an e2-micro's *usable* ceiling is CPU-bound
 > roughly 10× below its memory ceiling.
+>
+> **Superseded again, and more fundamentally: RSS per session is not a
+> per-session cost.** Every figure in this section — 1.1 MB, 1.4 MB,
+> 1.76 MB — is an RSS slope taken while interactions were in flight, so
+> it charges a largely fixed allocator pool to sessions. Measured with
+> sessions **idle** and the heap collected, the retention is **336 kB per
+> session and constant**, while the RSS slope moves from 2,118 kB/session
+> at N=25 to 1,367 kB/session at N=100 on the same build. See
+> ["The attribution"](#the-attribution--what-the-11-ms-and-the-14-mb-actually-are).
+>
+> The practical effect is that **memory capacity was understated**: the
+> hard ceiling is set by ~336 kB of retention plus an allocator pool that
+> is amortised across sessions, not by ~1.4 MB each. The CPU-binds-first
+> conclusion is unaffected and is strengthened.
 
 ## What is measured, and what is not
 
@@ -258,20 +527,25 @@ The server-side per-interaction path, as `dispatch` runs it
 (`runtime-go/rt/live.go:5022`) and as the `/_sky/event` handler replies
 (`live.go:4702`):
 
-| Step | Where | Measured here? |
-|---|---|---|
-| `update(msg, model)` | compiled Sky — user code | **No** |
-| `view(model) -> Html` | compiled Sky — user code | **No** |
-| `HtmlToVNode` | `live.go:108` | not yet |
-| `assignSkyIDs` | `live.go:573` | **Yes** |
-| `diffTrees` | `live.go:1295` | **Yes** |
-| JSON encode of the reply | `live.go:4715` | **Yes** |
+| Step | Where | In Phase 1 (microbenchmark)? | In Phase 6 (profile)? |
+|---|---|---|---|
+| `update(msg, model)` | compiled Sky — user code | **No** | **Yes** — negligible for this app |
+| `view(model) -> Html` | compiled Sky — user code | **No** | **Yes — 4.75 ms, 84% of the handler** |
+| `HtmlToVNode` | `live.go:108` | no | **Yes** — 0.53 ms |
+| `assignSkyIDs` | `live.go:573` | **Yes** | **Yes** — 0.05 ms |
+| `diffTrees` | `live.go:1295` | **Yes** | **Yes** — 0.12 ms |
+| JSON encode of the reply | `live.go:4715` | **Yes** | negligible |
 
 The two Sky-compiled steps cannot be driven from a Go benchmark — they
-are the user's own functions, and their cost is app-specific. This is a
-real limit on the result and is stated rather than folded in: the
-measured figure is the **runtime's** share of an interaction, and a
-pathological `view` can dominate it.
+are the user's own functions, and their cost is app-specific. Phase 1
+therefore measured only the **runtime's** share, and said so, warning
+that "a pathological `view` can dominate it."
+
+**Phase 6 profiled a running app and found that it does — and that no
+pathology is required.** `view(model)` is 84% of an ordinary interaction
+on a stock example app. The caveat above was correct and load-bearing:
+the runtime's share, which is what Phase 1 measured, is a few percent of
+the whole. See ["The attribution"](#the-attribution--what-the-11-ms-and-the-14-mb-actually-are).
 
 That said, the seam is clean. `VNode` (`live.go:51`) is a plain exported
 Go struct, `diffTrees` takes two of them, and the whole path below the
