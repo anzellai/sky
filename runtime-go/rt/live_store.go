@@ -236,6 +236,43 @@ func logOnce(key string, fn func()) {
 	}
 }
 
+// reportSessionSaveFailure is the ONE place a durable session store decides how
+// loudly a failed write is reported. All three backends route here, and
+// `TestEverySessionStoreReportsSaveFailuresThroughTheBoundedPath` holds them to
+// it — only the SQLite path can be driven end-to-end by a unit test, so the
+// other two are held by reachability rather than by hope.
+//
+// TWO STATES, and the whole point is that they are not the same event.
+//
+// `closed` is true only after the shutdown RELEASE phase has closed the store,
+// which is a single fact about a process that is on its way out. Every handler
+// goroutine still in flight across `srv.Close()` then arrives here with the same
+// news, and a bare log line per arrival put one `failed to save session` in the
+// log per draining session — a burst, in the last second of a deploy, that reads
+// to whoever is watching exactly like the data loss it is NOT. (It is not: `Set`
+// is synchronous, so every session written before the close is on disk, and the
+// write that failed here was going to die with the process either way. That is
+// asserted, not assumed, in live_store_late_write_test.go.) One line, naming the
+// cause, is the whole of the information.
+//
+// `closed` false is ordinary operation — a full disk, a revoked permission, a
+// Postgres gone away — and there the repetition IS the signal: a store failing
+// every write is a different event from a store that failed one, and a bound
+// that leaked into this branch would trade a burst of shutdown noise for a blind
+// spot in production. So this branch is unchanged and logs every time.
+func reportSessionSaveFailure(kind, sid string, closed bool, err error) {
+	if closed {
+		logOnce("late-write-"+kind, func() {
+			log.Printf("[sky.live] %s: session %s was not saved — the store was closed by the "+
+				"shutdown release phase (%v). The process is terminating and this write would "+
+				"not have outlived it; sessions written before the close are durable. Further "+
+				"late writes on this store are not logged.", kind, sid, err)
+		})
+		return
+	}
+	log.Printf("[sky.live] %s: failed to save session %s: %v", kind, sid, err)
+}
+
 // stringField: read a named record field and return its string form, or
 // "" when the field is absent / nil.
 //
@@ -705,7 +742,22 @@ func (s *sqliteStore) Set(sid string, sess *liveSession) {
 		ON CONFLICT(sid) DO UPDATE SET blob=excluded.blob, last_seen=excluded.last_seen`,
 		sid, blob, sess.lastSeenTime().Unix())
 	if err != nil {
-		log.Printf("[sky.live] sqlite: failed to save session %s: %v", sid, err)
+		reportSessionSaveFailure("sqlite", sid, s.isClosed(), err)
+	}
+}
+
+// isClosed reports whether the release phase has already closed this store.
+//
+// Read off `stop`, which `Close` closes BEFORE `db.Close()`, so a Set racing the
+// close either sees the store open and gets a real error, or sees it closed —
+// never sees it open after the handle is gone. Non-blocking, no new field, no
+// lock on the write path.
+func (s *sqliteStore) isClosed() bool {
+	select {
+	case <-s.stop:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1039,7 +1091,23 @@ func (s *postgresStore) Set(sid string, sess *liveSession) {
 		ON CONFLICT (sid) DO UPDATE SET blob = EXCLUDED.blob, last_seen = EXCLUDED.last_seen`,
 		sid, blob, sess.lastSeenTime().Unix())
 	if err != nil {
-		log.Printf("[sky.live] postgres: failed to save session %s: %v", sid, err)
+		reportSessionSaveFailure("postgres", sid, s.isClosed(), err)
+	}
+}
+
+// isClosed — see sqliteStore.isClosed. `Close` closes `stop` before releasing
+// the dbshare reference.
+//
+// Note what this does NOT mean on this backend: the pool is refcounted, so a
+// closed session store whose pool still has an analytics or telemetry consumer
+// leaves the underlying *sql.DB open and the late write SUCCEEDS. The predicate
+// is about THIS store's contract, not about the handle underneath it.
+func (s *postgresStore) isClosed() bool {
+	select {
+	case <-s.stop:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1277,9 +1345,14 @@ func (s *redisStore) Set(sid string, sess *liveSession) {
 		return
 	}
 	if err := s.client.Set(s.ctx, redisKey(sid), blob, s.ttl).Err(); err != nil {
-		log.Printf("[sky.live] redis: failed to save session %s: %v", sid, err)
+		reportSessionSaveFailure("redis", sid, s.isClosed(), err)
 	}
 }
+
+// isClosed — see sqliteStore.isClosed. This backend has no `stop` channel; its
+// `Close` cancels the store context first, so the context IS the predicate, and
+// it is the same thing that made the write fail.
+func (s *redisStore) isClosed() bool { return s.ctx.Err() != nil }
 
 func (s *redisStore) Delete(sid string) {
 	s.memMu.Lock()
