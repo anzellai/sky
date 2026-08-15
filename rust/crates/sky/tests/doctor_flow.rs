@@ -15,8 +15,17 @@
 //! early-returns with a note, matching the example-sweep toolchain-gate
 //! convention. The fault + no-project cases need no toolchain.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Say — VISIBLY — that a test did not run. `eprintln!` would go through
+/// libtest's output capture, which is printed only for a test that FAILED, so a
+/// skipped test would report `... ok` and say nothing about having skipped.
+fn skip(reason: &str) {
+    let mut e = std::io::stderr();
+    let _ = writeln!(e, "SKIPPED: {reason}");
+}
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -74,7 +83,7 @@ fn run_sky(dir: &Path, args: &[&str]) -> (i32, String) {
 #[test]
 fn doctor_healthy_project_reports_clean() {
     if !go_on_path() {
-        eprintln!("doctor_flow: skipping healthy-case — needs `go` on PATH");
+        skip("doctor healthy-case — needs `go` on PATH");
         return;
     }
     let dir = healthy_project("healthy");

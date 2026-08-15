@@ -27,6 +27,14 @@ use std::time::{Duration, Instant};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
+/// The ceiling on any single blocking `sky` invocation in this file.
+///
+/// Generous on purpose: a `sky run` compiles the app through a real `go build`,
+/// which on a cold CI cache is minutes, and a bound that fires on a slow-but-
+/// working machine is a flake of its own. What it rules out is the UNBOUNDED
+/// case — the one that does not fail, it just consumes the job.
+const SKY_LIMIT: Duration = Duration::from_secs(300);
+
 /// The app under test. It prints the DSN it was handed, opens it, runs a query,
 /// and then holds the process open for `SKY_P4_HOLD` milliseconds.
 ///
@@ -185,7 +193,71 @@ impl Fixture {
     }
 
     fn sky(&self, args: &[&str]) -> Output {
-        self.cmd(args).output().expect("failed to run sky")
+        self.sky_within(args, SKY_LIMIT)
+    }
+
+    /// Run `sky` to completion — but never for longer than `limit`.
+    ///
+    /// `Command::output()`, which this replaces, has NO BOUND. It returns when
+    /// the child has exited *and* every inherited copy of its stdout pipe is
+    /// closed, so one wedged descendant turns one test into an unbounded wait.
+    /// In CI that is not a failing test, it is a failing JOB: on 2026-08-15
+    /// `test-rest` ran `sky_watch_hands_the_same_cluster_to_the_app_it_spawns`
+    /// for 22 minutes until the 30-minute budget expired and the run was
+    /// cancelled. The cancellation is what makes an unbounded wait so expensive
+    /// to diagnose: libtest prints captured output only once the binary
+    /// finishes, so the evidence — including the assertion message of the OTHER
+    /// test that had already failed — went with it. Every blocking `sky` call
+    /// here is bounded now, whether or not the original wedge recurs; the point
+    /// is that the next one fails in minutes carrying its output, rather than
+    /// consuming a job and saying nothing.
+    ///
+    /// Output goes to FILES rather than pipes: nothing then depends on a reader
+    /// keeping up, and whatever the command managed to say is still readable
+    /// after a timeout. On expiry the whole process GROUP goes down (`sky run`
+    /// and the app it spawned), and the panic carries the partial output.
+    fn sky_within(&self, args: &[&str], limit: Duration) -> Output {
+        let tag = unique("cmd");
+        let out_path = self.logs.join(format!("{tag}.out"));
+        let err_path = self.logs.join(format!("{tag}.err"));
+        let mut child = self
+            .cmd(args)
+            // `Command::output()` nulls stdin for you; `spawn()` INHERITS it.
+            // Keeping the null is not tidiness — a verb that ever reads from a
+            // terminal would otherwise block on the harness's own stdin, and
+            // that is a hang with no output at all to explain itself.
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
+            .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap()))
+            // Its own group, so a timeout can take down the tree rather than
+            // just the process that happens to be holding the handle.
+            .process_group(0)
+            .spawn()
+            .expect("failed to spawn sky");
+        let deadline = Instant::now() + limit;
+        let status = loop {
+            match child.try_wait().unwrap() {
+                Some(s) => break s,
+                None if Instant::now() >= deadline => {
+                    kill_process_group(child.id() as i32);
+                    let _ = child.wait();
+                    panic!(
+                        "`sky {}` did not finish within {}s — killed.\n\
+                         --- stdout ---\n{}\n--- stderr ---\n{}",
+                        args.join(" "),
+                        limit.as_secs(),
+                        std::fs::read_to_string(&out_path).unwrap_or_default(),
+                        std::fs::read_to_string(&err_path).unwrap_or_default(),
+                    );
+                }
+                None => std::thread::sleep(Duration::from_millis(50)),
+            }
+        };
+        Output {
+            status,
+            stdout: std::fs::read(&out_path).unwrap_or_default(),
+            stderr: std::fs::read(&err_path).unwrap_or_default(),
+        }
     }
 
     /// Start `sky run` in the background, holding the app open for `hold_ms`,
@@ -322,10 +394,30 @@ impl Run {
             // pgid, which is a worse outcome than leaving it alone.
             return;
         }
-        let _ = Command::new("kill")
-            .args(["-9", &format!("-{}", self.child.id())])
-            .output();
-        let _ = self.child.wait();
+        kill_process_group(self.child.id() as i32);
+        // BOUNDED. Reaping a process we have just SIGKILLed is immediate, so
+        // this loop is normally one iteration — but `sky watch` never exits on
+        // its own, and an unbounded `wait()` on a process that (for whatever
+        // reason) was not signalled is an unbounded TEST. Give up loudly rather
+        // than hold the harness open: this runs from `Drop` too, where a panic
+        // during unwinding would abort the process.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => return,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "warning: pid {} outlived a SIGKILL to its process group",
+                        self.child.id()
+                    );
+                    let _ = self.child.kill();
+                    let _ = self.child.try_wait();
+                    return;
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
     }
 }
 
@@ -339,13 +431,27 @@ impl Drop for Run {
     }
 }
 
+/// SIGKILL an entire process group, without shelling out.
+///
+/// The `kill` this used to spawn is a BINARY, resolved on PATH: procps-ng on
+/// Linux, BSD kill on macOS, and on a slim image not present at all. Its spawn
+/// error was discarded, so "there is no kill binary here" and "the group is
+/// dead" were the same observation — followed by a `wait()` on a process that
+/// had never been signalled. One `kill(2)`, no PATH, no package set, and the
+/// two implementations cannot disagree about what a negative pid means.
+fn kill_process_group(pid: i32) {
+    if pid <= 0 {
+        return;
+    }
+    let _ = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(-pid),
+        nix::sys::signal::Signal::SIGKILL,
+    );
+}
+
 fn pid_alive(pid: i32) -> bool {
-    pid > 0
-        && Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+    // Signal 0 tests for existence + permission without delivering anything.
+    pid > 0 && nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
 }
 
 fn wait_until(limit: Duration, cond: impl Fn() -> bool, msg: impl Fn() -> String) {
@@ -356,9 +462,15 @@ fn wait_until(limit: Duration, cond: impl Fn() -> bool, msg: impl Fn() -> String
     }
 }
 
+/// Say — VISIBLY — that a live test did not run.
+///
+/// Deliberately NOT `eprintln!`: that goes through libtest's output capture,
+/// and capture is only ever printed for a test that FAILED. A skipped live test
+/// would report `... ok` and say nothing, which is how a green job can contain
+/// no live coverage at all. The process's own stderr bypasses the capture.
 fn skip(reason: &str) {
     let mut e = std::io::stderr();
-    let _ = writeln!(e, "skipping: {reason}");
+    let _ = writeln!(e, "SKIPPED (live): {reason}");
 }
 
 fn stdout(o: &Output) -> String {
@@ -533,7 +645,12 @@ fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
         return;
     };
 
-    let mut doomed = fx.spawn_run("doomed", 120_000);
+    // The hold only has to outlive the SIGKILL below and the two assertions
+    // after it — a couple of milliseconds. It used to be two MINUTES, which
+    // bought nothing and set the blast radius: any run in which the group kill
+    // failed to land left an app holding a cluster open for two minutes, inside
+    // a 30-minute job budget shared with the whole Rust suite.
+    let mut doomed = fx.spawn_run("doomed", 30_000);
     doomed.wait_for_connected("the doomed sky run");
     let pid = fx.postmaster_pid().expect("no postmaster after the doomed run connected");
     assert_eq!(fx.entry()["refs"].as_array().map(Vec::len), Some(1));
@@ -583,7 +700,9 @@ fn sky_watch_hands_the_same_cluster_to_the_app_it_spawns() {
         return;
     };
 
-    let mut watch = fx.spawn_watch("watch", 120_000);
+    // As in the SIGKILL case: long enough to still be running when the session
+    // is killed, no longer. See the note there.
+    let mut watch = fx.spawn_watch("watch", 30_000);
     watch.wait_for_connected("the app sky watch spawned");
     let pid = fx.postmaster_pid().expect("no postmaster after the watched app connected");
     let socket_dir = fx.entry()["socket_dir"].as_str().unwrap().to_string();

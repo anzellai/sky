@@ -18,6 +18,7 @@
 //! The tests that need no server (discovery failure, `ps` on an unknown project)
 //! always run.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -25,6 +26,10 @@ const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 /// The socket name PostgreSQL uses inside the socket directory.
 const SOCKET_BASENAME: &str = ".s.PGSQL.5432";
+
+/// The ceiling on any single blocking `sky` invocation in this file. Generous:
+/// what it rules out is the UNBOUNDED case, not a slow machine.
+const SKY_LIMIT: std::time::Duration = std::time::Duration::from_secs(300);
 
 // ---- environment discovery ----------------------------------------------
 
@@ -125,8 +130,23 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// Run `sky` to completion — but never for longer than [`SKY_LIMIT`].
+    ///
+    /// `Command::output()`, which this replaces, returns only when the child has
+    /// exited AND every inherited copy of its stdout pipe is closed, so a single
+    /// descendant that outlives the command turns one test into an unbounded
+    /// wait. That is not a failing test in CI, it is a failing JOB — see the
+    /// longer note on `sky_within` in `db_run_cluster_flow.rs`, where exactly
+    /// that consumed a 30-minute `test-rest` budget on 2026-08-15. These verbs
+    /// (`db start` / `ps` / `stop`) do not put an app in the foreground the way
+    /// `sky run` does, so the exposure here is smaller — but "smaller" is not a
+    /// reason for a live test that talks to a real server to have no bound at
+    /// all, and the two files are the same class.
     fn sky(&self, args: &[&str]) -> Output {
-        Command::new(SKY)
+        let tag = unique("cmd");
+        let out_path = std::env::temp_dir().join(format!("{tag}.out"));
+        let err_path = std::env::temp_dir().join(format!("{tag}.err"));
+        let mut child = Command::new(SKY)
             .args(args)
             .current_dir(&self.project)
             // An isolated registry: the test must not write to the developer's
@@ -136,8 +156,43 @@ impl Fixture {
             // Force the /tmp fallback so the assertion below is about the path
             // this code derives, not about whatever the CI runner sets.
             .env_remove("XDG_RUNTIME_DIR")
-            .output()
-            .expect("failed to run sky")
+            // `Command::output()` nulls stdin for you; `spawn()` INHERITS it, and
+            // a verb that ever reads from a terminal would then block on the
+            // harness's own stdin.
+            .stdin(std::process::Stdio::null())
+            // Files, not pipes: nothing depends on a reader keeping up, and the
+            // partial output survives a timeout.
+            .stdout(std::process::Stdio::from(std::fs::File::create(&out_path).unwrap()))
+            .stderr(std::process::Stdio::from(std::fs::File::create(&err_path).unwrap()))
+            .spawn()
+            .expect("failed to run sky");
+        let deadline = std::time::Instant::now() + SKY_LIMIT;
+        let status = loop {
+            match child.try_wait().unwrap() {
+                Some(s) => break s,
+                None if std::time::Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!(
+                        "`sky {}` did not finish within {}s — killed.\n\
+                         --- stdout ---\n{}\n--- stderr ---\n{}",
+                        args.join(" "),
+                        SKY_LIMIT.as_secs(),
+                        std::fs::read_to_string(&out_path).unwrap_or_default(),
+                        std::fs::read_to_string(&err_path).unwrap_or_default(),
+                    );
+                }
+                None => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        };
+        let out = Output {
+            status,
+            stdout: std::fs::read(&out_path).unwrap_or_default(),
+            stderr: std::fs::read(&err_path).unwrap_or_default(),
+        };
+        let _ = std::fs::remove_file(&out_path);
+        let _ = std::fs::remove_file(&err_path);
+        out
     }
 
     fn registry(&self) -> serde_json::Value {
@@ -184,6 +239,19 @@ fn fixture(tag: &str) -> Option<Fixture> {
     })
 }
 
+/// Say — VISIBLY — that a live test did not run.
+///
+/// `eprintln!`, which this replaces, goes through libtest's output capture, and
+/// capture is only ever printed for a test that FAILED. A skipped live test
+/// therefore reported `... ok` and said nothing at all, which is the exact
+/// shape this branch keeps finding: `integration-postgres` was green for months
+/// while every live supervisor test in it skipped. Writing to the process's
+/// own stderr bypasses the capture, so the reason appears in the job log.
+fn skip(reason: &str) {
+    let mut e = std::io::stderr();
+    let _ = writeln!(e, "SKIPPED (live): {reason}");
+}
+
 fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).to_string()
 }
@@ -201,7 +269,7 @@ fn both(o: &Output) -> String {
 #[test]
 fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
     let Some(fx) = fixture("cluster") else {
-        eprintln!("skipping: no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
+        skip("no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
         return;
     };
 
@@ -319,7 +387,7 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
 #[test]
 fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
     let Some(fx) = fixture("stale") else {
-        eprintln!("skipping: no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
+        skip("no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
         return;
     };
 
@@ -531,7 +599,7 @@ fn a_project_path_carrying_a_command_substitution_is_refused_not_executed() {
 #[test]
 fn a_major_version_mismatch_is_reported_and_never_attempted() {
     let Some(fx) = fixture("mismatch") else {
-        eprintln!("skipping: no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
+        skip("no PostgreSQL found (set SKY_POSTGRES_BIN to run this test)");
         return;
     };
 

@@ -29,3 +29,12 @@ serde_json.workspace = true
 # Safe SIGTERM wrapper for `sky watch --kill-timeout` graceful shutdown — the
 # crate forbids `unsafe`, so we use nix's safe `kill` rather than raw `libc`.
 nix = { version = "0.29", features = ["signal"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+# The live cluster tests take down a spawned `sky run` / `sky watch` by process
+# GROUP. They used to do it by spawning the `kill` BINARY, which is procps on
+# Linux and BSD kill on macOS, need not be installed at all, and whose spawn
+# error was discarded — leaving an unbounded `wait()` on a process that had
+# never been signalled. Same signal, sent directly. (An integration test cannot
+# reach the crate's own [dependencies]: `sky` has no lib target.)
+nix = { version = "0.29", features = ["signal"] }
