@@ -298,31 +298,77 @@ func safeMount(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
 
 // ─── Production-mode + auth helpers ────────────────────────────
 
-// productionMode is set by the runtime at startup based on:
+// productionMode is the BOOT SNAPSHOT of the production gate, and it is a
+// TRI-STATE on purpose.
 //
-//   - the `ENV` environment variable, or the namespaced
-//     `<PREFIX>_ENV` (`SKY_ENV` by default) — see productionFromEnv
-//   - OR the binary binding to 0.0.0.0 (rough heuristic — containers
-//     and cloud VMs invariably bind 0.0.0.0; local dev binds localhost)
+// It is set from `productionFromEnv()` by the two real serving paths —
+// `Server_listen` (rt.go:9468) and `liveAppRun` (live.go:4183) — and may be
+// overridden by an embedder afterwards. NOT from sky.toml
+// `[security] env = "production"`: no version of the compiler has parsed that
+// key, and which environment a binary runs in is a property of the deployment,
+// not of the build. (An earlier comment here also claimed a 0.0.0.0-binding
+// heuristic; no code has implemented one.)
 //
-// NOT sky.toml `[security] env = "production"`, which this comment
-// used to name as the explicit winner. No version of the compiler has
-// parsed that key; which environment a binary runs in is a property of
-// the deployment, not of the build.
+// # Why tri-state
 //
-// Both paths set this atomic via SetProductionMode(). Endpoint
-// handlers consult it to gate metrics auth.
-var productionMode atomic.Bool
+// It used to be an `atomic.Bool`, so NEVER SET was indistinguishable from
+// EXPLICITLY FALSE, and the default was the open one. Under `ENV=production`
+// in a process that had not reached either serving path, `isProd()` said true
+// while `isProductionMode()` said false — and `isProductionMode()` is what
+// guards `/_sky/metrics` admin auth (HandleMetrics, this file), the
+// `consoleAuthModeDevOpen` re-tightening (console_auth_v2.go:443) and the mode
+// the console reports (console.go:492). That is a genuine divergence between
+// two production predicates, in the fail-OPEN direction, on the endpoints most
+// worth gating.
+//
+// The processes it reaches are real: `startWebviewLoopback` (webview.go:428)
+// serves HTTP and never calls `SetProductionMode`; a sub-app installed by
+// `MountLiveSubAppInProcess` is safe only because some parent happened to call
+// it; and every `go test` starts at false.
+//
+// `unset` now falls back to the live predicate, so the snapshot can only ever
+// be a DELIBERATE statement. An explicit `SetProductionMode(false)` still wins,
+// which is what keeps the embedder override and the existing tests meaningful.
+type productionModeState = int32
 
-// SetProductionMode toggles the production auth gate. Called from
-// the Sky.Live startup path after reading sky.toml + inspecting the
-// listen address.
+const (
+	productionModeUnset productionModeState = 0
+	productionModeOff   productionModeState = 1
+	productionModeOn    productionModeState = 2
+)
+
+var productionMode atomic.Int32
+
+// SetProductionMode toggles the production auth gate. Called from the
+// Sky.Live and Sky.Http.Server startup paths, and available to an embedder.
 func SetProductionMode(on bool) {
-	productionMode.Store(on)
+	if on {
+		productionMode.Store(productionModeOn)
+	} else {
+		productionMode.Store(productionModeOff)
+	}
+}
+
+// clearProductionMode returns the snapshot to "never set", so the live
+// predicate is consulted again. Exists for tests: the state is process-global
+// and a `SetProductionMode(false)` in one test would otherwise pin every later
+// one to an explicit answer.
+func clearProductionMode() {
+	productionMode.Store(productionModeUnset)
 }
 
 func isProductionMode() bool {
-	return productionMode.Load()
+	switch productionMode.Load() {
+	case productionModeOn:
+		return true
+	case productionModeOff:
+		return false
+	default:
+		// Never set. Fall back to the live predicate rather than to `false`:
+		// an absent snapshot is not evidence that this is not production, and
+		// treating it as such opens the endpoints this flag exists to close.
+		return productionFromEnv()
+	}
 }
 
 // productionFromEnv — single source of truth for whether the
