@@ -55,6 +55,26 @@
     }
   },
   "gates": {
+    "analytics-prune-errors-are-reported": {
+      "expected_assertions": 3,
+      "falsifier_mutation": "analytics-prune.discard-the-exec-error",
+      "falsifier_proven": true,
+      "summary": "a failing analytics retention DELETE produces a warn, not silence",
+      "surfaces": [
+        "observability.analytics-store"
+      ],
+      "tier": "T1"
+    },
+    "analytics-retention-survives-a-panic": {
+      "expected_assertions": 2,
+      "falsifier_mutation": "analytics-retention.no-recover-inside-the-cycle",
+      "falsifier_proven": true,
+      "summary": "a panic in an analytics retention cycle costs the cycle, not the goroutine",
+      "surfaces": [
+        "observability.analytics-store"
+      ],
+      "tier": "T1"
+    },
     "apps-bundled": {
       "expected_assertions": 4,
       "falsifier_mutation": "apps-bundled.reintroduce-missing-field",
@@ -228,6 +248,17 @@
       ],
       "tier": "T1"
     },
+    "console-analytics-queries-are-bounded": {
+      "expected_assertions": 20,
+      "falsifier_mutation": "console-analytics.unbound-the-revenue-scan",
+      "falsifier_proven": true,
+      "summary": "every console Analytics query is windowed, row-capped, and plans off an index",
+      "surfaces": [
+        "observability.analytics-store",
+        "observability.console"
+      ],
+      "tier": "T1"
+    },
     "corpus": {
       "expected_assertions": 335,
       "falsifier_mutation": "corpus.wrong-expected-value",
@@ -327,6 +358,16 @@
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
       "surfaces": [
         "meta.coverage-accounting"
+      ],
+      "tier": "T1"
+    },
+    "erasure-path-uses-an-index": {
+      "expected_assertions": 5,
+      "falsifier_mutation": "erasure-index.drop-the-anonymous-id-index",
+      "falsifier_proven": true,
+      "summary": "Analytics.erase — the right-to-erasure DELETE — resolves through indexes, not a full scan",
+      "surfaces": [
+        "observability.analytics-store"
       ],
       "tier": "T1"
     },
@@ -548,11 +589,11 @@
   "summary": {
     "stdlib_entries": 1782,
     "stdlib_modules": 87,
-    "surfaces_covered": 129,
-    "surfaces_covered_pct": 90.2,
+    "surfaces_covered": 130,
+    "surfaces_covered_pct": 90.3,
     "surfaces_equal": 19,
-    "surfaces_stronger": 124,
-    "surfaces_total": 143,
+    "surfaces_stronger": 125,
+    "surfaces_total": 144,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -2027,6 +2068,54 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "gate `analytics-retention-survives-a-panic`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `analytics-prune-errors-are-reported`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `console-analytics-queries-are-bounded`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `erasure-path-uses-an-index`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "analytics retention keeps pruning, and the console's reads stay bounded + indexed (incl. the right-to-erasure DELETE)",
+      "id": "observability.analytics-store",
+      "verdict": "stronger"
+    },
+    {
+      "category": "observability",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `console-analytics-queries-are-bounded`",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "gate `apps-bundled`",
             "class": "Falsified",

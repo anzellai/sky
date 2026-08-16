@@ -288,6 +288,18 @@ static CROSS_CUTTING: &[CrossSurface] = &[
         ],
     },
     CrossSurface {
+        id: "observability.analytics-store",
+        category: "observability",
+        description: "analytics retention keeps pruning, and the console's reads stay \
+                      bounded + indexed (incl. the right-to-erasure DELETE)",
+        // Nothing, and that is the finding. Both defects behind this surface are
+        // SILENT: a retention goroutine that died on its first panic, and an
+        // unbounded scan on a pool shared with the session store. Neither has a
+        // symptom any existing suite could observe, which is why an adversarial
+        // review found them and no test did.
+        today: &[("nothing", 0)],
+    },
+    CrossSurface {
         id: "lsp",
         category: "tooling",
         description: "editor parity: hover, completion, diagnostics, go-to-definition",
@@ -443,6 +455,18 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
             "db.postgres",
         ],
     ),
+    // The analytics observability gates. The first two own the retention
+    // pruner; the last two own the console's read path, which also touches
+    // `observability.console` because the Analytics tab IS part of the console
+    // surface — an unbounded query there is a console defect that lands on the
+    // session store.
+    ("analytics-retention-survives-a-panic", &["observability.analytics-store"]),
+    ("analytics-prune-errors-are-reported", &["observability.analytics-store"]),
+    (
+        "console-analytics-queries-are-bounded",
+        &["observability.analytics-store", "observability.console"],
+    ),
+    ("erasure-path-uses-an-index", &["observability.analytics-store"]),
     ("roundtrip", &["compiler.parse", "lang.constructs"]),
     ("reject", &["compiler.reject", "compiler.infer"]),
     (

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestAnalyticsRecentEventsPath — the console recent stream lifts `path` out of
@@ -17,18 +18,21 @@ func TestAnalyticsRecentEventsPath(t *testing.T) {
 	t.Setenv("SKY_ANALYTICS_DB_PATH", path)
 	db := analyticsStore()
 
-	analyticsStoreInsert(map[string]any{"ts": int64(1), "event": "page_view", "props": map[string]any{"path": "/shop"}})
-	analyticsStoreInsert(map[string]any{"ts": int64(2), "event": "page_view", "props": map[string]any{"path": "/shop/necklaces", "referrer": "/shop"}})
-	analyticsStoreInsert(map[string]any{"ts": int64(3), "event": "signup", "props": map[string]any{"plan": "pro"}}) // no path
+	// Recent timestamps: the stream is windowed to `consoleAnalyticsWindow`,
+	// so ts=1 would be a 1970 event and correctly outside it.
+	now := time.Now().UnixMilli()
+	analyticsStoreInsert(map[string]any{"ts": now + 1, "event": "page_view", "props": map[string]any{"path": "/shop"}})
+	analyticsStoreInsert(map[string]any{"ts": now + 2, "event": "page_view", "props": map[string]any{"path": "/shop/necklaces", "referrer": "/shop"}})
+	analyticsStoreInsert(map[string]any{"ts": now + 3, "event": "signup", "props": map[string]any{"plan": "pro"}}) // no path
 
 	// Buffered writer — drain before reading the handle directly.
 	analyticsFlushPending()
 
-	recent := analyticsRecentEvents(db)
+	recent := analyticsRecentEvents(db, consoleAnalyticsCutoff())
 	if len(recent) != 3 {
 		t.Fatalf("want 3 recent events, got %d: %+v", len(recent), recent)
 	}
-	// Newest first (ORDER BY id DESC): signup, then /shop/necklaces, then /shop.
+	// Newest first (ORDER BY ts DESC): signup, then /shop/necklaces, then /shop.
 	if recent[0].Event != "signup" || recent[0].Path != "" {
 		t.Errorf("recent[0] = (%q, path=%q), want (signup, no path)", recent[0].Event, recent[0].Path)
 	}
@@ -64,9 +68,10 @@ func TestTheConsoleEndpointDrainsBeforeItReads(t *testing.T) {
 	}
 
 	const n = 9 // fewer than analyticsBatchSize, so only a drain can flush them
+	now := time.Now().UnixMilli()
 	for i := 0; i < n; i++ {
 		analyticsStoreInsert(map[string]any{
-			"ts": int64(i), "event": "page_view", "anonymous_id": "anon",
+			"ts": now + int64(i), "event": "page_view", "anonymous_id": "anon",
 			"props": map[string]any{"path": "/live"},
 		})
 	}

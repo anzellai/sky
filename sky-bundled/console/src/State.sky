@@ -137,18 +137,37 @@ type alias CurrencyTotal =
     , count : Int
     }
 
+-- `windowDays` / `rowCapHit` / `rowCap` are the HONESTY fields. Every
+-- figure above is computed over the last `windowDays` days and over at
+-- most `rowCap` events, because an unbounded scan of the analytics
+-- table ran on a connection pool shared with the session store — the
+-- observability surface degrading the thing it observes. The tab
+-- renders the window in its labels rather than presenting a windowed
+-- number under an all-time one; `rowCapHit` says the revenue total is
+-- a floor (rendered "≥"), not a complete sum.
 type alias Analytics =
     { total : Int
     , uniqueUsers : Int
     , counts : List EventCount
     , recent : List AnalyticsEvent
     , revenue : List CurrencyTotal
+    , windowDays : Int
+    , rowCapHit : Bool
+    , rowCap : Int
     }
 
 
 emptyAnalytics : Analytics
 emptyAnalytics =
-    { total = 0, uniqueUsers = 0, counts = [], recent = [], revenue = [] }
+    { total = 0
+    , uniqueUsers = 0
+    , counts = []
+    , recent = []
+    , revenue = []
+    , windowDays = 0
+    , rowCapHit = False
+    , rowCap = 0
+    }
 
 -- Per-service rollup row consumed by the multi-service Overview
 -- (v0.16.4 B5). One ServiceStat per distinct service_name in the

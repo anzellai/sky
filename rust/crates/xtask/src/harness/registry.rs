@@ -882,6 +882,118 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::sky_suites,
     },
+    // ---- analytics observability -------------------------------------------
+    //
+    // Two defects, four gates. Both were found by adversarial review rather
+    // than by anything failing, which is the point: the retention pruner's
+    // failure mode is SILENCE (a dead goroutine and a discarded error), and the
+    // console's is a slow query on somebody else's connection — neither has a
+    // symptom the existing suites could have noticed.
+    Gate {
+        name: "analytics-retention-survives-a-panic",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // Sub-second; the ceiling is for a cold `go test` compile of `rt`.
+        budget_s: 600,
+        expected: bodies::ANALYTICS_RETENTION_PANIC_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a panic in an analytics retention cycle costs the cycle, not the goroutine",
+        // The mutation takes the recover OUT of the prune cycle, which is the
+        // defect's substance: the panic then escapes the ticker loop and the
+        // goroutine unwinds. The test's own goroutine carries a recover that
+        // stands in for the one the shipped code had at the top level, so the
+        // consequence lands as a red assertion rather than a crashed binary.
+        //
+        // Re-adding a top-level recover was tried first and reported VACUOUS —
+        // correctly. With a recover still inside the cycle, the outer one is
+        // unreachable, so that "mutation" changed no behaviour at all. The
+        // falsifier runner caught a mutation that was a lie, which is the job.
+        mutations: Mutations::new(&[Mutation {
+            id: "analytics-retention.no-recover-inside-the-cycle",
+            description: "stop recovering inside the prune cycle — the shipped defect. \
+                          The first panic then unwinds past the ticker loop, retention \
+                          is dead for the process lifetime, and both the second-cycle \
+                          assertion and the panic-warn assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/analytics_store.go",
+                from: "if r := recover(); r != nil {",
+                to: "if r := any(nil); r != nil {",
+            },
+        }]),
+        body: bodies::analytics_retention_survives_a_panic,
+    },
+    Gate {
+        name: "analytics-prune-errors-are-reported",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::ANALYTICS_PRUNE_ERRORS_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a failing analytics retention DELETE produces a warn, not silence",
+        mutations: Mutations::new(&[Mutation {
+            id: "analytics-prune.discard-the-exec-error",
+            description: "restore `_, _ = db.Exec(...)` — the shipped defect. A \
+                          permissions failure, a lock timeout and a successful \
+                          zero-row delete become indistinguishable; the warn \
+                          assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/analytics_store.go",
+                from: "if _, err := db.Exec(analyticsQ(qAnalyticsRetentionPrune), cutoff); err != nil {",
+                to: "if _, err := db.Exec(analyticsQ(qAnalyticsRetentionPrune), cutoff); false && err != nil {",
+            },
+        }]),
+        body: bodies::analytics_prune_errors_are_reported,
+    },
+    Gate {
+        name: "console-analytics-queries-are-bounded",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // ~2 s on the dev host, of which the 200k-row fixture is the bulk.
+        // The ceiling covers a cold `go test` compile on a slow runner.
+        budget_s: 900,
+        expected: bodies::CONSOLE_ANALYTICS_BOUNDED_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every console Analytics query is windowed, row-capped, and plans off an index",
+        mutations: Mutations::new(&[Mutation {
+            id: "console-analytics.unbound-the-revenue-scan",
+            description: "restore the unbounded revenue scan — no window, no LIMIT, \
+                          the shipped defect. Its plan becomes a full table scan of \
+                          analytics_events on a pool shared with the session store, \
+                          and the plan assertion must go red. Note the TIMING \
+                          assertion alone does NOT catch this (354 ms over 200k rows, \
+                          against a 3 s budget) — which is exactly why the gate asserts \
+                          the PLAN and not only the clock",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/console_analytics.go",
+                from: "WHERE props IS NOT NULL AND ts >= ? ORDER BY ts DESC LIMIT ?",
+                to: "WHERE props IS NOT NULL AND ? >= 0 AND 0 < ?",
+            },
+        }]),
+        body: bodies::console_analytics_queries_are_bounded,
+    },
+    Gate {
+        name: "erasure-path-uses-an-index",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::ERASURE_INDEX_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "Analytics.erase — the right-to-erasure DELETE — resolves through indexes, not a full scan",
+        mutations: Mutations::new(&[Mutation {
+            id: "erasure-index.drop-the-anonymous-id-index",
+            description: "drop the `anonymous_id` index from the shipped schema — the \
+                          state this path was in. SQLite's MULTI-INDEX OR collapses to \
+                          `SCAN analytics_events` and the plan assertion must go red. \
+                          This is a compliance path: a deletion request slow enough to \
+                          time out is a deletion that did not happen",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/analytics_store.go",
+                from: "`CREATE INDEX IF NOT EXISTS idx_analytics_anonymous_id ON analytics_events(anonymous_id)`,",
+                to: "`SELECT 1`,",
+            },
+        }]),
+        body: bodies::erasure_path_uses_an_index,
+    },
     // ---- harness self-verification ----------------------------------------
     //
     // `selftest-hang` is deliberately registered BEFORE `canary`. Registry order

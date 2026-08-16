@@ -3010,3 +3010,160 @@ pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
     let (passed, assertions, detail) = crate::config_matrix::check_body(&ctx.repo_root);
     GateOutcome::new(passed, assertions, detail)
 }
+
+// ---------------------------------------------------------------------------
+// Analytics observability gates.
+//
+// Four gates over `runtime-go/rt/analytics_observability_gate_test.go`, added
+// with the two defects an adversarial review found on 2026-08-17:
+//
+//   * the analytics retention pruner recovered at its goroutine's TOP LEVEL,
+//     so the first panic killed retention for the process lifetime, silently;
+//     and it discarded every `Exec` error, so a pruner that had never deleted
+//     a row looked identical to a healthy one.
+//   * the console's Analytics tab ran unbounded, unindexed scans of
+//     `analytics_events` on every load, on a connection pool SHARED with the
+//     session store — the observability surface degrading the thing it
+//     observes. The right-to-erasure DELETE was a full scan for the same
+//     reason: neither subject column was indexed.
+//
+// Each gate runs ONE Go test and reads the `ASSERTIONS: <n>` line that test
+// prints. Counting is delegated to the test rather than to a source scan
+// because these assertions are dynamic (three per statement in
+// `consoleAnalyticsStatements`), and a source-counted total would go stale the
+// moment a statement is added — the failure mode the exact-count rule exists
+// to prevent.
+// ---------------------------------------------------------------------------
+
+/// Runs one Go test in `runtime-go` and returns its verdict + the assertion
+/// count it printed.
+///
+/// A missing / unrunnable Go toolchain is a **FAIL naming what to install**,
+/// never a skip: "a gate that cannot run has not passed". A test that ran but
+/// printed no `ASSERTIONS:` line is also a fail — a body that cannot establish
+/// a count reports 0, and 0 is vacuous.
+fn go_analytics_gate(ctx: &GateCtx, test: &str, expected: u64) -> GateOutcome {
+    let dir = ctx.repo_root.join("runtime-go");
+    if !dir.is_dir() {
+        return GateOutcome::new(false, 0, format!("{} does not exist", dir.display()));
+    }
+    // `go test -timeout` is the inner bound (it dumps stacks and NAMES the hung
+    // test); the harness budget is the outer one.
+    let out = Command::new("go")
+        .args([
+            "test",
+            "-count=1",
+            "-timeout",
+            "300s",
+            "-run",
+            &format!("^{test}$"),
+            "-v",
+            "./rt/",
+        ])
+        .current_dir(&dir)
+        .env_remove("GOFLAGS")
+        .stdin(std::process::Stdio::null())
+        .output();
+
+    let o = match out {
+        Ok(o) => o,
+        Err(e) => {
+            return GateOutcome::new(
+                false,
+                0,
+                format!(
+                    "could not run `go test` for {test}: {e}. Install the Go toolchain \
+                     (https://go.dev/dl/) — this gate measures the Go runtime and cannot \
+                     be established without it."
+                ),
+            )
+        }
+    };
+    let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+    let counted = stdout
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("ASSERTIONS:"))
+        .and_then(|n| n.trim().parse::<u64>().ok());
+
+    let Some(n) = counted else {
+        return GateOutcome::new(
+            false,
+            0,
+            format!(
+                "{test} printed no `ASSERTIONS: <n>` line, so no count could be \
+                 established (exit {:?}):\n{}",
+                o.status.code(),
+                super::layer2::tail(&stdout, 25)
+            ),
+        );
+    };
+    if n != expected {
+        return GateOutcome::new(
+            false,
+            n,
+            format!(
+                "{test} reported {n} assertions, expected EXACTLY {expected}. If an \
+                 assertion was deliberately added or removed, update the gate's \
+                 `expected` in harness/registry.rs in the same commit."
+            ),
+        );
+    }
+    if o.status.success() {
+        GateOutcome::new(true, n, format!("{test}: {n} assertions green"))
+    } else {
+        GateOutcome::new(
+            false,
+            n,
+            format!(
+                "{test} failed (exit {:?}):\n{}",
+                o.status.code(),
+                super::layer2::tail(&stdout, 30)
+            ),
+        )
+    }
+}
+
+/// Two: the loop survived the panic (>= 3 cycles), and the panic was logged.
+pub const ANALYTICS_RETENTION_PANIC_EXPECTED: u64 = 2;
+
+pub fn analytics_retention_survives_a_panic(ctx: &GateCtx) -> GateOutcome {
+    go_analytics_gate(
+        ctx,
+        "TestAnalyticsRetentionSurvivesAPanic",
+        ANALYTICS_RETENTION_PANIC_EXPECTED,
+    )
+}
+
+/// Three: exactly one Exec, a warn was emitted, and it carries the driver's
+/// message.
+pub const ANALYTICS_PRUNE_ERRORS_EXPECTED: u64 = 3;
+
+pub fn analytics_prune_errors_are_reported(ctx: &GateCtx) -> GateOutcome {
+    go_analytics_gate(
+        ctx,
+        "TestAnalyticsPruneErrorsAreReported",
+        ANALYTICS_PRUNE_ERRORS_EXPECTED,
+    )
+}
+
+/// Twenty: the statement list covers the handler (1), three per statement in
+/// `consoleAnalyticsStatements` — LIMIT, window, plan — (15), the revenue cap
+/// binds and still returns data (2), the total is capped (1), and the tab
+/// renders inside its budget (1).
+pub const CONSOLE_ANALYTICS_BOUNDED_EXPECTED: u64 = 20;
+
+pub fn console_analytics_queries_are_bounded(ctx: &GateCtx) -> GateOutcome {
+    go_analytics_gate(
+        ctx,
+        "TestConsoleAnalyticsQueriesAreBounded",
+        CONSOLE_ANALYTICS_BOUNDED_EXPECTED,
+    )
+}
+
+/// Five: no full scan, each of the two indexes is in the plan, the shipped
+/// schema creates them, and the indexed DELETE still deletes.
+pub const ERASURE_INDEX_EXPECTED: u64 = 5;
+
+pub fn erasure_path_uses_an_index(ctx: &GateCtx) -> GateOutcome {
+    go_analytics_gate(ctx, "TestErasurePathUsesAnIndex", ERASURE_INDEX_EXPECTED)
+}

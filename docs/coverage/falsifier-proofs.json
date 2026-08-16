@@ -1,5 +1,17 @@
 {
   "gates": {
+    "analytics-prune-errors-are-reported": {
+      "mutation": "analytics-prune.discard-the-exec-error",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786922602
+    },
+    "analytics-retention-survives-a-panic": {
+      "mutation": "analytics-retention.no-recover-inside-the-cycle",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786922602
+    },
     "apps-bundled": {
       "mutation": "apps-bundled.reintroduce-missing-field",
       "observed": "PROVEN",
@@ -90,6 +102,12 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786349758
     },
+    "console-analytics-queries-are-bounded": {
+      "mutation": "console-analytics.unbound-the-revenue-scan",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786922602
+    },
     "corpus": {
       "mutation": "corpus.wrong-expected-value",
       "observed": "PROVEN",
@@ -131,6 +149,12 @@
       "observed": "PROVEN",
       "outcome": "as-declared",
       "proven_at_unix": 1786442352
+    },
+    "erasure-path-uses-an-index": {
+      "mutation": "erasure-index.drop-the-anonymous-id-index",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786922602
     },
     "lsp": {
       "mutation": "lsp.hover-echoes-the-token",
