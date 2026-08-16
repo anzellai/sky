@@ -452,32 +452,64 @@ func TestStyleMarkerScanIsDerivedFromTheSpecs(t *testing.T) {
 }
 
 // interactionAllocBudget is allocations per ELEMENT for the whole server-side
-// interaction below the Sky boundary: lower the view ADT, assign ids, run the
-// style passes, diff against the previous tree.
+// interaction below the Sky boundary, as `dispatch` runs it: lower the view
+// ADT, assign ids, run the style passes, build the handler table and the
+// body, diff against the previous tree.
 //
-// Observed 16.50/element (6,418 allocations over 389 elements). Reverting the
-// style-injection spec hoist takes it to 27.51 and this gate goes red, which
-// is how it was proven able to fail.
+// TWO THINGS THIS GATE USED TO MISS, both fixed here:
 //
-// This budget is deliberately the LOOSER of the two: it covers a wide path
-// and would only catch a large regression. The per-pass gate above is the
-// sharp instrument; this one exists so that a regression somewhere else on
-// the interaction path -- one that no single sharp gate is watching -- still
-// has something in its way.
-const interactionAllocBudget = 20.0
+//  1. It rebuilt the FIXTURE inside the measured closure. `buildHtmlPage` is
+//     what the compiled Sky `view` returns — above the boundary this file
+//     measures — and it is 4,560 allocations, more than the whole runtime
+//     path. Two thirds of every number this gate printed described the test's
+//     own fixture builder, so a runtime regression had to be enormous to move
+//     the total. It is hoisted out now; `HtmlToVNode` does not mutate it,
+//     which is why one page can serve every iteration.
+//
+//  2. It never called `renderVNode`. The render was 2,632 of the 4,499
+//     allocations an interaction cost at the time this was written — the
+//     single largest component on the path — and no assertion in this file
+//     could see any of it. It is in the closure now, with a handler table,
+//     because populating that table is why dispatch renders at all.
+//
+// Observed 5.30/element (2,061 allocations over 389 elements). Before the
+// Stage 1 runtime-constant work the same closure measures 11.57/element
+// (4,499 allocations), so the budget at 8.0 sits 1.5x above the passing
+// value and 1.4x below the failing one -- it fires on a component-sized
+// regression coming back, not on drift.
+//
+// It remains the LOOSER instrument: the per-pass gates above are the sharp
+// ones. This exists so a regression somewhere on the path that no sharp gate
+// is watching still has something in its way.
+const interactionAllocBudget = 8.0
 
 func TestInteractionAllocationBudget(t *testing.T) {
 	census := htmlPageCensus(gateItems)
-	prev := HtmlToVNode(buildHtmlPage(gateItems))
+	// The view ADT the compiled Sky `view` would have returned. Built ONCE:
+	// see point 1 above.
+	page := buildHtmlPage(gateItems)
+
+	prev := HtmlToVNode(page)
 	assignSkyIDs(&prev, "r")
 	applyStyleInjections(&prev)
 
+	handlers := map[string]any{}
 	got := testing.AllocsPerRun(50, func() {
-		next := HtmlToVNode(buildHtmlPage(gateItems))
+		next := HtmlToVNode(page)
 		assignSkyIDs(&next, "r")
 		applyStyleInjections(&next)
+		clear(handlers)
+		_ = renderVNode(next, handlers)
 		diffTrees(&prev, &next, nil)
 	})
+	// A handler table that came back empty would mean the render walked no
+	// events, and the largest component of the budget would be measuring an
+	// early return.
+	if len(handlers) != census.withEvents {
+		t.Fatalf("render registered %d handlers, fixture has %d elements with "+
+			"events -- the measured closure is not doing the work",
+			len(handlers), census.withEvents)
+	}
 	per := got / float64(census.elements)
 	t.Logf("interaction: %.0f allocs over %d elements = %.2f/element",
 		got, census.elements, per)
