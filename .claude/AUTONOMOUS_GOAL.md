@@ -287,3 +287,49 @@ settings — advertising the console as the feature it is, and simply omitting t
 line under production rather than scolding.
 
 **This is documentation delivered where it is read, NOT a behaviour change.**
+
+## Config architecture — DECIDED (2026-08-16)
+
+The user settled it:
+
+> ok I'm in favour of using withX pattern with value or basically a config record,
+> env vars should be derived from .env files or env vars. with defaults
+> sky.toml for deps and compiled only flag like embed etc?
+
+**Three-way split:**
+
+1. **`sky.toml` — build manifest only.** Name, deps, toolchain, and COMPILE-ONLY
+   flags such as `embed` (it changes what is compiled INTO the binary, so it
+   cannot be a runtime value). Everything the compiler must know before or during
+   compilation, and nothing else.
+2. **A typed config record in the app's own `main`, built with the existing
+   `withX` pattern.** This is the runtime surface. Defaults are Sky values.
+3. **`.env` / environment variables feed that record**, with defaults — for what
+   genuinely varies per deployment (secrets, DSNs, ports).
+
+**Why this beats the schema-codegen design it replaces:** no schema language to
+invent, no generated readers to keep in sync, and drift becomes IMPOSSIBLE because
+the config IS the code. Discoverability comes free from `sky doc` and LSP
+completion. Most of the fourteen hand-rolled parsers disappear rather than being
+unified.
+
+The earlier verdict — "the schema is not the deliverable, the gate is", because the
+failure that reached users was *config that looks set and does nothing* — now reads
+as **the compiler IS the gate**. A `withX` nothing consumes will not type-check.
+That is a stronger guarantee than any drift-detection test.
+
+**Open, and load-bearing:**
+- **Bootstrap ordering.** `GOMEMLIMIT`, the `--embed` PostgreSQL supervisor, the
+  console mount and `[env] prefix` are consumed before user `main` could have built
+  a record. Whatever genuinely cannot move IS the residual runtime surface — and it
+  may be small enough to live in the manifest.
+- **Non-Sky.Live shapes.** `Sky.Http.Server`, `Sky.Cli`, `Sky.Tui`, `Sky.Webview`,
+  `Std.Jobs` each have their own entry point, plus cross-cutting concerns
+  (telemetry, database, prefix). A design where a Cli job cannot configure its
+  database the way a Live app does is not a win.
+- **Migration must be MECHANICAL, not prose.** A user — including one with a
+  running production deployment — must be able to ask "what do I change?" and get
+  an answer from a tool. An unmigrated app either keeps working or fails loudly;
+  silent behaviour change is the one unacceptable outcome.
+
+Design record: `docs/tooling/config-architecture.md`.
