@@ -292,10 +292,17 @@ func stringField(cfg any, name string) string {
 	return fmt.Sprintf("%v", v)
 }
 
-// parseTTL — resolve a TTL value from env > sky.toml > default in
-// precedence order. Each layer accepts EITHER a Go-duration string
+// parseTTL — take the first parseable of an ordered list of candidate layer
+// values, else `def`. Each layer accepts EITHER a Go-duration string
 // ("30m", "24h", "1h30m") OR a bare integer interpreted as seconds.
 // Empty or unparseable values fall through to the next layer.
+//
+// The ORDER of `vals` is not this function's business and never was: it is
+// `configLayers` (live_config_precedence.go) that decides which layer outranks
+// which, for every Sky.Live setting at once. This used to take `(envVal,
+// tomlVal)` positionally, which quietly made the parser the place the
+// precedence lived — and made `live.ttl`'s order impossible to change without
+// editing a function whose name says it only parses.
 //
 // History: the pre-fix implementation read only the env var AND
 // accepted only bare-integer seconds via strconv.Atoi.  So both
@@ -304,8 +311,8 @@ func stringField(cfg any, name string) string {
 // with the documented `30m`-style default in CLAUDE.md.  This
 // helper makes the documented shape the canonical one while
 // preserving bare-integer-seconds for backward compatibility.
-func parseTTL(envVal, tomlVal string, def time.Duration) time.Duration {
-	for _, raw := range []string{envVal, tomlVal} {
+func parseTTL(vals []string, def time.Duration) time.Duration {
+	for _, raw := range vals {
 		s := strings.TrimSpace(raw)
 		if s == "" {
 			continue
@@ -367,14 +374,15 @@ func slidingCookieMaxAgeSeconds(ttl time.Duration) int {
 	return floorSeconds
 }
 
-// parseIdleEvict — resolve the tiered-session-cache idle-evict window from
-// env > sky.toml > default, mirroring parseTTL's precedence + duration/seconds
-// parsing. Differs in ONE way: an EXPLICIT "0" / "off" / "none" / "disable(d)"
-// returns 0 (idle-evict OFF — fall back to the classic all-within-TTL memCache),
-// whereas parseTTL would treat 0 as unparseable and fall through to the default.
-// This lets an operator turn the feature off via SKY_LIVE_IDLE_EVICT=0.
-func parseIdleEvict(envVal, tomlVal string, def time.Duration) time.Duration {
-	for _, raw := range []string{envVal, tomlVal} {
+// parseIdleEvict — take the first parseable of an ordered list of candidate
+// layer values, mirroring parseTTL's duration/seconds parsing and, through the
+// shared `configLayers`, its precedence. Differs in ONE way: an EXPLICIT
+// "0" / "off" / "none" / "disable(d)" returns 0 (idle-evict OFF — fall back to
+// the classic all-within-TTL memCache), whereas parseTTL would treat 0 as
+// unparseable and fall through to the default. This lets an operator turn the
+// feature off via SKY_LIVE_IDLE_EVICT=0.
+func parseIdleEvict(vals []string, def time.Duration) time.Duration {
+	for _, raw := range vals {
 		s := strings.TrimSpace(raw)
 		if s == "" {
 			continue
@@ -1750,13 +1758,19 @@ func chooseStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 	return store
 }
 
+// selectStore builds the session store from ALREADY-RESOLVED values.
+//
+// It used to resolve two of them itself, with `if kind == "" { kind =
+// skyGetenv(…) }` — which put the config layer ahead of the environment and
+// made this function a second, disagreeing home for precedence. That is how
+// `live.storePath` came to invert `live.ttl` one module away: neither site was
+// wrong on its own terms, and nothing compared them. Resolution now happens in
+// `configLayers` (live_config_precedence.go) at the two call sites that have a
+// builder config to resolve, and this function has no opinion about layers.
+//
+// Callers passing explicit values — the store tests do — therefore get exactly
+// what they passed, which the env-fallback shape could not promise.
 func selectStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
-	if kind == "" {
-		kind = skyGetenv("LIVE_STORE")
-	}
-	if path == "" {
-		path = skyGetenv("LIVE_STORE_PATH")
-	}
 	if ttl == 0 {
 		ttl = 30 * time.Minute
 	}

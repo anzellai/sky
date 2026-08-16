@@ -79,7 +79,13 @@ import (
 // in ONE place rather than being re-derived per cookie — the drift that left
 // sky_sid on a TTL-keyed Max-Age after this one was fixed.
 func csrfCookieMaxAgeSeconds() int {
-	return slidingCookieMaxAgeSeconds(parseTTL(skyGetenv("LIVE_TTL"), "", 30*24*time.Hour))
+	// §1.7's THIRD `LIVE_TTL` reader, and the one with a different default (30
+	// days here against live.go's 30 minutes). It has no builder layer of its
+	// own — there is no `withCsrfTtl` — so it passes "" and resolves through
+	// the same shared rule as the other two. Routing it through `resolveTTL`
+	// does not change what it reads today; it means the reader cannot acquire
+	// a fourth precedence order later without the shared gate noticing.
+	return slidingCookieMaxAgeSeconds(resolveTTL("", 30*24*time.Hour))
 }
 
 const (

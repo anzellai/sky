@@ -3848,29 +3848,25 @@ func coerceRouteParam(fn any, p string) (any, error) {
 // the port to 0, which would bind an arbitrary ephemeral port that nothing can
 // discover.
 func resolveLivePort(cfg any) int {
-	envName := skyEnvName("LIVE_PORT")
-	envPort := 0
-	if v, ok := lookupEnvRaw(envName); ok && v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			envPort = n
-		}
-	}
-	// 1. operator-set env.
-	if envPort > 0 && !isSeededDefault(envName) {
-		return envPort
-	}
-	// 2. explicit Live.withPort. An unset optional is ABSENT from the config
-	//    map (see live_config.go), so a non-nil field means it was called.
+	// The three layers, ordered by the rule every Sky.Live setting now shares
+	// (configLayers, live_config_precedence.go). This function used to spell
+	// that order out by hand and was the ONLY one that got it right; the order
+	// is now the shared one, so `withPort` cannot silently drift back out of
+	// step with `withTtl` the way `withStorePath` had drifted out of step
+	// with both.
+	//
+	// An unset optional is ABSENT from the config map (see live_config.go), so
+	// a non-nil `Port` field means `withPort` was actually called.
+	builder := ""
 	if p := Field(cfg, "Port"); p != nil {
 		if n := AsInt(p); n > 0 {
-			return n
+			builder = strconv.Itoa(n)
 		}
 	}
-	// 3. the sky.toml default generated init() seeded.
-	if envPort > 0 {
-		return envPort
+	if n := parsePortLayers(configLayers("LIVE_PORT", builder)); n > 0 {
+		return n
 	}
-	// 4. floor.
+	// The floor, when nothing supplied a usable port.
 	return 8080
 }
 
@@ -3989,32 +3985,21 @@ func liveAppRun(cfg any) any {
 			app.staticURL = s
 		}
 	}
-	// Session store selection. Config fields `store` and `storePath`
-	// override the defaults; env vars <PREFIX>_LIVE_STORE /
-	// <PREFIX>_LIVE_STORE_PATH take precedence over config; final
-	// fallback is memory.
-	storeKind := stringField(cfg, "Store")
-	storePath := stringField(cfg, "StorePath")
-	// TTL resolution order:  env > sky.toml > default (30m).
-	// Two value shapes accepted at BOTH layers, per CLAUDE.md
-	// docs ("30m" default form):
+	// Session store, TTL and idle-evict window — all four resolved by the one
+	// rule in `configLayers` (live_config_precedence.go):
 	//
-	//   1. Go-duration string — "30m", "24h", "1h30m", "45s"
-	//      (anything time.ParseDuration handles, the documented
-	//      shape).
-	//   2. Bare integer — interpreted as SECONDS for backward-
-	//      compatibility with the original env-only path.
+	//	operator env > withX builder > seeded sky.toml default > fallback
 	//
-	// Empty / unparseable values fall through to the next layer;
-	// the final fallback is 30m.  The previous implementation only
-	// read the env var AND only accepted bare-integer seconds, so
-	// `SKY_LIVE_TTL=24h` and any `ttl = "24h"` in sky.toml were
-	// both silently ignored.
-	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), 30*time.Minute)
-	// Tiered-session-cache idle-evict window (env > cfg > default 5m; "0"/"off"
-	// disables). Bounds a durable store's RAM to the ACTIVE working set. See
-	// docs/skylive/tiered-session-cache.md.
-	idleEvict := parseIdleEvict(skyGetenv("LIVE_IDLE_EVICT"), stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	// Each accepts a Go-duration string ("30m", "24h", "1h30m", "45s") or a
+	// bare integer read as SECONDS, at every layer; an empty or unparseable
+	// value falls through to the next layer rather than to the fallback.
+	storeKind := resolveStoreKind(stringField(cfg, "Store"))
+	storePath := resolveStorePath(stringField(cfg, "StorePath"))
+	ttl := resolveTTL(stringField(cfg, "Ttl"), 30*time.Minute)
+	// "0"/"off"/"none"/"disable(d)" disables idle-evict outright, which is the
+	// one way it differs from ttl. Bounds a durable store's RAM to the ACTIVE
+	// working set. See docs/skylive/tiered-session-cache.md.
+	idleEvict := resolveIdleEvict(stringField(cfg, "IdleEvict"), defaultIdleEvict)
 	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
@@ -6449,7 +6434,7 @@ var runStreamSubscriberDispatch_debugCounter atomic.Int64
 // the decoder in defer-recover so a panicking decoder consumes the
 // event without crashing the session.
 func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev streamEvent) {
-	if streamDebug {
+	if streamDebugEnabled() {
 		n := runStreamSubscriberDispatch_debugCounter.Add(1)
 		fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d entering dispatch\n", n, ev.kind)
 		defer fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d exit dispatch\n", n, ev.kind)

@@ -92,8 +92,8 @@ expect_unset  = "30m0s"
 set_env       = "37m"
 set_toml      = "38m"
 set_builder   = "41m"
-builder_reaches_runtime = false
-note = "THE case. `lower.rs:822` emits `rt.SetSkyDefault(\"LIVE_TTL\", \"1800\")` unconditionally into every program, `SetSkyDefault` is set-if-unset, and `parseTTL` (live_store.go:307-325) takes the first parseable of [env, toml] — so the builder's value in argument two is unreachable. Measured, not reasoned: the builder-only cell sets `41m` and observes `30m0s`. Under §7.3's rule (`preserve the effective value, fix the precedence`) stage 3 flips this to `true`; the observed cells move with it, and both need a [[default-changed]] row in the same commit."
+builder_reaches_runtime = true
+note = "THE case, CLOSED in stage 3. It read `false` because `lower.rs:822` emits `rt.SetSkyDefault(\"LIVE_TTL\", \"1800\")` unconditionally into every program, `SetSkyDefault` is set-if-unset, and `parseTTL` took the first parseable of [env, toml] — so the builder's value in argument two was unreachable. The fix consults provenance that ALREADY EXISTED: `SetEnvDefault` has recorded what it seeded since the `withPort` fix (dotenv.go:57-66), so a prologue-seeded value is distinguishable from an operator's and now loses to a builder while still beating nothing at all. `lower.rs:822` is UNCHANGED and the emitted prologue byte-identical, so this cell moved without spending a `repro` or `golden` baseline. Two cells moved; both are listed below."
 
 [[setting]]
 id            = "live.storePath"
@@ -112,7 +112,7 @@ set_env       = "cfgmx_env.db"
 set_toml      = "cfgmx_toml.db"
 set_builder   = "cfgmx_builder.db"
 builder_reaches_runtime = true
-note = "Carries `selectStore`'s `if x == \"\" { x = skyGetenv(…) }` shape (live_store.go:1753-1759) — config first, env only when the field is empty, the OPPOSITE order to live.ttl one module away. It is the only member of that shape with three values that can be selected without a live server, which is why it stands in for `live.store` (see [[deferred]])."
+note = "Carried `selectStore`'s `if x == \"\" { x = skyGetenv(…) }` shape — config first, env only when the field is empty, the OPPOSITE order to live.ttl one module away. Stage 3 removed that branch entirely: `selectStore` now takes already-resolved values and has no opinion about layers, so an operator's `SKY_LIVE_STORE_PATH` is no longer silently ignored by an app that called `withStorePath`. Two cells moved and are listed below. It remains the stand-in for `live.store` (see [[deferred]]), whose identical branch moved with it and which no cell can observe — `TestStoreKind_OperatorEnvBeatsBuilder` in runtime-go is that one's only gate."
 
 [[setting]]
 id            = "live.idleEvict"
@@ -210,17 +210,82 @@ reason = "NOTHING READS THEM. `lower.rs:823-825` seeds all three into every prog
 # ---------------------------------------------------------------------------
 # Listed differences — the ONLY way an observed value may change.
 #
-# Empty today, and that is the correct state for a stage that moves nothing.
 # The parser requires all five fields on every stanza, so an empty stanza
 # cannot buy a free change.
 #
-#   [[default-changed]]
-#   cell   = "live.ttl/builder"      # setting id + arm combination
-#   from   = "30m0s"
-#   to     = "41m0s"
-#   reason = "…"
-#   commit = "…"
-#
 #   [[moved]]   — same five fields; for a setting that changed LAYER rather
-#                 than value, where the observed value must NOT move.
+#                 than value, where the observed value must NOT move. None
+#                 yet: stage 3 changed which layer WINS, not which layer a
+#                 setting is read from, so every difference below is a
+#                 [[default-changed]].
+#
+# ## Stage 3 — one rule for four settings
+#
+# The rule adopted, and it is one sentence:
+#
+#     operator env > withX builder > seeded default (sky.toml / compiler)
+#                  > hardcoded fallback
+#
+# It is not new. It is `resolveLivePort`'s order — the only one of the four
+# that was right — and it is written down twice already as the INTENT of a
+# mechanism that had a single consumer: verbatim at dotenv.go:41 ("the real
+# three-way precedence - operator env > explicit builder call > seeded
+# default"), and in the design at §4.2/§1.10, where a `.env` value counts as
+# operator-set and a `sky.toml` value does not. Adopting it also makes two
+# docstrings TRUE that were already claiming env wins (Std/Live.sky:167-168
+# and live.go's own store comment) rather than requiring them to be rewritten.
+#
+# Four cells moved. Two are §7.3's stated class — a builder that was silently
+# ignored starts working. Two are the SAME defect seen from the operator's
+# side, and are called out individually below because they are NOT the
+# smallest-blast-radius case §7.3 describes.
 # ---------------------------------------------------------------------------
+
+[[default-changed]]
+cell   = "live.ttl.builder_reaches_runtime"
+from   = "false"
+to     = "true"
+reason = "The verdict stage 2 recorded so that stage 3 would have to flip it deliberately. `Live.withTtl` now reaches the runtime: a binary whose only layer is `Live.withTtl \"41m\"` observes 41m0s where it observed 30m0s. Listed as a verdict in its own right and not merely implied by the two cell rows below, because the verdict is checked in BOTH directions on every run — claiming a live builder is dead hides a regression exactly as well as claiming a dead one is live, and an implied flip would be neither claim."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "live.ttl/builder"
+from   = "30m0s"
+to     = "41m0s"
+reason = "`Live.withTtl` was dead and now takes effect. This is §7.3's motivating case exactly: `lower.rs:822` seeds LIVE_TTL into every program unconditionally and `parseTTL` read env first, so no input could make the builder win. The DEFAULT is unchanged — an app that never calls `withTtl` still observes 30m0s (the `unset` cell is untouched) — so behaviour changes only for an app that called a builder that was being ignored, which is the smallest blast radius available. Note what did NOT have to change to achieve it: the compiler still emits the same prologue, byte for byte."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "live.ttl/toml+builder"
+from   = "38m0s"
+to     = "41m0s"
+reason = "The same fix seen against a sky.toml default rather than the compiler's. `[live] ttl = \"38m\"` is seeded through the identical `SetSkyDefault` path, so it was indistinguishable from the hardcoded 1800 and beat the builder for the same reason. Code the developer wrote in their own `main` now outranks a default in the manifest, which is the layer order the design states at §4.2 — the config value supplies the layer sky.toml used to supply, and sits beneath only the operator's environment."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "console_subapp_store/toml/noenv"
+from   = "memory (ttl=38m0s)"
+to     = "memory (ttl=30m0s)"
+reason = "The inline console sub-app sets `\"Ttl\": \"30m\"` in its own config (console_app/register_v3.go:109), and a host `[live] ttl = \"38m\"` used to override it — the console's explicit value lost to the host's seeded default exactly the way `withTtl` lost, one layer deeper. It now keeps its own 30m. This is §7.3's class again (a config value that was being silently ignored starts working), and an OPERATOR's env still overrides the console: the `/env` rows are unchanged at 37m0s. Found only because stage 3 also made this table compared rather than merely recorded — stage 2 wrote it for information, so these two cells moved with nothing going red."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "console_subapp_store/toml_builder/noenv"
+from   = "memory (ttl=38m0s)"
+to     = "memory (ttl=30m0s)"
+reason = "The same change as the row above, in the fixture arm that also calls the host's `Live.withTtl`. The host's builder is irrelevant to the console — a sub-app does not inherit the host's config map, only its environment — so this cell moves for the single reason the other one does, and is listed separately because the gate compares cells rather than causes."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "live.storePath/env+builder"
+from   = "cfgmx_builder.db"
+to     = "cfgmx_env.db"
+reason = "THE ONE TO ARGUE WITH. This is not §7.3's 'a builder that was silently ignored starts working' — here a builder that WAS winning stops winning, so an app that sets both a shell env var and `withStorePath` changes behaviour. It is listed rather than waved through because it is the same defect from the operator's side: `SKY_LIVE_STORE_PATH` was silently ignored by any app that called the builder, so an operator could not repoint a session store at a mounted volume without a recompile. Leaving it would also have meant abandoning the stage's purpose — `storePath` inverted `ttl` exactly, and fixing one while preserving the other keeps the divergence that caused all of this. Both the Sky docstring (Std/Live.sky:167-168) and live.go's own comment already claimed env wins."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "live.storePath/env+toml+builder"
+from   = "cfgmx_builder.db"
+to     = "cfgmx_env.db"
+reason = "The three-layer form of the row above, and it moves for the same reason and only that reason: the operator's environment now outranks the builder. The toml arm is inert in this cell either way — it was already losing to both — so this cell is not independent evidence, and is listed separately only because the gate compares cells rather than settings and an unlisted cell is the failure the whole sequence exists to prevent."
+commit = "935c68e1"

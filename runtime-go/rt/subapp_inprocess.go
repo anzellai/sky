@@ -397,8 +397,18 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	if storeKind == "" {
 		storeKind = "memory"
 	}
-	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), defaultSubAppSessionTTL())
-	idleEvict := parseIdleEvict(skyGetenv("LIVE_IDLE_EVICT"), stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	// storeKind/storePath deliberately do NOT go through `resolveStoreKind` /
+	// `resolveStorePath` — those consult the environment, and L9 above is the
+	// bug report for a sub-app that did. The host's `LIVE_STORE` must not
+	// reach here. `selectStore` no longer falls back to the environment
+	// either, so the sub-app now gets exactly its own cfg on both axes.
+	//
+	// ttl and idleEvict DO read the host environment, deliberately: this is
+	// §1.7's third `LIVE_TTL` reader, and an operator lengthening sessions
+	// means the console's too. They resolve through the shared rule so the
+	// sub-app cannot drift into a fourth precedence order.
+	ttl := resolveTTL(stringField(cfg, "Ttl"), defaultSubAppSessionTTL())
+	idleEvict := resolveIdleEvict(stringField(cfg, "IdleEvict"), defaultIdleEvict)
 	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	app.topics = app.store.Broker()

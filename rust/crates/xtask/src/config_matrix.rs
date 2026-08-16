@@ -1440,14 +1440,89 @@ fn unlisted_differences(base: &Value, cur: &Value, listed: &[Listed]) -> Vec<Str
         }
     }
     // The verdicts move with the cells; a flipped builder verdict must be as
-    // loud as a changed value.
-    if base.get("verdicts") != cur.get("verdicts") {
-        out.push(format!(
-            "VERDICTS changed: {} -> {}. A builder that started or stopped reaching the \
-             runtime is exactly the §7.3 class — list it.",
-            base.get("verdicts").map(render).unwrap_or_default(),
-            cur.get("verdicts").map(render).unwrap_or_default()
-        ));
+    // loud as a changed value — and, like a changed value, must be LISTABLE.
+    //
+    // Stage 2 compared the whole `verdicts` object and emitted one finding
+    // ending "list it", with no way to do so: no stanza named a verdict, so
+    // the check could never be satisfied. A legitimate fix could therefore
+    // never make the gate green, which makes the instruction unfollowable and
+    // the check a wall rather than a ratchet. Fixing `withTtl` is the first
+    // event that exercised it.
+    //
+    // Compared per key now, and a `[[default-changed]]` whose `cell` is the
+    // verdict key authorises exactly that one flip. Both directions still
+    // fail unlisted: claiming a live builder is dead hides a regression as
+    // well as the reverse, which is the property stage 2 was protecting.
+    // The console sub-app's store line, compared rather than merely recorded.
+    //
+    // Stage 2 wrote this table with the comment "recorded rather than
+    // asserted" — §1.7's third LIVE_TTL reader, captured for information. That
+    // left a hole exactly the width of the thing this gate exists to catch:
+    // stage 3 moved two of these values and NOTHING went red, because no
+    // comparison read them. They are a second consumer resolving the same
+    // setting, which is the entire reason they were worth recording; a value
+    // worth recording is worth failing on.
+    let empty = Map::new();
+    let bs = base.get("console_subapp_store").and_then(Value::as_object).unwrap_or(&empty);
+    let cs = cur.get("console_subapp_store").and_then(Value::as_object).unwrap_or(&empty);
+    for (k, cval) in cs {
+        let cell = format!("console_subapp_store/{k}");
+        match bs.get(k) {
+            None => out.push(format!(
+                "NEW SUB-APP CELL `{cell}` = {cval} — not in the baseline. Regenerate."
+            )),
+            Some(bval) if bval != cval => {
+                let (from, to) = (render(bval), render(cval));
+                let listed_here = listed.iter().any(|l| {
+                    l.kind == "default-changed" && l.cell == cell && l.from == from && l.to == to
+                });
+                if !listed_here {
+                    out.push(format!(
+                        "UNLISTED — sub-app cell `{cell}`: {from:?} -> {to:?}. The inline \
+                         console resolves the same LIVE_TTL through subapp_inprocess.go and \
+                         gets its own answer; a change to it is a change to a real consumer. \
+                         Needs a [[default-changed]] row with from/to/reason/commit."
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    for k in bs.keys() {
+        if !cs.contains_key(k) {
+            out.push(format!(
+                "LOST SUB-APP CELL `console_subapp_store/{k}` — it stopped being measured."
+            ));
+        }
+    }
+
+    let bv = base.get("verdicts").and_then(Value::as_object).unwrap_or(&empty);
+    let cv = cur.get("verdicts").and_then(Value::as_object).unwrap_or(&empty);
+    for (k, cval) in cv {
+        let before = bv.get(k);
+        if before == Some(cval) {
+            continue;
+        }
+        let from = before.map(render).unwrap_or_else(|| "<absent>".into());
+        let to = render(cval);
+        let listed_here = listed.iter().any(|l| {
+            l.kind == "default-changed" && l.cell == *k && l.from == from && l.to == to
+        });
+        if !listed_here {
+            out.push(format!(
+                "VERDICT `{k}`: {from} -> {to}. A builder that started or stopped reaching \
+                 the runtime is exactly the §7.3 class. Authorise it with a \
+                 [[default-changed]] row whose `cell` is `{k}`, from = {from:?}, to = {to:?}."
+            ));
+        }
+    }
+    for k in bv.keys() {
+        if !cv.contains_key(k) {
+            out.push(format!(
+                "LOST VERDICT `{k}` — a verdict that used to be computed no longer is. A \
+                 verdict that stops being computed cannot be seen to regress."
+            ));
+        }
     }
     out
 }
@@ -1633,21 +1708,39 @@ mod tests {
     }
 
     /// The declaration this gate exists to make checkable, pinned so a careless
-    /// edit to the manifest cannot quietly assert the dead builder is alive
-    /// without the observation that would contradict it.
+    /// edit to the manifest cannot quietly assert a live builder is dead — or
+    /// a dead one live — without the observation that would contradict it.
+    ///
+    /// This asserted `Some(false)` for `live.ttl` through stages 1 and 2, and
+    /// its message said that if stage 3 fixed it, the observed cells moved
+    /// too and both belonged in one commit with a `[[default-changed]]`.
+    /// Stage 3 fixed it, the cells moved, and they are listed. The assertion
+    /// is now the property the stage set out to establish, stated positively
+    /// over ALL settings — so a regression in any one of them fails here and
+    /// not only in the end-to-end run.
     #[test]
-    fn live_ttls_builder_is_declared_dead() {
+    fn every_settings_builder_reaches_the_runtime() {
         let m = load_manifest(&root()).expect("manifest parses");
-        let ttl = m
-            .settings
-            .iter()
-            .find(|s| s.id == "live.ttl")
-            .expect("live.ttl is in the matrix");
+        let mut checked = 0;
+        for st in &m.settings {
+            if st.builder.is_none() {
+                continue;
+            }
+            checked += 1;
+            assert_eq!(
+                st.builder_reaches_runtime,
+                Some(true),
+                "{}: declares its builder does NOT reach the runtime. Stage 3 made the \
+                 four settings share one precedence rule (operator env > builder > seeded \
+                 default > fallback), under which every withX wins against a default it \
+                 used to lose to. A `false` here is either a regression or a new setting \
+                 that skipped the shared resolver in live_config_precedence.go",
+                st.id
+            );
+        }
         assert_eq!(
-            ttl.builder_reaches_runtime,
-            Some(false),
-            "live.ttl's builder is dead (lower.rs:822 + parseTTL); if stage 3 fixed it, the \
-             observed cells moved too and both belong in one commit with a [[default-changed]]"
+            checked, 4,
+            "expected 4 settings with builders; a loop that checks nothing passes"
         );
     }
 
@@ -1733,6 +1826,75 @@ mod tests {
         // The console sub-app's own store is keyed separately, so print order
         // can never make one reader's answer stand in for the other's (§1.7).
         assert_eq!(extract(&mk("ttl=", ",)", "memory"), &o).unwrap(), "30m0s");
+    }
+
+    /// The verdict path, which through stage 2 could fail but never pass: the
+    /// finding said "list it" and no stanza could name a verdict, so a
+    /// legitimate fix left the gate permanently red. Both halves are asserted
+    /// here — an unlisted flip still fails, and a listed one is authorised —
+    /// because a check that cannot be satisfied and a check that cannot fail
+    /// are both useless, in opposite directions.
+    #[test]
+    fn a_verdict_flip_must_be_listed_and_can_be() {
+        // A `cells` object on both sides, identical: without one the function
+        // short-circuits on "baseline has no `cells` object", which would make
+        // the first assertion below pass for a reason that has nothing to do
+        // with verdicts.
+        let base = json!({
+            "cells": {"live.ttl/unset": "30m0s"},
+            "verdicts": {"live.ttl.builder_reaches_runtime": false},
+        });
+        let cur = json!({
+            "cells": {"live.ttl/unset": "30m0s"},
+            "verdicts": {"live.ttl.builder_reaches_runtime": true},
+        });
+        assert_eq!(unlisted_differences(&base, &cur, &[]).len(), 1);
+        let listed = [Listed {
+            kind: "default-changed".into(),
+            cell: "live.ttl.builder_reaches_runtime".into(),
+            from: "false".into(),
+            to: "true".into(),
+        }];
+        assert!(unlisted_differences(&base, &cur, &listed).is_empty());
+        // Both directions. A listing that authorised false->true must not
+        // silently authorise the regression back the other way.
+        assert_eq!(unlisted_differences(&cur, &base, &listed).len(), 1);
+    }
+
+    /// The console sub-app's line is a second consumer of the same LIVE_TTL,
+    /// and stage 2 recorded it without comparing it. Stage 3 moved two of its
+    /// values and nothing went red — so the comparison is now asserted here
+    /// as well as end to end.
+    #[test]
+    fn a_moved_subapp_cell_must_be_listed() {
+        let base = json!({
+            "cells": {"live.ttl/unset": "30m0s"},
+            "console_subapp_store": {"toml/noenv": "memory (ttl=38m0s)"},
+        });
+        let cur = json!({
+            "cells": {"live.ttl/unset": "30m0s"},
+            "console_subapp_store": {"toml/noenv": "memory (ttl=30m0s)"},
+        });
+        assert_eq!(unlisted_differences(&base, &cur, &[]).len(), 1);
+        let listed = [Listed {
+            kind: "default-changed".into(),
+            cell: "console_subapp_store/toml/noenv".into(),
+            from: "memory (ttl=38m0s)".into(),
+            to: "memory (ttl=30m0s)".into(),
+        }];
+        assert!(unlisted_differences(&base, &cur, &listed).is_empty());
+    }
+
+    /// A verdict that stops being computed cannot be seen to regress, so its
+    /// disappearance is itself a finding rather than a quiet pass.
+    #[test]
+    fn a_lost_verdict_is_a_finding() {
+        let base = json!({
+            "cells": {"live.ttl/unset": "30m0s"},
+            "verdicts": {"live.ttl.builder_reaches_runtime": true},
+        });
+        let cur = json!({"cells": {"live.ttl/unset": "30m0s"}, "verdicts": {}});
+        assert_eq!(unlisted_differences(&base, &cur, &[]).len(), 1);
     }
 
     #[test]

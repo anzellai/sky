@@ -141,6 +141,14 @@ const PREFIXED_READ_HELPERS: &[&str] = &[
     "dbEnvInt(\"",
     "dbEnvDuration(\"",
     "skyEnvSynchronousCommitOff(\"",
+    // The Sky.Live precedence resolver (stage 3). Every `live.*` setting is
+    // read through it — `configLayers("LIVE_TTL", …)` IS a read of
+    // `SKY_LIVE_TTL`, and the bare `skyGetenv("LIVE_TTL")` calls it replaced
+    // are gone. This entry is what the gate demanded when it went red with
+    // "the runtime-read derivation lost LIVE_TTL": a new wrapper is invisible
+    // to the derivation until it is declared, which is precisely the
+    // behaviour stage 1 built this list for.
+    "configLayers(\"",
 ];
 
 /// Every site where a prefixed-read primitive is called with a non-literal
@@ -164,6 +172,14 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
     (
         "runtime-go/rt/analytics_writer.go",
         "skyEnvSynchronousCommitOff wrapper",
+    ),
+    (
+        "runtime-go/rt/live_config_precedence.go",
+        "the configLayers wrapper — it takes the suffix as a parameter and \
+         resolves it with skyEnvName(suffix), so the read is non-literal HERE \
+         while every caller passes a literal (resolveTTL/resolveIdleEvict/\
+         resolveStoreKind/resolveStorePath, and resolveLivePort via \
+         resolveLivePortLayers)",
     ),
 ];
 

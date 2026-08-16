@@ -39,7 +39,6 @@
     "SKY_ANALYTICS_DEBUG",
     "SKY_AUTH_COOKIE",
     "SKY_AUTH_DRIVER",
-    "SKY_CONFIG_LEGACY",
     "SKY_LIVE_MAX_SUBS_PER_SESSION",
     "SKY_LSP_DEBUG",
     "SKY_LSP_TRACE",
@@ -237,7 +236,7 @@
   "summary": {
     "accepted_sky_toml_keys": 30,
     "documented_names": 88,
-    "documented_without_reader": 10,
+    "documented_without_reader": 9,
     "pre_binary_surfaces": 14,
     "read_without_doc": 28,
     "runtime_read_literal_sky_names": 38,

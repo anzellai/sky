@@ -19,19 +19,19 @@
     "live.port/unset": "8000",
     "live.storePath/builder": "cfgmx_builder.db",
     "live.storePath/env": "cfgmx_env.db",
-    "live.storePath/env+builder": "cfgmx_builder.db",
+    "live.storePath/env+builder": "cfgmx_env.db",
     "live.storePath/env+toml": "cfgmx_env.db",
-    "live.storePath/env+toml+builder": "cfgmx_builder.db",
+    "live.storePath/env+toml+builder": "cfgmx_env.db",
     "live.storePath/toml": "cfgmx_toml.db",
     "live.storePath/toml+builder": "cfgmx_builder.db",
     "live.storePath/unset": "sky_sessions.db",
-    "live.ttl/builder": "30m0s",
+    "live.ttl/builder": "41m0s",
     "live.ttl/env": "37m0s",
     "live.ttl/env+builder": "37m0s",
     "live.ttl/env+toml": "37m0s",
     "live.ttl/env+toml+builder": "37m0s",
     "live.ttl/toml": "38m0s",
-    "live.ttl/toml+builder": "38m0s",
+    "live.ttl/toml+builder": "41m0s",
     "live.ttl/unset": "30m0s"
   },
   "console_subapp_store": {
@@ -40,9 +40,9 @@
     "builder/env": "memory (ttl=37m0s)",
     "builder/noenv": "memory (ttl=30m0s)",
     "toml/env": "memory (ttl=37m0s)",
-    "toml/noenv": "memory (ttl=38m0s)",
+    "toml/noenv": "memory (ttl=30m0s)",
     "toml_builder/env": "memory (ttl=37m0s)",
-    "toml_builder/noenv": "memory (ttl=38m0s)"
+    "toml_builder/noenv": "memory (ttl=30m0s)"
   },
   "stray_census_ids": [],
   "summary": {
@@ -51,14 +51,14 @@
     "covered_settings": 4,
     "deferred_settings": 41,
     "deferred_stanzas": 8,
-    "listed_differences": 0,
+    "listed_differences": 7,
     "unobservable_settings": 6
   },
   "verdicts": {
     "live.idleEvict.builder_reaches_runtime": true,
     "live.port.builder_reaches_runtime": true,
     "live.storePath.builder_reaches_runtime": true,
-    "live.ttl.builder_reaches_runtime": false
+    "live.ttl.builder_reaches_runtime": true
   },
   "winners": {
     "live.idleEvict/env+builder": "env",
@@ -66,13 +66,13 @@
     "live.port/env+toml": "env",
     "live.port/env+toml+builder": "env",
     "live.port/toml+builder": "builder",
-    "live.storePath/env+builder": "builder",
+    "live.storePath/env+builder": "env",
     "live.storePath/env+toml": "env",
-    "live.storePath/env+toml+builder": "builder",
+    "live.storePath/env+toml+builder": "env",
     "live.storePath/toml+builder": "builder",
     "live.ttl/env+builder": "env",
     "live.ttl/env+toml": "env",
     "live.ttl/env+toml+builder": "env",
-    "live.ttl/toml+builder": "toml"
+    "live.ttl/toml+builder": "builder"
   }
 }
