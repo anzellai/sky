@@ -260,3 +260,30 @@ approach before committing to the compiler analysis.
 costs this properly → build. Do NOT let me sketch the mechanism; two of my
 mechanism proposals were revised by consults today (the inline loop, the Go
 generics) and both replacements were better.
+
+## Decision — the dev console stays on by default (2026-08-16)
+
+A framework-comparison audit found Sky was the only arm not running as it ships:
+with `ENV`/`SKY_ENV` unset, the runtime mounts its embedded console INSIDE the
+measured process and injects a dev-console anchor into every page. I proposed
+flipping the default so the fast, safe configuration is what you get without
+asking. **The user rejected that, and was right:**
+
+> console logics gated by ENV=production not not blank shouldn't change.
+> we'll rather document this and remind users.
+> so whatever FIRST try of sky.live app instantly shows value.
+> no one suddenly prompt building an app and instantly ship to production
+
+A framework whose first run shows nothing has failed at the moment it most needs
+to succeed. The gating on `ENV=production` (`observability.go:333`) is correct and
+**must not change**.
+
+**What ships instead is visibility.** Sky.Live's entire startup output is
+`Sky.Live listening on :%d` (`live.go:4329`) — nothing announces that the console
+is mounted, that it is dev-only, or that `ENV=production` exists. So a first-time
+user gets a console and is not told; a deploying user gets one and is not warned.
+The startup banner now states the mode, the console URL, and the derived GC
+settings — advertising the console as the feature it is, and simply omitting the
+line under production rather than scolding.
+
+**This is documentation delivered where it is read, NOT a behaviour change.**
