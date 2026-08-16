@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -u
-source /Users/anzel/works/playground/sky-bench-x86/scripts/lib/with-timeout.sh
+# The repo this file is committed in, not the worktree it was measured from: an
+# archived harness has to read as wired wherever it is checked out, and this
+# line named a sibling worktree that exists on exactly one machine. Gated by
+# xtask's `every_lib_source_line_names_a_file_that_exists`.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+source "$REPO_ROOT/scripts/lib/with-timeout.sh"
 create_one() {
   local n="$1" m="$2"
   with_timeout 400 gcloud compute instances create "$n" \

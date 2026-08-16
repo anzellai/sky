@@ -8,7 +8,12 @@
 # every earlier remote run in this corpus carried in its latency columns.
 set -u
 BASE=/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/x86bench
-source /Users/anzel/works/playground/sky-bench-x86/scripts/lib/with-timeout.sh
+# The repo this file is committed in, not the worktree it was measured from: an
+# archived harness has to read as wired wherever it is checked out, and this
+# line named a sibling worktree that exists on exactly one machine. Gated by
+# xtask's `every_lib_source_line_names_a_file_that_exists`.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+source "$REPO_ROOT/scripts/lib/with-timeout.sh"
 
 TGT="$1"; CFG="$2"; N="$3"; REP="$4"; BLOCK="$5"; POSTS="${6:-5}"
 HOLD="${HOLD:-90}"; RAMP="${RAMP:-25}"; WARM="${WARM:-10}"; THINK="${THINK:-0}"

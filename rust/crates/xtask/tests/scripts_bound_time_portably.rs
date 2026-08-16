@@ -683,6 +683,21 @@ fn the_shim_survives_a_shadowed_timeout_name() {
 /// saying so is better than implying coverage that does not exist.
 #[test]
 fn the_shim_honours_its_contract_in_every_shell_present() {
+    // `.`, not `source`. `source` is a bash/zsh extension; `/bin/sh` is bash in
+    // sh-mode on macOS and dash on Debian, and dash has only the POSIX `.`. So
+    // the `/bin/sh` arm read as covered on the machine this test was written on
+    // and, the first time CI installed enough PostgreSQL for the test binary
+    // ahead of it to stop failing early, reported
+    //
+    //     /bin/sh: 1: source: not found
+    //     /bin/sh: 1: with_timeout: not found
+    //     left: 127  right: 42
+    //
+    // — which accuses the shim of losing an exit status when nothing had been
+    // sourced at all. The shim itself is clean under dash (verified: 42 / 124 /
+    // 0, on both the `timeout` and the perl path). One spelling every shell in
+    // the list accepts makes the third arm test dash instead of testing bash
+    // twice.
     let mut ran = 0;
     for shell in ["/bin/bash", "/bin/zsh", "/bin/sh"] {
         if !Path::new(shell).is_file() {
@@ -691,16 +706,15 @@ fn the_shim_honours_its_contract_in_every_shell_present() {
         ran += 1;
         let (rc, out) = shell_script(
             shell,
-            &format!("source {SHIM}; with_timeout 5 /bin/sh -c 'exit 42'"),
+            &format!(". {SHIM}; with_timeout 5 /bin/sh -c 'exit 42'"),
         );
         assert_eq!(rc, 42, "{shell}: exit status must pass through unchanged.\n{out}");
 
-        let (rc, out) =
-            shell_script(shell, &format!("source {SHIM}; with_timeout 1 sleep 30"));
+        let (rc, out) = shell_script(shell, &format!(". {SHIM}; with_timeout 1 sleep 30"));
         assert_eq!(rc, 124, "{shell}: expiry must report 124.\n{out}");
 
         let (rc, out) =
-            shell_script(shell, &format!("source {SHIM}; with_timeout 5 /bin/sh -c 'exit 0'"));
+            shell_script(shell, &format!(". {SHIM}; with_timeout 5 /bin/sh -c 'exit 0'"));
         assert_eq!(rc, 0, "{shell}: success must report 0.\n{out}");
     }
     assert!(ran > 0, "no shell was found to probe, so this gate proved nothing");
