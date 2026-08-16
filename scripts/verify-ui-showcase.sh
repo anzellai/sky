@@ -27,7 +27,11 @@ APP_DIR="$ROOT/examples/26-ui-showcase"
 RUNNER="$ROOT/scripts/verify-ui-showcase.mjs"
 SKY="$ROOT/sky-out/sky"
 
-[[ -x "$SKY" ]] || { echo "missing $SKY — run scripts/build.sh first" >&2; exit 2; }
+# `require_fresh_compiler <bin>` — a snapshot baseline taken with a stale
+# compiler pins the rendering of a tree that is no longer here. See the header
+# of scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$SKY" "$ROOT"
 [[ -d "$APP_DIR" ]] || { echo "missing $APP_DIR" >&2; exit 2; }
 
 UPDATE=0

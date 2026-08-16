@@ -145,7 +145,15 @@ echo
 # The admin token is read on the box, used on the box, and never printed;
 # it must not reach this workstation, this repo, or any artefact.
 # ---------------------------------------------------------------------
-REMOTE_SCRIPT="$(cat <<REMOTE_EOF
+# NOT `REMOTE_SCRIPT="$(cat <<REMOTE_EOF …)"`. bash 3.2 — the only bash stock
+# macOS ships, and what `#!/usr/bin/env bash` resolves to the moment the nix
+# shell supplying bash 5 is not on PATH — cannot parse a heredoc inside a
+# command substitution inside double quotes when the heredoc body contains `"`,
+# and this one is full of them. It failed the WHOLE FILE at parse time:
+# `line 336: unexpected EOF while looking for matching '`, pointing 180 lines
+# away from the cause. The quotes bought nothing — the right-hand side of an
+# assignment is not word-split or globbed — so they are gone.
+REMOTE_SCRIPT=$(cat <<REMOTE_EOF
 set -u
 SERVICE='$SERVICE'
 PORT='$APP_PORT'
@@ -221,7 +229,7 @@ while [ \$i -lt \$TICKS ]; do
 done
 exit 0
 REMOTE_EOF
-)"
+)
 
 RAW="$OUTDIR/samples.tsv"
 # ssh can die mid-window (preemption, network). Keep whatever we collected

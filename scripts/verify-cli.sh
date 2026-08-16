@@ -28,6 +28,11 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
 source "$REPO_ROOT/scripts/lib/with-timeout.sh"
+# `require_fresh_compiler <bin>` — this drives `sky install` / `sky build` from
+# `$REPO_ROOT/sky-out/sky`; a compiler older than the tree verifies the CLI of a
+# different tree. See the header of scripts/lib/fresh-compiler.sh.
+source "$REPO_ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$REPO_ROOT/sky-out/sky" "$REPO_ROOT"
 ARTEFACT_DIR="$REPO_ROOT/.skycache/verify"
 
 JSON_OUT=""

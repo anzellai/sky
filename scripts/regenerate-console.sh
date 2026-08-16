@@ -58,6 +58,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
 source "$ROOT/scripts/lib/with-timeout.sh"
+# `require_fresh_compiler <bin>` — see the header of scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
 cd "$ROOT"
 
 # ANSI colours for the script's own diagnostics — only when stderr
@@ -92,10 +94,13 @@ else
 fi
 
 SKY="$ROOT/sky-out/sky"
-if [ ! -x "$SKY" ]; then
-    warn "sky-out/sky is not executable after build"
-    exit 1
-fi
+# This script writes a CHECKED-IN generated file, so a stale compiler here does
+# not merely mis-report — it commits wrong output to the repository, and the
+# `SKY_REGEN_SKIP_BUILD=1` branch above accepts any `sky-out/sky` that happens
+# to be executable. `require_fresh_compiler` covers both branches: the built one
+# passes by construction, the skipped one is checked. See the header of
+# scripts/lib/fresh-compiler.sh.
+require_fresh_compiler "$SKY" "$ROOT"
 say "using $($SKY --version 2>&1 | head -1)"
 
 CONSOLE_SRC="${SKY_CONSOLE_SRC:-$ROOT/sky-bundled/console}"
@@ -296,8 +301,16 @@ $0 ~ /^func main\(\) \{$/ {
 #
 # v0.16.0 PR 2 added this to drop init() blocks whose body is entirely
 # rt.RegisterAdtTag() calls. Those calls would otherwise pollute the
-# host binary's global rt.adtTagRegistry (rt.go) with the inline
-# console's ADT tags — colliding with user-app Msg names sharing any of
+# NOTE: no apostrophes below this line. This comment block sits INSIDE the
+# single-quoted awk program opened at the top of this command, so an
+# apostrophe closes that quote and bash then parses the rest of the awk
+# source as shell. It did: three of them (binary+s, console+s, app+s) made
+# this whole file unparseable — `bash -n scripts/regenerate-console.sh`
+# reported a syntax error near an unexpected token — so the generator that
+# writes a CHECKED-IN file could not run at all.
+#
+# the host binary global rt.adtTagRegistry (rt.go) with the inline
+# console ADT tags — colliding with user-app Msg names sharing any of
 # {Tick, SelectTab, GotOverview, ...} and silently mis-routing wire
 # event dispatch. "PR 3 reintroduces these via namespaced
 # Register/Lookup APIs" — PR 3 never landed.
@@ -317,7 +330,7 @@ $0 ~ /^func main\(\) \{$/ {
 #     rt.adtVariantRegistry are keyed by (owning ADT, ctor), not by the
 #     bare ctor name (runtime-go/rt/adt_variant_factory.go, AdtCtorKey),
 #     and the wire path resolves a client-supplied Msg string only
-#     within the app's own Msg ADT. Console registrations can no longer
+#     within the Msg ADT owned by the app. Console registrations can no longer
 #     shadow a user Msg constructor, so there is nothing to strip.
 #
 # Left in place rather than deleted because it is provably inert (no

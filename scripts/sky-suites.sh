@@ -30,6 +30,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
 source "$ROOT/scripts/lib/with-timeout.sh"
+# `require_fresh_compiler <bin>` — see the header of scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
 PROJ="$ROOT/tests"
 
 FILTER=""
@@ -53,6 +55,10 @@ SKY="${SKY_BIN:-}"
 if [ -z "$SKY" ]; then
     if [ -x "$ROOT/sky-out/sky" ]; then SKY="$ROOT/sky-out/sky"; else SKY="sky"; fi
 fi
+# …and only if it is CURRENT. "Months-old installed binary" and "compiler from
+# before the change under test" are the same defect at two intervals; the
+# resolution order above fixed the first, this fixes the second.
+require_fresh_compiler "$SKY" "$ROOT"
 
 
 if [ ! -f "$PROJ/sky.toml" ]; then

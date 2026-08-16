@@ -761,16 +761,31 @@ fn sky_binary_candidates(root: &Path) -> Vec<PathBuf> {
     candidates
 }
 
-/// The trees whose contents decide what a compiled `sky` binary DOES: the
-/// compiler crates, the Go runtime it embeds, and the Sky stdlib it ships.
+/// The trees whose contents decide what a compiled `sky` binary DOES.
+///
+/// Derived from how the binary is assembled, not from a guess:
+/// `rust/crates/ffi/build.rs` stages `sky-stdlib/`, `runtime-go/`,
+/// `tools/sky-ffi-inspect/`, `templates/` and `sky-bundled/` into
+/// `$OUT_DIR/embedded-assets/`, and `rust/crates/ffi/src/assets.rs` embeds that
+/// tree with `include_dir!`. This list carried only the first two of those
+/// five, so an edit to `templates/`, `sky-bundled/` or the FFI inspector was
+/// embedded into the binary and invisible to this check.
 ///
 /// `rust/crates/xtask` is excluded deliberately — editing the gate does not
 /// change what an already-built compiler emits, and demanding a compiler
 /// rebuild for a comment in this file would train people to bypass the check.
+///
+/// `scripts/lib/fresh-compiler.sh` is the shell counterpart and measures the
+/// same roots;
+/// `rust/crates/xtask/tests/gates_measure_a_fresh_compiler.rs` fails the build
+/// if the two lists drift apart.
 const MEASURED_SOURCE_ROOTS: &[(&str, &[&str])] = &[
-    ("rust/crates", &["rs"]),
-    ("runtime-go", &["go"]),
+    ("rust/crates", &["rs", "toml"]),
+    ("runtime-go", &["go", "mod", "sum"]),
     ("sky-stdlib", &["sky", "skyi"]),
+    ("templates", &["md"]),
+    ("sky-bundled", &["sky", "skyi", "toml"]),
+    ("tools/sky-ffi-inspect", &["go", "mod", "sum"]),
 ];
 
 /// The newest mtime among [`MEASURED_SOURCE_ROOTS`], with the file that carries
@@ -818,8 +833,14 @@ fn walk_newest(
         let name = entry.file_name();
         let name = name.to_string_lossy();
         // Build output and vendored deps are not sources; walking them would
-        // make the check depend on its own artefacts.
-        if name == "target" || name == "node_modules" || name.starts_with('.') {
+        // make the check depend on its own artefacts. `sky-out` matters now
+        // that `sky-bundled/` is measured: each bundled app has a committed
+        // `sky-out/` that a local build rewrites, and counting it would make
+        // every binary look stale the moment anyone ran the bundled console.
+        // `rust/crates/ffi/build.rs::skip_dir` drops it from the embed for the
+        // same reason.
+        if name == "target" || name == "node_modules" || name == "sky-out" || name.starts_with('.')
+        {
             continue;
         }
         if path.is_dir() {

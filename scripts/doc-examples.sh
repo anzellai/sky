@@ -21,11 +21,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
 source "$ROOT/scripts/lib/with-timeout.sh"
+# `require_fresh_compiler <bin>` — the live-docs gate `sky check`s every doc
+# example; against a stale compiler it certifies that the docs compiled under a
+# compiler nobody ships. See the header of scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
 SKY="${SKY_BIN:-$ROOT/sky-out/sky}"
 [ -x "$SKY" ] || SKY="$(command -v sky 2>/dev/null || true)"
-if [ -z "${SKY:-}" ] || [ ! -x "$SKY" ]; then
-  echo "doc-examples: no sky binary (set SKY_BIN or build sky-out/sky)"; exit 2
-fi
+require_fresh_compiler "${SKY:-}" "$ROOT"
 VERBOSE=0; [ "${1:-}" = "-v" ] && VERBOSE=1
 
 BLOCKS="$(mktemp -d)"; PROJ="$(mktemp -d)"
