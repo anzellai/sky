@@ -3521,6 +3521,65 @@ func List_foldlT[A, B any](fn func(B, A) B, seed B, xs []A) B {
 	return acc
 }
 
+// List_filterMapT / List_indexedMapT complete the fully-typed tier for the two
+// remaining kernel list HOFs a call site can prove. `List_mapT` and
+// `List_filterT` above already existed; `filterMap` and `indexedMap` had only
+// their erased and half-typed forms, so a call site that COULD prove both the
+// element type and the callback's Go shape had nowhere typed to dispatch to.
+//
+// Each is the exact-semantics twin of what its erased sibling produced AT A
+// CALL SITE, and for `filterMap` those two are not the same thing.
+//
+// The empty case differs across the erased family:
+//
+//	List_mapAny / List_indexedMap  ->  make([]any, len)   — non-nil at len 0
+//	List_filterAny                 ->  make([]any, 0, n)  — non-nil at len 0
+//	List_filterMap                 ->  var result []any   — NIL when nothing
+//	                                                         matched
+//
+// and nil vs empty IS observable: `reflect.DeepEqual` separates them, and a nil
+// slice marshals to `null` where an empty one marshals to `[]`.
+//
+// `List_filterMapT` returns NON-NIL, deliberately unlike `List_filterMap`,
+// because a nil never reached a call site: a typed call site wraps the erased
+// helper in `rt.AsListT[T]`, whose `[]any` arm is `make([]T, len(xs))` — so a
+// nil `[]any` came back out as a non-nil empty `[]T`. All five `filterMap`
+// sites in the app this was measured on are AsListT-wrapped, and the typed
+// dispatch only fires where the element type is proven, which is the same
+// condition (`AsListT[any]` is the one instantiation that passes a nil
+// through, and an `any` element is never proven). Copying the erased helper's
+// nil here would have been faithful to the helper and a behaviour change at
+// every site that calls it.
+//
+// It grows by append rather than pre-sizing, again matching `List_filterMap`.
+// Pre-sizing looks cheaper — one `make` instead of a geometric grow — and on
+// `19-skyforum` it cost **~800 more objects per interaction**: most filterMap
+// calls on a `Std.Ui` layout match NOTHING, and a `make([]B, 0, len(xs))`
+// allocates for every one of them where an unused `var out []B` allocates for
+// none. The empty return is `[]B{}`, which points at `runtime.zerobase` and
+// allocates nothing.
+
+func List_filterMapT[A, B any](fn func(A) SkyMaybe[B], xs []A) []B {
+	var out []B
+	for _, x := range xs {
+		if m := fn(x); m.Tag == 0 {
+			out = append(out, m.JustValue)
+		}
+	}
+	if out == nil {
+		return []B{}
+	}
+	return out
+}
+
+func List_indexedMapT[A, B any](fn func(int, A) B, xs []A) []B {
+	out := make([]B, len(xs))
+	for i, x := range xs {
+		out[i] = fn(i, x)
+	}
+	return out
+}
+
 func List_lengthT[A any](xs []A) int { return len(xs) }
 
 func List_headT[A any](xs []A) SkyMaybe[A] {
