@@ -37,6 +37,7 @@ That's enough — every other field has a sensible default.
 | `[database]`         | Std.Db default connection (the DSN selects the driver) |
 | `[log]`              | Std.Log default format and level                     |
 | `[env]`              | Env-var namespace prefix (v0.11.5+)                  |
+| `[security]`         | CSRF opt-out                                         |
 
 Every key seeded into the runtime is **only applied when the
 corresponding env var is unset**. So shell env / `.env` always wins
@@ -566,6 +567,48 @@ For values not known until runtime (derived from a startup flag,
 computed from another secret), use `System.setenv name value`
 from your code — it's a `Task Error ()` returning helper that
 mutates the process env without Go FFI.
+
+---
+
+## `[security]`
+
+```toml
+[security]
+csrf = false     # default: true — leave it on unless you are sure
+```
+
+| Key    | Env var         | Default | Meaning |
+|--------|-----------------|---------|---------|
+| `csrf` | `SKY_CSRF`      | `true`  | Global CSRF middleware on/off |
+
+**`csrf`** turns off Sky's global CSRF middleware. Leave it on for
+anything a browser talks to. The one case that justifies `false` is a
+purely-stateless API where every endpoint authenticates from a `Bearer`
+token in the `Authorization` header — a cross-origin page cannot add
+that header without a preflight, so the header itself is the CSRF
+defence. If any endpoint authenticates from a **cookie**, turning this
+off is a vulnerability.
+
+Equivalent at runtime: `SKY_CSRF=off` (or `false` / `0`).
+
+### There is no `[security] env`
+
+Which environment a binary is running in is **not** a sky.toml key, and
+never has been. Set the `ENV` environment variable on the deployment:
+
+```bash
+ENV=production ./sky-out/app
+```
+
+`ENV` (or the namespaced `<PREFIX>_ENV`, e.g. `SKY_ENV`) is what gates
+the dev console, metrics auth, and the `Secure` attribute on session
+cookies. Anything other than `dev` / `development` / `local` counts as
+production.
+
+The reason it is not a build-time key is that one binary gets promoted
+dev → staging → prod; a value baked in at compile time could not be
+right for all three. Writing `[security] env` into sky.toml now
+produces a build warning naming this variable.
 
 ---
 

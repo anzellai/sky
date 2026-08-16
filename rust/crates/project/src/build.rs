@@ -1052,10 +1052,28 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             // must emit `rt.SetEnvPrefix(...)` for it to take effect (the Rust
             // compiler previously emitted nothing, so it was silently ignored).
             ("env", "prefix") => cfg.env_prefix = Some(val),
-            // Everything else falls through. For a RECOGNISED config section,
-            // record the key instead of dropping it — see `unknown_config_keys`.
+            // [security] csrf = false → SKY_CSRF, the switch rt already honours
+            // (runtime-go/rt/csrf_middleware.go). The runtime half of this has
+            // been complete since CSRF shipped — SetCsrfEnabled, IsCsrfEnabled
+            // and the SKY_CSRF read all exist and are tested — but the compiler
+            // half was never written, so three separate runtime comments
+            // described `[security] csrf = false` as the way to turn CSRF off
+            // while the key did nothing at all.
+            //
+            // Deliberately NOT wired: `[security] env`. Which environment a
+            // binary is RUNNING in is not a property of how it was BUILT — one
+            // artefact gets promoted dev → staging → prod, and a compile-time
+            // answer cannot be right for all three. It stays an env var
+            // (`ENV`, or `<PREFIX>_ENV`), which is what productionFromEnv
+            // reads and what docs/skylive/overview.md documents. The key warns,
+            // with a hint naming the variable that works.
+            ("security", "csrf") => cfg.extra_defaults.push(("CSRF".into(), val)),
+            // Everything else falls through and is RECORDED, not dropped — see
+            // `unknown_config_keys`. The only silence is for sections consumed
+            // by other tooling, where an unrecognised key is not evidence of a
+            // mistake.
             _ => {
-                if is_runtime_config_section(&section) {
+                if !is_externally_consumed_section(&section) {
                     cfg.unknown_config_keys.push((section.clone(), key.to_string()));
                 }
             }
@@ -1064,16 +1082,40 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
     cfg
 }
 
-/// The sky.toml sections whose keys are seeded into runtime env defaults, and so
-/// whose keys have a FIXED accepted set.
+/// The sky.toml sections consumed by something OTHER than the runtime-config
+/// parser — the project metadata Sky reads elsewhere, and the dependency tables
+/// handed to cargo/go tooling. An unrecognised key in one of these is not
+/// evidence of a mistake, so it stays silent.
 ///
-/// `[project]`, `[source]`, `[dependencies]`, `[go.dependencies]` and `[lib]` are
-/// deliberately absent: they are consumed elsewhere (or by cargo/go tooling), so
-/// an unrecognised key there is not evidence of a mistake.
-fn is_runtime_config_section(section: &str) -> bool {
+/// # Why this is an exclusion list, and not the inclusion list it used to be
+///
+/// This function was `is_runtime_config_section`, naming the seven sections
+/// whose keys were checked. Everything else — every section NOT on the list —
+/// was dropped without a word, which meant the warning was structurally unable
+/// to report the single most likely config mistake: **a wrong section name**.
+///
+/// `[security] env` and `[security] csrf` were the live instance. `[security]`
+/// was on no list, so both keys vanished silently while
+/// `runtime-go/rt/observability.go:228` served a 401 telling the locked-out
+/// operator to "set [security] env" — instructing them to do a thing that could
+/// not work. A typo'd `[databse] path` and the equally-unparsed
+/// `[observability] enabled` (claimed in a comment at observability.go:255)
+/// failed exactly the same way.
+///
+/// Inverting the list closes the class: a key is now reported unless its
+/// section is known to be somebody else's. New runtime sections are covered the
+/// day they are added rather than the day someone remembers to list them.
+fn is_externally_consumed_section(section: &str) -> bool {
     matches!(
         section,
-        "live" | "database" | "auth" | "log" | "analytics" | "jobs" | "env"
+        // Bare top-level keys (`port`, `bin`, `root`) — handled by the arms
+        // above and by sky_toml_flag / configured_bin_name.
+        ""
+        | "project"
+        | "source"
+        | "dependencies"
+        | "go.dependencies"
+        | "lib"
     )
 }
 
@@ -1108,7 +1150,32 @@ fn accepted_config_keys(section: &str) -> &'static [&'static str] {
         "analytics" => &["dbPath", "retention"],
         "jobs" => &["store", "storePath", "store_path"],
         "env" => &["prefix"],
+        // `env` is deliberately absent — see the parser arm. Deployment
+        // environment is not a build-time constant.
+        "security" => &["csrf"],
         _ => &[],
+    }
+}
+
+/// A directed hint for a key that is inert but has a working equivalent, so the
+/// warning can say what to do instead of only what not to do.
+///
+/// `[security] env` is the case that motivated this: the runtime's own 401 hint
+/// pointed operators at it, and "this key does nothing" alone would leave them
+/// exactly as stuck as before.
+fn inert_key_hint(section: &str, key: &str) -> Option<&'static str> {
+    match (section, key) {
+        ("security", "env") => Some(
+            "Set the `ENV` environment variable on the deployment instead \
+             (`ENV=production`); Sky also accepts the namespaced `<PREFIX>_ENV`, \
+             e.g. `SKY_ENV`. Which environment a binary runs in is a property of \
+             the deployment, not of the build, so it is not a sky.toml key.",
+        ),
+        ("observability", "enabled") => Some(
+            "There is no `[observability]` section. The console and metrics \
+             endpoints gate on `ENV` (see docs/observability.md).",
+        ),
+        _ => None,
     }
 }
 
@@ -1142,12 +1209,35 @@ fn accepted_config_keys(section: &str) -> &'static [&'static str] {
 pub fn unknown_config_keys(keys: &[(String, String)]) -> Vec<String> {
     keys.iter()
         .map(|(section, key)| {
-            let accepted = accepted_config_keys(section).join(", ");
-            format!(
-                "sky.toml: `[{section}] {key}` is not a key Sky reads — it has no effect. \
-                 Accepted keys in `[{section}]`: {accepted}. \
-                 (See docs/sky-toml.md; keys are camelCase.)"
-            )
+            let mut msg = format!(
+                "sky.toml: `[{section}] {key}` is not a key Sky reads — it has no effect. "
+            );
+            let accepted = accepted_config_keys(section);
+            if accepted.is_empty() {
+                // Unknown SECTION, not merely an unknown key in a known one.
+                // Naming the real sections is the useful thing here: the
+                // likeliest cause is a typo or an invented section.
+                msg.push_str(
+                    "`[",
+                );
+                msg.push_str(section);
+                msg.push_str(
+                    "]` is not a section Sky reads. Runtime sections are: \
+                     `[live]`, `[database]`, `[auth]`, `[log]`, `[analytics]`, \
+                     `[jobs]`, `[env]`, `[security]`. ",
+                );
+            } else {
+                msg.push_str(&format!(
+                    "Accepted keys in `[{section}]`: {}. ",
+                    accepted.join(", ")
+                ));
+            }
+            if let Some(hint) = inert_key_hint(section, key) {
+                msg.push_str(hint);
+                msg.push(' ');
+            }
+            msg.push_str("(See docs/sky-toml.md; keys are camelCase.)");
+            msg
         })
         .collect()
 }
@@ -2411,7 +2501,9 @@ mod sky_toml_tests {
         let dir = std::env::temp_dir().join("sky-accepted-keys-test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sky.toml");
-        for section in ["live", "database", "auth", "log", "analytics", "jobs", "env"] {
+        for section in [
+            "live", "database", "auth", "log", "analytics", "jobs", "env", "security",
+        ] {
             for key in accepted_config_keys(section) {
                 std::fs::write(&path, format!("[{section}]\n{key} = \"v\"\n")).unwrap();
                 let cfg = read_sky_toml_config(&path);
@@ -2423,6 +2515,117 @@ mod sky_toml_tests {
                 );
             }
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[security]` was parsed by nothing AND absent from
+    /// `is_runtime_config_section`, so its keys were dropped without even the
+    /// unknown-key warning that covers every other runtime section.
+    ///
+    /// That silence had a victim: `runtime-go/rt/observability.go` serves a 401
+    /// whose hint tells the locked-out operator to "set [security] env" — advice
+    /// that could not work, given to someone already locked out of their own
+    /// metrics endpoint.
+    #[test]
+    fn security_section_keys_are_not_silently_dropped() {
+        let dir = std::env::temp_dir().join("sky-security-section-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+
+        // `[security] env` is NOT wired (deployment environment is not a
+        // build-time constant — see the parser comment). It must therefore
+        // WARN rather than vanish.
+        std::fs::write(&path, "[security]\nenv = \"production\"\n").unwrap();
+        let cfg = read_sky_toml_config(&path);
+        assert!(
+            cfg.unknown_config_keys
+                .iter()
+                .any(|(s, k)| s == "security" && k == "env"),
+            "`[security] env` was dropped with no warning: {:?}",
+            cfg.unknown_config_keys
+        );
+        let warnings = unknown_config_keys(&cfg.unknown_config_keys);
+        assert!(
+            warnings.iter().any(|w| w.contains("ENV")),
+            "the `[security] env` warning must name the ENV environment \
+             variable that DOES work: {warnings:?}"
+        );
+
+        // `[security] csrf` IS wired: the runtime half already exists
+        // (rt.SetCsrfEnabled / SKY_CSRF), only the compiler half was missing.
+        std::fs::write(&path, "[security]\ncsrf = false\n").unwrap();
+        let cfg = read_sky_toml_config(&path);
+        assert!(
+            cfg.extra_defaults
+                .iter()
+                .any(|(k, v)| k == "CSRF" && v == "false"),
+            "`[security] csrf = false` must seed the CSRF runtime default, \
+             got extra_defaults {:?}",
+            cfg.extra_defaults
+        );
+        assert!(
+            cfg.unknown_config_keys.is_empty(),
+            "`[security] csrf` is wired and must not warn: {:?}",
+            cfg.unknown_config_keys
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The root cause behind the `[security]` bug: a key in an UNRECOGNISED
+    /// section was dropped in total silence, because the unknown-key warning
+    /// only ever fired for sections already on the known list.
+    ///
+    /// So the warning could never tell you about the one mistake it is most
+    /// important to catch — a section name that is wrong. A typo'd
+    /// `[databse] path` and a whole-cloth `[observability] enabled` were
+    /// equally invisible.
+    #[test]
+    fn keys_in_unknown_sections_warn() {
+        let dir = std::env::temp_dir().join("sky-unknown-section-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+
+        for (section, key) in [
+            ("databse", "path"),        // typo of an existing section
+            ("observability", "enabled"), // claimed by observability.go, parsed by nothing
+            ("totally_made_up", "x"),
+        ] {
+            std::fs::write(&path, format!("[{section}]\n{key} = \"v\"\n")).unwrap();
+            let cfg = read_sky_toml_config(&path);
+            assert!(
+                cfg.unknown_config_keys
+                    .iter()
+                    .any(|(s, k)| s == section && k == key),
+                "`[{section}] {key}` was dropped with no warning: {:?}",
+                cfg.unknown_config_keys
+            );
+        }
+
+        // …and the sections that are consumed elsewhere must stay quiet, or
+        // every real project gets noise on every build.
+        for (section, key) in [
+            ("project", "bin"),
+            ("source", "root"),
+            ("dependencies", "somelib"),
+            ("go.dependencies", "github.com/x/y"),
+            ("lib", "name"),
+            ("", "port"),
+        ] {
+            let body = if section.is_empty() {
+                format!("{key} = \"v\"\n")
+            } else {
+                format!("[{section}]\n{key} = \"v\"\n")
+            };
+            std::fs::write(&path, body).unwrap();
+            let cfg = read_sky_toml_config(&path);
+            assert!(
+                cfg.unknown_config_keys.is_empty(),
+                "`[{section}] {key}` is consumed elsewhere and must not warn: {:?}",
+                cfg.unknown_config_keys
+            );
+        }
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
