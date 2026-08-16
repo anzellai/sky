@@ -101,22 +101,37 @@ analysis shows, is a small, enumerable set.
 
 ## Position in the query graph
 
-`lower` is a set of salsa queries (L2). It never reads a global; it asks the db.
+`lower` never reads a global; it asks the db. But it is **not** a set of
+per-def salsa queries, and the granularity below is whole-program, not
+per-def — the previously-drawn graph (`typed_hir` → `mono_instances` →
+`go_items` + `reachable`) has no counterpart in the code. `grep -rn salsa
+rust/crates/lower/src/` returns a single passing mention in a comment; the
+crate declares no queries at all.
+
+The real shape is **one tracked query, at the whole-program floor**:
 
 ```mermaid
 flowchart LR
-    RES["resolve(ModuleId)"] --> THIR
-    INFER["infer(DefId)\n(types + per-region type map)"] --> THIR["typed_hir(DefId)\n→ typed HIR (TCO-normalised)"]
-    THIR --> MONO["mono_instances(project)\n→ (DefId, [GoTy]) worklist"]
-    MONO --> GOIR["go_items(ModuleId)\n→ Vec<GoItem> (typed Go-IR)"]
-    DCE["reachable(project)\n→ Set<Ref>"] --> GOIR
-    THIR --> DCE
-    GOIR --> CODEGEN["codegen: go_module(ModuleId)"]
+    RES["resolve(ModuleId)\n(skydb:181)"] --> GP
+    INFER["infer(DefId)\n(skydb:304)"] --> GP["go_program(entry, config)\n#[salsa::tracked(no_eq)] — skydb:434"]
+    GP --> LP["lower::lower_program_cfg(entry, cfg)\n(lower.rs:212) — eager, whole program"]
+    LP --> CODEGEN["codegen: renders the Go-IR"]
 ```
 
-Every edge is memoised; editing one def reruns `typed_hir` for that def and the
-`go_items` of its module only. `reachable` and `mono_instances` are
-whole-program queries keyed on the project revision.
+`go_program` (`rust/crates/skydb/src/lib.rs:434`) is memoised and keyed on
+`(entry, config)`; the source and inference edges are captured through the
+`db.ty_db()` reads the lowerer performs while executing. So re-demanding with
+unchanged inputs is a cache hit, and any `SourceFile` edit that transitively
+reaches a lowered def re-executes it.
+
+**Re-executes all of it.** There is no per-def or per-module lowering
+granularity to fall back to: `lower_program_cfg` walks from `main` and lowers
+the whole reachable program in one call (§5.2). Editing one def does not rerun
+"that def and its module"; it reruns the lowering of the program.
+
+`resolve` (`skydb:181`) and `infer` (`skydb:304`) *are* the finer-grained
+tracked queries, and they are what keeps the re-execution cheap — the type
+world above `go_program` is still memoised per module and per def.
 
 ## 1. The typed Go-IR (`GoTy` + `GoExpr` + `GoStmt` + `GoItem`)
 

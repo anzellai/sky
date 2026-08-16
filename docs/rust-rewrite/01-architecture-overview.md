@@ -9,27 +9,41 @@ case, it is the query engine with a different driver.
 This shape is the direct answer to laws L1 (no globals — the `db` *is* the state),
 L2 (incremental for free), and L5 (queries compose along an explicit DAG).
 
-> **Implementation status.** This salsa query
-> engine is the **target** architecture, described below in the present tense. It
-> is not yet the running engine. A salsa spike is wired — `skydb` (`rust/crates/skydb/src/lib.rs`)
-> is a real `salsa` 0.28 database with one input (`SourceFile`) and one tracked
-> query (`line_count`), proving the engine end-to-end — but its own header states
-> "the full query DAG is threaded in M1+". The pipeline that actually parses,
-> resolves, infers, lowers and emits the corpus today runs on a hand-rolled
-> **resolution db** (`hir::db::SourceDb`, `rust/crates/hir/src/db.rs`): a
-> value-threaded `struct` holding parsed modules + a `DefId` interner + a
-> `RefCell` `module_exports` cache, walked in batch. It is deliberately structured
-> so a salsa port is mechanical (see its module doc), and it already delivers the
-> demand-driven cross-module `module_exports(dep)` lookup (no 5-round fixpoint) —
-> but the "all edges are salsa queries" framing below, and **every "salsa query"
-> / "salsa input" / `#[salsa::tracked]` label anywhere in this blueprint** —
-> [`04`](04-syntax-lexer-parser.md), [`05`](05-name-resolution.md),
-> [`06`](06-type-system.md), [`07`](07-lowering-and-ir.md),
-> [`09`](09-runtime-and-ffi.md), [`10`](10-lsp-and-tooling.md),
-> [`11`](11-testing-and-verification.md) — describes the destination, not the
-> current build. The *logic* those sections describe (resolution, inference,
-> lowering, FFI loading) is what the code does; only the memoising engine differs.
-> Threading the DAG through salsa is remaining work ([`12`](12-migration-and-milestones.md)).
+> **Implementation status — the salsa engine IS the running engine.**
+> This banner used to say the opposite ("not yet the running engine … a spike
+> with one input and one tracked query, `line_count`"), and it was badly out of
+> date: `line_count` is gone, and the real build driver constructs
+> `skydb::SkyDatabase` (`rust/crates/project/src/build.rs:124`) and demands
+> `skydb::go_program` (`:419`) to produce the emitted Go — replacing the eager
+> `lower_program_cfg` + `emit_program` pair it used to call directly.
+>
+> `skydb` (`rust/crates/skydb/src/lib.rs`) is a real `salsa` 0.28 database with
+> `#[salsa::input]`s (`SourceFile`, `BuildConfig`) and these tracked queries
+> spanning the whole DAG:
+>
+> | Query | Where | Grain |
+> |---|---|---|
+> | `parse` | `skydb:482` | per `SourceFile` |
+> | `module_exports` | `skydb:126` | per module |
+> | `resolve_query` | `skydb:181` | per module |
+> | `type_world_query` / `check_world_query` | `skydb:202` / `:224` | whole program |
+> | `record_result_sig_query` / `callsite_param_records_query` | `skydb:243` / `:272` | whole program |
+> | `infer_query` | `skydb:304` | per `DefId` |
+> | `go_program` | `skydb:434` | **whole program** |
+>
+> Two things below are still *not* what the code does, and are called out where
+> they appear rather than blanket-disclaimed here:
+>
+> - **Lowering has no per-def or per-module grain.** The diagram's
+>   `typed_hir(DefId)` → `go_module(ModuleId)` edges do not exist; there is one
+>   whole-program `go_program`. See [`07` "Position in the query
+>   graph"](07-lowering-and-ir.md#position-in-the-query-graph).
+> - **`exhaustiveness(DefId)` is not a separate tracked query.**
+>
+> The hand-rolled `hir::db::SourceDb` (`rust/crates/hir/src/db.rs`) still exists
+> as a second backend with identical `ModuleId` semantics, and its `RefCell`
+> exports cache is gone (`db.rs:61`). Remaining engine work is tracked in
+> [`12`](12-migration-and-milestones.md).
 
 ## Data flow (target: all edges are salsa queries)
 
