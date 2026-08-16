@@ -57,7 +57,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -95,31 +94,44 @@ const (
 	SkyCsrfHeaderName = "X-Sky-Csrf"
 )
 
-// csrfEnabled — global on/off switch. Default ON. Sky.toml
-// [security] csrf = false sets this to false via the runtime
-// startup path. Opt-out for very specific cases (purely-stateless
+// csrfEnabled — global on/off switch. Default ON. Turned off by
+// `<PREFIX>_CSRF=off|false|0`, which sky.toml's `[security] csrf =
+// false` seeds. Opt-out for very specific cases (purely-stateless
 // API, every endpoint reads via Bearer auth instead).
 var csrfEnabled atomic.Bool
 
 func init() {
-	csrfEnabled.Store(true)
-	// SKY_CSRF=off|false|0 disables the global CSRF middleware
-	// before the first request lands. Intended for pure-API
-	// services authenticated via Bearer in Authorization (where
-	// the header itself acts as the CSRF defence — cross-origin
-	// browsers can't add custom headers without preflight). The
-	// sky.toml [security] csrf = false toml-side plumbing routes
-	// through here too once it lands. Default-secure: any other
-	// value, including unset, keeps CSRF on.
-	switch strings.ToLower(os.Getenv("SKY_CSRF")) {
+	refreshCsrfEnabled()
+	// Re-read after SetEnvPrefix / SetSkyDefault. The generated
+	// init() seeds the sky.toml default AFTER this package's init()
+	// has already run, so without this hook `[security] csrf = false`
+	// would be written to the env too late to be seen — the same
+	// stale-capture that logJSON / logThreshold register for.
+	onEnvPrefixChange(refreshCsrfEnabled)
+}
+
+// refreshCsrfEnabled (re-)reads the CSRF switch from the environment.
+//
+// `<PREFIX>_CSRF=off|false|0` disables the global CSRF middleware
+// before the first request lands. Intended for pure-API services
+// authenticated via Bearer in Authorization (where the header itself
+// acts as the CSRF defence — cross-origin browsers can't add custom
+// headers without preflight).
+//
+// Default-secure: any other value, including unset, keeps CSRF ON.
+// That is why this assigns both branches rather than only clearing —
+// a re-read must be able to restore the default, not just drop it.
+func refreshCsrfEnabled() {
+	switch strings.ToLower(skyGetenv("CSRF")) {
 	case "off", "false", "0":
 		csrfEnabled.Store(false)
+	default:
+		csrfEnabled.Store(true)
 	}
 }
 
-// SetCsrfEnabled toggles the global CSRF middleware. Called from
-// the runtime startup path when sky.toml [security] csrf = false.
-// Tests use it for isolation.
+// SetCsrfEnabled toggles the global CSRF middleware. Tests use it for
+// isolation; the sky.toml / env path goes through refreshCsrfEnabled.
 func SetCsrfEnabled(on bool) {
 	csrfEnabled.Store(on)
 }

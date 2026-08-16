@@ -225,7 +225,11 @@ func HandleMetrics(w http.ResponseWriter, r *http.Request) {
 	if isProductionMode() && !hasAdminAuth(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="sky-metrics"`)
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"unauthorized","hint":"set [security] env or sign in with admin role"}`))
+		// The hint must name something that WORKS. It used to say "set
+		// [security] env", a sky.toml key no version of the compiler has
+		// ever parsed — telling an operator already locked out of their
+		// own metrics endpoint to do a thing that could not help.
+		w.Write([]byte(`{"status":"unauthorized","hint":"set SKY_ADMIN_TOKEN and send it as 'Authorization: Bearer <token>', or set ENV=dev to open metrics locally"}`))
 		return
 	}
 	w.Header().Set("Content-Type", telemetry.ContentType)
@@ -253,10 +257,14 @@ func HandleBuildInfo(w http.ResponseWriter, r *http.Request) {
 // to skip when conflicts exist.
 func MountObservabilityEndpoints(mux *http.ServeMux) {
 	if skyGetenv("OBSERVABILITY_DISABLED") == "1" {
-		// Explicit opt-out — used by tests that want to test the
-		// non-observability path. Production users opt out via
-		// sky.toml [observability] enabled = false, surfaced by
-		// the compiler as the same env var.
+		// Explicit opt-out. Set <PREFIX>_OBSERVABILITY_DISABLED=1 on
+		// the deployment.
+		//
+		// This used to claim production users opt out via sky.toml
+		// `[observability] enabled = false`, "surfaced by the compiler
+		// as the same env var". There is no `[observability]` section
+		// and the compiler surfaces nothing — the env var is the only
+		// way, and now the only thing documented here.
 		return
 	}
 	safeMount(mux, "/_sky/healthz", HandleHealthz)
@@ -292,9 +300,15 @@ func safeMount(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
 
 // productionMode is set by the runtime at startup based on:
 //
-//   - sky.toml `[security] env = "production"` (explicit, wins)
+//   - the `ENV` environment variable, or the namespaced
+//     `<PREFIX>_ENV` (`SKY_ENV` by default) — see productionFromEnv
 //   - OR the binary binding to 0.0.0.0 (rough heuristic — containers
 //     and cloud VMs invariably bind 0.0.0.0; local dev binds localhost)
+//
+// NOT sky.toml `[security] env = "production"`, which this comment
+// used to name as the explicit winner. No version of the compiler has
+// parsed that key; which environment a binary runs in is a property of
+// the deployment, not of the build.
 //
 // Both paths set this atomic via SetProductionMode(). Endpoint
 // handlers consult it to gate metrics auth.
