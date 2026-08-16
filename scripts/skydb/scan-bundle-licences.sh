@@ -151,7 +151,11 @@ classify() {
   local name="$1" path="${2:-}"
   case "$name" in
     # ── The PostgreSQL distribution itself ────────────────────────────
-    postgres|initdb|pg_ctl|pg_dump|pg_restore|libpq|libpgcommon|libpgport)
+    # pg_dumpall is in SHIPPED_BINARIES (build-postgres-bundle.sh — roles are
+    # cluster-wide, so a role-less pg_dump is not a restorable backup) but was
+    # missing here, so the gate's first run against a REAL bundle rejected the
+    # shipping artefact as UNKNOWN. Same source tree, same PostgreSQL Licence.
+    postgres|initdb|pg_ctl|pg_dump|pg_dumpall|pg_restore|libpq|libpgcommon|libpgport)
       echo "PostgreSQL|PERMISSIVE|PostgreSQL ${PG_VER:-} core" ;;
 
     # ── Platform C runtime / OS-provided ──────────────────────────────
