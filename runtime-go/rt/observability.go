@@ -331,12 +331,17 @@ func isProductionMode() bool {
 // the common case, and the previous addr-based heuristic broke
 // every Docker / reverse-proxy / sidecar pattern.
 func productionFromEnv() bool {
-	// Plain `ENV` first (the var users actually type), then
-	// `SKY_ENV` fallback (the namespaced variant the compiler
-	// emits from `sky.toml [security] env = ...`).
+	// Plain `ENV` first (the var users actually type), then the
+	// namespaced `<PREFIX>_ENV` fallback — `SKY_ENV` by default, or
+	// `FENCE_ENV` when sky.toml declares `[env] prefix = "FENCE"`.
+	//
+	// The fallback MUST route through skyGetenv rather than reading a
+	// hardcoded "SKY_ENV": a custom-prefix project sets FENCE_ENV, and
+	// hardcoding the default prefix meant such a project could not turn
+	// the production gate on through its own namespace at all.
 	envFlag := strings.ToLower(os.Getenv("ENV"))
 	if envFlag == "" {
-		envFlag = strings.ToLower(os.Getenv("SKY_ENV"))
+		envFlag = strings.ToLower(skyGetenv("ENV"))
 	}
 	if envFlag == "" {
 		return false

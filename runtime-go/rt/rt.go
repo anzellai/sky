@@ -10016,8 +10016,9 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 //
 // Token gen: 32 bytes from crypto/rand → base64-URL (no padding).
 // Token compare: subtle.ConstantTimeCompare (no timing leak).
-// Cookie attrs: Path=/; Secure; SameSite=Lax.  `securifyCookieAttrs`
-// strips Secure in dev mode if the user is testing without TLS.
+// Cookie attrs: Path=/; Secure; SameSite=Lax.  Note `securifyCookieAttrs`
+// only ever APPENDS Secure in production — it does not strip it in dev,
+// so the literal "Secure" in the attrs below is unconditional.
 func Middleware_withCsrf(handler any) any {
 	const (
 		csrfCookie    = "__Host-sky_csrf"
@@ -10198,10 +10199,25 @@ func setCookieHeader(resp any, name, value, attrs string) any {
 //       stderr plus the full frame to .skylog/panic.log in prod
 //       (no stack-trace leak in aggregated logs).
 
-// isProd reports whether <PREFIX>_ENV=prod is set. Kept as a small
-// function so tests can monkey-patch via env var at runtime.
+// isProd reports whether this process is running in production.
+//
+// It is a thin alias for productionFromEnv() — there is exactly ONE
+// production predicate in this runtime, deliberately.
+//
+// It used to be `skyGetenv("ENV") == "prod"`, which disagreed with
+// productionFromEnv() in two ways that silently disabled cookie
+// hardening:
+//
+//   - It read <PREFIX>_ENV only, never plain `ENV`.
+//   - It matched only the literal string "prod".
+//
+// `ENV=production` is what `sky init` scaffolds and what the docs
+// promise, and it satisfied NEITHER condition — so production
+// deployments got session cookies with no `Secure` attribute.
+// Keeping two predicates in agreement by convention had already
+// failed once; the alias makes divergence impossible.
 func isProd() bool {
-	return skyGetenv("ENV") == "prod"
+	return productionFromEnv()
 }
 
 // securifyCookieAttrs appends "; Secure" to an attribute string in

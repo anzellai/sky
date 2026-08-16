@@ -215,12 +215,15 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 		// cookie never arrives. None+Secure lets the cookie ride; the X-Sky-Csrf
 		// header-vs-cookie check (set by the SAME-ORIGIN iframed JS) remains the
 		// actual CSRF gate, since cross-origin attackers can't read the cookie.
+		// Secure mirrors the session cookie's rule exactly
+		// (writeSessionCookie in live.go): TLS on the wire, or the
+		// production env flag, or cross-origin iframe mode. Sharing
+		// requestIsHTTPS + productionFromEnv keeps the two cookies
+		// from drifting apart the way isProd/productionFromEnv did.
 		sameSite := http.SameSiteStrictMode
-		secure := r.TLS != nil
+		secure := requestIsHTTPS(r) || productionFromEnv()
 		if crossOriginIframeMode() {
 			sameSite = http.SameSiteNoneMode
-			secure = true
-		} else if proto := r.Header.Get("X-Forwarded-Proto"); proto == "https" {
 			secure = true
 		}
 		http.SetCookie(w, &http.Cookie{

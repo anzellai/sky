@@ -4863,7 +4863,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// not let the cookie lapse while the server session keeps sliding on
 	// activity via touchLastSeen — that would 404 every subsequent click on
 	// a session that is demonstrably alive.
-	writeSessionCookie(w, app.cookieNameOrDefault(), sid, app.sessionTTL)
+	writeSessionCookie(r, w, app.cookieNameOrDefault(), sid, app.sessionTTL)
 	// Per-session serial mutex: prevents two concurrent event handlers
 	// for the SAME session from racing each other's model updates.
 	// Different sessions proceed in parallel.
@@ -6857,13 +6857,13 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 		// TTL also slides on the SSE heartbeat, which cannot write a cookie into
 		// an already-open stream. Idle-under-SSE is covered by the Max-Age floor
 		// in slidingCookieMaxAgeSeconds, not by this re-issue.
-		writeSessionCookie(w, cookieName, c.Value, ttl)
+		writeSessionCookie(r, w, cookieName, c.Value, ttl)
 		return c.Value
 	}
 	b := make([]byte, 16)
 	rand.Read(b)
 	sid := hex.EncodeToString(b)
-	writeSessionCookie(w, cookieName, sid, ttl)
+	writeSessionCookie(r, w, cookieName, sid, ttl)
 	return sid
 }
 
@@ -6879,7 +6879,11 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 // cookie can only be re-issued by a GET/POST, so a TTL-keyed MaxAge expires the
 // cookie out from under a session that is still alive. Server-side reap remains
 // the sole authority on when a session ends.
-func writeSessionCookie(w http.ResponseWriter, cookieName, sid string, ttl time.Duration) {
+// The `r` parameter is the request being served, and is used solely to
+// decide the Secure attribute (see below). It may be nil only if a
+// caller genuinely has no request in hand; Secure then falls back to
+// the env-derived answer.
+func writeSessionCookie(r *http.Request, w http.ResponseWriter, cookieName, sid string, ttl time.Duration) {
 	maxAge := slidingCookieMaxAgeSeconds(ttl)
 	// SameSite: when SKY_LIVE_FRAME_ANCESTORS opts this deploy into being iframed
 	// cross-origin (e.g. a control plane's preview pane), the browser would
@@ -6888,9 +6892,35 @@ func writeSessionCookie(w http.ResponseWriter, cookieName, sid string, ttl time.
 	// lets the cookie ride along, and the CSRF check still gates state-mutating
 	// POSTs. Outside that mode keep Lax (the right floor for top-level nav +
 	// form posts on a same-origin app).
+	//
+	// Secure: this cookie is the session credential, so it must not travel in
+	// cleartext once there is any indication the deployment is real. Three
+	// independent signals turn it on, matching what the CSRF middleware
+	// already does for its own cookie (csrf_middleware.go):
+	//
+	//   1. cross-origin iframe mode — SameSite=None REQUIRES Secure.
+	//   2. the request arrived over TLS, directly or via a terminating proxy
+	//      that set X-Forwarded-Proto. This is the most accurate signal
+	//      available and is independent of any env var.
+	//   3. the production env flag is set (ENV / <PREFIX>_ENV = anything but
+	//      dev/development/local), which is the documented production gate.
+	//
+	// (3) is what makes a forgotten-to-redirect-to-HTTPS production deploy
+	// fail closed rather than leak the session id over plain HTTP. Local dev
+	// — no flag, no TLS — keeps Secure off, or the browser would refuse to
+	// send the cookie back over http://localhost and every session would be
+	// lost on the next request.
+	//
+	// THE DEFECT this replaces: `secure` was hardcoded false and set true
+	// ONLY by (1). Neither `ENV=production` nor even `SKY_ENV=prod` put
+	// Secure on the Sky.Live session cookie, because this path never went
+	// through securifyCookieAttrs.
 	sameSite, secure := http.SameSiteLaxMode, false
 	if crossOriginIframeMode() {
 		sameSite, secure = http.SameSiteNoneMode, true
+	}
+	if requestIsHTTPS(r) || productionFromEnv() {
+		secure = true
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
@@ -6912,6 +6942,28 @@ func writeSessionCookie(w http.ResponseWriter, cookieName, sid string, ttl time.
 // scopes WHICH origins may embed.
 func crossOriginIframeMode() bool {
 	return os.Getenv("SKY_LIVE_FRAME_ANCESTORS") != ""
+}
+
+// requestIsHTTPS reports whether the browser reached us over TLS —
+// either directly (r.TLS) or through a terminating reverse proxy that
+// announced the original scheme in X-Forwarded-Proto.
+//
+// This is the most accurate Secure-cookie signal there is: it
+// describes the connection actually in front of us rather than an
+// operator's guess about the environment. X-Forwarded-Proto is
+// attacker-controllable when the app is exposed directly, but the
+// only thing a forged header can do here is turn Secure ON, which
+// is fail-safe.
+//
+// Nil-tolerant so callers without a request in hand can pass nil.
+func requestIsHTTPS(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 // liveBannerConfig collects the <PREFIX>_LIVE_* env vars that
