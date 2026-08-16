@@ -23,7 +23,43 @@ use std::process::{Command, Output};
 
 #[path = "../src/live_gate.rs"]
 mod live_gate;
-use live_gate::{required, Need};
+use live_gate::{gate_if_postgres_cannot_start, required, Need};
+
+/// A test's FIRST `sky db start`, or a gated skip.
+///
+/// # Why a start is not just an assertion
+///
+/// `fixture()` probes for PostgreSQL BINARIES. That is discovery, not
+/// availability, and on a host whose 32 SysV shared-memory ids
+/// (`kern.sysv.shmmni`) are all held by sibling processes the binaries are
+/// there and `initdb` still fails:
+///
+/// ```text
+/// sky db start: initdb failed:
+/// FATAL:  could not create shared memory segment: No space left on device
+/// ```
+///
+/// Five tests in this file failed exactly that way inside a
+/// `SKY_LIVE_TESTS=skip` run — the variable this repository documents as the
+/// ONLY way to skip a live test could not reach them, because nothing on that
+/// path consults the gate. The classification lives in `live_gate` so every
+/// test crate that starts a cluster shares one answer.
+///
+/// `false` means stop: under the default `require` mode the gate has already
+/// panicked naming the machine's own diagnostic, so `false` is only reached
+/// under `skip`. A failure that is NOT an unavailable environment still panics
+/// with `what` — the default stays "this is a defect".
+#[track_caller]
+fn started_or_gate(out: &std::process::Output, what: &str) -> bool {
+    if out.status.success() {
+        return true;
+    }
+    let log = both(out);
+    if gate_if_postgres_cannot_start(&log) {
+        return false;
+    }
+    panic!("{what}:\n{log}");
+}
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -265,7 +301,9 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
 
     // --- start ---
     let out = fx.sky(&["db", "start"]);
-    assert!(out.status.success(), "sky db start failed:\n{}", both(&out));
+    if !started_or_gate(&out, "sky db start failed") {
+        return;
+    }
     let started = stdout(&out);
     assert!(started.contains("running"), "{started}");
 
@@ -382,7 +420,9 @@ fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
     };
 
     let out = fx.sky(&["db", "start"]);
-    assert!(out.status.success(), "{}", both(&out));
+    if !started_or_gate(&out, "sky db start failed") {
+        return;
+    }
     let pid = fx.postmaster_pid().expect("no postmaster.pid");
 
     // SIGKILL: no shutdown handler runs, so the pid file is left on disk.
@@ -594,7 +634,9 @@ fn a_major_version_mismatch_is_reported_and_never_attempted() {
     };
 
     let out = fx.sky(&["db", "start"]);
-    assert!(out.status.success(), "{}", both(&out));
+    if !started_or_gate(&out, "sky db start failed") {
+        return;
+    }
     let stop = fx.sky(&["db", "stop"]);
     assert!(stop.status.success(), "{}", both(&stop));
 
@@ -729,7 +771,9 @@ fn a_second_start_retunes_the_managed_block() {
 
     // --- first start: the path that already tuned ---
     let out = fx.sky(&["db", "start"]);
-    assert!(out.status.success(), "first start failed:\n{}", both(&out));
+    if !started_or_gate(&out, "first start failed") {
+        return;
+    }
     let conf_path = fx.data_dir().join("postgresql.conf");
     let first = std::fs::read_to_string(&conf_path).unwrap();
     let want = conf_max_connections(&first)
@@ -855,7 +899,9 @@ fn the_cluster_is_sized_for_the_pool_the_project_asks_for() {
     .unwrap();
 
     let out = fx.sky(&["db", "start"]);
-    assert!(out.status.success(), "start failed:\n{}", both(&out));
+    if !started_or_gate(&out, "start failed") {
+        return;
+    }
     let conf = std::fs::read_to_string(fx.data_dir().join("postgresql.conf")).unwrap();
 
     // The generated file NAMES the term it was sized for, so the arithmetic can

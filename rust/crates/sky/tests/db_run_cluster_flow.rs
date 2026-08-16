@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 #[path = "../src/live_gate.rs"]
 mod live_gate;
-use live_gate::{required, Need};
+use live_gate::{gate_if_postgres_cannot_start, required, Need};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -389,12 +389,44 @@ impl Run {
     /// Block until the app has printed the line proving it connected, or fail
     /// with everything it did print — a timeout with no context is a second
     /// investigation.
-    fn wait_for_connected(&self, what: &str) {
-        wait_until(
-            Duration::from_secs(180),
-            || self.output().contains("ANSWER=42"),
-            || format!("{what} never connected to the cluster. Its output:\n{}", self.output()),
-        );
+    /// Wait for the spawned run to reach its cluster, or gate.
+    ///
+    /// # Why this returns a bool
+    ///
+    /// `Fixture::new` probes for PostgreSQL BINARIES, and that is discovery,
+    /// not availability. On a host whose 32 SysV shared-memory ids
+    /// (`kern.sysv.shmmni`) are all held, the binaries are there and `initdb`
+    /// fails with `could not create shared memory segment`. This used to poll
+    /// for **180 seconds** against a child that had already died, then panic
+    /// with the postmaster's diagnostic — five tests in this file, 737 s, in a
+    /// run where `SKY_LIVE_TESTS=skip` was set. The variable this repository
+    /// documents as the only way to skip a live test could not reach them.
+    ///
+    /// Now the child's own output is classified: an unavailable environment
+    /// routes through the gate (which panics under the default `require` mode
+    /// naming the machine's words, and returns here only under `skip`), and a
+    /// child that exits without connecting fails IMMEDIATELY rather than after
+    /// the full deadline.
+    #[must_use]
+    fn wait_for_connected(&mut self, what: &str) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            let out = self.output();
+            if out.contains("ANSWER=42") {
+                return true;
+            }
+            if gate_if_postgres_cannot_start(&out) {
+                return false;
+            }
+            if self.child.try_wait().unwrap().is_some() {
+                panic!("{what} exited before it connected to the cluster. Its output:\n{out}");
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{what} never connected to the cluster. Its output:\n{out}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     fn wait_for_exit(&mut self, what: &str) -> std::process::ExitStatus {
@@ -547,7 +579,9 @@ fn sky_run_starts_a_cluster_injects_the_dsn_and_stops_it_on_exit() {
     fx.warm_build();
 
     let mut run = fx.spawn_run("basic", 0);
-    run.wait_for_connected("sky run");
+    if !run.wait_for_connected("sky run") {
+        return;
+    }
     let status = run.wait_for_exit("sky run");
     assert!(status.success(), "sky run failed:\n{}", run.output());
 
@@ -588,11 +622,15 @@ fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
 
     // First run: short-lived. Second: long enough to outlive it comfortably.
     let mut first = fx.spawn_run("first", 4_000);
-    first.wait_for_connected("the first sky run");
+    if !first.wait_for_connected("the first sky run") {
+        return;
+    }
     let started_pid = fx.postmaster_pid().expect("no postmaster after the first run connected");
 
     let mut second = fx.spawn_run("second", 30_000);
-    second.wait_for_connected("the second sky run");
+    if !second.wait_for_connected("the second sky run") {
+        return;
+    }
     assert_eq!(
         fx.postmaster_pid(),
         Some(started_pid),
@@ -654,12 +692,22 @@ fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
     fx.warm_build();
 
     let start = fx.sky(&["db", "start"]);
-    assert!(start.status.success(), "sky db start failed:\n{}", both(&start));
-    let pid = fx.postmaster_pid().expect("no postmaster after sky db start");
+    if !start.status.success() {
+        // Same classification as `wait_for_connected`: an environment that
+        // cannot start a postmaster is not a defect in `sky db start`.
+        let log = both(&start);
+        if gate_if_postgres_cannot_start(&log) {
+            return;
+        }
+        panic!("sky db start failed:\n{log}");
+    }
+    let pid = fx.postmaster_pid().expect("no postmaster after `sky db start`");
     assert_eq!(fx.entry()["explicit"].as_bool(), Some(true));
 
     let mut run = fx.spawn_run("explicit", 0);
-    run.wait_for_connected("sky run");
+    if !run.wait_for_connected("sky run") {
+        return;
+    }
     let status = run.wait_for_exit("sky run");
     assert!(status.success(), "sky run failed:\n{}", run.output());
     assert!(
@@ -705,7 +753,9 @@ fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
     // failed to land left an app holding a cluster open for two minutes, inside
     // a 30-minute job budget shared with the whole Rust suite.
     let mut doomed = fx.spawn_run("doomed", 30_000);
-    doomed.wait_for_connected("the doomed sky run");
+    if !doomed.wait_for_connected("the doomed sky run") {
+        return;
+    }
     let pid = fx.postmaster_pid().expect("no postmaster after the doomed run connected");
     assert_eq!(fx.entry()["refs"].as_array().map(Vec::len), Some(1));
 
@@ -760,7 +810,9 @@ fn sky_watch_hands_the_same_cluster_to_the_app_it_spawns() {
     // As in the SIGKILL case: long enough to still be running when the session
     // is killed, no longer. See the note there.
     let mut watch = fx.spawn_watch("watch", 30_000);
-    watch.wait_for_connected("the app sky watch spawned");
+    if !watch.wait_for_connected("the app sky watch spawned") {
+        return;
+    }
     let pid = fx.postmaster_pid().expect("no postmaster after the watched app connected");
     let socket_dir = fx.entry()["socket_dir"].as_str().unwrap().to_string();
     assert!(

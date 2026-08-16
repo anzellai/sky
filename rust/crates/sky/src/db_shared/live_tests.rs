@@ -33,6 +33,10 @@
 //! machine", out loud.
 
 use super::*;
+// The classifier lives in `live_gate` rather than here, because
+// `tests/db_cluster_flow.rs` needs the same answer and `sky` has no lib target
+// for an integration test to reach into.
+use crate::live_gate::postgres_cannot_start;
 use crate::pg_wire::{Conn, Target};
 
 /// One live cluster at a time, the mechanism `db_run_cluster_flow.rs` already
@@ -130,11 +134,58 @@ fn pg_dump(bins: &PgBins, dsn: &str, extra: &[&str]) -> std::process::Output {
         .expect("pg_dump")
 }
 
+/// The PostgreSQL binaries, or a gated skip naming why there are none.
+///
+/// Half of the availability question. [`provision_or_gate`] is the other half,
+/// and the half that used to be missing.
+#[track_caller]
+fn pg_bins_or_gate() -> Option<PgBins> {
+    match db_cluster::discover_pg_bins() {
+        Ok(b) => Some(b),
+        Err(e) => {
+            crate::live_gate::required_because(
+                crate::live_gate::Need::Postgres,
+                false,
+                &format!("no PostgreSQL binaries are discoverable: {e}"),
+            );
+            None
+        }
+    }
+}
+
+/// Provision a cluster, or a gated skip.
+///
+/// THE PROBE IS THE OPERATION. Nothing here models "can a cluster start"; it
+/// starts one and classifies the failure. A gate whose probe is a MODEL of the
+/// thing can only ever see the unavailability the model contains — which is how
+/// a host with every SysV segment taken produced thirteen panics that read like
+/// a security regression, on a run where `SKY_LIVE_TESTS=skip` was set.
+///
+/// `None` means the environment cannot run a postmaster: under the default
+/// `require` mode `required_because` has already panicked with the machine's
+/// own words; under `skip` it printed the marker and the caller returns. Any
+/// other failure still panics — the default stays "this is a defect".
+#[track_caller]
+fn provision_or_gate(opts: &Opts) -> Option<String> {
+    match provision_cluster(opts) {
+        Ok(out) => Some(out),
+        Err(e) => {
+            let e = e.to_string();
+            let Some(why) = postgres_cannot_start(&e) else {
+                panic!("provision failed:\n{e}");
+            };
+            crate::live_gate::required_because(crate::live_gate::Need::Postgres, false, &why);
+            None
+        }
+    }
+}
+
 fn provision_fixture(tag: &str) -> Option<(Fixture, String, String, String, String)> {
-    let Ok(bins) = db_cluster::discover_pg_bins() else {
-        crate::live_gate::required(crate::live_gate::Need::Postgres, false);
-        return None;
-    };
+    // The gate is consulted for BOTH kinds of unavailability now, and both
+    // routes carry a reason. It used to sit only in the `else` of
+    // `discover_pg_bins()`, so "installed but cannot start" bypassed it
+    // entirely — see [`postgres_cannot_start`].
+    let bins = pg_bins_or_gate()?;
     // Taken BEFORE initdb, released by `Fixture`'s drop after the postmaster is
     // stopped.
     let live = one_at_a_time();
@@ -156,7 +207,13 @@ fn provision_fixture(tag: &str) -> Option<(Fixture, String, String, String, Stri
         max_connections: Some(30),
         ..Opts::default()
     };
-    let out = provision_cluster(&opts).unwrap_or_else(|e| panic!("provision failed:\n{e}"));
+    let Some(out) = provision_or_gate(&opts) else {
+        // `live` is still held; dropping it releases the serialisation lock for
+        // the next test, which will reach the same verdict.
+        drop(live);
+        let _ = std::fs::remove_dir_all(&state);
+        return None;
+    };
     assert!(out.contains("cluster ready"), "{out}");
     let fx = Fixture {
         _live: live,
@@ -321,10 +378,7 @@ fn an_apps_credentials_cannot_reach_another_apps_database() {
 /// then a wrong password connects, and this test says what it read.
 #[test]
 fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
-    let Ok(bins) = db_cluster::discover_pg_bins() else {
-        crate::live_gate::required(crate::live_gate::Need::Postgres, false);
-        return;
-    };
+    let Some(bins) = pg_bins_or_gate() else { return };
     let live = one_at_a_time();
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
     let state = scratch_state_dir("adopt");
@@ -343,7 +397,23 @@ fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
         .stdout(Stdio::null())
         .output()
         .expect("initdb");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    if !out.status.success() {
+        // Same classification as `provision_or_gate`, at the one site that runs
+        // `initdb` DIRECTLY rather than through `provision_cluster`. Without it
+        // this test alone kept panicking with the postmaster's shared-memory
+        // diagnostic under `SKY_LIVE_TESTS=skip` — a fourth spelling of the
+        // same "availability is whatever the code happens to model" defect.
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        let Some(why) = postgres_cannot_start(&err) else {
+            drop(live);
+            let _ = std::fs::remove_dir_all(&state);
+            panic!("the operator's initdb failed:\n{err}");
+        };
+        drop(live);
+        let _ = std::fs::remove_dir_all(&state);
+        crate::live_gate::required_because(crate::live_gate::Need::Postgres, false, &why);
+        return;
+    }
     let conf = layout.data_dir.join("postgresql.conf");
     let mut text = std::fs::read_to_string(&conf).unwrap();
     text.push_str(&format!(
@@ -745,20 +815,21 @@ fn an_app_run_does_not_take_over_a_database_sky_did_not_create() {
 /// bits ARE the kernel's access control — asserting them is exact, not a proxy.
 #[test]
 fn the_socket_is_reachable_by_an_app_running_as_another_account() {
-    let Ok(bins) = db_cluster::discover_pg_bins() else {
-        crate::live_gate::required(crate::live_gate::Need::Postgres, false);
-        return;
-    };
+    let Some(bins) = pg_bins_or_gate() else { return };
     let live = one_at_a_time();
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
     let state = scratch_state_dir("sock");
-    provision_cluster(&Opts {
+    let provisioned = provision_or_gate(&Opts {
         state_dir: Some(state.clone()),
         start: true,
         max_connections: Some(20),
         ..Opts::default()
-    })
-    .unwrap_or_else(|e| panic!("provision failed:\n{e}"));
+    });
+    if provisioned.is_none() {
+        drop(live);
+        let _ = std::fs::remove_dir_all(&state);
+        return;
+    }
     let fx = Fixture { _live: live, layout: Layout::new(&state), bins, user: os_user().unwrap() };
     assert!(cluster_running(&fx.layout), "--start left no cluster running");
 
@@ -1160,10 +1231,7 @@ fn the_generated_launchd_jobs_pass_apples_own_parser() {
 #[cfg(target_os = "macos")]
 #[test]
 fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
-    let Ok(bins) = db_cluster::discover_pg_bins() else {
-        crate::live_gate::required(crate::live_gate::Need::Postgres, false);
-        return;
-    };
+    let Some(bins) = pg_bins_or_gate() else { return };
     let live = one_at_a_time();
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
     let state = scratch_state_dir("wrap");
@@ -1173,7 +1241,11 @@ fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
         max_connections: Some(20),
         ..Opts::default()
     };
-    provision_cluster(&opts).unwrap_or_else(|e| panic!("provision failed:\n{e}"));
+    if provision_or_gate(&opts).is_none() {
+        drop(live);
+        let _ = std::fs::remove_dir_all(&state);
+        return;
+    }
     let fx = Fixture { _live: live, layout: Layout::new(&state), bins, user: os_user().unwrap() };
     assert!(!cluster_running(&fx.layout), "the fixture wanted a stopped cluster");
 
