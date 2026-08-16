@@ -2,8 +2,10 @@
 //!
 //! The emitted Go leans on a fixed set of runtime *narrowing / erasure* helpers
 //! — `rt.Coerce[T]`, the `rt.As*` scalar/list/tuple/dict casts, `rt.Field`
-//! (reflect field access), `rt.SkyCall` (reflect HOF dispatch). These are the §8
-//! "irreducible floor": FFI return, wire decode, TEA dispatch, type-variable
+//! (reflect field access), `rt.SkyCall` (reflect HOF dispatch). Their origins,
+//! and which of them are floor, are catalogued in
+//! `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` ("doc 14" throughout
+//! this module): FFI return, wire decode, TEA dispatch, type-variable
 //! erasure. They are *sound* (each recovers to an `Err`/panic-classified path,
 //! never UB) but each one is a place the compiler gave up static type info. The
 //! fewer, the better.
@@ -29,8 +31,8 @@
 //! argument on **every invocation**. `rt.Coerce[Concrete]` is one assertion that
 //! succeeds. The two are not the same unit, and the raw count added them up.
 //!
-//! Eta-expanding an N-ary callback at its slot's shape (arch doc §5.3 as
-//! corrected 2026-08-15) therefore trades ONE never-succeeding token for N
+//! Eta-expanding an N-ary callback at its slot's shape (doc 14 §5.1)
+//! therefore trades ONE never-succeeding token for N
 //! succeeding ones. Measured on the `Std.Ui` marker scan: 318 → 126 allocations
 //! per scan, 1.36× end-to-end throughput — while the raw count ROSE on 9
 //! projects. Nine "WIDENED" verdicts on the change that closed the category.
@@ -40,9 +42,9 @@
 //!
 //! | class | what it costs | closeable? | ratchet |
 //! |---|---|---|---|
-//! | `adapter` | a `reflect.MakeFunc` thunk, paid per INVOCATION of the adapted func — i.e. once per element of every traversal it reaches. Unbounded in the site count. | **yes** — §5.3, both shapes are known at `coerce_if_needed` | **EXACT MATCH, and `--bless` refuses to raise it.** Monotone down, by construction. |
-//! | `dispatch` | `rt.SkyCall` — reflect call dispatch, paid per call. | **no** — §8.3 floor, the callee's shape exists only at runtime | fail-on-increase |
-//! | `narrow` | at most one type assertion (or one container rebuild) per evaluation of the site. Bounded by the site's own evaluation count. | per §6 category | fail-on-increase |
+//! | `adapter` | a `reflect.MakeFunc` thunk, paid per INVOCATION of the adapted func — i.e. once per element of every traversal it reaches. Unbounded in the site count. | **yes** — doc 14 §5.1, both shapes are known at `coerce_if_needed` | **EXACT MATCH, and `--bless` refuses to raise it.** Monotone down, by construction. |
+//! | `dispatch` | `rt.SkyCall` — reflect call dispatch, paid per call. | **no** — doc 14 §4.3 floor, the callee's shape exists only at runtime | fail-on-increase |
+//! | `narrow` | at most one type assertion (or one container rebuild) per evaluation of the site. Bounded by the site's own evaluation count. | per doc 14 §3 origin | fail-on-increase |
 //!
 //! `adapter` is the only class held to exact match. That is deliberate: it is the
 //! class that is *statically closeable*, so any drift — up OR down — is a fact
@@ -100,12 +102,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The tracked runtime narrowing / erasure token families, each mapped (in the
-/// doc comment) to its §8 floor category. A token is counted iff the identifier
+/// doc comment) to its doc 14 §4 floor category. A token is counted iff the identifier
 /// immediately following `rt.` is EXACTLY one of these (word-boundary matched via
 /// full-identifier extraction — `rt.Coerce` and `rt.CoerceString` are distinct,
 /// and `rt.CoerceX` for an untracked `X` counts as neither).
 ///
-/// Category legend (floor origin, doc 08 §8 / CLAUDE.md §8):
+/// Category legend (floor origin, doc 14 §4):
 ///   FFI     — Go FFI return value narrowed from `any`.
 ///   WIRE    — gob/JSON/form wire decode into a typed shape.
 ///   TEA     — TEA dispatch: `(model, cmd)` tuple + HOF reflect call.
@@ -250,9 +252,9 @@ pub fn run(args: &[String], root: &Path) -> i32 {
 /// within a class.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Class {
-    /// The site produces a `reflect.MakeFunc` thunk. Statically closeable (§5.3).
+    /// The site produces a `reflect.MakeFunc` thunk. Statically closeable (doc 14 §5.1).
     Adapter,
-    /// `rt.SkyCall` — reflect call dispatch. §8.3 irreducible floor.
+    /// `rt.SkyCall` — reflect call dispatch. doc 14 §4.3 irreducible floor.
     Dispatch,
     /// A value narrowing: one assertion (or one container rebuild) per evaluation.
     Narrow,
@@ -561,8 +563,8 @@ fn rows_to_write(
 
 /// THE monotone lock on the `adapter` class.
 ///
-/// `adapter` counts emissions that produce a `reflect.MakeFunc` thunk. Per arch
-/// doc §5.3 (corrected 2026-08-15) that category is *statically closeable* — both
+/// `adapter` counts emissions that produce a `reflect.MakeFunc` thunk. Per doc 14
+/// §5.1 that category is *statically closeable* — both
 /// the value's Go shape and the slot's Go shape are known at `coerce_if_needed`,
 /// so an adapter that appears is an adapter the lowering failed to eta-expand.
 ///
@@ -594,7 +596,7 @@ fn assert_adapter_monotone(
         "{} row(s) would RAISE the `adapter` count, and blessing cannot do that:\n  {}\n\n\
          Each of these is a `reflect.MakeFunc` thunk the lowering used to elide and \
          now emits — a cost paid per INVOCATION of the adapted function, i.e. once \
-         per element of every traversal it reaches. Per arch doc §5.3 this category \
+         per element of every traversal it reaches. Per doc 14 §5.1 this category \
          is statically closeable: both shapes are known at `coerce_if_needed` \
          (rust/crates/lower/src/lower.rs, `func_shape_eta`), so an adapter appearing \
          means the eta-expansion did not fire. Find out why — arity mismatch and a \
@@ -623,9 +625,9 @@ fn bless_golden(
          #\n\
          # adapter  — the site produces a `reflect.MakeFunc` thunk (`rt.Coerce[func(…)…]`).\n\
          #            Cost is paid per INVOCATION of the adapted func — once per element of\n\
-         #            every traversal it reaches. Statically closeable (arch doc §5.3).\n\
+         #            every traversal it reaches. Statically closeable (doc 14 §5.1).\n\
          #            EXACT MATCH: any drift fails. `--bless` REFUSES to raise it.\n\
-         # dispatch — `rt.SkyCall`, reflect call dispatch. §8.3 irreducible floor.\n\
+         # dispatch — `rt.SkyCall`, reflect call dispatch. doc 14 §4.3 irreducible floor.\n\
          #            FAIL-ON-INCREASE.\n\
          # narrow   — a value narrowing: at most one assertion (or one container rebuild)\n\
          #            per evaluation of the site. FAIL-ON-INCREASE.\n\
@@ -762,7 +764,7 @@ fn diff_and_gate(
     println!(
         "coerce-floor gate — runtime-narrowing token census BY COST CLASS\n\
          \x20 adapter  reflect.MakeFunc thunk, paid per invocation — EXACT MATCH\n\
-         \x20 dispatch rt.SkyCall, §8.3 floor                       — fail-on-increase\n\
+         \x20 dispatch rt.SkyCall, doc 14 §4.3 floor              — fail-on-increase\n\
          \x20 narrow   one assertion per evaluation                 — fail-on-increase\n"
     );
 
@@ -953,7 +955,7 @@ fn diff_and_gate(
              \x20 a reflect.MakeFunc thunk allocating a []reflect.Value on EVERY invocation —\n\
              \x20 once per element of every traversal it reaches, not once per call site.\n\
              \x20\n\
-             \x20 Per arch doc §5.3 (corrected 2026-08-15) this category is statically\n\
+             \x20 Per doc 14 §5.1 this category is statically\n\
              \x20 CLOSEABLE: both the value's Go shape and the slot's Go shape are known at\n\
              \x20 `coerce_if_needed`. So an adapter appearing means `func_shape_eta`\n\
              \x20 (rust/crates/lower/src/lower.rs) declined to eta-expand. Its documented\n\
@@ -1259,8 +1261,8 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
     // a different shape can NEVER satisfy its own `v.(T)` fast path — Go function
     // types are nominal in their parameters — so it falls to `makeFuncAdapter` →
     // `adaptFuncValueWithCapture`, a `reflect.MakeFunc` thunk that allocates on
-    // every INVOCATION (`runtime-go/rt/rt.go:5899-5907`, arch doc §5.3 as
-    // corrected 2026-08-15). A `rt.Coerce[Concrete]` is a single `v.(T)`
+    // every INVOCATION (`runtime-go/rt/rt.go:5899-5907`, doc 14 §5.1).
+    // A `rt.Coerce[Concrete]` is a single `v.(T)`
     // assertion that succeeds.
     //
     // So eta-expanding an N-ary callback into its slot's shape trades ONE
@@ -1298,7 +1300,7 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         assert_eq!(b.by_class.narrow, 2, "one precise narrowing per parameter");
     }
 
-    // `rt.SkyCall` is reflect dispatch (§8.3 floor) and must not be filed as a
+    // `rt.SkyCall` is reflect dispatch (doc 14 §4.3 floor) and must not be filed as a
     // value narrowing — it is paid per call, not per evaluation of a site.
     #[test]
     fn skycall_is_dispatch_not_narrow() {

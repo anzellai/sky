@@ -2,9 +2,9 @@
 #
 # adapter  — the site produces a `reflect.MakeFunc` thunk (`rt.Coerce[func(…)…]`).
 #            Cost is paid per INVOCATION of the adapted func — once per element of
-#            every traversal it reaches. Statically closeable (arch doc §5.3).
+#            every traversal it reaches. Statically closeable (doc 14 §5.1).
 #            EXACT MATCH: any drift fails. `--bless` REFUSES to raise it.
-# dispatch — `rt.SkyCall`, reflect call dispatch. §8.3 irreducible floor.
+# dispatch — `rt.SkyCall`, reflect call dispatch. doc 14 §4.3 irreducible floor.
 #            FAIL-ON-INCREASE.
 # narrow   — a value narrowing: at most one assertion (or one container rebuild)
 #            per evaluation of the site. FAIL-ON-INCREASE.

@@ -397,8 +397,12 @@ inward and whose result widens back. Both `from` and `to` are concrete `GoTy`s a
 that point, so the adaptation the compiler can already prove is emitted directly
 and the `rt.Coerce` — with its `reflect.MakeFunc` thunk paying a reflect dispatch
 per element — disappears. `func_shape_eta` returns `None` (leaving the runtime
-coerce in place) in exactly two cases, both documented at `lower.rs:2816-2822`:
-the source is not itself a Go func, or the arities differ.
+coerce in place) in **four** cases: the source is not itself a Go func; the
+arities differ; the source expression is a call rather than a literal, ident or
+selector (`lower.rs:2807-2822`); or a param/result narrowing would REBUILD a
+slice or map, trading an O(1) reflect box for an O(n) copy
+(`lower.rs:2832-2847`). Full catalogue:
+[`14-runtime-narrowing-taxonomy.md`](14-runtime-narrowing-taxonomy.md) §5.1.
 
 > **Why this section is written this way.** The removed text described the
 > monomorphiser in the present tense with no aspirational marker, and **the same
@@ -455,13 +459,31 @@ not get "unused" diagnostics out of it.
 ## 6. The central goal — coercion is the exception, enumerated
 
 The typed IR makes `Coerce` a node the lowerer must *justify*. Every insertion
-site is one of a small allowlist; `classify_coercion` returns the `CoerceReason`
-and `bug!()`s on anything else (L6/L7). Mapping the 8 documented residual classes
+site is one of a small allowlist — **nine sites, all in `lower.rs`**, each
+stamping a `CoerceReason` (`ir.rs:71-91`) that renders as a `/* … */` comment.
+The full catalogue, with each site's line and its floor classification, is
+[`14-runtime-narrowing-taxonomy.md`](14-runtime-narrowing-taxonomy.md) §3.
+
+> **There is no `classify_coercion`.** An earlier version of this paragraph said
+> the allowlist was enforced by a `classify_coercion` that "returns the
+> `CoerceReason` and `bug!()`s on anything else". No such function exists
+> (`grep -rn classify_coercion rust/crates` returns nothing). The allowlist is
+> enforced by there being only nine construction sites, which
+> `grep -rn 'CoerceReason::' rust/crates/lower/src/lower.rs` enumerates — not by
+> a runtime check.
+>
+> **The reason is inferred from the shape, and is often wrong about the origin.**
+> `coerce_if_needed` stamps `FfiReturn` on *any* `any → T` narrowing
+> (`lower.rs:2736-2740`), so a kernel return and a string-concat operand carry
+> `/* FFI return */` too. `WireDecode` and `TeaDispatch` are never stamped by the
+> lowerer at all. Do not census origins by the comment; see doc 14 §3.1.
+
+Mapping the 8 documented residual classes
 (`docs/history/v0.17/rt-coerce-residual-surface.md`) onto the rewrite:
 
 | # | Haskell residual class | Sites (26-ui) | Fate under the typed IR |
 |---|---|---|---|
-| 1 | Sealed-iface ctor narrowing | 80+ | **Deleted.** Sealed-iface ADT emission (Haskell #677, deferred) is the default here: a ctor already returns the interface type, so `from == to`, no wrap. |
+| 1 | Sealed-iface ctor narrowing | 80+ | **Deleted for APP-module ADTs**, where sealed-iface emission (Haskell #677, deferred) is the default: a ctor already returns the interface type, so `from == to`, no wrap. **NOT deleted for stdlib ADTs** — `should_seal_prefix` (`lower.rs:1774-1778`) excludes every `Sky_Core_*` / `Std_*` / `Sky_Http_*` union, so `Std_Ui_Element` and `Std_Ui_Attribute` stay on the `rt.SkyADT` bag and every payload read narrows. That is the largest open bucket; doc 14 §4.5. |
 | 2 | Parametric record-alias | 63+ | **Deleted** for typed paths — `Cfg_R[Msg]` flows structurally (§3). Survives *only* at a genuine `any` source (JSON/DB row) as reason `WireDecode`. |
 | 3 | Typed list narrowing `AsListT[T]` | 458+ (dominant) | **Deleted** for typed literals — `SliceLit(GoTy, …)` is born typed. Survives only wrapping a genuinely-`any` runtime slice (`WireDecode`). |
 | 4 | Container Maybe/Result/Task | 15+ | **Deleted** for typed paths — containers are `Named("rt.SkyMaybe",[T])`; the payload type is carried, not re-narrowed. |
@@ -470,11 +492,16 @@ and `bug!()`s on anything else (L6/L7). Mapping the 8 documented residual classe
 | 7 | Map/Dict narrowing | 5+ | Survives only at genuine `any` source (`WireDecode`). |
 | 8 | Generic-param erasure | 3+ | **Deleted** — `GoTy::TyVar(id)` in scope unifies by `==`; no widen-to-`any`-then-recover dance (the whole point of the enclosing-scope T-var hack). |
 
-What remains is exactly the **irreducible floor** named by L10 §8: values that
-enter Sky as genuine `any` — a **Go FFI return**, a **gob/JSON wire decode**, a
-**TEA `reflect.MakeFunc` dispatch**. Those are the only `CoerceReason`s that
-legitimately survive, and each is a small, countable set rather than a
-per-expression reflex. The reproducibility + soundness gates (L4/L6, tested in
+What remains is a **floor plus a residue**, and the two are not the same thing.
+The floor is values that enter Sky as genuine `any` — a **Go FFI return**, a
+**gob/JSON wire decode**, a **TEA `reflect.MakeFunc` dispatch**. The residue is
+closeable narrowings that have not been closed: the stdlib-ADT payload reads
+(row 1 above), the kernel-return narrowing, and the string-concat operand. The
+authority on which is which is
+[`14-runtime-narrowing-taxonomy.md`](14-runtime-narrowing-taxonomy.md) §4, and
+its §1 test is what separates them: **both shapes known at emit time →
+closeable; a shape that exists only at run time → floor.** The
+reproducibility + soundness gates (L4/L6, tested in
 [`11`](11-testing-and-verification.md)) assert the coerce-site count on the
 corpus stays at the floor and never regresses toward the Haskell surface.
 
