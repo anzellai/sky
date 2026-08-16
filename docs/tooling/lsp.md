@@ -13,9 +13,20 @@ if hover/completion don't appear). The stdlib is resolved from the
 compiler's embedded copy, so hover, completion, and go-to work in any
 project — not only inside the compiler repo.
 
-**LSP contract (100 % coverage)**: every USED symbol class has hover +
-goto-definition coverage. 17 end-to-end tests via the headless
-Neovim gate driver (`scripts/lsp-test-nvim.{lua,sh}`):
+**LSP contract**: every USED symbol class has hover + goto-definition
+coverage. The gate asserts an exact case count — `LSP_EXPECTED: u64 = 49`
+(`rust/crates/xtask/src/harness/bodies.rs:2758`), enforced at `:2902` so a
+case that silently stops running fails the build. `docs/rust-rewrite/11`
+decomposes that as 17 symbol-class + 32 corpus.
+
+> **This heading said "(100 % coverage)" and listed a total of 20 (17 + 3),
+> which disagrees with the 49 the gate enforces.** The "100 %" figure has no
+> derivation behind it — there is no denominator anywhere — so it is dropped
+> rather than restated. The 17 below are the symbol-class half; take the
+> total from `LSP_EXPECTED`, not from this page.
+
+The 17 symbol-class cases run via the headless Neovim gate driver
+(`scripts/lsp-test-nvim.{lua,sh}`):
 
 - hover-task-run, hover-field, hover-type-name
 - hover-function-use, hover-ctor-use, hover-lambda-param,
