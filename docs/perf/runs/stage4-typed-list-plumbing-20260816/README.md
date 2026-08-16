@@ -438,6 +438,107 @@ profiles:
 Flat across three repeats **and** across a 10× change in view size. The target
 was structural, which is what licensed the work.
 
+## Verification
+
+Sequential, each leg bounded through `scripts/lib/with-timeout.sh`, nothing
+piped through `tail`.
+
+| leg | verdict | what it asserted |
+|---|---|---|
+| `cargo test --workspace` | **PASS** 313 s | |
+| `go test -race ./rt/...` (`CGO_ENABLED=1`) | **PASS** 97 s | |
+| `xtask roundtrip` | **PASS** | 173/173 byte-exact, 0 error nodes |
+| `xtask infer` | **PASS** | 55/55 examples clean, 0 type errors |
+| `xtask resolve` | **PASS** | 0 class-(a) unresolved names |
+| `xtask repro` | **PASS** 148 s | |
+| `xtask build-run --golden --all` | **PASS** 344 s | **24/24** goldens matched |
+| `scripts/example-sweep.sh` | **PASS** 185 s | 29 passed, 0 failed |
+| `scripts/doc-examples.sh` | **PASS** | 14/14 doc examples compile |
+| `19-skyforum` Playwright e2e | **PASS** | loads, clicks upvote, no console errors |
+| `xtask coerce-floor` | **RED** | see below — **pre-existing** |
+
+**Two of these were initially wrong, and the fault was mine rather than the
+code's.** `example-sweep.sh` needs `sky-out/sky` and said so (exit 2 in 0 s —
+correct gate hygiene). And `xtask build-run --golden` **selects a subset without
+`--all`**: it reported `GOLDEN GATE: PASS (8 CLI example(s) matched)` while
+noting that **16 committed goldens had no emitting example this run**
+("env-tolerant, not gated"). A third of the corpus, passing. With `--all` it is
+24/24. Anyone verifying a codegen change against the goldens should pass
+`--all`; the default is not the gate you think you ran.
+
+The e2e is thin — one page load, one upvote click, one 551-byte body — so it
+confirms the app is not broken, not that it is correct in detail. The
+`--golden --all` run is the load-bearing behavioural gate here.
+
+### `coerce-floor` is red, and it was red before this work
+
+The gate fails on its **exact-match `adapter` class**: `35-composite-generics`
+6 → 2 and `apps/fieldbook` 4 → 1. The gate's own message calls this "a WIN"
+that fails because an unrecorded win leaves slack a regression could hide in.
+
+**Checked rather than assumed:** a worktree at the base commit `4234ca05`,
+built and run through `coerce-floor`, produces the **identical failure** with the
+identical two projects and numbers. This work did not cause it; Stage 3 left it
+deliberately unblessed and it is still unblessed.
+
+**The brief's warning about blessing is now out of date, and worth correcting.**
+Five projects still do not emit here — `03-tea-external`, `05-mux-server`,
+`08-notes-app`, `11-fyne-stopwatch` (no generated Go FFI surface) and
+`13-skyshop` (unfetched Sky dependency). But `bless_golden` no longer drops
+their rows: it **carries each forward at its last measured floor**, with a source
+comment stating that dropping them "would silently retire their locked floor on
+whichever machine happened to run the bless". The fake-improvement hazard is
+closed in the gate itself. **Not blessing anyway** — the adapter win belongs to
+whoever earned it, and rolling it into this stage's ratchet would mis-attribute
+it.
+
+### The narrow census moved, and it still does not predict the win
+
+`narrow` fell in **every** project and rose in none. Per project, base → HEAD:
+
+```
+apps/fieldbook          -45   sky-bundled/console   -26   16-skychess     -23
+26-ui-showcase          -21   37-composite-live-shop -21  38-composite-ui -21
+17-skymon               -17   00-standard-libs      -15   apps/dispatch   -14
+19-skyforum             -12   25-sky-console        -10   apps/ledger      -8
+52-blog-analytics        -7   24-tui-kitchen-sink    -6   31-webview       -6
+18-job-queue             -5   35-composite-generics  -5   12-skyvote       -4
+55-store-partial-update  -4   07-todo-cli            -3   36-composite     -2
+27-multi-session-chat    -1
+```
+
+**−276 across the 22 projects present in both runs** (−289 including five that
+newly moved). Against a corpus `narrow` total near 6,600 that is roughly
+**−4.4% of sites**, and it produced a **−21.9% object count**. Stage 3 saw −5.3%
+sites → −23% objects and drew the lesson; this is a sharper instance of it.
+**Do not size a perf change from `coerce-floor`.**
+
+## Falsification — which mutations make which gate red
+
+Each mutation asserts the pre-state literal is present, that the mutation landed,
+and that it is gone after revert. `harness/mutate.sh`.
+
+| # | mutation | gate | result |
+|---|---|---|---|
+| **S1** | `List_appendT` aliases its left operand again (`return append(a, b...)`) | `go test TestListAppendT_…` | **RED** — this is how the bug was found: the test was written first and failed against the original one-liner |
+| **S4** | the twin is called with its operands **swapped** | `xtask build-run --golden --all` | **RED** — `55-store-partial-update` MISMATCH, *"compiles but computes a different answer"* |
+| **S7** | `List_isEmptyT` returns `len(xs) != 0` | `go test TestListIsEmptyT_… / TestListUnaryT_…` | **RED** — 3 tests, including the nil-typed-slice case |
+| **S3** | the `++` predicate stops requiring `provable(le)` | `xtask build-run --all` | **GREEN — and that is a finding, not a pass** |
+
+**S3 is unfalsifiable on this corpus and the null is recorded.** Dropping
+`provable(le)` changes the emitted Go **not at all**: `26-ui-showcase` emits
+exactly 14 `rt.List_appendT[…]` with and without the guard, and the whole corpus
+builds 55/55. The guard defends against `GoTy::TyVar` leaking into an
+instantiation and against the D2 `lower_lambda` anonymous-struct re-pinning trap
+— neither of which any project in the corpus exercises **in `++` position**. It
+stays, because the failure it prevents is a miscompile and the cost of keeping it
+is zero, but nothing in the repo tests it and this document should not pretend
+otherwise.
+
+Two more mutations (`S2` unequal element types, `S6` the unary `provable` guard)
+are scripted and **were not run** for time. By S3's result they are likely to be
+unfalsifiable in the same way; that is a prediction, not a measurement.
+
 ## What the gates would NOT have caught
 
 * **`xtask coerce-floor` counts sites, not executions.** It cannot see the
@@ -445,10 +546,12 @@ was structural, which is what licensed the work.
   evaluation and emits no token. It also cannot weight by frequency: the five
   `++` in `renderNodeAs` run once per rendered element. Do not size this change,
   or any perf change, from the census.
-* **Every corpus gate passes the aliasing bug.** `append(a, b...)` returns the
-  right *value*; it corrupts a *different* value, and only when the left operand
-  carries spare capacity. Nothing in `infer` / `roundtrip` / `golden` /
-  `example-sweep` constructs that condition. The regression test does.
+* **The aliasing bug is caught by exactly one thing, and it is the new test.**
+  `append(a, b...)` returns the right *value*; it corrupts a *different* value,
+  and only when the left operand carries spare capacity. Nothing in `infer` /
+  `roundtrip` / `golden` / `example-sweep` constructs that condition.
+* **`provable` on `++` is untested** — see S3 above. A guard against a miscompile
+  class that the corpus does not contain is a guard no gate can defend.
 * **Byte-identical page length is a weak check.** It would not catch a reordering
   that preserved length, which is why the `golden` gate (whole-program stdout)
   and the `19-skyforum` e2e are the load-bearing correctness gates here.

@@ -37,7 +37,11 @@ WT="${WT:-/Users/anzel/works/playground/sky-stage4}"
 LOG="${LOG:-/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/stage4/mutate-$$-$(date +%s).log}"
 LOWER="$WT/rust/crates/lower/src/lower.rs"
 RT="$WT/runtime-go/rt/rt.go"
-SED=/usr/bin/sed
+# BSD sed (/usr/bin/sed on macOS) reads the argument after -i as a BACKUP SUFFIX,
+# so `sed -i "s/a/b/" f` dies with "command a expects \\ followed by text" and the
+# edit silently does not land. edge2 caught that rather than reporting a false
+# red, which is exactly what edge2 is for. Everything mutates via perl instead.
+SED="/usr/bin/sed -i.mutbak"
 PERL=/usr/bin/perl
 
 M="${1:?usage: mutate.sh S1|S2|S3|S4|S5|S6|S7}"
@@ -102,7 +106,7 @@ case "$M" in
   S2)
     F="$LOWER"; PRE="if le == re && provable(le) {"; MUT="if provable(le) { // MUTANT-S2"
     pre "$F" "$PRE"
-    $SED -i 's|if le == re \&\& provable(le) {|if provable(le) { // MUTANT-S2|' "$F"
+    $PERL -0pi -e 's|if le == re \&\& provable(le) {|if provable(le) { // MUTANT-S2|' "$F"
     post "$F" "$MUT"
     echo "--- expect RED: cargo build then sky build 19-skyforum ---"
     (cd "$WT/rust" && cargo build --release -p sky 2>&1 | tail -3)
@@ -111,7 +115,7 @@ case "$M" in
   S3)
     F="$LOWER"; PRE="if le == re && provable(le) {"; MUT="if le == re { // MUTANT-S3"
     pre "$F" "$PRE"
-    $SED -i 's|if le == re \&\& provable(le) {|if le == re { // MUTANT-S3|' "$F"
+    $PERL -0pi -e 's|if le == re \&\& provable(le) {|if le == re { // MUTANT-S3|' "$F"
     post "$F" "$MUT"
     echo "--- expect RED: cargo build then the corpus ---"
     (cd "$WT/rust" && cargo build --release -p sky 2>&1 | tail -3)
@@ -120,7 +124,7 @@ case "$M" in
   S4)
     F="$LOWER"; PRE="vec![l, r],"; MUT="vec![r, l], // MUTANT-S4"
     pre "$F" "$PRE"
-    $SED -i 's|vec!\[l, r\],|vec![r, l], // MUTANT-S4|' "$F"
+    $PERL -0pi -e 's|vec!\[l, r\],|vec![r, l], // MUTANT-S4|' "$F"
     post "$F" "$MUT"
     echo "--- expect RED: xtask build-run --golden ---"
     (cd "$WT/rust" && cargo build --release -p sky 2>&1 | tail -3)
@@ -130,7 +134,7 @@ case "$M" in
     F="$LOWER"; PRE='"rt.List_isEmpty" => Some(("rt.List_isEmptyT", GoTy::Bare(Prim::Bool))),'
     MUT='"rt.List_isEmpty" => Some(("rt.List_lengthT", GoTy::Bare(Prim::Bool))), // MUTANT-S5'
     pre "$F" "$PRE"
-    $SED -i 's|"rt.List_isEmpty" => Some(("rt.List_isEmptyT", GoTy::Bare(Prim::Bool))),|"rt.List_isEmpty" => Some(("rt.List_lengthT", GoTy::Bare(Prim::Bool))), // MUTANT-S5|' "$F"
+    $PERL -0pi -e 's|"rt.List_isEmpty" => Some(("rt.List_isEmptyT", GoTy::Bare(Prim::Bool))),|"rt.List_isEmpty" => Some(("rt.List_lengthT", GoTy::Bare(Prim::Bool))), // MUTANT-S5|' "$F"
     post "$F" "$MUT"
     echo "--- expect RED: cargo build then sky build 19-skyforum ---"
     (cd "$WT/rust" && cargo build --release -p sky 2>&1 | tail -3)
@@ -149,7 +153,7 @@ case "$M" in
     F="$RT"; PRE="func List_isEmptyT[A any](xs []A) bool { return len(xs) == 0 }"
     MUT="func List_isEmptyT[A any](xs []A) bool { return len(xs) != 0 }"
     pre "$F" "$PRE"
-    $SED -i 's|func List_isEmptyT\[A any\](xs \[\]A) bool { return len(xs) == 0 }|func List_isEmptyT[A any](xs []A) bool { return len(xs) != 0 }|' "$F"
+    $PERL -0pi -e 's|func List_isEmptyT\[A any\](xs \[\]A) bool { return len(xs) == 0 }|func List_isEmptyT[A any](xs []A) bool { return len(xs) != 0 }|' "$F"
     post "$F" "$MUT"
     echo "--- expect RED: go test TestListIsEmptyT / TestListUnaryT ---"
     (cd "$WT/runtime-go" && go test -timeout 240s -run 'TestListIsEmptyT|TestListUnaryT' ./rt/); echo "gate exit=$?"
