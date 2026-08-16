@@ -573,7 +573,17 @@ Keyed.column [ Ui.spacing 8 ]
     ]
 ```
 
-`Lazy` currently no-ops (the wrapper is in place; runtime memoisation is deferred). `Keyed.*` emits the `sky-key` attribute so Sky.Live's diff algorithm can identify children across re-renders.
+`Lazy` **memoises for real** — it is a bounded process-wide LRU in
+`runtime-go/rt/lazy.go` (kernel-mapped at
+`rust/crates/lower/src/kernel.rs:583-587`), keyed on the function pointer plus
+an injective fingerprint of each argument, capped at 1024 entries
+(`SKY_UI_LAZY_CAP` overrides). This line previously said it no-ops, which
+contradicted the support table further down this same file — see
+`docs/stdlib.md` under `Std.Ui.Lazy` for the four caveats that decide whether it
+is worth using (a hit still pays the whole render walk; the key is a reflective
+deep walk paid on hits too; the LRU is shared across sessions; a locally-built
+closure never hits). `Keyed.*` emits the `sky-key` attribute so Sky.Live's diff
+algorithm can identify children across re-renders.
 
 ## Responsive
 
