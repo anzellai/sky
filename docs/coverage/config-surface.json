@@ -54,7 +54,7 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1576 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:3449 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:3450 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:143 (toml_value)"
@@ -235,7 +235,7 @@
   ],
   "summary": {
     "accepted_sky_toml_keys": 30,
-    "documented_names": 88,
+    "documented_names": 89,
     "documented_without_reader": 9,
     "pre_binary_surfaces": 14,
     "read_without_doc": 28,

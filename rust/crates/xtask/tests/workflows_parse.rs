@@ -611,3 +611,106 @@ fn the_job_level_context_check_catches_the_shape_that_broke_nightly_sweep() {
         assert!(hits.is_empty(), "false positive on `{ok}`: {hits:?}");
     }
 }
+
+/// The census + ratchet gates must run on a PR, not only at release.
+///
+/// # The defect
+///
+/// `config-surface` and `config-matrix` are both `Tier::T1`, and the repo's
+/// only `harness --tier t1` invocation lived in `release.yml`; `denominators
+/// --check` and `coverage-ledger --check` were likewise release-only steps.
+/// Gate selection is exact tier equality, so nothing on a pull request could
+/// reach any of them.
+///
+/// The consequence was live on this branch: `xtask config-surface --check` was
+/// RED on a clean tree at HEAD — `STALE — summary.documented_names: 88 -> 89` —
+/// because `SKY_HTTP_CLIENT_TIMEOUT` was added one commit AFTER the census was
+/// regenerated. The series left its own gate red at merge and nothing noticed,
+/// because nothing ran it until a tag was cut.
+///
+/// # What this asserts
+///
+/// Each invocation below appears in the `run:` body of a `rust-ci.yml` job that
+/// `ci-green` fans in — the only place a step both runs on a PR AND blocks a
+/// merge. Parsed, never grepped as raw text: a comment mentioning an invocation
+/// must not vouch for one, which is exactly how the sibling tier-invocation
+/// test was defeated once already.
+const REQUIRED_ON_PR: &[(&str, &str)] = &[
+    (
+        "config-surface --check",
+        "the sky.toml + env census. Drifts on any commit that adds a documented \
+         name or a reader, which is to say on ordinary work",
+    ),
+    (
+        "denominators --check",
+        "how much surface exists. A DECREASE is a coverage claim shrinking",
+    ),
+    (
+        "coverage-ledger --check",
+        "how strongly each surface is covered. A surface getting weaker fails here",
+    ),
+    (
+        "--only config-matrix",
+        "every covered setting's effective value, observed from running binaries",
+    ),
+];
+
+#[test]
+fn the_census_and_ratchet_gates_run_on_a_pull_request() {
+    let path = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/workflows/rust-ci.yml"
+    ));
+    let text = std::fs::read_to_string(&path).expect("read rust-ci.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("rust-ci.yml parses");
+    let jobs = doc.get("jobs").and_then(|j| j.as_mapping()).expect("`jobs` mapping");
+
+    // Only jobs the required check fans in count: a step in a job `ci-green`
+    // does not need can go red while the merge proceeds.
+    let fanned: Vec<String> = jobs
+        .get(serde_yaml::Value::from("ci-green"))
+        .and_then(|g| g.get("needs"))
+        .and_then(|n| n.as_sequence())
+        .map(|s| s.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
+        .expect("ci-green declares a `needs` list");
+    assert!(
+        fanned.len() > 5,
+        "ci-green fans in only {} job(s) — the parse is wrong",
+        fanned.len()
+    );
+
+    let mut haystack = String::new();
+    for (name, job) in jobs {
+        let Some(name) = name.as_str() else { continue };
+        if !fanned.contains(&name.to_string()) {
+            continue;
+        }
+        let Some(steps) = job.get("steps").and_then(|s| s.as_sequence()) else {
+            continue;
+        };
+        for step in steps {
+            if let Some(run) = step.get("run").and_then(|r| r.as_str()) {
+                haystack.push_str(run);
+                haystack.push('\n');
+            }
+        }
+    }
+    assert!(
+        haystack.contains("xtask"),
+        "no `xtask` invocation found in any fanned-in job's `run:` body — the \
+         scan is broken, not the repo"
+    );
+
+    let missing: Vec<String> = REQUIRED_ON_PR
+        .iter()
+        .filter(|(inv, _)| !haystack.contains(inv))
+        .map(|(inv, why)| format!("`{inv}` — {why}"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "gate invocation(s) run only at RELEASE, so drift lands on `main` \
+         unnoticed and is discovered when a tag is cut:\n  {}\n\n\
+         Add each to a `rust-ci.yml` job that `ci-green` needs.",
+        missing.join("\n  ")
+    );
+}
