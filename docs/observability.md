@@ -252,6 +252,22 @@ Old rows are deleted on a schedule: analytics on the window given by
 `SKY_ANALYTICS_RETENTION` (unset keeps everything), telemetry at 24 h for logs
 and spans and 7 d for metrics.
 
+**A failed prune cycle costs the cycle, never the pruner.** Both pruners
+(`analyticsPruneOnce` in `runtime-go/rt/analytics_store.go`,
+`persistence.pruneCycle` in `runtime-go/rt/telemetry/persist.go`) recover
+per cycle and log what they caught — a `warn` on `analytics.retention_prune_
+panicked` / `analytics.retention_prune_failed`, and `telemetry persistence
+prune panicked` / `… prune failed` on the telemetry side. Each was previously
+missing one half of that: the analytics pruner recovered around its whole
+ticker loop, so the first panic ended retention for the process lifetime and
+discarded every `Exec` error on the way; the telemetry pruner checked its
+error but had no recover at all. Both failure modes are silent, and both end
+with an event table that grows without bound. If you see one of these warns
+repeating hourly, the store is refusing writes — check permissions and the
+lock timeout; the table is still growing while it repeats. The gates are
+`analytics-retention-survives-a-panic` and
+`analytics-prune-errors-are-reported`.
+
 On PostgreSQL these are `DELETE`s, which leave dead tuples for autovacuum to
 reclaim. Declarative range partitioning with retention by `DROP` of whole
 partitions — instant, and no vacuum debt — is the right shape for append-only

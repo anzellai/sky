@@ -266,19 +266,81 @@ func analyticsStartRetention(db *sql.DB) {
 	if window <= 0 {
 		return
 	}
-	go func() {
-		defer func() { _ = recover() }()
-		prune := func() {
-			cutoff := time.Now().Add(-window).UnixMilli()
-			_, _ = db.Exec(analyticsQ(`DELETE FROM analytics_events WHERE ts < ?`), cutoff)
-		}
-		prune() // once at startup
-		t := time.NewTicker(6 * time.Hour)
-		defer t.Stop()
-		for range t.C {
-			prune()
+	go analyticsRetentionLoop(db, window, nil)
+}
+
+// analyticsPruneExecer is the one method the pruner needs from the store. A
+// narrow interface rather than *sql.DB so the retention gates can inject an
+// Exec that panics or fails — the two behaviours the loop has to survive.
+type analyticsPruneExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// analyticsRetentionInterval is the prune period. A var, not a const, so the
+// regression gate can drive several cycles in milliseconds instead of waiting
+// six hours for the second one — which is what made this defect invisible.
+var analyticsRetentionInterval = 6 * time.Hour
+
+// qAnalyticsRetentionPrune is the retention DELETE. `ts` is indexed
+// (idx_analytics_ts), so this is a range delete, not a table scan.
+const qAnalyticsRetentionPrune = `DELETE FROM analytics_events WHERE ts < ?`
+
+// analyticsPruneOnce runs ONE retention cycle.
+//
+// # Why recover lives here and not around the loop
+//
+// It used to sit at the retention goroutine's top level:
+//
+//	go func() {
+//	    defer func() { _ = recover() }()
+//	    ...
+//	    for range t.C { prune() }
+//	}()
+//
+// which is the shape that looks defensive and is the opposite. A panic
+// anywhere inside a cycle unwinds PAST the ticker loop, the deferred recover
+// swallows it, and the goroutine returns — retention is then dead for the
+// whole process lifetime, silently, and the table grows without bound. The
+// recover has to be scoped to the unit of work you are willing to lose. Here
+// that is one cycle: the next tick tries again six hours later.
+//
+// The panic is also LOGGED. A recover that discards what it caught is how a
+// permanently-dead pruner produced no evidence at all.
+func analyticsPruneOnce(db analyticsPruneExecer, window time.Duration) {
+	defer func() {
+		if r := recover(); r != nil {
+			logStructured("warn", "analytics.retention_prune_panicked",
+				"detail", "analytics retention prune panicked — this cycle is lost, the next tick will retry",
+				"panic", fmt.Sprintf("%v", r))
 		}
 	}()
+	cutoff := time.Now().Add(-window).UnixMilli()
+	// The error is CHECKED. `_, _ = db.Exec(...)` made a permissions failure,
+	// a lock timeout and a dropped table indistinguishable from success, so a
+	// pruner that had never once deleted a row looked identical to a healthy
+	// one.
+	if _, err := db.Exec(analyticsQ(qAnalyticsRetentionPrune), cutoff); err != nil {
+		logStructured("warn", "analytics.retention_prune_failed",
+			"detail", "analytics retention prune failed — events older than the window are still on disk",
+			"error", err.Error())
+	}
+}
+
+// analyticsRetentionLoop prunes once at startup and then on every tick, until
+// `stop` closes (nil for the process-lifetime pruner). It carries NO recover
+// of its own — see analyticsPruneOnce for why that is the point.
+func analyticsRetentionLoop(db analyticsPruneExecer, window time.Duration, stop <-chan struct{}) {
+	analyticsPruneOnce(db, window) // once at startup
+	t := time.NewTicker(analyticsRetentionInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			analyticsPruneOnce(db, window)
+		}
+	}
 }
 
 // analyticsRetentionWindow parses SKY_ANALYTICS_RETENTION — a Go duration

@@ -39,6 +39,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -747,16 +748,49 @@ func (p *persistence) pruner(s *Store) {
 		case <-p.stop:
 			return
 		case <-timer.C:
-			if err := p.runPrune(); err != nil {
-				s.logs.append(LogEntry{
-					TS:      time.Now(),
-					Level:   "warn",
-					Message: "telemetry persistence prune failed",
-					Fields:  map[string]string{"error": err.Error()},
-				})
-			}
+			p.pruneCycle(s)
 			timer.Reset(1 * time.Hour)
 		}
+	}
+}
+
+// pruneCycle is ONE retention sweep, with its own recover.
+//
+// # Why the recover is here and not around the loop
+//
+// This pruner checked and logged `runPrune`'s error from the day it was
+// written, and had no recover at all — the mirror image of the analytics
+// pruner, which recovered at the goroutine's top level and discarded the
+// error. Each was missing exactly what the other had, and both failure modes
+// end the same way: telemetry retention stops for the process lifetime and
+// the rings' backing tables grow without bound.
+//
+// A panic in here is not hypothetical. `runPrune` drives a database/sql
+// driver: modernc's SQLite and pgx both panic on a closed/nil underlying
+// handle, and a driver that panics once will panic every hour — which is why
+// the recover is scoped to the CYCLE. Wrapping the loop instead would turn
+// the first panic into permanent silence.
+func (p *persistence) pruneCycle(s *Store) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "telemetry persistence prune panicked",
+				Fields: map[string]string{
+					"panic":  fmt.Sprintf("%v", r),
+					"detail": "this cycle is lost; the next hourly tick will retry",
+				},
+			})
+		}
+	}()
+	if err := p.runPrune(); err != nil {
+		s.logs.append(LogEntry{
+			TS:      time.Now(),
+			Level:   "warn",
+			Message: "telemetry persistence prune failed",
+			Fields:  map[string]string{"error": err.Error()},
+		})
 	}
 }
 
