@@ -285,8 +285,14 @@ fn allocs_per_scan(tag: &str) -> f64 {
 ///
 /// With the `reflect.MakeFunc` adapter in place each of the 36 element visits
 /// allocates a `[]reflect.Value` plus a re-boxed argument; without it the scan
-/// pays only the list erasure (`rt.AsListT[any]`, once per `List.any` call, plus
-/// the runtime's `any`-taking `SkyLen`/`SkyElem`). Measured: 318 → 126.
+/// paid only the list erasure (`rt.AsListT[any]`, once per `List.any` call, plus
+/// the runtime's `any`-taking `SkyLen`/`SkyElem`). Measured: 318 → 126 → **12**.
+///
+/// The last step is Stage 3, and it removed the erasure the middle number was
+/// made of: `List.any` is pure Sky, so a provable call site is now re-pointed at
+/// `rt.List_anyT[Main_Attr]` and there is no `[]any` to rebuild and no `any` to
+/// box per access. What is left is the six `Attr` values the fixture's own
+/// `sample` builds.
 ///
 /// What this leg does NOT catch: a change that preserves the allocation count
 /// while costing time elsewhere, and any shape this one fixture omits.
@@ -307,21 +313,21 @@ fn hof_callback_costs_no_reflect_allocation_per_element() {
     );
 }
 
-/// Measured on this fixture, M1, Go 1.25, and stable to the unit across repeat
-/// runs: **318** allocations per scan with the `reflect.MakeFunc` adapter, **126**
-/// without it.
+/// Measured on this fixture, M1, and stable to the unit across repeat runs
+/// (three consecutive): **318** allocations per scan with the `reflect.MakeFunc`
+/// adapter, **126** with the adapter gone but `List.any` still erased, **12**
+/// once the provable call site routes to `rt.List_anyT`.
 ///
-/// 126 is not zero, and the gap is not a rounding error — it is the OTHER
-/// erasure on this path, which the eta-expansion deliberately does not touch:
-/// `rt.AsListT[any]` rebuilds the six-element list on each of the six
-/// `List.any` calls, and the runtime's `SkyLen`/`SkyElem` helpers take `x any`,
-/// so the slice header is re-boxed per access. Assert what was actually fixed.
+/// The budget now has to catch TWO regressions, not one, so it sits below the
+/// middle measurement rather than below the top one — 126 must go red, or Stage
+/// 3 could silently unwind and the gate would still report PASS. 40 gives 3.3×
+/// clearance above the honest 12 (so a runtime tweak to the list helpers cannot
+/// flake it) and 3.15× below 126 (so a return to the erased helper cannot slip
+/// under it).
 ///
-/// The budget sits between the two measurements with ~1.6× clearance on each
-/// side: comfortably above the honest cost so a runtime tweak to the list
-/// helpers cannot flake it, and comfortably below the adapter's cost so the
-/// regression it exists to catch cannot slip under it.
-const ALLOC_BUDGET_PER_SCAN: f64 = 200.0;
+/// It was 200 while 126 was the honest cost. Lowering it is the ratchet; raising
+/// it to make a measurement fit would be the thing this gate exists to prevent.
+const ALLOC_BUDGET_PER_SCAN: f64 = 40.0;
 
 /// EMISSION LEG — the defect verbatim, checkable with no Go toolchain. A func
 /// value whose Go shape differs from its slot's ONLY in the params/result (same
@@ -348,10 +354,31 @@ fn hof_callback_is_eta_expanded_not_runtime_coerced() {
              thunk, paid once per ELEMENT VISIT. Eta-expand at the slot's shape \
              instead. Emitted:\n{body}"
         );
+        // The callback must reach the scan STATICALLY SHAPED at the element
+        // type. There are two ways that is true, and Stage 3 added the second:
+        //
+        //   * an eta-expanded closure whose params carry the SLOT's types
+        //     (`_e<n>`) and narrow inward — the Stage-1 bridge across
+        //     `List.any`'s erased `func(any) bool` slot;
+        //   * the call is re-pointed at the typed runtime twin
+        //     (`rt.List_anyT[Main_Attr]`), so there is no erased slot to bridge
+        //     and no bridge is emitted at all. `anyWide` then passes
+        //     `Main_isWide` by NAME and `hasMarker` passes its closure already
+        //     at `func(Main_Attr) bool`.
+        //
+        // The second is the stronger statement: with the eta form the emitter
+        // vouches for the callback's shape, whereas `rt.List_anyT[Main_Attr]`
+        // makes GO's type checker refuse anything that is not `func(Main_Attr)
+        // bool` — and the build leg below runs `go build`. What must never
+        // return is the erased slot with a reflect adapter across it, which the
+        // `rt.Coerce[func(` assertion above owns.
+        let typed_twin = body.contains("rt.List_anyT[");
         assert!(
-            body.contains("func(_e"),
-            "{def} must bridge the callback through an eta-expanded closure whose \
-             params carry the SLOT's types (`_e<n>`) and narrow inward. Emitted:\n{body}"
+            body.contains("func(_e") || typed_twin,
+            "{def} must reach `List.any` with a statically shaped callback — \
+             either an eta-expanded closure at the slot's types (`_e<n>`) or a \
+             call re-pointed at the typed twin `rt.List_anyT[…]`, which needs no \
+             bridge. Emitted:\n{body}"
         );
     }
     let _ = std::fs::remove_dir_all(&dir);

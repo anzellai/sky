@@ -4024,6 +4024,24 @@ impl<'a> Ctx<'a> {
             } else {
                 (None, actual.clone(), None)
             };
+        // A pure-Sky `Sky.Core.List` HOF whose Go types this site can prove is
+        // re-pointed at its typed runtime twin (`SKY_LIST_HOF_TWINS`). The
+        // decision is taken HERE, before any argument is lowered, because it
+        // CHOOSES the slots the arguments are lowered at: proven → the typed
+        // slots (so the callback is passed by name and the list needs no
+        // `rt.AsListT[any]` rebuild), unproven → today's erased slots and
+        // today's plain `Call`, byte-identical.
+        let hof_plan = match &self.body.exprs[callee] {
+            Expr::Var(Res::Def(d)) => {
+                let d = *d;
+                self.sky_list_hof_plan(d, &args)
+            }
+            _ => None,
+        };
+        let (param_gtys, ret_goty) = match &hof_plan {
+            Some((_, _, slots, ret)) => (Some(slots.clone()), ret.clone()),
+            None => (param_gtys, ret_goty),
+        };
         // Higher-order list-combinator closure: `List.map (\x -> …) xs`,
         // `List.foldl (\x acc -> …) z xs`. When arg 0 is a lambda and the LAST arg
         // is list-shaped, the closure's element param IS the list's element type.
@@ -4125,6 +4143,19 @@ impl<'a> Ctx<'a> {
                 let cod = *cod;
                 return self.make_partial(c, largs, &Some(ps), &cod, arity);
             }
+        }
+        if let Some((sym, targs, _, ret)) = hof_plan {
+            // The type arguments name concrete Go types; register them so their
+            // decls survive the type-reachability BFS even if this is the only
+            // site that mentions them.
+            for t in &targs {
+                let mut names = Vec::new();
+                collect_named(t, &mut names);
+                for n in names {
+                    self.used_types.insert(n);
+                }
+            }
+            return GoExpr::new(GoExprKind::GenericCall(sym.to_string(), targs, largs), ret);
         }
         GoExpr::new(GoExprKind::Call(Box::new(c), largs), ret_goty)
     }
@@ -4509,6 +4540,140 @@ impl<'a> Ctx<'a> {
     /// retyped. That is a rename, not a semantic change, and it is deterministic
     /// — `xtask repro` re-emits byte-stable across processes. It is called out
     /// because "byte-identical fallback" would otherwise be read as covering it.
+    /// The Go type an argument WILL lower to, read WITHOUT lowering it.
+    ///
+    /// Deciding after a trial lowering would be a probe-and-relower, and
+    /// `list_hof_typed`'s doc below records why that is not allowed: minting a
+    /// temporary shifts every subsequent `_e{n}` / `_v{n}` in the enclosing
+    /// function, so the UNPROVEN fallback would stop being byte-identical and
+    /// `repro` / `roundtrip` would move for calls this change does not touch.
+    ///
+    /// Same source `combinator_elem` reads (see `lower_call`): a local's
+    /// DECLARED Go type — which is exactly what `lower_var` emits for it — else
+    /// the node's own solved type.
+    fn probe_goty(&mut self, a: ExprId) -> GoTy {
+        if let Expr::Var(Res::Local(id)) = &self.body.exprs[a] {
+            if let Some(t) = self.local_tys.get(id).cloned() {
+                return t;
+            }
+        }
+        self.expr_ty(a)
+    }
+
+    /// Can the callback argument reach the typed slot WITHOUT gaining a reflect
+    /// adapter it does not have today?
+    ///
+    /// A callback passed BY NAME lowers to exactly its probed type (`lower_var`
+    /// returns an `Ident` typed by `expr_ty`, which is what `probe_goty` read),
+    /// so no adaptation can be needed at all. Anything else — a lambda, a
+    /// partially applied def — can lower with erased `any` params despite
+    /// probing typed, and `coerce_if_needed` then has to retype it in place.
+    /// `func_shape_eta_applies` REFUSES to do that when a param or result
+    /// narrowing would rebuild a container (`rt.AsListT` / `rt.AsMapT`, paid per
+    /// INVOCATION inside an eta closure — see its own comment), and the fallback
+    /// is `rt.Coerce[func(…)…]`: a `reflect.MakeFunc` adapter this call site
+    /// does not have today, because today its callback lands in an all-`any`
+    /// slot and matches exactly.
+    ///
+    /// So the win at those sites is not a win — it trades a list rebuild for a
+    /// per-element reflect dispatch. Refuse them and keep today's emission.
+    fn callback_reaches_slot(&self, cb: ExprId, ps: &[GoTy], r: &GoTy) -> bool {
+        if matches!(&self.body.exprs[cb], Expr::Var(Res::Def(_))) {
+            return true;
+        }
+        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_) | GoTy::Map(_, _));
+        !ps.iter().any(rebuilds) && !rebuilds(r)
+    }
+
+    /// Decide — before any argument is lowered — whether this call to a pure-Sky
+    /// `Sky.Core.List` HOF can be re-pointed at its typed runtime twin
+    /// (`SKY_LIST_HOF_TWINS`).
+    ///
+    /// Everything is proven off the Go types the arguments will LOWER to, never
+    /// off `sky_ty_of` — doc 13 §D3: what type-checks and what is emitted can
+    /// diverge, and on this very def they do. Per-def inference of `foldl`'s body
+    /// leaves the callback's codomain a free var distinct from the accumulator's
+    /// (`fn : t4 -> t1 -> t14` against `acc : t1`; the recursive occurrence does
+    /// not feed its own result type back), and `def_param_tys` then takes the
+    /// declared type only for the params that are not a bare `Ty::Var` — so the
+    /// accumulator's var name and the callback's codomain var name are different
+    /// symbols even WITH the annotation. Reasoning over `Ty::Var` identity here
+    /// would be unsound by construction.
+    ///
+    /// All-or-nothing, and `provable()` is reused unchanged — it is what
+    /// excludes the `Any` erasure, a Go type parameter, and the anonymous-struct
+    /// shape that `lower_lambda` is still entitled to re-pin underneath us (the
+    /// #166 record-narrowing class, which passed every corpus gate twice).
+    ///
+    /// Returns `(symbol, type args, param slots, result type)`.
+    fn sky_list_hof_plan(
+        &mut self,
+        d: DefId,
+        args: &[ExprId],
+    ) -> Option<(&'static str, Vec<GoTy>, Vec<GoTy>, GoTy)> {
+        let e = self.defs.get(&d)?;
+        let (_, _, sym, arity) = SKY_LIST_HOF_TWINS
+            .iter()
+            .copied()
+            .find(|(m, n, _, _)| *m == e.module_name && *n == e.name)?;
+        // Under- or over-application yields a closure / a stepwise apply, not a
+        // direct call — those keep the erased def, whose signature is what
+        // `make_partial` and `over_apply` already build against.
+        if args.len() != arity {
+            return None;
+        }
+        match sym {
+            // foldl fn acc list — Sky applies `fn x acc`, ELEMENT first. The
+            // runtime twin matches that order (see `List_foldlElemFirstT`), so
+            // the callback needs no permuting wrapper.
+            "rt.List_foldlElemFirstT" => {
+                let GoTy::Slice(a) = self.probe_goty(args[2]) else {
+                    return None;
+                };
+                let a = *a;
+                let b = self.probe_goty(args[1]);
+                if !provable(&a) || !provable(&b) {
+                    return None;
+                }
+                let want_cb = GoTy::Func(vec![a.clone(), b.clone()], Box::new(b.clone()));
+                if self.probe_goty(args[0]) != want_cb
+                    || !self.callback_reaches_slot(args[0], &[a.clone(), b.clone()], &b)
+                {
+                    return None;
+                }
+                Some((
+                    sym,
+                    vec![a.clone(), b.clone()],
+                    vec![want_cb, b.clone(), GoTy::Slice(Box::new(a))],
+                    b,
+                ))
+            }
+            // any pred list
+            "rt.List_anyT" => {
+                let GoTy::Slice(a) = self.probe_goty(args[1]) else {
+                    return None;
+                };
+                let a = *a;
+                if !provable(&a) {
+                    return None;
+                }
+                let want_cb = GoTy::Func(vec![a.clone()], Box::new(GoTy::Bare(Prim::Bool)));
+                if self.probe_goty(args[0]) != want_cb
+                    || !self.callback_reaches_slot(args[0], &[a.clone()], &GoTy::Bare(Prim::Bool))
+                {
+                    return None;
+                }
+                Some((
+                    sym,
+                    vec![a.clone()],
+                    vec![want_cb, GoTy::Slice(Box::new(a))],
+                    GoTy::Bare(Prim::Bool),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn list_hof_typed(
         &mut self,
         hof: ListHof,
@@ -7192,6 +7357,41 @@ fn widen(e: GoExpr) -> GoExpr {
         GoExpr::new(GoExprKind::Widen(Box::new(e)), GoTy::Any)
     }
 }
+
+/// The PURE-SKY `Sky.Core.List` HOFs that have a fully-typed runtime twin a
+/// provable call site can be re-pointed at.
+///
+/// `ListHof` below covers the KERNEL list HOFs — the ones `kernel_call` sees,
+/// because their Sky def is `Ffi.kernel "…"`. `foldl` and `any` are not those:
+/// they are ordinary Sky source (`sky-stdlib/Sky/Core/List.sky`), auto-TCO'd to
+/// a Go `for` loop, so no kernel symbol is ever resolved for them and
+/// `ListHof::of` never fires. Their typed runtime twins have therefore been
+/// compiled into every Sky binary and simply unreachable.
+///
+/// **The def is NOT changed.** `Sky_Core_List_foldl` keeps its erased signature
+/// (`func(func(any, any) any, any, []any) any`), and every value-position
+/// reference (`Task.map List.head`), every partial application and every
+/// unprovable call site still names it — byte-identically. Only a call site
+/// that can prove ALL of its Go types is re-pointed. That is what keeps a bare
+/// generic identifier (which `go build` rejects: "cannot use generic function
+/// without instantiation") and a `GoTy::TyVar` leaking into a caller's scope
+/// both UNREACHABLE rather than merely handled.
+///
+/// Increment 1 of a staged rollout — widening this table requires re-running
+/// the measurement. `member` and `head` are deliberately absent: they RELOCATE
+/// cost rather than remove it. `member` lowers `x == y` to `rt.Eq`, which takes
+/// `any`, so a typed element costs two heap boxes per element where today's
+/// `any` params cost none; `head`/`find` return `rt.SkyMaybe[T]` while their
+/// consumers take `rt.SkyMaybe[any]`, a distinct instantiation needing a
+/// reflective `rt.MaybeCoerce` rebuild — and neither `rt.Eq` nor
+/// `rt.MaybeCoerce` is in the `coerce-floor` gate's TRACKED set, so the gate
+/// would score both relocations as wins.
+///
+/// Fields: `(module, def name, typed runtime symbol, value arity)`.
+const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
+    ("Sky.Core.List", "foldl", "rt.List_foldlElemFirstT", 3),
+    ("Sky.Core.List", "any", "rt.List_anyT", 2),
+];
 
 /// The kernel list HOFs that have a fully-typed runtime twin, keyed by the
 /// erased symbol the kernel table already resolves to.
