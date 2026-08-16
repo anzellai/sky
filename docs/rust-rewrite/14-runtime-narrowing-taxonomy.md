@@ -13,7 +13,7 @@
 > floor). That document describes the **retired Haskell** pipeline; its §6 table
 > cites `Compile.hs` line numbers. It is retained for historical context only.
 > Cite **this** document for the Rust compiler. The legacy §6 numbers are mapped
-> to the new ones in [§6](#6-mapping-from-the-legacy-6-numbers) — they are not
+> to the new ones in §6 — they are not
 > silently renumbered, because prior commits, docs and agent transcripts cite the
 > old numbers and will be read again.
 
@@ -126,9 +126,9 @@ grep -rn 'CoerceReason::' rust/crates/lower/src/lower.rs
 | **R1** | `lower.rs:2736-2749` (`coerce_if_needed`) | value's `GoTy` ≠ slot's `GoTy`, after `func_shape_eta` declined | `FfiReturn` if source is `any`, else `PrimitiveJoin` | **case-by-case** — this is a fall-through, not an origin |
 | **R2** | `lower.rs:2771-2779` (`eta_narrow`) | inside an eta wrapper: the erased HOF slot being un-erased at the boundary the wrapper exists to create | `GenericErase` | **already the closed form** — this is the *replacement* for an adapter, not a defect |
 | **R3** | `lower.rs:4352-4364` | narrowing an argument into a typed Go FFI parameter slot (`rt.FfiT_*`) | `FfiReturn` | **floor** — the Go signature is the authority |
-| **R4** | `lower.rs:4386-4396` | **genuine Go FFI return**, `any → actual` | `FfiReturn` | **floor** ([§4.1](#41-go-ffi-return-r3--r4)) |
-| **R5** | `lower.rs:4429-4439` | **runtime kernel** call return, `any → actual` | `FfiReturn` ← **mislabelled** | **closeable** ([§4.4](#44-not-floor-the-kernel-return-r5)) |
-| **R6** | `lower.rs:6506-6519` | ADT payload: `SkyADT.Fields[i]` is `any`, narrowed to the sub-pattern's type | `GenericErase` | **closeable for app ADTs (already), blocked for stdlib ADTs** ([§4.5](#45-not-floor-but-blocked-stdlib-adt-payloads-r6)) |
+| **R4** | `lower.rs:4386-4396` | **genuine Go FFI return**, `any → actual` | `FfiReturn` | **floor** (§4.1) |
+| **R5** | `lower.rs:4429-4439` | **runtime kernel** call return, `any → actual` | `FfiReturn` ← **mislabelled** | **closeable** (§4.4) |
+| **R6** | `lower.rs:6506-6519` | ADT payload: `SkyADT.Fields[i]` is `any`, narrowed to the sub-pattern's type | `GenericErase` | **closeable for app ADTs (already), blocked for stdlib ADTs** (§4.5) |
 | **R7** | `lower.rs:6591-6600` | tuple pattern: `rt.T2.V{i}` erased field | `GenericErase` | **closeable** — `GoTy::Tuple` already renders `rt.T2[A,B]` when both are known |
 | **R8** | `lower.rs:6674-6683` | record / `Maybe` field pattern on an erased named field | `GenericErase` | **closeable** where the nominal is known |
 | **R9** | `lower.rs:6966-6980` (`coerce_to_str`) | operand of a Go string `+` that is not statically `string` | `FfiReturn` ← **mislabelled** | **closeable** — it is downstream of whatever produced the `any` |
@@ -142,7 +142,7 @@ not appear in that grep:
 | **R11** | `lower.rs:2995-3005`, `:3085`, `:6345` | field read on a value whose Go type is `any` (the R10 consequence, plus the row-poly param→result erasure at `lower.rs:2057-2106`) | `rt.Field` |
 
 `rt.RecordUpdate` (`rt.go:3760`) is a reflective record rebuild and is **not** in
-`TRACKED` — see [§8](#8-what-this-document-does-not-establish).
+`TRACKED` — see §8.
 
 ### 3.1 The `CoerceReason` comment is NOT the origin catalogue
 
@@ -175,7 +175,7 @@ Two consequences a reader must not get wrong:
    render tests. So the two categories the legacy document called the irreducible
    floor **are not observable in the Rust compiler's own attribution** — because
    in the Rust compiler they do not happen in emitted Go at all
-   ([§4.2](#42-wire-decode-r--none), [§4.3](#43-tea-dispatch-r--none)).
+   (§4.2, §4.3).
 
 ---
 
@@ -187,7 +187,7 @@ Two consequences a reader must not get wrong:
 to the Sky-side type. The Go function's signature is the authority on the value's
 shape and the compiler reads it through the FFI surface, but the *value* arrives
 as `interface{}` at run time. The slot's shape is known; the value's is not.
-Floor by [§1](#1-the-distinguishing-test).
+Floor by §1.
 
 **Scope, stated precisely:** floor means *this narrowing*. It does not mean the
 FFI subsystem is unimprovable. The legacy §8.1 escape (typed wrapper shims from
@@ -197,7 +197,7 @@ or refuted.
 
 ### 4.2 Wire decode (R = none) — **FLOOR, and not in emitted Go**
 
-The Rust lowerer emits no `WireDecode` narrowing ([§3.1](#31-the-coercereason-comment-is-not-the-origin-catalogue)). Wire
+The Rust lowerer emits no `WireDecode` narrowing (§3.1). Wire
 decoding happens **inside the runtime**: `runtime-go/rt/db_decoder.go` (10
 `SkyCall` sites), the session-store gob round trip, and the Sky.Live message
 decode path. Those decoders return `any` because the bytes on the wire do not
@@ -309,7 +309,7 @@ closed anonymous struct physically DROPS the fields not named in the row, so a
 erasure buys "no Sky program can ever silently lose record fields" at the price
 of a reflective `rt.Field`.
 
-By [§1](#1-the-distinguishing-test) this is floor — the value's shape is genuinely
+By §1 this is floor — the value's shape is genuinely
 unknown at emit time, because the row variable is unresolved. But note *why*: it
 is a consequence of the erased-ABI + no-monomorphisation policy
 (`07-lowering-and-ir.md` §5.1), not of a runtime contract. A different ABI would
@@ -376,11 +376,11 @@ authoritative rather than narrowing back into it:
 `dict_typed_key_specialised` (`lower.rs:1986`, applied at `lower.rs:4399`)
 re-targets a kernel call at a typed entry point when the key type is known.
 Generalising this to kernel
-*returns* is the R5 lever ([§4.4](#44-not-floor-the-kernel-return-r5)).
+*returns* is the R5 lever (§4.4).
 
 ### 5.4 Sealing more ADTs
 
-The R6 lever ([§4.5](#45-not-floor-but-blocked-stdlib-adt-payloads-r6)). Requires
+The R6 lever (§4.5). Requires
 a runtime change; floor-touching under `CLAUDE.md` §0.3 rule 5.
 
 ### 5.5 What is NOT a lever
@@ -391,7 +391,7 @@ compiler, and it is policy rather than a gap
 rust/crates` returns nothing). Sky's Go ABI is erased; a monomorphiser would have
 to un-erase it first and would buy binary growth proportional to instance count.
 **Before concluding anything here needs monomorphisation, apply
-[§1](#1-the-distinguishing-test)** — if the shape is statically known, the answer
+§1** — if the shape is statically known, the answer
 is an eta-expansion.
 
 ---
@@ -407,10 +407,10 @@ not that the problem was solved.
 | 1 | `coerceToFieldType` final-else fallback | **R1** `coerce_if_needed` | **transfers.** Same role: the fall-through when no better shape is known. |
 | 2 | Primitive helper (`rt.CoerceString/Int/…`) | **R1** with `PrimitiveJoin` → renders `rt.AsInt` / `rt.AsString` (`render_shapes.rs:189-192`) | **transfers, renamed.** The `rt.Coerce*` primitive tokens remain in `TRACKED` but the Rust lowerer's primitive path renders `rt.As*`. |
 | 3 | Map→struct narrowing for Db rows | no emission site — the narrowing lives inside `rt.Coerce`'s reflect path (`rt.go:5887` onward) and `db_decoder.go` | **moves into the runtime.** Not visible to an emitted-Go census. |
-| 4 | TEA dispatch return narrowing (*legacy: FLOOR*) | **no emitted analogue** — `runtime-go/rt/live.go` `sky_call`/`sky_call2` | **transfers as a runtime floor.** Never appears in `main.go`. See [§4.3](#43-tea-dispatch-r--none). |
+| 4 | TEA dispatch return narrowing (*legacy: FLOOR*) | **no emitted analogue** — `runtime-go/rt/live.go` `sky_call`/`sky_call2` | **transfers as a runtime floor.** Never appears in `main.go`. See §4.3. |
 | 5 | Ctor partial-application adapter | `lower_ctor_value` (`lower.rs:3363`) eta-expands by construction | **closed by construction.** |
-| 6 | Polymorphic kernel-fn arg | `func_shape_eta` (`lower.rs:2823`) | **closed for the statically-shaped majority**; 35 residual `adapter` tokens across 9 of 61 projects ([§7](#7-the-census)). |
-| 7 | Record-update / RecordExt narrowing | **R10 / R11** — `goty.rs:226-228` open-row erasure → `rt.Field` / `rt.RecordUpdate` | **transfers, with a different justification** — a deliberate correctness trade, not a missing context. See [§4.6](#46-not-floor-by-the-test-but-floor-today-open-rows-r10--r11). |
+| 6 | Polymorphic kernel-fn arg | `func_shape_eta` (`lower.rs:2823`) | **closed for the statically-shaped majority**; 35 residual `adapter` tokens across 9 of 61 projects (§7). |
+| 7 | Record-update / RecordExt narrowing | **R10 / R11** — `goty.rs:226-228` open-row erasure → `rt.Field` / `rt.RecordUpdate` | **transfers, with a different justification** — a deliberate correctness trade, not a missing context. See §4.6. |
 | 8 | Cross-module dep-ctx fallback | **no analogue.** There is no dep-emission context: lowering is one whole-program pass from a single `main` root with one worklist (`lower.rs:591-613`, `07-lowering-and-ir.md` §5.2). | **gone by construction.** |
 | 9 | Go FFI return (*legacy: FLOOR*) | **R4** `lower.rs:4386-4396`, plus **R3** on the argument side | **transfers, still floor.** |
 | 10 | gob/JSON wire decode (*legacy: FLOOR*) | **no emitted analogue** — `db_decoder.go`, session-store gob, Sky.Live decode | **transfers as a runtime floor**, partially met on the emitted side by generated per-variant JSON factories for **sealed** ADTs (`lower.rs:1647-1661`). |
@@ -424,8 +424,8 @@ Legacy §7 levers 7.1 (LowerCtx propagation), 7.2 (σ-recovery into dep ctx), 7.
 (IORef → reader threading) describe Haskell plumbing with **no Rust analogue**:
 lowering carries `expected` as a parameter (`lower.rs:2719`), there is no dep
 context, and there are no compiler globals to thread. Legacy §7.3 (sealed-iface)
-maps to [§5.4](#54-sealing-more-adts); legacy §7.4 (per-instance kernel σ) is
-**superseded** — it proposed monomorphisation, and [§5.1](#51-eta-expansion-at-the-slots-shape--the-primary-lever) is the cheaper mechanism.
+maps to §5.4; legacy §7.4 (per-instance kernel σ) is
+**superseded** — it proposed monomorphisation, and §5.1 is the cheaper mechanism.
 
 ---
 
@@ -486,7 +486,7 @@ That is the R2 shape: the callback is a func literal **retyped in place** at the
 erased slot's shape, with the narrowings pushed inside. No `rt.Coerce[func(…)…]`
 wraps it. Note what remains visible in it: a typed `[]State_Post_R` is widened to
 `any`, re-boxed element-by-element by the runtime helper, and narrowed back — the
-round trip [§9](#9-the-standing-question-this-document-does-not-answer) is about.
+round trip §9.2 is about, and the one still open after the adapter half closed.
 
 ---
 
@@ -537,7 +537,7 @@ per definition, no monomorphisation, no binary growth.
 | adapter census across the 56 projects emitting under both compilers | `adapter` **269 → 24** (−91%); 24 projects driven to 0; **0 rose**. `narrow` 8055 → 8234 (+179) — the trade, since an N-ary callback swaps one coarse token for N precise ones. Total 8324 → 8258 | `coerce_floor.golden:37-46` |
 
 The conclusion was reached **three times** before it was tested once. Both closes
-came from applying [§1](#1-the-distinguishing-test), and nothing else.
+came from applying §1, and nothing else.
 
 ### 9.2 The per-element `rt.SkyCall` path is CLOSEABLE, not floor
 
@@ -547,12 +547,12 @@ boundary from the per-element path inside the erased list helpers
 `List_find` — `rt.go:3152-3489`). The section was then mis-cited as floor for a
 category that is not.
 
-The two populations, separated by [§1](#1-the-distinguishing-test):
+The two populations, separated by §1:
 
-* **TEA boundary** — floor ([§4.3](#43-tea-dispatch-r--none)).
+* **TEA boundary** — floor (§4.3).
 * **Per-element helper path** — the callback's shape and the slot's shape are
   both known at emit time. Closeable, and the adapter half is closed
-  ([§5.1](#51-eta-expansion-at-the-slots-shape--the-primary-lever)). What remains
+  (§5.1). What remains
   open is the *boxing round trip*: the emitted call widens a typed slice to `any`,
   `rt.asList` re-boxes every element, `SkyCall` reflect-calls per element, and
   `rt.AsListT` walks the `[]any` back, asserting per element
@@ -619,14 +619,14 @@ profiles, which agree to 0.2%.
 
 A claim that a tactic closes a runtime-narrowing goal must name:
 
-1. **The origin** — an `R`-number from [§3](#3-the-origin-catalogue--the-emission-allowlist), with its `lower.rs` /
+1. **The origin** — an `R`-number from §3, with its `lower.rs` /
    `live.go` / `goty.rs` site.
-2. **The lever** — a subsection of [§5](#5-the-levers-on-rust-evidence).
-3. **The floor check** — apply [§1](#1-the-distinguishing-test) explicitly. If the
-   tactic touches R3/R4 ([§4.1](#41-go-ffi-return-r3--r4)), the wire decoders
-   ([§4.2](#42-wire-decode-r--none)), the TEA boundary
-   ([§4.3](#43-tea-dispatch-r--none)) or the stdlib-ADT representation
-   ([§4.5](#45-not-floor-but-blocked-stdlib-adt-payloads-r6)), it is
+2. **The lever** — a subsection of §5.
+3. **The floor check** — apply §1 explicitly. If the
+   tactic touches R3/R4 (§4.1), the wire decoders
+   (§4.2), the TEA boundary
+   (§4.3) or the stdlib-ADT representation
+   (§4.5), it is
    floor-touching and needs user authorisation per `CLAUDE.md` §0.3 rule 5.
 4. **The verification** — which gate would go red if the tactic regressed.
    `xtask coerce-floor` refuses to bless an `adapter` increase, so an adapter
