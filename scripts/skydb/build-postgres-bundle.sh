@@ -11,7 +11,7 @@
 #
 # The output is a self-contained, relocatable tree:
 #
-#   <bundle>/bin/    postgres initdb pg_ctl pg_dump pg_restore   (NO psql)
+#   <bundle>/bin/    postgres initdb pg_ctl pg_dump pg_dumpall pg_restore   (NO psql)
 #   <bundle>/lib/    libpq + every extension module + vendored non-system deps
 #   <bundle>/share/  timezone db, extension control/SQL files, base catalogs
 #   <bundle>/BUNDLE.json
