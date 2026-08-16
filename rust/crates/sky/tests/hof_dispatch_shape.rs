@@ -746,22 +746,24 @@ fn allocs_per_sweep(tag: &str) -> f64 {
 }
 
 /// Measured on this fixture, M1, Go 1.26, stable to the unit across repeat
-/// runs: **1030** allocations per sweep through the erased helpers, **51**
-/// through the typed ones. 40 element visits, so ~24.5 allocations per visit
-/// removed.
+/// runs: **236** allocations per sweep through the erased helpers, **29**
+/// through the typed ones — 8.1×. Both endpoints were taken from this exact
+/// test; the erased one by making `ListHof::of` return `None` unconditionally
+/// and confirming the mutation was in the file before believing the red.
 ///
-/// 51 is not zero and is not meant to be. What remains is (a) one result slice
-/// per traversal, which a `for` loop cannot avoid, and (b) the redundant
-/// `rt.Coerce[Row](_p0)` still sitting in the retyped callback body: the eta
-/// retype gives the param the element's type but does not rewrite the body's
-/// uses of it, so a struct element is re-boxed on the way into `Coerce`, whose
-/// `v.(T)` then succeeds immediately. That is a separate peephole and is not
-/// what this budget locks.
+/// 29 is not zero and is not meant to be. What remains is one result slice per
+/// traversal, the record update in `heavier`, and the redundant
+/// `rt.Coerce[Main_Row_R](_p0)` still sitting in the retyped callback body: the
+/// eta retype gives the parameter the element's type but does not rewrite the
+/// body's uses of it, so a struct element is re-boxed on the way into `Coerce`,
+/// whose `v.(T)` then succeeds immediately. That last one is a separate
+/// peephole; this budget does not lock it.
 ///
-/// The budget sits between the two with ~2× clearance below and ~5× above: high
-/// enough that a runtime tweak to the helpers cannot flake it, low enough that
-/// the erased round trip cannot slip under it.
-const ALLOC_BUDGET_PER_SWEEP: f64 = 110.0;
+/// The budget sits between the two with ~2.8× clearance on each side — high
+/// enough above the honest cost that a runtime tweak to the helpers cannot
+/// flake it, low enough below the erased round trip that the regression it
+/// exists to catch cannot slip under it.
+const ALLOC_BUDGET_PER_SWEEP: f64 = 80.0;
 
 /// ALLOCATION LEG — as above, the defect rather than a spelling of the fix.
 ///
