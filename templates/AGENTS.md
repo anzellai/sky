@@ -403,9 +403,12 @@ level  = "info"          # debug | info | warn | error
 ### How to pick — and what to change as you grow
 
 Only `name` / `version` / `entry` are required; add a section **only when you use
-that feature**. Config precedence is **process env > `.env` > `sky.toml`**, so
-every value here can be overridden at deploy time without editing the file (and
-secrets / connection strings should be — never commit them).
+that feature**. Config precedence is **process env > `.env` > `Live.withX`
+builder calls in code > `sky.toml`**, so every value here can be overridden at
+deploy time without editing the file (and secrets / connection strings should
+be — never commit them). An explicit builder call (`Live.withPort`,
+`Live.withStore`, `Live.withStorePath`, `Live.withTtl`, `Live.withIdleEvict`)
+beats the `sky.toml` seed but still loses to the operator's environment.
 
 **Persistence tier by traffic (the quick call — pick one, set `[live] store` +
 `[database]` to match):**

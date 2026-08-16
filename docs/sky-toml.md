@@ -114,8 +114,11 @@ consume them too.
 
 Sky.Live (server-driven UI) runtime config. Every key seeds an
 env-var default at startup, namespaced by `[env] prefix`
-(default `SKY_`). See the
-[Sky.Live overview](skylive/overview.md) for the full picture.
+(default `SKY_`). These seeds sit BELOW an explicit `Live.withX`
+builder call in code, which in turn sits below the operator's
+environment (shell or `.env`) — see [Precedence](#precedence).
+See the [Sky.Live overview](skylive/overview.md) for the full
+picture.
 
 ```toml
 [live]
@@ -621,12 +624,29 @@ first):
    `ENV`, k8s, CI vars).
 2. **`.env` file** in the working directory (auto-loaded at
    startup; never overrides existing env vars).
-3. **`sky.toml`** defaults (compiled into the binary's
+3. **Explicit builder calls in code** (`Live.withPort`,
+   `Live.withStore`, `Live.withStorePath`, `Live.withTtl`,
+   `Live.withIdleEvict`).
+4. **`sky.toml`** defaults (compiled into the binary's
    `init()`; only set when the corresponding env var is unset).
+5. **Hardcoded runtime fallbacks** (e.g. port `8080`, TTL `30m`).
 
 Standard godotenv / Docker convention: production deployments
 always win over `.env` and `sky.toml` so you can override
 settings without editing files.
+
+Layers 1, 2 and 4 meet in the *same* environment variable —
+`sky.toml` keys are seeded into their env vars at startup — but
+the runtime records which values it seeded itself, so a
+`sky.toml`-derived default never counts as "the operator set
+this". The one rule, spelled out:
+
+> **operator env (shell or `.env`) → `withX` builder call →
+> seeded default (`sky.toml` / compiler) → hardcoded fallback**
+
+So an operator can always override the binary without a rebuild,
+and an explicit `withX` call in code always beats the `sky.toml`
+seed while still losing to the operator.
 
 ---
 
