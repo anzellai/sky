@@ -40,7 +40,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	mrand "math/rand"
 	"net/http"
@@ -6273,7 +6272,7 @@ func Unreachable(site string) any {
 	// over-broad case match. Top-level recover (Cycle 6 PC)
 	// classifies as `CompilerBug` and surfaces the actionable hint.
 	msg := "sky: codegen reached an arm the exhaustiveness checker said was impossible"
-	fmt.Fprintf(os.Stderr, "[sky.unreachable] %s (site=%s)\n%s\n", msg, site, debugStack())
+	LogRecoveredPanic("sky.unreachable", "site="+site+": "+msg, msg)
 	panic(fmt.Sprintf("sky.Unreachable(%s): %s", site, msg))
 }
 
@@ -9207,7 +9206,7 @@ func Server_listen(port any, routes any) any {
 				if skyResp.ContentType != "" {
 					w.Header().Set("Content-Type", skyResp.ContentType)
 				}
-				applySkyResponseHeaders(w.Header(), skyResp)
+				applySkyResponseHeaders(w.Header(), req, skyResp)
 				// Safe-by-default security headers (callers can override);
 				// honours SKY_LIVE_FRAME_ANCESTORS for embeddable deploys.
 				setSecurityHeaders(w.Header())
@@ -10014,28 +10013,12 @@ func setCookieHeader(resp any, name, value, attrs string) any {
 // should rotate). Robust against the skylog dir not being
 // writeable: falls back to stderr-only in that case so we never
 // lose a panic report entirely.
+// This was the ONLY production-gated panic path in the runtime, and it
+// covered one of the nine recovery sites. The policy now lives in
+// panic_log.go and every site calls it; this is the Sky.Http.Server
+// spelling of the same call.
 func logPanicFrame(method, path string, rec any) {
-	errKind := fmt.Sprintf("%T", rec)
-	if productionFromEnv() {
-		// Compact stderr line — no stack trace, no internal paths.
-		fmt.Fprintf(os.Stderr, "[sky.http] panic %s %s (%s)\n", method, path, errKind)
-		// Full frame to .skylog/panic.log
-		full := fmt.Sprintf("[%s] %s %s %s: %v\n%s\n",
-			time.Now().UTC().Format(time.RFC3339),
-			method, path, errKind, rec, debugStack())
-		_ = os.MkdirAll(".skylog", 0o750)
-		f, err := os.OpenFile(".skylog/panic.log",
-			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-		if err == nil {
-			_, _ = f.WriteString(full)
-			_ = f.Close()
-		}
-		return
-	}
-	// Dev mode: full trace on stderr for fast feedback (matches the
-	// previous behaviour exactly).
-	log.Printf("[sky.http] panic handling %s %s: %v\n%s",
-		method, path, rec, debugStack())
+	LogRecoveredPanic("sky.http", method+" "+path, rec)
 }
 
 // Server.method : Request -> String   — HTTP method name in upper case.

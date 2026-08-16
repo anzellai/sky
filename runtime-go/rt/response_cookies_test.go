@@ -29,7 +29,7 @@ import (
 func emittedCookies(t *testing.T, resp SkyResponse) []*http.Cookie {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	applySkyResponseHeaders(rec.Header(), resp)
+	applySkyResponseHeaders(rec.Header(), nil, resp)
 	return rec.Result().Cookies()
 }
 
@@ -149,7 +149,7 @@ func TestSetCookie_IsARepeatedHeaderNotAJoin(t *testing.T) {
 	out, _ = asSkyResponse(Server_withCookie("b", "2", out))
 
 	rec := httptest.NewRecorder()
-	applySkyResponseHeaders(rec.Header(), out)
+	applySkyResponseHeaders(rec.Header(), nil, out)
 	lines := rec.Result().Header.Values("Set-Cookie")
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 Set-Cookie header lines, got %d: %v", len(lines), lines)
@@ -177,7 +177,7 @@ func TestSetCookie_UserSuppliedHeaderStillEmitted(t *testing.T) {
 func TestSetCookie_SingleCookieIsNotDuplicated(t *testing.T) {
 	out, _ := asSkyResponse(Server_withCookie("only", "1", SkyResponse{Status: 200}))
 	rec := httptest.NewRecorder()
-	applySkyResponseHeaders(rec.Header(), out)
+	applySkyResponseHeaders(rec.Header(), nil, out)
 	if lines := rec.Result().Header.Values("Set-Cookie"); len(lines) != 1 {
 		t.Fatalf("single cookie must emit exactly one header line, got %v", lines)
 	}

@@ -45,7 +45,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"sync"
 	"syscall"
 
@@ -228,8 +227,11 @@ func safeGo(name string, fn func()) {
 		defer func() {
 			if r := recover(); r != nil {
 				tuiTeardown()
-				fmt.Fprintf(os.Stderr, "\nSky runtime panic in %s: %v\n\n%s\n",
-					name, r, debug.Stack())
+				// Terminal is restored, so it is safe to write. The
+				// stack still obeys the production policy: a TUI-shaped
+				// job on a server ships its stderr to the same
+				// aggregator as any other app.
+				LogRecoveredPanic("sky.tui", name, r)
 				os.Exit(2)
 			}
 		}()

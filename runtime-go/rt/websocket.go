@@ -56,9 +56,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"reflect"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -903,9 +901,8 @@ func (app *liveApp) dispatchOneWsSub(sess *liveSession, reg *wsSubReg, ev wsEven
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr,
-					"[sky.websocket] decoder panic, dropping event kind=%d: %v\n%s\n",
-					ev.kind, r, debug.Stack())
+				LogRecoveredPanic("sky.websocket",
+					fmt.Sprintf("decoder, dropping event kind=%d", ev.kind), r)
 				msg = nil
 			}
 		}()

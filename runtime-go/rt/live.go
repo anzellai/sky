@@ -30,7 +30,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -3209,7 +3208,7 @@ func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter
 		if status == 0 {
 			status = 200
 		}
-		applySkyResponseHeaders(w.Header(), resp)
+		applySkyResponseHeaders(w.Header(), r, resp)
 		if resp.ContentType != "" && w.Header().Get("Content-Type") == "" {
 			w.Header().Set("Content-Type", resp.ContentType)
 		}
@@ -3886,9 +3885,7 @@ func liveAppRun(cfg any) any {
 			// Real panic — log to stderr so `go run` / tailing the
 			// server surfaces the cause. Client still gets a
 			// generic 500.
-			fmt.Fprintf(os.Stderr,
-				"[sky.live] panic handling %s %s: %v\n%s\n",
-				r.Method, r.URL.Path, rec, debugStack())
+			LogRecoveredPanic("sky.live", r.Method+" "+r.URL.Path, rec)
 			w.WriteHeader(500)
 			fmt.Fprint(w, "Internal Server Error")
 		}()
@@ -4949,7 +4946,8 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 					"panicKind":  kind,
 					"panicMsg":   rawMsg,
 					"hint":       hint,
-					"stackFrame": compressStack(debug.Stack(), 8),
+					"stackFrame": panicStackForLog("sky.live.dispatch",
+						"Msg dispatch", r, capturePanicStack(), 8),
 				})
 			// The update() that panicked never assigned a new model (Sky models
 			// are immutable), so sess.model is the valid pre-dispatch value — a
@@ -5118,16 +5116,18 @@ func (app *liveApp) safeViewCall(model any) (VNode, bool) {
 			if r := recover(); r != nil {
 				panicked = true
 				reason := fmt.Sprintf("%v", r)
-				stack := string(debug.Stack())
 				// Structured log for ops dashboards (Sky Console, OTel).
-				// Stack is included so the panic site is grep-able from
-				// the journalctl / Cloud Logging stream. logEmit fires
-				// immediately (no Task wrap) since we're already inside
-				// the deferred recover.
+				// In dev the stack is included so the panic site is
+				// grep-able from the journalctl / Cloud Logging stream;
+				// in production it goes to .skylog/panic.log instead of
+				// into the aggregated stream. logEmit fires immediately
+				// (no Task wrap) since we're already inside the
+				// deferred recover.
 				logEmit(logLevelError, "error", "sky.live.view.panic",
 					map[string]any{
-						"reason":     reason,
-						"stack_head": firstLines(stack, 40),
+						"reason": reason,
+						"stack_head": panicStackForLog("sky.live.view",
+							"view(model)", r, capturePanicStack(), 20),
 					},
 				)
 				vn = renderViewPanicFallback(reason)
@@ -5865,9 +5865,8 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr,
-					"[sky.live] pub/sub decoder panic, dropping event topic=%q: %v\n%s\n",
-					ev.Topic, r, debug.Stack())
+				LogRecoveredPanic("sky.live",
+					fmt.Sprintf("pub/sub decoder, dropping event topic=%q", ev.Topic), r)
 				msg = nil
 			}
 		}()
@@ -6085,9 +6084,8 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr,
-					"[sky.stream] chunk decoder panic, dropping event kind=%d: %v\n%s\n",
-					ev.kind, r, debug.Stack())
+				LogRecoveredPanic("sky.stream",
+					fmt.Sprintf("chunk decoder, dropping event kind=%d", ev.kind), r)
 				msg = nil
 			}
 		}()

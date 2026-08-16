@@ -15,13 +15,14 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"runtime/debug"
 	"strings"
 	"sync"
 )
 
-// debugStack returns a stack trace for panic logging elsewhere in rt.
-func debugStack() string { return string(debug.Stack()) }
+// `debugStack` moved to panic_log.go, which owns the dev/production
+// policy for what a stack trace is allowed to say. It lived here, next
+// to the .env parser, with no policy attached — which is how eight sites
+// came to dump full goroutine stacks into production logs.
 
 // SetPortDefault is called by generated main.go at init time with the
 // sky.toml `port` value. It only seeds <PREFIX>_LIVE_PORT when unset

@@ -219,6 +219,66 @@ func TestSessionCookie_SecureOverTLSInDev(t *testing.T) {
 	}
 }
 
+// The runtime used to hold its OWN cookies to a stricter rule than the
+// one it applied to the user's: `sky_sid` saw the request and got Secure
+// over HTTPS, while `Server.withCookie` (called from Sky with no request
+// in hand) could only consult the production gate. A user setting an auth
+// token over HTTPS on a staging deploy therefore got no Secure. The
+// decision now also runs at EMISSION time, where the request exists.
+func TestUserCookie_SecureOverTLSOutsideProduction(t *testing.T) {
+	restore := withEnvVars(t, "dev", "")
+	defer restore()
+
+	for _, form := range []struct {
+		name string
+		out  any
+	}{
+		{"withCookie/2", Server_withCookie(
+			Server_cookie("auth", "TOKEN"), SkyResponse{Status: 200})},
+		{"withCookie/3", Server_withCookie("auth", "TOKEN", SkyResponse{Status: 200})},
+		{"withCookie/4", Server_withCookie("auth", "TOKEN",
+			"Path=/; HttpOnly; SameSite=Lax", SkyResponse{Status: 200})},
+	} {
+		t.Run(form.name, func(t *testing.T) {
+			sr, ok := asSkyResponse(form.out)
+			if !ok {
+				t.Fatal("withCookie did not return a response")
+			}
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set("X-Forwarded-Proto", "https")
+			rec := httptest.NewRecorder()
+			applySkyResponseHeaders(rec.Header(), req, sr)
+			lines := rec.Result().Header.Values("Set-Cookie")
+			if len(lines) != 1 {
+				t.Fatalf("expected 1 Set-Cookie, got %v", lines)
+			}
+			if c := parseSetCookieLine(t, lines[0]); !c.Secure {
+				t.Fatalf("user cookie set over HTTPS must be Secure — the runtime's own "+
+					"sky_sid is, and the user's must meet the same bar: %q", lines[0])
+			}
+			if n := countSecureAttrs(lines[0]); n != 1 {
+				t.Fatalf("expected exactly one Secure attribute, got %d: %q", n, lines[0])
+			}
+		})
+	}
+}
+
+// Plain HTTP outside production stays plain: a Secure cookie on a
+// `http://localhost` dev session is never sent back, which would break
+// every local login.
+func TestUserCookie_NoSecureOverPlainHttpInDev(t *testing.T) {
+	restore := withEnvVars(t, "dev", "")
+	defer restore()
+
+	sr, _ := asSkyResponse(Server_withCookie("auth", "TOKEN", SkyResponse{Status: 200}))
+	rec := httptest.NewRecorder()
+	applySkyResponseHeaders(rec.Header(), httptest.NewRequest("GET", "/", nil), sr)
+	lines := rec.Result().Header.Values("Set-Cookie")
+	if c := parseSetCookieLine(t, lines[0]); c.Secure {
+		t.Fatalf("plain-HTTP dev cookie must not be Secure: %q", lines[0])
+	}
+}
+
 func TestCsrfMiddlewareCookie_SecureInProduction(t *testing.T) {
 	restore := withEnvVars(t, "production", "")
 	defer restore()

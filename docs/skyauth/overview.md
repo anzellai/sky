@@ -209,7 +209,13 @@ Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → 
 
 - **Rotate `SKY_AUTH_TOKEN_SECRET` periodically.** All outstanding tokens become invalid on rotation. Plan a deploy window.
 - **Minimum 32 bytes** for the secret. `Auth.signToken` rejects shorter values with an error rather than producing weak HMACs; the runtime also refuses to start with a short `SKY_AUTH_TOKEN_SECRET`.
-- **Set cookie attrs**. `Server.withCookie` defaults to `HttpOnly; Secure; SameSite=Lax`. Use `Server.cookie` to override only when you actually need cross-site flow.
+- **Set cookie attrs**. `Server.withCookie` defaults to `Path=/; HttpOnly; SameSite=Lax`, and the runtime adds `Secure` when the response goes back over HTTPS **or** the production gate is on (`ENV` set to any non-dev value) — the same rule the runtime applies to its own `sky_sid` and CSRF cookies. `Secure` is never added on a plain-HTTP dev session, because the browser would then refuse to send the cookie back and every local login would break. The four-argument form takes the attribute string outright when you need something else:
+
+  ```elm
+  resp |> Server.withCookie "sky_auth" token "Path=/; HttpOnly; Secure; SameSite=Strict"
+  ```
+
+  `Server.cookie name value` builds a name/value pair for the two-argument form; it does **not** carry attributes, so reach for the four-argument form to control them.
 - **Bcrypt cost**. Default is 12, which is ~250ms on a 2024 laptop. Raise to 13–14 in production if you can spare the latency budget; lower to 10 only for CI/test fixtures.
 - **Rate-limit `/login` and `/register`.** Use [`Sky.Http.Middleware.withRateLimit`](../../CLAUDE.md#standard-library) on those routes — credential stuffing is the #1 attack on any auth endpoint.
 - **Validate password strength at registration**. `Auth.passwordStrength password` returns `Result Error String` where the body is `"weak" / "fair" / "strong"`; reject `"weak"` at registration as a baseline.

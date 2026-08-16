@@ -328,7 +328,7 @@ func ServerStream_withContentType(ctArg any, sidArg any) any {
 // defer-recover (logPanicFrame + 500); since headers are already on
 // the wire the 500 would be a no-op on the response side — the
 // recover still neutralises the panic so the server stays up.
-func serveStreamingResponse(w http.ResponseWriter, _ *http.Request, resp SkyResponse) {
+func serveStreamingResponse(w http.ResponseWriter, req *http.Request, resp SkyResponse) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		// Reverse-proxy / middleware wrapping that doesn't
@@ -346,7 +346,7 @@ func serveStreamingResponse(w http.ResponseWriter, _ *http.Request, resp SkyResp
 	if resp.ContentType != "" {
 		w.Header().Set("Content-Type", resp.ContentType)
 	}
-	applySkyResponseHeaders(w.Header(), resp)
+	applySkyResponseHeaders(w.Header(), req, resp)
 	setSecurityHeaders(w.Header())
 
 	status := resp.Status

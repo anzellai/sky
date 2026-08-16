@@ -25,9 +25,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"runtime/debug"
+
+	rt "sky-app/rt"
 )
 
 type receiver struct {
@@ -76,8 +76,12 @@ func (r *receiver) recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.Printf("[sky.hub] panic in %s %s: %v\n%s",
-					req.Method, req.URL.Path, rec, debug.Stack())
+				// Same production policy as every other recovery site —
+				// `rt` owns it (runtime-go/rt/panic_log.go). A local
+				// copy of the dev/prod branch here is exactly the shape
+				// of the defect that let Sky.Live leak stacks while
+				// Sky.Http.Server did not.
+				rt.LogRecoveredPanic("sky.hub", req.Method+" "+req.URL.Path, rec)
 				http.Error(w, "internal error", http.StatusInternalServerError)
 			}
 		}()

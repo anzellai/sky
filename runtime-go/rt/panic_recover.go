@@ -32,7 +32,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"runtime/debug"
 	"strings"
 )
 
@@ -52,7 +51,7 @@ func LogPanicAndExit() {
 		return
 	}
 	stopProfiling("panic")
-	emitPanicLog(r, debug.Stack())
+	emitPanicLog(r, capturePanicStack())
 	os.Exit(1)
 }
 
@@ -63,7 +62,10 @@ func emitPanicLog(r any, stack []byte) {
 	errId := newErrId()
 	rawMsg := fmt.Sprintf("%v", r)
 	kind, hint := classifyPanic(rawMsg)
-	stackTail := compressStack(stack, 8)
+	// Production keeps the frame in .skylog/panic.log rather than in the
+	// aggregated log stream — same policy as every other recovery site
+	// (panic_log.go).
+	stackTail := panicStackForLog("sky.main", "top-level task", r, stack, 8)
 
 	ctx := map[string]any{
 		"errId":      errId,

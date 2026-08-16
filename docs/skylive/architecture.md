@@ -383,7 +383,7 @@ Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acqu
 
 ## Security defaults
 
-- Cookies: `HttpOnly`, `Secure` (when served over HTTPS); session cookie is `SameSite=Lax`, CSRF cookie is `SameSite=Strict`.
+- Cookies: `HttpOnly`; `Secure` when the request arrived over HTTPS (direct TLS, `X-Forwarded-Proto: https`, or `X-Forwarded-Ssl: on`) **or** the production gate is on (`ENV`, else `SKY_ENV`, set to any value other than `dev` / `development` / `local`). Cookies whose name carries the `__Host-` / `__Secure-` prefix, and any cookie sent `SameSite=None`, are always `Secure` — the spec requires it. One predicate governs every cookie the runtime mints, including the ones `Server.withCookie` sets from your handler. Session cookie is `SameSite=Lax`, CSRF cookie is `SameSite=Strict`.
 - Rate limit: per-IP + per-session token bucket; configurable via `[live]`.
 - CORS: off by default. Turn on by configuring allowed origins explicitly.
 - Event payload size cap: configurable via `[live] maxBodyBytes` / `SKY_LIVE_MAX_BODY_BYTES` (default `5242880` = 5 MiB; bump for `Event.onFile` / `Event.onImage` uploads). Larger payloads are rejected with HTTP 413.

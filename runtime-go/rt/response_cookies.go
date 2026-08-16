@@ -66,7 +66,18 @@ func addSetCookie(resp SkyResponse, line string) SkyResponse {
 // applySkyResponseHeaders writes a SkyResponse's headers onto an
 // outgoing http.Header. Single source of truth for all three
 // dispatchers.
-func applySkyResponseHeaders(h http.Header, resp SkyResponse) {
+//
+// `r` is the request being answered, and it is what closes the last gap
+// in the Secure story. `Server.withCookie` is called from Sky code with
+// no request in hand, so at MINT time the only thing it can consult is
+// the production gate — which left a user's auth cookie without Secure
+// on a staging deploy served over HTTPS, while the runtime's own
+// `sky_sid` (which does see the request) got it. The runtime was holding
+// its own cookies to a stricter rule than the one it applied to the
+// user's. Emission time is where the request exists, so the same
+// predicate every other mint site uses is applied here, to every cookie
+// on the response.
+func applySkyResponseHeaders(h http.Header, r *http.Request, resp SkyResponse) {
 	for k, v := range resp.Headers {
 		if http.CanonicalHeaderKey(k) == "Set-Cookie" {
 			continue // handled below, as a repeated field
@@ -74,6 +85,27 @@ func applySkyResponseHeaders(h http.Header, resp SkyResponse) {
 		h.Set(k, v)
 	}
 	for _, line := range setCookieLines(resp) {
-		h.Add("Set-Cookie", line)
+		h.Add("Set-Cookie", securifyCookieLine(r, line))
 	}
+}
+
+// securifyCookieLine adds `Secure` to a fully-formed Set-Cookie line
+// when the shared predicate says the cookie needs it. The line is parsed
+// with the STDLIB cookie parser — the browser's reading of it — so the
+// name prefix and SameSite mode are the real ones, not a substring
+// guess. An unparseable line is passed through untouched: emitting the
+// user's bytes unchanged beats corrupting them.
+func securifyCookieLine(r *http.Request, line string) string {
+	parsed := (&http.Response{Header: http.Header{"Set-Cookie": []string{line}}}).Cookies()
+	if len(parsed) != 1 {
+		return line
+	}
+	c := parsed[0]
+	if c.Secure {
+		return line
+	}
+	if !cookieSecureFor(r, c.Name, c.SameSite) {
+		return line
+	}
+	return line + "; Secure"
 }
