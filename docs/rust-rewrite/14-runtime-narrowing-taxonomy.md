@@ -140,9 +140,21 @@ not appear in that grep:
 |---|---|---|---|
 | **R10** | `rust/crates/lower/src/goty.rs:226-228` | a genuinely OPEN record row (`ext = Some(ρ)`) that matched no nominal — lowered to `GoTy::Any` deliberately, so field reads route reflectively | `rt.Field` / `rt.RecordUpdate` |
 | **R11** | `lower.rs:2995-3005`, `:3085`, `:6345` | field read on a value whose Go type is `any` (the R10 consequence, plus the row-poly param→result erasure at `lower.rs:2057-2106`) | `rt.Field` |
+| **R12** | `lower.rs:2047` (`lower_def`) | **polymorphic-def signature erasure.** A top-level Sky def's type variables erase to `any` because `GoFuncDecl.type_params` is hard-coded empty at all three construction sites (`lower.rs:2252`, `:2263`, `:2422`). The def's own signature carries no narrowing — the cost lands on the CALLER, which widens a typed slice element-by-element at **R1**. | surfaces as R1: `rt.AsListT[any]` on the argument, `rt.Coerce` per element inside the `func_shape_eta` wrapper, `rt.Coerce` on the result |
 
 `rt.RecordUpdate` (`rt.go:3760`) is a reflective record rebuild and is **not** in
 `TRACKED` — see §8.
+
+**R12 is why a census of R1 under-attributes this class.** R1 is a fall-through,
+so the widening is filed under "no better shape was known" when in fact the shape
+was known at both ends and the *callee's signature* was the thing that could not
+express it. `07-lowering-and-ir.md` §6 row 8 asserted this class "Deleted"; that
+is true for parametric record aliases (`Cfg_R[Msg]`, `TypeEnv::record_params`)
+and false for defs. Corrected there, and recorded here, because a primary
+reference asserting a false close is the exact failure §0 of this document was
+written about.
+
+The lever is §5.5.
 
 ### 3.1 The `CoerceReason` comment is NOT the origin catalogue
 
@@ -383,7 +395,47 @@ Generalising this to kernel
 The R6 lever (§4.5). Requires
 a runtime change; floor-touching under `CLAUDE.md` §0.3 rule 5.
 
-### 5.5 What is NOT a lever
+### 5.5 Typed instantiation of a polymorphic Sky def
+
+The R12 lever. §5.3 generalised from kernels to **Sky-source defs**, with a Go
+generic supplying the typed entry point instead of a second hand-written runtime
+symbol — so unlike §5.3 it needs **no runtime change at all**.
+
+Emit a qualifying polymorphic def as `func F[T1 any, T2 any](…)` and instantiate
+it at each call site from the arguments' own lowered Go types. Every piece of
+machinery already exists: `GoFuncDecl.type_params` (`ir.rs:228`) is rendered by
+`codegen/src/lib.rs:145-154`; `GoExprKind::GenericCall` (`ir.rs:132`) is already
+emitted by `list_hof_typed` (`lower.rs:4644`); `sky_ty_to_go_params`
+(`goty.rs:108`) already maps a `Ty::Var` to a supplied `GoTy`, which is how
+parametric record aliases emit today.
+
+Three properties decide whether it is sound at a given def:
+
+* **The body must not re-narrow.** It does not, because `destructure_ops`
+  (`lower.rs:7159-7176`) keys on `GoTy::Slice(_)` — including `Slice(TyVar)` —
+  and selects `rt.SkyLenT` / `rt.SkyElemT` / `rt.SkyTailSliceT`
+  (`rt.go:8669`, `:8672`, `:8681`), which compile to `len(xs)` / `xs[i]` /
+  `xs[1:]`. This is what separates the Rust path from the legacy Haskell
+  generic emission, whose bodies still carried `rt.AsList` and `rt.Coerce[T2]`
+  (`Monomorphise.hs:542`).
+* **A zero-param def cannot be generic.** The CAF path emits a package-level
+  `GoItem::Var` (`lower.rs:2178-2258`) and Go has no generic package-level
+  variable. The comment at `lower.rs:2175` already assumed this.
+* **A generic Go function has no bare value form.** Every non-call reference —
+  partial application, a value position, a cross-module reference — must emit
+  `F[any, …]`, whose stencil is character-for-character the erased function it
+  replaces. So an unproven site keeps today's behaviour, allocation, and token
+  count. Every failure mode of this lever is a `go build` error, never a silent
+  miscompile.
+
+**On the no-monomorphisation policy (§5.6).** This is one emit per definition in
+the lowerer's output — which is what `lower.rs:2804` is about. Go's own
+stenciling then merges instantiations by GC shape, so the growth is bounded by
+distinct GC shapes rather than by instance count. Do not claim "no binary
+growth"; Stage 2 crossed the same line with `rt.List_mapT[A,B]` and left the
+size **UNMEASURED**.
+
+### 5.6 What is NOT a lever
 
 **Monomorphisation.** There is no monomorphiser, there never was one in the Rust
 compiler, and it is policy rather than a gap

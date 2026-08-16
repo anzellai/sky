@@ -490,7 +490,7 @@ Mapping the 8 documented residual classes
 | 5 | Primitive narrowing | 6 | **Irreducible floor.** HM-structural ↔ Go-nominal join. Kept as `PrimitiveJoin`; caught by the panic floor (08). |
 | 6 | Tuple narrowing | 57+ | **Deleted** for typed tuples — `Tuple(vec![A,B])` renders `rt.T2[A,B]` directly. |
 | 7 | Map/Dict narrowing | 5+ | Survives only at genuine `any` source (`WireDecode`). |
-| 8 | Generic-param erasure | 3+ | **Deleted** — `GoTy::TyVar(id)` in scope unifies by `==`; no widen-to-`any`-then-recover dance (the whole point of the enclosing-scope T-var hack). |
+| 8 | Generic-param erasure | 3+ | **Deleted for parametric RECORD ALIASES** — `Cfg_R[Msg]` carries its args and a `GoTy::TyVar(id)` in scope unifies by `==`. **NOT deleted for top-level DEFS.** All three `GoFuncDecl` construction sites hard-code `type_params: Vec::new()` (`lower.rs:2252`, `:2263`, `:2422`), so no Sky def has ever carried a `GoTy::TyVar`: a polymorphic def's `List a` param erases to `[]any` and every typed caller widens it element-by-element at R1. Doc 14 §3 **R12**. |
 
 What remains is a **floor plus a residue**, and the two are not the same thing.
 The floor is values that enter Sky as genuine `any` — a **Go FFI return**, a

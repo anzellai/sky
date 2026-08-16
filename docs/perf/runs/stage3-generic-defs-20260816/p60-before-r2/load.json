@@ -1,0 +1,33 @@
+{
+  "label": "before-p60-r2",
+  "url": "http://127.0.0.1:8531",
+  "sessions_requested": 25,
+  "sessions_established": 25,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 4461,
+  "interactions_per_sec": 98.58947217813272,
+  "p50_ms": 303.229,
+  "p95_ms": 544.229,
+  "p99_ms": 625.278,
+  "max_ms": 867.908,
+  "outcomes": {
+    "ok": 4461
+  },
+  "error_rate": 0,
+  "patches_total": 8922,
+  "interactions_with_patches": 4461,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 175,
+  "sse_still_open_at_end": 25,
+  "generator_cpu_percent_of_machine": 0.15663731134376302,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T10:06:46Z"
+}

@@ -49,7 +49,7 @@ fn repo_root() -> PathBuf {
 /// Advertised kernel-qualifier members with NO Sky-level signature. Each row is
 /// a program the checker cannot arity-check. **Ratchets DOWNWARD only.**
 ///
-/// 94 rows when this gate was added; **69** now — 25 net departures, not 26.
+/// 94 rows when this gate was added; **67** now — 27 net departures, not 28.
 /// `Db.findWhere` was declared, then UN-declared again (`988de75b`) because
 /// typing it required exposing a raw `WHERE`-concatenating function from
 /// `Std/Db.sky` under a name that does not warn; it came back to this list and
@@ -58,7 +58,7 @@ fn repo_root() -> PathBuf {
 /// it — the count below is the one the gate enforces, so trust the list, and
 /// keep this sentence honest when the list moves.
 ///
-/// The 25 that left were declared in
+/// The 27 that left were declared in
 /// `sky-stdlib/` against the RUNTIME's real shape (verified by
 /// `kernel_signature_runtime_arity.rs`, which compares every declaration's
 /// arrow count with its `runtime-go/rt` parameter count): all 13 unsigned
@@ -68,10 +68,19 @@ fn repo_root() -> PathBuf {
 /// andMap` to exist at all (they were advertised with no runtime symbol, so
 /// every call was `[E4005]` at codegen).
 ///
+/// `List.any` and `List.foldl` left last, and they are the one pair whose
+/// departure was NOT primarily about the diagnostic. Both are pure Sky with a
+/// BODY (not `Ffi.kernel` aliases), and per-def inference of `foldl`'s body
+/// leaves the callback's codomain a free var distinct from the accumulator's —
+/// so nothing downstream could identify the two without the declaration. The
+/// declared shapes are byte-for-byte the ones `seed_check_sigs` already carried
+/// in the check-only channel, so the annotation states what the checker was
+/// already assuming rather than pinning anything new.
+///
 /// What is LEFT is left for a reason, and the reason is per-category. None of
 /// these is "not got to yet":
 ///
-///   * **`Basics` / `List` / `Maybe` / `Result` (47 rows)** — 29 of these are
+///   * **`Basics` / `List` / `Maybe` / `Result` (45 rows)** — 27 of these are
 ///     ALREADY arity-checked at the TYPE layer, with a source span, through
 ///     `ty::sig`'s `check_kernel_sigs` seeds and its pass-3 `Result` inference.
 ///     A `.sky` annotation would move them out of that CHECK-ONLY channel and
@@ -146,12 +155,12 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
     ("Io", &["readBytes", "writeString"]),
     (
         "List",
+        // `any` and `foldl` came off this list when they were annotated in
+        // `sky-stdlib/Sky/Core/List.sky`. The list ratchets DOWNWARD only.
         &[
             "all",
-            "any",
             "filterMap",
             "find",
-            "foldl",
             "head",
             "member",
             "parallelMap",
@@ -330,7 +339,7 @@ fn path_join_and_safe_join_are_declared() {
 }
 
 // ---------------------------------------------------------------------------
-// The DISPOSITION of the 69 that are left
+// The DISPOSITION of the 67 that are left
 // ---------------------------------------------------------------------------
 //
 // The ratchet above stops the number GROWING. It says nothing about the number
@@ -395,7 +404,7 @@ fn the_remaining_untyped_kernel_surface_is_still_within_its_review_date() {
     assert!(
         !expired,
         "the untyped kernel surface passed its review date of {UNTYPED_KERNEL_REVIEW_BY}.\n\n\
-         69 advertised kernel members across 11 pseudo-modules still have no Sky \
+         67 advertised kernel members across 11 pseudo-modules still have no Sky \
          signature, so the checker cannot arity-check a call to any of them. They \
          do NOT reach `go build` as raw Go errors — `lower::reject_over_application` \
          catches over-application one stage later — but the diagnostic has no span \
@@ -409,14 +418,14 @@ fn the_remaining_untyped_kernel_surface_is_still_within_its_review_date() {
 
 /// The declaration must describe the list it governs. A re-declaration whose
 /// number has drifted from reality is how "68 now" outlived the change that
-/// made it 69 — the stale sentence this gate now prevents.
+/// made it 67 — the stale sentence this gate now prevents.
 #[test]
 fn the_declared_remaining_count_matches_the_allowlist() {
     let declared: usize = UNTYPED_KERNEL_MEMBERS.iter().map(|(_, ms)| ms.len()).sum();
     assert_eq!(
-        declared, 69,
+        declared, 67,
         "the untyped-kernel allowlist holds {declared} member(s), but the \
-         re-declaration above and the module docstring both say 69. Update BOTH \
+         re-declaration above and the module docstring both say 67. Update BOTH \
          when the list moves — a hand-maintained count that nothing checks is a \
          number that goes stale silently, which is what happened at 988de75b."
     );
