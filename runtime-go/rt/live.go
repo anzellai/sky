@@ -4490,7 +4490,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// not let the cookie lapse while the server session keeps sliding on
 	// activity via touchLastSeen — that would 404 every subsequent click on
 	// a session that is demonstrably alive.
-	writeSessionCookie(w, app.cookieNameOrDefault(), sid, app.sessionTTL)
+	writeSessionCookie(w, r, app.cookieNameOrDefault(), sid, app.sessionTTL)
 	// Per-session serial mutex: prevents two concurrent event handlers
 	// for the SAME session from racing each other's model updates.
 	// Different sessions proceed in parallel.
@@ -6480,13 +6480,13 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 		// TTL also slides on the SSE heartbeat, which cannot write a cookie into
 		// an already-open stream. Idle-under-SSE is covered by the Max-Age floor
 		// in slidingCookieMaxAgeSeconds, not by this re-issue.
-		writeSessionCookie(w, cookieName, c.Value, ttl)
+		writeSessionCookie(w, r, cookieName, c.Value, ttl)
 		return c.Value
 	}
 	b := make([]byte, 16)
 	rand.Read(b)
 	sid := hex.EncodeToString(b)
-	writeSessionCookie(w, cookieName, sid, ttl)
+	writeSessionCookie(w, r, cookieName, sid, ttl)
 	return sid
 }
 
@@ -6502,7 +6502,7 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 // cookie can only be re-issued by a GET/POST, so a TTL-keyed MaxAge expires the
 // cookie out from under a session that is still alive. Server-side reap remains
 // the sole authority on when a session ends.
-func writeSessionCookie(w http.ResponseWriter, cookieName, sid string, ttl time.Duration) {
+func writeSessionCookie(w http.ResponseWriter, r *http.Request, cookieName, sid string, ttl time.Duration) {
 	maxAge := slidingCookieMaxAgeSeconds(ttl)
 	// SameSite: when SKY_LIVE_FRAME_ANCESTORS opts this deploy into being iframed
 	// cross-origin (e.g. a control plane's preview pane), the browser would
@@ -6511,10 +6511,14 @@ func writeSessionCookie(w http.ResponseWriter, cookieName, sid string, ttl time.
 	// lets the cookie ride along, and the CSRF check still gates state-mutating
 	// POSTs. Outside that mode keep Lax (the right floor for top-level nav +
 	// form posts on a same-origin app).
-	sameSite, secure := http.SameSiteLaxMode, false
+	sameSite := http.SameSiteLaxMode
 	if crossOriginIframeMode() {
-		sameSite, secure = http.SameSiteNoneMode, true
+		sameSite = http.SameSiteNoneMode
 	}
+	// `secure` used to be false in every mode except the iframe one, so
+	// the session id of a production Sky.Live app — the pinned default
+	// app shape — rode without Secure. One predicate now, shared with
+	// every other mint site: see cookie_secure.go.
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    sid,
@@ -6522,7 +6526,7 @@ func writeSessionCookie(w http.ResponseWriter, cookieName, sid string, ttl time.
 		HttpOnly: true,
 		MaxAge:   maxAge,
 		SameSite: sameSite,
-		Secure:   secure,
+		Secure:   cookieSecureFor(r, cookieName, sameSite),
 	})
 }
 

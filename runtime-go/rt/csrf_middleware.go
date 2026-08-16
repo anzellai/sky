@@ -216,13 +216,13 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 		// header-vs-cookie check (set by the SAME-ORIGIN iframed JS) remains the
 		// actual CSRF gate, since cross-origin attackers can't read the cookie.
 		sameSite := http.SameSiteStrictMode
-		secure := r.TLS != nil
 		if crossOriginIframeMode() {
 			sameSite = http.SameSiteNoneMode
-			secure = true
-		} else if proto := r.Header.Get("X-Forwarded-Proto"); proto == "https" {
-			secure = true
 		}
+		// The TLS / X-Forwarded-Proto test this used to inline is now
+		// one shared predicate (cookie_secure.go), which additionally
+		// covers the production gate — a deploy behind a proxy that
+		// forwards neither header still gets Secure.
 		http.SetCookie(w, &http.Cookie{
 			Name:     SkyCsrfCookieName,
 			Value:    cookieToken,
@@ -230,7 +230,7 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			HttpOnly: true,
 			MaxAge:   csrfCookieMaxAgeSeconds(),
 			SameSite: sameSite,
-			Secure:   secure,
+			Secure:   cookieSecureFor(r, SkyCsrfCookieName, sameSite),
 		})
 		if newlyIssued {
 			// Stash the freshly-generated token on the request so downstream

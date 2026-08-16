@@ -9819,8 +9819,9 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 //
 // Token gen: 32 bytes from crypto/rand → base64-URL (no padding).
 // Token compare: subtle.ConstantTimeCompare (no timing leak).
-// Cookie attrs: Path=/; Secure; SameSite=Lax.  `securifyCookieAttrs`
-// strips Secure in dev mode if the user is testing without TLS.
+// Cookie attrs: Path=/; Secure; SameSite=Lax — unconditional, because
+// the `__Host-` name prefix mandates Secure (RFC 6265bis §4.1.3.2) and a
+// client rejects the cookie without it, in dev as well as production.
 func Middleware_withCsrf(handler any) any {
 	const (
 		csrfCookie    = "__Host-sky_csrf"
@@ -10001,29 +10002,11 @@ func setCookieHeader(resp any, name, value, attrs string) any {
 //       stderr plus the full frame to .skylog/panic.log in prod
 //       (no stack-trace leak in aggregated logs).
 
-// isProd reports whether <PREFIX>_ENV=prod is set. Kept as a small
-// function so tests can monkey-patch via env var at runtime.
-func isProd() bool {
-	return skyGetenv("ENV") == "prod"
-}
-
-// securifyCookieAttrs appends "; Secure" to an attribute string in
-// prod mode, unless it's already present. Idempotent for the
-// caller-opt-in path too.
-func securifyCookieAttrs(attrs string) string {
-	if !isProd() {
-		return attrs
-	}
-	// strings.Contains is fine here; "Secure" in a cookie name is
-	// not a typical payload and this runs only on server response.
-	if strings.Contains(strings.ToLower(attrs), "secure") {
-		return attrs
-	}
-	if attrs == "" {
-		return "Secure"
-	}
-	return attrs + "; Secure"
-}
+// isProd / securifyCookieAttrs moved to cookie_secure.go. `isProd` is
+// GONE: it was a second production predicate (`<PREFIX>_ENV == "prod"`,
+// exact match) competing with `productionFromEnv()`, the documented
+// gate, so `ENV=production` left the cookie path in dev mode. Every
+// caller now uses `productionFromEnv()`.
 
 // logPanicFrame writes the panic context to the right place given
 // SKY_ENV. Dev: full frame on stderr. Prod: compact summary on
@@ -10033,7 +10016,7 @@ func securifyCookieAttrs(attrs string) string {
 // lose a panic report entirely.
 func logPanicFrame(method, path string, rec any) {
 	errKind := fmt.Sprintf("%T", rec)
-	if isProd() {
+	if productionFromEnv() {
 		// Compact stderr line — no stack trace, no internal paths.
 		fmt.Fprintf(os.Stderr, "[sky.http] panic %s %s (%s)\n", method, path, errKind)
 		// Full frame to .skylog/panic.log

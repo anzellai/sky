@@ -334,13 +334,17 @@ func verifyCookieValue(key []byte, value string) (string, bool) {
 // traffic.
 func setConsoleV2Cookie(w http.ResponseWriter, key []byte, subject string) {
 	value := signCookieValue(key, subject, consoleAuthCookieV2MaxAge)
+	// `__Host-` mandates Secure (RFC 6265bis §4.1.3.2) — a client
+	// rejects the cookie outright without it. The shared predicate
+	// returns true for the name prefix, in dev as well as production.
+	sameSite := consoleCookieSameSite()
 	http.SetCookie(w, &http.Cookie{
 		Name:     consoleAuthCookieV2Name,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
-		SameSite: consoleCookieSameSite(),
+		Secure:   cookieSecureFor(nil, consoleAuthCookieV2Name, sameSite),
+		SameSite: sameSite,
 		MaxAge:   int(consoleAuthCookieV2MaxAge.Seconds()),
 	})
 }
@@ -369,13 +373,16 @@ func consoleCookieSameSite() http.SameSite {
 
 // clearConsoleV2Cookie zeros the cookie (logout, denial, mode change).
 func clearConsoleV2Cookie(w http.ResponseWriter) {
+	sameSite := consoleCookieSameSite()
 	http.SetCookie(w, &http.Cookie{
 		Name:     consoleAuthCookieV2Name,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
-		SameSite: consoleCookieSameSite(),
+		// `__Host-` mandates Secure; a clear must match the set's
+		// attributes or the client keeps the original cookie.
+		Secure:   cookieSecureFor(nil, consoleAuthCookieV2Name, sameSite),
+		SameSite: sameSite,
 		MaxAge:   -1,
 	})
 }

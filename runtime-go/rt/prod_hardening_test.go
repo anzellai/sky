@@ -55,19 +55,17 @@ func TestWithCookie_NoSecureInDev(t *testing.T) {
 	}
 }
 
-func TestWithCookie_DoesNotDoubleAddSecure(t *testing.T) {
-	// Caller already opted in; don't duplicate.
-	withProdEnv(t, func() {
-		resp := SkyResponse{Status: 200}
-		out := Server_withCookie("session", "tok",
-			"Path=/; HttpOnly; Secure", resp).(SkyResponse)
-		sc := out.Headers["Set-Cookie"]
-		// Exactly one "Secure" occurrence.
-		if strings.Count(strings.ToLower(sc), "secure") != 1 {
-			t.Fatalf("expected exactly one Secure: %q", sc)
-		}
-	})
-}
+// TestWithCookie_DoesNotDoubleAddSecure used to assert with
+//
+//	strings.Count(strings.ToLower(sc), "secure") != 1
+//
+// — the SAME substring predicate as the code it was verifying, so it
+// agreed with the bug instead of catching it (`Path=/secure` counts).
+// A test must not re-implement the predicate it verifies: idempotency is
+// now asserted on the PARSED cookie in
+// TestSecurifyCookieAttrs_DoesNotDoubleAddSecure (cookie_secure_test.go),
+// which counts Secure ATTRIBUTES and checks `c.Secure` through
+// `(&http.Response{…}).Cookies()`.
 
 func TestCsrfIssue_SecureInProd(t *testing.T) {
 	withProdEnv(t, func() {
@@ -81,19 +79,11 @@ func TestCsrfIssue_SecureInProd(t *testing.T) {
 	})
 }
 
-func TestIsProd_ReadsEnvVar(t *testing.T) {
-	_ = os.Unsetenv("SKY_ENV")
-	if isProd() {
-		t.Fatal("isProd() should be false when SKY_ENV is unset")
-	}
-	withProdEnv(t, func() {
-		if !isProd() {
-			t.Fatal("isProd() should be true when SKY_ENV=prod")
-		}
-	})
-	_ = os.Setenv("SKY_ENV", "staging")
-	if isProd() {
-		t.Fatal("isProd() should be false for SKY_ENV=staging")
-	}
-	_ = os.Unsetenv("SKY_ENV")
-}
+// TestIsProd_ReadsEnvVar is gone with `isProd()`. It asserted
+// `SKY_ENV=staging` is NOT production, i.e. it pinned the divergence
+// between the cookie path's own predicate and `productionFromEnv()` —
+// the documented gate, under which staging IS production and therefore
+// gets Secure cookies. The single predicate is covered end-to-end by
+// TestCookieSecurePredicate_MatchesProductionGate (cookie_secure_test.go),
+// which asserts the cookie decision and the production gate agree for
+// every ENV / SKY_ENV combination.
