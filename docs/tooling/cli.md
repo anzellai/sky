@@ -223,25 +223,36 @@ Exit codes: `0` clean, `1` warnings, `2` errors. CI-friendly.
 ### `sky verify [example]`
 
 CI canonical runtime check. Iterates every directory under `examples/`
-(or the named one), builds, runs, and asserts runtime behaviour:
+(or the named one), builds it, `go build`s the emitted Go, and runs it
+(`cmd_verify`, `rust/crates/sky/src/main.rs:3842-3941`).
 
-- HTTP examples: hits `/` (and any routes declared in `examples/<n>/verify.json`)
-  and checks status codes + body substrings.
-- GUI examples (Fyne): skipped on headless CI via `SKY_SKIP_GUI=1`.
+Output lines: `  ok: <name>`, `  FAIL build: …`, `  FAIL go-build: …`,
+`  FAIL run: …`. Exit code is non-zero if any example fails.
 
-Output lines: `runtime ok: <name>`, `FAIL scenario: ...`, `FAIL build: ...`,
-`[skip] <name>: ...`. Exit code is non-zero if any example fails.
-
-Scenario file format:
-
-```json
-{
-    "requests": [
-        { "method": "GET", "path": "/",           "expectStatus": 200, "expectBody": ["Hello"] },
-        { "method": "GET", "path": "/api/status", "expectStatus": 200, "expectBody": ["status"] }
-    ]
-}
-```
+> **`sky verify` does no scenario-driven HTTP assertion, and this section used
+> to say it did.** The removed text described hitting `/` plus "any routes
+> declared in `examples/<n>/verify.json`", checking status codes and body
+> substrings, skipping GUI examples via `SKY_SKIP_GUI=1`, printing
+> `runtime ok:` / `FAIL scenario:` / `[skip]`, and a
+> `{"requests":[… "expectStatus" … "expectBody" …]}` schema. None of it
+> exists — `grep -rn 'verify.json\|expectStatus\|SKY_SKIP_GUI\|runtime
+> ok\|FAIL scenario' rust runtime-go scripts` returns nothing from the verify
+> path.
+>
+> Two consequences worth knowing:
+>
+> - **Four committed `verify.json` files are dead inputs.**
+>   `examples/{15-http-server,30-sse-server-demo,32-sse-relay,33-websocket-echo}/verify.json`
+>   are read by nothing.
+> - **GUI skipping is not env-gated.** It is a hard-coded `skip-gui` row in
+>   `scripts/verify-cli.sh:71`.
+>
+> The scenario-contract mechanism the old text described *does* exist — under a
+> different name, in a different tool: `scripts/example-e2e.sh` reads
+> `examples/<n>/e2e.json` and honours `expectStatus`
+> (`example-e2e.sh:113`, `:185`). That is the behavioural tier in
+> `docs/rust-rewrite/11-testing-and-verification.md` §1. To get scripted HTTP
+> assertions on an example, write an `e2e.json` — not a `verify.json`.
 
 ### `sky test <file>`
 
@@ -633,11 +644,14 @@ first use — no separate install required. Cold start costs one
 `go build` (~4s); subsequent calls are instant. Content-hashed
 cache means `sky upgrade` invalidates the helper automatically.
 
-Overrides, in probe order:
-
-1. `$SKY_FFI_INSPECTOR` — absolute path to a pre-built helper.
-2. `bin/sky-ffi-inspect` in the cwd or any ancestor (dev workflow).
-3. Embedded fallback (default for installed binaries).
+**There are no overrides.** This section used to list a probe order —
+`$SKY_FFI_INSPECTOR`, then `bin/sky-ffi-inspect` in the cwd or an ancestor,
+then the embedded fallback. Neither of the first two is implemented
+(`grep -rn 'SKY_FFI_INSPECTOR\|bin/sky-ffi-inspect' rust/crates --include='*.rs'`
+is empty); `ffi::ensure_inspector` (`rust/crates/ffi/src/inspect.rs:329`) goes
+directly to the source tree and the content-hashed cache. See
+`docs/development.md` for what that means for the `bin/` copy
+`scripts/build.sh` still writes.
 
 ### `sky remove [--go|--sky] <pkg>`
 

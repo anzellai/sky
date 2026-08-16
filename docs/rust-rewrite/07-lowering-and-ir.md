@@ -79,7 +79,7 @@ downstream can reason about it structurally. Three consequences, all scars:
 3. **`rt.Coerce`/`any` became a pervasive surface.** When a slot's type is a
    string you cannot cheaply prove "these two types are already equal", so the
    safe default is to wrap. The result is documented in
-   `docs/v0.17/rt-coerce-residual-surface.md`: **8 safety classes, 200–700 coerce
+   `docs/history/v0.17/rt-coerce-residual-surface.md`: **8 safety classes, 200–700 coerce
    sites per UI-heavy example**. A real emitted line from
    `examples/07-todo-cli/sky-out/main.go:864` reads:
 
@@ -457,7 +457,7 @@ not get "unused" diagnostics out of it.
 The typed IR makes `Coerce` a node the lowerer must *justify*. Every insertion
 site is one of a small allowlist; `classify_coercion` returns the `CoerceReason`
 and `bug!()`s on anything else (L6/L7). Mapping the 8 documented residual classes
-(`docs/v0.17/rt-coerce-residual-surface.md`) onto the rewrite:
+(`docs/history/v0.17/rt-coerce-residual-surface.md`) onto the rewrite:
 
 | # | Haskell residual class | Sites (26-ui) | Fate under the typed IR |
 |---|---|---|---|

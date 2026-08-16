@@ -8,7 +8,7 @@ auto-TCO for all list ops, negative literal args, multi-line signatures,
 zero-arg call shapes, Css keyword constants, FFI interface satisfaction,
 Dict typed-key inference, Sky.Live init request shape, URL-driven route
 Navigate Msg) are recorded in `CHANGELOG.md` and the per-version archives
-under `docs/archive/`. This file lists ONLY what's still active at HEAD.
+under `docs/history/`. This file lists ONLY what's still active at HEAD.
 
 ## Language (design floor — by intent)
 
@@ -63,8 +63,18 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
 
 6. **`rt.Coerce`-family narrowing calls remain at typed boundaries**
    (sealed-iface ctor narrowing, parametric record alias, typed list,
-   container, primitive, tuple, map/dict, generic-param erasure). 214
-   call sites on the canonical `examples/26-ui-showcase` benchmark.
+   container, primitive, tuple, map/dict, generic-param erasure).
+   **446 call sites** on the canonical `examples/26-ui-showcase`
+   benchmark — `26-ui-showcase  adapter=0  dispatch=0  narrow=446`,
+   `rust/crates/xtask/coerce_floor.golden:73`, which is the gate's own
+   census over exactly this `rt.Coerce`/`rt.As*`/`rt.Field`/`rt.SkyCall`
+   set.
+
+   > This entry said **214**, and the next sentence said #677 "would drop
+   > ~476 of these sites" — more sites than the count it had just given.
+   > The 214 was never re-derived after the golden landed. Quote the
+   > golden, not a remembered number: `grep 26-ui-showcase
+   > rust/crates/xtask/coerce_floor.golden`.
    **All sites are documented sound** with explicit per-class
    soundness proofs in `docs/history/v0.17/rt-coerce-residual-surface.md`. The
    synchronous-panic gate (`defer rt.LogPanicAndExit()`) catches any
@@ -157,4 +167,6 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
   headers / cookies)
 - URL-driven route matches fire `Navigate` Msg
 
-Full history in `CHANGELOG.md` + `docs/archive/v0.17-design-notes/`.
+Full history in `CHANGELOG.md` + `docs/history/v0.17/`. (This line named
+`docs/archive/v0.17-design-notes/`; no `docs/archive/` tree exists — frozen
+material lives under `docs/history/`.)

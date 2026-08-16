@@ -4,7 +4,8 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/versions.md`](../compiler/versions.md) for the changelog.
+> [`../../CHANGELOG.md`](../../CHANGELOG.md) for the changelog. (This link
+pointed at `../compiler/versions.md`; there is no `docs/compiler/` directory.)
 
 
 Sky ships with a first-class test framework: the `Sky.Test` stdlib module plus a `sky test` CLI command. Tests are plain Sky code and benefit from the same type checker, pattern exhaustiveness, and Error system as production code.
@@ -166,7 +167,7 @@ Current permanent regressions:
 - `runtime-go/rt/error_adt_shape_test.go` — rt `ErrIo` values are type-compatible with user-side `Sky_Core_Error_Error`.
 - `legacy-haskell-compiler/test/Sky/Format/FormatSpec.hs` — formatter idempotency (string escapes, scientific-notation floats, nested case, long pipelines, record updates).
 - `legacy-haskell-compiler/test/Sky/ErrorUnificationSpec.hs` — forbidden-pattern greps: `Result String`, `Task String`, `IoError`, `RemoteData`.
-- `tests/Core/CoreTest.sky` — 22 stdlib semantic tests (String / List / Dict / Maybe / Result).
+- `tests/Core/CoreTest.sky` — **30** stdlib semantic tests (String / List / Dict / Maybe / Result). (Said 22; `grep -o 'Test\.test' tests/Core/CoreTest.sky | wc -l` → 30. The other seven counts in this list match exactly, so this one had genuinely drifted.)
 - `tests/Lang/PatternTest.sky` — 10 pattern-matching tests (nested Result/Maybe, enum ADT, Bool-inside-Ok).
 - `tests/Live/CounterTest.sky` — 19 Sky.Live TEA loop tests (init / update / model invariants / event dispatch).
 - `tests/Live/FormTest.sky` — 20 Sky.Live form-handling tests (validation / state machine transitions / sign-out).

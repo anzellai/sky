@@ -559,9 +559,18 @@ disproved.** This section previously said closing requires
 "monomorphising every HOF call site into a generated typed dispatcher
 (Go binary size explodes)". Eta-expanding a func value into a closure at
 the target shape closes the adapter half with **one emit per def, no
-monomorphisation and no binary growth** — measured 1.36×, with the
-adapter census across 56 projects falling 269 → 24 (−91%, 24 projects to
-zero). The "one emit per def" principle is intact.
+monomorphisation and no binary growth** — measured 1.36×
+(`docs/perf/runs/hof-dispatch-20260815/`).
+
+> **The adapter census in this sentence is stale and is restated from the
+> golden.** It read "across 56 projects falling 269 → 24 (−91%, 24 projects to
+> zero)". `rust/crates/xtask/coerce_floor.golden` holds **62** project
+> entries, and `grep -o 'adapter=[0-9]*' … | awk` sums to **35** adapters
+> across **9** non-zero projects, with **53** at zero (skyshop 11,
+> composite-generics 6, relay 5, fieldbook 4, composite-live-shop 3,
+> composite-server 2, console 2, standard-libs 1, json 1). The direction of
+> the result is unchanged; the numbers are not the ones quoted. Re-derive from
+> the golden rather than citing this line. The "one emit per def" principle is intact.
 
 **Floor estimate**: the category-4 TEA dispatch is **one site per app**,
 exercised once per interaction. The 35-50 figure previously given here
