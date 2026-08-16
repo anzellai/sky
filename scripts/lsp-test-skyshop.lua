@@ -37,14 +37,39 @@ local test_name = args[3]
 local target_path = project_dir .. "/" .. rel_file
 
 
+-- The repo this script lives in, derived from the script's own path so the
+-- freshness check below resolves the same tree however nvim was invoked.
+local script_path = debug.getinfo(1, "S").source:sub(2)
+local repo_root = vim.fn.fnamemodify(script_path, ":p:h:h")
+
+-- The compiler this driver probes must be current with the tree, exactly as it
+-- must be for every shell gate. `~/.local/bin/sky` — the first candidate below
+-- — is a developer install that can be arbitrarily old, and a PASS from it says
+-- nothing about the LSP in this checkout. The same failure was found in the
+-- sibling driver on 2026-08-12: a mutated server was on `$PATH`, and the 17
+-- cases in scripts/lsp-test-nvim.lua silently tested a `sky-out/sky` built an
+-- hour earlier and reported PASS.
+--
+-- The check itself is scripts/lib/fresh-compiler.sh — run, not reimplemented in
+-- Lua, so there is one definition of "fresh" across shell, Node and here.
+local function require_fresh(bin)
+    local lib = repo_root .. "/scripts/lib/fresh-compiler.sh"
+    local out = vim.fn.system({ "/bin/bash", lib, bin, repo_root })
+    if vim.v.shell_error ~= 0 then
+        io.stderr:write(out)
+        os.exit(vim.v.shell_error)
+    end
+end
+
 local function find_sky_binary()
     local candidates = {
         vim.fn.expand("~/.local/bin/sky"),
-        vim.fn.getcwd() .. "/sky-out/sky",
+        repo_root .. "/sky-out/sky",
         "sky",
     }
     for _, c in ipairs(candidates) do
         if vim.fn.executable(c) == 1 then
+            require_fresh(c)
             return c
         end
     end

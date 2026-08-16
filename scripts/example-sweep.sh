@@ -35,6 +35,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
 source "$ROOT/scripts/lib/with-timeout.sh"
+# `require_fresh_compiler <bin>` — a sweep may not measure a compiler older than
+# the tree. See the header of scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
 cd "$ROOT"
 
 # shellcheck source=lib/concurrency.sh
@@ -77,7 +80,9 @@ else
 fi
 
 SKY="$ROOT/sky-out/sky"
-[[ -x "$SKY" ]] || { echo "missing $SKY — run scripts/build.sh first" >&2; exit 2; }
+# Existence is not currency. This used to be `[[ -x "$SKY" ]] || exit 2`, which
+# passes for a compiler built before every change the sweep claims to verify.
+require_fresh_compiler "$SKY" "$ROOT"
 
 export SKY_RUNTIME_DIR="$ROOT/runtime-go"
 

@@ -54,6 +54,7 @@ import { mkdirSync, existsSync, createWriteStream, readFileSync, readdirSync, st
 import { fileURLToPath } from 'url';
 import path from 'path';
 import net from 'net';
+import { requireFreshCompiler } from './lib/fresh-compiler.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -113,11 +114,16 @@ function killPort(port) {
 // checkout just built" (scripts/build.sh, example-sweep.sh, verify-all-web.sh,
 // preflight-tag.sh all install and read it), so it is what the gate must build
 // its fixture with. `SKY_SKY_BIN` still overrides for one-off bisects.
+//
+// Resolving to the right PATH is half the problem; the other half is that the
+// binary at that path may predate the change under test. `requireFreshCompiler`
+// is the same check every shell gate runs — see scripts/lib/fresh-compiler.sh.
 function skyBin() {
     for (const cand of [process.env.SKY_SKY_BIN, path.join(repoRoot, 'sky-out', 'sky')]) {
-        if (cand && existsSync(cand)) return cand;
+        if (cand && existsSync(cand)) { requireFreshCompiler(cand, repoRoot); return cand; }
     }
-    return 'sky'; // PATH fallback — a developer install, not a CI path
+    requireFreshCompiler('sky', repoRoot); // PATH fallback — a developer install, not a CI path
+    return 'sky';
 }
 
 // Newest mtime under the fixture's Sky sources.

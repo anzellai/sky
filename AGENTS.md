@@ -460,6 +460,22 @@ These apply to any Sky code you write or any compiler change you make:
   `rust/crates/sky/src/live_gate.rs`. Both take the same opt-out —
   `SKY_LIVE_TESTS=skip` — and both treat any other value as an error rather
   than guessing.
+- **A gate may not measure a compiler older than the tree.** `sky-out/sky` is
+  installed by exactly one line (`scripts/build.sh:80`), so a bare
+  `cargo build --release -p sky` leaves `rust/target/release/sky` fresh and
+  `sky-out/sky` untouched — and every consumer then measures whatever
+  `build.sh` last produced. Sixteen scripts read that path and none checked it.
+  Source `scripts/lib/fresh-compiler.sh` and call
+  `require_fresh_compiler "$SKY" "$ROOT"` (Node: `scripts/lib/fresh-compiler.mjs`;
+  it runs the shell library rather than reimplementing it). It FAILS naming
+  `./scripts/build.sh`, and unlike `require_tool` it has **no opt-out** — a tree
+  that has the sources can always rebuild, so "I cannot fix this" is never true.
+  `rust/crates/xtask/tests/gates_measure_a_fresh_compiler.rs` fails the build on
+  a new consumer that skips the check, on a script bash 3.2 cannot parse, and on
+  the shell roots drifting from `config_matrix.rs`'s. The loud symptom cost a
+  full diagnosis: a sweep after a bare `cargo build` reported 22 of 22
+  conformance suites FAILED on a consistent tree. The quiet one is worse — a
+  stale binary that PASSES certifies source it never compiled.
 - **Disk hygiene.** `scripts/build.sh` + `scripts/example-sweep.sh` auto-prune the
   Go build cache at a 5 GB threshold; the `xtask build-run` gate self-guards
   disk before the sweep. Reclaim manually (`go clean -cache`, worktree cleanup)

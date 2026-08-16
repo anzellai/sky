@@ -15,6 +15,10 @@ source "$REPO_ROOT/scripts/lib/with-timeout.sh"
 # `require_tool <name> <hint>` — a gate whose prerequisite is missing fails
 # naming what to install. See scripts/lib/require-tool.sh.
 source "$REPO_ROOT/scripts/lib/require-tool.sh"
+# `require_fresh_compiler <bin>` — the same reasoning applied to a prerequisite
+# that is out of date rather than missing. See scripts/lib/fresh-compiler.sh.
+source "$REPO_ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$REPO_ROOT/sky-out/sky" "$REPO_ROOT"
 
 # Every sub-gate below drives a browser through a Node verifier. Without node
 # each one returns 127 and reports itself as a product failure; the truth is

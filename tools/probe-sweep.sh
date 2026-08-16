@@ -37,7 +37,10 @@ source "$ROOT/scripts/lib/with-timeout.sh"
 cd "$ROOT"
 
 SKY="$ROOT/sky-out/sky"
-[[ -x "$SKY" ]] || { echo "missing $SKY — run scripts/build.sh first" >&2; exit 2; }
+# `require_fresh_compiler <bin>` — existence is not currency. See the header of
+# scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$SKY" "$ROOT"
 
 export SKY_RUNTIME_DIR="$ROOT/runtime-go"
 

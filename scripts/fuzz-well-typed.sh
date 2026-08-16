@@ -38,7 +38,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # `with_timeout <secs> <cmd...>` — the one time bound. See the header of
 # scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
 source "$ROOT/scripts/lib/with-timeout.sh"
+# `require_fresh_compiler <bin>` — 10,000 clean iterations against a compiler
+# from before the change under test say nothing about it. See the header of
+# scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
 SKY="${SKY:-$ROOT/sky-out/sky}"
+require_fresh_compiler "$SKY" "$ROOT"
 
 ITERS=10000
 SEED=""

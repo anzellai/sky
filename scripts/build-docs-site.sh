@@ -23,9 +23,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/_site}"
+# `require_fresh_compiler <bin>` — `sky doc --export` renders the API from the
+# compiler's own embedded stdlib, so a stale binary publishes a doc site for a
+# stdlib that is no longer in the tree. See scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+
 SKY="${SKY_BIN:-$ROOT/sky-out/sky}"
 [ -x "$SKY" ] || SKY="$(command -v sky 2>/dev/null || true)"
-[ -n "${SKY:-}" ] && [ -x "$SKY" ] || { echo "build-docs-site: no sky binary (set SKY_BIN)"; exit 2; }
+require_fresh_compiler "${SKY:-}" "$ROOT"
 
 echo "==> render doc-site (landing + reference + tour + guides) from source"
 rm -rf "$OUT"; mkdir -p "$OUT"

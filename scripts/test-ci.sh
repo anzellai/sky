@@ -47,6 +47,9 @@ cd "$ROOT"
 source "$ROOT/scripts/lib/concurrency.sh"
 # shellcheck source=lib/cargo-target.sh
 source "$ROOT/scripts/lib/cargo-target.sh"
+# `sky_compiler_freshness` / `require_fresh_compiler` — see the header of
+# scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
 
 # Defaults that map "CI mode" semantically. Operators can override
 # anything by exporting before invoking the script.
@@ -69,7 +72,19 @@ echo
 phase_compiler_build() {
     echo "--- phase: compiler build ---"
     local t0; t0=$(date +%s)
-    if [ ! -x "$ROOT/sky-out/sky" ] || [ -n "${SKY_REBUILD:-}" ]; then
+    # `[ ! -x … ]` was the whole condition, in the phase whose comment says its
+    # purpose is freshness. Existence is not freshness: with a `sky-out/sky`
+    # from any earlier run on disk, this phase printed "sky-out/sky exists" and
+    # every later phase measured a compiler built before the change under test.
+    # `sky_compiler_freshness` returns 1 for absent OR stale — see the header of
+    # scripts/lib/fresh-compiler.sh — so both now rebuild.
+    local fresh_rc=0
+    sky_compiler_freshness "$ROOT/sky-out/sky" "$ROOT" || fresh_rc=$?
+    if [ "$fresh_rc" = "2" ]; then
+        echo "  FAIL — cannot establish compiler freshness: $SKY_FRESH_REASON" >&2
+        return 1
+    fi
+    if [ "$fresh_rc" != "0" ] || [ -n "${SKY_REBUILD:-}" ]; then
         # Not `cp "$ROOT/rust/target/release/sky"` — cargo honours
         # CARGO_TARGET_DIR, so that path can name an older binary and this
         # phase's whole purpose is freshness. See scripts/lib/cargo-target.sh.
@@ -84,12 +99,11 @@ phase_compiler_build() {
             return 1
         fi
         install_binary "$(cargo_bin_path "$ROOT/rust" sky --release)" "$ROOT/sky-out/sky" || return 1
-        if [ ! -x "$ROOT/sky-out/sky" ]; then
-            echo "  FAIL — phase claims a fresh compiler but $ROOT/sky-out/sky is not executable" >&2
-            return 1
-        fi
+        # And assert the claim this phase makes, rather than the weaker one it
+        # used to check ("is executable").
+        require_fresh_compiler "$ROOT/sky-out/sky" "$ROOT"
     else
-        echo "  sky-out/sky exists (set SKY_REBUILD=1 to force rebuild)"
+        echo "  sky-out/sky is current with the tree (set SKY_REBUILD=1 to force rebuild)"
     fi
     local t1; t1=$(date +%s)
     echo "  $(( t1 - t0 ))s"
