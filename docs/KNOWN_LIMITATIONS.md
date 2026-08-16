@@ -33,11 +33,26 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
 5. **HM type-checker heap budget on monolithic Std.Ui-heavy modules.**
    For very large monolithic view files (~25+ polymorphic `Element Msg`
    helpers + many nested calls) the constraint solver can grow O(N²) in
-   heap. The compiler defensively caps solver invocations at
-   `SKY_SOLVER_BUDGET` steps (default `max(5,000,000, constraint_count
-   × 200)`). On hitting the cap, the compiler aborts with a clear
+   heap. **There is no cap.** This entry used to say the compiler
+   "defensively caps solver invocations at `SKY_SOLVER_BUDGET` steps
+   (default `max(5,000,000, constraint_count × 200)`)" and aborts with
    `TYPE ERROR: constraint solver exceeded budget` rather than OOMing
-   the host.
+   the host. That fence was the retired Haskell solver's
+   (`Solve.hs:708-746`); it was **not carried into the Rust `ty`
+   crate** and the entry was never updated.
+
+   ```bash
+   $ grep -rn 'bump_step\|SKY_SOLVER_BUDGET' rust/crates
+   $                                          # nothing
+   ```
+
+   The only surviving mention anywhere is a Go comment noting the knob
+   "is read by the Haskell compiler"
+   (`runtime-go/rt/env_prefix.go:24`). So: neither `SKY_SOLVER_BUDGET`
+   nor `SKY_SOLVER_BUDGET_FACTOR` is read, there is no `bump_step`, and
+   a constraint-explosion module **OOMs the host** — it does not abort
+   with a diagnostic. Treat the workaround below as the only mitigation
+   until a budget is reinstated.
 
    **Workaround**: split heavy view modules across multiple files
    (per `examples/19-skyforum`'s 8-module pattern — `State.sky` holds

@@ -217,14 +217,25 @@ fn occurs(&mut self, target: TyVarId) -> bool {
 ## `infer(DefId)` — inference as a salsa query (target)
 
 > **Implementation status.** HM inference is
-> **built** (M3: arena union-find, generalisation, exhaustiveness, per-region
-> types; 39/39 non-FFI typecheck-match + reject-parity). The `#[salsa::tracked]`
-> annotations and `db: &dyn Db` signatures in this section are the **target**
-> shape — the running inference in `rust/crates/ty` is invoked value-threaded over
-> `hir::db::SourceDb` (via the `Typer`), not as memoised salsa queries. The
-> `ImplementsMap`-as-"pinned salsa input" and `infer`-as-query framing below
-> describe the destination engine ([`01`](01-architecture-overview.md) status);
-> the *logic* they describe is what the code does.
+> **built** (M3: arena union-find, generalisation, exhaustiveness, per-expression
+> types; 39/39 non-FFI typecheck-match + reject-parity), **and `infer` is a real
+> `#[salsa::tracked]` query** — `infer_query`, `rust/crates/skydb/src/lib.rs:304`,
+> demanded through the database the build driver constructs
+> ([`01`](01-architecture-overview.md) status). This note used to say the
+> salsa framing was target-only and that inference "is invoked value-threaded
+> over `hir::db::SourceDb`, not as memoised salsa queries"; that stopped being
+> true when the resolve/infer/lower stages landed.
+>
+> Three things in this section are still **not** what the code does, and each is
+> marked where it appears rather than covered by a blanket disclaimer:
+>
+> - the **solver budget** (see "Budget" below) — not built at all;
+> - the **`RegionTable`** shape (see "The per-region type table") — the real
+>   table is `HashMap<ExprId, Ty>`, not `BTreeMap<Span, Ty>`;
+> - **`exhaustiveness(DefId)` is not a separate tracked query**, and the
+>   `#![deny(non_exhaustive_omitted_patterns)]` "L6 turned inward" lint is not
+>   applied in any crate (`grep -rn 'non_exhaustive_omitted_patterns'
+>   rust/crates` is empty; only `#![forbid(unsafe_code)]` is in force).
 
 Today constraint generation is a whole-module `IO` pass (`constrainModule`,
 `Constrain/Module.hs:17`) feeding one `solve` (`Solve.hs:803`); the LSP had to
@@ -279,8 +290,8 @@ struct InferCtx<'db> {
     /// input, not a mutable global (replaces `_ffiImplements`, Solve.hs:509
     /// + the deleted `ffiImplementsRef`).
     ffi_implements: &'db ImplementsMap,
-    /// Defensive solver-step budget (Solve.hs:544). `steps > budget` →
-    /// one diagnostic, bail (not an OOM).
+    /// NOT BUILT — see "Budget" below. The Rust `ty` crate has no step
+    /// counter and no cap; these two fields do not exist.
     steps: u64,
     budget: u64,
     diagnostics: Vec<Diagnostic>,
@@ -296,13 +307,31 @@ struct InferCtx<'db> {
 emission site keyed by hashmap order. Same source ⇒ same `TyVarId`s ⇒ same read-
 back ⇒ byte-identical Go (the reproducibility gate).
 
-### Budget
+### Budget — NOT BUILT
 
-Keep the structural budget verbatim (`Solve.hs:708-746`): `max(5_000_000,
-constraint_count × 200)`, env-overridable via `SKY_SOLVER_BUDGET` /
-`SKY_SOLVER_BUDGET_FACTOR`, `0` disables. It is the fence against constraint-
-explosion OOM (Limitation #17). `bump_step()` returns `Err(budget_msg)` past the
-cap; the caller short-circuits with a diagnostic. Per-`DefId` inference makes the
+> **This is the one section here that is target, not description, and it is
+> called out because the rest of this doc is not.** The section header used to
+> read "Keep the structural budget verbatim" in the imperative-plan voice, next
+> to a `budget: u64` field in the `InferCtx` sketch above, under a status note
+> (`:219-227`) saying the inference logic described here "is what the code
+> does". A reader could reasonably conclude the fence exists. It does not:
+>
+> ```bash
+> $ grep -rn 'bump_step\|budget' rust/crates/ty/src
+> $                                # nothing
+> ```
+>
+> No `budget` field, no `bump_step`, and neither `SKY_SOLVER_BUDGET` nor
+> `SKY_SOLVER_BUDGET_FACTOR` is read anywhere in `rust/`. A
+> constraint-explosion module OOMs the host rather than aborting with a
+> diagnostic. See `docs/KNOWN_LIMITATIONS.md` #5.
+
+The intended design, carried over from the retired Haskell solver
+(`Solve.hs:708-746`): `max(5_000_000, constraint_count × 200)`,
+env-overridable via `SKY_SOLVER_BUDGET` / `SKY_SOLVER_BUDGET_FACTOR`, `0`
+disables. It is the fence against constraint-explosion OOM (Limitation #17).
+`bump_step()` returns `Err(budget_msg)` past the cap; the caller
+short-circuits with a diagnostic. Per-`DefId` inference would make the
 per-query budget naturally smaller than the old whole-module one.
 
 ## Unification (the soundness core)
@@ -498,11 +527,24 @@ constraint's source region (`recordRegionVar`, `Solve.hs:762-766`, skipping the
 is what type-directed lowering reads to pick a typed Go shape per sub-expression
 (`07`; CLAUDE.md "Type-directed lowering").
 
+**What was built is `ExprId`-keyed, and there is no `RegionTable` type.** The
+sketch below described `pub struct RegionTable(BTreeMap<Span, Ty>)` "keyed by
+Span (interned FileId + range), iterated in id/BTree order (L4)". No such type
+exists — `grep -rn 'RegionTable\|region_ty' rust/crates` is empty — and the L4
+justification does not describe the shipped structure, which is a `HashMap`.
+
 ```rust
-/// Frozen at the end of `infer`. Consumed by `lower` (07). Keyed by Span
-/// (interned FileId + range), iterated in id/BTree order (L4).
-pub struct RegionTable(BTreeMap<Span, Ty>);
+// The real shape — Infer::infer_def_typed, rust/crates/ty/src/infer.rs:206-214
+pub fn infer_def_typed(&mut self, body: &Body)
+    -> (Option<Ty>, Option<Ty>, HashMap<ExprId, Ty>, HashMap<LocalId, Ty>);
 ```
+
+`ExprId` is the HIR arena index, and `rust/crates/ty/src/check.rs:202-205`
+states why it was preferred: it is "the stable per-expression identity in this
+HIR, a cleaner key than a source span for an arena-based IR". Determinism (L4)
+therefore does **not** come from BTree iteration order here — the table is
+lookup-only during lowering, so its iteration order never reaches the output
+(see 07 §5.2 for the same argument about `used_types`).
 
 This replaces the historical `scopeStateRef`/`_lc_regionTypes` IORef read that
 was "the load-bearing reason the LowerCtx cascade couldn't migrate"

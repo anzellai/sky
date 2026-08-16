@@ -57,9 +57,14 @@ rejection corpus's job); a green rejection corpus does not prove the program
 
 ---
 
-## 1. The conformance corpus — 42 examples, build **AND** run
+## 1. The conformance corpus — the numbered examples, build **AND** run
 
-`examples/00`–`examples/39` are the conformance suite. The gate is **build AND
+`examples/00`–`examples/55` are the conformance suite — **56 numbered
+directories** at this commit (`ls -d examples/[0-9][0-9]-*/ | wc -l`), plus the
+unnumbered `simple/` and `test_pkg/`. This section said "42 examples" and
+"`examples/00`–`examples/39`" in three places; the corpus outgrew that and the
+number was never re-derived, so it is now stated as a command rather than a
+constant. The gate is **build AND
 run correctly**, never build-only. `--build-only` is blind to the entire
 *click-is-a-no-op* regression class — a page that renders but whose event wire is
 dead `go build`s perfectly and serves HTTP 200. That class is why the runtime
@@ -123,7 +128,7 @@ flowchart LR
     D -->|no| DIFF["structured diff -> triage"]
 ```
 
-- **Corpus:** the 42 examples first, then a growing library of focused
+- **Corpus:** the numbered examples first (§1), then a growing library of focused
   fragments (one construct per file — every language feature in
   [`03`](03-language-reference.md), every stdlib surface).
 - **What "parity" means, honestly.** Byte-identical Go is the *target* but not
@@ -215,7 +220,7 @@ difference is a hard fail with the offending file + the two divergent outputs.
   `HashMap` iteration reaching output" (use `IndexMap` / `BTreeMap` /
   interned-id order) is *test-enforced*, not just reviewed.
 - **≥2 platforms** = the existing CI matrix (`ubuntu-latest` x64 +
-  `macos-latest` arm64, from `.github/workflows/ci.yml`). Multi-seed × multi-
+  `macos-latest` arm64, from `.github/workflows/rust-ci.yml`). Multi-seed × multi-
   toolchain is required precisely because a single green byte-diff does not prove
   cleanliness (self-host §7 R2(B)).
 - **FFI surface is pinned and committed (see [`09`](09-runtime-and-ffi.md)).**
@@ -239,15 +244,23 @@ a snapshot suite. Snapshots pin *intent* — they turn "did this edit change
 behaviour?" into a reviewable diff, and they are how a model (or human) working
 in a bounded crate verifies a local change without running the whole pipeline.
 
-| Query | Snapshot content | Crate | Guards |
-|---|---|---|---|
-| `parse(FileId)` | CST (lossless) + parse diagnostics | `syntax` | L8 — trivia + recovery |
-| `ast(FileId)` | typed AST view | `syntax` | desugaring stability |
-| `resolve(ModuleId)` | name → `DefId`, imports, qualifiers | `hir` | import-collision rules |
-| `infer(DefId)` | inferred types + per-region type map | `ty` | HM parity surface |
-| `exhaustiveness(DefId)` | diagnostics | `ty` | `[E3001]` |
-| all phases | rendered `Diagnostic` (Elm-style) | `diagnostics` | L7 — error quality |
-| `go_module(ModuleId)` | emitted Go source | `codegen` | L9 + repro |
+> **This whole snapshot regime is TARGET. One row of it exists.** `insta` is a
+> dev-dependency of exactly one crate (`rust/crates/syntax/Cargo.toml:16`),
+> `find rust -name '*.snap'` returns **two** files — both parser CST goldens —
+> and `cargo insta test` / `cargo insta review` appear in no workflow
+> (`grep -rn 'insta' .github/workflows/` is empty). The bullets below about
+> layered localisation, a shared normaliser, and `.snap.new` failing CI
+> describe a regime that is not in place.
+
+| Query | Snapshot content | Crate | Guards | Exists? |
+|---|---|---|---|---|
+| `parse(FileId)` | CST (lossless) + parse diagnostics | `syntax` | L8 — trivia + recovery | **yes** (2 goldens) |
+| `ast(FileId)` | typed AST view | `syntax` | desugaring stability | no |
+| `resolve(ModuleId)` | name → `DefId`, imports, qualifiers | `hir` | import-collision rules | no |
+| `infer(DefId)` | inferred types + per-expression type table | `ty` | HM parity surface | no |
+| `exhaustiveness(DefId)` | diagnostics | `ty` | `[E3001]` | no — and it is not a separate query (06) |
+| all phases | rendered `Diagnostic` (Elm-style) | `diagnostics` | L7 — error quality | no |
+| `go_module(ModuleId)` | emitted Go source | `codegen` | L9 + repro | no — the goldens that do this are `xtask`'s stdout goldens over `examples/`, not insta snapshots |
 
 - **Layered, not just end-to-end.** A codegen change that alters emitted Go is
   visible at the `go_module` snapshot; a resolver change is visible at `resolve`.
@@ -364,18 +377,25 @@ surface.
 
 ## 8. CI structure
 
-The Rust CI extends the existing `.github/workflows/ci.yml` shape (matrix:
-`ubuntu-latest` x64 + `macos-latest` arm64; fail-fast off) rather than replacing
-it — **both** compilers build in CI (the oracle stays live under
-`legacy-haskell-compiler/`, see [`12`](12-migration-and-milestones.md)).
+The Rust CI lives in **`.github/workflows/rust-ci.yml`** (matrix:
+`ubuntu-latest` x64 + `macos-latest` arm64; fail-fast off) — **both** compilers
+build in CI (the oracle stays live under `legacy-haskell-compiler/`, see
+[`12`](12-migration-and-milestones.md)). Earlier text here named
+`.github/workflows/ci.yml`, which does not exist.
+
+> **Five rows of this table were wrong, and "Blocks merge? yes" is exactly the
+> claim a reader cannot check cheaply.** They are struck below with the
+> disproof, because a plan that assumes a gate is catching something is worse
+> than no plan. This section's own §9 header says a law with no gate is not
+> enforced; that discipline has to apply to the table itself.
 
 | Job / step | Command | Blocks merge? | Proves |
 |---|---|---|---|
-| Rust workspace build + clippy-deny | `cargo build --workspace` + `cargo clippy -- -D warnings` | yes | L5 boundaries, no-unsafe allowlist |
-| Unit + snapshot | `cargo nextest run` + `cargo insta test` | yes | §4 goldens, per-query units |
-| Property (fast) | `proptest` in-suite (bounded iters) | yes | §5a Tier-A, §5b invariants |
-| **Differential — emitted-Go** | `cargo run -p xtask -- diff-go` | yes | §2a accept-and-emit parity vs oracle |
-| **Differential — accept/reject + rejection corpus** | `cargo run -p xtask -- diff-verdict` | yes | §2b — the soundness half |
+| Rust workspace build + ~~clippy-deny~~ **clippy (advisory)** | `cargo build --workspace`; clippy runs as `cargo clippy --workspace --all-targets \|\| true` (`rust-ci.yml:229-230`, step named "Clippy (report only)") | build **yes**, clippy **no** | L5 boundaries. The no-unsafe guarantee is `#![forbid(unsafe_code)]` in 12 crates, not clippy |
+| ~~Unit + snapshot~~ **Unit** | `cargo test --workspace`. **Not `cargo nextest run` and not `cargo insta test`** — `grep -rn nextest rust scripts .github` finds one comment; `insta` is a dev-dep of one crate (`syntax`), `find rust -name '*.snap'` returns 2 parser CST goldens, and `cargo insta test` appears in no workflow | yes | per-query units |
+| ~~Property (fast)~~ | ~~`proptest` in-suite~~ — **there is no property-test tier.** `grep -rn proptest rust scripts .github` → zero hits | — | — |
+| ~~**Differential — emitted-Go**~~ | ~~`xtask diff-go`~~ — **no such subcommand.** `xtask` dispatches `("diff", diff_stub)` (`rust/crates/xtask/src/main.rs:86-87`); `diff_stub` prints `xtask diff: NOT IMPLEMENTED (stub)` and returns 2 (`:92`) | — | — |
+| ~~**Differential — accept/reject + rejection corpus**~~ | ~~`xtask diff-verdict`~~ — **no such subcommand**, same stub | — | — |
 | **Reproducibility gate** | `cargo run -p xtask -- repro --seeds N` (matrix → cross-platform diff) | yes | §3, L4 |
 | Example sweep (build + run) | `scripts/example-sweep.sh` (SKY_BIN=rust) | yes | §1 tier-1 |
 | Runtime web | `scripts/verify-all-web.sh` (macOS: Playwright) | yes | §1 tier-2/3 |
@@ -383,7 +403,7 @@ it — **both** compilers build in CI (the oracle stays live under
 | LSP | `scripts/lsp-test-nvim.sh` | yes | §7, 49/49 (17 symbol-class + 32 corpus) |
 | Fuzz (robustness + determinism) | `cargo run -p xtask -- fuzz` | yes | §5 — mutated-corpus no-panic + L4 determinism |
 | Well-typed differential (local/release) | `cargo run -p xtask -- welltyped` | no (oracle absent in CI) | §5a Tier-A′ — generated-valid-program accept/reject parity vs oracle |
-| Fuzz (nightly) | `fuzz-well-typed.sh --iters 10000` + `cargo-fuzz` parser | nightly | §5 milestone grade |
+| ~~Fuzz (nightly)~~ | ~~`fuzz-well-typed.sh --iters 10000` + `cargo-fuzz` parser~~ — **nothing schedules either.** `.github/workflows/nightly-sweep.yml` runs four jobs (`example-sweep`, `web-runtime`, `behaviour-corpus`, `postgres-bundle-licence`); no workflow or script invokes `fuzz-well-typed.sh` or `cargo-fuzz` (`grep -rn 'cargo.fuzz' .github scripts rust` → zero). `scripts/fuzz-well-typed.sh` exists but is a **manual milestone runner**, not a nightly gate. The mutation fuzzer `xtask fuzz` *does* run per-push (`rust-ci.yml:540`) and is the row above | **manual, not nightly** | §5 milestone grade |
 | fmt idempotent + `sky check` smoke | (existing steps) | yes | tooling parity |
 
 Notes carried from the Haskell CI that stay true:
@@ -403,28 +423,41 @@ Notes carried from the Haskell CI that stay true:
 Every design law from [`00`](00-goals-and-principles.md) maps to a *test*, not a
 promise. If a law has no gate, it is not enforced.
 
-> **Implementation status.** Most gates below are
-> live: the LSP 17-test suite, the reproducibility gate (§3, byte-stable across
-> seeds), the `HashMap`-in-output lint, reject-parity (§2b), parser reprint, and
-> formatter idempotence all run today. Two rows describe gates whose *target*
-> mechanism isn't in place yet, tracking the two interim subsystems from
-> [`01`](01-architecture-overview.md)/[`07`](07-lowering-and-ir.md): **L2's "salsa
-> invalidation unit tests"** — the running engine is `hir::db::SourceDb`, so
-> incrementality is exercised via the LSP suite, not salsa memoisation tests; and
-> **L9's "coercion is the exception" emitted-Go parity** — parity holds, but
-> against the interim erase-based Go (which still carries a wide `rt.Coerce`/`any`
-> surface), so "fewer `rt.Coerce`" is a target the gate will tighten toward, not a
-> property already met.
+> **Implementation status — the disclaimer under this table was itself
+> unenforced.** It used to say "most gates below are live" and name **two**
+> aspirational rows (L2's salsa invalidation tests, L9's emitted-Go parity).
+> Checking each named mechanism against the tree turned up **five more that do
+> not exist**, all of them now struck in the table rather than listed here:
+>
+> ```bash
+> $ grep -rn 'static mut\|non_exhaustive_omitted_patterns\|crate size' \
+>       rust/crates .github/workflows/rust-ci.yml
+> $ grep -rn 'insta\|snap.new' .github/workflows/
+> $                                     # both empty
+> ```
+>
+> The `HashMap`-in-output "lint" is the one that matters most, because it was
+> listed twice under two names: there is no lint. What exists is
+> `xtask repro`'s fresh-process byte-diff
+> (`rust/crates/xtask/src/repro_gate.rs:1-16`), which is the *same mechanism*
+> as the reproducibility gate in the adjacent column — so L4 has one gate, not
+> two independent ones.
+>
+> Still true from the original note: **L2's salsa invalidation unit tests** do
+> not exist (though `infer`/`resolve`/`go_program` *are* now real tracked
+> queries — see [`01`](01-architecture-overview.md)), and **L9's emitted-Go
+> parity** holds only against the interim erase-based Go, so "fewer
+> `rt.Coerce`" remains a target.
 
 | Law | Enforcing gate |
 |---|---|
-| L1 no globals | crate boundaries (Cargo) + no `static mut` lint; a leaked global would surface as a repro-gate diff |
-| L2 incremental | LSP 17-test suite over the query DB (§7); salsa invalidation unit tests |
-| L3 intern everything | union-find identity property tests in `ty`; deterministic id-order iteration (feeds L4) |
-| **L4 determinism** | **reproducibility gate §3** (N seeds × ≥2 platforms) + `HashMap`-in-output lint |
-| L5 module budget | Cargo DAG (cycles impossible) + per-crate size CI check |
-| L6 illegal states unrepresentable | `#![deny(non_exhaustive_omitted_patterns)]` + no `any`; well-typed fuzzer §5a proves no panic |
-| L7 diagnostics as data | structured-`Diagnostic` snapshots §4 + reject-parity §2b compares the structured form |
+| L1 no globals | crate boundaries (Cargo) + `#![forbid(unsafe_code)]` in 12 crates; a leaked global would surface as a repro-gate diff. ~~no `static mut` lint~~ — no such lint exists |
+| L2 incremental | LSP suite over the query DB (§7). ~~salsa invalidation unit tests~~ — do not exist |
+| L3 intern everything | union-find identity ~~property tests~~ **unit tests** in `ty` (there is no `proptest`); deterministic id-order iteration (feeds L4) |
+| **L4 determinism** | **reproducibility gate §3** (N seeds × ≥2 platforms). ~~+ `HashMap`-in-output lint~~ — that *is* the repro gate (`xtask/src/repro_gate.rs`), not a second mechanism |
+| L5 module budget | Cargo DAG (cycles impossible). ~~+ per-crate size CI check~~ — no such check; the ~2–4k-line budget in [`02`](02-workspace-and-crates.md) is reviewed, not gated |
+| L6 illegal states unrepresentable | well-typed fuzzer §5a proves no panic. ~~`#![deny(non_exhaustive_omitted_patterns)]`~~ — not applied in any crate |
+| L7 diagnostics as data | reject-parity §2b compares the structured form. ~~+ structured-`Diagnostic` snapshots §4~~ — there are no diagnostic snapshots; the only `.snap` files in the tree are 2 parser CST goldens in `syntax` |
 | L8 lossless CST + recovery | parser fuzzer reprint-invariant §5b + formatter idempotence |
 | L9 typed IR, coercion is exception | emitted-Go parity §2a (fewer `rt.Coerce` is a *reviewed* improvement, not a silent diverge) |
 | L10 keep the Go backend | all runtime scripts §1/§6 reused unchanged |
@@ -438,7 +471,7 @@ The Rust compiler is *verified-compatible* when, on the CI matrix:
    the soundness half, first-class.
 2. **Emitted-Go parity** holds strict on the M4-frozen subset and semantic on
    the rest (§2a).
-3. **All 42 examples build AND run** through the three runtime tiers (§1) — zero
+3. **Every numbered example builds AND runs** through the three runtime tiers (§1) — zero
    panics, zero dead-click regressions.
 4. **The reproducibility gate is green** across N seeds × ≥2 platforms (§3).
 5. **LSP 49/49** (§7).

@@ -236,7 +236,11 @@ Lowering is a fold over the typed HIR carrying an `expected: GoTy` for the
 current slot (the honest, structural version of `LowerCtx`'s "expected type"
 thread). At each node the lowerer:
 
-1. reads the node's Sky type from the `infer` region map,
+1. reads the node's Sky type from the per-expression table `infer` returns —
+   the `HashMap<ExprId, Ty>` of `Infer::infer_def_typed`
+   (`rust/crates/ty/src/infer.rs:206-214`). Earlier text here called this "the
+   `infer` region map" and showed `db.region_ty(e.region)`; there is no
+   `region_ty` and no `Region` key (06 "The per-region type table"),
 2. maps it to `GoTy` via `sky_ty_to_go` (§3), producing the node's **actual** type,
 3. lowers children with *their* expected `GoTy` (record-field type, call-arg
    param type, list-element type — computed from the parent's `GoTy`),
@@ -245,7 +249,7 @@ thread). At each node the lowerer:
 
 ```rust
 fn lower_expr(db, cx: &LowerCx, e: &hir::Expr, expected: &GoTy) -> GoExpr {
-    let sky_ty = db.region_ty(e.region);          // from infer(DefId)
+    let sky_ty = cx.types[&e_id];                 // HashMap<ExprId, Ty> from infer_def_typed
     let actual = sky_ty_to_go(db, cx, &sky_ty);
     let node = match &e.kind {
         hir::ExprKind::List(items) => {
