@@ -668,6 +668,15 @@ measurement**, consistently on both machine types and at every level
 above 25. Taken literally, **1.1 MB/session is falsified on x86; the
 figure to size with is ~1.4 MB.**
 
+> **Superseded (2026-08-16): do not size with ~1.4 MB.** RSS regressed
+> against session count charges the app's fixed load-time growth to the
+> sessions (the n=1 row's warning, applied to the whole method). The
+> sizing input is the marginal slope under load, measured n = 100 → 500:
+> **625–650 kB/session (PostgreSQL store) / 451–531 kB (memory store)**
+> on x86, `19-skyforum` at 94 elements, commit `3ed83c08`
+> (`runs/gcp-x86-capacity-20260816/`). The correction this section makes
+> against the 10–100 KB guess stands, and is stronger.
+
 Taken as the correction it was made to support, it survives easily. The
 sizing docs had guessed 10–100 KB from the size of the Model gob; the
 true cost is **~14–140× that**, and the ARM run's error was in the
