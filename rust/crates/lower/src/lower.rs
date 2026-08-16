@@ -5057,6 +5057,41 @@ impl<'a> Ctx<'a> {
                         GoTy::Bare(Prim::Str),
                     );
                 }
+                // A LIST `++` whose two operands carry the SAME statically-known
+                // Go slice type goes to the typed twin instead. Doc 14 §5.3
+                // (typed runtime entry point), same lever family as the Stage 2
+                // list HOFs and the Stage 3 Sky-def twins — and, like them,
+                // `rt.List_appendT` was already compiled into every Sky binary
+                // and simply unreachable.
+                //
+                // What the erased form costs, per evaluation on lists of n and
+                // m: `rt.Concat` sees two typed slices, misses its `[]any` fast
+                // path, and calls `rt.AsList` on EACH — a reflect walk boxing
+                // every element into a fresh `[]any` — concatenates those into a
+                // third slice, and the enclosing slot then reflect-narrows all
+                // n+m elements BACK with `rt.AsListT[T]`. Five slices and
+                // ~2(n+m) element boxes where one `append` into one fresh slice
+                // does it.
+                //
+                // `provable` carries its usual three refusals; note that it also
+                // rules out `[]any ++ []any`, which is deliberate — `rt.Concat`
+                // already fast-paths that pair without reflect, so re-pointing it
+                // would add a call site and buy nothing.
+                if let (GoTy::Slice(le), GoTy::Slice(re)) = (&l.ty, &r.ty) {
+                    if le == re && provable(le) {
+                        let elem = (**le).clone();
+                        let out = GoTy::Slice(Box::new(elem.clone()));
+                        let call = GoExpr::new(
+                            GoExprKind::GenericCall(
+                                "rt.List_appendT".to_string(),
+                                vec![elem],
+                                vec![l, r],
+                            ),
+                            out,
+                        );
+                        return self.coerce_if_needed(call, actual);
+                    }
+                }
                 // `rt.Concat` returns Go `any` (list `++`); type the node `Any`
                 // so the enclosing slot narrows via `rt.AsListT` rather than
                 // feeding `any` into a `[]T` slot.

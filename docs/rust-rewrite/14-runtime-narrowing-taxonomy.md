@@ -390,6 +390,36 @@ re-targets a kernel call at a typed entry point when the key type is known.
 Generalising this to kernel
 *returns* is the R5 lever (§4.4).
 
+**One shipped instance: the list arm of `++`.** `lower_binop`'s `"++"` arm emits
+`rt.List_appendT[T](a, b)` when both operands lower to the same `GoTy::Slice(T)`
+and `provable(T)` holds, instead of `rt.AsListT[T](rt.Concat(any(a), any(b)))`.
+The erased form misses `rt.Concat`'s `[]any` fast path on any typed slice,
+`rt.AsList`-reflect-widens **both** operands element-wise, and the enclosing slot
+narrows all of it back: five slices and ~2(n+m) element boxes per evaluation,
+against one `append` into one fresh slice.
+
+`rt.List_appendT` already existed in `runtime-go/rt` with **no caller anywhere in
+the repo** — the same "compiled into every binary and unreachable" condition
+Stage 2 and Stage 3 found.
+
+Two properties of this lever are worth carrying:
+
+* **The failure mode is a `go build` error, never a silent miscompile** — the
+  same property §5.5 records. Committing to `[]T` at emit time is sound exactly
+  when the operand really is a `[]T`, which is what Go's own type checker
+  decides.
+* **A typed twin is not automatically a correct twin.** `rt.List_appendT` was
+  `return append(a, b...)`, which reuses the left operand's backing array
+  whenever it has spare capacity, where `rt.Concat` has always returned a fresh
+  slice. Sky lists are immutable values, so re-pointing at it as written would
+  have made `ys ++ zs` mutate a list nobody appended to — and one of the sites
+  the change converts in `19-skyforum` has a live Sky.Live **model field** as its
+  left operand. Every corpus gate passes that bug; it returns the right value and
+  corrupts a different one. Before re-pointing at any unreachable twin, check it
+  against the semantics of what it replaces, not just its type.
+
+Measured effect on a real app: `docs/perf/runs/stage4-typed-list-plumbing-20260816/`.
+
 ### 5.4 Sealing more ADTs
 
 The R6 lever (§4.5). Requires
