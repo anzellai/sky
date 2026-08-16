@@ -52,6 +52,7 @@
     "deferred_settings": 41,
     "deferred_stanzas": 8,
     "listed_differences": 7,
+    "uncovered_settings": 47,
     "unobservable_settings": 6
   },
   "verdicts": {
