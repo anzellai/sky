@@ -22,21 +22,17 @@
 
 package rt
 
-import "sync"
-
-// liveSessionByGoroutine — sync.Map keyed by goroutine id, value
-// is *liveSession. Parallel storage to goroutineCtx; see
-// goroutine_context.go for the rationale.
-var liveSessionByGoroutine sync.Map // map[int64]*liveSession
+// liveSessionByGoroutine — keyed by goroutine id, value is *liveSession.
+// Parallel storage to goroutineCtx; see goroutine_context.go for the
+// architecture rationale and goid_shard_map.go for why this is a sharded plain
+// map rather than the sync.Map it used to be.
+var liveSessionByGoroutine = newGoidShardedMap[*liveSession]()
 
 // currentLiveSession returns the *liveSession stamped on the
 // calling goroutine, or nil when none is set.
 func currentLiveSession() *liveSession {
-	gid := currentGoroutineID()
-	if v, ok := liveSessionByGoroutine.Load(gid); ok {
-		if sess, ok := v.(*liveSession); ok {
-			return sess
-		}
+	if sess, ok := liveSessionByGoroutine.load(currentGoroutineID()); ok {
+		return sess
 	}
 	return nil
 }
@@ -47,16 +43,15 @@ func currentLiveSession() *liveSession {
 func setGoroutineLiveSession(sess *liveSession) {
 	gid := currentGoroutineID()
 	if sess == nil {
-		liveSessionByGoroutine.Delete(gid)
+		liveSessionByGoroutine.drop(gid)
 		return
 	}
-	liveSessionByGoroutine.Store(gid, sess)
+	liveSessionByGoroutine.store(gid, sess)
 }
 
 // clearGoroutineLiveSession removes the calling goroutine's stamp.
 func clearGoroutineLiveSession() {
-	gid := currentGoroutineID()
-	liveSessionByGoroutine.Delete(gid)
+	liveSessionByGoroutine.drop(currentGoroutineID())
 }
 
 // runWithLiveSession is the canonical pattern. Equivalent to:

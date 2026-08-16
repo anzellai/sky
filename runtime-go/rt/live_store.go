@@ -493,9 +493,16 @@ func (s *memoryStore) Get(sid string) (*liveSession, bool) {
 }
 
 func (s *memoryStore) Set(sid string, sess *liveSession) {
+	// touchLastSeen is an atomic store (Task #326) and is safe outside the
+	// guard; the three durable stores already call it there.
+	sess.touchLastSeen()
+	// Steady state — the map already holds this exact pointer — needs no write
+	// lock. See memCacheAlreadyHolds.
+	if memCacheAlreadyHolds(&s.mu, s.sessions, sid, sess) {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess.touchLastSeen()
 	s.sessions[sid] = sess
 }
 
@@ -721,18 +728,24 @@ func (s *sqliteStore) Set(sid string, sess *liveSession) {
 	sess.touchLastSeen()
 	// Always keep the live pointer in memory so intra-process requests
 	// find the session even when the value isn't gob-encodable.
-	s.memMu.Lock()
-	if sess.evicted.Load() {
-		// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
-		// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
-		// check can still race the evict and re-insert the markDone'd corpse.
-		// Re-checking here — mutually exclusive with the evict's set+delete —
-		// closes it: the corpse never re-enters memCache.
+	//
+	// Steady state — the cache already holds this exact pointer — needs no
+	// write lock at all; see memCacheAlreadyHolds for why that is equivalent
+	// and not merely cheaper.
+	if !memCacheAlreadyHolds(&s.memMu, s.memCache, sid, sess) {
+		s.memMu.Lock()
+		if sess.evicted.Load() {
+			// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
+			// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
+			// check can still race the evict and re-insert the markDone'd corpse.
+			// Re-checking here — mutually exclusive with the evict's set+delete —
+			// closes it: the corpse never re-enters memCache.
+			s.memMu.Unlock()
+			return
+		}
+		s.memCache[sid] = sess
 		s.memMu.Unlock()
-		return
 	}
-	s.memCache[sid] = sess
-	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
 	if err != nil {
 		// Log ONCE per session (not every event) — the alternative is
@@ -790,6 +803,47 @@ func (s *sqliteStore) Close() error {
 		s.closeErr = s.db.Close()
 	})
 	return s.closeErr
+}
+
+// memCacheAlreadyHolds reports whether the in-memory cache tier already maps
+// sid to exactly this live pointer, so a Set has nothing to write.
+//
+// This is the interaction path's dominant lock. handleEvent does
+// `store.Get(sid)` and then `store.Set(sid, sess)` with the SAME pointer Get
+// just returned, so in the steady state `memCache[sid] = sess` assigns a map
+// entry the value it already has — a no-op that was nonetheless taking a
+// process-wide WRITE lock on every interaction. A mutex profile of
+// examples/19-skyforum at GOMAXPROCS=8 attributed 39.6% of all contention to
+// that one Unlock, against 40 microseconds of contention in total at
+// GOMAXPROCS=1. See docs/perf/runs/gomaxprocs-scaling-20260816/.
+//
+// Both reads happen under the SAME RLock, and that is what makes the fast path
+// equivalent rather than merely faster. idleEvictPass sets `evicted` and
+// deletes the entry together under memMu.Lock (fix #1 below), so a reader
+// holding RLock cannot observe the half-evicted state in between. Therefore
+// `entry == sess && !evicted` under RLock means the session is live and
+// correctly cached, and the write lock's entire payload — the TOCTOU re-check
+// and the assignment — is provably vacuous.
+//
+// Sharding memCache by sid was the other candidate and it loses here. It would
+// have to be repeated across four store types and both whole-map sweeps, and
+// each of the documented TOCTOU fixes (#1, #2, #6, #8) rests on memMu being
+// mutually exclusive with the evict pass — invariants that would need
+// re-establishing per shard. This removes the write lock from the path
+// altogether, which is the frame the profile actually names, and it does not
+// touch those invariants at all. Sharding remains available if the RLock
+// itself later shows up in a profile.
+func memCacheAlreadyHolds(
+	memMu *sync.RWMutex,
+	memCache map[string]*liveSession,
+	sid string,
+	sess *liveSession,
+) bool {
+	memMu.RLock()
+	entry, ok := memCache[sid]
+	held := ok && entry == sess && !sess.evicted.Load()
+	memMu.RUnlock()
+	return held
 }
 
 // idleEvictPass performs one tiered-session-cache idle-evict sweep over a
@@ -1072,18 +1126,21 @@ func (s *postgresStore) Set(sid string, sess *liveSession) {
 		return
 	}
 	sess.touchLastSeen()
-	s.memMu.Lock()
-	if sess.evicted.Load() {
-		// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
-		// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
-		// check can still race the evict and re-insert the markDone'd corpse.
-		// Re-checking here — mutually exclusive with the evict's set+delete —
-		// closes it: the corpse never re-enters memCache.
+	// Steady state needs no write lock — see memCacheAlreadyHolds.
+	if !memCacheAlreadyHolds(&s.memMu, s.memCache, sid, sess) {
+		s.memMu.Lock()
+		if sess.evicted.Load() {
+			// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
+			// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
+			// check can still race the evict and re-insert the markDone'd corpse.
+			// Re-checking here — mutually exclusive with the evict's set+delete —
+			// closes it: the corpse never re-enters memCache.
+			s.memMu.Unlock()
+			return
+		}
+		s.memCache[sid] = sess
 		s.memMu.Unlock()
-		return
 	}
-	s.memCache[sid] = sess
-	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
 	if err != nil {
 		telemetry.Default().Inc("sky_live_session_encode_fail_total", map[string]string{"store": "postgres"})
@@ -1330,18 +1387,21 @@ func (s *redisStore) Set(sid string, sess *liveSession) {
 	// (closures, channels) still work within this instance. They won't
 	// survive a restart or cross-instance routing, which is the same
 	// trade-off SQLite/Postgres make.
-	s.memMu.Lock()
-	if sess.evicted.Load() {
-		// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
-		// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
-		// check can still race the evict and re-insert the markDone'd corpse.
-		// Re-checking here — mutually exclusive with the evict's set+delete —
-		// closes it: the corpse never re-enters memCache.
+	// Steady state needs no write lock — see memCacheAlreadyHolds.
+	if !memCacheAlreadyHolds(&s.memMu, s.memCache, sid, sess) {
+		s.memMu.Lock()
+		if sess.evicted.Load() {
+			// Re-check under memMu (fix #2 TOCTOU): the idle-evict pass sets
+			// `evicted` UNDER memMu.Lock, so a Set that passed the pre-lock atomic
+			// check can still race the evict and re-insert the markDone'd corpse.
+			// Re-checking here — mutually exclusive with the evict's set+delete —
+			// closes it: the corpse never re-enters memCache.
+			s.memMu.Unlock()
+			return
+		}
+		s.memCache[sid] = sess
 		s.memMu.Unlock()
-		return
 	}
-	s.memCache[sid] = sess
-	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
 	if err != nil {
 		telemetry.Default().Inc("sky_live_session_encode_fail_total", map[string]string{"store": "redis"})
