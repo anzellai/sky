@@ -357,6 +357,23 @@ static CROSS_CUTTING: &[CrossSurface] = &[
                       and neither shrank without an accounted entry",
         today: &[("nothing — `xtask denominators` was invoked by no workflow", 0)],
     },
+    // The configuration surface is its own accounting, separate from the
+    // coverage one: not "how much of the product is tested" but "how much of
+    // the product's configuration is read by anything, and where from". It was
+    // measured by hand three times before `xtask config-surface` existed and
+    // produced three different answers, one of which asserted the DB pool knobs
+    // were undocumented when they are documented and read.
+    CrossSurface {
+        id: "meta.config-surface",
+        category: "meta",
+        description: "the configuration surface is measured from source — which \
+                      sky.toml keys are read pre-binary, which seeded env \
+                      suffixes nothing reads, how far docs and readers drifted",
+        today: &[(
+            "nothing — the surface was counted by hand, in prose, with no gate",
+            0,
+        )],
+    },
 ];
 
 /// Which surfaces each REGISTERED gate covers.
@@ -420,6 +437,7 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("sky-verify", &["compiler.fmt", "lang.constructs"]),
     ("shared-world", &["compiler.shared-world", "compiler.resolve"]),
     ("coverage-ledger", &["meta.coverage-accounting"]),
+    ("config-surface", &["meta.config-surface"]),
     ("corpus-manifest", &["lang.constructs"]),
     // Family R is the combinatorial face of `compiler.reject`. The standalone
     // `reject` gate covers 63 hand-written defects, one file each; this one

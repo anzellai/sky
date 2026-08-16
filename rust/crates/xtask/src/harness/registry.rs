@@ -985,6 +985,36 @@ pub static GATES: &[Gate] = &[
         body: bodies::coverage_ledger,
     },
     Gate {
+        name: "config-surface",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 120,
+        expected: bodies::CONFIG_SURFACE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the configuration surface is measured, current, and no defect count rose",
+        // The mutation is the defect the gate exists to catch, not a proxy for
+        // it: a seeded env suffix nothing reads. `[auth]` was exactly this for
+        // four minor versions — parsed, validated, emitted into every binary's
+        // prologue, and read by nothing — and two shipped examples advertised a
+        // 24-hour session while silently getting the default.
+        //
+        // The mutation edits SOURCE that the gate READS (lower.rs's emission
+        // site), not source the gate is compiled from, so no rebuild stands
+        // between applying it and observing red.
+        mutations: Mutations::new(&[Mutation {
+            id: "config-surface.seed-a-suffix-nothing-reads",
+            description: "misspell the LIVE_TTL default lower.rs seeds into every \
+                          program; `seeded_without_reader` must rise 3 -> 4 and the \
+                          checked-in measurement must go stale",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/lower/src/lower.rs",
+                from: "&[\"LIVE_TTL\", \"1800\"]",
+                to: "&[\"LIVE_TTL_TYPO\", \"1800\"]",
+            },
+        }]),
+        body: bodies::config_surface,
+    },
+    Gate {
         name: "selftest-blocked",
         tier: Tier::SelfTest,
         platforms: ALL_PLATFORMS,
