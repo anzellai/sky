@@ -286,6 +286,61 @@ func TestStyleInjectionAllocationBudget(t *testing.T) {
 	}
 }
 
+// renderBodyByteBudget is the ratio of BYTES ALLOCATED to BYTES OF HTML
+// PRODUCED for one full page render through a session.
+//
+// This is the first gate in this file that measures bytes rather than
+// allocation count, and it exists because the two move independently —
+// point 2 of "what these gates do not catch" above, which was written after
+// a change lowered the count 6.7% while raising the bytes 8%.
+//
+// A strings.Builder that starts empty reaches a 37.5 kB page through a
+// dozen doublings, each allocating a new buffer and copying everything so
+// far into it: 162 kB of allocation for 37.5 kB of output, a ratio of 4.3.
+// Rendering through the session's size hint makes it 48.6 kB, a ratio of
+// 1.30. The budget sits at 2.0 — 1.5x headroom over the passing value and
+// 2.2x below the failing one, so it fires on the growth series coming back
+// rather than on drift.
+const renderBodyByteBudget = 2.0
+
+func TestRenderBodyByteBudget(t *testing.T) {
+	vn := HtmlToVNode(buildHtmlPage(gateItems))
+	assignSkyIDs(&vn, "r")
+	applyStyleInjections(&vn)
+
+	sess := &liveSession{handlers: map[string]any{}}
+	body := renderVNode(vn, sess.handlers)
+	if len(body) < 10000 {
+		t.Fatalf("fixture renders only %d bytes — too small for this gate "+
+			"to mean anything", len(body))
+	}
+	// Warm the hint exactly as a second interaction on a live session would.
+	sess.commitRender(&vn, body)
+	if sess.lastBodyLen != len(body) {
+		t.Fatalf("size hint was not recorded (%d, body is %d) — this gate "+
+			"would be measuring the unhinted path",
+			sess.lastBodyLen, len(body))
+	}
+
+	res := testing.Benchmark(func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = sess.renderBody(vn)
+		}
+	})
+	if res.N == 0 {
+		t.Fatal("benchmark did not run — no verdict is available")
+	}
+	ratio := float64(res.AllocedBytesPerOp()) / float64(len(body))
+	t.Logf("render allocated %d B for %d B of HTML = %.2fx (%d allocs)",
+		res.AllocedBytesPerOp(), len(body), ratio, res.AllocsPerOp())
+	if ratio > renderBodyByteBudget {
+		t.Errorf("render allocates %.2fx the bytes it emits, budget %.2fx "+
+			"(%d B allocated for %d B of HTML) — the builder is growing by "+
+			"doubling again, so every page is copied through a dozen buffers",
+			ratio, renderBodyByteBudget, res.AllocedBytesPerOp(), len(body))
+	}
+}
+
 // ---------------------------------------------------------------------
 // Style-injection guard: the scan must not be able to skip a live pass
 // ---------------------------------------------------------------------

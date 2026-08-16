@@ -352,9 +352,40 @@ func init() {
 // byte-identical: the walk order, the escaping and the emission order are
 // untouched, which is what `xtask repro` and `build-run --golden` pin.
 func renderVNode(n VNode, handlers map[string]any) string {
+	return renderVNodeSized(n, handlers, 0)
+}
+
+// renderVNodeSized is renderVNode with a capacity hint for the builder.
+//
+// A page body is tens of kilobytes and the builder starts at nothing, so it
+// reaches that size through a dozen doublings, each of which allocates a
+// buffer and copies everything written so far into it. On a 37.5 kB
+// reference page that cost 162 kB of allocation to produce 37.5 kB of
+// output — 4.3x the bytes, all of it copying.
+//
+// The hint is the length of the body this session rendered LAST time, which
+// is the best available predictor: a view's size is stable across the
+// interactions of a session, and being wrong only costs the growth that
+// would have happened anyway (too small) or one oversized buffer that is
+// immediately released (too large). A fixed constant was rejected for the
+// second reason — it would make every small page allocate as if it were a
+// large one.
+//
+// hint <= 0 means "no idea", which is what the subtree renders inside the
+// diff pass use; those are small and have no session to ask.
+func renderVNodeSized(n VNode, handlers map[string]any, hint int) string {
 	var sb strings.Builder
+	if hint > 0 {
+		sb.Grow(hint)
+	}
 	renderVNodeInto(&sb, n, handlers)
 	return sb.String()
+}
+
+// renderBody renders the session's current tree into its handler table,
+// sized by what this session's view measured last time.
+func (s *liveSession) renderBody(vn VNode) string {
+	return renderVNodeSized(vn, s.handlers, s.lastBodyLen)
 }
 
 // renderChildrenHTML serialises a node's children as the innerHTML of a
@@ -2349,6 +2380,13 @@ type liveSession struct {
 	// resilient to that refactor class.
 	lastComputedBody string
 	lastShippedBody  string
+	// lastBodyLen — the length of the last body this session computed,
+	// used only as the capacity hint for the next render's builder (see
+	// renderVNodeSized). It is a PERFORMANCE hint and nothing reads it for
+	// correctness: a wrong value costs a growth or an oversized buffer, not
+	// a wrong byte. Kept beside lastComputedBody because commitRender is
+	// the one place that knows a body was just produced.
+	lastBodyLen int
 	// lastSeen — UnixNano timestamp of the most recent store touch
 	// (Get / Set / decodeSession seed). Stored as atomic.Int64 so the
 	// store-level RWMutex (memoryStore.mu et al.) can keep using RLock
@@ -2705,6 +2743,13 @@ func (s *liveSession) nextLocalSeq() int64 {
 func (s *liveSession) commitRender(vn *VNode, body string) {
 	s.prevTree = vn
 	s.lastComputedBody = body
+	// Only ever grow the hint. A dispatch that renders an empty or error
+	// body (the panic-rollback path commits the PREVIOUS body back) would
+	// otherwise shrink the hint to nothing and hand the next full render
+	// the doubling series again.
+	if len(body) > s.lastBodyLen {
+		s.lastBodyLen = len(body)
+	}
 }
 
 // ingestInputState absorbs the client's dirty-input snapshot into
@@ -4477,7 +4522,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	vn, _ := app.safeViewCall(model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
-	body := renderVNode(vn, sess.handlers)
+	body := sess.renderBody(vn)
 	// Initial mount writes the full HTML directly into the HTTP
 	// response below — the client receives this body as the page,
 	// so it counts as BOTH "last computed" and "last shipped".
@@ -4784,7 +4829,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		vn, _ := app.safeViewCall(sess.model)
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
 		// lastComputedBody coherent. Previously the body was
@@ -4855,7 +4900,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		sess.handlers = map[string]any{}
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		sess.commitRender(&vn, body)
 		sess.lastShippedBody = body
 		respSeq := sess.nextLocalSeq()
@@ -5014,7 +5059,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		vn, _ := app.safeViewCall(sess.model)
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
 		// lastComputedBody coherent — same shape as the
@@ -5276,7 +5321,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	vn, _ := app.safeViewCall(sess.model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
-	body = renderVNode(vn, sess.handlers)
+	body = sess.renderBody(vn)
 	// Commit prevTree + lastComputedBody as one atomic step (Cycle 3
 	// P40 / Gap C7). Previously this was two separate writes — prevTree
 	// here, lastComputedBody after runCmd + setupSubscriptions — which
@@ -5335,7 +5380,7 @@ func (app *liveApp) renderView(sess *liveSession) string {
 	vn, _ := app.safeViewCall(sess.model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
-	body := renderVNode(vn, sess.handlers)
+	body := sess.renderBody(vn)
 	sess.commitRender(&vn, body)
 	return body
 }
@@ -6542,7 +6587,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 			applyStyleInjections(&vn)
 			sess.handlers = map[string]any{}
-			body := renderVNode(vn, sess.handlers)
+			body := sess.renderBody(vn)
 			// Reconnect-resync writes the resync frame DIRECTLY to
 			// the SSE response writer below — so this body is both
 			// just-computed AND just-shipped, and the next tick's
@@ -7155,7 +7200,7 @@ func (app *liveApp) renderResyncFrame(sess *liveSession) (frameSnapshot, bool) {
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		sess.handlers = map[string]any{}
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		sess.commitRender(&vn, body)
 		sess.lastShippedBody = body
 		snap = sess.prepareFrameSnapshot(body)
