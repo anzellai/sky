@@ -4327,6 +4327,12 @@ func liveAppRun(cfg any) any {
 		}()
 	}()
 	fmt.Printf("Sky.Live listening on :%d\n", port)
+	// The block goes UNDER that line, never in place of it:
+	// `apps/fieldbook/verify.sh` greps it literally, and both `xtask
+	// build_run_gate` and `sky run`'s supervisor lift the port from the last
+	// `:PORT` of any line whose lowercase form contains "listening". See
+	// startup_report.go.
+	printStartupReport(port)
 	err := srv.ListenAndServe()
 	signal.Stop(sigCh)
 	// See the note in Server_listen: exiting here mid-shutdown would kill the

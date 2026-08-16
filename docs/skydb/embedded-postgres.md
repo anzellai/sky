@@ -987,8 +987,85 @@ small cloud instance. Measured components:
 | Observability agent, if you run one | **~87 MB** — see below |
 | PostgreSQL base — postmaster + 6 auxiliaries | **~22–29 MB** (measured under `--embed` on an e2-small) |
 | PG backends — one process per *active* connection | **6 backends total**, measured, at any session count — see below |
-| Sky.Live sessions — **~1.35–1.42 MB each on x86, measured** | ~135 MB at 100 concurrent |
+| Sky.Live sessions — **~1.8–1.9 MB each on x86 at the shipped `GOGC=400`** (625–650 kB at the Go default) | ~185 MB at 100 concurrent |
 | **Base, before sessions** | **~380 MB** |
+
+The session row moves with the collector and with the view; see "The
+per-session figure" below before quoting it anywhere.
+
+### The app and the cluster do not each size to the whole machine
+
+Two things on this box derive their memory from the same detected figure, and
+if both assumed they owned it their sum would exceed it.
+
+`tuningFor` gives PostgreSQL **15% of RAM** as `shared_buffers`. The Go runtime
+takes what is left: at startup the app sets `GOMEMLIMIT` to **three quarters of
+RAM after subtracting the OS (256 MiB) and, when `--embed` is in force, the
+cluster's `shared_buffers` plus a 96 MiB working set** — and sets `GOGC=400`
+under it. The `shared_buffers` term is not a restatement of "15%"; both call
+`pgSharedBuffersFor`, and `TestTheAppAndPostgresDoNotEachClaimTheWholeMachine`
+parses the figure back out of the *rendered* `postgresql.conf` so the two
+cannot drift.
+
+On an e2-small (1.93 GiB) running `--embed` that is a **996 MiB** app limit
+beside a 296 MiB `shared_buffers` and a 256 MiB OS reserve — **78% of the
+machine committed as ceilings**. What is actually *used* is lower, because both
+ceilings are ceilings: measured at 500 concurrent sessions, the app peaks at
+973 MB and the cluster at 80 MB, which is **59% of the machine**
+(`docs/perf/runs/gc-default-20260816/`).
+
+Why those numbers:
+
+- **`GOGC=400` + a bound was measured at +19% throughput and 759 MB peak RSS**
+  at 500 concurrent sessions on the PostgreSQL store, against 2,816 int/s and
+  402 MB at the Go default (`docs/perf/runs/gogc-postgres-20260816/`). The
+  bound cost nothing: it cut peak RSS 31% while moving throughput 3,314 →
+  3,345 int/s, inside noise.
+- **A bare `GOGC` is not shippable.** `GOGC=800` alone peaked at 1,827 MB —
+  more than an e2-small has — and two identical n=300 runs read 1,148 MB and
+  1,926 MB. An operator cannot provision against a 68% spread.
+- **The remaining quarter is not spare.** `GOMEMLIMIT` is a *soft* limit: if
+  the live heap genuinely needs more, Go exceeds it rather than dying, and the
+  runtime's GC CPU limiter caps collector CPU at 50% so the outcome is a slower
+  process, not a death spiral. The quarter is the allowance for that overshoot,
+  for non-Go memory in the process, and for RSS sitting above the limit while
+  pages are returned.
+- **A machine too small gets neither half.** Below a 256 MiB derived limit —
+  roughly 600 MB of RAM without `--embed`, 815 MB with it — the runtime is left
+  on Go's defaults entirely, because taking a 4× heap multiplier without being
+  able to afford the bound is the one combination that makes things worse. The
+  floor is calibrated against measurement: the stock collector already peaks at
+  138–145 MB at 100 sessions, so a limit we set can never bind below the
+  footprint the app has without us.
+- **Serverless takes the bound but not the multiplier.** A request-billed
+  container has a hard, platform-enforced ceiling where the soft limit's
+  overshoot is a killed instance rather than a slow one, and the +19% is a
+  property of a long-lived session-holding process. The bound is still applied,
+  because at the stock multiplier it measured free. The host-OS reserve is not
+  subtracted there — the platform's OS lives outside what the container is
+  charged for.
+- **Detection is container-aware.** Both derivations read `detectRAMBytes`,
+  which consults **cgroup v2 → cgroup v1 → `/proc/meminfo` → macOS `sysctl`**
+  in that order. `/proc/meminfo` is not namespaced, so a 512 MB container on a
+  64 GB node reads 64 GB; a limit derived from it would inherit exactly that
+  bug.
+
+**An explicit `GOGC` or `GOMEMLIMIT` in the environment always wins**, and
+setting one does not suppress the other. The decision — including a decision to
+do nothing, and why — is printed once at startup on stderr:
+
+```
+[sky.gc] GOMEMLIMIT=996MB derived from 1.9GB of machine memory less the OS and the embedded cluster's share; GOGC=400
+[sky.gc] machine has 512MB, too little to hold a 256MB bound with room to overshoot it; left on the Go defaults
+[sky.gc] GOMEMLIMIT=2GiB set by the operator; GOGC=400
+```
+
+`SKY_GC_QUIET=1` suppresses the line. There is deliberately **no `sky.toml`
+knob**: `GOGC`/`GOMEMLIMIT` are Go's own variables, every Go operator already
+knows them, they are what a container image or systemd unit can set without
+rewriting an entrypoint, and a value written into `sky.toml` would travel to
+machines it was not sized for — which is the whole reason the figure is derived
+at runtime.
 
 ### The embedded cluster, measured on an e2-small
 
@@ -1031,12 +1108,36 @@ Three corrections the run forces:
    exist" — and none of `sky build --embed`, bundle extraction, or version
    pinning.
 
-**The per-session figure has now been measured twice and corrected twice.** The
-original table guessed 10–100 KB from the Model gob's size. A local ARM run gave
-1.05 MB. Regression against real GCE hardware gives **1,379 kB on e2-micro and
-1,450 kB on e2-small** — so x86 is ~30% dearer than ARM, and the original guess
-was wrong by 14–140×. The Model is not the cost; the per-session goroutines,
-buffers and connection state are.
+**The per-session figure has been corrected three times, and the third
+correction is the one that changes how it must be quoted.** The original table
+guessed 10–100 KB from the Model gob's size. A local ARM run gave 1.05 MB.
+Regression against real GCE hardware gave **1,379 kB on e2-micro and 1,450 kB on
+e2-small**, and that number stood here as *the* per-session cost until
+`docs/perf/runs/gcp-x86-capacity-20260816/` measured **625–650 kB on x86 with a
+PostgreSQL session store** and 451–531 kB with the memory store.
+
+The two do not contradict each other; **they measure different applications.**
+The 1,379/1,450 regression held a 384-element `26-ui-showcase` view on the
+memory store at commit `ba3c3b1d`; the 625–650 slope is `examples/19-skyforum`
+at a 94-element view, on a runtime several optimisations later. The store
+difference points the *wrong* way — a PostgreSQL session store adds ~426
+kB/session — so the residual is the app and the view, and the lesson is the one
+`skylive-remote-validation.md` already wrote down and this table then ignored:
+
+> **Quote a per-session number with its view size, its store, and its `GOGC`.**
+> There is no per-session cost in general.
+
+`GOGC` is the third of those, and it is now load-bearing because Sky ships a
+non-default one. `GOGC` multiplies the live heap, so it scales the per-session
+**slope**, not merely the baseline — `docs/perf/runs/gogc-postgres-20260816/`
+measures the slope rising **2.9×** across `GOGC` 100 → 400 on one app and store.
+At the shipped default that puts an x86 postgres-store session at roughly
+**1.8–1.9 MB** — an estimate, applying a within-box M1 ratio to an x86 slope,
+not a measurement. Any capacity table that adopts a raised `GOGC` and keeps its
+sessions-per-instance column is wrong by that factor.
+
+The Model is not the cost; the per-session goroutines, buffers and connection
+state are.
 
 The regression is trustworthy for a reason worth stating: its **intercept
 independently recovers the separately-measured idle RSS** on both machines
@@ -1061,6 +1162,17 @@ had access to.
 So **1 GB carries roughly 400–500 concurrent sessions** and 2 GB roughly triple
 that. The pool ceiling is a ceiling and not an allocation — `database/sql` opens
 lazily, so a host pays for what is in flight.
+
+> **That table predates the shipped GC default and now reads as an upper
+> bound, not a forecast.** It is built on ~1.1 MB per session; at `GOGC=400`
+> the slope is ~2.9× the stock one, so the same rows arrive sooner. What
+> replaces "will it fit" as the question is that **it now cannot not fit**: on
+> a 1 GB machine running `--embed` the runtime derives a **389 MB** ceiling for
+> the app (1024 − 256 OS − 153 `shared_buffers` − 96 working set, three-
+> quartered), and the collector holds the process there, trading throughput
+> rather than being OOM-killed. Capacity on a small host is therefore set by
+> the bound, and the bound is set by the machine. And on every instance in this
+> class CPU still binds many times sooner — see the next section.
 
 **Cross-checked against a live e2-micro** (sky-lang.org, `us-central1-a`,
 969 MB usable, 9 days uptime): 516 MB available ÷ 1.1 MB per session ≈ **470
@@ -1094,6 +1206,17 @@ ceiling at its real traffic.
 
 An `e2-micro` will *hold* about 450 sessions in RAM and is **unusable past
 about 50**. Sizing on memory alone would overstate its capacity twelvefold.
+
+**And count physical cores, not vCPUs, when you move up the ladder.** A GCE
+vCPU is an SMT thread. `lscpu` on an `e2-standard-8` reports **4 cores per
+socket, 2 threads per core**, with `thread_siblings_list` pairing cpu0/4, 1/5,
+2/6, 3/7 — so the machine has four cores, not eight. Pinning four threads to
+four *distinct* physical cores serves a median **1,568 int/s**; pinning the same
+four threads to two physical cores serves **1,097**, or 70%. The second thread
+on a core is worth ~1.27×, and the measured 4 → 8 vCPU step is 1.17×
+(`docs/perf/runs/gomaxprocs-scaling-20260816/`). A capacity figure derived by
+multiplying a per-core number by a vCPU count therefore overstates the machine
+by roughly the SMT factor.
 Past 250 sessions both machines fail 79–96% of interactions — those are numbers
 describing a failing server, not a capacity.
 
