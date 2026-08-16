@@ -436,6 +436,31 @@ drop policy and its counter, the shutdown flush, and connection sharing — is i
 | `SKY_ANALYTICS_DB_PATH` | `.sky/analytics.db` | Where analytics persists. A `postgres://` value puts it in that database; anything else is a local SQLite file. Falls back to `SKY_CONSOLE_DB_PATH`, then `DATABASE_URL` when that is a PostgreSQL DSN. |
 | `SKY_ANALYTICS_RETENTION` | (unset — keep everything) | Delete events older than this. Go duration (`720h`) or a day form (`90d`). |
 
+### Garbage collection
+
+There is **no `sky.toml` knob for the collector, and that is deliberate.** At
+startup the runtime derives `GOMEMLIMIT` from detected machine memory — the
+cgroup limit before `/proc/meminfo`, so a container is sized to itself and not
+to its host — after subtracting the OS and, under `--embed`, the cluster's own
+`shared_buffers`, and sets `GOGC=400` under that bound. Measured at **+19%
+throughput and 759 MB peak RSS** at 500 concurrent sessions on the PostgreSQL
+store (`docs/perf/runs/gogc-postgres-20260816/`).
+
+The escape hatch is Go's own, because that is the one that already exists and
+already works from a container image or a systemd unit that never reads
+`sky.toml`:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `GOGC` | (derived — `400`; Go's `100` on serverless and on machines too small for the bound) | Go's own heap-growth multiplier. **Set it and sky derives nothing for it.** |
+| `GOMEMLIMIT` | (derived — three quarters of RAM after the OS and any embedded cluster) | Go's own soft memory limit. **Set it and sky derives nothing for it.** Setting one of these does not suppress the other. |
+| `SKY_GC_QUIET` | (unset) | Suppresses the one-line `[sky.gc]` startup banner on stderr. For a one-shot CLI whose stderr is somebody else's input; it does not change what is derived. |
+
+A value written into `sky.toml` would travel to machines it was not sized for,
+which is the whole reason the figure is derived at runtime rather than
+configured. Sizing detail, including the floor below which the runtime declines
+to tune at all: [embedded PostgreSQL](skydb/embedded-postgres.md).
+
 ---
 
 ## `[jobs]` *(v0.19.14+)*

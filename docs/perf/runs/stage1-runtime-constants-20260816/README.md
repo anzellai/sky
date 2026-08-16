@@ -207,7 +207,7 @@ how three of them were caught reporting success wrongly (see below).
 |---|---|
 | `cargo test --release --workspace` | 988 passed, 98 suites, 0 failed, **0 ignored** |
 | `CGO_ENABLED=1 go test -race ./rt/...` | 5 packages ok, **0 data races** |
-| `xtask coerce-floor` | PASS — adapter exact at 24 |
+| `xtask coerce-floor` | PASS — adapter exact at 24 — **see the coverage note below** |
 | `xtask repro` | PASS — **byte-stable 50/50** building, 50/50 emitting |
 | `xtask infer` | PASS |
 | `xtask roundtrip` | PASS |
@@ -218,6 +218,32 @@ how three of them were caught reporting success wrongly (see below).
 
 `repro` and `golden` are the two that had to stay green and did. Nothing was
 re-baselined.
+
+> **Coverage note, added 2026-08-16 — two of these PASSes covered less than
+> they read.** Neither gate stated its denominator at the time, and both
+> defaults were narrower than the table implies:
+>
+> * `xtask coerce-floor` locks a floor **per project** across a 61-row golden.
+>   A project whose generated FFI surface is absent could not be measured, and
+>   the gate filed it under "did not emit (not gated)" and passed on the rest.
+>   On a clean checkout that is **56 of 61 rows** — `03-tea-external`,
+>   `05-mux-server`, `08-notes-app`, `11-fyne-stopwatch` and `13-skyshop` need
+>   a `sky install` (`sky-ffi/` and `.skydeps/` are `.gitignore`d).
+> * `xtask build-run --golden` **selects a subset without `--all`**: 8 of 24
+>   committed goldens, which is why the row above reads 8/8. Stage 4 found and
+>   documented this one.
+>
+> **What the retrospective shows: the window hid nothing.** All 61 rows were
+> measured in one run on 2026-08-16 against the then-current golden, and the
+> five that this stage could not see came back `ok` ×3 (`03-tea-external`,
+> `05-mux-server`, `11-fyne-stopwatch`) and `tightened` ×2 (`08-notes-app`
+> −21 narrow, `13-skyshop` −34). **None widened and none raised `adapter`**,
+> so this stage's "nothing rose" holds on the full corpus — it was narrower
+> than it read, not wrong. That is a verified result, not an assumption.
+>
+> Both holes are now closed at the gate rather than left to a reader: an
+> unmeasurable `coerce-floor` row fails and names the `sky install` that fixes
+> it, and both its verdict lines carry the denominator.
 
 ### Real-app end to end (`examples/19-skyforum`)
 

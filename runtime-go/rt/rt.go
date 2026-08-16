@@ -9512,6 +9512,7 @@ func Server_listen(port any, routes any) any {
 		drainAndRelease(8*time.Second, func() { _ = srv.Close() })
 	}()
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
+	printStartupReport(p) // see startup_report.go — added under, never in place of
 	err := srv.ListenAndServe()
 	signal.Stop(srvSigCh)
 	// If the listener closed because the embedded-PostgreSQL supervisor is

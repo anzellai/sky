@@ -141,19 +141,49 @@ non-obvious ones as questions:
    | Sky app binary (Go) | **~22 MB fresh, ~56 MB settled** (measured) |
    | PostgreSQL base (`shared_buffers = 32MB`) | ~36 MB |
    | PG backends, ~5–10 MB each | ~40–70 MB at 6–10 active |
-   | Sky.Live sessions, **~1.35–1.42 MB on x86 (measured)** | ~140 MB at 100 concurrent |
+   | Sky.Live sessions, **~1.8–1.9 MB each on x86 at the shipped GC default** | ~185 MB at 100 concurrent |
    | **Base, before sessions** | **~380 MB** |
 
-   **Sessions are the number that decides the instance**, at ~1.35–1.42 MB each on x86 — so an
-   e2-micro HOLDS ~450 and an e2-small ~1,000. But see below: memory is not what runs out first.
-   Measured, not inferred: an earlier version of this table guessed 10–100 KB
-   from the Model gob and was wrong by 11–110×.
+   **Sessions are the number that decides the instance** — and the per-session
+   figure moves with the collector, which is why it changed. At the stock
+   `GOGC=100` a session costs **625–650 kB on x86 with a PostgreSQL session
+   store** and 451–531 kB with the memory store, measured as an OLS-free slope
+   across n = 100 → 500 on `examples/19-skyforum` at a 94-element view
+   (`docs/perf/runs/gcp-x86-capacity-20260816/`). Sky now ships **`GOGC=400`
+   under a derived `GOMEMLIMIT`** (below), and `GOGC` multiplies the slope, not
+   just the baseline: 100 → 400 scales it **2.9×** on the same app and store
+   (`docs/perf/runs/gogc-postgres-20260816/`). Hence ~1.8–1.9 MB — an estimate,
+   applying a within-box ratio measured on M1 to an x86 slope.
+
+   > Quote a per-session number **with its view size and its `GOGC`**, or it
+   > will be wrong. This table long carried ~1.35–1.42 MB, which was measured
+   > on a *different app* — `26-ui-showcase` at 384 elements, memory store — and
+   > is not the cost of a session in general.
 
    **CPU binds ~12× before memory, measured on real GCE instances.** An
    e2-micro *holds* ~450 sessions and is **unusable past ~50** (knee 25–50,
    peak ~18 interactions/sec); an e2-small knees at **50–100** (~35–42/s).
    Sizing on memory alone overstates an e2-micro twelvefold. Past 250 sessions
    both fail 79–96% of interactions.
+
+   **Count physical cores, not vCPUs.** A GCE vCPU is an SMT thread:
+   `e2-standard-8` is **4 cores × 2 threads**, not 8 cores. Four threads on four
+   distinct physical cores serve **1,568 int/s**; the same four threads on two
+   physical cores serve **1,097** — 70%. The second thread on a core is worth
+   ~1.27×, not 2× (`docs/perf/runs/gomaxprocs-scaling-20260816/`). Any capacity
+   number derived from a vCPU count overstates the machine by roughly that
+   factor.
+
+   **The GC default is derived, not configured.** At startup the runtime sizes
+   `GOMEMLIMIT` from detected machine memory — the cgroup limit first, so a
+   container is not sized to its host — after subtracting the OS and, under
+   `--embed`, the cluster's own `shared_buffers`, and sets `GOGC=400` under it.
+   Measured: **+19% throughput at 759 MB peak RSS** at 500 sessions on the
+   PostgreSQL store, against 1,827 MB for a bare `GOGC=800`. An explicit `GOGC`
+   or `GOMEMLIMIT` in the environment always wins, and a machine too small to
+   hold the bound is left on Go's defaults entirely. There is no `sky.toml`
+   knob: the Go env vars are the escape hatch, and they work even when the
+   process is launched by something that never reads `sky.toml`.
 
    Two things to tell a user picking a burstable instance: **repeated runs
    decline** (e2-micro at 100 sessions: 17.5 → 9.6 → 9.5/s as burst credits
@@ -216,11 +246,32 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
 
 ### Production gate (when the user says deploy / prod / Cloud Run / K8s)
 
-- `ENV=production` set on the runtime (locks the dev console + banner + metrics).
-- `SKY_AUTH_TOKEN_SECRET` ≥ 32 bytes; `SKY_CONSOLE_AUTH` set (`token` or `app`).
+**This is the same checklist the app prints on every dev start**, under its
+`listening` line. One list, in two places, deliberately — see
+`runtime-go/rt/startup_report.go`.
+
+- `ENV` set to anything that is **not** `dev` / `development` / `local` (the
+  runtime tests for the dev spellings, not for the literal `production`). Locks
+  the dev console + banner + metrics.
+- `SKY_CONSOLE_AUTH` = `token` \| `app` \| `off`. With `token`, also set
+  **`SKY_CONSOLE_TOKEN`** — without it the console falls back to an
+  auto-generated `.sky/console-token`, which a container regenerates every boot
+  and no operator can read. With `token`/`app` set and no console mounted the
+  app **exits 1**; `off` is the way to declare the surface intentionally absent.
+- `SKY_ADMIN_TOKEN` for the `/_sky/metrics` bearer. (`SKY_METRICS_TOKEN` and
+  `SKY_CONSOLE_TOKEN_SECRET` are back-compat aliases for it, not separate
+  settings.)
 - Multi-replica → a **shared** session store (`redis`/`postgres`), sticky
   sessions keyed on `sky_sid`, and cross-instance pub/sub (`store=redis` or
   `SKY_LIVE_BROKER_URL`). `memory` and `sqlite` are single-instance only.
+
+> **`SKY_AUTH_TOKEN_SECRET` is not a runtime setting, and this gate used to say
+> it was.** Nothing in `runtime-go/` reads it: `sky_sid` is unsigned random hex,
+> and `Auth.signToken` takes its secret as a Sky-level *argument*. The name is a
+> convention in user code (`System.getenvOr "SKY_AUTH_TOKEN_SECRET"`) that only
+> `sky doctor` knows about. If you use `Std.Auth`, whatever variable you feed
+> into `Auth.signToken` must be ≥ 32 bytes; if you don't, setting it changes
+> nothing.
 
 Env var reference: `docs/sky-toml.md` + `docs/skylive/architecture.md`.
 
@@ -294,6 +345,17 @@ New live tests gate through `rust/crates/sky/src/live_gate.rs`
 (`live_gate::required(Need::Postgres, <your probe>)`), and
 `rust/crates/xtask/tests/live_tests_are_not_silently_skipped.rs` fails the build
 on the shapes that used to be written instead.
+
+`xtask coerce-floor` takes the same variable for the same reason. Its golden
+locks a runtime-narrowing floor **per project**, and a project whose generated
+FFI surface is absent (`sky-ffi/` and `.skydeps/` are `.gitignore`d, so a fresh
+checkout has neither) cannot be measured — which used to be filed under "did not
+emit (not gated)" while the run reported PASS on the remainder, measuring 56 of
+61 rows. An unmeasurable row now FAILS, naming the `(cd <project-dir> && sky
+install)` that fixes it; `SKY_LIVE_TESTS=skip` downgrades it to a loud
+`UNMEASURED` block, and `--bless` refuses under a shortfall rather than write a
+golden mixing measured rows with carried-forward ones. Both verdict lines state
+how many of the golden's rows the run actually covered.
 
 `cargo run --release -p xtask -- harness` runs the registered gates through the
 gate harness, which enforces each gate's budget by `killpg`, requires an exact
