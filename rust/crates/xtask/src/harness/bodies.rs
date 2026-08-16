@@ -843,7 +843,7 @@ pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
 /// The second is what makes deletion visible. `cargo test` on a file whose tests
 /// were removed exits 0 having run nothing, which is the same shape as the
 /// `0/0 … GATE: PASS` defect.
-pub const CLI_VERBS_EXPECTED: u64 = 9;
+pub const CLI_VERBS_EXPECTED: u64 = 10;
 
 pub fn cli_verbs(ctx: &GateCtx) -> GateOutcome {
     let suite = ctx
@@ -2939,7 +2939,7 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// silently losing surface rows while still reporting PASS. The constant moves
 /// when the surface count moves — which is a real event that should be read,
 /// not absorbed.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 145;
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 147;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

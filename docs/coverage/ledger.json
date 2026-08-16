@@ -181,7 +181,7 @@
       "tier": "T1"
     },
     "cli-verbs": {
-      "expected_assertions": 9,
+      "expected_assertions": 10,
       "falsifier_mutation": "cli-verbs.break-an-expectation",
       "falsifier_proven": true,
       "summary": "member G — sky CLI verbs (init/clean/watch/db/install/update/upgrade/dispatch)",
@@ -321,7 +321,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 145,
+      "expected_assertions": 147,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
