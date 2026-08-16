@@ -2537,7 +2537,7 @@ foldGroup discIdx = go [] []
 -- }
 --
 -- func init() {
---     rt.RegisterAdtTag("Red", 0); rt.RegisterAdtTag("RGB", 2);
+--     rt.RegisterAdtTag("main.M_Color", "Red", 0); rt.RegisterAdtTag("main.M_Color", "RGB", 2);
 --     rt.RegisterAdtVariant("Red", func(raw []json.RawMessage) any {
 --         return Mod_Color_Red_V{}
 --     })
@@ -2705,8 +2705,12 @@ emitSealedIfaceUnion phaseACtx qualType vars ctors =
         ++ concatMap ((++ "\n") . ("\t" ++) . gobRegisterLine) ctors
         ++ "}"
 
+    -- Keyed by (OWNING ADT, ctor).  A bare ctor name is not a key: ctor
+    -- names are not unique across a program, and the wire-dispatch path
+    -- resolves a client-supplied string against this registry.  See
+    -- runtime-go/rt/adt_variant_factory.go (AdtCtorKey).
     registerAdtTagLine (Can.Ctor cname idx _ _) =
-        "rt.RegisterAdtTag(" ++ show cname ++ ", " ++ show idx ++ ")"
+        "rt.RegisterAdtTag(" ++ show ("main." ++ qualType) ++ ", " ++ show cname ++ ", " ++ show idx ++ ")"
 
     registerVariantLine (Can.Ctor cname _ arity argTys) =
         -- v0.17 iter 63 — emit @rt.JsonRawMessage@ / @rt.JsonUnmarshal@
@@ -2730,7 +2734,7 @@ emitSealedIfaceUnion phaseACtx qualType vars ctors =
                 "var v" ++ show i ++ " " ++ ctorFieldGoType i argTys
                 ++ "; if len(raw) >= " ++ show (i + 1)
                 ++ " { _ = rt.JsonUnmarshal(raw[" ++ show i ++ "], &v" ++ show i ++ ") }; "
-        in "rt.RegisterAdtVariant(" ++ show cname
+        in "rt.RegisterAdtVariant(" ++ show ("main." ++ qualType) ++ ", " ++ show cname
            ++ ", func(raw []rt.JsonRawMessage) any { "
            ++ unmarshalSteps ++ "return " ++ ctorLit ++ " })"
 
@@ -7366,8 +7370,9 @@ generateUnionForDep phaseACtx modName modPrefix (typeName, Can.Union vars ctors 
             -- @any@ via the variant arms.
             ++ emitDispatchTableVarDecls qualType ctors opts
             ++ [ GoIr.GoDeclRaw $ "func init() { "
+                   -- Keyed by (OWNING ADT, ctor) — see registerAdtTagLine.
                    ++ concatMap (\(Can.Ctor cname idx _ _) ->
-                        "rt.RegisterAdtTag(\"" ++ cname ++ "\", " ++ show idx ++ "); ")
+                        "rt.RegisterAdtTag(\"main." ++ qualType ++ "\", \"" ++ cname ++ "\", " ++ show idx ++ "); ")
                         ctors
                    -- v0.17 Phase 4 Stage 3 (dep-module path) — same
                    -- Stage 1+Stage 3 dispatch population +
@@ -8695,8 +8700,9 @@ generateUnionTypes _phaseACtx canMod =
             -- 'rt.RegisterMsgUpdate' at the same site.
             ++ emitDispatchTableVarDecls typeName ctors opts
             ++ [ GoIr.GoDeclRaw $ "func init() { "
+                   -- Keyed by (OWNING ADT, ctor) — see registerAdtTagLine.
                    ++ concatMap (\(Can.Ctor cname idx _ _) ->
-                        "rt.RegisterAdtTag(\"" ++ cname ++ "\", " ++ show idx ++ "); ")
+                        "rt.RegisterAdtTag(\"main." ++ typeName ++ "\", \"" ++ cname ++ "\", " ++ show idx ++ "); ")
                         ctors
                    -- v0.17 Phase 4 Stage 1 — per-Msg typed dispatch
                    -- scaffolding.  For every Msg-shaped union (Normal

@@ -21,7 +21,7 @@ func Sky_Core_Error_Error_Error(v0 any, v1 any) Sky_Core_Error_Error {
 }
 
 func init() {
-	rt.RegisterAdtTag("Error", 0)
+	rt.RegisterAdtTag("console_app.Sky_Core_Error_Error", "Error", 0)
 	rt.RegisterMsgVariant("Sky_Core_Error_Error", "Error", 0, 2)
 }
 
@@ -48,15 +48,15 @@ func Sky_Core_Error_ErrorDetails_Custom(v0 any) Sky_Core_Error_ErrorDetails {
 }
 
 func init() {
-	rt.RegisterAdtTag("FfiPanic", 0)
+	rt.RegisterAdtTag("console_app.Sky_Core_Error_ErrorDetails", "FfiPanic", 0)
 	rt.RegisterMsgVariant("Sky_Core_Error_ErrorDetails", "FfiPanic", 0, 1)
-	rt.RegisterAdtTag("TypeMismatch", 1)
+	rt.RegisterAdtTag("console_app.Sky_Core_Error_ErrorDetails", "TypeMismatch", 1)
 	rt.RegisterMsgVariant("Sky_Core_Error_ErrorDetails", "TypeMismatch", 1, 1)
-	rt.RegisterAdtTag("HttpStatus", 2)
+	rt.RegisterAdtTag("console_app.Sky_Core_Error_ErrorDetails", "HttpStatus", 2)
 	rt.RegisterMsgVariant("Sky_Core_Error_ErrorDetails", "HttpStatus", 2, 1)
-	rt.RegisterAdtTag("JsonDecode", 3)
+	rt.RegisterAdtTag("console_app.Sky_Core_Error_ErrorDetails", "JsonDecode", 3)
 	rt.RegisterMsgVariant("Sky_Core_Error_ErrorDetails", "JsonDecode", 3, 1)
-	rt.RegisterAdtTag("Custom", 4)
+	rt.RegisterAdtTag("console_app.Sky_Core_Error_ErrorDetails", "Custom", 4)
 	rt.RegisterMsgVariant("Sky_Core_Error_ErrorDetails", "Custom", 4, 1)
 }
 
@@ -358,45 +358,45 @@ func State_Msg_GlobalQuery(v0 any) State_Msg {
 }
 
 func init() {
-	rt.RegisterAdtTag("SelectTab", 0)
+	rt.RegisterAdtTag("console_app.State_Msg", "SelectTab", 0)
 	rt.RegisterMsgVariant("State_Msg", "SelectTab", 0, 1)
-	rt.RegisterAdtTag("Tick", 1)
+	rt.RegisterAdtTag("console_app.State_Msg", "Tick", 1)
 	rt.RegisterMsgVariant("State_Msg", "Tick", 1, 0)
-	rt.RegisterAdtTag("GotOverview", 2)
+	rt.RegisterAdtTag("console_app.State_Msg", "GotOverview", 2)
 	rt.RegisterMsgVariant("State_Msg", "GotOverview", 2, 1)
-	rt.RegisterAdtTag("GotLogs", 3)
+	rt.RegisterAdtTag("console_app.State_Msg", "GotLogs", 3)
 	rt.RegisterMsgVariant("State_Msg", "GotLogs", 3, 1)
-	rt.RegisterAdtTag("GotMetrics", 4)
+	rt.RegisterAdtTag("console_app.State_Msg", "GotMetrics", 4)
 	rt.RegisterMsgVariant("State_Msg", "GotMetrics", 4, 1)
-	rt.RegisterAdtTag("GotTraces", 5)
+	rt.RegisterAdtTag("console_app.State_Msg", "GotTraces", 5)
 	rt.RegisterMsgVariant("State_Msg", "GotTraces", 5, 1)
-	rt.RegisterAdtTag("GotErrors", 6)
+	rt.RegisterAdtTag("console_app.State_Msg", "GotErrors", 6)
 	rt.RegisterMsgVariant("State_Msg", "GotErrors", 6, 1)
-	rt.RegisterAdtTag("GotAnalytics", 7)
+	rt.RegisterAdtTag("console_app.State_Msg", "GotAnalytics", 7)
 	rt.RegisterMsgVariant("State_Msg", "GotAnalytics", 7, 1)
-	rt.RegisterAdtTag("LogFilterQuery", 8)
+	rt.RegisterAdtTag("console_app.State_Msg", "LogFilterQuery", 8)
 	rt.RegisterMsgVariant("State_Msg", "LogFilterQuery", 8, 1)
-	rt.RegisterAdtTag("LogFilterToggleLevel", 9)
+	rt.RegisterAdtTag("console_app.State_Msg", "LogFilterToggleLevel", 9)
 	rt.RegisterMsgVariant("State_Msg", "LogFilterToggleLevel", 9, 1)
-	rt.RegisterAdtTag("LogFilterPickSession", 10)
+	rt.RegisterAdtTag("console_app.State_Msg", "LogFilterPickSession", 10)
 	rt.RegisterMsgVariant("State_Msg", "LogFilterPickSession", 10, 1)
-	rt.RegisterAdtTag("LogFilterClear", 11)
+	rt.RegisterAdtTag("console_app.State_Msg", "LogFilterClear", 11)
 	rt.RegisterMsgVariant("State_Msg", "LogFilterClear", 11, 0)
-	rt.RegisterAdtTag("TraceFilterQuery", 12)
+	rt.RegisterAdtTag("console_app.State_Msg", "TraceFilterQuery", 12)
 	rt.RegisterMsgVariant("State_Msg", "TraceFilterQuery", 12, 1)
-	rt.RegisterAdtTag("PivotToTrace", 13)
+	rt.RegisterAdtTag("console_app.State_Msg", "PivotToTrace", 13)
 	rt.RegisterMsgVariant("State_Msg", "PivotToTrace", 13, 1)
-	rt.RegisterAdtTag("SelectService", 14)
+	rt.RegisterAdtTag("console_app.State_Msg", "SelectService", 14)
 	rt.RegisterMsgVariant("State_Msg", "SelectService", 14, 1)
-	rt.RegisterAdtTag("GotServiceStats", 15)
+	rt.RegisterAdtTag("console_app.State_Msg", "GotServiceStats", 15)
 	rt.RegisterMsgVariant("State_Msg", "GotServiceStats", 15, 1)
-	rt.RegisterAdtTag("GotIdentity", 16)
+	rt.RegisterAdtTag("console_app.State_Msg", "GotIdentity", 16)
 	rt.RegisterMsgVariant("State_Msg", "GotIdentity", 16, 1)
-	rt.RegisterAdtTag("SelectRange", 17)
+	rt.RegisterAdtTag("console_app.State_Msg", "SelectRange", 17)
 	rt.RegisterMsgVariant("State_Msg", "SelectRange", 17, 1)
-	rt.RegisterAdtTag("GotNowMs", 18)
+	rt.RegisterAdtTag("console_app.State_Msg", "GotNowMs", 18)
 	rt.RegisterMsgVariant("State_Msg", "GotNowMs", 18, 1)
-	rt.RegisterAdtTag("GlobalQuery", 19)
+	rt.RegisterAdtTag("console_app.State_Msg", "GlobalQuery", 19)
 	rt.RegisterMsgVariant("State_Msg", "GlobalQuery", 19, 1)
 }
 
@@ -520,13 +520,13 @@ func Std_Html_Attributes_Attribute_NoAttr() Std_Html_Attributes_Attribute {
 }
 
 func init() {
-	rt.RegisterAdtTag("Attr", 0)
+	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Attribute", "Attr", 0)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Attribute", "Attr", 0, 2)
-	rt.RegisterAdtTag("BoolAttr", 1)
+	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Attribute", "BoolAttr", 1)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Attribute", "BoolAttr", 1, 2)
-	rt.RegisterAdtTag("EventAttr", 2)
+	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Attribute", "EventAttr", 2)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Attribute", "EventAttr", 2, 1)
-	rt.RegisterAdtTag("NoAttr", 3)
+	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Attribute", "NoAttr", 3)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Attribute", "NoAttr", 3, 0)
 }
 
@@ -549,13 +549,13 @@ func Std_Html_Attributes_Event_OnRaw(v0 any, v1 any) Std_Html_Attributes_Event {
 }
 
 func init() {
-	rt.RegisterAdtTag("OnMsg", 0)
+	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Event", "OnMsg", 0)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Event", "OnMsg", 0, 2)
-	rt.RegisterAdtTag("OnString", 1)
+	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Event", "OnString", 1)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Event", "OnString", 1, 2)
-	rt.RegisterAdtTag("OnBool", 2)
+	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Event", "OnBool", 2)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Event", "OnBool", 2, 2)
-	rt.RegisterAdtTag("OnRaw", 3)
+	rt.RegisterAdtTag("console_app.Std_Html_Attributes_Event", "OnRaw", 3)
 	rt.RegisterMsgVariant("Std_Html_Attributes_Event", "OnRaw", 3, 2)
 }
 
@@ -574,11 +574,11 @@ func Std_Html_Html_HRaw(v0 any) Std_Html_Html {
 }
 
 func init() {
-	rt.RegisterAdtTag("HElement", 0)
+	rt.RegisterAdtTag("console_app.Std_Html_Html", "HElement", 0)
 	rt.RegisterMsgVariant("Std_Html_Html", "HElement", 0, 3)
-	rt.RegisterAdtTag("HText", 1)
+	rt.RegisterAdtTag("console_app.Std_Html_Html", "HText", 1)
 	rt.RegisterMsgVariant("Std_Html_Html", "HText", 1, 1)
-	rt.RegisterAdtTag("HRaw", 2)
+	rt.RegisterAdtTag("console_app.Std_Html_Html", "HRaw", 2)
 	rt.RegisterMsgVariant("Std_Html_Html", "HRaw", 2, 1)
 }
 
@@ -601,7 +601,7 @@ func Std_Ui_AnimationEntry_AnimationEntry(v0 any, v1 any, v2 any, v3 any) Std_Ui
 }
 
 func init() {
-	rt.RegisterAdtTag("AnimationEntry", 0)
+	rt.RegisterAdtTag("console_app.Std_Ui_AnimationEntry", "AnimationEntry", 0)
 	rt.RegisterMsgVariant("Std_Ui_AnimationEntry", "AnimationEntry", 0, 4)
 }
 
@@ -760,81 +760,81 @@ func Std_Ui_Attribute_AttrAnimation(v0 any, v1 any, v2 any, v3 any) Std_Ui_Attri
 }
 
 func init() {
-	rt.RegisterAdtTag("NoAttribute", 0)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "NoAttribute", 0)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "NoAttribute", 0, 0)
-	rt.RegisterAdtTag("AttrWidth", 1)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrWidth", 1)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrWidth", 1, 1)
-	rt.RegisterAdtTag("AttrHeight", 2)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrHeight", 2)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrHeight", 2, 1)
-	rt.RegisterAdtTag("AttrAlignX", 3)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrAlignX", 3)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrAlignX", 3, 1)
-	rt.RegisterAdtTag("AttrAlignY", 4)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrAlignY", 4)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrAlignY", 4, 1)
-	rt.RegisterAdtTag("AttrNearby", 5)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrNearby", 5)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrNearby", 5, 2)
-	rt.RegisterAdtTag("AttrPadding", 6)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrPadding", 6)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrPadding", 6, 4)
-	rt.RegisterAdtTag("AttrSpacing", 7)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrSpacing", 7)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrSpacing", 7, 1)
-	rt.RegisterAdtTag("AttrStyle", 8)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrStyle", 8)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrStyle", 8, 2)
-	rt.RegisterAdtTag("AttrDescribe", 9)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrDescribe", 9)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrDescribe", 9, 1)
-	rt.RegisterAdtTag("AttrClass", 10)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrClass", 10)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrClass", 10, 1)
-	rt.RegisterAdtTag("AttrEvent", 11)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrEvent", 11)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrEvent", 11, 1)
-	rt.RegisterAdtTag("AttrAttribute", 12)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrAttribute", 12)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrAttribute", 12, 2)
-	rt.RegisterAdtTag("AttrFontSize", 13)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontSize", 13)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontSize", 13, 1)
-	rt.RegisterAdtTag("AttrFontColor", 14)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontColor", 14)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontColor", 14, 1)
-	rt.RegisterAdtTag("AttrFontFamily", 15)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontFamily", 15)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontFamily", 15, 1)
-	rt.RegisterAdtTag("AttrFontWeight", 16)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontWeight", 16)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontWeight", 16, 1)
-	rt.RegisterAdtTag("AttrFontItalic", 17)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontItalic", 17)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontItalic", 17, 0)
-	rt.RegisterAdtTag("AttrFontUnderline", 18)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontUnderline", 18)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontUnderline", 18, 0)
-	rt.RegisterAdtTag("AttrFontDecoration", 19)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontDecoration", 19)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontDecoration", 19, 1)
-	rt.RegisterAdtTag("AttrFontLetterSpacing", 20)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontLetterSpacing", 20)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontLetterSpacing", 20, 1)
-	rt.RegisterAdtTag("AttrFontWordSpacing", 21)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontWordSpacing", 21)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontWordSpacing", 21, 1)
-	rt.RegisterAdtTag("AttrFontAlign", 22)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrFontAlign", 22)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrFontAlign", 22, 1)
-	rt.RegisterAdtTag("AttrBgColor", 23)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBgColor", 23)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBgColor", 23, 1)
-	rt.RegisterAdtTag("AttrBgImage", 24)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBgImage", 24)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBgImage", 24, 1)
-	rt.RegisterAdtTag("AttrBgGradient", 25)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBgGradient", 25)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBgGradient", 25, 1)
-	rt.RegisterAdtTag("AttrBorderWidth", 26)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBorderWidth", 26)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBorderWidth", 26, 1)
-	rt.RegisterAdtTag("AttrBorderWidthEach", 27)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBorderWidthEach", 27)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBorderWidthEach", 27, 4)
-	rt.RegisterAdtTag("AttrBorderColor", 28)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBorderColor", 28)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBorderColor", 28, 1)
-	rt.RegisterAdtTag("AttrBorderRounded", 29)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBorderRounded", 29)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBorderRounded", 29, 1)
-	rt.RegisterAdtTag("AttrBorderStyle", 30)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBorderStyle", 30)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBorderStyle", 30, 1)
-	rt.RegisterAdtTag("AttrBorderShadow", 31)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBorderShadow", 31)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBorderShadow", 31, 5)
-	rt.RegisterAdtTag("AttrBorderInsetShadow", 32)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrBorderInsetShadow", 32)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrBorderInsetShadow", 32, 5)
-	rt.RegisterAdtTag("AttrPointer", 33)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrPointer", 33)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrPointer", 33, 0)
-	rt.RegisterAdtTag("AttrOverflow", 34)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrOverflow", 34)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrOverflow", 34, 2)
-	rt.RegisterAdtTag("AttrPseudoRule", 35)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrPseudoRule", 35)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrPseudoRule", 35, 2)
-	rt.RegisterAdtTag("AttrTransition", 36)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrTransition", 36)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrTransition", 36, 2)
-	rt.RegisterAdtTag("AttrAnimation", 37)
+	rt.RegisterAdtTag("console_app.Std_Ui_Attribute", "AttrAnimation", 37)
 	rt.RegisterMsgVariant("Std_Ui_Attribute", "AttrAnimation", 37, 4)
 }
 
@@ -871,7 +871,7 @@ func Std_Ui_Color_Rgba(v0 any, v1 any, v2 any, v3 any) Std_Ui_Color {
 	return Std_Ui_Color{Tag: 0, SkyName: "Rgba", Fields: []any{v0, v1, v2, v3}}
 }
 
-func init() { rt.RegisterAdtTag("Rgba", 0); rt.RegisterMsgVariant("Std_Ui_Color", "Rgba", 0, 4) }
+func init() { rt.RegisterAdtTag("console_app.Std_Ui_Color", "Rgba", 0); rt.RegisterMsgVariant("Std_Ui_Color", "Rgba", 0, 4) }
 
 type Std_Ui_Description = rt.SkyADT
 
@@ -920,27 +920,27 @@ func Std_Ui_Description_DescParagraph() Std_Ui_Description {
 }
 
 func init() {
-	rt.RegisterAdtTag("NoDescription", 0)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "NoDescription", 0)
 	rt.RegisterMsgVariant("Std_Ui_Description", "NoDescription", 0, 0)
-	rt.RegisterAdtTag("DescMain", 1)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescMain", 1)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescMain", 1, 0)
-	rt.RegisterAdtTag("DescNavigation", 2)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescNavigation", 2)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescNavigation", 2, 0)
-	rt.RegisterAdtTag("DescContentInfo", 3)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescContentInfo", 3)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescContentInfo", 3, 0)
-	rt.RegisterAdtTag("DescComplementary", 4)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescComplementary", 4)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescComplementary", 4, 0)
-	rt.RegisterAdtTag("DescHeading", 5)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescHeading", 5)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescHeading", 5, 1)
-	rt.RegisterAdtTag("DescLabel", 6)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescLabel", 6)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescLabel", 6, 1)
-	rt.RegisterAdtTag("DescLivePolite", 7)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescLivePolite", 7)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescLivePolite", 7, 0)
-	rt.RegisterAdtTag("DescLiveAssertive", 8)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescLiveAssertive", 8)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescLiveAssertive", 8, 0)
-	rt.RegisterAdtTag("DescButton", 9)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescButton", 9)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescButton", 9, 0)
-	rt.RegisterAdtTag("DescParagraph", 10)
+	rt.RegisterAdtTag("console_app.Std_Ui_Description", "DescParagraph", 10)
 	rt.RegisterMsgVariant("Std_Ui_Description", "DescParagraph", 10, 0)
 }
 
@@ -967,15 +967,15 @@ func Std_Ui_Element_Raw(v0 any) Std_Ui_Element {
 }
 
 func init() {
-	rt.RegisterAdtTag("Empty", 0)
+	rt.RegisterAdtTag("console_app.Std_Ui_Element", "Empty", 0)
 	rt.RegisterMsgVariant("Std_Ui_Element", "Empty", 0, 0)
-	rt.RegisterAdtTag("Text", 1)
+	rt.RegisterAdtTag("console_app.Std_Ui_Element", "Text", 1)
 	rt.RegisterMsgVariant("Std_Ui_Element", "Text", 1, 1)
-	rt.RegisterAdtTag("Node", 2)
+	rt.RegisterAdtTag("console_app.Std_Ui_Element", "Node", 2)
 	rt.RegisterMsgVariant("Std_Ui_Element", "Node", 2, 3)
-	rt.RegisterAdtTag("TaggedNode", 3)
+	rt.RegisterAdtTag("console_app.Std_Ui_Element", "TaggedNode", 3)
 	rt.RegisterMsgVariant("Std_Ui_Element", "TaggedNode", 3, 4)
-	rt.RegisterAdtTag("Raw", 4)
+	rt.RegisterAdtTag("console_app.Std_Ui_Element", "Raw", 4)
 	rt.RegisterMsgVariant("Std_Ui_Element", "Raw", 4, 1)
 }
 
@@ -1034,19 +1034,19 @@ func Std_Ui_Length_Vw(v0 any) Std_Ui_Length {
 }
 
 func init() {
-	rt.RegisterAdtTag("Px", 0)
+	rt.RegisterAdtTag("console_app.Std_Ui_Length", "Px", 0)
 	rt.RegisterMsgVariant("Std_Ui_Length", "Px", 0, 1)
-	rt.RegisterAdtTag("Content", 1)
+	rt.RegisterAdtTag("console_app.Std_Ui_Length", "Content", 1)
 	rt.RegisterMsgVariant("Std_Ui_Length", "Content", 1, 0)
-	rt.RegisterAdtTag("Fill", 2)
+	rt.RegisterAdtTag("console_app.Std_Ui_Length", "Fill", 2)
 	rt.RegisterMsgVariant("Std_Ui_Length", "Fill", 2, 1)
-	rt.RegisterAdtTag("Min", 3)
+	rt.RegisterAdtTag("console_app.Std_Ui_Length", "Min", 3)
 	rt.RegisterMsgVariant("Std_Ui_Length", "Min", 3, 2)
-	rt.RegisterAdtTag("Max", 4)
+	rt.RegisterAdtTag("console_app.Std_Ui_Length", "Max", 4)
 	rt.RegisterMsgVariant("Std_Ui_Length", "Max", 4, 2)
-	rt.RegisterAdtTag("Vh", 5)
+	rt.RegisterAdtTag("console_app.Std_Ui_Length", "Vh", 5)
 	rt.RegisterMsgVariant("Std_Ui_Length", "Vh", 5, 1)
-	rt.RegisterAdtTag("Vw", 6)
+	rt.RegisterAdtTag("console_app.Std_Ui_Length", "Vw", 6)
 	rt.RegisterMsgVariant("Std_Ui_Length", "Vw", 6, 1)
 }
 

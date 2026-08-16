@@ -4215,25 +4215,58 @@ type SkyADT struct {
 	Fields  []any
 }
 
-// adtTagRegistry maps constructor SkyName → Tag for runtime-constructed
-// ADTs (e.g. __sky_send events). Populated by RegisterAdtTag which the
-// codegen's init() block calls for each Msg constructor.
-var adtTagRegistry = make(map[string]int)
+// adtTagRegistry maps (owning ADT, constructor) → Tag for
+// runtime-constructed ADTs (e.g. __sky_send events). Populated by
+// RegisterAdtTag which the codegen's init() block calls for each
+// constructor.
+//
+// Keyed by AdtCtorKey, not by the bare constructor name: see the
+// AdtCtorKey docstring (adt_variant_factory.go) for why a bare name is
+// not a key.
+var adtTagRegistry = make(map[AdtCtorKey]int)
 var adtTagRegistryMu sync.Mutex
 
 func RegisterGobType(v any) {
 	gobRegisterAll(v)
 }
 
-func RegisterAdtTag(skyName string, tag int) {
+// RegisterAdtTag records the declaration-order tag of `ctorName` within
+// `adtName`.
+//
+// Re-registering the SAME (adt, ctor) with the SAME tag is expected and
+// idempotent — a stdlib ADT is emitted into more than one Go package
+// (`Std_Ui_Element` exists in both `main` and `rt/console_app`), so its
+// init() runs once per package.
+//
+// Re-registering with a DIFFERENT tag is a codegen bug: it means two
+// distinct types lowered to one Go name, and whichever init() ran last
+// would silently decide how the wire decodes that constructor. That is
+// precisely the order-dependence this registry was reshaped to remove,
+// so it panics at init() rather than picking a winner. An init()-time
+// panic is deterministic and names both tags; a silent winner is
+// neither.
+func RegisterAdtTag(adtName, ctorName string, tag int) {
+	key := AdtCtorKey{Adt: adtName, Ctor: ctorName}
 	adtTagRegistryMu.Lock()
-	adtTagRegistry[skyName] = tag
+	prev, exists := adtTagRegistry[key]
+	if !exists {
+		adtTagRegistry[key] = tag
+	}
 	adtTagRegistryMu.Unlock()
+	if exists && prev != tag {
+		panic(fmt.Sprintf(
+			"sky: conflicting ADT tag registration for %s.%s — already registered as %d, re-registered as %d; "+
+				"two distinct Sky types have lowered to the same Go type name",
+			adtName, ctorName, prev, tag))
+	}
 }
 
-func LookupAdtTag(skyName string) (int, bool) {
+// LookupAdtTag returns the tag of `ctorName` WITHIN `adtName`. There is
+// deliberately no bare-name lookup — resolving a constructor without
+// naming its ADT is the defect this registry shape exists to prevent.
+func LookupAdtTag(adtName, ctorName string) (int, bool) {
 	adtTagRegistryMu.Lock()
-	tag, ok := adtTagRegistry[skyName]
+	tag, ok := adtTagRegistry[AdtCtorKey{Adt: adtName, Ctor: ctorName}]
 	adtTagRegistryMu.Unlock()
 	return tag, ok
 }
