@@ -65,6 +65,37 @@
 //!   * A golden entry with no emitting example (or vice-versa) is REPORTED, never
 //!     silently ignored.
 //!
+//! # Coverage: the census must measure the corpus it claims to measure
+//!
+//! Until 2026-08-16 a golden row whose project could not emit HERE was printed
+//! under "did not emit (not gated)" and the gate went on to report **PASS** on
+//! the rest. The stated reason was portability: an FFI example whose generated
+//! `sky-ffi/` surface is `.gitignore`d emits on a developer's machine and not on
+//! a fresh checkout, so failing on it would make the golden non-portable.
+//!
+//! That reasoning is right about the cause and wrong about the remedy. What it
+//! produced was a gate that measured **56 of its 61 rows** on a clean checkout
+//! and said PASS, with the five-row shortfall a line of prose in the middle of a
+//! 100-line report. Four performance stages were measured against this ratchet;
+//! each "no project rose" verdict silently covered whatever subset happened to
+//! emit on the machine that ran it. A census that does not state its own
+//! denominator cannot support a claim about the population.
+//!
+//! So an unmeasured row is now a FAILURE that names what to install, in line
+//! with the repo-wide norm that a gate whose prerequisite is missing fails
+//! rather than skips (AGENTS.md, "Engineering norms"). The escape is the same
+//! one every other live gate in this repo takes, spelled the same way:
+//!
+//! ```text
+//! SKY_LIVE_TESTS=skip cargo run -p xtask -- coerce-floor
+//! ```
+//!
+//! which downgrades the failure to a loud, itemised `UNMEASURED` block — a
+//! partial run someone ASKED for, rather than one nobody noticed. `--bless`
+//! refuses outright under a shortfall, because blessing a partially-measured
+//! corpus writes a golden whose rows are a mix of freshly measured numbers and
+//! silently carried-forward ones, presented as one census.
+//!
 //! Determinism: the emitted Go is byte-stable (repro's invariant), so the token
 //! census is byte-stable too.
 //!
@@ -166,6 +197,35 @@ pub fn tracked_tokens() -> &'static [&'static str] {
 /// Location of the committed golden (repo-root relative). One line per example:
 /// `<example-name>\t<total-count>`, sorted by name. Kept minimal + deterministic.
 const GOLDEN_REL: &str = "rust/crates/xtask/coerce_floor.golden";
+
+/// Whether the operator has explicitly asked for a partially-measured run.
+///
+/// Deliberately the SAME environment variable, and the same three-way parse, as
+/// `rust/crates/sky/src/live_gate.rs`: one spelling for "I genuinely cannot
+/// provide this environment", so a person who has met it once knows it
+/// everywhere. The parse is duplicated rather than shared because `xtask` does
+/// not — and should not — depend on the `sky` binary crate; the shared thing is
+/// the CONTRACT, and this test pins it.
+///
+/// An unrecognised value is a hard error rather than a fallback to either side.
+/// `SKY_LIVE_TESTS=1` meaning "require" to whoever typed it and "skip" here is
+/// precisely how a gate ends up not running.
+fn skip_requested() -> bool {
+    skip_from(std::env::var("SKY_LIVE_TESTS").ok().as_deref())
+}
+
+fn skip_from(raw: Option<&str>) -> bool {
+    match raw {
+        None | Some("") | Some("require") => false,
+        Some("skip") => true,
+        Some(other) => panic!(
+            "SKY_LIVE_TESTS={other:?} is not a mode. Use `require` (the default — a \
+             golden row that cannot be measured fails this gate) or `skip` (an \
+             unmeasurable row is reported as UNMEASURED and does not fail). Any \
+             other value is rejected rather than guessed."
+        ),
+    }
+}
 
 pub fn run(args: &[String], root: &Path) -> i32 {
     let bless = args.iter().any(|a| a == "--bless");
@@ -614,6 +674,39 @@ fn bless_golden(
 ) -> i32 {
     let carried = load_golden(root).unwrap_or_default();
     let rows = rows_to_write(root, counts, &carried);
+
+    // A bless under a coverage shortfall writes ONE file in which some rows are
+    // this run's measurements and others are last run's numbers carried
+    // forward, with nothing in the artefact distinguishing them. The
+    // carry-forward itself is right — dropping the row would retire a locked
+    // floor — but presenting the result as a census is not. Refuse, and name the
+    // fix; the census is cheap to re-take once the surfaces exist.
+    let unmeasured: Vec<&str> = carried
+        .keys()
+        .filter(|k| !counts.contains_key(*k))
+        .filter(|k| dir_for_key(root, k).is_dir())
+        .map(|s| s.as_str())
+        .collect();
+    if !unmeasured.is_empty() && !skip_requested() {
+        eprintln!(
+            "\ncoerce-floor --bless: REFUSED — {} golden row(s) exist on disk but did not \
+             emit here, so this run measured {} of {}:\n  {}\n\n\
+             Blessing now would write a golden mixing {} freshly measured row(s) with {} \
+             carried forward from the last machine that could measure them, indistinguishable \
+             in the file. Regenerate the missing FFI surfaces first — `(cd <project-dir> && \
+             sky install)` — then re-bless and the golden is one census.\n\
+             If you genuinely cannot: `SKY_LIVE_TESTS=skip … --bless` carries them forward \
+             deliberately. Nothing was written.",
+            unmeasured.len(),
+            carried.len() - unmeasured.len(),
+            carried.len(),
+            unmeasured.join(", "),
+            counts.len(),
+            unmeasured.len()
+        );
+        return 1;
+    }
+
     if let Err(why) = assert_adapter_monotone(&carried, &rows) {
         eprintln!("\ncoerce-floor --bless: REFUSED — {why}");
         return 1;
@@ -666,7 +759,30 @@ fn bless_golden(
          # arity mismatch, non-symbol source, and a param/result whose narrowing would\n\
          # REBUILD a slice or map (trading an O(1) reflect box for an O(n) copy). They\n\
          # are locked here exactly, so closing any of them shows up as a gate failure\n\
-         # asking to record the win.\n",
+         # asking to record the win.\n\
+         #\n\
+         # ── Recorded transition, 2026-08-16 — the typed-lowering stages, blessed at\n\
+         #    FULL corpus coverage ──\n\
+         # This is the first bless taken with all 61 rows MEASURED in the same run.\n\
+         # The four preceding stages were each verified against whatever subset the\n\
+         # measuring machine could emit: on a clean checkout that is 56 of 61, because\n\
+         # 03-tea-external, 05-mux-server, 08-notes-app and 11-fyne-stopwatch need a\n\
+         # generated `sky-ffi/` surface and 13-skyshop an unfetched Sky dependency, and\n\
+         # both `sky-ffi/` and `.skydeps/` are .gitignore'd. The gate filed those under\n\
+         # \"did not emit (not gated)\" and reported PASS on the remainder, so a\n\
+         # \"no project rose\" verdict covered 56 rows while reading as though it\n\
+         # covered 61. That is now a hard failure with its own clause; see the module\n\
+         # header of coerce_floor_gate.rs.\n\
+         #\n\
+         # Measured with all five surfaces restored, and cross-checked in two\n\
+         # independent working trees that agreed to the token:\n\
+         #     adapter  35 -> 28   (-7): 35-composite-generics 6 -> 2, apps/fieldbook 4 -> 1\n\
+         #     narrow  9024 -> 8325 (-699) across 29 projects; NONE rose\n\
+         #     total   9059 -> 8353 (-706)\n\
+         # The `adapter` fall is the exact-match ratchet doing its job: both projects\n\
+         # closed adapters the golden still reserved slack for, and that slack is now\n\
+         # gone. The `narrow` fall is a decrease in SITE count and is not a speedup\n\
+         # measurement — nothing here weights a site by how often it runs.\n",
     );
     // A project that did not emit HERE keeps the floor it was last measured at.
     //
@@ -860,16 +976,30 @@ fn diff_and_gate(
         }
     }
 
-    // golden entries with no emitting example this run. A golden entry whose
-    // example is in `no_emit` is NOT a true orphan — it EXISTS but couldn't emit
-    // in THIS environment (an FFI example whose surface is absent here: 11-fyne /
-    // 13-skyshop commit no surface — gitignored — so they emit locally but not on
-    // a fresh CI checkout). Those are environment-dependent non-emissions, already
-    // reported via `no_emit`; excluding them keeps the golden portable local↔CI.
-    // A genuinely REMOVED/renamed example is absent from the corpus entirely
-    // (neither `counts` nor `no_emit`), so it still surfaces as a true orphan.
+    // A golden row that produced no count this run falls into one of two very
+    // different buckets, and conflating them is what cost this gate half its
+    // coverage:
+    //
+    //   * UNMEASURED — the project EXISTS but could not emit HERE (an FFI
+    //     example whose generated `sky-ffi/` surface is `.gitignore`d, so it
+    //     emits on a machine that ran `sky install` and not on a fresh
+    //     checkout). Its locked floor is still real; this run simply did not
+    //     check it. That is a hole in THIS RUN's coverage, and it is now
+    //     reported as such and failed.
+    //   * ORPHAN — the project is gone from the corpus entirely (neither
+    //     `counts` nor `no_emit`), i.e. removed or renamed. The golden row
+    //     should be retired.
+    //
+    // The old code merged the first into "not gated" prose and let the run
+    // report PASS. Both are surfaced now, separately, because they need
+    // different fixes: `sky install` versus a golden edit.
     let no_emit_set: std::collections::HashSet<&str> =
         no_emit.iter().map(|(n, _)| n.as_str()).collect();
+    let unmeasured: Vec<&String> = golden
+        .keys()
+        .filter(|k| !counts.contains_key(*k))
+        .filter(|k| no_emit_set.contains(k.as_str()))
+        .collect();
     let golden_orphans: Vec<&String> = golden
         .keys()
         .filter(|k| !counts.contains_key(*k))
@@ -883,6 +1013,21 @@ fn diff_and_gate(
         a.narrow += c.narrow;
         a
     });
+    // The DENOMINATOR, stated next to the numbers it qualifies. A census whose
+    // totals are printed without the population they were summed over invites
+    // exactly the reading that went wrong here: "narrow 9,024 -> 6,925" looked
+    // like a 23% corpus-wide fall and was in fact a 56-row sum compared against
+    // a 61-row one.
+    let measured_of_golden = golden.keys().filter(|k| counts.contains_key(*k)).count();
+    println!(
+        "COVERAGE  |  {measured_of_golden} of {} golden row(s) measured this run{}",
+        golden.len(),
+        if measured_of_golden < golden.len() {
+            "  <<< SHORTFALL — the totals below are NOT corpus-wide"
+        } else {
+            ""
+        }
+    );
     println!(
         "TOTALS  |  {} project(s) counted\n  \
          now    adapter={}  dispatch={}  narrow={}  (total {})\n  \
@@ -915,7 +1060,7 @@ fn diff_and_gate(
     }
     if !no_emit.is_empty() {
         println!(
-            "\ncoerce-floor: {} example(s) did not emit (not gated):",
+            "\ncoerce-floor: {} example(s) did not emit here:",
             no_emit.len()
         );
         for (n, why) in no_emit {
@@ -1075,6 +1220,70 @@ fn diff_and_gate(
             missing_from_golden.join(", ")
         );
     }
+    // ---- the COVERAGE clause: the census must cover its own golden ----
+    //
+    // A `--only` run intentionally measures a subset, so the shortfall there is
+    // the point rather than a defect.
+    if !unmeasured.is_empty() && !subset {
+        if skip_requested() {
+            println!(
+                "\ncoerce-floor: {} golden row(s) UNMEASURED, and \
+                 SKY_LIVE_TESTS=skip was set, so this is not a failure.\n  \
+                 {}\n  \
+                 The verdict below covers {} of {} rows. It is NOT a corpus-wide \
+                 result and must not be quoted as one.",
+                unmeasured.len(),
+                unmeasured
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                measured_of_golden,
+                golden.len()
+            );
+        } else {
+            fail = true;
+            eprintln!(
+                "\nCOERCE-FLOOR GATE: FAIL — {} golden row(s) could not be MEASURED here, \
+                 so this run covers {} of {} rows:",
+                unmeasured.len(),
+                measured_of_golden,
+                golden.len()
+            );
+            for k in &unmeasured {
+                let why = no_emit
+                    .iter()
+                    .find(|(n, _)| n == *k)
+                    .map(|(_, w)| w.as_str())
+                    .unwrap_or("did not emit");
+                eprintln!("  {k}: {why}");
+            }
+            eprintln!(
+                "  Each of these has a LOCKED FLOOR that this run did not check. That is not\n\
+                 \x20 a neutral omission: the ratchet is retired over exactly as much of the\n\
+                 \x20 corpus as fails to emit, and every per-class verdict above — including\n\
+                 \x20 PASS — describes only the rows that did.\n\
+                 \x20\n\
+                 \x20 These are almost always a missing GENERATED FFI SURFACE. `sky-ffi/` and\n\
+                 \x20 `.skydeps/` are `.gitignore`d (large, regenerable), so a fresh checkout\n\
+                 \x20 has neither. Regenerate per project — needs a Go toolchain, and network\n\
+                 \x20 for the module fetch:\n\
+                 \x20\n\
+                 \x20     (cd <project-dir> && sky install)\n\
+                 \x20\n\
+                 \x20 If you genuinely cannot provide that environment, say so out loud —\n\
+                 \x20 the run then reports the shortfall instead of failing on it:\n\
+                 \x20\n\
+                 \x20     SKY_LIVE_TESTS=skip cargo run -p xtask -- coerce-floor\n\
+                 \x20\n\
+                 \x20 This clause exists because the gate used to file these under\n\
+                 \x20 \"did not emit (not gated)\" and report PASS on the remainder. It\n\
+                 \x20 measured 56 of 61 rows on a clean checkout for four performance\n\
+                 \x20 stages, and each stage's \"no project rose\" verdict silently covered\n\
+                 \x20 whichever subset that machine happened to emit."
+            );
+        }
+    }
     if !golden_orphans.is_empty() && !subset {
         fail = true;
         eprintln!(
@@ -1095,10 +1304,19 @@ fn diff_and_gate(
         eprintln!("\nCOERCE-FLOOR GATE: INCONCLUSIVE — no example emitted a count.");
         1
     } else {
+        // The verdict carries its own denominator. A PASS that does not say what
+        // it covered is the artefact four perf stages were read against.
         println!(
             "\nCOERCE-FLOOR GATE: PASS  (adapter exact at {}, no project widened \
-             dispatch/narrow)",
-            total_now.adapter
+             dispatch/narrow)\n  \
+             covered {measured_of_golden} of {} golden row(s){}",
+            total_now.adapter,
+            golden.len(),
+            if measured_of_golden < golden.len() {
+                " — PARTIAL, by explicit SKY_LIVE_TESTS=skip"
+            } else {
+                " — the whole corpus"
+            }
         );
         0
     }
@@ -1372,6 +1590,97 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         let err = assert_adapter_monotone(&old, &raised).expect_err("must refuse");
         assert!(err.contains("adapter 0 -> 1"), "got: {err}");
         assert!(err.contains("Nothing was written"), "got: {err}");
+    }
+
+    // ── The coverage defect, stated as a test. ─────────────────────────────
+    //
+    // THE MUTATION: delete the `unmeasured` clause from `diff_and_gate` (or
+    // restore the old `.filter(|k| !no_emit_set.contains(...))` that dropped
+    // these rows on the floor) and this test goes green->red on the first
+    // assertion, because the gate returns 0 for a run that measured half its
+    // golden. That is the exact shape the gate shipped with: a 61-row golden,
+    // 56 rows measured on a clean checkout, verdict PASS.
+    //
+    // The second half is the control. The SAME corpus with the surfaces present
+    // must pass, so the clause is proven to key on the shortfall and not merely
+    // to fail everything.
+    #[test]
+    fn a_golden_row_that_could_not_be_measured_fails_the_gate() {
+        let golden = BTreeMap::from([
+            ("emits".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 7 }),
+            ("blocked".to_string(), Classed { adapter: 2, dispatch: 0, narrow: 9 }),
+        ]);
+        let measured = |n: &str, c: Classed| {
+            (n.to_string(), Counts { by_class: c, per_family: BTreeMap::new() })
+        };
+
+        // HALF-MEASURED: `blocked` exists but has no FFI surface here. Every
+        // measured row matches its floor exactly, so nothing else can fail —
+        // the only thing wrong with this run is what it did not look at.
+        let partial = BTreeMap::from([measured("emits", golden["emits"])]);
+        let no_emit = vec![(
+            "blocked".to_string(),
+            "`Github.Com.Google.Uuid` has no generated FFI surface".to_string(),
+        )];
+        assert_eq!(
+            diff_and_gate(&partial, &no_emit, &golden, &None, false),
+            1,
+            "a run that measured 1 of 2 golden rows must NOT report PASS: the \
+             unchecked row's floor is unratcheted for the whole run"
+        );
+
+        // CONTROL: same golden, same values, both rows measured → PASS.
+        let full = BTreeMap::from([
+            measured("emits", golden["emits"]),
+            measured("blocked", golden["blocked"]),
+        ]);
+        assert_eq!(
+            diff_and_gate(&full, &[], &golden, &None, false),
+            0,
+            "with the whole corpus measured and every class at its floor, the \
+             gate must pass — the coverage clause keys on the SHORTFALL"
+        );
+    }
+
+    // `--only=NAME` measures a subset ON PURPOSE. The coverage clause must not
+    // fire there, or the filter flag becomes unusable and the next person
+    // deletes the clause rather than the flag.
+    #[test]
+    fn an_explicit_subset_run_is_not_a_coverage_shortfall() {
+        let golden = BTreeMap::from([
+            ("a".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 1 }),
+            ("b".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 2 }),
+        ]);
+        let only = Some(vec!["a".to_string()]);
+        let counts = BTreeMap::from([(
+            "a".to_string(),
+            Counts { by_class: golden["a"], per_family: BTreeMap::new() },
+        )]);
+        let no_emit = vec![("b".to_string(), "filtered out".to_string())];
+        assert_eq!(
+            diff_and_gate(&counts, &no_emit, &golden, &only, false),
+            0,
+            "--only names the subset the operator wants; that is not a hole"
+        );
+    }
+
+    // The skip contract, pinned. It must match `crates/sky/src/live_gate.rs`
+    // exactly — same variable, same three accepted spellings, same refusal to
+    // guess at a fourth — because the duplication is only safe while the
+    // CONTRACT is identical.
+    #[test]
+    fn the_skip_opt_out_matches_the_repo_wide_spelling() {
+        assert!(!skip_from(None), "absent means require");
+        assert!(!skip_from(Some("")), "empty means require");
+        assert!(!skip_from(Some("require")));
+        assert!(skip_from(Some("skip")));
+        let boom = std::panic::catch_unwind(|| skip_from(Some("1")));
+        assert!(
+            boom.is_err(),
+            "an unrecognised value must be rejected, not guessed: \
+             SKY_LIVE_TESTS=1 meaning `require` to its author and `skip` here is \
+             how a gate ends up not running"
+        );
     }
 
     // Counting is a pure function of the source text → identical on repeat.
