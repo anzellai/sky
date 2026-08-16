@@ -384,13 +384,42 @@ Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acqu
 ## Security defaults
 
 - Cookies: `HttpOnly`, `Secure` (when served over HTTPS); session cookie is `SameSite=Lax`, CSRF cookie is `SameSite=Strict`.
-- Rate limit: per-IP + per-session token bucket; configurable via `[live]`.
-- CORS: off by default. Turn on by configuring allowed origins explicitly.
 - Event payload size cap: configurable via `[live] maxBodyBytes` / `SKY_LIVE_MAX_BODY_BYTES` (default `5242880` = 5 MiB; bump for `Event.onFile` / `Event.onImage` uploads). Larger payloads are rejected with HTTP 413.
+
+> **Two bullets were removed here because they were false, and a reader
+> planning a deployment would have relied on them.**
+>
+> - ~~"Rate limit: per-IP + per-session token bucket; configurable via
+>   `[live]`."~~ **Sky.Live has no rate limiter.** There is no token bucket
+>   in `runtime-go/rt/live.go`, and `[live]` accepts exactly
+>   `port, static, store, storePath, ttl, maxBodyBytes, input`
+>   (`rust/crates/project/src/build.rs:1084-1092`) — a `[live] rateLimit`
+>   key would raise an unknown-config-key build warning.
+>   `Sky.Http.Middleware.withRateLimit` is real, but it is a per-route
+>   middleware you call yourself, not a Sky.Live default.
+> - ~~"CORS: off by default. Turn on by configuring allowed origins
+>   explicitly."~~ **There is no CORS configuration.** No allowed-origins
+>   key exists in `[live]` and nothing in `live.go` reads one. "Off by
+>   default" is accurate only in the sense that nothing implements it;
+>   there is no supported way to turn it on.
+>
+> Rate limiting and origin control are the deployer's to add in front of
+> the app (reverse proxy / ingress), or per-route with
+> `Sky.Http.Middleware`.
 
 ## Client-side runtime
 
-`runtime-go/rt/live_client.js` (embedded, served at `/_sky/live.js`) — about 2 KB gzipped.
+**The client is not a separate file and is not served at a URL.** It is a
+`fmt.Sprintf` template inlined into every HTML response
+(`runtime-go/rt/live.go:4397`, from `liveJSWithCfgAndCsrfWithBase`,
+`live.go:7113`), whose body spans roughly `live.go:7114-9031`.
+
+This paragraph used to read "`runtime-go/rt/live_client.js` (embedded,
+served at `/_sky/live.js`) — about 2 KB gzipped". There is **no `.js` file
+anywhere under `runtime-go/`** (`find runtime-go -name '*.js'` is empty),
+nothing serves `/_sky/live.js`, and ~1,900 lines of inlined JS source is an
+order of magnitude past "about 2 KB gzipped". It ships on every full-page
+response, so its size is a per-page-load cost, not a cached-asset one.
 
 Responsibilities:
 

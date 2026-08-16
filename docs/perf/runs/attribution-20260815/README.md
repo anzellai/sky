@@ -123,7 +123,20 @@ snapshots (awk only — `jq` is not assumed and `python3` does not run here).
    measurement window.
 4. **The control's `Mallocs` was not recorded** (the field was omitted from its
    probe), so only its bytes-per-interaction is quoted, not its object count.
-5. **No durable session store was profiled here.** The memory store was used
-   throughout; the gob/encode path is therefore absent from these profiles by
-   construction. The earlier memory-vs-postgres comparison (~21/s vs ~19/s)
-   bounds that path at ~10%.
+5. **No durable session store was profiled here, and it is UNMEASURED.** The
+   memory store was used throughout; the gob/encode path is therefore absent
+   from these profiles by construction.
+
+   This note used to add "the earlier memory-vs-postgres comparison (~21/s vs
+   ~19/s) bounds that path at ~10%". **That bound is withdrawn.** The ~21/s vs
+   ~19/s gap is the run-order artefact that
+   `docs/perf/skylive-interaction-cost.md` §5 ("The load curve — and a spread
+   that was not what it looked like") demonstrates with a counterbalanced
+   re-run: whichever configuration goes first gets ~40/s, whichever goes third
+   gets ~21/s, config C included. And the comparison ran entirely at ~17–22
+   interactions/sec — one session write and one fsync per interaction
+   (`runtime-go/rt/live.go:4745`), so ~20 fsync/s. At 1,000 interactions/sec
+   the same write is 1,000 writes and 1,000 fsync/s, 50× what was ever
+   applied. It bounds nothing above ~20/s. See
+   `docs/perf/skylive-interaction-cost.md` → "The ~10% store bound is
+   withdrawn".

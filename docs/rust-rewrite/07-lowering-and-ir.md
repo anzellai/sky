@@ -36,6 +36,13 @@ the exception**. It is also where **L4** (deterministic fresh-name generation),
 >   and `GoTy::TyVar(String)` in `ir.rs`; the interned-`GoName`/`Name` listing
 >   in §1 is target.
 >
+> **§4 and §5 are NOT target — they describe what the code does today**, and
+> both were rewritten after the previous text (which described a
+> monomorphiser that has never existed, and an auto-TCO HIR pass that has never
+> existed) caused the same wrong architectural conclusion three times. §5.1 in
+> particular states a *policy*, not a gap: there is no monomorphiser, and there
+> is not going to be one.
+>
 > This interim erase-based representation is **verified to build+run+match** the
 > Haskell oracle across the corpus (including `13-skyshop`, 76k FFI symbols), so
 > it is a working simplification, not a bug — but the residual-`any` surface it
@@ -72,7 +79,7 @@ downstream can reason about it structurally. Three consequences, all scars:
 3. **`rt.Coerce`/`any` became a pervasive surface.** When a slot's type is a
    string you cannot cheaply prove "these two types are already equal", so the
    safe default is to wrap. The result is documented in
-   `docs/v0.17/rt-coerce-residual-surface.md`: **8 safety classes, 200–700 coerce
+   `docs/history/v0.17/rt-coerce-residual-surface.md`: **8 safety classes, 200–700 coerce
    sites per UI-heavy example**. A real emitted line from
    `examples/07-todo-cli/sky-out/main.go:864` reads:
 
@@ -94,22 +101,37 @@ analysis shows, is a small, enumerable set.
 
 ## Position in the query graph
 
-`lower` is a set of salsa queries (L2). It never reads a global; it asks the db.
+`lower` never reads a global; it asks the db. But it is **not** a set of
+per-def salsa queries, and the granularity below is whole-program, not
+per-def — the previously-drawn graph (`typed_hir` → `mono_instances` →
+`go_items` + `reachable`) has no counterpart in the code. `grep -rn salsa
+rust/crates/lower/src/` returns a single passing mention in a comment; the
+crate declares no queries at all.
+
+The real shape is **one tracked query, at the whole-program floor**:
 
 ```mermaid
 flowchart LR
-    RES["resolve(ModuleId)"] --> THIR
-    INFER["infer(DefId)\n(types + per-region type map)"] --> THIR["typed_hir(DefId)\n→ typed HIR (TCO-normalised)"]
-    THIR --> MONO["mono_instances(project)\n→ (DefId, [GoTy]) worklist"]
-    MONO --> GOIR["go_items(ModuleId)\n→ Vec<GoItem> (typed Go-IR)"]
-    DCE["reachable(project)\n→ Set<Ref>"] --> GOIR
-    THIR --> DCE
-    GOIR --> CODEGEN["codegen: go_module(ModuleId)"]
+    RES["resolve(ModuleId)\n(skydb:181)"] --> GP
+    INFER["infer(DefId)\n(skydb:304)"] --> GP["go_program(entry, config)\n#[salsa::tracked(no_eq)] — skydb:434"]
+    GP --> LP["lower::lower_program_cfg(entry, cfg)\n(lower.rs:212) — eager, whole program"]
+    LP --> CODEGEN["codegen: renders the Go-IR"]
 ```
 
-Every edge is memoised; editing one def reruns `typed_hir` for that def and the
-`go_items` of its module only. `reachable` and `mono_instances` are
-whole-program queries keyed on the project revision.
+`go_program` (`rust/crates/skydb/src/lib.rs:434`) is memoised and keyed on
+`(entry, config)`; the source and inference edges are captured through the
+`db.ty_db()` reads the lowerer performs while executing. So re-demanding with
+unchanged inputs is a cache hit, and any `SourceFile` edit that transitively
+reaches a lowered def re-executes it.
+
+**Re-executes all of it.** There is no per-def or per-module lowering
+granularity to fall back to: `lower_program_cfg` walks from `main` and lowers
+the whole reachable program in one call (§5.2). Editing one def does not rerun
+"that def and its module"; it reruns the lowering of the program.
+
+`resolve` (`skydb:181`) and `infer` (`skydb:304`) *are* the finer-grained
+tracked queries, and they are what keeps the re-execution cheap — the type
+world above `go_program` is still memoised per module and per def.
 
 ## 1. The typed Go-IR (`GoTy` + `GoExpr` + `GoStmt` + `GoItem`)
 
@@ -214,7 +236,11 @@ Lowering is a fold over the typed HIR carrying an `expected: GoTy` for the
 current slot (the honest, structural version of `LowerCtx`'s "expected type"
 thread). At each node the lowerer:
 
-1. reads the node's Sky type from the `infer` region map,
+1. reads the node's Sky type from the per-expression table `infer` returns —
+   the `HashMap<ExprId, Ty>` of `Infer::infer_def_typed`
+   (`rust/crates/ty/src/infer.rs:206-214`). Earlier text here called this "the
+   `infer` region map" and showed `db.region_ty(e.region)`; there is no
+   `region_ty` and no `Region` key (06 "The per-region type table"),
 2. maps it to `GoTy` via `sky_ty_to_go` (§3), producing the node's **actual** type,
 3. lowers children with *their* expected `GoTy` (record-field type, call-arg
    param type, list-element type — computed from the parent's `GoTy`),
@@ -223,7 +249,7 @@ thread). At each node the lowerer:
 
 ```rust
 fn lower_expr(db, cx: &LowerCx, e: &hir::Expr, expected: &GoTy) -> GoExpr {
-    let sky_ty = db.region_ty(e.region);          // from infer(DefId)
+    let sky_ty = cx.types[&e_id];                 // HashMap<ExprId, Ty> from infer_def_typed
     let actual = sky_ty_to_go(db, cx, &sky_ty);
     let node = match &e.kind {
         hir::ExprKind::List(items) => {
@@ -300,69 +326,138 @@ residual classes 1/3/6.
 
 ## 4. Auto-TCO
 
-Identical strategy to the Haskell `Sky.Build.TailCallOpt`, run as a **HIR→HIR
-normalisation** inside `typed_hir` before Go-IR construction — so the Go-IR is
-already loop-shaped and codegen stays dumb.
+Same *strategy* as the Haskell `Sky.Build.TailCallOpt`, but **not** the same
+placement. There is **no HIR→HIR normalisation pass and no `typed_hir` query**:
+auto-TCO is applied **inline, during Go-IR construction**, in the single place
+that decides a definition's return shape — `lower_def`,
+`rust/crates/lower/src/lower.rs:2138-2152`. The Go-IR comes out loop-shaped
+because the lowerer emitted it that way, not because an earlier pass rewrote the
+HIR. Codegen still stays dumb, which was the property that mattered.
 
-- `is_tail_recursive(def)` — a self-reference exists AND every self-reference is
-  in tail position with matching arity (port of `isTailRecursive`,
-  `TailCallOpt.hs:52`; tail-position propagators = `Case`/`If`/`Let` bodies,
-  `TailCallOpt.hs:301`).
-- If so, the body lowers to `GoStmt::Loop(body')` where each tail self-call
-  becomes *param reassignments + `Continue`* and every other tail position
-  becomes `Return` (port of `rewriteTailCalls` + the `GoForever` target,
-  `TailCallOpt.hs:163`, `Ir.hs:63`). Reassignment uses fresh temporaries drawn
-  from the L4 deterministic counter to avoid the read-before-write hazard.
+- `Ctx::is_tail_recursive(root, cur_def, arity)`
+  (`lower.rs:4790`, documented against the oracle's
+  `Sky.Build.TailCallOpt.isTailRecursive`) — a self-reference exists AND every
+  self-reference is a saturated call in tail position with matching arity
+  (tail-position propagators = `Case`/`If`/`Let` bodies).
+- When it holds, `lower_def` installs a `TcoCtx { def, arity, params }` on the
+  lowering context (`lower.rs:2140`), lowers the body through
+  `lower_tail_stmts`, clears the context (`lower.rs:2150`) and wraps the result
+  in `GoStmt::Loop` (`lower.rs:2151`). Each tail self-call becomes *param
+  reassignments + `Continue`* — the rewrite lives in `Ctx::tco_tail_call`
+  (`lower.rs:5087`), which reads the installed `TcoCtx` and bails when the
+  callee is not the current def or the arity does not match. Reassignment uses
+  fresh temporaries drawn from the L4 deterministic counter to avoid the
+  read-before-write hazard.
+- The optimisation is **gated on `body.is_empty()`** (`lower.rs:2138`) — a def
+  whose params destructure has already pushed statements, and those would have
+  to be re-run per iteration. Such a def falls through to the ordinary
+  `GoStmt::Return` path.
+
+Because the transform is inline rather than a pass, `self.tco` is a lowering
+context field (`lower.rs:1902`), set and cleared around exactly one body. The
+in-crate tests are `mod tco_tests` (`lower.rs:7277`).
 
 The pure-Sky CPS-rewritten list ops (`map`/`filter`/`foldr`/… per CLAUDE.md)
 are stdlib source, not compiler passes — they land as ordinary tail-recursive
 defs that this pass turns into loops. Result: constant Go stack, the arena/no-GC
 memory story of L3 continued into the runtime.
 
-## 5. Monomorphisation & DCE
+## 5. There is no monomorphiser — and DCE is a demand worklist
 
-**Monomorphisation** — polymorphic *annotated* defs are specialised per call-site
-type instance (the CLAUDE.md "same-module polymorphic re-instantiation" +
-alpha-rename), but over the **typed IR**:
+### 5.1 No monomorphisation. This is policy, not a gap.
 
-- Call instances are collected at inference time (the salsa analogue of
-  `Solve.solveWithInstances`) into `mono_instances`: a set of `(DefId, Vec<GoTy>)`.
-- Each instance mangles to a deterministic Go name via a **structural** mangle
-  over `GoTy` (port of `mangleType`/`mangleInstance`, `Monomorphise.hs:83/132` —
-  same `MaybeOf_Int` grammar, but folding the `GoTy` tree, not re-parsing a
-  string).
-- Specialisation substitutes `GoTy::TyVar(id) → concrete GoTy` **structurally**
-  (`subst_tyvars`, the honest version of `substTVarsInGoTypeStructural`,
-  `Go/Type.hs:290`) — deleting the token-level `substTypeParamsInString` string
-  rewrite (`Monomorphise.hs:481`) entirely. Wildcard `any` keeps its
-  per-occurrence fresh-var semantics via the `any (/= "any")` gate (CLAUDE.md
-  "wildcard-any soundness gate"), expressed as: a `GoTy::Any` param is never a
-  monomorphisation target.
+**The Rust compiler does not monomorphise, has never monomorphised, and is not
+going to.** There is no `mono_instances` worklist, no `subst_tyvars`, no
+structural `GoTy` mangle, no per-call-site specialisation. The whole mechanism is
+absent:
 
-Determinism (L4): the instance worklist is a `BTreeSet<(DefId, Vec<GoTy>)>` and
-emission walks it in sorted order; equal instances mangle to equal names so no
-duplicate emission and a stable LSP symbol index.
-
-**DCE** — a whole-program reachability query (port of `Dce.reachableWholeProgram`,
-`src/Sky/Build/Dce.hs`). The typed `Ref` ADT is preserved:
-
-```rust
-enum Ref { Top(ModuleId, Name), Ffi(Name, Name), Ctor(ModuleId, Name) }  // Dce.hs:63
+```bash
+$ grep -rn 'mono_instances\|subst_tyvars' rust/crates
+$                                    # no matches, and none are expected
 ```
 
-`reachable(project)` walks the call graph from roots `(entry, "main")` (+ test
-lists under `sky test`), keeping ctor-closures alive on pattern matches
-(`expandCtorClosure`) and treating module-init side-effect discards as roots
-(`sideEffectRoots`). `go_items` consults it and skips unreachable defs + FFI
-sigs. As a salsa query it is incremental for free — the LSP gets accurate
-"unused" diagnostics without the batch re-walk the Haskell side needed.
+The policy is stated at the site that would most obviously have wanted the
+escape hatch — `Ctx::func_shape_eta` (`rust/crates/lower/src/lower.rs:2823`),
+whose doc comment (`lower.rs:2804`) reads:
+
+> The ABI stays fully erased: **one emit per definition, no monomorphisation,
+> no binary growth.**
+
+Sky's Go ABI is **erased** (§ the status banner above, and §3): a user ADT is an
+`rt.SkyADT` bag, a parametric record alias is a struct with `any`-erased type-var
+fields, a tuple is `rt.T2[any,any]`. Erasure is what makes one emit per
+definition sufficient. A monomorphiser would have to un-erase that ABI first, and
+would buy binary growth proportional to the instance count for it.
+
+**When a value's Go shape does not match its slot, the lever is eta-expansion at
+the statically-known shape — not specialisation.** `func_shape_eta`
+(`lower.rs:2823`), `kernel_value_eta` (`lower.rs:3349`) and `lower_ctor_value`
+(`lower.rs:3363`) all emit a closure *at the target shape* whose params narrow
+inward and whose result widens back. Both `from` and `to` are concrete `GoTy`s at
+that point, so the adaptation the compiler can already prove is emitted directly
+and the `rt.Coerce` — with its `reflect.MakeFunc` thunk paying a reflect dispatch
+per element — disappears. `func_shape_eta` returns `None` (leaving the runtime
+coerce in place) in exactly two cases, both documented at `lower.rs:2816-2822`:
+the source is not itself a Go func, or the arities differ.
+
+> **Why this section is written this way.** The removed text described the
+> monomorphiser in the present tense with no aspirational marker, and **the same
+> wrong architectural conclusion was reached from it three separate times**.
+> Twice an optimisation was filed as "irreducible — would require monomorphising
+> every call site", and both times it was closed instead by eta-expansion at a
+> statically-known shape, one emit per definition, no binary growth:
+> `docs/perf/runs/hof-dispatch-20260815/` (**1.36× throughput**, ranges
+> non-overlapping) and `docs/perf/runs/typed-destructure-20260815/` (**1.34×
+> throughput**, ranges non-overlapping). Before concluding that anything here
+> needs monomorphisation, check whether the shape is statically known at the
+> emit site — it usually is, and then the answer is an eta-expansion.
+>
+> `docs/architecture/sky-compiler-architecture.md` §5.3 retracted the same
+> claim on 2026-08-15 ("Both halves were wrong, and together they are why this
+> category was filed as irreducible"). That retraction landed in the *legacy*
+> reference while this — the **primary** one — still described the
+> monomorphiser as real, which is how the conclusion came back a third time.
+
+### 5.2 DCE — a demand-driven worklist inside `lower_program_cfg`
+
+DCE is real, but it is **not** the salsa `reachable(project)` query the previous
+text described, and there is no `Dce` module, no `Ref` ADT, and no
+`go_items`-consults-a-reachability-set step. Nothing named `Dce`, `reachable`,
+`expandCtorClosure` or `sideEffectRoots` exists in `rust/crates`.
+
+What exists is simpler: lowering **only ever lowers what it reaches**, and
+reachability is discovered as a side effect of lowering
+(`rust/crates/lower/src/lower.rs:611-685`).
+
+- **One root**: `main` in the entry module (`lower.rs:592-613`). Not a root list
+  — a single `DefId`. A program with no `main` returns an empty `LowerOutput`.
+- The worklist is `Vec<DefId>` seeded with that root; each `lower_def` records
+  the defs its body referenced in `Ctx::discovered`, which are pushed onto the
+  worklist if not already `seen` (`lower.rs:671-675`). Unreached defs are never
+  lowered, so they are never emitted — DCE by construction rather than by a
+  subsequent filter.
+- A **kernel-alias** def is skipped rather than emitted (`lower.rs:625-629`): it
+  is inlined at the call site, and only a value-reference needs a wrapper.
+- **Type declarations** get a second, separate BFS: `Ctx::used_types` accumulates
+  Go type names actually mentioned in emitted code, and a walk over those emits
+  only the reachable type decls (`lower.rs:687` onward).
+
+Determinism (L4) is preserved differently than the old text claimed. `discovered`
+is an ordered `Vec`; the two set drains are order-*independent* because they only
+union into another set (`lower.rs:666-670`); `used_go_types` is sorted before it
+drives emission; `ffi_used` is a `BTreeSet`. So the randomised `HashSet`
+iteration order never reaches the output.
+
+The incrementality claim was also aspirational: this runs eagerly inside
+`lower_program_cfg`, once per program, and is not a tracked query. The LSP does
+not get "unused" diagnostics out of it.
 
 ## 6. The central goal — coercion is the exception, enumerated
 
 The typed IR makes `Coerce` a node the lowerer must *justify*. Every insertion
 site is one of a small allowlist; `classify_coercion` returns the `CoerceReason`
 and `bug!()`s on anything else (L6/L7). Mapping the 8 documented residual classes
-(`docs/v0.17/rt-coerce-residual-surface.md`) onto the rewrite:
+(`docs/history/v0.17/rt-coerce-residual-surface.md`) onto the rewrite:
 
 | # | Haskell residual class | Sites (26-ui) | Fate under the typed IR |
 |---|---|---|---|

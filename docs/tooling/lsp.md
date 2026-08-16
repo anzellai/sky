@@ -13,9 +13,20 @@ if hover/completion don't appear). The stdlib is resolved from the
 compiler's embedded copy, so hover, completion, and go-to work in any
 project — not only inside the compiler repo.
 
-**LSP contract (100 % coverage)**: every USED symbol class has hover +
-goto-definition coverage. 17 end-to-end tests via the headless
-Neovim gate driver (`scripts/lsp-test-nvim.{lua,sh}`):
+**LSP contract**: every USED symbol class has hover + goto-definition
+coverage. The gate asserts an exact case count — `LSP_EXPECTED: u64 = 49`
+(`rust/crates/xtask/src/harness/bodies.rs:2758`), enforced at `:2902` so a
+case that silently stops running fails the build. `docs/rust-rewrite/11`
+decomposes that as 17 symbol-class + 32 corpus.
+
+> **This heading said "(100 % coverage)" and listed a total of 20 (17 + 3),
+> which disagrees with the 49 the gate enforces.** The "100 %" figure has no
+> derivation behind it — there is no denominator anywhere — so it is dropped
+> rather than restated. The 17 below are the symbol-class half; take the
+> total from `LSP_EXPECTED`, not from this page.
+
+The 17 symbol-class cases run via the headless Neovim gate driver
+(`scripts/lsp-test-nvim.{lua,sh}`):
 
 - hover-task-run, hover-field, hover-type-name
 - hover-function-use, hover-ctor-use, hover-lambda-param,
@@ -48,7 +59,7 @@ From `serverCapabilities` in the Rust LSP crate (`rust/crates/sky-lsp`):
 | `textDocument/codeAction` | yes | `quickfix` + `source.organizeImports` kinds |
 | `textDocument/semanticTokens/full` | yes | Syntactic highlighting |
 | `textDocument/completion` | yes | Triggered on `.` (qualified-name) |
-| `workspace/symbol` | no | Use `documentSymbol` per-file |
+| `workspace/symbol` | **yes** | Project-wide symbol search. This row said "no — use `documentSymbol` per-file"; the server advertises `workspace_symbol_provider: Some(OneOf::Left(true))` (`rust/crates/sky-lsp/src/server.rs:86`), handles it at `:243`, and has a dedicated test (`sky-lsp/tests/workspace_symbol.rs`) |
 
 ## What gets indexed
 
@@ -62,7 +73,11 @@ The LSP discovers symbols from:
 The LSP **does NOT** index:
 
 - `.skycache/go/*.go` — generated Go FFI wrappers.
-- `.skycache/lowered/` — incremental cache.
+- `.skycache/lowered/` — named in the watcher's exclude list. **Note it is not a
+  real cache**: `grep -rn 'lowered' rust/crates --include='*.rs'` finds the
+  string exactly once, in a `is_watched_change_excludes_generated_dirs` test
+  fixture (`rust/crates/sky/src/main.rs:5028`). Nothing reads or writes that
+  directory.
 - `sky-out/` — compiled output.
 - `target/`, `node_modules/`, `legacy-*/`, `bootstrap/` — hard-coded skips.
 
@@ -172,13 +187,23 @@ No official extension yet. The LSP is standards-compliant so any generic LSP cli
 
 ## Debugging
 
-- Log location: `~/.cache/sky/lsp.log` (or `$XDG_CACHE_HOME/sky/lsp.log`).
-- Environment: `SKY_LSP_DEBUG=1 sky lsp` increases verbosity.
-- Trace JSON-RPC: `SKY_LSP_TRACE=1 sky lsp` prints every request/response.
+> **None of the three debugging affordances documented here exist.** This
+> section listed a log at `~/.cache/sky/lsp.log`, `SKY_LSP_DEBUG=1` for
+> verbosity and `SKY_LSP_TRACE=1` for JSON-RPC tracing.
+> `grep -rn 'SKY_LSP_DEBUG\|SKY_LSP_TRACE\|lsp.log' rust runtime-go` returns
+> nothing. There is no log file and neither variable is read. Use your
+> editor's own LSP trace (`"sky.trace.server": "verbose"` in VS Code,
+> `vim.lsp.set_log_level` in Neovim) until a server-side one is added.
 
 ## Performance
 
 - Parse + canonicalise are on the critical path for every save.
-- Type-check is incremental per module using `.skycache/lowered/` cached state.
-- Whole-project cold start on the Sky compiler itself (~15k LoC Haskell): ~600 ms.
-- Warm hover: < 50 ms for any symbol.
+
+> **The two figures that were here are not measurements of this server.** They
+> read: "Whole-project cold start on the Sky compiler itself (~15k LoC
+> Haskell): ~600 ms" and "Warm hover: < 50 ms for any symbol", alongside
+> "Type-check is incremental per module using `.skycache/lowered/` cached
+> state". The benchmark subject named — the Haskell compiler tree — is no
+> longer the compiler, there is no `.skycache/lowered/` state (see "What gets
+> indexed"), and no run artefact backs either number. They are removed rather
+> than restated; `rust/crates/sky-lsp` has not been benchmarked.

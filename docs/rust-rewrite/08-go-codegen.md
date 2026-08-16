@@ -78,7 +78,7 @@ there is no unordered map to sort.
 | Top-level items in a module | DCE-reachable set walked in `DefId` allocation order |
 | Struct / record fields | `_fieldIndex` — baked into `GoTy::Struct`/`GoTypeDef::Struct` at lowering (`Go/Record.hs:461`) |
 | ADT constructor tags | declaration order (§3) — tag `int` assigned once, stable |
-| Monomorphisation instances | `BTreeSet<(DefId, Vec<GoTy>)>` sorted walk (07 §5) |
+| ~~Monomorphisation instances~~ | **N/A — there is no monomorphiser** (07 §5.1). One emit per definition; nothing to order. |
 | Imports | sorted by import path |
 | Map literals | keys already `BTreeMap`/`IndexMap` in the IR |
 

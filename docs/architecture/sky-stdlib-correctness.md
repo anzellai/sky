@@ -253,7 +253,7 @@ the law itself). Law-by-inspection for the algebraic content.
 
 **Files**: `Dict.sky` (127 lines), `Set.sky` (92 lines). Both are
 `Ffi.kernel` aliases — implementations live in Go runtime
-(`runtime-go/rt/dict.go` and `set.go`).
+(`runtime-go/rt/rt.go` — there are no `dict.go` / `set.go` files; the `Dict_*` / `Set_*` kernels live in `rt.go` and `stdlib_extra.go`).
 
 **Types**:
 ```elm

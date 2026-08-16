@@ -157,12 +157,16 @@ directly — each is **seeded into a `SKY_AUTH_*` env var that your
 code reads** at the call site:
 
 ```elm
-secret = System.getenvOr "SKY_AUTH_SECRET" "dev-secret"
+secret = System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret"
 ttl    = System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400" |> String.toInt |> Result.withDefault 86400
 cookie = System.getenvOr "SKY_AUTH_COOKIE" "sky_auth"
 
 token  = Auth.signToken secret claims ttl
 ```
+
+`tokenTtl` / `cookieName` / `driver` are seeded from `sky.toml`. **The secret
+is not** — see the note below — so the first line reads an env var nothing
+seeds, which is the point.
 
 Production overrides via shell env / `.env` win over the sky.toml
 seed (same precedence as every other key).
@@ -184,9 +188,17 @@ driver     = "jwt"             # jwt / session / oauth
 > **`secret` is NOT a sky.toml key.** It appears in the example block above only
 > to be explicit that it does not work: the compiler deliberately refuses to
 > seed a signing key from a file that is normally committed to source control.
-> Set `<PREFIX>_AUTH_SECRET` in the environment (shell, `.env`, secret manager).
-> A `secret = "…"` line in sky.toml is inert, and since v0.19.14 the build warns
-> about it rather than ignoring it silently.
+> Set **`SKY_AUTH_TOKEN_SECRET`** in the environment (shell, `.env`, secret
+> manager). A `secret = "…"` line in sky.toml is inert, and since v0.19.14 the
+> build warns about it rather than ignoring it silently.
+>
+> **The name matters and this note used to give the wrong one.** It said
+> `<PREFIX>_AUTH_SECRET`. The production gate reads the literal, unprefixed
+> `SKY_AUTH_TOKEN_SECRET` (`rust/crates/sky/src/main.rs:3692`), and that is
+> the name `sky init` writes into the generated `.env` (`main.rs:1300`).
+> Nothing in the tree reads `SKY_AUTH_SECRET`, prefixed or not — so a reader
+> who followed the old instruction would set a variable no one looks at and
+> still fail the `ENV=production` gate.
 
 Keys are **camelCase**. `session_ttl` is not `tokenTtl`; it is nothing, and two
 examples in this repository shipped it for months advertising a 24-hour session

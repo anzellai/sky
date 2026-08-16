@@ -615,8 +615,10 @@ P2 *discovers*; P3 provisions. The order is fixed, and it is the order of
 decreasing explicitness:
 
 1. `SKY_POSTGRES_BIN` — an operator's or a test's deliberate choice.
-2. `~/.sky/postgres/<version>/bin` — the P3 cache. **Pinned version first, then
-   newest major.** An empty or absent cache is simply skipped.
+2. `~/.sky/postgres/<version>/bin` — the P3 cache. **In the `sky` CLI: pinned
+   version first, then newest major.** An empty or absent cache is simply
+   skipped. **In the Go runtime — a deployed `./app --embed` — newest major
+   only; there is no pin.** See the note below; the difference is deliberate.
 3. `PATH` — a system PostgreSQL.
 
 A candidate counts only if it holds all of `initdb`, `pg_ctl` and `postgres`.
@@ -640,6 +642,19 @@ to the source to work out what was even looked for.
 > file nothing reads. The pin orders the CACHE GROUP only: it never outranks
 > `SKY_POSTGRES_BIN`, which is someone deliberately overriding, and a pin with
 > nothing provisioned for it is not a candidate rather than a synthesised path.
+>
+> **This is true of the Rust side only.** `postgres_is_discoverable`
+> (`rust/crates/sky/src/db_cluster.rs:601`) and `discover_pg_bins` (`:622`)
+> both read `db_provision::pinned_version` and thread it into
+> `bin_dir_candidates`. **The Go runtime never consults a pin.**
+> `cachedPgBinDirs` (`runtime-go/rt/pg_embed_bundle.go:181-196`) enumerates
+> `$SKY_HOME/postgres/*/bin` and sorts newest-major-first
+> (`sortByVersionDesc`, comparing numerically per component so "9.6" does not
+> sort above "14") — and that is correct, not an oversight: a deployed binary
+> has no `sky.toml` to read a pin out of. So `sky db start` in a project
+> honours `[database] postgresVersion` and `./app --embed` on a server takes
+> the newest cached major. If a deployment must pin, pin it with
+> `SKY_POSTGRES_BIN` or by provisioning exactly one version into the cache.
 
 ### `sky db provision --embed` (P3)
 
@@ -661,8 +676,20 @@ load-bearing, and each has a gate that has been observed failing:
   more confusingly than at the point of the interrupted download.
 - **Provisioning what is already provisioned is a fast success** that makes no
   request at all. A cache entry counts as provisioned only when every required
-  binary is present *and executable*: `go:embed` yields mode 0444 and a
-  file-exists check would accept a `postgres` that cannot be run.
+  binary is a regular file, **non-empty**, and executable — all three, in
+  `bundle_is_complete` (`rust/crates/sky/src/db_provision.rs:615-633`; the
+  `m.len() == 0` clause is `:621`). `go:embed` yields mode 0444 and a
+  file-exists check would accept a `postgres` that cannot be run; a length
+  check additionally rejects the zero-byte file a killed extraction leaves.
+
+  **And at install time the tree is actually RUN.** `bundle_is_complete`
+  deliberately does not ask whether the binaries execute — that would spawn
+  three processes on every `--embed` build and turn a transient exec failure
+  into a re-download. The one place the answer must be certain, the gate that
+  decides whether a freshly extracted tree is INSTALLED, calls `bundle_runs`
+  (`db_provision.rs:643`), which invokes `postgres --version`. A binary
+  truncated part-way through or built for another architecture is present,
+  non-empty, executable and useless; only running it settles that.
 - **An unsupported platform is refused with a way out**, never a download of
   something that cannot execute. Windows is named as out of scope rather than
   reported as an unknown platform.
@@ -1185,12 +1212,17 @@ app pool, not because 56 is a target.
 
 ### Write characteristics, as they are today
 
-- **Analytics writes are row-at-a-time.** One
-  `INSERT INTO analytics_events (…) VALUES (…)` per event — pgx's simple
-  protocol does not batch `;`-separated statements, and a source comment in
-  `analytics_store.go` records that. Row-at-a-time is fsync-bound: order
-  5–10k inserts/s, against the 100k–500k rows/s that `COPY` or multi-row
-  inserts reach on the same hardware.
+- **Analytics writes are BATCHED.** This bullet used to say "row-at-a-time",
+  and that was true before `runtime-go/rt/analytics_writer.go` existed. Today
+  the hot path marshals and enqueues onto a bounded queue and returns
+  (`analyticsStoreInsert`, `analytics_store.go:341`); **one** writer goroutine
+  drains it and issues a **multi-row `VALUES` INSERT**
+  (`analyticsInsertStatement`, `analytics_writer.go:594-608`), flushing on
+  whichever comes first of **256 rows** (`analyticsBatchSize`,
+  `analytics_writer.go:96`) or **250 ms** (`analyticsFlushInterval`, `:107`).
+  A burst of N events becomes `ceil(N/256)` statements, not N (`:321`). The
+  writer flushes on shutdown, before PostgreSQL is stopped, and read paths
+  call `analyticsFlushPending` first so reads-after-writes are honest.
 - **Telemetry is bounded by construction.** A single buffered flusher goroutine
   does all the writing, which is why it does not open a backend per concurrent
   flush.
@@ -1199,14 +1231,18 @@ app pool, not because 56 is a target.
   different one means a different database. The split is available and
   unopinionated.
 
-### Guidance — NOT IMPLEMENTED
+### Guidance — item 1 is SHIPPED; the rest is not implemented
 
-Everything in this subsection is a recommendation for an operator, or for a
-later change to Sky. **None of it is shipped behaviour**, and nothing in Sky
-does any of it for you today:
+**Item 1 was implemented and this heading said otherwise.** Everything from
+item 2 down is still a recommendation for an operator, or for a later change
+to Sky, and nothing in Sky does any of it for you today.
 
-1. **Batch the analytics inserts** (`COPY`, or multi-row `VALUES`). The single
-   biggest lever available — 10–50×.
+1. ~~**Batch the analytics inserts** (`COPY`, or multi-row `VALUES`). The
+   single biggest lever available — 10–50×.~~ **SHIPPED.**
+   `runtime-go/rt/analytics_writer.go` gives analytics a buffered
+   single-writer with a multi-row `VALUES` INSERT
+   (`analyticsInsertStatement`, `:594-608`), batched at 256 rows (`:96`) or
+   250 ms (`:107`), whichever comes first. See "Write characteristics" above.
 2. **`synchronous_commit = off` on the analytics/telemetry connection only.**
    It is a per-transaction setting, so app data keeps full durability while
    telemetry trades a few hundred milliseconds of loss-on-crash for throughput.
