@@ -1134,6 +1134,30 @@ fn the_generated_launchd_jobs_pass_apples_own_parser() {
 /// smart shutdown PostgreSQL performs on a SIGTERM it receives directly (which
 /// waits for every client, forever). launchd itself cannot be driven from a
 /// test, but the thing the wrapper has to get right can be.
+///
+/// # Why this is compiled only on macOS
+///
+/// The subject does not exist elsewhere. `provision --shared --service` writes
+/// `sky-postgres-run.sh` under `Platform::Launchd` only (`db_shared.rs`, the
+/// `write_file(&spec.wrapper_path(), …)` arm); a systemd host gets a unit with
+/// `KillSignal=SIGINT` and no wrapper process at all, and that line has its own
+/// gate over the generated unit text. So on Linux there is nothing to `exec`,
+/// and the test failed with `/bin/sh: cannot open …/sky-postgres-run.sh`.
+///
+/// It had never run there. `discover_pg_bins()` failed on the Linux CI runner,
+/// so the gate returned early — and when `92cc5fa9` installed PostgreSQL in
+/// `test-rest` so live tests would stop skipping, this one started running on a
+/// platform it was never about. That is the live-test change working: an
+/// UNDECLARED platform scope is exactly the kind of thing a silent skip hides.
+/// Declaring it is the fix; widening it is not, because a launchd wrapper on
+/// Linux is not a missing prerequisite, it is a category error.
+///
+/// KNOWN GAP, stated rather than left implicit: no CI job runs
+/// `cargo test -p sky` on macOS today, so this gate currently runs only on a
+/// developer's machine. Closing that needs a macOS step with PostgreSQL
+/// provisioned, on a 10x-billed runner — a CI-topology decision, not a
+/// one-line one.
+#[cfg(target_os = "macos")]
 #[test]
 fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
     let Ok(bins) = db_cluster::discover_pg_bins() else {
