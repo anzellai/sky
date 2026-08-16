@@ -982,13 +982,25 @@ small cloud instance. Measured components:
 
 | | RAM |
 |---|---|
-| Minimal Linux | ~250 MB |
-| Sky app binary (Go, idle) | **~55 MB** (measured on a live e2-micro) · **21 MB** for a plain app on a bench e2-small |
-| Observability agent, if you run one | **~87 MB** — see below |
-| PostgreSQL base — postmaster + 6 auxiliaries | **~22–29 MB** (measured under `--embed` on an e2-small) |
-| PG backends — one process per *active* connection | **6 backends total**, measured, at any session count — see below |
+| Sky app binary (Go, idle) | **~55 MB** (measured on a live e2-micro) · **21–27 MB** for a plain app on a bench e2-small |
+| PostgreSQL — the whole tree, as `MemAvailable` actually falls | **+21.9 MB** idle · **+28.4 MB** once sessions are written through it (measured under `--embed` on an e2-small) |
 | Sky.Live sessions — **625–650 kB each on x86 at the Go-default `GOGC=100`**, PostgreSQL store (`docs/perf/runs/gcp-x86-capacity-20260816/`); the shipped `GOGC=400` raises the slope, x86 unmeasured | ~65 MB at 100 concurrent at `GOGC=100` |
-| **Base, before sessions** | **~380 MB** |
+| **Base, before sessions — measured whole-machine, OS included** | **~382 MB** app alone · **~410 MB** with the cluster carrying the sessions |
+| Observability agent, if you run one | **+86 MB** on top of that — measured, see below |
+
+Sources: `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed at
+`docs/perf/skylive-interaction-cost.md:1065-1082`; the base line is
+`MemTotal − MemAvailable` on that machine (2,023,888 kB total; median idle
+`MemAvailable` 1,632,340 kB without the cluster, 1,603,636 kB with it), so it
+already contains the OS.
+
+> **Two rows were deleted rather than adjusted.** "Minimal Linux | ~250 MB"
+> is sourced to no run — and the machine that *was* measured spent ~382 MB on
+> the OS plus an idle app, so it was not a safe allowance either; the base
+> line is now a measurement instead of a sum, which is why no OS row is
+> needed. "PG backends … | **6 backends total**" carried no MB value at all
+> and so contributed nothing to the sum it sat inside; its content was a
+> process count, and the count was wrong — see below.
 
 The session row moves with the collector and with the view; see "The
 per-session figure" below before quoting it anywhere.
@@ -1098,9 +1110,16 @@ Three corrections the run forces:
 2. **"One process per active connection, ~5–10 MB each, 6–10 active" is the
    wrong shape.** The pool caps backends at
    `dbSharedAuxPoolConfigFor(cpus, …)`, and the count did not move between 25 and
-   100 concurrent sessions: **6, flat**. PostgreSQL's memory does not grow
-   with sessions — its RSS slope against established sessions is zero within
-   noise. Embedded PostgreSQL is a **fixed block**, not a per-session tax.
+   100 concurrent sessions: **7, flat** — `pg_backends_max` in every valid
+   config-C row of `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, and
+   **7 (occasionally 8)** at 100 / 300 / 500 sessions in
+   `docs/perf/runs/gcp-x86-capacity-20260816/README.md:49-53`. (**This said
+   6**, which is the adjacent `idle_pg_nproc` column — the idle process count
+   — read as a client-backend count. Same slip in `AGENTS.md` and
+   `docs/perf/skylive-interaction-cost.md`, corrected in the same commit.)
+   PostgreSQL's memory does not grow with sessions — its RSS slope against
+   established sessions is zero within noise. Embedded PostgreSQL is a
+   **fixed block**, not a per-session tax.
 3. **The bundle delivery path is still unmeasured.** That run used
    `SKY_POSTGRES_BIN` against Debian's `postgresql-15`, which exercises the
    supervisor, `initdb`, the tuned conf, pool sizing and the
@@ -1161,9 +1180,20 @@ had access to.
 | 500 | 550 MB | ~930 MB | at the edge |
 | 700 | 770 MB | ~1.15 GB | no |
 
-So **1 GB carries roughly 400–500 concurrent sessions** and 2 GB roughly triple
-that. The pool ceiling is a ceiling and not an allocation — `database/sql` opens
+The pool ceiling is a ceiling and not an allocation — `database/sql` opens
 lazily, so a host pays for what is in flight.
+
+> **"So 1 GB carries roughly 400–500 concurrent sessions and 2 GB roughly
+> triple that" stood here and is deleted.** It is `available RAM ÷ 1.1 MB`,
+> and the 1.1 MB is the retracted RSS/n figure from a *different* app
+> (`26-ui-showcase` at 384 elements, memory store —
+> `docs/perf/skylive-interaction-cost.md`, "Where the 1.4 MB goes"). No run
+> has ever established a session ceiling on a 1 GB or 2 GB instance, and the
+> replacement 625–650 kB slope was measured on `19-skyforum` at 94 elements,
+> so dividing by *it* would just swap one app's cost into another app's
+> budget. The only session ceiling anyone has actually reached in this corpus
+> is the e2-micro's 447 (below). What bounds a small host at the shipped GC
+> default is the derived `GOMEMLIMIT`, which is the paragraph after next.
 
 > **That table predates the shipped GC default and now reads as an upper
 > bound, not a forecast.** It is built on ~1.1 MB per session; at `GOGC=400`
@@ -1176,12 +1206,15 @@ lazily, so a host pays for what is in flight.
 > the bound, and the bound is set by the machine. And on every instance in this
 > class CPU still binds many times sooner — see the next section.
 
-**Cross-checked against a live e2-micro** (sky-lang.org, `us-central1-a`,
-969 MB usable, 9 days uptime): 516 MB available ÷ 1.1 MB per session ≈ **470
-sessions**, which lands inside the range above. The same box measures the Sky
-binary at **55 MB RSS** — higher than the 30–40 MB this table previously
-guessed — and averages **0.09% CPU** over 40 hours, i.e. nowhere near any
-ceiling at its real traffic.
+**Observed on a live e2-micro** (sky-lang.org, `us-central1-a`, 969 MB usable,
+9 days uptime): **516 MB available**, the Sky binary at **55 MB RSS** — higher
+than the 30–40 MB this table previously guessed — and **0.09% CPU** averaged
+over 40 hours, i.e. nowhere near any ceiling at its real traffic. (This
+paragraph used to divide that 516 MB by 1.1 MB per session and report "≈ 470
+sessions, which lands inside the range above". The divisor is the retracted
+RSS/n figure and the range it agreed with was computed from the same divisor,
+so the agreement was arithmetic, not corroboration. The three measurements
+stand; the quotient is deleted.)
 
 > **The monitoring costs 86 MB — and that turns out not to matter.** A
 > within-boot A/B on `MemAvailable` puts the Ops Agent at **86.4 MB**, not the
@@ -1206,11 +1239,19 @@ SQLite store (`docs/perf/runs/gcp-x86-20260815/`):
 
 | | throughput knee | peak interactions/sec | memory ceiling | CPU binds earlier by |
 |---|---|---|---|---|
-| **e2-micro** | **25–50 sessions** | ~18/s | ~450 sessions | **~12×** |
-| **e2-small** | **50–100 sessions** | ~35–42/s | ~1,000 sessions | ~12× |
+| **e2-micro** | **25–50 sessions** | ~18/s | **~450 sessions — reached**: 447 of a requested 500 established, `MemAvailable` down to ~43 MB | **~12×** |
+| **e2-small** | **50–100 sessions** | ~35–42/s | **never reached** — 500 of 500 established, all three repeats | — |
 
 An `e2-micro` will *hold* about 450 sessions in RAM and is **unusable past
 about 50**. Sizing on memory alone would overstate its capacity twelvefold.
+That 450 is an observation, not a division: `micro-noagent.tsv`'s n=500 row
+records 447 established (and a 96% interaction failure rate there), and
+`micro-rss-n500-r1-memexhaustion.txt` records the machine running down to
+~43 MB available — both in `docs/perf/runs/gcp-x86-20260815/`. **The
+e2-small's "~1,000 sessions" is deleted**: that row was
+`available RAM ÷ the retracted 1.4 MB slope`, and the same sweep's
+`small-noagent.tsv` establishes 500 of 500 with memory nowhere near binding,
+so no ceiling was found and none is asserted.
 
 **Re-measured at commit `3ed83c08`** — after several per-interaction
 optimisation stages, with the app's own embedded PostgreSQL carrying the

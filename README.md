@@ -242,9 +242,13 @@ embedded PostgreSQL, or a managed database, with no code change. Bundles are
 built from source in CI (PostgreSQL 18.6, pinned) with an SBOM and a
 GPL/LGPL/AGPL link gate.
 
-**It fits in 1 GB.** A Sky.Live app plus its own PostgreSQL is ~380 MB before
-sessions — ~250 MB of Linux, ~40 MB of app, and **~22–29 MB of PostgreSQL**
-(measured under `--embed` on an e2-small). So a free-tier or entry-level cloud
+**It fits in 1 GB.** On the e2-small this was measured on, a Sky.Live app plus
+its own embedded PostgreSQL leaves the machine **~410 MB** short of its total
+before a single session exists — `MemTotal − MemAvailable`, OS included, with
+the app idle at ~21–27 MB and PostgreSQL costing **+28.4 MB** of that
+(`docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed at
+[docs/perf/skylive-interaction-cost.md](docs/perf/skylive-interaction-cost.md#1065)).
+Without the database it is ~382 MB. So a free-tier or entry-level cloud
 instance runs a real app with a real database, and the managed-database line
 disappears from the bill.
 

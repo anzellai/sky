@@ -137,12 +137,40 @@ non-obvious ones as questions:
 
    | | RAM |
    |---|---|
-   | Minimal Linux | ~250 MB |
-   | Sky app binary (Go) | **~22 MB fresh, ~56 MB settled** (measured) |
-   | PostgreSQL base — postmaster + auxiliaries | **~22–29 MB** (measured under `--embed` on an e2-small) |
-   | PG backends | **6 total, flat** at any session count — a fixed block, not a per-session tax |
+   | Sky app binary (Go), idle | **~21–27 MB** (measured, `26-ui-showcase` on an e2-small) |
+   | Sky app, settled under days of real traffic | **~56 MB** (measured, sky-lang.org on an e2-micro, 9 days up) |
+   | Embedded PostgreSQL — the whole tree, as `MemAvailable` actually falls | **+21.9 MB** idle · **+28.4 MB** once sessions are written through it |
    | Sky.Live sessions, **625–650 kB each on x86, PostgreSQL store, stock `GOGC=100`** (the shipped default raises this — see below) | ~65 MB at 100 concurrent |
-   | **Base, before sessions** | **~380 MB** |
+   | **Base, before sessions — measured whole-machine, not a sum of the rows** | **~382 MB** app alone · **~410 MB** with embedded PostgreSQL carrying the sessions |
+
+   Every row: `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed
+   in `docs/perf/skylive-interaction-cost.md:1065-1082`; the settled-app row is
+   that document's row 7. The base line is `MemTotal − MemAvailable` on the
+   measured machine (2,023,888 kB total; median idle `MemAvailable` 1,632,340
+   / 1,603,636 kB for the two configurations), so it already contains the OS
+   and needs no OS row added to it.
+
+   > **This table used to open with "Minimal Linux | ~250 MB" and close with
+   > "Base, before sessions | ~380 MB", and the rows between them no longer
+   > added up to it** — the ~380 was left in place when the PostgreSQL rows
+   > were corrected downward, so it had become an orphan of an earlier
+   > arithmetic. The OS row is deleted rather than adjusted: no run in
+   > `docs/perf/runs/` measured a bare Linux image, and on the machine that
+   > *was* measured the OS plus an idle app came to ~382 MB, so ~250 MB was
+   > not a conservative allowance either. A "PG backends" row also sat here
+   > carrying no MB value at all; its content was a process count, not RAM,
+   > and it has moved into the paragraph below — with the count corrected.
+
+   **PostgreSQL is a fixed block, not a per-session tax.** Its tree's RSS
+   slope against established sessions is −10 kB / +22 kB per session — zero
+   within noise (`docs/perf/skylive-interaction-cost.md:142-147`), because the
+   pool holds **7 client backends flat at 25, 50 and 100 concurrent sessions**
+   (`gcp-embed-postgres-20260815/sweep.tsv`, `pg_backends_max`, every valid
+   config-C row) and **7, occasionally 8, at 100 / 300 / 500**
+   (`gcp-x86-capacity-20260816/README.md:49-53`, against
+   `max_connections = 56`). Earlier text here and in
+   `skylive-interaction-cost.md` said **6**, which was `idle_pg_nproc` — the
+   idle process count — read as a backend count.
 
    **Sessions are the number that decides the instance** — and the per-session
    figure moves with the collector, which is why it changed. At the stock
@@ -166,7 +194,14 @@ non-obvious ones as questions:
    **CPU binds ~12× before memory, measured on real GCE instances.** An
    e2-micro *holds* ~450 sessions and is **unusable past ~50** (knee 25–50,
    peak ~18 interactions/sec, and past 250 sessions it fails 79–96% of
-   interactions; commit `ba3c3b1d`, `docs/perf/runs/gcp-x86-20260815/`).
+   interactions; commit `ba3c3b1d`, `docs/perf/runs/gcp-x86-20260815/`). The
+   ~450 is an **observation, not a division**: asked for 500, that machine
+   established **447** (`gcp-x86-20260815/micro-noagent.tsv`, n=500 row, which
+   also records 96% of interactions failing there) with `MemAvailable` down to
+   **~43 MB** (`micro-rss-n500-r1-memexhaustion.txt`) — so it does not move
+   when the per-session slope is restated. No comparable memory ceiling was
+   ever *reached* on e2-small: it established **500 of 500** in all three
+   repeats of the same sweep (`small-noagent.tsv`).
    Re-measured at commit `3ed83c08` with embedded PostgreSQL carrying the
    sessions (`docs/perf/runs/gcp-x86-capacity-20260816/`): an **e2-small
    sustains 64.3 int/s at 300 sessions** (failure knee between 100 and 300),

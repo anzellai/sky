@@ -144,7 +144,10 @@ handleRegister db req =
                     )
 
 
--- POST /login — verifies, signs a token, sets it as an HttpOnly cookie
+-- POST /login — verifies, signs a token, sets it as an HttpOnly cookie.
+-- The attrs are spelled out: the two-and-three-argument forms of
+-- `withCookie` emit `Path=/; HttpOnly; SameSite=Lax` and add `Secure`
+-- only when the process is in production (see "Production checklist").
 handleLogin : Db -> Request -> Task Error Response
 handleLogin db req =
     case ( Server.formValue "email" req, Server.formValue "password" req ) of
@@ -162,7 +165,7 @@ handleLogin db req =
                     (\token ->
                         Task.succeed
                             (Server.text "ok"
-                                |> Server.withCookie "sky_auth" token
+                                |> Server.withCookie "sky_auth" token "Path=/; HttpOnly; Secure; SameSite=Lax"
                             )
                     )
 
@@ -229,7 +232,28 @@ Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → 
 
 - **Rotate `SKY_AUTH_TOKEN_SECRET` periodically.** All outstanding tokens become invalid on rotation. Plan a deploy window.
 - **Minimum 32 bytes** for the secret. `Auth.signToken` rejects shorter values with an error rather than producing weak HMACs; the runtime also refuses to start with a short `SKY_AUTH_TOKEN_SECRET`.
-- **Set cookie attrs**. `Server.withCookie` defaults to `HttpOnly; Secure; SameSite=Lax`. Use `Server.cookie` to override only when you actually need cross-site flow.
+- **Set cookie attrs explicitly — `Secure` is not in the default.**
+  `Server.withCookie`'s two- and three-argument forms emit
+  `Path=/; HttpOnly; SameSite=Lax`
+  (`runtime-go/rt/rt.go:10164`, `:10168`), and `securifyCookieAttrs`
+  (`rt.go:10226`) appends `; Secure` **only when the process is in
+  production** — `ENV` (or `<PREFIX>_ENV`) set to anything that is not
+  `dev` / `development` / `local` (`rt/observability.go:347-368`). Under
+  `sky run`, in CI, and on any deployment that forgot to set `ENV`, an auth
+  cookie set through those forms goes out **without `Secure`**.
+
+  The escape hatch is the **four-argument form**,
+  `Server.withCookie name value attrs resp` (`rt.go:10169-10171`), which
+  passes your attribute string through verbatim — that is what the login
+  handler above uses. `Server.cookie` is **not** an override: it takes only
+  a name and a value (`rt.go:10136`, `Sky/Http/Server.sky:254`) and carries
+  no attribute control at all.
+
+  > This bullet used to read "`Server.withCookie` defaults to
+  > `HttpOnly; Secure; SameSite=Lax`. Use `Server.cookie` to override" —
+  > both halves false. A reader following it shipped a session token with
+  > no `Secure` attribute and had no way to notice, because the named
+  > remedy has no parameter that could have fixed it.
 - **Bcrypt cost**. Default is 12, which is ~250ms on a 2024 laptop. Raise to 13–14 in production if you can spare the latency budget; lower to 10 only for CI/test fixtures.
 - **Rate-limit `/login` and `/register`.** Use [`Sky.Http.Middleware.withRateLimit`](../../CLAUDE.md#standard-library) on those routes — credential stuffing is the #1 attack on any auth endpoint.
 - **Validate password strength at registration**. `Auth.passwordStrength password` returns `Result Error String` where the body is `"weak" / "fair" / "strong"`; reject `"weak"` at registration as a baseline.
