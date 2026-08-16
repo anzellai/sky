@@ -221,6 +221,45 @@ not executed.
 
 Hidden precedence produced all of this. §3 removes the hiding.
 
+> **CLOSED 2026-08-16 (stage 3).** All three orders above are now one order,
+> and it is `withPort`'s:
+>
+> > **operator env → `withX` builder → seeded default (`sky.toml` / compiler)
+> > → hardcoded fallback**
+>
+> The order was not chosen freshly. It is the one this document already
+> endorsed (§4.2, §1.10), and the one `dotenv.go:41` already stated verbatim as
+> the reason `seededDefaults` exists — "operator env > explicit builder call >
+> seeded default" — a rule written down for a mechanism that had exactly one
+> consumer. The provenance was never missing; three of the four readers simply
+> never asked for it.
+>
+> It lives in ONE function now, `configLayers`
+> (`runtime-go/rt/live_config_precedence.go`), which `resolveTTL`,
+> `resolveIdleEvict`, `resolveStoreKind`, `resolveStorePath` and
+> `resolveLivePort` all call. The point is not that four functions were edited
+> to agree on one afternoon; it is that there is no longer anywhere for them to
+> disagree. `selectStore`'s `if kind == "" { kind = skyGetenv(…) }` branch is
+> gone entirely — it takes already-resolved values now — and `parseTTL` takes an
+> ordered candidate LIST, so the parser stopped being the place precedence
+> lived.
+>
+> **The two backwards docstrings are now true.** `Std/Live.sky:167-168` and
+> `live.go`'s store comment both said env wins; the code was what was wrong, so
+> fixing the precedence made the documentation correct rather than requiring it
+> to be rewritten to match a defect.
+>
+> **`lower.rs:822` is UNCHANGED.** It still seeds `LIVE_TTL=1800` into every
+> program, and it is now correct that it does: the seed is a default, marked as
+> one, and it loses to a builder while still beating nothing at all. The emitted
+> prologue is byte-identical, so `repro` and `golden` did not move — verified,
+> both PASS, the latter with `--all` (24 projects).
+>
+> Six cells and one verdict moved and all seven are listed in
+> `config-matrix.toml`. Two are NOT §7.3's "a builder that was ignored starts
+> working" class: `live.storePath/env+builder` is a builder that WAS winning and
+> stops. See §7.3's addendum.
+
 ### 1.9 Three files hand-register a repair for one ordering problem
 
 `SetSkyDefault` (`env_prefix.go:107-119`) re-runs `envPrefixHooks` because
@@ -245,6 +284,59 @@ have rescued it either — the ordering, not the namespace, is the defect. The
 same package-level-`var` shape carries `logThreshold`/`logJSON`
 (`rt.go:1207-1208`), which ARE rescued, which is what makes the omission easy
 to miss: the file next door does it correctly.
+
+> **CLOSED 2026-08-16 (stage 3) — and there were TWO, not one.**
+>
+> The sweep that replaced the inspection found a second member that no reader
+> had spotted: `skyHttpClient` (`stdlib_extra.go:1314`). Its environment read is
+> two calls away from the declaration —
+>
+> ```
+> var skyHttpClient = newSkyHttpClient()
+>   → newSkyHttpClient()  → httpEnvTimeout("SKY_HTTP_CLIENT_TIMEOUT", 30s)
+>                         → os.Getenv(key)
+> ```
+>
+> — so nothing at the declaration site looks like a capture. It is also the more
+> damaging of the two: `SKY_HTTP_CLIENT_TIMEOUT` is the documented escape hatch
+> for slow upstreams (the comment beside it says "LLM APIs especially"), and
+> setting it the documented way, in a `.env`, did nothing. Every outbound
+> `Http.get` stayed pinned at 30s, and `stdlib_extra.go:1562` copied the stale
+> value into per-request derived clients, so it fanned out.
+>
+> Both are fixed, in two different shapes because they have different
+> constraints. `streamDebugEnabled()` reads on every call — it is read from the
+> spool and drain goroutines, so on-demand needs no atomic and cannot go stale.
+> `skyHTTPClient()` is built once behind `sync.OnceValue`, because reading on
+> demand would rebuild the client per request and silently destroy connection
+> pooling; first use is an outbound request, necessarily after every `init()`.
+>
+> **Neither uses the `onEnvPrefixChange` hook**, though it would have worked for
+> both and is the established local pattern. The hook fires only from
+> `SetEnvPrefix` / `SetSkyDefault` — so it rescues a value only because
+> generated `init()` code happens to always call one of them, which is a
+> coincidence a hand-written embedder of `rt` does not inherit. Both remedies
+> here are unconditional. The hook is still accepted; it is just not what new
+> code should reach for first.
+>
+> **The class is now a gate**, `runtime-go/rt/env_init_order_audit_test.go`: an
+> AST walk over every package under `runtime-go/rt/` that computes the FIXPOINT
+> of "functions reaching an environment read" — not a depth limit, since
+> `skyHttpClient` was exactly two levels down and a depth-2 cutoff would have
+> found it by luck — and flags any file-scope `var` whose initializer reaches
+> that set without an `onEnvPrefixChange` callback reassigning it. Its allowlist
+> is empty.
+>
+> Four shapes it deliberately does not count, each of them live in this package
+> and each of them a false red for a naive version: a function VALUE
+> (`var lookupEnvFunc = osLookupEnv`), `http.ProxyFromEnvironment` passed as a
+> value and resolved lazily by `net/http`, `sync.Once`-deferred bodies (the walk
+> does not descend into `FuncLit` bodies), and the tens of thousands of lines of
+> JavaScript in backtick raw strings in `live.go` and `console_html.go` — which
+> on its own rules out a grep-based version. One gap is stated in the gate's own
+> header rather than papered over: a var initialised from another package's
+> env-reading function is invisible to a per-package call graph. Zero instances
+> today.
 
 The remaining four `rt` `init()`s that read the environment apply their values
 **irreversibly** and could not be repaired by a hook even if one were
@@ -1037,6 +1129,28 @@ cell's observation against the single-layer ones, not asserted beside them:
 Three orders across four settings in one module, and `live.storePath` inverts
 `live.ttl` exactly. §1.8 reasoned that from source; this is measured.
 
+> **SUPERSEDED 2026-08-16 (stage 3).** The table above is the stage-2
+> measurement and is kept as the before-picture. All four now observe one
+> order — `env → builder → toml → fallback`, with `env` meaning an
+> OPERATOR's, distinguished from a seeded one by `isSeededDefault`:
+>
+> | setting | observed order |
+> |---|---|
+> | `live.port` | env → builder → toml → 8000 (unchanged) |
+> | `live.storePath` | env → builder → toml → `sky_sessions.db` |
+> | `live.ttl` | env → builder → toml → 30m |
+> | `live.idleEvict` | env → builder → 5m (unchanged) |
+>
+> `live.idleEvict` is listed as unchanged and that is worth one sentence,
+> because it is the reason a control belongs in a table: it read
+> `builder_reaches_runtime = true` before this stage BY LUCK. Nothing seeds
+> `LIVE_IDLE_EVICT`, so its env-first `parseTTL` shape never had a seeded
+> default to lose to; it would have acquired `withTtl`'s dead builder the moment
+> a `sky.toml` key or a prologue default existed. It is now correct by
+> construction, and `TestIdleEvict_SeededDefaultLosesToBuilder` seeds one
+> explicitly — the only way to tell "correct" from "never exercised". That test
+> fails against the pre-stage-3 tree.
+
 **The dead builder is a recorded fact, not a claim.** `verdicts` reads
 `live.ttl.builder_reaches_runtime = false` against `true` for the other three,
 verified on every run by comparing the builder-only cell with the unset cell.
@@ -1116,6 +1230,49 @@ Three known members of this class, all from §1: `Live.withTtl` (dead),
 `Live.withStore`/`withStorePath`/`withStatic` (documented backwards in two
 places), and `LIVE_TTL`'s three meanings (§1.7) separating into three settings.
 Each is listed individually with its old and new behaviour.
+
+> **APPLIED 2026-08-16 (stage 3) — and the rule needed one amendment.**
+>
+> Two of the three members above are closed (`withTtl`; the
+> `withStore`/`withStorePath` pair). `LIVE_TTL`'s three meanings are NOT — the
+> three readers now share a precedence rule, but `csrf_middleware.go:82` still
+> resolves the same name to a 30-DAY default against `live.go`'s 30 minutes.
+> Separating them into three settings remains open.
+>
+> Seven differences were listed. Five are exactly what this section describes.
+> **Two are not, and the rule as written does not cover them:**
+>
+> | listed | class |
+> |---|---|
+> | `live.ttl.builder_reaches_runtime` false→true | §7.3 as written |
+> | `live.ttl/builder` 30m→41m | §7.3 as written |
+> | `live.ttl/toml+builder` 38m→41m | §7.3 as written |
+> | `console_subapp_store/toml/noenv` 38m→30m | §7.3 as written |
+> | `console_subapp_store/toml_builder/noenv` 38m→30m | §7.3 as written |
+> | `live.storePath/env+builder` builder→env | **operator's side** |
+> | `live.storePath/env+toml+builder` builder→env | **operator's side** |
+>
+> §7.3 says behaviour changes "only for an app that called a builder that was
+> silently ignored". The last two are the mirror image: an app that called a
+> builder which WAS being honoured, and an **operator** whose environment
+> variable was being silently ignored. `SKY_LIVE_STORE_PATH` did nothing in any
+> app that called `withStorePath`, so a session store could not be repointed at
+> a mounted volume without a recompile.
+>
+> The amendment, stated so the next stage inherits it rather than rediscovering
+> it: **the class is a LAYER that was silently ignored, not a builder.** An
+> ignored operator override is the same defect as an ignored builder, seen from
+> the other end, and it is not less severe for being the end that does not
+> appear in the source.
+>
+> Not fixing it was the alternative, and it was worse in two ways: it would have
+> left `storePath` inverting `ttl` — the exact divergence this stage exists to
+> remove, since fixing one member of an inverted pair preserves the inversion —
+> and it would have kept two docstrings (§1.8) wrong that fixing it made right.
+>
+> The blast radius is genuinely small but it is not zero, which is why it is
+> listed at cell granularity with the argument in its own `reason` string rather
+> than folded into the `withTtl` rows.
 
 ---
 
