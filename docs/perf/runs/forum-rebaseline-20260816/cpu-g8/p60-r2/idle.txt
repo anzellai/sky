@@ -1,0 +1,2 @@
+idle_rss_kb 51520
+idle_cpu_s  0.25

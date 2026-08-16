@@ -1,0 +1,33 @@
+{
+  "label": "forum-p12-g1-r3",
+  "url": "http://127.0.0.1:8531",
+  "sessions_requested": 50,
+  "sessions_established": 50,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 11416,
+  "interactions_per_sec": 252.60911054417585,
+  "p50_ms": 264.458,
+  "p95_ms": 388.213,
+  "p99_ms": 428.694,
+  "max_ms": 480.503,
+  "outcomes": {
+    "ok": 11416
+  },
+  "error_rate": 0,
+  "patches_total": 22832,
+  "interactions_with_patches": 11416,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 350,
+  "sse_still_open_at_end": 50,
+  "generator_cpu_percent_of_machine": 0.2904703282196077,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-15T23:58:41Z"
+}

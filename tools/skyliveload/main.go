@@ -79,6 +79,13 @@ type config struct {
 	label         string
 	warmup        time.Duration
 	selfCheckOnly bool
+
+	hidSuffix    string
+	hidContext   string
+	hidCtxRe     *regexp.Regexp
+	setupPath    string
+	setup        []setupStep
+	minPatchRate float64
 }
 
 func main() {
@@ -94,6 +101,21 @@ func main() {
 	flag.StringVar(&cfg.label, "label", "", "label recorded in the output (e.g. analytics=on)")
 	flag.DurationVar(&cfg.warmup, "warmup", 3*time.Second, "discard interactions from this initial window")
 	flag.BoolVar(&cfg.selfCheckOnly, "self-check", false, "establish one session, do one interaction, print the exchange, exit")
+
+	// Handler selection + setup script. See script.go for the failure this
+	// exists to prevent: the previous "first .click on the page" rule
+	// chose skyforum's site-title link, whose Msg is a no-op on the page
+	// it is rendered on, and three archived runs measured that.
+	flag.StringVar(&cfg.hidSuffix, "hid-suffix", ".click",
+		"only consider handler ids with this suffix (the DOM event)")
+	flag.StringVar(&cfg.hidContext, "hid-context", "",
+		"regex matched against the ~300 bytes following the hid attribute, to name a "+
+			"specific element (handler ids are structural paths and carry no semantics)")
+	flag.StringVar(&cfg.setupPath, "setup", "",
+		"JSON file of setup steps run once per session before measurement (e.g. sign in)")
+	flag.Float64Var(&cfg.minPatchRate, "min-patch-rate", 0.9,
+		"fail the run unless at least this fraction of counted interactions returned "+
+			"a patch; a run of empty exchanges is not a measurement of the diff path")
 
 	// Target guards -- see guard.go. Load against anything but loopback is
 	// opt-in, production is refused outright, and the resolved target is
@@ -111,6 +133,20 @@ func main() {
 	// session against a real server.
 	if err := checkTarget(cfg.baseURL, remoteLoad, prodOverride, assumeYes); err != nil {
 		fmt.Fprintf(os.Stderr, "\n%v\n", err)
+		os.Exit(3)
+	}
+
+	if cfg.hidContext != "" {
+		re, err := regexp.Compile(cfg.hidContext)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bad -hid-context: %v\n", err)
+			os.Exit(3)
+		}
+		cfg.hidCtxRe = re
+	}
+	var err error
+	if cfg.setup, err = loadSetup(cfg.setupPath); err != nil {
+		fmt.Fprintf(os.Stderr, "bad -setup: %v\n", err)
 		os.Exit(3)
 	}
 
@@ -153,10 +189,12 @@ var (
 )
 
 type session struct {
-	id      int
-	client  *http.Client
-	base    string
-	sid     string
+	id        int
+	client    *http.Client
+	base      string
+	hidSuffix string
+	hidCtxRe  *regexp.Regexp
+	sid       string
 	csrf    string
 	tab     string
 	handler string // a real data-sky-hid scraped from the served HTML
@@ -164,6 +202,17 @@ type session struct {
 	sseCancel context.CancelFunc
 	sseFrames atomic.Int64 // frames seen on the stream (liveness evidence)
 	sseOpen   atomic.Bool
+
+	// The most recent full-page body this session fetched. Two uses:
+	// picking a handler after a scripted setup step navigates, and
+	// checking that the ids a patch names actually exist in the DOM the
+	// client is holding -- "patches were emitted" and "patches were
+	// applicable" are different claims and this run has to make both.
+	lastBody []byte
+
+	patches      atomic.Int64 // patch objects returned across all replies
+	patchesNoID  atomic.Int64 // patches whose id is absent from lastBody
+	patchReplies atomic.Int64 // replies carrying at least one patch
 }
 
 // establish performs the browser's opening sequence: GET the page for
@@ -217,19 +266,16 @@ func (s *session) establish(ctx context.Context) error {
 			"the app did not establish a Sky.Live session")
 	}
 
-	hids := hidRe.FindAllSubmatch(body, -1)
-	if len(hids) == 0 {
-		return fmt.Errorf("no data-sky-hid in the served HTML: this page has no "+
-			"interactive handlers, so there is nothing to load-test (%d bytes)", len(body))
+	s.lastBody = body
+	// The handler is CHOSEN, not stumbled upon. See script.go for why the
+	// old "first hid ending .click" rule silently measured a no-op on
+	// skyforum. A page with no matching handler is an error, never a
+	// fallback to some other handler.
+	hid, err := pickHandler(body, s.hidSuffix, s.hidCtxRe)
+	if err != nil {
+		return err
 	}
-	// Prefer a click handler -- the cheapest unambiguous interaction.
-	s.handler = string(hids[0][1])
-	for _, h := range hids {
-		if strings.HasSuffix(string(h[1]), ".click") {
-			s.handler = string(h[1])
-			break
-		}
-	}
+	s.handler = hid
 
 	s.tab = fmt.Sprintf("t%d-%d", s.id, rand.Int63())
 
@@ -348,15 +394,25 @@ type eventReply struct {
 	} `json:"patches"`
 }
 
-// interact performs one POST /_sky/event and reads the reply fully.
-// Returns the wall time of the complete exchange and its classification.
-func (s *session) interact(ctx context.Context, seq int64) (time.Duration, outcome, int) {
+// interact performs one steady-state POST /_sky/event on the session's
+// chosen handler.
+func (s *session) interact(ctx context.Context, seq int64) (time.Duration, outcome, int, int) {
+	return s.interactWith(ctx, seq, s.handler, nil)
+}
+
+// interactWith performs one POST /_sky/event and reads the reply fully.
+// Returns the wall time of the complete exchange, its classification, the
+// reply size, and the number of patch objects it carried.
+func (s *session) interactWith(ctx context.Context, seq int64, handler string, args []any) (time.Duration, outcome, int, int) {
+	if args == nil {
+		args = []any{}
+	}
 	body, _ := json.Marshal(map[string]any{
 		"sessionId": s.sid,
 		"seq":       seq,
 		"msg":       "",
-		"args":      []any{},
-		"handlerId": s.handler,
+		"args":      args,
+		"handlerId": handler,
 		"tab":       s.tab,
 	})
 
@@ -371,43 +427,59 @@ func (s *session) interact(ctx context.Context, seq int64) (time.Duration, outco
 	start := time.Now()
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return time.Since(start), outTransport, 0
+		return time.Since(start), outTransport, 0, 0
 	}
 	payload, rerr := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	elapsed := time.Since(start)
 	if rerr != nil {
-		return elapsed, outTransport, 0
+		return elapsed, outTransport, 0, 0
 	}
 
 	switch {
 	case resp.StatusCode == 403:
-		return elapsed, outCSRF, 0
+		return elapsed, outCSRF, 0, 0
 	case resp.Header.Get("X-Sky-Status") == "session-lost" || resp.StatusCode == 404:
-		return elapsed, outSessionLost, 0
+		return elapsed, outSessionLost, 0, 0
 	case resp.Header.Get("X-Sky-Status") == "desync":
-		return elapsed, outDesync, 0
+		return elapsed, outDesync, 0, 0
 	case resp.StatusCode != 200 && resp.StatusCode != 204:
-		return elapsed, outHTTPError, 0
+		return elapsed, outHTTPError, 0, 0
 	}
 
 	// A text/html reply is the full-body fallback -- real work, real
 	// patch payload, just not the JSON diff route.
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
-		return elapsed, outOK, len(payload)
+		return elapsed, outOK, len(payload), 1
 	}
 
 	var reply eventReply
 	if err := json.Unmarshal(payload, &reply); err != nil {
-		return elapsed, outHTTPError, 0
+		return elapsed, outHTTPError, 0, 0
 	}
 	if len(reply.Patches) == 0 {
 		// Legitimate (the model advanced without changing the view) but
 		// counted separately: a run consisting ENTIRELY of these is not
 		// exercising the diff path and must not be quoted as throughput.
-		return elapsed, outNoPatches, len(payload)
+		return elapsed, outNoPatches, len(payload), 0
 	}
-	return elapsed, outOK, len(payload)
+
+	// "Patches were emitted" and "patches were APPLICABLE" are separate
+	// claims. A browser applies a patch by finding `sky-id="<id>"` in its
+	// DOM; a patch naming an id the client does not hold is a dropped
+	// update, not work delivered (that class shipped as a real defect --
+	// see memory `sky_live_patch_target_missing_2026_07_17`). Check the
+	// ids against the last full page this session fetched.
+	s.patches.Add(int64(len(reply.Patches)))
+	s.patchReplies.Add(1)
+	if len(s.lastBody) > 0 {
+		for _, p := range reply.Patches {
+			if p.ID == "" || !bytes.Contains(s.lastBody, []byte(`sky-id="`+p.ID+`"`)) {
+				s.patchesNoID.Add(1)
+			}
+		}
+	}
+	return elapsed, outOK, len(payload), len(reply.Patches)
 }
 
 func (s *session) close() {
@@ -427,11 +499,15 @@ func selfCheck(cfg config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s := &session{id: 0, base: strings.TrimRight(cfg.baseURL, "/")}
+	s := &session{id: 0, base: strings.TrimRight(cfg.baseURL, "/"),
+		hidSuffix: cfg.hidSuffix, hidCtxRe: cfg.hidCtxRe}
 	if err := s.establish(ctx); err != nil {
 		return err
 	}
 	defer s.close()
+	if err := s.runSetup(ctx, cfg.setup, cfg.hidSuffix, cfg.hidCtxRe); err != nil {
+		return err
+	}
 
 	fmt.Printf("session established\n")
 	fmt.Printf("  sky_sid      %s\n", s.sid)
@@ -440,21 +516,39 @@ func selfCheck(cfg config) error {
 	fmt.Printf("  handlerId    %s   (scraped from data-sky-hid)\n", s.handler)
 	fmt.Printf("  SSE open     %v (%d frames so far)\n", s.sseOpen.Load(), s.sseFrames.Load())
 
-	d, out, n := s.interact(ctx, 1)
-	fmt.Printf("\ninteraction 1: %s in %v, %d bytes of reply\n", out, d, n)
-	if out != outOK && out != outNoPatches {
-		return fmt.Errorf("first interaction classified %s -- the client is not "+
-			"speaking the protocol correctly", out)
+	// FOUR interactions, not two. The steady-state interaction has to be
+	// repeatable: skyforum's vote button TOGGLES, so it patches on every
+	// press, but a handler that patches once and then settles into a fixed
+	// point would pass a two-interaction check and then produce a run of
+	// empty exchanges -- which is the failure this whole file exists to
+	// stop being invisible.
+	var empties, steady int
+	for i := int64(1); i <= 4; i++ {
+		d, out, n, np := s.interact(ctx, i)
+		steady += np
+		fmt.Printf("interaction %d: %s in %v, %d bytes of reply, %d patches\n", i, out, d, n, np)
+		if out != outOK && out != outNoPatches {
+			return fmt.Errorf("interaction %d classified %s -- the client is not "+
+				"speaking the protocol correctly", i, out)
+		}
+		if np == 0 {
+			empties++
+		}
 	}
-	d2, out2, n2 := s.interact(ctx, 2)
-	fmt.Printf("interaction 2: %s in %v, %d bytes of reply\n", out2, d2, n2)
-
-	if out2 == outNoPatches && out == outNoPatches {
-		return fmt.Errorf("both interactions returned zero patches: this app+handler " +
-			"does not change the view, so a load run against it would measure " +
-			"an empty diff and NOT the render/diff path")
+	if empties > 0 {
+		return fmt.Errorf("%d of 4 interactions returned zero patches: this "+
+			"app+handler (%s) does not change the view on every press, so a load "+
+			"run against it would measure empty exchanges and NOT the render/diff "+
+			"path. Choose another handler with -hid-context, or script the state "+
+			"it needs with -setup", empties, s.handler)
 	}
-	fmt.Printf("\nSELF-CHECK PASSED: the server is doing real per-interaction work.\n")
+	if u := s.patchesNoID.Load(); u > 0 {
+		return fmt.Errorf("%d patches named a sky-id absent from the served page: "+
+			"the server did the work but a browser would drop the update", u)
+	}
+	fmt.Printf("\nSELF-CHECK PASSED: %d patches over 4 steady-state interactions "+
+		"(setup steps excluded), all naming ids present in the DOM. The server is "+
+		"doing real per-interaction work.\n", steady)
 	return nil
 }
 
@@ -473,6 +567,7 @@ type sample struct {
 	at      time.Time
 	latency time.Duration
 	out     outcome
+	patches int
 }
 
 type Result struct {
@@ -490,6 +585,13 @@ type Result struct {
 	MaxMs              float64        `json:"max_ms"`
 	Outcomes           map[string]int `json:"outcomes"`
 	ErrorRate          float64        `json:"error_rate"`
+	PatchesTotal       int            `json:"patches_total"`
+	PatchBearing       int            `json:"interactions_with_patches"`
+	PatchRate          float64        `json:"patch_rate"`
+	PatchesPerInt      float64        `json:"patches_per_interaction"`
+	PatchesUnresolved  int64          `json:"patches_naming_absent_ids"`
+	Handler            string         `json:"handler_id"`
+	SetupSteps         int            `json:"setup_steps"`
 	SSEFramesTotal     int64          `json:"sse_frames_total"`
 	SSEStillOpen       int            `json:"sse_still_open_at_end"`
 	GeneratorCPUPct    float64        `json:"generator_cpu_percent_of_machine"`
@@ -523,11 +625,18 @@ func run(cfg config) (*Result, error) {
 		go func(i int) {
 			defer wg.Done()
 			time.Sleep(time.Duration(i) * gap)
-			s := &session{id: i, base: base}
+			s := &session{id: i, base: base, hidSuffix: cfg.hidSuffix, hidCtxRe: cfg.hidCtxRe}
 			if err := s.establish(ctx); err != nil {
 				mu.Lock()
 				establishErrs[err.Error()]++
 				mu.Unlock()
+				return
+			}
+			if err := s.runSetup(ctx, cfg.setup, cfg.hidSuffix, cfg.hidCtxRe); err != nil {
+				mu.Lock()
+				establishErrs[err.Error()]++
+				mu.Unlock()
+				s.close()
 				return
 			}
 			mu.Lock()
@@ -571,8 +680,8 @@ func run(cfg config) (*Result, error) {
 			var seq int64
 			for time.Now().Before(deadline) {
 				seq++
-				d, out, _ := s.interact(ctx, seq)
-				local = append(local, sample{at: time.Now(), latency: d, out: out})
+				d, out, _, np := s.interact(ctx, seq)
+				local = append(local, sample{at: time.Now(), latency: d, out: out, patches: np})
 				if cfg.thinkTime > 0 {
 					j := 1 + (rand.Float64()*2-1)*cfg.thinkJitter
 					time.Sleep(time.Duration(float64(cfg.thinkTime) * j))
@@ -589,6 +698,8 @@ func run(cfg config) (*Result, error) {
 	outcomes := map[string]int{}
 	var lat []time.Duration
 	counted := 0
+	patchesInWindow := 0
+	patchBearing := 0
 	for _, ss := range samples {
 		for _, sm := range ss {
 			if sm.at.Before(warmupEnds) {
@@ -596,16 +707,21 @@ func run(cfg config) (*Result, error) {
 			}
 			outcomes[sm.out.String()]++
 			counted++
+			patchesInWindow += sm.patches
+			if sm.patches > 0 {
+				patchBearing++
+			}
 			if sm.out == outOK || sm.out == outNoPatches {
 				lat = append(lat, sm.latency)
 			}
 		}
 	}
 
-	var sseFrames int64
+	var sseFrames, patchesNoID int64
 	sseOpen := 0
 	for _, s := range sessions {
 		sseFrames += s.sseFrames.Load()
+		patchesNoID += s.patchesNoID.Load()
 		if s.sseOpen.Load() {
 			sseOpen++
 		}
@@ -631,6 +747,18 @@ func run(cfg config) (*Result, error) {
 		P95ms:          pct(lat, 0.95),
 		P99ms:          pct(lat, 0.99),
 		MaxMs:          pct(lat, 1.0),
+
+		PatchesTotal:      patchesInWindow,
+		PatchBearing:      patchBearing,
+		PatchesUnresolved: patchesNoID,
+		SetupSteps:        len(cfg.setup),
+	}
+	if len(sessions) > 0 {
+		res.Handler = sessions[0].handler
+	}
+	if counted > 0 {
+		res.PatchRate = float64(patchBearing) / float64(counted)
+		res.PatchesPerInt = float64(patchesInWindow) / float64(counted)
 	}
 	measured := wall - cfg.warmup
 	if measured > 0 {
@@ -660,6 +788,24 @@ func run(cfg config) (*Result, error) {
 	case outcomes[outOK.String()] == 0:
 		res.Valid, res.InvalidReason = false,
 			"no interaction produced a single patch: the server never ran the diff path, so this measures an empty exchange"
+	case res.PatchRate < cfg.minPatchRate:
+		// A MAJORITY test, not a "was there ever one" test. The archived
+		// forum runs had ZERO, and the zero check above would have caught
+		// them -- but a single stray patch among 5,000 empty exchanges
+		// would have passed it while measuring exactly the same nothing.
+		// Whatever fraction of interactions is supposed to hit the diff
+		// path has to be declared and met.
+		res.Valid, res.InvalidReason = false,
+			fmt.Sprintf("only %.1f%% of interactions returned a patch (%d of %d); "+
+				"-min-patch-rate is %.1f%%. The rest were empty exchanges that never "+
+				"ran render+diff, so this does not measure the interaction path",
+				res.PatchRate*100, patchBearing, counted, cfg.minPatchRate*100)
+	case patchesNoID > 0:
+		// Patches were emitted but name sky-ids the client is not holding.
+		// The server did the work; the browser would drop the update.
+		res.Valid, res.InvalidReason = false,
+			fmt.Sprintf("%d patches named a sky-id absent from the page the session "+
+				"was holding: emitted is not applied", patchesNoID)
 	case res.ErrorRate > cfg.maxErrorRate:
 		res.Valid, res.InvalidReason = false,
 			fmt.Sprintf("error rate %.2f%% exceeds the %.2f%% limit", res.ErrorRate*100, cfg.maxErrorRate*100)
@@ -694,6 +840,12 @@ func (r *Result) print(w io.Writer) {
 	fmt.Fprintf(w, "latency p50/p95/p99  %.2f / %.2f / %.2f ms  (max %.2f)\n", r.P50ms, r.P95ms, r.P99ms, r.MaxMs)
 	fmt.Fprintf(w, "error rate           %.3f%%\n", r.ErrorRate*100)
 	fmt.Fprintf(w, "outcomes             %v\n", r.Outcomes)
+	fmt.Fprintf(w, "handler              %s (%d setup steps/session)\n", r.Handler, r.SetupSteps)
+	fmt.Fprintf(w, "patches              %d total, %.2f per interaction, %.1f%% of interactions bore one\n",
+		r.PatchesTotal, r.PatchesPerInt, r.PatchRate*100)
+	if r.PatchesUnresolved > 0 {
+		fmt.Fprintf(w, "  UNAPPLIABLE        %d patches named an absent sky-id\n", r.PatchesUnresolved)
+	}
 	fmt.Fprintf(w, "SSE frames received  %d (across %d sessions; %d streams still open at end)\n",
 		r.SSEFramesTotal, r.SessionsLive, r.SSEStillOpen)
 	fmt.Fprintf(w, "generator CPU        %.1f%% of machine%s\n", r.GeneratorCPUPct,
