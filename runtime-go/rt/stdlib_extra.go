@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -1311,22 +1312,39 @@ type HttpResponse struct {
 // a hostile or misconfigured server can't hang a Sky process forever.
 // Users can bring their own *http.Client via Http.request when they need
 // custom limits.
-var skyHttpClient = newSkyHttpClient()
-
-// skyHTTPClient — the accessor every read site goes through.
+// skyHTTPClient — the shared outbound client, built ONCE on first use.
 //
-// NOTE (step 1 of 2): still backed by the eager package-level var above, so
-// the accompanying test reds on the stale capture rather than on a missing
-// symbol. Step 2 replaces the body.
-func skyHTTPClient() *http.Client { return skyHttpClient }
+// It used to be `var skyHttpClient = newSkyHttpClient()`, evaluated at package
+// init — before `dotenv.go`'s `init()` loads `.env`, and two call levels away
+// from the `os.Getenv` that made that matter (`newSkyHttpClient` ->
+// `httpEnvTimeout` -> `os.Getenv`). So `SKY_HTTP_CLIENT_TIMEOUT` in a `.env`
+// did nothing: every outbound request stayed pinned at the 30s default, and
+// stdlib_extra.go:1562 copied that stale value into per-request derived
+// clients, so the staleness fanned out.
+//
+// Built once rather than per call, because the client owns the connection
+// pool — rebuilding it per request would silently disable keep-alive. First
+// use is an outbound HTTP request, which is necessarily after every `init()`,
+// so `.env` has been applied by the time the timeout is read.
+var skyHTTPClientOnce = sync.OnceValue(newSkyHttpClient)
+
+func skyHTTPClient() *http.Client { return skyHTTPClientOnce() }
+
+// skyHTTPClientTimeout — the whole-request deadline for outbound HTTP,
+// resolved from the environment at the moment it is asked for.
+//
+// Separate from the client so it is testable without the one-shot build:
+// asserting on a cached client can only observe whichever test ran first.
+func skyHTTPClientTimeout() time.Duration {
+	// 30s default; overridable via SKY_HTTP_CLIENT_TIMEOUT (e.g. "180s",
+	// "5m", or "0" to disable). Apps that call slow upstreams — LLM APIs
+	// especially — routinely need more than 30s.
+	return httpEnvTimeout("SKY_HTTP_CLIENT_TIMEOUT", 30*time.Second)
+}
 
 func newSkyHttpClient() *http.Client {
 	return &http.Client{
-		// 30s default; overridable via SKY_HTTP_CLIENT_TIMEOUT
-		// (e.g. "180s", "5m", or "0" to disable). Apps that call
-		// slow upstreams — LLM APIs especially — routinely need
-		// more than 30s, and the cap had no escape hatch before.
-		Timeout: httpEnvTimeout("SKY_HTTP_CLIENT_TIMEOUT", 30*time.Second),
+		Timeout: skyHTTPClientTimeout(),
 		// Bound redirect chains.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {

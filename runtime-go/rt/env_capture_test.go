@@ -63,29 +63,36 @@ func TestStreamDebug_OffByDefault(t *testing.T) {
 // stdlib_extra.go:1318 — "Apps that call slow upstreams — LLM APIs especially
 // — routinely need more than 30s" — and setting it the documented way in a
 // `.env` did nothing at all.
+// Asserted on the RESOLVER, not on `skyHTTPClient()`. The shared client is
+// built once (it owns the connection pool, so rebuilding it per request would
+// silently disable keep-alive), which means a test reading its `.Timeout` can
+// only ever observe whichever test in this package ran first — it would pass
+// or fail on test ORDER rather than on the behaviour under test. The resolver
+// is the thing that has to see `.env`, and it is what the client is built
+// from (stdlib_extra.go, `newSkyHttpClient`).
 func TestHTTPClientTimeout_HonoursEnvSetAfterPackageInit(t *testing.T) {
 	t.Setenv("SKY_HTTP_CLIENT_TIMEOUT", "180s")
-	if got := skyHTTPClient().Timeout; got != 180*time.Second {
+	if got := skyHTTPClientTimeout(); got != 180*time.Second {
 		t.Fatalf("SKY_HTTP_CLIENT_TIMEOUT=180s set after package init: "+
-			"client timeout = %s, want 3m0s — every outbound Http.get stays "+
+			"resolved timeout = %s, want 3m0s — every outbound Http.get stays "+
 			"pinned at the 30s default no matter what the .env says", got)
 	}
 }
 
 func TestHTTPClientTimeout_DefaultsTo30s(t *testing.T) {
 	t.Setenv("SKY_HTTP_CLIENT_TIMEOUT", "")
-	if got := skyHTTPClient().Timeout; got != 30*time.Second {
-		t.Fatalf("SKY_HTTP_CLIENT_TIMEOUT unset: client timeout = %s, want 30s", got)
+	if got := skyHTTPClientTimeout(); got != 30*time.Second {
+		t.Fatalf("SKY_HTTP_CLIENT_TIMEOUT unset: resolved timeout = %s, want 30s", got)
 	}
 }
 
-// The derived-client path propagates the resolved timeout rather than a
-// snapshot taken at package init (stdlib_extra.go:1555 reads
-// `skyHttpClient.Timeout` and hands it to a per-request client), so the
-// staleness used to fan out beyond the shared client.
-func TestHTTPClientTimeout_ReachesDerivedClients(t *testing.T) {
+// The resolver is not decorative: a freshly built client must actually carry
+// it. Built directly rather than through `skyHTTPClient()` for the same
+// order-independence reason. This is what makes the two tests above a claim
+// about outbound HTTP rather than about an unused function.
+func TestHTTPClientTimeout_IsWhatTheClientIsBuiltWith(t *testing.T) {
 	t.Setenv("SKY_HTTP_CLIENT_TIMEOUT", "90s")
-	if got := skyHTTPClient().Timeout; got != 90*time.Second {
-		t.Fatalf("derived-client source timeout = %s, want 1m30s", got)
+	if got := newSkyHttpClient().Timeout; got != 90*time.Second {
+		t.Fatalf("client built with SKY_HTTP_CLIENT_TIMEOUT=90s: timeout = %s, want 1m30s", got)
 	}
 }

@@ -311,19 +311,28 @@ func (sh *streamHandle) IsClosed() bool {
 	return sh.closed.Load()
 }
 
-// streamDebug — set true via SKY_STREAM_DEBUG=1 env to print
-// per-event timing on the spool + drain paths. Useful for
-// diagnosing latency when the dispatch loop falls behind the
-// upstream's chunk cadence. Off by default — adds two stderr
-// lines per chunk when on.
-var streamDebug = os.Getenv("SKY_STREAM_DEBUG") == "1"
-
-// streamDebugEnabled — the accessor every read site goes through.
+// streamDebugEnabled — true when SKY_STREAM_DEBUG=1, printing per-event
+// timing on the spool + drain paths. Useful for diagnosing latency when the
+// dispatch loop falls behind the upstream's chunk cadence. Off by default —
+// adds two stderr lines per chunk when on.
 //
-// NOTE (step 1 of 2): still backed by the eager package-level var above, so
-// the accompanying test reds on the stale capture rather than on a missing
-// symbol. Step 2 replaces the body.
-func streamDebugEnabled() bool { return streamDebug }
+// READS ON EVERY CALL, deliberately. This was a package-level
+// `var streamDebug = os.Getenv("SKY_STREAM_DEBUG") == "1"`, which Go evaluates
+// before any `init()` in the package — including `dotenv.go`'s, which is what
+// loads `.env`. So `SKY_STREAM_DEBUG=1` in a `.env` did nothing, permanently
+// and silently, and being a `bool` rather than a lookup it could not even be
+// re-read later.
+//
+// The `onEnvPrefixChange` hook that rescues `logThreshold` / `logJSON`
+// (rt.go:1215) would have worked here too, and is the established local
+// pattern — but it fires only from `SetEnvPrefix` / `SetSkyDefault`, i.e. only
+// because generated `init()` code happens to always call one of them. Reading
+// on demand needs no such coincidence, cannot go stale, and is race-free
+// without an atomic (this is read from the spool and drain goroutines).
+//
+// The cost is one `os.Getenv` per chunk on a path that is doing a 4 KiB
+// network read either side of it, which is not a cost.
+func streamDebugEnabled() bool { return os.Getenv("SKY_STREAM_DEBUG") == "1" }
 
 // runSpool reads from body in streamReadBuffer-sized chunks and
 // pushes streamEvents onto ch. Exits on:
