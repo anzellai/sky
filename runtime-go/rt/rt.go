@@ -3678,7 +3678,30 @@ func List_dropT[A any](n int, xs []A) []A {
 	return xs[n:]
 }
 
-func List_appendT[A any](a, b []A) []A { return append(a, b...) }
+// List_appendT is the typed twin of the LIST arm of `rt.Concat` — what a
+// `xs ++ ys` whose operands share one statically-known Go element type lowers
+// to. It replaces `rt.AsListT[T](rt.Concat(any(xs), any(ys)))`, which reflect-
+// widens BOTH operands element-wise into a fresh `[]any`, concatenates that,
+// and then reflect-narrows every element back into a `[]T`.
+//
+// It ALLOCATES A FRESH SLICE, always. The one-line `return append(a, b...)`
+// this replaces did not: `append` reuses `a`'s backing array whenever
+// `cap(a) > len(a)`, writing through into memory another Sky value may still
+// hold. Sky lists are immutable values and `rt.Concat` has always returned a
+// fresh slice, so the aliasing form made `ys ++ zs` able to mutate a list
+// nobody appended to — a wrong-answer bug visible only when the left operand
+// happened to carry spare capacity. `TestListAppendT_doesNotAliasItsLeftOperand`
+// in `list_append_typed_test.go` pins it.
+//
+// The result is non-nil even when both operands are empty, matching what
+// `rt.AsListT` hands the rest of the emitted program (`nil` and `[]T{}` marshal
+// as JSON `null` and `[]` respectively, so the two are not interchangeable).
+func List_appendT[A any](a, b []A) []A {
+	out := make([]A, 0, len(a)+len(b))
+	out = append(out, a...)
+	out = append(out, b...)
+	return out
+}
 
 func List_range(lo any, hi any) any {
 	l, h := AsInt(lo), AsInt(hi)

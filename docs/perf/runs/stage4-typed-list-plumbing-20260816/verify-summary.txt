@@ -1,0 +1,14 @@
+PASS  cargo-test-workspace         313s
+PASS  go-race-rt                    97s
+PASS  xtask-roundtrip               53s
+PASS  xtask-infer                    3s
+PASS  xtask-resolve                  0s
+PASS  xtask-repro                  148s
+FAIL  xtask-coerce-floor            39s  (exit 1, see xtask-coerce-floor.log)
+PASS  xtask-build-run               33s
+FAIL  example-sweep                  0s  (exit 2, see example-sweep.log)
+PASS  doc-examples                  32s
+FAIL  skyforum-e2e                   0s  (exit 1, see skyforum-e2e.log)
+PASS  xtask-build-run-all          344s
+PASS  example-sweep                185s
+PASS  skyforum-e2e                   2s

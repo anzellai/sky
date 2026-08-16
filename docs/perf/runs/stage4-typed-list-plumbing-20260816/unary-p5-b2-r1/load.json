@@ -1,0 +1,33 @@
+{
+  "label": "b2-p5-r1",
+  "url": "http://127.0.0.1:8541",
+  "sessions_requested": 25,
+  "sessions_established": 25,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 52460,
+  "interactions_per_sec": 1165.1859819666577,
+  "p50_ms": 23.902,
+  "p95_ms": 37.11,
+  "p99_ms": 42.728,
+  "max_ms": 54.219,
+  "outcomes": {
+    "ok": 52460
+  },
+  "error_rate": 0,
+  "patches_total": 104920,
+  "interactions_with_patches": 52460,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 175,
+  "sse_still_open_at_end": 25,
+  "generator_cpu_percent_of_machine": 1.0751178385216986,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T12:27:21Z"
+}

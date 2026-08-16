@@ -390,6 +390,67 @@ re-targets a kernel call at a typed entry point when the key type is known.
 Generalising this to kernel
 *returns* is the R5 lever (§4.4).
 
+**Two shipped instances**, both re-pointing at a typed twin that already existed
+in `runtime-go/rt` with **no caller anywhere in the repo** — the same "compiled
+into every binary and unreachable" condition Stage 2 and Stage 3 found:
+
+* **The list arm of `++`.** `lower_binop`'s `"++"` arm emits
+  `rt.List_appendT[T](a, b)` when both operands lower to the same
+  `GoTy::Slice(T)` and `provable(T)` holds, instead of
+  `rt.AsListT[T](rt.Concat(any(a), any(b)))`. The erased form misses
+  `rt.Concat`'s `[]any` fast path on any typed slice, `rt.AsList`-reflect-widens
+  **both** operands element-wise, and the enclosing slot narrows all of it back:
+  five slices and ~2(n+m) element boxes per evaluation, against one `append`
+  into one fresh slice.
+* **Unary list kernels that only read a length.** `kernel_call` emits
+  `rt.List_isEmptyT[T](xs)` / `rt.List_lengthT[T](xs)` over a proven slice,
+  instead of `rt.AsBool(rt.List_isEmpty(any(xs)))`, whose body calls the
+  unexported `asList` and therefore reflect-walks the list and boxes every
+  element in order to compute `len(items) == 0`.
+
+`list_unary_prim_twin` (`lower.rs`) stops at twins returning a Go **primitive**,
+and that boundary is load-bearing rather than a convenient stopping point:
+`bool` and `int` need no container rebuilt on the way out, so the twin is a
+strict removal. `rt.List_headT` returns `rt.SkyMaybe[A]` where its consumers take
+`rt.SkyMaybe[any]` — a distinct instantiation needing a reflective
+`rt.MaybeCoerce` rebuild, so it RELOCATES cost, which is the same reason `head`
+is absent from `SKY_LIST_HOF_TWINS`. `rt.List_reverseT` / `takeT` / `dropT` pass
+that test but are O(n) work rather than an O(1) length read, so they are a
+different measurement and are left for a later tranche per §5.5's staged-rollout
+rule. **`::` is deliberately untouched** — it was this stage's negative control,
+and re-pointing it would have destroyed the only evidence that the routing keys
+on proven operand types rather than on operator shape.
+
+Three properties of this lever are worth carrying:
+
+* **The failure mode is a `go build` error, never a silent miscompile** — the
+  same property §5.5 records. Committing to `[]T` at emit time is sound exactly
+  when the operand really is a `[]T`, which is what Go's own type checker
+  decides.
+* **A typed twin is not automatically a correct twin.** `rt.List_appendT` was
+  `return append(a, b...)`, which reuses the left operand's backing array
+  whenever it has spare capacity, where `rt.Concat` has always returned a fresh
+  slice. Sky lists are immutable values, so re-pointing at it as written would
+  have made `ys ++ zs` mutate a list nobody appended to — and one of the sites
+  the change converts in `19-skyforum` has a live Sky.Live **model field** as its
+  left operand. Every corpus gate passes that bug; it returns the right value and
+  corrupts a different one. Before re-pointing at any unreachable twin, check it
+  against the semantics of what it replaces, not just its type.
+* **A frame invisible to pprof is not a frame that costs nothing.**
+  `rt.List_isEmpty` does not appear at all in a 385-node listing at
+  `-nodefraction=0`, and `rt.List_length` sits at 0.011% — yet removing them was
+  worth **−3.6%** of all objects per interaction. The cost was the `any(xs)` box
+  at the CALL site, attributed to whichever function inlined it, and the erased
+  body forced Go to keep three `Std_Ui.renderNodeAs` closures as real functions
+  (`renderNodeAs.func1.{1,2,4}`, 888–899 objects/interaction each). Replacing the
+  body with `len(xs) == 0` made them inlinable and the frames stopped existing.
+  A profile attributes to frames; a cost paid at a call site and inlined away has
+  no frame to be attributed to.
+
+Measured effect on a real app: `docs/perf/runs/stage4-typed-list-plumbing-20260816/`
+— **−21.3% / −21.9%** objects per interaction for the pair, at 94 and 974
+elements, with the allocation effect flat across the 10× view-size change.
+
 ### 5.4 Sealing more ADTs
 
 The R6 lever (§4.5). Requires
