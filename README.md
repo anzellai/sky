@@ -243,16 +243,22 @@ built from source in CI (PostgreSQL 18.6, pinned) with an SBOM and a
 GPL/LGPL/AGPL link gate.
 
 **It fits in 1 GB.** A Sky.Live app plus its own PostgreSQL is ~380 MB before
-sessions — ~250 MB of Linux, ~40 MB of app, and **36 MB of PostgreSQL**. So a
-free-tier or entry-level cloud instance runs a real app with a real database,
-and the managed-database line disappears from the bill.
+sessions — ~250 MB of Linux, ~40 MB of app, and **~22–29 MB of PostgreSQL**
+(measured under `--embed` on an e2-small). So a free-tier or entry-level cloud
+instance runs a real app with a real database, and the managed-database line
+disappears from the bill.
 
 Sizing is measured on real GCE instances, not guessed
-([docs/perf/](docs/perf/skylive-interaction-cost.md)): a Sky.Live session costs
-**~1.35 MB**, but **CPU runs out roughly 12× before memory does**. An e2-micro
-*holds* ~450 sessions and is comfortable up to about **25–50**; an e2-small up
-to **50–100**. Size on the knee, not the RAM — and on a burstable instance plan
-with the sustained figure, since repeated runs decline as credits drain.
+([docs/perf/](docs/perf/skylive-interaction-cost.md)): a session's marginal
+cost is **625–650 kB** on x86 with a PostgreSQL session store (451–531 kB on
+the memory store, stock `GOGC`), and **CPU runs out well before memory does**
+— an e2-small with embedded PostgreSQL sustains **~64 interactions/sec at 300
+sessions**, an e2-medium **~262** (commit `3ed83c08`;
+[docs/perf/runs/gcp-x86-capacity-20260816/](docs/perf/runs/gcp-x86-capacity-20260816/)).
+Count **physical cores, not vCPUs** — a GCE vCPU is an SMT thread, worth
+~1.27×, not 2× ([runs/gomaxprocs-scaling-20260816/](docs/perf/runs/gomaxprocs-scaling-20260816/)).
+And on a burstable e2 instance plan with the **sustained** figure: a rested
+e2-small's first run measured **2.7×** what it then sustained.
 
 A single instance has no replica — `--shared` generates a backup timer, a lone
 `--embed` app does not, so schedule a `pg_dump`. Full sizing:
