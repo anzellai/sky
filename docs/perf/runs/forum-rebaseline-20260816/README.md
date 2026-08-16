@@ -129,6 +129,14 @@ buckets-g1.tsv     per-run self-time buckets
   self-check as a precondition, then `patch_rate` over the measurement window.
   Every run archived here reads `"patch_rate": 1` and
   `"patches_naming_absent_ids": 0`.
+* **Every run asserts the session store it actually opened.** Sky.Live's dev
+  fallback degrades an unreachable durable store to memory and then serves
+  every request correctly, so a mis-configured run is valid, patch-bearing and
+  about a different system. `forumrun.sh` reads the store banner out of
+  `app.log` and REJECTS a mismatch; `store.txt` records both. This is not
+  hypothetical — it caught two separate configuration bugs of mine during this
+  run, one of which had already produced a full set of `"valid": true` results
+  labelled postgres while running on memory.
 * **The CPU self-time attribution is unreliable on this host at high
   interaction rates**, and the three repeats are what show it. See
   `ANALYSIS.md` §4. The totals are repeatable to 2%; the allocation

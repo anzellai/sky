@@ -1,0 +1,18 @@
+establishing 50 sessions over 3s...
+50 sessions live; measuring for 45s (warmup 3s)
+
+=== Sky.Live load run ===
+label                showcase-g8-r3
+url                  http://127.0.0.1:8531
+sessions             50 requested, 50 established
+think time           0s
+interactions         42737
+throughput           949.2 interactions/sec
+latency p50/p95/p99  22.08 / 174.67 / 267.68 ms  (max 594.71)
+error rate           0.000%
+outcomes             map[ok:42737]
+handler              r.1#div.7#div.1#div.0#button.click (0 setup steps/session)
+patches              42737 total, 1.00 per interaction, 100.0% of interactions bore one
+SSE frames received  250 (across 50 sessions; 50 streams still open at end)
+generator CPU        2.2% of machine
+valid                true

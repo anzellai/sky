@@ -99,7 +99,18 @@ done
 cd "$APPDIR"
 CMD="./sky-out/$BIN"
 ENVARGS=("SKY_LIVE_PORT=$PORT" "GOMAXPROCS=$GOMAXPROCS_SET")
-[ -n "$APP_ENV" ] && ENVARGS+=($APP_ENV)
+# APP_ENV is NEWLINE-separated, one KEY=VALUE per line, and is read without
+# word splitting. It used to be space-separated and expanded unquoted, which
+# split a libpq DSN mid-string: `SKY_LIVE_STORE_PATH=host=127.0.0.1` reached
+# the app and `port=55433 user=skyperf dbname=skylive sslmode=disable` became
+# four junk variables. The app then failed to reach postgres on :5432, fell
+# back to the memory store, served every request correctly, and produced a
+# full set of `"valid": true` runs measuring the wrong store.
+if [ -n "$APP_ENV" ]; then
+  while IFS= read -r _line; do
+    [ -n "$_line" ] && ENVARGS+=("$_line")
+  done <<< "$APP_ENV"
+fi
 if [ "$PROFILE" = "1" ]; then
   ENVARGS+=("SKY_PERF_PPROF_ADDR=127.0.0.1:$PPROF_PORT")
   [ "$MEMRATE" != "0" ] && ENVARGS+=("SKY_PERF_MEMPROFILERATE=$MEMRATE")
@@ -122,6 +133,23 @@ curl -sf "http://127.0.0.1:$PORT/" -o /dev/null || { echo "app never came up" >&
 kill -0 "$APP_PID" 2>/dev/null || { echo "app pid $APP_PID is gone but the port answers" >&2; exit 71; }
 OWNER=$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1)
 [ "$OWNER" = "$APP_PID" ] || { echo "port $PORT owned by pid $OWNER, not our $APP_PID" >&2; exit 72; }
+
+# The store the app ACTUALLY opened, asserted against the one it was asked
+# for. Sky.Live's dev fallback is deliberate and right for a developer -- an
+# unreachable durable store logs a warning and degrades to memory, and the app
+# then serves every request correctly. For a benchmark it is a trap: the run
+# is valid, patch-bearing, repeatable and about a different system. It has to
+# be a REJECT, not a footnote.
+STORE_WANTED=$(printf '%s\n' "$APP_ENV" | awk -F= '$1=="SKY_LIVE_STORE"{print $2; exit}')
+if [ -n "$STORE_WANTED" ]; then
+  STORE_GOT=$(awk -F'session store: ' '/session store: /{split($2,a," "); print a[1]; exit}' "$OUT/app.log")
+  echo "store_requested $STORE_WANTED" >| "$OUT/store.txt"
+  echo "store_opened    ${STORE_GOT:-NONE}" >> "$OUT/store.txt"
+  if [ "$STORE_GOT" != "$STORE_WANTED" ]; then
+    grep -i "store" "$OUT/app.log" | head -20 >&2
+    reject "asked for the $STORE_WANTED session store, the app opened ${STORE_GOT:-none}"
+  fi
+fi
 
 # The view size this binary is actually serving, counted from the HTML it
 # actually served, at the moment it served it. The regression's x-axis is

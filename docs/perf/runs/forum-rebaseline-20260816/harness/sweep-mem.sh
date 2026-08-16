@@ -37,8 +37,9 @@ for rep in $(seq 1 "$REPS"); do
     fi
     rm -rf "$out"
     echo "=== $TAG n=$n rep=$rep ==="
-    appenv="FORUM_POSTS=5 SKY_LIVE_STORE=postgres SKY_LIVE_STORE_PATH=$DSN"
-    [ -n "$EVICT" ] && appenv="$appenv SKY_LIVE_IDLE_EVICT=$EVICT"
+    appenv=$(printf 'FORUM_POSTS=5\nSKY_LIVE_STORE=postgres\nSKY_LIVE_STORE_PATH=%s' "$DSN")
+    if [ -n "$EVICT" ]; then appenv="$appenv
+SKY_LIVE_IDLE_EVICT=$EVICT"; fi
     MODE=mem N="$n" THINK=1s DUR=90s RAMP=20s WARMUP=5s \
       GOMAXPROCS_SET="$G" PROFILE=1 MEMRATE=0 \
       APP_ENV="$appenv" LABEL="mem-$TAG-n$n-r$rep" \

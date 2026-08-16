@@ -31,7 +31,7 @@ if [ ! -d "$PGDATA" ]; then
 fi
 
 if ! "$PGBIN/pg_ctl" -D "$PGDATA" status >/dev/null 2>&1; then
-  "$PGBIN/pg_ctl" -D "$PGDATA" -l "$BASE/pg.log" -w start
+  "$PGBIN/pg_ctl" -D "$PGDATA" -l "$BASE/pg.log" -w start >&2
 fi
 "$PGBIN/psql" -h 127.0.0.1 -p "$PGPORT" -U skyperf -d postgres \
   -c "SELECT 1" >/dev/null

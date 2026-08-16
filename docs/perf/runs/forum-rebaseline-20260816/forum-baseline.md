@@ -323,37 +323,189 @@ The one outlier in the whole matrix is `cpu-g8/p5-r3`, 1515/s against 1956 and
 
 ---
 
-## 6. Comparison with `26-ui-showcase` at the same commit
+## 6. `26-ui-showcase` at the same commit — the poster costs less
 
-`showcase-g1/`, `showcase-g8/` — same harness, same validity gates, same
-commit, so this is the first like-for-like comparison of the two apps.
-Figures are in the run directories and summarised at the end of this file.
+Same harness, same validity gates, same commit, so this is the first
+like-for-like comparison of the two apps (`showcase-g1/`, `showcase-g8/`; all
+six runs `"patch_rate": 1`).
+
+| | showcase, 384 el | skyforum, 382 el | ratio |
+|---|---|---|---:|
+| ms / interaction, 1 core | 4.14 / 4.26 / 4.40 | 7.00 / 7.15 / 7.19 | **1.67×** |
+| interactions/sec, 1 core | 235 / 235 / 246 | 138 / 142 / 143 | 1.71× |
+| interactions/sec, 8 cores | 844 / 945 / 949 | 536 / 555 / 555 | 1.68× |
+| objects / interaction | 44,566 – 44,892 | 95,972 – 96,646 | **2.15×** |
+| kB / interaction | 2,828 – 2,849 | 4,816 – 4,850 | 1.70× |
+| µs / element | 11.1 | 18.6 | 1.67× |
+| objects / element | 116 | 252 | 2.17× |
+
+Ranges do not overlap on any row.
+
+**At equal element counts, an application costs 1.67× more time and allocates
+2.17× more objects per element than the poster.** The showcase is not merely a
+different app: as a per-element cost model it understates a real one by a
+factor of two on the quantity — allocation — that drives the cost.
+
+The mechanism is the one the architecture consult identified. 99.3% of
+showcase's construction sites are model-independent, so its per-element work
+is largely a constant tree walk; skyforum routes 90.6% of its nodes through
+`List.indexedMap` with a first-class function value, which is the
+`asList` → per-element `reflect.Value.Call` → `[]any` → `AsListT` round trip
+of §3.
+
+Also worth recording: HEAD is **2.2× faster on showcase than the published
+baseline** (240 vs 108.6 interactions/sec, same 50-session closed-loop config
+at GOMAXPROCS=1), against the 1.80× claimed for eta-expansion plus typed list
+accessors. Not attributed further here — the intervening commits were not
+bisected.
 
 ---
 
-## 7. Defects found, not fixed
+## 7. Memory under sustained load, on the postgres session store
+
+`mem-pg/` — n = 100/300/500, three runs each, `SKY_LIVE_STORE=postgres`
+against a real PostgreSQL 14 cluster (`shared_buffers = 32MB`, sized like the
+small instance the capacity question is about), sustained load at `-think 1s`,
+GOMAXPROCS=8, `SKY_LIVE_IDLE_EVICT` at its 5 m default. Every run
+`"patch_rate": 1`; every run's `store.txt` records `store_opened postgres`;
+2,845 rows landed in `sky_sessions`.
+
+| n | RSS under load, no forced GC (MB) | after forced GC | 20 s after load stops | `HeapAlloc` under load (MB) | goroutines |
+|---:|---|---|---|---|---:|
+| 100 | 96.8 / 98.3 / 99.3 | identical | 97.6 / 99.2 / 100.1 | 23.4 / 27.0 / 31.4 | 4.1 / session |
+| 300 | 207.7 / 209.6 / 211.0 | identical | 208.4 / 210.3 / 211.8 | 55.4 / 57.6 / 63.6 | 4.04 / session |
+| 500 | 300.5 / 338.4 / 341.5 | identical | 301.0 / 339.2 / 342.3 | 92.1 / 116.7 / 117.3 | 4.02 / session |
+
+```
+RSS_MB = 39.96 + 0.5717 x sessions      n = 9, R2 = 0.9866
+  base         40.0 MB   (se 8.6)
+  per session  585 kB    (se 26)
+```
+
+### The sizing input a capacity table should use
+
+**Base 40 MB, plus 585 kB per concurrent session, of RSS under load.** Not
+either of the two numbers already in circulation:
+
+* **Not 336 kB/session.** That is live heap with the sessions *idle* after two
+  forced GCs — a correct retention measurement, and 1.7× under the resident
+  cost of a session that is actually being used.
+* **Not "RSS ÷ n".** At n = 100 that reads 991–1,017 kB/session, 1.7× the
+  marginal cost, because it charges the whole 40 MB base to 100 sessions. The
+  archived idle sweep shows the same artefact from the other end (2,118 →
+  1,367 kB/session as n went 25 → 100); a per-session cost that depends on how
+  many sessions you divide by is a base term in disguise. The **slope** is the
+  session cost; the intercept is the process.
+
+Two supporting facts. `RSS` after a forced GC is byte-identical to `RSS`
+before one at every n — Go does not return the spans — and RSS 20 s after the
+load stops is *higher* than during it, never lower. And the durable
+representation of a session is **2,080 bytes** (mean over 2,845 `sky_sessions`
+rows, max 2,086): **0.36% of the 585 kB it occupies resident.** Almost none of
+a session's footprint is its model.
+
+### `idleEvict` changes nothing at bench timescales, and that is the honest finding
+
+`mem-pgevict/` repeats the sweep with `SKY_LIVE_IDLE_EVICT=15s` so the feature
+demonstrably engages rather than sitting at its unreachable 5 m default:
+
+| n | default (5 m), 3 runs | 15 s, 1 run |
+|---:|---|---|
+| 100 | 96.8 / 98.3 / 99.3 MB | 98.2 MB |
+| 300 | 207.7 / 209.6 / 211.0 MB | 212.8 MB |
+| 500 | 300.5 / 338.4 / 341.5 MB | 323.5 MB |
+
+Every 15 s figure sits inside the default arm's range. **No effect is
+claimed.** Nor should one be expected: under sustained load at `-think 1s` no
+session is idle for 15 s, so the eviction predicate (`now - lastSeen >
+idleEvict` AND no live SSE) is never true for a session that is being used.
+The tiered cache is a lever for *idle* sessions, and a sustained-load sweep is
+the wrong instrument for it. Recorded so that "idleEvict was allowed to fire"
+is not mistaken for "idleEvict was shown to help".
+
+### Does 500 sessions fit an e2-small's 2 GB alongside embedded PostgreSQL?
+
+**Yes, with roughly 3× headroom.** MEASURED on this host, plus one INFERRED
+architecture adjustment:
+
+| | |
+|---|---|
+| Sky app, 500 sessions (MEASURED, arm64) | 40 + 0.585 × 500 = **333 MB** |
+| the same on x86 (INFERRED — `../../skylive-remote-validation.md` found the memory figure ~30% higher) | ~430 MB |
+| PostgreSQL, `shared_buffers = 32MB` + ~10 backends (from AGENTS.md's sizing table) | ~100 MB |
+| Minimal Linux (AGENTS.md) | ~250 MB |
+| **Total** | **~780 MB of 2,048 MB** |
+
+The memory question is not close. **CPU decides the instance, exactly as the
+existing remote validation says** — this run measured 487–492 interactions/sec
+sustained at n = 500 on 8 M1 cores, and an e2-small has 2 shared vCPU. What
+this run does change is the *per-interaction* cost that sizing rests on:
+1.78–1.92 ms at 94 elements against the 9.15 ms the e2-small guidance was
+derived from. That is a 5× cheaper interaction, and INFERRED, it should move
+the e2-small knee proportionally — but it is an inference across an
+architecture and a machine class, and it is not measured here. Re-running the
+GCE arm at HEAD, with this harness, is the honest way to settle it.
+
+---
+
+## 8. Defects, and one non-defect I nearly published
 
 Reported per the brief; no fix attempted.
 
-1. **`SKY_LIVE_STORE_PATH` silently ignores a `postgres://` URL.**
-   `docs/skylive/overview.md:123` documents
-   `[live] store = "postgres", storePath = "postgres://..."`. With
-   `SKY_LIVE_STORE_PATH=postgres://skyperf@127.0.0.1:55433/skylive?sslmode=disable`
-   the app logs five connect attempts against `user=anzel database=` on
-   `/private/tmp/.s.PGSQL.5432` — pgx's rendering of an **empty** connection
-   string — then falls back to memory. The same cluster reached with the libpq
-   keyword form, `host=127.0.0.1 port=55433 user=skyperf dbname=skylive
-   sslmode=disable`, connects on the first attempt and logs
-   `session store: postgres`. `DATABASE_URL` in URL form is dropped the same
-   way.
+1. **NOT A DEFECT — `SKY_LIVE_STORE_PATH` handles `postgres://` correctly.**
+   Recorded because it was nearly published as one. A first probe had the app
+   log five connect attempts against `user=anzel database=` on the default
+   unix socket and fall back to memory, which reads exactly like a dropped
+   URL. It was my harness: `pg-up.sh` emitted the DSN on stdout *after*
+   `pg_ctl`'s `waiting for server to start.... done / server started`, and
+   `DSN=$(pg-up.sh)` captured all three lines. Re-probed with a clean value,
+   **all five spellings open the store** — `postgres://…?sslmode=disable`,
+   `postgres://…` bare, `postgresql://…`, the libpq keyword form, and
+   `DATABASE_URL`. The claim is withdrawn.
 
-2. **The dev fallback is easy to measure straight past.** The URL failure
-   above ends in `DEV fallback → in-memory sessions` and the app then serves
-   normally — so a load run against it yields a complete set of valid,
-   patch-bearing, entirely mislabelled results. It is documented behaviour
-   (`ENV` set makes it a hard failure) and right for a developer; it is a trap
-   for a benchmark, which is why the memory runs record the store banner from
-   `app.log`.
+2. **A harness hazard worth naming, in the runtime's favour.** Sky.Live's
+   dev fallback — an unreachable durable store logs a warning and degrades to
+   memory, and is a hard failure only when `ENV` is set — is right for a
+   developer and a trap for a benchmark: the app then serves every request
+   correctly and the run comes out valid, patch-bearing, repeatable and about
+   a different system. It caught me twice (the DSN above, and a
+   word-split DSN in my own driver), and produced a complete set of
+   `"valid": true` numbers labelled postgres while running on memory.
+   `forumrun.sh` now reads the store banner out of `app.log` and **rejects**
+   any run whose opened store differs from the one it asked for
+   (`store.txt` in every memory run).
 
 3. **`skyliveload`'s handler choice was the corpus defect**, described in
-   `README.md`. Recorded here so the defects live in one list.
+   `README.md`. Recorded here so the findings live in one list.
+
+---
+
+## 9. What this run did NOT measure
+
+Named rather than left to be assumed covered.
+
+* **No GCE / x86 arm.** Everything is one Apple M1. The e2-small capacity
+  statement in §7 carries an INFERRED 30% memory adjustment from
+  `../../skylive-remote-validation.md` and no CPU adjustment at all. The
+  interaction is 5× cheaper than the figure the existing e2-small guidance
+  rests on; whether the knee moves 5× is **not measured**, and re-running the
+  GCE arm at HEAD with this harness is the only way to settle it.
+* **No `sqlite` or `redis` session store.** Postgres and memory only.
+* **No multi-replica topology**, no cross-instance broker, no sticky-session
+  behaviour. One process throughout.
+* **No `update`-heavy app.** The one interaction shape measured re-runs
+  `update` over the post list and re-renders the whole page — a `view`-bound
+  profile. An app whose cost is in `update`, or one holding a large Model with
+  a small view, is not represented.
+* **No attribution of HEAD's 2.2× on showcase to individual commits.** §6
+  records the ratio against the published baseline; the intervening commits
+  were not bisected.
+* **No self-time bucket figures at 30–382 elements.** The profiler is not
+  stable there on this host (§4); only totals, allocation attribution, and the
+  974/1614-element buckets are quoted.
+* **`SKY_LIVE_IDLE_EVICT` was exercised, not validated.** See §7 — a
+  sustained-load sweep cannot show what an idle-session lever does.
+* **The `-min-patch-rate` default changed from "at least one patch ever" to
+  0.9.** Re-running the archived `attribution-20260815` sweeps with this
+  generator would now reject their forum arm. That is intended, and it means
+  the two generators are not interchangeable for reproducing those runs.
