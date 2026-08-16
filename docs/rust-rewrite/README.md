@@ -65,6 +65,7 @@ purity tax or laziness/space-leak surprises. Full rationale: [`00-goals-and-prin
 | 11 | [`11-testing-and-verification.md`](11-testing-and-verification.md) | Conformance corpus, differential + rejection testing, repro gate | agent |
 | 12 | [`12-migration-and-milestones.md`](12-migration-and-milestones.md) | Phased bring-up with the Haskell compiler as oracle | agent |
 | 13 | [`13-change-verification-and-edge-cases.md`](13-change-verification-and-edge-cases.md) | The edge-case matrix + mandatory verification protocol for `hir`/`ty`/`lower` changes (corpus gates ≠ sufficient) | agent |
+| 14 | [`14-runtime-narrowing-taxonomy.md`](14-runtime-narrowing-taxonomy.md) | **The floor authority.** Where `rt.Coerce`/`rt.As*`/`rt.Field`/`rt.SkyCall` come from, which origins are closeable and which are floor, the levers, and the mapping from the legacy Haskell §6 numbers | agent |
 
 ## Status
 
