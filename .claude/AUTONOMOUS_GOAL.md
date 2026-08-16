@@ -333,3 +333,34 @@ That is a stronger guarantee than any drift-detection test.
   silent behaviour change is the one unacceptable outcome.
 
 Design record: `docs/tooling/config-architecture.md`.
+
+## Closing mandate (2026-08-16, verbatim)
+
+> ok i let you arrange + organise all these accordingly, in autonomous until
+> branch/pr ready to merge with known bugs + security fixed and configs
+> implemented correctly
+
+**Done = PR ready to merge**, meaning all of:
+1. **Security fixed** — wire-ADT registry (`51034674`), production cookies missing
+   `Secure` + stack traces leaking (`517c3945`). Both in release notes.
+2. **Known bugs fixed** — `Live.withTtl` dead (builder unreachable), `streamDebug`
+   evaluated before dotenv so `SKY_STREAM_DEBUG` in `.env` is permanently silent,
+   and whatever the config gates surface.
+3. **Config implemented correctly** — the three-way split: `sky.toml` = build
+   manifest + compile-only flags; typed `withX` record; `.env`/env feeding it with
+   defaults that PRESERVE today's effective behaviour.
+4. **CI green** — achieved at `dc63b3ed`, all 16 jobs. Must stay green.
+5. **Grill round 8** — seven rounds, seven breached. Not optional.
+
+NOT required for this mandate: the Django/Next.js benchmark (20 of 45 arms
+remain, harness built and fairness-audited on `perf/fwbench` — resume later), and
+further Sky.Live perf work, which the user has directed to a separate branch.
+
+### Budget allocation (weekly quota at 85%, resets Tue 05:59)
+
+**Fable 5 is a SEPARATE, UNUSED bucket (0%).** Dispatch mechanical, well-specified,
+gate-verifiable work there via the Agent `model` override: docs corrections,
+measurement runs, the embedded-PG local bundle steps, benchmark arms.
+
+Keep the default model for adversarial judgement: grill rounds, config stages
+where a wrong default is invisible, design decisions.
