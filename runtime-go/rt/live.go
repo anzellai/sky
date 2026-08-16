@@ -334,24 +334,95 @@ func init() {
 // VNode rendering
 // ═══════════════════════════════════════════════════════════
 
+// renderVNode serialises a VNode subtree to HTML and, as it goes,
+// registers every event binding it emits into `handlers`.
+//
+// It is a thin wrapper over renderVNodeInto, which is where the work
+// happens. The recursion threads ONE builder rather than returning a
+// string per node. The previous shape gave every element its own
+// strings.Builder, grew it through several doublings, produced a string,
+// and had the parent copy those bytes into ITS builder — so a leaf's bytes
+// were copied once per level of nesting above it, and each of the ~390
+// elements of a reference page paid its own allocation series.
+//
+// Measured on the 389-element gate fixture (`live_alloc_gate_test.go`),
+// Apple M1, go1.26.1: 2,632 -> 692 allocations and 380 kB -> 176 kB per
+// render for the builder change, then 692 -> 212 and 176 kB -> 162 kB once
+// the per-event-binding fmt.Sprintf below went with it. Output is
+// byte-identical: the walk order, the escaping and the emission order are
+// untouched, which is what `xtask repro` and `build-run --golden` pin.
 func renderVNode(n VNode, handlers map[string]any) string {
+	return renderVNodeSized(n, handlers, 0)
+}
+
+// renderVNodeSized is renderVNode with a capacity hint for the builder.
+//
+// A page body is tens of kilobytes and the builder starts at nothing, so it
+// reaches that size through a dozen doublings, each of which allocates a
+// buffer and copies everything written so far into it. On a 37.5 kB
+// reference page that cost 162 kB of allocation to produce 37.5 kB of
+// output — 4.3x the bytes, all of it copying.
+//
+// The hint is the length of the body this session rendered LAST time, which
+// is the best available predictor: a view's size is stable across the
+// interactions of a session, and being wrong only costs the growth that
+// would have happened anyway (too small) or one oversized buffer that is
+// immediately released (too large). A fixed constant was rejected for the
+// second reason — it would make every small page allocate as if it were a
+// large one.
+//
+// hint <= 0 means "no idea", which is what the subtree renders inside the
+// diff pass use; those are small and have no session to ask.
+func renderVNodeSized(n VNode, handlers map[string]any, hint int) string {
+	var sb strings.Builder
+	if hint > 0 {
+		sb.Grow(hint)
+	}
+	renderVNodeInto(&sb, n, handlers)
+	return sb.String()
+}
+
+// renderBody renders the session's current tree into its handler table,
+// sized by what this session's view measured last time.
+func (s *liveSession) renderBody(vn VNode) string {
+	return renderVNodeSized(vn, s.handlers, s.lastBodyLen)
+}
+
+// renderChildrenHTML serialises a node's children as the innerHTML of a
+// subtree-replace patch.
+//
+// It passes a nil handler table on purpose. Every id inside this subtree
+// was registered by the whole-tree render that this diff runs against, so
+// there is nothing here to record; the three call sites used to say that
+// by handing renderVNode a fresh `map[string]any{}` and dropping it on the
+// floor, which allocated a map per patch and read as though the
+// registrations were wanted.
+func renderChildrenHTML(children []VNode) string {
+	var sb strings.Builder
+	for _, c := range children {
+		renderVNodeInto(&sb, c, nil)
+	}
+	return sb.String()
+}
+
+func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 	if n.Kind == "text" {
-		return html.EscapeString(n.Text)
+		sb.WriteString(html.EscapeString(n.Text))
+		return
 	}
 	if n.Kind == "raw" {
-		return n.Text
+		sb.WriteString(n.Text)
+		return
 	}
 	// Html.doctype wraps children in a pseudo-element; render as
 	// <!DOCTYPE html> followed by the children directly.
 	if n.Tag == "!doctype-wrapper" {
-		var sb strings.Builder
 		sb.WriteString("<!DOCTYPE html>")
 		for _, c := range n.Children {
-			sb.WriteString(renderVNode(c, handlers))
+			renderVNodeInto(sb, c, handlers)
 		}
-		return sb.String()
+		return
 	}
-	var sb strings.Builder
 	sb.WriteString("<")
 	sb.WriteString(n.Tag)
 	// Stamp the element with its sky-id so diff patches can address it.
@@ -429,7 +500,16 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		//     rebuilds the same table — required for DB-backed stores
 		//     that can't serialise the handler map.
 		id := n.SkyID + "." + ev
-		handlers[id] = msg
+		// A nil map is the caller saying "render the bytes, drop the
+		// registrations" — what diffNodes wants when it re-serialises a
+		// subtree for a replace patch, since the ids in that subtree were
+		// already registered by the whole-tree render this diff follows.
+		// It used to say that by passing a throwaway `map[string]any{}`
+		// and discarding it, which allocated a map per replace patch and
+		// read as though the registrations mattered.
+		if handlers != nil {
+			handlers[id] = msg
+		}
 		msgName := msgDisplayName(msg)
 		// Event names starting with `sky-` are side-channel meta-events
 		// (onImage, onFile) — not real DOM events that __skyBindOne
@@ -438,18 +518,27 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		// HTML5 data-attribute convention. Plain DOM events (click,
 		// input, change, …) keep the legacy `sky-<eventName>` naming
 		// since __skyBindOne queries by that selector.
-		var attr string
+		//
+		// Written out rather than composed through fmt.Sprintf: the format
+		// string ran once per event binding on every render, and each run
+		// allocated the result plus the []any of its arguments. The bytes
+		// emitted are the same; only the route to the builder changed.
+		sb.WriteString(" ")
 		if strings.HasPrefix(ev, "sky-") {
-			attr = "data-sky-ev-" + ev
+			sb.WriteString("data-sky-ev-")
 		} else {
-			attr = "sky-" + ev
+			sb.WriteString("sky-")
 		}
-		sb.WriteString(fmt.Sprintf(` %s="%s" data-sky-hid="%s"`,
-			attr, html.EscapeString(msgName), id))
+		sb.WriteString(ev)
+		sb.WriteString(`="`)
+		sb.WriteString(html.EscapeString(msgName))
+		sb.WriteString(`" data-sky-hid="`)
+		sb.WriteString(id)
+		sb.WriteString(`"`)
 	}
 	if isVoidTag(n.Tag) {
 		sb.WriteString(" />")
-		return sb.String()
+		return
 	}
 	sb.WriteString(">")
 	// Textarea special-case: write the captured value as text content.
@@ -487,15 +576,14 @@ func renderVNode(n VNode, handlers map[string]any) string {
 			} else {
 				delete(picked.Attrs, "selected")
 			}
-			sb.WriteString(renderVNode(picked, handlers))
+			renderVNodeInto(sb, picked, handlers)
 		} else {
-			sb.WriteString(renderVNode(c, handlers))
+			renderVNodeInto(sb, c, handlers)
 		}
 	}
 	sb.WriteString("</")
 	sb.WriteString(n.Tag)
 	sb.WriteString(">")
-	return sb.String()
 }
 
 func copyAttrs(src map[string]string) map[string]string {
@@ -530,6 +618,16 @@ func msgDisplayName(msg any) string {
 	// builders and pre-v0.17 codegen.
 	if sv, ok := msg.(SkyVariant); ok {
 		return sv.SkyVariantName()
+	}
+	// Legacy SkyADT carries SkyName as a plain field, so a type assertion
+	// reads it directly. Without this the value fell through to the
+	// reflect.ValueOf + FieldByName("SkyName") path below — a by-name field
+	// search, on a function the render loop calls once per event binding
+	// and the diff calls twice more. Measured 46 ns -> 3 ns per call on an
+	// Apple M1. The reflect path stays for struct shapes that are neither
+	// (rt-side builders that embed SkyName in a bespoke struct).
+	if adt, ok := msg.(SkyADT); ok {
+		return adt.SkyName
 	}
 	rv := reflect.ValueOf(msg)
 	if rv.Kind() == reflect.Struct {
@@ -1013,10 +1111,93 @@ func pseudoSelectorForTag(tag string) (selector string, hoverGated bool, known b
 //
 // Pre-condition: assignSkyIDs has already stamped n.SkyID.
 func applyStyleInjections(n *VNode) {
-	injectMediaQueryStyles(n)
-	injectPseudoClassStyles(n)
-	injectTransitionStyles(n)
-	injectAnimationStyles(n)
+	present := scanStyleMarkers(n)
+	if present == 0 {
+		return
+	}
+	for _, p := range styleMarkerPasses {
+		if present&p.bit != 0 {
+			p.run(n)
+		}
+	}
+}
+
+// The four passes each walked the WHOLE tree, unconditionally, on every
+// render. A page using no `Ui.hover` and no `Ui.transition` — most pages,
+// and every page for at least three of the four passes — paid four full
+// traversals to find nothing and delete nothing.
+//
+// scanStyleMarkers replaces that with one traversal reporting which passes
+// have work. It reads KEY PRESENCE, not value: a marker attr present with
+// an EMPTY value still needs its pass to run, because stripping empty
+// markers so they cannot leak into the wire output is part of what the
+// pass does (`applyMarkerAsFirstChild` deletes them on the no-match path
+// too). Skipping a pass whose key appears on no element is exactly
+// equivalent, because every effect a pass has is keyed on that attr.
+//
+// The marker sets are disjoint from the `styleAttr` names the passes stamp
+// on the <style> elements they emit (`data-sky-mq` vs `data-sky-mq-q` /
+// `data-sky-mq-rules`), so no pass can see a marker another pass created
+// and running one cannot invalidate the scan.
+type styleMarkerPass struct {
+	bit  int
+	spec *styleMarkerSpec
+	run  func(*VNode)
+}
+
+// The order here IS the documented pass order above; the scan does not
+// reorder anything, it only drops passes with nothing to do.
+var styleMarkerPasses = []styleMarkerPass{
+	{markerMediaQuery, &mediaQuerySpec, injectMediaQueryStyles},
+	{markerPseudoClass, &pseudoClassSpec, injectPseudoClassStyles},
+	{markerTransition, &transitionSpec, injectTransitionStyles},
+	{markerAnimation, &animationSpec, injectAnimationStyles},
+}
+
+const (
+	markerMediaQuery = 1 << iota
+	markerPseudoClass
+	markerTransition
+	markerAnimation
+)
+
+// styleMarkerBits is DERIVED from the specs rather than restating their
+// marker names. A second hand-written copy of the attr list is exactly how
+// a pass gets silently skipped later: someone adds a marker attr to a spec,
+// the scan does not know it, and the pass stops running for the trees that
+// need it — with no test failing, because the pass still works whenever
+// some OTHER marker of the same spec is also present.
+var styleMarkerBits = func() map[string]int {
+	m := make(map[string]int, 8)
+	for _, p := range styleMarkerPasses {
+		for _, a := range p.spec.markerAttrs {
+			m[a] |= p.bit
+		}
+	}
+	return m
+}()
+
+func scanStyleMarkers(n *VNode) int {
+	found := 0
+	scanStyleMarkersInto(n, &found)
+	return found
+}
+
+func scanStyleMarkersInto(n *VNode, found *int) {
+	if n.Kind == "element" {
+		for k := range n.Attrs {
+			// Every marker starts with this prefix and almost no ordinary
+			// attribute does, so one prefix test rejects `class`, `id`,
+			// `href`, … before the map is touched at all.
+			if !strings.HasPrefix(k, "data-sky-") {
+				continue
+			}
+			*found |= styleMarkerBits[k]
+		}
+	}
+	for i := range n.Children {
+		scanStyleMarkersInto(&n.Children[i], found)
+	}
 }
 
 // injectTransitionStyles walks the tree after assignSkyIDs and
@@ -1379,7 +1560,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	}
 	// Tag / kind change → replace subtree via HTML patch.
 	if old.Tag != new_.Tag || old.Kind != new_.Kind {
-		html := renderVNode(*new_, map[string]any{})
+		html := renderVNode(*new_, nil)
 		*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 		return
 	}
@@ -1493,12 +1674,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	// has mismatched tag/kind, replace the whole subtree's innerHTML.
 	if len(old.Children) != len(new_.Children) {
 		if old.SkyID != "" {
-			var sb strings.Builder
-			dummy := map[string]any{}
-			for _, c := range new_.Children {
-				sb.WriteString(renderVNode(c, dummy))
-			}
-			html := sb.String()
+			html := renderChildrenHTML(new_.Children)
 			*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 		}
 		return
@@ -1510,12 +1686,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 		if oc.Kind == "text" && nc.Kind == "text" {
 			if oc.Text != nc.Text && old.SkyID != "" {
 				// Single-text is above; mixed children = replace subtree.
-				var sb strings.Builder
-				dummy := map[string]any{}
-				for _, c := range new_.Children {
-					sb.WriteString(renderVNode(c, dummy))
-				}
-				html := sb.String()
+				html := renderChildrenHTML(new_.Children)
 				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 				return
 			}
@@ -1524,12 +1695,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 		if oc.Tag != nc.Tag || oc.Kind != nc.Kind {
 			// Tag mismatch: replace subtree at the parent.
 			if old.SkyID != "" {
-				var sb strings.Builder
-				dummy := map[string]any{}
-				for _, c := range new_.Children {
-					sb.WriteString(renderVNode(c, dummy))
-				}
-				html := sb.String()
+				html := renderChildrenHTML(new_.Children)
 				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 			}
 			return
@@ -2214,6 +2380,13 @@ type liveSession struct {
 	// resilient to that refactor class.
 	lastComputedBody string
 	lastShippedBody  string
+	// lastBodyLen — the length of the last body this session computed,
+	// used only as the capacity hint for the next render's builder (see
+	// renderVNodeSized). It is a PERFORMANCE hint and nothing reads it for
+	// correctness: a wrong value costs a growth or an oversized buffer, not
+	// a wrong byte. Kept beside lastComputedBody because commitRender is
+	// the one place that knows a body was just produced.
+	lastBodyLen int
 	// lastSeen — UnixNano timestamp of the most recent store touch
 	// (Get / Set / decodeSession seed). Stored as atomic.Int64 so the
 	// store-level RWMutex (memoryStore.mu et al.) can keep using RLock
@@ -2570,6 +2743,13 @@ func (s *liveSession) nextLocalSeq() int64 {
 func (s *liveSession) commitRender(vn *VNode, body string) {
 	s.prevTree = vn
 	s.lastComputedBody = body
+	// Only ever grow the hint. A dispatch that renders an empty or error
+	// body (the panic-rollback path commits the PREVIOUS body back) would
+	// otherwise shrink the hint to nothing and hand the next full render
+	// the doubling series again.
+	if len(body) > s.lastBodyLen {
+		s.lastBodyLen = len(body)
+	}
 }
 
 // ingestInputState absorbs the client's dirty-input snapshot into
@@ -2608,28 +2788,33 @@ func clientStateFromRequest(state map[string]inputStateEntry) map[string]string 
 // evicted as a side effect so the map doesn't accumulate dead ids.
 // Returns nil if nothing to ack (client's __skyInputs map reads nil as
 // "no updates"). MUST be called with sess.mu held.
+//
+// The question this answers is membership for the ids the user currently
+// has dirty — one or two of them, the fields being typed into. It used to
+// answer that by building a set of EVERY sky-id in the tree first: a map
+// of ~390 entries, 27 kB and 15 allocations on a reference page, to look
+// up two keys. It now searches for the wanted ids directly and stops as
+// soon as it has them all, so the common case (the dirty field is on the
+// page, which is why the user is typing into it) does not even finish the
+// walk.
+//
+// It still needs a tree pass in the worst case — an id that has unmounted
+// can only be shown absent by looking everywhere — and that case is the
+// one that matters least, because it happens once per unmount rather than
+// once per keystroke.
 func ackInputsForPrevTree(s *liveSession) map[string]int64 {
 	if len(s.inputSeqs) == 0 {
 		return nil
 	}
-	present := map[string]struct{}{}
+	var out map[string]int64
 	if s.prevTree != nil {
-		var walk func(*VNode)
-		walk = func(n *VNode) {
-			if n.Kind == "element" && n.SkyID != "" {
-				present[n.SkyID] = struct{}{}
-			}
-			for i := range n.Children {
-				walk(&n.Children[i])
-			}
-		}
-		walk(s.prevTree)
+		out = make(map[string]int64, len(s.inputSeqs))
+		findAckInputs(s.prevTree, s.inputSeqs, out)
 	}
-	out := make(map[string]int64, len(s.inputSeqs))
-	for id, seq := range s.inputSeqs {
-		if _, ok := present[id]; ok {
-			out[id] = seq
-		} else {
+	// Evict ids the walk did not find: their element has unmounted, and
+	// keeping them would let the map grow without bound over a session.
+	for id := range s.inputSeqs {
+		if _, still := out[id]; !still {
 			delete(s.inputSeqs, id)
 		}
 	}
@@ -2637,6 +2822,26 @@ func ackInputsForPrevTree(s *liveSession) map[string]int64 {
 		return nil
 	}
 	return out
+}
+
+// findAckInputs records every id of `want` it finds in the subtree, and
+// reports true once it has found all of them so the callers above it can
+// unwind without visiting the rest of the tree.
+func findAckInputs(n *VNode, want map[string]int64, out map[string]int64) bool {
+	if n.Kind == "element" && n.SkyID != "" {
+		if seq, ok := want[n.SkyID]; ok {
+			out[n.SkyID] = seq
+			if len(out) == len(want) {
+				return true
+			}
+		}
+	}
+	for i := range n.Children {
+		if findAckInputs(&n.Children[i], want, out) {
+			return true
+		}
+	}
+	return false
 }
 
 // frameSnapshot captures every piece of session state encodeSSEFrame
@@ -4317,7 +4522,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	vn, _ := app.safeViewCall(model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
-	body := renderVNode(vn, sess.handlers)
+	body := sess.renderBody(vn)
 	// Initial mount writes the full HTML directly into the HTTP
 	// response below — the client receives this body as the page,
 	// so it counts as BOTH "last computed" and "last shipped".
@@ -4624,7 +4829,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		vn, _ := app.safeViewCall(sess.model)
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
 		// lastComputedBody coherent. Previously the body was
@@ -4695,7 +4900,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		sess.handlers = map[string]any{}
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		sess.commitRender(&vn, body)
 		sess.lastShippedBody = body
 		respSeq := sess.nextLocalSeq()
@@ -4854,7 +5059,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		vn, _ := app.safeViewCall(sess.model)
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
 		// lastComputedBody coherent — same shape as the
@@ -5116,7 +5321,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	vn, _ := app.safeViewCall(sess.model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
-	body = renderVNode(vn, sess.handlers)
+	body = sess.renderBody(vn)
 	// Commit prevTree + lastComputedBody as one atomic step (Cycle 3
 	// P40 / Gap C7). Previously this was two separate writes — prevTree
 	// here, lastComputedBody after runCmd + setupSubscriptions — which
@@ -5175,7 +5380,7 @@ func (app *liveApp) renderView(sess *liveSession) string {
 	vn, _ := app.safeViewCall(sess.model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
-	body := renderVNode(vn, sess.handlers)
+	body := sess.renderBody(vn)
 	sess.commitRender(&vn, body)
 	return body
 }
@@ -6382,7 +6587,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 			applyStyleInjections(&vn)
 			sess.handlers = map[string]any{}
-			body := renderVNode(vn, sess.handlers)
+			body := sess.renderBody(vn)
 			// Reconnect-resync writes the resync frame DIRECTLY to
 			// the SSE response writer below — so this body is both
 			// just-computed AND just-shipped, and the next tick's
@@ -6995,7 +7200,7 @@ func (app *liveApp) renderResyncFrame(sess *liveSession) (frameSnapshot, bool) {
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		sess.handlers = map[string]any{}
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		sess.commitRender(&vn, body)
 		sess.lastShippedBody = body
 		snap = sess.prepareFrameSnapshot(body)

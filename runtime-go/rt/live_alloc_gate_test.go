@@ -58,6 +58,7 @@ package rt
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -285,33 +286,230 @@ func TestStyleInjectionAllocationBudget(t *testing.T) {
 	}
 }
 
+// renderBodyByteBudget is the ratio of BYTES ALLOCATED to BYTES OF HTML
+// PRODUCED for one full page render through a session.
+//
+// This is the first gate in this file that measures bytes rather than
+// allocation count, and it exists because the two move independently —
+// point 2 of "what these gates do not catch" above, which was written after
+// a change lowered the count 6.7% while raising the bytes 8%.
+//
+// A strings.Builder that starts empty reaches a 37.5 kB page through a
+// dozen doublings, each allocating a new buffer and copying everything so
+// far into it: 162 kB of allocation for 37.5 kB of output, a ratio of 4.3.
+// Rendering through the session's size hint makes it 48.6 kB, a ratio of
+// 1.30. The budget sits at 2.0 — 1.5x headroom over the passing value and
+// 2.2x below the failing one, so it fires on the growth series coming back
+// rather than on drift.
+const renderBodyByteBudget = 2.0
+
+func TestRenderBodyByteBudget(t *testing.T) {
+	vn := HtmlToVNode(buildHtmlPage(gateItems))
+	assignSkyIDs(&vn, "r")
+	applyStyleInjections(&vn)
+
+	sess := &liveSession{handlers: map[string]any{}}
+	body := renderVNode(vn, sess.handlers)
+	if len(body) < 10000 {
+		t.Fatalf("fixture renders only %d bytes — too small for this gate "+
+			"to mean anything", len(body))
+	}
+	// Warm the hint exactly as a second interaction on a live session would.
+	sess.commitRender(&vn, body)
+	if sess.lastBodyLen != len(body) {
+		t.Fatalf("size hint was not recorded (%d, body is %d) — this gate "+
+			"would be measuring the unhinted path",
+			sess.lastBodyLen, len(body))
+	}
+
+	res := testing.Benchmark(func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = sess.renderBody(vn)
+		}
+	})
+	if res.N == 0 {
+		t.Fatal("benchmark did not run — no verdict is available")
+	}
+	ratio := float64(res.AllocedBytesPerOp()) / float64(len(body))
+	t.Logf("render allocated %d B for %d B of HTML = %.2fx (%d allocs)",
+		res.AllocedBytesPerOp(), len(body), ratio, res.AllocsPerOp())
+	if ratio > renderBodyByteBudget {
+		t.Errorf("render allocates %.2fx the bytes it emits, budget %.2fx "+
+			"(%d B allocated for %d B of HTML) — the builder is growing by "+
+			"doubling again, so every page is copied through a dozen buffers",
+			ratio, renderBodyByteBudget, res.AllocedBytesPerOp(), len(body))
+	}
+}
+
+// ---------------------------------------------------------------------
+// Style-injection guard: the scan must not be able to skip a live pass
+// ---------------------------------------------------------------------
+//
+// applyStyleInjections used to run all four passes unconditionally. It now
+// runs one scan and then only the passes whose marker attrs the scan found.
+// The failure that buys is silent: a pass that should have run does not,
+// its markers survive into the wire output as inert `data-*`, and the
+// styling it existed to emit is simply missing. Nothing else notices.
+//
+// These two tests are the guard. They are driven off `styleMarkerPasses`
+// and each spec's own `markerAttrs`, so a pass or a marker added later is
+// covered without anyone remembering to extend them.
+
+// markerTree builds a minimal tree whose inner element carries `attr`.
+func markerTree(attr, val string) VNode {
+	vn := HtmlToVNode(hElem("div", []any{hAttr("id", "root")},
+		[]any{hElem("section", []any{hAttr(attr, val)}, []any{hText("body")})}))
+	assignSkyIDs(&vn, "r")
+	return vn
+}
+
+// TestStyleInjectionGuardRunsEveryPassItsMarkerNeeds proves the guarded
+// funnel is indistinguishable from running all four passes unconditionally,
+// for every marker attr every spec declares, at an empty AND a non-empty
+// value. The empty case is the one that catches a value-keyed scan: an
+// empty marker is still stripped by its pass so it cannot leak onto the
+// wire, so a scan testing `v != ""` rather than key presence would leave it
+// in the output and this test would see the difference.
+//
+// Proven able to fail: deleting an entry from `styleMarkerBits`, or keying
+// the scan on the value, turns the corresponding cases red.
+func TestStyleInjectionGuardRunsEveryPassItsMarkerNeeds(t *testing.T) {
+	if len(styleMarkerPasses) == 0 {
+		t.Fatal("styleMarkerPasses is empty -- this gate is vacuous")
+	}
+	cases := 0
+	for _, p := range styleMarkerPasses {
+		if len(p.spec.markerAttrs) == 0 {
+			t.Errorf("pass with bit %d declares no markerAttrs", p.bit)
+		}
+		for _, attr := range p.spec.markerAttrs {
+			for _, val := range []string{"", "(min-width: 40em)"} {
+				cases++
+				guarded := markerTree(attr, val)
+				applyStyleInjections(&guarded)
+
+				unguarded := markerTree(attr, val)
+				for _, q := range styleMarkerPasses {
+					q.run(&unguarded)
+				}
+
+				got := renderVNode(guarded, nil)
+				want := renderVNode(unguarded, nil)
+				if got != want {
+					t.Errorf("marker %q=%q: guarded funnel diverged from the "+
+						"unconditional passes\n  guarded   %s\n  unguarded %s",
+						attr, val, got, want)
+				}
+				if strings.Contains(got, attr) {
+					t.Errorf("marker %q=%q survived into the rendered output "+
+						"-- its pass did not run: %s", attr, val, got)
+				}
+			}
+		}
+	}
+	if cases == 0 {
+		t.Fatal("no marker attrs were exercised -- this gate is vacuous")
+	}
+	t.Logf("%d marker cases across %d passes", cases, len(styleMarkerPasses))
+}
+
+// TestStyleMarkerScanIsDerivedFromTheSpecs pins the two properties the
+// scan's correctness rests on, neither of which is visible at its call
+// site: every declared marker maps to its own pass's bit, and no marker
+// collides with the `styleAttr` a pass stamps on the <style> elements it
+// emits. A collision there would let one pass read another pass's output
+// as its own input.
+func TestStyleMarkerScanIsDerivedFromTheSpecs(t *testing.T) {
+	seen := map[string]bool{}
+	for _, p := range styleMarkerPasses {
+		for _, attr := range p.spec.markerAttrs {
+			if styleMarkerBits[attr]&p.bit == 0 {
+				t.Errorf("marker %q does not map to its pass's bit %d", attr, p.bit)
+			}
+			if seen[attr] {
+				t.Errorf("marker %q is claimed by two passes", attr)
+			}
+			seen[attr] = true
+		}
+		if _, isMarker := styleMarkerBits[p.spec.styleAttr]; isMarker {
+			t.Errorf("styleAttr %q is also a marker attr -- a pass would see "+
+				"another pass's emitted <style> as work to do", p.spec.styleAttr)
+		}
+		// The scan filters on this prefix before consulting the map, so a
+		// marker that lost it would be invisible rather than merely wrong.
+		for _, attr := range p.spec.markerAttrs {
+			if !strings.HasPrefix(attr, "data-sky-") {
+				t.Errorf("marker %q lacks the data-sky- prefix the scan "+
+					"filters on -- the scan can never see it", attr)
+			}
+		}
+	}
+	// A tree with no markers at all must report no work.
+	clean := HtmlToVNode(hElem("div", []any{hAttr("class", "c")}, []any{hText("x")}))
+	if got := scanStyleMarkers(&clean); got != 0 {
+		t.Errorf("marker-free tree reported work: %d", got)
+	}
+}
+
 // interactionAllocBudget is allocations per ELEMENT for the whole server-side
-// interaction below the Sky boundary: lower the view ADT, assign ids, run the
-// style passes, diff against the previous tree.
+// interaction below the Sky boundary, as `dispatch` runs it: lower the view
+// ADT, assign ids, run the style passes, build the handler table and the
+// body, diff against the previous tree.
 //
-// Observed 16.50/element (6,418 allocations over 389 elements). Reverting the
-// style-injection spec hoist takes it to 27.51 and this gate goes red, which
-// is how it was proven able to fail.
+// TWO THINGS THIS GATE USED TO MISS, both fixed here:
 //
-// This budget is deliberately the LOOSER of the two: it covers a wide path
-// and would only catch a large regression. The per-pass gate above is the
-// sharp instrument; this one exists so that a regression somewhere else on
-// the interaction path -- one that no single sharp gate is watching -- still
-// has something in its way.
-const interactionAllocBudget = 20.0
+//  1. It rebuilt the FIXTURE inside the measured closure. `buildHtmlPage` is
+//     what the compiled Sky `view` returns — above the boundary this file
+//     measures — and it is 4,560 allocations, more than the whole runtime
+//     path. Two thirds of every number this gate printed described the test's
+//     own fixture builder, so a runtime regression had to be enormous to move
+//     the total. It is hoisted out now; `HtmlToVNode` does not mutate it,
+//     which is why one page can serve every iteration.
+//
+//  2. It never called `renderVNode`. The render was 2,632 of the 4,499
+//     allocations an interaction cost at the time this was written — the
+//     single largest component on the path — and no assertion in this file
+//     could see any of it. It is in the closure now, with a handler table,
+//     because populating that table is why dispatch renders at all.
+//
+// Observed 5.30/element (2,061 allocations over 389 elements). Before the
+// Stage 1 runtime-constant work the same closure measures 11.57/element
+// (4,499 allocations), so the budget at 8.0 sits 1.5x above the passing
+// value and 1.4x below the failing one -- it fires on a component-sized
+// regression coming back, not on drift.
+//
+// It remains the LOOSER instrument: the per-pass gates above are the sharp
+// ones. This exists so a regression somewhere on the path that no sharp gate
+// is watching still has something in its way.
+const interactionAllocBudget = 8.0
 
 func TestInteractionAllocationBudget(t *testing.T) {
 	census := htmlPageCensus(gateItems)
-	prev := HtmlToVNode(buildHtmlPage(gateItems))
+	// The view ADT the compiled Sky `view` would have returned. Built ONCE:
+	// see point 1 above.
+	page := buildHtmlPage(gateItems)
+
+	prev := HtmlToVNode(page)
 	assignSkyIDs(&prev, "r")
 	applyStyleInjections(&prev)
 
+	handlers := map[string]any{}
 	got := testing.AllocsPerRun(50, func() {
-		next := HtmlToVNode(buildHtmlPage(gateItems))
+		next := HtmlToVNode(page)
 		assignSkyIDs(&next, "r")
 		applyStyleInjections(&next)
+		clear(handlers)
+		_ = renderVNode(next, handlers)
 		diffTrees(&prev, &next, nil)
 	})
+	// A handler table that came back empty would mean the render walked no
+	// events, and the largest component of the budget would be measuring an
+	// early return.
+	if len(handlers) != census.withEvents {
+		t.Fatalf("render registered %d handlers, fixture has %d elements with "+
+			"events -- the measured closure is not doing the work",
+			len(handlers), census.withEvents)
+	}
 	per := got / float64(census.elements)
 	t.Logf("interaction: %.0f allocs over %d elements = %.2f/element",
 		got, census.elements, per)
