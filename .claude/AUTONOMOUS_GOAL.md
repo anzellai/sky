@@ -184,3 +184,31 @@ what a small instance DOES serve with the full single-DB topology, and the
 named architectural reason for the ceiling — with the numbers to support it.
 "We improved it" is not a close. Neither is quoting a figure from a tuned
 configuration the user did not ask for.
+
+## Scope decision — no auto-split frontend/backend (2026-08-16)
+
+Considered and REJECTED, by the user, with reasoning worth preserving:
+
+> we still need to store session etc. so async update vs sync will just create
+> more problems down the line.
+> we accpet it's truly fullstack + secured by default.
+> we shall focus on optimisation on sky.live app lifecycle + throughputs
+
+The proposal was to auto-partition a Sky.Live app: compile `view` to JS/WASM and
+run it client-side, keep the server as an API, with `Msg -> update` as an
+auto-generated wire protocol. Sky is unusually well suited to it — the effect
+system already distinguishes pure from `Task`, and `compute_def_effect` is
+already a whole-program per-`DefId` effect fixpoint, which is exactly the
+partition oracle such a design needs. It would have removed the view render
+(51.9% of interaction CPU) and server-held session state (625 kB/session) from
+the server entirely.
+
+Rejected because sessions must be stored either way, so the split does not
+remove the state problem — it relocates it and adds client/server reconciliation
+on top. Server-held state is also AUTHORITATIVE; client-held state can be lied
+about, and the effect system cannot tell you which pure branches are
+security-relevant.
+
+**The pinned model stands: Sky.Live is server-driven, truly full-stack, secure
+by default.** Optimisation targets the interaction lifecycle and throughput
+WITHIN that model. Do not re-propose the split as a performance tactic.
