@@ -530,6 +530,90 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
+  # ── Configuration surface + coverage ratchets ───────────────────────────────
+  #
+  # THESE RAN ONLY AT RELEASE, AND ONE OF THEM WAS RED ON `main` FOR IT.
+  #
+  # `config-surface` and `config-matrix` are both `Tier::T1`, and the repo's
+  # only `harness --tier t1` invocation is in `release.yml`; `denominators
+  # --check` and `coverage-ledger --check` were likewise release-only steps. So
+  # a whole class of drift was invisible until a tag was cut.
+  #
+  # What that cost, live on this branch: `SKY_HTTP_CLIENT_TIMEOUT` was added by
+  # `51ae71ee`, one commit AFTER `4a118e39` regenerated the census, and
+  # `xtask config-surface --check` was FAILING on a clean tree at HEAD —
+  # `STALE — summary.documented_names: 88 -> 89`. The series left its own gate
+  # red at merge and nothing noticed, because nothing ran it before a release.
+  #
+  # COST, measured locally at this commit (warm caches, 8-core M-series):
+  #   denominators --check      0.13 s
+  #   coverage-ledger --check   0.28 s
+  #   config-surface --check    0.28 s
+  #   config-matrix (harness)  ~50 s   — 5 `sky build`s + 10 start/observe/kill
+  #
+  # The first three are free and belong on every PR without argument. The
+  # fourth is ~50 s of RUN time but needs a `--release` compiler and a Go
+  # toolchain, which is why it gets its own job rather than being bolted onto
+  # one that has neither. It is nowhere near `codegen-build`'s ~13 min, so it
+  # does not move the tier's critical path.
+  #
+  # `harness --only config-matrix` rather than `xtask config-matrix --check`:
+  # the harness is what enforces the budget by `killpg`, requires the exact
+  # assertion count, and refuses to render PASS when it cannot establish a
+  # verdict. The plain subcommand has none of that.
+  config-gates:
+    needs: setup
+    runs-on: ubuntu-latest
+    # ~60s cache restore + ~90s release `sky` (cache-warm) + ~50s config-matrix
+    # + three sub-second checks ≈ 4 min. 1.5x with runner variance ≈ 12.
+    timeout-minutes: 12
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-linux-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      # `config_matrix::sky_binary` establishes that the compiler it measures
+      # was built from THIS tree and rebuilds it when it was not. Building it
+      # here anyway keeps that rebuild OUT of the gate's budget, and keeps the
+      # gate's own `cargo` invocation from nesting inside a `cargo run`.
+      - name: Build the compiler the config matrix measures
+        working-directory: rust
+        run: cargo build --release --locked -p sky
+      - name: 'Gate — config-surface (the census is current; no defect count rose)'
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- config-surface --check
+      - name: Gate — coverage ratchets (denominators + ledger)
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          cargo run --release --locked -q -p xtask -- denominators --check
+          cargo run --release --locked -q -p xtask -- coverage-ledger --check
+      - name: 'Gate — config-matrix (effective values, observed from running binaries)'
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --only config-matrix
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
   # ── Editor-parity (Neovim) + fuzzer (small; isolated setup) ─────────────────
   lsp-fuzz:
     needs: setup
@@ -834,6 +918,7 @@ jobs:
       - codegen-build
       - build-corpus
       - behaviour-docs
+      - config-gates
       - lsp-fuzz
       - licence-gate-linux
       - licence-gate-macos

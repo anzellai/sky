@@ -73,10 +73,10 @@
       "proven_at_unix": 1786370152
     },
     "config-matrix": {
-      "mutation": "config-matrix.claim-a-dead-builder-is-alive",
+      "mutation": "config-matrix.invert-operator-env-provenance",
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1786897914
+      "proven_at_unix": 1786907177
     },
     "config-surface": {
       "mutation": "config-surface.seed-a-suffix-nothing-reads",

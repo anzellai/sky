@@ -178,8 +178,8 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
         "the configLayers wrapper — it takes the suffix as a parameter and \
          resolves it with skyEnvName(suffix), so the read is non-literal HERE \
          while every caller passes a literal (resolveTTL/resolveIdleEvict/\
-         resolveStoreKind/resolveStorePath, and resolveLivePort via \
-         resolveLivePortLayers)",
+         resolveStoreKind/resolveStorePath, and resolveLivePort, which calls \
+         configLayers directly)",
     ),
 ];
 

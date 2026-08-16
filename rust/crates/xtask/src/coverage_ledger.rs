@@ -657,6 +657,12 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     // anti-drift test stays total; they claim nothing.
     ("xtask:denominators", &[]),
     ("xtask:coverage-ledger", &[]),
+    // Likewise accounting: `config-surface --check` measures how much
+    // configuration surface EXISTS and ratchets its defect counts. The
+    // effective-value coverage that reads from it is scored through
+    // `config-matrix` (a registered gate, so GATE_SURFACES already carries it);
+    // claiming it here too would double-count.
+    ("xtask:config-surface", &[]),
     // The harness runs the registered gates; their coverage is already scored
     // through GATE_SURFACES, and counting it twice here would double-claim.
     ("xtask:harness", &[]),
@@ -1286,8 +1292,28 @@ fn rust_string_literals(src: &str) -> String {
 
 // ------------------------------------------------------------------- gates
 
-/// Gate name -> `PROVEN` in `docs/coverage/falsifier-proofs.json`.
-fn read_proofs(repo_root: &Path) -> BTreeMap<String, bool> {
+/// One row of `docs/coverage/falsifier-proofs.json`.
+///
+/// The `mutation` is NOT decoration. A proof says "gate G went red when
+/// mutation M was applied"; it is evidence about the PAIR, and it survives a
+/// change to G's declared mutations only if M is still one of them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordedProof {
+    pub proven: bool,
+    pub mutation: String,
+}
+
+/// Gate name -> the proof recorded in `docs/coverage/falsifier-proofs.json`.
+///
+/// This used to return `BTreeMap<String, bool>`, dropping `mutation` on the
+/// floor. That is how `config-matrix` kept a `PROVEN` record — and the
+/// strongest coverage tier the ledger can award — against
+/// `config-matrix.claim-a-dead-builder-is-alive`, a mutation commit `4a118e39`
+/// had deleted because stage 3 made it inapplicable. The registry declared
+/// `claim-a-live-builder-is-dead`; nothing compared the two, so the ledger
+/// credited a proof of a property no longer under test. Substituting
+/// `THIS-MUTATION-NEVER-EXISTED` for the id left `--check` green.
+fn read_proofs(repo_root: &Path) -> BTreeMap<String, RecordedProof> {
     let mut out = BTreeMap::new();
     let path = repo_root.join("docs/coverage/falsifier-proofs.json");
     let Ok(src) = std::fs::read_to_string(&path) else {
@@ -1300,29 +1326,83 @@ fn read_proofs(repo_root: &Path) -> BTreeMap<String, bool> {
         for (name, g) in map {
             out.insert(
                 name.clone(),
-                g["observed"].as_str() == Some("PROVEN"),
+                RecordedProof {
+                    proven: g["observed"].as_str() == Some("PROVEN"),
+                    mutation: g["mutation"].as_str().unwrap_or_default().to_string(),
+                },
             );
         }
     }
     out
 }
 
+/// Does the registry still declare `mutation` for `gate`?
+///
+/// An unregistered gate declares nothing, so a proof naming any mutation for it
+/// is stale by construction.
+fn registry_declares_mutation(gate: &str, mutation: &str) -> bool {
+    GATES
+        .iter()
+        .find(|g| g.name == gate)
+        .is_some_and(|g| g.mutations.as_slice().iter().any(|m| m.id == mutation))
+}
+
+/// Gates whose recorded proof credits a mutation the registry no longer
+/// declares, as violation strings.
+///
+/// Reported in BOTH `--check` and regeneration mode, deliberately: the fix is
+/// to re-establish the proof (`xtask harness --verify-falsifiers --only <gate>`)
+/// and only then regenerate, which is the ordering `docs/tooling/gate-harness.md`
+/// already documents. Writing a ledger over a dead proof would launder the
+/// defect into a fresh baseline.
+fn stale_proof_violations(proofs: &BTreeMap<String, RecordedProof>) -> Vec<String> {
+    let mut out = Vec::new();
+    for (gate, p) in proofs {
+        if !p.proven {
+            continue;
+        }
+        if registry_declares_mutation(gate, &p.mutation) {
+            continue;
+        }
+        let declared: Vec<&str> = GATES
+            .iter()
+            .find(|g| g.name == gate.as_str())
+            .map(|g| g.mutations.as_slice().iter().map(|m| m.id).collect())
+            .unwrap_or_default();
+        out.push(format!(
+            "STALE PROOF — `{gate}` is recorded PROVEN against mutation `{}`, which the \
+             registry no longer declares. Currently declared: {}. A proof is evidence about \
+             a (gate, mutation) PAIR; renaming or replacing the mutation retires the \
+             evidence with it. Re-establish it with \
+             `cargo run --release -p xtask -- harness --verify-falsifiers --only {gate}`, \
+             then regenerate the ledger.",
+            if p.mutation.is_empty() { "(none recorded)" } else { p.mutation.as_str() },
+            if declared.is_empty() {
+                "(the gate is not in the registry at all)".to_string()
+            } else {
+                declared.join(", ")
+            }
+        ));
+    }
+    out
+}
+
 /// A registered gate's coverage strength: `Falsified` only when its falsifying
-/// mutation is recorded PROVEN, `Asserted` otherwise. A registered-but-unproven
-/// gate still counts assertions; it just has not shown they can go red.
+/// mutation is recorded PROVEN **and the recorded mutation is one the registry
+/// still declares**, `Asserted` otherwise. A registered-but-unproven gate still
+/// counts assertions; it just has not shown they can go red.
 ///
 /// A **BLOCKED** gate contributes `None`. `GateState::counts_as_cover()` is
 /// false for `Blocked`, and that property is the entire reason the state was
 /// affordable: a block that still counted as coverage would be a skip with
 /// better paperwork.
-fn gate_strength(gate: &str, proofs: &BTreeMap<String, bool>) -> Strength {
+fn gate_strength(gate: &str, proofs: &BTreeMap<String, RecordedProof>) -> Strength {
     if crate::harness::registry::block_for(gate).is_some() {
         return Strength::None;
     }
-    if *proofs.get(gate).unwrap_or(&false) {
-        Strength::Falsified
-    } else {
-        Strength::Asserted
+    match proofs.get(gate) {
+        Some(p) if p.proven && registry_declares_mutation(gate, &p.mutation) => Strength::Falsified,
+        _ => Strength::Asserted,
     }
 }
 
@@ -1954,7 +2034,17 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                         "tier": g.tier.label(),
                         "expected_assertions": g.expected,
                         "summary": g.summary,
-                        "falsifier_proven": *proofs.get(g.name).unwrap_or(&false),
+                        // Both halves, because the pair is the evidence. A bare
+                        // boolean is what let a proof outlive the mutation it
+                        // was taken against; naming the credited mutation puts
+                        // the claim and its subject in the same record.
+                        "falsifier_proven": proofs
+                            .get(g.name)
+                            .is_some_and(|p| p.proven && registry_declares_mutation(g.name, &p.mutation)),
+                        "falsifier_mutation": proofs
+                            .get(g.name)
+                            .map(|p| p.mutation.clone())
+                            .unwrap_or_default(),
                         "surfaces": ids,
                     }),
                 )
@@ -2911,6 +3001,9 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         .and_then(|s| serde_json::from_str(&s).ok());
 
     let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
+    // Reported in BOTH modes: a proof that credits a retired mutation must not
+    // be laundered into a freshly regenerated baseline either.
+    fails.extend(stale_proof_violations(&read_proofs(repo_root)));
 
     let text = format!("{}\n", serde_json::to_string_pretty(&led.doc).unwrap());
     if check_only {
@@ -3049,6 +3142,7 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
         .and_then(|s| serde_json::from_str(&s).ok());
 
     let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
+    fails.extend(stale_proof_violations(&read_proofs(repo_root)));
     match &baseline {
         None => fails.push(format!("{} does not exist", json_path.display())),
         Some(base) => {
@@ -3215,12 +3309,23 @@ mod tests {
     /// false for `Blocked`, and the ledger must agree — a block that still
     /// scored as coverage would be a skip with better paperwork, which is the
     /// exact thing the state was introduced to make inexpressible.
+    /// A proof entry crediting `gate` with its FIRST declared mutation.
+    fn live_proof(gate: &str) -> RecordedProof {
+        let mutation = GATES
+            .iter()
+            .find(|g| g.name == gate)
+            .and_then(|g| g.mutations.as_slice().first())
+            .map(|m| m.id.to_string())
+            .unwrap_or_default();
+        RecordedProof { proven: true, mutation }
+    }
+
     #[test]
     fn a_blocked_gate_contributes_no_cover() {
         use crate::harness::registry::BLOCKED;
-        let proofs: BTreeMap<String, bool> = BLOCKED
+        let proofs: BTreeMap<String, RecordedProof> = BLOCKED
             .iter()
-            .map(|b| (b.gate.to_string(), true))
+            .map(|b| (b.gate.to_string(), live_proof(b.gate)))
             .collect();
         assert!(
             !BLOCKED.is_empty(),
@@ -3242,9 +3347,63 @@ mod tests {
             .map(|g| g.name)
             .find(|n| crate::harness::registry::block_for(n).is_none())
             .expect("some gate is unblocked");
-        let proven: BTreeMap<String, bool> =
-            [(unblocked.to_string(), true)].into_iter().collect();
+        let proven: BTreeMap<String, RecordedProof> =
+            [(unblocked.to_string(), live_proof(unblocked))].into_iter().collect();
         assert_eq!(gate_strength(unblocked, &proven), Strength::Falsified);
+    }
+
+    /// THE REGRESSION for GAP 1. A recorded proof is evidence about a
+    /// (gate, mutation) PAIR. Keying it on the gate alone let
+    /// `config-matrix`'s `PROVEN` record — taken against
+    /// `config-matrix.claim-a-dead-builder-is-alive`, a mutation commit
+    /// `4a118e39` deleted — keep awarding `Falsified`, the strongest tier, for
+    /// a property nothing tests any more. `THIS-MUTATION-NEVER-EXISTED`
+    /// substituted for the id left `coverage-ledger --check` green.
+    #[test]
+    fn a_proof_naming_a_retired_mutation_is_not_cover() {
+        let gate = GATES
+            .iter()
+            .map(|g| g.name)
+            .find(|n| crate::harness::registry::block_for(n).is_none())
+            .expect("some gate is unblocked");
+
+        // The proof the registry still declares: strongest tier, no violation.
+        let live: BTreeMap<String, RecordedProof> =
+            [(gate.to_string(), live_proof(gate))].into_iter().collect();
+        assert_eq!(gate_strength(gate, &live), Strength::Falsified);
+        assert!(
+            stale_proof_violations(&live).is_empty(),
+            "a proof naming a declared mutation must not be reported stale"
+        );
+
+        // The same gate, same `PROVEN`, a mutation the registry never declared.
+        let dead: BTreeMap<String, RecordedProof> = [(
+            gate.to_string(),
+            RecordedProof {
+                proven: true,
+                mutation: "THIS-MUTATION-NEVER-EXISTED".to_string(),
+            },
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            gate_strength(gate, &dead),
+            Strength::Asserted,
+            "a proof naming a retired mutation still scored as Falsified"
+        );
+        let v = stale_proof_violations(&dead);
+        assert_eq!(v.len(), 1, "expected exactly one STALE PROOF violation, got {v:?}");
+        assert!(v[0].contains("THIS-MUTATION-NEVER-EXISTED"), "{}", v[0]);
+        assert!(v[0].contains(gate), "{}", v[0]);
+    }
+
+    /// Every gate recorded PROVEN in the CHECKED-IN ledger names a mutation the
+    /// registry still declares. This is the file-level form of the test above:
+    /// it is what catches the drift on the real tree rather than on a fixture.
+    #[test]
+    fn the_checked_in_proof_ledger_names_only_live_mutations() {
+        let v = stale_proof_violations(&read_proofs(&repo_root()));
+        assert!(v.is_empty(), "{}", v.join("\n"));
     }
 
     /// The script scanner must see every invocation form CI actually uses.

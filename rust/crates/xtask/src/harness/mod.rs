@@ -708,12 +708,28 @@ impl Proofs {
         Proofs { entries }
     }
 
-    /// Is this gate's falsification proven within the window?
+    /// Is this gate's falsification proven within the window, AGAINST A
+    /// MUTATION THE REGISTRY STILL DECLARES?
+    ///
+    /// The last clause is not decoration. A proof is evidence about a
+    /// (gate, mutation) pair; renaming or replacing the mutation retires the
+    /// evidence with it. Reading only `observed` let `config-matrix` render
+    /// PROVEN under `--require-proofs` on a record taken against
+    /// `config-matrix.claim-a-dead-builder-is-alive`, which commit `4a118e39`
+    /// had deleted — the same defect the coverage ledger carried.
     fn fresh(&self, gate: &str) -> bool {
         let Some(e) = self.entries.get(gate) else {
             return false;
         };
         if e.get("outcome").and_then(|o| o.as_str()) != Some("as-declared") {
+            return false;
+        }
+        let recorded = e.get("mutation").and_then(|m| m.as_str()).unwrap_or_default();
+        let declared = registry::GATES
+            .iter()
+            .find(|g| g.name == gate)
+            .is_some_and(|g| g.mutations.as_slice().iter().any(|m| m.id == recorded));
+        if !declared {
             return false;
         }
         let at = e.get("proven_at_unix").and_then(|v| v.as_u64()).unwrap_or(0);

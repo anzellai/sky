@@ -67,6 +67,26 @@
 # closed adapters the golden still reserved slack for, and that slack is now
 # gone. The `narrow` fall is a decrease in SITE count and is not a speedup
 # measurement — nothing here weights a site by how often it runs.
+#
+# ── Recorded transition, 2026-08-16 — the corpus is discovered, not assumed ──
+# 61 rows -> 66. The five added existed on disk all along with a `sky.toml` and
+# a `src/`, and no floor was locked for any of them:
+#     apps/fieldbook/probe               narrow=2
+#     examples/39-hub-demo/billing-app   narrow=8
+#     examples/39-hub-demo/frontend-app  narrow=7
+#     simple                             narrow=1
+#     test_pkg                           narrow=1
+# The gate could not report the omission because its denominator was this file:
+# "56 of 61" is `golden.len()`, so a project missing from the golden was missing
+# from the question. Three were invisible to a NON-RECURSIVE `read_dir` on
+# `examples/` (`39-hub-demo` is a wrapper holding two projects and none of its
+# own; `apps/fieldbook/probe` nests inside a member); two were dropped by a
+# hard-coded `n != "simple" && n != "test_pkg"` with no reason attached.
+#
+# Discovery is now recursive over examples/, apps/ and sky-bundled/, and a
+# discovered project with no golden row FAILS. Blessed with all 66 emitting in
+# one run (`sky install` restored the five FFI surfaces first): rows 61 -> 66
+# (+5), tokens 8353 -> 8372 (+19). No existing row moved.
 00-standard-libs	adapter=1	dispatch=0	narrow=186
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=9
@@ -124,7 +144,12 @@
 55-store-partial-update	adapter=0	dispatch=0	narrow=69
 apps/dispatch	adapter=0	dispatch=0	narrow=491
 apps/fieldbook	adapter=1	dispatch=0	narrow=556
+apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
 apps/ledger	adapter=0	dispatch=0	narrow=462
 apps/relay	adapter=5	dispatch=0	narrow=170
+examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=8
+examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=7
+simple	adapter=0	dispatch=0	narrow=1
 sky-bundled/console	adapter=2	dispatch=0	narrow=283
 sky-bundled/doc	adapter=0	dispatch=0	narrow=17
+test_pkg	adapter=0	dispatch=0	narrow=1

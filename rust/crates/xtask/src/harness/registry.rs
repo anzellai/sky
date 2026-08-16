@@ -1020,57 +1020,47 @@ pub static GATES: &[Gate] = &[
         // Builds and runs five real Sky.Live apps and binds real ports;
         // `killpg` and `process_group(0)` are what teardown depends on.
         platforms: UNIX,
-        // Five `sky build`s (~8 s each warm, slower cold) and ten
-        // start/observe/kill cycles. Generous, because the alternative to a
-        // generous budget on a build-and-run gate is a flaky one, and a
-        // timeout here renders FAIL, never a fabricated pass.
-        budget_s: 900,
+        // Five `sky build`s (~8 s each warm, slower cold), ten
+        // start/observe/kill cycles, and — since the gate now establishes that
+        // the compiler it measures was built from THIS tree — a
+        // `cargo build --release -p sky` whenever it was not. Generous, because
+        // the alternative to a generous budget on a build-and-run gate is a
+        // flaky one, and a timeout here renders FAIL, never a fabricated pass.
+        budget_s: 1800,
         expected: bodies::CONFIG_MATRIX_EXPECTED,
         expect: Expect::Falsifiable,
         summary: "every covered setting's EFFECTIVE value, observed from running binaries, \
                   matches the baseline in every arm combination",
-        // THE mutation, and it is the defect the gate exists to catch rather
-        // than a proxy for it: a declared builder verdict the observation
-        // contradicts.
+        // THE mutation, and it is now a SOURCE mutation — the precedence rule
+        // itself, in the one file that holds it.
         //
-        // It used to run the other way. `Live.withTtl` was dead (design §1.8)
-        // — `lower.rs:822` seeds `LIVE_TTL=1800` into every program and
-        // `parseTTL` read the environment first — so the manifest recorded
-        // `builder_reaches_runtime = false` and this mutation flipped it to
-        // `true`, the claim a careless stage-3 commit would make.
+        // Every previous version of this falsifier edited the gate's own TOML,
+        // and the comment here said why: a mutation in `lower.rs` or
+        // `runtime-go/` "would leave it measuring the unmutated tree and report
+        // VACUOUS", because both reach the gate only through an
+        // already-built `sky` binary. That was true, and it meant
+        // `--verify-falsifiers` proved the gate could catch a lie in its own
+        // manifest and NOTHING about production code. Demonstrated: reverting
+        // the stage-3 fix without rebuilding gave `config-matrix: OK` in 49 s;
+        // the same edit after a 17.8 s `cargo build` gave six findings.
         //
-        // Stage 3 made that claim TRUE, and the old mutation died with it: the
-        // string `builder_reaches_runtime = false` no longer occurs anywhere,
-        // and `every_replace_once_mutation_targets_a_real_unique_site` failed
-        // with "occurs 0x ... 0 means the mutation is dead". A mutation that
-        // cannot be applied proves nothing, and a fix that quietly retires its
-        // own falsifier is how a gate becomes decorative.
-        //
-        // So it now runs in the direction that is still wrong: declaring a
-        // LIVE builder dead. The gate checks the verdict in BOTH directions
-        // precisely because claiming a live builder is dead hides a regression
-        // as well as the reverse, and this is what proves that second
-        // direction is real rather than merely asserted in a comment.
-        //
-        // Anchored on `live.ttl`'s `set_builder` line, because
-        // `builder_reaches_runtime = true` alone now occurs four times and an
-        // ambiguous mutation is rejected as loudly as a dead one.
-        //
-        // It edits DATA the gate reads, so nothing needs rebuilding between
-        // applying it and observing red — and in particular not the compiler,
-        // which is the trap a mutation in `lower.rs` or `runtime-go/` falls
-        // into here: both reach this gate only through the already-built `sky`
-        // binary, so mutating them would leave it measuring the unmutated tree
-        // and report VACUOUS.
+        // `config_matrix::sky_binary` now establishes that the compiler it
+        // measures was built from this tree and rebuilds it when it was not, so
+        // a `runtime-go/` mutation reaches the observation. Inverting
+        // `operatorSet`'s provenance test makes an operator's environment stop
+        // outranking a `withX` builder — the exact regression stage 3 closed —
+        // and moves `live.storePath/env+builder` and `live.ttl/env+builder`,
+        // which the unlisted-difference scan reports as named cell
+        // differences.
         mutations: Mutations::new(&[Mutation {
-            id: "config-matrix.claim-a-live-builder-is-dead",
-            description: "declare that `Live.withTtl`'s value does NOT reach the runtime; \
-                          the builder-only cell observes 41m0s against an unset 30m0s, so \
-                          the BUILDER clause must go red",
+            id: "config-matrix.invert-operator-env-provenance",
+            description: "invert the provenance test that makes an operator's env outrank a \
+                          `withX` builder (live_config_precedence.go); the env+builder cells \
+                          must move and the unlisted-difference scan must go red",
             kind: MutationKind::ReplaceOnce {
-                path: "rust/crates/xtask/config-matrix.toml",
-                from: "set_builder   = \"41m\"\nbuilder_reaches_runtime = true",
-                to: "set_builder   = \"41m\"\nbuilder_reaches_runtime = false",
+                path: "runtime-go/rt/live_config_precedence.go",
+                from: "operatorSet := envSet && envVal != \"\" && !isSeededDefault(name)",
+                to: "operatorSet := envSet && envVal != \"\" && isSeededDefault(name)",
             },
         }]),
         body: bodies::config_matrix,

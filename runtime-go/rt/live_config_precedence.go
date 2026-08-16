@@ -104,12 +104,17 @@ func resolveStorePath(builderVal string) string {
 	return firstNonEmpty(configLayers("LIVE_STORE_PATH", builderVal))
 }
 
-// resolveLivePortLayers — the listen port, as an ordered candidate list.
-// Kept separate from `resolveLivePort` because the port's fallback is a
-// number and its "unparseable" test is `n > 0` rather than a parse error.
-func resolveLivePortLayers(builderVal string) []string {
-	return configLayers("LIVE_PORT", builderVal)
-}
+// `resolveLivePortLayers` USED TO LIVE HERE and it was a decoy: a one-line
+// wrapper around `configLayers("LIVE_PORT", …)` with ZERO callers in
+// production and in tests, while `resolveLivePort` (live.go:3866) called
+// `configLayers` directly. Every other resolver in this file has at least one
+// production call site; this one existed only to be read.
+//
+// It was found because inverting ITS precedence left `config-matrix --check:
+// OK` — the file that exists to hold "one precedence rule" contained a second,
+// unreachable copy of the rule that a reader would reasonably edit. Deleted
+// rather than wired: wiring it would add indirection to reach the same
+// `configLayers` call, and a decoy in this file is worse than no file.
 
 // parsePortLayers returns the first candidate that is a positive integer, or 0.
 func parsePortLayers(vals []string) int {

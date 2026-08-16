@@ -160,7 +160,7 @@
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::harness::layer2;
 
@@ -190,6 +190,11 @@ const READY_TIMEOUT: Duration = Duration::from_secs(45);
 /// How long to let the stderr pipe catch up with the stdout readiness line
 /// before reading the log. See the note in [`run_fixture`].
 const BANNER_SETTLE: Duration = Duration::from_secs(10);
+
+/// How long to allow between the app ANNOUNCING a port and that port actually
+/// being bound. The announcement is `fmt.Printf`ed from the same goroutine that
+/// is about to call `ListenAndServe`, so this is slack, not a wait.
+const BIND_CONFIRM: Duration = Duration::from_secs(10);
 
 // ---------------------------------------------------------------------------
 // A TOML subset, hand-rolled
@@ -388,6 +393,7 @@ struct Manifest {
     unobservable: Vec<String>,
     listed: Vec<Listed>,
     deferred_stanzas: usize,
+    bucket_changes: Vec<BucketChange>,
 }
 
 /// A `[[default-changed]]` / `[[moved]]` row: the only way an observed value
@@ -427,6 +433,7 @@ fn load_manifest(root: &Path) -> Result<Manifest, String> {
     let mut unobservable = Vec::new();
     let mut listed = Vec::new();
     let mut deferred_stanzas = 0usize;
+    let mut bucket_changes: Vec<BucketChange> = Vec::new();
 
     for (name, st) in &stanzas {
         match name.as_str() {
@@ -558,6 +565,39 @@ fn load_manifest(root: &Path) -> Result<Manifest, String> {
                     to,
                 });
             }
+            "bucket-change" => {
+                let what = "[[bucket-change]]";
+                let metric = need_str(st, "metric", what)?;
+                if !RATCHETED.iter().any(|(m, _)| *m == metric) {
+                    return Err(format!(
+                        "{what}: `metric = {metric:?}` is not ratcheted. Accounting for a rise \
+                         in a metric nothing ratchets buys nothing and hides the typo."
+                    ));
+                }
+                let reason = need_str(st, "reason", what)?;
+                if reason.trim().len() < 80 {
+                    return Err(format!(
+                        "{what} {metric}: `reason` is {} chars. Raising an uncovered count is \
+                         a decision to stop measuring something; say what and why.",
+                        reason.trim().len()
+                    ));
+                }
+                need_str(st, "commit", what)?;
+                let num = |k: &str| -> Result<u64, String> {
+                    need_str(st, k, what)?
+                        .trim()
+                        .parse::<u64>()
+                        .map_err(|_| format!("{what}: `{k}` must be a whole number"))
+                };
+                let (from, to) = (num("from")?, num("to")?);
+                if to <= from {
+                    return Err(format!(
+                        "{what} {metric}: to {to} is not above from {from}. A \
+                         [[bucket-change]] authorises a RISE; a fall needs no authorisation."
+                    ));
+                }
+                bucket_changes.push(BucketChange { metric, from, to });
+            }
             other => return Err(format!("config-matrix.toml: unknown stanza `[[{other}]]`")),
         }
     }
@@ -574,6 +614,7 @@ fn load_manifest(root: &Path) -> Result<Manifest, String> {
         unobservable,
         listed,
         deferred_stanzas,
+        bucket_changes,
     })
 }
 
@@ -707,19 +748,191 @@ fn write_fixture(dir: &Path, toml: &str, main: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn sky_binary(root: &Path) -> Result<PathBuf, String> {
+/// Where a built compiler may live, in preference order.
+fn sky_binary_candidates(root: &Path) -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Some(t) = std::env::var_os("CARGO_TARGET_DIR") {
         candidates.push(PathBuf::from(t).join("release/sky"));
     }
     candidates.push(root.join("rust/target/release/sky"));
+    // `scripts/build.sh:80` installs the cargo-built Rust binary here, so this
+    // is the same artefact, not the retired Haskell compiler.
     candidates.push(root.join("sky-out/sky"));
-    candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| {
-        "no compiler at rust/target/release/sky or sky-out/sky — build it first \
-         (`cargo build --release -p sky`, or scripts/build.sh). A gate that cannot run \
-         has not passed."
-            .to_string()
-    })
+    candidates
+}
+
+/// The trees whose contents decide what a compiled `sky` binary DOES: the
+/// compiler crates, the Go runtime it embeds, and the Sky stdlib it ships.
+///
+/// `rust/crates/xtask` is excluded deliberately — editing the gate does not
+/// change what an already-built compiler emits, and demanding a compiler
+/// rebuild for a comment in this file would train people to bypass the check.
+const MEASURED_SOURCE_ROOTS: &[(&str, &[&str])] = &[
+    ("rust/crates", &["rs"]),
+    ("runtime-go", &["go"]),
+    ("sky-stdlib", &["sky", "skyi"]),
+];
+
+/// The newest mtime among [`MEASURED_SOURCE_ROOTS`], with the file that carries
+/// it — the witness, so a staleness message can name what moved.
+fn newest_source_mtime(root: &Path) -> Result<(SystemTime, PathBuf), String> {
+    let mut newest = SystemTime::UNIX_EPOCH;
+    let mut witness = PathBuf::new();
+    let mut seen = 0usize;
+    for (rel, exts) in MEASURED_SOURCE_ROOTS {
+        let dir = root.join(rel);
+        if !dir.is_dir() {
+            return Err(format!(
+                "{} does not exist — the gate cannot establish that the compiler it is \
+                 about to measure was built from this tree, and a measurement of an \
+                 unknown artefact is not a measurement.",
+                dir.display()
+            ));
+        }
+        walk_newest(&dir, exts, &mut newest, &mut witness, &mut seen)?;
+    }
+    // A walk that found nothing would make every binary look fresh — the
+    // vacuity this whole gate exists to refuse.
+    if seen < 100 {
+        return Err(format!(
+            "the source walk found only {seen} files under {:?}. A walk that finds \
+             nothing makes any binary look fresh.",
+            MEASURED_SOURCE_ROOTS.iter().map(|(r, _)| *r).collect::<Vec<_>>()
+        ));
+    }
+    Ok((newest, witness))
+}
+
+fn walk_newest(
+    dir: &Path,
+    exts: &[&str],
+    newest: &mut SystemTime,
+    witness: &mut PathBuf,
+    seen: &mut usize,
+) -> Result<(), String> {
+    let entries =
+        std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("cannot read an entry of {}: {e}", dir.display()))?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // Build output and vendored deps are not sources; walking them would
+        // make the check depend on its own artefacts.
+        if name == "target" || name == "node_modules" || name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            if dir.ends_with("crates") && name == "xtask" {
+                continue;
+            }
+            walk_newest(&path, exts, newest, witness, seen)?;
+            continue;
+        }
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            continue;
+        };
+        if !exts.contains(&ext) {
+            continue;
+        }
+        // Go test files are not compiled into the embedded runtime.
+        if ext == "go" && name.ends_with("_test.go") {
+            continue;
+        }
+        *seen += 1;
+        let m = entry
+            .metadata()
+            .and_then(|md| md.modified())
+            .map_err(|e| format!("cannot stat {}: {e}", path.display()))?;
+        if m > *newest {
+            *newest = m;
+            *witness = path;
+        }
+    }
+    Ok(())
+}
+
+/// The compiler binary this gate measures, PROVEN to have been built from the
+/// tree it is measuring.
+///
+/// # The defect this closes
+///
+/// This used to be "find the first candidate that is a file". So the gate
+/// measured whatever binary happened to be on disk. Demonstrated: reverting the
+/// stage-3 precedence fix in `runtime-go/` WITHOUT rebuilding produced
+/// `config-matrix: OK` in 49 s; the same edit after a 17.8 s `cargo build`
+/// produced six findings including
+/// `VERDICT live.ttl.builder_reaches_runtime: true -> false`. CI was covered by
+/// ORDERING in the workflow — a build step that happens to run first — not by
+/// the gate, and an ordering nobody asserts is not a property.
+///
+/// The registry's own comment recorded the consequence: a source mutation was
+/// rejected as a falsifier because it "would leave it measuring the unmutated
+/// tree", so the declared falsifier could only ever be a lie in the gate's own
+/// TOML. Establishing freshness here is what makes a SOURCE mutation a legal
+/// falsifier again.
+fn sky_binary(root: &Path) -> Result<PathBuf, String> {
+    let (newest, witness) = newest_source_mtime(root)?;
+
+    let fresh = |p: &Path| -> bool {
+        std::fs::metadata(p)
+            .and_then(|md| md.modified())
+            .map(|m| m >= newest)
+            .unwrap_or(false)
+    };
+
+    if let Some(p) = sky_binary_candidates(root).into_iter().find(|p| fresh(p)) {
+        return Ok(p);
+    }
+
+    // Stale or absent. Build it — measuring a binary older than the sources
+    // whose behaviour is under test measures the wrong tree, and refusing
+    // outright would leave a source mutation unfalsifiable.
+    build_compiler(root)?;
+
+    let Some(p) = sky_binary_candidates(root).into_iter().find(|p| p.is_file()) else {
+        return Err(
+            "`cargo build --release -p sky` reported success and produced no binary at \
+             rust/target/release/sky. A gate that cannot find what it measures has not \
+             passed."
+                .to_string(),
+        );
+    };
+    if !fresh(&p) {
+        return Err(format!(
+            "{} is still older than {} after a rebuild. The gate measures what a compiler \
+             built from THIS tree does; an older binary answers for a different tree.",
+            p.display(),
+            witness.display()
+        ));
+    }
+    Ok(p)
+}
+
+fn build_compiler(root: &Path) -> Result<(), String> {
+    let manifest = root.join("rust/Cargo.toml");
+    let out = std::process::Command::new("cargo")
+        .args(["build", "--release", "-p", "sky", "--manifest-path"])
+        .arg(&manifest)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| {
+            format!(
+                "the compiler is stale or absent and `cargo` could not be spawned to \
+                 rebuild it ({e}). Install a Rust toolchain, or build it yourself with \
+                 `cargo build --release -p sky`. A gate whose prerequisite is missing \
+                 FAILS; it does not skip."
+            )
+        })?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let mut log = String::from_utf8_lossy(&out.stdout).into_owned();
+    log.push_str(&String::from_utf8_lossy(&out.stderr));
+    Err(format!(
+        "the compiler is stale and `cargo build --release -p sky` failed:\n{}",
+        tail(&log, 30)
+    ))
 }
 
 fn build_fixture(sky: &Path, dir: &Path) -> Result<(), String> {
@@ -822,27 +1035,96 @@ fn extract(st: &Setting, o: &Observed) -> Result<String, String> {
 // Running one cell-set
 // ---------------------------------------------------------------------------
 
-fn run_fixture(
-    dir: &Path,
-    env: &[(String, String)],
-    expect_port: &str,
-) -> Result<Observed, String> {
-    let port: u16 = expect_port
-        .parse()
-        .map_err(|_| format!("expected port {expect_port:?} is not a port number"))?;
-    if layer2::port_in_use(port) {
-        return Err(format!(
-            "port {port} is already in use, so the cell that expects the app to bind it \
-             cannot be observed, and the matrix will not guess. Two likely causes: a \
-             leftover listener (8000 is the default this repo's examples bind), or a \
-             CONCURRENT `config-matrix` run — the sentinel ports come from the manifest \
-             and cannot be ephemeral, because for `live.port` the port IS the observed \
-             value. Free it, or serialise the two runs."
-        ));
+/// Every port any arm of `live.port` (or the prefix check) could make the app
+/// bind. The preflight checks ALL of them, because the run does not know in
+/// advance which one it will observe.
+fn port_sentinels(m: &Manifest) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::new();
+    let mut push = |s: &str| {
+        if let Ok(p) = s.parse::<u16>() {
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+    };
+    for st in &m.settings {
+        if st.probe != "listening" {
+            continue;
+        }
+        push(&st.expect_unset);
+        for v in [&st.set_env, &st.set_toml, &st.set_builder].into_iter().flatten() {
+            push(v);
+        }
     }
+    for v in [
+        &m.prefix.wrong_value,
+        &m.prefix.right_value,
+        &m.prefix.expect_wrong,
+        &m.prefix.expect_right,
+    ] {
+        push(v);
+    }
+    out
+}
+
+/// Run one fixture and observe it.
+///
+/// # Why the port is not passed in
+///
+/// It used to be. `run_fixture` took `expect_port`, computed by
+/// [`expected_port`] — the gate's OWN re-implementation of `resolveLivePort` —
+/// and `wait_ready` then blocked until the app bound THAT port. So the
+/// `live.port` row compared the gate's constants to themselves: inverting the
+/// real precedence surfaced as a 45-second readiness timeout naming neither the
+/// setting nor the precedence, and **no cell difference was ever produced**.
+/// The other three settings were observed genuinely, at consumption
+/// (`live_store.go:1798`); this one was not.
+///
+/// The port is now observed the same way: readiness is the announcement alone,
+/// the announced port is adopted, and it is then confirmed genuinely bound — so
+/// a precedence inversion changes the `live.port` cell and fails as a named
+/// difference.
+fn run_fixture(dir: &Path, env: &[(String, String)]) -> Result<Observed, String> {
     let pairs: Vec<(&str, String)> = env.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
-    let mut server = layer2::Server::spawn_isolated(&dir.join("sky-out/app"), dir, port, &pairs)?;
+    let mut server = layer2::Server::spawn_isolated_unbound(&dir.join("sky-out/app"), dir, &pairs)?;
     let ready = server.wait_ready(PROBE_LISTENING, READY_TIMEOUT);
+
+    // The announcement is a CLAIM. Adopt it, then confirm the app really holds
+    // that port — otherwise a binary that printed a number it never bound would
+    // read as a clean observation, and teardown would assert the release of a
+    // port nothing ever took.
+    if ready.is_ok() {
+        let announced = observe(&server.log())
+            .listening
+            .first()
+            .and_then(|s| s.trim().parse::<u16>().ok());
+        match announced {
+            Some(p) => {
+                server.adopt_port(p);
+                let t0 = std::time::Instant::now();
+                while !layer2::port_in_use(p) && t0.elapsed() < BIND_CONFIRM {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                if !layer2::port_in_use(p) {
+                    let _ = server.shutdown();
+                    return Err(format!(
+                        "the app announced `{PROBE_LISTENING}{p}` and nothing is listening on \
+                         {p} after {BIND_CONFIRM:?}. The announcement is the gate's \
+                         observation of `live.port`; an announcement the process does not \
+                         back is not an observation."
+                    ));
+                }
+            }
+            None => {
+                let _ = server.shutdown();
+                return Err(format!(
+                    "the app's readiness line did not carry a port number, so `live.port` \
+                     has no observed value. Saw: {:?}",
+                    observe(&server.log()).listening
+                ));
+            }
+        }
+    }
 
     // The two probes arrive on DIFFERENT pipes: `Sky.Live listening on :N` is
     // `fmt.Printf` on stdout (live.go:4329) and the store banner is
@@ -989,6 +1271,27 @@ fn compute(root: &Path) -> Result<Measured, String> {
         .filter(|k| !census.contains(*k) && !k.is_empty())
         .collect();
 
+    // --- pre-flight: no sentinel port is already held -----------------------
+    //
+    // Once per run rather than once per cell, because the run no longer knows
+    // in advance which port it will observe — that is the point of observing it
+    // rather than predicting it. A leftover listener on any of them would be
+    // indistinguishable from the app binding it.
+    let held: Vec<u16> = port_sentinels(&m)
+        .into_iter()
+        .filter(|p| layer2::port_in_use(*p))
+        .collect();
+    if !held.is_empty() {
+        return Err(format!(
+            "port(s) {held:?} are already in use, so a run that binds one of them cannot be \
+             observed and the matrix will not guess. Two likely causes: a leftover listener \
+             (8000 is the default this repo's examples bind), or a CONCURRENT \
+             `config-matrix` run — the sentinel ports come from the manifest and cannot be \
+             ephemeral, because for `live.port` the port IS the observed value. Free them, \
+             or serialise the two runs."
+        ));
+    }
+
     // --- build the fixtures -------------------------------------------------
     let scratch = scratch_dir();
     sweep_stale_scratch();
@@ -1029,9 +1332,8 @@ fn compute(root: &Path) -> Result<Measured, String> {
                     }
                 }
             }
-            let expect_port = expected_port(&m, env_on, b);
             let dir = &dirs[b.name()];
-            let o = run_fixture(dir, &env, &expect_port)?;
+            let o = run_fixture(dir, &env)?;
 
             // Probe occurrence — a probe that matched the wrong number of
             // times has not observed; it has guessed.
@@ -1231,7 +1533,7 @@ fn compute(root: &Path) -> Result<Measured, String> {
             .map(|(k, v)| (format!("{}{k}", m.prefix.prefix), v.clone()))
             .collect();
         env.push((env_name.clone(), value.clone()));
-        let o = run_fixture(&pfx_dir, &env, &expect)?;
+        let o = run_fixture(&pfx_dir, &env)?;
         let got = o
             .listening
             .first()
@@ -1270,6 +1572,9 @@ fn compute(root: &Path) -> Result<Measured, String> {
             "deferred_settings": m.deferred.len(),
             "deferred_stanzas": m.deferred_stanzas,
             "unobservable_settings": m.unobservable.len(),
+            // The sum, ratcheted. Without it a relabel between the two buckets
+            // above lowered one number and raised none, and read as progress.
+            "uncovered_settings": m.deferred.len() + m.unobservable.len(),
             "census_entries": census.len(),
             "listed_differences": m.listed.len(),
         }
@@ -1282,33 +1587,13 @@ fn compute(root: &Path) -> Result<Measured, String> {
     })
 }
 
-/// Which port the app will bind for a given run, under `resolveLivePort`'s
-/// documented order (live.go:3849-3874): operator env, then builder, then the
-/// seeded `sky.toml` default, then 8080 — except that `SetPortDefault` always
-/// seeds something, so step 4 is unreachable and the floor is the compiler's
-/// own 8000.
-fn expected_port(m: &Manifest, env_on: bool, b: Build) -> String {
-    let port = m.settings.iter().find(|s| s.id == "live.port");
-    let Some(p) = port else {
-        return "8000".to_string();
-    };
-    if env_on {
-        if let Some(v) = &p.set_env {
-            return v.clone();
-        }
-    }
-    if b.builder {
-        if let Some(v) = &p.set_builder {
-            return v.clone();
-        }
-    }
-    if b.toml {
-        if let Some(v) = &p.set_toml {
-            return v.clone();
-        }
-    }
-    p.expect_unset.clone()
-}
+// `expected_port` USED TO LIVE HERE, and it was the defect. It re-implemented
+// `resolveLivePort` inside the gate, `run_fixture` waited for the app to bind
+// what it predicted, and the `live.port` row therefore compared the gate's
+// constants to themselves. It is gone: the port is observed at consumption,
+// like the other three settings, and the only thing the manifest's port values
+// are still used for is the preflight in [`port_sentinels`] — a check that a
+// stale listener is not holding a port the run might need.
 
 /// The census: every `sky.toml` key the compiler accepts and every env suffix
 /// it seeds, as stage 1 measured them.
@@ -1532,13 +1817,49 @@ fn render(v: &Value) -> String {
 }
 
 /// Counts that may FALL (progress) and may not RISE (regression).
-const RATCHETED: &[(&str, &str)] = &[(
-    "deferred_settings",
-    "a setting moved into [[deferred]] is one the matrix stopped protecting; stage 3 moves \
-     settings, and the bucket must not become the place they go to avoid being measured",
-)];
+///
+/// # Why all three, and not just `deferred_settings`
+///
+/// One ratcheted metric was RELABEL-EVADABLE. `deferred_settings` was the only
+/// number under a ratchet, so moving four ids from `[[deferred]]` to
+/// `[[unobservable]]` — an unratcheted bucket — with identical reason text read
+/// `deferred_settings: 41 -> 37`, i.e. AS PROGRESS. Nothing was covered; the
+/// ids changed which paragraph they sat under. The only objection the run
+/// emitted was "regenerate", which is unauthorised and unlogged.
+///
+/// So the sum is ratcheted (a move between buckets cannot lower it) AND each
+/// bucket individually (a move RAISES the destination and fails there). The
+/// only way past is a `[[bucket-change]]` stanza that names the metric, the
+/// endpoints, a reason and a commit — the same accounting `[[default-changed]]`
+/// already demands of an observed value.
+const RATCHETED: &[(&str, &str)] = &[
+    (
+        "deferred_settings",
+        "a setting moved into [[deferred]] is one the matrix stopped protecting; stage 3 moves \
+         settings, and the bucket must not become the place they go to avoid being measured",
+    ),
+    (
+        "unobservable_settings",
+        "[[unobservable]] is the stronger claim — that no effective value EXISTS to compare — \
+         so it must be at least as hard to enter as [[deferred]]. Unratcheted, it was the \
+         drain a deferred id could be relabelled into while the deferred count fell and read \
+         as progress",
+    ),
+    (
+        "uncovered_settings",
+        "the total the matrix does NOT cover, deferred plus unobservable. Ratcheting the sum \
+         is what makes a bucket-to-bucket relabel a no-op instead of an improvement",
+    ),
+];
 
-fn ratchet(baseline: Option<&Value>, current: &Value) -> Vec<String> {
+/// An authorised rise in a [`RATCHETED`] metric — `[[bucket-change]]`.
+struct BucketChange {
+    metric: String,
+    from: u64,
+    to: u64,
+}
+
+fn ratchet(baseline: Option<&Value>, current: &Value, allowed: &[BucketChange]) -> Vec<String> {
     let Some(base) = baseline else {
         return Vec::new();
     };
@@ -1547,13 +1868,28 @@ fn ratchet(baseline: Option<&Value>, current: &Value) -> Vec<String> {
         let b = base.get("summary").and_then(|s| s.get(metric)).and_then(Value::as_u64);
         let c = current.get("summary").and_then(|s| s.get(metric)).and_then(Value::as_u64);
         match (b, c) {
-            (Some(b), Some(c)) if c > b => out.push(format!(
-                "RATCHET — `{metric}` rose {b} -> {c}. {why}."
-            )),
+            (Some(b), Some(c)) if c > b => {
+                let accounted = allowed
+                    .iter()
+                    .any(|a| a.metric == *metric && a.from == b && a.to == c);
+                if !accounted {
+                    out.push(format!(
+                        "RATCHET — `{metric}` rose {b} -> {c}. {why}. If this rise is \
+                         deliberate, account for it with a [[bucket-change]] stanza in \
+                         rust/crates/xtask/config-matrix.toml naming `metric`, `from = \
+                         \"{b}\"`, `to = \"{c}\"`, a `reason` and a `commit`."
+                    ));
+                }
+            }
             (Some(_), None) => out.push(format!(
                 "RATCHET — `{metric}` disappeared from the recomputed document. A metric that \
                  stops being computed cannot be seen to regress."
             )),
+            // A metric absent from the BASELINE needs no arm of its own: the
+            // recomputed document always carries every RATCHETED metric, so a
+            // baseline without one differs from it and the STALE clause fires.
+            // Failing here as well would deadlock the regeneration that fixes
+            // it — a new metric could never acquire its first baseline.
             _ => {}
         }
     }
@@ -1583,8 +1919,12 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         .and_then(|t| serde_json::from_str::<Value>(&t).ok());
 
     let mut fails = m.findings.clone();
-    fails.extend(ratchet(baseline.as_ref(), &m.doc));
     let manifest = load_manifest(repo_root);
+    let allowed: &[BucketChange] = match &manifest {
+        Ok(mf) => &mf.bucket_changes,
+        Err(_) => &[],
+    };
+    fails.extend(ratchet(baseline.as_ref(), &m.doc, allowed));
     if let (Some(base), Ok(mf)) = (baseline.as_ref(), &manifest) {
         fails.extend(unlisted_differences(base, &m.doc, &mf.listed));
     }
@@ -1638,8 +1978,13 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok());
     let mut fails = m.findings.clone();
-    fails.extend(ratchet(baseline.as_ref(), &m.doc));
-    match (&baseline, load_manifest(repo_root)) {
+    let manifest = load_manifest(repo_root);
+    fails.extend(ratchet(
+        baseline.as_ref(),
+        &m.doc,
+        manifest.as_ref().map(|mf| mf.bucket_changes.as_slice()).unwrap_or(&[]),
+    ));
+    match (&baseline, manifest) {
         (Some(base), Ok(mf)) => fails.extend(unlisted_differences(base, &m.doc, &mf.listed)),
         (None, _) => fails.push(
             "no docs/coverage/config-matrix.json — the baseline every cell is compared \
@@ -1964,15 +2309,50 @@ mod tests {
         assert_eq!(l.as_list().unwrap(), ["a".to_string(), "b,c".to_string()]);
     }
 
+    /// `expected_port_follows_resolve_live_port` USED TO BE HERE, asserting
+    /// that the gate's re-implementation of `resolveLivePort` returned the
+    /// manifest's own sentinels — the self-comparison in unit-test form. Both
+    /// it and the function are gone; the port is observed at consumption.
+    ///
+    /// What replaces it is the property the manifest's port values are still
+    /// FOR: the preflight must cover every port any arm could make the app
+    /// bind, because the run no longer predicts which one that will be. A
+    /// sentinel missing from this set is a port a stale listener could hold
+    /// while the run blamed the value.
     #[test]
-    fn expected_port_follows_resolve_live_port() {
+    fn the_port_preflight_covers_every_arm_of_every_listening_setting() {
         let m = load_manifest(&root()).expect("manifest parses");
-        // env beats builder beats toml beats the compiler's own default —
-        // live.go:3849-3874, and the reason `withPort` is alive where
-        // `withTtl` is not.
-        assert_eq!(expected_port(&m, true, Build { toml: true, builder: true }), "19811");
-        assert_eq!(expected_port(&m, false, Build { toml: true, builder: true }), "19813");
-        assert_eq!(expected_port(&m, false, Build { toml: true, builder: false }), "19812");
-        assert_eq!(expected_port(&m, false, Build { toml: false, builder: false }), "8000");
+        let got = port_sentinels(&m);
+        let mut expected: Vec<u16> = Vec::new();
+        for st in &m.settings {
+            if st.probe != "listening" {
+                continue;
+            }
+            for v in [Some(&st.expect_unset), st.set_env.as_ref(), st.set_toml.as_ref(), st.set_builder.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                let p: u16 = v.parse().unwrap_or_else(|_| panic!("{}: {v:?} is not a port", st.id));
+                assert!(got.contains(&p), "{}: sentinel {p} is not preflighted", st.id);
+                if !expected.contains(&p) {
+                    expected.push(p);
+                }
+            }
+        }
+        for v in [&m.prefix.expect_wrong, &m.prefix.expect_right, &m.prefix.wrong_value, &m.prefix.right_value] {
+            let p: u16 = v.parse().expect("prefix_check port");
+            assert!(got.contains(&p), "prefix_check sentinel {p} is not preflighted");
+            if !expected.contains(&p) {
+                expected.push(p);
+            }
+        }
+        // Exact, not `>=`: a preflight that grew a port nobody declared would
+        // be checking something the run cannot produce.
+        assert_eq!(
+            got.len(),
+            expected.len(),
+            "preflight set {got:?} differs from the declared sentinels {expected:?}"
+        );
+        assert!(!expected.is_empty(), "no sentinels — the loop asserted nothing");
     }
 }
