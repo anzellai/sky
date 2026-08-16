@@ -5,7 +5,12 @@
 set -u
 BASE=/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/x86bench
 CORE="$BASE/core"
-source /Users/anzel/works/playground/sky-bench-x86/scripts/lib/with-timeout.sh
+# The repo this file is committed in, not the worktree it was measured from: an
+# archived harness has to read as wired wherever it is checked out, and this
+# line named a sibling worktree that exists on exactly one machine. Gated by
+# xtask's `every_lib_source_line_names_a_file_that_exists`.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+source "$REPO_ROOT/scripts/lib/with-timeout.sh"
 GP=(--project settleby --zone us-central1-a)
 
 gzip -kf "$BASE/bin/forumbench-linux-amd64"

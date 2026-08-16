@@ -1134,6 +1134,30 @@ fn the_generated_launchd_jobs_pass_apples_own_parser() {
 /// smart shutdown PostgreSQL performs on a SIGTERM it receives directly (which
 /// waits for every client, forever). launchd itself cannot be driven from a
 /// test, but the thing the wrapper has to get right can be.
+///
+/// # Why this is compiled only on macOS
+///
+/// The subject does not exist elsewhere. `provision --shared --service` writes
+/// `sky-postgres-run.sh` under `Platform::Launchd` only (`db_shared.rs`, the
+/// `write_file(&spec.wrapper_path(), …)` arm); a systemd host gets a unit with
+/// `KillSignal=SIGINT` and no wrapper process at all, and that line has its own
+/// gate over the generated unit text. So on Linux there is nothing to `exec`,
+/// and the test failed with `/bin/sh: cannot open …/sky-postgres-run.sh`.
+///
+/// It had never run there. `discover_pg_bins()` failed on the Linux CI runner,
+/// so the gate returned early — and when `92cc5fa9` installed PostgreSQL in
+/// `test-rest` so live tests would stop skipping, this one started running on a
+/// platform it was never about. That is the live-test change working: an
+/// UNDECLARED platform scope is exactly the kind of thing a silent skip hides.
+/// Declaring it is the fix; widening it is not, because a launchd wrapper on
+/// Linux is not a missing prerequisite, it is a category error.
+///
+/// KNOWN GAP, stated rather than left implicit: no CI job runs
+/// `cargo test -p sky` on macOS today, so this gate currently runs only on a
+/// developer's machine. Closing that needs a macOS step with PostgreSQL
+/// provisioned, on a 10x-billed runner — a CI-topology decision, not a
+/// one-line one.
+#[cfg(target_os = "macos")]
 #[test]
 fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
     let Ok(bins) = db_cluster::discover_pg_bins() else {
@@ -1153,11 +1177,20 @@ fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
     let fx = Fixture { _live: live, layout: Layout::new(&state), bins, user: os_user().unwrap() };
     assert!(!cluster_running(&fx.layout), "the fixture wanted a stopped cluster");
 
+    // The wrapper's output goes to a FILE, not to /dev/null.
+    //
+    // It used to be discarded, and when this test failed in CI on 2026-08-16 —
+    // "the wrapper never brought the cluster up" — the one thing that could say
+    // why had been thrown away at the point of capture. A live gate that can
+    // only report that something did not happen costs its next reader a whole
+    // investigation to learn what a `postgres` log line already knew.
     let wrapper = fx.layout.service_dir.join("sky-postgres-run.sh");
+    let log_path = fx.layout.service_dir.join("wrapper-test.log");
+    let log = std::fs::File::create(&log_path).expect("wrapper log");
     let mut child = Command::new("/bin/sh")
         .arg(&wrapper)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(log.try_clone().expect("dup wrapper log")))
+        .stderr(Stdio::from(log))
         .spawn()
         .expect("wrapper");
 
@@ -1165,14 +1198,34 @@ fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
     // shutdown would block on exactly this connection, which is the failure the
     // wrapper exists to prevent.
     let mut held = None;
+    let mut last_err = None;
     for _ in 0..100 {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        if let Ok(c) = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres") {
-            held = Some(c);
-            break;
+        match admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres") {
+            Ok(c) => {
+                held = Some(c);
+                break;
+            }
+            Err(e) => last_err = Some(e.to_string()),
         }
     }
-    assert!(held.is_some(), "the wrapper never brought the cluster up");
+    assert!(
+        held.is_some(),
+        "the wrapper never brought the cluster up within 20s.\n\
+         last connection error: {}\n\
+         wrapper output ({}):\n{}\n\
+         postgres log ({}):\n{}",
+        last_err.as_deref().unwrap_or("<none — the loop never ran>"),
+        log_path.display(),
+        std::fs::read_to_string(&log_path).unwrap_or_else(|e| format!("<unreadable: {e}>")),
+        fx.layout.log_file().display(),
+        std::fs::read_to_string(fx.layout.log_file())
+            .map(|s| {
+                let lines: Vec<&str> = s.lines().collect();
+                lines[lines.len().saturating_sub(40)..].join("\n")
+            })
+            .unwrap_or_else(|e| format!("<unreadable: {e}>")),
+    );
 
     let pid = child.id() as i32;
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGTERM)

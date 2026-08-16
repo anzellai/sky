@@ -522,6 +522,28 @@ func waitGone(t *testing.T, pid int) {
 	t.Fatalf("pid %d did not die", pid)
 }
 
+// waitNothingServing blocks until dataDir has no live postmaster, by the same
+// predicate `bringUp` uses to decide whether to adopt.
+//
+// A test that kills a postmaster and then boots again needs this rather than
+// `waitGone`: the question is not "has that pid died" but "would the next boot
+// still adopt", and those differ while the kernel is reaping — the pid file is
+// still there naming a process `kill(pid, 0)` still reports.
+func waitNothingServing(t *testing.T, dataDir string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := runningPostmaster(dataDir); !ok {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	pid, _ := runningPostmaster(dataDir)
+	t.Fatalf("a postmaster (pid %d) is still serving %s 15s after it was told to "+
+		"stop — the next boot would adopt it rather than start, and an adopted "+
+		"supervisor exits the process when that pid goes away", pid, dataDir)
+}
+
 // ---------------------------------------------------------------------------
 // A dead postmaster must exit the app non-zero
 // ---------------------------------------------------------------------------

@@ -443,3 +443,171 @@ fn every_non_blocking_declaration_states_why() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Contexts a job-level key is not allowed to name
+// ---------------------------------------------------------------------------
+
+/// Contexts that are available in NO job-level key.
+///
+/// GitHub's context-availability table varies per key — `matrix` is legal in a
+/// job `env:` and not in `runs-on:`, `secrets` is legal in `env:` and not in
+/// `if:` — so this list is deliberately the intersection: four contexts that no
+/// job-level key may ever name, which is a rule with no false positives.
+///
+/// `runner` is the one that bit. `nightly-sweep.yml` carried
+///
+/// ```yaml
+///     env:
+///       OUT: ${{ runner.temp }}/bundles
+/// ```
+///
+/// on a job, and the penalty is not a warning about one variable: GitHub
+/// refuses to parse the FILE. The run is created, has zero jobs, finishes in
+/// 0 s and is attributed to whatever push arrived — so the nightly sweep, the
+/// browser tier and the real-bundle licence gate all stopped running while the
+/// red looked like a nightly problem on a branch nobody reads.
+///
+/// That is the same outage this file's header describes, reached through a
+/// different door: `every_workflow_is_parseable_yaml` passes, because the YAML
+/// is fine and it is GitHub's expression checker that refuses it.
+const NO_JOB_LEVEL_KEY_MAY_USE: [&str; 4] = ["runner", "steps", "job", "env"];
+
+/// Job-level keys evaluated BEFORE the job has a runner, a step or an
+/// environment — so an expression in one of them cannot name those.
+const JOB_LEVEL_KEYS: [&str; 5] =
+    ["env", "if", "runs-on", "timeout-minutes", "continue-on-error"];
+
+/// Every `${{ … }}` span in a string, inner text only.
+fn expressions(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find("${{") {
+        rest = &rest[open + 3..];
+        match rest.find("}}") {
+            Some(close) => {
+                out.push(&rest[..close]);
+                rest = &rest[close + 2..];
+            }
+            // Unterminated — GitHub would reject it too, but that is the
+            // parser's complaint to make, not this test's.
+            None => break,
+        }
+    }
+    out
+}
+
+/// The context names an expression reads: an identifier immediately followed
+/// by `.`. `runner.temp` yields `runner`; `fromJSON('["a"]')` yields nothing.
+fn contexts_used(expr: &str) -> Vec<String> {
+    let bytes: Vec<char> = expr.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_alphabetic() || bytes[i] == '_' {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == '_' || bytes[i] == '-') {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == '.' {
+                out.push(bytes[start..i].iter().collect());
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Every scalar string reachable from a YAML value, however nested.
+fn scalars(v: &serde_yaml::Value, out: &mut Vec<String>) {
+    match v {
+        serde_yaml::Value::String(s) => out.push(s.clone()),
+        serde_yaml::Value::Sequence(xs) => xs.iter().for_each(|x| scalars(x, out)),
+        serde_yaml::Value::Mapping(m) => m.iter().for_each(|(k, x)| {
+            scalars(k, out);
+            scalars(x, out);
+        }),
+        _ => {}
+    }
+}
+
+#[test]
+fn job_level_keys_name_only_contexts_that_exist_yet() {
+    let mut bad = Vec::new();
+    for path in workflows() {
+        let text = std::fs::read_to_string(&path).expect("read workflow");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parsed above");
+        let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else { continue };
+        for (job_name, job) in jobs {
+            let job_name = job_name.as_str().unwrap_or("<non-string>");
+            for key in JOB_LEVEL_KEYS {
+                let Some(value) = job.get(key) else { continue };
+                let mut strings = Vec::new();
+                scalars(value, &mut strings);
+                for s in &strings {
+                    for expr in expressions(s) {
+                        for ctx in contexts_used(expr) {
+                            if NO_JOB_LEVEL_KEY_MAY_USE.contains(&ctx.as_str()) {
+                                bad.push(format!(
+                                    "{}: job `{job_name}` key `{key}` uses `{ctx}.` in `${{{{{expr}}}}}`",
+                                    path.display()
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "a job-level key names a context that does not exist at job level. \
+         GitHub does not warn: it REFUSES THE WHOLE FILE, and the run then has \
+         zero jobs, zero logs and a 0 s red that reads like a flake:\n  {}\n\
+         Set the value from a step instead — `echo \"OUT=$RUNNER_TEMP/x\" >> \
+         \"$GITHUB_ENV\"` — or move the expression to the step that uses it, \
+         where `runner`/`steps`/`env` are available.",
+        bad.join("\n  ")
+    );
+}
+
+/// The gate must be able to go red. A test that only ever sees a clean tree
+/// proves nothing about what it would do with a dirty one.
+#[test]
+fn the_job_level_context_check_catches_the_shape_that_broke_nightly_sweep() {
+    let doc: serde_yaml::Value = serde_yaml::from_str(
+        "jobs:\n  b:\n    runs-on: ubuntu-latest\n    env:\n      OUT: ${{ runner.temp }}/bundles\n    steps:\n      - run: true\n",
+    )
+    .expect("fixture parses");
+    let env = doc
+        .get("jobs")
+        .and_then(|j| j.get("b"))
+        .and_then(|b| b.get("env"))
+        .expect("fixture has a job env");
+    let mut strings = Vec::new();
+    scalars(env, &mut strings);
+    let found: Vec<String> = strings
+        .iter()
+        .flat_map(|s| expressions(s))
+        .flat_map(contexts_used)
+        .filter(|c| NO_JOB_LEVEL_KEY_MAY_USE.contains(&c.as_str()))
+        .collect();
+    assert_eq!(found, vec!["runner".to_string()], "the check no longer sees the original defect");
+
+    // …and does not fire on the expressions the workflows legitimately use.
+    for ok in [
+        "${{ github.workspace }}/.gocache",
+        "${{ needs.setup.outputs.sha }}",
+        "${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('[\"both\"]'), inputs.only) }}",
+        "${{ matrix.os }}",
+        "${{ secrets.GITHUB_TOKEN }}",
+    ] {
+        let hits: Vec<String> = expressions(ok)
+            .into_iter()
+            .flat_map(contexts_used)
+            .filter(|c| NO_JOB_LEVEL_KEY_MAY_USE.contains(&c.as_str()))
+            .collect();
+        assert!(hits.is_empty(), "false positive on `{ok}`: {hits:?}");
+    }
+}

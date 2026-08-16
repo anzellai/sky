@@ -456,11 +456,30 @@ func TestASecondBootRetunesTheManagedBlock(t *testing.T) {
 		t.Fatalf("first boot: %v", err)
 	}
 	confPath := filepath.Join(s.cfg.dataDir, "postgresql.conf")
+	// detach must leave NOTHING serving the data directory, and must not return
+	// until that is true.
+	//
+	// SIGQUIT is asynchronous. This helper used to return the instant the signal
+	// was delivered, so the second boot below could still find a live pid — and
+	// `bringUp` ADOPTS whatever is serving the directory. Two things then went
+	// wrong at once:
+	//
+	//  1. the adopt path returns before `writeTunedConf`, so the re-tune this
+	//     gate exists to measure never ran; and
+	//  2. adoption arms `watchAdopted`, whose contract is to `os.Exit(1)` the
+	//     moment that pid disappears — which it did, on its next two-second
+	//     poll, taking the whole test binary with it.
+	//
+	// (2) is what `integration-postgres` reported: `FAIL sky-app/rt` with no
+	// failing test and no output to read, because the process was gone before
+	// `testing` could print anything. The window was always there and `-race`
+	// widened it enough to hit every run.
 	detach := func(sup *pgSupervisor) {
 		sup.stopping.Store(true)
 		if pid, ok := runningPostmaster(sup.cfg.dataDir); ok {
 			_ = syscall.Kill(pid, syscall.SIGQUIT)
 		}
+		waitNothingServing(t, sup.cfg.dataDir)
 		_ = os.RemoveAll(sup.cfg.socketDir)
 	}
 	detach(s)
@@ -487,6 +506,14 @@ func TestASecondBootRetunesTheManagedBlock(t *testing.T) {
 		t.Fatalf("second boot: %v", err)
 	}
 	t.Cleanup(func() { detach(s2) })
+	// A boot that adopted is not a second boot: `bringUp` returns from the
+	// adopt branch before it re-renders the managed block, so every assertion
+	// below would be reading the conf this test planted rather than one a
+	// re-tune produced. Fail here rather than measure nothing.
+	if s2.adopted {
+		t.Fatal("the second boot adopted a postmaster instead of starting one — the " +
+			"adopt path never reaches writeTunedConf, so the rest of this gate is vacuous")
+	}
 
 	after, err := os.ReadFile(confPath)
 	if err != nil {
