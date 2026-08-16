@@ -171,6 +171,18 @@ const mb = uint64(1) << 20
 // It gets 15%, clamped so that a 512MB container is not handed 76MB of shared
 // buffers it needs for the app, and a 512GB host is not handed 76GB it cannot
 // usefully fill.
+// pgSharedBuffersFor is the cluster's claim on the machine's memory.
+//
+// It is a named function rather than an expression inside `tuningFor` because
+// it has a SECOND caller: `gc_tuning.go` subtracts it before deriving the app's
+// `GOMEMLIMIT`, so that the app and the database it supervises are not each
+// sized as though they own the box. Restating "15%" in the second place is the
+// version of this that goes wrong silently — every setting on both sides stays
+// individually plausible while their sum exceeds the machine.
+func pgSharedBuffersFor(ram uint64) uint64 {
+	return clampBytes(ram*15/100, 32*mb, 8192*mb)
+}
+
 func tuningFor(m machine) []confSetting {
 	cpus := m.cpus
 	if cpus < 1 {
@@ -183,7 +195,7 @@ func tuningFor(m machine) []confSetting {
 		ram = 1024 * mb
 	}
 
-	shared := clampBytes(ram*15/100, 32*mb, 8192*mb)
+	shared := pgSharedBuffersFor(ram)
 	effectiveCache := clampBytes(ram*40/100, 128*mb, 32768*mb)
 	maintenance := clampBytes(ram*5/100, 32*mb, 1024*mb)
 

@@ -14,9 +14,16 @@
 #
 # A gate that stays green under its own falsifying mutation is not a gate.
 set -u
-RT=/Users/anzel/works/playground/sky-perf-gogc/runtime-go/rt
-cd /Users/anzel/works/playground/sky-perf-gogc/runtime-go || exit 1
-source ../scripts/lib/with-timeout.sh
+WT=/Users/anzel/works/playground/sky-perf-gogc
+RT="$WT/runtime-go/rt"
+cd "$WT/runtime-go" || exit 1
+# Absolute, matching every other script in this harness. It was
+# `source ../scripts/lib/with-timeout.sh`, which resolved correctly AT RUNTIME
+# thanks to the `cd` above but NOT relative to this file — so
+# `xtask/tests/scripts_bound_time_portably.rs`'s
+# `every_lib_source_line_names_a_file_that_exists` read the script as
+# wired-and-not, and `cargo test --workspace` was red on main.
+source "$WT/scripts/lib/with-timeout.sh"
 PASS=0; FAIL=0
 
 # mutate <file> <pristine-regex> <mutated-regex> <perl-expr> <test-regex> <pkg>

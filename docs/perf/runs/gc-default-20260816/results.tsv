@@ -1,0 +1,8 @@
+tag	sessions	gogc	gomemlimit	win_peak_rss_kb	pg_peak_kb	tput	estab	err	patch	load1	gc_banner	valid	verdict
+default-n100	100	unset	unset	429168	82320	2471.440916416662	100	0	1	10.28	GOMEMLIMIT=9.9GB derived from 16.0GB of machine memory less the OS and the embedded cluster's share; GOGC=400	true	OK
+default-n300	300	unset	unset	914256	82320	2647.197459850937	300	0	1	11.44	GOMEMLIMIT=9.9GB derived from 16.0GB of machine memory less the OS and the embedded cluster's share; GOGC=400	true	OK
+default-n500	500	unset	unset	1369824	82336	1663.0332334013735	500	0	1	15.82	GOMEMLIMIT=9.9GB derived from 16.0GB of machine memory less the OS and the embedded cluster's share; GOGC=400	true	OK
+e2small-n100	100	400	996MiB	442336	82352	3039.936756439018	100	0	1	11.15	GOGC=400 and GOMEMLIMIT=996MiB set by the operator; sky derived nothing	true	OK
+e2small-n300	300	400	996MiB	665696	82352	3432.026725792567	300	0	1	10.26	GOGC=400 and GOMEMLIMIT=996MiB set by the operator; sky derived nothing	true	OK
+e2small-n500	500	400	996MiB	996640	82304	2454.385538540759	500	0	1	12.94	GOGC=400 and GOMEMLIMIT=996MiB set by the operator; sky derived nothing	true	OK
+overbound-n300	300	400	192MiB	223776	82320	1726.9005118369969	300	0	1	16.14	GOGC=400 and GOMEMLIMIT=192MiB set by the operator; sky derived nothing	true	OK
