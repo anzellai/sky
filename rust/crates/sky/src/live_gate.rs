@@ -149,18 +149,56 @@ pub fn required(need: Need, available: bool) -> bool {
     required_in(mode(), need, available)
 }
 
+/// [`required`], with the caller's own account of WHY the need is unmet.
+///
+/// # Why a reason is worth a second entry point
+///
+/// "Not available" was only ever produced by one probe — "the binaries are not
+/// discoverable" — so the label alone said everything there was to say.
+///
+/// It does not any more, and the difference is expensive. On a host whose 32
+/// SysV shared-memory ids are all held (macOS ships `kern.sysv.shmmni = 32`),
+/// PostgreSQL is fully installed and discoverable and **cannot start**:
+///
+/// ```text
+/// FATAL:  could not create shared memory segment: No space left on device
+/// DETAIL:  Failed system call was shmget(key=496045126, size=56, 03600).
+/// ```
+///
+/// Thirteen shared-cluster SECURITY tests failed that way in one
+/// `cargo test --workspace`, and a red run naming thirteen security tests is
+/// indistinguishable from a real regression — it took reading the gate's source
+/// to establish it was the host. `why` is what puts the machine's answer in the
+/// failure instead.
+#[track_caller]
+pub fn required_because(need: Need, available: bool, why: &str) -> bool {
+    required_in_because(mode(), need, available, why)
+}
+
 /// [`required`] with the mode passed in, so the behaviour can be asserted
 /// without depending on the environment the assertion is running under — a
 /// test of a skip mechanism that itself skips proves nothing.
 #[track_caller]
 pub fn required_in(mode: Mode, need: Need, available: bool) -> bool {
+    required_in_because(mode, need, available, "")
+}
+
+/// [`required_in`] carrying the caller's reason. See [`required_because`].
+#[track_caller]
+pub fn required_in_because(mode: Mode, need: Need, available: bool, why: &str) -> bool {
     if available {
         return true;
     }
     let at = std::panic::Location::caller();
+    let because = if why.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\nThe machine's answer:\n{}\n", why.trim())
+    };
     if need != Need::Network && mode == Mode::Require {
         panic!(
             "live gate: this test needs {} and it is not available.\n\
+             {}\
              \n\
              A live test that did not run has not passed — that is why this is a \
              failure and not a `return`. Fourteen shared-cluster security tests \
@@ -172,6 +210,7 @@ pub fn required_in(mode: Mode, need: Need, available: bool) -> bool {
              \n\
              at {}:{}",
             need.label(),
+            because,
             need.how_to_get_it(),
             at.file(),
             at.line(),
@@ -182,11 +221,90 @@ pub fn required_in(mode: Mode, need: Need, available: bool) -> bool {
     let mut e = std::io::stderr();
     let _ = writeln!(
         e,
-        "SKIPPED (live): {} is not available — {}:{}",
+        "SKIPPED (live): {} is not available{} — {}:{}",
         need.label(),
+        if why.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", first_line(why))
+        },
         at.file(),
         at.line()
     );
     false
+}
+
+/// Does `err` describe the ENVIRONMENT being unable to run a postmaster, rather
+/// than this code being wrong?
+///
+/// # Why this is here and not at a call site
+///
+/// Availability used to be modelled as DISCOVERY — `discover_pg_bins()`
+/// succeeding — and a probe that models the thing can only ever see the
+/// unavailability the model contains. On a host whose 32 SysV shared-memory ids
+/// (`kern.sysv.shmmni`) were all held by sibling processes, PostgreSQL was
+/// installed, discoverable, and could not start:
+///
+/// ```text
+/// FATAL:  could not create shared memory segment: No space left on device
+/// DETAIL:  Failed system call was shmget(key=496045126, size=56, 03600).
+/// ```
+///
+/// Discovery succeeded, the gate was bypassed, and thirteen shared-cluster
+/// SECURITY tests panicked inside `initdb`. `SKY_LIVE_TESTS=skip` could not
+/// reach them, because the code path that reads the mode was never entered —
+/// and thirteen red security tests are indistinguishable from a real
+/// regression.
+///
+/// The patterns are PostgreSQL's own diagnostics for resource exhaustion AT
+/// STARTUP, not a generic "no space" match: a disk that is genuinely full says
+/// `could not write` from a different call, and that is a real failure this must
+/// not launder. Anything unrecognised returns `None` — the default stays "this
+/// is a defect".
+pub fn postgres_cannot_start(err: &str) -> Option<String> {
+    const EXHAUSTED: &[&str] = &[
+        // SysV shm ids exhausted — `shmget` ENOSPC. macOS ships shmmni = 32.
+        "could not create shared memory segment",
+        // The semaphore equivalent, `semget` ENOSPC, same class.
+        "could not create semaphores",
+        // POSIX shm / mmap variant on hosts using dynamic_shared_memory_type.
+        "could not resize shared memory segment",
+    ];
+    // The MATCHED line leads. A caller's one-line marker takes the head of the
+    // reason, and `initdb`'s first line is "initdb failed:" — true and useless.
+    for p in EXHAUSTED {
+        if let Some(hit) = err.lines().map(str::trim).find(|l| l.contains(p)) {
+            return Some(format!("{hit}\n\nin full:\n{}", err.trim()));
+        }
+    }
+    None
+}
+
+/// Classify `err` and, when it is the environment, route it through the gate.
+///
+/// Returns `true` when the caller should stop: under the default `require` mode
+/// this has already panicked, so a `true` return is only ever reached under
+/// `SKY_LIVE_TESTS=skip`. `false` means the failure is NOT an unavailable
+/// environment and the caller must treat it as the defect it is.
+#[track_caller]
+pub fn gate_if_postgres_cannot_start(err: &str) -> bool {
+    match postgres_cannot_start(err) {
+        Some(why) => {
+            required_because(Need::Postgres, false, &why);
+            true
+        }
+        None => false,
+    }
+}
+
+/// The first non-empty line of `s`, trimmed to something a one-line marker can
+/// carry. A multi-line `initdb` transcript is the reason, not the headline.
+fn first_line(s: &str) -> String {
+    let l = s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    if l.chars().count() > 140 {
+        format!("{}…", l.chars().take(140).collect::<String>())
+    } else {
+        l.to_string()
+    }
 }
 

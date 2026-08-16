@@ -17,7 +17,7 @@ use std::process::{Command, Output};
 
 #[path = "../src/live_gate.rs"]
 mod live_gate;
-use live_gate::{required, Need};
+use live_gate::{gate_if_postgres_cannot_start, required, Need};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -195,7 +195,18 @@ fn the_binary_provisions_a_cluster_whose_apps_cannot_read_each_other() {
         &state,
     );
     let t = text(&out);
-    assert!(out.status.success(), "provision failed:\n{t}");
+    if !out.status.success() {
+        // `find_pg_bin` probes for BINARIES — discovery, not availability. On a
+        // host whose 32 SysV shared-memory ids are all held, the binaries are
+        // there and `initdb` fails with `could not create shared memory
+        // segment`. Without this, THIS security test panicked with the
+        // postmaster's diagnostic inside a `SKY_LIVE_TESTS=skip` run, and a red
+        // security test reads like a regression.
+        if gate_if_postgres_cannot_start(&t) {
+            return;
+        }
+        panic!("provision failed:\n{t}");
+    }
     assert!(t.contains("cluster ready"), "{t}");
 
     // The artefacts the operator was promised.
