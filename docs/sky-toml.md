@@ -316,10 +316,28 @@ What's affected by the prefix:
   `rt.SetSkyDefault("LIVE_TTL", "1800")`, which under prefix
   `FENCE` becomes `FENCE_LIVE_TTL=1800`.
 
+This list is enforced, not aspirational:
+`rust/crates/xtask/tests/sky_env_reads_honour_the_prefix.rs` classifies
+every `os.Getenv("SKY_…")` in the runtime and fails the build on a read
+in a prefix-affected namespace that bypasses `skyGetenv`. Before that
+gate, `SKY_LIVE_FRAME_ANCESTORS` — the switch that puts
+`SameSite=None; Secure` on the session and CSRF cookies — was read raw,
+so a project with a custom prefix could not enable cross-origin
+embedding at all, and nothing said why.
+
 What's NOT affected:
 
 - User code calling `System.getenv "DATABASE_URL"` — those names
   are passed through raw.
+- Names set from OUTSIDE the app, which cannot know a prefix declared
+  inside the app's own `sky.toml`: `SKY_CONSOLE_*` (set by the deploy or
+  the console hub), `SKY_ADMIN_TOKEN` / `SKY_METRICS_TOKEN`,
+  `SKY_INGEST_TOKEN`, `SKY_PARENT_URL`, `SKY_RUNTIME_MODE`,
+  `SKY_PROFILE_*`, `SKY_OBSERVABILITY_*`, `SKY_SERVICE_NAME`, and the
+  developer trace switches (`SKY_STREAM_DEBUG`, `SKY_TUI_*`,
+  `SKY_WEBVIEW_DEBUG`, `SKY_DEV_BANNER`, `SKY_CSRF`,
+  `SKY_EMAIL_DRY_RUN`). Each is listed with its reason in the gate's
+  `FIXED_NAME_READS` table.
 - Standard non-Sky fallbacks: `DATABASE_URL`, `REDIS_URL`,
   `PORT` (consulted by Sky.Live's session-store config when the
   prefixed override is unset).

@@ -32,7 +32,7 @@ var SkyEmbeddedMigrations string
 // boot without `SKY_DB_OP` just serve. This is the safe shape for horizontal
 // scale (no concurrent migrate-on-boot across replicas).
 func MaybeApplyEmbeddedMigrationsAndExit() {
-	op := strings.ToLower(strings.TrimSpace(os.Getenv("SKY_DB_OP")))
+	op := strings.ToLower(strings.TrimSpace(skyGetenv("DB_OP")))
 	if op != "migrate" && op != "status" {
 		return
 	}

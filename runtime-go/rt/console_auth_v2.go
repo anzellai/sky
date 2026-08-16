@@ -402,7 +402,7 @@ func evaluateConsoleAuth(w http.ResponseWriter, r *http.Request) bool {
 	// Sub-app context: a sub-app shouldn't host its own console
 	// (parent owns it). This is short-circuited at mount time but
 	// the per-request guard is cheap.
-	if base := os.Getenv("SKY_LIVE_BASE_PATH"); base != "" {
+	if base := skyGetenv("LIVE_BASE_PATH"); base != "" {
 		http.NotFound(w, r)
 		return false
 	}

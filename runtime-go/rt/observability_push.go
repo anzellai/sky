@@ -94,7 +94,7 @@ func StartPushExporter() *PushExporter {
 		return existing
 	}
 	parent := os.Getenv("SKY_PARENT_URL")
-	ns := os.Getenv("SKY_LIVE_NAMESPACE")
+	ns := skyGetenv("LIVE_NAMESPACE")
 	if parent == "" || ns == "" {
 		return nil // standalone — no parent to push to
 	}

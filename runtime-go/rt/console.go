@@ -139,7 +139,7 @@ func ResetConsoleHealthFlagsForTesting() {
 // is true but neither flag is set after both mount paths ran, exit
 // loudly rather than silently leave the user with a missing surface.
 func shouldHaveConsole() bool {
-	if base := os.Getenv("SKY_LIVE_BASE_PATH"); base != "" {
+	if base := skyGetenv("LIVE_BASE_PATH"); base != "" {
 		return false
 	}
 	if v := os.Getenv("SKY_CONSOLE_EMBED"); v == "off" || v == "0" || v == "false" {
@@ -282,7 +282,7 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	// duplicates the v0.15.x maybeAutoMountConsole guard so apps
 	// transitioning from the old runtime don't gain an unexpected
 	// sub-mount.
-	if base := os.Getenv("SKY_LIVE_BASE_PATH"); base != "" {
+	if base := skyGetenv("LIVE_BASE_PATH"); base != "" {
 		return
 	}
 	if v := os.Getenv("SKY_CONSOLE_EMBED"); v == "off" || v == "0" || v == "false" {

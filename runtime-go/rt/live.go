@@ -4004,7 +4004,7 @@ func setSecurityHeaders(h http.Header) {
 	// directive, the only header that can scope framing to a
 	// cross-origin allow-list (X-Frame-Options has no such value).
 	if h.Get("X-Frame-Options") == "" && h.Get("Content-Security-Policy") == "" {
-		if fa := os.Getenv("SKY_LIVE_FRAME_ANCESTORS"); fa != "" {
+		if fa := skyGetenv("LIVE_FRAME_ANCESTORS"); fa != "" {
 			h.Set("Content-Security-Policy", "frame-ancestors "+fa)
 		} else {
 			h.Set("X-Frame-Options", "SAMEORIGIN")
@@ -6536,7 +6536,7 @@ func writeSessionCookie(w http.ResponseWriter, r *http.Request, cookieName, sid 
 // directive set in setSecurityHeaders is the orthogonal gate that
 // scopes WHICH origins may embed.
 func crossOriginIframeMode() bool {
-	return os.Getenv("SKY_LIVE_FRAME_ANCESTORS") != ""
+	return skyGetenv("LIVE_FRAME_ANCESTORS") != ""
 }
 
 // liveBannerConfig collects the <PREFIX>_LIVE_* env vars that

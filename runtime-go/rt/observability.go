@@ -317,7 +317,7 @@ func productionFromEnv() bool {
 	// emits from `sky.toml [security] env = ...`).
 	envFlag := strings.ToLower(os.Getenv("ENV"))
 	if envFlag == "" {
-		envFlag = strings.ToLower(os.Getenv("SKY_ENV"))
+		envFlag = strings.ToLower(skyGetenv("ENV"))
 	}
 	if envFlag == "" {
 		return false

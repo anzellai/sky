@@ -1466,7 +1466,7 @@ type appliedMigration struct {
 func Db_migrateApply(dbA, pairsA any) any {
 	return func() any {
 		return WithDbSpan(dbSystemOf(dbA), "migrate", "schema migration", func() any {
-			op := strings.ToLower(strings.TrimSpace(os.Getenv("SKY_DB_OP")))
+			op := strings.ToLower(strings.TrimSpace(skyGetenv("DB_OP")))
 
 			// fail routes an error value: in `migrate` ops mode it
 			// prints to stderr and exits non-zero; otherwise it is
