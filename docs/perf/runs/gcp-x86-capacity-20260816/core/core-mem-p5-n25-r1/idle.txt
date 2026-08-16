@@ -1,0 +1,1 @@
+IDLE pid=2772 store=memory gomaxprocs=1 app_rss_kb=28596 mem_avail_kb=15849808 elements=94 posts=5 clk_tck=100 nproc=4

@@ -1,0 +1,33 @@
+{
+  "label": "small-mem-n500-b3r1",
+  "url": "http://10.128.0.7:8000",
+  "sessions_requested": 500,
+  "sessions_established": 500,
+  "duration": "1m30s",
+  "think_time": "0s",
+  "interactions_counted": 8686,
+  "interactions_per_sec": 90.08917684657376,
+  "p50_ms": 6279.306,
+  "p95_ms": 12720.7,
+  "p99_ms": 16457.501,
+  "max_ms": 27248.517,
+  "outcomes": {
+    "ok": 8686
+  },
+  "error_rate": 0,
+  "patches_total": 17372,
+  "interactions_with_patches": 8686,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 5728,
+  "sse_still_open_at_end": 500,
+  "generator_cpu_percent_of_machine": 1.3012036377178005,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "skyperf-gen",
+  "gomaxprocs": 4,
+  "started_at": "2026-08-16T04:05:41Z"
+}

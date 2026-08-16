@@ -1,0 +1,37 @@
+Teardown — gcp-x86-capacity-20260816, verbatim
+
+All four instances carried --max-run-duration with
+--instance-termination-action=DELETE from creation, so an abandoned run
+could not bill indefinitely regardless of what happened to the driver.
+skyperf-core (4h) expired first, unattended, while the sweep was still
+running; the other three (5h) expired on schedule at 07:58:45Z.
+
+$ date -u
+2026-08-16T07:59:11Z
+$ gcloud compute instances list --project settleby --filter='name~skyperf'
+NAME            STATUS    ZONE
+skyperf-gen     STOPPING  us-central1-a
+skyperf-medium  STOPPING  us-central1-a
+skyperf-small   STOPPING  us-central1-a
+(skyperf-core already absent — its 4h deadline passed at ~07:24Z)
+
+$ date -u
+2026-08-16T07:59:49Z
+$ gcloud compute instances list --project settleby --filter='name~skyperf'
+(empty)
+
+$ gcloud compute disks list --project settleby --filter='name~skyperf'
+
+$ gcloud compute firewall-rules list --project settleby --filter='name~skyperf'
+
+No firewall rule was ever created: all instances sat on the default
+network, whose pre-existing default-allow-internal rule already permits
+tcp from 10.128.0.0/9. Verified empirically before the run by serving
+port 8000 on each target and curling it from the generator (HTTP 200),
+not by reading the rule table.
+
+$ gcloud compute instances list --project settleby   # remaining, all pre-existing
+NAME               ZONE            STATUS
+sky-lang-org       us-central1-a   RUNNING
+ringfence-cloud-1  europe-west1-b  RUNNING
+settleby-caddy     europe-west2-c  RUNNING
