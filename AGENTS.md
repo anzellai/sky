@@ -401,6 +401,7 @@ before assuming a limitation still holds.
 | Language + errors | `docs/language/`, `docs/errors/` |
 | Compiler architecture (Rust, primary) | `docs/rust-rewrite/` |
 | Change verification / edge cases | `docs/rust-rewrite/13-change-verification-and-edge-cases.md` |
+| Runtime narrowing — origins, levers, **the floor authority** | `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` |
 | Stdlib correctness (algebraic laws, invariants) | `docs/architecture/sky-stdlib-correctness.md` |
 | Sky.Live runtime + architecture | `docs/skylive/overview.md`, `docs/skylive/architecture.md` |
 | `Std.Ui` layout DSL | `docs/skyui/overview.md` |
