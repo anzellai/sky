@@ -4502,6 +4502,27 @@ impl<'a> Ctx<'a> {
                 return self.list_hof_typed(hof, go, f, xs, actual);
             }
         }
+        // A UNARY list kernel that only needs the list's LENGTH, over a proven
+        // slice, goes to its typed twin. See `list_unary_prim_twin` for why the
+        // table stops where it does.
+        if args.len() == 1 {
+            if let Some((typed, ret)) = list_unary_prim_twin(go) {
+                let xs = self.lower_expr(args[0], &GoTy::Any);
+                if let GoTy::Slice(e) = &xs.ty {
+                    if provable(e) {
+                        let elem = (**e).clone();
+                        let call = GoExpr::new(
+                            GoExprKind::GenericCall(typed.to_string(), vec![elem], vec![xs]),
+                            ret,
+                        );
+                        return self.coerce_if_needed(call, actual);
+                    }
+                }
+                // Unproven: the erased call, byte-identically, over the argument
+                // already lowered above rather than lowered a second time.
+                return self.kernel_call_lowered(go, vec![widen(xs)], actual);
+            }
+        }
         let largs: Vec<GoExpr> = args
             .iter()
             .map(|a| {
@@ -7453,6 +7474,39 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
     ("Sky.Core.List", "foldl", "rt.List_foldlElemFirstT", 3),
     ("Sky.Core.List", "any", "rt.List_anyT", 2),
 ];
+
+/// The UNARY list kernels whose typed twin returns a Go PRIMITIVE, keyed by the
+/// erased symbol the kernel table already resolves to.
+///
+/// `rt.List_isEmpty` is `func(any) any` and its body calls the unexported
+/// `asList`, so on a typed `[]T` — which is every list in a well-typed Sky
+/// program — it MISSES the `[]any` fast path, reflect-walks the slice, and boxes
+/// every element into a fresh `[]any`, in order to compute `len(items) == 0`.
+/// The call site additionally boxes the slice header (`any(xs)`) on the way in
+/// and narrows the boxed `bool` back with `rt.AsBool` on the way out.
+/// `rt.List_isEmptyT[T]` (`rt.go:3669`) is `len(xs) == 0` — like the Stage 2 and
+/// Stage 3 twins it has been compiled into every Sky binary and unreachable.
+///
+/// **The table stops at the twins that return a Go PRIMITIVE, and that boundary
+/// is load-bearing rather than a stopping point chosen for time.** `bool` and
+/// `int` need no container rebuilt on the way out, so the twin is a strict
+/// removal. `rt.List_headT` returns `rt.SkyMaybe[A]` where its consumers take
+/// `rt.SkyMaybe[any]`, a distinct Go instantiation needing a reflective
+/// `rt.MaybeCoerce` rebuild — it RELOCATES the cost rather than removing it,
+/// which is the same reason `head` is absent from `SKY_LIST_HOF_TWINS` above.
+/// `rt.List_reverseT` returns `[]A` and would qualify on that test, but it is a
+/// different measurement (it is O(n) work, not an O(1) length read) and doc 14
+/// §5.5's staged-rollout rule is that widening the table re-runs the
+/// measurement. It is deliberately left for a later tranche.
+///
+/// Fields: `(typed runtime symbol, the twin's Go return type)`.
+fn list_unary_prim_twin(go: &str) -> Option<(&'static str, GoTy)> {
+    match go {
+        "rt.List_isEmpty" => Some(("rt.List_isEmptyT", GoTy::Bare(Prim::Bool))),
+        "rt.List_length" => Some(("rt.List_lengthT", GoTy::Bare(Prim::Int))),
+        _ => None,
+    }
+}
 
 /// The kernel list HOFs that have a fully-typed runtime twin, keyed by the
 /// erased symbol the kernel table already resolves to.

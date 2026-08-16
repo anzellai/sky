@@ -87,6 +87,17 @@ case "$M" in
     post "$F" "$MUT"
     echo "--- expect RED: go test TestListAppendT_doesNotAliasItsLeftOperand ---"
     (cd "$WT/runtime-go" && go test -timeout 240s -run TestListAppendT ./rt/); echo "gate exit=$?"
+    # S1b — and expect GREEN from the corpus, which is the POINT. The README
+    # claims "every corpus gate passes the aliasing bug"; that claim is worth
+    # only what it is measured at, so measure it rather than assert it. The
+    # aliasing form returns the correct VALUE and corrupts a DIFFERENT one, only
+    # when the left operand carries spare capacity, and nothing in
+    # infer/roundtrip/golden constructs that condition.
+    if [ "${S1B:-0}" = "1" ]; then
+      echo "--- S1b: expect GREEN (the gates do not catch it) ---"
+      (cd "$WT/rust" && cargo build --release -p sky 2>&1 | tail -2)
+      (cd "$WT/rust" && cargo run --release -p xtask -- build-run --golden 2>&1 | tail -6); echo "corpus exit=$?"
+    fi
     ;;
   S2)
     F="$LOWER"; PRE="if le == re && provable(le) {"; MUT="if provable(le) { // MUTANT-S2"

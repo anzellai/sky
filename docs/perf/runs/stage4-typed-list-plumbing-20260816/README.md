@@ -1,4 +1,4 @@
-# Stage 4 — a provable `++` stops widening both its lists
+# Stage 4 — a provable `++`, and a provable length read, stop widening their lists
 
 Stage 2 specialised the **kernel** list HOFs (`rt.List_mapT` over
 `rt.List_mapAny`). Stage 3 specialised two **pure-Sky** list defs
@@ -247,7 +247,130 @@ constructed.**
 *witness*, never a control — it is 51–54% of the callers of `rt.asList` (see the
 falsifier below) and a control cannot sit inside the mechanism under test.
 
-## Binary size — MEASURED, and it is +624 bytes
+## The second change: unary list kernels that only read a length
+
+`kernel_call` emits `rt.List_isEmptyT[T](xs)` / `rt.List_lengthT[T](xs)` over a
+proven `[]T`, in place of `rt.AsBool(rt.List_isEmpty(any(xs)))` /
+`rt.AsInt(rt.List_length(any(xs)))`. Same origin (R5), same lever (§5.3), same
+"already compiled in and unreachable" condition.
+
+**The Stage 4 brief's premise for this change was stale, and correcting it is
+most of the result.** The brief described three `rt.AsListT[any]` wrappers around
+`List.isEmpty` in `renderNodeAs`, taken from a `console_app/main.go` that was one
+stdlib generation old. Those do not exist in the current emission. What is there
+is `rt.AsBool(rt.List_isEmpty(any(nearbyChildren_10)))`, and `rt.List_isEmpty`'s
+body calls the **unexported** `asList` — so the real mechanism is worse in
+principle than the brief described (a full reflect walk over the list, boxing
+every element, in order to read `len(items) == 0`) and much smaller in practice.
+
+It is smaller because **`rt.List_isEmpty` does not appear in the Stage 3 profiles
+at all.** Listing every node at `-nodefraction=0` (385 nodes) finds no
+`rt.List_isEmpty` and puts `rt.List_length` at **0.011%**. The three call sites
+in `renderNodeAs` run on `nearbyChildren`, `pseudoEntries` and
+`animationEntries`, all of which are empty on almost every element, so the
+reflect walk never has elements to box and the remaining cost is one slice-header
+box per call — attributed to the *caller*, where pprof cannot isolate it.
+
+### Why this one needed a benchmark as well as an A/B
+
+Three `List.isEmpty` per rendered element against ~96 objects per element after
+the `++` change puts the ceiling near the harness's own between-run spread on
+objects/interaction. **A null from the A/B alone could not distinguish "no
+effect" from "effect below resolution."** So the per-call cost is measured
+exactly instead (`runtime-go/rt/list_twin_alloc_bench_test.go`, `-benchmem`,
+2,000,000 iterations, typed `[]struct{K string; V int}` inputs because that is
+what a well-typed Sky program hands these helpers):
+
+| | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `List_isEmpty(any(xs))`, empty | 23.80 | 24 | **1** |
+| `List_isEmptyT(xs)`, empty | **0.32** | **0** | **0** |
+| `List_isEmpty(any(xs))`, n=8 | 249.70 | 344 | **10** |
+| `List_isEmptyT(xs)`, n=8 | **0.32** | **0** | **0** |
+| `List_length(any(xs))`, n=8 | 246.40 | 344 | **10** |
+| `List_lengthT(xs)`, n=8 | **0.32** | **0** | **0** |
+
+The same file measures the `++` pair, which reconciles the first change against
+its call frequency: `AsListT[T](Concat(any(a), any(b)))` on 8+8 costs **23
+allocs / 683 ns** against `List_appendT`'s **1 alloc / 91 ns**, and on the
+empty-left-operand shape that three of `renderNodeAs`'s five `++` actually run,
+**10 allocs / 253 ns** against **1 alloc / 34 ns**.
+
+**One caveat the benchmark cannot settle, and the A/B can.** The benchmark
+assigns to a package-level sink, which forces the boxed argument to escape. At
+the real call site Go inlines `rt.List_isEmpty` — pprof labels it
+`rt.List_length (inline)` — and an inlined callee with a statically known
+concrete type may let escape analysis elide the `any(xs)` box entirely. If it
+does, the erased form already costs 0 there and the whole-app effect is nil. The
+benchmark bounds the per-call cost; only the A/B says what the app pays.
+
+### Emission
+
+10/10 sites convert in `19-skyforum` — 4 `isEmpty`, 6 `length` — and the 4
+`rt.AsBool` and 6 `rt.AsInt` wrappers go with them. The full emission diff
+against the `++`-only arm is 14 lines, all of them the intended transform.
+
+### Whole-app effect — it resolves, and it is bigger than the profile suggested
+
+Measured against the `++`-only arm (so this is B2 alone, not the pair), 3 reps
+each, all 12 runs on a uniformly quiet host (`load1_at_start` 1.76–2.55):
+
+| | `++` only (3 reps) | `++` + unary (3 reps) | Δ |
+|---|---|---|---|
+| **94 elements** | | | |
+| objects / interaction | 8,936 – 9,085 | **8,710 – 8,817** | **−3.0%** |
+| kB / interaction | 438.8 – 444.2 | **433.1 – 438.9** | −1.2% |
+| interactions / sec | 1136.2 – 1147.5 | **1162.2 – 1169.3** | **1.02×** |
+| **974 elements** | | | |
+| objects / interaction | 92,515 – 94,620 | **90,039 – 90,164** | **−3.6%** |
+| kB / interaction | 4644.0 – 4731.1 | **4563.6 – 4588.6** | **−2.3%** |
+| interactions / sec | 132.6 – 134.5 | **137.1 – 137.5** | **1.03×** |
+
+Objects and throughput are non-overlapping at both sizes. **The prediction from
+the profile was wrong in the useful direction**: `rt.List_isEmpty` is invisible
+to pprof, so the expectation was ~1%, and the measured effect is three to four
+times that.
+
+**Where it went, and it is exact.** Differencing every frame between the two
+arms at 974 elements finds three that vanish completely:
+
+| frame | `++` only | `++` + unary |
+|---|---|---|
+| `main.Std_Ui_renderNodeAs.func1.1` | 888.1 | **0** |
+| `main.Std_Ui_renderNodeAs.func1.2` | 898.7 | **0** |
+| `main.Std_Ui_renderNodeAs.func1.4` | 898.7 | **0** |
+| `main.Std_Ui_renderElement.func1.…renderNodeAs.2.{1,2,4}` | 367.2 | **0** |
+| `main.State_postScore` (a `List.length` site) | 136.6 | **0** |
+
+Those first three **are** the three `List.isEmpty` sites — the anonymous IIFEs
+`Std/Ui.sky:1952`, `:1973` and `:2005` lower to. They sum with the rest to
+**3,189 objects/interaction against a measured whole-app drop of 3,333**, so
+~96% of the effect is accounted for by name.
+
+They go to *zero*, not down, and that is the mechanism: the erased body forced a
+heap-boxed `any` argument, so Go kept each closure as a real function. Replacing
+it with `len(xs) == 0` makes the closure trivially inlinable and the frame stops
+existing. `main.Std_Ui_renderNodeAs.func1` correspondingly rises **+137.7**,
+absorbing them.
+
+Controls hold: `rt.List_cons` +67.7 on ~3,010, `rt.asList` −104.8 on ~3,087,
+`rt.(*VNode).setAttr` unmoved — all inside their between-run spreads.
+
+**So the benchmark's escape-analysis caveat resolved against the benchmark.** Go
+did *not* elide the boxing at the real call sites; the erased form was paying it,
+and the A/B is what proved it. The benchmark bounded the per-call cost correctly
+and could not have told us the app paid it.
+
+### Both changes together
+
+| | baseline | `++` + unary | Δ |
+|---|---|---|---|
+| objects / interaction, 94 el | 11,032 – 11,309 | **8,710 – 8,817** | **−21.3%** |
+| objects / interaction, 974 el | 115,005 – 115,594 | **90,039 – 90,164** | **−21.9%** |
+| interactions / sec, 94 el | 1028.8 – 1050.1 | **1162.2 – 1169.3** | **1.12×** |
+| interactions / sec, 974 el | 115.3 – 120.9 | **137.1 – 137.5** | **1.16×** |
+
+## Binary size — MEASURED, and it is +1,952 bytes for the pair
 
 Stage 2 and Stage 3 both instantiated new Go generics and both left binary size
 **UNMEASURED**, with doc 14 §5.5 warning not to claim "no binary growth". Here it

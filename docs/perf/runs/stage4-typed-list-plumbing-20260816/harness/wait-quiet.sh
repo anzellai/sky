@@ -30,8 +30,13 @@ while :; do
   # process NAME: siblings run binaries called `app-probe` and `skyliveload`
   # too, and matching those would be indistinguishable from matching my own).
   sib=$(ps -Ao command | grep -E "scratchpad/[a-z0-9-]+/(ab[0-9]*\.sh|bin/)" | grep -v "scratchpad/$MINE/" | grep -vc grep || true)
-  hot=$(ps -Ao pcpu,command | awk -v m="$CPU_MAX" -v mine="scratchpad/$MINE/" '
-          $1 > m && index($0, mine) == 0 && $0 !~ /ANECompilerService|WindowServer/ { n++ } END { print n+0 }')
+  # Only OTHER AGENTS' work counts as contention, and every agent on this host
+  # runs out of the shared scratchpad. Keying on "any user process above N%"
+  # instead was tried and never released: Google Drive spikes past 40% every
+  # minute or so, resetting the streak forever — and it was equally present
+  # during the clean runs, so it is background, not contention.
+  hot=$(ps -Ao pcpu,command | awk -v m="$CPU_MAX" -v mine="scratchpad/$MINE/" -v sp="scratchpad/" '
+          $1 > m && index($0, sp) > 0 && index($0, mine) == 0 { n++ } END { print n+0 }')
   if [ "$sib" -eq 0 ] && [ "$hot" -eq 0 ]; then
     streak=$((streak + 10))
     if [ "$streak" -ge "$HOLD" ]; then

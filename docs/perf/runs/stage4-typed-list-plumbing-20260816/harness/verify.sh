@@ -45,5 +45,6 @@ leg xtask-coerce-floor   1800 cargo run --release -p xtask --manifest-path rust/
 leg xtask-build-run      3600 cargo run --release -p xtask --manifest-path rust/Cargo.toml -- build-run --golden
 leg example-sweep        3600 bash scripts/example-sweep.sh
 leg doc-examples         1800 bash scripts/doc-examples.sh
+leg skyforum-e2e         1200 node scripts/playwright-live-verify.mjs 19-skyforum
 
 echo; echo "===== SUMMARY ====="; cat "$SUMMARY"
