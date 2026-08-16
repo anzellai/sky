@@ -657,6 +657,12 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     // anti-drift test stays total; they claim nothing.
     ("xtask:denominators", &[]),
     ("xtask:coverage-ledger", &[]),
+    // Likewise accounting: `config-surface --check` measures how much
+    // configuration surface EXISTS and ratchets its defect counts. The
+    // effective-value coverage that reads from it is scored through
+    // `config-matrix` (a registered gate, so GATE_SURFACES already carries it);
+    // claiming it here too would double-count.
+    ("xtask:config-surface", &[]),
     // The harness runs the registered gates; their coverage is already scored
     // through GATE_SURFACES, and counting it twice here would double-claim.
     ("xtask:harness", &[]),

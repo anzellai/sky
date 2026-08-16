@@ -301,7 +301,34 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         }
     };
 
-    diff_and_gate(&counts, &no_emit, &golden, &only, verbose)
+    diff_and_gate(&counts, &no_emit, &golden, &only, verbose, &corpus_report(root))
+}
+
+/// The CORPUS denominator — discovered on disk, independent of the golden.
+///
+/// The gate used to report "`N` of 61", where 61 was `golden.len()`. A project
+/// absent from the golden was therefore absent from the denominator too, so
+/// five projects with a `src/` and a `sky.toml` could sit outside the ratchet
+/// with every run reporting full coverage.
+pub struct CorpusReport {
+    /// Every project found on disk, exclusions included.
+    discovered: usize,
+    /// Discovered, not excluded — the set the golden must cover.
+    expected: Vec<String>,
+    /// Exclusions that name a directory which is not there any more.
+    stale_exclusions: Vec<String>,
+}
+
+fn corpus_report(root: &Path) -> CorpusReport {
+    CorpusReport {
+        discovered: discovered(root).len(),
+        expected: corpus(root),
+        stale_exclusions: EXCLUDED_FROM_FLOOR
+            .iter()
+            .filter(|(k, _)| !dir_for_key(root, k).is_dir())
+            .map(|(k, _)| (*k).to_string())
+            .collect(),
+    }
 }
 
 /// The cost class a narrowing token falls into. See the module header table.
@@ -876,6 +903,7 @@ fn diff_and_gate(
     golden: &BTreeMap<String, Classed>,
     only: &Option<Vec<String>>,
     verbose: bool,
+    corpus: &CorpusReport,
 ) -> i32 {
     println!(
         "coerce-floor gate — runtime-narrowing token census BY COST CLASS\n\
@@ -1019,10 +1047,18 @@ fn diff_and_gate(
     // like a 23% corpus-wide fall and was in fact a 56-row sum compared against
     // a 61-row one.
     let measured_of_golden = golden.keys().filter(|k| counts.contains_key(*k)).count();
+    // Projects on disk that the golden does not lock a floor for. Independent
+    // of the golden by construction, which is the whole point: reading the
+    // denominator off the golden made a missing row invisible.
+    let undeclared: Vec<&String> =
+        corpus.expected.iter().filter(|k| !golden.contains_key(*k)).collect();
     println!(
-        "COVERAGE  |  {measured_of_golden} of {} golden row(s) measured this run{}",
+        "COVERAGE  |  {} of {} project(s) discovered on disk emitted this run; \
+         {measured_of_golden} of {} golden row(s) measured{}",
+        counts.len(),
+        corpus.discovered,
         golden.len(),
-        if measured_of_golden < golden.len() {
+        if measured_of_golden < golden.len() || !undeclared.is_empty() {
             "  <<< SHORTFALL — the totals below are NOT corpus-wide"
         } else {
             ""
@@ -1220,6 +1256,44 @@ fn diff_and_gate(
             missing_from_golden.join(", ")
         );
     }
+    // ---- the CORPUS clause: the golden must cover its own corpus ----
+    //
+    // `missing_from_golden` above only sees a project that EMITTED here, so a
+    // discovered project that cannot emit on this machine was doubly invisible:
+    // absent from the golden, and absent from the count of what was missing.
+    if !undeclared.is_empty() && !subset {
+        fail = true;
+        eprintln!(
+            "\nCOERCE-FLOOR GATE: FAIL — {} project(s) exist on disk with a `sky.toml` and \
+             a `src/` and have NO golden row, so no floor is locked for them:\n  {}",
+            undeclared.len(),
+            undeclared.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n  ")
+        );
+        eprintln!(
+            "  The denominator of this gate is the CORPUS — projects discovered on disk —\n\
+             \x20 not `golden.len()`. Reading it off the golden is why five projects\n\
+             \x20 (39-hub-demo/billing-app, 39-hub-demo/frontend-app, apps/fieldbook/probe,\n\
+             \x20 simple, test_pkg) sat outside the ratchet while every run reported full\n\
+             \x20 coverage: a project missing from the golden was missing from the question.\n\
+             \x20\n\
+             \x20 Fix by BLESSING once the project emits here —\n\
+             \x20     cargo run -p xtask -- coerce-floor --rekey\n\
+             \x20 — or, if it genuinely cannot carry a floor, add it to\n\
+             \x20 EXCLUDED_FROM_FLOOR in coerce_floor_gate.rs WITH A REASON. Do NOT bless\n\
+             \x20 while any input cannot emit: a project that did not emit contributes 0\n\
+             \x20 and manufactures a fake improvement."
+        );
+    }
+    if !corpus.stale_exclusions.is_empty() {
+        fail = true;
+        eprintln!(
+            "\nCOERCE-FLOOR GATE: FAIL — {} EXCLUDED_FROM_FLOOR entr(y/ies) name a directory \
+             that is not there: {}. An exclusion that outlives the thing it excused is a \
+             hole nobody is holding open on purpose.",
+            corpus.stale_exclusions.len(),
+            corpus.stale_exclusions.join(", ")
+        );
+    }
     // ---- the COVERAGE clause: the census must cover its own golden ----
     //
     // A `--only` run intentionally measures a subset, so the shortfall there is
@@ -1309,9 +1383,12 @@ fn diff_and_gate(
         println!(
             "\nCOERCE-FLOOR GATE: PASS  (adapter exact at {}, no project widened \
              dispatch/narrow)\n  \
-             covered {measured_of_golden} of {} golden row(s){}",
+             covered {measured_of_golden} of {} golden row(s), over {} of {} project(s) \
+             discovered on disk{}",
             total_now.adapter,
             golden.len(),
+            counts.len(),
+            corpus.discovered,
             if measured_of_golden < golden.len() {
                 " — PARTIAL, by explicit SKY_LIVE_TESTS=skip"
             } else {
@@ -1354,17 +1431,54 @@ fn dir_for_key(root: &Path, key: &str) -> PathBuf {
 /// authority (`docs/ci-layer2-members.md` Decision 2) — **not** by `read_dir` on
 /// `apps/`, because discovery-by-listing is how `39-hub-demo` became invisible
 /// to six gates at once.
+/// Projects discovered on disk that are deliberately OUTSIDE the floor, each
+/// with a reason.
+///
+/// The list is empty, and that is the intended state: an exclusion is a hole in
+/// the ratchet, so the bar is a project that genuinely cannot carry a floor.
+/// `examples/simple` and `examples/test_pkg` were excluded here in an earlier
+/// draft as "unnumbered scratch from v0.10.0" — they are not scratch, they emit
+/// like any other project, and a row costs nothing. They are in the golden.
+///
+/// A key listed here that does NOT exist on disk fails the gate: stale
+/// accounting is how an exclusion outlives the thing it excused.
+const EXCLUDED_FROM_FLOOR: &[(&str, &str)] = &[];
+
+/// The ratchet's corpus: every Sky project DISCOVERED ON DISK, minus the
+/// accounted exclusions.
+///
+/// # The defect this closes
+///
+/// The corpus used to be `read_dir("examples")` at ONE level, plus
+/// `apps/manifest.toml`, minus two hard-coded names with no reason attached.
+/// Five projects that exist on disk with a `src/` and a `sky.toml` were in the
+/// golden not at all — `examples/39-hub-demo/billing-app`,
+/// `examples/39-hub-demo/frontend-app`, `apps/fieldbook/probe`,
+/// `examples/simple`, `examples/test_pkg` — and the gate could not say so,
+/// because its denominator came from the golden: `61` in
+/// "`N` of 61 row(s) measured" is `golden.len()`, so the artefact was 100% of
+/// itself. A project missing from the golden was missing from the question.
+///
+/// Discovery is now recursive over `examples/`, `apps/` and `sky-bundled/` —
+/// nesting is real (`apps/fieldbook/probe` sits inside `apps/fieldbook`, and
+/// `39-hub-demo` is a wrapper directory holding two projects and no project of
+/// its own), and a one-level listing cannot see it. `apps/manifest.toml` is
+/// still consulted so a declared member outside those roots is still included.
 fn corpus(root: &Path) -> Vec<String> {
-    let mut ds: Vec<String> = std::fs::read_dir(root.join("examples"))
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir())
-                .filter_map(|e| e.file_name().to_str().map(String::from))
-                .filter(|n| root.join("examples").join(n).join("src").is_dir())
-                .filter(|n| n != "simple" && n != "test_pkg")
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut ds = discovered(root);
+    ds.retain(|n| !EXCLUDED_FROM_FLOOR.iter().any(|(k, _)| k == n));
+    ds
+}
+
+/// Every Sky project under the corpus roots, keyed the way the golden keys it.
+///
+/// A project is a directory holding BOTH `sky.toml` and `src/`. The walk keeps
+/// descending after finding one, because a project can contain another.
+fn discovered(root: &Path) -> Vec<String> {
+    let mut ds: Vec<String> = Vec::new();
+    for r in ["examples", "apps", "sky-bundled"] {
+        walk_projects(root, &root.join(r), &mut ds);
+    }
 
     for key in layer2_keys(root) {
         // Member D's declared path IS `examples/13-skyshop`, and member E is a
@@ -1378,6 +1492,38 @@ fn corpus(root: &Path) -> Vec<String> {
     ds.sort();
     ds.dedup();
     ds
+}
+
+/// Directories a walk must not descend into: build output, generated FFI, and
+/// dependency caches. Descending into them would discover projects the compiler
+/// generated rather than projects a human wrote.
+const NOT_A_PROJECT_ROOT: &[&str] =
+    &["sky-out", "sky-out-rust", ".skycache", ".skydeps", "sky-ffi", "node_modules", "target"];
+
+fn walk_projects(root: &Path, dir: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    if dir.join("sky.toml").is_file() && dir.join("src").is_dir() {
+        if let Ok(rel) = dir.strip_prefix(root) {
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            // The golden's two key shapes: a bare name for a direct child of
+            // `examples/`, a repo-relative path for anything else.
+            out.push(rel.strip_prefix("examples/").filter(|s| !s.contains('/')).map_or(rel.clone(), str::to_string));
+        }
+    }
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || name == "src" || NOT_A_PROJECT_ROOT.contains(&name.as_ref()) {
+            continue;
+        }
+        walk_projects(root, &path, out);
+    }
 }
 
 /// Layer-2 member project paths, from the declared manifest.
@@ -1623,7 +1769,7 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
             "`Github.Com.Google.Uuid` has no generated FFI surface".to_string(),
         )];
         assert_eq!(
-            diff_and_gate(&partial, &no_emit, &golden, &None, false),
+            diff_and_gate(&partial, &no_emit, &golden, &None, false, &corpus_of(&["emits", "blocked"])),
             1,
             "a run that measured 1 of 2 golden rows must NOT report PASS: the \
              unchecked row's floor is unratcheted for the whole run"
@@ -1635,10 +1781,123 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
             measured("blocked", golden["blocked"]),
         ]);
         assert_eq!(
-            diff_and_gate(&full, &[], &golden, &None, false),
+            diff_and_gate(&full, &[], &golden, &None, false, &corpus_of(&["emits", "blocked"])),
             0,
             "with the whole corpus measured and every class at its floor, the \
              gate must pass — the coverage clause keys on the SHORTFALL"
+        );
+    }
+
+    fn repo_root() -> PathBuf {
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        while !d.join("examples").is_dir() {
+            d = d.parent().expect("repo root").to_path_buf();
+        }
+        d
+    }
+
+    /// A `CorpusReport` naming exactly `keys` as discovered on disk.
+    fn corpus_of(keys: &[&str]) -> CorpusReport {
+        CorpusReport {
+            discovered: keys.len(),
+            expected: keys.iter().map(|s| (*s).to_string()).collect(),
+            stale_exclusions: Vec::new(),
+        }
+    }
+
+    /// THE REGRESSION for the corpus denominator.
+    ///
+    /// A project that exists on disk, has NO golden row, and does NOT emit here
+    /// was doubly invisible: `missing_from_golden` only sees projects that
+    /// emitted, and `unmeasured`/`golden_orphans` are both keyed on the golden.
+    /// So the run reported "N of N golden rows measured" and PASSED while a
+    /// whole project sat outside the ratchet. That is how
+    /// `examples/39-hub-demo/billing-app`, `examples/39-hub-demo/frontend-app`,
+    /// `apps/fieldbook/probe`, `examples/simple` and `examples/test_pkg` — five
+    /// projects with a `sky.toml` and a `src/` — stayed unlocked.
+    #[test]
+    fn a_discovered_project_with_no_golden_row_fails_even_when_it_did_not_emit() {
+        let golden =
+            BTreeMap::from([("a".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 1 })]);
+        let counts = BTreeMap::from([(
+            "a".to_string(),
+            Counts { by_class: golden["a"], per_family: BTreeMap::new() },
+        )]);
+
+        // CONTROL: the corpus is exactly the golden's key. Every golden row
+        // measured, every discovered project declared → PASS.
+        assert_eq!(
+            diff_and_gate(&counts, &[], &golden, &None, false, &corpus_of(&["a"])),
+            0,
+            "a fully declared, fully measured corpus must pass, or the assertion \
+             below is about something else"
+        );
+
+        // THE CASE: `b` is on disk, has no golden row, and did not emit. Every
+        // golden-keyed clause is satisfied — the run measured 1 of 1 rows.
+        assert_eq!(
+            diff_and_gate(
+                &counts,
+                &[("b".to_string(), "no FFI surface here".to_string())],
+                &golden,
+                &None,
+                false,
+                &corpus_of(&["a", "b"]),
+            ),
+            1,
+            "a project discovered on disk with no golden row must FAIL even when \
+             it did not emit — otherwise the denominator is the golden and the \
+             artefact is 100% of itself"
+        );
+    }
+
+    /// An exclusion that names a directory which is gone must fail: stale
+    /// accounting is how a hole outlives the thing it excused.
+    #[test]
+    fn a_stale_exclusion_fails() {
+        let golden =
+            BTreeMap::from([("a".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 1 })]);
+        let counts = BTreeMap::from([(
+            "a".to_string(),
+            Counts { by_class: golden["a"], per_family: BTreeMap::new() },
+        )]);
+        let mut corpus = corpus_of(&["a"]);
+        corpus.stale_exclusions = vec!["examples/long-gone".to_string()];
+        assert_eq!(diff_and_gate(&counts, &[], &golden, &None, false, &corpus), 1);
+    }
+
+    /// The discovery walk must find the projects the old one-level `read_dir`
+    /// could not see, and must not invent any.
+    #[test]
+    fn discovery_finds_every_nested_project_on_disk() {
+        let root = repo_root();
+        let found = discovered(&root);
+        for expect in [
+            "examples/39-hub-demo/billing-app",
+            "examples/39-hub-demo/frontend-app",
+            "apps/fieldbook/probe",
+            "simple",
+            "test_pkg",
+            "00-standard-libs",
+            "apps/ledger",
+            "sky-bundled/console",
+        ] {
+            assert!(found.iter().any(|k| k == expect), "discovery missed `{expect}`: {found:?}");
+        }
+        // Every discovered key must be a real project directory, so a walk that
+        // started inventing keys fails here rather than widening the corpus.
+        for k in &found {
+            let dir = dir_for_key(&root, k);
+            assert!(
+                dir.join("sky.toml").is_file() && dir.join("src").is_dir(),
+                "discovery produced `{k}`, which is not a Sky project"
+            );
+        }
+        assert!(
+            found.len() > 60,
+            "discovery found only {} project(s) — the walk has broken, and a \
+             corpus that shrinks silently is the defect this replaced",
+            found.len()
         );
     }
 
@@ -1658,7 +1917,7 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         )]);
         let no_emit = vec![("b".to_string(), "filtered out".to_string())];
         assert_eq!(
-            diff_and_gate(&counts, &no_emit, &golden, &only, false),
+            diff_and_gate(&counts, &no_emit, &golden, &only, false, &corpus_of(&["a", "b"])),
             0,
             "--only names the subset the operator wants; that is not a hole"
         );
