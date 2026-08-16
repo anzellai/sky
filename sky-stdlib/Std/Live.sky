@@ -166,26 +166,43 @@ withPort =
 
 
 -- | Select the session store kind ("memory" / "sqlite" / "redis" /
--- "postgres"). Env `SKY_LIVE_STORE` wins.
+-- "postgres").
+--
+-- Resolved by the same precedence order as `withPort`, highest first:
+-- operator env `SKY_LIVE_STORE` (shell or `.env`) → this call →
+-- `[live] store` in `sky.toml` → "memory".
 withStore : String -> AppConfig model msg -> AppConfig model msg
 withStore =
     Ffi.kernel "Live_withStore"
 
 
--- | Session store path / URL (env `SKY_LIVE_STORE_PATH` wins).
+-- | Session store path / URL.
+--
+-- Same precedence order as `withPort`: operator env `SKY_LIVE_STORE_PATH`
+-- (shell or `.env`) → this call → `[live] storePath` in `sky.toml` → the
+-- store's own fallback (postgres: `DATABASE_URL`; redis: `REDIS_URL`, then
+-- `localhost:6379`). An operator can therefore repoint the store (e.g. at a
+-- mounted volume) without a recompile, even when the app calls this.
 withStorePath : String -> AppConfig model msg -> AppConfig model msg
 withStorePath =
     Ffi.kernel "Live_withStorePath"
 
 
--- | Session TTL ("30m" / "24h" / bare seconds; env `SKY_LIVE_TTL` wins).
+-- | Session TTL ("30m" / "24h" / bare seconds).
+--
+-- Same precedence order as `withPort`: operator env `SKY_LIVE_TTL` (shell or
+-- `.env`) → this call → `[live] ttl` in `sky.toml` → 30 minutes. An empty or
+-- unparseable value at one layer falls through to the next.
 withTtl : String -> AppConfig model msg -> AppConfig model msg
 withTtl =
     Ffi.kernel "Live_withTtl"
 
 
--- | Tiered-session-cache idle-evict window ("5m" / "0"/"off" to disable; env
--- `SKY_LIVE_IDLE_EVICT` wins). On a durable store (sqlite / postgres / redis)
+-- | Tiered-session-cache idle-evict window ("5m" / "0"/"off" to disable).
+--
+-- Same precedence order as `withPort`: operator env `SKY_LIVE_IDLE_EVICT`
+-- (shell or `.env`) → this call → 5 minutes.
+-- On a durable store (sqlite / postgres / redis)
 -- a session with no active SSE that's been idle this long drops its live
 -- pointer from RAM while its blob stays on disk to the full TTL, resurrecting
 -- on next access — bounding RAM to the ACTIVE working set. Ignored by the
