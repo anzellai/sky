@@ -68,6 +68,15 @@ derivations.
 | 5 | **e2-small** · x86 | **embedded PostgreSQL**, `memory` sessions | **1,395 kB** | **25–50** | not isolated | ~21/s | 21.2 + **21.9 MB** | absent | `8e166eaf` |
 | 6 | **e2-small** · x86 | **embedded PostgreSQL**, `postgres` sessions | **1,764 kB** | **25–50** | 39.9/s | ~19/s | 21.2 + **28.4 MB** | absent | `8e166eaf` |
 | 7 | **e2-micro**, sky-lang.org · x86 — *production reference, idle* | SQLite | not measurable | — | — | — | **56.1 MB** app | **present, 86 MB** | live |
+| 8 | **e2-small** · x86 — *`19-skyforum`, 94 elements* | **embedded PostgreSQL**, `postgres` sessions | **625–650 kB** (marginal slope, n=100→500) | **100–300** (failure knee) | 183.5/s (rested first run) | **64.3/s** at n=300 | — | absent | `3ed83c08` |
+| 9 | **e2-medium** · x86 — *`19-skyforum`, 94 elements* | **embedded PostgreSQL**, `postgres` sessions | — | >500 | — | **261.5/s** at n=300 | — | absent | `3ed83c08` |
+
+> **Rows 1–7 are `examples/26-ui-showcase` (384 elements); rows 8–9 are
+> `examples/19-skyforum` (94 elements), several optimisation stages later**
+> (`runs/gcp-x86-capacity-20260816/`). Figures do not transfer across view
+> sizes or commits — and rows 8–9's "Per session" is a **marginal slope
+> across levels**, not RSS ÷ n, which is why it is far below rows 2–6 (see
+> the note below).
 
 > **Read the "Per session" column with
 > ["The attribution"](#the-attribution--what-the-11-ms-and-the-14-mb-actually-are)
@@ -75,10 +84,14 @@ derivations.
 > load. RSS is a high-water mark, and the slope is dominated by allocator
 > headroom that does not belong to any session: on the same build it reads
 > 2,118 kB/session at N=25 and 1,367 kB/session at N=100. The **retained**
-> cost, measured idle after a forced GC, is **336 kB/session and flat**.
-> The column is still the right input for "how much RSS will this
-> instance show at this concurrency"; it is the wrong input for "what
-> does one more session cost".
+> cost, measured idle after a forced GC, is **336 kB/session and flat** —
+> but that is idle retention, **not** the marginal cost of a loaded session
+> either. The sizing input is the **marginal slope under load across
+> levels** (rows 8–9's method): 625–650 kB/session on the PostgreSQL store,
+> 451–531 kB on the memory store (`runs/gcp-x86-capacity-20260816/`).
+> RSS ÷ n charges the fixed base to the sessions; idle post-GC live heap
+> omits what a loaded session pins. The RSS columns remain the right input
+> for "how much RSS will this instance show at this concurrency".
 
 **Row 1 is kept only as evidence for why on-target measurement is
 required.** Apple's `container` rejects fractional `--cpus`, so its 1-CPU
@@ -105,7 +118,11 @@ the SQLite baseline at all.
 On every x86 instance measured, **CPU binds an order of magnitude before
 memory does.** Sizing either e2 machine from its RAM overstates capacity by
 10–25×. Memory sets the hard ceiling; latency sets the useful one, and the
-useful one arrives first by a wide margin.
+useful one arrives first by a wide margin. (This table derives from rows
+2–6's commits; the memory-ceiling figures use those runs' RSS slopes. The
+later `19-skyforum` measurement — rows 8–9 — reproduces the conclusion with
+a sustained 64.3 int/s at 300 sessions on e2-small while memory was nowhere
+near binding; `runs/gcp-x86-capacity-20260816/`.)
 
 ### What embedded PostgreSQL costs
 
@@ -741,6 +758,17 @@ hundred. Memory sets the hard ceiling; latency sets the useful one.
 > hard ceiling is set by ~336 kB of retention plus an allocator pool that
 > is amortised across sessions, not by ~1.4 MB each. The CPU-binds-first
 > conclusion is unaffected and is strengthened.
+>
+> **Third pass (2026-08-16) — the number to size with is the marginal
+> slope, and it is measured.** Neither RSS ÷ n (charges the fixed base to
+> sessions) nor idle post-GC live heap (336 kB — omits what a loaded
+> session pins) is the sizing input. Measured as an OLS-free slope across
+> n = 100 → 500 under load on x86 (`19-skyforum`, 94 elements, commit
+> `3ed83c08`): **625–650 kB/session on the PostgreSQL session store,
+> 451–531 kB on the memory store** (`runs/gcp-x86-capacity-20260816/`).
+> Note `GOGC` multiplies this slope — 2.9× across 100 → 400, measured on M1
+> (`runs/gogc-postgres-20260816/`); the x86 slope at the shipped `GOGC=400`
+> default is unmeasured.
 
 ## What is measured, and what is not
 

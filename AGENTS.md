@@ -139,9 +139,9 @@ non-obvious ones as questions:
    |---|---|
    | Minimal Linux | ~250 MB |
    | Sky app binary (Go) | **~22 MB fresh, ~56 MB settled** (measured) |
-   | PostgreSQL base (`shared_buffers = 32MB`) | ~36 MB |
-   | PG backends, ~5–10 MB each | ~40–70 MB at 6–10 active |
-   | Sky.Live sessions, **~1.8–1.9 MB each on x86 at the shipped GC default** | ~185 MB at 100 concurrent |
+   | PostgreSQL base — postmaster + auxiliaries | **~22–29 MB** (measured under `--embed` on an e2-small) |
+   | PG backends | **6 total, flat** at any session count — a fixed block, not a per-session tax |
+   | Sky.Live sessions, **625–650 kB each on x86, PostgreSQL store, stock `GOGC=100`** (the shipped default raises this — see below) | ~65 MB at 100 concurrent |
    | **Base, before sessions** | **~380 MB** |
 
    **Sessions are the number that decides the instance** — and the per-session
@@ -152,8 +152,11 @@ non-obvious ones as questions:
    (`docs/perf/runs/gcp-x86-capacity-20260816/`). Sky now ships **`GOGC=400`
    under a derived `GOMEMLIMIT`** (below), and `GOGC` multiplies the slope, not
    just the baseline: 100 → 400 scales it **2.9×** on the same app and store
-   (`docs/perf/runs/gogc-postgres-20260816/`). Hence ~1.8–1.9 MB — an estimate,
-   applying a within-box ratio measured on M1 to an x86 slope.
+   (`docs/perf/runs/gogc-postgres-20260816/`). The x86 slope at the shipped
+   default is **unmeasured** — do not multiply the two runs together and quote
+   the product; this programme's projections have been wrong by 2×, 13× and
+   20×. What bounds memory at the shipped default is the derived `GOMEMLIMIT`
+   itself, not a per-session figure.
 
    > Quote a per-session number **with its view size and its `GOGC`**, or it
    > will be wrong. This table long carried ~1.35–1.42 MB, which was measured
@@ -162,9 +165,14 @@ non-obvious ones as questions:
 
    **CPU binds ~12× before memory, measured on real GCE instances.** An
    e2-micro *holds* ~450 sessions and is **unusable past ~50** (knee 25–50,
-   peak ~18 interactions/sec); an e2-small knees at **50–100** (~35–42/s).
-   Sizing on memory alone overstates an e2-micro twelvefold. Past 250 sessions
-   both fail 79–96% of interactions.
+   peak ~18 interactions/sec, and past 250 sessions it fails 79–96% of
+   interactions; commit `ba3c3b1d`, `docs/perf/runs/gcp-x86-20260815/`).
+   Re-measured at commit `3ed83c08` with embedded PostgreSQL carrying the
+   sessions (`docs/perf/runs/gcp-x86-capacity-20260816/`): an **e2-small
+   sustains 64.3 int/s at 300 sessions** (failure knee between 100 and 300),
+   an **e2-medium 261.5** (knee above 500). Quote throughput with its commit
+   — these figures predate later optimisation work. Sizing on memory alone
+   overstates an e2-micro twelvefold.
 
    **Count physical cores, not vCPUs.** A GCE vCPU is an SMT thread:
    `e2-standard-8` is **4 cores × 2 threads**, not 8 cores. Four threads on four
@@ -172,7 +180,9 @@ non-obvious ones as questions:
    physical cores serve **1,097** — 70%. The second thread on a core is worth
    ~1.27×, not 2× (`docs/perf/runs/gomaxprocs-scaling-20260816/`). Any capacity
    number derived from a vCPU count overstates the machine by roughly that
-   factor.
+   factor. Counted in physical cores, throughput scales at **79–80% efficiency
+   per doubling** (same run) — a larger instance is a legitimate route when
+   sized on cores.
 
    **The GC default is derived, not configured.** At startup the runtime sizes
    `GOMEMLIMIT` from detected machine memory — the cgroup limit first, so a
@@ -185,16 +195,22 @@ non-obvious ones as questions:
    knob: the Go env vars are the escape hatch, and they work even when the
    process is launched by something that never reads `sky.toml`.
 
-   Two things to tell a user picking a burstable instance: **repeated runs
-   decline** (e2-micro at 100 sessions: 17.5 → 9.6 → 9.5/s as burst credits
-   drain, so plan with the low end, not the first number they see), and a
-   figure measured under a container CPU quota was optimistic against real
-   hardware by **2.5–5×**.
+   Two things to tell a user picking a burstable e2 instance: **the first run
+   after idling overstates sustained capacity by ~2.7×** — a rested e2-small
+   measured 183.5 int/s, then 58–71 for six consecutive runs (seven-run soak,
+   `docs/perf/runs/gcp-x86-capacity-20260816/`; the same decay on e2-micro
+   read 17.5 → 9.6 → 9.5/s, `docs/perf/runs/gcp-x86-20260815/`) — so plan
+   with the sustained figure, never the first number they see. And a figure
+   measured under a container CPU quota was optimistic against real hardware
+   by **2.5–5×**.
 
-   Do **not** tell a user to simplify their view to go faster: the render →
-   diff → serialize path is ~128 ns per VNode, so a 384-element view costs
-   86 µs — **under 1%** of an interaction. And **a single instance has no
-   replica**:
+   The **diff** is not the cost — ~128 ns per VNode, under 1% of an
+   interaction — but the interaction as a whole **does track view size**,
+   because `view(model)` re-runs in full every interaction:
+   `cost_ms ≈ 0.12 + 0.018 × elements` on one core
+   (`docs/perf/runs/forum-rebaseline-20260816/`). Optimising the differ buys
+   nothing; trimming a large view is a real lever. And **a single instance
+   has no replica**:
    `sky db provision --shared` generates a backup timer, a single `--embed` app
    does not, so a `pg_dump` schedule is the operator's to add. Sizing detail:
    `docs/skydb/embedded-postgres.md`.
