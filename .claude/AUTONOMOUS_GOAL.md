@@ -212,3 +212,51 @@ security-relevant.
 **The pinned model stands: Sky.Live is server-driven, truly full-stack, secure
 by default.** Optimisation targets the interaction lifecycle and throughput
 WITHIN that model. Do not re-propose the split as a performance tactic.
+
+## Next structural lever — model-diff-driven selective render (agreed 2026-08-16)
+
+The user's framing:
+
+> wouldn't it be great if the diff happens first and the view rendering logic
+> accept JUST the diff? as the end response only render the diff?
+> ^^ exception on fully re-render page rather than diff when the page refresh etc.
+
+**Adjusted to be buildable**: you cannot diff the view before rendering it — the
+diff is OF the rendered output. But you CAN diff the MODEL. Knowing which model
+fields changed, plus a static map of which view subtrees read which fields, means
+only re-rendering subtrees whose dependencies moved. **Sound because `view` is
+pure**: an unchanged dependency set means provably identical output. That is a
+theorem here, not a heuristic.
+
+An unchanged subtree then costs nothing twice: skipped in the render AND in the
+diff, contributing no patch. `prevTree` is already retained, so the old subtree
+splices in. First render / page refresh renders everything, which is what
+`renderView` already does — the user's stated exception falls out.
+
+**Why it outranks everything else remaining.** Measured law: `cost ≈ 0.12 ms +
+0.018 ms × elements`. Every stage so far made rendering the whole view CHEAPER;
+this stops rendering most of it. A typical interaction touches a tiny fraction of
+the view, so this is potentially an order of magnitude where the ADT sealing the
+user declined was ~1.1×. It also improves as views grow, reversing the current
++139%-for-4x-elements behaviour.
+
+**Scouted obstacles, both already surveyed:**
+- Seeing through first-class callbacks (`List.map (postRow s) posts`): the corpus
+  census found bucket F — genuinely unknown callee — is EMPTY. 86.3% resolve by
+  first-order resolution; 100% have a syntactically known body.
+- Row-polymorphic records erase to `Any` (`goty.rs:226-228`) with reads through
+  reflective `rt.Field`, so field-dependency analysis is UNSOUND there. Must fall
+  back to "assume everything changed" — correct, slow, right failure direction.
+- `compute_def_effect` (`lower.rs:1062`) is already a whole-program call-graph
+  fixpoint of the shape the dependency analysis needs.
+
+**Cheap validation first**: `Std.Ui.Lazy` already exists but memoises the
+`Element` ADT BEFORE the expensive walk, so a hit still pays most of the cost; its
+key is a reflective deep walk paid on hits, behind a process-wide mutex with a
+1024 cap. Fixing WHERE it caches is days, not weeks, and would validate the
+approach before committing to the compiler analysis.
+
+**Sequence**: Stage 4 lands (it moves the denominator) → architecture consult
+costs this properly → build. Do NOT let me sketch the mechanism; two of my
+mechanism proposals were revised by consults today (the inline loop, the Go
+generics) and both replacements were better.
