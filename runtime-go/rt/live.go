@@ -6434,7 +6434,7 @@ var runStreamSubscriberDispatch_debugCounter atomic.Int64
 // the decoder in defer-recover so a panicking decoder consumes the
 // event without crashing the session.
 func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev streamEvent) {
-	if streamDebug {
+	if streamDebugEnabled() {
 		n := runStreamSubscriberDispatch_debugCounter.Add(1)
 		fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d entering dispatch\n", n, ev.kind)
 		defer fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d exit dispatch\n", n, ev.kind)

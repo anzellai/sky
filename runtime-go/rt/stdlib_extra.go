@@ -1313,6 +1313,13 @@ type HttpResponse struct {
 // custom limits.
 var skyHttpClient = newSkyHttpClient()
 
+// skyHTTPClient — the accessor every read site goes through.
+//
+// NOTE (step 1 of 2): still backed by the eager package-level var above, so
+// the accompanying test reds on the stale capture rather than on a missing
+// symbol. Step 2 replaces the body.
+func skyHTTPClient() *http.Client { return skyHttpClient }
+
 func newSkyHttpClient() *http.Client {
 	return &http.Client{
 		// 30s default; overridable via SKY_HTTP_CLIENT_TIMEOUT
@@ -1359,7 +1366,7 @@ func Http_get(url any) any {
 			// so the downstream service nests under this client span.
 			req = req.WithContext(CurrentTraceContext())
 			InjectTraceHeaders(req)
-			resp, err := skyHttpClient.Do(req)
+			resp, err := skyHTTPClient().Do(req)
 			if err != nil {
 				return Err[any, any](ErrNetwork("http.get: " + err.Error()))
 			}
@@ -1385,7 +1392,7 @@ func Http_get(url any) any {
 // P8/Http typed companion — Task-shaped string in, HttpResponse out.
 func Http_getT(url string) func() SkyResult[string, HttpResponse] {
 	return func() SkyResult[string, HttpResponse] {
-		resp, err := skyHttpClient.Get(url)
+		resp, err := skyHTTPClient().Get(url)
 		if err != nil {
 			return Err[string, HttpResponse]("http.get: " + err.Error())
 		}
@@ -1421,7 +1428,7 @@ func Http_post(url any, body any) any {
 			req.Header.Set("Content-Type", "application/json")
 			req = req.WithContext(CurrentTraceContext())
 			InjectTraceHeaders(req)
-			resp, err := skyHttpClient.Do(req)
+			resp, err := skyHTTPClient().Do(req)
 			if err != nil {
 				return Err[any, any](ErrNetwork("http.post: " + err.Error()))
 			}
@@ -1521,7 +1528,7 @@ func Http_request(firstArg any, rest ...any) any {
 			return Err[any, any](ErrNetwork("http.request: " + err.Error()))
 		}
 		applyHttpHeaders(req, headers)
-		client := skyHttpClient
+		client := skyHTTPClient()
 		if timeoutMs >= 0 || !followRedirects || maxRedirects != 10 {
 			client = httpClientFor(timeoutMs, followRedirects, maxRedirects)
 		}
@@ -1552,7 +1559,7 @@ func Http_request(firstArg any, rest ...any) any {
 // inherits the env default; ==0 disables. followRedirects=false
 // returns the first response (resp.Body must still be read & closed).
 func httpClientFor(timeoutMs int, followRedirects bool, maxRedirects int) *http.Client {
-	timeout := skyHttpClient.Timeout
+	timeout := skyHTTPClient().Timeout
 	if timeoutMs == 0 {
 		timeout = 0
 	} else if timeoutMs > 0 {
@@ -1568,7 +1575,7 @@ func httpClientFor(timeoutMs int, followRedirects bool, maxRedirects int) *http.
 		return nil
 	}
 	return &http.Client{
-		Transport:     skyHttpClient.Transport,
+		Transport:     skyHTTPClient().Transport,
 		Timeout:       timeout,
 		CheckRedirect: check,
 	}

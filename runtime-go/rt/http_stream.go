@@ -318,6 +318,13 @@ func (sh *streamHandle) IsClosed() bool {
 // lines per chunk when on.
 var streamDebug = os.Getenv("SKY_STREAM_DEBUG") == "1"
 
+// streamDebugEnabled — the accessor every read site goes through.
+//
+// NOTE (step 1 of 2): still backed by the eager package-level var above, so
+// the accompanying test reds on the stale capture rather than on a missing
+// symbol. Step 2 replaces the body.
+func streamDebugEnabled() bool { return streamDebug }
+
 // runSpool reads from body in streamReadBuffer-sized chunks and
 // pushes streamEvents onto ch. Exits on:
 //
@@ -352,7 +359,7 @@ func (sh *streamHandle) runSpool() {
 			return
 		}
 		n, err := sh.body.Read(buf)
-		if streamDebug {
+		if streamDebugEnabled() {
 			fmt.Fprintf(os.Stderr, "[sky.stream/%d] %dms Read n=%d err=%v\n",
 				sh.id, time.Since(startNs).Milliseconds(), n, err)
 		}
@@ -364,7 +371,7 @@ func (sh *streamHandle) runSpool() {
 				sh.Close()
 				return
 			}
-			if streamDebug {
+			if streamDebugEnabled() {
 				fmt.Fprintf(os.Stderr, "[sky.stream/%d] %dms delivered chunk (took %dms)\n",
 					sh.id, time.Since(startNs).Milliseconds(), time.Since(deliveredAt).Milliseconds())
 			}
@@ -372,7 +379,7 @@ func (sh *streamHandle) runSpool() {
 		if err == io.EOF {
 			doneAt := time.Now()
 			sh.deliver(streamEvent{kind: streamDoneEv})
-			if streamDebug {
+			if streamDebugEnabled() {
 				fmt.Fprintf(os.Stderr, "[sky.stream/%d] %dms delivered Done (took %dms)\n",
 					sh.id, time.Since(startNs).Milliseconds(), time.Since(doneAt).Milliseconds())
 			}
