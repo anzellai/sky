@@ -407,6 +407,12 @@ the source is not itself a Go func, or the arities differ.
 > throughput**, ranges non-overlapping). Before concluding that anything here
 > needs monomorphisation, check whether the shape is statically known at the
 > emit site — it usually is, and then the answer is an eta-expansion.
+>
+> `docs/architecture/sky-compiler-architecture.md` §5.3 retracted the same
+> claim on 2026-08-15 ("Both halves were wrong, and together they are why this
+> category was filed as irreducible"). That retraction landed in the *legacy*
+> reference while this — the **primary** one — still described the
+> monomorphiser as real, which is how the conclusion came back a third time.
 
 ### 5.2 DCE — a demand-driven worklist inside `lower_program_cfg`
 
