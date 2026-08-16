@@ -120,8 +120,7 @@
     "SKY_PARENT_URL",
     "SKY_PROFILE_DIR",
     "SKY_PROFILE_TIMEOUT",
-    "SKY_STATIC_DIR",
-    "SKY_STREAM_DEBUG"
+    "SKY_STATIC_DIR"
   ],
   "runtime_read_literal_sky_names": [
     "SKY_ADMIN_TOKEN",
@@ -237,10 +236,10 @@
   ],
   "summary": {
     "accepted_sky_toml_keys": 30,
-    "documented_names": 87,
+    "documented_names": 88,
     "documented_without_reader": 10,
     "pre_binary_surfaces": 14,
-    "read_without_doc": 29,
+    "read_without_doc": 28,
     "runtime_read_literal_sky_names": 38,
     "runtime_read_suffixes": 40,
     "seeded_suffixes": 23,
