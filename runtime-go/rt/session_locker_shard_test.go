@@ -112,17 +112,25 @@ func TestSessionLocker_ConcurrentDistinctSidsDoNotShareAShard(t *testing.T) {
 		}
 	}
 
-	// With 64 shards and 4096 ids the expected occupancy is 64 per shard.
-	// A correct hash fills every shard; a single-shard locker fills one.
-	if used != sessionLockerShards {
-		t.Fatalf("session ids reached only %d of %d shards — the map guard is "+
-			"still effectively process-wide", used, sessionLockerShards)
+	// These thresholds are ABSOLUTE and deliberately not derived from
+	// sessionLockerShards. An earlier version asserted `used != sessionLockerShards`
+	// and `maxShare > 4*sessions/sessionLockerShards`, which is vacuous under the
+	// gate's own falsifying mutation: at sessionLockerShards = 1 every id lands in
+	// the single shard and `1 != 1` passes. mutate.sh caught it staying green.
+	// The property being asserted is "4096 sessions spread over many distinct
+	// guards", and that has to be stated as a number.
+	const minDistinctShards = 32
+	const maxPerShard = sessions / 8 // 512; the mean at 64 shards is 64
+
+	if used < minDistinctShards {
+		t.Fatalf("session ids reached only %d distinct shards (need >= %d) — the "+
+			"map guard is still effectively process-wide", used, minDistinctShards)
 	}
-	// Guard against a hash that technically touches every shard but piles the
-	// keys into one. 4x the mean is far outside binomial noise at this n.
-	if limit := 4 * sessions / sessionLockerShards; maxShare > limit {
+	// Guard against a hash that technically touches many shards but piles the
+	// keys into one. 8x the mean is far outside binomial noise at this n.
+	if maxShare > maxPerShard {
 		t.Fatalf("worst shard holds %d of %d ids (limit %d) — hash distributes "+
-			"badly and the contention would survive sharding", maxShare, sessions, limit)
+			"badly and the contention would survive sharding", maxShare, sessions, maxPerShard)
 	}
 
 	// And the sharded locker must still be usable concurrently across sids.

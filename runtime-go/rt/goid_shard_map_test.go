@@ -116,9 +116,18 @@ func TestGoidShardedMap_ConcurrentGoroutinesDoNotShareAShard(t *testing.T) {
 		seen[m.shardFor(gid)]++
 	}
 
-	if len(seen) < goidShards/2 {
-		t.Fatalf("%d concurrent goroutines reached only %d of %d shards — the "+
-			"guard is still effectively process-wide", N, len(seen), goidShards)
+	// ABSOLUTE thresholds, deliberately not derived from goidShards. An earlier
+	// version asserted `len(seen) < goidShards/2`, which is vacuous under this
+	// gate's own falsifying mutation: at goidShards = 1 that reads `1 < 0`.
+	// mutate.sh caught it staying green. The property is "N concurrent
+	// goroutines spread over many distinct guards", which needs a number.
+	const minDistinctShards = 16
+	const maxPerShard = N / 8 // 64; the mean at 64 shards is 8
+
+	if len(seen) < minDistinctShards {
+		t.Fatalf("%d concurrent goroutines reached only %d distinct shards "+
+			"(need >= %d) — the guard is still effectively process-wide",
+			N, len(seen), minDistinctShards)
 	}
 	worst := 0
 	for _, c := range seen {
@@ -126,10 +135,10 @@ func TestGoidShardedMap_ConcurrentGoroutinesDoNotShareAShard(t *testing.T) {
 			worst = c
 		}
 	}
-	if limit := 4 * N / goidShards; worst > limit {
+	if worst > maxPerShard {
 		t.Fatalf("worst shard holds %d of %d goroutines (limit %d) — the mask "+
 			"distributes badly and contention would survive sharding",
-			worst, N, limit)
+			worst, N, maxPerShard)
 	}
 }
 

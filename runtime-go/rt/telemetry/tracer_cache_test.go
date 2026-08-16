@@ -28,6 +28,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/embedded"
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
@@ -97,7 +98,11 @@ func TestTracerCache_NonComparableProviderDoesNotPanic(t *testing.T) {
 }
 
 // nonComparableProvider has a map field, so `==` on two of them panics.
+// The embedded.TracerProvider is otel's forward-compatibility guard: the
+// TracerProvider interface carries an unexported method, so an implementation
+// outside the otel module must embed it.
 type nonComparableProvider struct {
+	embedded.TracerProvider
 	fields map[string]string
 }
 
