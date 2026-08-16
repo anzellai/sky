@@ -3989,32 +3989,21 @@ func liveAppRun(cfg any) any {
 			app.staticURL = s
 		}
 	}
-	// Session store selection. Config fields `store` and `storePath`
-	// override the defaults; env vars <PREFIX>_LIVE_STORE /
-	// <PREFIX>_LIVE_STORE_PATH take precedence over config; final
-	// fallback is memory.
-	storeKind := stringField(cfg, "Store")
-	storePath := stringField(cfg, "StorePath")
-	// TTL resolution order:  env > sky.toml > default (30m).
-	// Two value shapes accepted at BOTH layers, per CLAUDE.md
-	// docs ("30m" default form):
+	// Session store, TTL and idle-evict window — all four resolved by the one
+	// rule in `configLayers` (live_config_precedence.go):
 	//
-	//   1. Go-duration string — "30m", "24h", "1h30m", "45s"
-	//      (anything time.ParseDuration handles, the documented
-	//      shape).
-	//   2. Bare integer — interpreted as SECONDS for backward-
-	//      compatibility with the original env-only path.
+	//	operator env > withX builder > seeded sky.toml default > fallback
 	//
-	// Empty / unparseable values fall through to the next layer;
-	// the final fallback is 30m.  The previous implementation only
-	// read the env var AND only accepted bare-integer seconds, so
-	// `SKY_LIVE_TTL=24h` and any `ttl = "24h"` in sky.toml were
-	// both silently ignored.
-	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), 30*time.Minute)
-	// Tiered-session-cache idle-evict window (env > cfg > default 5m; "0"/"off"
-	// disables). Bounds a durable store's RAM to the ACTIVE working set. See
-	// docs/skylive/tiered-session-cache.md.
-	idleEvict := parseIdleEvict(skyGetenv("LIVE_IDLE_EVICT"), stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	// Each accepts a Go-duration string ("30m", "24h", "1h30m", "45s") or a
+	// bare integer read as SECONDS, at every layer; an empty or unparseable
+	// value falls through to the next layer rather than to the fallback.
+	storeKind := resolveStoreKind(stringField(cfg, "Store"))
+	storePath := resolveStorePath(stringField(cfg, "StorePath"))
+	ttl := resolveTTL(stringField(cfg, "Ttl"), 30*time.Minute)
+	// "0"/"off"/"none"/"disable(d)" disables idle-evict outright, which is the
+	// one way it differs from ttl. Bounds a durable store's RAM to the ACTIVE
+	// working set. See docs/skylive/tiered-session-cache.md.
+	idleEvict := resolveIdleEvict(stringField(cfg, "IdleEvict"), defaultIdleEvict)
 	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
