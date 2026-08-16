@@ -222,10 +222,22 @@ func TestProductionPredicate_HonoursEnvPrefix(t *testing.T) {
 	}
 }
 
-// TestOneProductionPredicate — the structural assertion. isProd() and
-// productionFromEnv() must agree on every input, or a future change
-// re-opens the split that caused this bug. Compared across the whole
-// spelling matrix, dev and prod alike.
+// TestOneProductionPredicate — the structural assertion, over the
+// predicates that can actually DISAGREE.
+//
+// It used to close with `if isProd() != productionFromEnv()`, and
+// `isProd()` is `return productionFromEnv()` (rt.go). That is `x != x`:
+// it cannot fail, and it consumed the whole "exactly ONE production
+// predicate" claim while the genuine second predicate went uncompared.
+//
+// The genuine one is `isProductionMode()` — the boot SNAPSHOT — against
+// `isProd()`, the live env read. It guards `/_sky/metrics` admin auth
+// (observability.go HandleMetrics), the `consoleAuthModeDevOpen`
+// re-tightening (console_auth_v2.go) and the mode the console reports.
+// With the snapshot never set, `isProd()` said true under
+// `ENV=production` while `isProductionMode()` said false — fail-open, on
+// the endpoints most worth gating. `clearProductionMode()` restores that
+// exact state, so this asserts the relationship rather than assuming it.
 func TestOneProductionPredicate(t *testing.T) {
 	cases := []struct {
 		key, value string
@@ -252,10 +264,17 @@ func TestOneProductionPredicate(t *testing.T) {
 			if got := productionFromEnv(); got != c.want {
 				t.Errorf("productionFromEnv() = %v, want %v", got, c.want)
 			}
-			if isProd() != productionFromEnv() {
-				t.Errorf("isProd() = %v disagrees with productionFromEnv() = %v "+
-					"— there must be exactly ONE production predicate",
-					isProd(), productionFromEnv())
+			// The BOOT SNAPSHOT against the LIVE read. Restore the
+			// snapshot to "never set" first: it is process-global, and a
+			// `SetProductionMode(false)` left behind by any earlier test
+			// in this binary would otherwise make this assert about that
+			// call rather than about the predicates.
+			clearProductionMode()
+			if isProductionMode() != isProd() {
+				t.Errorf("isProductionMode() = %v disagrees with isProd() = %v "+
+					"with the boot snapshot never set — there must be exactly ONE "+
+					"production predicate, and this one guards /_sky/metrics",
+					isProductionMode(), isProd())
 			}
 		})
 	}
