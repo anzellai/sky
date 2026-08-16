@@ -57,6 +57,7 @@
   "gates": {
     "apps-bundled": {
       "expected_assertions": 4,
+      "falsifier_mutation": "apps-bundled.reintroduce-missing-field",
       "falsifier_proven": true,
       "summary": "member F — the Sky apps shipped inside the compiler build from a wiped slate",
       "surfaces": [
@@ -67,6 +68,7 @@
     },
     "apps-dispatch": {
       "expected_assertions": 22,
+      "falsifier_mutation": "apps-dispatch.swallow-the-job-failure",
       "falsifier_proven": true,
       "summary": "member H (SQLite arm) — Std.Jobs, Std.Db.Schema/Migrate, Std.Markdown, Std.Email",
       "surfaces": [
@@ -83,6 +85,7 @@
     },
     "apps-dispatch-destructive": {
       "expected_assertions": 5,
+      "falsifier_mutation": "apps-dispatch-destructive.rename-the-quarantine-target",
       "falsifier_proven": true,
       "summary": "a destructive schema diff is quarantined, never applied",
       "surfaces": [
@@ -93,6 +96,7 @@
     },
     "apps-dispatch-postgres": {
       "expected_assertions": 22,
+      "falsifier_mutation": "apps-dispatch-postgres.break-health-driver",
       "falsifier_proven": true,
       "summary": "member H (Postgres arm) — the same source and assertions on real pgx",
       "surfaces": [
@@ -106,6 +110,7 @@
     },
     "apps-ffi-scale": {
       "expected_assertions": 3,
+      "falsifier_mutation": "apps-ffi-scale.break-an-ffi-symbol",
       "falsifier_proven": true,
       "summary": "member D — Go FFI at 76k-symbol scale (install + build, pre-release)",
       "surfaces": [
@@ -116,6 +121,7 @@
     },
     "apps-fieldbook": {
       "expected_assertions": 8,
+      "falsifier_mutation": "apps-fieldbook.diverge-one-backend",
       "falsifier_proven": true,
       "summary": "member C — one Std.Ui view renders identically across backends",
       "surfaces": [
@@ -127,6 +133,7 @@
     },
     "apps-fleet": {
       "expected_assertions": 8,
+      "falsifier_mutation": "apps-fleet.drop-the-production-gate",
       "falsifier_proven": true,
       "summary": "member E — Ledger as a multi-replica topology over one shared session store",
       "surfaces": [
@@ -137,6 +144,7 @@
     },
     "apps-ledger": {
       "expected_assertions": 11,
+      "falsifier_mutation": "apps-ledger.drop-the-ordering",
       "falsifier_proven": true,
       "summary": "member A (SQLite arm) — migrations, auth, journal ordering, money residue",
       "surfaces": [
@@ -151,6 +159,7 @@
     },
     "apps-ledger-postgres": {
       "expected_assertions": 11,
+      "falsifier_mutation": "apps-ledger-postgres.break-health-driver",
       "falsifier_proven": true,
       "summary": "member A (Postgres arm) — identical source, identical assertions, real pgx",
       "surfaces": [
@@ -161,6 +170,7 @@
     },
     "apps-relay": {
       "expected_assertions": 12,
+      "falsifier_mutation": "apps-relay.disable-rate-limiting",
       "falsifier_proven": true,
       "summary": "member B — headless HTTP: auth refusal, rate limiting, CORS, asserted live",
       "surfaces": [
@@ -172,6 +182,7 @@
     },
     "cli-verbs": {
       "expected_assertions": 9,
+      "falsifier_mutation": "cli-verbs.break-an-expectation",
       "falsifier_proven": true,
       "summary": "member G — sky CLI verbs (init/clean/watch/db/install/update/upgrade/dispatch)",
       "surfaces": [
@@ -187,6 +198,7 @@
     },
     "config-matrix": {
       "expected_assertions": 98,
+      "falsifier_mutation": "config-matrix.invert-operator-env-provenance",
       "falsifier_proven": true,
       "summary": "every covered setting's EFFECTIVE value, observed from running binaries, matches the baseline in every arm combination",
       "surfaces": [
@@ -196,6 +208,7 @@
     },
     "config-surface": {
       "expected_assertions": 59,
+      "falsifier_mutation": "config-surface.seed-a-suffix-nothing-reads",
       "falsifier_proven": true,
       "summary": "the configuration surface is measured, current, and no defect count rose",
       "surfaces": [
@@ -205,6 +218,7 @@
     },
     "conformance": {
       "expected_assertions": 935,
+      "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
       "surfaces": [
@@ -216,6 +230,7 @@
     },
     "corpus": {
       "expected_assertions": 335,
+      "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
       "surfaces": [
@@ -252,6 +267,7 @@
     },
     "corpus-emit-shape": {
       "expected_assertions": 46,
+      "falsifier_mutation": "corpus-emit-shape.delete-the-probe-use",
       "falsifier_proven": true,
       "summary": "properties of the generated Go (no `go build`): no erasure, no `any` in a concrete signature, no raw `.(T)`, declared field order, fieldset selected by TYPE",
       "surfaces": [
@@ -262,6 +278,7 @@
     },
     "corpus-isolation": {
       "expected_assertions": 24,
+      "falsifier_mutation": "corpus-isolation.perturb-batch",
       "falsifier_proven": true,
       "summary": "sampled cases give identical verdicts alone / in-batch / shuffled (v2 §3.2)",
       "surfaces": [
@@ -272,6 +289,7 @@
     },
     "corpus-manifest": {
       "expected_assertions": 481,
+      "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
       "surfaces": [
@@ -281,6 +299,7 @@
     },
     "corpus-reject": {
       "expected_assertions": 270,
+      "falsifier_mutation": "corpus-reject.break-the-twin",
       "falsifier_proven": true,
       "summary": "reject matrix: rejection by DIAGNOSTIC CODE, each with an accepted twin",
       "surfaces": [
@@ -292,6 +311,7 @@
     },
     "corpus-witness": {
       "expected_assertions": 16,
+      "falsifier_mutation": "corpus-witness.compare-against-itself",
       "falsifier_proven": true,
       "summary": "each case emits different Go from its axis-neutralised twin (v2 §4.4)",
       "surfaces": [
@@ -302,6 +322,7 @@
     },
     "coverage-ledger": {
       "expected_assertions": 145,
+      "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
       "surfaces": [
@@ -311,6 +332,7 @@
     },
     "lsp": {
       "expected_assertions": 49,
+      "falsifier_mutation": "lsp.hover-echoes-the-token",
       "falsifier_proven": true,
       "summary": "the editor answers hover / goto-def / completion / diagnostics through a REAL Neovim LSP client, on fixtures and a real app",
       "surfaces": [
@@ -320,6 +342,7 @@
     },
     "reject": {
       "expected_assertions": 68,
+      "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
       "surfaces": [
@@ -330,6 +353,7 @@
     },
     "roundtrip": {
       "expected_assertions": 173,
+      "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
       "surfaces": [
@@ -340,6 +364,7 @@
     },
     "shared-world": {
       "expected_assertions": 126,
+      "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
       "surfaces": [
@@ -350,6 +375,7 @@
     },
     "sky-suites": {
       "expected_assertions": 393,
+      "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
       "surfaces": [
@@ -359,6 +385,7 @@
     },
     "sky-verify": {
       "expected_assertions": 6,
+      "falsifier_mutation": "sky-verify.break-a-suite",
       "falsifier_proven": true,
       "summary": "`sky verify` over every examples/* project that owns a tests/ suite",
       "surfaces": [
@@ -369,6 +396,7 @@
     },
     "verify-cli": {
       "expected_assertions": 13,
+      "falsifier_mutation": "verify-cli.drop-expected-output",
       "falsifier_proven": true,
       "summary": "CLI/TUI examples start, produce expected output, and do not panic",
       "surfaces": [
