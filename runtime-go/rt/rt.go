@@ -3521,6 +3521,41 @@ func List_foldlT[A, B any](fn func(B, A) B, seed B, xs []A) B {
 	return acc
 }
 
+// List_foldlElemFirstT is List_foldlT with Sky's OWN argument order.
+//
+// `Sky.Core.List.foldl` is pure Sky and applies `fn x acc` — element first,
+// accumulator second (`sky-stdlib/Sky/Core/List.sky`). `List_foldlT` above
+// takes `func(B, A) B` — accumulator first — because it was written for the
+// `rt.List_foldl` kernel's own convention. Re-targeting a Sky `List.foldl`
+// call at `List_foldlT` would therefore need a permuting closure at every
+// call site, which allocates and defeats the point: the whole gain is that a
+// callback like `Std_Ui_markerFlagStep` can be passed BY NAME, retyped in
+// place, with no wrapper.
+//
+// So the argument order lives here instead of at 308 call sites. Semantics are
+// otherwise identical to the pure-Sky def, empty case included (`foldl fn acc
+// [] = acc` → `seed`).
+func List_foldlElemFirstT[A, B any](fn func(A, B) B, seed B, xs []A) B {
+	acc := seed
+	for _, x := range xs {
+		acc = fn(x, acc)
+	}
+	return acc
+}
+
+// List_anyT is the fully-typed twin of List_anyAnyT: the predicate is called
+// directly instead of through SkyCall's reflect dispatch, and the element needs
+// no boxing. Short-circuits on the first True, exactly as the pure-Sky
+// `Sky.Core.List.any` does (`any pred [] = False`; `if pred x then True`).
+func List_anyT[A any](fn func(A) bool, xs []A) bool {
+	for _, x := range xs {
+		if fn(x) {
+			return true
+		}
+	}
+	return false
+}
+
 // List_filterMapT / List_indexedMapT complete the fully-typed tier for the two
 // remaining kernel list HOFs a call site can prove. `List_mapT` and
 // `List_filterT` above already existed; `filterMap` and `indexedMap` had only
