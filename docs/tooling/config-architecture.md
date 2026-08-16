@@ -1115,6 +1115,43 @@ produces no effective value to compare). A census entry in no bucket fails the
 gate, so the matrix cannot quietly stop covering something and a new setting
 cannot arrive unclassified.
 
+**The census is not the configuration surface, and nothing here should be read
+as saying it is.** `read_census` (`config_matrix.rs:1313-1339`) builds it from
+exactly two arrays of `config-surface.json` — `accepted_sky_toml_keys` (30) and
+`seeded_suffixes` (23). Every setting the runtime reads that the compiler
+neither accepts in `sky.toml` nor seeds is therefore **outside the census
+altogether**, and `config-surface` counts those in two further arrays:
+
+| array in `config-surface.json` | count | in the census |
+|---|---|---|
+| `accepted_sky_toml_keys` | 30 | **yes** |
+| `seeded_suffixes` | 23 | **yes** |
+| `runtime_read_literal_sky_names` | 38 | **none** — 0 of 38 intersect it |
+| `runtime_read_suffixes` not among `seeded_suffixes` | 20 (of 40) | **no** |
+
+So the matrix's "4 of 53" is 4 of the *seeded* surface. Across both naming
+spaces `config-surface` measures **58 further settings the census never
+enumerates** — 111 in total against the census's 53 — and the matrix makes no
+claim about any of them. (Counts are `config-surface.json`'s own arrays; the
+two set differences are `comm` over them.)
+
+**Security-critical names sit in the excluded set.** Every one of these is in
+`runtime_read_literal_sky_names` or the unseeded part of
+`runtime_read_suffixes`, so no `[[setting]]` / `[[deferred]]` /
+`[[unobservable]]` bucket accounts for it and no census-completeness assertion
+touches it:
+
+* `SKY_CONSOLE_AUTH` — whether the dev console demands credentials at all
+* `SKY_CONSOLE_TOKEN_SECRET` and `SKY_METRICS_TOKEN` — the back-compat aliases
+  for the `/_sky/metrics` bearer
+* `SKY_INGEST_TOKEN` — the console hub's ingest credential
+* `LIVE_BROKER_URL` — the cross-instance pub/sub endpoint, and with it whether
+  a multi-replica deployment fans out at all
+
+A green `config-matrix` says nothing about any of them, and a reader entitled
+to infer otherwise from "every census entry is in exactly one bucket" would be
+inferring it about the wrong denominator.
+
 **§1.8's three precedence orders are now mechanical**, from
 `config-matrix.json`'s `winners` — each label derived by matching a multi-layer
 cell's observation against the single-layer ones, not asserted beside them:
@@ -1188,8 +1225,12 @@ the file before the red was believed:
    day one.
 
 **What it does not catch**, stated as plainly as stage 1's list. It covers 4
-settings of 53, and a ratchet on how much is uncovered is not coverage. It
-cannot see a setting with no consumer. It observes through two startup lines, so
+settings of the census's 53 — and the census is 53 of the 111 distinct settings
+`config-surface` measures, so 4 of 111 of the configuration surface, with
+`SKY_CONSOLE_AUTH`, `SKY_CONSOLE_TOKEN_SECRET`, `SKY_METRICS_TOKEN`,
+`SKY_INGEST_TOKEN` and `LIVE_BROKER_URL` among the 58 outside it (see the
+census-is-not-the-surface table above). A ratchet on how much is uncovered is
+not coverage. It cannot see a setting with no consumer. It observes through two startup lines, so
 a setting whose consumer prints nothing is invisible. It sets every covered
 setting at once, so cross-talk is recorded rather than attributed. It pins
 `LIVE_STORE=sqlite` as a harness constant, so the store KIND's precedence branch
@@ -1608,7 +1649,13 @@ is not fixed by moving settings into Sky.
    where §7.2's own specification could not be built as written. The residual
    risk is now legible rather than invisible: it is the 41 deferred settings,
    ratcheted so the bucket cannot grow unnoticed, plus the six limitations
-   listed at the end of §7.2.1.
+   listed at the end of §7.2.1 — **and, larger than either, the 58 settings
+   the census does not enumerate at all**, because the census is built from
+   `accepted_sky_toml_keys` + `seeded_suffixes` only. That set contains
+   `SKY_CONSOLE_AUTH`, `SKY_CONSOLE_TOKEN_SECRET`, `SKY_METRICS_TOKEN`,
+   `SKY_INGEST_TOKEN` and `LIVE_BROKER_URL`. Widening the census is gate work
+   and is not claimed here; what is claimed is that this document no longer
+   reads as though 53 were the denominator.
 3. **The Sky↔Go field binding is stringly typed.** `stringField(cfg, "Ttl")`
    joins the two sides by a name no compiler checks. Extending the builder
    surface multiplies that seam; it needs §9's gate, and possibly extension of
