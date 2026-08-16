@@ -58,6 +58,7 @@ package rt
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -282,6 +283,116 @@ func TestStyleInjectionAllocationBudget(t *testing.T) {
 			"(%.0f allocs over %d elements) -- a per-element, per-pass "+
 			"allocation has come back",
 			per, styleInjectionAllocBudget, got, census.elements)
+	}
+}
+
+// ---------------------------------------------------------------------
+// Style-injection guard: the scan must not be able to skip a live pass
+// ---------------------------------------------------------------------
+//
+// applyStyleInjections used to run all four passes unconditionally. It now
+// runs one scan and then only the passes whose marker attrs the scan found.
+// The failure that buys is silent: a pass that should have run does not,
+// its markers survive into the wire output as inert `data-*`, and the
+// styling it existed to emit is simply missing. Nothing else notices.
+//
+// These two tests are the guard. They are driven off `styleMarkerPasses`
+// and each spec's own `markerAttrs`, so a pass or a marker added later is
+// covered without anyone remembering to extend them.
+
+// markerTree builds a minimal tree whose inner element carries `attr`.
+func markerTree(attr, val string) VNode {
+	vn := HtmlToVNode(hElem("div", []any{hAttr("id", "root")},
+		[]any{hElem("section", []any{hAttr(attr, val)}, []any{hText("body")})}))
+	assignSkyIDs(&vn, "r")
+	return vn
+}
+
+// TestStyleInjectionGuardRunsEveryPassItsMarkerNeeds proves the guarded
+// funnel is indistinguishable from running all four passes unconditionally,
+// for every marker attr every spec declares, at an empty AND a non-empty
+// value. The empty case is the one that catches a value-keyed scan: an
+// empty marker is still stripped by its pass so it cannot leak onto the
+// wire, so a scan testing `v != ""` rather than key presence would leave it
+// in the output and this test would see the difference.
+//
+// Proven able to fail: deleting an entry from `styleMarkerBits`, or keying
+// the scan on the value, turns the corresponding cases red.
+func TestStyleInjectionGuardRunsEveryPassItsMarkerNeeds(t *testing.T) {
+	if len(styleMarkerPasses) == 0 {
+		t.Fatal("styleMarkerPasses is empty -- this gate is vacuous")
+	}
+	cases := 0
+	for _, p := range styleMarkerPasses {
+		if len(p.spec.markerAttrs) == 0 {
+			t.Errorf("pass with bit %d declares no markerAttrs", p.bit)
+		}
+		for _, attr := range p.spec.markerAttrs {
+			for _, val := range []string{"", "(min-width: 40em)"} {
+				cases++
+				guarded := markerTree(attr, val)
+				applyStyleInjections(&guarded)
+
+				unguarded := markerTree(attr, val)
+				for _, q := range styleMarkerPasses {
+					q.run(&unguarded)
+				}
+
+				got := renderVNode(guarded, nil)
+				want := renderVNode(unguarded, nil)
+				if got != want {
+					t.Errorf("marker %q=%q: guarded funnel diverged from the "+
+						"unconditional passes\n  guarded   %s\n  unguarded %s",
+						attr, val, got, want)
+				}
+				if strings.Contains(got, attr) {
+					t.Errorf("marker %q=%q survived into the rendered output "+
+						"-- its pass did not run: %s", attr, val, got)
+				}
+			}
+		}
+	}
+	if cases == 0 {
+		t.Fatal("no marker attrs were exercised -- this gate is vacuous")
+	}
+	t.Logf("%d marker cases across %d passes", cases, len(styleMarkerPasses))
+}
+
+// TestStyleMarkerScanIsDerivedFromTheSpecs pins the two properties the
+// scan's correctness rests on, neither of which is visible at its call
+// site: every declared marker maps to its own pass's bit, and no marker
+// collides with the `styleAttr` a pass stamps on the <style> elements it
+// emits. A collision there would let one pass read another pass's output
+// as its own input.
+func TestStyleMarkerScanIsDerivedFromTheSpecs(t *testing.T) {
+	seen := map[string]bool{}
+	for _, p := range styleMarkerPasses {
+		for _, attr := range p.spec.markerAttrs {
+			if styleMarkerBits[attr]&p.bit == 0 {
+				t.Errorf("marker %q does not map to its pass's bit %d", attr, p.bit)
+			}
+			if seen[attr] {
+				t.Errorf("marker %q is claimed by two passes", attr)
+			}
+			seen[attr] = true
+		}
+		if _, isMarker := styleMarkerBits[p.spec.styleAttr]; isMarker {
+			t.Errorf("styleAttr %q is also a marker attr -- a pass would see "+
+				"another pass's emitted <style> as work to do", p.spec.styleAttr)
+		}
+		// The scan filters on this prefix before consulting the map, so a
+		// marker that lost it would be invisible rather than merely wrong.
+		for _, attr := range p.spec.markerAttrs {
+			if !strings.HasPrefix(attr, "data-sky-") {
+				t.Errorf("marker %q lacks the data-sky- prefix the scan "+
+					"filters on -- the scan can never see it", attr)
+			}
+		}
+	}
+	// A tree with no markers at all must report no work.
+	clean := HtmlToVNode(hElem("div", []any{hAttr("class", "c")}, []any{hText("x")}))
+	if got := scanStyleMarkers(&clean); got != 0 {
+		t.Errorf("marker-free tree reported work: %d", got)
 	}
 }
 

@@ -1080,10 +1080,93 @@ func pseudoSelectorForTag(tag string) (selector string, hoverGated bool, known b
 //
 // Pre-condition: assignSkyIDs has already stamped n.SkyID.
 func applyStyleInjections(n *VNode) {
-	injectMediaQueryStyles(n)
-	injectPseudoClassStyles(n)
-	injectTransitionStyles(n)
-	injectAnimationStyles(n)
+	present := scanStyleMarkers(n)
+	if present == 0 {
+		return
+	}
+	for _, p := range styleMarkerPasses {
+		if present&p.bit != 0 {
+			p.run(n)
+		}
+	}
+}
+
+// The four passes each walked the WHOLE tree, unconditionally, on every
+// render. A page using no `Ui.hover` and no `Ui.transition` — most pages,
+// and every page for at least three of the four passes — paid four full
+// traversals to find nothing and delete nothing.
+//
+// scanStyleMarkers replaces that with one traversal reporting which passes
+// have work. It reads KEY PRESENCE, not value: a marker attr present with
+// an EMPTY value still needs its pass to run, because stripping empty
+// markers so they cannot leak into the wire output is part of what the
+// pass does (`applyMarkerAsFirstChild` deletes them on the no-match path
+// too). Skipping a pass whose key appears on no element is exactly
+// equivalent, because every effect a pass has is keyed on that attr.
+//
+// The marker sets are disjoint from the `styleAttr` names the passes stamp
+// on the <style> elements they emit (`data-sky-mq` vs `data-sky-mq-q` /
+// `data-sky-mq-rules`), so no pass can see a marker another pass created
+// and running one cannot invalidate the scan.
+type styleMarkerPass struct {
+	bit  int
+	spec *styleMarkerSpec
+	run  func(*VNode)
+}
+
+// The order here IS the documented pass order above; the scan does not
+// reorder anything, it only drops passes with nothing to do.
+var styleMarkerPasses = []styleMarkerPass{
+	{markerMediaQuery, &mediaQuerySpec, injectMediaQueryStyles},
+	{markerPseudoClass, &pseudoClassSpec, injectPseudoClassStyles},
+	{markerTransition, &transitionSpec, injectTransitionStyles},
+	{markerAnimation, &animationSpec, injectAnimationStyles},
+}
+
+const (
+	markerMediaQuery = 1 << iota
+	markerPseudoClass
+	markerTransition
+	markerAnimation
+)
+
+// styleMarkerBits is DERIVED from the specs rather than restating their
+// marker names. A second hand-written copy of the attr list is exactly how
+// a pass gets silently skipped later: someone adds a marker attr to a spec,
+// the scan does not know it, and the pass stops running for the trees that
+// need it — with no test failing, because the pass still works whenever
+// some OTHER marker of the same spec is also present.
+var styleMarkerBits = func() map[string]int {
+	m := make(map[string]int, 8)
+	for _, p := range styleMarkerPasses {
+		for _, a := range p.spec.markerAttrs {
+			m[a] |= p.bit
+		}
+	}
+	return m
+}()
+
+func scanStyleMarkers(n *VNode) int {
+	found := 0
+	scanStyleMarkersInto(n, &found)
+	return found
+}
+
+func scanStyleMarkersInto(n *VNode, found *int) {
+	if n.Kind == "element" {
+		for k := range n.Attrs {
+			// Every marker starts with this prefix and almost no ordinary
+			// attribute does, so one prefix test rejects `class`, `id`,
+			// `href`, … before the map is touched at all.
+			if !strings.HasPrefix(k, "data-sky-") {
+				continue
+			}
+			*found |= styleMarkerBits[k]
+		}
+	}
+	for i := range n.Children {
+		scanStyleMarkersInto(&n.Children[i], found)
+	}
 }
 
 // injectTransitionStyles walks the tree after assignSkyIDs and
