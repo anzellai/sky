@@ -3848,29 +3848,25 @@ func coerceRouteParam(fn any, p string) (any, error) {
 // the port to 0, which would bind an arbitrary ephemeral port that nothing can
 // discover.
 func resolveLivePort(cfg any) int {
-	envName := skyEnvName("LIVE_PORT")
-	envPort := 0
-	if v, ok := lookupEnvRaw(envName); ok && v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			envPort = n
-		}
-	}
-	// 1. operator-set env.
-	if envPort > 0 && !isSeededDefault(envName) {
-		return envPort
-	}
-	// 2. explicit Live.withPort. An unset optional is ABSENT from the config
-	//    map (see live_config.go), so a non-nil field means it was called.
+	// The three layers, ordered by the rule every Sky.Live setting now shares
+	// (configLayers, live_config_precedence.go). This function used to spell
+	// that order out by hand and was the ONLY one that got it right; the order
+	// is now the shared one, so `withPort` cannot silently drift back out of
+	// step with `withTtl` the way `withStorePath` had drifted out of step
+	// with both.
+	//
+	// An unset optional is ABSENT from the config map (see live_config.go), so
+	// a non-nil `Port` field means `withPort` was actually called.
+	builder := ""
 	if p := Field(cfg, "Port"); p != nil {
 		if n := AsInt(p); n > 0 {
-			return n
+			builder = strconv.Itoa(n)
 		}
 	}
-	// 3. the sky.toml default generated init() seeded.
-	if envPort > 0 {
-		return envPort
+	if n := parsePortLayers(configLayers("LIVE_PORT", builder)); n > 0 {
+		return n
 	}
-	// 4. floor.
+	// The floor, when nothing supplied a usable port.
 	return 8080
 }
 

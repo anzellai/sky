@@ -49,17 +49,20 @@ import (
 // hardcoded fallback — the behaviour `parseTTL` and `resolveLivePort` already
 // had, and the reason `SKY_LIVE_PORT=not-a-port` does not bind port 0.
 func configLayers(suffix, builderVal string) []string {
-	// NOTE (stage 3, step 1 of 2): this reproduces the PRE-EXISTING order
-	// verbatim — provenance-blind, environment unconditionally first — so that
-	// the accompanying test reds on the precedence it gets wrong rather than
-	// on a missing symbol. Step 2 replaces the body with the order documented
-	// above. Nothing but the body changes.
-	var out []string
-	if v := skyGetenv(suffix); v != "" {
-		out = append(out, v)
+	name := skyEnvName(suffix)
+	envVal, envSet := lookupEnvRaw(name)
+	operatorSet := envSet && envVal != "" && !isSeededDefault(name)
+
+	out := make([]string, 0, 3)
+	if operatorSet {
+		out = append(out, envVal)
 	}
 	if builderVal != "" {
 		out = append(out, builderVal)
+	}
+	// The seeded layer, only when it was not already emitted as layer 1.
+	if envSet && envVal != "" && !operatorSet {
+		out = append(out, envVal)
 	}
 	return out
 }
@@ -92,21 +95,13 @@ func resolveIdleEvict(builderVal string, def time.Duration) time.Duration {
 // resolveStoreKind — the session store backend name ("memory" / "sqlite" /
 // "postgres" / "redis"). `builderVal` is `Live.withStore`'s value.
 func resolveStoreKind(builderVal string) string {
-	// NOTE (stage 3, step 1 of 2): pre-existing order, builder first.
-	if builderVal != "" {
-		return builderVal
-	}
-	return skyGetenv("LIVE_STORE")
+	return firstNonEmpty(configLayers("LIVE_STORE", builderVal))
 }
 
 // resolveStorePath — the session store path or DSN. `builderVal` is
 // `Live.withStorePath`'s value.
 func resolveStorePath(builderVal string) string {
-	// NOTE (stage 3, step 1 of 2): pre-existing order, builder first.
-	if builderVal != "" {
-		return builderVal
-	}
-	return skyGetenv("LIVE_STORE_PATH")
+	return firstNonEmpty(configLayers("LIVE_STORE_PATH", builderVal))
 }
 
 // resolveLivePortLayers — the listen port, as an ordered candidate list.
