@@ -444,3 +444,439 @@ fn curried_partial_application_still_runs_and_is_correct() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Stage 2 — the OTHER half of the same erasure, and the half the eta-expansion
+// above deliberately left behind.
+//
+// Eta-expansion removed the `reflect.MakeFunc` ADAPTER wrapped around the
+// callback. It did not remove the `rt.SkyCall` the erased runtime helper makes
+// per element, nor the two container rebuilds around it. On a `[]Row` of n,
+// `rt.AsListT[T](rt.List_mapAny(any(fn), any(xs)))` costs: one box for the
+// slice header, `asList` reflect-walking and boxing every element, a
+// `reflect.Value.Call` per element, a `[]any` result, and `AsListT` walking
+// that back — ~7n+2 allocations where a Go `for` over the typed slice costs 1.
+// `indexedMap` is worse again: it applies the index first, so each element also
+// builds a curried closure.
+//
+// When the call site can PROVE the element type and the callback's Go shape,
+// `Ctx::list_hof_typed` dispatches to the typed member of the helper family
+// (`rt.List_mapT[A, B](fn func(A) B, xs []A) []B`) instead. One emit per
+// definition, no monomorphisation: the specialisation is Go's own generic
+// instantiation of one runtime function, not a copy of the loop per call site.
+//
+// The legs mirror the four above, plus one this change needs and the
+// eta-expansion did not: a FALLBACK leg. The safety property is "a site the
+// compiler cannot prove emits exactly what it emits today", and a gate that
+// only checks the fast path fires cannot see the fast path firing where it
+// must not.
+
+/// Five call sites over a NOMINAL record list, one per callback bucket the
+/// corpus census found:
+///
+///   * `bumped`  — a partially applied top-level def (`heavier 1`). 23% of
+///     sites. `make_partial` hard-codes its remaining params to `any`, so this
+///     is the bucket that needs `func_shape_eta` to retype the literal.
+///   * `kept`    — a bare top-level def passed point-free. 53% of sites.
+///   * `ids`     — a bare def returning `Maybe`, through `List.filterMap`.
+///   * `idx`     — a bare def through `List.indexedMap`, the 2-ary shape.
+///   * `lambdaed`— a lambda with an inline body. 14% of sites.
+///
+/// `Row` is a nominal record alias — `State_Comment_R` in the app this was
+/// measured on, and precisely the shape issue #166 broke twice while every
+/// corpus gate stayed green. A row-polymorphic record would erase to `any`
+/// (`goty.rs`, OPEN row → `GoTy::Any`) and belongs in `LIST_HOF_ERASED` below.
+const LIST_HOF: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+
+type alias Row =
+    { id : Int
+    , weight : Int
+    , tag : String
+    }
+
+
+mkRow : Int -> Row
+mkRow i =
+    { id = i, weight = i * 2, tag = "r" }
+
+
+sample : Int -> List Row
+sample n =
+    List.map mkRow (List.range 1 n)
+
+
+heavier : Int -> Row -> Row
+heavier k r =
+    { r | weight = r.weight + k }
+
+
+isBig : Row -> Bool
+isBig r =
+    r.weight > 6
+
+
+bigId : Row -> Maybe Int
+bigId r =
+    if r.weight > 6 then
+        Just r.id
+
+    else
+        Nothing
+
+
+tagged : Int -> Row -> Int
+tagged i r =
+    i + r.weight
+
+
+bumped : List Row -> List Row
+bumped rows =
+    List.map (heavier 1) rows
+
+
+kept : List Row -> List Row
+kept rows =
+    List.filter isBig rows
+
+
+ids : List Row -> List Int
+ids rows =
+    List.filterMap bigId rows
+
+
+idx : List Row -> List Int
+idx rows =
+    List.indexedMap tagged rows
+
+
+lambdaed : List Row -> List Int
+lambdaed rows =
+    List.map (\r -> r.weight + 1) rows
+
+
+sum : List Int -> Int
+sum xs =
+    List.foldl (\x acc -> acc + x) 0 xs
+
+
+answer : Int
+answer =
+    let
+        rows =
+            bumped (sample 8)
+    in
+    List.length (kept rows)
+        + sum (ids rows)
+        + sum (idx rows)
+        + sum (lambdaed rows)
+
+
+main =
+    println (String.fromInt answer)
+"#;
+
+/// `sample 8` gives ids 1…8 with weights 2,4,…,16; `bumped` adds 1, so weights
+/// 3,5,…,17.
+///
+///   * `kept` keeps weight > 6 — the last six rows. **length 6**
+///   * `ids` yields those six rows' ids, 3…8. **sum 33**
+///   * `idx` is `i + weight` over all eight, `i` 0-based: 3,6,9,12,15,18,21,24.
+///     **sum 108**
+///   * `lambdaed` is `weight + 1`: 4,6,…,18. **sum 88**
+///
+/// 6 + 33 + 108 + 88 = 235. Three of the four terms are SUMS rather than
+/// lengths on purpose: a length is blind to every value-level mutation of a
+/// typed helper — an off-by-one index in `List_indexedMapT`, the wrong element
+/// handed to the callback, a `filterMap` that keeps the `Nothing`s — and this
+/// leg exists to catch exactly those.
+const LIST_HOF_ANSWER: &str = "235";
+
+/// Two sites the specialisation must REFUSE, because the element type is a
+/// type variable and lowers to `any`. Emitting `rt.List_filterT[any]` here
+/// would be a lie about what is proven, and the erased helper's `asList` is
+/// also the only thing that copes with a caller handing in a differently-typed
+/// slice. These must keep the erased call, unchanged.
+const LIST_HOF_ERASED: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+
+yes : a -> Bool
+yes _ =
+    True
+
+
+same : a -> a
+same x =
+    x
+
+
+keepAll : List a -> List a
+keepAll xs =
+    List.filter yes xs
+
+
+echo : List a -> List a
+echo xs =
+    List.map same xs
+
+
+main =
+    println (String.fromInt (List.length (keepAll (echo [ 1, 2, 3 ]))))
+"#;
+
+/// The five traversals, measured together, over one list built OUTSIDE the
+/// closure. 5 × 8 = 40 element visits — the same unit as the marker scan above.
+const LIST_HOF_PROBE: &str = r#"package main
+
+import "testing"
+
+func TestListHofAllocsPerSweep(t *testing.T) {
+	rows := Main_bumped(Main_sample(8))
+	if len(rows) != 8 {
+		t.Fatalf("fixture: bumped(sample(8)) has %d rows, want 8", len(rows))
+	}
+	// Anti-vacuity: a sweep over an empty list allocates almost nothing and
+	// would pass any budget. Each traversal must have produced its elements.
+	if n := len(Main_kept(rows)); n != 6 {
+		t.Fatalf("fixture: kept has %d, want 6", n)
+	}
+	if n := len(Main_ids(rows)); n != 6 {
+		t.Fatalf("fixture: ids has %d, want 6", n)
+	}
+	if n := len(Main_idx(rows)); n != 8 {
+		t.Fatalf("fixture: idx has %d, want 8", n)
+	}
+	if n := len(Main_lambdaed(rows)); n != 8 {
+		t.Fatalf("fixture: lambdaed has %d, want 8", n)
+	}
+	n := testing.AllocsPerRun(200, func() {
+		_ = Main_bumped(rows)
+		_ = Main_kept(rows)
+		_ = Main_ids(rows)
+		_ = Main_idx(rows)
+		_ = Main_lambdaed(rows)
+	})
+	t.Logf("SKY_LIST_HOF_ALLOCS_PER_SWEEP=%.0f", n)
+}
+"#;
+
+/// Build the list-HOF fixture and return allocations per five-traversal sweep.
+///
+/// Deliberately a near-copy of `allocs_per_scan` rather than a generalisation
+/// of it: the two differ in the fixture, the probe, the marker string and the
+/// assertions, and folding them together would leave a function whose every
+/// line is a parameter.
+fn allocs_per_sweep(tag: &str) -> f64 {
+    let dir = project(tag, LIST_HOF);
+    let log = build(&dir);
+    assert!(
+        !log.contains("go build failed"),
+        "the fixture must build before its allocations mean anything. Log:\n{log}"
+    );
+    let out_dir = dir.join("sky-out");
+    std::fs::write(out_dir.join("list_hof_probe_test.go"), LIST_HOF_PROBE).unwrap();
+    let out = Command::new("go")
+        .args([
+            "test",
+            "-run",
+            "TestListHofAllocsPerSweep",
+            "-v",
+            "-count=1",
+            "-timeout",
+            "300s",
+            ".",
+        ])
+        .current_dir(&out_dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn go test");
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "the allocation probe must run. go test output:\n{text}"
+    );
+    let n = text
+        .lines()
+        .find_map(|l| l.split("SKY_LIST_HOF_ALLOCS_PER_SWEEP=").nth(1))
+        .unwrap_or_else(|| panic!("probe must report its count. go test output:\n{text}"))
+        .trim()
+        .parse::<f64>()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    n
+}
+
+/// Measured on this fixture, M1, Go 1.26, stable to the unit across repeat
+/// runs: **1030** allocations per sweep through the erased helpers, **51**
+/// through the typed ones. 40 element visits, so ~24.5 allocations per visit
+/// removed.
+///
+/// 51 is not zero and is not meant to be. What remains is (a) one result slice
+/// per traversal, which a `for` loop cannot avoid, and (b) the redundant
+/// `rt.Coerce[Row](_p0)` still sitting in the retyped callback body: the eta
+/// retype gives the param the element's type but does not rewrite the body's
+/// uses of it, so a struct element is re-boxed on the way into `Coerce`, whose
+/// `v.(T)` then succeeds immediately. That is a separate peephole and is not
+/// what this budget locks.
+///
+/// The budget sits between the two with ~2× clearance below and ~5× above: high
+/// enough that a runtime tweak to the helpers cannot flake it, low enough that
+/// the erased round trip cannot slip under it.
+const ALLOC_BUDGET_PER_SWEEP: f64 = 110.0;
+
+/// ALLOCATION LEG — as above, the defect rather than a spelling of the fix.
+///
+/// What it does NOT catch: a site shape absent from this fixture (that is the
+/// example sweep), and the possibility that the typed helper computes something
+/// else — the semantics leg and the fallback leg cover that.
+#[test]
+fn list_hof_over_a_known_element_type_does_not_allocate_per_element() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let n = allocs_per_sweep("listhof-alloc");
+    assert!(
+        n <= ALLOC_BUDGET_PER_SWEEP,
+        "five list traversals over eight records allocated {n} times, budget \
+         {ALLOC_BUDGET_PER_SWEEP}. That is the erased round trip back: \
+         `rt.List_mapAny(any(fn), any(xs))` boxes the slice header, reflect-walks \
+         every element into a fresh `[]any`, `reflect.Value.Call`s the callback \
+         per element, and `rt.AsListT` walks the result back. A call site that \
+         knows the element type and the callback's Go shape must dispatch to the \
+         typed helper instead — `Ctx::list_hof_typed` in lower.rs."
+    );
+}
+
+/// EMISSION LEG — the routing decision, checkable with no Go toolchain, and
+/// localising a failure to the emitter. One assertion per callback bucket, so a
+/// regression names which bucket stopped resolving rather than just "fewer
+/// typed calls than expected".
+#[test]
+fn provable_list_hof_sites_route_to_the_typed_helper() {
+    let dir = project("listhof-emit", LIST_HOF);
+    let log = build(&dir);
+    let src = emitted_go(&dir, &log);
+
+    // (def, typed symbol, erased symbol, which census bucket it stands for)
+    let cases = [
+        ("Main_bumped", "rt.List_mapT[", "rt.List_mapAny(", "partially applied def"),
+        ("Main_kept", "rt.List_filterT[", "rt.List_filterAny(", "bare top-level def"),
+        ("Main_ids", "rt.List_filterMapT[", "rt.List_filterMap(", "bare def returning Maybe"),
+        ("Main_idx", "rt.List_indexedMapT[", "rt.List_indexedMap(", "2-ary bare def"),
+        ("Main_lambdaed", "rt.List_mapT[", "rt.List_mapAny(", "inline lambda"),
+    ];
+    for (def, typed, erased, bucket) in cases {
+        let body = func_body(&src, def);
+        assert!(
+            body.contains(typed),
+            "{def} ({bucket}) has a proven element type and callback shape, so it \
+             must dispatch to {typed}…]. Emitted:\n{body}"
+        );
+        assert!(
+            !body.contains(erased),
+            "{def} ({bucket}) must not keep the erased `{erased}…)` alongside the \
+             typed dispatch. Emitted:\n{body}"
+        );
+    }
+    // The typed helper returns the element type, so the narrowing that used to
+    // wrap every one of these call sites is gone with it.
+    for def in ["Main_bumped", "Main_kept", "Main_ids", "Main_idx", "Main_lambdaed"] {
+        let body = func_body(&src, def);
+        assert!(
+            !body.contains("rt.AsListT["),
+            "{def} must not rebuild its result list: the typed helper already \
+             returns `[]T`. Emitted:\n{body}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// FALLBACK LEG — the safety property, asserted in the direction that can
+/// actually fail. The specialisation's contract is "a site whose element type
+/// or callback shape is not statically proven emits exactly what it emits
+/// today", and the way to break that is not to emit too few typed calls but too
+/// many: `rt.List_filterT[any]` over a `[]any` type-checks, runs, and quietly
+/// claims a proof that was never made — and it loses `asList`, which is the
+/// only thing that copes with a caller passing a differently-typed slice.
+///
+/// What this leg does NOT catch: byte-identity of the fallback. It proves the
+/// erased symbol survives, not that every other byte around it is unchanged.
+/// `xtask repro` and `xtask coerce-floor` cover the rest.
+#[test]
+fn unprovable_element_type_keeps_the_erased_helper() {
+    let dir = project("listhof-erased", LIST_HOF_ERASED);
+    let log = build(&dir);
+    let src = emitted_go(&dir, &log);
+
+    for (def, erased, typed) in [
+        ("Main_keepAll", "rt.List_filterAny(", "rt.List_filterT["),
+        ("Main_echo", "rt.List_mapAny(", "rt.List_mapT["),
+    ] {
+        let body = func_body(&src, def);
+        assert!(
+            body.contains(erased),
+            "{def}'s element type is a TYPE VARIABLE, which lowers to `any`. \
+             Nothing is proven here, so the erased `{erased}…)` must survive \
+             unchanged. Emitted:\n{body}"
+        );
+        assert!(
+            !body.contains(typed),
+            "{def} must NOT be specialised: `{typed}any]` type-checks and runs \
+             while claiming a proof that was never made, and drops the `asList` \
+             widen that copes with a differently-typed slice. \
+             `provable()` in lower.rs rejects `GoTy::Any`. Emitted:\n{body}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEMANTICS LEG — a dispatch change must never be a semantics change, and the
+/// empty case is the sharp edge. `List_filterMap` returns a NIL slice when
+/// nothing matches, where the other three return a non-nil empty one; nil vs
+/// empty is observable through `reflect.DeepEqual` and through JSON (`null` vs
+/// `[]`). `List_filterMapT` matches what the erased helper produced AT A CALL
+/// SITE — non-nil, because `rt.AsListT[T]` normalised the nil away — not what
+/// the erased helper returned in isolation. See its comment in `rt.go`.
+#[test]
+fn typed_list_hof_computes_the_same_answer() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    for (tag, src, want) in [
+        ("listhof-run", LIST_HOF, LIST_HOF_ANSWER),
+        ("listhof-erased-run", LIST_HOF_ERASED, "3"),
+    ] {
+        let dir = project(tag, src);
+        let log = build(&dir);
+        assert!(
+            !log.contains("go build failed"),
+            "`sky check` ≡ `sky build`: the typed dispatch must compile. Log:\n{log}"
+        );
+        let app = dir.join("sky-out").join("app");
+        assert!(app.is_file(), "build must produce sky-out/app. Log:\n{log}");
+        let out = Command::new(&app)
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("run sky-out/app");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert_eq!(
+            stdout.trim(),
+            want,
+            "{tag}: dispatching to the typed list helper is a SHAPE change, never \
+             a semantics change. stdout:\n{stdout}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

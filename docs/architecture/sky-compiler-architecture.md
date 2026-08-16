@@ -446,7 +446,7 @@ line. Distinct categories with Compile.hs citations:
 | 3 | Map→struct narrowing for Db rows | rt.Coerce with target = `Foo_R` | Closes via typed Db.queryDecode (already shipped) — only legacy `Db.query` path emits |
 | 4 | TEA dispatch return narrowing | wrap around reflect.MakeFunc return | **FLOOR** — runtime contract |
 | 5 | Ctor partial-application adapter | Compile.hs:3777 `rt.Coerce[func(string) any](Msg_Ctor)` | Closes via sealed-iface + typed ctor signature |
-| 6 | Polymorphic kernel-fn arg | Compile.hs:4357 `Sky_Core_List_map_(rt.Coerce[func(any) any](fn), …)` | Closes via per-instance kernel σ — partially shipped |
+| 6 | Polymorphic kernel-fn arg | Rust: `lower.rs` `kernel_call` → `rt.List_mapAny(any(fn), any(xs))`. (Legacy: Compile.hs:4357 `Sky_Core_List_map_(rt.Coerce[func(any) any](fn), …)`) | §7.4 typed kernel dispatch — **SHIPPED** for `map`/`filter`/`filterMap`/`indexedMap` where the element type and callback shape are proven; the erased call is the fallback, not the default |
 | 7 | Record-update / RecordExt narrowing | wraps around RecordExt access | LowerCtx + σ |
 | 8 | Cross-module dep ctx fallback | dep-emission "Nothing" branch | Closes via wiring SolvedTypes into dep ctx (#642 follow-ups) |
 | 9 | Go FFI return narrowing | wrap around foreign call result | **FLOOR** — runtime contract |
@@ -488,13 +488,55 @@ Msg / Cmd / Sub / VNode. ~2-3 weeks. **HIGHEST-leverage lever** for
 the "renderer walks tree" rt.Coerce class which is the single
 largest bucket.
 
-### 7.4 Per-instance kernel σ (lever for category 6)
+### 7.4 Typed kernel dispatch (lever for category 6) — SHIPPED
 
-`Sky_Core_List_map_` etc. currently take `func(any) any` and rely on
-SkyCall. **Tactic**: emit per-instance specialisation (`List_map_int_str`)
-where the call site has known concrete σ. Cost: Go binary size
-inflates with kernel-call-site count. Benefit: HOF rt.Coerce wraps
-eliminate.
+The erased list helpers (`rt.List_mapAny`, `rt.List_filterAny`,
+`rt.List_filterMap`, `rt.List_indexedMap`) take `fn any, xs any` and
+dispatch through `rt.SkyCall`, i.e. `reflect.Value.Call`, once per
+element.
+
+**Earlier wording of this section proposed NAMED per-instance
+specialisation** — "emit `List_map_int_str` where the call site has
+known concrete σ", costed as "Go binary size inflates with
+kernel-call-site count". That is not what shipped, and it is not what
+should ship. Sky's Go ABI is erased and stays erased; the design
+principle is **one emit per definition, no monomorphisation**, stated
+in the `func_shape_eta` doc comment in `rust/crates/lower/src/lower.rs`
+and true of the code — `grep -r 'mono_instances\|subst_tyvars'
+rust/crates` returns nothing. (`docs/rust-rewrite/07-lowering-and-ir.md`
+§ "mono_instances" still describes a monomorphiser in the present
+tense; there is no such pass. Cite the code, not that section.) A
+per-call-site inlined loop and a per-instance named function both
+un-erase the ABI, and both buy binary growth proportional to the
+instance count.
+
+**What shipped instead**: the call site selects the fully-typed member
+of the runtime's existing list-helper family and lets **Go's own
+generics** instantiate it — `rt.List_mapT[A, B](fn func(A) B, xs []A)
+[]B`. One runtime function, one emit per definition, no new code per
+call site. The compiler site is `Ctx::list_hof_typed`
+(`rust/crates/lower/src/lower.rs`), reached from `kernel_call`, which
+is the confluence both the kernel-alias and the kernel-pseudo-module
+resolution paths pass through.
+
+It fires only where the emitter can PROVE, from the LOWERED Go types,
+that the list argument is a real `[]A` with `A` concrete and that the
+callback is at — or is retypable in place to — the typed shape.
+Anything else keeps the erased call. `provable()` rejects `GoTy::Any`
+(what an OPEN record row erases to), `GoTy::TyVar`, and `GoTy::Struct`
+(an anonymous record, which `lower_lambda` is still entitled to widen
+underneath the call — the issue #166 class).
+
+**Measured** on `examples/19-skyforum` under load, three alternating
+reps per arm: `docs/perf/runs/stage2-typed-hof-20260816/`.
+
+**Not in scope, and why**: `List.foldl`, `List.find`, `List.any` and
+`List.all` are pure Sky source in `sky-stdlib/Sky/Core/List.sky`,
+already TCO'd to a Go `for` loop, and emit `Sky_Core_List_*` rather
+than any `rt.List_*`. Across `examples/`, `apps/` and `sky-bundled/`
+there are 48 uses of `List.foldl` / `List.find` and not one of them
+emits a kernel call. `List.foldr` IS a kernel alias, and has a single
+use in the whole corpus.
 
 ### 7.5 IORef → reader threading (foundation, prerequisite for above)
 
