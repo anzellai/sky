@@ -1,0 +1,1 @@
+IDLE pid=1268 bin=app store=memory gomaxprocs=1 probe=NA app_rss_kb=26164 mem_avail_kb=32151460 elements=94 posts=5 threads=6 clk_tck=100 nproc=8 gogc=default

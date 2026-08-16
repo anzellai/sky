@@ -1,0 +1,33 @@
+{
+  "label": "g8-n100-b1",
+  "url": "http://10.128.0.11:8000",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 80906,
+  "interactions_per_sec": 1796.1987044774646,
+  "p50_ms": 35.472,
+  "p95_ms": 169.749,
+  "p99_ms": 269.978,
+  "max_ms": 652.596,
+  "outcomes": {
+    "ok": 80906
+  },
+  "error_rate": 0,
+  "patches_total": 161812,
+  "interactions_with_patches": 80906,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 753,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 6.133989103887591,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "skygmp-gen",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T08:25:15Z"
+}

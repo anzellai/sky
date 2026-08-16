@@ -1,0 +1,33 @@
+{
+  "label": "g1-n400-b9-sens",
+  "url": "http://10.128.0.11:8000",
+  "sessions_requested": 400,
+  "sessions_established": 400,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 21998,
+  "interactions_per_sec": 479.7115323370698,
+  "p50_ms": 983.664,
+  "p95_ms": 1032.442,
+  "p99_ms": 1057.833,
+  "max_ms": 1121.24,
+  "outcomes": {
+    "ok": 21998
+  },
+  "error_rate": 0,
+  "patches_total": 43996,
+  "interactions_with_patches": 21998,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 3036,
+  "sse_still_open_at_end": 400,
+  "generator_cpu_percent_of_machine": 2.2287837640621344,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "skygmp-gen",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T09:49:00Z"
+}
