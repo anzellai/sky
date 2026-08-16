@@ -44,45 +44,68 @@
 # REBUILD a slice or map (trading an O(1) reflect box for an O(n) copy). They
 # are locked here exactly, so closing any of them shows up as a gate failure
 # asking to record the win.
-00-standard-libs	adapter=1	dispatch=0	narrow=208
+#
+# ── Recorded transition, 2026-08-16 — the typed-lowering stages, blessed at
+#    FULL corpus coverage ──
+# This is the first bless taken with all 61 rows MEASURED in the same run.
+# The four preceding stages were each verified against whatever subset the
+# measuring machine could emit: on a clean checkout that is 56 of 61, because
+# 03-tea-external, 05-mux-server, 08-notes-app and 11-fyne-stopwatch need a
+# generated `sky-ffi/` surface and 13-skyshop an unfetched Sky dependency, and
+# both `sky-ffi/` and `.skydeps/` are .gitignore'd. The gate filed those under
+# "did not emit (not gated)" and reported PASS on the remainder, so a
+# "no project rose" verdict covered 56 rows while reading as though it
+# covered 61. That is now a hard failure with its own clause; see the module
+# header of coerce_floor_gate.rs.
+#
+# Measured with all five surfaces restored, and cross-checked in two
+# independent working trees that agreed to the token:
+#     adapter  35 -> 28   (-7): 35-composite-generics 6 -> 2, apps/fieldbook 4 -> 1
+#     narrow  9024 -> 8325 (-699) across 29 projects; NONE rose
+#     total   9059 -> 8353 (-706)
+# The `adapter` fall is the exact-match ratchet doing its job: both projects
+# closed adapters the golden still reserved slack for, and that slack is now
+# gone. The `narrow` fall is a decrease in SITE count and is not a speedup
+# measurement — nothing here weights a site by how often it runs.
+00-standard-libs	adapter=1	dispatch=0	narrow=186
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=9
 03-tea-external	adapter=0	dispatch=0	narrow=3
 04-local-pkg	adapter=0	dispatch=0	narrow=2
 05-mux-server	adapter=0	dispatch=0	narrow=9
 06-json	adapter=1	dispatch=0	narrow=45
-07-todo-cli	adapter=0	dispatch=0	narrow=105
-08-notes-app	adapter=0	dispatch=0	narrow=347
+07-todo-cli	adapter=0	dispatch=0	narrow=100
+08-notes-app	adapter=0	dispatch=0	narrow=326
 09-live-counter	adapter=0	dispatch=0	narrow=68
 10-live-component	adapter=0	dispatch=0	narrow=71
 11-fyne-stopwatch	adapter=0	dispatch=0	narrow=10
-12-skyvote	adapter=0	dispatch=0	narrow=337
-13-skyshop	adapter=11	dispatch=0	narrow=1375
+12-skyvote	adapter=0	dispatch=0	narrow=331
+13-skyshop	adapter=11	dispatch=0	narrow=1341
 14-task-demo	adapter=0	dispatch=0	narrow=5
 15-http-server	adapter=0	dispatch=0	narrow=13
-16-skychess	adapter=0	dispatch=0	narrow=466
-17-skymon	adapter=0	dispatch=0	narrow=379
-18-job-queue	adapter=0	dispatch=0	narrow=123
-19-skyforum	adapter=0	dispatch=0	narrow=290
+16-skychess	adapter=0	dispatch=0	narrow=429
+17-skymon	adapter=0	dispatch=0	narrow=357
+18-job-queue	adapter=0	dispatch=0	narrow=116
+19-skyforum	adapter=0	dispatch=0	narrow=256
 20-cli-counter	adapter=0	dispatch=0	narrow=3
 21-tui-stopwatch	adapter=0	dispatch=0	narrow=9
 22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=13
-23-tui-todo	adapter=0	dispatch=0	narrow=31
-24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=230
-25-sky-console	adapter=0	dispatch=0	narrow=237
-26-ui-showcase	adapter=0	dispatch=0	narrow=426
-27-multi-session-chat	adapter=0	dispatch=0	narrow=112
-28-streaming-chat	adapter=0	dispatch=0	narrow=27
+23-tui-todo	adapter=0	dispatch=0	narrow=29
+24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=202
+25-sky-console	adapter=0	dispatch=0	narrow=205
+26-ui-showcase	adapter=0	dispatch=0	narrow=365
+27-multi-session-chat	adapter=0	dispatch=0	narrow=109
+28-streaming-chat	adapter=0	dispatch=0	narrow=24
 29-webview-threejs-spike	adapter=0	dispatch=0	narrow=2
 30-sse-server-demo	adapter=0	dispatch=0	narrow=7
-31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=222
+31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=194
 32-sse-relay	adapter=0	dispatch=0	narrow=7
 33-websocket-echo	adapter=0	dispatch=0	narrow=4
 34-multi-tier-console	adapter=0	dispatch=0	narrow=11
-35-composite-generics	adapter=6	dispatch=0	narrow=147
-36-composite-server	adapter=2	dispatch=0	narrow=213
-37-composite-live-shop	adapter=3	dispatch=0	narrow=439
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=338
+35-composite-generics	adapter=2	dispatch=0	narrow=141
+36-composite-server	adapter=2	dispatch=0	narrow=209
+37-composite-live-shop	adapter=3	dispatch=0	narrow=391
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=289
 40-generic-adt-field	adapter=0	dispatch=0	narrow=5
 41-nested-curry	adapter=0	dispatch=0	narrow=7
 42-poly-record	adapter=0	dispatch=0	narrow=3
@@ -95,13 +118,13 @@
 49-xmodule-adt	adapter=0	dispatch=0	narrow=2
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=1
-52-blog-analytics	adapter=0	dispatch=0	narrow=338
-53-record-update-map	adapter=0	dispatch=0	narrow=26
+52-blog-analytics	adapter=0	dispatch=0	narrow=307
+53-record-update-map	adapter=0	dispatch=0	narrow=24
 54-record-fieldset-collision	adapter=0	dispatch=0	narrow=5
-55-store-partial-update	adapter=0	dispatch=0	narrow=75
-apps/dispatch	adapter=0	dispatch=0	narrow=529
-apps/fieldbook	adapter=4	dispatch=0	narrow=644
-apps/ledger	adapter=0	dispatch=0	narrow=498
-apps/relay	adapter=5	dispatch=0	narrow=173
-sky-bundled/console	adapter=2	dispatch=0	narrow=323
-sky-bundled/doc	adapter=0	dispatch=0	narrow=20
+55-store-partial-update	adapter=0	dispatch=0	narrow=69
+apps/dispatch	adapter=0	dispatch=0	narrow=491
+apps/fieldbook	adapter=1	dispatch=0	narrow=556
+apps/ledger	adapter=0	dispatch=0	narrow=462
+apps/relay	adapter=5	dispatch=0	narrow=170
+sky-bundled/console	adapter=2	dispatch=0	narrow=283
+sky-bundled/doc	adapter=0	dispatch=0	narrow=17
