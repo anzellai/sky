@@ -176,6 +176,22 @@ Then `xtask coerce-floor` should report 61/61 counted, and only then is
 `--bless` safe. Expect the blessed `narrow` total to land near 8,669
 (9,024 − 355) rather than 6,925.
 
+> **Settled, 2026-08-16.** The five surfaces were restored and the gate
+> reported **61/61 counted**, so the bless above was taken:
+> `adapter` **35 → 28**, `narrow` **9,024 → 8,325**, total **9,059 → 8,353**,
+> rows 61 → 61. The `adapter` −7 is exactly the two projects named above.
+>
+> The `narrow` prediction of ~8,669 came in at **8,325** because Stage 4
+> landed between this run and the bless; 8,669 was the Stage-3-only estimate
+> and there is no Stage-3-only number to compare it against any more.
+>
+> The refusal to bless at 56/61 was correct, and the gate has since been
+> taught to enforce it rather than rely on a reader noticing: a golden row
+> that cannot be measured is now a hard failure naming what to install
+> (`SKY_LIVE_TESTS=skip` to opt out, loudly), `--bless` refuses under a
+> shortfall, and both verdict lines carry the denominator. The five rows
+> this document had to argue about by hand are now argued about by the gate.
+
 ## Scope: the fallback is real and is exercised
 
 Corpus-wide, **60 of 70** provable-shaped call sites route to a twin (`foldl`

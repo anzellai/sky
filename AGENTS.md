@@ -295,6 +295,17 @@ New live tests gate through `rust/crates/sky/src/live_gate.rs`
 `rust/crates/xtask/tests/live_tests_are_not_silently_skipped.rs` fails the build
 on the shapes that used to be written instead.
 
+`xtask coerce-floor` takes the same variable for the same reason. Its golden
+locks a runtime-narrowing floor **per project**, and a project whose generated
+FFI surface is absent (`sky-ffi/` and `.skydeps/` are `.gitignore`d, so a fresh
+checkout has neither) cannot be measured — which used to be filed under "did not
+emit (not gated)" while the run reported PASS on the remainder, measuring 56 of
+61 rows. An unmeasurable row now FAILS, naming the `(cd <project-dir> && sky
+install)` that fixes it; `SKY_LIVE_TESTS=skip` downgrades it to a loud
+`UNMEASURED` block, and `--bless` refuses under a shortfall rather than write a
+golden mixing measured rows with carried-forward ones. Both verdict lines state
+how many of the golden's rows the run actually covered.
+
 `cargo run --release -p xtask -- harness` runs the registered gates through the
 gate harness, which enforces each gate's budget by `killpg`, requires an exact
 assertion count, and refuses to report PASS when it cannot establish a verdict
