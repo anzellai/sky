@@ -150,6 +150,9 @@ analyticsDecoder =
         |> Pipeline.optional "counts" (Decode.list eventCountDecoder) []
         |> Pipeline.optional "recent" (Decode.list analyticsEventDecoder) []
         |> Pipeline.optional "revenue" (Decode.list currencyTotalDecoder) []
+        |> Pipeline.optional "windowDays" Decode.int 0
+        |> Pipeline.optional "rowCapHit" Decode.bool False
+        |> Pipeline.optional "rowCap" Decode.int 0
 
 
 currencyTotalDecoder : Decode.Decoder CurrencyTotal

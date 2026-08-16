@@ -125,6 +125,14 @@ func analyticsSchemaStmts(driver string) []string {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_analytics_ts ON analytics_events(ts)`,
 		`CREATE INDEX IF NOT EXISTS idx_analytics_event ON analytics_events(event)`,
+		// The two subject columns. Without these, `Analytics.erase` — the
+		// right-to-erasure path — was a full table scan of every event ever
+		// recorded, and so was the console's unique-user count. A GDPR/CCPA
+		// deletion request is not a query you want to be O(all history):
+		// on a busy store it is slow enough to time out, and a timed-out
+		// erasure is an erasure that did not happen.
+		`CREATE INDEX IF NOT EXISTS idx_analytics_anonymous_id ON analytics_events(anonymous_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_analytics_user_id ON analytics_events(user_id)`,
 	}
 }
 
@@ -450,6 +458,15 @@ func nullableStr(s string) any {
 // the LOCAL store, returning the row count. Events already exported to a
 // provider must be erased there (out of the stdlib's reach). No-op (Ok 0) when
 // no store is configured.
+// qAnalyticsErase is the right-to-erasure DELETE. Named so the
+// `erasure-path-uses-an-index` gate EXPLAINs the exact string this path
+// executes rather than a copy of it that could drift.
+//
+// Both columns are indexed (see analyticsSchemaStmts) — SQLite resolves the
+// `OR` as a MULTI-INDEX OR over the two, PostgreSQL as a BitmapOr. Drop
+// either index and this reverts to the full scan it was.
+const qAnalyticsErase = `DELETE FROM analytics_events WHERE anonymous_id = ? OR user_id = ?`
+
 func Analytics_erase(idArg any) any {
 	return func() any {
 		db := analyticsStore()
@@ -461,7 +478,7 @@ func Analytics_erase(idArg any) any {
 		// moments after the app reported them erased.
 		analyticsFlushPending()
 		id := fmt.Sprintf("%v", unwrapAny(idArg))
-		res, err := db.Exec(analyticsQ(`DELETE FROM analytics_events WHERE anonymous_id = ? OR user_id = ?`), id, id)
+		res, err := db.Exec(analyticsQ(qAnalyticsErase), id, id)
 		if err != nil {
 			return Err[any, any](ErrUnexpected("analytics.erase: " + err.Error()))
 		}

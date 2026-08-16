@@ -193,6 +193,40 @@ a compliance property rather than a freshness one: a right-to-erasure request
 that deleted the rows on disk while the same subject's events sat in the queue
 would re-materialise them a moment later.
 
+### The Analytics tab shows a window, and says so
+
+**Every figure on the console's Analytics tab covers the last 30 days and at
+most the newest 20,000 events in it** — total events, identified users, events
+by name, the recent stream, and the per-currency revenue rollup. The tab labels
+each panel with its window (`· last 30 days`), carries a scope note above the
+stat cards, and renders revenue as `≥` when the row cap was reached, because a
+windowed number under an all-time label is a wrong number rather than a fast
+one. The bounds are `consoleAnalyticsWindow` and `consoleAnalyticsRowCap` in
+`runtime-go/rt/console_analytics.go`.
+
+They are bounds and not conveniences. The tab runs on a connection from the
+pool it **shares** with the Sky.Live session store, and the analytics read
+paths sit deliberately outside the write semaphore, so an unbounded query here
+competes with session reads on the request path — the observability surface
+degrading the thing it observes. The revenue rollup was the worst of them:
+`SELECT props FROM analytics_events WHERE props IS NOT NULL`, no window, no
+limit, no usable index, plus a `json.Unmarshal` per row in Go, on every load of
+the tab.
+
+For an all-time figure or a different window, query the store directly —
+`Analytics.openStore` hands back a `Std.Db` handle over the same table, and a
+deliberate report is the right place for a scan that costs a scan.
+
+`analytics_events` is indexed on `ts`, `event`, `anonymous_id` and `user_id`.
+The last two also carry `Analytics.erase`: the right-to-erasure `DELETE`
+matches on both subject columns, and without them it was a full table scan
+holding the write lock — on a busy store, slow enough to time out, and a
+timed-out erasure is an erasure that did not happen. `analyticsSchemaStmts` is
+the only migration analytics has, and it runs `CREATE INDEX IF NOT EXISTS` on
+every open, so an existing store gains the two indexes on its next boot. The
+gates are `console-analytics-queries-are-bounded` and
+`erasure-path-uses-an-index`.
+
 ### `synchronous_commit` is off for these two sinks
 
 On PostgreSQL both writers run their flush inside a transaction that has asked

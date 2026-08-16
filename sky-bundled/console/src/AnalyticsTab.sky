@@ -5,12 +5,19 @@ module AnalyticsTab exposing (analyticsView)
 -- is `AnalyticsTab`, in BOTH embedded and hub modes (the data is the
 -- host app's own event store, not per-service hub telemetry).
 --
--- Layout: two summary stat cards (total events, unique identified
+-- Layout: a scope note → two summary stat cards (events, identified
 -- users) → an "events by name" frequency panel → a recent-event
 -- stream. Data comes from the parent's /_sky/console/api/analytics
 -- endpoint (see Main.sky fetchAnalytics), which reads the SAME
 -- Std.Analytics store the app writes — the console runs in-process
 -- with the host, so there is no second DB and no env plumbing.
+--
+-- EVERY figure here is windowed and row-capped, and every label says
+-- so. The queries behind them were all-time, unindexed scans on a
+-- connection pool shared with the session store, so the tab degraded
+-- the app it observes. Bounding them changed what the numbers MEAN,
+-- and a windowed number under an all-time label is a wrong number,
+-- not a fast one — hence `scopeNote` and the `· last N days` suffixes.
 --
 -- Palette mirrors ErrorsTab.sky so the tab is visually consistent
 -- with the rest of the console.
@@ -79,29 +86,69 @@ mono =
 -- ─── Entry point ────────────────────────────────────────────────
 analyticsView : Analytics -> List (Element Msg)
 analyticsView a =
-    [ statRow a
-    , revenuePanel a.revenue
-    , eventsPanel a.counts
-    , recentPanel a.recent
-    ]
+    [ scopeNote a, statRow a, revenuePanel a, eventsPanel a, recentPanel a ]
+
+
+-- ── scope note ──────────────────────────────────────────────────
+-- Every figure on this tab is windowed and row-capped (see
+-- consoleAnalyticsWindow / consoleAnalyticsRowCap in
+-- runtime-go/rt/console_analytics.go). Those queries used to be
+-- all-time, unindexed scans running on the connection pool the session
+-- store uses. Bounding them changed WHAT THE NUMBERS MEAN, so the tab
+-- says so: a windowed number shown under an all-time label is a wrong
+-- number, not a fast one.
+scopeNote : Analytics -> Element Msg
+scopeNote a =
+    Ui.el
+        [ Ui.width Ui.fill, Font.size 12, Font.color textMuted ]
+        (Ui.text (scopeText a))
+
+
+scopeText : Analytics -> String
+scopeText a =
+    let
+        base =
+            "Scope: the last " ++ windowLabel a ++ ", newest "
+                ++ String.fromInt a.rowCap
+                ++ " events — not an all-time total."
+    in
+        if a.rowCapHit then
+            base
+                ++ " The row cap was reached, so revenue is a floor (≥), not a full sum."
+
+        else
+            base
+
+
+windowLabel : Analytics -> String
+windowLabel a =
+    if a.windowDays == 1 then
+        "day"
+
+    else
+        String.fromInt a.windowDays ++ " days"
 
 
 -- ── revenue (Money summed per currency) ─────────────────────────
-revenuePanel : List CurrencyTotal -> Element Msg
-revenuePanel rows =
+revenuePanel : Analytics -> Element Msg
+revenuePanel a =
     panel
-        "Revenue by currency"
-        (if List.isEmpty rows then
+        ("Revenue by currency · last " ++ windowLabel a)
+        (if List.isEmpty a.revenue then
             [ emptyState
                   "No revenue captured — track a Money prop to see totals."
             ]
 
         else
-            List.map currencyRowView rows)
+            List.map (currencyRowView a.rowCapHit) a.revenue)
 
 
-currencyRowView : CurrencyTotal -> Element Msg
-currencyRowView r =
+-- `capped` prefixes the amount with "≥": the rollup stopped at the row
+-- cap, so the total is a floor over the window rather than the whole of
+-- it. Rendering a capped sum as if it were complete is the same class
+-- of error as rendering a windowed total under an all-time label.
+currencyRowView : Bool -> CurrencyTotal -> Element Msg
+currencyRowView capped r =
     Ui.row
         [ Ui.width Ui.fill
         , Ui.paddingXY 0 6
@@ -124,7 +171,12 @@ currencyRowView r =
               , Font.color textPrimary
               , Font.family mono
               ]
-              (Ui.text r.amount)
+              (Ui.text
+                  (if capped then
+                      "≥ " ++ r.amount
+
+                  else
+                      r.amount))
         , Ui.el
               [ Font.size 12, Font.color textMuted, Font.family mono ]
               (Ui.text (String.fromInt r.count ++ "×"))
@@ -136,8 +188,13 @@ statRow : Analytics -> Element Msg
 statRow a =
     Ui.row
         [ Ui.width Ui.fill, Ui.spacing 12 ]
-        [ statCard "TOTAL EVENTS" (String.fromInt a.total)
-        , statCard "IDENTIFIED USERS" (String.fromInt a.uniqueUsers)
+        -- The labels name the WINDOW. They used to read "TOTAL EVENTS"
+        -- and "IDENTIFIED USERS" against `count(*)` over all of history;
+        -- the figures are now windowed, so the labels are too.
+        [ statCard ("EVENTS · LAST " ++ windowLabel a) (String.fromInt a.total)
+        , statCard
+              ("IDENTIFIED USERS · LAST " ++ windowLabel a)
+              (String.fromInt a.uniqueUsers)
         ]
 
 
@@ -166,15 +223,15 @@ statCard label value =
 
 
 -- ── events by name ──────────────────────────────────────────────
-eventsPanel : List EventCount -> Element Msg
-eventsPanel rows =
+eventsPanel : Analytics -> Element Msg
+eventsPanel a =
     panel
-        "Events by name"
-        (if List.isEmpty rows then
+        ("Events by name · last " ++ windowLabel a)
+        (if List.isEmpty a.counts then
             [ emptyState "No events captured yet." ]
 
         else
-            List.map eventCountView rows)
+            List.map eventCountView a.counts)
 
 
 eventCountView : EventCount -> Element Msg
@@ -200,15 +257,15 @@ eventCountView r =
 
 
 -- ── recent event stream ─────────────────────────────────────────
-recentPanel : List AnalyticsEvent -> Element Msg
-recentPanel rows =
+recentPanel : Analytics -> Element Msg
+recentPanel a =
     panel
-        "Recent events"
-        (if List.isEmpty rows then
+        ("Recent events · last " ++ windowLabel a)
+        (if List.isEmpty a.recent then
             [ emptyState "Nothing recent to show." ]
 
         else
-            List.map recentRowView rows)
+            List.map recentRowView a.recent)
 
 
 recentRowView : AnalyticsEvent -> Element Msg
