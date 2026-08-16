@@ -194,10 +194,30 @@ handleMe db req =
 
 ```toml
 [auth]
-tokenSecret = "REPLACE-WITH-32+-BYTE-RANDOM-STRING"   # SKY_AUTH_TOKEN_SECRET
-tokenTtl    = "24h"                                    # SKY_AUTH_TOKEN_TTL (Go duration string)
-cookie      = "sky_sid"                                # SKY_AUTH_COOKIE
+cookieName = "sky_sid"     # → SKY_AUTH_COOKIE
+tokenTtl   = "24h"         # → SKY_AUTH_TOKEN_TTL (Go duration string)
+driver     = "…"           # → SKY_AUTH_DRIVER
 ```
+
+Those **three keys are the whole section** (`accepted_config_keys("auth")`,
+`rust/crates/project/src/build.rs:1106`; the seeding is at `:1045-1047`).
+
+> **Two keys were wrong here and both failed silently.** This block used to
+> show `cookie = "sky_sid"` and
+> `tokenSecret = "REPLACE-WITH-32+-BYTE-RANDOM-STRING"`.
+>
+> - The key is **`cookieName`**, not `cookie`. `cookie` is not accepted and
+>   raises an unknown-config-key warning; the cookie name silently stays at
+>   its default.
+> - **`tokenSecret` is not a `sky.toml` key at all, by design.** The
+>   build.rs comment is explicit: *"`secret` is deliberately NOT seeded from
+>   sky.toml — it must come from env"* (`:1043-1044`). `SKY_AUTH_TOKEN_SECRET`
+>   is read from the process environment only (`sky/src/main.rs:3692`). So the
+>   old example invited a reader to put a **signing secret in a committed
+>   file**, where it would then be ignored — the worst of both outcomes.
+>
+> `docs/sky-toml.md:184-188` already documented this correctly; the two docs
+> contradicted each other.
 
 Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → `sky.toml`. See [environment-variable precedence](../../CLAUDE.md#environment-variables) for the full doctrine.
 
