@@ -11,6 +11,7 @@
 mod build_run_gate;
 mod ci_scan;
 mod coerce_floor_gate;
+mod config_surface;
 mod corpus;
 mod corpus_bench;
 mod coverage_ledger;
@@ -80,6 +81,9 @@ const GATES: &[(&str, GateFn)] = &[
     }),
     ("coverage-ledger", |args| {
         coverage_ledger::run(args, &repo_root())
+    }),
+    ("config-surface", |args| {
+        config_surface::run(args, &repo_root())
     }),
     ("harness", |args| harness::run(args, &repo_root())),
     ("errloc", errloc),
