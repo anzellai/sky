@@ -20,9 +20,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 142 |
-| covered by the new corpus (>= Asserted) | 128 |
-| verdict `stronger` | 123 |
+| surfaces | 143 |
+| covered by the new corpus (>= Asserted) | 129 |
+| verdict `stronger` | 124 |
 | verdict `equal` | 19 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
@@ -133,6 +133,7 @@ None.
 | `http.sse-websocket` | http | Asserted | Falsified | stronger |
 | `lang.constructs` | language | Asserted | Falsified | stronger |
 | `lsp` | tooling | Asserted | Falsified | stronger |
+| `meta.config-effective-values` | meta | None | Falsified | stronger |
 | `meta.config-surface` | meta | None | Falsified | stronger |
 | `meta.coverage-accounting` | meta | None | Falsified | stronger |
 | `observability.console` | observability | Asserted | Falsified | stronger |
@@ -246,6 +247,7 @@ None.
 | `apps-ledger-postgres` | T3 | PROVEN | `db.postgres` · `db.migrations` |
 | `apps-relay` | T1 | PROVEN | `http.middleware-ratelimit` · `http.sse-websocket` · `runtime.panic-classes` |
 | `cli-verbs` | T1 | PROVEN | `cli.init` · `cli.clean` · `cli.watch` · `cli.db` · `cli.install` · `cli.update` · `cli.upgrade` |
+| `config-matrix` | T1 | PROVEN | `meta.config-effective-values` |
 | `config-surface` | T1 | PROVEN | `meta.config-surface` |
 | `conformance` | T1 | PROVEN | `db.sqlite` · `db.codec-store` · `auth.password-session` |
 | `corpus` | T2 | PROVEN | `lang.constructs` · `compiler.infer` · `compiler.lower-emit-shape` · `stdlib.Sky.Core.String` · `stdlib.Sky.Core.List` · `stdlib.Sky.Core.Dict` · `stdlib.Sky.Core.Set` · `stdlib.Sky.Core.Maybe` · `stdlib.Sky.Core.Result` · `stdlib.Sky.Core.Char` · `stdlib.Sky.Core.Encoding` · `stdlib.Sky.Core.Crypto` · `stdlib.Sky.Core.Math` · `stdlib.Sky.Core.Basics` · `stdlib.Sky.Core.ToString` · `stdlib.Sky.Core.Path` · `stdlib.Sky.Core.Error` · `stdlib.Sky.Core.Regex` · `stdlib.Sky.Core.Json.Encode` · `stdlib.Sky.Core.Json.Decode` · `stdlib.Std.Decimal` · `stdlib.Std.Money` · `stdlib.Std.Csv` · `stdlib.Sky.Core.Bytes` · `stdlib.Sky.Core.Jwt` · `stdlib.Std.Codec` · `stdlib.Std.Markdown` · `stdlib.Std.Compression` |

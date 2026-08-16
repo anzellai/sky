@@ -2984,3 +2984,29 @@ pub fn config_surface(ctx: &GateCtx) -> GateOutcome {
     let (passed, assertions, detail) = crate::config_surface::check_body(&ctx.repo_root);
     GateOutcome::new(passed, assertions, detail)
 }
+
+/// One assertion per observed cell, one per census entry the manifest must
+/// bucket, three per covered setting (the declared default, the
+/// arm-distinguishability check, and — where a builder exists — the
+/// `builder_reaches_runtime` verdict), plus the pre-flight sentinel check and
+/// the two fixed clauses.
+///
+/// EXACT, never a `>=`, and it MOVES when the matrix moves. That is the point:
+/// a cell quietly disappearing is how a matrix stops protecting a setting while
+/// still reporting green, and `reject.rs` shipped exactly that shape — `>= 13`
+/// against an actual 63, so deleting 50 corpus files kept it green.
+///
+/// It also moves when `config-surface`'s census moves, which is deliberate:
+/// this gate's coverage claim is stated *against* that census, so a new
+/// `sky.toml` key has to be bucketed here before either gate is green again.
+pub const CONFIG_MATRIX_EXPECTED: u64 = 98;
+
+/// `xtask config-matrix --check`, run in-process.
+///
+/// In-process for the same reason `config_surface` is: the measurement's whole
+/// claim is that it was observed from binaries THIS tree's compiler built, and
+/// a prebuilt xtask might have been built from another one.
+pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::config_matrix::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}

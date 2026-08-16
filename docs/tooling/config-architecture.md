@@ -719,6 +719,15 @@ the config. **VERIFIED** by reading the boot guard and its callers.
 from `sky.toml` (`db_pool_sizing.rs:126-143`). If the knob moves into code, a
 Rust CLI cannot read it without running the program.
 
+> **Corrected 2026-08-16.** `--sky-config` **does not exist** — outside this
+> document the string occurs in the tree exactly once, in a comment citing this
+> document. The paragraph below is a proposal written in the present tense, and
+> §7.2 leaned on it as though it were built. §7.2.1 records the second problem:
+> a printer placed where this one would have to run (from `main`, after every
+> `init()`) cannot see the `withX` builder layer at all, because the
+> `AppConfig` does not exist yet. It can answer `provision --shared`; it cannot
+> serve as the matrix's oracle.
+
 The answer is `./sky-out/app --sky-config`, which prints the applied
 configuration as JSON. This is strictly *more* accurate than a static read — it
 reflects what the binary will actually do, including `.env` and defaults — and
@@ -959,6 +968,135 @@ default equals the literal at its current read site — `30*time.Minute`
 (`live.go:4013`), `8080` (`live.go:3873`), `"memory"` (`live_store.go:1823`),
 `1800`/`86400`/`sky_auth`/`jwt` (`lower.rs:822-825`). It is brittle against
 refactors, so it supplements the matrix rather than replacing it.
+
+### 7.2.1 BUILT — `xtask config-matrix`, and where §7.2 was wrong
+
+**Built 2026-08-16, before any default moved**, per §12 risk 2's "it must exist
+before the first default is written". It moves nothing. The specification is
+`rust/crates/xtask/config-matrix.toml`; what it observed is
+`docs/coverage/config-matrix.json`; every number below comes from that file.
+
+**Two of §7.2's four steps could not be built as written, and the reasons are
+worth recording.**
+
+*Step 1 and 3 — `SKY_CONFIG_LEGACY=1` and `--sky-config`.* There is no second
+path yet, so a gate that ran "both paths" today would run the current path
+twice and compare its output to itself — §12 risk 8's vacuity, shipped as the
+cure for risk 2. The dual path is therefore realised over TIME rather than over
+a flag: the current path's effective values are recorded, and that record is the
+baseline every later run is compared against. When stage 3 introduces the new
+path, the same harness compares it against the same baseline, which is the
+comparison step 3 wanted; `SKY_CONFIG_LEGACY=1` becomes one more arm rather than
+a precondition. The baseline is live from the first commit — a default changed
+today reddens the gate today, and that was verified, not assumed (below).
+
+And **`--sky-config` does not exist**: outside this document the string appears
+in the whole tree exactly once, in a comment citing this document. §4.4 and §7.2
+both read as though it did. Worse, it could not serve step 3 unaided even once
+written: it would run from `main` (`lower.rs:2424-2441`, for the same ordering
+reason `MaybeStartEmbeddedPostgres` cannot live in an `init()`), and at that
+point the `AppConfig` a `withX` builder writes into does not exist. A printer
+there can report the environment and the seeded defaults; it is structurally
+blind to the builder layer — which is precisely the layer §7.3's motivating
+defect lives in.
+
+*What the matrix does instead.* It reads the effective value **at the point of
+consumption**, from the app's own startup output: `selectStore` prints the ttl,
+path and idle-evict window it is about to build the session store out of
+(`live_store.go:1784-1828`), and `liveAppRun` prints the port it is about to
+bind (`live.go:4329`). Both lines are printed by the code that USES the value.
+That is the difference between this gate and the failure class it is most at
+risk of being: a gate proving two functions agree while the value that reaches
+the runtime comes from a third place.
+
+**What it covers.** 4 settings — `live.port`, `live.ttl`, `live.storePath`,
+`live.idleEvict` — across 28 cells, plus 2 cells for `[env] prefix`. Five
+fixture projects are generated outside the repo, built by this tree's compiler,
+and run ten times with a **cleared environment**, so a developer's exported
+`SKY_LIVE_TTL` cannot contaminate a cell.
+
+Every one of the 53 census entries `config-surface` counts — 30 accepted
+`sky.toml` keys and 23 seeded env suffixes — must sit in exactly one bucket:
+`[[setting]]`, `[[deferred]]` (41, ratcheted so it may fall and not rise) or
+`[[unobservable]]` (6, the whole `[auth]` block, because a setting nothing reads
+produces no effective value to compare). A census entry in no bucket fails the
+gate, so the matrix cannot quietly stop covering something and a new setting
+cannot arrive unclassified.
+
+**§1.8's three precedence orders are now mechanical**, from
+`config-matrix.json`'s `winners` — each label derived by matching a multi-layer
+cell's observation against the single-layer ones, not asserted beside them:
+
+| setting | observed order |
+|---|---|
+| `live.port` | env → builder → toml → 8000 |
+| `live.storePath` | builder → env → toml → `sky_sessions.db` |
+| `live.ttl` | env → toml → **builder never wins** → 30m |
+| `live.idleEvict` | env → builder → 5m |
+
+Three orders across four settings in one module, and `live.storePath` inverts
+`live.ttl` exactly. §1.8 reasoned that from source; this is measured.
+
+**The dead builder is a recorded fact, not a claim.** `verdicts` reads
+`live.ttl.builder_reaches_runtime = false` against `true` for the other three,
+verified on every run by comparing the builder-only cell with the unset cell.
+The check runs in BOTH directions: claiming a live builder is dead hides a
+regression exactly as well as claiming a dead one is live. That is what lets
+§7.3's fix land safely — the fix flips the declaration AND moves the observed
+cells, and the gate refuses both unless a `[[default-changed]]` row authorises
+them together.
+
+**Falsification.** The declared mutation is
+`config-matrix.claim-a-dead-builder-is-alive`: flip `live.ttl`'s
+`builder_reaches_runtime` to `true`. It edits DATA the gate reads, which matters
+here more than usual — a mutation in `lower.rs` or `runtime-go/` would reach
+this gate only through the already-built `sky` binary, so applying one without
+rebuilding the compiler leaves the gate measuring the unmutated tree and
+reporting VACUOUS.
+
+Three reds during development, each with the mutation grep-confirmed present in
+the file before the red was believed:
+
+1. *The declared mutation.* `BUILDER — live.ttl: declares
+   builder_reaches_runtime = true; a binary whose ONLY layer is
+   Live.withTtl 41m observes "30m0s" against an unset observation of "30m0s",
+   so the builder is IGNORED.`
+2. *A declared default that is not the observed one.* `expect_unset = "5m"`
+   against an observed `5m0s` — the §7.2 companion check, done against a
+   running binary instead of a source literal, so a refactor that moves the
+   literal cannot move the observation.
+3. *A real default change in the compiler.* `lower.rs:822`'s `"1800"` → `"1799"`
+   plus a compiler rebuild. The gate named the two cells that moved —
+   `live.ttl/unset` and `live.ttl/builder`, `"30m0s" -> "29m59s"` — and the
+   declared-default clause caught it independently. One second of difference in
+   a compiler constant, surfaced end to end through prologue, runtime and
+   consumer. This is the evidence for the claim that the baseline is live from
+   day one.
+
+**What it does not catch**, stated as plainly as stage 1's list. It covers 4
+settings of 53, and a ratchet on how much is uncovered is not coverage. It
+cannot see a setting with no consumer. It observes through two startup lines, so
+a setting whose consumer prints nothing is invisible. It sets every covered
+setting at once, so cross-talk is recorded rather than attributed. It pins
+`LIVE_STORE=sqlite` as a harness constant, so the store KIND's precedence branch
+is measured by no cell — only the path branch beside it. It proves a value
+reaches a consumer, not that the consumer is right. It is blind to a third
+reader that resolves the same name silently — `csrf_middleware.go:82`'s 30-day
+`LIVE_TTL` is exactly that, and is how the §1.7 collision survived. And it
+measures one platform.
+
+**Pre-binary surfaces (§4.3.1) are out of scope here, and not for cost.** The
+matrix covers one of the 14 — `[env] prefix`, because it shapes the NAMES every
+other cell depends on, so a mistake in it would invalidate the whole table while
+each individual cell still passed. The rest are excluded because a pre-binary
+reader has no effective value in the sense this gate compares:
+`resolve_max_open_conns` does not resolve a value the runtime then uses, it
+sizes a `postgresql.conf` the runtime never reads. Comparing those needs a
+different instrument — observe what the CLI WRITES or REFUSES (the generated
+`postgresql.conf`, the `--embed`-alongside-a-DSN ambiguity error, the
+`sky db reset` confirmation line) — and folding it into the cell model would
+give one gate two incompatible notions of "effective value". Named here so
+stage 3 does not mistake this gate's green for cover it does not give.
 
 ### 7.3 Where "today's behaviour" is itself a bug
 
@@ -1306,9 +1444,14 @@ is not fixed by moving settings into Sky.
    quietly get worse while the rest of the work proceeds. It is **not** large
    enough to bring §10's schema back: the additions are four `[database]` keys
    and two hand-rolled parsers, not a new layer.
-2. **Defaults that do not reproduce today's behaviour** (§7). The failure is
-   invisible — the app compiles and runs. The dual-path fixture matrix is the
-   only real defence, and it must exist before the first default is written.
+2. ~~**Defaults that do not reproduce today's behaviour**~~ **INSTRUMENTED —
+   `xtask config-matrix` exists, and no default has moved yet.** §7.2.1 records
+   what it covers (4 settings, 30 cells, observed from running binaries), what
+   it deliberately does not (pre-binary surfaces, 41 deferred settings), and
+   where §7.2's own specification could not be built as written. The residual
+   risk is now legible rather than invisible: it is the 41 deferred settings,
+   ratcheted so the bucket cannot grow unnoticed, plus the six limitations
+   listed at the end of §7.2.1.
 3. **The Sky↔Go field binding is stringly typed.** `stringField(cfg, "Ttl")`
    joins the two sides by a name no compiler checks. Extending the builder
    surface multiplies that seam; it needs §9's gate, and possibly extension of
