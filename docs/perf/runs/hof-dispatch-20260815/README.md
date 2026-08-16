@@ -1,8 +1,11 @@
 # HOF dispatch — A/B for the `coerce_if_needed` eta-expansion
 
 What the `Func → Func` eta-expansion in `rust/crates/lower/src/lower.rs`
-is worth, measured rather than estimated. Background and the corrected
-cost model: `docs/architecture/sky-compiler-architecture.md` §5.3.
+is worth, measured rather than estimated. Background and the cost model:
+`docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` §5.1 (the lever) and
+§9.1 (this result, alongside the claim it retracted). The original
+citation here was `docs/architecture/sky-compiler-architecture.md` §5.3 —
+the retired Haskell compiler's reference, superseded for this purpose.
 
 ## The control
 
