@@ -111,9 +111,23 @@ the SQLite baseline at all.
 
 | Instance | Memory ceiling | **Usable** ceiling | Binds on |
 |---|---|---|---|
-| e2-micro, SQLite | ~450 sessions (measured: 447 established, 43 MB left) | **~25–50** | **CPU, ~10× before memory** |
-| e2-small, SQLite | ~1,300 sessions (1.98 GB, ~1.4 MB each) | **~50** | **CPU, ~25× before memory** |
-| e2-small, embedded PostgreSQL | ~1,100 sessions | **~50** | **CPU** |
+| e2-micro, SQLite | **~450 sessions — reached, not derived**: asked for 500, established **447** (`runs/gcp-x86-20260815/micro-noagent.tsv`, n=500 row) with `MemAvailable` down to **~43 MB** (`micro-rss-n500-r1-memexhaustion.txt`, final samples) | **~25–50** | **CPU, ~10× before memory** |
+| e2-small, SQLite | **never reached** — **500 of 500** established in all three repeats (`runs/gcp-x86-20260815/small-noagent.tsv`), memory nowhere near binding | **~50** | **CPU** |
+| e2-small, embedded PostgreSQL | **never reached** — see below | **~50** | **CPU** |
+
+> **Two memory ceilings were deleted from this table rather than
+> recalculated: "~1,300 sessions (1.98 GB, ~1.4 MB each)" for e2-small on
+> SQLite, and "~1,100 sessions" for e2-small on embedded PostgreSQL.** Both
+> were `available RAM ÷ per-session slope`, and the slope was the
+> 1.35–1.42 MB RSS/n figure this document itself retracts below ("Where the
+> 1.4 MB goes — and why that figure is not a per-session cost"). They cannot
+> be re-derived from the replacement slope either: 625–650 kB was measured
+> on `19-skyforum` at a 94-element view (`runs/gcp-x86-capacity-20260816/`)
+> and these rows are `26-ui-showcase` at 384, so dividing by it would swap
+> one app's cost into another app's budget — the exact error the retraction
+> is about. A number with no run behind it is deleted, not adjusted. What
+> would establish these rows is what established the e2-micro one: run the
+> instance out of memory and record where it stops.
 
 On every x86 instance measured, **CPU binds an order of magnitude before
 memory does.** Sizing either e2 machine from its RAM overstates capacity by
@@ -142,7 +156,13 @@ knee, against 1.5 GB free.
 **PostgreSQL's own memory does not grow with sessions.** Regressed against
 established sessions, the postgres process tree's RSS slope is −10 kB
 (config B) and +22 kB (config C) per session — zero within noise, because
-the pool caps backends at 6 no matter how many sessions exist. Embedded
+the pool caps backends at **7** no matter how many sessions exist —
+`pg_backends_max` reads 7 in **every** valid config-C row of
+`runs/gcp-embed-postgres-20260815/sweep.tsv` at 25, 50 and 100 sessions,
+and `runs/gcp-x86-capacity-20260816/README.md:49-53` reads "7 (occasionally
+8)" at 100 / 300 / 500. (**This said 6**, which is `idle_pg_nproc` — the
+idle process count in the adjacent column — read as a client-backend
+count.) Embedded
 PostgreSQL is a **fixed block**, not a per-session tax; the +426 kB/session
 in row 6 is paid in the *app*, not the database.
 
@@ -870,8 +890,10 @@ Stated so they are not discovered later as surprises:
    throughout here. The harness supports it (`--app`, `--label`); the
    run was not performed.
 4. ~~**Postgres backend counts were not collected**~~ — **closed.** They
-   were collected on an e2-small running embedded PostgreSQL: a flat **6
-   backends** at 25, 50 and 100 concurrent sessions, against a derived
+   were collected on an e2-small running embedded PostgreSQL: a flat **7
+   backends** at 25, 50 and 100 concurrent sessions (`pg_backends_max`,
+   `runs/gcp-embed-postgres-20260815/sweep.tsv` — every valid config-C row;
+   this bullet said 6, which was the idle process count), against a derived
    `max_connections` of 36. See "Embedded PostgreSQL, measured" below. The
    *local* harness still reads `n/a`, because the reference app uses no
    database; the measurement was taken by switching the app's session
