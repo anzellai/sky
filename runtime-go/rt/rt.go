@@ -8662,6 +8662,20 @@ type SkyResponse struct {
 	Headers     map[string]string
 	ContentType string
 
+	// Cookies holds the Set-Cookie lines minted for this response, in
+	// issue order. It exists because `Headers` is a map[string]string —
+	// ONE slot per header name — and Set-Cookie is a repeated field: a
+	// response that sets a session cookie AND a CSRF cookie needs two.
+	// Assigning `Headers["Set-Cookie"]` twice silently dropped the
+	// first, which is how `Middleware.withCsrf` destroyed a handler's
+	// session cookie on a visitor's first GET.
+	//
+	// Invisible to Sky: `Sky.Http.Server.Response` has no matching
+	// field, so `asSkyResponse`'s reflect bridge never populates it and
+	// the Sky-visible record shape is unchanged. Append via
+	// `addSetCookie`; emit via `applySkyResponseHeaders`.
+	Cookies []string
+
 	// StreamHandler is the user's `StreamWriter -> Task Error ()`
 	// closure. The dispatcher special-cases this when non-nil:
 	// writes headers + flush, registers a serverStreamHandle,
@@ -9193,9 +9207,7 @@ func Server_listen(port any, routes any) any {
 				if skyResp.ContentType != "" {
 					w.Header().Set("Content-Type", skyResp.ContentType)
 				}
-				for k, v := range skyResp.Headers {
-					w.Header().Set(k, v)
-				}
+				applySkyResponseHeaders(w.Header(), skyResp)
 				// Safe-by-default security headers (callers can override);
 				// honours SKY_LIVE_FRAME_ANCESTORS for embeddable deploys.
 				setSecurityHeaders(w.Header())
@@ -9840,21 +9852,29 @@ func Middleware_withCsrf(handler any) any {
 						// commonly Ok[any, any](SkyResponse{...}). Unwrap
 						// the SkyResponse so the Set-Cookie header lands
 						// on the response struct, then re-wrap.
+						// `__Host-` mandates Secure (RFC 6265bis
+						// §4.1.3.2) — not env-conditional.
 						cookieHeader := fmt.Sprintf("%s=%s; %s",
-							csrfCookie, token,
-							securifyCookieAttrs("Path=/; Secure; SameSite=Lax"))
+							csrfCookie, token, "Path=/; Secure; SameSite=Lax")
+						// Unwrap via asSkyResponse, NOT a raw
+						// `.(SkyResponse)` assertion: a handler whose
+						// return type is the typed Sky record
+						// (`Sky_Http_Server_Response_R`) failed that
+						// assertion and fell through to
+						// `setCookieHeader(resp, …)` — whose argument
+						// was the Ok WRAPPER, which asSkyResponse
+						// rejects, so the CSRF cookie was dropped
+						// entirely and every later POST 403'd.
 						if okResult, isResult := resp.(SkyResult[any, any]); isResult && okResult.Tag == 0 {
-							if sr, isResp := okResult.OkValue.(SkyResponse); isResp {
-								if sr.Headers == nil {
-									sr.Headers = map[string]string{}
-								}
-								sr.Headers["Set-Cookie"] = cookieHeader
-								return Ok[any, any](any(sr))
+							if sr, isResp := asSkyResponse(okResult.OkValue); isResp {
+								return Ok[any, any](any(addSetCookie(sr, cookieHeader)))
 							}
 						}
 						// Fallback for handlers that return a bare
-						// SkyResponse rather than Ok-wrapped.
-						resp = setCookieHeader(resp, csrfCookie, token, "Path=/; Secure; SameSite=Lax")
+						// response rather than Ok-wrapped.
+						if sr, isResp := asSkyResponse(resp); isResp {
+							resp = addSetCookie(sr, cookieHeader)
+						}
 					}
 				}
 				return resp
@@ -9947,12 +9967,8 @@ func Server_withCookie(args ...any) any {
 		if !cok {
 			return resp
 		}
-		if r.Headers == nil {
-			r.Headers = map[string]string{}
-		}
-		r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; %s", c.Name, c.Value,
-			securifyCookieAttrs("Path=/; HttpOnly; SameSite=Lax"))
-		return r
+		return addSetCookie(r, fmt.Sprintf("%s=%s; %s", c.Name, c.Value,
+			securifyCookieAttrs("Path=/; HttpOnly; SameSite=Lax")))
 	case 3:
 		name, value, resp := args[0], args[1], args[2]
 		return setCookieHeader(resp, fmt.Sprintf("%v", name), fmt.Sprintf("%v", value), "Path=/; HttpOnly; SameSite=Lax")
@@ -9969,11 +9985,7 @@ func setCookieHeader(resp any, name, value, attrs string) any {
 	if !ok {
 		return resp
 	}
-	if r.Headers == nil {
-		r.Headers = map[string]string{}
-	}
-	r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; %s", name, value, securifyCookieAttrs(attrs))
-	return r
+	return addSetCookie(r, fmt.Sprintf("%s=%s; %s", name, value, securifyCookieAttrs(attrs)))
 }
 
 // ── Audit P1-5: production-mode hardening ────────────────────
@@ -10083,12 +10095,9 @@ func Server_csrfIssue(resp any) any {
 		return SkyTuple2{V0: "", V1: resp}
 	}
 	token := generateCsrfToken()
-	if r.Headers == nil {
-		r.Headers = map[string]string{}
-	}
-	r.Headers["Set-Cookie"] = fmt.Sprintf(
+	r = addSetCookie(r, fmt.Sprintf(
 		"%s=%s; %s", csrfCookieName, token,
-		securifyCookieAttrs("Path=/; HttpOnly; SameSite=Strict"))
+		securifyCookieAttrs("Path=/; HttpOnly; SameSite=Strict")))
 	return SkyTuple2{V0: token, V1: r}
 }
 

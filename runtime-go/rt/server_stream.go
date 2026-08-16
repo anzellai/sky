@@ -346,9 +346,7 @@ func serveStreamingResponse(w http.ResponseWriter, _ *http.Request, resp SkyResp
 	if resp.ContentType != "" {
 		w.Header().Set("Content-Type", resp.ContentType)
 	}
-	for k, v := range resp.Headers {
-		w.Header().Set(k, v)
-	}
+	applySkyResponseHeaders(w.Header(), resp)
 	setSecurityHeaders(w.Header())
 
 	status := resp.Status

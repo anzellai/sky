@@ -3209,9 +3209,7 @@ func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter
 		if status == 0 {
 			status = 200
 		}
-		for k, v := range resp.Headers {
-			w.Header().Set(k, v)
-		}
+		applySkyResponseHeaders(w.Header(), resp)
 		if resp.ContentType != "" && w.Header().Get("Content-Type") == "" {
 			w.Header().Set("Content-Type", resp.ContentType)
 		}
