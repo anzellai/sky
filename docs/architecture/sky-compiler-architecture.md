@@ -2,12 +2,24 @@
 
 > **Historical / legacy reference.** Describes the Haskell compiler, now preserved under legacy-haskell-compiler/. The primary compiler is Rust — see docs/rust-rewrite/.
 
-> **This is the durable architectural reference.** Every compiler-level
-> workflow, agent, and judge verdict MUST consult this document before
-> claiming a tactic closes a strategic goal. Tactical feasibility (can
+> **§6 / §7 / §8 have been superseded. Do not cite them.**
+> The rt.Coerce origin catalog (§6), the architectural levers (§7) and the
+> irreducible floor (§8) below describe the **Haskell** lowering, down to
+> `Compile.hs` line numbers, and were the repository's only floor authority long
+> after that compiler was retired. The Rust-grounded replacement is
+> **`docs/rust-rewrite/14-runtime-narrowing-taxonomy.md`**, derived from the Rust
+> compiler's own emission sites; its §6 maps these § numbers onto the new ones.
+> Citing the sections below to establish what is closeable in the Rust compiler
+> is how "closing this requires monomorphising every HOF call site" survived to
+> produce the same wrong conclusion three times.
+>
+> **This WAS the durable architectural reference.** Every compiler-level
+> workflow, agent, and judge verdict was required to consult this document
+> before claiming a tactic closes a strategic goal. That role now belongs to
+> `docs/rust-rewrite/` (and doc 14 for the floor). Tactical feasibility (can
 > I implement this change?) is an agent-level judgement; strategic
 > feasibility (does it close the user goal?) is a user-level decision
-> taken AFTER cross-checking this reference.
+> taken AFTER cross-checking the reference.
 >
 > **Authored 2026-06-23** as Phase 4 synthesis of the v0.17 deep dive
 > (Parse/Canon, Type/Solve, Lower/Codegen, Runtime, and 890-site
@@ -436,6 +448,14 @@ works" semantics even when the lowering hits an erosion-point fallback.
 
 ## 6. rt.Coerce emission — code path catalog
 
+> **SUPERSEDED — Haskell only.** The Rust compiler's origin catalogue is
+> `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` §3, and doc 14 §6 maps
+> every number below onto it. Several of these categories have **no Rust
+> analogue** (8, cross-module dep ctx), several **split** (11: user `Msg` closed,
+> `Std.Ui` `Element`/`Attribute` still open), and the Rust compiler has origins
+> the Haskell one did not (kernel return, string-concat operand, the eta-narrow
+> that is itself the closed form). Do not translate this table; read doc 14.
+
 The 890-site forensics (Phase 3) classified emission origins by source
 line. Distinct categories with Compile.hs citations:
 
@@ -463,6 +483,14 @@ sites). NOT closeable without runtime rewrite.
 ---
 
 ## 7. Architectural levers for closing rt.Coerce
+
+> **SUPERSEDED — Haskell only.** §7.1, §7.2 and §7.5 describe `Compile.hs`
+> plumbing (LowerCtx threading, dep-emission σ-recovery, IORef→reader) that has
+> **no Rust analogue**: lowering carries `expected` as a parameter, there is no
+> dep context, and there are no compiler globals. §7.4 is **superseded** — it
+> proposed monomorphisation, and eta-expansion at the slot's shape is the cheaper
+> mechanism. The Rust levers are
+> `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` §5.
 
 ### 7.1 LowerCtx propagation (lever for category 1, 7, 12)
 
@@ -506,6 +534,13 @@ the IORefs.
 ---
 
 ## 8. Irreducible floor
+
+> **SUPERSEDED — Haskell only.** The Rust compiler's floor is
+> `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` §4, and it is a
+> **different set**: it distinguishes contract floor (FFI return) from policy
+> floor (open-row erasure) from closeable-but-blocked (stdlib-ADT payloads), and
+> it excludes the per-element `rt.SkyCall` path this section was mis-cited for.
+> The test that decides membership is doc 14 §1, not a category name.
 
 The following site classes CANNOT close without runtime contract
 rewrite. They are NOT lowering bugs.

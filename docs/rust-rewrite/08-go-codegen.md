@@ -155,11 +155,14 @@ truth:
 
 | Emitted call | Runtime (`runtime-go/rt/rt.go`) | Meaning |
 |---|---|---|
-| `rt.AnyTaskRun(t)` | `rt.go:5718` | force a `Task` at an entry boundary (program `main`, `let _ =`, `Cmd.perform`); guarantees a `SkyResult`-shaped result |
-| `rt.SkyCall(f, args…)` | `rt.go:9450` | `reflect.MakeFunc`-backed HOF/partial-application dispatch when the arity is dynamic |
-| `rt.Coerce[T](v)` | `rt.go:5032` | typed assertion fast-path + reflect map→struct narrowing |
-| `rt.AsListT[T](v)` | `rt.go:2136` | narrow `[]any` → `[]T` (per-element coerce) |
-| `rt.MaybeCoerce[A]` / `rt.ResultCoerce[E,A]` / `rt.TaskCoerceT[E,A]` | `rt.go:359` / … | container payload narrowing |
+| `rt.AnyTaskRun(t)` | `rt.go:6654` | force a `Task` at an entry boundary (program `main`, `let _ =`, `Cmd.perform`); guarantees a `SkyResult`-shaped result |
+| `rt.SkyCall(f, args…)` | `rt.go:10565` | `reflect.MakeFunc`-backed HOF/partial-application dispatch when the arity is dynamic. **Not emitted by this compiler** — reached from inside the runtime's erased list helpers and the TEA boundary (doc 14 §4.3) |
+| `rt.Coerce[T](v)` | `rt.go:5887` | typed assertion fast-path + reflect map→struct narrowing; a **func**-typed target always routes to `makeFuncAdapter` (`rt.go:5899-5907`) because Go func types are nominal |
+| `rt.AsListT[T](v)` | `rt.go:2321` | narrow `[]any` → `[]T` (per-element coerce) |
+| `rt.MaybeCoerce[A]` / `rt.ResultCoerce[E,A]` / `rt.TaskCoerceT[E,A]` | `rt.go:359` / `rt.go:329` / `rt.go:5860` | container payload narrowing |
+
+Where each of these comes from in the lowering, and which are floor, is
+[`14-runtime-narrowing-taxonomy.md`](14-runtime-narrowing-taxonomy.md).
 
 The **program entry** wraps the Task-typed `main` unconditionally — the CLAUDE.md
 "runtime auto-forces a Task-typed `main`" rule: `func main()` emits
