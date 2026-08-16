@@ -17,4 +17,8 @@ Contents:
   is now the Rust rewrite; see `docs/rust-rewrite/`).
 - `v0.16.x-console/`, `v0.17*/`, `v0.18/`, `v1-rfc/`, `self-host/` — per-version
   roadmaps, closure plans, and design explorations.
+- `embedded-postgres/` — the simultaneous-mutation experiment for the
+  Std.Analytics / Std.Db pool work: does the gate suite still discriminate when
+  nine defects are present AT ONCE, or only one at a time? Regenerate with
+  `scripts/grill-mutation-matrix.sh`.
 - `archive/` — earlier audits, remediation notes, and legacy READMEs.

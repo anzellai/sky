@@ -2952,3 +2952,61 @@ pub fn coverage_ledger(ctx: &GateCtx) -> GateOutcome {
     let (passed, assertions, detail) = crate::coverage_ledger::check_body(&ctx.repo_root);
     GateOutcome::new(passed, assertions, detail)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// config-surface — the configuration surface, and its three defect counts
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One assertion per `sky.toml` key the compiler accepts (30), one per env
+/// suffix it seeds into every program's prologue (23), plus the six fixed
+/// clauses (staleness, no unresolvable read site, and one ratchet each for
+/// `pre_binary_surfaces`, `seeded_without_reader`, `documented_without_reader`
+/// and `read_without_doc`).
+///
+/// EXACT, never a `>=`, for the reason every count here is exact: `reject.rs`
+/// asserted `>= 13` against an actual 63, so deleting 50 corpus files kept it
+/// green. The analogous failure here is the derivation silently losing keys —
+/// which would make the ratchet clauses pass over an empty set — and it is
+/// exactly what this constant catches, because a lost key moves the number.
+///
+/// It MOVES when the configuration surface moves, which is a real event that
+/// should be read rather than absorbed: a new `sky.toml` key or a new seeded
+/// default is precisely the thing `docs/tooling/config-architecture.md` is
+/// trying to stop happening.
+pub const CONFIG_SURFACE_EXPECTED: u64 = 59;
+
+/// `xtask config-surface --check`, run in-process.
+///
+/// In-process rather than shelling out, for the same reason `coverage_ledger`
+/// is: the measurement's whole claim is that it was recomputed from THIS tree,
+/// and a prebuilt binary might have been built from another one.
+pub fn config_surface(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::config_surface::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
+
+/// One assertion per observed cell, one per census entry the manifest must
+/// bucket, three per covered setting (the declared default, the
+/// arm-distinguishability check, and — where a builder exists — the
+/// `builder_reaches_runtime` verdict), plus the pre-flight sentinel check and
+/// the two fixed clauses.
+///
+/// EXACT, never a `>=`, and it MOVES when the matrix moves. That is the point:
+/// a cell quietly disappearing is how a matrix stops protecting a setting while
+/// still reporting green, and `reject.rs` shipped exactly that shape — `>= 13`
+/// against an actual 63, so deleting 50 corpus files kept it green.
+///
+/// It also moves when `config-surface`'s census moves, which is deliberate:
+/// this gate's coverage claim is stated *against* that census, so a new
+/// `sky.toml` key has to be bucketed here before either gate is green again.
+pub const CONFIG_MATRIX_EXPECTED: u64 = 98;
+
+/// `xtask config-matrix --check`, run in-process.
+///
+/// In-process for the same reason `config_surface` is: the measurement's whole
+/// claim is that it was observed from binaries THIS tree's compiler built, and
+/// a prebuilt xtask might have been built from another one.
+pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::config_matrix::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}

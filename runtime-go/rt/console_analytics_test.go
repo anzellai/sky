@@ -1,6 +1,8 @@
 package rt
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 )
@@ -19,6 +21,9 @@ func TestAnalyticsRecentEventsPath(t *testing.T) {
 	analyticsStoreInsert(map[string]any{"ts": int64(2), "event": "page_view", "props": map[string]any{"path": "/shop/necklaces", "referrer": "/shop"}})
 	analyticsStoreInsert(map[string]any{"ts": int64(3), "event": "signup", "props": map[string]any{"plan": "pro"}}) // no path
 
+	// Buffered writer — drain before reading the handle directly.
+	analyticsFlushPending()
+
 	recent := analyticsRecentEvents(db)
 	if len(recent) != 3 {
 		t.Fatalf("want 3 recent events, got %d: %+v", len(recent), recent)
@@ -32,5 +37,59 @@ func TestAnalyticsRecentEventsPath(t *testing.T) {
 	}
 	if recent[2].Path != "/shop" {
 		t.Errorf("recent[2] path = %q, want /shop", recent[2].Path)
+	}
+}
+
+// TestTheConsoleEndpointDrainsBeforeItReads is the read-your-writes gate for
+// the console's Analytics tab.
+//
+// Buffering made writes asynchronous, and every read path is supposed to ask
+// the writer for a synchronous drain first. `Analytics.erase` has a gate for
+// that (its version is a COMPLIANCE property). The console endpoint had none:
+// deleting the `analyticsFlushPending()` line from `HandleConsoleAnalytics`
+// left both suites green while the tab showed a total that lagged whatever the
+// app had just emitted — the operator opens the console precisely because
+// something is happening NOW, and is shown the state of a quarter-second ago,
+// or of nothing at all on a quiet app whose events have not filled a batch.
+//
+// Driven over `httptest` through the real handler, with NO explicit drain, so
+// the drain has to come from the handler itself.
+func TestTheConsoleEndpointDrainsBeforeItReads(t *testing.T) {
+	t.Cleanup(resetAnalyticsStore)
+	resetAnalyticsStore()
+	t.Setenv("SKY_ANALYTICS_DB_PATH", filepath.Join(t.TempDir(), "console-drain.db"))
+	t.Setenv("SKY_ADMIN_TOKEN", "admin-token-32-bytes-of-testdata-xxxx")
+	if analyticsStore() == nil {
+		t.Fatal("analytics store did not open")
+	}
+
+	const n = 9 // fewer than analyticsBatchSize, so only a drain can flush them
+	for i := 0; i < n; i++ {
+		analyticsStoreInsert(map[string]any{
+			"ts": int64(i), "event": "page_view", "anonymous_id": "anon",
+			"props": map[string]any{"path": "/live"},
+		})
+	}
+
+	req := httptest.NewRequest("GET", "/_sky/console/api/analytics", nil)
+	req.Header.Set("Authorization", "Bearer admin-token-32-bytes-of-testdata-xxxx")
+	rec := httptest.NewRecorder()
+	HandleConsoleAnalytics(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body %s", rec.Code, rec.Body.String())
+	}
+	var out consoleAnalyticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+	}
+	if out.Total != n {
+		t.Fatalf("the console reports %d events immediately after %d were emitted — the "+
+			"endpoint reads the store without asking the buffered writer to drain, so the "+
+			"Analytics tab shows a state that is up to a flush interval stale (and shows "+
+			"nothing at all on an app too quiet to fill a batch)", out.Total, n)
+	}
+	if len(out.Recent) != n {
+		t.Errorf("the recent stream carries %d of %d events", len(out.Recent), n)
 	}
 }

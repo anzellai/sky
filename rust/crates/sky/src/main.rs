@@ -9,7 +9,19 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+mod db_cluster;
+mod db_embed;
 mod db_migrate;
+mod db_pool_sizing;
+mod db_provision;
+mod db_shared;
+/// Test-only: the one place a live test is allowed to not run. Also `#[path]`-
+/// included by the integration tests under `tests/`, which cannot import from a
+/// binary crate.
+#[cfg(test)]
+mod live_gate;
+mod pg_managed_conf;
+mod pg_wire;
 use std::time::{Duration, Instant};
 
 use fmt::{format_source, is_formatted};
@@ -707,6 +719,7 @@ fn entry_module_name(file: &Path) -> Option<String> {
 
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let (positional, out_override) = parse_out(args);
+    let embed = args.iter().any(|a| a == "--embed");
     let file = match resolve_entry_arg(
         &positional,
         &format!(
@@ -735,6 +748,28 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // `--embed` is resolved BEFORE anything is compiled. Acquiring the bundle
+    // can mean a download, and finding out at the far end of a build that the
+    // target platform has no PostgreSQL published for it is the wrong end.
+    let embed_bundle = if embed {
+        let platform = match db_embed::target_platform() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match db_embed::resolve_bundle_archive(&project_dir, platform) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+
     let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
     let opts = BuildOptions {
         repo_root,
@@ -745,6 +780,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         stdin: None,
         entry_module: entry_module_name(file),
         progress: true,
+        embed_bundle,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -798,6 +834,25 @@ fn cmd_run(args: &[String]) -> ExitCode {
     // subcommands, so they reuse the exact migrate/seed logic + env inheritance).
     // Order: db push/migrate, then seed, then serve — the container-entrypoint
     // "migrate-then-serve" shape.
+    // `--embed` is a BUILD flag, and `parse_out` swallows anything it does not
+    // recognise — so without this it would be accepted in silence and do
+    // nothing, which is the exact failure mode `--embed` exists to refuse. Say
+    // what to use instead rather than just rejecting.
+    if args.iter().any(|a| a == "--embed") {
+        eprintln!(
+            "sky run: --embed is a `sky build` flag, not a `sky run` one.\n\
+             \n\
+             `sky run` already supervises a development cluster: set\n\
+             \x20 [database]\n\
+             \x20 embedded = true\n\
+             in sky.toml and it starts one, injects the DSN and stops it on exit.\n\
+             \n\
+             To produce a binary that carries its own PostgreSQL, build it:\n\
+             \x20 sky build --embed src/Main.sky\n\
+             \x20 ./sky-out/app --embed"
+        );
+        return ExitCode::from(2);
+    }
     let db_push = args.iter().any(|a| a == "--db-push");
     let db_migrate = args.iter().any(|a| a == "--db-migrate");
     let db_seed = args.iter().any(|a| a == "--db-seed");
@@ -820,6 +875,18 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
+    // The configuration is judged BEFORE the build: a project whose
+    // `embedded = true` contradicts an explicit DSN is misconfigured, and making
+    // the user sit through a compile to be told so is a worse way to learn it.
+    // The cluster itself is started AFTER, so a project that does not compile
+    // does not cycle a PostgreSQL up and down on every attempt.
+    let embedded = match db_cluster::check_run_config(&project_dir, "sky run") {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
     let opts = BuildOptions {
         repo_root,
@@ -830,6 +897,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         stdin: None,
         entry_module: entry_module_name(file),
         progress: true,
+        embed_bundle: None,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -847,6 +915,23 @@ fn cmd_run(args: &[String]) -> ExitCode {
         eprintln!("sky run: go build {note}");
     }
     let mut envs: Vec<(String, String)> = Vec::new();
+    // The lease lives for the rest of this function — dropping it releases this
+    // run's reference and, if nothing else holds one, stops the cluster.
+    let cluster = if embedded {
+        match db_cluster::acquire_for_run(&project_dir) {
+            Ok(c) => {
+                println!("{}", c.banner("sky run:"));
+                envs.extend(c.envs());
+                Some(c)
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     if let Some(p) = &profile {
         // A relative dir resolves against the app's cwd (the project root, where
         // `run_app` runs it) → profiles land in `<project>/profile/` by default.
@@ -876,13 +961,18 @@ fn cmd_run(args: &[String]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        let ok = Command::new(&exe)
-            .arg("db")
-            .arg(op)
-            .current_dir(&project_dir)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let mut step = Command::new(&exe);
+        step.arg("db").arg(op).current_dir(&project_dir);
+        // The migrate/seed steps talk to the SAME database the app is about to,
+        // so they need the cluster's DSN too. Without this they would fall back
+        // to whatever `sky.toml` declares — which, under `embedded = true`, is
+        // nothing — and the app would boot onto an unmigrated cluster.
+        if let Some(c) = &cluster {
+            for (k, v) in c.envs() {
+                step.env(k, v);
+            }
+        }
+        let ok = step.status().map(|s| s.success()).unwrap_or(false);
         if !ok {
             eprintln!("sky run --db-{op}: DB step failed — not starting the app.");
             return ExitCode::FAILURE;
@@ -1114,7 +1204,7 @@ fn cmd_init(args: &[String]) -> ExitCode {
          #    `docker compose up -d`, copy .env.example → .env, then uncomment below.\n\
          #    ONE DATABASE_URL (.env) wires app data + sessions + analytics + telemetry\n\
          #    into a single database — no separate paths. Also set ENV=production\n\
-         #    (locks the dev console; requires SKY_AUTH_TOKEN_SECRET >= 32 bytes).\n\
+         #    (locks the dev console; see the production gate in AGENTS.md).\n\
          #    Use BIGINT (not INTEGER) for millisecond timestamps on Postgres.\n\
          #    Know you'll scale? Scaffold production-grade: `sky init <name> --production`.\n\
          #\n\
@@ -1149,7 +1239,11 @@ fn cmd_init(args: &[String]) -> ExitCode {
          import Std.Log exposing (println)\n\n\n\
          main =\n    println \"Hello from {name}!\"\n"
     );
-    let gitignore = "sky-out/\n.skycache/\n.skydeps/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
+    // `.skydata/` holds the local PostgreSQL cluster `sky db start` supervises —
+    // a whole data directory, WAL included. Committing it would put a binary
+    // database (and its `postmaster.pid`) into git.
+    let gitignore =
+        "sky-out/\n.skycache/\n.skydeps/\n.skydata/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
 
     // docker-compose.yml — always scaffolded so the production path is one command
     // away, whether or not you start on Postgres. Host port 5433 avoids clashing
@@ -1193,8 +1287,9 @@ fn cmd_init(args: &[String]) -> ExitCode {
     // (dev needs none of them; they document the on-ramp).
     let c = if production { "" } else { "# " };
     let env_example = format!(
-        "# Copy to `.env` (gitignored) and edit. Sky loads .env via System.loadEnv.\n\
-         # Precedence: process env > .env > sky.toml.\n\n\
+        "# Copy to `.env` (gitignored) and edit. Sky auto-loads .env at startup\n\
+         # (shell env is never overridden; `System.loadEnv` re-loads explicitly).\n\
+         # Precedence: process env > .env > Live.withX builder calls > sky.toml.\n\n\
          # Production gate — locks the dev console/banner, requires the auth secret.\n\
          {c}ENV=production\n\n\
          # ── ONE database for everything (Postgres from docker-compose.yml) ──\n\
@@ -2111,6 +2206,7 @@ fn build_temp_db_entry(
         stdin: None,
         entry_module: Some(module.to_string()),
         progress: false,
+        embed_bundle: None,
     };
     let report = build_project(&opts, &[scratch.clone()], Some(module));
     if !(report.emitted && report.go_build_ok) {
@@ -2660,6 +2756,23 @@ fn cmd_db(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("init") {
         return cmd_db_init();
     }
+    // Cluster supervision (embedded-Postgres phase 2). These are the ONLY `sky db`
+    // verbs that do not build the project: they manage the PostgreSQL process the
+    // project talks to, not its schema. `start`/`stop`/`ps` rather than the
+    // obvious `status`, because `sky db status` and `sky db init` already belong
+    // to the migration engine above and quietly changing what they mean would
+    // break every project using them.
+    match args.first().map(String::as_str) {
+        Some("start") => return db_cluster::cmd_start(&args[1..]),
+        Some("stop") => return db_cluster::cmd_stop(&args[1..]),
+        Some("ps") => return db_cluster::cmd_ps(&args[1..]),
+        // `sky db provision --embed` — fetch the PostgreSQL bundle into
+        // ~/.sky/postgres/<version>, which is the middle entry of the discovery
+        // order above. It is grouped with the cluster verbs, not the migration
+        // ones, for the same reason: it manages the SERVER, not the schema.
+        Some("provision") => return db_provision::cmd_provision(&args[1..]),
+        _ => {}
+    }
     let file_based = Path::new("db").join("migrations").is_dir();
     // `sky db migrate` in a file-based project (db/migrations/ present) → apply the
     // committed migration files.
@@ -2691,7 +2804,11 @@ fn cmd_db(args: &[String]) -> ExitCode {
         Some("migrate") => "migrate",
         _ => {
             eprintln!(
-                "usage: sky db <status|migrate [--gen [name]]|push|seed|reset [table]|drop [table]|init> [file.sky]"
+                "usage: sky db <status|migrate [--gen [name]]|push|seed|reset [table]|drop [table]|init> [file.sky]\n\
+                 \x20      sky db <start|stop [--all]|ps [--all]>    local PostgreSQL cluster\n\
+                 \x20      sky db provision --embed                  fetch PostgreSQL into ~/.sky\n\
+                 \x20      sky db provision --shared [--service]     one shared cluster for this host\n\
+                 \x20      sky db provision --shared --app <name>    a database + role for one app"
             );
             return ExitCode::from(2);
         }
@@ -2719,6 +2836,7 @@ fn cmd_db(args: &[String]) -> ExitCode {
         stdin: None,
         entry_module: entry_module_name(file),
         progress: false,
+        embed_bundle: None,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -2777,6 +2895,26 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         eprintln!("sky watch: refusing to run from the Sky compiler repo root");
         return ExitCode::FAILURE;
     }
+    // ONE lease for the whole watch session, not one per rebuild: restarting the
+    // app must not cycle its database underneath it. Held until the loop ends.
+    // Unlike `sky run`, the cluster is taken before the first build, because a
+    // watch session survives a failing build and keeps watching.
+    let cluster = match db_cluster::check_run_config(&project_dir, "sky watch")
+        .and_then(|on| if on { db_cluster::acquire_for_run(&project_dir).map(Some) } else { Ok(None) })
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let app_envs: Vec<(String, String)> = cluster
+        .as_ref()
+        .map(|c| {
+            println!("{}", c.banner("[watch]"));
+            c.envs()
+        })
+        .unwrap_or_default();
 
     // Watched roots: the entry's directory, the project's tests/ (if present),
     // the project root (to catch sky.toml), plus any `--watch=PATH` extras.
@@ -2844,7 +2982,7 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         "[watch] watching {} for changes (Ctrl-C to stop)",
         entry_dir.display()
     );
-    let mut child = watch_build_and_spawn(&repo_root, &project_dir, file, no_run);
+    let mut child = watch_build_and_spawn(&repo_root, &project_dir, file, no_run, &app_envs);
 
     // Debounce loop: coalesce a burst of save events, rebuild once.
     loop {
@@ -2869,7 +3007,8 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         // Build-error policy: only replace the running child when the rebuild
         // produced a fresh binary. A failing rebuild returns None → the old
         // binary keeps running.
-        if let Some(fresh) = watch_build_and_spawn(&repo_root, &project_dir, file, no_run) {
+        if let Some(fresh) = watch_build_and_spawn(&repo_root, &project_dir, file, no_run, &app_envs)
+        {
             if let Some(old) = child.take() {
                 terminate_child(old, opts.kill_timeout_ms);
             }
@@ -2974,6 +3113,7 @@ fn watch_build_and_spawn(
     project_dir: &Path,
     file: &Path,
     no_run: bool,
+    app_envs: &[(String, String)],
 ) -> Option<std::process::Child> {
     let opts = BuildOptions {
         repo_root: repo_root.to_path_buf(),
@@ -2984,6 +3124,7 @@ fn watch_build_and_spawn(
         stdin: None,
         entry_module: entry_module_name(file),
         progress: false,
+        embed_bundle: None,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -3009,10 +3150,15 @@ fn watch_build_and_spawn(
     }
     let out_dir = project_dir.join("sky-out");
     let bin_name = project::configured_bin_name(project_dir);
-    match Command::new(format!("./{bin_name}"))
-        .current_dir(&out_dir)
-        .spawn()
-    {
+    let mut cmd = Command::new(format!("./{bin_name}"));
+    cmd.current_dir(&out_dir);
+    // The embedded cluster's DSN, when the project has one. EVERY respawn gets
+    // it: a rebuild replaces the process, and a replacement that lost its DSN
+    // would fail to connect while the cluster it was meant to use sat running.
+    for (k, v) in app_envs {
+        cmd.env(k, v);
+    }
+    match cmd.spawn() {
         Ok(child) => Some(child),
         Err(e) => {
             eprintln!("[watch] could not launch binary: {e}");
@@ -3173,6 +3319,11 @@ struct Finding {
 enum Fix {
     RemoveDir(PathBuf),
     Install,
+    /// Pre-warm `~/.sky/postgres/<version>` for a project that has opted into an
+    /// embedded cluster. Network-touching, like `Install` (which fetches Go
+    /// modules); source-preserving, unlike an edit to `sky.toml` — the pin is
+    /// deliberately not written by a `--fix`.
+    ProvisionPostgres,
 }
 
 /// `sky doctor [--fix] [--verbose|-v]` — port of `Sky.Cli.Doctor.runDoctor`.
@@ -3282,7 +3433,38 @@ fn run_all_checks(root: &Path) -> Vec<Finding> {
     out.extend(check_stale_build(root));
     out.extend(check_missing_ffi(root));
     out.extend(check_auth_secret(root));
+    out.extend(check_embedded_postgres(root));
     out
+}
+
+/// A project opted into `[database] embedded = true` needs a PostgreSQL the
+/// toolchain can supervise. Reporting that at `doctor` time — where the reader is
+/// already asking "is this machine set up" — beats discovering it at the first
+/// `sky run`, and the `--fix` pre-warms the cache so the first run is not also
+/// the first download.
+///
+/// The fix deliberately does NOT record the pin: `Fix` is contracted to leave
+/// user source and `sky.toml` alone, and pinning a version is a decision the
+/// project makes, not a remediation.
+fn check_embedded_postgres(root: &Path) -> Vec<Finding> {
+    if !project::sky_toml_flag(root, "database", "embedded") {
+        return Vec::new();
+    }
+    if db_cluster::postgres_is_discoverable(root) {
+        return Vec::new();
+    }
+    let version = db_provision::pinned_version(root)
+        .unwrap_or_else(|| db_provision::DEFAULT_PG_VERSION.to_string());
+    vec![Finding {
+        check: "embedded-postgres-missing",
+        severity: Severity::Warn,
+        message: format!(
+            "[database] embedded = true, but no PostgreSQL {version} is available to \
+             supervise (nothing at $SKY_POSTGRES_BIN, in ~/.sky/postgres, or on PATH)"
+        ),
+        hint: "run `sky db provision --embed` (or `sky doctor --fix`) to fetch one".into(),
+        fix: Some(Fix::ProvisionPostgres),
+    }]
 }
 
 /// sky.toml exists (root guarantees it) AND is non-empty / readable.
@@ -3545,6 +3727,22 @@ fn apply_fix(root: &Path, check: &str, fix: &Fix) -> String {
             }
             None => format!("✗ {check}: could not resolve assets to run `sky install`"),
         },
+        Fix::ProvisionPostgres => {
+            let opts = db_provision::Opts {
+                version: db_provision::pinned_version(root),
+                no_pin: true,
+                ..Default::default()
+            };
+            match db_provision::provision(&opts) {
+                Ok(db_provision::Outcome::Installed { version, .. }) => {
+                    format!("✓ {check}: provisioned PostgreSQL {version}")
+                }
+                Ok(db_provision::Outcome::AlreadyPresent { version, .. }) => {
+                    format!("✓ {check}: PostgreSQL {version} was already provisioned")
+                }
+                Err(e) => format!("✗ {check}: {e}"),
+            }
+        }
     }
 }
 
@@ -3704,6 +3902,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
             stdin: None,
             entry_module: None,
             progress: false,
+            embed_bundle: None,
         };
         let report = build_example(&opts);
         if !report.emitted {
@@ -3818,6 +4017,7 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
         stdin: None,
         entry_module: None,
         progress: false,
+        embed_bundle: None,
     };
     let report = build_example(&opts);
     if report.emitted && report.go_build_ok {
@@ -4441,7 +4641,7 @@ fn print_help() {
         "sky — the Sky compiler CLI (rust bring-up)\n\n\
          USAGE:\n  sky <command> [args]\n\n\
          WIRED COMMANDS:\n\
-         \x20 build <file>     compile → sky-out/ + go build\n\
+         \x20 build <file>     compile → sky-out/ + go build (--embed bundles PostgreSQL)\n\
          \x20 check <file>     type-check + go build (no binary run)\n\
          \x20 run   <file>     build + execute\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\
@@ -4455,6 +4655,8 @@ fn print_help() {
          \x20 console-serve [...]          run the Sky Console hub daemon\n\
          \x20 watch <file>     rebuild + restart on source change\n\
          \x20 db    <status|migrate> [file]  Std.Db migrations\n\
+         \x20 db    <start|stop|ps>          local PostgreSQL cluster (--all for ps/stop)\n\
+         \x20 db    provision --embed        fetch PostgreSQL into ~/.sky/postgres\n\
          \x20 add    <import-path>  inspect a Go pkg → commit its FFI surface\n\
          \x20 remove <import-path>  drop a Go pkg's FFI surface + dep\n\
          \x20 install               regen/verify committed FFI surfaces\n\

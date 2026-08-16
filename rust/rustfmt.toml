@@ -1,3 +1,13 @@
 # Default rustfmt (stable), edition-2021. No custom style — just enforce a
-# consistent format across the workspace via `cargo fmt` + the CI fmt gate.
+# consistent format across the workspace via `cargo fmt`, run by hand.
+#
+# THERE IS NO CI FMT GATE. This comment used to claim one; a search of
+# `.github/workflows/*.yml` and the xtask sources for `cargo fmt` returns
+# nothing, and `cargo fmt --check -p sky` disagrees with committed code today.
+# The claim is corrected rather than deleted because an instruction that
+# asserts a mechanism nobody built is worse than one that says nothing —
+# every agent and every contributor reading it believed this surface was
+# enforced when it was not. AGENTS.md records the same failure for a deleted
+# `kernel_api.rs` gate. Adding a real gate means reformatting the workspace
+# first; that is a deliberate decision, not a drive-by.
 edition = "2021"

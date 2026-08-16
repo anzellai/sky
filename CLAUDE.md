@@ -255,16 +255,31 @@ and judge verdicts.
 
 1. **Architecture reference is Phase 0.** All compiler-level
    workflows MUST begin by consulting `docs/rust-rewrite/` (the
-   primary Rust-compiler architecture reference; the legacy
-   `docs/architecture/sky-compiler-architecture.md` documents the
-   retired Haskell pipeline and is kept for historical context)
-   and, where stdlib semantics are touched,
+   primary Rust-compiler architecture reference) and, where
+   stdlib semantics are touched,
    `docs/architecture/sky-stdlib-correctness.md`,
    before claiming a tactic closes a strategic goal. The first
    phase of every compiler workflow's JS DAG is
    `phase('Architecture-Consult')`. Tactics proposed without
    consulting the reference document are rejected at workflow
    entry.
+
+   **The floor authority is
+   `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md`.** It
+   carries the runtime-narrowing origin catalogue (`R1`–`R11`,
+   each a `lower.rs` / `goty.rs` / `live.go` site), the levers,
+   and the floor — derived from the Rust compiler's own emission
+   sites, not translated from the Haskell table. Its §6 maps the
+   legacy §6 numbers onto the new ones, because prior commits and
+   transcripts cite the old numbers.
+
+   `docs/architecture/sky-compiler-architecture.md` documents the
+   **retired Haskell pipeline** and is kept for historical
+   context ONLY. Its §6/§7/§8 cite `Compile.hs` line numbers and
+   describe a compiler that no longer ships. **Do not cite it to
+   establish what is closeable or what is floor.** Doing so is
+   how the monomorphisation claim produced the same wrong
+   conclusion three times (doc 14 §0).
 
    **Criterion #3 deletion-target wording (locked 2026-06-24).**
    Earlier framings of `.claude/AUTONOMOUS_GOAL.md` criterion #3
@@ -312,47 +327,67 @@ and judge verdicts.
 3. **N-strikes circuit-breaker.** If 3 consecutive iterations fail
    to materially close the same criterion via the same lever, the
    next workflow MUST start with re-classification — NOT another
-   attempt. Re-classification means: re-read the architecture
-   reference, identify whether the criterion is in the irreducible
-   floor (§8 of the reference), and escalate to the user with the
-   floor citation. Continuing to retry the same lever past 3
-   strikes is forbidden and counts as drift under §0 rule 3.
+   attempt. Re-classification means: re-read doc 14, apply its §1
+   test to the criterion, identify whether it is floor (doc 14
+   §4), and escalate to the user with the floor citation.
+   Continuing to retry the same lever past 3 strikes is forbidden
+   and counts as drift under §0 rule 3.
 
 4. **Optimism-without-citation is forbidden.** Agent prompts must
    require, and judge verdicts must check, that any "close" claim
-   names:
-   - The Compile.hs / runtime / Solve site (with line citation)
-   - The LowerCtx field, Solve reader, or runtime contract being
-     consulted
-   - The §6 origin category and §7 lever being activated
-   A claim of "this closes rt.Coerce category X" without the §7
+   names all four of doc 14 §10:
+   - The **origin** — an `R`-number from doc 14 §3, with its
+     `lower.rs` / `goty.rs` / `live.go` site
+   - The **lever** — a subsection of doc 14 §5
+   - The **floor check** — doc 14 §1 applied explicitly ("both
+     the value's Go shape and the slot's Go shape are known at
+     emit time" → closeable; a shape that exists only at run
+     time → floor)
+   - The **verification** — which gate goes red if the tactic
+     regresses (`xtask coerce-floor` refuses to bless an
+     `adapter` increase)
+   A claim of "this closes rt.Coerce category X" without the
    lever name + the source-line citation is rejected. A judge
    that returns PASS without verifying the citations failed its
    adversarial duty.
 
+   **Reject a `/* FFI return */` count offered as a floor
+   count.** `coerce_if_needed` stamps `FfiReturn` on any
+   `any → T` narrowing, so the comment names the shape, not the
+   origin (doc 14 §3.1).
+
 5. **Floor-touching tactics need user authorisation.** Tactics
-   that touch the irreducible floor (§8 of the reference — Go FFI
-   return, gob/JSON wire decode, TEA reflect.MakeFunc dispatch)
-   MUST escalate to the user before spending iterations.
+   that touch the floor (doc 14 §4 — Go FFI return/argument
+   R3/R4, the runtime wire decoders, the TEA `sky_call`
+   boundary, or the stdlib-ADT `rt.SkyADT` representation that
+   `should_seal_prefix` excludes from sealing) MUST escalate to
+   the user before spending iterations.
    **AUTHORIZED 2026-06-23**: user has explicitly authorised
    floor-touching tactics for v0.17 close (literal-zero
    rt.Coerce via runtime rewrite — see
    `docs/history/v0.17-roadmap/literal-zero-close-plan.md`).
+   That authorisation is scoped to the v0.17 close and does not
+   carry to a new floor-touching tactic.
 
 #### Workflow Phase-0 template (mandatory entry phase)
 
 ```js
 phase('Architecture-Consult')
 const archRef = await agent({
-  prompt: `Read docs/architecture/sky-compiler-architecture.md.
+  prompt: `Read docs/rust-rewrite/14-runtime-narrowing-taxonomy.md.
 For the proposed tactic <X>:
-  1. Locate the §6 rt.Coerce origin category it would target.
-  2. Identify the §7 architectural lever it would activate.
-  3. Verify the lever is NOT in §8 (the irreducible floor) — OR
-     confirm user-authorisation for floor-touching tactics is
-     present.
-  4. Cite the Compile.hs site (with line) + LowerCtx field /
-     Solve reader / runtime contract being consulted.
+  1. Name the §3 origin (R1-R11) it would target, with its
+     lower.rs / goty.rs / live.go site.
+  2. Name the §5 lever it would activate.
+  3. Apply the §1 test EXPLICITLY: are both the value's Go shape
+     and the slot's Go shape known at emit time? If either exists
+     only at run time it is floor (§4) — confirm user
+     authorisation for floor-touching tactics is present.
+  4. Name the gate that goes red if the tactic regresses.
+Cite file:line for every claim. If a claim rests on
+docs/architecture/sky-compiler-architecture.md (the retired
+Haskell compiler) rather than on Rust source, mark it UNVERIFIED
+rather than carrying it over.
 If you cannot make all four citations, return cannotJustify=true
 with a description of what's missing.`,
   schema: ARCH_REF_SCHEMA
@@ -371,22 +406,38 @@ if (archRef.inFloor && !userAuthorizedFloor) {
 * Agent prompts: "design and implement a fix for X" without
   requiring the architecture reference be consulted first.
 * Judge verdicts: "VERDICT: 100% ACHIEVED" without listing the
-  §6 categories closed + §7 levers activated + §8 floor sites
-  documented.
+  doc 14 §3 origins closed + §5 levers activated + §4 floor
+  sites documented.
+* **Citing `docs/architecture/sky-compiler-architecture.md`
+  §6/§7/§8 to establish floor.** That is the retired Haskell
+  compiler. Cite doc 14.
+* **Quoting a number no script produced** — a rt.Coerce census
+  taken from `examples/*/sky-out-rust/main.go` (untracked local
+  artefacts, routinely stale) instead of
+  `rust/crates/xtask/coerce_floor.golden`, or a per-dispatch
+  cost that no run in `docs/perf/runs/` measured.
 * Workflows: skipping `phase('Architecture-Consult')` to "save
   time" — the architecture phase IS the time-saver because it
   short-circuits re-discovering the floor.
 * Iteration N+1 after 3 consecutive failures on the same lever
   without re-classification.
+* Concluding a tactic "requires monomorphisation". There is no
+  monomorphiser and it is policy, not a gap
+  (`07-lowering-and-ir.md` §5.1). Apply doc 14 §1 first — if the
+  shape is statically known, the answer is an eta-expansion.
 
 #### Companion canonical references
 
+- `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` — **the
+  floor authority.** Runtime-narrowing origins (R1–R11), levers,
+  floor, the legacy-§6 mapping table, and the empirical
+  corrections with their measurements.
 - `docs/rust-rewrite/` — primary Rust-compiler architecture
   reference: pipeline (Parse → Canon → Type → Lower → Emit),
-  workspace + crate layout, rt.Coerce origin catalog,
-  architectural levers, irreducible floor, verbatim-goal verdict.
+  workspace + crate layout, verbatim-goal verdict.
 - `docs/architecture/sky-compiler-architecture.md` — legacy
-  Haskell-pipeline reference, retained for historical context.
+  Haskell-pipeline reference, historical context ONLY. Not a
+  floor authority; see rule 1.
 - `docs/architecture/sky-stdlib-correctness.md` — Sky.Core
   algebraic laws, Std.Ui layout invariants, Std.Html + Sky.Live
   TEA architecture, Std.Db + Std.Auth security invariants,
@@ -443,10 +494,10 @@ For any work where solo execution carries cascade risk
 DEFAULT pattern is:
 
 1. **Architecture-Consult agent** (Phase 0) — fresh-context agent
-   reads `docs/architecture/sky-compiler-architecture.md` +
-   `docs/architecture/sky-stdlib-correctness.md`, cites §6
-   rt.Coerce origin + §7 lever + §8 floor for the proposed
-   tactic. Returns PROCEED / REVISE / ABORT.
+   reads `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` +
+   `docs/architecture/sky-stdlib-correctness.md`, cites the §3
+   origin (R-number) + §5 lever + the §1 floor test for the
+   proposed tactic. Returns PROCEED / REVISE / ABORT.
 2. **Adversarial grill** (Phase 0b) — the architecture proposal
    is grilled BEFORE implementation. Grill questions:
    - G1: Could this produce false negatives (gaps the regression
@@ -491,10 +542,15 @@ A single-leg "proof" is NOT a proof; ship all three legs.
 17 / 37 / 42 / Class-A swap pattern) FORBIDS a 4th attempt without
 re-classification. Re-classification means:
 
-1. Re-read `docs/architecture/sky-compiler-architecture.md`
-   §6/§7/§8.
-2. Identify whether the criterion sits in the irreducible floor
-   (§8). If yes — escalate to user with the floor citation.
+1. Re-read `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md`
+   §3/§4/§5.
+2. Apply its §1 test and identify whether the criterion sits in
+   the floor (§4). If yes — escalate to user with the floor
+   citation. Note §4 distinguishes CONTRACT floor (R4: the value
+   arrives as `interface{}` at run time) from POLICY floor (R10:
+   a consequence of the erased ABI), and from
+   closeable-but-blocked (R6: a runtime contract, needing
+   authorisation rather than a different lever).
 3. Author a postmortem of what the 3 prior attempts missed.
 4. Get explicit user authorization for the 4th attempt with the
    postmortem cited.
@@ -611,8 +667,25 @@ End-of-mission checklist:
 # Orphan polling loops
 ps -u $USER -o pid,command | awk '/while pgrep|until ! pgrep/ && /\/bin\/zsh -c/ {print $1}' | xargs -n1 kill -9 2>/dev/null
 
-# Stray sleeps + verification leftovers
-ps -u $USER -o pid,ppid,command | awk '$3 == "sleep" && $2 != 1 {print $1}' | xargs -n1 kill -9 2>/dev/null
+# Stray sleeps — DO NOT KILL THEM BY PREDICATE. This block used to read
+#
+#     ps -u $USER -o pid,ppid,command \
+#       | awk '$3 == "sleep" && $2 != 1 {print $1}' | xargs -n1 kill -9
+#
+# and it is unsafe on this machine, because `sleep` is what EVERY polling loop
+# on the uid looks like — not just yours. Observed twice on 2026-08-16: it
+# SIGKILLed `mem-guard`'s own 2-second poll (`mem-guard.sh: line 229: Killed: 9
+# sleep "$INTERVAL"`, which is why the safety net kept vanishing mid-session),
+# and a sibling agent's cleanup killed a benchmark agent's poll mid-measurement.
+# Narrowing it to spare mem-guard did not fix it: the predicate still matches
+# every OTHER agent's sleep, and agents that loaded CLAUDE.md before the
+# narrowing keep running the old version for their whole lifetime.
+#
+# There is no safe uid-wide predicate. A sleep carries no evidence of who owns
+# it. So: DON'T CREATE ORPHAN POLL LOOPS — prefer the Monitor tool over
+# `run_in_background` + polling, which is what the note at the end of this
+# section already says. If you must reap your own, track the PIDs you spawned
+# and kill those, never a pattern match across the uid.
 
 # Verification leftovers — SCOPED TO THIS AGENT'S OWN WORKTREE.
 #

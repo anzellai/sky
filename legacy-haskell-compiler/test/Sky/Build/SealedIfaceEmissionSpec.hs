@@ -95,13 +95,13 @@ spec = do
             case rawDecls of
                 [initBody] -> do
                     -- RegisterAdtTag — legacy compat (3 lines)
-                    initBody `shouldContain` "rt.RegisterAdtTag(\"Red\", 0)"
-                    initBody `shouldContain` "rt.RegisterAdtTag(\"Green\", 1)"
-                    initBody `shouldContain` "rt.RegisterAdtTag(\"RGB\", 2)"
+                    initBody `shouldContain` "rt.RegisterAdtTag(\"main.Mod_Color\", \"Red\", 0)"
+                    initBody `shouldContain` "rt.RegisterAdtTag(\"main.Mod_Color\", \"Green\", 1)"
+                    initBody `shouldContain` "rt.RegisterAdtTag(\"main.Mod_Color\", \"RGB\", 2)"
                     -- RegisterAdtVariant factories
-                    initBody `shouldContain` "rt.RegisterAdtVariant(\"Red\""
-                    initBody `shouldContain` "rt.RegisterAdtVariant(\"Green\""
-                    initBody `shouldContain` "rt.RegisterAdtVariant(\"RGB\""
+                    initBody `shouldContain` "rt.RegisterAdtVariant(\"main.Mod_Color\", \"Red\""
+                    initBody `shouldContain` "rt.RegisterAdtVariant(\"main.Mod_Color\", \"Green\""
+                    initBody `shouldContain` "rt.RegisterAdtVariant(\"main.Mod_Color\", \"RGB\""
                     -- N-ary factory has rt.JsonUnmarshal steps
                     -- (v0.17 iter 63 — re-routed via rt.* re-exports
                     -- to keep emitted main.go's import list to

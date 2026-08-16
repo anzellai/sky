@@ -72,18 +72,36 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
     ("SKY_CONSOLE_TOKEN", "console bearer; set by the deploy"),
     ("SKY_CONSOLE_TOKEN_SECRET", "back-compat alias for SKY_ADMIN_TOKEN"),
     ("SKY_CONSOLE_URL", "dev-banner link target; set by the launcher"),
-    ("SKY_CSRF", "CSRF kill switch; set by the deploy while debugging"),
+    // SKY_CSRF is deliberately ABSENT: the CSRF kill switch moved to
+    // `skyGetenv("CSRF")` (csrf_middleware.go), so it is prefix-aware and no
+    // longer a raw read. The stale-entry check below is what noticed.
     ("SKY_DEV_BANNER", "startup-banner toggle; set by the launcher"),
     ("SKY_EMAIL_DRY_RUN", "test-harness switch; set by the runner"),
+    ("SKY_GC_QUIET", "startup-report verbosity; set by the launcher"),
+    (
+        "SKY_HOME",
+        "location of the shared ~/.sky provision cache — one per USER, not one \
+         per app, so a per-app prefix would defeat the sharing it exists for",
+    ),
     ("SKY_INGEST_TOKEN", "OTLP ingest bearer; shared between app and collector"),
     ("SKY_OBSERVABILITY_BUFFER", "push-exporter tuning; set by the collector deploy"),
     ("SKY_OBSERVABILITY_PUSH_INTERVAL_MS", "push-exporter tuning"),
     ("SKY_PARENT_URL", "control-plane callback URL; injected by the plane"),
+    (
+        "SKY_POSTGRES_BIN",
+        "operator's explicit PostgreSQL binary override for `--embed`; set by \
+         the host or the CI job, which does not read the app's sky.toml",
+    ),
     ("SKY_PROFILE_DIR", "`sky run --profile` output dir; set by the CLI"),
     ("SKY_PROFILE_TIMEOUT", "`sky run --profile` bound; set by the CLI"),
     ("SKY_RUNTIME_MODE", "serverless/VM hint; set by the platform"),
     ("SKY_SERVICE_NAME", "OTel resource attribute; peer of OTEL_SERVICE_NAME"),
     ("SKY_STREAM_DEBUG", "developer trace switch"),
+    (
+        "SKY_TELEMETRY_SYNCHRONOUS_COMMIT",
+        "telemetry durability knob, read in rt/telemetry which CANNOT import rt \
+         (import cycle) and so has no access to skyGetenv",
+    ),
     ("SKY_TUI_LOG", "developer trace switch"),
     ("SKY_TUI_QUIET", "developer trace switch"),
     ("SKY_WEBVIEW_DEBUG", "developer trace switch"),

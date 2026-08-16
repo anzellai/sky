@@ -8,7 +8,7 @@ auto-TCO for all list ops, negative literal args, multi-line signatures,
 zero-arg call shapes, Css keyword constants, FFI interface satisfaction,
 Dict typed-key inference, Sky.Live init request shape, URL-driven route
 Navigate Msg) are recorded in `CHANGELOG.md` and the per-version archives
-under `docs/archive/`. This file lists ONLY what's still active at HEAD.
+under `docs/history/`. This file lists ONLY what's still active at HEAD.
 
 ## Language (design floor — by intent)
 
@@ -33,11 +33,26 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
 5. **HM type-checker heap budget on monolithic Std.Ui-heavy modules.**
    For very large monolithic view files (~25+ polymorphic `Element Msg`
    helpers + many nested calls) the constraint solver can grow O(N²) in
-   heap. The compiler defensively caps solver invocations at
-   `SKY_SOLVER_BUDGET` steps (default `max(5,000,000, constraint_count
-   × 200)`). On hitting the cap, the compiler aborts with a clear
+   heap. **There is no cap.** This entry used to say the compiler
+   "defensively caps solver invocations at `SKY_SOLVER_BUDGET` steps
+   (default `max(5,000,000, constraint_count × 200)`)" and aborts with
    `TYPE ERROR: constraint solver exceeded budget` rather than OOMing
-   the host.
+   the host. That fence was the retired Haskell solver's
+   (`Solve.hs:708-746`); it was **not carried into the Rust `ty`
+   crate** and the entry was never updated.
+
+   ```bash
+   $ grep -rn 'bump_step\|SKY_SOLVER_BUDGET' rust/crates
+   $                                          # nothing
+   ```
+
+   The only surviving mention anywhere is a Go comment noting the knob
+   "is read by the Haskell compiler"
+   (`runtime-go/rt/env_prefix.go:24`). So: neither `SKY_SOLVER_BUDGET`
+   nor `SKY_SOLVER_BUDGET_FACTOR` is read, there is no `bump_step`, and
+   a constraint-explosion module **OOMs the host** — it does not abort
+   with a diagnostic. Treat the workaround below as the only mitigation
+   until a budget is reinstated.
 
    **Workaround**: split heavy view modules across multiple files
    (per `examples/19-skyforum`'s 8-module pattern — `State.sky` holds
@@ -48,8 +63,18 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
 
 6. **`rt.Coerce`-family narrowing calls remain at typed boundaries**
    (sealed-iface ctor narrowing, parametric record alias, typed list,
-   container, primitive, tuple, map/dict, generic-param erasure). 214
-   call sites on the canonical `examples/26-ui-showcase` benchmark.
+   container, primitive, tuple, map/dict, generic-param erasure).
+   **446 call sites** on the canonical `examples/26-ui-showcase`
+   benchmark — `26-ui-showcase  adapter=0  dispatch=0  narrow=446`,
+   `rust/crates/xtask/coerce_floor.golden:73`, which is the gate's own
+   census over exactly this `rt.Coerce`/`rt.As*`/`rt.Field`/`rt.SkyCall`
+   set.
+
+   > This entry said **214**, and the next sentence said #677 "would drop
+   > ~476 of these sites" — more sites than the count it had just given.
+   > The 214 was never re-derived after the golden landed. Quote the
+   > golden, not a remembered number: `grep 26-ui-showcase
+   > rust/crates/xtask/coerce_floor.golden`.
    **All sites are documented sound** with explicit per-class
    soundness proofs in `docs/history/v0.17/rt-coerce-residual-surface.md`. The
    synchronous-panic gate (`defer rt.LogPanicAndExit()`) catches any
@@ -142,4 +167,6 @@ under `docs/archive/`. This file lists ONLY what's still active at HEAD.
   headers / cookies)
 - URL-driven route matches fire `Navigate` Msg
 
-Full history in `CHANGELOG.md` + `docs/archive/v0.17-design-notes/`.
+Full history in `CHANGELOG.md` + `docs/history/v0.17/`. (This line named
+`docs/archive/v0.17-design-notes/`; no `docs/archive/` tree exists — frozen
+material lives under `docs/history/`.)

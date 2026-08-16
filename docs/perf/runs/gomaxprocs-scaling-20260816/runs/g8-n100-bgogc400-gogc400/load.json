@@ -1,0 +1,33 @@
+{
+  "label": "g8-n100-bgogc400-gogc400",
+  "url": "http://10.128.0.11:8000",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 102707,
+  "interactions_per_sec": 2280.1051957131544,
+  "p50_ms": 37.193,
+  "p95_ms": 100.151,
+  "p99_ms": 170.847,
+  "max_ms": 467.683,
+  "outcomes": {
+    "ok": 102707
+  },
+  "error_rate": 0,
+  "patches_total": 205414,
+  "interactions_with_patches": 102707,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 753,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 7.646461267976096,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "skygmp-gen",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T09:41:15Z"
+}

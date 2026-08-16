@@ -130,11 +130,23 @@ func HtmlToVNode(node any) VNode {
 		if len(fields) < 3 {
 			return vtext("")
 		}
+		// Attrs/Events are deliberately left nil here and created on
+		// first write by applyHtmlAttr. Two maps were being allocated
+		// for EVERY element whether or not it had any attribute or
+		// event, and both are retained for the lifetime of the session
+		// inside prevTree — 30% of the 336 kB a session holds
+		// (`docs/perf/skylive-interaction-cost.md`, "The attribution").
+		//
+		// Every reader is nil-safe by construction: an index read, a
+		// comma-ok read, `range`, `len` and `delete` all behave on a nil
+		// map exactly as they do on an empty one. Text and raw nodes
+		// have shipped with nil Attrs/Events through this same pipeline
+		// since `vtext` was written, so the nil case is not a new one.
+		// The only nil-unsafe operation is a map ASSIGN, and every
+		// assign lives in applyHtmlAttr below.
 		vn := VNode{
-			Kind:   "element",
-			Tag:    AsString(fields[0]),
-			Attrs:  map[string]string{},
-			Events: map[string]any{},
+			Kind: "element",
+			Tag:  AsString(fields[0]),
 		}
 		for _, a := range asList(fields[1]) {
 			applyHtmlAttr(&vn, a)
@@ -146,6 +158,23 @@ func HtmlToVNode(node any) VNode {
 	default:
 		return vtext("")
 	}
+}
+
+// setAttr writes one attribute, creating the map on first use.
+// HtmlToVNode leaves Attrs nil; this is the only place it is filled.
+func (vn *VNode) setAttr(k, v string) {
+	if vn.Attrs == nil {
+		vn.Attrs = make(map[string]string, 1)
+	}
+	vn.Attrs[k] = v
+}
+
+// setEvent writes one event binding, creating the map on first use.
+func (vn *VNode) setEvent(name string, msg any) {
+	if vn.Events == nil {
+		vn.Events = make(map[string]any, 1)
+	}
+	vn.Events[name] = msg
 }
 
 // applyHtmlAttr folds one Sky `Attribute` ADT value into a VNode.
@@ -178,23 +207,23 @@ func applyHtmlAttr(vn *VNode, a any) {
 			if existing, ok := vn.Attrs[k]; ok && existing != "" {
 				switch k {
 				case "class":
-					vn.Attrs[k] = existing + " " + v
+					vn.setAttr(k, existing+" "+v)
 					return
 				case "style":
 					sep := "; "
 					if strings.HasSuffix(existing, ";") {
 						sep = " "
 					}
-					vn.Attrs[k] = existing + sep + v
+					vn.setAttr(k, existing+sep+v)
 					return
 				}
 			}
-			vn.Attrs[k] = v
+			vn.setAttr(k, v)
 		}
 	case "BoolAttr":
 		if len(fields) >= 2 && AsBool(fields[1]) {
 			k := AsString(fields[0])
-			vn.Attrs[k] = k
+			vn.setAttr(k, k)
 		}
 	case "EventAttr":
 		if len(fields) >= 1 {
@@ -202,7 +231,7 @@ func applyHtmlAttr(vn *VNode, a any) {
 			if _, _, evFields, ok := unwrapADTShape(ev); ok && len(evFields) >= 2 {
 				// OnMsg / OnString / OnBool: Fields[0] = event name,
 				// Fields[1] = Msg value (OnMsg) or handler fn.
-				vn.Events[AsString(evFields[0])] = evFields[1]
+				vn.setEvent(AsString(evFields[0]), evFields[1])
 			}
 		}
 	case "NoAttr":
@@ -304,24 +333,95 @@ func init() {
 // VNode rendering
 // ═══════════════════════════════════════════════════════════
 
+// renderVNode serialises a VNode subtree to HTML and, as it goes,
+// registers every event binding it emits into `handlers`.
+//
+// It is a thin wrapper over renderVNodeInto, which is where the work
+// happens. The recursion threads ONE builder rather than returning a
+// string per node. The previous shape gave every element its own
+// strings.Builder, grew it through several doublings, produced a string,
+// and had the parent copy those bytes into ITS builder — so a leaf's bytes
+// were copied once per level of nesting above it, and each of the ~390
+// elements of a reference page paid its own allocation series.
+//
+// Measured on the 389-element gate fixture (`live_alloc_gate_test.go`),
+// Apple M1, go1.26.1: 2,632 -> 692 allocations and 380 kB -> 176 kB per
+// render for the builder change, then 692 -> 212 and 176 kB -> 162 kB once
+// the per-event-binding fmt.Sprintf below went with it. Output is
+// byte-identical: the walk order, the escaping and the emission order are
+// untouched, which is what `xtask repro` and `build-run --golden` pin.
 func renderVNode(n VNode, handlers map[string]any) string {
+	return renderVNodeSized(n, handlers, 0)
+}
+
+// renderVNodeSized is renderVNode with a capacity hint for the builder.
+//
+// A page body is tens of kilobytes and the builder starts at nothing, so it
+// reaches that size through a dozen doublings, each of which allocates a
+// buffer and copies everything written so far into it. On a 37.5 kB
+// reference page that cost 162 kB of allocation to produce 37.5 kB of
+// output — 4.3x the bytes, all of it copying.
+//
+// The hint is the length of the body this session rendered LAST time, which
+// is the best available predictor: a view's size is stable across the
+// interactions of a session, and being wrong only costs the growth that
+// would have happened anyway (too small) or one oversized buffer that is
+// immediately released (too large). A fixed constant was rejected for the
+// second reason — it would make every small page allocate as if it were a
+// large one.
+//
+// hint <= 0 means "no idea", which is what the subtree renders inside the
+// diff pass use; those are small and have no session to ask.
+func renderVNodeSized(n VNode, handlers map[string]any, hint int) string {
+	var sb strings.Builder
+	if hint > 0 {
+		sb.Grow(hint)
+	}
+	renderVNodeInto(&sb, n, handlers)
+	return sb.String()
+}
+
+// renderBody renders the session's current tree into its handler table,
+// sized by what this session's view measured last time.
+func (s *liveSession) renderBody(vn VNode) string {
+	return renderVNodeSized(vn, s.handlers, s.lastBodyLen)
+}
+
+// renderChildrenHTML serialises a node's children as the innerHTML of a
+// subtree-replace patch.
+//
+// It passes a nil handler table on purpose. Every id inside this subtree
+// was registered by the whole-tree render that this diff runs against, so
+// there is nothing here to record; the three call sites used to say that
+// by handing renderVNode a fresh `map[string]any{}` and dropping it on the
+// floor, which allocated a map per patch and read as though the
+// registrations were wanted.
+func renderChildrenHTML(children []VNode) string {
+	var sb strings.Builder
+	for _, c := range children {
+		renderVNodeInto(&sb, c, nil)
+	}
+	return sb.String()
+}
+
+func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 	if n.Kind == "text" {
-		return html.EscapeString(n.Text)
+		sb.WriteString(html.EscapeString(n.Text))
+		return
 	}
 	if n.Kind == "raw" {
-		return n.Text
+		sb.WriteString(n.Text)
+		return
 	}
 	// Html.doctype wraps children in a pseudo-element; render as
 	// <!DOCTYPE html> followed by the children directly.
 	if n.Tag == "!doctype-wrapper" {
-		var sb strings.Builder
 		sb.WriteString("<!DOCTYPE html>")
 		for _, c := range n.Children {
-			sb.WriteString(renderVNode(c, handlers))
+			renderVNodeInto(sb, c, handlers)
 		}
-		return sb.String()
+		return
 	}
-	var sb strings.Builder
 	sb.WriteString("<")
 	sb.WriteString(n.Tag)
 	// Stamp the element with its sky-id so diff patches can address it.
@@ -399,7 +499,16 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		//     rebuilds the same table — required for DB-backed stores
 		//     that can't serialise the handler map.
 		id := n.SkyID + "." + ev
-		handlers[id] = msg
+		// A nil map is the caller saying "render the bytes, drop the
+		// registrations" — what diffNodes wants when it re-serialises a
+		// subtree for a replace patch, since the ids in that subtree were
+		// already registered by the whole-tree render this diff follows.
+		// It used to say that by passing a throwaway `map[string]any{}`
+		// and discarding it, which allocated a map per replace patch and
+		// read as though the registrations mattered.
+		if handlers != nil {
+			handlers[id] = msg
+		}
 		msgName := msgDisplayName(msg)
 		// Event names starting with `sky-` are side-channel meta-events
 		// (onImage, onFile) — not real DOM events that __skyBindOne
@@ -408,18 +517,27 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		// HTML5 data-attribute convention. Plain DOM events (click,
 		// input, change, …) keep the legacy `sky-<eventName>` naming
 		// since __skyBindOne queries by that selector.
-		var attr string
+		//
+		// Written out rather than composed through fmt.Sprintf: the format
+		// string ran once per event binding on every render, and each run
+		// allocated the result plus the []any of its arguments. The bytes
+		// emitted are the same; only the route to the builder changed.
+		sb.WriteString(" ")
 		if strings.HasPrefix(ev, "sky-") {
-			attr = "data-sky-ev-" + ev
+			sb.WriteString("data-sky-ev-")
 		} else {
-			attr = "sky-" + ev
+			sb.WriteString("sky-")
 		}
-		sb.WriteString(fmt.Sprintf(` %s="%s" data-sky-hid="%s"`,
-			attr, html.EscapeString(msgName), id))
+		sb.WriteString(ev)
+		sb.WriteString(`="`)
+		sb.WriteString(html.EscapeString(msgName))
+		sb.WriteString(`" data-sky-hid="`)
+		sb.WriteString(id)
+		sb.WriteString(`"`)
 	}
 	if isVoidTag(n.Tag) {
 		sb.WriteString(" />")
-		return sb.String()
+		return
 	}
 	sb.WriteString(">")
 	// Textarea special-case: write the captured value as text content.
@@ -457,15 +575,14 @@ func renderVNode(n VNode, handlers map[string]any) string {
 			} else {
 				delete(picked.Attrs, "selected")
 			}
-			sb.WriteString(renderVNode(picked, handlers))
+			renderVNodeInto(sb, picked, handlers)
 		} else {
-			sb.WriteString(renderVNode(c, handlers))
+			renderVNodeInto(sb, c, handlers)
 		}
 	}
 	sb.WriteString("</")
 	sb.WriteString(n.Tag)
 	sb.WriteString(">")
-	return sb.String()
 }
 
 func copyAttrs(src map[string]string) map[string]string {
@@ -500,6 +617,16 @@ func msgDisplayName(msg any) string {
 	// builders and pre-v0.17 codegen.
 	if sv, ok := msg.(SkyVariant); ok {
 		return sv.SkyVariantName()
+	}
+	// Legacy SkyADT carries SkyName as a plain field, so a type assertion
+	// reads it directly. Without this the value fell through to the
+	// reflect.ValueOf + FieldByName("SkyName") path below — a by-name field
+	// search, on a function the render loop calls once per event binding
+	// and the diff calls twice more. Measured 46 ns -> 3 ns per call on an
+	// Apple M1. The reflect path stays for struct shapes that are neither
+	// (rt-side builders that embed SkyName in a bespoke struct).
+	if adt, ok := msg.(SkyADT); ok {
+		return adt.SkyName
 	}
 	rv := reflect.ValueOf(msg)
 	if rv.Kind() == reflect.Struct {
@@ -617,26 +744,39 @@ func assignSkyIDs(n *VNode, path string) {
 // Pre-condition: assignSkyIDs has already stamped n.SkyID on every
 // element. Post-condition: marker attrs removed; style child
 // prepended where present.
+// mediaQuerySpec and its three siblings are package-level values, built
+// once, NOT struct literals rebuilt inside the walk.
+//
+// They used to be constructed inside the inject* function -- which is also
+// the function the walk recursed through, so every element in the tree
+// re-allocated a `markerAttrs` slice and a `build` closure, on each of the
+// four passes. That, not the children-slice rebuild, was the dominant
+// per-element allocation in style injection: 7.0 allocations per element
+// against the 0.02 the slice rebuild costs.
+//
+// None of the four `build` funcs captures anything, so hoisting them is a
+// pure lifetime change. The walk is byte-for-byte the same walk.
+var mediaQuerySpec = styleMarkerSpec{
+	markerAttrs: []string{"data-sky-mq-q", "data-sky-mq-rules"},
+	styleAttr:   "data-sky-mq",
+	build: func(skyID string, attrs map[string]string) string {
+		query := attrs["data-sky-mq-q"]
+		rules := attrs["data-sky-mq-rules"]
+		if query == "" || rules == "" {
+			return ""
+		}
+		selector := `[sky-id="` + skyID + `"]`
+		safeRules := strings.ReplaceAll(rules, "</style", "")
+		safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
+		safeQuery := strings.ReplaceAll(query, "</style", "")
+		safeQuery = strings.ReplaceAll(safeQuery, "</STYLE", "")
+		return "@media " + safeQuery + " { " + selector +
+			" { " + safeRules + " } }"
+	},
+}
+
 func injectMediaQueryStyles(n *VNode) {
-	injectStyleMarker(n, styleMarkerSpec{
-		markerAttrs: []string{"data-sky-mq-q", "data-sky-mq-rules"},
-		styleAttr:   "data-sky-mq",
-		build: func(skyID string, attrs map[string]string) string {
-			query := attrs["data-sky-mq-q"]
-			rules := attrs["data-sky-mq-rules"]
-			if query == "" || rules == "" {
-				return ""
-			}
-			selector := `[sky-id="` + skyID + `"]`
-			safeRules := strings.ReplaceAll(rules, "</style", "")
-			safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
-			safeQuery := strings.ReplaceAll(query, "</style", "")
-			safeQuery = strings.ReplaceAll(safeQuery, "</STYLE", "")
-			return "@media " + safeQuery + " { " + selector +
-				" { " + safeRules + " } }"
-		},
-		recurse: injectMediaQueryStyles,
-	})
+	injectStyleMarker(n, mediaQuerySpec)
 }
 
 // injectPseudoClassStyles walks the tree after assignSkyIDs and
@@ -673,15 +813,16 @@ func injectMediaQueryStyles(n *VNode) {
 // Pre-condition: assignSkyIDs has already stamped n.SkyID on every
 // element. Post-condition: marker attr removed; style child
 // prepended where present.
+var pseudoClassSpec = styleMarkerSpec{
+	markerAttrs: []string{"data-sky-pc-rules"},
+	styleAttr:   "data-sky-pc",
+	build: func(skyID string, attrs map[string]string) string {
+		return buildPseudoClassStyleText(skyID, attrs["data-sky-pc-rules"])
+	},
+}
+
 func injectPseudoClassStyles(n *VNode) {
-	injectStyleMarker(n, styleMarkerSpec{
-		markerAttrs: []string{"data-sky-pc-rules"},
-		styleAttr:   "data-sky-pc",
-		build: func(skyID string, attrs map[string]string) string {
-			return buildPseudoClassStyleText(skyID, attrs["data-sky-pc-rules"])
-		},
-		recurse: injectPseudoClassStyles,
-	})
+	injectStyleMarker(n, pseudoClassSpec)
 }
 
 // styleMarkerSpec describes one style-injection pass. All four passes
@@ -707,10 +848,14 @@ type styleMarkerSpec struct {
 	// build builds the CSS body. Returns "" if there's nothing to
 	// emit (the marker was empty / malformed).
 	build func(skyID string, attrs map[string]string) string
-	// recurse is the entry point used to recursively walk children
-	// (passed in so each pass keeps its own identity for tracing).
-	recurse func(*VNode)
 }
+
+// The struct carried no `recurse func(*VNode)` field after the specs became
+// package-level values. It had held each pass's own entry point, which for
+// all four was exactly `injectStyleMarker(n, thatSameSpec)` -- so recursing
+// through `injectStyleMarker` directly walks the identical tree in the
+// identical order, and removes the reason the spec had to be rebuilt per
+// node.
 
 // injectStyleMarker applies a single style-injection spec to a VNode
 // + its descendants. Handles both the non-void case (attach style as
@@ -775,11 +920,22 @@ func applyMarkerAsFirstChild(n *VNode, spec styleMarkerSpec) {
 // walkChildrenWithVoidSiblingHoist recurses into each child + splices
 // a sibling <style> immediately after any VOID child whose marker
 // survived the self-handler's bail. See #409.
+// It rebuilds the slice ONLY when a hoist actually happens. The
+// previous version allocated `make([]VNode, 0, len(children))` and
+// re-copied every child for every element, on each of the four
+// injection passes, whether or not the tree contained a single style
+// marker — 4 full tree-copies per render, and 17% of what a session
+// retains (`docs/perf/skylive-interaction-cost.md`, "The attribution").
+// A hoist is rare: it needs a VOID child carrying a live marker.
+//
+// The recursive call mutates through the pointer either way, so when
+// nothing is hoisted the input slice already holds exactly the values
+// the old code copied out, and returning it is the same result.
 func walkChildrenWithVoidSiblingHoist(children []VNode, spec styleMarkerSpec) []VNode {
-	out := make([]VNode, 0, len(children))
+	var out []VNode // nil until the first hoist forces a rebuild
 	for i := range children {
 		child := &children[i]
-		spec.recurse(child)
+		injectStyleMarker(child, spec)
 		// Capture the void-child's marker BEFORE we append (the recurse
 		// call may have stripped non-void markers from deep descendants
 		// but a void child's marker still sits on the child).
@@ -809,10 +965,25 @@ func walkChildrenWithVoidSiblingHoist(children []VNode, spec styleMarkerSpec) []
 				}
 			}
 		}
-		out = append(out, *child)
-		if hoist != nil {
-			out = append(out, *hoist)
+		if hoist == nil {
+			if out != nil {
+				out = append(out, *child)
+			}
+			continue
 		}
+		if out == nil {
+			// First hoist in this child list: materialise the prefix
+			// (already recursed, so these are the same values the old
+			// code would have copied) and switch to the rebuilt slice.
+			out = make([]VNode, 0, len(children)+1)
+			out = append(out, children[:i+1]...)
+		} else {
+			out = append(out, *child)
+		}
+		out = append(out, *hoist)
+	}
+	if out == nil {
+		return children
 	}
 	return out
 }
@@ -939,10 +1110,93 @@ func pseudoSelectorForTag(tag string) (selector string, hoverGated bool, known b
 //
 // Pre-condition: assignSkyIDs has already stamped n.SkyID.
 func applyStyleInjections(n *VNode) {
-	injectMediaQueryStyles(n)
-	injectPseudoClassStyles(n)
-	injectTransitionStyles(n)
-	injectAnimationStyles(n)
+	present := scanStyleMarkers(n)
+	if present == 0 {
+		return
+	}
+	for _, p := range styleMarkerPasses {
+		if present&p.bit != 0 {
+			p.run(n)
+		}
+	}
+}
+
+// The four passes each walked the WHOLE tree, unconditionally, on every
+// render. A page using no `Ui.hover` and no `Ui.transition` — most pages,
+// and every page for at least three of the four passes — paid four full
+// traversals to find nothing and delete nothing.
+//
+// scanStyleMarkers replaces that with one traversal reporting which passes
+// have work. It reads KEY PRESENCE, not value: a marker attr present with
+// an EMPTY value still needs its pass to run, because stripping empty
+// markers so they cannot leak into the wire output is part of what the
+// pass does (`applyMarkerAsFirstChild` deletes them on the no-match path
+// too). Skipping a pass whose key appears on no element is exactly
+// equivalent, because every effect a pass has is keyed on that attr.
+//
+// The marker sets are disjoint from the `styleAttr` names the passes stamp
+// on the <style> elements they emit (`data-sky-mq` vs `data-sky-mq-q` /
+// `data-sky-mq-rules`), so no pass can see a marker another pass created
+// and running one cannot invalidate the scan.
+type styleMarkerPass struct {
+	bit  int
+	spec *styleMarkerSpec
+	run  func(*VNode)
+}
+
+// The order here IS the documented pass order above; the scan does not
+// reorder anything, it only drops passes with nothing to do.
+var styleMarkerPasses = []styleMarkerPass{
+	{markerMediaQuery, &mediaQuerySpec, injectMediaQueryStyles},
+	{markerPseudoClass, &pseudoClassSpec, injectPseudoClassStyles},
+	{markerTransition, &transitionSpec, injectTransitionStyles},
+	{markerAnimation, &animationSpec, injectAnimationStyles},
+}
+
+const (
+	markerMediaQuery = 1 << iota
+	markerPseudoClass
+	markerTransition
+	markerAnimation
+)
+
+// styleMarkerBits is DERIVED from the specs rather than restating their
+// marker names. A second hand-written copy of the attr list is exactly how
+// a pass gets silently skipped later: someone adds a marker attr to a spec,
+// the scan does not know it, and the pass stops running for the trees that
+// need it — with no test failing, because the pass still works whenever
+// some OTHER marker of the same spec is also present.
+var styleMarkerBits = func() map[string]int {
+	m := make(map[string]int, 8)
+	for _, p := range styleMarkerPasses {
+		for _, a := range p.spec.markerAttrs {
+			m[a] |= p.bit
+		}
+	}
+	return m
+}()
+
+func scanStyleMarkers(n *VNode) int {
+	found := 0
+	scanStyleMarkersInto(n, &found)
+	return found
+}
+
+func scanStyleMarkersInto(n *VNode, found *int) {
+	if n.Kind == "element" {
+		for k := range n.Attrs {
+			// Every marker starts with this prefix and almost no ordinary
+			// attribute does, so one prefix test rejects `class`, `id`,
+			// `href`, … before the map is touched at all.
+			if !strings.HasPrefix(k, "data-sky-") {
+				continue
+			}
+			*found |= styleMarkerBits[k]
+		}
+	}
+	for i := range n.Children {
+		scanStyleMarkersInto(&n.Children[i], found)
+	}
 }
 
 // injectTransitionStyles walks the tree after assignSkyIDs and
@@ -973,28 +1227,29 @@ func applyStyleInjections(n *VNode) {
 // further coordination.
 //
 // Pre-condition: assignSkyIDs has already stamped n.SkyID.
+var transitionSpec = styleMarkerSpec{
+	markerAttrs: []string{"data-sky-tr-rules", "data-sky-tr-respect"},
+	styleAttr:   "data-sky-tr",
+	build: func(skyID string, attrs map[string]string) string {
+		rules := attrs["data-sky-tr-rules"]
+		respectRaw := attrs["data-sky-tr-respect"]
+		if rules == "" {
+			return ""
+		}
+		respect := respectRaw != "0"
+		safeRules := strings.ReplaceAll(rules, "</style", "")
+		safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
+		selector := `[sky-id="` + skyID + `"]`
+		if respect {
+			return "@media (prefers-reduced-motion: no-preference) { " +
+				selector + " { transition: " + safeRules + "; } }"
+		}
+		return selector + " { transition: " + safeRules + "; }"
+	},
+}
+
 func injectTransitionStyles(n *VNode) {
-	injectStyleMarker(n, styleMarkerSpec{
-		markerAttrs: []string{"data-sky-tr-rules", "data-sky-tr-respect"},
-		styleAttr:   "data-sky-tr",
-		build: func(skyID string, attrs map[string]string) string {
-			rules := attrs["data-sky-tr-rules"]
-			respectRaw := attrs["data-sky-tr-respect"]
-			if rules == "" {
-				return ""
-			}
-			respect := respectRaw != "0"
-			safeRules := strings.ReplaceAll(rules, "</style", "")
-			safeRules = strings.ReplaceAll(safeRules, "</STYLE", "")
-			selector := `[sky-id="` + skyID + `"]`
-			if respect {
-				return "@media (prefers-reduced-motion: no-preference) { " +
-					selector + " { transition: " + safeRules + "; } }"
-			}
-			return selector + " { transition: " + safeRules + "; }"
-		},
-		recurse: injectTransitionStyles,
-	})
+	injectStyleMarker(n, transitionSpec)
 }
 
 // injectAnimationStyles walks the tree after assignSkyIDs and
@@ -1026,15 +1281,16 @@ func injectTransitionStyles(n *VNode) {
 // with DIFFERENT keyframes don't collide globally. The sky-id is
 // already structurally unique within a page; we strip the
 // non-CSS-ident chars to produce a safe @keyframes name suffix.
+var animationSpec = styleMarkerSpec{
+	markerAttrs: []string{"data-sky-anim-rules"},
+	styleAttr:   "data-sky-anim",
+	build: func(skyID string, attrs map[string]string) string {
+		return buildAnimationStyleText(skyID, attrs["data-sky-anim-rules"])
+	},
+}
+
 func injectAnimationStyles(n *VNode) {
-	injectStyleMarker(n, styleMarkerSpec{
-		markerAttrs: []string{"data-sky-anim-rules"},
-		styleAttr:   "data-sky-anim",
-		build: func(skyID string, attrs map[string]string) string {
-			return buildAnimationStyleText(skyID, attrs["data-sky-anim-rules"])
-		},
-		recurse: injectAnimationStyles,
-	})
+	injectStyleMarker(n, animationSpec)
 }
 
 // skyIDToCSSIdent rewrites a sky-id (`r.0.2#div`) into a CSS-safe
@@ -1303,7 +1559,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	}
 	// Tag / kind change → replace subtree via HTML patch.
 	if old.Tag != new_.Tag || old.Kind != new_.Kind {
-		html := renderVNode(*new_, map[string]any{})
+		html := renderVNode(*new_, nil)
 		*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 		return
 	}
@@ -1417,12 +1673,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	// has mismatched tag/kind, replace the whole subtree's innerHTML.
 	if len(old.Children) != len(new_.Children) {
 		if old.SkyID != "" {
-			var sb strings.Builder
-			dummy := map[string]any{}
-			for _, c := range new_.Children {
-				sb.WriteString(renderVNode(c, dummy))
-			}
-			html := sb.String()
+			html := renderChildrenHTML(new_.Children)
 			*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 		}
 		return
@@ -1434,12 +1685,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 		if oc.Kind == "text" && nc.Kind == "text" {
 			if oc.Text != nc.Text && old.SkyID != "" {
 				// Single-text is above; mixed children = replace subtree.
-				var sb strings.Builder
-				dummy := map[string]any{}
-				for _, c := range new_.Children {
-					sb.WriteString(renderVNode(c, dummy))
-				}
-				html := sb.String()
+				html := renderChildrenHTML(new_.Children)
 				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 				return
 			}
@@ -1448,12 +1694,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 		if oc.Tag != nc.Tag || oc.Kind != nc.Kind {
 			// Tag mismatch: replace subtree at the parent.
 			if old.SkyID != "" {
-				var sb strings.Builder
-				dummy := map[string]any{}
-				for _, c := range new_.Children {
-					sb.WriteString(renderVNode(c, dummy))
-				}
-				html := sb.String()
+				html := renderChildrenHTML(new_.Children)
 				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 			}
 			return
@@ -2138,6 +2379,13 @@ type liveSession struct {
 	// resilient to that refactor class.
 	lastComputedBody string
 	lastShippedBody  string
+	// lastBodyLen — the length of the last body this session computed,
+	// used only as the capacity hint for the next render's builder (see
+	// renderVNodeSized). It is a PERFORMANCE hint and nothing reads it for
+	// correctness: a wrong value costs a growth or an oversized buffer, not
+	// a wrong byte. Kept beside lastComputedBody because commitRender is
+	// the one place that knows a body was just produced.
+	lastBodyLen int
 	// lastSeen — UnixNano timestamp of the most recent store touch
 	// (Get / Set / decodeSession seed). Stored as atomic.Int64 so the
 	// store-level RWMutex (memoryStore.mu et al.) can keep using RLock
@@ -2494,6 +2742,13 @@ func (s *liveSession) nextLocalSeq() int64 {
 func (s *liveSession) commitRender(vn *VNode, body string) {
 	s.prevTree = vn
 	s.lastComputedBody = body
+	// Only ever grow the hint. A dispatch that renders an empty or error
+	// body (the panic-rollback path commits the PREVIOUS body back) would
+	// otherwise shrink the hint to nothing and hand the next full render
+	// the doubling series again.
+	if len(body) > s.lastBodyLen {
+		s.lastBodyLen = len(body)
+	}
 }
 
 // ingestInputState absorbs the client's dirty-input snapshot into
@@ -2532,28 +2787,33 @@ func clientStateFromRequest(state map[string]inputStateEntry) map[string]string 
 // evicted as a side effect so the map doesn't accumulate dead ids.
 // Returns nil if nothing to ack (client's __skyInputs map reads nil as
 // "no updates"). MUST be called with sess.mu held.
+//
+// The question this answers is membership for the ids the user currently
+// has dirty — one or two of them, the fields being typed into. It used to
+// answer that by building a set of EVERY sky-id in the tree first: a map
+// of ~390 entries, 27 kB and 15 allocations on a reference page, to look
+// up two keys. It now searches for the wanted ids directly and stops as
+// soon as it has them all, so the common case (the dirty field is on the
+// page, which is why the user is typing into it) does not even finish the
+// walk.
+//
+// It still needs a tree pass in the worst case — an id that has unmounted
+// can only be shown absent by looking everywhere — and that case is the
+// one that matters least, because it happens once per unmount rather than
+// once per keystroke.
 func ackInputsForPrevTree(s *liveSession) map[string]int64 {
 	if len(s.inputSeqs) == 0 {
 		return nil
 	}
-	present := map[string]struct{}{}
+	var out map[string]int64
 	if s.prevTree != nil {
-		var walk func(*VNode)
-		walk = func(n *VNode) {
-			if n.Kind == "element" && n.SkyID != "" {
-				present[n.SkyID] = struct{}{}
-			}
-			for i := range n.Children {
-				walk(&n.Children[i])
-			}
-		}
-		walk(s.prevTree)
+		out = make(map[string]int64, len(s.inputSeqs))
+		findAckInputs(s.prevTree, s.inputSeqs, out)
 	}
-	out := make(map[string]int64, len(s.inputSeqs))
-	for id, seq := range s.inputSeqs {
-		if _, ok := present[id]; ok {
-			out[id] = seq
-		} else {
+	// Evict ids the walk did not find: their element has unmounted, and
+	// keeping them would let the map grow without bound over a session.
+	for id := range s.inputSeqs {
+		if _, still := out[id]; !still {
 			delete(s.inputSeqs, id)
 		}
 	}
@@ -2561,6 +2821,26 @@ func ackInputsForPrevTree(s *liveSession) map[string]int64 {
 		return nil
 	}
 	return out
+}
+
+// findAckInputs records every id of `want` it finds in the subtree, and
+// reports true once it has found all of them so the callers above it can
+// unwind without visiting the rest of the tree.
+func findAckInputs(n *VNode, want map[string]int64, out map[string]int64) bool {
+	if n.Kind == "element" && n.SkyID != "" {
+		if seq, ok := want[n.SkyID]; ok {
+			out[n.SkyID] = seq
+			if len(out) == len(want) {
+				return true
+			}
+		}
+	}
+	for i := range n.Children {
+		if findAckInputs(&n.Children[i], want, out) {
+			return true
+		}
+	}
+	return false
 }
 
 // frameSnapshot captures every piece of session state encodeSSEFrame
@@ -2880,6 +3160,14 @@ type liveApp struct {
 	locker            *sessionLocker
 	msgTags           map[string]int // SkyName → Tag cache for direct-send events
 	msgTagsMu         sync.Mutex
+
+	// msgAdt is the Go type name of THIS app's Msg ADT (e.g. "Main_Msg").
+	// It scopes every wire-string → constructor resolution, so a
+	// client-supplied Msg name can only ever name a constructor of the
+	// app's own Msg type. Derived once, lazily, by expectedMsgAdt().
+	msgAdt     string
+	msgAdtOnce sync.Once
+
 	bannerCfg         liveBannerConfig // resolved env-vars + cfg.status overrides
 	// basePath: URL prefix this app is mounted under when running as
 	// a sub-app (e.g. "/_sky/console" when reverse-proxied behind a
@@ -3557,29 +3845,25 @@ func coerceRouteParam(fn any, p string) (any, error) {
 // the port to 0, which would bind an arbitrary ephemeral port that nothing can
 // discover.
 func resolveLivePort(cfg any) int {
-	envName := skyEnvName("LIVE_PORT")
-	envPort := 0
-	if v, ok := lookupEnvRaw(envName); ok && v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			envPort = n
-		}
-	}
-	// 1. operator-set env.
-	if envPort > 0 && !isSeededDefault(envName) {
-		return envPort
-	}
-	// 2. explicit Live.withPort. An unset optional is ABSENT from the config
-	//    map (see live_config.go), so a non-nil field means it was called.
+	// The three layers, ordered by the rule every Sky.Live setting now shares
+	// (configLayers, live_config_precedence.go). This function used to spell
+	// that order out by hand and was the ONLY one that got it right; the order
+	// is now the shared one, so `withPort` cannot silently drift back out of
+	// step with `withTtl` the way `withStorePath` had drifted out of step
+	// with both.
+	//
+	// An unset optional is ABSENT from the config map (see live_config.go), so
+	// a non-nil `Port` field means `withPort` was actually called.
+	builder := ""
 	if p := Field(cfg, "Port"); p != nil {
 		if n := AsInt(p); n > 0 {
-			return n
+			builder = strconv.Itoa(n)
 		}
 	}
-	// 3. the sky.toml default generated init() seeded.
-	if envPort > 0 {
-		return envPort
+	if n := parsePortLayers(configLayers("LIVE_PORT", builder)); n > 0 {
+		return n
 	}
-	// 4. floor.
+	// The floor, when nothing supplied a usable port.
 	return 8080
 }
 
@@ -3595,6 +3879,65 @@ func Live_app(cfg any) any {
 	return func() any {
 		return liveAppRun(cfg)
 	}
+}
+
+// expectedMsgAdt returns the Go type name of this app's Msg ADT, or ""
+// when it cannot be determined.
+//
+// The source is the app's OWN `update` function signature — codegen
+// emits it strongly typed, e.g.
+//
+//	func Main_update(v_0 Main_Msg, v_1 Main_Model_R) rt.T2[Main_Model_R, any]
+//
+// so `reflect.TypeOf(update).In(0)` is literally "the type the handler
+// asked for". That is exactly the scope a client-supplied wire string
+// must be resolved within, and taking it from the handler itself means
+// there is no second declaration of the app's Msg type to drift from.
+//
+// Returns "" — meaning "unknown", which callers must treat as "consult
+// no global registry" rather than "allow anything" — when:
+//
+//   - update is nil or not a function;
+//   - its first parameter is `any`/an unnamed type (an un-pinned or
+//     reflect.MakeFunc-adapted update);
+//   - its first parameter is `rt.SkyADT`. A non-sealed ADT lowers to
+//     `type Main_Msg = rt.SkyADT`, a Go ALIAS, which reflect erases —
+//     the name would be "rt.SkyADT", naming the runtime's untyped bag
+//     rather than any app's ADT, and would collide across every app.
+//     User Msg types are sealed unless a variant field type is
+//     ambiguous cross-module (rust/crates/lower/src/lower.rs
+//     `should_seal_prefix` excludes only Sky_Core_/Std_/Sky_Http_),
+//     so this is the rare fallback shape.
+//
+// The name is PACKAGE-QUALIFIED (`main.State_Msg`), because the bare Go
+// type name is not unique across the process either: `rt/console_app` is
+// a second Go package in every binary and its Msg is also `State_Msg`
+// (it is compiled from sky-bundled/console/src/State.sky). A user app
+// whose own module is `State.sky` — examples 12/13/16 — collides on the
+// unqualified name. `reflect.Type.String()` is precisely that qualified
+// form, and codegen emits the matching `"main."` prefix.
+func (a *liveApp) expectedMsgAdt() string {
+	a.msgAdtOnce.Do(func() {
+		a.msgAdt = msgAdtFromUpdate(a.update)
+	})
+	return a.msgAdt
+}
+
+var skyADTReflectType = reflect.TypeOf(SkyADT{})
+
+func msgAdtFromUpdate(update any) string {
+	if update == nil {
+		return ""
+	}
+	t := reflect.TypeOf(update)
+	if t == nil || t.Kind() != reflect.Func || t.NumIn() < 1 {
+		return ""
+	}
+	in := t.In(0)
+	if in == skyADTReflectType || in.Name() == "" {
+		return ""
+	}
+	return in.String()
 }
 
 func liveAppRun(cfg any) any {
@@ -3639,32 +3982,21 @@ func liveAppRun(cfg any) any {
 			app.staticURL = s
 		}
 	}
-	// Session store selection. Config fields `store` and `storePath`
-	// override the defaults; env vars <PREFIX>_LIVE_STORE /
-	// <PREFIX>_LIVE_STORE_PATH take precedence over config; final
-	// fallback is memory.
-	storeKind := stringField(cfg, "Store")
-	storePath := stringField(cfg, "StorePath")
-	// TTL resolution order:  env > sky.toml > default (30m).
-	// Two value shapes accepted at BOTH layers, per CLAUDE.md
-	// docs ("30m" default form):
+	// Session store, TTL and idle-evict window — all four resolved by the one
+	// rule in `configLayers` (live_config_precedence.go):
 	//
-	//   1. Go-duration string — "30m", "24h", "1h30m", "45s"
-	//      (anything time.ParseDuration handles, the documented
-	//      shape).
-	//   2. Bare integer — interpreted as SECONDS for backward-
-	//      compatibility with the original env-only path.
+	//	operator env > withX builder > seeded sky.toml default > fallback
 	//
-	// Empty / unparseable values fall through to the next layer;
-	// the final fallback is 30m.  The previous implementation only
-	// read the env var AND only accepted bare-integer seconds, so
-	// `SKY_LIVE_TTL=24h` and any `ttl = "24h"` in sky.toml were
-	// both silently ignored.
-	ttl := parseTTL(skyGetenv("LIVE_TTL"), stringField(cfg, "Ttl"), 30*time.Minute)
-	// Tiered-session-cache idle-evict window (env > cfg > default 5m; "0"/"off"
-	// disables). Bounds a durable store's RAM to the ACTIVE working set. See
-	// docs/skylive/tiered-session-cache.md.
-	idleEvict := parseIdleEvict(skyGetenv("LIVE_IDLE_EVICT"), stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	// Each accepts a Go-duration string ("30m", "24h", "1h30m", "45s") or a
+	// bare integer read as SECONDS, at every layer; an empty or unparseable
+	// value falls through to the next layer rather than to the fallback.
+	storeKind := resolveStoreKind(stringField(cfg, "Store"))
+	storePath := resolveStorePath(stringField(cfg, "StorePath"))
+	ttl := resolveTTL(stringField(cfg, "Ttl"), 30*time.Minute)
+	// "0"/"off"/"none"/"disable(d)" disables idle-evict outright, which is the
+	// one way it differs from ttl. Bounds a durable store's RAM to the ACTIVE
+	// working set. See docs/skylive/tiered-session-cache.md.
+	idleEvict := resolveIdleEvict(stringField(cfg, "IdleEvict"), defaultIdleEvict)
 	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
@@ -3916,6 +4248,11 @@ func liveAppRun(cfg any) any {
 	// Two-press escalation: a second SIGINT triggers os.Exit(130),
 	// which kills the process immediately even if something inside
 	// srv.Close is wedged. Familiar Ctrl-C-twice idiom.
+	// Under `--embed` the supervisor in pg_embed.go owns the shutdown
+	// SEQUENCE (stop accepting → drain → stop PostgreSQL). Handing it the
+	// listener is what makes its first phase real; a no-op when there is no
+	// embedded cluster.
+	RegisterAcceptStopper("live.Server", func() { _ = srv.Close() })
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
@@ -3941,14 +4278,21 @@ func liveAppRun(cfg any) any {
 		// LIFO order — HubExporter (registered last, during boot)
 		// runs first; future v0.17+ hooks fan out from here. No-op
 		// when no exporter / no hooks are registered.
-		RunShutdownHooks(8 * time.Second)
+		//
 		// v0.16.0: the inline console runs in-process, so there's
 		// no child to tear down. Pre-v0.16.0 this section closed
 		// srv.Close() FIRST (to drain in-flight reverse-proxy
 		// requests) then ShutdownSubApps() to signal the console
 		// child. Now the console handler runs on the same mux, so
 		// closing the server is sufficient.
-		_ = srv.Close()
+		//
+		// The release phase then closes the session store — which
+		// until v0.20.4 NOTHING did, so its cleanup goroutine and
+		// its backing handle were left to process exit. It runs
+		// after the drain deliberately: a store closed while the
+		// hook chain is still flushing telemetry is a store taken
+		// away from a writer. See drainAndRelease.
+		drainAndRelease(8*time.Second, func() { _ = srv.Close() })
 		// If srv.Close completes the listener teardown, ListenAndServe
 		// returns and the function exits naturally. If something hangs,
 		// a second Ctrl-C escapes via os.Exit. Without this watchdog,
@@ -3956,18 +4300,30 @@ func liveAppRun(cfg any) any {
 		go func() {
 			<-sigCh
 			fmt.Fprintln(os.Stderr, "Sky.Live: forcing exit (second SIGINT)")
-			os.Exit(130) // 128 + SIGINT(2)
+			// ExitProcess, not os.Exit: this runs from a goroutine, so main's
+			// `defer rt.StopEmbeddedPostgres()` never fires. Forcing past a
+			// wedged HTTP shutdown must not also force past the database.
+			ExitProcess(130) // 128 + SIGINT(2)
 		}()
 	}()
 	fmt.Printf("Sky.Live listening on :%d\n", port)
+	// The block goes UNDER that line, never in place of it:
+	// `apps/fieldbook/verify.sh` greps it literally, and both `xtask
+	// build_run_gate` and `sky run`'s supervisor lift the port from the last
+	// `:PORT` of any line whose lowercase form contains "listening". See
+	// startup_report.go.
+	printStartupReport(port)
 	err := srv.ListenAndServe()
 	signal.Stop(sigCh)
+	// See the note in Server_listen: exiting here mid-shutdown would kill the
+	// embedded database instead of stopping it.
+	BlockIfEmbeddedShuttingDown()
 	if err != nil && err != http.ErrServerClosed {
 		// A port-already-bound failure is the common startup error — make it
 		// LOUD + actionable on stderr instead of a silent Task-Err exit.
 		if isAddrInUse(err) {
 			reportPortInUse(port, "set SKY_LIVE_PORT, or [live] port in sky.toml")
-			os.Exit(1)
+			ExitProcess(1)
 		}
 		return Err[any, any](ErrFfi(err.Error()))
 	}
@@ -4219,7 +4575,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	vn, _ := app.safeViewCall(model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
-	body := renderVNode(vn, sess.handlers)
+	body := sess.renderBody(vn)
 	// Initial mount writes the full HTML directly into the HTTP
 	// response below — the client receives this body as the page,
 	// so it counts as BOTH "last computed" and "last shipped".
@@ -4487,7 +4843,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// not let the cookie lapse while the server session keeps sliding on
 	// activity via touchLastSeen — that would 404 every subsequent click on
 	// a session that is demonstrably alive.
-	writeSessionCookie(w, r, app.cookieNameOrDefault(), sid, app.sessionTTL)
+	writeSessionCookie(r, w, app.cookieNameOrDefault(), sid, app.sessionTTL)
 	// Per-session serial mutex: prevents two concurrent event handlers
 	// for the SAME session from racing each other's model updates.
 	// Different sessions proceed in parallel.
@@ -4526,7 +4882,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		vn, _ := app.safeViewCall(sess.model)
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
 		// lastComputedBody coherent. Previously the body was
@@ -4546,13 +4902,17 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		// variant factory registry first (typed payload via
 		// RegisterAdtVariant), then falls back to the legacy SkyADT
 		// path (LookupAdtTag + Fields:[]any).
+		//
+		// req.Msg is CLIENT-SUPPLIED. It is resolved only within this
+		// app's own Msg ADT, so it cannot name a constructor of any
+		// other ADT linked into the binary.
 		localTag := -1
 		app.msgTagsMu.Lock()
 		if t2, ok2 := app.msgTags[req.Msg]; ok2 {
 			localTag = t2
 		}
 		app.msgTagsMu.Unlock()
-		built, found := BuildAdtFromWire(req.Msg, req.Args, localTag)
+		built, found := BuildAdtFromWire(app.expectedMsgAdt(), req.Msg, req.Args, localTag)
 		// Unknown Msg name: refuse to dispatch instead of building a
 		// SkyADT with Tag=-1 and letting the user's `case` fall
 		// through to the exhaustiveness `Unreachable`. Caller gets a
@@ -4597,7 +4957,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		sess.handlers = map[string]any{}
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		sess.commitRender(&vn, body)
 		sess.lastShippedBody = body
 		respSeq := sess.nextLocalSeq()
@@ -4756,7 +5116,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		vn, _ := app.safeViewCall(sess.model)
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		// Route through commitRender (Cycle 3 P40 / Gap C7) so
 		// the rebuilt-handlers branch keeps prevTree +
 		// lastComputedBody coherent — same shape as the
@@ -4772,7 +5132,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 			localTag = t2
 		}
 		app.msgTagsMu.Unlock()
-		built, found := BuildAdtFromWire(ev.Msg, ev.Args, localTag)
+		built, found := BuildAdtFromWire(app.expectedMsgAdt(), ev.Msg, ev.Args, localTag)
 		// Unknown Msg name — same defence as the single-event path
 		// above. Silently drop (this is the batched/tab-unload path
 		// so there's no response channel to surface the error).
@@ -5019,7 +5379,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	vn, _ := app.safeViewCall(sess.model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
-	body = renderVNode(vn, sess.handlers)
+	body = sess.renderBody(vn)
 	// Commit prevTree + lastComputedBody as one atomic step (Cycle 3
 	// P40 / Gap C7). Previously this was two separate writes — prevTree
 	// here, lastComputedBody after runCmd + setupSubscriptions — which
@@ -5078,7 +5438,7 @@ func (app *liveApp) renderView(sess *liveSession) string {
 	vn, _ := app.safeViewCall(sess.model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 	applyStyleInjections(&vn)
-	body := renderVNode(vn, sess.handlers)
+	body := sess.renderBody(vn)
 	sess.commitRender(&vn, body)
 	return body
 }
@@ -6071,7 +6431,7 @@ var runStreamSubscriberDispatch_debugCounter atomic.Int64
 // the decoder in defer-recover so a panicking decoder consumes the
 // event without crashing the session.
 func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev streamEvent) {
-	if streamDebug {
+	if streamDebugEnabled() {
 		n := runStreamSubscriberDispatch_debugCounter.Add(1)
 		fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d entering dispatch\n", n, ev.kind)
 		defer fmt.Fprintf(os.Stderr, "[sky.stream-drain] #%d ev.kind=%d exit dispatch\n", n, ev.kind)
@@ -6285,7 +6645,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 			applyStyleInjections(&vn)
 			sess.handlers = map[string]any{}
-			body := renderVNode(vn, sess.handlers)
+			body := sess.renderBody(vn)
 			// Reconnect-resync writes the resync frame DIRECTLY to
 			// the SSE response writer below — so this body is both
 			// just-computed AND just-shipped, and the next tick's
@@ -6478,13 +6838,13 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 		// TTL also slides on the SSE heartbeat, which cannot write a cookie into
 		// an already-open stream. Idle-under-SSE is covered by the Max-Age floor
 		// in slidingCookieMaxAgeSeconds, not by this re-issue.
-		writeSessionCookie(w, r, cookieName, c.Value, ttl)
+		writeSessionCookie(r, w, cookieName, c.Value, ttl)
 		return c.Value
 	}
 	b := make([]byte, 16)
 	rand.Read(b)
 	sid := hex.EncodeToString(b)
-	writeSessionCookie(w, r, cookieName, sid, ttl)
+	writeSessionCookie(r, w, cookieName, sid, ttl)
 	return sid
 }
 
@@ -6500,7 +6860,11 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 // cookie can only be re-issued by a GET/POST, so a TTL-keyed MaxAge expires the
 // cookie out from under a session that is still alive. Server-side reap remains
 // the sole authority on when a session ends.
-func writeSessionCookie(w http.ResponseWriter, r *http.Request, cookieName, sid string, ttl time.Duration) {
+// The `r` parameter is the request being served, and is used solely to
+// decide the Secure attribute (see below). It may be nil only if a
+// caller genuinely has no request in hand; Secure then falls back to
+// the env-derived answer.
+func writeSessionCookie(r *http.Request, w http.ResponseWriter, cookieName, sid string, ttl time.Duration) {
 	maxAge := slidingCookieMaxAgeSeconds(ttl)
 	// SameSite: when SKY_LIVE_FRAME_ANCESTORS opts this deploy into being iframed
 	// cross-origin (e.g. a control plane's preview pane), the browser would
@@ -6509,14 +6873,36 @@ func writeSessionCookie(w http.ResponseWriter, r *http.Request, cookieName, sid 
 	// lets the cookie ride along, and the CSRF check still gates state-mutating
 	// POSTs. Outside that mode keep Lax (the right floor for top-level nav +
 	// form posts on a same-origin app).
+	//
+	// Secure: this cookie is the session credential, so it must not travel in
+	// cleartext once there is any indication the deployment is real. The
+	// decision is `cookieSecureFor` (cookie_secure.go) — the SAME helper the
+	// CSRF middleware, the console cookies and `Server.withCookie` all call,
+	// so no two cookies can drift apart. It says yes when any of:
+	//
+	//   1. the cookie's name mandates it (`__Host-` / `__Secure-` prefix), or
+	//      SameSite=None is being set — including cross-origin iframe mode
+	//      below. Both are spec requirements, not policy.
+	//   2. the request arrived over TLS, directly or via a terminating proxy
+	//      that set X-Forwarded-Proto / X-Forwarded-Ssl. This is the most
+	//      accurate signal available and is independent of any env var.
+	//   3. the production env flag is set (ENV / <PREFIX>_ENV = anything but
+	//      dev/development/local), which is the documented production gate.
+	//
+	// (3) is what makes a forgotten-to-redirect-to-HTTPS production deploy
+	// fail closed rather than leak the session id over plain HTTP. Local dev
+	// — no flag, no TLS — keeps Secure off, or the browser would refuse to
+	// send the cookie back over http://localhost and every session would be
+	// lost on the next request.
+	//
+	// THE DEFECT this replaces: `secure` was hardcoded false and set true
+	// ONLY by (1). Neither `ENV=production` nor even `SKY_ENV=prod` put
+	// Secure on the Sky.Live session cookie, because this path never went
+	// through securifyCookieAttrs.
 	sameSite := http.SameSiteLaxMode
 	if crossOriginIframeMode() {
 		sameSite = http.SameSiteNoneMode
 	}
-	// `secure` used to be false in every mode except the iframe one, so
-	// the session id of a production Sky.Live app — the pinned default
-	// app shape — rode without Secure. One predicate now, shared with
-	// every other mint site: see cookie_secure.go.
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    sid,
@@ -6538,6 +6924,10 @@ func writeSessionCookie(w http.ResponseWriter, r *http.Request, cookieName, sid 
 func crossOriginIframeMode() bool {
 	return skyGetenv("LIVE_FRAME_ANCESTORS") != ""
 }
+
+// `requestIsHTTPS` lives in cookie_secure.go, next to the rest of the
+// Secure-cookie decision it feeds. It was defined here when the session
+// cookie was the only caller; it now has five.
 
 // liveBannerConfig collects the <PREFIX>_LIVE_* env vars that
 // influence the connection-status banner so they can be templated
@@ -6902,7 +7292,7 @@ func (app *liveApp) renderResyncFrame(sess *liveSession) (frameSnapshot, bool) {
 		assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
 		applyStyleInjections(&vn)
 		sess.handlers = map[string]any{}
-		body := renderVNode(vn, sess.handlers)
+		body := sess.renderBody(vn)
 		sess.commitRender(&vn, body)
 		sess.lastShippedBody = body
 		snap = sess.prepareFrameSnapshot(body)

@@ -1,0 +1,31 @@
+# single-A6 — verdict lines only, from scripts/grill-mutation-matrix.sh.
+# The full verbose log is ~250 kB and is deliberately not checked in;
+# re-run the script to regenerate it.
+
+--- FAIL: TestTheProductionQueueHasTheDocumentedBound (0.00s)
+--- SKIP: TestHelper_RunInvariant (0.00s)
+    --- SKIP: TestIdentityKeyIsInjectiveWhereSprintfIsNot/record_of_strings (0.00s)
+    --- SKIP: TestIdentityKeyIsInjectiveWhereSprintfIsNot/pipe_inside_a_string (0.00s)
+    --- SKIP: TestSessionStoreCloseIsIdempotent/postgres (0.00s)
+    --- SKIP: TestSessionStoreCloseIsIdempotent/redis (0.00s)
+FAIL
+FAIL	sky-app/rt	47.221s
+PASS
+ok  	sky-app/rt/console_app	0.027s
+PASS
+ok  	sky-app/rt/hub	0.292s
+--- SKIP: TestPostgresStore_EnqueueAndClaim (0.00s)
+--- SKIP: TestPostgresStore_SkipsClaimedRowsConcurrently (0.00s)
+--- SKIP: TestPostgresStore_LeaseExpiryReclaim (0.00s)
+--- SKIP: TestPostgresStore_Complete (0.00s)
+--- SKIP: TestPostgresStore_Reschedule (0.00s)
+--- SKIP: TestPostgresStore_DeadLetterChainsError (0.00s)
+--- SKIP: TestPostgresStore_DeadLetterIdempotent (0.00s)
+--- SKIP: TestPostgresStore_Cancel (0.00s)
+--- SKIP: TestPostgresStore_CancelClaimedJobFails (0.00s)
+--- SKIP: TestPostgresStore_QueueDepth (0.00s)
+PASS
+ok  	sky-app/rt/jobs	0.179s
+PASS
+ok  	sky-app/rt/telemetry	0.134s
+FAIL

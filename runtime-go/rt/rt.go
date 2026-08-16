@@ -3520,6 +3520,100 @@ func List_foldlT[A, B any](fn func(B, A) B, seed B, xs []A) B {
 	return acc
 }
 
+// List_foldlElemFirstT is List_foldlT with Sky's OWN argument order.
+//
+// `Sky.Core.List.foldl` is pure Sky and applies `fn x acc` — element first,
+// accumulator second (`sky-stdlib/Sky/Core/List.sky`). `List_foldlT` above
+// takes `func(B, A) B` — accumulator first — because it was written for the
+// `rt.List_foldl` kernel's own convention. Re-targeting a Sky `List.foldl`
+// call at `List_foldlT` would therefore need a permuting closure at every
+// call site, which allocates and defeats the point: the whole gain is that a
+// callback like `Std_Ui_markerFlagStep` can be passed BY NAME, retyped in
+// place, with no wrapper.
+//
+// So the argument order lives here instead of at 308 call sites. Semantics are
+// otherwise identical to the pure-Sky def, empty case included (`foldl fn acc
+// [] = acc` → `seed`).
+func List_foldlElemFirstT[A, B any](fn func(A, B) B, seed B, xs []A) B {
+	acc := seed
+	for _, x := range xs {
+		acc = fn(x, acc)
+	}
+	return acc
+}
+
+// List_anyT is the fully-typed twin of List_anyAnyT: the predicate is called
+// directly instead of through SkyCall's reflect dispatch, and the element needs
+// no boxing. Short-circuits on the first True, exactly as the pure-Sky
+// `Sky.Core.List.any` does (`any pred [] = False`; `if pred x then True`).
+func List_anyT[A any](fn func(A) bool, xs []A) bool {
+	for _, x := range xs {
+		if fn(x) {
+			return true
+		}
+	}
+	return false
+}
+
+// List_filterMapT / List_indexedMapT complete the fully-typed tier for the two
+// remaining kernel list HOFs a call site can prove. `List_mapT` and
+// `List_filterT` above already existed; `filterMap` and `indexedMap` had only
+// their erased and half-typed forms, so a call site that COULD prove both the
+// element type and the callback's Go shape had nowhere typed to dispatch to.
+//
+// Each is the exact-semantics twin of what its erased sibling produced AT A
+// CALL SITE, and for `filterMap` those two are not the same thing.
+//
+// The empty case differs across the erased family:
+//
+//	List_mapAny / List_indexedMap  ->  make([]any, len)   — non-nil at len 0
+//	List_filterAny                 ->  make([]any, 0, n)  — non-nil at len 0
+//	List_filterMap                 ->  var result []any   — NIL when nothing
+//	                                                         matched
+//
+// and nil vs empty IS observable: `reflect.DeepEqual` separates them, and a nil
+// slice marshals to `null` where an empty one marshals to `[]`.
+//
+// `List_filterMapT` returns NON-NIL, deliberately unlike `List_filterMap`,
+// because a nil never reached a call site: a typed call site wraps the erased
+// helper in `rt.AsListT[T]`, whose `[]any` arm is `make([]T, len(xs))` — so a
+// nil `[]any` came back out as a non-nil empty `[]T`. All five `filterMap`
+// sites in the app this was measured on are AsListT-wrapped, and the typed
+// dispatch only fires where the element type is proven, which is the same
+// condition (`AsListT[any]` is the one instantiation that passes a nil
+// through, and an `any` element is never proven). Copying the erased helper's
+// nil here would have been faithful to the helper and a behaviour change at
+// every site that calls it.
+//
+// It grows by append rather than pre-sizing, again matching `List_filterMap`.
+// Pre-sizing looks cheaper — one `make` instead of a geometric grow — and on
+// `19-skyforum` it cost **~800 more objects per interaction**: most filterMap
+// calls on a `Std.Ui` layout match NOTHING, and a `make([]B, 0, len(xs))`
+// allocates for every one of them where an unused `var out []B` allocates for
+// none. The empty return is `[]B{}`, which points at `runtime.zerobase` and
+// allocates nothing.
+
+func List_filterMapT[A, B any](fn func(A) SkyMaybe[B], xs []A) []B {
+	var out []B
+	for _, x := range xs {
+		if m := fn(x); m.Tag == 0 {
+			out = append(out, m.JustValue)
+		}
+	}
+	if out == nil {
+		return []B{}
+	}
+	return out
+}
+
+func List_indexedMapT[A, B any](fn func(int, A) B, xs []A) []B {
+	out := make([]B, len(xs))
+	for i, x := range xs {
+		out[i] = fn(i, x)
+	}
+	return out
+}
+
 func List_lengthT[A any](xs []A) int { return len(xs) }
 
 func List_headT[A any](xs []A) SkyMaybe[A] {
@@ -3583,7 +3677,30 @@ func List_dropT[A any](n int, xs []A) []A {
 	return xs[n:]
 }
 
-func List_appendT[A any](a, b []A) []A { return append(a, b...) }
+// List_appendT is the typed twin of the LIST arm of `rt.Concat` — what a
+// `xs ++ ys` whose operands share one statically-known Go element type lowers
+// to. It replaces `rt.AsListT[T](rt.Concat(any(xs), any(ys)))`, which reflect-
+// widens BOTH operands element-wise into a fresh `[]any`, concatenates that,
+// and then reflect-narrows every element back into a `[]T`.
+//
+// It ALLOCATES A FRESH SLICE, always. The one-line `return append(a, b...)`
+// this replaces did not: `append` reuses `a`'s backing array whenever
+// `cap(a) > len(a)`, writing through into memory another Sky value may still
+// hold. Sky lists are immutable values and `rt.Concat` has always returned a
+// fresh slice, so the aliasing form made `ys ++ zs` able to mutate a list
+// nobody appended to — a wrong-answer bug visible only when the left operand
+// happened to carry spare capacity. `TestListAppendT_doesNotAliasItsLeftOperand`
+// in `list_append_typed_test.go` pins it.
+//
+// The result is non-nil even when both operands are empty, matching what
+// `rt.AsListT` hands the rest of the emitted program (`nil` and `[]T{}` marshal
+// as JSON `null` and `[]` respectively, so the two are not interchangeable).
+func List_appendT[A any](a, b []A) []A {
+	out := make([]A, 0, len(a)+len(b))
+	out = append(out, a...)
+	out = append(out, b...)
+	return out
+}
 
 func List_range(lo any, hi any) any {
 	l, h := AsInt(lo), AsInt(hi)
@@ -4155,25 +4272,58 @@ type SkyADT struct {
 	Fields  []any
 }
 
-// adtTagRegistry maps constructor SkyName → Tag for runtime-constructed
-// ADTs (e.g. __sky_send events). Populated by RegisterAdtTag which the
-// codegen's init() block calls for each Msg constructor.
-var adtTagRegistry = make(map[string]int)
+// adtTagRegistry maps (owning ADT, constructor) → Tag for
+// runtime-constructed ADTs (e.g. __sky_send events). Populated by
+// RegisterAdtTag which the codegen's init() block calls for each
+// constructor.
+//
+// Keyed by AdtCtorKey, not by the bare constructor name: see the
+// AdtCtorKey docstring (adt_variant_factory.go) for why a bare name is
+// not a key.
+var adtTagRegistry = make(map[AdtCtorKey]int)
 var adtTagRegistryMu sync.Mutex
 
 func RegisterGobType(v any) {
 	gobRegisterAll(v)
 }
 
-func RegisterAdtTag(skyName string, tag int) {
+// RegisterAdtTag records the declaration-order tag of `ctorName` within
+// `adtName`.
+//
+// Re-registering the SAME (adt, ctor) with the SAME tag is expected and
+// idempotent — a stdlib ADT is emitted into more than one Go package
+// (`Std_Ui_Element` exists in both `main` and `rt/console_app`), so its
+// init() runs once per package.
+//
+// Re-registering with a DIFFERENT tag is a codegen bug: it means two
+// distinct types lowered to one Go name, and whichever init() ran last
+// would silently decide how the wire decodes that constructor. That is
+// precisely the order-dependence this registry was reshaped to remove,
+// so it panics at init() rather than picking a winner. An init()-time
+// panic is deterministic and names both tags; a silent winner is
+// neither.
+func RegisterAdtTag(adtName, ctorName string, tag int) {
+	key := AdtCtorKey{Adt: adtName, Ctor: ctorName}
 	adtTagRegistryMu.Lock()
-	adtTagRegistry[skyName] = tag
+	prev, exists := adtTagRegistry[key]
+	if !exists {
+		adtTagRegistry[key] = tag
+	}
 	adtTagRegistryMu.Unlock()
+	if exists && prev != tag {
+		panic(fmt.Sprintf(
+			"sky: conflicting ADT tag registration for %s.%s — already registered as %d, re-registered as %d; "+
+				"two distinct Sky types have lowered to the same Go type name",
+			adtName, ctorName, prev, tag))
+	}
 }
 
-func LookupAdtTag(skyName string) (int, bool) {
+// LookupAdtTag returns the tag of `ctorName` WITHIN `adtName`. There is
+// deliberately no bare-name lookup — resolving a constructor without
+// naming its ADT is the defect this registry shape exists to prevent.
+func LookupAdtTag(adtName, ctorName string) (int, bool) {
 	adtTagRegistryMu.Lock()
-	tag, ok := adtTagRegistry[skyName]
+	tag, ok := adtTagRegistry[AdtCtorKey{Adt: adtName, Ctor: ctorName}]
 	adtTagRegistryMu.Unlock()
 	return tag, ok
 }
@@ -6838,7 +6988,11 @@ func System_getcwd(unit any) any { return System_cwd(unit) }
 // state is nil and the call returns immediately.
 func System_exit(code any) any {
 	tuiTeardown()
-	os.Exit(AsInt(code))
+	// ExitProcess, not os.Exit: `Std.System.exit` is the ordinary way a
+	// `Sky.Cli` job ends, and os.Exit skips generated main's
+	// `defer rt.StopEmbeddedPostgres()`. A one-shot job built with `--embed`
+	// would leave its own database running with nothing left to stop it.
+	ExitProcess(AsInt(code))
 	return struct{}{}
 }
 
@@ -8579,6 +8733,48 @@ func SkyTailSlice(x any) []any {
 	return l[1:]
 }
 
+// ── Typed counterparts, for a subject whose Go type is statically []T ────
+//
+// The three helpers above take `x any`, so the emitted destructuring boxed the
+// slice header on every call. That understates the cost. `AsList` fast-paths a
+// `[]any`, but a `[]T` for any other T MISSES that assertion and falls to the
+// reflect arm, which allocates a fresh `[]any` of length n and boxes every
+// element into it. On a typed list each call is therefore O(n) allocation, and
+// a cons loop rebuilt the entire list on every iteration — quadratic in n, for
+// a walk that is O(n).
+//
+// When the lowerer knows the subject's Go type is a slice (`Pattern::Cons` /
+// `Pattern::List` in rust/crates/lower/src/lower.rs) it emits these instead.
+// They compile to `len(xs)`, `xs[i]` and `xs[1:]`, allocate nothing, and Go
+// infers T from the argument so the call site needs no type argument.
+//
+// The bounds guards are kept even though the pattern's length test has already
+// run. That test is a claim about the CALLER; a helper that panics when the
+// claim is wrong converts a lowering bug into a runtime panic, and "no runtime
+// panic from well-typed Sky" is not a property to leave resting on an
+// invariant asserted in a comment. Out of range yields T's zero value, exactly
+// as the `any` versions yield nil.
+
+// SkyLenT is the element count of a statically-typed Sky list.
+func SkyLenT[T any](xs []T) int { return len(xs) }
+
+// SkyElemT is the i-th element (bounds-guarded; T's zero when out of range).
+func SkyElemT[T any](xs []T, i int) T {
+	if i < 0 || i >= len(xs) {
+		var zero T
+		return zero
+	}
+	return xs[i]
+}
+
+// SkyTailSliceT is the list minus its head (empty when already empty).
+func SkyTailSliceT[T any](xs []T) []T {
+	if len(xs) == 0 {
+		return xs
+	}
+	return xs[1:]
+}
+
 func List_indexedMap(fn any, list any) any {
 	items := asList(list)
 	result := make([]any, len(items))
@@ -8603,7 +8799,6 @@ func List_find(fn any, list any) any {
 var _ = bufio.NewReader
 var _ = io.EOF
 var _ = exec.Command
-var _ = os.Exit
 var _ = time.Now
 var _ = mrand.Intn
 var _ = sha256.Sum256
@@ -9304,6 +9499,12 @@ func Server_listen(port any, routes any) any {
 		IdleTimeout:       httpEnvTimeout("SKY_HTTP_IDLE_TIMEOUT", serverIdleTimeout),
 		MaxHeaderBytes:    serverMaxHeaderBytes,
 	}
+	// Under `--embed` the supervisor in pg_embed.go owns the shutdown
+	// SEQUENCE, because the embedded database must be stopped strictly after
+	// the app has stopped accepting and drained. Handing it the listener is
+	// what makes its first phase real; it is a no-op registration when no
+	// cluster is being supervised.
+	RegisterAcceptStopper("http.Server", func() { _ = srv.Close() })
 	// v0.16.0: inline console runs in-process — no children to
 	// signal. Still install a SIGINT/SIGTERM/SIGHUP handler so the
 	// server closes gracefully (drains in-flight requests) rather
@@ -9315,17 +9516,25 @@ func Server_listen(port any, routes any) any {
 		// v0.16.1: drain HubExporter (and any other shutdown
 		// hook) BEFORE srv.Close so pending telemetry pushes
 		// reach the hub within Cloud Run / k8s grace windows.
-		// 8 s budget matches Sky.Live's signal handler.
-		RunShutdownHooks(8 * time.Second)
-		_ = srv.Close()
+		// 8 s budget matches Sky.Live's signal handler. The
+		// release phase that follows the drain closes whatever
+		// registered a resource closer (a mounted sub-app's
+		// session store, on this shape).
+		drainAndRelease(8*time.Second, func() { _ = srv.Close() })
 	}()
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
+	printStartupReport(p) // see startup_report.go — added under, never in place of
 	err := srv.ListenAndServe()
 	signal.Stop(srvSigCh)
+	// If the listener closed because the embedded-PostgreSQL supervisor is
+	// mid-shutdown, returning here would let main exit and take the database
+	// down with a kill instead of a clean stop. It exits the process itself
+	// once PostgreSQL is down.
+	BlockIfEmbeddedShuttingDown()
 	if err != nil && err != http.ErrServerClosed {
 		if isAddrInUse(err) {
 			reportPortInUse(p, "pass a different port to Server.listen")
-			os.Exit(1)
+			ExitProcess(1)
 		}
 		return Err[any, any](ErrFfi(err.Error()))
 	}
@@ -9821,6 +10030,8 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 // Cookie attrs: Path=/; Secure; SameSite=Lax — unconditional, because
 // the `__Host-` name prefix mandates Secure (RFC 6265bis §4.1.3.2) and a
 // client rejects the cookie without it, in dev as well as production.
+// (`securifyCookieAttrs` only ever APPENDS Secure, never strips it, so
+// the literal in the attrs below stands on its own either way.)
 func Middleware_withCsrf(handler any) any {
 	const (
 		csrfCookie    = "__Host-sky_csrf"
@@ -10001,11 +10212,14 @@ func setCookieHeader(resp any, name, value, attrs string) any {
 //       stderr plus the full frame to .skylog/panic.log in prod
 //       (no stack-trace leak in aggregated logs).
 
-// isProd / securifyCookieAttrs moved to cookie_secure.go. `isProd` is
-// GONE: it was a second production predicate (`<PREFIX>_ENV == "prod"`,
-// exact match) competing with `productionFromEnv()`, the documented
-// gate, so `ENV=production` left the cookie path in dev mode. Every
-// caller now uses `productionFromEnv()`.
+// `isProd` and `securifyCookieAttrs` live in cookie_secure.go, which owns
+// the whole "does this cookie get Secure?" decision — the attribute-string
+// path here and the `http.SetCookie` paths in live.go / csrf_middleware.go
+// / console_auth*.go alike. Two independent fixes converged on that split:
+// one made `isProd` a thin alias for `productionFromEnv()` so the two
+// predicates cannot diverge again, the other replaced the substring test
+// inside `securifyCookieAttrs` with a real attribute-list parse. Both are
+// in cookie_secure.go.
 
 // logPanicFrame writes the panic context to the right place given
 // SKY_ENV. Dev: full frame on stderr. Prod: compact summary on

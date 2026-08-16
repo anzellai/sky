@@ -1,0 +1,233 @@
+package rt
+
+// SCRATCH measurement harness for the Stage 1 runtime-constants work.
+// Not a gate. Deleted before the final commit series lands.
+
+import (
+	"hash/maphash"
+	"testing"
+)
+
+func benchTree() VNode {
+	vn := HtmlToVNode(buildHtmlPage(gateItems))
+	assignSkyIDs(&vn, "r")
+	applyStyleInjections(&vn)
+	return vn
+}
+
+func BenchmarkS1_HtmlToVNode(b *testing.B) {
+	page := buildHtmlPage(gateItems)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = HtmlToVNode(page)
+	}
+}
+
+func BenchmarkS1_AssignSkyIDs(b *testing.B) {
+	trees := make([]VNode, 0, 8)
+	for i := 0; i < 8; i++ {
+		trees = append(trees, HtmlToVNode(buildHtmlPage(gateItems)))
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		vn := trees[i%8]
+		assignSkyIDs(&vn, "r")
+	}
+}
+
+func BenchmarkS1_ApplyStyleInjections(b *testing.B) {
+	// The passes strip their markers, so a tree can only be measured once.
+	// Pre-build a pool of already-lowered, already-id-assigned trees and
+	// time ONLY the style passes.
+	page := buildHtmlPage(gateItems)
+	trees := make([]VNode, b.N)
+	for i := range trees {
+		trees[i] = HtmlToVNode(page)
+		assignSkyIDs(&trees[i], "r")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		applyStyleInjections(&trees[i])
+	}
+}
+
+// Same tree with the one style marker stripped: the case most real pages
+// are in for at least three of the four passes.
+func BenchmarkS1_ApplyStyleInjectionsNoMarkers(b *testing.B) {
+	page := buildHtmlPage(gateItems)
+	trees := make([]VNode, b.N)
+	for i := range trees {
+		trees[i] = HtmlToVNode(page)
+		assignSkyIDs(&trees[i], "r")
+		delete(trees[i].Children[0].Attrs, "data-sky-mq-q")
+		delete(trees[i].Children[0].Attrs, "data-sky-mq-rules")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		applyStyleInjections(&trees[i])
+	}
+}
+
+func BenchmarkS1_RenderVNode(b *testing.B) {
+	vn := benchTree()
+	h := map[string]any{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = renderVNode(vn, h)
+	}
+}
+
+// BenchmarkS1_RenderBody is the render as a SESSION runs it — second and
+// subsequent interactions, where the size hint is warm. The first render of
+// a session has no hint and measures the same as BenchmarkS1_RenderVNode.
+func BenchmarkS1_RenderBody(b *testing.B) {
+	vn := benchTree()
+	s := &liveSession{handlers: map[string]any{}}
+	s.commitRender(&vn, renderVNode(vn, s.handlers)) // warm the hint
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = s.renderBody(vn)
+	}
+}
+
+func BenchmarkS1_DiffTrees(b *testing.B) {
+	prev := benchTree()
+	next := benchTree()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = diffTrees(&prev, &next, nil)
+	}
+}
+
+// BenchmarkS1_Interaction is the whole server-side interaction below the
+// Sky boundary as dispatch runs it: lower the view ADT, assign ids, run
+// the four style passes, build the handler table + body string, diff.
+func BenchmarkS1_Interaction(b *testing.B) {
+	// `page` stands in for what the compiled Sky `view` returns. Building
+	// it is ABOVE the boundary this benchmark measures (the attribution run
+	// puts the user's update+view at 84% of the handler), so it is hoisted
+	// out: including it would swamp the runtime cost with fixture cost.
+	page := buildHtmlPage(gateItems)
+	prev := benchTree()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		next := HtmlToVNode(page)
+		assignSkyIDs(&next, "r")
+		applyStyleInjections(&next)
+		handlers := map[string]any{}
+		_ = renderVNode(next, handlers)
+		_ = diffTrees(&prev, &next, nil)
+	}
+}
+
+// BenchmarkS1_InteractionPatchPath is what the interaction WOULD cost if
+// the handler table were collected without materialising the body string.
+// Before the split lands this is a lower bound, not a measurement of any
+// code path that runs.
+func BenchmarkS1_InteractionNoRender(b *testing.B) {
+	page := buildHtmlPage(gateItems)
+	prev := benchTree()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		next := HtmlToVNode(page)
+		assignSkyIDs(&next, "r")
+		applyStyleInjections(&next)
+		_ = diffTrees(&prev, &next, nil)
+	}
+}
+
+// collectIDs gathers sky-ids from the tree so the ack bench can name ids
+// that really exist in it.
+func collectIDs(n *VNode, out *[]string) {
+	if n.Kind == "element" && n.SkyID != "" {
+		*out = append(*out, n.SkyID)
+	}
+	for i := range n.Children {
+		collectIDs(&n.Children[i], out)
+	}
+}
+
+// BenchmarkS1_AckInputs — the walk that runs once any input has been typed.
+// Two ids, which is what a user typing into a form actually has dirty.
+// "late" places them at the end of the tree (worst case for an early exit);
+// "gone" names ids that have unmounted, which forces the full walk.
+func benchAck(b *testing.B, pick func(ids []string) []string) {
+	vn := benchTree()
+	var ids []string
+	collectIDs(&vn, &ids)
+	want := pick(ids)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		s := &liveSession{prevTree: &vn, inputSeqs: map[string]int64{}}
+		for _, id := range want {
+			s.inputSeqs[id] = 1
+		}
+		b.StartTimer()
+		_ = ackInputsForPrevTree(s)
+	}
+}
+
+func BenchmarkS1_AckInputsEarly(b *testing.B) {
+	benchAck(b, func(ids []string) []string { return []string{ids[2], ids[5]} })
+}
+
+func BenchmarkS1_AckInputsLate(b *testing.B) {
+	benchAck(b, func(ids []string) []string {
+		return []string{ids[len(ids)-2], ids[len(ids)-1]}
+	})
+}
+
+func BenchmarkS1_AckInputsUnmounted(b *testing.B) {
+	benchAck(b, func(ids []string) []string { return []string{"r.gone#input"} })
+}
+
+func BenchmarkS1_MsgDisplayName(b *testing.B) {
+	msg := SkyADT{SkyName: "OpenThread"}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = msgDisplayName(msg)
+	}
+}
+
+func TestZZBodySize(t *testing.T) {
+	vn := benchTree()
+	b := renderVNode(vn, map[string]any{})
+	t.Logf("rendered body = %d bytes", len(b))
+}
+
+func BenchmarkS1_MapHashBody(b *testing.B) {
+	vn := benchTree()
+	body := renderVNode(vn, map[string]any{})
+	seed := maphash.MakeSeed()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = maphash.String(seed, body)
+	}
+}
+
+func BenchmarkS1_StringCompareBody(b *testing.B) {
+	vn := benchTree()
+	body := renderVNode(vn, map[string]any{})
+	other := body[:len(body)-1] + "x"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if body == other {
+			b.Fatal("no")
+		}
+	}
+}
+

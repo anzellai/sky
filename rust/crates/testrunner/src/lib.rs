@@ -109,6 +109,7 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
         stdin: None,
         entry_module: None,
         progress: false,
+        embed_bundle: None,
     };
     // Extra source roots: the project's `tests/` tree (carries the suite when it
     // lives under tests/), the root the suite's DECLARED name is relative to (so

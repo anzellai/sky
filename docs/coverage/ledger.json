@@ -185,6 +185,24 @@
       ],
       "tier": "T1"
     },
+    "config-matrix": {
+      "expected_assertions": 98,
+      "falsifier_proven": true,
+      "summary": "every covered setting's EFFECTIVE value, observed from running binaries, matches the baseline in every arm combination",
+      "surfaces": [
+        "meta.config-effective-values"
+      ],
+      "tier": "T1"
+    },
+    "config-surface": {
+      "expected_assertions": 59,
+      "falsifier_proven": true,
+      "summary": "the configuration surface is measured, current, and no defect count rose",
+      "surfaces": [
+        "meta.config-surface"
+      ],
+      "tier": "T1"
+    },
     "conformance": {
       "expected_assertions": 935,
       "falsifier_proven": true,
@@ -500,13 +518,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1776,
+    "stdlib_entries": 1782,
     "stdlib_modules": 87,
-    "surfaces_covered": 127,
-    "surfaces_covered_pct": 90.1,
+    "surfaces_covered": 129,
+    "surfaces_covered_pct": 90.2,
     "surfaces_equal": 19,
-    "surfaces_stronger": 122,
-    "surfaces_total": 141,
+    "surfaces_stronger": 124,
+    "surfaces_total": 143,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -590,6 +608,11 @@
         "evidence": [
           {
             "by": "gate `verify-cli`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
             "class": "Falsified",
             "strength": 4
           }
@@ -1087,7 +1110,7 @@
         "class": "Asserted",
         "evidence": [
           {
-            "by": ".github/workflows/release.yml: xtask coerce-floor (`xtask:coerce-floor` is not harness-registered — no proven falsifier)",
+            "by": ".github/workflows/nightly-sweep.yml: xtask coerce-floor (`xtask:coerce-floor` is not harness-registered — no proven falsifier)",
             "class": "Asserted",
             "strength": 3
           }
@@ -1885,6 +1908,62 @@
       },
       "description": "editor parity: hover, completion, diagnostics, go-to-definition",
       "id": "lsp",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `config-matrix`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — no gate compared a setting's resolved value against anything",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "each covered setting's effective value, observed from a running binary in every combination of environment / sky.toml / withX, as the baseline a moved default is compared against",
+      "id": "meta.config-effective-values",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `config-surface`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — the surface was counted by hand, in prose, with no gate",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "the configuration surface is measured from source — which sky.toml keys are read pre-binary, which seeded env suffixes nothing reads, how far docs and readers drifted",
+      "id": "meta.config-surface",
       "verdict": "stronger"
     },
     {
@@ -11283,7 +11362,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 130,
+          "count": 136,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -11291,6 +11370,7 @@
             "LayoutContext",
             "Length",
             "Location",
+            "MarkerFlags",
             "PseudoClass",
             "VAlign",
             "above",
@@ -11316,6 +11396,7 @@
             "borderWidth",
             "borderWidthEach",
             "buildStyleString",
+            "buildStyleStringWith",
             "class",
             "clip",
             "clipY",
@@ -11377,8 +11458,12 @@
             "joinWithPipe",
             "kernelAttr",
             "layoutContextFor",
+            "layoutContextFromFlags",
             "locationCss",
+            "markerFlagStep",
+            "markerFlags",
             "mediaQueryRulesCss",
+            "noMarkerFlags",
             "onFile",
             "onImage",
             "onKeyDown",
@@ -11559,8 +11644,8 @@
           ]
         }
       },
-      "count": 699,
-      "pct_of_denominator": 39.4
+      "count": 705,
+      "pct_of_denominator": 39.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -12406,7 +12491,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 130,
+          "count": 136,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -12414,6 +12499,7 @@
             "LayoutContext",
             "Length",
             "Location",
+            "MarkerFlags",
             "PseudoClass",
             "VAlign",
             "above",
@@ -12439,6 +12525,7 @@
             "borderWidth",
             "borderWidthEach",
             "buildStyleString",
+            "buildStyleStringWith",
             "class",
             "clip",
             "clipY",
@@ -12500,8 +12587,12 @@
             "joinWithPipe",
             "kernelAttr",
             "layoutContextFor",
+            "layoutContextFromFlags",
             "locationCss",
+            "markerFlagStep",
+            "markerFlags",
             "mediaQueryRulesCss",
+            "noMarkerFlags",
             "onFile",
             "onImage",
             "onKeyDown",
@@ -12683,8 +12774,8 @@
           ]
         }
       },
-      "count": 778,
-      "pct_of_denominator": 43.8
+      "count": 784,
+      "pct_of_denominator": 44.0
     }
   },
   "units": [

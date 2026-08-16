@@ -189,7 +189,7 @@ stop, re-classify against the architecture docs, escalate — do not attempt a 4
 
 | | |
 |---|---|
-| **Goal** | Typed lowering IR (L9), type-directed lowering, TCO, DCE, monomorphisation; deterministic Go emission (L4). |
+| **Goal** | Typed lowering IR (L9), type-directed lowering, TCO, DCE; deterministic Go emission (L4). *(Monomorphisation was in this goal and was dropped deliberately: the Go ABI is erased, so one emit per definition suffices and shape mismatches are closed by eta-expansion — 07 §5.1.)* |
 | **Entry** | M3 exit. |
 | **Exit** | **Strict byte-identical Go** vs oracle on a *frozen subset* (start: CLI examples 00–07, 14 — no FFI, no server runtime); record fields emit in `_fieldIndex` (source) order, NOT lexical (the deterministic-but-WRONG trap, self-host §7); the subset passes the reproducibility gate (N seeds, cross-platform). |
 | **Proves** | L9 (coercion is the exception), L4 (determinism), lowering compat. |

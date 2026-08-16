@@ -44,7 +44,7 @@ flowchart TD
 | `hir` | Desugared, name-resolved high-level IR. Imports, scopes, `DefId` resolution, module items. | `base`, `syntax`, `diagnostics` | 05 |
 | `ty` | HM inference, arena union-find, generalisation, exhaustiveness, the type table. | `base`, `hir`, `syntax`, `diagnostics` | 06 |
 | `skydb` | The salsa database + query spike (target: every query; today: one input + one tracked query, doc 01). | `salsa`, `base`, `syntax`, `hir`, `ty`, `diagnostics` | 01 |
-| `lower` | Typed lowering IR (Sky-typed → Go-IR), type-directed lowering, TCO, DCE, monomorphisation. | `base`, `ty`, `hir`, `syntax`, `skydb` | 07 |
+| `lower` | Typed lowering IR (Sky-typed → Go-IR), type-directed lowering, inline auto-TCO, demand-driven DCE. **No monomorphiser** — the Go ABI is erased and shape mismatches are closed by eta-expansion (07 §5.1). | `base`, `ty`, `hir`, `syntax`, `skydb` | 07 |
 | `codegen` | Deterministic Go source emission from the Go-IR; the runtime ABI/interface. | `base`, `lower` | 08 |
 | `ffi` | Deterministic Go-package inspection → pinned `.skyi` surface; reproducible, committed. | `base`, `serde`, `serde_json`, `include_dir` | 09 |
 | `project` | `sky.toml`, module discovery, dependency graph, driver that runs the build + `go build`, stdlib embedding. | `skydb`, `codegen`, `lower`, `hir`, `ty`, `syntax`, `base`, `ffi` | 08, 09 |

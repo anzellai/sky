@@ -19,10 +19,13 @@ on:
   workflow_dispatch: # manual trigger
     inputs:
       only:
-        description: 'Which job to run on a manual dispatch (the schedule always runs both)'
+        description: 'Which job to run on a manual dispatch (the schedule always runs all of them)'
         type: choice
         default: both
-        options: [both, example-sweep, web-runtime]
+        # Every job's `if:` names itself here. `behaviour-corpus` gated on a
+        # value this list did not offer, so it could never be dispatched alone —
+        # the dropdown had no way to say it, and any other value skipped it.
+        options: [both, example-sweep, web-runtime, behaviour-corpus, postgres-bundle-licence]
 
 # Don't stack nightly runs; a newer run supersedes an in-flight one.
 concurrency:
@@ -92,6 +95,24 @@ jobs:
           sky-out/sky --version
       - name: Full example sweep (clean-slate build of every example, incl. FFI/Std.Db)
         run: scripts/example-sweep.sh
+      # The census the per-push tier cannot take, taken here.
+      #
+      # `coerce-floor` measures every project's emitted Go, and five of the 61
+      # golden rows belong to examples whose generated FFI surface is
+      # .gitignored — 03-tea-external, 05-mux-server, 08-notes-app,
+      # 11-fyne-stopwatch, 13-skyshop. On a fresh per-push checkout they do not
+      # emit, so `codegen-build` and `macos-determinism` run the gate with
+      # SKY_LIVE_TESTS=skip and it reports the shortfall instead of failing.
+      # That leaves the corpus-wide totals gated NOWHERE, which is the exact
+      # hole the 2026-08-16 coverage clause was written to close.
+      #
+      # The step above has just generated all five surfaces. This is therefore
+      # the one place in CI where the golden's own denominator holds, so this is
+      # where the 61-of-61 census belongs. No SKY_LIVE_TESTS here, deliberately:
+      # a shortfall in THIS job means the sweep did not build what it claims to.
+      - name: Gate — coerce-floor over the whole corpus (61 of 61 rows)
+        working-directory: rust
+        run: cargo run -q -p xtask -- coerce-floor
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
@@ -369,3 +390,110 @@ jobs:
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
+
+  # ── The licence gate, against a REAL built PostgreSQL bundle ───────────────
+  #
+  # scan-bundle-licences.sh had never been run against one. Its only real-bundle
+  # caller is postgres-bundle.yml, whose triggers are `workflow_dispatch` and
+  # `push: tags: ['postgres-bundle-v*']`; `git tag -l 'postgres-bundle-v*'`
+  # returns nothing and no such tag has ever been cut. The per-commit
+  # `licence-gate-linux` / `licence-gate-macos` jobs run
+  # test-licence-gate.sh with no `--bundle`, so its two real-bundle cases (C8
+  # unmodified-bundle-accepts, C9 planted-GPL-extension-rejects) skip there.
+  #
+  # Everything the gate knows, it knows from fixtures built by `cc` in a temp
+  # directory: five stub executables, a handful of stub libraries, ~11 objects.
+  # A real bundle is ~600 objects with real soname chains, real rpath
+  # relocation, real ICU/OpenSSL/LZ4/zstd/libxml2 linkage and a real contrib
+  # module set — the surface the module allowlist and the unvendored arm were
+  # written against and have never met. The first bundle cut must not be the
+  # first time those two see each other.
+  #
+  # Nightly, one platform, not per-commit: PostgreSQL from source is 10-20 min,
+  # and the per-commit tier already covers the gate's DISCRIMINATION on
+  # fixtures. What this adds is the artifact.
+  #
+  # linux-amd64 only, deliberately. Cross-platform bundle differences are the
+  # publication matrix's business (postgres-bundle.yml builds four natively);
+  # what is being closed here is "no real bundle, ever", and one is enough to
+  # close it.
+  postgres-bundle-licence:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "postgres-bundle-licence"]'), inputs.only) }}
+    runs-on: ubuntu-latest
+    # The publication matrix budgets 45 for the same build on the same runner
+    # class, with the same reasoning (10-20 min native + two extensions, ~2x).
+    timeout-minutes: 45
+    env:
+      PLATFORM: linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      # `runner` is NOT one of the contexts a job-level `env:` may use, and the
+      # penalty is not a warning: GitHub refuses to parse the whole FILE. Both
+      # jobs above stop existing, the run has no jobs and no log, and it is
+      # attributed to whatever push happened to arrive — which is how this
+      # workflow was red on every push while reading like a nightly problem.
+      # `RUNNER_TEMP` is the same directory and the shell has always had it.
+      - name: Paths under the runner's temp directory
+        run: |
+          set -euo pipefail
+          echo "OUT=$RUNNER_TEMP/bundles" >> "$GITHUB_ENV"
+          echo "SKYDB_BUILD_DIR=$RUNNER_TEMP/sky-postgres-build" >> "$GITHUB_ENV"
+
+      # libreadline-dev is deliberately NOT installed, exactly as in
+      # postgres-bundle.yml: --without-readline already excludes it, and not
+      # having the headers means an edit that drops the flag fails to find
+      # readline rather than silently linking it.
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bison flex pkg-config patchelf \
+            libssl-dev zlib1g-dev liblz4-dev libzstd-dev libicu-dev libxml2-dev
+
+      - name: Build a real bundle
+        run: bash scripts/skydb/build-postgres-bundle.sh --out "$OUT"
+
+      - name: Resolve the bundle
+        id: resolve
+        run: |
+          set -euo pipefail
+          # By search, not by glob-in-assignment: a glob that matched nothing
+          # would expand to a literal path and the gate would scan a directory
+          # that does not exist. Same shape as postgres-bundle.yml.
+          found=$(find "$OUT" -maxdepth 1 -type d -name "postgres-*-${PLATFORM}")
+          count=$(printf '%s\n' "$found" | command grep -c . || true)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::expected exactly 1 bundle for ${PLATFORM}, found ${count}" >&2
+            exit 1
+          fi
+          echo "bundle=$found" >> "$GITHUB_OUTPUT"
+
+      # Two separate claims, and the second is the one that was missing.
+      #
+      #   1. the gate ACCEPTS the artifact we would publish;
+      #   2. the gate still REJECTS a violation planted in that same artifact.
+      #
+      # (1) alone is satisfied by a gate that accepts everything, which is
+      # precisely the failure this repo keeps finding. `--bundle` runs C8 and
+      # C9: the real bundle unmodified, and the real bundle with one GPL-linked
+      # extension planted in lib/ — identical in every other respect, so the
+      # planted object is the only thing between green and red.
+      - name: 'SBOM + licence gate — the real bundle'
+        env:
+          BUNDLE: ${{ steps.resolve.outputs.bundle }}
+        run: bash scripts/skydb/scan-bundle-licences.sh "$BUNDLE" --sbom-out "$BUNDLE/sbom.json"
+
+      - name: 'Prove the gate discriminates ON the real bundle (C8 + C9)'
+        env:
+          BUNDLE: ${{ steps.resolve.outputs.bundle }}
+        run: bash scripts/skydb/test-licence-gate.sh --bundle "$BUNDLE"
+
+      - name: Upload the SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-sbom-linux-amd64
+          path: ${{ runner.temp }}/bundles/*/sbom.json
+          if-no-files-found: warn

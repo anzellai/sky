@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -299,6 +300,12 @@ type Worker struct {
 	pollInterval time.Duration
 	stop         chan struct{}
 	stopped      atomic.Bool
+	// done is closed by run on its way out. It is the happens-before edge Stop
+	// waits on; `stopped` remains only as a cheap non-blocking status probe.
+	done      chan struct{}
+	startOnce sync.Once
+	stopOnce  sync.Once
+	started   atomic.Bool
 
 	// Metrics callbacks — injected so the worker doesn't depend
 	// on the telemetry package directly (avoids import cycle:
@@ -318,32 +325,57 @@ func NewWorker(store Store, queue string) *Worker {
 		queue:        queue,
 		pollInterval: 100 * time.Millisecond,
 		stop:         make(chan struct{}),
+		done:         make(chan struct{}),
 	}
 }
 
-// Start spawns the worker goroutine. Returns immediately.
+// Start spawns the worker goroutine. Returns immediately. Idempotent — a
+// second Start would otherwise run a second loop against the same stop
+// channel, and both would claim from the same queue.
 func (w *Worker) Start() {
-	go w.run()
+	w.startOnce.Do(func() {
+		w.started.Store(true)
+		go w.run()
+	})
 }
 
-// Stop signals the worker to exit + waits briefly for in-flight
-// dispatch to finish. Called on SIGTERM. Bounded so we don't hang
-// past the orchestrator grace window.
-func (w *Worker) Stop(timeout time.Duration) {
-	if w.stopped.Load() {
-		return
+// Stop signals the worker to exit + waits for the in-flight dispatch to
+// finish. Bounded so we don't hang past an orchestrator grace window.
+//
+// # What was wrong with the previous shape
+//
+//   - IT COULD PANIC. The guard was `if w.stopped.Load() { return }` followed
+//     by `close(w.stop)`. Two goroutines that both observed `stopped == false`
+//     both reached the close, and the second one panicked on a closed channel.
+//
+//   - IT POLLED A PROXY. `stopped` is set by a defer in `run`, so the loop
+//     below was sampling a flag every 10 ms rather than waiting on an edge.
+//
+//   - IT GAVE UP IN SILENCE. Past the deadline the loop simply fell out, with
+//     no return value and no log line, so a job abandoned mid-dispatch left no
+//     trace — the fact an operator most needs after a restart.
+//
+// Reports whether the worker actually stopped inside the budget.
+func (w *Worker) Stop(timeout time.Duration) bool {
+	w.stopOnce.Do(func() { close(w.stop) })
+	if !w.started.Load() {
+		// Nothing was ever spawned, so `done` will never close.
+		return true
 	}
-	close(w.stop)
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if w.stopped.Load() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-w.done:
+		return true
+	case <-timer.C:
+		log.Printf("[sky.jobs] worker %q did not stop within %s; "+
+			"an in-flight dispatch was abandoned", w.queue, timeout)
+		return false
 	}
 }
 
 func (w *Worker) run() {
+	defer close(w.done)
 	defer w.stopped.Store(true)
 	for {
 		select {

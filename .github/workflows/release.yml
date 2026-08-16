@@ -225,8 +225,25 @@ jobs:
         with:
           neovim: true
 
+      # The live environment, for the same reason `test-rest` now provisions it:
+      # the shared-cluster security tests need a real PostgreSQL, and without
+      # one they used to return and report `ok`. A release gate is the last
+      # place that should be counting tests that did not run.
+      - name: PostgreSQL + sqlite3 for the live tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 sqlite3
+          for b in initdb pg_ctl postgres; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+          done
+
       - name: Workspace tests
         working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
         run: cargo test --workspace --locked
 
       # Release-built, deliberately. `preflight-tag.sh:70-74` records the

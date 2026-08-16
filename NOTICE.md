@@ -285,3 +285,95 @@ copyright notices of each library are reproduced in their respective
 If you replace any of these dependencies in a fork, please update
 this section accordingly. Removal of these packages is allowed
 without changing Sky's licence — they're consumed at link time only.
+
+
+## Embedded PostgreSQL bundles
+
+`sky build --embed` and `sky db provision --embed` distribute a
+PostgreSQL bundle that Sky builds from source in its own CI (see
+`docs/skydb/embedded-postgres.md` and
+`.github/workflows/postgres-bundle.yml`). Unlike the Go dependencies
+above, these are *redistributed as binaries*, so the notice below
+travels with the artifact.
+
+The bundle contains `postgres`, `initdb`, `pg_ctl`, `pg_dump` and
+`pg_restore`, the PostgreSQL `contrib` extensions, pgvector and
+pg_partman, plus the permissively-licensed shared libraries they
+link.
+
+**`psql` is deliberately NOT included.** A stock `psql` links GNU
+readline (GPL-3.0), which would place a GPL-linked binary inside this
+Apache-2.0 distribution. `--embed` does not need an interactive
+client. This exclusion is enforced against the built artifacts by
+`scripts/skydb/scan-bundle-licences.sh`, which walks every ELF/Mach-O
+object *and every symbolic link* in a bundle and fails the build on any
+GPL, LGPL or AGPL component — a link is a name we ship, and one that
+points outside the bundle is a library we do not ship at all. PostGIS (GPL-2.0), TimescaleDB (TSL) and Citus (AGPL-3.0)
+are excluded on the same grounds.
+
+### PostgreSQL
+
+PostgreSQL Database Management System
+(also known as Postgres, formerly known as Postgres95)
+
+Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
+
+Portions Copyright (c) 1994, The Regents of the University of
+California
+
+Permission to use, copy, modify, and distribute this software and its
+documentation for any purpose, without fee, and without a written
+agreement is hereby granted, provided that the above copyright notice
+and this paragraph and the following two paragraphs appear in all
+copies.
+
+IN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO ANY PARTY
+FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES,
+INCLUDING LOST PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND
+ITS DOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA HAS BEEN
+ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+THE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE SOFTWARE
+PROVIDED HEREUNDER IS ON AN "AS IS" BASIS, AND THE UNIVERSITY OF
+CALIFORNIA HAS NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT,
+UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+
+### Bundled extensions
+
+- **pgvector** — vector similarity search for `Std.Db`. PostgreSQL
+  Licence. Copyright (c) 2021-2026 Andrew Kane.
+
+- **pg_partman** — time-range and serial table partitioning.
+  PostgreSQL Licence. Copyright (c) 2026 Keith Fiske,
+  Crunchy Data Solutions, Inc.
+
+### Libraries linked into the bundle
+
+Each is permissively licensed and redistributed inside the bundle.
+The authoritative, per-build list is the SBOM published alongside
+each bundle (`sbom-<platform>.json`), generated from the built
+artifacts rather than from this list.
+
+- **OpenSSL 3.x** — TLS and `pgcrypto`. Apache-2.0. Copyright (c)
+  1998-2026 The OpenSSL Project Authors.
+
+- **ICU** — collation and locale support. Unicode-3.0 licence.
+  Copyright (c) 2016-2026 Unicode, Inc.
+
+- **zlib** — Zlib licence. Copyright (c) 1995-2026 Jean-loup Gailly
+  and Mark Adler.
+
+- **LZ4** — BSD-2-Clause. Copyright (c) 2011-2026 Yann Collet.
+
+- **Zstandard** — BSD-3-Clause (Zstandard is dual-licensed
+  BSD-3-Clause/GPL-2.0; it is taken here under BSD-3-Clause).
+  Copyright (c) Meta Platforms, Inc. and affiliates.
+
+- **libxml2** — MIT. Copyright (c) 1998-2012 Daniel Veillard.
+
+Host operating-system libraries — the C library and its loader on
+Linux, and the libraries in `/usr/lib` and `/System/Library` on
+macOS — are referenced by the bundle but are *not* redistributed in
+it, and are supplied by the operating system.

@@ -1,0 +1,291 @@
+# config-matrix.toml — the dual-path fixture matrix, declared.
+#
+# `docs/tooling/config-architecture.md` §7.2 asks for a gate that proves every
+# setting's EFFECTIVE VALUE is preserved when a setting moves. §12.2 says it
+# "must exist before the first default is written". This file is that gate's
+# specification; `docs/coverage/config-matrix.json` is what it observed.
+#
+# ## What a cell is
+#
+# A cell is one (setting, arm-combination) pair, where an arm is a layer that
+# can supply a value: the environment, `sky.toml`, or a `withX` builder. A
+# setting with three layers has 2^3 = 8 cells; one with two layers has 4.
+#
+# The value in a cell is **observed from a running binary** — the fixture is
+# compiled by the real compiler, launched, and its own startup output read. It
+# is never computed by re-implementing the resolver. That distinction is the
+# whole point: this repository's dominant gate defect is proving two functions
+# agree while the value that reaches the runtime comes from a third place, and
+# a matrix built on a re-implementation would be exactly that defect wearing
+# the uniform of its own cure.
+#
+# ## Why the sentinels must differ
+#
+# Every arm of a setting sets a DIFFERENT value. If two arms shared one, the
+# cell could not say which layer won — it would compare a constant to itself
+# and report `ok`. `set_env` / `set_toml` / `set_builder` are checked pairwise
+# distinct before anything is built, and a collision is a hard failure with
+# that sentence in the message.
+#
+# ## `builder_reaches_runtime`
+#
+# The declared answer to "does this builder's value reach the runtime, or is
+# the builder ignored?", VERIFIED against the builder-only cell on every run.
+# `live.ttl` declares `false` and that is not an oversight — it is §1.8's dead
+# `Live.withTtl`, recorded as a measured fact rather than an assertion in
+# prose. Flipping a declaration the observation contradicts is a failure in
+# either direction: claiming a live builder is dead hides a regression just as
+# well as the reverse.
+#
+# ## Buckets
+#
+# Every `sky.toml` key the compiler accepts and every env suffix it seeds —
+# the census `docs/coverage/config-surface.json` maintains — must appear in
+# exactly one of `[[setting]]`, `[[deferred]]` or `[[unobservable]]`. A census
+# entry in none of them fails the gate, so the matrix cannot silently stop
+# covering a setting, and a NEW setting cannot be added without someone
+# writing down which bucket it is in and why.
+
+# ---------------------------------------------------------------------------
+# Harness constants — held fixed across every cell, and declared because a
+# value the harness pins is a value the matrix is NOT measuring.
+# ---------------------------------------------------------------------------
+
+[[harness_constant]]
+env    = "LIVE_STORE"
+value  = "sqlite"
+reason = "`live.storePath` is only printed by a store that HAS a path — `selectStore` (live_store.go:1828) renders the memory store as `memory (ttl=…)` with no `@ path`. Pinning the kind is what lets the path axis vary alone. It also pins the store OUT of the matrix; see the `live.store` entry under [[deferred]]."
+
+# ---------------------------------------------------------------------------
+# Covered settings
+# ---------------------------------------------------------------------------
+
+[[setting]]
+id            = "live.port"
+census        = ["live.port"]
+toml_section  = "live"
+toml_key      = "port"
+env_suffix    = "LIVE_PORT"
+builder       = "Live.withPort"
+builder_kind  = "int"
+probe         = "listening"
+expect_unset  = "8000"
+set_env       = "19811"
+set_toml      = "19812"
+set_builder   = "19813"
+builder_reaches_runtime = true
+note = "The FIXED counterpart to live.ttl. `resolveLivePort` (live.go:3849-3874) uses `isSeededDefault` to tell an operator's env from the one the prologue seeded, so the builder can win against a seeded default. That fix is why this row reads `true` and live.ttl's reads `false`, and having both in one table is how the difference stays legible."
+
+[[setting]]
+id            = "live.ttl"
+census        = ["live.ttl", "LIVE_TTL"]
+toml_section  = "live"
+toml_key      = "ttl"
+env_suffix    = "LIVE_TTL"
+builder       = "Live.withTtl"
+builder_kind  = "string"
+probe         = "store_banner"
+probe_key     = "sqlite"
+field_after   = "ttl="
+field_until   = ",)"
+expect_unset  = "30m0s"
+set_env       = "37m"
+set_toml      = "38m"
+set_builder   = "41m"
+builder_reaches_runtime = true
+note = "THE case, CLOSED in stage 3. It read `false` because `lower.rs:822` emits `rt.SetSkyDefault(\"LIVE_TTL\", \"1800\")` unconditionally into every program, `SetSkyDefault` is set-if-unset, and `parseTTL` took the first parseable of [env, toml] — so the builder's value in argument two was unreachable. The fix consults provenance that ALREADY EXISTED: `SetEnvDefault` has recorded what it seeded since the `withPort` fix (dotenv.go:57-66), so a prologue-seeded value is distinguishable from an operator's and now loses to a builder while still beating nothing at all. `lower.rs:822` is UNCHANGED and the emitted prologue byte-identical, so this cell moved without spending a `repro` or `golden` baseline. Two cells moved; both are listed below."
+
+[[setting]]
+id            = "live.storePath"
+census        = ["live.storePath", "LIVE_STORE_PATH"]
+toml_section  = "live"
+toml_key      = "storePath"
+env_suffix    = "LIVE_STORE_PATH"
+builder       = "Live.withStorePath"
+builder_kind  = "string"
+probe         = "store_banner"
+probe_key     = "sqlite"
+field_after   = "@ "
+field_until   = " "
+expect_unset  = "sky_sessions.db"
+set_env       = "cfgmx_env.db"
+set_toml      = "cfgmx_toml.db"
+set_builder   = "cfgmx_builder.db"
+builder_reaches_runtime = true
+note = "Carried `selectStore`'s `if x == \"\" { x = skyGetenv(…) }` shape — config first, env only when the field is empty, the OPPOSITE order to live.ttl one module away. Stage 3 removed that branch entirely: `selectStore` now takes already-resolved values and has no opinion about layers, so an operator's `SKY_LIVE_STORE_PATH` is no longer silently ignored by an app that called `withStorePath`. Two cells moved and are listed below. It remains the stand-in for `live.store` (see [[deferred]]), whose identical branch moved with it and which no cell can observe — `TestStoreKind_OperatorEnvBeatsBuilder` in runtime-go is that one's only gate."
+
+[[setting]]
+id            = "live.idleEvict"
+census        = []
+env_suffix    = "LIVE_IDLE_EVICT"
+builder       = "Live.withIdleEvict"
+builder_kind  = "string"
+probe         = "store_banner"
+probe_key     = "sqlite"
+field_after   = "idleEvict="
+field_until   = ",)"
+expect_unset  = "5m0s"
+set_env       = "6m"
+set_builder   = "11m"
+builder_reaches_runtime = true
+note = "In NEITHER census list — no `sky.toml` key accepts it and the prologue seeds no suffix for it, so it is env-and-builder only and `config-surface` cannot see it at all. It is in the matrix because §1.8 names it alongside `withTtl` as sharing `parseTTL`'s env-first order, and it is the control that shows the order is not the cause: same helper, live builder, because nothing seeds `LIVE_IDLE_EVICT`."
+
+# ---------------------------------------------------------------------------
+# The `[env] prefix` check — two cells, run against their own fixture.
+#
+# `[env] prefix` is R4: it shapes the NAMES of every other setting here, so a
+# stage-3 mistake in it would invalidate every cell above while each of them
+# still passed. The check is deliberately not a [[setting]] — its arms are not
+# values but namespaces, so it does not fit the cell model.
+# ---------------------------------------------------------------------------
+
+[[prefix_check]]
+prefix        = "CFGMX_"
+census        = ["env.prefix"]
+probe         = "listening"
+wrong_env     = "SKY_LIVE_PORT"
+wrong_value   = "19821"
+right_env     = "CFGMX_LIVE_PORT"
+right_value   = "19822"
+expect_wrong  = "8000"
+expect_right  = "19822"
+note = "Under `prefix = \"CFGMX_\"` the default-namespace name must be INERT (the app falls to its 8000 default) and the prefixed one must win. Both halves matter: a prefix that renamed nothing would pass a test that only checked the prefixed name works."
+
+# ---------------------------------------------------------------------------
+# Deferred — observable in principle, no cells yet.
+#
+# `deferred_settings` in the JSON summary is RATCHETED: it may fall, never
+# rise. Adding a setting to this bucket instead of covering it is therefore a
+# decision someone has to authorise, not a default.
+# ---------------------------------------------------------------------------
+
+[[deferred]]
+ids    = ["live.store", "LIVE_STORE"]
+reason = "Three pairwise-distinct arm values are required for a cell to tell which layer won, and only `memory` and `sqlite` can be selected without a live server: `postgres` and `redis` reach `storeFatalf` (live_store.go:1705) and the app never starts. Two safe values cannot fill three arms. `live.storePath` carries the same `selectStore` config-first branch and IS covered; what stays unmeasured is the `kind` branch specifically. Closing it needs the Postgres-gated fixture in the row below."
+needs  = "a `live_gate::required(Need::Postgres, …)` fixture"
+
+[[deferred]]
+ids    = ["database.path", "database.url", "database.driver", "database.embedded", "database.isolation", "database.txRetry", "database.maxOpenConns", "database.maxIdleConns", "database.connMaxLifetime", "database.connMaxIdleTime", "DB_PATH", "DB_ISOLATION", "DB_TX_RETRY", "DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME", "DB_CONN_MAX_IDLE_TIME"]
+reason = "The effective value of a pool or isolation setting is only observable from a connected database — the fixture would have to open one and report what it opened. The Sky.Live fixture here deliberately has no `Std.Db` dependency, because a database that fails to start would turn every unrelated cell red. `database.maxOpenConns` additionally has a PRE-BINARY reader (`resolve_max_open_conns`, db_pool_sizing.rs:143, on `sky db start`); see the note on pre-binary coverage in the module doc of `config_matrix.rs`."
+needs  = "a Postgres-gated Std.Db fixture that reports its applied pool settings"
+
+[[deferred]]
+ids    = ["log.level", "log.format", "LOG_LEVEL", "LOG_FORMAT"]
+reason = "Observable — they change the shape of a `Std.Log` line — but the fixture logs nothing, and making it log adds a second probe whose parsing is coupled to the log format under test. Worth doing; not needed to protect the settings stage 3 moves first. Note these are §4.3.1's `look like R5 and are not`: captured at package init (rt.go:1205-1207) and REPAIRED by a hook, so they can move."
+needs  = "a fixture that emits one `Std.Log` line per level"
+
+[[deferred]]
+ids    = ["security.csrf", "CSRF"]
+reason = "Observable as the presence and attributes of the CSRF cookie on an HTTP response, which needs an HTTP probe rather than a startup line. `csrf_middleware.go:110` registers the env-prefix repair hook that makes it movable, and `csrf_middleware.go:82` reads `LIVE_TTL` with a 30-DAY default against live.go's 30 minutes — the §1.7 collision. That second fact is why this row is a priority once the HTTP probe exists."
+needs  = "an HTTP probe of the fixture's cookie jar"
+
+[[deferred]]
+ids    = ["live.static", "live.input", "live.maxBodyBytes", "LIVE_STATIC_DIR", "LIVE_INPUT_MODE", "LIVE_MAX_BODY_BYTES"]
+reason = "Each is observable only through request behaviour — what a static path serves, how an input event is dispatched, what body size is refused — so all three need the same HTTP probe as `security.csrf` and land with it."
+needs  = "an HTTP probe of the fixture's request path"
+
+[[deferred]]
+ids    = ["jobs.store", "jobs.storePath", "jobs.store_path", "JOBS_STORE", "JOBS_STORE_PATH"]
+reason = "Needs a `Std.Jobs` fixture. `jobsBoot` (jobs_kernel.go:86) is lazy and guarded, so nothing is applied until `enqueue`/`define` runs — the fixture must actually enqueue to make the setting take effect, and a fixture that only imports the module would observe the default and call it covered. Note `jobs.store_path` and `jobs.storePath` are BOTH accepted, which is a spelling the matrix should pin once it covers them."
+needs  = "a Std.Jobs fixture that enqueues one job"
+
+[[deferred]]
+ids    = ["analytics.dbPath", "analytics.retention", "ANALYTICS_DB_PATH", "ANALYTICS_RETENTION"]
+reason = "Observable as the path of the analytics database the runtime opens and the retention it applies, which requires the fixture to emit an event; without one the subsystem never opens anything."
+needs  = "a fixture that emits one analytics event"
+
+[[deferred]]
+ids    = ["database.postgresVersion"]
+reason = "Pre-binary and compile-affecting (R2): it pins which bundle `sky db provision --embed` resolves. Its effective value is observable as the resolved bundle, and no `postgres-bundle-v*` tag has been cut — the resolver 404s — so there is nothing to observe today. Covering it means a local-bundle fixture."
+needs  = "a published postgres bundle, or a local-bundle fixture"
+
+# ---------------------------------------------------------------------------
+# Unobservable — there is no effective value to compare.
+# ---------------------------------------------------------------------------
+
+[[unobservable]]
+ids    = ["auth.cookieName", "auth.driver", "auth.tokenTtl", "AUTH_COOKIE", "AUTH_DRIVER", "AUTH_TOKEN_TTL"]
+reason = "NOTHING READS THEM. `lower.rs:823-825` seeds all three into every program's prologue and `config-surface` counts them as `seeded_without_reader = 3` — §1.11's write-only `[auth]` block, parsed, validated, emitted and ignored for four minor versions. A cell cannot compare an effective value where no consumer produces one, and inventing an observation would manufacture the appearance of coverage over a setting that does nothing. When stage 3 gives them a reader they move to [[setting]] and this bucket shrinks."
+
+# ---------------------------------------------------------------------------
+# Listed differences — the ONLY way an observed value may change.
+#
+# The parser requires all five fields on every stanza, so an empty stanza
+# cannot buy a free change.
+#
+#   [[moved]]   — same five fields; for a setting that changed LAYER rather
+#                 than value, where the observed value must NOT move. None
+#                 yet: stage 3 changed which layer WINS, not which layer a
+#                 setting is read from, so every difference below is a
+#                 [[default-changed]].
+#
+# ## Stage 3 — one rule for four settings
+#
+# The rule adopted, and it is one sentence:
+#
+#     operator env > withX builder > seeded default (sky.toml / compiler)
+#                  > hardcoded fallback
+#
+# It is not new. It is `resolveLivePort`'s order — the only one of the four
+# that was right — and it is written down twice already as the INTENT of a
+# mechanism that had a single consumer: verbatim at dotenv.go:41 ("the real
+# three-way precedence - operator env > explicit builder call > seeded
+# default"), and in the design at §4.2/§1.10, where a `.env` value counts as
+# operator-set and a `sky.toml` value does not. Adopting it also makes two
+# docstrings TRUE that were already claiming env wins (Std/Live.sky:167-168
+# and live.go's own store comment) rather than requiring them to be rewritten.
+#
+# Four cells moved. Two are §7.3's stated class — a builder that was silently
+# ignored starts working. Two are the SAME defect seen from the operator's
+# side, and are called out individually below because they are NOT the
+# smallest-blast-radius case §7.3 describes.
+# ---------------------------------------------------------------------------
+
+[[default-changed]]
+cell   = "live.ttl.builder_reaches_runtime"
+from   = "false"
+to     = "true"
+reason = "The verdict stage 2 recorded so that stage 3 would have to flip it deliberately. `Live.withTtl` now reaches the runtime: a binary whose only layer is `Live.withTtl \"41m\"` observes 41m0s where it observed 30m0s. Listed as a verdict in its own right and not merely implied by the two cell rows below, because the verdict is checked in BOTH directions on every run — claiming a live builder is dead hides a regression exactly as well as claiming a dead one is live, and an implied flip would be neither claim."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "live.ttl/builder"
+from   = "30m0s"
+to     = "41m0s"
+reason = "`Live.withTtl` was dead and now takes effect. This is §7.3's motivating case exactly: `lower.rs:822` seeds LIVE_TTL into every program unconditionally and `parseTTL` read env first, so no input could make the builder win. The DEFAULT is unchanged — an app that never calls `withTtl` still observes 30m0s (the `unset` cell is untouched) — so behaviour changes only for an app that called a builder that was being ignored, which is the smallest blast radius available. Note what did NOT have to change to achieve it: the compiler still emits the same prologue, byte for byte."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "live.ttl/toml+builder"
+from   = "38m0s"
+to     = "41m0s"
+reason = "The same fix seen against a sky.toml default rather than the compiler's. `[live] ttl = \"38m\"` is seeded through the identical `SetSkyDefault` path, so it was indistinguishable from the hardcoded 1800 and beat the builder for the same reason. Code the developer wrote in their own `main` now outranks a default in the manifest, which is the layer order the design states at §4.2 — the config value supplies the layer sky.toml used to supply, and sits beneath only the operator's environment."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "console_subapp_store/toml/noenv"
+from   = "memory (ttl=38m0s)"
+to     = "memory (ttl=30m0s)"
+reason = "The inline console sub-app sets `\"Ttl\": \"30m\"` in its own config (console_app/register_v3.go:109), and a host `[live] ttl = \"38m\"` used to override it — the console's explicit value lost to the host's seeded default exactly the way `withTtl` lost, one layer deeper. It now keeps its own 30m. This is §7.3's class again (a config value that was being silently ignored starts working), and an OPERATOR's env still overrides the console: the `/env` rows are unchanged at 37m0s. Found only because stage 3 also made this table compared rather than merely recorded — stage 2 wrote it for information, so these two cells moved with nothing going red."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "console_subapp_store/toml_builder/noenv"
+from   = "memory (ttl=38m0s)"
+to     = "memory (ttl=30m0s)"
+reason = "The same change as the row above, in the fixture arm that also calls the host's `Live.withTtl`. The host's builder is irrelevant to the console — a sub-app does not inherit the host's config map, only its environment — so this cell moves for the single reason the other one does, and is listed separately because the gate compares cells rather than causes."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "live.storePath/env+builder"
+from   = "cfgmx_builder.db"
+to     = "cfgmx_env.db"
+reason = "THE ONE TO ARGUE WITH. This is not §7.3's 'a builder that was silently ignored starts working' — here a builder that WAS winning stops winning, so an app that sets both a shell env var and `withStorePath` changes behaviour. It is listed rather than waved through because it is the same defect from the operator's side: `SKY_LIVE_STORE_PATH` was silently ignored by any app that called the builder, so an operator could not repoint a session store at a mounted volume without a recompile. Leaving it would also have meant abandoning the stage's purpose — `storePath` inverted `ttl` exactly, and fixing one while preserving the other keeps the divergence that caused all of this. Both the Sky docstring (Std/Live.sky:167-168) and live.go's own comment already claimed env wins."
+commit = "935c68e1"
+
+[[default-changed]]
+cell   = "live.storePath/env+toml+builder"
+from   = "cfgmx_builder.db"
+to     = "cfgmx_env.db"
+reason = "The three-layer form of the row above, and it moves for the same reason and only that reason: the operator's environment now outranks the builder. The toml arm is inert in this cell either way — it was already losing to both — so this cell is not independent evidence, and is listed separately only because the gate compares cells rather than settings and an unlisted cell is the failure the whole sequence exists to prevent."
+commit = "935c68e1"

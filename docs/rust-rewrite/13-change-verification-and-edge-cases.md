@@ -134,6 +134,32 @@ Run in order; do not claim "verified" until all pass.
 FFI examples (requires `sky install` in CI), step 3 is done by hand /
 script and is non-optional.
 
+### 2a. Do not verify by tailing
+
+`cargo test -p sky -p project 2>&1 | tail -40` is not a verification. Cargo
+prints one summary block per test binary, so the tail shows the LAST few
+binaries and nothing else — a crate whose unit tests live in the first binary
+is invisible. An embedded-PostgreSQL grill round found this concretely: the
+~70 `db_cluster.rs` unit tests are in `-p sky`'s first binary, and every
+verdict reached by tailing had verified almost none of them while reporting
+green.
+
+The same trap applies to `go test ./rt/... | tail -N`, to `-p` runs whose
+crate list you did not choose deliberately, and to any `| tail` on a command
+that emits more than one PASS/FAIL summary.
+
+Read the whole output, or ask for a machine-checkable verdict instead:
+
+```bash
+# the exit status is the verdict — no scrolling, no tail
+cargo test -p sky -p project >/tmp/t.log 2>&1; echo "exit=$?"
+grep -c '^test result:' /tmp/t.log      # how many binaries actually reported
+grep '^test result:' /tmp/t.log         # and what each of them said
+```
+
+If the count of `test result:` lines is smaller than the number of test
+binaries the crates own, the run did not cover what you think it did.
+
 ## 3. The sweep/kitchen-sink app (the durable test surface)
 
 The most reliable guard is a single real app that combines the hard

@@ -1,0 +1,13 @@
+{
+  "label": "under-50-sessions",
+  "url": "http://127.0.0.1:8477",
+  "samples_requested": 15,
+  "samples_observed": 15,
+  "timeouts": 0,
+  "p50_ms": 23.9,
+  "p95_ms": 31.5,
+  "p99_ms": 31.5,
+  "max_ms": 41.8,
+  "page_errors": [],
+  "valid": true
+}

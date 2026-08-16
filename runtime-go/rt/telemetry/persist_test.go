@@ -17,6 +17,9 @@ import (
 // is the load-bearing test that the dual-write actually lands
 // in console.db.
 func TestPersistence_DualWriteRoundTrip(t *testing.T) {
+	// The flusher's timer is pinned out of reach: these rows must be committed
+	// by FlushPersistence, not by a tick the test raced and usually won.
+	pinFlushInterval(t, time.Hour)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "console.db")
 
@@ -89,6 +92,132 @@ func TestPersistence_DualWriteRoundTrip(t *testing.T) {
 	}
 }
 
+// pinFlushInterval makes the flusher's timer irrelevant for the duration of a
+// test. Any test that passes with the interval pinned to an hour is asserting
+// synchronisation; a test that needs the timer to fire is asserting that it
+// won a race, which is the defect this pin exists to catch.
+func pinFlushInterval(t *testing.T, d time.Duration) {
+	t.Helper()
+	persistFlushIntervalOverride.Store(int64(d))
+	t.Cleanup(func() { persistFlushIntervalOverride.Store(0) })
+}
+
+// FlushPersistence must be a synchronisation, not a race with a handicap.
+//
+// This is the regression gate for the CI failure that motivated the flushReq
+// rendezvous. The old helper polled for an empty queue and then slept 250 ms,
+// which happened to out-wait the flusher's 200 ms tick on an idle machine and
+// did not on a loaded runner — 86 of 100 rows, two committed batches and a
+// 44-entry remainder still in the flusher's local slice.
+//
+// Pinning the interval to an hour removes the timer from the picture entirely.
+// Every row must still be present, because FlushPersistence commits them
+// itself. Against the poll-and-sleep helper this test fails 100% of the time
+// rather than intermittently, which is the whole point: the bug becomes
+// reproducible on the developer's machine instead of only on CI's.
+func TestPersistence_FlushIsSynchronisedNotTimed(t *testing.T) {
+	pinFlushInterval(t, time.Hour)
+
+	dbPath := filepath.Join(t.TempDir(), "sync.db")
+	s := NewStore()
+	if err := s.EnablePersistence(dbPath); err != nil {
+		t.Fatalf("EnablePersistence: %v", err)
+	}
+	defer s.ClosePersistence()
+
+	// 10 entries — deliberately fewer than persistBatchSize, so NOTHING is
+	// flushed by the size trigger and the assertion rests entirely on
+	// FlushPersistence. A count above the batch size would pass even with a
+	// broken flush, on the batches the size cap happened to commit.
+	const n = 10
+	for i := 0; i < n; i++ {
+		s.AppendLog(LogEntry{Level: "info", Message: "sync"})
+	}
+	if n >= persistBatchSize {
+		t.Fatalf("test is vacuous: %d entries reaches the %d size trigger, "+
+			"which would flush without FlushPersistence", n, persistBatchSize)
+	}
+	s.FlushPersistence()
+
+	rdb, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("re-open DB: %v", err)
+	}
+	defer rdb.Close()
+	var got int
+	if err := rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log`).Scan(&got); err != nil {
+		t.Fatalf("count logs: %v", err)
+	}
+	if got != n {
+		t.Errorf("expected %d log rows committed by FlushPersistence, got %d "+
+			"(the flush returned before the writer committed)", n, got)
+	}
+}
+
+// The deploy-safety gate: shutdown alone must commit the queue.
+//
+// No FlushPersistence here on purpose, and the interval is pinned to an hour so
+// the ticker cannot do the work. If ClosePersistence merely signalled the
+// flusher and returned, this would report a fraction of the rows — and
+// "telemetry is flushed on shutdown" would be false on every deploy, losing
+// exactly the window an operator reads when a deploy goes wrong.
+func TestPersistence_ShutdownCommitsTheQueue(t *testing.T) {
+	pinFlushInterval(t, time.Hour)
+
+	dbPath := filepath.Join(t.TempDir(), "shutdown.db")
+	s := NewStore()
+	if err := s.EnablePersistence(dbPath); err != nil {
+		t.Fatalf("EnablePersistence: %v", err)
+	}
+
+	const n = 200 // spans the size trigger, so a partial batch is left pending
+	for i := 0; i < n; i++ {
+		s.AppendLog(LogEntry{Level: "info", Message: "bye"})
+	}
+
+	s.ClosePersistence()
+
+	rdb, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("re-open DB: %v", err)
+	}
+	defer rdb.Close()
+	var got int
+	if err := rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log`).Scan(&got); err != nil {
+		t.Fatalf("count logs: %v", err)
+	}
+	if got != n {
+		t.Errorf("expected shutdown to commit all %d queued log rows, got %d", n, got)
+	}
+}
+
+// FlushPersistence must not hang when the writer is already stopped, and must
+// stay safe to call on a store that never enabled persistence.
+func TestPersistence_FlushAfterCloseIsSafe(t *testing.T) {
+	pinFlushInterval(t, time.Hour)
+
+	s := NewStore()
+	s.FlushPersistence() // never enabled — a no-op, not a nil deref
+
+	dbPath := filepath.Join(t.TempDir(), "after-close.db")
+	if err := s.EnablePersistence(dbPath); err != nil {
+		t.Fatalf("EnablePersistence: %v", err)
+	}
+	s.AppendLog(LogEntry{Level: "info", Message: "x"})
+	s.ClosePersistence()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.FlushPersistence()
+	}()
+	select {
+	case <-done:
+	case <-time.After(persistFlushWait + 2*time.Second):
+		t.Fatal("FlushPersistence hung after ClosePersistence")
+	}
+}
+
 // When persistence is NOT enabled, the in-RAM behaviour is unchanged.
 // Mostly belt-and-braces — the regression we want to catch is the
 // dual-write hook accidentally panicking on a nil persist field.
@@ -110,6 +239,7 @@ func TestPersistence_DisabledIsInRamOnly(t *testing.T) {
 // EnablePersistenceFromEnv reads SKY_CONSOLE_DB_PATH and enables
 // the writer when set.  Tests that the env-var indirection works.
 func TestPersistence_EnableFromEnv(t *testing.T) {
+	pinFlushInterval(t, time.Hour)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "from-env.db")
 	t.Setenv(persistEnvVar, dbPath)
@@ -173,6 +303,7 @@ func TestPersistence_EnableIsIdempotent(t *testing.T) {
 // wait the real hour — drive `runPrune` directly with a back-dated
 // row inserted into the test DB.
 func TestPersistence_PrunerDropsOldRows(t *testing.T) {
+	pinFlushInterval(t, time.Hour)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "prune.db")
 	s := NewStore()

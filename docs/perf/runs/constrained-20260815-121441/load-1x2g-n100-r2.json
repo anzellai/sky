@@ -1,0 +1,26 @@
+{
+  "label": "container:--cpus 1 --memory 2g",
+  "url": "http://127.0.0.1:8500",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "20s",
+  "think_time": "1s",
+  "interactions_counted": 1950,
+  "interactions_per_sec": 91.79749756844022,
+  "p50_ms": 17.847,
+  "p95_ms": 94.637,
+  "p99_ms": 163.266,
+  "max_ms": 285.765,
+  "outcomes": {
+    "ok": 1950
+  },
+  "error_rate": 0,
+  "sse_frames_total": 300,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 0.3771712027978371,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-15T11:15:21Z"
+}

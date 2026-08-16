@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"sky-app/rt/dbshare"
 )
 
 // The Sky.Live sqlite session store must open with the same concurrency
@@ -45,5 +47,53 @@ func TestSqliteStoreOpensUnderConcurrentHandle(t *testing.T) {
 	s1.Set("sid-1", sess)
 	if _, ok := s1.Get("sid-1"); !ok {
 		t.Error("session written via the hardened sqlite store was not read back")
+	}
+}
+
+// The Postgres session store needs the same assertion, and did not have it.
+//
+// `TestDbAuxPoolIsASmallShareOfTheAppPool` checks the arithmetic of
+// `dbAuxPoolConfig` and stops there: it never asks whether the number reaches a
+// pool. Deleting the `applyTo` call from the store's open path therefore left
+// the whole suite green while `MaxOpenConns` went back to Go's zero value,
+// which means UNLIMITED — on what live_store.go's own comment calls the
+// HOTTEST pool in a Sky.Live app. A spike then opens one backend per concurrent
+// request until `FATAL: sorry, too many clients already`, and because every
+// request begins with a session lookup, that fails EVERY request rather than
+// the excess ones.
+//
+// No server is needed: `sql.Open` does not dial, and the pool config is
+// readable from Stats() straight away.
+func TestPostgresSessionPoolHasACeiling(t *testing.T) {
+	// Via the connection-demand table rather than `dbSharedAuxPoolConfig()`:
+	// the acquire site evaluates that expression, so comparing the pool with it
+	// asserts an identity. The demand table is the number the cluster's
+	// max_connections is derived from, and it is pinned by a fixture the Rust
+	// sizing reproduces independently.
+	want, ok := dbAuxPoolConsumerMaxOpen("live-sessions")
+	if !ok {
+		t.Fatal(`"live-sessions" is not in dbAuxPoolConsumers — the session store's pool is ` +
+			`not counted in the connection demand any cluster is sized from`)
+	}
+	if want <= 0 {
+		t.Fatalf("the demand table attributes %d connections to the session store — this "+
+			"gate would assert 'unlimited == unlimited' and prove nothing", want)
+	}
+	dbshare.ResetForTesting()
+	t.Cleanup(dbshare.ResetForTesting)
+
+	// Port 1 is deliberately dead; nothing here connects.
+	h, err := openPostgresSessionPool("postgres://sky:sky@127.0.0.1:1/sky?sslmode=disable")
+	if err != nil {
+		t.Fatalf("openPostgresSessionPool: %v", err)
+	}
+	defer h.Close()
+	db := h.DB()
+
+	if got := db.Stats().MaxOpenConnections; got != want {
+		t.Errorf("the Sky.Live postgres session pool has MaxOpenConnections = %d, want %d.\n"+
+			"0 means UNLIMITED: a traffic spike opens one backend per concurrent request "+
+			"until the server answers `FATAL: sorry, too many clients already`, which fails "+
+			"the session lookup on EVERY request.", got, want)
 	}
 }

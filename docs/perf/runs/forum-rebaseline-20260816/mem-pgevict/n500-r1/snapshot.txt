@@ -1,0 +1,6 @@
+established_conns_incl_header 2001
+rss_kb 331264
+rss_kb_under_load_nogc 331264
+rss_kb_under_load_after_gc 331264
+generator_rc 0
+rss_kb_after_settle 331920

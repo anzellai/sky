@@ -28,6 +28,7 @@ package rt
 //                     verification + dashboards.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -71,6 +72,24 @@ func init() {
 			Fields:  map[string]string{"error": err.Error()},
 		})
 	}
+	// Drain the telemetry queue on shutdown.
+	//
+	// `ClosePersistence` has always done the right thing — stop the flusher,
+	// let it drain, close the handle — and it documented itself as "test-only;
+	// production code lets the goroutines run for the process lifetime". The
+	// consequence was that in production, whatever sat in the 1024-deep queue
+	// at SIGTERM was dropped: the last fraction of a second of logs, metrics
+	// and spans before every deploy, which is exactly the window an operator
+	// looks at when a deploy goes wrong. A correct flush that nothing calls is
+	// not a flush. This is the same wiring the analytics writer gets, and under
+	// `--embed` it likewise runs before PostgreSQL is stopped.
+	//
+	// The hook's context is PASSED THROUGH rather than discarded, so a drain
+	// that outruns the shutdown budget says so in the log instead of dropping
+	// the tail of the queue in silence.
+	RegisterShutdownHook("telemetry-persistence", func(ctx context.Context) {
+		telemetry.Default().ClosePersistenceContext(ctx)
+	})
 }
 
 // RegisterReadinessProbe adds a health check to the readyz endpoint.
@@ -206,7 +225,11 @@ func HandleMetrics(w http.ResponseWriter, r *http.Request) {
 	if isProductionMode() && !hasAdminAuth(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="sky-metrics"`)
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"unauthorized","hint":"set [security] env or sign in with admin role"}`))
+		// The hint must name something that WORKS. It used to say "set
+		// [security] env", a sky.toml key no version of the compiler has
+		// ever parsed — telling an operator already locked out of their
+		// own metrics endpoint to do a thing that could not help.
+		w.Write([]byte(`{"status":"unauthorized","hint":"set SKY_ADMIN_TOKEN and send it as 'Authorization: Bearer <token>', or set ENV=dev to open metrics locally"}`))
 		return
 	}
 	w.Header().Set("Content-Type", telemetry.ContentType)
@@ -234,10 +257,14 @@ func HandleBuildInfo(w http.ResponseWriter, r *http.Request) {
 // to skip when conflicts exist.
 func MountObservabilityEndpoints(mux *http.ServeMux) {
 	if skyGetenv("OBSERVABILITY_DISABLED") == "1" {
-		// Explicit opt-out — used by tests that want to test the
-		// non-observability path. Production users opt out via
-		// sky.toml [observability] enabled = false, surfaced by
-		// the compiler as the same env var.
+		// Explicit opt-out. Set <PREFIX>_OBSERVABILITY_DISABLED=1 on
+		// the deployment.
+		//
+		// This used to claim production users opt out via sky.toml
+		// `[observability] enabled = false`, "surfaced by the compiler
+		// as the same env var". There is no `[observability]` section
+		// and the compiler surfaces nothing — the env var is the only
+		// way, and now the only thing documented here.
 		return
 	}
 	safeMount(mux, "/_sky/healthz", HandleHealthz)
@@ -273,9 +300,15 @@ func safeMount(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
 
 // productionMode is set by the runtime at startup based on:
 //
-//   - sky.toml `[security] env = "production"` (explicit, wins)
+//   - the `ENV` environment variable, or the namespaced
+//     `<PREFIX>_ENV` (`SKY_ENV` by default) — see productionFromEnv
 //   - OR the binary binding to 0.0.0.0 (rough heuristic — containers
 //     and cloud VMs invariably bind 0.0.0.0; local dev binds localhost)
+//
+// NOT sky.toml `[security] env = "production"`, which this comment
+// used to name as the explicit winner. No version of the compiler has
+// parsed that key; which environment a binary runs in is a property of
+// the deployment, not of the build.
 //
 // Both paths set this atomic via SetProductionMode(). Endpoint
 // handlers consult it to gate metrics auth.
@@ -312,9 +345,14 @@ func isProductionMode() bool {
 // the common case, and the previous addr-based heuristic broke
 // every Docker / reverse-proxy / sidecar pattern.
 func productionFromEnv() bool {
-	// Plain `ENV` first (the var users actually type), then
-	// `SKY_ENV` fallback (the namespaced variant the compiler
-	// emits from `sky.toml [security] env = ...`).
+	// Plain `ENV` first (the var users actually type), then the
+	// namespaced `<PREFIX>_ENV` fallback — `SKY_ENV` by default, or
+	// `FENCE_ENV` when sky.toml declares `[env] prefix = "FENCE"`.
+	//
+	// The fallback MUST route through skyGetenv rather than reading a
+	// hardcoded "SKY_ENV": a custom-prefix project sets FENCE_ENV, and
+	// hardcoding the default prefix meant such a project could not turn
+	// the production gate on through its own namespace at all.
 	envFlag := strings.ToLower(os.Getenv("ENV"))
 	if envFlag == "" {
 		envFlag = strings.ToLower(skyGetenv("ENV"))
@@ -328,7 +366,6 @@ func productionFromEnv() bool {
 	}
 	return true
 }
-
 
 // hasAdminAuth checks for a valid Std.Auth admin session on the
 // request. v1.0 implementation: looks for a session cookie holding

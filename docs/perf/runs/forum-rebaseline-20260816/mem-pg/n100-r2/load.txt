@@ -1,0 +1,18 @@
+establishing 100 sessions over 20s...
+100 sessions live; measuring for 1m30s (warmup 5s)
+
+=== Sky.Live load run ===
+label                mem-pg-n100-r2
+url                  http://127.0.0.1:8531
+sessions             100 requested, 100 established
+think time           1s
+interactions         8956
+throughput           98.2 interactions/sec
+latency p50/p95/p99  3.94 / 6.61 / 8.80 ms  (max 25.30)
+error rate           0.000%
+outcomes             map[ok:8956]
+handler              r.1#div.1#div.0#div.1#div.0#button.click (2 setup steps/session)
+patches              17912 total, 2.00 per interaction, 100.0% of interactions bore one
+SSE frames received  1056 (across 100 sessions; 100 streams still open at end)
+generator CPU        0.3% of machine
+valid                true

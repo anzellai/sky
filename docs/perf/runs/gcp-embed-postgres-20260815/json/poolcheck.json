@@ -1,0 +1,26 @@
+{
+  "label": "poolcheck",
+  "url": "http://34.59.219.179:8000",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "45s",
+  "think_time": "1s",
+  "interactions_counted": 1096,
+  "interactions_per_sec": 23.398359248399892,
+  "p50_ms": 1961.608,
+  "p95_ms": 10452.391,
+  "p99_ms": 10734.998,
+  "max_ms": 10994.382,
+  "outcomes": {
+    "ok": 1096
+  },
+  "error_rate": 0,
+  "sse_frames_total": 532,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 0.19161729780382702,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-15T16:28:38Z"
+}

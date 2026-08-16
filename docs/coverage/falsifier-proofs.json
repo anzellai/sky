@@ -72,6 +72,18 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786370152
     },
+    "config-matrix": {
+      "mutation": "config-matrix.claim-a-dead-builder-is-alive",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786897914
+    },
+    "config-surface": {
+      "mutation": "config-surface.seed-a-suffix-nothing-reads",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786894818
+    },
     "conformance": {
       "mutation": "conformance.break-expectation",
       "observed": "PROVEN",

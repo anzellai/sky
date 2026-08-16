@@ -1,0 +1,235 @@
+// control — a minimal Go SSE server that speaks just enough of the Sky.Live
+// wire protocol for tools/skyliveload to drive it.
+//
+// PURPOSE. Sky.Live's ~11 ms per interaction and ~1.4 MB per session are
+// unanchored numbers until something establishes what a connection and an
+// interaction cost in Go with none of Sky.Live's machinery. This is that
+// floor. It is deliberately NOT a fair-featured comparison — it has no
+// virtual DOM, no diff, no reflective dispatch, no session store, no CSRF
+// verification beyond echoing the token. It answers exactly one question:
+// what does the transport plus a server-held per-session model cost?
+//
+// Any Sky.Live cost above this floor is Sky.Live's own, and the ratio is the
+// finding. Read it as a lower bound on what is achievable, not as a target.
+//
+// Protocol implemented (see tools/skyliveload/main.go):
+//
+//	GET  /               -> sets sky_sid + __sky_csrf cookies, returns HTML
+//	                        carrying a data-sky-hid attribute to scrape
+//	GET  /_sky/sse       -> text/event-stream, 2 KiB pad, `event: hello`,
+//	                        then held open with periodic heartbeats
+//	POST /_sky/event     -> {seq, patches:[{id,text}]}
+//
+// Same env-gated pprof probe as the app under test, so both are measured the
+// same way.
+package main
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// controlSession is the control's answer to liveSession. It holds a
+// per-session model — the thing that makes this a state-holding server rather
+// than a stateless echo — plus the SSE plumbing a held connection needs.
+type controlSession struct {
+	mu      sync.Mutex
+	sid     string
+	csrf    string
+	counter int64 // the "model"
+	seq     int64
+	sseCh   chan string
+	done    chan struct{}
+}
+
+var (
+	sessions   sync.Map // sid -> *controlSession
+	sessionCnt atomic.Int64
+)
+
+func tok() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// page is the served HTML. It carries ONE data-sky-hid so the generator has a
+// handler id to post, and is padded to roughly the byte size of the showcase
+// app's document so the transport cost of the initial GET is comparable.
+const hidAttr = `data-sky-hid="r.1#div.7#div.1#div.0#button.click"`
+
+func handleRoot(w http.ResponseWriter, r *http.Request) {
+	sid := tok()
+	csrf := tok()
+	s := &controlSession{
+		sid:   sid,
+		csrf:  csrf,
+		sseCh: make(chan string, 16),
+		done:  make(chan struct{}),
+	}
+	sessions.Store(sid, s)
+	sessionCnt.Add(1)
+
+	http.SetCookie(w, &http.Cookie{Name: "sky_sid", Value: sid, Path: "/"})
+	http.SetCookie(w, &http.Cookie{Name: "__sky_csrf", Value: csrf, Path: "/"})
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	var b strings.Builder
+	b.WriteString("<!doctype html><html><body><div id=\"root\">")
+	b.WriteString("<button " + hidAttr + " sky-id=\"r.1#div.7#div.1#div.0\">go</button>")
+	// Pad toward a realistic document size so the initial GET is not
+	// unrealistically cheap relative to the app under test.
+	for i := 0; i < 380; i++ {
+		fmt.Fprintf(&b, "<div sky-id=\"r.%d\" class=\"c%d\"><span>item %d</span></div>", i, i%7, i)
+	}
+	b.WriteString("</div></body></html>")
+	_, _ = w.Write([]byte(b.String()))
+}
+
+func sessionFor(r *http.Request) *controlSession {
+	c, err := r.Cookie("sky_sid")
+	if err != nil {
+		return nil
+	}
+	v, ok := sessions.Load(c.Value)
+	if !ok {
+		return nil
+	}
+	return v.(*controlSession)
+}
+
+func handleSSE(w http.ResponseWriter, r *http.Request) {
+	s := sessionFor(r)
+	if s == nil {
+		http.Error(w, "no session", http.StatusNotFound)
+		return
+	}
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "no flush", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(200)
+
+	// 2 KiB comment pad, then hello — same shape as the real server.
+	_, _ = w.Write([]byte(": " + strings.Repeat("p", 2048) + "\n\n"))
+	_, _ = w.Write([]byte("event: hello\ndata: {}\n\n"))
+	fl.Flush()
+
+	hb := time.NewTicker(15 * time.Second)
+	defer hb.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-s.done:
+			return
+		case frame := <-s.sseCh:
+			_, _ = w.Write([]byte(frame))
+			fl.Flush()
+		case <-hb.C:
+			_, _ = w.Write([]byte(": hb\n\n"))
+			fl.Flush()
+		}
+	}
+}
+
+func handleEvent(w http.ResponseWriter, r *http.Request) {
+	s := sessionFor(r)
+	if s == nil {
+		w.Header().Set("X-Sky-Status", "session-lost")
+		http.Error(w, "no session", http.StatusNotFound)
+		return
+	}
+	if got := r.Header.Get("X-Sky-Csrf"); got != "" && got != s.csrf {
+		http.Error(w, "csrf", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Seq int64 `json:"seq"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	// The "update": mutate the server-held model, produce one patch.
+	s.mu.Lock()
+	s.counter++
+	s.seq++
+	seq := s.seq
+	text := fmt.Sprintf("%d", s.counter)
+	s.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"seq": seq,
+		"patches": []map[string]any{
+			{"id": "r.1#div.7#div.1#div.0", "text": text},
+		},
+	})
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8541"
+	}
+	if addr := os.Getenv("SKY_PERF_PPROF_ADDR"); addr != "" {
+		if s := os.Getenv("SKY_PERF_MEMPROFILERATE"); s != "" {
+			var n int
+			_, _ = fmt.Sscanf(s, "%d", &n)
+			if n > 0 {
+				runtime.MemProfileRate = n
+			}
+		}
+		http.HandleFunc("/perf/memstats", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("gc") != "0" {
+				runtime.GC()
+			}
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"num_goroutine": runtime.NumGoroutine(),
+				"sessions":      sessionCnt.Load(),
+				"heap_alloc":    ms.HeapAlloc,
+				"heap_inuse":    ms.HeapInuse,
+				"heap_sys":      ms.HeapSys,
+				"heap_objects":  ms.HeapObjects,
+				"stack_inuse":   ms.StackInuse,
+				"stack_sys":     ms.StackSys,
+				"mspan_inuse":   ms.MSpanInuse,
+				"mcache_inuse":  ms.MCacheInuse,
+				"gc_sys":        ms.GCSys,
+				"other_sys":     ms.OtherSys,
+				"sys":           ms.Sys,
+				"num_gc":        ms.NumGC,
+				"total_alloc":   ms.TotalAlloc,
+			})
+		})
+		go func() {
+			if err := http.ListenAndServe(addr, http.DefaultServeMux); err != nil {
+				fmt.Fprintf(os.Stderr, "control pprof listener died: %v\n", err)
+			}
+		}()
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", handleRoot)
+	mux.HandleFunc("/_sky/sse", handleSSE)
+	mux.HandleFunc("/_sky/event", handleEvent)
+	fmt.Fprintf(os.Stderr, "control listening on :%s\n", port)
+	if err := http.ListenAndServe("127.0.0.1:"+port, mux); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

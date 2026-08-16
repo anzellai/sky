@@ -1,0 +1,12 @@
+### PSS BREAKDOWN, config B (embedded postgres running)
+app_pss_kb=35240
+pg_pss_total_kb=31151
+--- per-postgres-process rss/pss ---
+/usr/lib/postgresql/15/bin/postgres -D /var/lib/skybench/dat rss=35688 pss=15910
+postgres: checkpointer  rss=10472 pss=3233
+postgres: background writer  rss=5820 pss=1896
+postgres: walwriter  rss=15472 pss=5832
+postgres: autovacuum launcher  rss=9036 pss=2303
+postgres: logical replication launcher  rss=6972 pss=1975
+### app-only PSS, config A
+app_pss_kb=22228

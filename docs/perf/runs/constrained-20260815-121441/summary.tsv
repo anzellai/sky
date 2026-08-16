@@ -1,0 +1,9 @@
+profile	cpus	mem	sessions	rep	throughput	p50_ms	p95_ms	valid
+1x2g	1	2g	100	1	92.5	14.10	74.58	true
+1x2g	1	2g	100	2	91.8	17.85	94.64	true
+1x2g	1	2g	500	1	88.2	4227.14	9486.69	true
+1x2g	1	2g	500	2	93.2	4104.16	8671.81	true
+2x2g	2	2g	100	1	94.3	8.46	22.64	true
+2x2g	2	2g	100	2	93.4	8.26	24.86	true
+2x2g	2	2g	500	1	187.5	1428.87	3121.82	true
+2x2g	2	2g	500	2	194.3	1390.24	2435.32	true

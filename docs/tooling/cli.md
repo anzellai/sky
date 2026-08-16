@@ -26,7 +26,39 @@ Pipeline:
 3. Resolve modules, type-check, lower to Go under `sky-out/`.
 4. Invoke `go build` → `sky-out/app` (or the `bin` name set in `sky.toml`).
 
+**`--embed`** bundles a PostgreSQL distribution into the binary, so
+`./sky-out/app --embed` is a self-contained app *and* database on a bare host —
+one file, no system PostgreSQL, no `DATABASE_URL`.
+
+```bash
+sky build --embed src/Main.sky
+./sky-out/app --embed                       # starts its own cluster
+./sky-out/app --embed --data-dir /var/lib/myapp
+```
+
+- **What it costs.** The binary grows by the compressed bundle — about 25–30 MB
+  — and becomes platform-specific. A build *without* the flag pays nothing: no
+  bundle is linked, and any archive an earlier `--embed` build staged is removed.
+- **Where the bundle comes from.** The pin is `[database] postgresVersion`.
+  `sky build --embed` uses `$SKY_HOME/postgres-bundles/`, else re-packs an
+  existing `sky db provision --embed` cache (no network), else fetches and
+  checksum-verifies the release. A prior `sky db provision` is **not** required.
+- **Cross-compiling.** `GOOS` / `GOARCH` select the target's bundle, so
+  `GOOS=linux GOARCH=arm64 sky build --embed …` embeds Linux/arm64 PostgreSQL.
+  A target Sky publishes no bundle for is refused before the build starts — the
+  host's binaries are never embedded into another platform's binary.
+- **`--embed` plus an explicit DSN is an error**, at app startup, naming the
+  source. There is no precedence that does not either ignore the operator's
+  database or make the flag inert.
+
+`--embed` belongs on `sky build`, not on `sky run` — see below.
+
 ### `sky run [path]`
+
+For development you do not need `--embed` (and `sky run --embed` is refused with
+a pointer): set `[database] embedded = true` in `sky.toml` and `sky run` starts a
+local cluster, injects the DSN, and stops it on exit. See
+[`sky db start`](#sky-db-start--sky-db-stop--sky-db-ps--the-local-postgresql-cluster).
 
 `sky build` + execute the resulting binary.
 
@@ -191,25 +223,36 @@ Exit codes: `0` clean, `1` warnings, `2` errors. CI-friendly.
 ### `sky verify [example]`
 
 CI canonical runtime check. Iterates every directory under `examples/`
-(or the named one), builds, runs, and asserts runtime behaviour:
+(or the named one), builds it, `go build`s the emitted Go, and runs it
+(`cmd_verify`, `rust/crates/sky/src/main.rs:3842-3941`).
 
-- HTTP examples: hits `/` (and any routes declared in `examples/<n>/verify.json`)
-  and checks status codes + body substrings.
-- GUI examples (Fyne): skipped on headless CI via `SKY_SKIP_GUI=1`.
+Output lines: `  ok: <name>`, `  FAIL build: …`, `  FAIL go-build: …`,
+`  FAIL run: …`. Exit code is non-zero if any example fails.
 
-Output lines: `runtime ok: <name>`, `FAIL scenario: ...`, `FAIL build: ...`,
-`[skip] <name>: ...`. Exit code is non-zero if any example fails.
-
-Scenario file format:
-
-```json
-{
-    "requests": [
-        { "method": "GET", "path": "/",           "expectStatus": 200, "expectBody": ["Hello"] },
-        { "method": "GET", "path": "/api/status", "expectStatus": 200, "expectBody": ["status"] }
-    ]
-}
-```
+> **`sky verify` does no scenario-driven HTTP assertion, and this section used
+> to say it did.** The removed text described hitting `/` plus "any routes
+> declared in `examples/<n>/verify.json`", checking status codes and body
+> substrings, skipping GUI examples via `SKY_SKIP_GUI=1`, printing
+> `runtime ok:` / `FAIL scenario:` / `[skip]`, and a
+> `{"requests":[… "expectStatus" … "expectBody" …]}` schema. None of it
+> exists — `grep -rn 'verify.json\|expectStatus\|SKY_SKIP_GUI\|runtime
+> ok\|FAIL scenario' rust runtime-go scripts` returns nothing from the verify
+> path.
+>
+> Two consequences worth knowing:
+>
+> - **Four committed `verify.json` files are dead inputs.**
+>   `examples/{15-http-server,30-sse-server-demo,32-sse-relay,33-websocket-echo}/verify.json`
+>   are read by nothing.
+> - **GUI skipping is not env-gated.** It is a hard-coded `skip-gui` row in
+>   `scripts/verify-cli.sh:71`.
+>
+> The scenario-contract mechanism the old text described *does* exist — under a
+> different name, in a different tool: `scripts/example-e2e.sh` reads
+> `examples/<n>/e2e.json` and honours `expectStatus`
+> (`example-e2e.sh:113`, `:185`). That is the behavioural tier in
+> `docs/rust-rewrite/11-testing-and-verification.md` §1. To get scripted HTTP
+> assertions on an example, write an `e2e.json` — not a `verify.json`.
 
 ### `sky test <file>`
 
@@ -314,6 +357,149 @@ declares. For a TOTAL wipe of a shared database (every table + extensions +
 sequences, including ones Sky doesn't know about), use your database's own
 tooling — e.g. `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` on Postgres,
 or delete the SQLite file.
+
+### `sky db start` · `sky db stop` · `sky db ps` — the local PostgreSQL cluster
+
+Every verb above talks to a database. These three *are* the database: they
+supervise a local PostgreSQL cluster for the project you are standing in, so
+development runs the same engine production does instead of the SQLite that
+quietly diverges from it. The design is
+[`docs/skydb/embedded-postgres.md`](../skydb/embedded-postgres.md).
+
+```bash
+sky db start        # initdb on first use, then start; already running is a no-op
+sky db ps           # this project's cluster
+sky db ps --all     # every Sky-managed cluster on the machine
+sky db stop         # stop this project's cluster (pg_ctl stop -m fast)
+sky db stop --all   # stop all of them
+```
+
+```
+$ sky db start
+sky db start: PostgreSQL 18.6 running (pid 41277).
+  data:   /Users/dev/shop/.skydata/pg
+  socket: /tmp/sky-9f2c1a4b7e03d5c8
+  log:    /Users/dev/shop/.skydata/postgres.log
+
+Connect with:
+  psql -h /tmp/sky-9f2c1a4b7e03d5c8 postgres
+  DSN: postgresql:///postgres?host=/tmp/sky-9f2c1a4b7e03d5c8
+```
+
+- **One cluster per project**, in `.skydata/pg/` (gitignored by `sky init`).
+  `rm -rf .skydata` resets exactly one project, and two projects on different
+  PostgreSQL majors never fight.
+- **A unix socket, never a TCP port** — so two `sky db start`s cannot race over
+  a port and nothing is exposed to the network. The socket lives in a short
+  hashed directory *outside* the project (`$XDG_RUNTIME_DIR/sky/<hash>/`, else
+  `/tmp/sky-<hash>/`), because `sockaddr_un` caps a socket path at ~107 bytes
+  and a deeply nested project overflows it.
+- **Tuned small** — `shared_buffers = 32MB` against PostgreSQL's 128MB default,
+  so an idle project cluster costs tens of megabytes rather than hundreds. Only
+  resource knobs are set; nothing that changes what a query means.
+- **A machine-level registry** at `~/.sky/clusters.json` is what lets
+  `sky db ps --all` see clusters this shell did not start. It is reconciled on
+  every read: a dead pid is erased, and a vanished data dir is dropped.
+- **Idempotent by design.** Starting a running cluster and stopping a stopped
+  one both succeed, so both are safe in a script or a shell trap.
+
+The binaries are discovered, in order, from `SKY_POSTGRES_BIN`, then
+`~/.sky/postgres/<version>/bin` (pinned version first, then newest), then
+`PATH`; a directory must hold `initdb`, `pg_ctl` and `postgres` to count.
+`SKY_POSTGRES_BIN` set but incomplete is an error rather than a fall-through —
+silently using a different installation is worse than the typo. Set `SKY_HOME`
+to relocate the registry (tests and CI).
+
+### `sky db provision --embed` — fetch PostgreSQL, no system install needed
+
+Populates the middle entry of that discovery order with Sky's own build of
+PostgreSQL, so a machine with no PostgreSQL at all can still run
+`sky db start`.
+
+```bash
+sky db provision --embed                 # fetch, verify, install, pin
+sky db provision --embed --force         # re-install over an existing cache
+sky db provision --embed --from ./postgres-18.6-linux-amd64.tar.gz \
+                        --checksum <sha256>   # offline, from a local file
+```
+
+```
+$ sky db provision --embed
+sky db provision: fetching https://github.com/anzellai/sky/releases/download/…
+sky db provision: PostgreSQL 18.6 installed.
+  /Users/dev/.sky/postgres/18.6/bin
+  pinned in sky.toml ([database] postgresVersion = "18.6")
+
+Next: sky db start
+```
+
+- **Verified before it is trusted.** The release's `SHA256SUMS` is fetched
+  first, the downloaded archive is hashed on disk, and a mismatch installs
+  nothing and says so. A corrupt or truncated download never reaches the cache.
+- **Installed atomically** — extracted to scratch and renamed into place, so an
+  interrupted provision leaves no half-populated `bin/` for discovery to find.
+- **Idempotent.** Already provisioned is a fast success with no request made.
+- **Pinned** in `sky.toml` as `[database] postgresVersion`, and discovery
+  prefers that version, so a checkout on another machine gets the PostgreSQL the
+  project states.
+- **Offline-capable** via `--from` (with `--checksum`, or a `SHA256SUMS` beside
+  the archive). `sky doctor --fix` pre-warms the cache for a project with
+  `[database] embedded = true`. `SKY_POSTGRES_BUNDLE_URL` points at a mirror.
+
+Bundles are built from source in Sky's CI for linux-amd64, linux-arm64,
+darwin-amd64 and darwin-arm64; `psql` is deliberately excluded (GNU readline is
+GPL-3.0). Windows is out of scope — use a system PostgreSQL and
+`SKY_POSTGRES_BIN`.
+
+### `sky db provision --shared` — one cluster for every app on a host
+
+The production counterpart to `sky db start`. `--embed` provisions the
+*binaries*; `--shared` provisions the *cluster* they run, at a stable state
+directory (`/var/lib/sky`, `/usr/local/var/sky` on macOS, `--state-dir` to move
+it), tuned from the host's real RAM and CPU rather than from the small
+development profile.
+
+```bash
+sky db provision --shared --service --backup --start   # once per host
+sky db provision --shared --app orders                 # once per app, prints its DSN
+sky db provision --shared --app orders --rotate-password
+sky db provision --shared --dry-run                    # show the conf, hba, SQL and units
+```
+
+```
+$ sky db provision --shared --app orders
+sky db provision --shared: app orders is ready.
+  database: orders
+  role:     orders  (may connect to orders and to nothing else)
+
+DSN — sky does not write this anywhere; put it in your secret store:
+  postgresql://orders:<generated>@/orders?host=/var/lib/sky/run
+```
+
+- **A database and a role per app**, the role granted `CONNECT` on its own
+  database and `PUBLIC`'s implicit access revoked. App A's credentials are
+  refused by PostgreSQL — not by an application check — when pointed at app B.
+- **Socket-only by default.** `--listen <addr>` adds a TCP listener with
+  `scram-sha-256` on loopback; without it nothing is exposed to the network.
+- **An OS service unit** with `--service`, generated into `<state>/service` with
+  the `sudo` lines to install it: a systemd unit on Linux, a launchd job plus a
+  shutdown wrapper on macOS. Both stop PostgreSQL with `SIGINT` (fast shutdown);
+  a `SIGTERM` means *smart* shutdown, which waits for every client for ever.
+- **A backup timer** with `--backup`: `pg_dump --format=custom` per app on a
+  daily schedule (`--backup-at HH:MM`, `--backup-keep <days>`), reading the app
+  list at run time so an app added later is included.
+- **Run it as the account the cluster will run as** — `sudo -u postgres sky db
+  provision --shared`. Running as root is refused, as `initdb` refuses.
+- **Re-running `--app` is idempotent** and prints no DSN: the password is stored
+  as a SCRAM verifier and cannot be read back, so a printed one would be
+  invented. `--rotate-password` issues a new one.
+
+`SKY_PG_TUNE_MEM_MB` states the RAM the cluster may use, for containers where
+`/proc/meminfo` reports the host's total rather than the cgroup limit.
+
+> `sky db init` and `sky db status` belong to the migration engine documented
+> above and are unchanged. The cluster verbs are `start` / `stop` / `ps` /
+> `provision`.
 
 ### Running migrations as part of `sky run`
 
@@ -458,11 +644,14 @@ first use — no separate install required. Cold start costs one
 `go build` (~4s); subsequent calls are instant. Content-hashed
 cache means `sky upgrade` invalidates the helper automatically.
 
-Overrides, in probe order:
-
-1. `$SKY_FFI_INSPECTOR` — absolute path to a pre-built helper.
-2. `bin/sky-ffi-inspect` in the cwd or any ancestor (dev workflow).
-3. Embedded fallback (default for installed binaries).
+**There are no overrides.** This section used to list a probe order —
+`$SKY_FFI_INSPECTOR`, then `bin/sky-ffi-inspect` in the cwd or an ancestor,
+then the embedded fallback. Neither of the first two is implemented
+(`grep -rn 'SKY_FFI_INSPECTOR\|bin/sky-ffi-inspect' rust/crates --include='*.rs'`
+is empty); `ffi::ensure_inspector` (`rust/crates/ffi/src/inspect.rs:329`) goes
+directly to the source tree and the content-hashed cache. See
+`docs/development.md` for what that means for the `bin/` copy
+`scripts/build.sh` still writes.
 
 ### `sky remove [--go|--sky] <pkg>`
 

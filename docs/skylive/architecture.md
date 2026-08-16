@@ -383,14 +383,69 @@ Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acqu
 
 ## Security defaults
 
-- Cookies: `HttpOnly`; `Secure` when the request arrived over HTTPS (direct TLS, `X-Forwarded-Proto: https`, or `X-Forwarded-Ssl: on`) **or** the production gate is on (`ENV`, else `SKY_ENV`, set to any value other than `dev` / `development` / `local`). Cookies whose name carries the `__Host-` / `__Secure-` prefix, and any cookie sent `SameSite=None`, are always `Secure` — the spec requires it. One predicate governs every cookie the runtime mints, including the ones `Server.withCookie` sets from your handler. Session cookie is `SameSite=Lax`, CSRF cookie is `SameSite=Strict`.
-- Rate limit: per-IP + per-session token bucket; configurable via `[live]`.
-- CORS: off by default. Turn on by configuring allowed origins explicitly.
+- **One `Secure` rule, for the runtime's cookies and yours alike.**
+  `cookieSecureFor` (`runtime-go/rt/cookie_secure.go`) is the only place the
+  question is answered. A cookie carries `Secure` when **any** of these holds:
+  the request arrived over HTTPS (direct TLS, `X-Forwarded-Proto: https`, or
+  `X-Forwarded-Ssl: on`); the process is in production (`ENV`, else
+  `<PREFIX>_ENV`, set to anything other than `dev` / `development` /
+  `local`); the cookie's name carries the `__Host-` / `__Secure-` prefix; or
+  it is sent `SameSite=None`. The last two are spec requirements, not policy.
+- **The runtime's own cookies.** The session cookie (`sky_sid`) is
+  `Path=/; HttpOnly; SameSite=Lax` (`writeSessionCookie` in
+  `runtime-go/rt/live.go`); `SKY_LIVE_FRAME_ANCESTORS` /
+  `<PREFIX>_LIVE_FRAME_ANCESTORS` switches it to `SameSite=None`, which
+  forces `Secure`. The built-in CSRF cookie (`__sky_csrf`) is
+  `SameSite=Strict` (`runtime-go/rt/csrf_middleware.go`);
+  `Sky.Http.Middleware.withCsrf`'s `__Host-sky_csrf` is
+  `Path=/; Secure; SameSite=Lax` unconditionally — the `__Host-` prefix
+  mandates `Secure` — and is deliberately **not** `HttpOnly`.
+- **Cookies your own code sets get the same treatment.**
+  `Server.withCookie name value resp` emits `Path=/; HttpOnly; SameSite=Lax`
+  and picks up `Secure` from the rule above, including the HTTPS signal —
+  the decision runs where the response is written, so the request is in
+  hand. It used to run only at mint time, where it was not, and the `ENV`
+  predicate was all a user cookie could consult; an auth token set over
+  HTTPS on a non-production tier therefore went out without `Secure` while
+  `sky_sid` on the same response had it. To pin the attributes yourself, use
+  the four-argument form — see
+  [`docs/skyauth/overview.md`](../skyauth/overview.md#production-checklist).
 - Event payload size cap: configurable via `[live] maxBodyBytes` / `SKY_LIVE_MAX_BODY_BYTES` (default `5242880` = 5 MiB; bump for `Event.onFile` / `Event.onImage` uploads). Larger payloads are rejected with HTTP 413.
+
+> **Two bullets were removed here because they were false, and a reader
+> planning a deployment would have relied on them.**
+>
+> - ~~"Rate limit: per-IP + per-session token bucket; configurable via
+>   `[live]`."~~ **Sky.Live has no rate limiter.** There is no token bucket
+>   in `runtime-go/rt/live.go`, and `[live]` accepts exactly
+>   `port, static, store, storePath, ttl, maxBodyBytes, input`
+>   (`rust/crates/project/src/build.rs:1084-1092`) — a `[live] rateLimit`
+>   key would raise an unknown-config-key build warning.
+>   `Sky.Http.Middleware.withRateLimit` is real, but it is a per-route
+>   middleware you call yourself, not a Sky.Live default.
+> - ~~"CORS: off by default. Turn on by configuring allowed origins
+>   explicitly."~~ **There is no CORS configuration.** No allowed-origins
+>   key exists in `[live]` and nothing in `live.go` reads one. "Off by
+>   default" is accurate only in the sense that nothing implements it;
+>   there is no supported way to turn it on.
+>
+> Rate limiting and origin control are the deployer's to add in front of
+> the app (reverse proxy / ingress), or per-route with
+> `Sky.Http.Middleware`.
 
 ## Client-side runtime
 
-`runtime-go/rt/live_client.js` (embedded, served at `/_sky/live.js`) — about 2 KB gzipped.
+**The client is not a separate file and is not served at a URL.** It is a
+`fmt.Sprintf` template inlined into every HTML response
+(`runtime-go/rt/live.go:4397`, from `liveJSWithCfgAndCsrfWithBase`,
+`live.go:7113`), whose body spans roughly `live.go:7114-9031`.
+
+This paragraph used to read "`runtime-go/rt/live_client.js` (embedded,
+served at `/_sky/live.js`) — about 2 KB gzipped". There is **no `.js` file
+anywhere under `runtime-go/`** (`find runtime-go -name '*.js'` is empty),
+nothing serves `/_sky/live.js`, and ~1,900 lines of inlined JS source is an
+order of magnitude past "about 2 KB gzipped". It ships on every full-page
+response, so its size is a per-page-load cost, not a cached-asset one.
 
 Responsibilities:
 

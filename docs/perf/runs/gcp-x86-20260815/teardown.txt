@@ -1,0 +1,56 @@
+Teardown verification, 2026-08-15, project settleby.
+
+Both instances additionally carried maxRunDuration=14400s with
+instanceTerminationAction=DELETE as a backstop, verified at creation:
+
+  NAME             ZONE           MACHINE_TYPE  STATUS   NETWORK_IP  NAT_IP         SECONDS  INSTANCE_TERMINATION_ACTION
+  sky-bench-micro  us-central1-a  e2-micro      RUNNING  10.128.0.3  34.71.1.67     14400    DELETE
+  sky-bench-small  us-central1-a  e2-small      RUNNING  10.128.0.4  34.59.219.179  14400    DELETE
+
+They were deleted explicitly rather than left to the TTL.
+
+$ scripts/skylive-bench-gcp.sh down --project settleby --zone us-central1-a
+==> deleting sky-bench-micro
+Deleted [https://www.googleapis.com/compute/v1/projects/settleby/zones/us-central1-a/instances/sky-bench-micro].
+==> deleting sky-bench-small
+Deleted [https://www.googleapis.com/compute/v1/projects/settleby/zones/us-central1-a/instances/sky-bench-small].
+
+The one piece of project state this run created beyond the instances was
+a firewall rule, scoped to a single source address, deleted with them:
+
+$ gcloud compute firewall-rules delete sky-bench-load-8000 --project settleby --quiet
+Deleted [https://www.googleapis.com/compute/v1/projects/settleby/global/firewalls/sky-bench-load-8000].
+
+$ gcloud compute instances list --project settleby --filter="name~sky-bench"
+Listed 0 items.
+
+$ gcloud compute disks list --project settleby --filter="name~sky-bench"
+Listed 0 items.
+
+$ scripts/skylive-bench-gcp.sh verify --project settleby
+==> instances matching sky-bench-* in settleby (all zones)
+    (none)
+==> disks matching sky-bench-* in settleby (all zones)
+    (none)
+
+VERIFIED CLEAN: no sky-bench-* instances and no sky-bench-* disks remain.
+
+An orphaned disk outlives its instance, so the disk list is checked
+separately and not inferred from the instance list being empty.
+
+Production instances, confirmed still running and untouched (no load was
+ever sent to any of them; the generator refuses sky-lang.org by name and
+was pointed only at the two bench IPs):
+
+  NAME               ZONE            MACHINE_TYPE  STATUS
+  sky-lang-org       us-central1-a   e2-micro      RUNNING
+  ringfence-cloud-1  europe-west1-b  e2-small      RUNNING
+  settleby-caddy     europe-west2-c  e2-micro      RUNNING
+
+LIFECYCLE STATUS. skylive-remote-validation.md previously recorded the
+bench-instance lifecycle as unproven code, since neither `up` nor `down`
+had ever run. `down` and `verify` are now both exercised against real
+instances and both behaved as documented. `up` remains unexercised: the
+two instances were created outside this script, so its creation path --
+including the --max-run-duration/--instance-termination-action pairing it
+relies on as layer 1 -- is still unproven by execution.

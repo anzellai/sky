@@ -1,16 +1,17 @@
 package rt
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
-	"context"
 	"fmt"
 	"os"
 	"reflect"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"unicode"
@@ -37,6 +38,16 @@ type SkyDb struct {
 	// instead of the pool, so the body's writes are actually inside the
 	// BEGIN…COMMIT. nil for the ordinary pool handle.
 	tx *sql.Tx
+	// txCfg is the isolation level + retry budget Db_withTransaction
+	// begins with, resolved once at connect. Zero value = the driver
+	// default with no retries, which is the historical `conn.Begin()`
+	// behaviour. See db_pool.go.
+	txCfg dbTxConfig
+	// txRetryFlag is set on a tx-scoped handle ONLY when a retry budget
+	// is configured. The wrapped executor stores true into it when a
+	// statement fails with a retryable SQLSTATE, so the attempt loop can
+	// classify by code rather than by error text. nil otherwise.
+	txRetryFlag *atomic.Bool
 }
 
 // dbExecutor is the intersection of *sql.DB and *sql.Tx — both expose the
@@ -53,6 +64,13 @@ type dbExecutor interface {
 // so they transparently participate in an open transaction.
 func (d *SkyDb) executor() dbExecutor {
 	if d.tx != nil {
+		// Retry configured → hand back the wrapper that records a
+		// retryable SQLSTATE while the typed driver error is still in
+		// hand (see txExecutor in db_pool.go). Otherwise the bare *sql.Tx,
+		// so the default path is exactly what it was.
+		if d.txRetryFlag != nil {
+			return txExecutor{tx: d.tx, retryable: d.txRetryFlag}
+		}
 		return d.tx
 	}
 	return d.conn
@@ -274,7 +292,7 @@ func Db_connect(path any) any {
 			// ACCEPT connections). Instead: keep the live pool and warn — the
 			// next query after the database comes up connects transparently, and
 			// /_sky/readyz reports the outage window via the probe below.
-			Log_warn(fmt.Sprintf("db.connect: %s not reachable at boot (%v); connection pool "+
+			rtWarn(fmt.Sprintf("db.connect: %s not reachable at boot (%v); connection pool "+
 				"is live and will (re)connect on demand once the database is available", driver, err))
 		}
 		// v0.17.10 — SQLite concurrency defaults. Without these, any
@@ -311,12 +329,20 @@ func Db_connect(path any) any {
 		//   Skips one fsync per commit; big write-perf win on the
 		//   Sky.Live update-per-msg path.
 		//
-		// Postgres/MySQL fall through the switch — their connection
-		// pool defaults are already sane, and multi-conn concurrency
-		// on those backends does not fire the SQLite-BUSY class.
+		// The pool sizing for BOTH drivers is resolved in db_pool.go.
+		//
+		// An earlier version of this comment said Postgres "falls through
+		// the switch — their connection pool defaults are already sane".
+		// That was false and it was load-bearing: Go's database/sql
+		// defaults are MaxOpenConns=0 (unlimited), MaxIdleConns=2 and no
+		// connection lifetime, which under burst opens unbounded backends
+		// against a server whose own max_connections default is 100, and
+		// below that threshold churns connections because only two stay
+		// idle. resolveDbPoolConfig now picks deployment-aware defaults
+		// (see db_pool.go) and the SQLite branch below keeps only what is
+		// genuinely SQLite-specific: the PRAGMAs.
+		resolveDbPoolConfig(driver).applyTo(conn)
 		if driver == "sqlite" {
-			conn.SetMaxOpenConns(1)
-			conn.SetMaxIdleConns(1)
 			for _, pragma := range []string{
 				"PRAGMA journal_mode=WAL",
 				"PRAGMA busy_timeout=5000",
@@ -327,11 +353,11 @@ func Db_connect(path any) any {
 					// :memory: DB rejects some PRAGMAs, and NFS-mounted
 					// paths reject WAL). Emit a warn via Std.Log —
 					// visible in dev + prod but doesn't break.
-					Log_warn("db.connect: " + pragma + " failed: " + pErr.Error())
+					rtWarn("db.connect: " + pragma + " failed: " + pErr.Error())
 				}
 			}
 		}
-		db := &SkyDb{conn: conn, name: p, driver: driver}
+		db := &SkyDb{conn: conn, name: p, driver: driver, txCfg: resolveDbTxConfig(driver)}
 		dbRegistry[p] = db
 		// Wire the app DB into /_sky/readyz so the endpoint reports 503 during
 		// any window the database is unreachable (including the boot self-heal
@@ -1374,48 +1400,87 @@ func Db_withTransaction(db any, body any) any {
 }
 
 func dbWithTransactionBody(capDb, capBody any) any {
-	{
-		d, ok := capDb.(*SkyDb)
-		if !ok {
-			return Err[any, any](ErrInvalidInput("db.withTransaction: not a Db"))
-		}
-		tx, err := d.conn.Begin()
-		if err != nil {
-			return Err[any, any](ErrFfi("tx begin: " + err.Error()))
-		}
-		// Hand the body a tx-SCOPED Db: same pool + name + driver, but with
-		// `tx` set so its exec/query/execRaw run on THIS transaction, not the
-		// pool. This is the fix for the historical "the body wrote outside the
-		// tx" defect — a rollback now actually rolls back the body's writes.
-		txDb := &SkyDb{conn: d.conn, name: d.name, driver: d.driver, tx: tx}
-		// Apply the body via sky_call — compiled Sky closures are adapter-
-		// wrapped values, NOT plain `func(any) any`, so a raw type assertion
-		// always failed ("body is not a function"). sky_call is the same
-		// adapter-aware apply List.map / Task.andThen use. A panic inside the
-		// body (e.g. a bad Coerce) must roll back too, so we recover.
-		var result any
-		panicked := false
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					panicked = true
-					result = Err[any, any](ErrUnexpected(fmt.Sprintf("withTransaction: body panicked: %v", r)))
-				}
-			}()
-			result = AnyTaskRun(sky_call(capBody, txDb))
-		}()
-		// Commit only on a clean Ok. Roll back on panic, on an Err result, or
-		// on a non-Result body (there's no success signal to trust).
-		sr, isResult := result.(SkyResult[any, any])
-		if panicked || !isResult || sr.Tag != 0 {
-			tx.Rollback()
+	d, ok := capDb.(*SkyDb)
+	if !ok {
+		return Err[any, any](ErrInvalidInput("db.withTransaction: not a Db"))
+	}
+	// One attempt unless a retry budget was opted into. `Retries` is 0
+	// by default, so this loop runs exactly once and behaves identically
+	// to the pre-v0.20.3 single-shot code. See resolveDbTxConfig in
+	// db_pool.go for the replayability requirement retries impose on the
+	// body — the runtime cannot verify it, so it is off unless asked for.
+	attempts := d.txCfg.Retries + 1
+	var result any
+	for attempt := 0; attempt < attempts; attempt++ {
+		var retryable bool
+		result, retryable = dbTransactionAttempt(d, capBody)
+		if !retryable || attempt == attempts-1 {
 			return result
 		}
-		if err := tx.Commit(); err != nil {
-			return Err[any, any](ErrFfi("tx commit: " + err.Error()))
-		}
-		return result
+		time.Sleep(dbTxRetryBackoff(attempt))
 	}
+	return result
+}
+
+// dbTransactionAttempt runs the body once inside one BEGIN…COMMIT.
+// Returns the body's result and whether the failure was a PostgreSQL
+// transaction conflict (40001 / 40P01) that a replayable body may retry.
+func dbTransactionAttempt(d *SkyDb, capBody any) (any, bool) {
+	// BeginTx with the resolved options. d.txCfg.Opts is nil unless
+	// isolation was explicitly requested, and a nil *sql.TxOptions makes
+	// BeginTx equivalent to the Begin() this replaced — the default
+	// isolation level is unchanged.
+	tx, err := d.conn.BeginTx(context.Background(), d.txCfg.Opts)
+	if err != nil {
+		return Err[any, any](ErrFfi("tx begin: " + err.Error())), false
+	}
+	// Hand the body a tx-SCOPED Db: same pool + name + driver, but with
+	// `tx` set so its exec/query/execRaw run on THIS transaction, not the
+	// pool. This is the fix for the historical "the body wrote outside the
+	// tx" defect — a rollback now actually rolls back the body's writes.
+	txDb := &SkyDb{conn: d.conn, name: d.name, driver: d.driver, tx: tx}
+	if d.txCfg.Retries > 0 {
+		txDb.txRetryFlag = &atomic.Bool{}
+	}
+	// Apply the body via sky_call — compiled Sky closures are adapter-
+	// wrapped values, NOT plain `func(any) any`, so a raw type assertion
+	// always failed ("body is not a function"). sky_call is the same
+	// adapter-aware apply List.map / Task.andThen use. A panic inside the
+	// body (e.g. a bad Coerce) must roll back too, so we recover.
+	var result any
+	panicked := false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+				result = Err[any, any](ErrUnexpected(fmt.Sprintf("withTransaction: body panicked: %v", r)))
+			}
+		}()
+		result = AnyTaskRun(sky_call(capBody, txDb))
+	}()
+	// Commit only on a clean Ok. Roll back on panic, on an Err result, or
+	// on a non-Result body (there's no success signal to trust).
+	sr, isResult := result.(SkyResult[any, any])
+	if panicked || !isResult || sr.Tag != 0 {
+		tx.Rollback()
+		// A panic is never retried: it is a defect in the body, not a
+		// conflict, and replaying it just panics again.
+		return result, !panicked && txDb.sawRetryableTxError()
+	}
+	if err := tx.Commit(); err != nil {
+		// PostgreSQL reports a serialization failure the statements did
+		// not hit (the read-only anomaly, and any conflict detected at
+		// commit time) here rather than at the statement.
+		return Err[any, any](ErrFfi("tx commit: " + err.Error())), dbIsRetryableTxError(err)
+	}
+	return result, false
+}
+
+// sawRetryableTxError reports whether a statement on this tx-scoped
+// handle failed with a retryable SQLSTATE. Always false when no retry
+// budget is configured — the flag is only installed then.
+func (d *SkyDb) sawRetryableTxError() bool {
+	return d.txRetryFlag != nil && d.txRetryFlag.Load()
 }
 
 // appliedMigration — a row of the _sky_migrations bookkeeping table.
@@ -1474,7 +1539,7 @@ func Db_migrateApply(dbA, pairsA any) any {
 			fail := func(msg string, e any) any {
 				if op == "migrate" {
 					fmt.Fprintln(os.Stderr, "db: "+msg)
-					os.Exit(1)
+					ExitProcess(1)
 				}
 				return e
 			}
@@ -1513,7 +1578,7 @@ func Db_migrateApply(dbA, pairsA any) any {
 			// status — read-only report, then exit.
 			if op == "status" {
 				dbPrintMigrationStatus(applied, pairs)
-				os.Exit(0)
+				ExitProcess(0)
 			}
 
 			out := []any{}
@@ -1568,7 +1633,7 @@ func Db_migrateApply(dbA, pairsA any) any {
 					}
 					fmt.Printf("db: applied %d migration(s): %s\n", len(out), strings.Join(names, ", "))
 				}
-				os.Exit(0)
+				ExitProcess(0)
 			}
 			return Ok[any, any](out)
 		})
@@ -1618,7 +1683,7 @@ func dbPrintMigrationStatus(applied map[string]appliedMigration, pairs []any) {
 		fmt.Fprintln(os.Stderr,
 			"\ndb: drift detected — an applied migration's SQL was edited. "+
 				"Restore its original text, or ship a new compensating migration.")
-		os.Exit(1)
+		ExitProcess(1)
 	}
 }
 

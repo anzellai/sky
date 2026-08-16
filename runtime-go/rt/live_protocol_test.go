@@ -76,6 +76,56 @@ func TestAckInputsEvictsUnmounted(t *testing.T) {
 	}
 }
 
+// TestAckInputsFindsEveryDirtyIdWhereverItSits is the guard on the early
+// exit in findAckInputs. The walk stops as soon as it has every id it was
+// looking for, which is the whole point of it — and is also exactly how a
+// walk starts silently returning the first match and dropping the rest.
+//
+// The ids here are deliberately spread: one in the first subtree, one in
+// the last, one that no longer exists. A search that unwinds on the first
+// hit loses the last input's seq, the client never sees it acked, and its
+// __skyIsDirty flag never retires — the field stays stuck as far as the
+// server's input-authority alignment is concerned.
+func TestAckInputsFindsEveryDirtyIdWhereverItSits(t *testing.T) {
+	tree := el("form", nil,
+		el("fieldset", nil, el("input", map[string]string{"name": "first"})),
+		el("fieldset", nil, el("input", map[string]string{"name": "middle"})),
+		el("fieldset", nil, el("input", map[string]string{"name": "last"})),
+	)
+	assignSkyIDs(&tree, "r")
+	firstID := tree.Children[0].Children[0].SkyID
+	lastID := tree.Children[2].Children[0].SkyID
+	if firstID == "" || lastID == "" || firstID == lastID {
+		t.Fatalf("fixture is vacuous: first=%q last=%q", firstID, lastID)
+	}
+	sess := &liveSession{
+		prevTree: &tree,
+		inputSeqs: map[string]int64{
+			firstID:           4,
+			lastID:            11,
+			"r.9#input:gone": 2,
+		},
+	}
+	ack := ackInputsForPrevTree(sess)
+	if ack[firstID] != 4 {
+		t.Errorf("first input (start of tree) lost: %+v", ack)
+	}
+	if ack[lastID] != 11 {
+		t.Errorf("last input (end of tree) lost — the walk unwound before "+
+			"reaching it: %+v", ack)
+	}
+	if _, present := ack["r.9#input:gone"]; present {
+		t.Errorf("unmounted id was acked: %+v", ack)
+	}
+	if _, present := sess.inputSeqs["r.9#input:gone"]; present {
+		t.Errorf("unmounted id not evicted from session state: %+v", sess.inputSeqs)
+	}
+	if len(sess.inputSeqs) != 2 {
+		t.Errorf("session kept %d input seqs, want the 2 still mounted: %+v",
+			len(sess.inputSeqs), sess.inputSeqs)
+	}
+}
+
 func TestEncodeSSEFrameShape(t *testing.T) {
 	sess := &liveSession{}
 	raw := encodeSSEFrame(sess, "<div>hi</div>")

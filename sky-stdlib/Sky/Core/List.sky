@@ -126,6 +126,8 @@ zip =
 
 
 -- ─── Scalar-accumulating / O(1) ops (pure Sky, auto-TCO'd) ──────────
+-- | `any pred list` — True iff `pred` holds for at least one element.
+any : (a -> Bool) -> List a -> Bool
 any pred list =
     case list of
 
@@ -168,6 +170,15 @@ find pred list =
                 find pred rest
 
 
+-- | `foldl fn acc list` — left fold: `fn aN (… (fn a1 (fn a0 acc)))`.
+--
+-- The signature is load-bearing, not decoration, for the same reason the
+-- module header gives for the kernel aliases. Per-def inference of THIS body
+-- leaves `fn`'s codomain a free var distinct from the accumulator's
+-- (`fn : t4 -> t1 -> t14` against `acc : t1`) — the recursive occurrence does
+-- not feed its own result type back into the accumulator — so the declared
+-- `b -> b` is the only place the two are identified.
+foldl : (a -> b -> b) -> b -> List a -> b
 foldl fn acc list =
     case list of
 

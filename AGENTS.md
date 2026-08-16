@@ -132,6 +132,123 @@ non-obvious ones as questions:
    *Required even when the primary DB differs.* Shared store the moment there is
    more than one replica.
 5. **Deployment target** — local binary / Docker / Cloud Run / Kubernetes / VM.
+   Ask what the host *is*, because a Sky.Live app plus its own embedded
+   PostgreSQL fits comfortably in **1 GB**, and most people over-provision:
+
+   | | RAM |
+   |---|---|
+   | Sky app binary (Go), idle | **~21–27 MB** (measured, `26-ui-showcase` on an e2-small) |
+   | Sky app, settled under days of real traffic | **~56 MB** (measured, sky-lang.org on an e2-micro, 9 days up) |
+   | Embedded PostgreSQL — the whole tree, as `MemAvailable` actually falls | **+21.9 MB** idle · **+28.4 MB** once sessions are written through it |
+   | Sky.Live sessions, **625–650 kB each on x86, PostgreSQL store, stock `GOGC=100`** (the shipped default raises this — see below) | ~65 MB at 100 concurrent |
+   | **Base, before sessions — measured whole-machine, not a sum of the rows** | **~382 MB** app alone · **~410 MB** with embedded PostgreSQL carrying the sessions |
+
+   Every row: `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed
+   in `docs/perf/skylive-interaction-cost.md:1065-1082`; the settled-app row is
+   that document's row 7. The base line is `MemTotal − MemAvailable` on the
+   measured machine (2,023,888 kB total; median idle `MemAvailable` 1,632,340
+   / 1,603,636 kB for the two configurations), so it already contains the OS
+   and needs no OS row added to it.
+
+   > **This table used to open with "Minimal Linux | ~250 MB" and close with
+   > "Base, before sessions | ~380 MB", and the rows between them no longer
+   > added up to it** — the ~380 was left in place when the PostgreSQL rows
+   > were corrected downward, so it had become an orphan of an earlier
+   > arithmetic. The OS row is deleted rather than adjusted: no run in
+   > `docs/perf/runs/` measured a bare Linux image, and on the machine that
+   > *was* measured the OS plus an idle app came to ~382 MB, so ~250 MB was
+   > not a conservative allowance either. A "PG backends" row also sat here
+   > carrying no MB value at all; its content was a process count, not RAM,
+   > and it has moved into the paragraph below — with the count corrected.
+
+   **PostgreSQL is a fixed block, not a per-session tax.** Its tree's RSS
+   slope against established sessions is −10 kB / +22 kB per session — zero
+   within noise (`docs/perf/skylive-interaction-cost.md:142-147`), because the
+   pool holds **7 client backends flat at 25, 50 and 100 concurrent sessions**
+   (`gcp-embed-postgres-20260815/sweep.tsv`, `pg_backends_max`, every valid
+   config-C row) and **7, occasionally 8, at 100 / 300 / 500**
+   (`gcp-x86-capacity-20260816/README.md:49-53`, against
+   `max_connections = 56`). Earlier text here and in
+   `skylive-interaction-cost.md` said **6**, which was `idle_pg_nproc` — the
+   idle process count — read as a backend count.
+
+   **Sessions are the number that decides the instance** — and the per-session
+   figure moves with the collector, which is why it changed. At the stock
+   `GOGC=100` a session costs **625–650 kB on x86 with a PostgreSQL session
+   store** and 451–531 kB with the memory store, measured as an OLS-free slope
+   across n = 100 → 500 on `examples/19-skyforum` at a 94-element view
+   (`docs/perf/runs/gcp-x86-capacity-20260816/`). Sky now ships **`GOGC=400`
+   under a derived `GOMEMLIMIT`** (below), and `GOGC` multiplies the slope, not
+   just the baseline: 100 → 400 scales it **2.9×** on the same app and store
+   (`docs/perf/runs/gogc-postgres-20260816/`). The x86 slope at the shipped
+   default is **unmeasured** — do not multiply the two runs together and quote
+   the product; this programme's projections have been wrong by 2×, 13× and
+   20×. What bounds memory at the shipped default is the derived `GOMEMLIMIT`
+   itself, not a per-session figure.
+
+   > Quote a per-session number **with its view size and its `GOGC`**, or it
+   > will be wrong. This table long carried ~1.35–1.42 MB, which was measured
+   > on a *different app* — `26-ui-showcase` at 384 elements, memory store — and
+   > is not the cost of a session in general.
+
+   **CPU binds ~12× before memory, measured on real GCE instances.** An
+   e2-micro *holds* ~450 sessions and is **unusable past ~50** (knee 25–50,
+   peak ~18 interactions/sec, and past 250 sessions it fails 79–96% of
+   interactions; commit `ba3c3b1d`, `docs/perf/runs/gcp-x86-20260815/`). The
+   ~450 is an **observation, not a division**: asked for 500, that machine
+   established **447** (`gcp-x86-20260815/micro-noagent.tsv`, n=500 row, which
+   also records 96% of interactions failing there) with `MemAvailable` down to
+   **~43 MB** (`micro-rss-n500-r1-memexhaustion.txt`) — so it does not move
+   when the per-session slope is restated. No comparable memory ceiling was
+   ever *reached* on e2-small: it established **500 of 500** in all three
+   repeats of the same sweep (`small-noagent.tsv`).
+   Re-measured at commit `3ed83c08` with embedded PostgreSQL carrying the
+   sessions (`docs/perf/runs/gcp-x86-capacity-20260816/`): an **e2-small
+   sustains 64.3 int/s at 300 sessions** (failure knee between 100 and 300),
+   an **e2-medium 261.5** (knee above 500). Quote throughput with its commit
+   — these figures predate later optimisation work. Sizing on memory alone
+   overstates an e2-micro twelvefold.
+
+   **Count physical cores, not vCPUs.** A GCE vCPU is an SMT thread:
+   `e2-standard-8` is **4 cores × 2 threads**, not 8 cores. Four threads on four
+   distinct physical cores serve **1,568 int/s**; the same four threads on two
+   physical cores serve **1,097** — 70%. The second thread on a core is worth
+   ~1.27×, not 2× (`docs/perf/runs/gomaxprocs-scaling-20260816/`). Any capacity
+   number derived from a vCPU count overstates the machine by roughly that
+   factor. Counted in physical cores, throughput scales at **79–80% efficiency
+   per doubling** (same run) — a larger instance is a legitimate route when
+   sized on cores.
+
+   **The GC default is derived, not configured.** At startup the runtime sizes
+   `GOMEMLIMIT` from detected machine memory — the cgroup limit first, so a
+   container is not sized to its host — after subtracting the OS and, under
+   `--embed`, the cluster's own `shared_buffers`, and sets `GOGC=400` under it.
+   Measured: **+19% throughput at 759 MB peak RSS** at 500 sessions on the
+   PostgreSQL store, against 1,827 MB for a bare `GOGC=800`. An explicit `GOGC`
+   or `GOMEMLIMIT` in the environment always wins, and a machine too small to
+   hold the bound is left on Go's defaults entirely. There is no `sky.toml`
+   knob: the Go env vars are the escape hatch, and they work even when the
+   process is launched by something that never reads `sky.toml`.
+
+   Two things to tell a user picking a burstable e2 instance: **the first run
+   after idling overstates sustained capacity by ~2.7×** — a rested e2-small
+   measured 183.5 int/s, then 58–71 for six consecutive runs (seven-run soak,
+   `docs/perf/runs/gcp-x86-capacity-20260816/`; the same decay on e2-micro
+   read 17.5 → 9.6 → 9.5/s, `docs/perf/runs/gcp-x86-20260815/`) — so plan
+   with the sustained figure, never the first number they see. And a figure
+   measured under a container CPU quota was optimistic against real hardware
+   by **2.5–5×**.
+
+   The **diff** is not the cost — ~128 ns per VNode, under 1% of an
+   interaction — but the interaction as a whole **does track view size**,
+   because `view(model)` re-runs in full every interaction:
+   `cost_ms ≈ 0.12 + 0.018 × elements` on one core
+   (`docs/perf/runs/forum-rebaseline-20260816/`). Optimising the differ buys
+   nothing; trimming a large view is a real lever. And **a single instance
+   has no replica**:
+   `sky db provision --shared` generates a backup timer, a single `--embed` app
+   does not, so a `pg_dump` schedule is the operator's to add. Sizing detail:
+   `docs/skydb/embedded-postgres.md`.
 6. **Observability** — local logs + embedded console / central console hub /
    OTel collector (Honeycomb / Tempo / Datadog).
 
@@ -180,11 +297,32 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
 
 ### Production gate (when the user says deploy / prod / Cloud Run / K8s)
 
-- `ENV=production` set on the runtime (locks the dev console + banner + metrics).
-- `SKY_AUTH_TOKEN_SECRET` ≥ 32 bytes; `SKY_CONSOLE_AUTH` set (`token` or `app`).
+**This is the same checklist the app prints on every dev start**, under its
+`listening` line. One list, in two places, deliberately — see
+`runtime-go/rt/startup_report.go`.
+
+- `ENV` set to anything that is **not** `dev` / `development` / `local` (the
+  runtime tests for the dev spellings, not for the literal `production`). Locks
+  the dev console + banner + metrics.
+- `SKY_CONSOLE_AUTH` = `token` \| `app` \| `off`. With `token`, also set
+  **`SKY_CONSOLE_TOKEN`** — without it the console falls back to an
+  auto-generated `.sky/console-token`, which a container regenerates every boot
+  and no operator can read. With `token`/`app` set and no console mounted the
+  app **exits 1**; `off` is the way to declare the surface intentionally absent.
+- `SKY_ADMIN_TOKEN` for the `/_sky/metrics` bearer. (`SKY_METRICS_TOKEN` and
+  `SKY_CONSOLE_TOKEN_SECRET` are back-compat aliases for it, not separate
+  settings.)
 - Multi-replica → a **shared** session store (`redis`/`postgres`), sticky
   sessions keyed on `sky_sid`, and cross-instance pub/sub (`store=redis` or
   `SKY_LIVE_BROKER_URL`). `memory` and `sqlite` are single-instance only.
+
+> **`SKY_AUTH_TOKEN_SECRET` is not a runtime setting, and this gate used to say
+> it was.** Nothing in `runtime-go/` reads it: `sky_sid` is unsigned random hex,
+> and `Auth.signToken` takes its secret as a Sky-level *argument*. The name is a
+> convention in user code (`System.getenvOr "SKY_AUTH_TOKEN_SECRET"`) that only
+> `sky doctor` knows about. If you use `Std.Auth`, whatever variable you feed
+> into `Auth.signToken` must be ≥ 32 bytes; if you don't, setting it changes
+> nothing.
 
 Env var reference: `docs/sky-toml.md` + `docs/skylive/architecture.md`.
 
@@ -201,9 +339,32 @@ sky fmt src/Main.sky             # opinionated formatter (idempotent)
 sky test tests/MyTest.sky        # Sky.Test runner (SKY_TEST_JSON=<path> → per-case JSON report)
 sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
+sky db start | stop [--all] | ps [--all]                       # local PostgreSQL cluster
+sky db provision --embed                                       # fetch + pin a PostgreSQL bundle
+sky db provision --shared [--service] [--app <name>]           # one host cluster, role-per-app
+sky build --embed src/Main.sky   # bundle PostgreSQL INTO the binary; ./sky-out/app --embed
 sky add <go/module> | remove | install | update                # Go FFI deps
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```
+
+**Embedded PostgreSQL — dev/prod engine parity.** `Std.Db` is dialect-safe
+across SQLite and Postgres, and that gap is a real tax: `Codec.auto` cannot
+encode `Money`/`Decimal`, and there is no `NUMERIC` DDL kind, while `Std.Money`
+is the pinned currency default. Running the same engine in development that you
+run in production is now the easy path.
+
+The rule that makes it work: **the app never knows which tier it is in.** It
+consumes a DSN (`<PREFIX>_DB_PATH`, or `DATABASE_URL`) — only the provisioner
+changes. `sky run` supervises a per-project cluster; `./app --embed` runs its
+own; an operator sets a DSN; a shared host cluster issues one per app. Opt in
+with `[database] embedded = true`. `--embed` alongside an explicit DSN is an
+**error**, not a precedence rule.
+
+> **Bundles are not published yet.** `sky db provision --embed` resolves a
+> release built by `.github/workflows/postgres-bundle.yml`, and no
+> `postgres-bundle-v*` tag has been cut — so it 404s until one is, unless
+> pointed at a local bundle. `SKY_POSTGRES_BIN` or a system PostgreSQL works
+> today for `sky db start`. Full design: `docs/skydb/embedded-postgres.md`.
 
 **Never run `sky build` from the repo root** — it overwrites the compiler binary
 in `sky-out/`. Always `cd` into the example/project dir first.
@@ -217,6 +378,35 @@ build-run / coerce-floor / repro / golden / fuzz) + the example sweep
 are necessary but **not sufficient**: a change is not verified until it also
 passes the full example sweep + a real app (see
 `docs/rust-rewrite/13-change-verification-and-edge-cases.md`).
+
+**Live tests fail rather than skip.** Some tests need a real environment — a
+PostgreSQL installation, a Go toolchain, the `sqlite3` client — and `cargo test`
+**fails** when one is missing, naming what to install. That is deliberate:
+fourteen tests covering the shared-cluster security boundary used to end their
+probe with `eprintln!(…); return;`, and with and without a cluster they printed
+byte-identical verdict lines (`ok. 14 passed`), so CI — which installed no
+PostgreSQL in the only job that ran them — had never run one of them. If you
+genuinely cannot provide the environment, say so out loud:
+
+```bash
+SKY_LIVE_TESTS=skip cargo test --workspace   # the ONLY way to skip a live test
+```
+
+New live tests gate through `rust/crates/sky/src/live_gate.rs`
+(`live_gate::required(Need::Postgres, <your probe>)`), and
+`rust/crates/xtask/tests/live_tests_are_not_silently_skipped.rs` fails the build
+on the shapes that used to be written instead.
+
+`xtask coerce-floor` takes the same variable for the same reason. Its golden
+locks a runtime-narrowing floor **per project**, and a project whose generated
+FFI surface is absent (`sky-ffi/` and `.skydeps/` are `.gitignore`d, so a fresh
+checkout has neither) cannot be measured — which used to be filed under "did not
+emit (not gated)" while the run reported PASS on the remainder, measuring 56 of
+61 rows. An unmeasurable row now FAILS, naming the `(cd <project-dir> && sky
+install)` that fixes it; `SKY_LIVE_TESTS=skip` downgrades it to a loud
+`UNMEASURED` block, and `--bless` refuses under a shortfall rather than write a
+golden mixing measured rows with carried-forward ones. Both verdict lines state
+how many of the golden's rows the run actually covered.
 
 `cargo run --release -p xtask -- harness` runs the registered gates through the
 gate harness, which enforces each gate's budget by `killpg`, requires an exact
@@ -253,8 +443,23 @@ These apply to any Sky code you write or any compiler change you make:
   failing test is the discovery artefact. Compile-time behaviour → cargo/`hspec`
   specs; runtime helpers → `runtime-go/rt/*_test.go`; stdlib semantics →
   `tests/**/*Test.sky`; behaviour → `tests/conformance/`.
-- **Timeout-bound every long command.** `cargo test` / xtask gates run under
-  `timeout` (60 min ceiling). A test that hangs is a bug to bisect, not wait out.
+- **Timeout-bound every long command — through the shim, never a bare
+  `timeout`.** `cargo test` / xtask gates run under a 60 min ceiling. A test
+  that hangs is a bug to bisect, not wait out. In a script,
+  `source scripts/lib/with-timeout.sh` and call `with_timeout <secs> <cmd...>`;
+  `rust/crates/xtask/tests/scripts_bound_time_portably.rs` fails the build on a
+  bare `timeout`. GNU coreutils `timeout` is absent on stock macOS and was
+  absent here when the nix shell supplying it went away — at which point
+  `timeout 1200 go test -race ./rt/... | tail -8` printed `command not found`
+  to stderr, took `tail`'s status, and reported **exit 0 having run nothing**.
+  Where the bound only wraps `go test`, prefer its own `-timeout` (it dumps
+  stacks and names the hung test) with `with_timeout` outside as the backstop.
+- **A gate whose prerequisite is missing FAILS, naming what to install.** Never
+  skip, never pass. Shell gates use `require_tool <name> <hint>` from
+  `scripts/lib/require-tool.sh`; Rust live tests use
+  `rust/crates/sky/src/live_gate.rs`. Both take the same opt-out —
+  `SKY_LIVE_TESTS=skip` — and both treat any other value as an error rather
+  than guessing.
 - **Disk hygiene.** `scripts/build.sh` + `scripts/example-sweep.sh` auto-prune the
   Go build cache at a 5 GB threshold; the `xtask build-run` gate self-guards
   disk before the sweep. Reclaim manually (`go clean -cache`, worktree cleanup)
@@ -309,6 +514,7 @@ before assuming a limitation still holds.
 | Language + errors | `docs/language/`, `docs/errors/` |
 | Compiler architecture (Rust, primary) | `docs/rust-rewrite/` |
 | Change verification / edge cases | `docs/rust-rewrite/13-change-verification-and-edge-cases.md` |
+| Runtime narrowing — origins, levers, **the floor authority** | `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` |
 | Stdlib correctness (algebraic laws, invariants) | `docs/architecture/sky-stdlib-correctness.md` |
 | Sky.Live runtime + architecture | `docs/skylive/overview.md`, `docs/skylive/architecture.md` |
 | `Std.Ui` layout DSL | `docs/skyui/overview.md` |

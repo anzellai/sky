@@ -35,6 +35,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
 cd "$ROOT"
 
 # shellcheck source=lib/concurrency.sh
@@ -67,7 +71,7 @@ phase_behavioral() {
     # suites — the int64-class "compiles-clean, behaves-wrong" gate). Also run on
     # both platforms in CI's codegen-build / macos-determinism jobs.
     local t0; t0=$(date +%s)
-    ( cd "$ROOT/rust" && timeout 1500 bash -c '
+    ( cd "$ROOT/rust" && with_timeout 1500 bash -c '
         cargo run -q -p xtask -- build-run --shape cli --run --golden || exit 1
         cargo build --release -p sky --locked || exit 1
         SKY_BIN="$PWD/target/release/sky" ../scripts/conformance.sh || exit 1
@@ -81,9 +85,13 @@ phase_behavioral() {
 phase_web_verify() {
     echo
     echo "--- phase 3/6: Playwright web verify ---"
+    # NOT a skip. This is the pre-tag gate: a tier that cannot run is a tier
+    # whose claim is unproven, and `return 0` published that as a pass. A gate
+    # script missing or un-executable is a repository fault — `chmod +x` it.
     if [ ! -x "$ROOT/scripts/verify-all-web.sh" ]; then
-        echo "  scripts/verify-all-web.sh missing or not executable — SKIP"
-        return 0
+        echo "  FAIL — $ROOT/scripts/verify-all-web.sh is missing or not executable." >&2
+        echo "         This tier proves nothing without it; chmod +x or restore it." >&2
+        return 1
     fi
     local t0; t0=$(date +%s)
     bash "$ROOT/scripts/verify-all-web.sh"
@@ -96,9 +104,13 @@ phase_web_verify() {
 phase_cli_verify() {
     echo
     echo "--- phase 4/6: CLI / Tui / Webview verify ---"
+    # NOT a skip. This is the pre-tag gate: a tier that cannot run is a tier
+    # whose claim is unproven, and `return 0` published that as a pass. A gate
+    # script missing or un-executable is a repository fault — `chmod +x` it.
     if [ ! -x "$ROOT/scripts/verify-cli.sh" ]; then
-        echo "  scripts/verify-cli.sh missing or not executable — SKIP"
-        return 0
+        echo "  FAIL — $ROOT/scripts/verify-cli.sh is missing or not executable." >&2
+        echo "         This tier proves nothing without it; chmod +x or restore it." >&2
+        return 1
     fi
     local t0; t0=$(date +%s)
     bash "$ROOT/scripts/verify-cli.sh"
@@ -111,9 +123,13 @@ phase_cli_verify() {
 phase_ui_showcase() {
     echo
     echo "--- phase 5/6: UI showcase visual regression ---"
+    # NOT a skip. This is the pre-tag gate: a tier that cannot run is a tier
+    # whose claim is unproven, and `return 0` published that as a pass. A gate
+    # script missing or un-executable is a repository fault — `chmod +x` it.
     if [ ! -x "$ROOT/scripts/verify-ui-showcase.sh" ]; then
-        echo "  scripts/verify-ui-showcase.sh missing or not executable — SKIP"
-        return 0
+        echo "  FAIL — $ROOT/scripts/verify-ui-showcase.sh is missing or not executable." >&2
+        echo "         This tier proves nothing without it; chmod +x or restore it." >&2
+        return 1
     fi
     local t0; t0=$(date +%s)
     bash "$ROOT/scripts/verify-ui-showcase.sh"
@@ -132,7 +148,7 @@ phase_release_parity() {
     # corpus. Needs the oracle (NOT available in CI); the gate self-skips (exit 0)
     # when the oracle binary is absent, so this phase is safe everywhere.
     local t0; t0=$(date +%s)
-    ( cd "$ROOT/rust" && timeout 900 cargo run -q -p xtask -- welltyped )
+    ( cd "$ROOT/rust" && with_timeout 900 cargo run -q -p xtask -- welltyped )
     local rc=$?
     local t1; t1=$(date +%s)
     echo "  $(( t1 - t0 ))s (exit $rc)"

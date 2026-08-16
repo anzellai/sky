@@ -1,0 +1,14 @@
+{
+  "label": "under-200-sessions",
+  "url": "http://127.0.0.1:8477",
+  "samples_requested": 15,
+  "samples_observed": 1,
+  "timeouts": 14,
+  "p50_ms": 79.6,
+  "p95_ms": 79.6,
+  "p99_ms": 79.6,
+  "max_ms": 79.6,
+  "page_errors": [],
+  "valid": false,
+  "invalid_reason": "only 1/15 clicks produced a DOM change"
+}

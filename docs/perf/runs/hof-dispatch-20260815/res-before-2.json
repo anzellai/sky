@@ -1,0 +1,26 @@
+{
+  "label": "before-r2",
+  "url": "http://127.0.0.1:8537",
+  "sessions_requested": 25,
+  "sessions_established": 25,
+  "duration": "20s",
+  "think_time": "0s",
+  "interactions_counted": 2766,
+  "interactions_per_sec": 137.05906182668238,
+  "p50_ms": 70.017,
+  "p95_ms": 566.901,
+  "p99_ms": 695.353,
+  "max_ms": 846.601,
+  "outcomes": {
+    "ok": 2766
+  },
+  "error_rate": 0,
+  "sse_frames_total": 75,
+  "sse_still_open_at_end": 25,
+  "generator_cpu_percent_of_machine": 0.2193781168427325,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-15T22:02:42Z"
+}

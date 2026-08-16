@@ -36,16 +36,37 @@
 package telemetry
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver "pgx" (one-DB-for-everything)
 	_ "modernc.org/sqlite"
+
+	"sky-app/rt/dbshare"
+)
+
+// Connection-pool bounds for the telemetry persistence handle. Small and
+// fixed: a single buffered flusher goroutine does all the writing, so the
+// pool exists to survive a burst and to bound the damage, not to scale.
+// See EnsurePersistence for why the deployment-aware sizing in
+// `rt/db_pool.go` cannot be reached from this package.
+//
+// `PoolMaxConns` is EXPORTED because it is a term in the process's
+// connection-demand arithmetic (`dbProcessConnectionDemand`), which sizes every
+// cluster Sky generates. That arithmetic reads this constant rather than
+// restating it: telemetry is the package that hands the number to
+// `dbshare.Acquire`, so this is where the number lives.
+const (
+	PoolMaxConns          = 4
+	telemetryPoolLifetime = 30 * time.Minute
+	telemetryPoolIdleTime = 60 * time.Second
 )
 
 // The console telemetry store (logs / metrics / spans) — the embedded schema
@@ -126,6 +147,108 @@ func consoleDBSchemaStmts(driver string) []string {
 	}
 }
 
+// openTelemetryPool opens the persistence handle.
+//
+// On PostgreSQL it goes through the shared registry (dbshare), so when the
+// telemetry DSN resolves to the same string as the app's analytics or session
+// store — the normal case, since this store's own fallback is the shared
+// `DATABASE_URL` — the consumers draw on ONE set of backends instead of
+// three. Before this, the telemetry writer opened its own pool against the
+// same server and competed with the app's queries for the same
+// `max_connections` budget: observability taking down the thing it observes.
+//
+// The cap (`Share`) is what preserves the bulkhead that separate
+// pools used to provide: a telemetry burst can hold at most that many of the
+// shared pool, so it cannot starve the session store on the request path.
+//
+// On SQLite it keeps its own handle with the small plural pool it has always
+// had. That is deliberate and it is NOT the single-connection clamp used
+// elsewhere: this store is read by the console mini-app while being written
+// here, and a one-connection pool turns any read issued while another query's
+// rows are still open into a self-deadlock. Bounded-but-plural was the fix;
+// unbounded was the defect. It also means the SQLite handle cannot be shared
+// with analytics, which wants the single-connection clamp — one handle cannot
+// be both.
+func openTelemetryPool(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
+	if driver != "pgx" {
+		db, err := sql.Open(driver, dsn)
+		if err != nil {
+			return nil, nil, err
+		}
+		db.SetMaxOpenConns(PoolMaxConns)
+		db.SetMaxIdleConns(PoolMaxConns)
+		db.SetConnMaxLifetime(telemetryPoolLifetime)
+		db.SetConnMaxIdleTime(telemetryPoolIdleTime)
+		return db, nil, nil
+	}
+	// The deployment-aware sizing lives in `rt` (db_pool.go), which imports
+	// THIS package, so it cannot be called from here without an import cycle.
+	// The registry is a leaf package precisely so both sides can reach it;
+	// `rt` passes its sizing in when IT acquires, and whichever consumer gets
+	// there first sizes the shared pool. The fixed numbers below are the
+	// floor this package can justify alone.
+	return acquireShared(driver, dsn)
+}
+
+func acquireShared(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
+	h, err := dbshare.Acquire("telemetry", driver, dsn, dbshare.Config{
+		MaxOpenConns:    PoolMaxConns,
+		MaxIdleConns:    PoolMaxConns,
+		ConnMaxLifetime: telemetryPoolLifetime,
+		ConnMaxIdleTime: telemetryPoolIdleTime,
+	}, Share)
+	if err != nil {
+		return nil, nil, err
+	}
+	return h.DB(), h, nil
+}
+
+// persistTx is the subset of a transaction writeBatch uses, so the capped and
+// uncapped paths are interchangeable.
+type persistTx interface {
+	Prepare(string) (*sql.Stmt, error)
+	Exec(string, ...any) (sql.Result, error)
+	Commit() error
+	Rollback() error
+}
+
+func (p *persistence) begin() (persistTx, error) {
+	if p.pool != nil {
+		return p.pool.Begin()
+	}
+	return p.db.Begin()
+}
+
+// closeTelemetryPool releases this consumer's claim on the pool.
+//
+// On PostgreSQL that is a refcount decrement, NOT a close: another consumer
+// may be serving requests through the same pool, and closing it under them
+// would surface as `sql: database is closed` in a subsystem nobody asked to
+// stop. On SQLite the handle is this store's alone, so it really does close.
+func closeTelemetryPool(db *sql.DB, h *dbshare.Handle) {
+	if h != nil {
+		_ = h.Close()
+		return
+	}
+	if db != nil {
+		_ = db.Close()
+	}
+}
+
+// Share bounds how much of a SHARED pool this writer may hold at once, and it
+// is the ONLY definition of that number.
+//
+// It used to be declared twice — here and as `dbTelemetryShare` in
+// rt/db_pool.go, where the bulkhead arithmetic lives — with a gate asserting
+// the two agreed. A gate that compares two copies proves the copies, not the
+// property: the shared pool's size is `aux + analyticsShare + telemetryShare`,
+// and rt now reads this constant to compute it, so there is nothing left to
+// drift. The import direction permits it: rt imports telemetry.
+//
+// Two is enough because the writer is a single batching goroutine: one slot
+// for the flush, one for the hourly prune.
+const Share = 2
+
 // persistEnvVar is the env var SkyDeploy injects on Pro+ tenants.
 // When set + non-empty, the store dual-writes to the SQLite file.
 const persistEnvVar = "SKY_CONSOLE_DB_PATH"
@@ -135,6 +258,40 @@ const persistEnvVar = "SKY_CONSOLE_DB_PATH"
 // busy app); a sustained overflow surfaces as a warn-level entry in
 // the in-RAM log ring (no panic, no block).
 const persistQueueCap = 1024
+
+// persistBatchSize is the entry count that triggers a flush on size.
+const persistBatchSize = 128
+
+// persistFlushWait caps how long a caller of FlushPersistence waits for the
+// writer to drain before proceeding anyway. A caller that blocked indefinitely
+// on a wedged writer would turn a degraded telemetry store into a hung test or
+// a hung console page.
+const persistFlushWait = 5 * time.Second
+
+// persistFlushInterval is the flush-on-time half of "size or interval,
+// whichever comes first". It bounds how long an entry can sit unwritten on an
+// app that is not busy enough to fill a batch.
+//
+// It is a function over a var, rather than a const, for one reason: it is the
+// knob that proves FlushPersistence is a real synchronisation and not a race
+// that happens to be won. Until this commit the helper polled for an empty
+// queue and then slept 250 ms, which was correct only while this interval
+// stayed BELOW that sleep — two unrelated constants in different functions,
+// neither documenting its dependence on the other. Raising this to 300 ms
+// turned three tests red with exactly the counts CI reported (86/85/85, and 0
+// of 1), because an empty queue means the flusher has taken the entries, not
+// that it has committed them. `TestPersistence_FlushIsSynchronisedNotTimed`
+// now pins the interval to an hour and still expects every row, so a
+// regression to any interval-dependent flush fails immediately and locally
+// rather than intermittently on a loaded runner.
+var persistFlushIntervalOverride atomic.Int64
+
+func persistFlushInterval() time.Duration {
+	if d := persistFlushIntervalOverride.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	return 200 * time.Millisecond
+}
 
 // persistEntry — a single record queued for the flusher goroutine.
 // The `kind` field discriminates the variant; only the matching
@@ -156,11 +313,25 @@ type persistMetric struct {
 // persistence wraps the DB handle + writer goroutine.  One per Store.
 // nil when SKY_CONSOLE_DB_PATH is unset (in-RAM-only).
 type persistence struct {
-	db     *sql.DB
+	db *sql.DB
+	// pool is this consumer's reference into the shared registry (nil on
+	// SQLite, which keeps its own handle). Closing it releases the reference;
+	// the pool closes only when the last consumer lets go.
+	pool   *dbshare.Handle
 	driver string // "sqlite" or "pgx" — drives placeholder style
-	queue  chan persistEntry
-	stop   chan struct{}
-	wg     sync.WaitGroup
+	// syncCommitOff asks PostgreSQL not to wait for the WAL fsync when this
+	// writer's batches commit. See writeBatch. Always false on SQLite, which
+	// has no such setting.
+	syncCommitOff bool
+	queue         chan persistEntry
+	// flushReq carries a caller's request for a synchronous drain. The flusher
+	// closes the handed-in channel once every entry that was queued before the
+	// request has been COMMITTED, which is the happens-before edge the old
+	// poll-and-sleep helper never established. Unbuffered on purpose: the
+	// rendezvous is what guarantees the writer has seen the request.
+	flushReq chan chan struct{}
+	stop     chan struct{}
+	wg       sync.WaitGroup
 	// onceClose protects Close() against double-close from test
 	// teardown + the eventual process-exit hook.
 	onceClose sync.Once
@@ -185,14 +356,14 @@ func (s *Store) EnablePersistence(path string) error {
 		return nil
 	}
 	driver, dsn := telemetryBackend(path)
-	db, err := sql.Open(driver, dsn)
+	db, handle, err := openTelemetryPool(driver, dsn)
 	if err != nil {
 		return err
 	}
 	if driver == "sqlite" {
 		// WAL mode → console mini-app can read concurrently with our writes.
 		if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-			db.Close()
+			closeTelemetryPool(db, handle)
 			return err
 		}
 	}
@@ -202,21 +373,24 @@ func (s *Store) EnablePersistence(path string) error {
 		// checkpoint / a second writer briefly holding the write lock. Postgres
 		// handles concurrency natively — no PRAGMA.
 		if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
-			db.Close()
+			closeTelemetryPool(db, handle)
 			return err
 		}
 	}
 	for _, stmt := range consoleDBSchemaStmts(driver) {
 		if _, err := db.Exec(stmt); err != nil {
-			db.Close()
+			closeTelemetryPool(db, handle)
 			return err
 		}
 	}
 	p := &persistence{
-		db:     db,
-		driver: driver,
-		queue:  make(chan persistEntry, persistQueueCap),
-		stop:   make(chan struct{}),
+		db:            db,
+		pool:          handle,
+		driver:        driver,
+		syncCommitOff: driver == "pgx" && SynchronousCommitOff(),
+		queue:         make(chan persistEntry, persistQueueCap),
+		flushReq:      make(chan chan struct{}),
+		stop:          make(chan struct{}),
 	}
 	s.persist = p
 	p.wg.Add(2)
@@ -244,10 +418,26 @@ func (s *Store) EnablePersistenceFromEnv() error {
 	return s.EnablePersistence(path)
 }
 
-// ClosePersistence stops the flusher + pruner and closes the DB
-// handle.  Test-only; production code lets the goroutines run for
-// the process lifetime.
+// ClosePersistence stops the flusher + pruner, waits for the queue to be
+// committed, and closes the DB handle. It blocks until the drain is complete.
 func (s *Store) ClosePersistence() {
+	s.closePersistence(context.Background())
+}
+
+// ClosePersistenceContext is ClosePersistence bounded by a shutdown budget.
+//
+// The drain itself is unchanged and is genuinely synchronous — the flusher's
+// stop branch commits everything still queued, and the WaitGroup below is what
+// makes "flushed on shutdown" a fact rather than a hope. What the context adds
+// is the ability to REPORT a drain that did not finish. Without it, a shutdown
+// whose budget expired mid-drain lost the tail of the queue silently, which is
+// the one fact an operator needs after a deploy and cannot recover afterwards.
+// This mirrors `analyticsWriter.shutdown`.
+func (s *Store) ClosePersistenceContext(ctx context.Context) {
+	s.closePersistence(ctx)
+}
+
+func (s *Store) closePersistence(ctx context.Context) {
 	s.persistMu.Lock()
 	p := s.persist
 	s.persist = nil
@@ -255,12 +445,31 @@ func (s *Store) ClosePersistence() {
 	if p == nil {
 		return
 	}
-	p.onceClose.Do(func() {
-		close(p.stop)
-	})
-	p.wg.Wait()
-	if p.db != nil {
-		_ = p.db.Close()
+	// Cleared from the store BEFORE the stop is signalled, so a concurrent
+	// record call sees a nil persistence and no-ops rather than sending to a
+	// queue nobody will drain again.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.onceClose.Do(func() {
+			close(p.stop)
+		})
+		p.wg.Wait()
+		if p.db != nil {
+			closeTelemetryPool(p.db, p.pool)
+		}
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		if n := len(p.queue); n > 0 {
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "telemetry persistence shutdown incomplete: the budget expired before the queue drained",
+				Fields:  map[string]string{"unwritten": strconv.Itoa(n)},
+			})
+		}
 	}
 }
 
@@ -286,7 +495,9 @@ func (s *Store) enqueuePersist(e persistEntry) {
 				Level:   "warn",
 				Message: "telemetry persistence queue full; dropping write-through",
 				Fields: map[string]string{
-					"queue_cap": "1024",
+					// Derived, not a literal: a hand-copied "1024" here would
+					// report the wrong capacity the first time the const moved.
+					"queue_cap": strconv.Itoa(persistQueueCap),
 				},
 			})
 		}
@@ -297,12 +508,28 @@ func (s *Store) enqueuePersist(e persistEntry) {
 // transaction every 200 ms (or when 128 entries accumulate).  This
 // keeps SQLite write amplification low without delaying log
 // visibility for the console operator beyond a fraction of a second.
+//
+// Three things end a batch: the size cap, the interval, and an explicit
+// synchronous flush request. The last is what gives callers read-your-writes
+// against an asynchronous writer — see FlushPersistence.
 func (p *persistence) flusher(s *Store) {
 	defer p.wg.Done()
-	const batchSize = 128
-	tick := time.NewTicker(200 * time.Millisecond)
+	tick := time.NewTicker(persistFlushInterval())
 	defer tick.Stop()
-	batch := make([]persistEntry, 0, batchSize)
+	batch := make([]persistEntry, 0, persistBatchSize)
+	// coalesce pulls everything already queued into the current batch, up to
+	// the size cap — a burst of N entries becomes ceil(N/128) transactions
+	// rather than N.
+	coalesce := func() {
+		for len(batch) < persistBatchSize {
+			select {
+			case e := <-p.queue:
+				batch = append(batch, e)
+			default:
+				return
+			}
+		}
+	}
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -317,29 +544,41 @@ func (p *persistence) flusher(s *Store) {
 		}
 		batch = batch[:0]
 	}
+	// drainAll writes everything currently queued, not merely one batch.
+	drainAll := func() {
+		for {
+			coalesce()
+			flush()
+			if len(p.queue) == 0 {
+				return
+			}
+		}
+	}
 	for {
 		select {
 		case <-p.stop:
-			// Drain remaining queued entries on shutdown so tests
-			// observing the file see every write that landed in the
-			// queue before Close.
-			for {
-				select {
-				case e := <-p.queue:
-					batch = append(batch, e)
-					if len(batch) >= batchSize {
-						flush()
-					}
-				default:
-					flush()
-					return
-				}
-			}
+			// Final drain. Everything that reached the queue before the stop is
+			// committed before this goroutine returns, and ClosePersistence
+			// waits on the WaitGroup — so "telemetry is flushed on shutdown" is
+			// a guarantee the caller can rely on rather than a signal and a
+			// hope.
+			drainAll()
+			return
+
+		case done := <-p.flushReq:
+			// A caller is waiting. Drain to empty before closing `done`: every
+			// entry enqueued before the request must be committed by the time
+			// the caller observes the close.
+			drainAll()
+			close(done)
+
 		case e := <-p.queue:
 			batch = append(batch, e)
-			if len(batch) >= batchSize {
+			coalesce()
+			if len(batch) >= persistBatchSize {
 				flush()
 			}
+
 		case <-tick.C:
 			flush()
 		}
@@ -350,11 +589,35 @@ func (p *persistence) flusher(s *Store) {
 // Splits by kind so each table sees one prepared statement reused
 // across its share of the batch.
 func (p *persistence) writeBatch(batch []persistEntry) error {
-	tx, err := p.db.Begin()
+	// Begun through the CAPPED handle when there is one, so this consumer's
+	// slot is held for the whole transaction. A transaction pins its
+	// connection for its lifetime, so a cap released at BEGIN would bound
+	// nothing — and a cap that is created but never taken is a bulkhead that
+	// exists only in the comment above it.
+	tx, err := p.begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck — Commit below supersedes
+
+	// Telemetry takes the same durability trade as analytics: acknowledge the
+	// commit without waiting for the WAL fsync, at the cost of losing a few
+	// hundred milliseconds of it if the SERVER crashes. Logs, metrics and
+	// spans are already a sampled, lossy, best-effort surface — the queue in
+	// front of this transaction drops entries under overflow by design — so
+	// paying an fsync per batch to protect them is spending the app's write
+	// throughput on the wrong thing.
+	//
+	// `SET LOCAL`, so it reverts at the end of THIS transaction and cannot
+	// reach the next borrower of the connection. That matters more here than
+	// it looks: this pool is now SHARED with the session store and with
+	// analytics, and a bare `SET` would quietly make somebody else's writes
+	// non-durable.
+	if p.syncCommitOff {
+		if _, err := tx.Exec(`SET LOCAL synchronous_commit = off`); err != nil {
+			return err
+		}
+	}
 
 	var (
 		insLog    *sql.Stmt
@@ -514,9 +777,33 @@ func (p *persistence) runPrune() error {
 	return nil
 }
 
-// FlushPersistence is a test-only helper that waits for the flusher
-// to drain the queue and commit.  Production code never calls this —
-// the 200 ms tick is fast enough for the console UI.
+// FlushPersistence asks the writer to drain synchronously and waits for it.
+// When it returns, every telemetry entry enqueued by the calling goroutine
+// before the call has been committed and is visible to any other reader of the
+// database — including a freshly opened handle.
+//
+// # Why this is a rendezvous and not a sleep
+//
+// It used to poll until `len(p.queue) == 0` and then sleep 250 ms. Both halves
+// were wrong, and together they produced a test suite that was green on a quiet
+// laptop and red on a loaded CI runner:
+//
+//   - An EMPTY QUEUE IS NOT A COMMITTED WRITE. The flusher moves entries out of
+//     the channel into a local batch and commits them later, so the queue
+//     reaches zero at the moment the data is least durable — in one goroutine's
+//     stack, in no transaction.
+//
+//   - The 250 ms sleep was covering that gap by out-waiting the flusher's
+//     200 ms tick. That is not synchronisation, it is a race with a handicap:
+//     it holds only while those two unrelated constants keep their accidental
+//     ordering, and only while the runner schedules the flusher promptly. CI
+//     lost it and reported 86 of 100 rows — two full batches committed, the
+//     44-entry remainder still in the flusher's hands.
+//
+// The flusher now answers an explicit request and closes the caller's channel
+// only after the drain has COMMITTED, which is a happens-before edge rather
+// than a probability. `persistFlushWait` bounds the wait so a wedged writer
+// degrades the caller instead of hanging it.
 func (s *Store) FlushPersistence() {
 	s.persistMu.RLock()
 	p := s.persist
@@ -524,15 +811,38 @@ func (s *Store) FlushPersistence() {
 	if p == nil {
 		return
 	}
-	// Poll-drain.  Cheap because the channel has a known capacity
-	// and we just wait for the count to hit zero plus one tick.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(p.queue) == 0 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	done := make(chan struct{})
+	timer := time.NewTimer(persistFlushWait)
+	defer timer.Stop()
+	select {
+	case p.flushReq <- done:
+	case <-p.stop:
+		// Already shutting down; the stop drain commits the queue and
+		// ClosePersistence is what waits for it.
+		return
+	case <-timer.C:
+		return
 	}
-	// One extra tick to let an in-flight batch commit.
-	time.Sleep(250 * time.Millisecond)
+	select {
+	case <-done:
+	case <-timer.C:
+	}
+}
+
+// SynchronousCommitOff reports whether telemetry's flush transactions should
+// skip the WAL fsync at commit. Default ON (i.e. the setting is `off`); an
+// operator who wants durable telemetry sets:
+//
+//	SKY_TELEMETRY_SYNCHRONOUS_COMMIT=on
+//
+// Parsed here rather than in `rt` because this package cannot import `rt`; the
+// spelling deliberately matches PostgreSQL's own vocabulary and the analytics
+// knob, so the two cannot mean different things.
+func SynchronousCommitOff() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SKY_TELEMETRY_SYNCHRONOUS_COMMIT"))) {
+	case "on", "true", "1", "remote_write", "remote_apply":
+		return false
+	default:
+		return true
+	}
 }

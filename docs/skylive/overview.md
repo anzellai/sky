@@ -306,6 +306,20 @@ Backwards-compatible: omit `[env] prefix` and behaviour matches every prior Sky 
 
 Every Sky.Live (and Sky.Http.Server) app **auto-mounts a Std.Ui-written dev console at `/_sky/console`** in dev mode. A floating "🔍 Console" anchor injected into every rendered page links straight to it. Zero user code needed.
 
+**On a bare `sky run` it is mounted AND unauthenticated.** With `SKY_CONSOLE_AUTH` and `ENV` both unset the mode resolves to dev-open and the gate returns true outright, so anything that can reach the port can read the console. That is deliberate — it is what makes a first Sky.Live app show its own telemetry with nothing configured — and it is why the default is now *announced* rather than only gated. The app says so at startup, under its `listening` line, together with what to set before deploying:
+
+```
+Sky.Live listening on :8000
+  dev console  http://localhost:8000/_sky/console  (open — no login in dev)
+  GC           GOMEMLIMIT 996MB, GOGC 400 — from 1.9GB detected, less the OS and embedded PostgreSQL
+  to deploy    ENV=production  SKY_CONSOLE_AUTH=token
+               SKY_CONSOLE_TOKEN=$(openssl rand -base64 32)  · SKY_ADMIN_TOKEN for /_sky/metrics
+```
+
+Under a production `ENV` the console lines simply disappear — they are not replaced by a warning. The `GC` line stays, because what the collector was sized for is not a dev-only fact ([`sky.toml` § Garbage collection](../sky-toml.md#garbage-collection)). **Nothing here changes behaviour**; it reports state that was already the default. The first line is emitted unchanged, because `apps/fieldbook/verify.sh` and both port-parsing supervisors key on it.
+
+The anchor and the console are separate surfaces: `SKY_DEV_BANNER=off` removes the floating link, and the console stays mounted and reachable.
+
 The console is a fully-isolated Sky.Live mini-app (`sky-bundled/console/`) spawned as a child process and reverse-proxied behind your app — same port, same origin, no shared state, no Sky.Live wire collision. The child dies when the parent exits.
 
 **Production gate**: console + banner are gated on the same `productionFromEnv()` rule that governs `/_sky/metrics` auth. `ENV` (then `SKY_ENV`) unset OR set to `dev` / `development` / `local` → console on. Anything else (`production`, `prod`, `staging`, `qa`, `preview`, …) → console off, banner gone, `/_sky/metrics` gated. Intentionally bias-to-gate: if you bother setting `ENV` at all, you mean it.

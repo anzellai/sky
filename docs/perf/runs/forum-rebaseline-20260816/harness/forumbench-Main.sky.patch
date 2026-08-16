@@ -1,0 +1,85 @@
+--- /private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/wt/examples/19-skyforum/src/Main.sky	2026-08-16 00:12:49.331294320 +0100
++++ /private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/src/Main.sky	2026-08-16 00:41:53.877202191 +0100
+@@ -11,6 +11,10 @@
+ -- pending compiler fix.
+ 
+ import Sky.Core.Prelude exposing (..)
++import Sky.Core.List as List
++import Sky.Core.Maybe as Maybe
++import Sky.Core.String as String
++import Sky.Core.System as System
+ import Std.Cmd as Cmd
+ import Std.Sub as Sub
+ import Std.Live exposing (app, route, config)
+@@ -152,7 +156,7 @@
+                   []
+             ]
+     in
+-        ( { posts = seedPosts
++        ( { posts = benchPosts seedPosts
+           , comments = seedComments
+           , currentPage = HomePage
+           , session = Nothing
+@@ -211,3 +215,62 @@
+             , routes = []
+             , notFound = ()
+             })
++
++
++-- ─── View-size lever (bench variant only) ────────────────────────
++--
++-- The ONE difference between this app and `examples/19-skyforum`.
++-- `FORUM_POSTS` (default 5, the stock seed count) sets how many posts
++-- the home page renders, so ONE binary produces every view size in the
++-- fixed-term regression. Varying N by editing a literal list would
++-- vary the binary too, and a fitted intercept is only meaningful if
++-- the code under it is identical at every point.
++--
++-- The lever is in `init` only. Nothing on the interaction path reads
++-- it: `view`, `update` and every `View/*` module are byte-identical to
++-- the stock example.
++benchPostCount : Int
++benchPostCount =
++    Maybe.withDefault
++        5
++        (String.toInt (System.getenvOr "FORUM_POSTS" "5"))
++
++
++-- FORUM_POSTS = 5 is the stock seed and reproduces `examples/19-skyforum`
++-- exactly (94 sky-id elements, 135 tags). ABOVE 5 the seed is extended;
++-- BELOW 5 it is truncated, down to 0 posts / 14 elements of page chrome.
++--
++-- The small sizes exist so the regression INTERPOLATES its intercept
++-- instead of extrapolating it. Extrapolating a fixed term from two points
++-- at 94 and 384 elements -- which is what the showcase figure did -- puts
++-- the intercept 94 elements outside the data, where a mild superlinearity
++-- in the slope shows up as a large change in the constant.
++benchPosts : List Post -> List Post
++benchPosts seeded =
++    if benchPostCount < List.length seeded then
++        List.take benchPostCount seeded
++
++    else if benchPostCount == List.length seeded then
++        seeded
++
++    else
++        seeded ++ List.map benchPost (List.range 6 benchPostCount)
++
++
++-- Title length is held constant across N. Per-post element count is
++-- structural and does not depend on it, but per-post BYTES would, and
++-- a term that grows with N for a reason other than element count would
++-- contaminate the slope.
++benchPost : Int -> Post
++benchPost i =
++    Post
++        i
++        ("Bench post "
++            ++ String.fromInt i
++            ++ " — a link-aggregator headline of typical length")
++        ("https://example.com/bench/" ++ String.fromInt i)
++        "alice"
++        (100 + i)
++        3
++        []
++        []

@@ -79,11 +79,33 @@ func TestCsrfIssue_SecureInProd(t *testing.T) {
 	})
 }
 
-// TestIsProd_ReadsEnvVar is gone with `isProd()`. It asserted
-// `SKY_ENV=staging` is NOT production, i.e. it pinned the divergence
-// between the cookie path's own predicate and `productionFromEnv()` —
-// the documented gate, under which staging IS production and therefore
-// gets Secure cookies. The single predicate is covered end-to-end by
-// TestCookieSecurePredicate_MatchesProductionGate (cookie_secure_test.go),
-// which asserts the cookie decision and the production gate agree for
-// every ENV / SKY_ENV combination.
+func TestIsProd_ReadsEnvVar(t *testing.T) {
+	t.Setenv("ENV", "")
+	t.Setenv("SKY_ENV", "")
+	if isProd() {
+		t.Fatal("isProd() should be false when the env flag is unset")
+	}
+	withProdEnv(t, func() {
+		if !isProd() {
+			t.Fatal("isProd() should be true when SKY_ENV=prod")
+		}
+	})
+
+	// SKY_ENV=staging now gates as production, and this assertion was
+	// INVERTED to say so.
+	//
+	// The previous expectation ("staging is not prod") codified the
+	// defect rather than a requirement. productionFromEnv() — the
+	// documented gate, observability.go — deliberately biases to gate:
+	// dev/development/local are the only non-production markers, and
+	// everything else, staging included, is treated as real. Bothering
+	// to set the flag at all signals a non-casual deployment.
+	//
+	// For cookies that is plainly the right answer: a staging deploy is
+	// served over HTTPS and its session cookie should carry Secure.
+	// Nothing depended on the narrower reading except this line.
+	t.Setenv("SKY_ENV", "staging")
+	if !isProd() {
+		t.Fatal("isProd() should be true for SKY_ENV=staging (bias-to-gate)")
+	}
+}

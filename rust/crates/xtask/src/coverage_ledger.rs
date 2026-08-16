@@ -357,6 +357,39 @@ static CROSS_CUTTING: &[CrossSurface] = &[
                       and neither shrank without an accounted entry",
         today: &[("nothing — `xtask denominators` was invoked by no workflow", 0)],
     },
+    // The configuration surface is its own accounting, separate from the
+    // coverage one: not "how much of the product is tested" but "how much of
+    // the product's configuration is read by anything, and where from". It was
+    // measured by hand three times before `xtask config-surface` existed and
+    // produced three different answers, one of which asserted the DB pool knobs
+    // were undocumented when they are documented and read.
+    CrossSurface {
+        id: "meta.config-surface",
+        category: "meta",
+        description: "the configuration surface is measured from source — which \
+                      sky.toml keys are read pre-binary, which seeded env \
+                      suffixes nothing reads, how far docs and readers drifted",
+        today: &[(
+            "nothing — the surface was counted by hand, in prose, with no gate",
+            0,
+        )],
+    },
+    // Distinct from `meta.config-surface`, and the distinction is the whole
+    // point of the stage. That one counts WHO READS WHAT, from source. This one
+    // records WHAT VALUE ARRIVES, from a running binary — which is the only
+    // form of the question a moved default can be checked against, and the form
+    // §7 says the design's highest risk turns on.
+    CrossSurface {
+        id: "meta.config-effective-values",
+        category: "meta",
+        description: "each covered setting's effective value, observed from a running \
+                      binary in every combination of environment / sky.toml / withX, \
+                      as the baseline a moved default is compared against",
+        today: &[(
+            "nothing — no gate compared a setting's resolved value against anything",
+            0,
+        )],
+    },
 ];
 
 /// Which surfaces each REGISTERED gate covers.
@@ -420,6 +453,8 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("sky-verify", &["compiler.fmt", "lang.constructs"]),
     ("shared-world", &["compiler.shared-world", "compiler.resolve"]),
     ("coverage-ledger", &["meta.coverage-accounting"]),
+    ("config-surface", &["meta.config-surface"]),
+    ("config-matrix", &["meta.config-effective-values"]),
     ("corpus-manifest", &["lang.constructs"]),
     // Family R is the combinatorial face of `compiler.reject`. The standalone
     // `reject` gate covers 63 hand-written defects, one file each; this one

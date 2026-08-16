@@ -56,27 +56,56 @@ func GobRegister(value any) {
 // live for cross-version compatibility through the v0.17 transition.
 type AdtVariantFactory func(rawArgs []json.RawMessage) any
 
+// AdtCtorKey namespaces a constructor by the ADT that OWNS it.
+//
+// The bare constructor name is NOT a key. Constructor names are not
+// unique across a program: `runtime-go/rt/console_app/main.go` alone
+// registers 55 `Std_Ui_*` names (`Text`, `Node`, `Empty`, `Raw`, `Min`,
+// `Max`, `Fill`, …), and `AlignLeft` exists in both `Std.Ui.HAlign` and
+// `Std.Css.TextAlign` (rust/crates/lower/src/lower.rs:412-416). Keyed on
+// the bare name these registries were last-write-wins, so which ADT a
+// name resolved to was decided by Go `init()` order — and the wire
+// dispatch path feeds them a CLIENT-SUPPLIED string (live.go:4841).
+type AdtCtorKey struct {
+	Adt  string // owning ADT's Go type name, e.g. "Main_Msg"
+	Ctor string // constructor name, e.g. "Submit"
+}
+
 var (
-	adtVariantRegistry   = make(map[string]AdtVariantFactory)
+	adtVariantRegistry   = make(map[AdtCtorKey]AdtVariantFactory)
 	adtVariantRegistryMu sync.RWMutex
 )
 
-// RegisterAdtVariant binds a SkyName to a factory function that
-// constructs the typed variant struct from raw JSON arguments.
-// Codegen calls this from init() for every ctor of every ADT whose
-// emission shape is sealed-interface + variant struct (v0.17 P3+).
-func RegisterAdtVariant(skyName string, factory AdtVariantFactory) {
+// RegisterAdtVariant binds an (owning ADT, constructor) pair to a
+// factory that constructs the typed variant struct from raw JSON
+// arguments. Codegen calls this from init() for every ctor of every ADT
+// whose emission shape is sealed-interface + variant struct.
+//
+// Duplicate registration of the SAME (adt, ctor) is expected and
+// tolerated: an ADT declared in the stdlib is emitted into more than one
+// Go package (e.g. `Std_Ui_Element` in both `main` and
+// `rt/console_app`), so both packages run an init() for it. The two
+// factories are generated from one declaration and are behaviourally
+// identical, so the first registration is kept and later ones are
+// ignored — which makes the result independent of init() order.
+// `RegisterAdtTag` enforces that the accompanying tags agree, which is
+// the observable that could actually differ.
+func RegisterAdtVariant(adtName, ctorName string, factory AdtVariantFactory) {
+	key := AdtCtorKey{Adt: adtName, Ctor: ctorName}
 	adtVariantRegistryMu.Lock()
-	adtVariantRegistry[skyName] = factory
+	if _, exists := adtVariantRegistry[key]; !exists {
+		adtVariantRegistry[key] = factory
+	}
 	adtVariantRegistryMu.Unlock()
 }
 
-// LookupAdtVariant returns the factory for a SkyName or (nil, false).
-// Used by the wire-dispatch path to construct typed variants before
-// falling back to legacy SkyADT.
-func LookupAdtVariant(skyName string) (AdtVariantFactory, bool) {
+// LookupAdtVariant returns the factory for a constructor WITHIN the
+// named ADT, or (nil, false). There is deliberately no bare-name
+// lookup: resolving a constructor without naming its ADT is the defect
+// this registry shape exists to prevent.
+func LookupAdtVariant(adtName, ctorName string) (AdtVariantFactory, bool) {
 	adtVariantRegistryMu.RLock()
-	f, ok := adtVariantRegistry[skyName]
+	f, ok := adtVariantRegistry[AdtCtorKey{Adt: adtName, Ctor: ctorName}]
 	adtVariantRegistryMu.RUnlock()
 	return f, ok
 }
@@ -86,19 +115,35 @@ func LookupAdtVariant(skyName string) (AdtVariantFactory, bool) {
 // legacy SkyADT path, and returns (value, true) on success or
 // (nil, false) if the Msg name is unknown to both registries.
 //
-// localTag is the per-app msgTags fallback (built lazily during
-// previous dispatches as the renderer encounters ctor functions);
-// pass -1 if unavailable.
-func BuildAdtFromWire(msgName string, rawArgs []json.RawMessage, localTag int) (any, bool) {
-	// Variant factory (v0.17 sealed-interface) takes priority.
-	if factory, found := LookupAdtVariant(msgName); found {
-		return factory(rawArgs), true
-	}
-	// Legacy SkyADT path: global registry first, per-app fallback second.
+// SECURITY PROPERTY — `msgName` is a client-supplied wire string
+// (live.go:4841). It is resolved ONLY within `adtName`, the ADT the
+// dispatch site expects. A wire string can therefore never select a
+// constructor belonging to an ADT the handler did not ask for, however
+// the name collides across the program.
+//
+// An empty `adtName` means the caller could not determine which ADT it
+// expects. Both process-global registries are then skipped entirely —
+// searching them without an ADT to scope to IS the defect — and only
+// `localTag` remains. That degrades safely rather than failing shut:
+// `localTag` comes from the per-app `msgTags` cache, which is populated
+// exclusively from messages this app has ALREADY dispatched through a
+// render-time handler (live.go:5302), so it cannot name a constructor
+// of a foreign ADT.
+//
+// localTag is that per-app fallback; pass -1 if unavailable.
+func BuildAdtFromWire(adtName, msgName string, rawArgs []json.RawMessage, localTag int) (any, bool) {
 	tag := -1
-	if t, ok := LookupAdtTag(msgName); ok {
-		tag = t
-	} else if localTag >= 0 {
+	if adtName != "" {
+		// Variant factory (v0.17 sealed-interface) takes priority.
+		if factory, found := LookupAdtVariant(adtName, msgName); found {
+			return factory(rawArgs), true
+		}
+		// Legacy SkyADT path, scoped to the same ADT.
+		if t, ok := LookupAdtTag(adtName, msgName); ok {
+			tag = t
+		}
+	}
+	if tag < 0 && localTag >= 0 {
 		tag = localTag
 	}
 	if tag < 0 {

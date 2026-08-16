@@ -195,7 +195,7 @@ func TestSessionCookie_SecureInProduction(t *testing.T) {
 	defer restore()
 
 	w := httptest.NewRecorder()
-	writeSessionCookie(w, httptest.NewRequest("GET", "/", nil), "sky_sid", "SID", time.Hour)
+	writeSessionCookie(httptest.NewRequest("GET", "/", nil), w, "sky_sid", "SID", time.Hour)
 	lines := w.Result().Header.Values("Set-Cookie")
 	if len(lines) != 1 {
 		t.Fatalf("expected 1 Set-Cookie, got %v", lines)
@@ -212,7 +212,7 @@ func TestSessionCookie_SecureOverTLSInDev(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-Forwarded-Proto", "https")
 	w := httptest.NewRecorder()
-	writeSessionCookie(w, req, "sky_sid", "SID", time.Hour)
+	writeSessionCookie(req, w, "sky_sid", "SID", time.Hour)
 	lines := w.Result().Header.Values("Set-Cookie")
 	if c := parseSetCookieLine(t, lines[0]); !c.Secure {
 		t.Fatalf("cookie served over HTTPS must be Secure: %q", lines[0])

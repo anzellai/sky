@@ -197,6 +197,26 @@ sky db reset [table]           # empty data (all declared tables, or one); keeps
 sky db drop [table]            # drop tables (all + ledger, or one); fresh "never migrated" state — prompts / --yes
 ```
 
+### Running PostgreSQL in development
+
+`Std.Db` is dialect-safe across SQLite and Postgres, but the gap is real —
+`Codec.auto` cannot encode `Money`/`Decimal`, and there is no `NUMERIC` DDL
+kind. If production is Postgres, develop on Postgres.
+
+```bash
+sky db start | stop | ps       # a per-project cluster on a unix socket
+sky build --embed src/Main.sky # bundle PostgreSQL INTO the binary → ./sky-out/app --embed
+```
+
+Opt in with `[database] embedded = true` in `sky.toml`. **The app never knows
+which tier it is in** — it consumes a DSN (`<PREFIX>_DB_PATH`, or
+`DATABASE_URL`); only the provisioner changes. `sky run` supervises the cluster
+for you; in production an operator sets a DSN and the same binary just works.
+Passing `--embed` *and* an explicit DSN is an error, not a precedence rule.
+
+`sky db start` needs PostgreSQL binaries — `SKY_POSTGRES_BIN`, a provisioned
+bundle, or a system install.
+
 Expose a `db : Store.Project` binding for `--gen`:
 `db = Store.project [ Store.toTable products, Store.toTable orders ]`, from
 `module Main exposing (main, db, seed)`. On deploy `sky build` embeds the
@@ -205,6 +225,24 @@ migrations, so `SKY_DB_OP=migrate ./app` self-migrates with no source tree.
 **Connection** comes from config — `SKY_DB_PATH` (SQLite) or `DATABASE_URL`
 (Postgres), or `[database]` in `sky.toml`; `Db.connect ()` reads them. The handle
 is a **memoised top-level value** (`db = Task.run (Db.connect ())`) — never in Model.
+
+### A local PostgreSQL, so dev runs what production runs
+
+```bash
+sky db start        # initdb on first use + start; already running is a no-op
+sky db ps [--all]   # this project's cluster, or every one on the machine
+sky db stop [--all] # pg_ctl stop -m fast
+```
+
+One cluster per project in `.skydata/pg/` (gitignored), on a **unix socket** —
+no port to race over and nothing on the network. `sky db start` prints the DSN
+to put in `DATABASE_URL`. Tuned small (`shared_buffers = 32MB`), so an idle
+project cluster costs tens of megabytes. Needs PostgreSQL on `PATH`, or point
+`SKY_POSTGRES_BIN` at a `bin` directory holding `initdb`/`pg_ctl`/`postgres`.
+
+Worth reaching for the moment the app is headed for Postgres in production:
+developing on SQLite and deploying on Postgres is how dialect differences reach
+users. The app code does not change — only the DSN does.
 
 ## Effect boundary — Task everywhere
 
@@ -355,7 +393,7 @@ path   = "app.db"
 
 [auth]                   # Std.Auth
 driver     = "jwt"
-cookieName = "sky_sid"   # secret comes from SKY_AUTH_TOKEN_SECRET (>=32 bytes), never committed
+cookieName = "sky_sid"   # INERT: [auth] keys are parsed and read by nothing
 
 [log]                    # structured logging
 format = "plain"         # plain (dev) | json (production)
@@ -365,9 +403,12 @@ level  = "info"          # debug | info | warn | error
 ### How to pick — and what to change as you grow
 
 Only `name` / `version` / `entry` are required; add a section **only when you use
-that feature**. Config precedence is **process env > `.env` > `sky.toml`**, so
-every value here can be overridden at deploy time without editing the file (and
-secrets / connection strings should be — never commit them).
+that feature**. Config precedence is **process env > `.env` > `Live.withX`
+builder calls in code > `sky.toml`**, so every value here can be overridden at
+deploy time without editing the file (and secrets / connection strings should
+be — never commit them). An explicit builder call (`Live.withPort`,
+`Live.withStore`, `Live.withStorePath`, `Live.withTtl`, `Live.withIdleEvict`)
+beats the `sky.toml` seed but still loses to the operator's environment.
 
 **Persistence tier by traffic (the quick call — pick one, set `[live] store` +
 `[database]` to match):**
@@ -392,14 +433,17 @@ is dev-only (per-process, lost on restart).
 - **`[database]`** — your APPLICATION data (separate from sessions). `sqlite` for a
   prototype / single host; `postgres` for production / multiple instances. Leave
   the real connection string to `DATABASE_URL` (env), not the committed file.
-- **`[auth]`** — only when you own users (`Std.Auth`). The signing secret is NEVER
-  in the file — it comes from `SKY_AUTH_TOKEN_SECRET` (≥32 bytes).
+- **`[auth]`** — **currently inert.** `driver`, `cookieName` and `tokenTtl` are
+  parsed and read by nothing, so setting them has no effect (a known gap, not a
+  design). Use `Std.Auth` from code: `Auth.signToken` takes its secret as an
+  argument, so pass one from your own environment variable (≥32 bytes) rather
+  than expecting the file or the runtime to supply it.
 - **`[log]`** — `plain`/`info` while developing; `json`/`warn` in production (JSON
   logs are what a log aggregator ingests).
 
 **Going to production — set these via env (not the file):** `ENV=production`
 (locks the dev console + banner off, gates `/_sky/metrics` behind auth),
-`SKY_AUTH_TOKEN_SECRET`, `SKY_CONSOLE_AUTH`; a SHARED `SKY_LIVE_STORE`
+`SKY_CONSOLE_AUTH` with `SKY_CONSOLE_TOKEN`; a SHARED `SKY_LIVE_STORE`
 (`redis`/`postgres`) **and** load-balancer sticky sessions keyed on the `sky_sid`
 cookie if you run more than one replica.
 
@@ -410,7 +454,7 @@ cookie if you run more than one replica.
 - **Secrets are typed** — `Auth.signToken`/`verifyToken` take `String`; never `fmt.Sprintf("%v", secret)`.
 - **Money is `Std.Money`**, never `Float`.
 - **`sky fmt` after editing**, **`sky verify` before shipping.**
-- **Production gate**: with `ENV=production`, set `SKY_AUTH_TOKEN_SECRET` (>=32 bytes) and `SKY_CONSOLE_AUTH`; use a shared session store (redis/postgres) + sticky sessions when you run more than one replica.
+- **Production gate**: set `ENV=production`, and `SKY_CONSOLE_AUTH` (`token` or `app`) with `SKY_CONSOLE_TOKEN`; use a shared session store (redis/postgres) + sticky sessions when you run more than one replica. `SKY_AUTH_TOKEN_SECRET` is **not** a runtime setting — nothing in the runtime reads it (`sky_sid` is unsigned random hex, and `Auth.signToken` takes its secret as a Sky-level *argument*). It is a convention in your own code that only `sky doctor` knows about: if you use `Std.Auth`, whatever variable you feed into `Auth.signToken` must be ≥ 32 bytes; if you don't, setting it changes nothing.
 - **Sky.Live resilience (automatic)**: an explicitly-configured `store` (postgres/sqlite/redis) that can't connect at boot **fails loud in production** (the app refuses to start) instead of silently using memory — so make sure `DATABASE_URL` is reachable, or set `SKY_LIVE_STORE=memory` to opt in to in-memory sessions. `/_sky/readyz` returns 503 when the store/DB is down. Keep `view` a **pure** function of the model (no `Time.now`/`Random` in `view`); enable `SKY_LIVE_VIEW_DETERMINISM_CHECK=1` in dev to catch violations.
 
 When a signature or module is unclear, run `sky doc <Module>` — it is complete

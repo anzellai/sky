@@ -579,6 +579,7 @@ fn verify_one(
         stdin: stdin_for(name),
         entry_module: None,
         progress: false,
+        embed_bundle: None,
     };
     let rep = build_example(&opts);
     let out_dir = dir.join("sky-out-rust");

@@ -1,0 +1,26 @@
+{
+  "label": "B-n50-r2",
+  "url": "http://34.59.219.179:8000",
+  "sessions_requested": 50,
+  "sessions_established": 50,
+  "duration": "1m0s",
+  "think_time": "1s",
+  "interactions_counted": 1205,
+  "interactions_per_sec": 18.90174817063085,
+  "p50_ms": 264.415,
+  "p95_ms": 5622.587,
+  "p99_ms": 7397.59,
+  "max_ms": 10640.262,
+  "outcomes": {
+    "ok": 1205
+  },
+  "error_rate": 0,
+  "sse_frames_total": 334,
+  "sse_still_open_at_end": 50,
+  "generator_cpu_percent_of_machine": 0.1721188482588225,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-15T16:26:30Z"
+}

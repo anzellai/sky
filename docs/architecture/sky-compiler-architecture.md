@@ -2,12 +2,24 @@
 
 > **Historical / legacy reference.** Describes the Haskell compiler, now preserved under legacy-haskell-compiler/. The primary compiler is Rust — see docs/rust-rewrite/.
 
-> **This is the durable architectural reference.** Every compiler-level
-> workflow, agent, and judge verdict MUST consult this document before
-> claiming a tactic closes a strategic goal. Tactical feasibility (can
+> **§6 / §7 / §8 have been superseded. Do not cite them.**
+> The rt.Coerce origin catalog (§6), the architectural levers (§7) and the
+> irreducible floor (§8) below describe the **Haskell** lowering, down to
+> `Compile.hs` line numbers, and were the repository's only floor authority long
+> after that compiler was retired. The Rust-grounded replacement is
+> **`docs/rust-rewrite/14-runtime-narrowing-taxonomy.md`**, derived from the Rust
+> compiler's own emission sites; its §6 maps these § numbers onto the new ones.
+> Citing the sections below to establish what is closeable in the Rust compiler
+> is how "closing this requires monomorphising every HOF call site" survived to
+> produce the same wrong conclusion three times.
+>
+> **This WAS the durable architectural reference.** Every compiler-level
+> workflow, agent, and judge verdict was required to consult this document
+> before claiming a tactic closes a strategic goal. That role now belongs to
+> `docs/rust-rewrite/` (and doc 14 for the floor). Tactical feasibility (can
 > I implement this change?) is an agent-level judgement; strategic
 > feasibility (does it close the user goal?) is a user-level decision
-> taken AFTER cross-checking this reference.
+> taken AFTER cross-checking the reference.
 >
 > **Authored 2026-06-23** as Phase 4 synthesis of the v0.17 deep dive
 > (Parse/Canon, Type/Solve, Lower/Codegen, Runtime, and 890-site
@@ -369,10 +381,61 @@ Used by the lowerer to know which Go names are "really" Sky-typed so
 
 ### 5.3 `rt.SkyCall` + `reflect.MakeFunc`
 
-Generic HOF dispatcher. ~100 ns per element. Bounded. Closes the
-"Sky `func(any) any` ↔ Go `func(T) U`" impedance mismatch. Cannot be
-elided without monomorphising every HOF call site (massive Go binary
-size cost + breaks Sky's principle of single emit per def).
+Generic HOF dispatcher. Closes the "Sky `func(any) any` ↔ Go
+`func(T) U`" impedance mismatch.
+
+> **Corrected 2026-08-15.** This section previously read "~100 ns per
+> element. Bounded." and "Cannot be elided without monomorphising every
+> HOF call site (massive Go binary size cost + breaks Sky's principle
+> of single emit per def)". **Both halves were wrong, and together they
+> are why this category was filed as irreducible.** Neither claim had a
+> measurement behind it.
+
+**The cost was understated.** A `func(Attr) bool` passed to `List.any`'s
+erased `func(any) bool` slot was emitted as `rt.Coerce[func(any) bool]`.
+Go function types are nominal in their parameters, so that assertion can
+never satisfy its own `v.(T)` fast path — *every* such call falls through
+to `makeFuncAdapter` → `adaptFuncValueWithCapture`, a `reflect.MakeFunc`
+thunk allocating a `[]reflect.Value` and re-boxing each argument. That is
+paid **per element visit**, not per call. Measured on the `Std.Ui` marker
+scan (`hasMarker name attrs = List.any (\a -> isMarker name a) attrs`),
+six probes over six attributes = 36 visits: **318 allocations with the
+adapter, 126 without** — 5.3 allocations per element visit that the
+"bounded" framing did not account for. `Std.Ui` runs this scan six times
+per element of every layout, so it sat on the hot path of every rendered
+view.
+
+**The dichotomy was false.** Eliding the dispatch does *not* require
+monomorphisation. Both shapes are fully known at `coerce_if_needed`
+(`rust/crates/lower/src/lower.rs`), so the adaptation is statically
+derivable: eta-expand into a closure **at the slot's shape** with the
+coercions pushed inside —
+`func(_e0 any) bool { return isMarker(name, rt.Coerce[Attr](_e0)) }`.
+The ABI is unchanged: still one emit per definition, still fully erased,
+no binary growth. Measured end to end on `examples/26-ui-showcase`
+(384 elements, `GOMAXPROCS=1`, closed loop, 25 sessions, 20 s, three runs
+per arm, the two compilers differing *only* by this branch):
+
+| | interactions/s | p95 |
+|---|---|---|
+| adapter (before) | 132.2 / 137.1 / 137.2 | ~580 ms |
+| eta-expanded (after) | 184.9 / 184.9 / 184.9 | ~362 ms |
+
+**1.36× throughput**, with the two arms' ranges not overlapping. Note
+this is the closed-loop, CPU-bound regime; traffic with real think time
+moves less, and the per-element microbenchmark ratio does **not**
+extrapolate to a whole request — a large share of an interaction is
+network syscall no compiler change touches.
+
+**This category is therefore lowering-closeable, not floor.** Do not
+confuse it with **§8.3's TEA `reflect.MakeFunc` dispatch (category 4)**,
+which *is* genuinely irreducible: there the callee's shape is known only
+at runtime, so there is no static target shape to eta-expand to. The two
+were described in near-identical prose, and that similarity is what
+caused this one to be mis-filed. The distinguishing test is simple —
+**if both the value's Go shape and the slot's Go shape are known at emit
+time, it is closeable; if the shape only exists at runtime, it is
+floor.**
 
 ### 5.4 Panic recovery floor
 
@@ -385,6 +448,14 @@ works" semantics even when the lowering hits an erosion-point fallback.
 
 ## 6. rt.Coerce emission — code path catalog
 
+> **SUPERSEDED — Haskell only.** The Rust compiler's origin catalogue is
+> `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` §3, and doc 14 §6 maps
+> every number below onto it. Several of these categories have **no Rust
+> analogue** (8, cross-module dep ctx), several **split** (11: user `Msg` closed,
+> `Std.Ui` `Element`/`Attribute` still open), and the Rust compiler has origins
+> the Haskell one did not (kernel return, string-concat operand, the eta-narrow
+> that is itself the closed form). Do not translate this table; read doc 14.
+
 The 890-site forensics (Phase 3) classified emission origins by source
 line. Distinct categories with Compile.hs citations:
 
@@ -395,7 +466,7 @@ line. Distinct categories with Compile.hs citations:
 | 3 | Map→struct narrowing for Db rows | rt.Coerce with target = `Foo_R` | Closes via typed Db.queryDecode (already shipped) — only legacy `Db.query` path emits |
 | 4 | TEA dispatch return narrowing | wrap around reflect.MakeFunc return | **FLOOR** — runtime contract |
 | 5 | Ctor partial-application adapter | Compile.hs:3777 `rt.Coerce[func(string) any](Msg_Ctor)` | Closes via sealed-iface + typed ctor signature |
-| 6 | Polymorphic kernel-fn arg | Compile.hs:4357 `Sky_Core_List_map_(rt.Coerce[func(any) any](fn), …)` | Closes via per-instance kernel σ — partially shipped |
+| 6 | Polymorphic kernel-fn arg | Rust: `lower.rs` `kernel_call` → `rt.List_mapAny(any(fn), any(xs))`. (Legacy: Compile.hs:4357 `Sky_Core_List_map_(rt.Coerce[func(any) any](fn), …)`) | §7.4 typed kernel dispatch — **SHIPPED** for `map`/`filter`/`filterMap`/`indexedMap` where the element type and callback shape are proven; the erased call is the fallback, not the default |
 | 7 | Record-update / RecordExt narrowing | wraps around RecordExt access | LowerCtx + σ |
 | 8 | Cross-module dep ctx fallback | dep-emission "Nothing" branch | Closes via wiring SolvedTypes into dep ctx (#642 follow-ups) |
 | 9 | Go FFI return narrowing | wrap around foreign call result | **FLOOR** — runtime contract |
@@ -412,6 +483,14 @@ sites). NOT closeable without runtime rewrite.
 ---
 
 ## 7. Architectural levers for closing rt.Coerce
+
+> **SUPERSEDED — Haskell only.** §7.1, §7.2 and §7.5 describe `Compile.hs`
+> plumbing (LowerCtx threading, dep-emission σ-recovery, IORef→reader) that has
+> **no Rust analogue**: lowering carries `expected` as a parameter, there is no
+> dep context, and there are no compiler globals. §7.4 is **superseded** — it
+> proposed monomorphisation, and eta-expansion at the slot's shape is the cheaper
+> mechanism. The Rust levers are
+> `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` §5.
 
 ### 7.1 LowerCtx propagation (lever for category 1, 7, 12)
 
@@ -437,13 +516,55 @@ Msg / Cmd / Sub / VNode. ~2-3 weeks. **HIGHEST-leverage lever** for
 the "renderer walks tree" rt.Coerce class which is the single
 largest bucket.
 
-### 7.4 Per-instance kernel σ (lever for category 6)
+### 7.4 Typed kernel dispatch (lever for category 6) — SHIPPED
 
-`Sky_Core_List_map_` etc. currently take `func(any) any` and rely on
-SkyCall. **Tactic**: emit per-instance specialisation (`List_map_int_str`)
-where the call site has known concrete σ. Cost: Go binary size
-inflates with kernel-call-site count. Benefit: HOF rt.Coerce wraps
-eliminate.
+The erased list helpers (`rt.List_mapAny`, `rt.List_filterAny`,
+`rt.List_filterMap`, `rt.List_indexedMap`) take `fn any, xs any` and
+dispatch through `rt.SkyCall`, i.e. `reflect.Value.Call`, once per
+element.
+
+**Earlier wording of this section proposed NAMED per-instance
+specialisation** — "emit `List_map_int_str` where the call site has
+known concrete σ", costed as "Go binary size inflates with
+kernel-call-site count". That is not what shipped, and it is not what
+should ship. Sky's Go ABI is erased and stays erased; the design
+principle is **one emit per definition, no monomorphisation**, stated
+in the `func_shape_eta` doc comment in `rust/crates/lower/src/lower.rs`
+and true of the code — `grep -r 'mono_instances\|subst_tyvars'
+rust/crates` returns nothing. (`docs/rust-rewrite/07-lowering-and-ir.md`
+§ "mono_instances" still describes a monomorphiser in the present
+tense; there is no such pass. Cite the code, not that section.) A
+per-call-site inlined loop and a per-instance named function both
+un-erase the ABI, and both buy binary growth proportional to the
+instance count.
+
+**What shipped instead**: the call site selects the fully-typed member
+of the runtime's existing list-helper family and lets **Go's own
+generics** instantiate it — `rt.List_mapT[A, B](fn func(A) B, xs []A)
+[]B`. One runtime function, one emit per definition, no new code per
+call site. The compiler site is `Ctx::list_hof_typed`
+(`rust/crates/lower/src/lower.rs`), reached from `kernel_call`, which
+is the confluence both the kernel-alias and the kernel-pseudo-module
+resolution paths pass through.
+
+It fires only where the emitter can PROVE, from the LOWERED Go types,
+that the list argument is a real `[]A` with `A` concrete and that the
+callback is at — or is retypable in place to — the typed shape.
+Anything else keeps the erased call. `provable()` rejects `GoTy::Any`
+(what an OPEN record row erases to), `GoTy::TyVar`, and `GoTy::Struct`
+(an anonymous record, which `lower_lambda` is still entitled to widen
+underneath the call — the issue #166 class).
+
+**Measured** on `examples/19-skyforum` under load, three alternating
+reps per arm: `docs/perf/runs/stage2-typed-hof-20260816/`.
+
+**Not in scope, and why**: `List.foldl`, `List.find`, `List.any` and
+`List.all` are pure Sky source in `sky-stdlib/Sky/Core/List.sky`,
+already TCO'd to a Go `for` loop, and emit `Sky_Core_List_*` rather
+than any `rt.List_*`. Across `examples/`, `apps/` and `sky-bundled/`
+there are 48 uses of `List.foldl` / `List.find` and not one of them
+emits a kernel call. `List.foldr` IS a kernel alias, and has a single
+use in the whole corpus.
 
 ### 7.5 IORef → reader threading (foundation, prerequisite for above)
 
@@ -455,6 +576,13 @@ the IORefs.
 ---
 
 ## 8. Irreducible floor
+
+> **SUPERSEDED — Haskell only.** The Rust compiler's floor is
+> `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` §4, and it is a
+> **different set**: it distinguishes contract floor (FFI return) from policy
+> floor (open-row erasure) from closeable-but-blocked (stdlib-ADT payloads), and
+> it excludes the per-element `rt.SkyCall` path this section was mis-cited for.
+> The test that decides membership is doc 14 §1, not a category name.
 
 The following site classes CANNOT close without runtime contract
 rewrite. They are NOT lowering bugs.
@@ -480,15 +608,51 @@ Neither has been authorised by the user.
 
 ### 8.3 TEA reflect.MakeFunc dispatch (category 4)
 
+**Scope — read this before citing this section as floor.** What is
+irreducible here is the TEA dispatch itself: the ONE `sky_call(app.view,
+model)` per interaction at `runtime-go/rt/live.go`, where the runtime
+holds a `func(any) any` and the user's `view`/`update` has a concrete
+signature the runtime cannot name. That call is category 4 and it is
+genuinely floor. Measured, it is one reflect call per interaction, not a
+per-element cost.
+
+`rt.SkyCall` is ALSO reached on the per-element path inside the erased
+list helpers (`List_mapAny`, `List_filterMap`, `List_foldlAnyT`,
+`List_indexedMap`, `List_find`). **That path is NOT this section.** §6
+files it as **category 6, "Polymorphic kernel-fn arg"**, closing via the
+§7.4 per-instance kernel σ lever — a call site where the element type
+and the callback shape are statically known can emit a typed loop
+directly. Because the prose below names `rt.SkyCall` without that
+distinction, this section has been mis-cited as floor for a closeable
+category. When establishing floor, cite §6's table, not this heading.
+
 `rt.SkyCall` uses `reflect.MakeFunc` for the `func(any) any` ↔
 `func(T) U` impedance. The MakeFunc closure box-and-unbox is type-erased
-by construction. Closing requires monomorphising every HOF call site
-into a generated typed dispatcher (Go binary size explodes; Sky's
-"one emit per def" principle breaks).
+by construction **at the TEA boundary**, where the runtime genuinely
+cannot know the user's type.
 
-**Floor estimate**: 35-50 sites across a representative example sweep
-(`examples/26-ui-showcase`, `examples/13-skyshop`). The exact count
-moves with example surface area; the architectural ratio is stable.
+**Monomorphisation is not the only route, and the claim that it was is
+disproved.** This section previously said closing requires
+"monomorphising every HOF call site into a generated typed dispatcher
+(Go binary size explodes)". Eta-expanding a func value into a closure at
+the target shape closes the adapter half with **one emit per def, no
+monomorphisation and no binary growth** — measured 1.36×
+(`docs/perf/runs/hof-dispatch-20260815/`).
+
+> **The adapter census in this sentence is stale and is restated from the
+> golden.** It read "across 56 projects falling 269 → 24 (−91%, 24 projects to
+> zero)". `rust/crates/xtask/coerce_floor.golden` holds **62** project
+> entries, and `grep -o 'adapter=[0-9]*' … | awk` sums to **35** adapters
+> across **9** non-zero projects, with **53** at zero (skyshop 11,
+> composite-generics 6, relay 5, fieldbook 4, composite-live-shop 3,
+> composite-server 2, console 2, standard-libs 1, json 1). The direction of
+> the result is unchanged; the numbers are not the ones quoted. Re-derive from
+> the golden rather than citing this line. The "one emit per def" principle is intact.
+
+**Floor estimate**: the category-4 TEA dispatch is **one site per app**,
+exercised once per interaction. The 35-50 figure previously given here
+counted the category-6 per-element sites as well and therefore
+overstated the floor.
 
 ---
 

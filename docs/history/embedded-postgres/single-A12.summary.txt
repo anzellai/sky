@@ -1,0 +1,32 @@
+# single-A12 — verdict lines only, from scripts/grill-mutation-matrix.sh.
+# The full verbose log is ~250 kB and is deliberately not checked in;
+# re-run the script to regenerate it.
+
+--- SKIP: TestHelper_RunInvariant (0.00s)
+--- FAIL: TestTheAnalyticsWriterActuallyGoesThroughItsCap (1.43s)
+    --- FAIL: TestTheAnalyticsWriterActuallyGoesThroughItsCap/SKY_ANALYTICS_SYNCHRONOUS_COMMIT=on (0.74s)
+    --- SKIP: TestIdentityKeyIsInjectiveWhereSprintfIsNot/record_of_strings (0.00s)
+    --- SKIP: TestIdentityKeyIsInjectiveWhereSprintfIsNot/pipe_inside_a_string (0.00s)
+    --- SKIP: TestSessionStoreCloseIsIdempotent/postgres (0.00s)
+    --- SKIP: TestSessionStoreCloseIsIdempotent/redis (0.00s)
+FAIL
+FAIL	sky-app/rt	52.670s
+PASS
+ok  	sky-app/rt/console_app	0.041s
+PASS
+ok  	sky-app/rt/hub	0.177s
+--- SKIP: TestPostgresStore_EnqueueAndClaim (0.00s)
+--- SKIP: TestPostgresStore_SkipsClaimedRowsConcurrently (0.00s)
+--- SKIP: TestPostgresStore_LeaseExpiryReclaim (0.00s)
+--- SKIP: TestPostgresStore_Complete (0.00s)
+--- SKIP: TestPostgresStore_Reschedule (0.00s)
+--- SKIP: TestPostgresStore_DeadLetterChainsError (0.00s)
+--- SKIP: TestPostgresStore_DeadLetterIdempotent (0.00s)
+--- SKIP: TestPostgresStore_Cancel (0.00s)
+--- SKIP: TestPostgresStore_CancelClaimedJobFails (0.00s)
+--- SKIP: TestPostgresStore_QueueDepth (0.00s)
+PASS
+ok  	sky-app/rt/jobs	0.247s
+PASS
+ok  	sky-app/rt/telemetry	0.105s
+FAIL

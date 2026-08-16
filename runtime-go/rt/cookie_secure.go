@@ -49,9 +49,36 @@ import (
 // see productionFromEnv.
 func cookiesMustBeSecure() bool { return productionFromEnv() }
 
-// requestIsHTTPS reports whether the request reached us over TLS,
-// directly or through a terminating proxy. A cookie set on an HTTPS
-// response is always safe to mark Secure.
+// isProd reports whether this process is running in production.
+//
+// It is a thin alias for productionFromEnv() — there is exactly ONE
+// production predicate in this runtime, deliberately.
+//
+// It used to be `skyGetenv("ENV") == "prod"`, which disagreed with
+// productionFromEnv() in two ways that silently disabled cookie
+// hardening:
+//
+//   - It read <PREFIX>_ENV only, never plain `ENV`.
+//   - It matched only the literal string "prod".
+//
+// `ENV=production` is what `sky init` scaffolds and what the docs
+// promise, and it satisfied NEITHER condition — so production
+// deployments got session cookies with no `Secure` attribute. Keeping
+// two predicates in agreement by convention had already failed once;
+// the alias makes divergence impossible.
+func isProd() bool { return productionFromEnv() }
+
+// requestIsHTTPS reports whether the browser reached us over TLS —
+// either directly (r.TLS) or through a terminating reverse proxy that
+// announced the original scheme in X-Forwarded-Proto / X-Forwarded-Ssl.
+//
+// This is the most accurate Secure-cookie signal there is: it describes
+// the connection actually in front of us rather than an operator's guess
+// about the environment. X-Forwarded-Proto is attacker-controllable when
+// the app is exposed directly, but the only thing a forged header can do
+// here is turn Secure ON, which is fail-safe.
+//
+// Nil-tolerant so callers without a request in hand can pass nil.
 func requestIsHTTPS(r *http.Request) bool {
 	if r == nil {
 		return false

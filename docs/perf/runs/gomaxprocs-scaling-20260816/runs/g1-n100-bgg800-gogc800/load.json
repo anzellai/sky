@@ -1,0 +1,33 @@
+{
+  "label": "g1-n100-bgg800-gogc800",
+  "url": "http://10.128.0.11:8000",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 28083,
+  "interactions_per_sec": 621.5753887789881,
+  "p50_ms": 159.371,
+  "p95_ms": 209.282,
+  "p99_ms": 217.429,
+  "max_ms": 230.5,
+  "outcomes": {
+    "ok": 28083
+  },
+  "error_rate": 0,
+  "patches_total": 56166,
+  "interactions_with_patches": 28083,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 754,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 2.814670727281476,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "skygmp-gen",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T09:57:00Z"
+}

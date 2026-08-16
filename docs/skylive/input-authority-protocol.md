@@ -384,7 +384,12 @@ func sanitiseKey(s string) string {
 }
 ```
 
-**Also:** `Html.keyed` helper added to `sky-stdlib/Sky/Html.sky` (opt-in; sets `sky-key` attribute, consumed by `skyIDKey` above):
+**Also:** the keyed helper. It shipped as **`Std.Ui.Keyed`**
+(`sky-stdlib/Std/Ui/Keyed.sky:39-45`), not as `Html.keyed` in
+`sky-stdlib/Sky/Html.sky` — that file does not exist (`sky-stdlib/Sky/` holds
+`Core/`, `Http/`, `Test.sky`). `Keyed.keyed` injects the `sky-key` attribute
+through an outer `Ui.el` via `Ui.htmlAttribute`, consumed by `skyIDKey` above.
+The sketch below is the shape, not the shipped signature:
 
 ```elm
 keyed : String -> VNode -> VNode

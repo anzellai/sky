@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 141 |
-| covered by the new corpus (>= Asserted) | 127 |
-| verdict `stronger` | 122 |
+| surfaces | 143 |
+| covered by the new corpus (>= Asserted) | 129 |
+| verdict `stronger` | 124 |
 | verdict `equal` | 19 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
 | stdlib modules (denominator) | 87 |
-| stdlib entries (denominator) | 1776 |
+| stdlib entries (denominator) | 1782 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 6 | 6.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 778 | 43.8% |
-| symbols unreferenced under the generous rule | 699 | 39.4% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 784 | 44.0% |
+| symbols unreferenced under the generous rule | 705 | 39.6% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -133,6 +133,8 @@ None.
 | `http.sse-websocket` | http | Asserted | Falsified | stronger |
 | `lang.constructs` | language | Asserted | Falsified | stronger |
 | `lsp` | tooling | Asserted | Falsified | stronger |
+| `meta.config-effective-values` | meta | None | Falsified | stronger |
+| `meta.config-surface` | meta | None | Falsified | stronger |
 | `meta.coverage-accounting` | meta | None | Falsified | stronger |
 | `observability.console` | observability | Asserted | Falsified | stronger |
 | `runtime.go-rt` | runtime | Asserted | Asserted | equal |
@@ -245,6 +247,8 @@ None.
 | `apps-ledger-postgres` | T3 | PROVEN | `db.postgres` · `db.migrations` |
 | `apps-relay` | T1 | PROVEN | `http.middleware-ratelimit` · `http.sse-websocket` · `runtime.panic-classes` |
 | `cli-verbs` | T1 | PROVEN | `cli.init` · `cli.clean` · `cli.watch` · `cli.db` · `cli.install` · `cli.update` · `cli.upgrade` |
+| `config-matrix` | T1 | PROVEN | `meta.config-effective-values` |
+| `config-surface` | T1 | PROVEN | `meta.config-surface` |
 | `conformance` | T1 | PROVEN | `db.sqlite` · `db.codec-store` · `auth.password-session` |
 | `corpus` | T2 | PROVEN | `lang.constructs` · `compiler.infer` · `compiler.lower-emit-shape` · `stdlib.Sky.Core.String` · `stdlib.Sky.Core.List` · `stdlib.Sky.Core.Dict` · `stdlib.Sky.Core.Set` · `stdlib.Sky.Core.Maybe` · `stdlib.Sky.Core.Result` · `stdlib.Sky.Core.Char` · `stdlib.Sky.Core.Encoding` · `stdlib.Sky.Core.Crypto` · `stdlib.Sky.Core.Math` · `stdlib.Sky.Core.Basics` · `stdlib.Sky.Core.ToString` · `stdlib.Sky.Core.Path` · `stdlib.Sky.Core.Error` · `stdlib.Sky.Core.Regex` · `stdlib.Sky.Core.Json.Encode` · `stdlib.Sky.Core.Json.Decode` · `stdlib.Std.Decimal` · `stdlib.Std.Money` · `stdlib.Std.Csv` · `stdlib.Sky.Core.Bytes` · `stdlib.Sky.Core.Jwt` · `stdlib.Std.Codec` · `stdlib.Std.Markdown` · `stdlib.Std.Compression` |
 | `corpus-emit-shape` | T1 | PROVEN | `compiler.lower-emit-shape` · `compiler.codegen-determinism` |

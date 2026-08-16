@@ -1,0 +1,33 @@
+{
+  "label": "combo-n100-gogc400-750MiB",
+  "url": "http://127.0.0.1:8541",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 133468,
+  "interactions_per_sec": 2965.3033370865633,
+  "p50_ms": 26.904,
+  "p95_ms": 81.209,
+  "p99_ms": 122.495,
+  "max_ms": 677.863,
+  "outcomes": {
+    "ok": 133468
+  },
+  "error_rate": 0,
+  "patches_total": 266936,
+  "interactions_with_patches": 133468,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 765,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 4.621325483904261,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T11:03:51Z"
+}

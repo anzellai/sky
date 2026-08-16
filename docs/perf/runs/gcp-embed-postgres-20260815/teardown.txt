@@ -1,0 +1,11 @@
+$ gcloud compute instances list --project settleby --filter="name~sky-bench"
+Listed 0 items.
+
+$ gcloud compute disks list --project settleby --filter="name~sky-bench"
+Listed 0 items.
+
+$ gcloud compute firewall-rules list --project settleby --filter="name~sky-bench"
+
+To show all fields of the firewall, please show in JSON format: --format=json
+To show all fields in table format, please see the examples in --help.
+

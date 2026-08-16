@@ -29,6 +29,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"sky-app/rt/dbshare"
 	"sky-app/rt/telemetry"
 	"strconv"
 	"strings"
@@ -235,6 +236,43 @@ func logOnce(key string, fn func()) {
 	}
 }
 
+// reportSessionSaveFailure is the ONE place a durable session store decides how
+// loudly a failed write is reported. All three backends route here, and
+// `TestEverySessionStoreReportsSaveFailuresThroughTheBoundedPath` holds them to
+// it — only the SQLite path can be driven end-to-end by a unit test, so the
+// other two are held by reachability rather than by hope.
+//
+// TWO STATES, and the whole point is that they are not the same event.
+//
+// `closed` is true only after the shutdown RELEASE phase has closed the store,
+// which is a single fact about a process that is on its way out. Every handler
+// goroutine still in flight across `srv.Close()` then arrives here with the same
+// news, and a bare log line per arrival put one `failed to save session` in the
+// log per draining session — a burst, in the last second of a deploy, that reads
+// to whoever is watching exactly like the data loss it is NOT. (It is not: `Set`
+// is synchronous, so every session written before the close is on disk, and the
+// write that failed here was going to die with the process either way. That is
+// asserted, not assumed, in live_store_late_write_test.go.) One line, naming the
+// cause, is the whole of the information.
+//
+// `closed` false is ordinary operation — a full disk, a revoked permission, a
+// Postgres gone away — and there the repetition IS the signal: a store failing
+// every write is a different event from a store that failed one, and a bound
+// that leaked into this branch would trade a burst of shutdown noise for a blind
+// spot in production. So this branch is unchanged and logs every time.
+func reportSessionSaveFailure(kind, sid string, closed bool, err error) {
+	if closed {
+		logOnce("late-write-"+kind, func() {
+			log.Printf("[sky.live] %s: session %s was not saved — the store was closed by the "+
+				"shutdown release phase (%v). The process is terminating and this write would "+
+				"not have outlived it; sessions written before the close are durable. Further "+
+				"late writes on this store are not logged.", kind, sid, err)
+		})
+		return
+	}
+	log.Printf("[sky.live] %s: failed to save session %s: %v", kind, sid, err)
+}
+
 // stringField: read a named record field and return its string form, or
 // "" when the field is absent / nil.
 //
@@ -254,10 +292,17 @@ func stringField(cfg any, name string) string {
 	return fmt.Sprintf("%v", v)
 }
 
-// parseTTL — resolve a TTL value from env > sky.toml > default in
-// precedence order. Each layer accepts EITHER a Go-duration string
+// parseTTL — take the first parseable of an ordered list of candidate layer
+// values, else `def`. Each layer accepts EITHER a Go-duration string
 // ("30m", "24h", "1h30m") OR a bare integer interpreted as seconds.
 // Empty or unparseable values fall through to the next layer.
+//
+// The ORDER of `vals` is not this function's business and never was: it is
+// `configLayers` (live_config_precedence.go) that decides which layer outranks
+// which, for every Sky.Live setting at once. This used to take `(envVal,
+// tomlVal)` positionally, which quietly made the parser the place the
+// precedence lived — and made `live.ttl`'s order impossible to change without
+// editing a function whose name says it only parses.
 //
 // History: the pre-fix implementation read only the env var AND
 // accepted only bare-integer seconds via strconv.Atoi.  So both
@@ -266,8 +311,8 @@ func stringField(cfg any, name string) string {
 // with the documented `30m`-style default in CLAUDE.md.  This
 // helper makes the documented shape the canonical one while
 // preserving bare-integer-seconds for backward compatibility.
-func parseTTL(envVal, tomlVal string, def time.Duration) time.Duration {
-	for _, raw := range []string{envVal, tomlVal} {
+func parseTTL(vals []string, def time.Duration) time.Duration {
+	for _, raw := range vals {
 		s := strings.TrimSpace(raw)
 		if s == "" {
 			continue
@@ -329,14 +374,15 @@ func slidingCookieMaxAgeSeconds(ttl time.Duration) int {
 	return floorSeconds
 }
 
-// parseIdleEvict — resolve the tiered-session-cache idle-evict window from
-// env > sky.toml > default, mirroring parseTTL's precedence + duration/seconds
-// parsing. Differs in ONE way: an EXPLICIT "0" / "off" / "none" / "disable(d)"
-// returns 0 (idle-evict OFF — fall back to the classic all-within-TTL memCache),
-// whereas parseTTL would treat 0 as unparseable and fall through to the default.
-// This lets an operator turn the feature off via SKY_LIVE_IDLE_EVICT=0.
-func parseIdleEvict(envVal, tomlVal string, def time.Duration) time.Duration {
-	for _, raw := range []string{envVal, tomlVal} {
+// parseIdleEvict — take the first parseable of an ordered list of candidate
+// layer values, mirroring parseTTL's duration/seconds parsing and, through the
+// shared `configLayers`, its precedence. Differs in ONE way: an EXPLICIT
+// "0" / "off" / "none" / "disable(d)" returns 0 (idle-evict OFF — fall back to
+// the classic all-within-TTL memCache), whereas parseTTL would treat 0 as
+// unparseable and fall through to the default. This lets an operator turn the
+// feature off via SKY_LIVE_IDLE_EVICT=0.
+func parseIdleEvict(vals []string, def time.Duration) time.Duration {
+	for _, raw := range vals {
 		s := strings.TrimSpace(raw)
 		if s == "" {
 			continue
@@ -378,6 +424,18 @@ type SessionStore interface {
 	Set(sid string, sess *liveSession)
 	Delete(sid string)
 	NewID() string
+	// Close tears the store down: it stops the background cleanup /
+	// idle-evict goroutines and releases the backing handle.
+	//
+	// IDEMPOTENT. Close has more than one plausible caller — a shutdown
+	// hook, an explicit teardown in the app that owns the store, a test
+	// harness swapping a store out — and a teardown method that panics
+	// the second time it is called is a process kill in the window where
+	// the process is supposed to be exiting cleanly. Every backend gates
+	// its channel close behind a sync.Once and returns the FIRST close's
+	// error to every caller. `TestSessionStoreCloseIsIdempotent` proves
+	// the behaviour and `TestLiveStoreClosesLifecycleChannelsUnderOnce`
+	// proves no future backend can drop the guard.
 	Close() error
 	// Broker returns the pub/sub broker bound to this store. v0.15.x
 	// default: in-process *topicRegistry. Future cross-process
@@ -401,6 +459,9 @@ type memoryStore struct {
 	sessions map[string]*liveSession
 	ttl      time.Duration
 	stop     chan struct{}
+	// closeOnce guards `stop` so a second Close cannot panic. Same
+	// mechanism as jobs.Worker.Stop. See SessionStore.Close.
+	closeOnce sync.Once
 	// broker — pub/sub registry. Cycle 3 P46. Default in-process
 	// *topicRegistry; future cross-process tiers swap the pointer.
 	// Stored as the Broker interface so test fixtures + memory-store
@@ -464,7 +525,7 @@ func (s *memoryStore) Delete(sid string) {
 func (s *memoryStore) NewID() string { return generateSkySessionID() }
 
 func (s *memoryStore) Close() error {
-	close(s.stop)
+	s.closeOnce.Do(func() { close(s.stop) })
 	return nil
 }
 
@@ -508,6 +569,11 @@ type sqliteStore struct {
 	db   *sql.DB
 	ttl  time.Duration
 	stop chan struct{}
+	// closeOnce + closeErr make Close idempotent: the channel is closed
+	// once and every caller gets the FIRST db.Close()'s verdict, not a
+	// panic and not a second driver-level error. See SessionStore.Close.
+	closeOnce sync.Once
+	closeErr  error
 	// idleEvict — tiered-session-cache idle-evict window (0 disables). When
 	// 0 < idleEvict < ttl, cleanupLoop drops a session's live memCache pointer
 	// after this idle window with no active SSE while KEEPING its blob on disk
@@ -565,7 +631,13 @@ func newSQLiteStore(path string, ttl, idleEvict time.Duration) (*sqliteStore, er
 			// rejects WAL (NFS/SMB, :memory:) still works in rollback-journal
 			// mode. Warn and carry on; only a genuine open/CREATE failure below
 			// falls back to memory.
-			Log_warn("live session store: " + pragma + " failed: " + pErr.Error())
+			// rtWarn, not Log_warn: the kernel returns a Task (a `func() any`),
+			// so as a bare statement this message was built and dropped. The
+			// loop deliberately carries on, so that dead warning was the only
+			// thing standing between an operator and a session store running
+			// silently without the concurrency configuration above — the exact
+			// configuration v0.17.10 added to stop it stalling under load.
+			rtWarn("live session store: " + pragma + " failed: " + pErr.Error())
 		}
 	}
 	if _, err := db.Exec(`
@@ -684,7 +756,22 @@ func (s *sqliteStore) Set(sid string, sess *liveSession) {
 		ON CONFLICT(sid) DO UPDATE SET blob=excluded.blob, last_seen=excluded.last_seen`,
 		sid, blob, sess.lastSeenTime().Unix())
 	if err != nil {
-		log.Printf("[sky.live] sqlite: failed to save session %s: %v", sid, err)
+		reportSessionSaveFailure("sqlite", sid, s.isClosed(), err)
+	}
+}
+
+// isClosed reports whether the release phase has already closed this store.
+//
+// Read off `stop`, which `Close` closes BEFORE `db.Close()`, so a Set racing the
+// close either sees the store open and gets a real error, or sees it closed —
+// never sees it open after the handle is gone. Non-blocking, no new field, no
+// lock on the write path.
+func (s *sqliteStore) isClosed() bool {
+	select {
+	case <-s.stop:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -706,8 +793,11 @@ func (s *sqliteStore) Delete(sid string) {
 func (s *sqliteStore) NewID() string { return generateSkySessionID() }
 
 func (s *sqliteStore) Close() error {
-	close(s.stop)
-	return s.db.Close()
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		s.closeErr = s.db.Close()
+	})
+	return s.closeErr
 }
 
 // idleEvictPass performs one tiered-session-cache idle-evict sweep over a
@@ -847,9 +937,20 @@ func (s *sqliteStore) runIdleEvictOnce(now time.Time) {
 // ═════════════════════════════════════════════════════════════════════
 
 type postgresStore struct {
-	db   *sql.DB
+	db *sql.DB
+	// pool is this store's reference into the shared registry. Closing the
+	// store releases the reference; the underlying pool closes only when the
+	// LAST consumer does. Closing `db` directly would take the pool out from
+	// under analytics and telemetry, and the symptom — `sql: database is
+	// closed` from a subsystem nobody asked to stop — would point at the
+	// victim rather than at the cause.
+	pool *dbshare.Handle
 	ttl  time.Duration
 	stop chan struct{}
+	// closeOnce + closeErr — see SessionStore.Close. dbshare.Handle.Close
+	// is already idempotent (refcounted); the bare channel close was not.
+	closeOnce sync.Once
+	closeErr  error
 	// idleEvict — tiered-session-cache idle-evict window (0 disables). See
 	// sqliteStore.idleEvict + docs/skylive/tiered-session-cache.md.
 	idleEvict time.Duration
@@ -868,22 +969,63 @@ func (s *postgresStore) Ping() error {
 	return s.db.PingContext(ctx)
 }
 
+// openPostgresSessionPool opens the session store's pool with its ceiling
+// already applied.
+//
+// Split out from newPostgresStore for a testability reason worth stating: the
+// CREATE TABLE below needs a live engine, so ANY gate that goes through
+// newPostgresStore can only run under `-tags integration` against a real
+// server — and that is exactly how the `applyTo` line came to be deletable with
+// the whole default suite green. `sql.Open` does not dial, so the sizing IS
+// assertable offline, but only if it is reachable without the DDL.
+// The session store is the HOTTEST pool in a Sky.Live app — every request
+// reads and writes its session — and until v0.20.3 it was the only one with no
+// ceiling at all: Go's `MaxOpenConns` zero value is unlimited, so a traffic
+// spike opened one PostgreSQL backend per concurrent request until the server
+// answered `FATAL: sorry, too many clients already`, which fails the session
+// lookup and therefore every request, not just the excess ones.
+//
+// It now takes its pool from the shared registry (see the dbshare package):
+// when the session DSN resolves to the same string as the analytics or
+// telemetry store's — the normal case under one `DATABASE_URL` — all three
+// draw on ONE set of backends instead of three.
+//
+// UNCAPPED (`dbSessionShare` is 0), and that asymmetry is the design. This
+// store is on the request path, so throttling it would be throttling the app.
+// The two BACKGROUND writers carry the caps instead, and the shared pool is
+// sized so that what those caps leave over is exactly the pool this store used
+// to own outright (see dbSharedAuxPoolSizeFor). Sharing therefore costs the
+// request path nothing, and it still cannot be starved.
+func openPostgresSessionPool(connStr string) (*dbshare.Handle, error) {
+	c := dbSharedAuxPoolConfig()
+	return dbshare.Acquire("live-sessions", "pgx", connStr, dbshare.Config{
+		MaxOpenConns:    c.MaxOpenConns,
+		MaxIdleConns:    c.MaxIdleConns,
+		ConnMaxLifetime: c.ConnMaxLifetime,
+		ConnMaxIdleTime: c.ConnMaxIdleTime,
+	}, dbSessionShare)
+}
+
 func newPostgresStore(connStr string, ttl, idleEvict time.Duration) (*postgresStore, error) {
-	db, err := sql.Open("pgx", connStr)
+	handle, err := openPostgresSessionPool(connStr)
 	if err != nil {
 		return nil, err
 	}
+	db := handle.DB()
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS sky_sessions (
 			sid        TEXT PRIMARY KEY,
 			blob       BYTEA NOT NULL,
 			last_seen  BIGINT NOT NULL
 		)`); err != nil {
-		db.Close()
+		// Release THIS consumer's reference, not the pool: another consumer
+		// may already be serving requests through it.
+		handle.Close()
 		return nil, err
 	}
 	s := &postgresStore{
 		db:        db,
+		pool:      handle,
 		ttl:       ttl,
 		idleEvict: idleEvict,
 		stop:      make(chan struct{}),
@@ -963,7 +1105,23 @@ func (s *postgresStore) Set(sid string, sess *liveSession) {
 		ON CONFLICT (sid) DO UPDATE SET blob = EXCLUDED.blob, last_seen = EXCLUDED.last_seen`,
 		sid, blob, sess.lastSeenTime().Unix())
 	if err != nil {
-		log.Printf("[sky.live] postgres: failed to save session %s: %v", sid, err)
+		reportSessionSaveFailure("postgres", sid, s.isClosed(), err)
+	}
+}
+
+// isClosed — see sqliteStore.isClosed. `Close` closes `stop` before releasing
+// the dbshare reference.
+//
+// Note what this does NOT mean on this backend: the pool is refcounted, so a
+// closed session store whose pool still has an analytics or telemetry consumer
+// leaves the underlying *sql.DB open and the late write SUCCEEDS. The predicate
+// is about THIS store's contract, not about the handle underneath it.
+func (s *postgresStore) isClosed() bool {
+	select {
+	case <-s.stop:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -982,8 +1140,11 @@ func (s *postgresStore) Delete(sid string) {
 func (s *postgresStore) NewID() string { return generateSkySessionID() }
 
 func (s *postgresStore) Close() error {
-	close(s.stop)
-	return s.db.Close()
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		s.closeErr = s.pool.Close()
+	})
+	return s.closeErr
 }
 
 func (s *postgresStore) cleanupLoop() {
@@ -1056,6 +1217,12 @@ type redisStore struct {
 	// override this field to use `redis.PSubscribe` for cross-process
 	// fan-out (design doc §11.2.5 tier 1).
 	broker Broker
+	// closeOnce + closeErr — see SessionStore.Close. `cancel` is already
+	// idempotent, but redis.Client.Close is not: a second call answers
+	// "redis: client is closed", which reads to a caller as a teardown
+	// FAILURE rather than as a teardown that already happened.
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (s *redisStore) Broker() Broker { return s.broker }
@@ -1192,9 +1359,14 @@ func (s *redisStore) Set(sid string, sess *liveSession) {
 		return
 	}
 	if err := s.client.Set(s.ctx, redisKey(sid), blob, s.ttl).Err(); err != nil {
-		log.Printf("[sky.live] redis: failed to save session %s: %v", sid, err)
+		reportSessionSaveFailure("redis", sid, s.isClosed(), err)
 	}
 }
+
+// isClosed — see sqliteStore.isClosed. This backend has no `stop` channel; its
+// `Close` cancels the store context first, so the context IS the predicate, and
+// it is the same thing that made the write fail.
+func (s *redisStore) isClosed() bool { return s.ctx.Err() != nil }
 
 func (s *redisStore) Delete(sid string) {
 	s.memMu.Lock()
@@ -1216,15 +1388,18 @@ func (s *redisStore) Delete(sid string) {
 func (s *redisStore) NewID() string { return generateSkySessionID() }
 
 func (s *redisStore) Close() error {
-	s.cancel()
-	// Close the broker BEFORE the client — the cross-instance broker's
-	// Pub/Sub connection rides this client; tearing it down first stops
-	// the receive loop cleanly. The broker shares the client
-	// (ownsClient=false) so it won't double-close it.
-	if s.broker != nil {
-		_ = s.broker.Close()
-	}
-	return s.client.Close()
+	s.closeOnce.Do(func() {
+		s.cancel()
+		// Close the broker BEFORE the client — the cross-instance broker's
+		// Pub/Sub connection rides this client; tearing it down first stops
+		// the receive loop cleanly. The broker shares the client
+		// (ownsClient=false) so it won't double-close it.
+		if s.broker != nil {
+			_ = s.broker.Close()
+		}
+		s.closeErr = s.client.Close()
+	})
+	return s.closeErr
 }
 
 // idleEvictLoop runs the tiered-session-cache idle-evict pass every 60s until
@@ -1494,7 +1669,12 @@ var (
 	storeConnectMaxWait  = 4 * time.Second
 	// storeFatalf is the fail-loud action; overridable in tests so the
 	// production path can be asserted without exiting the test process.
-	storeFatalf = log.Fatalf
+	//
+	// NOT log.Fatalf. That ends in os.Exit(1), which runs no deferred
+	// functions and so skips generated main's `defer rt.StopEmbeddedPostgres()`
+	// — and this branch fires AFTER MaybeStartEmbeddedPostgres, orphaning the
+	// postmaster this process had just started. See fatalfAndExit.
+	storeFatalf = fatalfAndExit
 	// storeSleep is the retry backoff sleep; overridable in tests.
 	storeSleep = time.Sleep
 )
@@ -1547,13 +1727,50 @@ func failDurableStore(kind string, err error, ttl time.Duration) SessionStore {
 	return newMemoryStore(ttl)
 }
 
+// chooseStore selects the backend and registers its teardown, in that order and
+// in ONE place.
+//
+// The registration lives here rather than at the two call sites (the main app in
+// live.go, a mounted sub-app in subapp_inprocess.go) because this is the only
+// function that produces a session store: every branch of selectStore, including
+// all four fail-loud fallbacks to memory, returns through this line. A caller
+// that obtains a store cannot obtain one that nothing will close.
+//
+// The closer runs in the release phase — after the drain, after the listener has
+// stopped accepting — see RegisterResourceCloser. What it settles is small and
+// worth stating precisely, because it is NOT lost data: session writes are
+// synchronous, so a bare process exit loses no session (a fresh handle reads the
+// row straight back out of the un-checkpointed WAL). What a close settles is the
+// WAL checkpoint itself (the `-wal`/`-shm` sidecars are folded into the main file
+// and removed, and under `synchronous=NORMAL` that checkpoint is what makes the
+// last sessions durable against a HOST crash rather than merely a process exit),
+// the cleanup / idle-evict goroutine, the `dbshare` refcount the Postgres store
+// holds on a shared pool, and the Redis client's connections. At process exit
+// most of those are moot; in-process — a mounted sub-app, a test harness, any
+// store swapped out while the process lives — they are leaks.
 func chooseStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
-	if kind == "" {
-		kind = skyGetenv("LIVE_STORE")
-	}
-	if path == "" {
-		path = skyGetenv("LIVE_STORE_PATH")
-	}
+	store := selectStore(kind, path, ttl, idleEvict)
+	RegisterResourceCloser("live.sessionStore", func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[sky.live] session store close: %v", err)
+		}
+	})
+	return store
+}
+
+// selectStore builds the session store from ALREADY-RESOLVED values.
+//
+// It used to resolve two of them itself, with `if kind == "" { kind =
+// skyGetenv(…) }` — which put the config layer ahead of the environment and
+// made this function a second, disagreeing home for precedence. That is how
+// `live.storePath` came to invert `live.ttl` one module away: neither site was
+// wrong on its own terms, and nothing compared them. Resolution now happens in
+// `configLayers` (live_config_precedence.go) at the two call sites that have a
+// builder config to resolve, and this function has no opinion about layers.
+//
+// Callers passing explicit values — the store tests do — therefore get exactly
+// what they passed, which the env-fallback shape could not promise.
+func selectStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 	if ttl == 0 {
 		ttl = 30 * time.Minute
 	}

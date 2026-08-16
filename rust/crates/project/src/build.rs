@@ -42,6 +42,18 @@ pub struct BuildOptions {
     /// interactive `sky build`/`run`/`check` UX, mirroring the Haskell oracle.
     /// Batch gates + synthesised-entry verbs leave it `false` for quiet builds.
     pub progress: bool,
+    /// `sky build --embed`: the PostgreSQL bundle archive to compile into the
+    /// binary, already resolved and verified by the CLI (see
+    /// `rust/crates/sky/src/db_embed.rs`). `None` — the ordinary build — links
+    /// no bundle at all and actively REMOVES any archive a previous `--embed`
+    /// build left in the out dir, so a binary never carries 25MB of PostgreSQL
+    /// because of a flag someone passed yesterday.
+    ///
+    /// The path is resolved by the CLI rather than here because acquiring it can
+    /// mean a network fetch and a checksum verification, and `project` is the
+    /// library every gate and harness builds through — none of which should be
+    /// able to reach the network as a side effect of compiling.
+    pub embed_bundle: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -554,6 +566,20 @@ fn build_inner(
         report.warnings.push(format!("embed migrations: {e}"));
     }
 
+    // `sky build --embed`: stage the PostgreSQL bundle and the `go:embed` that
+    // links it. NOT best-effort — a `--embed` build that quietly produced a
+    // binary with no database in it is the one outcome this flag must never
+    // have, so a failure here fails the build before `go build` runs.
+    if let Err(e) = write_postgres_bundle(opts.embed_bundle.as_deref(), &out_dir) {
+        // `emitted` is cleared as well as noted: the Go is on disk, but the
+        // binary this build would have produced is not the one that was asked
+        // for, and the CLI's "emitted" path goes on to report `go build`
+        // results. A `--embed` build that cannot stage its bundle has failed.
+        report.emitted = false;
+        report.note = e;
+        return report;
+    }
+
     // ---- go build (two-phase cgo detection + bounded) ----
     // Prefer static binaries (CGO_ENABLED=0) so the common pure-Go app ships
     // without libSystem/CoreFoundation/Security dylib deps; retry with cgo when
@@ -920,6 +946,53 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
                 cfg.db_dsn = Some(val.clone());
                 cfg.extra_defaults.push(("DB_PATH".into(), val))
             }
+            // Connection-pool sizing + transaction isolation → the
+            // suffixes db_pool.go reads. All four pool knobs are
+            // PostgreSQL-only (SQLite is pinned to one connection by its
+            // global writer lock and warns if these are set), and the
+            // runtime's own deployment-aware defaults apply when they
+            // are absent — these exist for the operator who knows their
+            // server's max_connections budget.
+            ("database", "maxOpenConns") => {
+                cfg.extra_defaults.push(("DB_MAX_OPEN_CONNS".into(), val))
+            }
+            ("database", "maxIdleConns") => {
+                cfg.extra_defaults.push(("DB_MAX_IDLE_CONNS".into(), val))
+            }
+            ("database", "connMaxLifetime") => {
+                cfg.extra_defaults.push(("DB_CONN_MAX_LIFETIME".into(), val))
+            }
+            ("database", "connMaxIdleTime") => {
+                cfg.extra_defaults.push(("DB_CONN_MAX_IDLE_TIME".into(), val))
+            }
+            // `isolation` raises the level Std.Db.transaction begins at.
+            // Unset = the driver default (READ COMMITTED on PostgreSQL),
+            // which is what shipped before this key existed and is not
+            // changed by adding it. `txRetry` is the retry budget for a
+            // 40001/40P01 conflict and is only safe when the transaction
+            // body is REPLAYABLE — see resolveDbTxConfig in db_pool.go.
+            ("database", "isolation") => {
+                cfg.extra_defaults.push(("DB_ISOLATION".into(), val))
+            }
+            ("database", "txRetry") => cfg.extra_defaults.push(("DB_TX_RETRY".into(), val)),
+            // `embedded` opts the project into the `sky db start` cluster
+            // supervisor (docs/skydb/embedded-postgres.md). It is a TOOLCHAIN
+            // key, not a runtime one: `sky run` reads it, starts the cluster and
+            // injects the DSN as `<PREFIX>_DB_PATH` into the app's environment.
+            // The binary itself must never learn which tier provisioned its DSN,
+            // so nothing is emitted for it here.
+            //
+            // It is matched rather than left to the fall-through arm because that
+            // arm reports every unmatched key in a recognised section as
+            // honoured-by-nothing — which is exactly what `embedded` would look
+            // like, while being the one key that opts the project in.
+            ("database", "embedded") => {}
+            // `postgresVersion` is the pin `sky db provision --embed` records, so
+            // a project states which PostgreSQL it is developed against and gets
+            // that one back on another machine. Toolchain-only for the same
+            // reason as `embedded`: the app binary must never learn which tier
+            // provisioned its DSN, let alone which build of the server it is.
+            ("database", "postgresVersion") => {}
             // `[analytics] dbPath` → the Std.Analytics store override
             // (SKY_ANALYTICS_DB_PATH). Unset → analytics reuses the console DB
             // (SKY_CONSOLE_DB_PATH). See analytics_store.go.
@@ -979,10 +1052,28 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             // must emit `rt.SetEnvPrefix(...)` for it to take effect (the Rust
             // compiler previously emitted nothing, so it was silently ignored).
             ("env", "prefix") => cfg.env_prefix = Some(val),
-            // Everything else falls through. For a RECOGNISED config section,
-            // record the key instead of dropping it — see `unknown_config_keys`.
+            // [security] csrf = false → SKY_CSRF, the switch rt already honours
+            // (runtime-go/rt/csrf_middleware.go). The runtime half of this has
+            // been complete since CSRF shipped — SetCsrfEnabled, IsCsrfEnabled
+            // and the SKY_CSRF read all exist and are tested — but the compiler
+            // half was never written, so three separate runtime comments
+            // described `[security] csrf = false` as the way to turn CSRF off
+            // while the key did nothing at all.
+            //
+            // Deliberately NOT wired: `[security] env`. Which environment a
+            // binary is RUNNING in is not a property of how it was BUILT — one
+            // artefact gets promoted dev → staging → prod, and a compile-time
+            // answer cannot be right for all three. It stays an env var
+            // (`ENV`, or `<PREFIX>_ENV`), which is what productionFromEnv
+            // reads and what docs/skylive/overview.md documents. The key warns,
+            // with a hint naming the variable that works.
+            ("security", "csrf") => cfg.extra_defaults.push(("CSRF".into(), val)),
+            // Everything else falls through and is RECORDED, not dropped — see
+            // `unknown_config_keys`. The only silence is for sections consumed
+            // by other tooling, where an unrecognised key is not evidence of a
+            // mistake.
             _ => {
-                if is_runtime_config_section(&section) {
+                if !is_externally_consumed_section(&section) {
                     cfg.unknown_config_keys.push((section.clone(), key.to_string()));
                 }
             }
@@ -991,16 +1082,40 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
     cfg
 }
 
-/// The sky.toml sections whose keys are seeded into runtime env defaults, and so
-/// whose keys have a FIXED accepted set.
+/// The sky.toml sections consumed by something OTHER than the runtime-config
+/// parser — the project metadata Sky reads elsewhere, and the dependency tables
+/// handed to cargo/go tooling. An unrecognised key in one of these is not
+/// evidence of a mistake, so it stays silent.
 ///
-/// `[project]`, `[source]`, `[dependencies]`, `[go.dependencies]` and `[lib]` are
-/// deliberately absent: they are consumed elsewhere (or by cargo/go tooling), so
-/// an unrecognised key there is not evidence of a mistake.
-fn is_runtime_config_section(section: &str) -> bool {
+/// # Why this is an exclusion list, and not the inclusion list it used to be
+///
+/// This function was `is_runtime_config_section`, naming the seven sections
+/// whose keys were checked. Everything else — every section NOT on the list —
+/// was dropped without a word, which meant the warning was structurally unable
+/// to report the single most likely config mistake: **a wrong section name**.
+///
+/// `[security] env` and `[security] csrf` were the live instance. `[security]`
+/// was on no list, so both keys vanished silently while
+/// `runtime-go/rt/observability.go:228` served a 401 telling the locked-out
+/// operator to "set [security] env" — instructing them to do a thing that could
+/// not work. A typo'd `[databse] path` and the equally-unparsed
+/// `[observability] enabled` (claimed in a comment at observability.go:255)
+/// failed exactly the same way.
+///
+/// Inverting the list closes the class: a key is now reported unless its
+/// section is known to be somebody else's. New runtime sections are covered the
+/// day they are added rather than the day someone remembers to list them.
+fn is_externally_consumed_section(section: &str) -> bool {
     matches!(
         section,
-        "live" | "database" | "auth" | "log" | "analytics" | "jobs" | "env"
+        // Bare top-level keys (`port`, `bin`, `root`) — handled by the arms
+        // above and by sky_toml_flag / configured_bin_name.
+        ""
+        | "project"
+        | "source"
+        | "dependencies"
+        | "go.dependencies"
+        | "lib"
     )
 }
 
@@ -1017,13 +1132,50 @@ fn accepted_config_keys(section: &str) -> &'static [&'static str] {
             "maxBodyBytes",
             "input",
         ],
-        "database" => &["driver", "path", "url"],
+        "database" => &[
+            "driver",
+            "path",
+            "url",
+            "maxOpenConns",
+            "maxIdleConns",
+            "connMaxLifetime",
+            "connMaxIdleTime",
+            "isolation",
+            "txRetry",
+            "embedded",
+            "postgresVersion",
+        ],
         "auth" => &["cookieName", "tokenTtl", "driver"],
         "log" => &["format", "level"],
         "analytics" => &["dbPath", "retention"],
         "jobs" => &["store", "storePath", "store_path"],
         "env" => &["prefix"],
+        // `env` is deliberately absent — see the parser arm. Deployment
+        // environment is not a build-time constant.
+        "security" => &["csrf"],
         _ => &[],
+    }
+}
+
+/// A directed hint for a key that is inert but has a working equivalent, so the
+/// warning can say what to do instead of only what not to do.
+///
+/// `[security] env` is the case that motivated this: the runtime's own 401 hint
+/// pointed operators at it, and "this key does nothing" alone would leave them
+/// exactly as stuck as before.
+fn inert_key_hint(section: &str, key: &str) -> Option<&'static str> {
+    match (section, key) {
+        ("security", "env") => Some(
+            "Set the `ENV` environment variable on the deployment instead \
+             (`ENV=production`); Sky also accepts the namespaced `<PREFIX>_ENV`, \
+             e.g. `SKY_ENV`. Which environment a binary runs in is a property of \
+             the deployment, not of the build, so it is not a sky.toml key.",
+        ),
+        ("observability", "enabled") => Some(
+            "There is no `[observability]` section. The console and metrics \
+             endpoints gate on `ENV` (see docs/observability.md).",
+        ),
+        _ => None,
     }
 }
 
@@ -1057,12 +1209,35 @@ fn accepted_config_keys(section: &str) -> &'static [&'static str] {
 pub fn unknown_config_keys(keys: &[(String, String)]) -> Vec<String> {
     keys.iter()
         .map(|(section, key)| {
-            let accepted = accepted_config_keys(section).join(", ");
-            format!(
-                "sky.toml: `[{section}] {key}` is not a key Sky reads — it has no effect. \
-                 Accepted keys in `[{section}]`: {accepted}. \
-                 (See docs/sky-toml.md; keys are camelCase.)"
-            )
+            let mut msg = format!(
+                "sky.toml: `[{section}] {key}` is not a key Sky reads — it has no effect. "
+            );
+            let accepted = accepted_config_keys(section);
+            if accepted.is_empty() {
+                // Unknown SECTION, not merely an unknown key in a known one.
+                // Naming the real sections is the useful thing here: the
+                // likeliest cause is a typo or an invented section.
+                msg.push_str(
+                    "`[",
+                );
+                msg.push_str(section);
+                msg.push_str(
+                    "]` is not a section Sky reads. Runtime sections are: \
+                     `[live]`, `[database]`, `[auth]`, `[log]`, `[analytics]`, \
+                     `[jobs]`, `[env]`, `[security]`. ",
+                );
+            } else {
+                msg.push_str(&format!(
+                    "Accepted keys in `[{section}]`: {}. ",
+                    accepted.join(", ")
+                ));
+            }
+            if let Some(hint) = inert_key_hint(section, key) {
+                msg.push_str(hint);
+                msg.push(' ');
+            }
+            msg.push_str("(See docs/sky-toml.md; keys are camelCase.)");
+            msg
         })
         .collect()
 }
@@ -1116,6 +1291,58 @@ pub fn sky_toml_project_key(project_dir: &Path, key: &str, default: &str) -> Str
         }
     }
     default.to_string()
+}
+
+/// Read a scalar key out of a named `sky.toml` section — `[database] embedded`,
+/// `[env] prefix`, and anything else a *toolchain* verb needs to see.
+///
+/// [`sky_toml_project_key`] cannot serve this: it only ever looks at the
+/// top-level / `[project]` / `[source]` scope, and it sanitises the value to a
+/// single path segment (a DSN would come back as the default). The parsing rules
+/// here are the ones [`read_sky_toml_config`] already applies to every runtime
+/// key — same section tracking, same [`parse_toml_scalar`] — so a value read by a
+/// verb and a value seeded into the app's environment cannot disagree about what
+/// the file says.
+///
+/// Returns `None` when the file, the section or the key is absent. A key present
+/// with an empty value returns `Some("")`, which is a *set* key: callers that
+/// treat "declared" as meaningful (the embedded/DSN ambiguity check) must be able
+/// to tell it from "absent".
+pub fn sky_toml_section_key(project_dir: &Path, section: &str, key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(project_dir.join("sky.toml")).ok()?;
+    let mut cur = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            if let Some(end) = line.find(']') {
+                cur = line[1..end].trim().trim_matches('"').to_string();
+                continue;
+            }
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        if cur == section && k.trim() == key {
+            return Some(parse_toml_scalar(v));
+        }
+    }
+    None
+}
+
+/// A `sky.toml` boolean. TOML's own spelling is bare `true`/`false`; `"true"`
+/// and `yes`/`on`/`1` are accepted because a config file is written by hand and
+/// an opt-in that silently reads as "off" is the worst possible failure — the
+/// project looks configured and behaves as if it were not.
+pub fn sky_toml_flag(project_dir: &Path, section: &str, key: &str) -> bool {
+    matches!(
+        sky_toml_section_key(project_dir, section, key)
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("true" | "yes" | "on" | "1")
+    )
 }
 
 /// Output binary name (`bin` key, default `app`) — the file `go build -o`
@@ -1341,10 +1568,21 @@ fn go_string_literal(s: &str) -> String {
 
 /// Bake the project's committed `db/migrations/*.json` into a generated
 /// `<out_dir>/embedded_migrations.go` (an `init()` that sets
-/// `rt.SkyEmbeddedMigrations` and calls `rt.MaybeApplyEmbeddedMigrationsAndExit`),
-/// so a deployed `SKY_DB_OP=migrate ./app` self-migrates with no source tree. When
-/// the project has no `db/migrations/`, any stale generated file is removed so a
-/// binary never ships migrations the project has dropped.
+/// `rt.SkyEmbeddedMigrations`), so a deployed `SKY_DB_OP=migrate ./app`
+/// self-migrates with no source tree. When the project has no `db/migrations/`,
+/// any stale generated file is removed so a binary never ships migrations the
+/// project has dropped.
+///
+/// The `init()` sets the variable and nothing else. It used to CALL
+/// `rt.MaybeApplyEmbeddedMigrationsAndExit` too, which could not work for an
+/// `--embed` binary: Go runs every `init()` before `main`, and the cluster is
+/// started from `main` — so the migration ran against a database that did not
+/// exist yet. The call now lives in generated `main` immediately after
+/// `rt.MaybeStartEmbeddedPostgres()` (`lower_main` in
+/// `rust/crates/lower/src/lower.rs`, which documents why the start call cannot
+/// move the other way to meet it). Setting the variable stays here, because a
+/// plain assignment has no ordering requirement beyond "before `main` reads it",
+/// which `init()` guarantees.
 fn write_embedded_migrations(example_dir: &Path, out_dir: &Path) -> Result<(), String> {
     let migrations_dir = example_dir.join("db").join("migrations");
     let target = out_dir.join("embedded_migrations.go");
@@ -1373,13 +1611,141 @@ fn write_embedded_migrations(example_dir: &Path, out_dir: &Path) -> Result<(), S
     let go = format!(
         "package main\n\nimport rt \"sky-app/rt\"\n\n\
          // Generated by `sky build` from db/migrations/*.json — do not edit.\n\
+         //\n\
+         // This init() only SETS the variable. `main` calls\n\
+         // rt.MaybeApplyEmbeddedMigrationsAndExit() after starting the embedded\n\
+         // cluster; calling it from here would migrate before the database exists.\n\
          func init() {{\n\
          \trt.SkyEmbeddedMigrations = {}\n\
-         \trt.MaybeApplyEmbeddedMigrationsAndExit()\n\
          }}\n",
         go_string_literal(&json)
     );
     std::fs::write(&target, go).map_err(|e| e.to_string())
+}
+
+/// The archive `sky build --embed` stages in the out dir, and the literal the
+/// generated `//go:embed` directive is written against. Fixed, because a
+/// `go:embed` path is a literal and cannot carry a version or a platform — see
+/// `EMBEDDED_BUNDLE_FILENAME` in `rust/crates/sky/src/db_embed.rs`, and
+/// `bundleIdentity` in `runtime-go/rt/pg_embed_bundle.go` for why the runtime's
+/// extraction marker therefore keys on the archive's CONTENT and not this name.
+pub const EMBEDDED_BUNDLE_FILENAME: &str = "postgres-bundle.tar.gz";
+/// The generated file holding the `//go:embed` and the two assignments.
+const EMBEDDED_BUNDLE_GO: &str = "pg_embed_bundle_gen.go";
+/// Records which archive the staged copy came from, so a rebuild that changes
+/// nothing does not re-copy 25MB.
+const EMBEDDED_BUNDLE_STAMP: &str = ".sky-postgres-bundle";
+
+/// Stage the PostgreSQL bundle for `sky build --embed`, or remove every trace of
+/// a previous one.
+///
+/// Three properties, each of which has a way of going wrong that is invisible
+/// until the binary is on a server:
+///
+/// - **The archive is embedded AS A TAR.** `go:embed` forces mode 0444 on every
+///   file it carries and cannot represent a symlink at all, so embedding the
+///   *extracted* tree yields a `postgres` that cannot be executed and a
+///   `libpq.5.dylib` that does not exist. The tar has to survive intact into the
+///   binary and be unpacked by the runtime.
+/// - **`None` actively cleans up.** A build without `--embed` deletes the staged
+///   archive, the generated Go and the stamp. Leaving them would keep 25MB of
+///   PostgreSQL — and a `go:embed` of it — in every subsequent ordinary build of
+///   that project, which is the "non-embed builds pay nothing" property failing
+///   silently and expensively.
+/// - **Re-staging is skipped when nothing changed.** The stamp records the
+///   source path, length and mtime; a matching stamp with the archive still in
+///   place means the copy is a no-op. This is what makes `sky build --embed`
+///   twice cost one copy rather than two.
+fn write_postgres_bundle(archive: Option<&Path>, out_dir: &Path) -> Result<(), String> {
+    let staged = out_dir.join(EMBEDDED_BUNDLE_FILENAME);
+    let generated = out_dir.join(EMBEDDED_BUNDLE_GO);
+    let stamp = out_dir.join(EMBEDDED_BUNDLE_STAMP);
+
+    let Some(archive) = archive else {
+        for p in [&staged, &generated, &stamp] {
+            let _ = std::fs::remove_file(p);
+        }
+        return Ok(());
+    };
+
+    let meta = std::fs::metadata(archive).map_err(|e| {
+        format!(
+            "sky build --embed: cannot read the PostgreSQL bundle {}: {e}",
+            archive.display()
+        )
+    })?;
+    if meta.len() == 0 {
+        return Err(format!(
+            "sky build --embed: the PostgreSQL bundle {} is empty.\n\
+             An interrupted download or pack leaves exactly this, and embedding it \
+             would produce a binary whose only failure is at first start.",
+            archive.display()
+        ));
+    }
+    let want = bundle_stamp(archive, &meta);
+    let fresh = staged.is_file()
+        && std::fs::read_to_string(&stamp).map(|s| s.trim() == want).unwrap_or(false);
+    if !fresh {
+        // Copy through a sibling and rename: a `go build` racing a half-written
+        // 25MB archive embeds a truncated one, and gzip only notices at the far
+        // end of the deploy.
+        let tmp = out_dir.join(format!(".{EMBEDDED_BUNDLE_FILENAME}.part"));
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::copy(archive, &tmp).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!(
+                "sky build --embed: cannot stage {} into {}: {e}",
+                archive.display(),
+                out_dir.display()
+            )
+        })?;
+        std::fs::rename(&tmp, &staged)
+            .map_err(|e| format!("sky build --embed: cannot stage {}: {e}", staged.display()))?;
+        std::fs::write(&stamp, format!("{want}\n"))
+            .map_err(|e| format!("sky build --embed: cannot write {}: {e}", stamp.display()))?;
+    }
+
+    let go = format!(
+        "package main\n\n\
+         // Generated by `sky build --embed` — do not edit.\n\
+         //\n\
+         // The bundle stays a TAR inside the embedded filesystem. `go:embed` forces\n\
+         // mode 0444 on every file and cannot represent a symlink, so an embedded\n\
+         // directory tree would give this binary a `postgres` it cannot execute and\n\
+         // no `libpq.5.dylib` at all. rt unpacks it once, on first start.\n\n\
+         import (\n\
+         \t\"embed\"\n\n\
+         \trt \"sky-app/rt\"\n\
+         )\n\n\
+         //go:embed {name}\n\
+         var skyEmbeddedPostgresBundle embed.FS\n\n\
+         func init() {{\n\
+         \trt.EmbeddedPostgresBundle = skyEmbeddedPostgresBundle\n\
+         \trt.EmbeddedPostgresBundleName = {lit}\n\
+         }}\n",
+        name = EMBEDDED_BUNDLE_FILENAME,
+        lit = go_string_literal(EMBEDDED_BUNDLE_FILENAME),
+    );
+    // Only the assignment of the bundle lives in an `init()`. The two calls that
+    // START and STOP a cluster are emitted into `func main()` (lower.rs
+    // `lower_main`), because `[database] path`/`url` arrive as
+    // `rt.SetSkyDefault` in the prologue `init()` and `--embed`'s ambiguity check
+    // has to be able to see them.
+    if std::fs::read_to_string(&generated).map(|s| s == go).unwrap_or(false) {
+        return Ok(());
+    }
+    std::fs::write(&generated, go)
+        .map_err(|e| format!("sky build --embed: cannot write {}: {e}", generated.display()))
+}
+
+fn bundle_stamp(archive: &Path, meta: &std::fs::Metadata) -> String {
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{} {} {}", archive.display(), meta.len(), mtime)
 }
 
 /// Copy `rt/` wholesale, skipping `*_test.go` and testdata (doc 09 §A.1). Copies
@@ -1650,10 +2016,194 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 #[cfg(test)]
+mod embed_bundle_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("sky-p5b-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// The `go:embed` directive, the `EmbeddedPostgresBundleName` assignment and
+    /// the staged file must all name one literal. They are three separate
+    /// strings in the generated Go; if they drift, the binary carries an archive
+    /// under a name nothing opens, and the failure is at first start on the
+    /// deployed host rather than here.
+    #[test]
+    fn the_generated_go_names_the_staged_archive_three_times_consistently() {
+        let root = scratch("gen");
+        let src = root.join("bundle.tar.gz");
+        std::fs::write(&src, b"pretend gzip").unwrap();
+        let out = root.join("sky-out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        write_postgres_bundle(Some(&src), &out).unwrap();
+
+        let staged = out.join(EMBEDDED_BUNDLE_FILENAME);
+        assert!(staged.is_file(), "the archive was not staged");
+        assert_eq!(std::fs::read(&staged).unwrap(), b"pretend gzip");
+
+        let go = std::fs::read_to_string(out.join(EMBEDDED_BUNDLE_GO)).unwrap();
+        assert!(go.contains(&format!("//go:embed {EMBEDDED_BUNDLE_FILENAME}")), "{go}");
+        assert!(
+            go.contains(&format!(
+                "rt.EmbeddedPostgresBundleName = \"{EMBEDDED_BUNDLE_FILENAME}\""
+            )),
+            "{go}"
+        );
+        assert!(go.contains("rt.EmbeddedPostgresBundle = skyEmbeddedPostgresBundle"), "{go}");
+        // The two calls that START a cluster belong in `func main()`, never here:
+        // `[database] path`/`url` arrive as rt.SetSkyDefault in the prologue
+        // `init()`, and from a second `init()` the ambiguity check cannot see
+        // them (filename order decides which runs first).
+        assert!(
+            !go.contains("MaybeStartEmbeddedPostgres"),
+            "the start call must not be emitted into an init(): {go}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A build without `--embed` must leave nothing behind. Otherwise the first
+    /// `--embed` build in a project silently makes every later ordinary build
+    /// 25MB heavier, which is the "non-embed builds pay nothing" property
+    /// failing in the most expensive possible way.
+    #[test]
+    fn a_build_without_embed_removes_what_an_earlier_embed_build_left() {
+        let root = scratch("clean");
+        let src = root.join("bundle.tar.gz");
+        std::fs::write(&src, b"pretend gzip").unwrap();
+        let out = root.join("sky-out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        write_postgres_bundle(Some(&src), &out).unwrap();
+        assert!(out.join(EMBEDDED_BUNDLE_FILENAME).exists());
+
+        write_postgres_bundle(None, &out).unwrap();
+        for f in [EMBEDDED_BUNDLE_FILENAME, EMBEDDED_BUNDLE_GO, EMBEDDED_BUNDLE_STAMP] {
+            assert!(!out.join(f).exists(), "{f} survived a non-embed build");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The generated `embedded_migrations.go` SETS the migrations and does
+    /// nothing else.
+    ///
+    /// It used to call `rt.MaybeApplyEmbeddedMigrationsAndExit()` from the same
+    /// `init()`, which made `SKY_DB_OP=migrate ./app --embed` impossible by
+    /// construction: Go runs every `init()` before `main`, the embedded cluster
+    /// is started from `main`, so the migration ran against a database that did
+    /// not exist yet and the binary exited saying so. The call belongs in
+    /// `main`, immediately after the start (see `lower_main` in
+    /// `rust/crates/lower/src/lower.rs` and
+    /// `rust/crates/project/tests/embedded_main_prologue.rs`). The ASSIGNMENT
+    /// stays here — a variable has no ordering requirement beyond "before `main`
+    /// reads it", which is exactly what `init()` guarantees.
+    #[test]
+    fn the_generated_migrations_init_sets_them_and_does_not_apply_them() {
+        let root = scratch("migrations");
+        let out = root.join("sky-out");
+        std::fs::create_dir_all(&out).unwrap();
+        let mig = root.join("db").join("migrations");
+        std::fs::create_dir_all(&mig).unwrap();
+        std::fs::write(
+            mig.join("0001_widgets.json"),
+            r#"{"id":"0001_widgets","ops":[{"kind":"createTable","table":"widgets"}]}"#,
+        )
+        .unwrap();
+
+        write_embedded_migrations(&root, &out).unwrap();
+        let target = out.join("embedded_migrations.go");
+        let go = std::fs::read_to_string(&target).unwrap();
+        // Comment lines are stripped: the file explains WHY it does not apply the
+        // migrations, and a gate that reads its own explanation as the thing it
+        // forbids would make the file undocumentable.
+        let code = go
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(code.contains("rt.SkyEmbeddedMigrations = "), "{go}");
+        assert!(
+            code.contains("0001_widgets"),
+            "the migration body is missing:\n{go}"
+        );
+        assert!(
+            !code.contains("rt.MaybeApplyEmbeddedMigrationsAndExit()"),
+            "the migration is applied from an init(), which runs BEFORE main — so \
+             before `--embed` has started the database it is supposed to migrate:\n{go}"
+        );
+
+        // Dropping the migrations drops the generated file, so a rebuilt binary
+        // never ships migrations the project no longer has.
+        std::fs::remove_dir_all(root.join("db")).unwrap();
+        write_embedded_migrations(&root, &out).unwrap();
+        assert!(!target.exists(), "a stale embedded_migrations.go survived");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Two `--embed` builds with nothing changed copy the archive once.
+    #[test]
+    fn re_staging_an_unchanged_bundle_is_a_no_op() {
+        let root = scratch("idem");
+        let src = root.join("bundle.tar.gz");
+        std::fs::write(&src, b"pretend gzip").unwrap();
+        let out = root.join("sky-out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        write_postgres_bundle(Some(&src), &out).unwrap();
+        let staged = out.join(EMBEDDED_BUNDLE_FILENAME);
+        let first = std::fs::metadata(&staged).unwrap().modified().unwrap();
+
+        // Scribble on the staged copy: if it is re-copied, the scribble is gone.
+        std::fs::write(&staged, b"scribbled").unwrap();
+        write_postgres_bundle(Some(&src), &out).unwrap();
+        assert_eq!(
+            std::fs::read(&staged).unwrap(),
+            b"scribbled",
+            "an unchanged bundle was staged a second time"
+        );
+        let _ = first;
+
+        // A CHANGED source is re-staged, though — that is the whole point of the
+        // stamp carrying length and mtime rather than just the path.
+        std::fs::write(&src, b"a different pretend gzip").unwrap();
+        write_postgres_bundle(Some(&src), &out).unwrap();
+        assert_eq!(std::fs::read(&staged).unwrap(), b"a different pretend gzip");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An interrupted download or pack leaves a zero-length archive. Embedding
+    /// it produces a binary whose only failure is at first start, on the host.
+    #[test]
+    fn an_empty_or_missing_archive_fails_the_build_rather_than_being_embedded() {
+        let root = scratch("empty");
+        let out = root.join("sky-out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        let empty = root.join("empty.tar.gz");
+        std::fs::write(&empty, b"").unwrap();
+        let e = write_postgres_bundle(Some(&empty), &out).unwrap_err();
+        assert!(e.contains("empty"), "{e}");
+        assert!(!out.join(EMBEDDED_BUNDLE_FILENAME).exists());
+
+        let e = write_postgres_bundle(Some(&root.join("nope.tar.gz")), &out).unwrap_err();
+        assert!(e.contains("cannot read"), "{e}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
 mod sky_toml_tests {
     use super::{
         accepted_config_keys, configured_bin_name, configured_source_root, db_driver_conflict,
-        driver_for_dsn, read_sky_toml_config, sky_build_goflags_from, unknown_config_keys,
+        driver_for_dsn, read_sky_toml_config, sky_build_goflags_from, sky_toml_flag,
+        sky_toml_section_key, unknown_config_keys,
     };
 
     #[test]
@@ -1775,6 +2325,119 @@ mod sky_toml_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// `[database]`'s pool + isolation keys must reach the suffixes
+    /// `runtime-go/rt/db_pool.go` reads, and must not report themselves unknown.
+    ///
+    /// Before these existed, the PostgreSQL pool had no configuration surface at
+    /// all — the runtime fell through on Go's `database/sql` defaults
+    /// (`MaxOpenConns = 0`, i.e. unlimited) under a comment asserting those
+    /// defaults were "already sane".
+    #[test]
+    fn database_pool_and_isolation_keys_seed_env_defaults() {
+        let dir = std::env::temp_dir().join("sky-db-pool-toml-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(
+            &path,
+            "name = \"x\"\n[database]\nurl = \"postgres://u:p@h/db\"\n\
+             maxOpenConns = 12\nmaxIdleConns = 12\n\
+             connMaxLifetime = \"30m\"\nconnMaxIdleTime = \"5m\"\n\
+             isolation = \"serializable\"\ntxRetry = 3\n",
+        )
+        .unwrap();
+        let cfg = read_sky_toml_config(&path);
+        let has = |suffix: &str, value: &str| {
+            cfg.extra_defaults
+                .iter()
+                .any(|(s, v)| s == suffix && v == value)
+        };
+        assert!(has("DB_MAX_OPEN_CONNS", "12"), "{:?}", cfg.extra_defaults);
+        assert!(has("DB_MAX_IDLE_CONNS", "12"));
+        assert!(has("DB_CONN_MAX_LIFETIME", "30m"));
+        assert!(has("DB_CONN_MAX_IDLE_TIME", "5m"));
+        assert!(has("DB_ISOLATION", "serializable"));
+        assert!(has("DB_TX_RETRY", "3"));
+        assert!(
+            cfg.unknown_config_keys.is_empty(),
+            "{:?}",
+            cfg.unknown_config_keys
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[database] embedded` is the embedded-PostgreSQL opt-in
+    /// (docs/skydb/embedded-postgres.md). It is read by `sky run`, not by the
+    /// app, so it must seed NO runtime default — and it must not be reported as
+    /// a key Sky ignores, because the one key that opts a project in cannot also
+    /// be the one key that warns it has no effect.
+    #[test]
+    fn the_embedded_opt_in_is_a_toolchain_key_that_seeds_nothing_and_warns_nothing() {
+        let dir = std::env::temp_dir().join("sky-embedded-toml-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(&path, "name = \"x\"\n[database]\nembedded = true\n").unwrap();
+
+        let cfg = read_sky_toml_config(&path);
+        assert!(
+            !cfg.extra_defaults.iter().any(|(s, _)| s.starts_with("DB_")),
+            "`embedded` must not reach the app's environment: {:?}",
+            cfg.extra_defaults
+        );
+        assert!(
+            cfg.unknown_config_keys.is_empty(),
+            "the opt-in key reports itself as honoured by nothing: {:?}",
+            cfg.unknown_config_keys
+        );
+        assert!(sky_toml_flag(&dir, "database", "embedded"));
+        assert!(!sky_toml_flag(&dir, "database", "isolation"));
+
+        // Bare TOML `false`, the quoted spellings, and the absent case.
+        for (text, want) in [
+            ("[database]\nembedded = false\n", false),
+            ("[database]\nembedded = \"true\"\n", true),
+            ("[database]\nembedded = true  # dev only\n", true),
+            ("[database]\npath = \"a.db\"\n", false),
+            // Right key, wrong section: the flag is scoped, or a `[live]
+            // embedded` would silently start a PostgreSQL.
+            ("[live]\nembedded = true\n", false),
+        ] {
+            std::fs::write(&path, text).unwrap();
+            assert_eq!(sky_toml_flag(&dir, "database", "embedded"), want, "{text:?}");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `sky_toml_section_key` must read a DSN back VERBATIM. The older
+    /// `sky_toml_project_key` sanitises its value to a single path segment, so a
+    /// `postgres://…` URL comes back as the default — a caller that used it for
+    /// the embedded/DSN ambiguity check would see "no DSN declared" and start a
+    /// cluster over the top of the operator's database.
+    #[test]
+    fn section_keys_come_back_verbatim_and_distinguish_empty_from_absent() {
+        let dir = std::env::temp_dir().join("sky-section-key-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"x\"\n[env]\nprefix = \"FENCE\"\n\
+             [database]\nurl = \"postgres://u:p@host/db\"\npath = \"\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            sky_toml_section_key(&dir, "database", "url").as_deref(),
+            Some("postgres://u:p@host/db")
+        );
+        assert_eq!(sky_toml_section_key(&dir, "env", "prefix").as_deref(), Some("FENCE"));
+        // Set-but-empty is not the same as absent.
+        assert_eq!(sky_toml_section_key(&dir, "database", "path").as_deref(), Some(""));
+        assert_eq!(sky_toml_section_key(&dir, "database", "driver"), None);
+        assert_eq!(sky_toml_section_key(&dir, "nosuch", "url"), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A key in a runtime config section that Sky does not read must be
     /// REPORTED, not dropped.
     ///
@@ -1838,7 +2501,9 @@ mod sky_toml_tests {
         let dir = std::env::temp_dir().join("sky-accepted-keys-test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sky.toml");
-        for section in ["live", "database", "auth", "log", "analytics", "jobs", "env"] {
+        for section in [
+            "live", "database", "auth", "log", "analytics", "jobs", "env", "security",
+        ] {
             for key in accepted_config_keys(section) {
                 std::fs::write(&path, format!("[{section}]\n{key} = \"v\"\n")).unwrap();
                 let cfg = read_sky_toml_config(&path);
@@ -1850,6 +2515,117 @@ mod sky_toml_tests {
                 );
             }
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[security]` was parsed by nothing AND absent from
+    /// `is_runtime_config_section`, so its keys were dropped without even the
+    /// unknown-key warning that covers every other runtime section.
+    ///
+    /// That silence had a victim: `runtime-go/rt/observability.go` serves a 401
+    /// whose hint tells the locked-out operator to "set [security] env" — advice
+    /// that could not work, given to someone already locked out of their own
+    /// metrics endpoint.
+    #[test]
+    fn security_section_keys_are_not_silently_dropped() {
+        let dir = std::env::temp_dir().join("sky-security-section-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+
+        // `[security] env` is NOT wired (deployment environment is not a
+        // build-time constant — see the parser comment). It must therefore
+        // WARN rather than vanish.
+        std::fs::write(&path, "[security]\nenv = \"production\"\n").unwrap();
+        let cfg = read_sky_toml_config(&path);
+        assert!(
+            cfg.unknown_config_keys
+                .iter()
+                .any(|(s, k)| s == "security" && k == "env"),
+            "`[security] env` was dropped with no warning: {:?}",
+            cfg.unknown_config_keys
+        );
+        let warnings = unknown_config_keys(&cfg.unknown_config_keys);
+        assert!(
+            warnings.iter().any(|w| w.contains("ENV")),
+            "the `[security] env` warning must name the ENV environment \
+             variable that DOES work: {warnings:?}"
+        );
+
+        // `[security] csrf` IS wired: the runtime half already exists
+        // (rt.SetCsrfEnabled / SKY_CSRF), only the compiler half was missing.
+        std::fs::write(&path, "[security]\ncsrf = false\n").unwrap();
+        let cfg = read_sky_toml_config(&path);
+        assert!(
+            cfg.extra_defaults
+                .iter()
+                .any(|(k, v)| k == "CSRF" && v == "false"),
+            "`[security] csrf = false` must seed the CSRF runtime default, \
+             got extra_defaults {:?}",
+            cfg.extra_defaults
+        );
+        assert!(
+            cfg.unknown_config_keys.is_empty(),
+            "`[security] csrf` is wired and must not warn: {:?}",
+            cfg.unknown_config_keys
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The root cause behind the `[security]` bug: a key in an UNRECOGNISED
+    /// section was dropped in total silence, because the unknown-key warning
+    /// only ever fired for sections already on the known list.
+    ///
+    /// So the warning could never tell you about the one mistake it is most
+    /// important to catch — a section name that is wrong. A typo'd
+    /// `[databse] path` and a whole-cloth `[observability] enabled` were
+    /// equally invisible.
+    #[test]
+    fn keys_in_unknown_sections_warn() {
+        let dir = std::env::temp_dir().join("sky-unknown-section-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+
+        for (section, key) in [
+            ("databse", "path"),        // typo of an existing section
+            ("observability", "enabled"), // claimed by observability.go, parsed by nothing
+            ("totally_made_up", "x"),
+        ] {
+            std::fs::write(&path, format!("[{section}]\n{key} = \"v\"\n")).unwrap();
+            let cfg = read_sky_toml_config(&path);
+            assert!(
+                cfg.unknown_config_keys
+                    .iter()
+                    .any(|(s, k)| s == section && k == key),
+                "`[{section}] {key}` was dropped with no warning: {:?}",
+                cfg.unknown_config_keys
+            );
+        }
+
+        // …and the sections that are consumed elsewhere must stay quiet, or
+        // every real project gets noise on every build.
+        for (section, key) in [
+            ("project", "bin"),
+            ("source", "root"),
+            ("dependencies", "somelib"),
+            ("go.dependencies", "github.com/x/y"),
+            ("lib", "name"),
+            ("", "port"),
+        ] {
+            let body = if section.is_empty() {
+                format!("{key} = \"v\"\n")
+            } else {
+                format!("[{section}]\n{key} = \"v\"\n")
+            };
+            std::fs::write(&path, body).unwrap();
+            let cfg = read_sky_toml_config(&path);
+            assert!(
+                cfg.unknown_config_keys.is_empty(),
+                "`[{section}] {key}` is consumed elsewhere and must not warn: {:?}",
+                cfg.unknown_config_keys
+            );
+        }
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

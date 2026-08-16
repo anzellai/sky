@@ -57,7 +57,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -80,7 +79,13 @@ import (
 // in ONE place rather than being re-derived per cookie — the drift that left
 // sky_sid on a TTL-keyed Max-Age after this one was fixed.
 func csrfCookieMaxAgeSeconds() int {
-	return slidingCookieMaxAgeSeconds(parseTTL(skyGetenv("LIVE_TTL"), "", 30*24*time.Hour))
+	// §1.7's THIRD `LIVE_TTL` reader, and the one with a different default (30
+	// days here against live.go's 30 minutes). It has no builder layer of its
+	// own — there is no `withCsrfTtl` — so it passes "" and resolves through
+	// the same shared rule as the other two. Routing it through `resolveTTL`
+	// does not change what it reads today; it means the reader cannot acquire
+	// a fourth precedence order later without the shared gate noticing.
+	return slidingCookieMaxAgeSeconds(resolveTTL("", 30*24*time.Hour))
 }
 
 const (
@@ -95,31 +100,44 @@ const (
 	SkyCsrfHeaderName = "X-Sky-Csrf"
 )
 
-// csrfEnabled — global on/off switch. Default ON. Sky.toml
-// [security] csrf = false sets this to false via the runtime
-// startup path. Opt-out for very specific cases (purely-stateless
+// csrfEnabled — global on/off switch. Default ON. Turned off by
+// `<PREFIX>_CSRF=off|false|0`, which sky.toml's `[security] csrf =
+// false` seeds. Opt-out for very specific cases (purely-stateless
 // API, every endpoint reads via Bearer auth instead).
 var csrfEnabled atomic.Bool
 
 func init() {
-	csrfEnabled.Store(true)
-	// SKY_CSRF=off|false|0 disables the global CSRF middleware
-	// before the first request lands. Intended for pure-API
-	// services authenticated via Bearer in Authorization (where
-	// the header itself acts as the CSRF defence — cross-origin
-	// browsers can't add custom headers without preflight). The
-	// sky.toml [security] csrf = false toml-side plumbing routes
-	// through here too once it lands. Default-secure: any other
-	// value, including unset, keeps CSRF on.
-	switch strings.ToLower(os.Getenv("SKY_CSRF")) {
+	refreshCsrfEnabled()
+	// Re-read after SetEnvPrefix / SetSkyDefault. The generated
+	// init() seeds the sky.toml default AFTER this package's init()
+	// has already run, so without this hook `[security] csrf = false`
+	// would be written to the env too late to be seen — the same
+	// stale-capture that logJSON / logThreshold register for.
+	onEnvPrefixChange(refreshCsrfEnabled)
+}
+
+// refreshCsrfEnabled (re-)reads the CSRF switch from the environment.
+//
+// `<PREFIX>_CSRF=off|false|0` disables the global CSRF middleware
+// before the first request lands. Intended for pure-API services
+// authenticated via Bearer in Authorization (where the header itself
+// acts as the CSRF defence — cross-origin browsers can't add custom
+// headers without preflight).
+//
+// Default-secure: any other value, including unset, keeps CSRF ON.
+// That is why this assigns both branches rather than only clearing —
+// a re-read must be able to restore the default, not just drop it.
+func refreshCsrfEnabled() {
+	switch strings.ToLower(skyGetenv("CSRF")) {
 	case "off", "false", "0":
 		csrfEnabled.Store(false)
+	default:
+		csrfEnabled.Store(true)
 	}
 }
 
-// SetCsrfEnabled toggles the global CSRF middleware. Called from
-// the runtime startup path when sky.toml [security] csrf = false.
-// Tests use it for isolation.
+// SetCsrfEnabled toggles the global CSRF middleware. Tests use it for
+// isolation; the sky.toml / env path goes through refreshCsrfEnabled.
 func SetCsrfEnabled(on bool) {
 	csrfEnabled.Store(on)
 }
@@ -215,14 +233,19 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 		// cookie never arrives. None+Secure lets the cookie ride; the X-Sky-Csrf
 		// header-vs-cookie check (set by the SAME-ORIGIN iframed JS) remains the
 		// actual CSRF gate, since cross-origin attackers can't read the cookie.
+		// Secure mirrors the session cookie's rule exactly
+		// (writeSessionCookie in live.go): TLS on the wire, or the
+		// production env flag, or cross-origin iframe mode. Both now
+		// call the SAME helper — `cookieSecureFor` in cookie_secure.go
+		// — rather than each inlining `requestIsHTTPS(r) ||
+		// productionFromEnv()`, so the two cookies cannot drift apart
+		// the way isProd/productionFromEnv did. The helper additionally
+		// returns true for a `__Host-`/`__Secure-` name prefix and for
+		// SameSite=None, both of which the spec requires.
 		sameSite := http.SameSiteStrictMode
 		if crossOriginIframeMode() {
 			sameSite = http.SameSiteNoneMode
 		}
-		// The TLS / X-Forwarded-Proto test this used to inline is now
-		// one shared predicate (cookie_secure.go), which additionally
-		// covers the production gate — a deploy behind a proxy that
-		// forwards neither header still gets Secure.
 		http.SetCookie(w, &http.Cookie{
 			Name:     SkyCsrfCookieName,
 			Value:    cookieToken,

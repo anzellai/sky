@@ -24,6 +24,9 @@ func TestAnalyticsRevenueByCurrency(t *testing.T) {
 	// JPY has 0 minor units — must format WITHOUT decimals.
 	analyticsStoreInsert(map[string]any{"ts": int64(6), "event": "purchase", "props": map[string]any{"total": "JPY 1200"}})
 
+	// Buffered writer — drain before reading the handle directly.
+	analyticsFlushPending()
+
 	rev := analyticsRevenueByCurrency(db)
 	got := map[string]consoleCurrencyTotal{}
 	for _, r := range rev {
