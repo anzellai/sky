@@ -429,7 +429,7 @@ Rows 1–10 are unconditional; 11–13 are gated as marked. The count is
 therefore **10 always, 13 at the ceiling** — against a mental model of 6.
 
 Line numbers above are the `/_sky/event` dispatch path
-(`dispatch`, `live.go:4983-5161`, whose render is `live.go:5116-5119`). The
+(`dispatch`, `live.go:4983-5162`, whose render is `live.go:5116-5119`). The
 same four-call render sequence — `safeViewCall` → `assignSkyIDs` →
 `applyStyleInjections` → `renderVNode` — is **duplicated verbatim at nine
 sites** in `live.go` (`:4317`, `:4624`, `:4694`, `:4854`, `:5116`, `:5175`,
