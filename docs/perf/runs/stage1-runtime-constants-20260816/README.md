@@ -42,6 +42,33 @@ handlers → diff.
 | after all five landed changes | **2,061** | **335,458** |
 | | **-54.2%** | **-49.7%** |
 
+### Wall-clock, five alternating base/new reps on a quiet host
+
+`HtmlToVNode` is the CONTROL: untouched by any of these changes. It moves
+0.6%, which is what says the other three numbers are the code and not the
+machine.
+
+| bench | base (median) | new (median) | Δ |
+|---|---|---|---|
+| whole interaction | 492.2 µs | 396.8 µs | **-19.4%** |
+| `renderVNode` | 149.7 µs | 85.6 µs | **-42.8%** |
+| `diffTrees` | 54.3 µs | 47.3 µs | -12.8% |
+| `HtmlToVNode` *(control)* | 200.4 µs | 199.3 µs | -0.6% |
+
+Per-rep spreads (µs), base then new:
+
+```
+Interaction   493.9 492.2 508.2 491.8 491.6  |  397.4 394.5 398.8 396.8 395.9
+renderVNode   149.5 149.7 152.5 149.4 150.5  |   85.6  86.7  97.3  85.2  85.3
+HtmlToVNode   199.0 200.4 200.4 200.4 204.2  |  200.4 201.0 199.3 197.8 198.8
+diffTrees      54.1  54.6  54.7  54.3  54.2  |   47.2  47.3  51.4  47.8  47.0
+```
+
+The interaction figure UNDERSTATES the total: the fixture carries one style
+marker, so it does not show the marker-free style saving, and it does not
+include `ackInputsForPrevTree` at all (that runs only once an input has been
+typed).
+
 ### Where it went
 
 | component | allocs before | after | bytes before | after |
@@ -169,6 +196,77 @@ Surface: ~40 production sites (`live.go` concentrated in `setAttr`,
 `applyHtmlAttr`, `renderVNodeInto`, the style-injection passes, `diffNodes`
 and the view fingerprint at live.go:5497) plus ~87 sites across 14 test
 files that build `Attrs` as map literals.
+
+## Verification
+
+Sequential, bounded through `scripts/lib/with-timeout.sh`, on the branch as
+landed. Every leg's `rc` was captured to a ledger BEFORE any pipe, which is
+how three of them were caught reporting success wrongly (see below).
+
+| leg | result |
+|---|---|
+| `cargo test --release --workspace` | 988 passed, 98 suites, 0 failed, **0 ignored** |
+| `CGO_ENABLED=1 go test -race ./rt/...` | 5 packages ok, **0 data races** |
+| `xtask coerce-floor` | PASS — adapter exact at 24 |
+| `xtask repro` | PASS — **byte-stable 50/50** building, 50/50 emitting |
+| `xtask infer` | PASS |
+| `xtask roundtrip` | PASS |
+| `xtask build-run --golden` | PASS — **8/8 matched committed goldens** |
+| `scripts/build.sh` | rc=0 |
+| `scripts/example-sweep.sh` | **29 passed, 0 failed** |
+| `scripts/doc-examples.sh` | PASS — 14/14 doc examples compile |
+
+`repro` and `golden` are the two that had to stay green and did. Nothing was
+re-baselined.
+
+### Real-app end to end (`examples/19-skyforum`)
+
+The corpus gates are necessary and not sufficient here: these changes move
+where the HTML bytes are produced and what buffer they land in, and the
+thing that would break is a live session, not a compile. Driven over the
+real wire protocol:
+
+- **15/15** dispatches of a FRESHLY RENDERED handler id resolved, **0
+  desync**; 11 of them returned non-empty patches.
+- Msg names render correctly on real sealed-variant ADTs
+  (`sky-click="UpvotePost"`, `"DownvotePost"`, `"Navigate"`) — the check
+  that matters for the `msgDisplayName` change.
+- **Form submit works**: navigated four steps to the sign-in form,
+  dispatched `sky-submit`, got real HTML patches back
+  (`{"id":"r.1#div.1#form.0#div","html":"<h2 …>Sign in</h2>…"}`), no
+  desync. Subtree-replace patches are the path that exercises
+  `renderChildrenHTML`'s nil handler table.
+- Two fresh renders of the same state are **byte-identical (109,411
+  bytes)** once the per-session `__skySid` / csrf token are normalised —
+  the runtime counterpart of what `repro` pins at build time.
+- **0 panics** for browser-shaped requests.
+
+Two probe artefacts were chased down rather than accepted, and both are
+worth recording because either could have been mistaken for a regression:
+
+1. **20/23 "desync" on the first pass** was correct behaviour. Handler ids
+   are position-derived, so the first dispatch that changes the view
+   invalidates every id captured from the previous render. Re-rendering
+   between dispatches, as a browser does, gives 15/15 clean.
+2. **A recovered `rt.Coerce` panic** came from the probe POSTing a curried
+   Msg handler with no `value`, so a bare string reached a slot expecting a
+   record. Sending a value, as a browser does, gives zero panics.
+
+### Three legs reported success while failing
+
+Recorded because the pattern is the one `AGENTS.md` documents for bare
+`timeout`, and it recurred twice more here in new forms:
+
+- `example-sweep.sh` returned **rc=2** (it needs `sky-out/sky`, which the
+  `xtask` gates do not build) while the surrounding pipeline exited 0,
+  because a trailing `tail` took the status.
+- The retry returned **rc=1** having run nothing: `noclobber` is set in this
+  shell, so `> existing.log` failed — and the stale log from the first
+  attempt read exactly like a fresh result.
+- A `perl -0pi` mutation intended to prove a gate could fail matched
+  nothing and reported the gate PASSING. Every mutation in this session was
+  subsequently confirmed present in the file with `grep` before its red was
+  believed.
 
 ## Gates added
 
