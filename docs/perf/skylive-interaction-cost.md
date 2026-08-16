@@ -308,7 +308,7 @@ they are listed because each was plausible and each was wrong:
 
 | Suspect | Measured share | Verdict |
 |---|---|---|
-| gob-encoding the Model per interaction | **absent** (0%) | Not on the `memory`-store path at all; the earlier memory-vs-postgres gap bounds it at ~10% |
+| gob-encoding the Model per interaction | **absent** (0%) | Not on the `memory`-store path at all. **The "~10%" this row used to quote is withdrawn** — see ["The ~10% store bound is withdrawn"](#the-10-store-bound-is-withdrawn) |
 | `hashAny` — two full reflect+SHA-256 Model walks per dispatch, to decide whether to log | **absent** (0%) | Real code, cheap here because this app's Model is small |
 | Session store `Set` | **absent** (0%) | |
 | JSON encode/decode of the wire envelope | **absent** (0%) | |
@@ -350,12 +350,83 @@ every predicate call goes through `reflect.Value.Call` via the
 higher-order-call adapter, allocating as it goes. `hasMarker` alone is
 **13.5% of all server CPU**.
 
-The runtime adds its own share of the churn: `HtmlToVNode` allocates a
-`map[string]string` *and* a `map[string]any` for **every element whether
-or not it has any attributes or events** (`live.go:137-138`), and
-`applyStyleInjections` makes **four full-tree passes, each reallocating
-every node's children slice** (`live.go:942-947`), whether or not any
-style marker exists.
+The runtime added its own share of the churn. **Both runtime items below
+have since been fixed; the text is kept in the past tense because the
+allocation figures in this section were measured before them, and
+["What items 1–3 actually bought"](#what-items-13-actually-bought)
+re-measures against them.**
+
+- `HtmlToVNode` **allocated** a `map[string]string` *and* a
+  `map[string]any` for every element whether or not it had any attributes
+  or events. **Fixed:** `applyHtmlAttr` (`live.go:182`) now writes through
+  `setAttr` (`live.go:166`) and `setEvent` (`live.go:174`), each of which
+  creates its map on first use.
+- `applyStyleInjections` made **four full-tree passes, each reallocating
+  every node's children slice**. **Half fixed:** the walk is now
+  copy-on-write — `walkChildrenWithVoidSiblingHoist` leaves `out` nil
+  until a hoist forces a rebuild — and the four `styleMarkerSpec` values
+  were hoisted to package level (`live.go:662`, `:719`, `:1050`, `:1104`),
+  which is where the cost actually was.
+
+  **Still four unguarded walks.** `applyStyleInjections`
+  (`live.go:1015-1020`) calls the four `injectStyleMarker` passes
+  unconditionally, and `injectStyleMarker` (`live.go:766`) recurses the
+  whole tree with no whole-tree "does any marker exist" early-out. An app
+  using no `@media` / `:hover` / transition / animation attribute still
+  pays four complete traversals per render.
+
+### Every pass over the tree, per interaction
+
+**No document stated this count before, and the working assumption was six.
+It is thirteen.** That gap is why the two runtime items above were the ones
+anyone thought to look at: a wrong mental model of the pipeline had nothing
+to check itself against. Every entry below is a complete traversal of a
+whole tree, per `/_sky/event` interaction, for a `Std.Ui` app — the pinned
+default.
+
+| # | Pass | Where | Builds a tree? | Conditional? |
+|---|---|---|---|---|
+| 1 | `view(model)` builds the **`Element`** ADT | compiled Sky — user code | **yes — tree 1** | no |
+| 2 | `Ui.layout` → `renderElement` walks `Element` → **`Html`** | `sky-stdlib/Std/Ui.sky:1696` / `:1776` | **yes — tree 2** | `Std.Ui` apps only |
+| 3 | `HtmlToVNode` walks `Html` → **`VNode`** | `runtime-go/rt/live.go:108` | **yes — tree 3** | no |
+| 4 | `assignSkyIDs` stamps every element | `live.go:602` | no | no |
+| 5 | `injectMediaQueryStyles` | `live.go:1016` → `injectStyleMarker` `:766` | rebuilds children on hoist | **no guard** |
+| 6 | `injectPseudoClassStyles` | `live.go:1017` | rebuilds children on hoist | **no guard** |
+| 7 | `injectTransitionStyles` | `live.go:1018` | rebuilds children on hoist | **no guard** |
+| 8 | `injectAnimationStyles` | `live.go:1019` | rebuilds children on hoist | **no guard** |
+| 9 | `renderVNode` builds the **whole-page HTML string** | `live.go:337`, called at `live.go:5178` | no | no — **and discarded on the patch path** |
+| 10 | `diffTrees` — the reply patch | `live.go:1370`, called at `live.go:4795` | no | no |
+| 11 | `ackInputsForPrevTree` walks `prevTree` for live `sky-id`s | `live.go:2611`, called at `live.go:4741` | no | **yes** — only when the client sent dirty inputs (`len(s.inputSeqs) != 0`) |
+| 12 | **Second `diffTrees`** for the multi-tab fan-out | `live.go:4762` | no | **yes** — only when a sibling tab holds an SSE connection (`hasSSEConnOtherThan`) |
+| 13 | Dev determinism check: a **second full `view`** plus two `vnodeShapeSig` walks | `live.go:5239-5245` | **yes — a 4th tree** | **yes** — dev only, `viewDeterminismCheckEnabled()` |
+
+Four things in that table appear in no breakdown anywhere else in this
+document, and each is a distinct finding:
+
+1. **The `Element` → `Html` → `VNode` chain builds two complete ADT trees
+   before the diff sees anything** (rows 2 and 3), on top of the `Element`
+   tree the user's `view` built. `Std.Ui` is the pinned default view layer,
+   so this is the ordinary path, not an exotic one. The profile attributes
+   rows 1 and 2 together as "`view(model)` — 84% of the handler", which is
+   correct but hides that a third of that name is a stdlib tree conversion
+   rather than user code.
+2. **The four style-injection walks are unguarded** (rows 5–8). An app that
+   uses no `@media`, `:hover`, transition or animation attribute anywhere
+   still pays four full traversals. A single whole-tree marker check would
+   skip all four.
+3. **The full-page HTML string is built every interaction and thrown away
+   on the patch path** (row 9). `renderView` (`live.go:5173-5181`) always
+   calls `renderVNode`; `handleEvent` then ships `patches` and never sends
+   `body2` (`live.go:4794-4800`). The string is retained only to seed
+   `lastComputedBody` / `lastShippedBody` for no-op suppression — which is
+   also the 80 kB/session of "Rendered HTML bodies" in the retention table
+   below.
+4. **Rows 11 and 12 are real per-interaction work that no cost model
+   included.** Row 12 in particular is a *second complete diff* of the same
+   two trees, paid by any user with two tabs open.
+
+Rows 1–10 are unconditional; 11–13 are gated as marked. The count is
+therefore **10 always, 13 at the ceiling** — against a mental model of 6.
 
 ### Where the 1.4 MB goes — and why that figure is not a per-session cost
 
@@ -398,7 +469,7 @@ sampled totals agree with `MemStats` to 6%):
 | Retention | kB/session | Share | Where |
 |---|---|---|---|
 | **`prevTree` — the previous VNode tree, held for diffing** | **132** | **40%** | `HtmlToVNode` |
-| ↳ *of which the eager per-element `Attrs`+`Events` maps* | *98* | *30%* | `applyHtmlAttr`, `live.go:137-138` |
+| ↳ *of which the then-eager per-element `Attrs`+`Events` maps* | *98* | *30%* | `applyHtmlAttr`, `live.go:182` — since made lazy (`setAttr` `:166` / `setEvent` `:174`); re-measured below |
 | **Rendered HTML bodies** (`lastComputedBody` + `lastShippedBody`) | **80** | **24%** | `strings.Builder` |
 | **Style-injection tree copies** | **57** | **17%** | `walkChildrenWithVoidSiblingHoist` |
 | `net/http` per-connection read+write buffers | 18 | 6% | `bufio` |
@@ -423,9 +494,9 @@ they are worth arguing about:
 | # | Change | Buys | Cost / risk |
 |---|---|---|---|
 | 1 | **Fold `Std.Ui`'s six marker scans into one pass** over the attribute list, producing a flags record | up to **1.24 ms/interaction (~13% of CPU)** and a large share of the 133k allocations | Contained to `layoutContextFor` + `buildStyleString` in `Std/Ui.sky`. Behaviour-preserving; needs `26-ui-showcase` + `19-skyforum` render goldens |
-| 2 | **Allocate `VNode.Attrs`/`Events` lazily** instead of unconditionally per element | **~98 kB/session (30% of retention)** + 2 allocations per element per render | `live.go:137-138` plus every reader. Go reads nil maps safely; only writes need a guard. Small but touches a hot struct |
-| 3 | **Fuse `applyStyleInjections`' four tree passes into one**, and skip entirely when no style markers exist | **~57 kB/session (17%)** + 4 tree-copies of churn per render | `live.go:942-947`. Moderate; the four passes have distinct semantics |
-| 4 | **Stop retaining two HTML bodies** where they are byte-identical | up to **80 kB/session (24%)** | They usually alias already; the win is only in the diverged case. Needs care — the split exists to keep a suppression invariant honest (`live.go:2110-2141`) |
+| 2 | **Allocate `VNode.Attrs`/`Events` lazily** instead of unconditionally per element | **~98 kB/session (30% of retention)** | `live.go:182` plus every reader. Go reads nil maps safely; only writes need a guard. Small but touches a hot struct — **DONE** (`setAttr` `:166`, `setEvent` `:174`) |
+| 3 | **Fuse `applyStyleInjections`' four tree passes into one**, and skip entirely when no style markers exist | **~57 kB/session (17%)** + 4 tree-copies of churn per render | `live.go:1015-1020`. **PARTLY DONE** — the specs were hoisted and the walk made copy-on-write, which was the real cost; the four passes were NOT fused and there is still no marker guard (`injectStyleMarker`, `live.go:766`) |
+| 4 | **Stop retaining two HTML bodies** where they are byte-identical | up to **80 kB/session (24%)** | They usually alias already; the win is only in the diverged case. Needs care — the split exists to keep a suppression invariant honest (`live.go:2186-2216`) |
 | 5 | **Direct dispatch instead of `reflect.Value.Call`** for Sky higher-order calls | 11–12% of CPU is reflection self-time; more is the allocation it forces | Codegen-level, large, and the highest-leverage item here |
 | 6 | Tune `GOGC` / `SetMemoryLimit` | trades RSS headroom against GC CPU — moves the 64%, not the 336 kB | Config only; a sizing lever, not a fix |
 
@@ -501,13 +572,63 @@ cannot silently come back. It cannot see item 1, which is compiled Sky
 above the boundary its fixtures start at; that hole is stated in the
 file.
 
+### The ~10% store bound is withdrawn
+
+Three places in this work quoted "the earlier memory-vs-postgres gap
+(~21/s vs ~19/s) bounds the gob/store path at ~10%". **That bound does not
+hold, for two independent reasons, and it is retracted rather than
+restated.**
+
+**One: its own source retracts the gap.** The ~21/s vs ~19/s difference is
+the same spread that ["The load curve — and a spread that was not what it
+looked like"](#5-the-load-curve--and-a-spread-that-was-not-what-it-looked-like)
+shows to be an artefact of **run order**, not configuration. Counterbalancing
+the sweep, whichever configuration runs first gets ~40/s and whichever runs
+third gets ~21/s — including config C, which writes every session through
+PostgreSQL. That section's conclusion is that embedded PostgreSQL has **no
+measurable throughput cost on this hardware**. A 2/s difference read off a
+run order cannot bound anything.
+
+**Two: it bounds nothing above ~20 interactions/sec, which is all it ever
+saw.** Every number in that comparison was taken at a sustained ~17–22
+interactions/sec, at and past the knee of a 2-vCPU instance. `handleEvent`
+writes the session once per interaction (`app.store.Set`,
+`runtime-go/rt/live.go:4745`), and on a durable store each of those is its
+own transaction and therefore its own fsync. So the measurement applied:
+
+```
+  ~20 interactions/s  ->  ~20 session writes/s  ->  ~20 fsync/s
+```
+
+The arithmetic does not stay flat when the rate does not. At 1,000
+interactions/sec the *same per-interaction write* is:
+
+```
+  1,000 interactions/s -> 1,000 session writes/s -> 1,000 fsync/s
+```
+
+— **50× the write rate and 50× the fsync rate the measurement ever
+applied**, and the byte rate scales by the same factor. That is the regime
+where a store cost stops being a percentage and starts being the ceiling:
+this repo's own note on the identical mechanism, one transaction per row on
+a durable store, puts the fsync-bound ceiling at **order 5–10k/s** and
+records that it is a property of the disk rather than of the code
+(`runtime-go/rt/analytics_writer.go:9-14`). A "~10%" figure taken at 20/s
+says nothing about proximity to that ceiling at 1,000/s.
+
+**What can honestly be said:** the gob/store path is absent from these
+profiles by construction, and **it is unmeasured**. Sizing a durable session
+store needs a run that actually drives one above the knee. Until that run
+exists, no percentage should be quoted for it.
+
 ### What this does not cover
 
 1. **`arm64` only.** The GCE work found x86 differs ~30% on memory.
    Ratios should travel; milliseconds should not.
 2. **`memory` session store only**, so the gob path is absent from these
-   profiles by construction. The earlier ~21/s vs ~19/s comparison
-   bounds it at ~10%.
+   profiles by construction, and **this document no longer offers a bound
+   on it** — see ["The ~10% store bound is
+   withdrawn"](#the-10-store-bound-is-withdrawn).
 3. **Two apps.** The CPU breakdown is `26-ui-showcase`'s; `19-skyforum`
    supplies only the second point on view size. An app with a heavy
    `update` rather than a heavy `view` would profile differently — the
@@ -596,17 +717,23 @@ hundred. Memory sets the hard ceiling; latency sets the useful one.
 ## What is measured, and what is not
 
 The server-side per-interaction path, as `dispatch` runs it
-(`runtime-go/rt/live.go:5022`) and as the `/_sky/event` handler replies
-(`live.go:4702`):
+(`runtime-go/rt/live.go:4983`) and as the `/_sky/event` handler replies
+(`handleEvent`, `live.go:4516`):
 
 | Step | Where | In Phase 1 (microbenchmark)? | In Phase 6 (profile)? |
 |---|---|---|---|
 | `update(msg, model)` | compiled Sky — user code | **No** | **Yes** — negligible for this app |
 | `view(model) -> Html` | compiled Sky — user code | **No** | **Yes — 4.75 ms, 84% of the handler** |
 | `HtmlToVNode` | `live.go:108` | no | **Yes** — 0.53 ms |
-| `assignSkyIDs` | `live.go:573` | **Yes** | **Yes** — 0.05 ms |
-| `diffTrees` | `live.go:1295` | **Yes** | **Yes** — 0.12 ms |
-| JSON encode of the reply | `live.go:4715` | **Yes** | negligible |
+| `assignSkyIDs` | `live.go:602` | **Yes** | **Yes** — 0.05 ms |
+| `diffTrees` | `live.go:1370` | **Yes** | **Yes** — 0.12 ms |
+| JSON encode of the reply | `writeEventJSON`, `live.go:4808` | **Yes** | negligible |
+
+**This table is a subset of the real path, not the whole of it.** It lists
+the steps the two benchmark phases could see. The full per-interaction
+pass count — thirteen, not the six above — is
+["Every pass over the tree"](#every-pass-over-the-tree-per-interaction)
+below.
 
 The two Sky-compiled steps cannot be driven from a Go benchmark — they
 are the user's own functions, and their cost is app-specific. Phase 1
@@ -637,15 +764,16 @@ it — which is why Phase 1 needs no container, network or database.
 > knowing — but the variable that sets a server's capacity is node
 > count, not mutation class.
 
-`diffNodes` (`live.go:1301`) is a non-keyed positional walk with two
+`diffNodes` (`live.go:1376`) is a non-keyed positional walk with two
 very different cost regimes:
 
 - **Text or attribute change** — walk the tree, emit a small patch.
   Cost is proportional to node count, with a small constant.
 - **Any change to a child count** — the parent's entire child list is
   re-serialised through `renderVNode` into one HTML patch
-  (`live.go:1419-1461`). Cost is proportional to the *subtree*, not to
-  the size of the change, and allocates heavily.
+  (`live.go:1493-1504`; the mixed-children variant at `:1508-1520`).
+  Cost is proportional to the *subtree*, not to the size of the change,
+  and allocates heavily.
 
 So "the cost of a diff" is not one number. Adding a row to a list costs
 far more than editing a label in that same list, at the same node
