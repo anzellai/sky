@@ -1,0 +1,16 @@
+tag gml-n500-gogcoff-750MiB
+sessions 500
+gogc off
+gomemlimit 750MiB
+elements 94
+idle_rss_kb 42704
+load_rss_kb 766512
+peak_rss_kb 766496
+window_peak_rss_kb 766496
+window_mean_rss_kb 765996
+pg_peak_rss_kb 82384
+app_cpu_delta_s 269.25
+wall_s 73
+generator_rc 0
+aborted no
+load1 10.48

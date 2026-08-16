@@ -1,0 +1,33 @@
+{
+  "label": "gml-n100-gogcoff-750MiB",
+  "url": "http://127.0.0.1:8541",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 148035,
+  "interactions_per_sec": 3289.224339086934,
+  "p50_ms": 24.721,
+  "p95_ms": 73.574,
+  "p99_ms": 107.437,
+  "max_ms": 270.986,
+  "outcomes": {
+    "ok": 148035
+  },
+  "error_rate": 0,
+  "patches_total": 296070,
+  "interactions_with_patches": 148035,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 765,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 5.289980281873873,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T10:58:48Z"
+}

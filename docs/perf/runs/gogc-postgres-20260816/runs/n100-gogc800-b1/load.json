@@ -1,0 +1,33 @@
+{
+  "label": "n100-gogc800-b1",
+  "url": "http://127.0.0.1:8541",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 137711,
+  "interactions_per_sec": 3059.8315060394834,
+  "p50_ms": 25.636,
+  "p95_ms": 79.256,
+  "p99_ms": 122.047,
+  "max_ms": 676.576,
+  "outcomes": {
+    "ok": 137711
+  },
+  "error_rate": 0,
+  "patches_total": 275422,
+  "interactions_with_patches": 137711,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 765,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 4.518218301111611,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T10:23:49Z"
+}
