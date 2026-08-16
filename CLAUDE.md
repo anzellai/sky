@@ -667,18 +667,25 @@ End-of-mission checklist:
 # Orphan polling loops
 ps -u $USER -o pid,command | awk '/while pgrep|until ! pgrep/ && /\/bin\/zsh -c/ {print $1}' | xargs -n1 kill -9 2>/dev/null
 
-# Stray sleeps + verification leftovers
+# Stray sleeps — DO NOT KILL THEM BY PREDICATE. This block used to read
 #
-# EXCLUDE mem-guard's own poll loop. Its interval is a `sleep` whose parent is
-# the mem-guard shell, not init, so the naive predicate below matches it and
-# SIGKILLs the watchdog — observed 2026-08-16 as
-# `mem-guard.sh: line 229: Killed: 9 sleep "$INTERVAL"`. That is how the
-# safety net kept vanishing mid-session: not a crash, this cleanup.
-MG_PIDS="$(pgrep -f mem-guard.sh | tr '\n' ' ')"
-ps -u $USER -o pid,ppid,command | awk -v mg="$MG_PIDS" '
-    BEGIN { n = split(mg, a, " "); for (i = 1; i <= n; i++) guard[a[i]] = 1 }
-    $3 == "sleep" && $2 != 1 && !($2 in guard) { print $1 }
-' | xargs -n1 kill -9 2>/dev/null
+#     ps -u $USER -o pid,ppid,command \
+#       | awk '$3 == "sleep" && $2 != 1 {print $1}' | xargs -n1 kill -9
+#
+# and it is unsafe on this machine, because `sleep` is what EVERY polling loop
+# on the uid looks like — not just yours. Observed twice on 2026-08-16: it
+# SIGKILLed `mem-guard`'s own 2-second poll (`mem-guard.sh: line 229: Killed: 9
+# sleep "$INTERVAL"`, which is why the safety net kept vanishing mid-session),
+# and a sibling agent's cleanup killed a benchmark agent's poll mid-measurement.
+# Narrowing it to spare mem-guard did not fix it: the predicate still matches
+# every OTHER agent's sleep, and agents that loaded CLAUDE.md before the
+# narrowing keep running the old version for their whole lifetime.
+#
+# There is no safe uid-wide predicate. A sleep carries no evidence of who owns
+# it. So: DON'T CREATE ORPHAN POLL LOOPS — prefer the Monitor tool over
+# `run_in_background` + polling, which is what the note at the end of this
+# section already says. If you must reap your own, track the PIDs you spawned
+# and kill those, never a pattern match across the uid.
 
 # Verification leftovers — SCOPED TO THIS AGENT'S OWN WORKTREE.
 #
