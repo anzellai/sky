@@ -123,9 +123,9 @@ func TestConcurrentEventsSerialise(t *testing.T) {
 // DOM reflects the server's actual mutation order.
 func TestSeqCountsCoverEveryOutgoingFrame(t *testing.T) {
 	sess := &liveSession{}
-	a := sess.nextLocalSeq() // simulate event reply 1
+	a := sess.nextLocalSeq()                       // simulate event reply 1
 	sseFrame := encodeSSEFrame(sess, "<p>sub</p>") // subscription tick
-	b := sess.nextLocalSeq() // simulate event reply 2
+	b := sess.nextLocalSeq()                       // simulate event reply 2
 
 	var env map[string]any
 	if err := json.Unmarshal([]byte(sseFrame), &env); err != nil {
@@ -242,4 +242,116 @@ func TestLegacyFieldsPreserved(t *testing.T) {
 			t.Errorf("seq still required in response envelope: %+v", env)
 		}
 	}
+}
+
+// ── /_sky/event body cap — pinned as a NUMBER ────────────────────────
+//
+// handleEvent bounds the event payload with `maxBody := int64(5 << 20)`
+// (live.go, just above `http.MaxBytesReader`). That constant is a
+// PRODUCT decision, not an implementation detail: `Event.onFile` /
+// `Event.onImage` ship the picked file as a base64 data URL through this
+// same channel, so a ~4 MiB image (~5.4 MiB base64) is the sizing case.
+// Shrinking it — say to `64 << 10` — silently 413s every non-trivial
+// upload, and until these tests existed NOTHING in the package exercised
+// a body between 64 KiB and 5 MiB against this handler, so the whole Go
+// suite stayed green through that mutation.
+//
+// The pin is deliberately two-sided: at-cap must PASS and cap+1 must
+// 413. A one-sided "something gets rejected" assertion would survive any
+// shrink of the constant.
+
+// liveEventDefaultMaxBody mirrors handleEvent's `int64(5 << 20)` default.
+// It is duplicated here on purpose — a test that read the value out of
+// the source under test could not detect a change to it.
+const liveEventDefaultMaxBody = 5 << 20 // 5 MiB, exactly 5242880 bytes
+
+// eventBodyPaddedTo builds a well-formed /_sky/event JSON envelope for
+// (sid, hid) whose total encoded length is EXACTLY n bytes. The padding
+// rides in an extra `pad` member; encoding/json ignores unknown fields,
+// so the request stays a valid dispatch all the way through the handler.
+func eventBodyPaddedTo(t *testing.T, sid, hid string, n int) string {
+	t.Helper()
+	head := `{"sessionId":"` + sid + `","seq":1,"msg":"","args":[],"handlerId":"` + hid + `","pad":"`
+	tail := `"}`
+	pad := n - len(head) - len(tail)
+	if pad < 0 {
+		t.Fatalf("cannot build a %d-byte body: envelope alone is %d bytes", n, len(head)+len(tail))
+	}
+	body := head + strings.Repeat("a", pad) + tail
+	if len(body) != n {
+		t.Fatalf("padding arithmetic wrong: built %d bytes, wanted %d", len(body), n)
+	}
+	return body
+}
+
+// TestHandleEventBodyCapIsFiveMiB pins the DEFAULT cap at both edges.
+//
+//   - a body of exactly 5 MiB dispatches (200) — this is the assertion a
+//     shrink of `5 << 20` to `64 << 10` breaks;
+//   - a body of 5 MiB + 1 is rejected 413 — which is what stops the first
+//     assertion from being vacuous (it proves a cap exists at all, and
+//     that it sits at this exact byte).
+func TestHandleEventBodyCapIsFiveMiB(t *testing.T) {
+	// Neutralise any ambient override so the DEFAULT is what is measured.
+	// Empty parses as "not a positive int", so handleEvent keeps 5 << 20.
+	t.Setenv(skyEnvName("LIVE_MAX_BODY_BYTES"), "")
+
+	app := newBindingTestApp("sky_sid")
+	sid, cookie := mintSession(t, app, "sky_sid")
+	hid := clickHandlerID(t, app, sid)
+
+	atCap := eventBodyPaddedTo(t, sid, hid, liveEventDefaultMaxBody)
+	if rr := postEvent(app, cookie, atCap); rr.Code != http.StatusOK {
+		t.Errorf("a %d-byte body (exactly the default cap, live.go `maxBody := int64(5 << 20)`) "+
+			"got status %d, want 200. The cap constant must be 5<<20 = %d bytes; "+
+			"body %q", len(atCap), rr.Code, liveEventDefaultMaxBody, truncateForMsg(rr.Body.String()))
+	}
+
+	overCap := eventBodyPaddedTo(t, sid, hid, liveEventDefaultMaxBody+1)
+	if rr := postEvent(app, cookie, overCap); rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("a %d-byte body (cap+1, cap = 5<<20 = %d) got status %d, want 413. "+
+			"Without this the at-cap assertion above proves nothing; body %q",
+			len(overCap), liveEventDefaultMaxBody, rr.Code, truncateForMsg(rr.Body.String()))
+	}
+}
+
+// TestHandleEventBodyCapEnvOverride pins the documented escape hatch,
+// <PREFIX>_LIVE_MAX_BODY_BYTES. An override that silently did nothing
+// would look identical to a working one in every other test, because
+// every other body in the suite is a few hundred bytes.
+func TestHandleEventBodyCapEnvOverride(t *testing.T) {
+	const override = 4096
+	t.Setenv(skyEnvName("LIVE_MAX_BODY_BYTES"), "4096")
+
+	app := newBindingTestApp("sky_sid")
+	sid, cookie := mintSession(t, app, "sky_sid")
+	hid := clickHandlerID(t, app, sid)
+
+	atCap := eventBodyPaddedTo(t, sid, hid, override)
+	if rr := postEvent(app, cookie, atCap); rr.Code != http.StatusOK {
+		t.Errorf("%s=4096: a %d-byte body got status %d, want 200",
+			skyEnvName("LIVE_MAX_BODY_BYTES"), len(atCap), rr.Code)
+	}
+
+	overCap := eventBodyPaddedTo(t, sid, hid, override+1)
+	if rr := postEvent(app, cookie, overCap); rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("%s=4096: a %d-byte body got status %d, want 413 — the override did not move the cap",
+			skyEnvName("LIVE_MAX_BODY_BYTES"), len(overCap), rr.Code)
+	}
+
+	// And the override must be BELOW the default here, so a body that the
+	// default would accept is now refused. Otherwise "413 at 4097" could
+	// be explained by some unrelated bound rather than by the override.
+	underDefault := eventBodyPaddedTo(t, sid, hid, 64<<10)
+	if rr := postEvent(app, cookie, underDefault); rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("%s=4096: a %d-byte body (well under the 5<<20 default) got status %d, want 413",
+			skyEnvName("LIVE_MAX_BODY_BYTES"), len(underDefault), rr.Code)
+	}
+}
+
+func truncateForMsg(s string) string {
+	if len(s) > 120 {
+		return s[:120] + "…"
+	}
+	return s
 }
