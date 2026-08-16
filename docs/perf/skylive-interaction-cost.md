@@ -212,16 +212,32 @@ So:
 > That generalised a measurement of the **diff** to the whole
 > interaction. The diff is indeed near-constant. The interaction is
 > **dominated by re-running `view(model)`**, which is proportional to
-> the view. Measured directly, same config, same method:
+> the view. View complexity is very much the right variable to worry
+> about. See "The attribution" below for why.
 >
-> | App | Elements | CPU per interaction | Throughput, 1 core |
-> |---|---|---|---|
-> | `19-skyforum` | 94 | 4.41 / 4.47 / 4.77 ms | 249–267/s |
-> | `26-ui-showcase` | 384 | 10.68 / 10.81 / 10.93 ms | 108–110/s |
+> **The two-point table that stood here was itself invalid, and is
+> withdrawn.** It read `19-skyforum` at 94 elements / 4.41–4.77 ms /
+> 249–267 per sec against `26-ui-showcase` at 384 / 10.68–10.93 ms /
+> 108–110, and concluded "4.1× the elements costs 2.4× the interaction".
+> All three forum runs behind it are flagged
+> `"valid": false — no interaction produced a single patch`
+> ([`runs/attribution-20260815/viewsize/`](runs/attribution-20260815/viewsize/)):
+> the load generator had picked the site-title link, whose `Navigate
+> HomePage` is a no-op on the home page, so that arm never ran the
+> render/diff path at all.
 >
-> **4.1× the elements costs 2.4× the interaction** — +139%, not +0.6%.
-> View complexity is very much the right variable to worry about. See
-> "The attribution" below for why.
+> Replaced by a seven-point regression on runs that provably produced
+> patches — [`runs/forum-rebaseline-20260816/`](runs/forum-rebaseline-20260816/).
+> The direction was right and the magnitude was not:
+>
+> ```
+> cost_ms = 0.124 + 0.0183 x elements      (30-94 elements, R2 = 0.99)
+> ```
+>
+> **The fixed term is 0.12 ms, not the ~2.5 ms this table's two points
+> extrapolate to** — a 30-element view costs 0.64–0.68 ms and serves
+> ~1,500 interactions/sec on one core. Cost tracks element count almost
+> exactly, with a floor near zero.
 
 ## The attribution — what the 11 ms and the 1.4 MB actually are
 
@@ -537,11 +553,15 @@ this describes the generator.
 
 **Every throughput figure in this document is for a specific view
 size, and does not transfer to a different one.** The rows above are a
-384-element view. The same harness on a 94-element view sustains
-249–267/s against this app's 108–110/s — **2.4× the throughput for
-4.1× fewer elements** (see the view-size table above). Capacity
-guidance quoted without the view size it was measured at is not usable;
-scale it by element count, not by session count alone.
+384-element view. Capacity guidance quoted without the view size it was
+measured at is not usable; scale it by element count, not by session
+count alone. The measured relation — seven sizes from 30 to 1614
+elements, three runs each, every run patch-bearing — is
+`cost_ms ≈ 0.12 + 0.018 × elements` at one core
+([`runs/forum-rebaseline-20260816/`](runs/forum-rebaseline-20260816/));
+the "2.4× the throughput for 4.1× fewer elements" comparison that stood
+here rested on three runs the generator had flagged invalid, and is
+withdrawn.
 
 ### Memory is the constraint that binds first
 

@@ -1,0 +1,18 @@
+establishing 100 sessions over 20s...
+100 sessions live; measuring for 1m30s (warmup 5s)
+
+=== Sky.Live load run ===
+label                mem-pgevict-n100-r1
+url                  http://127.0.0.1:8531
+sessions             100 requested, 100 established
+think time           1s
+interactions         8866
+throughput           97.2 interactions/sec
+latency p50/p95/p99  5.61 / 37.09 / 127.15 ms  (max 427.92)
+error rate           0.000%
+outcomes             map[ok:8866]
+handler              r.1#div.1#div.0#div.1#div.0#button.click (2 setup steps/session)
+patches              17732 total, 2.00 per interaction, 100.0% of interactions bore one
+SSE frames received  1056 (across 100 sessions; 100 streams still open at end)
+generator CPU        0.5% of machine
+valid                true
