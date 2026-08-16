@@ -372,7 +372,25 @@ jobs:
           shared-key: sky-linux
           save-if: 'false'
       - run: cargo build --workspace --locked
+      # Declared partial, and only here. The census needs every project's
+      # GENERATED FFI surface to emit, and `sky-ffi/` + `.skydeps/` are
+      # .gitignored — so on a fresh checkout five rows (03-tea-external,
+      # 05-mux-server, 08-notes-app, 11-fyne-stopwatch, 13-skyshop) cannot be
+      # measured. Since 2026-08-16 the gate FAILS on that rather than reporting
+      # PASS on the remainder, which is right, and `SKY_LIVE_TESTS=skip` is the
+      # escape its own docs name: the run prints a loud itemised UNMEASURED
+      # block instead, so the shortfall is a partial someone asked for rather
+      # than one nobody noticed.
+      #
+      # Per-push cannot supply the surfaces: `sky install` for those five means
+      # a cold 76k-symbol Stripe regeneration and Fyne's GL/X11 toolchain, which
+      # is why the FFI examples live in the nightly sweep. The full 61-of-61
+      # census runs THERE, after the sweep has generated all of them —
+      # `nightly-sweep.yml`, job `example-sweep`. The per-project ratchets below
+      # are unaffected either way; only the corpus-wide totals are.
       - name: Gate — coerce-floor (runtime-coercion floor lock, FAIL-ON-INCREASE)
+        env:
+          SKY_LIVE_TESTS: skip
         run: cargo run -q -p xtask -- coerce-floor
       - name: Gate — runtime rt tests (go test)
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
@@ -710,7 +728,13 @@ jobs:
       - run: cargo build --workspace --locked
       - name: Gate — repro (byte-stable Go, 2nd platform)
         run: cargo run -q -p xtask -- repro
+      # Declared partial for the same reason as `codegen-build` above, and more
+      # sharply: this runner bills at 10x, so `sky install` over the five FFI
+      # examples is the last thing that belongs here. The full 61-of-61 census
+      # runs in `nightly-sweep.yml`.
       - name: Gate — coerce-floor (2nd platform)
+        env:
+          SKY_LIVE_TESTS: skip
         run: cargo run -q -p xtask -- coerce-floor
       # Platform parity for the emit + go-build regression class. The #164/#166
       # alias-collision / record-update-field-drop bugs are gated only by these

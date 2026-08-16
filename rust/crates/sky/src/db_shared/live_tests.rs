@@ -1153,11 +1153,20 @@ fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
     let fx = Fixture { _live: live, layout: Layout::new(&state), bins, user: os_user().unwrap() };
     assert!(!cluster_running(&fx.layout), "the fixture wanted a stopped cluster");
 
+    // The wrapper's output goes to a FILE, not to /dev/null.
+    //
+    // It used to be discarded, and when this test failed in CI on 2026-08-16 —
+    // "the wrapper never brought the cluster up" — the one thing that could say
+    // why had been thrown away at the point of capture. A live gate that can
+    // only report that something did not happen costs its next reader a whole
+    // investigation to learn what a `postgres` log line already knew.
     let wrapper = fx.layout.service_dir.join("sky-postgres-run.sh");
+    let log_path = fx.layout.service_dir.join("wrapper-test.log");
+    let log = std::fs::File::create(&log_path).expect("wrapper log");
     let mut child = Command::new("/bin/sh")
         .arg(&wrapper)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(log.try_clone().expect("dup wrapper log")))
+        .stderr(Stdio::from(log))
         .spawn()
         .expect("wrapper");
 
@@ -1165,14 +1174,34 @@ fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
     // shutdown would block on exactly this connection, which is the failure the
     // wrapper exists to prevent.
     let mut held = None;
+    let mut last_err = None;
     for _ in 0..100 {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        if let Ok(c) = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres") {
-            held = Some(c);
-            break;
+        match admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres") {
+            Ok(c) => {
+                held = Some(c);
+                break;
+            }
+            Err(e) => last_err = Some(e.to_string()),
         }
     }
-    assert!(held.is_some(), "the wrapper never brought the cluster up");
+    assert!(
+        held.is_some(),
+        "the wrapper never brought the cluster up within 20s.\n\
+         last connection error: {}\n\
+         wrapper output ({}):\n{}\n\
+         postgres log ({}):\n{}",
+        last_err.as_deref().unwrap_or("<none — the loop never ran>"),
+        log_path.display(),
+        std::fs::read_to_string(&log_path).unwrap_or_else(|e| format!("<unreadable: {e}>")),
+        fx.layout.log_file().display(),
+        std::fs::read_to_string(fx.layout.log_file())
+            .map(|s| {
+                let lines: Vec<&str> = s.lines().collect();
+                lines[lines.len().saturating_sub(40)..].join("\n")
+            })
+            .unwrap_or_else(|e| format!("<unreadable: {e}>")),
+    );
 
     let pid = child.id() as i32;
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGTERM)

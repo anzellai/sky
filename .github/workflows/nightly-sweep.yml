@@ -95,6 +95,24 @@ jobs:
           sky-out/sky --version
       - name: Full example sweep (clean-slate build of every example, incl. FFI/Std.Db)
         run: scripts/example-sweep.sh
+      # The census the per-push tier cannot take, taken here.
+      #
+      # `coerce-floor` measures every project's emitted Go, and five of the 61
+      # golden rows belong to examples whose generated FFI surface is
+      # .gitignored — 03-tea-external, 05-mux-server, 08-notes-app,
+      # 11-fyne-stopwatch, 13-skyshop. On a fresh per-push checkout they do not
+      # emit, so `codegen-build` and `macos-determinism` run the gate with
+      # SKY_LIVE_TESTS=skip and it reports the shortfall instead of failing.
+      # That leaves the corpus-wide totals gated NOWHERE, which is the exact
+      # hole the 2026-08-16 coverage clause was written to close.
+      #
+      # The step above has just generated all five surfaces. This is therefore
+      # the one place in CI where the golden's own denominator holds, so this is
+      # where the 61-of-61 census belongs. No SKY_LIVE_TESTS here, deliberately:
+      # a shortfall in THIS job means the sweep did not build what it claims to.
+      - name: Gate — coerce-floor over the whole corpus (61 of 61 rows)
+        working-directory: rust
+        run: cargo run -q -p xtask -- coerce-floor
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
