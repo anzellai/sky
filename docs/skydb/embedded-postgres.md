@@ -987,7 +987,7 @@ small cloud instance. Measured components:
 | Observability agent, if you run one | **~87 MB** — see below |
 | PostgreSQL base — postmaster + 6 auxiliaries | **~22–29 MB** (measured under `--embed` on an e2-small) |
 | PG backends — one process per *active* connection | **6 backends total**, measured, at any session count — see below |
-| Sky.Live sessions — **~1.8–1.9 MB each on x86 at the shipped `GOGC=400`** (625–650 kB at the Go default) | ~185 MB at 100 concurrent |
+| Sky.Live sessions — **625–650 kB each on x86 at the Go-default `GOGC=100`**, PostgreSQL store (`docs/perf/runs/gcp-x86-capacity-20260816/`); the shipped `GOGC=400` raises the slope, x86 unmeasured | ~65 MB at 100 concurrent at `GOGC=100` |
 | **Base, before sessions** | **~380 MB** |
 
 The session row moves with the collector and with the view; see "The
@@ -1131,10 +1131,12 @@ kB/session — so the residual is the app and the view, and the lesson is the on
 non-default one. `GOGC` multiplies the live heap, so it scales the per-session
 **slope**, not merely the baseline — `docs/perf/runs/gogc-postgres-20260816/`
 measures the slope rising **2.9×** across `GOGC` 100 → 400 on one app and store.
-At the shipped default that puts an x86 postgres-store session at roughly
-**1.8–1.9 MB** — an estimate, applying a within-box M1 ratio to an x86 slope,
-not a measurement. Any capacity table that adopts a raised `GOGC` and keeps its
-sessions-per-instance column is wrong by that factor.
+The x86 slope at the shipped default is **unmeasured**: an earlier draft
+multiplied the M1 ratio into the x86 slope and quoted ~1.8–1.9 MB, and that
+projection is withdrawn — this programme's projections have been wrong by 2×,
+13× and 20×, so no number is quoted here until a run measures one. Any
+capacity table that adopts a raised `GOGC` and keeps its sessions-per-instance
+column is wrong by roughly the slope multiplier.
 
 The Model is not the cost; the per-session goroutines, buffers and connection
 state are.
@@ -1184,9 +1186,11 @@ ceiling at its real traffic.
 > **The monitoring costs 86 MB — and that turns out not to matter.** A
 > within-boot A/B on `MemAvailable` puts the Ops Agent at **86.4 MB**, not the
 > 190 MB its RSS suggests: RSS double-counts shared pages and would have
-> overstated it 2.2×. At 1.35 MB/session that is ~64 sessions of headroom on an
-> e2-micro — **and approximately none of it is usable, because the box
-> saturates on CPU at a fifth of that.** Per-session cost is unchanged by the
+> overstated it 2.2×. At that run's own 1.35 MB/session slope this is ~64
+> sessions of headroom on an e2-micro (more at the later-measured 625–650 kB
+> marginal slope, `docs/perf/runs/gcp-x86-capacity-20260816/`) — **and
+> approximately none of it is usable, because the box saturates on CPU at a
+> fifth of that.** Per-session cost is unchanged by the
 > agent, which is what makes the arithmetic valid.
 >
 > So: run the agent if you want the observability. On a CPU-bound tier its
@@ -1197,7 +1201,8 @@ ceiling at its real traffic.
 ### Which resource binds first — measured on real e2 instances
 
 **CPU, by an order of magnitude, and it is not close.** Measured on throwaway
-`e2-micro` and `e2-small` instances in `us-central1-a`:
+`e2-micro` and `e2-small` instances in `us-central1-a` at commit `ba3c3b1d`,
+SQLite store (`docs/perf/runs/gcp-x86-20260815/`):
 
 | | throughput knee | peak interactions/sec | memory ceiling | CPU binds earlier by |
 |---|---|---|---|---|
@@ -1206,6 +1211,15 @@ ceiling at its real traffic.
 
 An `e2-micro` will *hold* about 450 sessions in RAM and is **unusable past
 about 50**. Sizing on memory alone would overstate its capacity twelvefold.
+
+**Re-measured at commit `3ed83c08`** — after several per-interaction
+optimisation stages, with the app's own embedded PostgreSQL carrying the
+session store (`docs/perf/runs/gcp-x86-capacity-20260816/`): an **e2-small
+sustains 64.3 int/s at 300 sessions** (failure knee between 100 and 300
+sessions, decisive by 500) and an **e2-medium 261.5 int/s** (knee above 500 —
+it degrades to 1.4 s p50 without dropping anything). Quote throughput with the
+commit it was measured at; these figures predate later optimisation work, and
+this programme does not project.
 
 **And count physical cores, not vCPUs, when you move up the ladder.** A GCE
 vCPU is an SMT thread. `lscpu` on an `e2-standard-8` reports **4 cores per
@@ -1217,6 +1231,9 @@ on a core is worth ~1.27×, and the measured 4 → 8 vCPU step is 1.17×
 (`docs/perf/runs/gomaxprocs-scaling-20260816/`). A capacity figure derived by
 multiplying a per-core number by a vCPU count therefore overstates the machine
 by roughly the SMT factor.
+Counted in physical cores, throughput scales at **79–80% efficiency per
+doubling** (same run) — the sub-linear look of the raw vCPU curve is the SMT
+step, not a scaling defect.
 Past 250 sessions both machines fail 79–96% of interactions — those are numbers
 describing a failing server, not a capacity.
 
@@ -1227,18 +1244,19 @@ hardware that was optimistic by **2.5× on e2-small and 5× on e2-micro**. The
 local run flagged itself as an optimistic stand-in; it was right to, and the
 size of the error is the argument for measuring on the target.
 
-> **Burst credits drain, and a single run will lie to you.** Repeated runs at
-> the same concurrency decline monotonically — on `e2-micro` at 100 sessions:
-> **17.5 → 9.6 → 9.5 interactions/sec**. A first run against a rested instance
-> overstates sustained capacity by roughly 2×. That spread is a *trend*, not a
-> confidence interval: **plan with the low end**, because that is what a busy
-> instance actually delivers.
+> **Burst credits drain, and a single run will lie to you.** A rested
+> e2-small's first run measured **183.5 int/s where the next six consecutive
+> runs sustained 58–71** (median 69.0) — a **2.7×** overstatement, gone by the
+> second run (seven-run soak, `docs/perf/runs/gcp-x86-capacity-20260816/`).
+> The same decay on `e2-micro` at 100 sessions read **17.5 → 9.6 → 9.5
+> interactions/sec** (`docs/perf/runs/gcp-x86-20260815/`). That spread is a
+> *trend*, not a confidence interval: **plan with the sustained figure**,
+> because that is what a busy instance actually delivers.
 
-### The cost is NOT in the view diff — do not optimise there
+### The cost is NOT in the view diff — but it DOES track view size
 
-This document previously said the per-interaction cost "scales with view size".
-**It does not**, and the measurement is unambiguous. The render → diff →
-serialize path costs:
+The diff is not where the time goes, and the measurement is unambiguous. The
+render → diff → serialize path costs:
 
 ```
 ≈ 0.4 µs + 128 ns × VNodes     (text/attribute change — the common case)
@@ -1252,11 +1270,16 @@ linear to within 2% across a 370× range. In practice:
 | `19-skyforum` (94 elements) | 159 | **21 µs** |
 | `26-ui-showcase` (384 elements) | 670 | **86 µs** |
 
-So the diff is **under 1%** of an 11 ms interaction, and quadrupling the view —
-94 to 384 elements — adds 0.6%. Optimising the differ would buy nothing; at
-saturation the entire diff path is under 4% of a core. **Where the other ~11 ms
-goes has not been measured**, and that is the open question worth answering
-before anyone tunes anything.
+So the diff is **under 1%** of an interaction — optimising the differ buys
+nothing; at saturation the entire diff path is under 4% of a core. But the
+interaction as a whole **does track element count**, because `view(model)`
+re-runs in full on every interaction and is ~84% of the handler: measured
+across seven view sizes, `cost_ms ≈ 0.12 + 0.018 × elements` on one core, so
+a 30-element view serves ~1,500 interactions/sec per core
+(`docs/perf/runs/forum-rebaseline-20260816/`). An earlier version of this
+section generalised the diff's flatness to the whole interaction; that
+generalisation is withdrawn — the full attribution of where the milliseconds
+go is in `docs/perf/skylive-interaction-cost.md`, "The attribution".
 
 > **These figures are ARM-on-Apple-silicon**, from `docs/perf/skylive-interaction-cost.md`.
 > They are sound for relative comparisons and for locating the knee. They are
