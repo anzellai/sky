@@ -1,0 +1,33 @@
+{
+  "label": "after-p60-r1",
+  "url": "http://127.0.0.1:8531",
+  "sessions_requested": 25,
+  "sessions_established": 25,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 4535,
+  "interactions_per_sec": 100.21766016160501,
+  "p50_ms": 278.31,
+  "p95_ms": 552.639,
+  "p99_ms": 630.654,
+  "max_ms": 1249.162,
+  "outcomes": {
+    "ok": 4535
+  },
+  "error_rate": 0,
+  "patches_total": 9070,
+  "interactions_with_patches": 4535,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 175,
+  "sse_still_open_at_end": 25,
+  "generator_cpu_percent_of_machine": 0.1448984940401596,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T02:19:27Z"
+}

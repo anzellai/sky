@@ -1,0 +1,5 @@
+prof_window_start_rss_kb 54720
+prof_seconds_requested 25
+prof_wall_s            25
+prof_cpu_delta_s       25.28
+prof_window_end_rss_kb 68240

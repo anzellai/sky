@@ -1,0 +1,18 @@
+establishing 25 sessions over 3s...
+25 sessions live; measuring for 45s (warmup 3s)
+
+=== Sky.Live load run ===
+label                after-p60-r2
+url                  http://127.0.0.1:8531
+sessions             25 requested, 25 established
+think time           0s
+interactions         4537
+throughput           100.3 interactions/sec
+latency p50/p95/p99  273.55 / 552.96 / 624.52 ms  (max 789.96)
+error rate           0.000%
+outcomes             map[ok:4537]
+handler              r.1#div.1#div.0#div.1#div.0#button.click (2 setup steps/session)
+patches              9074 total, 2.00 per interaction, 100.0% of interactions bore one
+SSE frames received  175 (across 25 sessions; 25 streams still open at end)
+generator CPU        0.1% of machine
+valid                true
