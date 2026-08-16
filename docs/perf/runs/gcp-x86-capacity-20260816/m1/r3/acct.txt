@@ -1,0 +1,6 @@
+idle_rss_kb 34592
+load_rss_kb 63408
+app_cpu_delta_s 48.43
+elements 94
+generator_rc 0
+load1 2.99

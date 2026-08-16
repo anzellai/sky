@@ -1,0 +1,33 @@
+{
+  "label": "medium-pg-n500-b1r1",
+  "url": "http://10.128.0.8:8000",
+  "sessions_requested": 500,
+  "sessions_established": 500,
+  "duration": "1m30s",
+  "think_time": "0s",
+  "interactions_counted": 20174,
+  "interactions_per_sec": 222.86757414622213,
+  "p50_ms": 1515.479,
+  "p95_ms": 7080.613,
+  "p99_ms": 11566.879,
+  "max_ms": 25249.341,
+  "outcomes": {
+    "ok": 20174
+  },
+  "error_rate": 0,
+  "patches_total": 40348,
+  "interactions_with_patches": 20174,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 5522,
+  "sse_still_open_at_end": 500,
+  "generator_cpu_percent_of_machine": 2.4375188095422873,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "skyperf-gen",
+  "gomaxprocs": 4,
+  "started_at": "2026-08-16T03:39:06Z"
+}

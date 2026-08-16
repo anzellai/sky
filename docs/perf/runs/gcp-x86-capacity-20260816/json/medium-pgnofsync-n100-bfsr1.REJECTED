@@ -1,0 +1,1 @@
+FAIL pgnofsync arm: fsync=on synchronous_commit=on (wanted off/off)

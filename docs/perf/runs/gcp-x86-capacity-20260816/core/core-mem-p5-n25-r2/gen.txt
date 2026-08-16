@@ -1,0 +1,18 @@
+establishing 25 sessions over 3s...
+25 sessions live; measuring for 45s (warmup 3s)
+
+=== Sky.Live load run ===
+label                core-mem-p5-n25-r2
+url                  http://127.0.0.1:8000
+sessions             25 requested, 25 established
+think time           0s
+interactions         13026
+throughput           288.9 interactions/sec
+latency p50/p95/p99  106.58 / 146.34 / 159.38 ms  (max 193.88)
+error rate           0.000%
+outcomes             map[ok:13026]
+handler              r.1#div.1#div.0#div.1#div.0#button.click (2 setup steps/session)
+patches              26052 total, 2.00 per interaction, 100.0% of interactions bore one
+SSE frames received  175 (across 25 sessions; 25 streams still open at end)
+generator CPU        3.8% of machine
+valid                true
