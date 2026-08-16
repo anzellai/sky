@@ -2743,28 +2743,33 @@ func clientStateFromRequest(state map[string]inputStateEntry) map[string]string 
 // evicted as a side effect so the map doesn't accumulate dead ids.
 // Returns nil if nothing to ack (client's __skyInputs map reads nil as
 // "no updates"). MUST be called with sess.mu held.
+//
+// The question this answers is membership for the ids the user currently
+// has dirty — one or two of them, the fields being typed into. It used to
+// answer that by building a set of EVERY sky-id in the tree first: a map
+// of ~390 entries, 27 kB and 15 allocations on a reference page, to look
+// up two keys. It now searches for the wanted ids directly and stops as
+// soon as it has them all, so the common case (the dirty field is on the
+// page, which is why the user is typing into it) does not even finish the
+// walk.
+//
+// It still needs a tree pass in the worst case — an id that has unmounted
+// can only be shown absent by looking everywhere — and that case is the
+// one that matters least, because it happens once per unmount rather than
+// once per keystroke.
 func ackInputsForPrevTree(s *liveSession) map[string]int64 {
 	if len(s.inputSeqs) == 0 {
 		return nil
 	}
-	present := map[string]struct{}{}
+	var out map[string]int64
 	if s.prevTree != nil {
-		var walk func(*VNode)
-		walk = func(n *VNode) {
-			if n.Kind == "element" && n.SkyID != "" {
-				present[n.SkyID] = struct{}{}
-			}
-			for i := range n.Children {
-				walk(&n.Children[i])
-			}
-		}
-		walk(s.prevTree)
+		out = make(map[string]int64, len(s.inputSeqs))
+		findAckInputs(s.prevTree, s.inputSeqs, out)
 	}
-	out := make(map[string]int64, len(s.inputSeqs))
-	for id, seq := range s.inputSeqs {
-		if _, ok := present[id]; ok {
-			out[id] = seq
-		} else {
+	// Evict ids the walk did not find: their element has unmounted, and
+	// keeping them would let the map grow without bound over a session.
+	for id := range s.inputSeqs {
+		if _, still := out[id]; !still {
 			delete(s.inputSeqs, id)
 		}
 	}
@@ -2772,6 +2777,26 @@ func ackInputsForPrevTree(s *liveSession) map[string]int64 {
 		return nil
 	}
 	return out
+}
+
+// findAckInputs records every id of `want` it finds in the subtree, and
+// reports true once it has found all of them so the callers above it can
+// unwind without visiting the rest of the tree.
+func findAckInputs(n *VNode, want map[string]int64, out map[string]int64) bool {
+	if n.Kind == "element" && n.SkyID != "" {
+		if seq, ok := want[n.SkyID]; ok {
+			out[n.SkyID] = seq
+			if len(out) == len(want) {
+				return true
+			}
+		}
+	}
+	for i := range n.Children {
+		if findAckInputs(&n.Children[i], want, out) {
+			return true
+		}
+	}
+	return false
 }
 
 // frameSnapshot captures every piece of session state encodeSSEFrame
