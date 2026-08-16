@@ -597,11 +597,27 @@ main =
 /// leg exists to catch exactly those.
 const LIST_HOF_ANSWER: &str = "235";
 
-/// Two sites the specialisation must REFUSE, because the element type is a
-/// type variable and lowers to `any`. Emitting `rt.List_filterT[any]` here
-/// would be a lie about what is proven, and the erased helper's `asList` is
-/// also the only thing that copes with a caller handing in a differently-typed
-/// slice. These must keep the erased call, unchanged.
+/// Three sites the specialisation must REFUSE, for two different reasons.
+///
+/// `keepAll` and `echo` — the element type is a TYPE VARIABLE and lowers to
+/// `any`. Emitting `rt.List_filterT[any]` would be a lie about what is proven,
+/// and it drops the erased helper's `asList`, which is the only thing that
+/// copes with a caller handing in a differently-typed slice.
+///
+/// `shout` — the callback is a KERNEL referenced as a value, and this one is a
+/// trap the other two do not cover. `String.toUpper`'s inferred Sky type is
+/// `String -> String`, and the lowered node CARRIES that type — but the symbol
+/// it emits is `rt.String_toUpper`, whose real Go signature is
+/// `func(s any) any` (every runtime kernel is `any`-based; see
+/// `kernel_value_eta` in lower.rs, whose doc comment names this exact defect).
+/// A fast path that trusts the node's own `GoTy` here emits
+///
+///     rt.List_mapT[string, string](rt.String_toUpper, v_0)
+///
+/// which `go build` rejects — "cannot use rt.String_toUpper (value of type
+/// func(s any) any) as func(string) string". Found by
+/// `kernel_value_slot_contract.rs`, which the corpus gates and the first four
+/// legs of this file all missed.
 const LIST_HOF_ERASED: &str = r#"module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
@@ -630,8 +646,17 @@ echo xs =
     List.map same xs
 
 
+shout : List String -> List String
+shout xs =
+    List.map String.toUpper xs
+
+
 main =
-    println (String.fromInt (List.length (keepAll (echo [ 1, 2, 3 ]))))
+    println
+        (String.join ","
+            (shout [ "a", "b" ])
+            ++ String.fromInt (List.length (keepAll (echo [ 1, 2, 3 ])))
+        )
 "#;
 
 /// The five traversals, measured together, over one list built OUTSIDE the
@@ -713,6 +738,9 @@ fn allocs_per_sweep(tag: &str) -> f64 {
         .trim()
         .parse::<f64>()
         .unwrap();
+    // Visible with `--nocapture`, so the budget below can be re-derived rather
+    // than taken on trust when someone next changes the dispatch.
+    eprintln!("SKY_LIST_HOF_ALLOCS_PER_SWEEP[{tag}]={n}");
     let _ = std::fs::remove_dir_all(&dir);
     n
 }
@@ -819,23 +847,40 @@ fn unprovable_element_type_keeps_the_erased_helper() {
     let log = build(&dir);
     let src = emitted_go(&dir, &log);
 
-    for (def, erased, typed) in [
-        ("Main_keepAll", "rt.List_filterAny(", "rt.List_filterT["),
-        ("Main_echo", "rt.List_mapAny(", "rt.List_mapT["),
+    for (def, erased, typed, why) in [
+        (
+            "Main_keepAll",
+            "rt.List_filterAny(",
+            "rt.List_filterT[",
+            "its element type is a TYPE VARIABLE, which lowers to `any`, so \
+             nothing is proven — and specialising drops the `asList` widen that \
+             copes with a differently-typed slice. `provable()` rejects `GoTy::Any`",
+        ),
+        (
+            "Main_echo",
+            "rt.List_mapAny(",
+            "rt.List_mapT[",
+            "its element type is a TYPE VARIABLE, as above",
+        ),
+        (
+            "Main_shout",
+            "rt.List_mapAny(",
+            "rt.List_mapT[",
+            "its callback is a KERNEL referenced as a value. The lowered node \
+             carries `String.toUpper`'s INFERRED type, `func(string) string`, \
+             but emits `rt.String_toUpper`, which is `func(s any) any` — every \
+             runtime kernel is `any`-based. Trusting the node's own GoTy here \
+             emits Go that does not compile",
+        ),
     ] {
         let body = func_body(&src, def);
         assert!(
             body.contains(erased),
-            "{def}'s element type is a TYPE VARIABLE, which lowers to `any`. \
-             Nothing is proven here, so the erased `{erased}…)` must survive \
-             unchanged. Emitted:\n{body}"
+            "{def} must keep the erased `{erased}…)`: {why}. Emitted:\n{body}"
         );
         assert!(
             !body.contains(typed),
-            "{def} must NOT be specialised: `{typed}any]` type-checks and runs \
-             while claiming a proof that was never made, and drops the `asList` \
-             widen that copes with a differently-typed slice. \
-             `provable()` in lower.rs rejects `GoTy::Any`. Emitted:\n{body}"
+            "{def} must NOT be specialised — {why}. Emitted:\n{body}"
         );
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -855,7 +900,7 @@ fn typed_list_hof_computes_the_same_answer() {
     }
     for (tag, src, want) in [
         ("listhof-run", LIST_HOF, LIST_HOF_ANSWER),
-        ("listhof-erased-run", LIST_HOF_ERASED, "3"),
+        ("listhof-erased-run", LIST_HOF_ERASED, "A,B3"),
     ] {
         let dir = project(tag, src);
         let log = build(&dir);

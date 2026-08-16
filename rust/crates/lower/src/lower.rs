@@ -4533,6 +4533,26 @@ impl<'a> Ctx<'a> {
         if !provable(&elem) {
             return erased(self, f, xs);
         }
+        // A KERNEL referenced as a VALUE is the one node whose `GoTy` does not
+        // describe the symbol it emits. `List.map String.toUpper xs` lowers to
+        // `Ident("rt.String_toUpper")` typed `func(string) string` — the
+        // INFERRED Sky type — while `rt.String_toUpper` is `func(s any) any`,
+        // because every runtime kernel is `any`-based. `lower_var` types it that
+        // way deliberately: at an `any` slot the bare symbol is correct output,
+        // and the bridge is `kernel_value_eta`, driven by the SLOT rather than
+        // by the reference's own type (see its doc comment, which records the
+        // same defect being introduced and caught once before).
+        //
+        // Everything above reads `f.ty`, so a raw kernel here would put
+        // `rt.List_mapT[string, string](rt.String_toUpper, …)` into the output
+        // and `go build` would reject it. Refuse. Bridging it instead —
+        // `kernel_value_eta` at the typed shape — would work and would trade a
+        // reflect dispatch for one widen and one narrow per element, but that is
+        // a coercion this does not currently emit, and the rule for an unproven
+        // site is to leave it exactly as it was.
+        if matches!(&f.kind, GoExprKind::Ident(n) if n.starts_with("rt.")) {
+            return erased(self, f, xs);
+        }
         let elem = (*elem).clone();
 
         // Per-HOF: the callback shape to prove, the Go type arguments, and the
