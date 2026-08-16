@@ -77,7 +77,7 @@ live / hub outputs):
 | Coercion (hottest) | `rt.Coerce[T]`, `rt.CoerceString/Int/Bool/Float`, `rt.ResultCoerce`, `rt.MaybeCoerce`, `rt.TaskCoerceT` | `rt.Coerce[T]` alone is ~4.7k hits in the skyshop-scale sample. The typed IR (doc [`07`](07-lowering-and-ir.md)) exists to make this the exception, not the norm (L9). |
 | List / map bridging | `rt.AsListT`, `rt.AsMapT`, `rt.AsList`, `rt.AsDict`, `rt.AsBool/Int/String/Float`, `rt.AsTuple2T` | Per-element coercion at the FFI/collection boundary. |
 | Tuples / records | `rt.SkyTuple2`, `rt.T2`, `rt.Field`, `rt.RecordUpdate` | Record field access sorts by `_fieldIndex` before emission (L4 — see [`08`](08-go-codegen.md)). |
-| ADT machinery | `type X = rt.SkyADT` (`{Tag int; SkyName string; Fields []any}`), `rt.SkyVariant` (sealed-iface successor), `rt.SkyMaybe/Result/Value/Attribute`, `rt.RegisterAdtTag/AdtVariant/MsgVariant/MsgUpdate/MsgDecoder/GobType`, `rt.EnumTagIs`, `rt.Unreachable`, `rt.Ok/Err/Just/Nothing` | Registration calls are emitted into `init()`. Contract at `runtime-go/rt/rt.go:3723-3770`. |
+| ADT machinery | `type X = rt.SkyADT` (`{Tag int; SkyName string; Fields []any}`), `rt.SkyVariant` (sealed-iface successor), `rt.SkyMaybe/Result/Value/Attribute`, `rt.RegisterAdtTag/AdtVariant/MsgVariant/MsgUpdate/MsgDecoder/GobType`, `rt.EnumTagIs`, `rt.Unreachable`, `rt.Ok/Err/Just/Nothing` | Registration calls are emitted into `init()`. `RegisterAdtTag`/`AdtVariant` take the **package-qualified owning ADT first** (`rt.RegisterAdtTag("main.Main_Msg", "Inc", 0)`) — a bare ctor name is not a key, and neither is a bare Go type name, because the wire path resolves a client-supplied string against these registries. See [Wire dispatch](#wire-dispatch-is-scoped-to-the-apps-msg-adt) below. |
 | Task / call | `rt.AnyTaskRun`, `rt.SkyTask`, `rt.SkyCall` | `main` auto-forces a Task-typed entry via `rt.AnyTaskRun` (matches the current runtime auto-force rule). |
 | JSON / wire | `rt.JsonRawMessage`, `rt.JsonUnmarshal` | |
 | Operators | `rt.Add/Sub/Mul/Eq/Or/And/Gt/Concat`, `rt.IntDiv/Rem/Div` | Div-family are the reachable-from-Sky panic sites (classified by `rt.LogPanicAndExit`). |
@@ -111,6 +111,67 @@ red. Scanning the real tree is strictly stronger than a checked-in manifest,
 which could itself go stale — but it is a *build-time* check, not the
 compile-time one described above, and it does not stop the literals from being
 scattered.
+
+### A.2b Wire dispatch is scoped to the app's Msg ADT
+
+<a id="wire-dispatch-is-scoped-to-the-apps-msg-adt"></a>
+
+The ADT registries codegen populates in `init()` are read by the Sky.Live
+direct-send path (`__sky_send("MsgName", args)`), and the `MsgName` it resolves
+is **supplied by the client**. Two rules keep that safe, and both are load-bearing.
+
+**1. A constructor is keyed by the ADT that owns it, never by its bare name —
+and the ADT is package-qualified.** `rt.RegisterAdtTag` and
+`rt.RegisterAdtVariant` take the owning ADT first, in Go's own
+`reflect.Type.String()` form:
+
+```go
+func init() {
+    rt.RegisterAdtTag("main.Main_Msg", "Inc", 0)
+    rt.RegisterMsgVariant("Main_Msg", "Inc", 0, 0)
+    rt.RegisterAdtVariant("main.Main_Msg", "Inc", func(raw []rt.JsonRawMessage) any { … })
+}
+```
+
+Two levels of non-uniqueness force this, and both are live in the repo:
+
+* **Constructor names are not unique.** `AlignLeft` belongs to both
+  `Std.Ui.HAlign` and `Std.Css.TextAlign`, and `rt/console_app` registers 55
+  `Std_Ui_*` names (`Text`, `Node`, `Empty`, `Raw`, `Min`, `Max`, `Fill`, …)
+  into the same process.
+* **Go type names are not unique either.** `rt/console_app` is a second Go
+  package in every binary, compiled from `sky-bundled/console/src/State.sky`,
+  so its Msg is `State_Msg` — the same Go type name a user app whose own module
+  is `State.sky` gets. `examples/12-skyvote`, `13-skyshop` and `16-skychess` all
+  do exactly that, and their `Tick` sits at a different tag from the console's.
+
+Keyed on a bare name the registries were last-write-wins, so which ADT a name
+resolved to was decided by Go `init()` order. Re-registering one
+`(ADT, ctor)` pair with a *different* tag now panics at init rather than picking
+a winner. `scripts/regenerate-console.sh` rewrites the emitted `main.` prefix to
+`console_app.` when it transforms the console's `package main`; that rewrite is
+load-bearing.
+
+**2. The wire string is resolved only within the ADT the handler declared.**
+`rt.BuildAdtFromWire(adtName, msgName, …)` never searches program-wide. The
+`adtName` comes from the app's own `update` signature, which codegen emits
+strongly typed (`func Main_update(v_0 Main_Msg, v_1 Main_Model_R) …`), so it is
+literally the type the handler asked for. When it cannot be determined the
+registries are skipped entirely and only the per-app `msgTags` cache remains —
+unknown scope degrades to a narrower search, never a wider one.
+
+This matters because a sealed ADT's Go interface carries no per-ADT marker
+method (`SkyVariantTag`/`SkyVariantName` only), so **every** variant struct in the
+binary structurally satisfies **every** sealed interface: Go cannot reject a
+cross-ADT substitution, and `case` arms compare a bare integer tag
+(`rt.EnumTagIs`). A mis-scoped wire lookup would therefore hand `update` a
+foreign variant that either selects the wrong arm silently or reaches
+`rt.Unreachable`. The compile-time form of the same hazard is
+`rust/crates/ty/src/nominal.rs` (pinned at
+`corpus/repro/cross-module-union-conflation/`); the wire path has no type checker
+in front of it.
+
+Regression gate: `runtime-go/rt/adt_registry_namespace_test.go`.
 
 ### A.3 Kernel dispatch is static, resolved at lowering — not a runtime table
 

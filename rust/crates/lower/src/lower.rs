@@ -1637,7 +1637,27 @@ fn emit_type_decl(
                     vstruct,
                     assigns.join(", ")
                 )));
-                reg.push_str(&format!("rt.RegisterAdtTag(\"{cn}\", {i}); "));
+                // Both registries are keyed by (OWNING ADT, ctor), never by the
+                // bare ctor name: constructor names are not unique across a
+                // program (`AlignLeft` is in both `Std.Ui.HAlign` and
+                // `Std.Css.TextAlign`, see the `ctor_in_union` note above), and
+                // the wire-dispatch path resolves a CLIENT-SUPPLIED string
+                // against them (runtime-go/rt/adt_variant_factory.go).
+                //
+                // The ADT is named PACKAGE-QUALIFIED — `main.State_Msg`, not
+                // `State_Msg` — because the Go type name alone is not unique
+                // either. `rt/console_app` is a second Go package in every
+                // binary, compiled from `sky-bundled/console/src/State.sky`,
+                // so its Msg is also `State_Msg`; a user app whose own module
+                // is `State.sky` collides with it (examples 12/13/16 do).
+                // `main.` mirrors the single hardcoded package clause in
+                // codegen/src/lib.rs, and the qualified form is exactly Go's
+                // own `reflect.Type.String()`, which is what the runtime
+                // compares it against (live.go, msgAdtFromUpdate).
+                reg.push_str(&format!(
+                    "rt.RegisterAdtTag(\"main.{}\", \"{cn}\", {i}); ",
+                    decl.go_name
+                ));
                 reg.push_str(&format!(
                     "rt.RegisterMsgVariant(\"{}\", \"{cn}\", {i}, {}); ",
                     decl.go_name,
@@ -1656,7 +1676,8 @@ fn emit_type_decl(
                 let fassigns: Vec<String> =
                     (0..args.len()).map(|j| format!("V{j}: v{j}")).collect();
                 reg.push_str(&format!(
-                    "rt.RegisterAdtVariant(\"{cn}\", func(raw []rt.JsonRawMessage) any {{ {fbody}return {vstruct}{{{}}} }}); ",
+                    "rt.RegisterAdtVariant(\"main.{}\", \"{cn}\", func(raw []rt.JsonRawMessage) any {{ {fbody}return {vstruct}{{{}}} }}); ",
+                    decl.go_name,
                     fassigns.join(", ")
                 ));
             }
@@ -1697,7 +1718,12 @@ fn emit_type_decl(
                     decl.go_name,
                     fields.join(", ")
                 )));
-                reg.push_str(&format!("rt.RegisterAdtTag(\"{cn}\", {i}); "));
+                // Keyed by (package-qualified OWNING ADT, ctor) — see the
+                // sealed-union branch above for why the package matters.
+                reg.push_str(&format!(
+                    "rt.RegisterAdtTag(\"main.{}\", \"{cn}\", {i}); ",
+                    decl.go_name
+                ));
                 reg.push_str(&format!(
                     "rt.RegisterMsgVariant(\"{}\", \"{cn}\", {i}, {}); ",
                     decl.go_name,

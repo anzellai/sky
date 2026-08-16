@@ -3161,6 +3161,14 @@ type liveApp struct {
 	locker            *sessionLocker
 	msgTags           map[string]int // SkyName → Tag cache for direct-send events
 	msgTagsMu         sync.Mutex
+
+	// msgAdt is the Go type name of THIS app's Msg ADT (e.g. "Main_Msg").
+	// It scopes every wire-string → constructor resolution, so a
+	// client-supplied Msg name can only ever name a constructor of the
+	// app's own Msg type. Derived once, lazily, by expectedMsgAdt().
+	msgAdt     string
+	msgAdtOnce sync.Once
+
 	bannerCfg         liveBannerConfig // resolved env-vars + cfg.status overrides
 	// basePath: URL prefix this app is mounted under when running as
 	// a sub-app (e.g. "/_sky/console" when reverse-proxied behind a
@@ -3878,6 +3886,65 @@ func Live_app(cfg any) any {
 	return func() any {
 		return liveAppRun(cfg)
 	}
+}
+
+// expectedMsgAdt returns the Go type name of this app's Msg ADT, or ""
+// when it cannot be determined.
+//
+// The source is the app's OWN `update` function signature — codegen
+// emits it strongly typed, e.g.
+//
+//	func Main_update(v_0 Main_Msg, v_1 Main_Model_R) rt.T2[Main_Model_R, any]
+//
+// so `reflect.TypeOf(update).In(0)` is literally "the type the handler
+// asked for". That is exactly the scope a client-supplied wire string
+// must be resolved within, and taking it from the handler itself means
+// there is no second declaration of the app's Msg type to drift from.
+//
+// Returns "" — meaning "unknown", which callers must treat as "consult
+// no global registry" rather than "allow anything" — when:
+//
+//   - update is nil or not a function;
+//   - its first parameter is `any`/an unnamed type (an un-pinned or
+//     reflect.MakeFunc-adapted update);
+//   - its first parameter is `rt.SkyADT`. A non-sealed ADT lowers to
+//     `type Main_Msg = rt.SkyADT`, a Go ALIAS, which reflect erases —
+//     the name would be "rt.SkyADT", naming the runtime's untyped bag
+//     rather than any app's ADT, and would collide across every app.
+//     User Msg types are sealed unless a variant field type is
+//     ambiguous cross-module (rust/crates/lower/src/lower.rs
+//     `should_seal_prefix` excludes only Sky_Core_/Std_/Sky_Http_),
+//     so this is the rare fallback shape.
+//
+// The name is PACKAGE-QUALIFIED (`main.State_Msg`), because the bare Go
+// type name is not unique across the process either: `rt/console_app` is
+// a second Go package in every binary and its Msg is also `State_Msg`
+// (it is compiled from sky-bundled/console/src/State.sky). A user app
+// whose own module is `State.sky` — examples 12/13/16 — collides on the
+// unqualified name. `reflect.Type.String()` is precisely that qualified
+// form, and codegen emits the matching `"main."` prefix.
+func (a *liveApp) expectedMsgAdt() string {
+	a.msgAdtOnce.Do(func() {
+		a.msgAdt = msgAdtFromUpdate(a.update)
+	})
+	return a.msgAdt
+}
+
+var skyADTReflectType = reflect.TypeOf(SkyADT{})
+
+func msgAdtFromUpdate(update any) string {
+	if update == nil {
+		return ""
+	}
+	t := reflect.TypeOf(update)
+	if t == nil || t.Kind() != reflect.Func || t.NumIn() < 1 {
+		return ""
+	}
+	in := t.In(0)
+	if in == skyADTReflectType || in.Name() == "" {
+		return ""
+	}
+	return in.String()
 }
 
 func liveAppRun(cfg any) any {
@@ -4849,13 +4916,17 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		// variant factory registry first (typed payload via
 		// RegisterAdtVariant), then falls back to the legacy SkyADT
 		// path (LookupAdtTag + Fields:[]any).
+		//
+		// req.Msg is CLIENT-SUPPLIED. It is resolved only within this
+		// app's own Msg ADT, so it cannot name a constructor of any
+		// other ADT linked into the binary.
 		localTag := -1
 		app.msgTagsMu.Lock()
 		if t2, ok2 := app.msgTags[req.Msg]; ok2 {
 			localTag = t2
 		}
 		app.msgTagsMu.Unlock()
-		built, found := BuildAdtFromWire(req.Msg, req.Args, localTag)
+		built, found := BuildAdtFromWire(app.expectedMsgAdt(), req.Msg, req.Args, localTag)
 		// Unknown Msg name: refuse to dispatch instead of building a
 		// SkyADT with Tag=-1 and letting the user's `case` fall
 		// through to the exhaustiveness `Unreachable`. Caller gets a
@@ -5075,7 +5146,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 			localTag = t2
 		}
 		app.msgTagsMu.Unlock()
-		built, found := BuildAdtFromWire(ev.Msg, ev.Args, localTag)
+		built, found := BuildAdtFromWire(app.expectedMsgAdt(), ev.Msg, ev.Args, localTag)
 		// Unknown Msg name — same defence as the single-event path
 		// above. Silently drop (this is the batched/tab-unload path
 		// so there's no response channel to surface the error).

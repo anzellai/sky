@@ -172,26 +172,14 @@ func TestMsgDispatch_ConcurrentRegisterAndLookupSafe(t *testing.T) {
 
 // ── Stage 5: fast-path consumer infrastructure tests ────────
 
-func TestLookupAdtByCtor_PopulatedViaRegisterMsgVariant(t *testing.T) {
-	const adt = "TestADT_Stage5_LookupByCtor"
-	const ctor = "TestCtor_Stage5_AB"
-	RegisterMsgVariant(adt, ctor, 0, 0)
-
-	got, ok := LookupAdtByCtor(ctor)
-	if !ok {
-		t.Fatalf("LookupAdtByCtor(%q) ok=false, want true after RegisterMsgVariant", ctor)
-	}
-	if got != adt {
-		t.Errorf("LookupAdtByCtor(%q) = %q, want %q", ctor, got, adt)
-	}
-}
-
-func TestLookupAdtByCtor_AbsentReturnsFalse(t *testing.T) {
-	const ctor = "TestCtor_Stage5_DoesNotExist_Absent"
-	if _, ok := LookupAdtByCtor(ctor); ok {
-		t.Errorf("LookupAdtByCtor(%q) ok=true, want false for unregistered ctor", ctor)
-	}
-}
+// `LookupAdtByCtor` and its `msgCtorToAdt` reverse index are GONE, and
+// the two tests that covered them with them. A constructor name alone
+// does not identify an ADT — `AlignLeft` belongs to both
+// `Std.Ui.HAlign` and `Std.Css.TextAlign` — so the index answered with
+// whichever ADT's init() ran last. Nothing in production consumed it.
+// Rationale in full: the note above RegisterMsgVariant in
+// msg_dispatch.go. The (ADT, ctor)-keyed `LookupMsgVariant` covers
+// every caller that legitimately knows which ADT it means.
 
 func TestFastPathProbe_NonSkyADTFallsThrough(t *testing.T) {
 	FastPathProbeReset()
@@ -219,26 +207,30 @@ func TestFastPathProbe_SkyADTWithNoRegistryFallsThrough(t *testing.T) {
 	}
 }
 
-func TestFastPathProbe_RegisteredADTReportsEligible(t *testing.T) {
+// A SkyADT value cannot key LookupMsgUpdate: it carries its
+// CONSTRUCTOR name, not its owning ADT, and the ctor→ADT reverse index
+// that used to bridge the gap was unsound and has been deleted. So the
+// probe falls through even when both registries are populated.
+//
+// This test previously asserted the opposite (eligible=1) by leaning on
+// that reverse index. It never described production: codegen emits no
+// `RegisterMsgUpdate`, so `LookupMsgUpdate` is empty in every real
+// binary and the probe has always fallen through there.
+func TestFastPathProbe_SkyADTCannotKeyUpdateTableFallsThrough(t *testing.T) {
 	const adt = "TestADT_FastPath_Eligible"
 	const ctor = "TestCtor_FastPath_Eligible_Inc"
-	// Register both the variant (populates reverse ctor->adt map)
-	// and the update dispatch table (non-nil so probe reports eligible).
 	RegisterMsgVariant(adt, ctor, 0, 0)
 	RegisterMsgUpdate(adt, map[int]any{0: "sentinel"})
 
 	FastPathProbeReset()
-	table, ok := tryFastPathMsgUpdate(SkyADT{Tag: 0, SkyName: ctor, Fields: nil})
-	if !ok {
-		t.Fatalf("tryFastPathMsgUpdate(eligible SkyADT) ok=false, want true")
-	}
-	m, isMap := table.(map[int]any)
-	if !isMap || m[0] != "sentinel" {
-		t.Errorf("returned table = %v, want map with sentinel", table)
+	_, ok := tryFastPathMsgUpdate(SkyADT{Tag: 0, SkyName: ctor, Fields: nil})
+	if ok {
+		t.Fatalf("tryFastPathMsgUpdate ok=true — the owning ADT is not " +
+			"recoverable from a constructor name; it must not be guessed")
 	}
 	eligible, fall := FastPathProbeStats()
-	if eligible != 1 || fall != 0 {
-		t.Errorf("probe stats = (e=%d, f=%d), want (1, 0)", eligible, fall)
+	if eligible != 0 || fall != 1 {
+		t.Errorf("probe stats = (e=%d, f=%d), want (0, 1)", eligible, fall)
 	}
 }
 
