@@ -1015,6 +1015,52 @@ pub static GATES: &[Gate] = &[
         body: bodies::config_surface,
     },
     Gate {
+        name: "config-matrix",
+        tier: Tier::T1,
+        // Builds and runs five real Sky.Live apps and binds real ports;
+        // `killpg` and `process_group(0)` are what teardown depends on.
+        platforms: UNIX,
+        // Five `sky build`s (~8 s each warm, slower cold) and ten
+        // start/observe/kill cycles. Generous, because the alternative to a
+        // generous budget on a build-and-run gate is a flaky one, and a
+        // timeout here renders FAIL, never a fabricated pass.
+        budget_s: 900,
+        expected: bodies::CONFIG_MATRIX_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every covered setting's EFFECTIVE value, observed from running binaries, \
+                  matches the baseline in every arm combination",
+        // THE mutation, and it is the defect the gate exists to catch rather
+        // than a proxy for it: a builder declared to reach the runtime that
+        // does not.
+        //
+        // `Live.withTtl` is dead today (design §1.8) — `lower.rs:822` seeds
+        // `LIVE_TTL=1800` into every program and `parseTTL` reads the
+        // environment first, so the builder's value is unreachable. The
+        // manifest records that as `builder_reaches_runtime = false`, verified
+        // against the builder-only cell on every run. Flipping the declaration
+        // to `true` is exactly the claim a careless stage-3 commit would make,
+        // and the gate must refuse it.
+        //
+        // It edits DATA the gate reads, so nothing needs rebuilding between
+        // applying it and observing red — and in particular not the compiler,
+        // which is the trap a mutation in `lower.rs` or `runtime-go/` falls
+        // into here: both reach this gate only through the already-built `sky`
+        // binary, so mutating them would leave it measuring the unmutated tree
+        // and report VACUOUS.
+        mutations: Mutations::new(&[Mutation {
+            id: "config-matrix.claim-a-dead-builder-is-alive",
+            description: "declare that `Live.withTtl`'s value reaches the runtime; the \
+                          builder-only cell observes the 30-minute default against the \
+                          builder's 41m, so the BUILDER clause must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/xtask/config-matrix.toml",
+                from: "builder_reaches_runtime = false",
+                to: "builder_reaches_runtime = true",
+            },
+        }]),
+        body: bodies::config_matrix,
+    },
+    Gate {
         name: "selftest-blocked",
         tier: Tier::SelfTest,
         platforms: ALL_PLATFORMS,

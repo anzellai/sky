@@ -206,10 +206,45 @@ impl Server {
     /// leaves the real server holding the port. The group is what `killpg`
     /// reaches.
     pub fn spawn(binary: &Path, dir: &Path, port: u16, env: &[(&str, String)]) -> Result<Server, String> {
+        Server::spawn_inner(binary, dir, port, env, false)
+    }
+
+    /// As [`Server::spawn`], but with the ambient environment CLEARED — only
+    /// `PATH`, `HOME` and `TMPDIR` pass through, plus `env`.
+    ///
+    /// For a gate that measures what a configuration setting resolves to. A
+    /// developer with `SKY_LIVE_TTL` exported in their shell would otherwise
+    /// contaminate every observation, and the contamination reads as a real
+    /// difference in the value under test rather than as an artefact of whose
+    /// machine it ran on.
+    pub fn spawn_isolated(
+        binary: &Path,
+        dir: &Path,
+        port: u16,
+        env: &[(&str, String)],
+    ) -> Result<Server, String> {
+        Server::spawn_inner(binary, dir, port, env, true)
+    }
+
+    fn spawn_inner(
+        binary: &Path,
+        dir: &Path,
+        port: u16,
+        env: &[(&str, String)],
+        isolate: bool,
+    ) -> Result<Server, String> {
         if !binary.is_file() {
             return Err(format!("no app binary at {}", binary.display()));
         }
         let mut cmd = Command::new(binary);
+        if isolate {
+            cmd.env_clear();
+            for pass in ["PATH", "HOME", "TMPDIR"] {
+                if let Some(v) = std::env::var_os(pass) {
+                    cmd.env(pass, v);
+                }
+            }
+        }
         cmd.current_dir(dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

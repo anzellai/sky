@@ -185,6 +185,15 @@
       ],
       "tier": "T1"
     },
+    "config-matrix": {
+      "expected_assertions": 98,
+      "falsifier_proven": true,
+      "summary": "every covered setting's EFFECTIVE value, observed from running binaries, matches the baseline in every arm combination",
+      "surfaces": [
+        "meta.config-effective-values"
+      ],
+      "tier": "T1"
+    },
     "config-surface": {
       "expected_assertions": 59,
       "falsifier_proven": true,
@@ -511,11 +520,11 @@
   "summary": {
     "stdlib_entries": 1782,
     "stdlib_modules": 87,
-    "surfaces_covered": 128,
-    "surfaces_covered_pct": 90.1,
+    "surfaces_covered": 129,
+    "surfaces_covered_pct": 90.2,
     "surfaces_equal": 19,
-    "surfaces_stronger": 123,
-    "surfaces_total": 142,
+    "surfaces_stronger": 124,
+    "surfaces_total": 143,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -1101,7 +1110,7 @@
         "class": "Asserted",
         "evidence": [
           {
-            "by": ".github/workflows/release.yml: xtask coerce-floor (`xtask:coerce-floor` is not harness-registered — no proven falsifier)",
+            "by": ".github/workflows/nightly-sweep.yml: xtask coerce-floor (`xtask:coerce-floor` is not harness-registered — no proven falsifier)",
             "class": "Asserted",
             "strength": 3
           }
@@ -1899,6 +1908,34 @@
       },
       "description": "editor parity: hover, completion, diagnostics, go-to-definition",
       "id": "lsp",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `config-matrix`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — no gate compared a setting's resolved value against anything",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "each covered setting's effective value, observed from a running binary in every combination of environment / sky.toml / withX, as the baseline a moved default is compared against",
+      "id": "meta.config-effective-values",
       "verdict": "stronger"
     },
     {
