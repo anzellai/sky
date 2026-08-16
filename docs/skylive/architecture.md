@@ -383,7 +383,8 @@ Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acqu
 
 ## Security defaults
 
-- Cookies: `HttpOnly`, `Secure` (when served over HTTPS); session cookie is `SameSite=Lax`, CSRF cookie is `SameSite=Strict`.
+- **The runtime's own cookies.** The session cookie (`sky_sid`) is `Path=/; HttpOnly; SameSite=Lax`, and carries `Secure` when **either** the request arrived over HTTPS **or** the process is in production — `requestIsHTTPS(r) || productionFromEnv()`, `runtime-go/rt/live.go:6903-6918`. (`SKY_LIVE_FRAME_ANCESTORS` forces `SameSite=None; Secure` instead, `live.go:6904-6906`.) The built-in CSRF cookie is `SameSite=Strict` (`runtime-go/rt/csrf_middleware.go:21`); `Sky.Http.Middleware.withCsrf`'s `__Host-sky_csrf` is `Path=/; Secure; SameSite=Lax` unconditionally and is deliberately **not** `HttpOnly` (`runtime-go/rt/rt.go:10019-10021`, `:10055`).
+- **Cookies your own code sets are gated differently — read this before shipping an auth cookie.** `Server.withCookie name value resp` emits `Path=/; HttpOnly; SameSite=Lax` and gets `Secure` **only from the `ENV` predicate**, never from the request being HTTPS (`rt.go:10164`, `:10168`, `:10226`). Spell the attributes out with the four-argument form — see [`docs/skyauth/overview.md`](../skyauth/overview.md#production-checklist).
 - Event payload size cap: configurable via `[live] maxBodyBytes` / `SKY_LIVE_MAX_BODY_BYTES` (default `5242880` = 5 MiB; bump for `Event.onFile` / `Event.onImage` uploads). Larger payloads are rejected with HTTP 413.
 
 > **Two bullets were removed here because they were false, and a reader
