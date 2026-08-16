@@ -612,7 +612,17 @@ End-of-mission checklist:
 ps -u $USER -o pid,command | awk '/while pgrep|until ! pgrep/ && /\/bin\/zsh -c/ {print $1}' | xargs -n1 kill -9 2>/dev/null
 
 # Stray sleeps + verification leftovers
-ps -u $USER -o pid,ppid,command | awk '$3 == "sleep" && $2 != 1 {print $1}' | xargs -n1 kill -9 2>/dev/null
+#
+# EXCLUDE mem-guard's own poll loop. Its interval is a `sleep` whose parent is
+# the mem-guard shell, not init, so the naive predicate below matches it and
+# SIGKILLs the watchdog — observed 2026-08-16 as
+# `mem-guard.sh: line 229: Killed: 9 sleep "$INTERVAL"`. That is how the
+# safety net kept vanishing mid-session: not a crash, this cleanup.
+MG_PIDS="$(pgrep -f mem-guard.sh | tr '\n' ' ')"
+ps -u $USER -o pid,ppid,command | awk -v mg="$MG_PIDS" '
+    BEGIN { n = split(mg, a, " "); for (i = 1; i <= n; i++) guard[a[i]] = 1 }
+    $3 == "sleep" && $2 != 1 && !($2 in guard) { print $1 }
+' | xargs -n1 kill -9 2>/dev/null
 
 # Verification leftovers — SCOPED TO THIS AGENT'S OWN WORKTREE.
 #
