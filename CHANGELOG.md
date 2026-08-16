@@ -11,6 +11,48 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## Unreleased
+
+### ⚠ Breaking changes — Sky.Live config: what was silently ignored now takes effect
+
+Every Sky.Live setting (`port`, `store`, `storePath`, `ttl`, `idleEvict`) now
+resolves through ONE precedence rule, highest first:
+
+> **operator env (shell or `.env`) → `Live.withX` builder call →
+> seeded default (`sky.toml` / compiler) → hardcoded fallback**
+
+This was always the documented intent (and was already `withPort`'s behaviour),
+but the four settings actually resolved through three different orders. The
+resolution now lives in one function (`runtime-go/rt/live_config_precedence.go`),
+measured end-to-end by the `config-matrix` gate. What that changes for a running
+app — in each case, **a builder or variable that was silently ignored now takes
+effect**, so an app relying on the broken behaviour will see it change:
+
+- **`Live.withTtl` now works.** Its value could never reach the runtime before —
+  the `sky.toml`-seeded default (1800s when unset) always won. An app that calls
+  `withTtl` now gets the TTL it asked for; an operator's `SKY_LIVE_TTL` still
+  overrides it.
+- **`SKY_LIVE_STORE` and `SKY_LIVE_STORE_PATH` now beat `Live.withStore` /
+  `Live.withStorePath`.** Previously those builders silently beat the operator's
+  environment (the code read the env var only when no builder value was set), so
+  a session store could not be repointed (e.g. at a mounted volume) without a
+  recompile. If your app calls either builder AND the environment carries a
+  different operator-set value, the store now follows the environment.
+- **`SKY_STREAM_DEBUG` and `SKY_HTTP_CLIENT_TIMEOUT` now work from a `.env`
+  file.** Both were read before `.env` loading, so setting them there did
+  nothing — the latter left every outbound HTTP request pinned at the 30s
+  default even when a longer timeout was configured the documented way. Only a
+  shell `export` worked before; both routes work now.
+- **A sub-app's explicit config no longer loses to the host's `sky.toml` seed.**
+  The inline console sets its own 30m session TTL, and a host `[live] ttl` used
+  to override it; it now keeps its own value. An operator's env still overrides
+  everything.
+
+Not changed: `Live.withPort` and `Live.withIdleEvict` already resolved in this
+order, and an app that never calls a builder observes exactly what it observed
+before — verified cell-by-cell against the measured baseline
+(`docs/coverage/config-matrix.json`).
+
 ## v0.20.3 — the PostgreSQL Sky ships, and the pool it never configured (2026-08-15)
 
 > **Upgrade note.** One thing you can measure changes: the PostgreSQL connection

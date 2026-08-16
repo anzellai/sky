@@ -1204,7 +1204,7 @@ fn cmd_init(args: &[String]) -> ExitCode {
          #    `docker compose up -d`, copy .env.example → .env, then uncomment below.\n\
          #    ONE DATABASE_URL (.env) wires app data + sessions + analytics + telemetry\n\
          #    into a single database — no separate paths. Also set ENV=production\n\
-         #    (locks the dev console; requires SKY_AUTH_TOKEN_SECRET >= 32 bytes).\n\
+         #    (locks the dev console; see the production gate in AGENTS.md).\n\
          #    Use BIGINT (not INTEGER) for millisecond timestamps on Postgres.\n\
          #    Know you'll scale? Scaffold production-grade: `sky init <name> --production`.\n\
          #\n\
@@ -1287,8 +1287,9 @@ fn cmd_init(args: &[String]) -> ExitCode {
     // (dev needs none of them; they document the on-ramp).
     let c = if production { "" } else { "# " };
     let env_example = format!(
-        "# Copy to `.env` (gitignored) and edit. Sky loads .env via System.loadEnv.\n\
-         # Precedence: process env > .env > sky.toml.\n\n\
+        "# Copy to `.env` (gitignored) and edit. Sky auto-loads .env at startup\n\
+         # (shell env is never overridden; `System.loadEnv` re-loads explicitly).\n\
+         # Precedence: process env > .env > Live.withX builder calls > sky.toml.\n\n\
          # Production gate — locks the dev console/banner, requires the auth secret.\n\
          {c}ENV=production\n\n\
          # ── ONE database for everything (Postgres from docker-compose.yml) ──\n\
