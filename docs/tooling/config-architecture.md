@@ -765,6 +765,12 @@ thread no config today.
 ### 5.2 Sky.Cli — a nightly batch job
 
 ```elm
+-- doc-example: skip
+--   `Sky.Config` and `Sky.Env` are what this document PROPOSES; neither module
+--   exists yet, `reconcileLedger` is elided, and `sky check` would rightly
+--   refuse all three. The skip marker is the honest form for a design sketch —
+--   scripts/doc-examples.sh checks every `module Main` fence in live docs, so
+--   without it this design becomes a red gate rather than a proposal.
 module Main exposing (main, config)
 
 import Sky.Config as Config exposing (Database(..))
