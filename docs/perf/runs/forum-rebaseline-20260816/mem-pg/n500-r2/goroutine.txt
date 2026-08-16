@@ -1,0 +1,181 @@
+goroutine profile: total 2013
+503 @ 0x100c0eb6c 0x100bd27b0 0x100c0dd80 0x100c7c1d8 0x100c7d354 0x100c7d345 0x100d40918 0x100d4e2f4 0x100ebd538 0x100c16ba4
+#	0x100c0dd7f	internal/poll.runtime_pollWait+0x9f		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/netpoll.go:351
+#	0x100c7c1d7	internal/poll.(*pollDesc).wait+0x27		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x100c7d353	internal/poll.(*pollDesc).waitRead+0x233	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x100c7d344	internal/poll.(*FD).Read+0x224			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_unix.go:165
+#	0x100d40917	net.(*netFD).Read+0x27				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/fd_posix.go:68
+#	0x100d4e2f3	net.(*conn).Read+0x33				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/net.go:196
+#	0x100ebd537	net/http.(*connReader).backgroundRead+0x37	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:702
+
+501 @ 0x100c0eb6c 0x100becd0c 0x1016f9d48 0x100c16ba4
+#	0x1016f9d47	sky-app/rt.(*liveSession).ensureSSERelay.func1.1+0x87	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:6853
+
+500 @ 0x100c0eb6c 0x100becd0c 0x1016f87c0 0x100ec4858 0x100ec6240 0x1016ebe34 0x100ec4858 0x1016eb7b4 0x100ec4858 0x1016eb708 0x1016eac70 0x1016eac55 0x100ec4858 0x100ee09b0 0x100ec2cbc 0x100c16ba4
+#	0x1016f87bf	sky-app/rt.(*liveApp).handleSSE+0xe9f						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:6433
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x100ec623f	net/http.(*ServeMux).ServeHTTP+0x18f						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2828
+#	0x1016ebe33	sky-app/rt.liveAppRun.CSRFMiddleware.func6+0x583				/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/csrf_middleware.go:159
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x1016eb7b3	sky-app/rt.liveAppRun.ObservabilityMiddleware.WithSubAppNamespace.func8+0x73	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/telemetry_namespace.go:90
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x1016eb707	sky-app/rt.liveAppRun.ObservabilityMiddleware.func7+0x827			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/observability_middleware.go:110
+#	0x1016eac6f	net/http.HandlerFunc.ServeHTTP+0x6f						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x1016eac54	sky-app/rt.liveAppRun.func2+0x54						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:3972
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x100ee09af	net/http.serverHandler.ServeHTTP+0xaf						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3311
+#	0x100ec2cbb	net/http.(*conn).serve+0x51b							/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2073
+
+498 @ 0x100c0eb6c 0x100bd27b0 0x100c0dd80 0x100c7c1d8 0x100c7d354 0x100c7d345 0x100d40918 0x100d4e2f4 0x100ebdadc 0x100ca9a30 0x100ca9b78 0x100ec2de8 0x100c16ba4
+#	0x100c0dd7f	internal/poll.runtime_pollWait+0x9f		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/netpoll.go:351
+#	0x100c7c1d7	internal/poll.(*pollDesc).wait+0x27		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x100c7d353	internal/poll.(*pollDesc).waitRead+0x233	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x100c7d344	internal/poll.(*FD).Read+0x224			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_unix.go:165
+#	0x100d40917	net.(*netFD).Read+0x27				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/fd_posix.go:68
+#	0x100d4e2f3	net.(*conn).Read+0x33				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/net.go:196
+#	0x100ebdadb	net/http.(*connReader).Read+0x22b		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:812
+#	0x100ca9a2f	bufio.(*Reader).fill+0xdf			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/bufio/bufio.go:113
+#	0x100ca9b77	bufio.(*Reader).Peek+0x57			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/bufio/bufio.go:152
+#	0x100ec2de7	net/http.(*conn).serve+0x647			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2109
+
+1 @ 0x100bcf19c 0x100c0d974 0x101695194 0x101694fc0 0x1016927c4 0x1016bde14 0x1016be684 0x100ec4858 0x100ec6240 0x100ee09b0 0x100ec2cbc 0x100c16ba4
+#	0x101695193	runtime/pprof.writeRuntimeProfile+0xb3	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/pprof/pprof.go:851
+#	0x101694fbf	runtime/pprof.writeGoroutine+0x4f	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/pprof/pprof.go:784
+#	0x1016927c3	runtime/pprof.(*Profile).WriteTo+0x143	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/pprof/pprof.go:408
+#	0x1016bde13	net/http/pprof.handler.ServeHTTP+0x413	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/pprof/pprof.go:273
+#	0x1016be683	net/http/pprof.Index+0xa3		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/pprof/pprof.go:397
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x100ec623f	net/http.(*ServeMux).ServeHTTP+0x18f	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2828
+#	0x100ee09af	net/http.serverHandler.ServeHTTP+0xaf	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3311
+#	0x100ec2cbb	net/http.(*conn).serve+0x51b		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2073
+
+1 @ 0x100bd37f0 0x100c11058 0x10126665c 0x100c16ba4
+#	0x100c11057	os/signal.signal_recv+0x107	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/sigqueue.go:149
+#	0x10126665b	os/signal.loop+0x1b		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/os/signal/signal_unix.go:23
+
+1 @ 0x100c0b3ec 0x100c0b0f8 0x100c27530 0x100c3d278 0x100c3d249 0x100c3eea0 0x100c3e8b4 0x10172df94 0x10172d7f0 0x10172ca74 0x1018afc20 0x1018a7eb8 0x1018a79fc 0x1018aa674 0x1018aa398 0x1018aa1ec 0x1018aa179 0x100c3f53c 0x100c3e8b4 0x10172df94 0x10172d7f0 0x1017284c0 0x1018a83d8 0x1018a79fc 0x1018aa674 0x1018aa398 0x1018aa1ec 0x1018aa179 0x100c3f53c 0x100c3e8b4 0x10172df94 0x10172d7f0 0x1017284c0 0x1018a83d8 0x1018a79fc 0x1018a6b74 0x1018a69b5 0x1018a691c 0x1018a66c8 0x1018a64ed 0x1018a649d 0x101891458 0x100c3f53c 0x100c3e8b4 0x1016fc4c8 0x1016f1a90 0x1016f17b8 0x1016f0a5c 0x1016eef54 0x100ec4858 0x100ec6240 0x1016ebd64 0x100ec4858 0x1016eb7b4 0x100ec4858 0x1016eb708 0x1016eac70 0x1016eac55 0x100ec4858 0x100ee09b0 0x100ec2cbc 0x100c16ba4
+#	0x100c2752f	internal/sync.(*HashTrieMap[...]).Load+0x4f					/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/sync/hashtriemap.go:66
+#	0x100c3d277	sync.(*Map).Load+0xa7								/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/sync/map.go:48
+#	0x100c3d248	reflect.funcLayout+0x78								/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/type.go:2840
+#	0x100c3ee9f	reflect.Value.call+0x41f							/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:473
+#	0x100c3e8b3	reflect.Value.Call+0x93								/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:369
+#	0x10172df93	sky-app/rt.skyCallDirect+0x663							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:10710
+#	0x10172d7ef	sky-app/rt.SkyCall+0x13f							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:10578
+#	0x10172ca73	sky-app/rt.List_filterMap+0xa3							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:8533
+#	0x1018afc1f	main.Std_Ui_collectPseudoRules+0x3f						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:1019
+#	0x1018a7eb7	main.Std_Ui_renderNodeAs.func1+0x437						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:844
+#	0x1018a79fb	main.Std_Ui_renderNodeAs+0x7b							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:844
+#	0x1018aa673	main.Std_Ui_renderNodeAs.func1.5.Std_Ui_renderElement.1.1+0x93			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:840
+#	0x1018aa397	main.Std_Ui_renderNodeAs.func1.5.Std_Ui_renderElement.1+0x157			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:840
+#	0x1018aa1eb	main.Std_Ui_renderElement+0x9b							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:840
+#	0x1018aa178	main.Std_Ui_renderNodeAs.func1.5+0x28						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:844
+#	0x100c3f53b	reflect.Value.call+0xabb							/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:586
+#	0x100c3e8b3	reflect.Value.Call+0x93								/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:369
+#	0x10172df93	sky-app/rt.skyCallDirect+0x663							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:10710
+#	0x10172d7ef	sky-app/rt.SkyCall+0x13f							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:10578
+#	0x1017284bf	sky-app/rt.List_mapAny+0xaf							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:3379
+#	0x1018a83d7	main.Std_Ui_renderNodeAs.func1+0x957						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:844
+#	0x1018a79fb	main.Std_Ui_renderNodeAs+0x7b							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:844
+#	0x1018aa673	main.Std_Ui_renderNodeAs.func1.5.Std_Ui_renderElement.1.1+0x93			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:840
+#	0x1018aa397	main.Std_Ui_renderNodeAs.func1.5.Std_Ui_renderElement.1+0x157			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:840
+#	0x1018aa1eb	main.Std_Ui_renderElement+0x9b							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:840
+#	0x1018aa178	main.Std_Ui_renderNodeAs.func1.5+0x28						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:844
+#	0x100c3f53b	reflect.Value.call+0xabb							/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:586
+#	0x100c3e8b3	reflect.Value.Call+0x93								/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:369
+#	0x10172df93	sky-app/rt.skyCallDirect+0x663							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:10710
+#	0x10172d7ef	sky-app/rt.SkyCall+0x13f							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:10578
+#	0x1017284bf	sky-app/rt.List_mapAny+0xaf							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:3379
+#	0x1018a83d7	main.Std_Ui_renderNodeAs.func1+0x957						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:844
+#	0x1018a79fb	main.Std_Ui_renderNodeAs+0x7b							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:844
+#	0x1018a6b73	main.Std_Ui_renderElement.func1.1+0x1e3						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:840
+#	0x1018a69b4	main.Std_Ui_renderElement.func1+0x24						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:840
+#	0x1018a691b	main.Std_Ui_renderElement+0x6b							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:840
+#	0x1018a66c7	main.Std_Ui_layout.Std_Ui_layoutWith.func1+0x277				/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:836
+#	0x1018a64ec	main.Std_Ui_layoutWith+0x9c							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:836
+#	0x1018a649c	main.Std_Ui_layout+0x4c								/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:832
+#	0x101891457	main.Main_view+0xb77								/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:442
+#	0x100c3f53b	reflect.Value.call+0xabb							/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:586
+#	0x100c3e8b3	reflect.Value.Call+0x93								/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:369
+#	0x1016fc4c7	sky-app/rt.sky_call+0x1f7							/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:9220
+#	0x1016f1a8f	sky-app/rt.(*liveApp).safeViewCall.func1+0x5f					/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:5231
+#	0x1016f17b7	sky-app/rt.(*liveApp).safeViewCall+0x87						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:5232
+#	0x1016f0a5b	sky-app/rt.(*liveApp).dispatch+0x3eb						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:5116
+#	0x1016eef53	sky-app/rt.(*liveApp).handleEvent+0xde3						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:4722
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x100ec623f	net/http.(*ServeMux).ServeHTTP+0x18f						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2828
+#	0x1016ebd63	sky-app/rt.liveAppRun.CSRFMiddleware.func6+0x4b3				/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/csrf_middleware.go:296
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x1016eb7b3	sky-app/rt.liveAppRun.ObservabilityMiddleware.WithSubAppNamespace.func8+0x73	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/telemetry_namespace.go:90
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x1016eb707	sky-app/rt.liveAppRun.ObservabilityMiddleware.func7+0x827			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/observability_middleware.go:110
+#	0x1016eac6f	net/http.HandlerFunc.ServeHTTP+0x6f						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x1016eac54	sky-app/rt.liveAppRun.func2+0x54						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:3972
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x100ee09af	net/http.serverHandler.ServeHTTP+0xaf						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3311
+#	0x100ec2cbb	net/http.(*conn).serve+0x51b							/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2073
+
+1 @ 0x100c0eb6c 0x100ba1bd0 0x100ba1724 0x1016eaa2c 0x100c16ba4
+#	0x1016eaa2b	sky-app/rt.liveAppRun.func4+0x2b	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:4007
+
+1 @ 0x100c0eb6c 0x100bd27b0 0x100c0dd80 0x100c7c1d8 0x100c80384 0x100c80375 0x100d42018 0x100d56534 0x100d5593c 0x100ec7b34 0x100ec77f0 0x1016ea758 0x101890840 0x10172ba5c 0x101890770 0x100c3f53c 0x100c3e8b4 0x10172bd30 0x10172c188 0x101890578 0x100bd8fc4 0x100c16ba4
+#	0x100c0dd7f	internal/poll.runtime_pollWait+0x9f		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/netpoll.go:351
+#	0x100c7c1d7	internal/poll.(*pollDesc).wait+0x27		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x100c80383	internal/poll.(*pollDesc).waitRead+0x213	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x100c80374	internal/poll.(*FD).Accept+0x204		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_unix.go:613
+#	0x100d42017	net.(*netFD).accept+0x27			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/fd_unix.go:150
+#	0x100d56533	net.(*TCPListener).accept+0x23			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/tcpsock_posix.go:159
+#	0x100d5593b	net.(*TCPListener).Accept+0x2b			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/tcpsock.go:387
+#	0x100ec7b33	net/http.(*Server).Serve+0x243			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3434
+#	0x100ec77ef	net/http.(*Server).ListenAndServe+0x7f		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3360
+#	0x1016ea757	sky-app/rt.liveAppRun+0xfe7			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:4058
+#	0x10189083f	main.main.Live_app.func1+0x1f			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:3674
+#	0x10172ba5b	sky-app/rt.anyTaskInvoke+0x6b			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:6290
+#	0x10189076f	main.main.TaskCoerceT[...].func2+0x3f		/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:5865
+#	0x100c3f53b	reflect.Value.call+0xabb			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:586
+#	0x100c3e8b3	reflect.Value.Call+0x93				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:369
+#	0x10172bd2f	sky-app/rt.anyTaskInvoke+0x33f			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:6303
+#	0x10172c187	sky-app/rt.AnyTaskRun+0xf7			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/rt.go:6660
+#	0x101890577	main.main+0x1b7					/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/main.go:430
+#	0x100bd8fc3	runtime.main+0x2b3				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/proc.go:290
+
+1 @ 0x100c0eb6c 0x100bd27b0 0x100c0dd80 0x100c7c1d8 0x100c80384 0x100c80375 0x100d42018 0x100d56534 0x100d5593c 0x100ec7b34 0x100ec77f0 0x10173be30 0x100c16ba4
+#	0x100c0dd7f	internal/poll.runtime_pollWait+0x9f		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/netpoll.go:351
+#	0x100c7c1d7	internal/poll.(*pollDesc).wait+0x27		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x100c80383	internal/poll.(*pollDesc).waitRead+0x213	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x100c80374	internal/poll.(*FD).Accept+0x204		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_unix.go:613
+#	0x100d42017	net.(*netFD).accept+0x27			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/fd_unix.go:150
+#	0x100d56533	net.(*TCPListener).accept+0x23			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/tcpsock_posix.go:159
+#	0x100d5593b	net.(*TCPListener).Accept+0x2b			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/tcpsock.go:387
+#	0x100ec7b33	net/http.(*Server).Serve+0x243			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3434
+#	0x100ec77ef	net/http.(*Server).ListenAndServe+0x7f		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3360
+#	0x10173be2f	sky-app/rt.init.13.func3+0x8f			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/zz_perfprobe.go:123
+
+1 @ 0x100c0eb6c 0x100becd0c 0x100d6c610 0x100c16ba4
+#	0x100d6c60f	database/sql.(*DB).connectionCleaner+0x8f	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/database/sql/sql.go:1104
+
+1 @ 0x100c0eb6c 0x100becd0c 0x100d6cf94 0x100c16ba4
+#	0x100d6cf93	database/sql.(*DB).connectionOpener+0x83	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/database/sql/sql.go:1261
+
+1 @ 0x100c0eb6c 0x100becd0c 0x101701cd8 0x100c16ba4
+#	0x101701cd7	sky-app/rt.(*memoryStore).cleanupLoop+0xb7	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live_store.go:528
+
+1 @ 0x100c0eb6c 0x100becd0c 0x101704dac 0x100c16ba4
+#	0x101704dab	sky-app/rt.(*postgresStore).cleanupLoop+0xcb	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live_store.go:1146
+
+1 @ 0x1016f3a98 0x1016f0bd4 0x1016eef54 0x100ec4858 0x100ec6240 0x1016ebd64 0x100ec4858 0x1016eb7b4 0x100ec4858 0x1016eb708 0x1016eac70 0x1016eac55 0x100ec4858 0x100ee09b0 0x100ec2cbc 0x100c16ba4
+#	0x1016f3a97	sky-app/rt.(*liveApp).runCmd+0x407						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:5420
+#	0x1016f0bd3	sky-app/rt.(*liveApp).dispatch+0x563						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:5158
+#	0x1016eef53	sky-app/rt.(*liveApp).handleEvent+0xde3						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:4722
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x100ec623f	net/http.(*ServeMux).ServeHTTP+0x18f						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2828
+#	0x1016ebd63	sky-app/rt.liveAppRun.CSRFMiddleware.func6+0x4b3				/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/csrf_middleware.go:296
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x1016eb7b3	sky-app/rt.liveAppRun.ObservabilityMiddleware.WithSubAppNamespace.func8+0x73	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/telemetry_namespace.go:90
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x1016eb707	sky-app/rt.liveAppRun.ObservabilityMiddleware.func7+0x827			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/observability_middleware.go:110
+#	0x1016eac6f	net/http.HandlerFunc.ServeHTTP+0x6f						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x1016eac54	sky-app/rt.liveAppRun.func2+0x54						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/forumperf/forumbench/sky-out/rt/live.go:3972
+#	0x100ec4857	net/http.HandlerFunc.ServeHTTP+0x37						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x100ee09af	net/http.serverHandler.ServeHTTP+0xaf						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3311
+#	0x100ec2cbb	net/http.(*conn).serve+0x51b							/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2073
+

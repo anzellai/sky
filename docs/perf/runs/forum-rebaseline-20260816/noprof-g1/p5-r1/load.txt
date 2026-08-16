@@ -1,0 +1,18 @@
+establishing 50 sessions over 3s...
+50 sessions live; measuring for 45s (warmup 3s)
+
+=== Sky.Live load run ===
+label                noprof-p5-r1
+url                  http://127.0.0.1:8531
+sessions             50 requested, 50 established
+think time           0s
+interactions         24415
+throughput           541.4 interactions/sec
+latency p50/p95/p99  116.94 / 177.38 / 192.11 ms  (max 231.81)
+error rate           0.000%
+outcomes             map[ok:24415]
+handler              r.1#div.1#div.0#div.1#div.0#button.click (2 setup steps/session)
+patches              48830 total, 2.00 per interaction, 100.0% of interactions bore one
+SSE frames received  350 (across 50 sessions; 50 streams still open at end)
+generator CPU        0.5% of machine
+valid                true

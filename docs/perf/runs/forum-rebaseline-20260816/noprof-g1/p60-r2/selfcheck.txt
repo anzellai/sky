@@ -1,0 +1,12 @@
+session established
+  sky_sid      c004d67e0f4c13aa64adb31e8fcea7d0
+  __sky_csrf   e8dd6d64...
+  tab          t0-6940500429072890206
+  handlerId    r.1#div.1#div.0#div.1#div.0#button.click   (scraped from data-sky-hid)
+  SSE open     true (4 frames so far)
+interaction 1: ok in 18.708834ms, 411 bytes of reply, 2 patches
+interaction 2: ok in 18.564084ms, 413 bytes of reply, 2 patches
+interaction 3: ok in 18.388916ms, 411 bytes of reply, 2 patches
+interaction 4: ok in 18.56175ms, 413 bytes of reply, 2 patches
+
+SELF-CHECK PASSED: 8 patches over 4 steady-state interactions (setup steps excluded), all naming ids present in the DOM. The server is doing real per-interaction work.

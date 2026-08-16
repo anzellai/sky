@@ -1,0 +1,33 @@
+{
+  "label": "mem-pg-n100-r1",
+  "url": "http://127.0.0.1:8531",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "1m30s",
+  "think_time": "1s",
+  "interactions_counted": 8983,
+  "interactions_per_sec": 98.43621517009876,
+  "p50_ms": 3.858,
+  "p95_ms": 7.013,
+  "p99_ms": 12.294,
+  "max_ms": 53.941,
+  "outcomes": {
+    "ok": 8983
+  },
+  "error_rate": 0,
+  "patches_total": 17966,
+  "interactions_with_patches": 8983,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 1056,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 0.3050584386745962,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T00:50:04Z"
+}
