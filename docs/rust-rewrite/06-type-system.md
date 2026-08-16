@@ -247,7 +247,9 @@ pub fn infer(db: &dyn Db, def: DefId) -> InferResult {
 pub struct InferResult {
     pub scheme: Ty,                             // generalised type of `def`
     pub regions: RegionTable,                   // per-region types → lowering (07)
-    pub instances: Vec<CallInstance>,           // monomorphisation keys
+    // NOTE: an earlier sketch carried `instances: Vec<CallInstance>` here as
+    // "monomorphisation keys". There is no monomorphiser and no `CallInstance`
+    // — see 07 §5.1. Nothing collects call instances.
     pub diagnostics: Vec<Diagnostic>,
 }
 ```
