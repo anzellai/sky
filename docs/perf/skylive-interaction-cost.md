@@ -388,13 +388,13 @@ default.
 |---|---|---|---|---|
 | 1 | `view(model)` builds the **`Element`** ADT | compiled Sky — user code | **yes — tree 1** | no |
 | 2 | `Ui.layout` → `renderElement` walks `Element` → **`Html`** | `sky-stdlib/Std/Ui.sky:1696` / `:1776` | **yes — tree 2** | `Std.Ui` apps only |
-| 3 | `HtmlToVNode` walks `Html` → **`VNode`** | `runtime-go/rt/live.go:108` | **yes — tree 3** | no |
-| 4 | `assignSkyIDs` stamps every element | `live.go:602` | no | no |
+| 3 | `HtmlToVNode` walks `Html` → **`VNode`** | `runtime-go/rt/live.go:108`, via `safeViewCall` `:5231`, called at `:5116` | **yes — tree 3** | no |
+| 4 | `assignSkyIDs` stamps every element | `live.go:602`, called at `:5117` | no | no |
 | 5 | `injectMediaQueryStyles` | `live.go:1016` → `injectStyleMarker` `:766` | rebuilds children on hoist | **no guard** |
 | 6 | `injectPseudoClassStyles` | `live.go:1017` | rebuilds children on hoist | **no guard** |
 | 7 | `injectTransitionStyles` | `live.go:1018` | rebuilds children on hoist | **no guard** |
 | 8 | `injectAnimationStyles` | `live.go:1019` | rebuilds children on hoist | **no guard** |
-| 9 | `renderVNode` builds the **whole-page HTML string** | `live.go:337`, called at `live.go:5178` | no | no — **and discarded on the patch path** |
+| 9 | `renderVNode` builds the **whole-page HTML string** | `live.go:337`, called at `live.go:5119` | no | no — **and discarded on the patch path** |
 | 10 | `diffTrees` — the reply patch | `live.go:1370`, called at `live.go:4795` | no | no |
 | 11 | `ackInputsForPrevTree` walks `prevTree` for live `sky-id`s | `live.go:2611`, called at `live.go:4741` | no | **yes** — only when the client sent dirty inputs (`len(s.inputSeqs) != 0`) |
 | 12 | **Second `diffTrees`** for the multi-tab fan-out | `live.go:4762` | no | **yes** — only when a sibling tab holds an SSE connection (`hasSSEConnOtherThan`) |
@@ -415,8 +415,8 @@ document, and each is a distinct finding:
    still pays four full traversals. A single whole-tree marker check would
    skip all four.
 3. **The full-page HTML string is built every interaction and thrown away
-   on the patch path** (row 9). `renderView` (`live.go:5173-5181`) always
-   calls `renderVNode`; `handleEvent` then ships `patches` and never sends
+   on the patch path** (row 9). `dispatch` always calls `renderVNode`
+   (`live.go:5119`); `handleEvent` then ships `patches` and never sends
    `body2` (`live.go:4794-4800`). The string is retained only to seed
    `lastComputedBody` / `lastShippedBody` for no-op suppression — which is
    also the 80 kB/session of "Rendered HTML bodies" in the retention table
@@ -427,6 +427,14 @@ document, and each is a distinct finding:
 
 Rows 1–10 are unconditional; 11–13 are gated as marked. The count is
 therefore **10 always, 13 at the ceiling** — against a mental model of 6.
+
+Line numbers above are the `/_sky/event` dispatch path
+(`dispatch`, `live.go:4983-5161`, whose render is `live.go:5116-5119`). The
+same four-call render sequence — `safeViewCall` → `assignSkyIDs` →
+`applyStyleInjections` → `renderVNode` — is **duplicated verbatim at nine
+sites** in `live.go` (`:4317`, `:4624`, `:4694`, `:4854`, `:5116`, `:5175`,
+`:6381`, `:6994`, and `:280` in the initial-mount helper). Any change to the
+pass list has to be made in all nine.
 
 ### Where the 1.4 MB goes — and why that figure is not a per-session cost
 
