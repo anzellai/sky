@@ -1030,16 +1030,31 @@ pub static GATES: &[Gate] = &[
         summary: "every covered setting's EFFECTIVE value, observed from running binaries, \
                   matches the baseline in every arm combination",
         // THE mutation, and it is the defect the gate exists to catch rather
-        // than a proxy for it: a builder declared to reach the runtime that
-        // does not.
+        // than a proxy for it: a declared builder verdict the observation
+        // contradicts.
         //
-        // `Live.withTtl` is dead today (design §1.8) — `lower.rs:822` seeds
-        // `LIVE_TTL=1800` into every program and `parseTTL` reads the
-        // environment first, so the builder's value is unreachable. The
-        // manifest records that as `builder_reaches_runtime = false`, verified
-        // against the builder-only cell on every run. Flipping the declaration
-        // to `true` is exactly the claim a careless stage-3 commit would make,
-        // and the gate must refuse it.
+        // It used to run the other way. `Live.withTtl` was dead (design §1.8)
+        // — `lower.rs:822` seeds `LIVE_TTL=1800` into every program and
+        // `parseTTL` read the environment first — so the manifest recorded
+        // `builder_reaches_runtime = false` and this mutation flipped it to
+        // `true`, the claim a careless stage-3 commit would make.
+        //
+        // Stage 3 made that claim TRUE, and the old mutation died with it: the
+        // string `builder_reaches_runtime = false` no longer occurs anywhere,
+        // and `every_replace_once_mutation_targets_a_real_unique_site` failed
+        // with "occurs 0x ... 0 means the mutation is dead". A mutation that
+        // cannot be applied proves nothing, and a fix that quietly retires its
+        // own falsifier is how a gate becomes decorative.
+        //
+        // So it now runs in the direction that is still wrong: declaring a
+        // LIVE builder dead. The gate checks the verdict in BOTH directions
+        // precisely because claiming a live builder is dead hides a regression
+        // as well as the reverse, and this is what proves that second
+        // direction is real rather than merely asserted in a comment.
+        //
+        // Anchored on `live.ttl`'s `set_builder` line, because
+        // `builder_reaches_runtime = true` alone now occurs four times and an
+        // ambiguous mutation is rejected as loudly as a dead one.
         //
         // It edits DATA the gate reads, so nothing needs rebuilding between
         // applying it and observing red — and in particular not the compiler,
@@ -1048,14 +1063,14 @@ pub static GATES: &[Gate] = &[
         // binary, so mutating them would leave it measuring the unmutated tree
         // and report VACUOUS.
         mutations: Mutations::new(&[Mutation {
-            id: "config-matrix.claim-a-dead-builder-is-alive",
-            description: "declare that `Live.withTtl`'s value reaches the runtime; the \
-                          builder-only cell observes the 30-minute default against the \
-                          builder's 41m, so the BUILDER clause must go red",
+            id: "config-matrix.claim-a-live-builder-is-dead",
+            description: "declare that `Live.withTtl`'s value does NOT reach the runtime; \
+                          the builder-only cell observes 41m0s against an unset 30m0s, so \
+                          the BUILDER clause must go red",
             kind: MutationKind::ReplaceOnce {
                 path: "rust/crates/xtask/config-matrix.toml",
-                from: "builder_reaches_runtime = false",
-                to: "builder_reaches_runtime = true",
+                from: "set_builder   = \"41m\"\nbuilder_reaches_runtime = true",
+                to: "set_builder   = \"41m\"\nbuilder_reaches_runtime = false",
             },
         }]),
         body: bodies::config_matrix,
