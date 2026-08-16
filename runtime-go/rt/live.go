@@ -347,12 +347,30 @@ func init() {
 //
 // Measured on the 389-element gate fixture (`live_alloc_gate_test.go`),
 // Apple M1, go1.26.1: 2,632 -> 692 allocations and 380 kB -> 176 kB per
-// render. Output is byte-identical: the walk order, the escaping and the
-// emission order are untouched, which is what `xtask repro` and
-// `build-run --golden` pin.
+// render for the builder change, then 692 -> 212 and 176 kB -> 162 kB once
+// the per-event-binding fmt.Sprintf below went with it. Output is
+// byte-identical: the walk order, the escaping and the emission order are
+// untouched, which is what `xtask repro` and `build-run --golden` pin.
 func renderVNode(n VNode, handlers map[string]any) string {
 	var sb strings.Builder
 	renderVNodeInto(&sb, n, handlers)
+	return sb.String()
+}
+
+// renderChildrenHTML serialises a node's children as the innerHTML of a
+// subtree-replace patch.
+//
+// It passes a nil handler table on purpose. Every id inside this subtree
+// was registered by the whole-tree render that this diff runs against, so
+// there is nothing here to record; the three call sites used to say that
+// by handing renderVNode a fresh `map[string]any{}` and dropping it on the
+// floor, which allocated a map per patch and read as though the
+// registrations were wanted.
+func renderChildrenHTML(children []VNode) string {
+	var sb strings.Builder
+	for _, c := range children {
+		renderVNodeInto(&sb, c, nil)
+	}
 	return sb.String()
 }
 
@@ -451,7 +469,16 @@ func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 		//     rebuilds the same table — required for DB-backed stores
 		//     that can't serialise the handler map.
 		id := n.SkyID + "." + ev
-		handlers[id] = msg
+		// A nil map is the caller saying "render the bytes, drop the
+		// registrations" — what diffNodes wants when it re-serialises a
+		// subtree for a replace patch, since the ids in that subtree were
+		// already registered by the whole-tree render this diff follows.
+		// It used to say that by passing a throwaway `map[string]any{}`
+		// and discarding it, which allocated a map per replace patch and
+		// read as though the registrations mattered.
+		if handlers != nil {
+			handlers[id] = msg
+		}
 		msgName := msgDisplayName(msg)
 		// Event names starting with `sky-` are side-channel meta-events
 		// (onImage, onFile) — not real DOM events that __skyBindOne
@@ -460,14 +487,23 @@ func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 		// HTML5 data-attribute convention. Plain DOM events (click,
 		// input, change, …) keep the legacy `sky-<eventName>` naming
 		// since __skyBindOne queries by that selector.
-		var attr string
+		//
+		// Written out rather than composed through fmt.Sprintf: the format
+		// string ran once per event binding on every render, and each run
+		// allocated the result plus the []any of its arguments. The bytes
+		// emitted are the same; only the route to the builder changed.
+		sb.WriteString(" ")
 		if strings.HasPrefix(ev, "sky-") {
-			attr = "data-sky-ev-" + ev
+			sb.WriteString("data-sky-ev-")
 		} else {
-			attr = "sky-" + ev
+			sb.WriteString("sky-")
 		}
-		sb.WriteString(fmt.Sprintf(` %s="%s" data-sky-hid="%s"`,
-			attr, html.EscapeString(msgName), id))
+		sb.WriteString(ev)
+		sb.WriteString(`="`)
+		sb.WriteString(html.EscapeString(msgName))
+		sb.WriteString(`" data-sky-hid="`)
+		sb.WriteString(id)
+		sb.WriteString(`"`)
 	}
 	if isVoidTag(n.Tag) {
 		sb.WriteString(" />")
@@ -551,6 +587,16 @@ func msgDisplayName(msg any) string {
 	// builders and pre-v0.17 codegen.
 	if sv, ok := msg.(SkyVariant); ok {
 		return sv.SkyVariantName()
+	}
+	// Legacy SkyADT carries SkyName as a plain field, so a type assertion
+	// reads it directly. Without this the value fell through to the
+	// reflect.ValueOf + FieldByName("SkyName") path below — a by-name field
+	// search, on a function the render loop calls once per event binding
+	// and the diff calls twice more. Measured 46 ns -> 3 ns per call on an
+	// Apple M1. The reflect path stays for struct shapes that are neither
+	// (rt-side builders that embed SkyName in a bespoke struct).
+	if adt, ok := msg.(SkyADT); ok {
+		return adt.SkyName
 	}
 	rv := reflect.ValueOf(msg)
 	if rv.Kind() == reflect.Struct {
@@ -1400,7 +1446,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	}
 	// Tag / kind change → replace subtree via HTML patch.
 	if old.Tag != new_.Tag || old.Kind != new_.Kind {
-		html := renderVNode(*new_, map[string]any{})
+		html := renderVNode(*new_, nil)
 		*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 		return
 	}
@@ -1514,12 +1560,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	// has mismatched tag/kind, replace the whole subtree's innerHTML.
 	if len(old.Children) != len(new_.Children) {
 		if old.SkyID != "" {
-			var sb strings.Builder
-			dummy := map[string]any{}
-			for _, c := range new_.Children {
-				renderVNodeInto(&sb, c, dummy)
-			}
-			html := sb.String()
+			html := renderChildrenHTML(new_.Children)
 			*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 		}
 		return
@@ -1531,12 +1572,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 		if oc.Kind == "text" && nc.Kind == "text" {
 			if oc.Text != nc.Text && old.SkyID != "" {
 				// Single-text is above; mixed children = replace subtree.
-				var sb strings.Builder
-				dummy := map[string]any{}
-				for _, c := range new_.Children {
-					renderVNodeInto(&sb, c, dummy)
-				}
-				html := sb.String()
+				html := renderChildrenHTML(new_.Children)
 				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 				return
 			}
@@ -1545,12 +1581,7 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 		if oc.Tag != nc.Tag || oc.Kind != nc.Kind {
 			// Tag mismatch: replace subtree at the parent.
 			if old.SkyID != "" {
-				var sb strings.Builder
-				dummy := map[string]any{}
-				for _, c := range new_.Children {
-					renderVNodeInto(&sb, c, dummy)
-				}
-				html := sb.String()
+				html := renderChildrenHTML(new_.Children)
 				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
 			}
 			return
