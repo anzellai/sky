@@ -72,6 +72,12 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786370152
     },
+    "config-surface": {
+      "mutation": "config-surface.seed-a-suffix-nothing-reads",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1786894818
+    },
     "conformance": {
       "mutation": "conformance.break-expectation",
       "observed": "PROVEN",

@@ -145,3 +145,60 @@ commit = "2771303a"
 #
 # No weakenings. No surface has been allowed to get weaker under this
 # contract.
+#
+#
+# ===========================================================================
+# ## The THIRD ledger: `[[config-surface-rise]]` — the only way a
+# ##                   configuration-surface count may GROW
+# ===========================================================================
+#
+# `docs/coverage/config-surface.json` (`xtask config-surface`) measures the
+# configuration surface: how many `sky.toml` keys are read PRE-BINARY, how many
+# env suffixes the compiler seeds that nothing reads, and how far the docs and
+# the readers have drifted apart. Every one of those counts is a defect count,
+# so the ratchet runs the other way from the denominator ledger above:
+#
+#   * A DECREASE is always allowed. Fewer pre-binary reads means more of the
+#     surface can move into typed app config; fewer unread seeds means fewer
+#     settings that look set and do nothing. Nothing to declare.
+#
+#   * An INCREASE fails the gate. This is how an increase is authorised.
+#
+# The asymmetry has a second edge the other two ledgers do not: the gate cannot
+# tell "the surface grew" from "the MEASUREMENT got better", and both raise the
+# number. When `config-surface` learned to resolve a key named by a `const`, the
+# pre-binary count went 9 -> 12 without a line of product code changing. Both
+# readings are important and only a person can say which happened — so the
+# stanza records it, pinned to the exact `from` and `to` so one authorisation
+# can never quietly cover a later, different rise.
+#
+# All six fields are REQUIRED; a stanza missing any of them fails the gate.
+#
+#   metric — the summary key that rose, exactly as `config-surface.json`
+#            spells it: `pre_binary_surfaces`, `seeded_without_reader`,
+#            `documented_without_reader`, `read_without_doc`.
+#   from   — the baseline value. Must match, so the stanza cannot be reused.
+#   to     — the new value. Must match, for the same reason.
+#   reason — WHY. Say which of the two readings it is. "the scan improved" is
+#            not enough; "the scan now resolves a key named by a const, so
+#            db_provision.rs's read of [database] postgresVersion is counted
+#            for the first time — no new read was added" is.
+#   owner  — the person accountable.
+#   commit — the commit that raised it, so the claim is checkable.
+#
+# ## Example (do not uncomment — it is not a real rise)
+#
+#   [[config-surface-rise]]
+#   metric = "pre_binary_surfaces"
+#   from   = 12
+#   to     = 14
+#   reason = "measurement, not surface: STRUCTURAL_PRE_BINARY gained the two
+#             inline parsers (db_driver_label, check_auth_secret) that the
+#             mechanical scan cannot see because they take no key argument"
+#   owner  = "anzel"
+#   commit = "0000000"
+#
+# ## Current state
+#
+# No authorised rises. Every count in config-surface.json is at or below the
+# value it was first measured at.
