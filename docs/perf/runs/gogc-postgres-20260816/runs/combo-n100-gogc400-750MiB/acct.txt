@@ -1,0 +1,16 @@
+tag combo-n100-gogc400-750MiB
+sessions 100
+gogc 400
+gomemlimit 750MiB
+elements 94
+idle_rss_kb 41072
+load_rss_kb 390480
+peak_rss_kb 390480
+window_peak_rss_kb 390480
+window_mean_rss_kb 382790
+pg_peak_rss_kb 82320
+app_cpu_delta_s 250.71
+wall_s 73
+generator_rc 0
+aborted no
+load1 10.61

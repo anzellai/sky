@@ -1925,29 +1925,9 @@ func Sub_subscribeStream(streamID, toMsg any) SkySub {
 // sessionLocker serialises concurrent event handlers for the SAME session
 // while allowing different sessions to proceed in parallel. Ref-counted so
 // idle sessions don't leak mutex entries.
-//
-// The lock that does that job is sessionLockEntry.mu, and it is correctly
-// per-session. The map guard below is a different thing: it exists only to
-// make the lazy-create and the refcount-delete atomic. It used to be ONE
-// process-wide mutex, so two interactions on DIFFERENT sessions serialised on
-// it — and because Lock takes it once and Unlock takes it again, twice per
-// interaction each. A mutex profile at GOMAXPROCS=8 put 23.0% of all
-// contention here (docs/perf/runs/gomaxprocs-scaling-20260816/).
-//
-// It is now sharded by sid. Same sid always lands on the same shard, so the
-// create/refcount/delete sequence remains atomic per session; different sids
-// usually do not meet. Nothing ranges this map — every operation is
-// single-key — so sharding costs nothing in semantics.
-const sessionLockerShards = 64
-
-type sessionLockerShard struct {
+type sessionLocker struct {
 	mu    sync.Mutex
 	locks map[string]*sessionLockEntry
-	_     [shardCacheLine - 16]byte // keep each shard's mutex off its neighbour's cache line
-}
-
-type sessionLocker struct {
-	shards [sessionLockerShards]sessionLockerShard
 }
 
 type sessionLockEntry struct {
@@ -1956,43 +1936,33 @@ type sessionLockEntry struct {
 }
 
 func newSessionLocker() *sessionLocker {
-	s := &sessionLocker{}
-	for i := range s.shards {
-		s.shards[i].locks = map[string]*sessionLockEntry{}
-	}
-	return s
-}
-
-func (s *sessionLocker) shardFor(sid string) *sessionLockerShard {
-	return &s.shards[shardKey(sid, sessionLockerShards-1)]
+	return &sessionLocker{locks: map[string]*sessionLockEntry{}}
 }
 
 func (s *sessionLocker) Lock(sid string) {
-	sh := s.shardFor(sid)
-	sh.mu.Lock()
-	e, ok := sh.locks[sid]
+	s.mu.Lock()
+	e, ok := s.locks[sid]
 	if !ok {
 		e = &sessionLockEntry{}
-		sh.locks[sid] = e
+		s.locks[sid] = e
 	}
 	e.refs++
-	sh.mu.Unlock()
+	s.mu.Unlock()
 	e.mu.Lock()
 }
 
 func (s *sessionLocker) Unlock(sid string) {
-	sh := s.shardFor(sid)
-	sh.mu.Lock()
-	e, ok := sh.locks[sid]
+	s.mu.Lock()
+	e, ok := s.locks[sid]
 	if !ok {
-		sh.mu.Unlock()
+		s.mu.Unlock()
 		return
 	}
 	e.refs--
 	if e.refs <= 0 {
-		delete(sh.locks, sid)
+		delete(s.locks, sid)
 	}
-	sh.mu.Unlock()
+	s.mu.Unlock()
 	e.mu.Unlock()
 }
 

@@ -1,0 +1,16 @@
+tag gml-n100-gogc100-750MiB
+sessions 100
+gogc 100
+gomemlimit 750MiB
+elements 94
+idle_rss_kb 37568
+load_rss_kb 145136
+peak_rss_kb 145136
+window_peak_rss_kb 145136
+window_mean_rss_kb 143868
+pg_peak_rss_kb 82304
+app_cpu_delta_s 288.34
+wall_s 73
+generator_rc 0
+aborted no
+load1 10.07

@@ -35,10 +35,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -111,55 +109,17 @@ var noopTracerInstance = noop.NewTracerProvider().Tracer("sky-app")
 // when the package is built without ever calling Tracer().
 var _ = noopTracerInstance
 
-// tracerCache memoises the "sky-app" tracer against the provider it came from.
-//
-// Why this is not just `return otel.GetTracerProvider().Tracer("sky-app")`:
-// sdktrace's TracerProvider.Tracer takes a PROVIDER-GLOBAL mutex on every call
-// to guard its named-tracer map (sdk/trace/provider.go). Tracer() is reached
-// from every span — the HTTP server span, the msg span, and each db/http/auth
-// /file kernel span — so a single interaction took that one lock several
-// times. A mutex profile at GOMAXPROCS=8 attributed 6.0% of all contention to
-// it. And it is paid even with no OTLP endpoint configured, because the Sky
-// Console trace ring registers a span processor unconditionally, which installs
-// a real SDK provider rather than the noop one.
-//
-// Why cache on provider IDENTITY rather than caching outright: the previous
-// caching attempt was REMOVED (see noopTracerInstance above) because tests swap
-// the provider via otel.SetTracerProvider and a flat cache went stale.
-// otel.GetTracerProvider returns the provider that was actually set — not a
-// stable delegate — so a swap changes the interface value and is detected on
-// the next call. That keeps the property the removal was protecting.
-type cachedTracer struct {
-	provider trace.TracerProvider
-	tracer   trace.Tracer
-}
-
-var tracerCache atomic.Pointer[cachedTracer]
-
-// Tracer returns the active tracer. Consults the OTel global TracerProvider so
-// tests that swap it via otel.SetTracerProvider(...) take effect immediately.
-// When no provider has been installed at all, OTel's default returns a noop
-// tracer — every span call is zero-cost.
+// Tracer returns the active tracer. Always consults the OTel
+// global TracerProvider so tests that swap it via
+// otel.SetTracerProvider(...) take effect immediately. When no
+// provider has been installed at all, OTel's default returns a
+// noop tracer — every span call is zero-cost.
 //
 // Callers do NOT need to check whether tracing is enabled — the
 // noop tracer is a valid Tracer; calling .Start / .End on it is
 // trivial.
 func Tracer() trace.Tracer {
-	tp := otel.GetTracerProvider()
-	if c := tracerCache.Load(); c != nil && c.provider == tp {
-		return c.tracer
-	}
-	t := tp.Tracer("sky-app")
-	// Only ever cache a comparable provider. Comparing two interface values
-	// panics when their dynamic types are identical AND non-comparable; if
-	// every cached provider is comparable, the `c.provider == tp` above can
-	// never hit that case, so the hot path stays panic-free whatever a caller
-	// installs. Every real implementation is a pointer type; this costs one
-	// type-flag check on the miss path only.
-	if reflect.TypeOf(tp) != nil && reflect.TypeOf(tp).Comparable() {
-		tracerCache.Store(&cachedTracer{provider: tp, tracer: t})
-	}
-	return t
+	return otel.GetTracerProvider().Tracer("sky-app")
 }
 
 // extraProcessors are in-process span sinks registered BEFORE

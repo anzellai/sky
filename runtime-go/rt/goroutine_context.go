@@ -36,30 +36,28 @@ import (
 	"context"
 	"runtime"
 	"strconv"
+	"sync"
 )
 
 // goroutineCtx stores per-goroutine trace context. Sized to hold
 // every active Cmd.perform goroutine + every SSE subscription tick.
 // At typical workloads (~1000 concurrent goroutines) the map fits
 // in well under 1 MB.
-//
-// Sharded plain map, not sync.Map, for the reason set out in
-// goid_shard_map.go: the key set here is write-mostly and every key is fresh,
-// which is sync.Map's documented worst case. WithSpan stamps and clears this
-// twice per span (tracing.go), so it sits on the same per-interaction path as
-// the session stamp that the mutex profile named.
-var goroutineCtx = newGoidShardedMap[context.Context]()
+var goroutineCtx sync.Map // map[int64]context.Context
 
 // CurrentTraceContext returns the trace context stamped on the
 // calling goroutine, or context.Background() when none is set.
-// Safe from any goroutine; cheap (one sharded-map load + a
+// Safe from any goroutine; cheap (one sync.Map.Load + a
 // goroutine-ID parse).
 //
 // `WithSpan` calls this to find the parent span for an
 // auto-instrumented kernel.
 func CurrentTraceContext() context.Context {
-	if ctx, ok := goroutineCtx.load(currentGoroutineID()); ok && ctx != nil {
-		return ctx
+	gid := currentGoroutineID()
+	if v, ok := goroutineCtx.Load(gid); ok {
+		if ctx, ok := v.(context.Context); ok && ctx != nil {
+			return ctx
+		}
 	}
 	return context.Background()
 }
@@ -70,20 +68,19 @@ func CurrentTraceContext() context.Context {
 func SetGoroutineTraceContext(ctx context.Context) {
 	gid := currentGoroutineID()
 	if ctx == nil {
-		goroutineCtx.drop(gid)
+		goroutineCtx.Delete(gid)
 		return
 	}
-	goroutineCtx.store(gid, ctx)
+	goroutineCtx.Store(gid, ctx)
 }
 
 // ClearGoroutineTraceContext removes the calling goroutine's stamp.
 // Must run (via defer) at the top of any goroutine that called
-// SetGoroutineTraceContext, so the map doesn't accumulate entries
-// for spawned-and-exited goroutines. Goroutine ids are recycled, so
-// a leaked entry is a correctness hazard and not just a leak: a
-// later goroutine would inherit a dead one's stamp.
+// SetGoroutineTraceContext, so the sync.Map doesn't accumulate
+// entries for spawned-and-exited goroutines.
 func ClearGoroutineTraceContext() {
-	goroutineCtx.drop(currentGoroutineID())
+	gid := currentGoroutineID()
+	goroutineCtx.Delete(gid)
 }
 
 // RunWithTraceContext is the canonical goroutine-spawn pattern.
