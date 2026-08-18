@@ -2948,7 +2948,7 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// and `config-gates`' `coverage-ledger --check` (the `run()` path) does not
 /// assert the count. Exactly the release-only-counting-gate latency this cycle
 /// is closing; brought current here.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 149;
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 150;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

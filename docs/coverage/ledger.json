@@ -352,7 +352,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 149,
+      "expected_assertions": 150,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -618,13 +618,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1782,
-    "stdlib_modules": 87,
+    "stdlib_entries": 1798,
+    "stdlib_modules": 88,
     "surfaces_covered": 131,
-    "surfaces_covered_pct": 90.3,
-    "surfaces_equal": 19,
+    "surfaces_covered_pct": 89.7,
+    "surfaces_equal": 20,
     "surfaces_stronger": 126,
-    "surfaces_total": 145,
+    "surfaces_total": 146,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -2369,6 +2369,22 @@
       "description": "sessions, the persistent SSE channel, and CSRF refusal",
       "id": "skylive.session-sse-csrf",
       "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Sky.Config public API",
+      "id": "stdlib.Sky.Config",
+      "verdict": "equal"
     },
     {
       "category": "stdlib",
@@ -10758,8 +10774,9 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 6,
+      "count": 7,
       "modules": [
+        "Sky.Config",
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
@@ -10767,7 +10784,7 @@
         "Std.Db.Table",
         "Std.Live.Console"
       ],
-      "pct_of_denominator": 6.9
+      "pct_of_denominator": 8.0
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -10778,7 +10795,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 10,
+      "count": 11,
       "surfaces": [
         "cli.check",
         "cli.console",
@@ -10787,6 +10804,7 @@
         "cli.lsp",
         "cli.upgrade-claude",
         "cli.verify",
+        "stdlib.Sky.Config",
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Live.Console"
@@ -10794,6 +10812,25 @@
     },
     "symbols_unreferenced_generous": {
       "by_module": {
+        "Sky.Config": {
+          "count": 14,
+          "symbols": [
+            "Config",
+            "Database",
+            "JobStore",
+            "LogFormat",
+            "LogLevel",
+            "Sessions",
+            "Telemetry",
+            "default",
+            "withCsrf",
+            "withDatabase",
+            "withJobs",
+            "withLog",
+            "withSessions",
+            "withTelemetry"
+          ]
+        },
         "Sky.Core.Basics": {
           "count": 6,
           "symbols": [
@@ -11458,13 +11495,15 @@
           ]
         },
         "Std.Live": {
-          "count": 11,
+          "count": 13,
           "symbols": [
             "AppConfig",
             "lifecycle",
             "withAnalyticsIdentify",
             "withConsoleAuth",
             "withIdleEvict",
+            "withInput",
+            "withMaxBodyBytes",
             "withOnNavigate",
             "withStatic",
             "withStaticUrl",
@@ -11835,11 +11874,30 @@
           ]
         }
       },
-      "count": 705,
-      "pct_of_denominator": 39.6
+      "count": 721,
+      "pct_of_denominator": 40.1
     },
     "symbols_unreferenced_strict": {
       "by_module": {
+        "Sky.Config": {
+          "count": 14,
+          "symbols": [
+            "Config",
+            "Database",
+            "JobStore",
+            "LogFormat",
+            "LogLevel",
+            "Sessions",
+            "Telemetry",
+            "default",
+            "withCsrf",
+            "withDatabase",
+            "withJobs",
+            "withLog",
+            "withSessions",
+            "withTelemetry"
+          ]
+        },
         "Sky.Core.Basics": {
           "count": 6,
           "symbols": [
@@ -12584,7 +12642,7 @@
           ]
         },
         "Std.Live": {
-          "count": 14,
+          "count": 16,
           "symbols": [
             "AppConfig",
             "api",
@@ -12594,6 +12652,8 @@
             "withConsoleAuth",
             "withGuard",
             "withIdleEvict",
+            "withInput",
+            "withMaxBodyBytes",
             "withOnNavigate",
             "withStatic",
             "withStaticUrl",
@@ -12965,8 +13025,8 @@
           ]
         }
       },
-      "count": 784,
-      "pct_of_denominator": 44.0
+      "count": 800,
+      "pct_of_denominator": 44.5
     }
   },
   "units": [
