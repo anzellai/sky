@@ -561,11 +561,34 @@ jobs:
   # the harness is what enforces the budget by `killpg`, requires the exact
   # assertion count, and refuses to render PASS when it cannot establish a
   # verdict. The plain subcommand has none of that.
+  #
+  # THE SAME LATENCY, WIDER: the fast T1 COUNTING gates ran only at release too.
+  # `harness --tier t1` lives solely in `release.yml`, so `cli-verbs` and the
+  # four analytics gates — pure assertion-count checks over `cargo test` /
+  # `go test`, no server, no browser — were invisible until a tag was cut. That
+  # is the exact latency that let `cli-verbs` sit RED on this branch for a whole
+  # cycle (commit `726a5589`). They join this job below.
+  #
+  # THE SPLIT, and why it is here rather than a blanket `--tier t1`. Measured
+  # locally at this commit (warm caches, 8-core M-series):
+  #   cli-verbs                              76.8 s  (`cargo test` compile-bound)
+  #   analytics-retention-survives-a-panic   20.2 s  (`go test` rt compile)
+  #   analytics-prune-errors-are-reported     3.6 s
+  #   console-analytics-queries-are-bounded   7.3 s
+  #   erasure-path-uses-an-index              4.1 s
+  #                                          ~112 s total
+  # These are counting/assertion gates and belong on every PR. The rest of T1 —
+  # `apps-*`, `sky-suites`, `lsp` — SPIN REAL SERVERS, PTYs and multi-replica
+  # topologies (measured in minutes each) and stay at release / their own jobs;
+  # a blanket `--tier t1` here would drag those onto the per-PR path. HOLE-1's
+  # falsifier-applicability check is already per-PR: it rides inside the
+  # `coverage-ledger --check` step below.
   config-gates:
     needs: setup
     runs-on: ubuntu-latest
     # ~60s cache restore + ~90s release `sky` (cache-warm) + ~50s config-matrix
-    # + three sub-second checks ≈ 4 min. 1.5x with runner variance ≈ 12.
+    # + ~112s cli-verbs+analytics + three sub-second checks ≈ 6 min. 1.5x with
+    # runner variance ≈ 9; 12 leaves headroom for a cold `cargo test` compile.
     timeout-minutes: 12
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -609,6 +632,13 @@ jobs:
       - name: 'Gate — config-matrix (effective values, observed from running binaries)'
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --only config-matrix
+      # The fast T1 counting gates, moved off release-only. One harness
+      # invocation so a NOT RUN / UNPROVEN in any of them renders the suite
+      # UNKNOWN (exit 3) rather than a quiet skip. Server-spinning apps-* /
+      # sky-suites / lsp stay out deliberately — see the job header.
+      - name: 'Gate — cli-verbs + analytics (fast T1 counting gates)'
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --only cli-verbs,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index
       - name: Bound the Go caches before save
         if: always()
         working-directory: .

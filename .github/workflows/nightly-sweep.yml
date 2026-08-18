@@ -25,7 +25,7 @@ on:
         # Every job's `if:` names itself here. `behaviour-corpus` gated on a
         # value this list did not offer, so it could never be dispatched alone —
         # the dropdown had no way to say it, and any other value skipped it.
-        options: [both, example-sweep, web-runtime, behaviour-corpus, postgres-bundle-licence]
+        options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence]
 
 # Don't stack nightly runs; a newer run supersedes an in-flight one.
 concurrency:
@@ -387,6 +387,92 @@ jobs:
           sky-out/sky --version
       - name: 'Gate — Layer-2 app tier (harness tier T3)'
         run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t3
+      - name: Bound the Go caches before save
+        if: always()
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── Falsifier verification (harness --verify-falsifiers) ────────────────────
+  #
+  # WHY THIS EXISTS. `docs/coverage/falsifier-proofs.json` records, per gate,
+  # that its declared mutation once made it go red — and the whole gate harness
+  # rests on those proofs: `coverage-ledger` scores a surface `Falsified` (the
+  # strongest tier) only when its gate's proof is PROVEN, and `release.yml`'s
+  # `--require-proofs` demotes a PASS whose proof lapsed. Yet the run that
+  # ESTABLISHES a proof — `harness --verify-falsifiers`, which actually applies
+  # each mutation and confirms the gate reddens — ran in NO workflow and NO
+  # script. A from-pattern drift is now caught statically per-PR (it reddens
+  # `coverage-ledger --check`), but "does the mutation still make the gate red"
+  # was re-verified nowhere. This job re-verifies it.
+  #
+  # WHY NIGHTLY AND NOT PER-PUSH. Falsification is the deepest and slowest check
+  # in the repo: for every selected gate it runs the body TWICE — a green
+  # baseline, then the mutated run — and a mutation to Rust source rebuilds the
+  # `xtask` binary in between (v2 §7.5 costs it at "~13-24 s cold build per
+  # mutation"). The app gates build ~35 MB server binaries from a wiped slate on
+  # both passes; `lsp` drives 49 Neovim cases twice. That is minutes per gate —
+  # impossible on a per-push runner, exactly the tier nightly exists for.
+  #
+  # SCOPE: `--tier t1`, the merge-blocking tier — the same gates the per-push
+  # `config-gates` job now runs (`cli-verbs`, the analytics gates) plus the rest
+  # of T1. Verifying that THESE mutations still bite is the highest-value slice,
+  # because these are the proofs the per-push safety net leans on. `--tier`
+  # scoping (added to `run_falsifiers` alongside this) means T2/T3/T4 can be
+  # wired the same way as follow-up; they additionally need the Postgres service
+  # and the cold FFI install their tier jobs already carry, and would push one
+  # job past the 90-min T3 ceiling.
+  falsifier-verification:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "falsifier-verification"]'), inputs.only) }}
+    runs-on: ubuntu-latest
+    # T1 falsification runs ~22 gates twice; `lsp` (Neovim ×2) and the app builds
+    # dominate. 90 is the T3 nightly ceiling; if a real run approaches it, the
+    # answer is to shard by gate, not to raise the ceiling.
+    timeout-minutes: 90
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      GO_CACHE_BUDGET_MB: '6144'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      # `lsp` is a T1 gate; its body drives a REAL headless Neovim LSP client, so
+      # the falsifier's baseline + mutated runs both need it. Absent, that gate
+      # FAILs (never skips) and would fail this job — which is correct, but the
+      # point here is to verify the mutation, so the editor is installed.
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-falsify-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-falsify-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-gates-linux
+          save-if: 'false'
+      - name: Build sky binary
+        # The app / conformance / config-matrix gates resolve the compiler under
+        # test at `<repo>/sky-out/sky` and treat a missing one as a hard error,
+        # never a skip — so both the baseline and the mutated run need it.
+        run: |
+          source scripts/lib/cargo-target.sh
+          cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
+          install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
+          sky-out/sky --version
+      - name: 'Gate — verify T1 falsifiers actually bite (harness --verify-falsifiers --tier t1)'
+        # A mutation that no longer reddens its gate (VACUOUS), or a baseline that
+        # is not green (INCONCLUSIVE), fails this job — the proof the ledger
+        # credits was a lie. The run rewrites falsifier-proofs.json in the
+        # workspace; nightly does not commit it, so that is ephemeral.
+        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --verify-falsifiers --tier t1
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh
