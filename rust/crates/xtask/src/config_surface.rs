@@ -186,8 +186,12 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
         "ApplyConfig resolves each Sky.Config key's env suffix with \
          skyEnvName(suffix), so the write is non-literal HERE while every suffix \
          is a literal VALUE in the configKeyToEnvSuffix table (LOG_FORMAT / \
-         LOG_LEVEL today). It is a seed-aware WRITE of the withX layer, not a \
-         new read of a hidden suffix",
+         LOG_LEVEL / DB_PATH / LIVE_STORE(_PATH) / JOBS_STORE(_PATH) / CSRF — \
+         all already-seeded suffixes). It is a seed-aware WRITE of the withX \
+         layer, not a new read of a hidden suffix. The literal builders \
+         (DATABASE_URL / OTEL_EXPORTER_OTLP_ENDPOINT, in configKeyToLiteralEnv) \
+         are written verbatim, not via skyEnvName, so they are not prefixed \
+         reads at all",
     ),
 ];
 

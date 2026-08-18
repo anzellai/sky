@@ -9,27 +9,53 @@
 -- reserved entry point in the entry module) and applies it before the runtime
 -- reads anything, so a value set here beats the legacy `sky.toml` seed while
 -- still losing to an operator's environment override. See
--- `docs/tooling/config-architecture.md` §3–§4 and `rt.ApplyConfig`.
+-- `docs/tooling/config-architecture.md` §3–§5 and `rt.ApplyConfig`.
 --
 -- ```elm
 -- module Main exposing (main, config)
 --
--- import Sky.Config as Config exposing (LogFormat(..), LogLevel(..))
+-- import Sky.Config as Config exposing (LogFormat(..), LogLevel(..), Database(..))
 --
 -- config : Config.Config
 -- config =
 --     Config.default
 --         |> Config.withLog Json Warn
+--         |> Config.withDatabase (Postgres "postgres://localhost/app")
+--         |> Config.withSessions Config.SharedWithDatabase
 --
 -- main =
 --     ...
 -- ```
 --
--- This is the FOUNDATION module: it ships `default` + `withLog` to prove the
--- discovery → DCE → `Main_config()` → `rt.ApplyConfig` pipeline end-to-end. The
--- remaining cross-cutting builders (withDatabase / withSessions / withJobs /
--- withCsrf / withTelemetry) are mechanical repetition added in a later phase.
-module Sky.Config exposing (Config, default, LogFormat(..), LogLevel(..), withLog)
+-- ## The one precedence rule (shared with `Live.withX`)
+--
+-- Every builder here resolves through the SAME order the `Live.withX` builders
+-- do, because both land in the same runtime layer (`rt.configLayers`):
+--
+--     operator env  >  withX (Sky.Config / Live)  >  seeded default (sky.toml)  >  fallback
+--
+-- An operator's environment variable always wins; a `withX` value beats a
+-- legacy `sky.toml` seed; both beat the hardcoded runtime fallback. Where a
+-- setting has BOTH a `Sky.Config.withX` and a more-specific `Live.withX` (only
+-- the session store — `withSessions` vs `Live.withStore`/`withStorePath`), the
+-- app-shape `Live.withX` wins the shared builder layer (see
+-- `rt.configLayers`).
+module Sky.Config exposing
+    ( Config
+    , default
+    , LogFormat(..)
+    , LogLevel(..)
+    , withLog
+    , Database(..)
+    , withDatabase
+    , Sessions(..)
+    , withSessions
+    , JobStore(..)
+    , withJobs
+    , withCsrf
+    , Telemetry(..)
+    , withTelemetry
+    )
 
 import Sky.Ffi as Ffi
 
@@ -52,6 +78,56 @@ type LogLevel
     | Warn
     | Error
 
+-- | Which database the app talks to. `Sqlite` names a single-file path (a
+-- great default for a pet/prototype tier); `Postgres` names a DSN.
+--
+-- The DSN is deployment-owned in some tiers — an operator's `DATABASE_URL`
+-- still wins over this builder — and a project configured for an EMBEDDED
+-- PostgreSQL cluster (`sky.toml [database] embedded = true`, `./app --embed`)
+-- must NOT also name a DSN: the runtime refuses the ambiguity at startup
+-- (`rt.MaybeStartEmbeddedPostgres` runs immediately after `ApplyConfig` and
+-- reports the conflict) exactly as it does for an explicit env/`sky.toml` DSN.
+-- Do not combine `withDatabase` with `--embed`.
+type Database
+    = Sqlite String
+    | Postgres String
+
+-- | Which Sky.Live session store the app uses. One typed strategy replacing
+-- the two stringly-typed `Live.withStore` / `Live.withStorePath` knobs.
+--
+--   * `Memory` — dev only, single-instance, lost on restart.
+--   * `SessionsSqlite path` — durable, single-instance.
+--   * `SharedWithDatabase` — a Postgres store on the app's own `DATABASE_URL`
+--     (the multi-replica default; the store reuses the primary DB connection
+--     string, so nothing extra is named).
+--   * `Redis url` — a shared Redis store.
+--
+-- This OVERLAPS `Live.withStore` / `Live.withStorePath`. They land in the same
+-- builder layer; when an app sets BOTH, the more-specific `Live.withX` wins.
+type Sessions
+    = Memory
+    | SessionsSqlite String
+    | SharedWithDatabase
+    | Redis String
+
+-- | Which Std.Jobs store backs the background-job queue.
+--
+--   * `JobsMemory` — dev only, lost on restart.
+--   * `JobsSqlite path` — durable, single-instance.
+--   * `JobsSharedWithDatabase` — a Postgres queue on the app's own
+--     `DATABASE_URL`.
+type JobStore
+    = JobsMemory
+    | JobsSqlite String
+    | JobsSharedWithDatabase
+
+-- | Telemetry export target. `Otlp endpoint` points the OTLP exporter at a
+-- collector (`OTEL_EXPORTER_OTLP_ENDPOINT`). Telemetry/console *tokens* are
+-- deliberately NOT builders — they stay operator-owned environment (a secret
+-- belongs to the deployment, not the source).
+type Telemetry
+    = Otlp String
+
 
 -- | The empty config — every setting takes its runtime default. An app that
 -- writes no `config` binding gets exactly this.
@@ -71,12 +147,74 @@ withLog format level cfg =
     setLog (logFormatName format) (logLevelName level) cfg
 
 
--- The raw kernel takes already-normalised strings, so the ADT → env-string
+-- | Set the database the app connects to (`<PREFIX>_DB_PATH` for SQLite,
+-- `DATABASE_URL` for Postgres). Operator env still wins; do not combine with
+-- `--embed` (see `Database`).
+withDatabase : Database -> Config -> Config
+withDatabase db cfg =
+    setDatabase (databaseKind db) (databaseValue db) cfg
+
+
+-- | Set the Sky.Live session store (`<PREFIX>_LIVE_STORE` /
+-- `<PREFIX>_LIVE_STORE_PATH`). See `Sessions`.
+withSessions : Sessions -> Config -> Config
+withSessions sessions cfg =
+    setSessions (sessionsKind sessions) (sessionsPath sessions) cfg
+
+
+-- | Set the Std.Jobs store (`<PREFIX>_JOBS_STORE` /
+-- `<PREFIX>_JOBS_STORE_PATH`). See `JobStore`.
+withJobs : JobStore -> Config -> Config
+withJobs store cfg =
+    setJobs (jobStoreKind store) (jobStorePath store) cfg
+
+
+-- | Enable or disable the global CSRF middleware (`<PREFIX>_CSRF`). Default is
+-- ON; pass `False` for a pure Bearer-authenticated API where the request
+-- header itself is the cross-origin defence. Operator env still wins.
+withCsrf : Bool -> Config -> Config
+withCsrf enabled cfg =
+    setCsrf (csrfValue enabled) cfg
+
+
+-- | Point the OTLP telemetry exporter at a collector
+-- (`OTEL_EXPORTER_OTLP_ENDPOINT`). Operator env still wins.
+withTelemetry : Telemetry -> Config -> Config
+withTelemetry telemetry cfg =
+    setTelemetry (telemetryEndpoint telemetry) cfg
+
+
+-- The raw kernels take already-normalised strings, so the ADT → env-string
 -- mapping stays a total `case` in Sky (type-safe, robust to constructor
 -- reordering) rather than a fragile tag-index read in Go.
 setLog : String -> String -> Config -> Config
 setLog =
     Ffi.kernel "Config_withLog"
+
+
+setDatabase : String -> String -> Config -> Config
+setDatabase =
+    Ffi.kernel "Config_withDatabase"
+
+
+setSessions : String -> String -> Config -> Config
+setSessions =
+    Ffi.kernel "Config_withSessions"
+
+
+setJobs : String -> String -> Config -> Config
+setJobs =
+    Ffi.kernel "Config_withJobs"
+
+
+setCsrf : String -> Config -> Config
+setCsrf =
+    Ffi.kernel "Config_withCsrf"
+
+
+setTelemetry : String -> Config -> Config
+setTelemetry =
+    Ffi.kernel "Config_withTelemetry"
 
 
 logFormatName : LogFormat -> String
@@ -105,3 +243,104 @@ logLevelName level =
 
         Error ->
             "error"
+
+
+databaseKind : Database -> String
+databaseKind db =
+    case db of
+
+        Sqlite _ ->
+            "sqlite"
+
+        Postgres _ ->
+            "postgres"
+
+
+databaseValue : Database -> String
+databaseValue db =
+    case db of
+
+        Sqlite path ->
+            path
+
+        Postgres url ->
+            url
+
+
+sessionsKind : Sessions -> String
+sessionsKind sessions =
+    case sessions of
+
+        Memory ->
+            "memory"
+
+        SessionsSqlite _ ->
+            "sqlite"
+
+        SharedWithDatabase ->
+            "postgres"
+
+        Redis _ ->
+            "redis"
+
+
+sessionsPath : Sessions -> String
+sessionsPath sessions =
+    case sessions of
+
+        Memory ->
+            ""
+
+        SessionsSqlite path ->
+            path
+
+        SharedWithDatabase ->
+            ""
+
+        Redis url ->
+            url
+
+
+jobStoreKind : JobStore -> String
+jobStoreKind store =
+    case store of
+
+        JobsMemory ->
+            "memory"
+
+        JobsSqlite _ ->
+            "sqlite"
+
+        JobsSharedWithDatabase ->
+            "postgres"
+
+
+jobStorePath : JobStore -> String
+jobStorePath store =
+    case store of
+
+        JobsMemory ->
+            ""
+
+        JobsSqlite path ->
+            path
+
+        JobsSharedWithDatabase ->
+            ""
+
+
+csrfValue : Bool -> String
+csrfValue enabled =
+    if enabled then
+        "on"
+
+    else
+        "off"
+
+
+telemetryEndpoint : Telemetry -> String
+telemetryEndpoint telemetry =
+    case telemetry of
+
+        Otlp endpoint ->
+            endpoint

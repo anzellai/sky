@@ -75,15 +75,100 @@ func Config_withLog(format, level, cfg any) any {
 	return out
 }
 
+// configSetStr stores `value` under `key` in a shallow clone of `cfg`, skipping
+// an empty string so an absent ADT arm (e.g. `Memory`'s empty store PATH)
+// leaves the key unset rather than blanking it. The Sky surface has already
+// normalised each ADT to its env string via a total `case`, so these kernels
+// only ever see plain strings.
+func configSetStr(cfg any, key string, value any) map[string]any {
+	out := configClone(cfg)
+	if s, ok := value.(string); ok && s != "" {
+		out[key] = s
+	}
+	return out
+}
+
+// Config_withDatabase sets the database DSN. `kind` is "sqlite" | "postgres"
+// (normalised in Sky). SQLite writes the prefixed `DB_PATH` (a file path);
+// Postgres writes the literal `DATABASE_URL` — the name Db_connect falls back
+// to and the session/analytics/jobs stores read. Both names are exactly the
+// ones `rt.embeddedDSNConflict` checks, so a `withDatabase` DSN in an `--embed`
+// app is refused at startup identically to an explicit env/sky.toml DSN
+// (ApplyConfig runs immediately before MaybeStartEmbeddedPostgres).
+func Config_withDatabase(kind, value, cfg any) any {
+	k, _ := kind.(string)
+	switch k {
+	case "sqlite":
+		return configSetStr(cfg, "DbPath", value)
+	case "postgres":
+		return configSetStr(cfg, "DatabaseUrl", value)
+	default:
+		return configClone(cfg)
+	}
+}
+
+// Config_withSessions sets the Sky.Live session store kind + path
+// (`LIVE_STORE` / `LIVE_STORE_PATH`). `SharedWithDatabase` normalises to
+// kind="postgres" with an empty path, so `selectStore` falls back to
+// `DATABASE_URL` (live_store.go). This OVERLAPS `Live.withStore`; both land in
+// the builder layer and the more-specific `Live.withStore` wins (configLayers).
+func Config_withSessions(kind, path, cfg any) any {
+	out := configSetStr(cfg, "LiveStore", kind)
+	return configSetStr(out, "LiveStorePath", path)
+}
+
+// Config_withJobs sets the Std.Jobs store kind + path (`JOBS_STORE` /
+// `JOBS_STORE_PATH`). `JobsSharedWithDatabase` normalises to kind="postgres"
+// with an empty path, so `chooseJobsStore` falls back to `DATABASE_URL`.
+func Config_withJobs(kind, path, cfg any) any {
+	out := configSetStr(cfg, "JobsStore", kind)
+	return configSetStr(out, "JobsStorePath", path)
+}
+
+// Config_withCsrf toggles the global CSRF middleware (`CSRF`). The Sky surface
+// normalises the Bool to "on"/"off"; `refreshCsrfEnabled` reads
+// off/false/0 → disabled, anything else → enabled. ApplyConfig re-runs the
+// env-prefix hooks after writing, so the change reaches `csrfEnabled` even
+// though `refreshCsrfEnabled` captured its value at init.
+func Config_withCsrf(value, cfg any) any {
+	return configSetStr(cfg, "Csrf", value)
+}
+
+// Config_withTelemetry points the OTLP exporter at a collector (the literal
+// `OTEL_EXPORTER_OTLP_ENDPOINT`, an industry-standard name that is NOT
+// env-prefixed).
+func Config_withTelemetry(endpoint, cfg any) any {
+	return configSetStr(cfg, "OtelEndpoint", endpoint)
+}
+
 // ── Application into the env namespace ──────────────────────────────────────
 
-// configKeyToEnvSuffix maps a Sky.Config map key to the internal env suffix
-// the runtime reads it through (skyEnvName prepends the [env] prefix). This is
-// the single registry of which config keys exist; a later phase extends it as
-// builders are added.
+// configKeyToEnvSuffix maps a Sky.Config map key to the internal env SUFFIX the
+// runtime reads it through — `skyEnvName` prepends the configured `[env]`
+// prefix, so `LOG_FORMAT` becomes e.g. `SKY_LOG_FORMAT`. Every suffix here is
+// one the compiler ALREADY seeds from the corresponding `sky.toml` section
+// (config-surface's `seeded_suffixes`), so a builder that writes it wins over
+// that seed while still losing to an operator override.
 var configKeyToEnvSuffix = map[string]string{
-	"LogFormat": "LOG_FORMAT",
-	"LogLevel":  "LOG_LEVEL",
+	"LogFormat":     "LOG_FORMAT",
+	"LogLevel":      "LOG_LEVEL",
+	"DbPath":        "DB_PATH",
+	"LiveStore":     "LIVE_STORE",
+	"LiveStorePath": "LIVE_STORE_PATH",
+	"JobsStore":     "JOBS_STORE",
+	"JobsStorePath": "JOBS_STORE_PATH",
+	"Csrf":          "CSRF",
+}
+
+// configKeyToLiteralEnv maps a Sky.Config map key to a LITERAL env var name
+// that is NOT `[env]`-prefixed — the industry-standard names the runtime reads
+// verbatim (`DATABASE_URL` for a Postgres DSN, `OTEL_EXPORTER_OTLP_ENDPOINT`
+// for the OTLP collector). These are never seeded by the prologue, so they sit
+// outside config-surface's census; a builder writes one only when an operator
+// has not, and defers to the operator otherwise (applyConfigValue).
+var configKeyToLiteralEnv = map[string]string{
+	"DatabaseUrl":  "DATABASE_URL",
+	"OtelEndpoint": "OTEL_EXPORTER_OTLP_ENDPOINT",
 }
 
 // configApplied records the env vars a `withX` config value wrote — distinct
@@ -136,16 +221,18 @@ func ApplyConfig(cfg any) {
 		return
 	}
 	changed := false
+	// Prefixed suffixes — resolved through the configured [env] prefix. Each is
+	// already a seeded default, so applyConfigValue clears-and-overrides the seed
+	// while deferring to an operator override.
 	for key, suffix := range configKeyToEnvSuffix {
-		v, present := m[key]
-		if !present {
-			continue
+		if applyConfigKey(m, key, skyEnvName(suffix)) {
+			changed = true
 		}
-		s, ok := v.(string)
-		if !ok || s == "" {
-			continue
-		}
-		if applyConfigValue(skyEnvName(suffix), s) {
+	}
+	// Literal names — written verbatim (DATABASE_URL / OTEL_…). Never seeded, so
+	// the seed branch of applyConfigValue is simply never taken for these.
+	for key, name := range configKeyToLiteralEnv {
+		if applyConfigKey(m, key, name) {
 			changed = true
 		}
 	}
@@ -154,6 +241,21 @@ func ApplyConfig(cfg any) {
 			fn()
 		}
 	}
+}
+
+// applyConfigKey applies one config-map key to a resolved env NAME, returning
+// true when it actually wrote. A missing key or an empty/non-string value is a
+// no-op — an unset builder must leave the env untouched.
+func applyConfigKey(m map[string]any, key, name string) bool {
+	v, present := m[key]
+	if !present {
+		return false
+	}
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return false
+	}
+	return applyConfigValue(name, s)
 }
 
 // applyConfigValue writes a single `withX` value into the env under the shared
