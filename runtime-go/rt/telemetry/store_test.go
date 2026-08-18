@@ -481,6 +481,77 @@ func TestCardinalityWarns_DedupeMapIsCapped(t *testing.T) {
 	}
 }
 
+// SILENT-COLLISION regression: canonicaliseLabels built the series
+// key with no escaping, so a label VALUE containing "=" or ","
+// collapsed distinct label sets into one key — {"a": "1,b=2"} and
+// {"a": "1", "b": "2"} were the same series, silently mixing
+// metrics from a URL. Escaping makes canonicalisation injective.
+func TestCanonicaliseLabels_StructuralCharactersDoNotCollide(t *testing.T) {
+	s := NewStore()
+	s.Inc("collide", map[string]string{"a": "1,b=2"})
+	s.Inc("collide", map[string]string{"a": "1", "b": "2"})
+	series := 0
+	for _, m := range s.Snapshot() {
+		if m.Name == "collide" {
+			series++
+		}
+	}
+	if series != 2 {
+		t.Errorf("distinct label sets collapsed: got %d series, want 2", series)
+	}
+}
+
+// SEMANTICS regression: the doc comments promised "each metric's
+// label combinations are capped at 10,000" but checkCardinality
+// received the GLOBAL series count for the kind — one bombed metric
+// froze EVERY other metric's series creation for the process
+// lifetime (first-N-win, no eviction). The cap is now per name,
+// with a separate global backstop.
+func TestCardinality_CapIsPerName(t *testing.T) {
+	s := NewStore()
+	s.cardinalityCap = 2
+	// Bomb metric A past its cap.
+	s.Inc("bombed", map[string]string{"u": "1"})
+	s.Inc("bombed", map[string]string{"u": "2"})
+	s.Inc("bombed", map[string]string{"u": "3"}) // dropped
+	// Metric B must still accept new series.
+	s.Inc("healthy", map[string]string{"u": "1"})
+	bombed, healthy := 0, 0
+	for _, m := range s.Snapshot() {
+		switch m.Name {
+		case "bombed":
+			bombed++
+		case "healthy":
+			healthy++
+		}
+	}
+	if bombed != 2 {
+		t.Errorf("bombed metric holds %d series, want 2 (its own cap)", bombed)
+	}
+	if healthy != 1 {
+		t.Errorf("healthy metric holds %d series, want 1 — a bombed neighbour must not freeze it", healthy)
+	}
+}
+
+// The global backstop: per-name caps bound each family, but wire
+// input can mint unlimited FAMILIES — total series stay bounded.
+func TestCardinality_GlobalBackstopBoundsTotalSeries(t *testing.T) {
+	s := NewStore()
+	s.globalSeriesCap = 3
+	for i := 0; i < 10; i++ {
+		s.Inc("family_"+itoaT(i), nil)
+	}
+	total := 0
+	for _, m := range s.Snapshot() {
+		if m.Type == "counter" {
+			total++
+		}
+	}
+	if total > 3 {
+		t.Errorf("global backstop leaked: %d counter series, want <= 3", total)
+	}
+}
+
 func itoaT(n int) string {
 	if n == 0 {
 		return "0"
