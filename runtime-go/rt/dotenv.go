@@ -96,11 +96,13 @@ func lookupEnvRaw(name string) (string, bool) { return os.LookupEnv(name) }
 
 func setEnvRaw(name, value string) {
 	clearSeededDefault(name)
+	clearConfigApplied(name)
 	_ = os.Setenv(name, value)
 }
 
 func unsetEnvRaw(name string) {
 	clearSeededDefault(name)
+	clearConfigApplied(name)
 	_ = os.Unsetenv(name)
 }
 
