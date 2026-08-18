@@ -28,6 +28,10 @@
 //!   xtask repro --jobs N              # examples checked concurrently
 //!                                     #   (default: cores, capped at 8;
 //!                                     #    also XTASK_REPRO_JOBS)
+//!   xtask repro --shard=I/N           # gate only corpus slice I of N (0<=I<N),
+//!                                     #   interleaved by index. For fanning the
+//!                                     #   corpus across N parallel CI jobs; the
+//!                                     #   union of all N shards is the whole set.
 //!   xtask repro --emit-worker=NAME    # (internal) single fresh emission → stdout
 
 use project::{build_example, emit_example_source, BuildOptions};
@@ -65,11 +69,15 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         });
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     let no_build = args.iter().any(|a| a == "--no-build");
+    let shard = parse_shard(args);
 
     let names: Vec<String> = match &only {
         Some(n) => n.clone(),
         None => corpus(root),
     };
+    // Shard AFTER the corpus is assembled and sorted, so the partition is
+    // deterministic and every example lands in exactly one shard.
+    let names = apply_shard(names, shard);
 
     let worker = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("xtask"));
 
@@ -178,6 +186,54 @@ fn check_all(
         .enumerate()
         .map(|(i, r)| r.unwrap_or_else(|| panic!("repro: example {i} produced no row")))
         .collect()
+}
+
+/// Parse `--shard=I/N`: gate only corpus slice `I` of `N`, interleaved by index.
+///
+/// A shard is a CI-level fan-out: the corpus's dominant cost is the per-example
+/// `go build`, which is bounded by one runner's cores, so splitting the corpus
+/// across N sibling jobs on N runners is the only lever that adds real hardware
+/// parallelism. The union of shards `0/N … (N-1)/N` is the whole corpus and the
+/// shards are disjoint, so every example is gated exactly once across the fan-out.
+///
+/// Rejects a malformed or out-of-range spec by aborting — a shard that silently
+/// gates nothing (or the wrong slice) is how a fan-out reports PASS over a
+/// corpus it never checked.
+fn parse_shard(args: &[String]) -> Option<(usize, usize)> {
+    let spec = args.iter().find_map(|a| a.strip_prefix("--shard="))?;
+    let (i, n) = spec
+        .split_once('/')
+        .unwrap_or_else(|| panic!("repro: --shard expects I/N (e.g. 0/2), got {spec:?}"));
+    let i: usize = i
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("repro: --shard index not a number: {i:?}"));
+    let n: usize = n
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("repro: --shard count not a number: {n:?}"));
+    if n == 0 || i >= n {
+        panic!("repro: --shard=I/N requires 0 <= I < N (got {i}/{n})");
+    }
+    Some((i, n))
+}
+
+/// Keep only slice `I` of `N` (interleaved by index) when `shard` is set.
+///
+/// Interleave by index (stride `N`) rather than a contiguous split so the few
+/// heavy examples (19-skyforum, 26-ui-showcase, 52-blog-analytics …) spread
+/// across shards and the shards finish in roughly equal wall-clock. Kept pure +
+/// separate from `run` so its disjoint-and-total property is unit-tested.
+fn apply_shard(names: Vec<String>, shard: Option<(usize, usize)>) -> Vec<String> {
+    match shard {
+        Some((i, n)) => names
+            .into_iter()
+            .enumerate()
+            .filter(|(idx, _)| idx % n == i)
+            .map(|(_, name)| name)
+            .collect(),
+        None => names,
+    }
 }
 
 /// One fresh emission of an example's Go source, written raw to stdout. Runs in
@@ -512,5 +568,126 @@ fn gate_result(rows: &[Row]) -> i32 {
                 .join(", ")
         );
         1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_shard, parse_shard};
+
+    fn names(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("ex-{i:02}")).collect()
+    }
+
+    #[test]
+    fn shards_are_disjoint_and_total() {
+        // For every corpus size and every shard count, the union of all shards
+        // is the whole corpus and no example appears in two shards. A break in
+        // either property is a false-green: a dropped example is never gated by
+        // any shard, so its non-determinism would ship undetected.
+        for total in [0usize, 1, 2, 3, 7, 56, 57] {
+            for n in 1..=4usize {
+                let full = names(total);
+                let mut union: Vec<String> = Vec::new();
+                for i in 0..n {
+                    union.extend(apply_shard(full.clone(), Some((i, n))));
+                }
+                union.sort();
+                let mut expect = full.clone();
+                expect.sort();
+                assert_eq!(union.len(), expect.len(), "size={total} n={n}: overlap or drop");
+                assert_eq!(union, expect, "size={total} n={n}: union != corpus");
+            }
+        }
+    }
+
+    #[test]
+    fn shards_are_balanced_within_one() {
+        // Interleaving keeps shard sizes within 1 of each other, so no single
+        // CI shard carries a disproportionate slice of the wall-clock.
+        for total in [7usize, 56, 57] {
+            for n in 2..=3usize {
+                let sizes: Vec<usize> = (0..n)
+                    .map(|i| apply_shard(names(total), Some((i, n))).len())
+                    .collect();
+                let max = *sizes.iter().max().unwrap();
+                let min = *sizes.iter().min().unwrap();
+                assert!(max - min <= 1, "size={total} n={n}: sizes {sizes:?} unbalanced");
+            }
+        }
+    }
+
+    #[test]
+    fn none_shard_is_identity() {
+        assert_eq!(apply_shard(names(5), None), names(5));
+    }
+
+    #[test]
+    fn parse_shard_reads_i_of_n() {
+        assert_eq!(parse_shard(&["--shard=0/2".to_string()]), Some((0, 2)));
+        assert_eq!(parse_shard(&["--shard=1/2".to_string()]), Some((1, 2)));
+        assert_eq!(parse_shard(&["--jobs".to_string(), "3".to_string()]), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "0 <= I < N")]
+    fn parse_shard_rejects_index_out_of_range() {
+        parse_shard(&["--shard=2/2".to_string()]);
+    }
+
+    #[test]
+    #[should_panic(expected = "I/N")]
+    fn parse_shard_rejects_missing_slash() {
+        parse_shard(&["--shard=2".to_string()]);
+    }
+
+    // ── the detector still bites ────────────────────────────────────────────
+    // Sharding only filters WHICH examples an invocation gates; it must not
+    // blunt the determinism check itself. These lock the teeth: a divergence is
+    // seen, and an in-gate unstable row FAILS (non-zero) — while a gate over
+    // nothing is INCONCLUSIVE, never a silent pass.
+    use super::{compare_samples, gate_result, Row};
+
+    fn row(name: &str, builds: Option<bool>, samples: usize, stable: bool) -> Row {
+        Row {
+            name: name.into(),
+            builds,
+            samples,
+            stable,
+            first_diff: if stable { None } else { Some((3, "a vs b".into())) },
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn compare_samples_flags_a_divergence() {
+        let s = "package main\nfunc f(){}\n".to_string();
+        let identical = [s.clone(), s.clone(), s];
+        assert_eq!(compare_samples(&identical), (true, None));
+
+        let diverge = [
+            "package main\nx := map[string]int{}\n".to_string(),
+            "package main\ny := map[string]int{}\n".to_string(),
+        ];
+        let (stable, first) = compare_samples(&diverge);
+        assert!(!stable, "differing emissions must be reported unstable");
+        assert_eq!(first.unwrap().0, 2, "divergence is at line 2");
+    }
+
+    #[test]
+    fn gate_fails_on_an_in_gate_nondeterministic_row() {
+        // one building, byte-stable example + one building, nondeterministic one
+        let rows = vec![
+            row("stable", Some(true), 3, true),
+            row("flaky", Some(true), 3, false),
+        ];
+        assert_eq!(gate_result(&rows), 1, "a nondeterministic building example must FAIL");
+    }
+
+    #[test]
+    fn gate_passes_only_when_something_was_actually_gated() {
+        assert_eq!(gate_result(&[row("ok", Some(true), 3, true)]), 0);
+        // nothing in-gate (no build) → INCONCLUSIVE, not a vacuous pass
+        assert_eq!(gate_result(&[row("noemit", Some(false), 3, true)]), 1);
     }
 }
