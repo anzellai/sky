@@ -999,8 +999,9 @@ already contains the OS.
 > the OS plus an idle app, so it was not a safe allowance either; the base
 > line is now a measurement instead of a sum, which is why no OS row is
 > needed. "PG backends … | **6 backends total**" carried no MB value at all
-> and so contributed nothing to the sum it sat inside; its content was a
-> process count, and the count was wrong — see below.
+> and so contributed nothing to the sum it sat inside; it was a backend
+> count, not memory — reconciled below (the app pool is 6; `pg_backends_max`
+> reads 7 with the 1-Hz sampler counted in).
 
 The session row moves with the collector and with the view; see "The
 per-session figure" below before quoting it anywhere.
@@ -1092,7 +1093,7 @@ load on a throwaway e2-small. Full analysis and raw data:
 | PostgreSQL tree at idle — **`MemAvailable` cost** | **21.9 MB** |
 | PostgreSQL tree at idle — RSS sum | 76.3 MB — **do not use this**, it counts `shared_buffers` once per process and overstates by 2.6× |
 | `max_connections` rendered on 2 vCPU | **36** (= demand 14 × 2 + 3 reserved + 5 headroom) on the day of the run, matching the derivation exactly. The *derivation* has since been corrected — the demand was counting one aux-pool size per consumer rather than what each consumer asks for — so the same host renders **56** today (= demand 24 × 2 + 3 + 5). The measurement stands; the number it matched moved. |
-| Backends held under **100 concurrent sessions** | **6** — 18% of the 33 usable |
+| Peak `client backend` rows, **100 concurrent sessions** | **7** (`pg_backends_max`) — the app's 6-connection pool plus the 1-Hz sampler's own psql; the pool alone is 18% of the 33 usable |
 | Per-session cost added, `memory` session store | **~57 kB** — free, within run-to-run noise |
 | Per-session cost added, `postgres` session store | **~426 kB** (+32%), paid in the app, not in PostgreSQL |
 | Throughput cost | **none measurable** |
@@ -1109,14 +1110,18 @@ Three corrections the run forces:
    set that exercises the buffer pool can pull resident memory far above it.
 2. **"One process per active connection, ~5–10 MB each, 6–10 active" is the
    wrong shape.** The pool caps backends at
-   `dbSharedAuxPoolConfigFor(cpus, …)`, and the count did not move between 25 and
-   100 concurrent sessions: **7, flat** — `pg_backends_max` in every valid
-   config-C row of `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, and
-   **7 (occasionally 8)** at 100 / 300 / 500 sessions in
-   `docs/perf/runs/gcp-x86-capacity-20260816/README.md:49-53`. (**This said
-   6**, which is the adjacent `idle_pg_nproc` column — the idle process count
-   — read as a client-backend count. Same slip in `AGENTS.md` and
-   `docs/perf/skylive-interaction-cost.md`, corrected in the same commit.)
+   `dbSharedAuxPoolConfigFor(cpus, …)` — a **6-connection pool**
+   (`dbSharedAuxPoolSizeFor(2) = 6`), and the count did not move between 25 and
+   100 concurrent sessions. `pg_backends_max` reads **7, flat** — the 6 pool
+   backends plus the 1-Hz sampler's own psql, which counts itself as a
+   `client backend` (`sweep.tsv` at 50 and 100 sessions; one of the three
+   n=25 rows also reads 7, the other two read 0 — the mid-sweep sampler bug
+   documented in `docs/perf/runs/gcp-embed-postgres-20260815/README.md:78-82`).
+   `docs/perf/runs/gcp-x86-capacity-20260816/README.md:49-53` reads
+   **7 (occasionally 8)** at 100 / 300 / 500 sessions. (**This said 6**, which
+   is the pool — correct for the pool, but it misquoted `pg_backends_max` as 6
+   when the column reads 7. Same slip in `AGENTS.md` and
+   `docs/perf/skylive-interaction-cost.md`.)
    PostgreSQL's memory does not grow with sessions — its RSS slope against
    established sessions is zero within noise. Embedded PostgreSQL is a
    **fixed block**, not a per-session tax.

@@ -163,14 +163,17 @@ non-obvious ones as questions:
 
    **PostgreSQL is a fixed block, not a per-session tax.** Its tree's RSS
    slope against established sessions is −10 kB / +22 kB per session — zero
-   within noise (`docs/perf/skylive-interaction-cost.md:142-147`), because the
-   pool holds **7 client backends flat at 25, 50 and 100 concurrent sessions**
-   (`gcp-embed-postgres-20260815/sweep.tsv`, `pg_backends_max`, every valid
-   config-C row) and **7, occasionally 8, at 100 / 300 / 500**
+   within noise (`docs/perf/skylive-interaction-cost.md:156-158`), because the
+   pool holds a flat **6-connection pool** (`dbSharedAuxPoolSizeFor(2) = 6`) at
+   25, 50 and 100 concurrent sessions; `pg_backends_max` reads **7** — the pool
+   plus the 1-Hz sampler's own psql
+   (`gcp-embed-postgres-20260815/sweep.tsv`: 7 in the config-C rows at 50 and
+   100 and one of the three at n=25, the other two a documented sampler bug,
+   `README:78-82`) — and **7, occasionally 8, at 100 / 300 / 500**
    (`gcp-x86-capacity-20260816/README.md:49-53`, against
    `max_connections = 56`). Earlier text here and in
-   `skylive-interaction-cost.md` said **6**, which was `idle_pg_nproc` — the
-   idle process count — read as a backend count.
+   `skylive-interaction-cost.md` said `pg_backends_max` was **6**; the column
+   reads 7 (the 6 is the pool).
 
    **Sessions are the number that decides the instance** — and the per-session
    figure moves with the collector, which is why it changed. At the stock
