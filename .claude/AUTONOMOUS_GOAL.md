@@ -82,3 +82,19 @@ USER DECISIONS: (1) HOLD the PR — do secondary tracks on THIS branch, one big 
 later. (2) Next: SLIDING AUTH TOKEN (security).
 Remaining after auth: telemetry storage P1-P3, runPerform bound, (maybe) kernel-ABI
 perf lever (separate risk decision).
+
+## SLIDING AUTH — design grilled, decisions locked (2026-08-18)
+Opt-in only (automatic infeasible: runtime can't know app's auth cookie/secret — VERIFIED).
+Grill found 2 ship-blockers:
+ - G2 (revocation): USER CHOSE optional per-user revocation hook consulted at
+   RE-ISSUE time (revokedCheck : sub -> Task Error Bool). Makes long-cap sliding safe.
+ - G4 (SameSite downgrade): builder-owned cookie setter at BOTH login + re-issue
+   (single source, can't drift), default SameSite=Strict. Middleware CANNOT read
+   attrs off the request (browsers don't send them) — so login must use the builder's setter.
+Required gates (grill): idle-timeout real (verify-first-bail before re-issue, db_auth.go:1942);
+ builder REJECTS window>maxLifetime; fail-CLOSED on malformed/missing aexp/iat/exp; carry
+ window as its own signed claim `w` (avoid silent shrink near cap); wrong-cookie-name fails
+ closed (no 500, no stray mint); SSE caveat (slides on interaction POST not SSE heartbeat) —
+ document. Exposure delta (stolen token: window->aexp on continuous use) documented in
+ docs/skyauth. Layer-2 flow tests (stolen/expired/stale-claim/downgrade) — coerce-floor is
+ structurally blind to these.
