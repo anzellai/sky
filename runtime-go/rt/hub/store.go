@@ -37,6 +37,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"sky-app/rt/periodic"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -534,9 +536,41 @@ func (s *Store) writeBatch(batch []pendingItem) error {
 	return nil
 }
 
+// periodicReport routes this package's background-loop failures into the hub's
+// log. periodic deliberately does no logging of its own — see that package's
+// header — because rt/hub cannot import rt and so cannot reach rt's structured
+// logger. `log.Printf` with the `[sky.hub]` tag is what this package's
+// operators already read.
+func periodicReport(r periodic.Report) {
+	switch {
+	case r.Panic != nil:
+		log.Printf("[sky.hub] %s: cycle panicked: %v — this cycle is lost, the next tick will retry\n%s",
+			r.Loop, r.Panic, r.Stack)
+	case r.Err != nil:
+		log.Printf("[sky.hub] %s: %v", r.Loop, r.Err)
+	}
+}
+
 // pruner runs every PruneInterval and deletes rows older than
 // RetentionHours.
-func (s *Store) pruner() {
+//
+// The recover is per cycle (periodic.Every → periodic.Guard). This loop had
+// none — the exact mirror of the analytics retention pruner, which had a
+// recover at its goroutine's top level and discarded its error while this one
+// checked its error and had no recover at all. Each was missing precisely what
+// the other had, and both end the same way: retention stops for the process
+// lifetime and the telemetry tables grow without bound.
+//
+// The panic is not hypothetical. runPrune drives a database/sql driver, and
+// modernc's SQLite panics on a closed or nil underlying handle; a driver that
+// panics once panics every interval, which is why the recover is scoped to the
+// cycle rather than to the loop.
+func (s *Store) pruner() { s.runPruner(s.db) }
+
+// runPruner is the prune loop, taking its execer as a parameter so the
+// regression gate can drive the REAL loop with a database that panics. See
+// hubPruneExecer.
+func (s *Store) runPruner(db hubPruneExecer) {
 	defer s.wg.Done()
 	// Stagger the first sweep so a busy boot doesn't immediately
 	// hammer the DB with a giant DELETE. 60 s for normal config;
@@ -545,22 +579,33 @@ func (s *Store) pruner() {
 	if s.opts.pruneInterval < first {
 		first = s.opts.pruneInterval
 	}
-	timer := time.NewTimer(first)
-	defer timer.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case <-timer.C:
-			if err := s.runPrune(); err != nil {
-				log.Printf("[sky.hub] prune: %v", err)
-			}
-			timer.Reset(s.opts.pruneInterval)
-		}
+	select {
+	case <-s.stop:
+		return
+	case <-time.After(first):
 	}
+	prune := func() error { return s.runPruneOn(db) }
+	periodic.Guard("hub.pruner", periodicReport, prune)
+	periodic.Every(periodic.Config{
+		Name:     "hub.pruner",
+		Interval: s.opts.pruneInterval,
+		Stop:     s.stop,
+		Report:   periodicReport,
+		Work:     func(time.Time) error { return prune() },
+	})
 }
 
-func (s *Store) runPrune() error {
+// hubPruneExecer is the one method the pruner needs from the store. A narrow
+// interface rather than *sql.DB so the regression gate can inject an Exec that
+// panics — the behaviour the loop has to survive, and one a real driver
+// produces only when its handle is already closed.
+type hubPruneExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func (s *Store) runPrune() error { return s.runPruneOn(s.db) }
+
+func (s *Store) runPruneOn(db hubPruneExecer) error {
 	now := time.Now().UTC()
 	cutoff := now.Add(-time.Duration(s.opts.retentionHours) * time.Hour)
 	cutoffStr := formatTime(cutoff)
@@ -569,7 +614,7 @@ func (s *Store) runPrune() error {
 		`DELETE FROM telemetry_metric WHERE time < ?`,
 		`DELETE FROM telemetry_span   WHERE time < ?`,
 	} {
-		if _, err := s.db.Exec(q, cutoffStr); err != nil {
+		if _, err := db.Exec(q, cutoffStr); err != nil {
 			return err
 		}
 	}

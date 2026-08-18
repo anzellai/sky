@@ -51,6 +51,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"sky-app/rt/periodic"
+
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -834,14 +836,32 @@ func pruneConsumedJTI() {
 
 var jtiJanitorOnce sync.Once
 
+// jtiJanitorInterval is the JTI-prune period. A var so the regression gate can
+// drive several cycles in milliseconds — the defect is only visible ACROSS
+// cycles, and the shipped second one is five minutes after the first.
+var jtiJanitorInterval = 5 * time.Minute
+
+// startJTIJanitor spawns the consumed-JTI pruner.
+//
+// It was a bare `for { time.Sleep(...); pruneConsumedJTI() }` with no recover.
+// `pruneConsumedJTI` walks a sync.Map and deletes from it; a panic in there —
+// or in anything it grows to call — ended the janitor for the process
+// lifetime, and `consumedJTI` then grew without bound for as long as the
+// process ran. Low severity because the map only grows with successful URL
+// handshakes, but it is the same shape as the rest of the class and is fixed
+// with the same mechanism rather than left as the one that got away.
+//
+// The loop has no stop channel: it genuinely runs for the process lifetime. A
+// nil periodic.Config.Stop is how that is spelled — select on a nil channel
+// blocks forever — rather than an unreachable case nobody maintains.
 func startJTIJanitor() {
 	jtiJanitorOnce.Do(func() {
-		go func() {
-			for {
-				time.Sleep(5 * time.Minute)
-				pruneConsumedJTI()
-			}
-		}()
+		go periodic.Every(periodic.Config{
+			Name:     "console.jti-janitor",
+			Interval: jtiJanitorInterval,
+			Report:   periodicReport,
+			Work:     func(time.Time) error { pruneConsumedJTI(); return nil },
+		})
 	})
 }
 
