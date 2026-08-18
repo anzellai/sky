@@ -74,3 +74,11 @@ MANDATORY SEQUENCING (grill found the crux BROKEN — do not skip):
   Grill verdicts: G1 BREAKS(precedence) G2 UNPROVEN(DCE) G3 HOLDS(auth-del safe)
   G4 BREAKS(migrate self-proof proxy) G5 BREAKS(4/111) G6 was over-scope — user
   chose full scope anyway, so the crux-fix is now REQUIRED not optional.
+
+## PROGRESS (2026-08-18, later)
+CONFIG fully closed + PERF render levers + docs sweep + CSRF bundled-app isolation
+(user-found) all merged on feat/config-perf-followup @ e81ce2fd, milestone green.
+USER DECISIONS: (1) HOLD the PR — do secondary tracks on THIS branch, one big PR
+later. (2) Next: SLIDING AUTH TOKEN (security).
+Remaining after auth: telemetry storage P1-P3, runPerform bound, (maybe) kernel-ABI
+perf lever (separate risk decision).
