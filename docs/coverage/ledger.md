@@ -20,9 +20,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 149 |
-| covered by the new corpus (>= Asserted) | 133 |
-| verdict `stronger` | 128 |
+| surfaces | 150 |
+| covered by the new corpus (>= Asserted) | 134 |
+| verdict `stronger` | 129 |
 | verdict `equal` | 21 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
@@ -138,6 +138,7 @@ None.
 | `lang.constructs` | language | Asserted | Falsified | stronger |
 | `lsp` | tooling | Asserted | Falsified | stronger |
 | `meta.config-effective-values` | meta | None | Falsified | stronger |
+| `meta.config-migrate` | meta | None | Asserted | stronger |
 | `meta.config-migration` | meta | None | Falsified | stronger |
 | `meta.config-surface` | meta | None | Falsified | stronger |
 | `meta.coverage-accounting` | meta | None | Falsified | stronger |
@@ -258,7 +259,7 @@ None.
 | `apps-relay` | T1 | PROVEN | `http.middleware-ratelimit` · `http.sse-websocket` · `runtime.panic-classes` |
 | `cli-verbs` | T1 | PROVEN | `cli.init` · `cli.clean` · `cli.watch` · `cli.db` · `cli.install` · `cli.update` · `cli.upgrade` |
 | `config-matrix` | T1 | PROVEN | `meta.config-effective-values` |
-| `config-migrate` | T1 | not proven | — (none declared) |
+| `config-migrate` | T1 | not proven | `meta.config-migrate` |
 | `config-migration` | T1 | PROVEN | `meta.config-migration` |
 | `config-surface` | T1 | PROVEN | `meta.config-surface` |
 | `conformance` | T1 | PROVEN | `db.sqlite` · `db.codec-store` · `auth.password-session` |

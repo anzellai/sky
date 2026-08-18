@@ -235,7 +235,9 @@
       "falsifier_mutation": "",
       "falsifier_proven": false,
       "summary": "sky config migrate rewrites a legacy fixture end-to-end (every key leaves sky.toml, the builders land in the right destination, a re-check is clean) and proposes zero undeclared changes when planning a copy of examples/19-skyforum",
-      "surfaces": [],
+      "surfaces": [
+        "meta.config-migrate"
+      ],
       "tier": "T1"
     },
     "config-migration": {
@@ -374,7 +376,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 153,
+      "expected_assertions": 154,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -642,11 +644,11 @@
   "summary": {
     "stdlib_entries": 1798,
     "stdlib_modules": 88,
-    "surfaces_covered": 133,
+    "surfaces_covered": 134,
     "surfaces_covered_pct": 89.3,
     "surfaces_equal": 21,
-    "surfaces_stronger": 128,
-    "surfaces_total": 149,
+    "surfaces_stronger": 129,
+    "surfaces_total": 150,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -2096,6 +2098,34 @@
       },
       "description": "each covered setting's effective value, observed from a running binary in every combination of environment / sky.toml / withX, as the baseline a moved default is compared against",
       "id": "meta.config-effective-values",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "gate `config-migrate`",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — no automatic legacy→withX converter existed",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "the `sky config migrate` rewriter applies the migration table end-to-end (sky.toml stripped, a typed config binding written), proves the migrated effective config identical to the legacy one, and hard-errors on an undeclared move",
+      "id": "meta.config-migrate",
       "verdict": "stronger"
     },
     {

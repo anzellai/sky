@@ -2963,7 +2963,7 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// 151 -> 153: `sky config migrate` shipped — a new CLI verb and a new
 /// registered `config-migrate` gate — which added two surfaces (`surfaces_total`
 /// 147 -> 149), so `surfaces.len() + 4` is now 153.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 153;
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 154;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
