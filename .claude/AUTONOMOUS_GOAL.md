@@ -98,3 +98,29 @@ Required gates (grill): idle-timeout real (verify-first-bail before re-issue, db
  document. Exposure delta (stolen token: window->aexp on continuous use) documented in
  docs/skyauth. Layer-2 flow tests (stolen/expired/stale-claim/downgrade) — coerce-floor is
  structurally blind to these.
+
+## revokeUser — GRILLED, design reshaped (2026-08-18). DO NOT build as first designed.
+Grill BREAKS: G1 silent-miss (sub has 3 uncoordinated reps; signToken does NOT stamp
+sub — app-supplied; %v on float64 misformats ids>=1e8 -> revoke misses silently),
+G2 Live-kill INFEASIBLE on current store (event path is sid-keyed, no JWT/iat/sub;
+only ConsoleIdentity known, app user is in opaque model gob; no user->session index),
+G3 prune footgun (app maxTTL<real TTL resurrects), G4 name misleads (kill-existing !=
+lock-out; compromise wants lock-out).
+REQUIRED reshape:
+ 1. canonicalSub(any)->string helper used on BOTH write + middleware read (float64 via
+    strconv.FormatInt never %v; reject non-integral/oob). revokeUser takes STRING sub,
+    not Int (else can't express OAuth subs).
+ 2. Split into THREE named pieces:
+    - Auth.invalidateSessions / revokeSessions = kill-existing (revoked_at epoch,
+      checked at token re-issue/verify). Needs the token to CARRY a sub (tie to
+      signSlidingToken including sub).
+    - Auth.disableUser = lock-out (users.disabled flag checked in login before pw
+      verify, db_auth.go:2035-2062). This is what actually stops re-login.
+    - Live-session active kill = INFEASIBLE without a session-schema change (app-identity
+      field on liveSession/storableSession + user->sid index + DeleteByUser + Broker
+      cross-replica). SCOPE DECISION for user.
+ 3. No auto-prune (bounded by revoked-user count; TTL-parameterised prune is a footgun).
+ 4. Gates must include numeric-sub + id>=1e8 cases (existing fixtures are all small
+    string subs -> would be green while broken).
+PENDING: sliding-auth IMPLEMENTATION landing first (it owns the revokedCheck hook +
+whether the sliding token carries sub). Then synthesize + user decides Live-kill scope.
