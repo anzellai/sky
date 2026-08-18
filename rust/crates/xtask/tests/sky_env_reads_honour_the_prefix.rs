@@ -85,6 +85,11 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
     ),
     ("SKY_INGEST_TOKEN", "OTLP ingest bearer; shared between app and collector"),
     ("SKY_OBSERVABILITY_BUFFER", "push-exporter tuning; set by the collector deploy"),
+    (
+        "SKY_TELEMETRY_AGGREGATION_WINDOW",
+        "telemetry counter-coalescing window; an operator/deploy storage setting, \
+         same for every app on the host, so a per-app prefix would defeat it",
+    ),
     ("SKY_OBSERVABILITY_PUSH_INTERVAL_MS", "push-exporter tuning"),
     ("SKY_PARENT_URL", "control-plane callback URL; injected by the plane"),
     (

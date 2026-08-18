@@ -173,24 +173,29 @@ func TestRunPerform_SessionDoneEscapesParkedPermit(t *testing.T) {
 func TestRunPerform_DependentPerformDoesNotDeadlock(t *testing.T) {
 	var ranChild int64
 	childDone := make(chan struct{})
+	var closeOnce sync.Once
+	toMsg := func(r any) any { return r } // identity: the Msg IS the task result
 
-	// The child perform's Task simply records that it ran.
+	// The child perform's Task records that it ran and tags its result "child".
 	childTask := func() any {
 		atomic.StoreInt64(&ranChild, 1)
-		return 0
+		return "child"
 	}
-	toMsg := func(r any) any { return r }
-
-	// update: on the FIRST dispatch (parent's result) emit a Cmd.perform for
-	// the child; on the child's dispatch, signal completion + emit none.
-	var dispatches int64
+	// Msg-keyed state machine — NOT a dispatch counter (bootstrap must not be
+	// mistaken for the parent, and every non-first dispatch must not re-close
+	// the channel). The parent perform's result ("parent") emits the child
+	// perform; the child's result ("child") signals completion exactly once.
 	app := &liveApp{
 		update: func(msg, model any) any {
-			if atomic.AddInt64(&dispatches, 1) == 1 {
+			switch msg {
+			case "parent":
 				return SkyTuple2{V0: model, V1: cmdT{kind: "perform", task: childTask, toMsg: toMsg}}
+			case "child":
+				closeOnce.Do(func() { close(childDone) })
+				return SkyTuple2{V0: model, V1: cmdT{kind: "none"}}
+			default:
+				return SkyTuple2{V0: model, V1: cmdT{kind: "none"}}
 			}
-			close(childDone)
-			return SkyTuple2{V0: model, V1: cmdT{kind: "none"}}
 		},
 		view: func(model any) any {
 			return velement("div", nil, []any{vtext("x")})
@@ -204,11 +209,13 @@ func TestRunPerform_DependentPerformDoesNotDeadlock(t *testing.T) {
 		handlers:  map[string]any{},
 	}
 	sess.app.Store(app)
-	app.dispatch(sess, "bootstrap") // seed prevTree
+	app.dispatch(sess, "bootstrap") // seed prevTree; msg "bootstrap" -> none
 	seedPerfSem(sess, 1)            // sole permit — the deadlock trap
 
-	// Parent perform. Its update emits the child perform (fire-and-forget).
-	go app.runPerform(sess, func() any { return 0 }, toMsg, context.Background())
+	// Parent perform: its result "parent" makes update emit the child perform
+	// (fire-and-forget). Under a cap of 1, the parent must release its permit
+	// on return so the child can acquire it — no join, no cycle.
+	go app.runPerform(sess, func() any { return "parent" }, toMsg, context.Background())
 
 	select {
 	case <-childDone:
