@@ -1,0 +1,12 @@
+BenchmarkHtmlToVNode_Before/vnodes=101-8         	   88393	     41549 ns/op	       101.0 vnodes	   50928 B/op	     552 allocs/op
+BenchmarkHtmlToVNode_Before/vnodes=101-8         	   87806	     41187 ns/op	       101.0 vnodes	   50928 B/op	     552 allocs/op
+BenchmarkHtmlToVNode_Before/vnodes=101-8         	   88396	     40834 ns/op	       101.0 vnodes	   50928 B/op	     552 allocs/op
+BenchmarkHtmlToVNode_Before/vnodes=965-8         	    8589	    401813 ns/op	       965.0 vnodes	  489728 B/op	    5253 allocs/op
+BenchmarkHtmlToVNode_Before/vnodes=965-8         	    8563	    405247 ns/op	       965.0 vnodes	  489728 B/op	    5253 allocs/op
+BenchmarkHtmlToVNode_Before/vnodes=965-8         	    8624	    405860 ns/op	       965.0 vnodes	  489728 B/op	    5253 allocs/op
+BenchmarkHtmlToVNode_After/vnodes=101-8          	  285232	     12609 ns/op	       101.0 vnodes	   32128 B/op	     197 allocs/op
+BenchmarkHtmlToVNode_After/vnodes=101-8          	  286711	     12489 ns/op	       101.0 vnodes	   32128 B/op	     197 allocs/op
+BenchmarkHtmlToVNode_After/vnodes=101-8          	  281511	     12502 ns/op	       101.0 vnodes	   32128 B/op	     197 allocs/op
+BenchmarkHtmlToVNode_After/vnodes=965-8          	   29990	    119813 ns/op	       965.0 vnodes	  308016 B/op	    1871 allocs/op
+BenchmarkHtmlToVNode_After/vnodes=965-8          	   29989	    120021 ns/op	       965.0 vnodes	  308016 B/op	    1871 allocs/op
+BenchmarkHtmlToVNode_After/vnodes=965-8          	   30124	    120222 ns/op	       965.0 vnodes	  308016 B/op	    1871 allocs/op

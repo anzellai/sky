@@ -1,0 +1,4 @@
+pass	before_allocs	after_allocs	before_B	after_B	before_ns	after_ns
+26-ui-showcase full pipeline (384 el)	17098	14163	1366970	1150632	1321389	1028879
+showcase HtmlToVNode only	3849	914	391080	174760	373004	86788
+showcase ViewOnly (unchanged)	12517	12517	541777	541779	656541	656094
