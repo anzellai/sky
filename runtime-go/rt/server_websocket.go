@@ -47,6 +47,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+
+	"sky-app/rt/periodic"
+
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -386,27 +389,36 @@ func serveWebSocketUpgrade(w http.ResponseWriter, r *http.Request, cfg webSocket
 		runWsServerCallback(cfg.onConnect, sockADT, "onConnect")
 	}
 
-	// Heartbeat: same pattern as the client side.
+	// Heartbeat: same pattern as the client side, with the same per-cycle
+	// recover.
+	//
+	// `close(hbDone)` is DEFERRED rather than written on each exit path, and
+	// that is the load-bearing half. This handler waits on hbDone before
+	// returning, so a panic in the heartbeat used to leave hbDone unclosed and
+	// the HTTP handler goroutine blocked on it FOREVER — holding the
+	// connection, its buffers and a server goroutine, for one panic in a ping.
+	// A guard has to release whoever is waiting on the work it just lost.
 	hbDone := make(chan struct{})
+	stopped := make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(wsDefaultPingInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-h.closed_ch:
-				close(hbDone)
-				return
-			case <-ticker.C:
+		defer close(hbDone)
+		periodic.Every(periodic.Config{
+			Name:     "ws.server-heartbeat",
+			Interval: wsDefaultPingInterval,
+			Stop:     h.closed_ch,
+			AlsoStop: stopped,
+			Report:   periodicReport,
+			Work: func(time.Time) error {
 				pingCtx, pcancel := context.WithTimeout(h.ctx, 10*time.Second)
 				err := h.conn.Ping(pingCtx)
 				pcancel()
 				if err != nil {
 					h.Close()
-					close(hbDone)
-					return
+					close(stopped)
 				}
-			}
-		}
+				return nil
+			},
+		})
 	}()
 	defer func() {
 		<-hbDone

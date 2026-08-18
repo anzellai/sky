@@ -37,6 +37,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"sky-app/rt/periodic"
 )
 
 // JobID identifies a queued job. Opaque to callers; backend-specific
@@ -374,6 +376,45 @@ func (w *Worker) Stop(timeout time.Duration) bool {
 	}
 }
 
+// periodicReport routes this package's background-loop failures into the jobs
+// log. periodic deliberately does no logging of its own — see that package's
+// header — because rt/jobs cannot import rt and so cannot reach rt's
+// structured logger. `log.Printf` with the `[sky.jobs]` tag is what this
+// package's operators already read.
+// No stack is logged, deliberately. Capturing one is production-gated policy
+// that lives in exactly one place (rt/panic_log.go's LogRecoveredPanic), and
+// rt/jobs cannot import rt — rt imports jobs. Keeping a second copy of the
+// policy here is the shape of defect that file exists to close, and an
+// ungated capture would put internal frames in a production log, so the panic
+// value is logged without one. rt/hub, which imports rt the other way round,
+// does route through LogRecoveredPanic.
+func periodicReport(r periodic.Report) {
+	switch {
+	case r.Recovered != nil:
+		log.Printf("[sky.jobs] %s: cycle panicked: %v — this job is lost, the worker continues",
+			r.Loop, r.Recovered)
+	case r.Err != nil:
+		log.Printf("[sky.jobs] %s: %v", r.Loop, r.Err)
+	}
+}
+
+// run is the claim-and-dispatch poll loop.
+//
+// # Why the recover is per iteration
+//
+// `safeHandle` already recovers the USER's handler, so the worker survived a
+// panicking job. Nothing recovered the surrounding machinery: a panic in
+// `Claim`, in `LookupHandler`, in an `OnInflight`/`OnSuccess` callback, or in
+// the store's `Complete`/`Reschedule`/`DeadLetter` unwound straight out of
+// `run`, past the loop, and killed the worker for the process lifetime. Every
+// job on that queue then sat unclaimed forever with no log line — the queue
+// simply stopped, and `Stop` reported a clean exit because `done` closes on
+// the way out either way.
+//
+// periodic.Guard scopes the recover to ONE claim-and-dispatch. The job that
+// panicked is lost — it stays claimed until its lease expires and is then
+// redelivered, which is at-least-once behaving as designed — and the worker
+// takes the next one.
 func (w *Worker) run() {
 	defer close(w.done)
 	defer w.stopped.Store(true)
@@ -383,22 +424,45 @@ func (w *Worker) run() {
 			return
 		default:
 		}
-		now := time.Now()
-		rec, err := w.store.Claim(w.queue, now)
-		if err == ErrNoJob {
-			time.Sleep(w.pollInterval)
-			continue
-		}
-		if err != nil {
-			// Storage error — backoff briefly + retry.
-			time.Sleep(w.pollInterval * 5)
-			continue
-		}
-		w.dispatch(rec)
+		periodic.Guard("jobs.worker."+w.queue, periodicReport, w.claimAndDispatch)
 	}
 }
 
-func (w *Worker) dispatch(rec JobRecord) {
+// claimAndDispatch is ONE iteration of the worker loop: claim a job, dispatch
+// it, or sleep. It returns the storage error rather than swallowing it — a
+// store that has been failing every claim for an hour is a fact an operator
+// needs, and `continue` after a bare backoff is how it stayed invisible.
+func (w *Worker) claimAndDispatch() error {
+	rec, err := w.store.Claim(w.queue, time.Now())
+	if err == ErrNoJob {
+		time.Sleep(w.pollInterval)
+		return nil
+	}
+	if err != nil {
+		// Storage error — backoff briefly + retry. Reported, not discarded.
+		time.Sleep(w.pollInterval * 5)
+		return fmt.Errorf("claiming from queue %q: %w", w.queue, err)
+	}
+	return w.dispatch(rec)
+}
+
+// dispatch runs one claimed job and records its outcome.
+//
+// # Why every store call's error is now returned
+//
+// These three were `_ = w.store.Complete(...)`, `_ = w.store.DeadLetter(...)`
+// and `_ = w.store.Reschedule(...)`. The discarded `Complete` is the worst of
+// the three by a distance: a job whose handler SUCCEEDED but whose completion
+// write failed stays claimed, its lease expires, it is redelivered, it
+// succeeds again, and its completion fails again. At-least-once delivery
+// becomes an INFINITE redelivery loop, running the handler's side effects
+// forever, and the only evidence is that the queue never drains. With the
+// error discarded there was nothing to correlate that with.
+//
+// The callbacks still fire on a failed write, deliberately: OnSuccess records
+// that the handler succeeded, which it did. What failed is the bookkeeping,
+// and that is what the returned error says.
+func (w *Worker) dispatch(rec JobRecord) error {
 	if w.OnInflight != nil {
 		w.OnInflight(rec.Queue, +1)
 		defer w.OnInflight(rec.Queue, -1)
@@ -408,11 +472,15 @@ func (w *Worker) dispatch(rec JobRecord) {
 		// No registered handler — permanent failure. Goes
 		// straight to dead-letter (retrying won't help; the
 		// missing code isn't going to appear).
-		_ = w.store.DeadLetter(rec.ID, "no handler registered for "+rec.Name)
+		err := w.store.DeadLetter(rec.ID, "no handler registered for "+rec.Name)
 		if w.OnDeadLetter != nil {
 			w.OnDeadLetter(rec.Queue)
 		}
-		return
+		if err != nil {
+			return fmt.Errorf("dead-lettering job %s (%s, no handler): %w — "+
+				"it stays claimed and will be redelivered", rec.ID, rec.Name, err)
+		}
+		return nil
 	}
 
 	start := time.Now()
@@ -420,11 +488,16 @@ func (w *Worker) dispatch(rec JobRecord) {
 	elapsed := time.Since(start)
 
 	if err == nil {
-		_ = w.store.Complete(rec.ID)
+		completeErr := w.store.Complete(rec.ID)
 		if w.OnSuccess != nil {
 			w.OnSuccess(rec.Queue, elapsed)
 		}
-		return
+		if completeErr != nil {
+			return fmt.Errorf("completing job %s (%s): %w — the handler SUCCEEDED but the "+
+				"job is still claimed; it will be redelivered when its lease expires and "+
+				"the handler's side effects will run again", rec.ID, rec.Name, completeErr)
+		}
+		return nil
 	}
 
 	attempts := rec.Attempts + 1
@@ -433,19 +506,28 @@ func (w *Worker) dispatch(rec JobRecord) {
 	}
 	if attempts >= MaxAttempts {
 		// Move to dead-letter with the final error chain.
-		_ = w.store.DeadLetter(rec.ID,
+		dlErr := w.store.DeadLetter(rec.ID,
 			fmt.Sprintf("max attempts (%d) reached: %v",
 				MaxAttempts, err))
 		if w.OnDeadLetter != nil {
 			w.OnDeadLetter(rec.Queue)
 		}
-		return
+		if dlErr != nil {
+			return fmt.Errorf("dead-lettering job %s (%s) after %d attempts: %w — "+
+				"it stays claimed and will be redelivered past MaxAttempts",
+				rec.ID, rec.Name, attempts, dlErr)
+		}
+		return nil
 	}
 	// Retry with backoff.
 	rec.Attempts = attempts
 	rec.NextRunAt = time.Now().Add(BackoffFor(attempts))
 	rec.LastError = err.Error()
-	_ = w.store.Reschedule(rec)
+	if rescheduleErr := w.store.Reschedule(rec); rescheduleErr != nil {
+		return fmt.Errorf("rescheduling job %s (%s) for attempt %d: %w — its backoff "+
+			"was not recorded", rec.ID, rec.Name, attempts, rescheduleErr)
+	}
+	return nil
 }
 
 // safeHandle wraps the user's handler in panic recovery — a

@@ -3052,6 +3052,18 @@ pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
 /// printed no `ASSERTIONS:` line is also a fail — a body that cannot establish
 /// a count reports 0, and 0 is vacuous.
 fn go_analytics_gate(ctx: &GateCtx, test: &str, expected: u64) -> GateOutcome {
+    go_runtime_gate(ctx, "./rt/", test, expected)
+}
+
+/// Runs one Go test in a named `runtime-go` package.
+///
+/// `go_analytics_gate` delegates here rather than the two existing side by
+/// side: the periodic-goroutine gates added later live in `./rt/hub/` and
+/// `./rt/jobs/`, which cannot import `rt`, so the package had to become a
+/// parameter. Everything else about the contract is unchanged — a missing Go
+/// toolchain FAILS naming what to install, and a test that printed no
+/// `ASSERTIONS:` line fails rather than reporting a vacuous 0.
+fn go_runtime_gate(ctx: &GateCtx, pkg: &str, test: &str, expected: u64) -> GateOutcome {
     let dir = ctx.repo_root.join("runtime-go");
     if !dir.is_dir() {
         return GateOutcome::new(false, 0, format!("{} does not exist", dir.display()));
@@ -3067,7 +3079,7 @@ fn go_analytics_gate(ctx: &GateCtx, test: &str, expected: u64) -> GateOutcome {
             "-run",
             &format!("^{test}$"),
             "-v",
-            "./rt/",
+            pkg,
         ])
         .current_dir(&dir)
         .env_remove("GOFLAGS")
@@ -3175,4 +3187,67 @@ pub const ERASURE_INDEX_EXPECTED: u64 = 5;
 
 pub fn erasure_path_uses_an_index(ctx: &GateCtx) -> GateOutcome {
     go_analytics_gate(ctx, "TestErasurePathUsesAnIndex", ERASURE_INDEX_EXPECTED)
+}
+
+// ---------------------------------------------------------------------------
+// Periodic-goroutine gates.
+//
+// The class the analytics retention pruner above turned out to be an instance
+// of. A background loop that recovers at its GOROUTINE's top level, or
+// discards a write's error, fails silently and permanently: one panic and the
+// loop is dead for the process lifetime with no log line, and a write that has
+// never once succeeded is indistinguishable from one that always does.
+//
+// Eight sites carried it. The gates registered here are the three that close
+// the class rather than one instance of it:
+//
+//   * the AST audit, which fails on the NEXT one;
+//   * the session-mutex discipline, the highest-severity instance — a
+//     panicking Time.every tick used to leave `sess.mu` locked forever, so the
+//     user's tab froze permanently on Sky's pinned default app shape;
+//   * the jobs worker's completion write, whose discarded error turned
+//     at-least-once delivery into an INFINITE redelivery loop.
+//
+// The remaining per-site gates run under `go test ./rt/...`; these three are
+// registered because they are the ones whose silent absence would cost most.
+// ---------------------------------------------------------------------------
+
+/// Two: the audit found loops at all (non-vacuous), and none was unaccounted.
+/// FIXED rather than the number of loops audited — a dynamic count would move
+/// with every loop added to the runtime, and the exact-count rule exists to
+/// catch a body that stopped asserting, not to track the tree's size.
+pub const PERIODIC_LOOP_AUDIT_EXPECTED: u64 = 2;
+
+pub fn periodic_loops_recover_per_cycle(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestPeriodicLoopsRecoverPerCycle",
+        PERIODIC_LOOP_AUDIT_EXPECTED,
+    )
+}
+
+/// Two: the tick fired at all, and `sess.mu` was acquirable afterwards.
+pub const TIME_EVERY_MUTEX_EXPECTED: u64 = 2;
+
+pub fn time_every_panic_leaves_the_mutex_acquirable(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestTimeEveryPanicLeavesTheSessionMutexAcquirable",
+        TIME_EVERY_MUTEX_EXPECTED,
+    )
+}
+
+/// Three: dispatch returned an error, it wraps the store's, and Complete was
+/// called exactly once.
+pub const JOBS_COMPLETE_FAILURE_EXPECTED: u64 = 3;
+
+pub fn jobs_complete_failure_is_reported(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/jobs/",
+        "TestJobsCompleteFailureIsReported",
+        JOBS_COMPLETE_FAILURE_EXPECTED,
+    )
 }

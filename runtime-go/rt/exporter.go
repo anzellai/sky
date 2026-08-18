@@ -52,6 +52,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"sky-app/rt/periodic"
 	"sky-app/rt/telemetry"
 )
 
@@ -218,7 +219,12 @@ type HubExporter struct {
 	spool           spool
 	spoolCfg        spoolConfig
 	spoolWriteFails int64 // atomic
-	spoolReplayed   atomic.Bool
+	// spoolAckFails counts Acks that failed after a successful push. Each one
+	// is a spool row that will be replayed on the next boot; a rising count is
+	// the signal that the spool is growing without bound, which the discarded
+	// `_ = sp.Ack(...)` used to hide completely.
+	spoolAckFails int64 // atomic
+	spoolReplayed atomic.Bool
 
 	// Test hooks — set via SetTransport for in-test stub server.
 	// nil → use httpC.
@@ -551,17 +557,22 @@ func (e *HubExporter) Start(ctx context.Context) {
 		// either waits for a drainer that exists or skips a wait for one that
 		// never will.
 		e.started.Store(true)
-		// Use SafeGo-equivalent — the drainer runs under defer/
-		// recover so any panic inside batching/push doesn't kill
-		// the process. We don't import SafeGo here because the rt
-		// package init ordering means SafeGo might not be wired
-		// when tests construct the exporter directly; using a
-		// local defer/recover keeps the test surface simple.
+		// The drainer's recover is INSIDE drain(), scoped to one loop
+		// iteration — see drain() for why. This deferred function is the
+		// goroutine's exit bookkeeping only; it keeps a recover as a last
+		// resort so a panic from the bookkeeping itself still closes doneCh
+		// rather than deadlocking every Stop, and that recover is now
+		// unreachable from the work.
+		//
+		// It used to be the ONLY recover: a panic anywhere in batching or
+		// push unwound past the loop, was swallowed here, and export stopped
+		// permanently — while `doneCh` still closed, so `Stop()` reported a
+		// clean drain. A silent failure that actively lied about itself.
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
 					fmt.Fprintf(os.Stderr,
-						"[sky.hub-exporter] drainer panicked: %v\n", r)
+						"[sky.hub-exporter] drainer exit path panicked: %v\n", r)
 				}
 				// Before doneCh, so a Stop that returns on doneCh cannot
 				// observe a queue that still looks live. Ordered after the
@@ -574,17 +585,10 @@ func (e *HubExporter) Start(ctx context.Context) {
 		}()
 		// Spool retention sweep (PR 5). Runs in its own goroutine
 		// so the drainer hot loop stays clean. Skipped when no
-		// spool is attached (memory-only / disabled).
+		// spool is attached (memory-only / disabled). Its recover is per
+		// sweep, inside spoolRetentionSweep.
 		if e.activeSpool() != nil {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Fprintf(os.Stderr,
-							"[sky.hub-exporter] spool sweep panicked: %v\n", r)
-					}
-				}()
-				e.spoolRetentionSweep(ctx, e.spoolCfg)
-			}()
+			go e.spoolRetentionSweep(ctx, e.spoolCfg)
 		}
 		// Register shutdown hook — runs before srv.Close so any
 		// pending push reaches the hub within the orchestrator
@@ -879,26 +883,61 @@ func (e *HubExporter) drain(ctx context.Context) {
 			// pushed before this goroutine returns, and Stop waits on doneCh —
 			// which is what makes "the exporter drains on SIGTERM" a guarantee
 			// rather than a signal and a hope.
-			drainAll()
+			//
+			// Guarded like every other cycle: a panic in the final drain must
+			// not skip the exit bookkeeping that closes doneCh, or Stop blocks
+			// for its whole budget and reports a lost tail it did not lose.
+			periodic.Guard("hub-exporter.drain-final", exporterPeriodicReport,
+				func() error { drainAll(); return nil })
 			return
 
 		case done := <-e.flushReq:
 			// A caller is waiting. Drain to empty before closing `done`: every
 			// item enqueued before the request must have been pushed by the
 			// time the caller observes the close.
-			drainAll()
-			close(done)
+			//
+			// `close(done)` is DEFERRED inside the guard rather than written
+			// after it. A panic in drainAll would otherwise leave the waiting
+			// Flush caller blocked until its own timeout with no explanation —
+			// so the guard must not merely keep the drainer alive, it has to
+			// release whoever is waiting on this cycle.
+			periodic.Guard("hub-exporter.drain-flush", exporterPeriodicReport, func() error {
+				defer close(done)
+				drainAll()
+				return nil
+			})
 
 		case <-tick.C:
-			flushBatch()
+			periodic.Guard("hub-exporter.drain-tick", exporterPeriodicReport,
+				func() error { flushBatch(); return nil })
 
 		case it := <-e.queue:
 			batch = append(batch, it)
 			batchBytes += len(it.payload)
 			if len(batch) >= e.batchMax || batchBytes >= e.batchBytes {
-				flushBatch()
+				periodic.Guard("hub-exporter.drain-full-batch", exporterPeriodicReport,
+					func() error { flushBatch(); return nil })
 			}
 		}
+	}
+}
+
+// exporterPeriodicReport routes the exporter's loop failures to stderr, the
+// same channel every other line in this file uses. It is NOT the telemetry
+// ring: the exporter is what drains that ring, so reporting an export failure
+// into it would make the failure's own record depend on the machinery that
+// just failed.
+func exporterPeriodicReport(r periodic.Report) {
+	switch {
+	case r.Recovered != nil:
+		// LogRecoveredPanic is the one production-gated stack path
+		// (rt/panic_log.go); it prints the class and persists the frame rather
+		// than putting internal frames in a production log.
+		LogRecoveredPanic("sky.hub-exporter", r.Loop, r.Recovered)
+		fmt.Fprintf(os.Stderr, "[sky.hub-exporter] %s: cycle panicked: %v — "+
+			"this cycle is lost, the exporter continues\n", r.Loop, r.Recovered)
+	case r.Err != nil:
+		fmt.Fprintf(os.Stderr, "[sky.hub-exporter] %s: %v\n", r.Loop, r.Err)
 	}
 }
 

@@ -156,11 +156,29 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786922602
     },
+    "jobs-complete-failure-is-reported": {
+      "mutation": "jobs-complete.discard-the-store-error",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1787038666
+    },
+    "live-time-every-mutex-survives-a-panic": {
+      "mutation": "time-every.unlock-only-on-the-happy-path",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1787038666
+    },
     "lsp": {
       "mutation": "lsp.hover-echoes-the-token",
       "observed": "PROVEN",
       "outcome": "as-declared",
       "proven_at_unix": 1786556125
+    },
+    "periodic-loops-recover-per-cycle": {
+      "mutation": "periodic-loops.recover-at-the-goroutine-top-level",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1787038666
     },
     "reject": {
       "mutation": "reject.neutralise-axis",

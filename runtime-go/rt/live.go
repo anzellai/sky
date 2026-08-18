@@ -40,6 +40,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"sky-app/rt/periodic"
 	"sky-app/rt/telemetry"
 )
 
@@ -5828,6 +5829,30 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	}
 }
 
+// rotateCancelSub closes the current per-dispatch cancel channel and installs
+// a fresh one, under cancelSubMu.
+//
+// The unlock is DEFERRED, and that is the point of the helper rather than an
+// incidental style choice. `close` on an already-closed channel panics — which
+// is the exact race Bug #339 introduced this mutex to prevent, so it is the
+// one operation here most likely to. Written inline with a manual
+// `cancelSubMu.Unlock()`, that panic escaped the unlock and left cancelSubMu
+// held for the lifetime of the process: every later dispatch on the session
+// blocks here forever on a mutex nobody will release, the tab freezes, and the
+// recover in `dispatch` reports the panic while the session it happened on is
+// already unrecoverable.
+//
+// Found while fixing the Time.every ticker below, which carried the same fault
+// in the same shape — a lock taken across an operation that can panic, with
+// the unlock on the happy path only. It is the same defect class as the
+// periodic-goroutine one and is fixed here for the same reason.
+func (sess *liveSession) rotateCancelSub() {
+	sess.cancelSubMu.Lock()
+	defer sess.cancelSubMu.Unlock()
+	close(sess.cancelSub)
+	sess.cancelSub = make(chan struct{})
+}
+
 // flattenSubs walks a Sub value, recursing into "batch", and appends
 // every non-batch leaf (kind = "every", "subscribeTopic", "none", …)
 // to `out`. Pure walk — no I/O, no registry touch. Used by
@@ -5885,10 +5910,7 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	// non-dispatch caller need the contract enforced on the field
 	// itself. The crit-section is tiny (one close, one make) so
 	// contention is negligible even under tight Time.every ticks.
-	sess.cancelSubMu.Lock()
-	close(sess.cancelSub)
-	sess.cancelSub = make(chan struct{})
-	sess.cancelSubMu.Unlock()
+	sess.rotateCancelSub()
 
 	if app.subscriptions == nil {
 		// No subscriptions at all → tear down anything that was
@@ -5967,88 +5989,117 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	// is safe: select on a nil channel blocks forever.
 	done := sess.done
 	toMsg := sub.toMsg
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-cancel:
-				return
-			case <-done:
-				return
-			case t := <-ticker.C:
-				sess.mu.Lock()
-				msg := toMsg
-				// If toMsg is a function, call it with current time millis
-				if isFunc(msg) {
-					msg = sky_call(toMsg, t.UnixMilli())
-				}
-				// Capture lastShippedBody BEFORE dispatch so we can
-				// detect a tick whose update produced a view that
-				// byte-equals what the client already has (the
-				// typical Time.every shape — heartbeat polling,
-				// once-per-second refresh, etc.). Suppression lives
-				// at the SSE callsite (not inside dispatch) because
-				// the HTTP /_sky/event response path needs the body
-				// to compute structural patches; only the SSE tick
-				// can safely silence-drop when the view didn't move.
-				prevShipped := sess.lastShippedBody
-				// Cycle 3 P50a / Gap C11: capture prevTree BEFORE
-				// dispatch so the structural diff can run against
-				// the tree the client last saw.
-				prevTreeBeforeDispatch := sess.prevTree
-				body := app.dispatch(sess, msg)
-				newTreeAfterDispatch := sess.prevTree
-				// Cycle 3 P41 / Gap C6: snapshot under the lock, then
-				// release before the JSON marshal. Time.every ticks
-				// on every session that subscribes — the lock-held
-				// marshal previously serialised through sess.mu at
-				// every interval, amplifying contention on busy
-				// sessions. Advancing lastShippedBody stays under
-				// the lock so the next tick's prevShipped read sees
-				// the up-to-date value.
-				var snap frameSnapshot
-				var patches []Patch
-				var haveFrame bool
-				if body != "" && body != prevShipped {
-					snap = sess.prepareFrameSnapshot(body)
-					sess.lastShippedBody = body
-					if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
-						// Cycle 3 P50a / Gap C11: structural diff
-						// for Time.every ticks — the largest win,
-						// because ticks fire periodically without
-						// user interaction so server-driven body
-						// shipping previously hit every connected
-						// session at every interval. clientState
-						// nil: the SSE tick has no fresh inputState
-						// from the client.
-						patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
-					}
-					haveFrame = true
-				}
-				sess.mu.Unlock()
-				// Suppress SSE write when the tick didn't change
-				// the view — prevents Time.every from pushing an
-				// identical HTML frame every interval.
-				if !haveFrame {
-					continue
-				}
-				// Cycle 3 P50a / Gap C11: chooseSSEFrame picks
-				// event:patches vs event:patch per render.
-				frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
-				select {
-				case sess.sseCh <- frame:
-				default:
-					// Cycle 3 P42 / Gap C14: Time.every tick fired
-					// but the SSE consumer is wedged or slow; drop
-					// + count. Next tick's view-equality check (or
-					// the next user dispatch) supersedes anyway.
-					recordSseDrop(sess.sid)
-					sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
-				}
-			}
+	go app.runTimeEvery(sess, toMsg, interval, cancel, done)
+}
+
+// runTimeEvery is the Time.every ticker loop. Split out of
+// setupSubscriptions so the regression gate drives the REAL loop —
+// the same periodic.Config production builds — rather than a copy of it
+// that could drift.
+//
+// The loop is periodic.Every, so the recover is scoped to ONE TICK. This
+// goroutine used to carry no recover at all: a panic out of `dispatch` —
+// which runs generated Sky code, so a compiler defect or a kernel edge case
+// reaches it — killed the ticker permanently AND, because the cycle held
+// sess.mu across a manual Unlock, left the session mutex locked forever. The
+// tab froze for the process lifetime on Sky's pinned default app shape, with
+// nothing in the logs. See timeEveryTick for the lock discipline that makes a
+// recovered tick safe.
+func (app *liveApp) runTimeEvery(sess *liveSession, toMsg any, interval time.Duration, cancel, done <-chan struct{}) {
+	periodic.Every(periodic.Config{
+		Name:     "live.time-every",
+		Interval: interval,
+		Stop:     cancel,
+		AlsoStop: done,
+		Report:   periodicReport,
+		Work: func(t time.Time) error {
+			app.timeEveryTick(sess, toMsg, t)
+			return nil
+		},
+	})
+}
+
+// timeEveryTick runs ONE Time.every tick: dispatch under the session lock,
+// then ship the frame outside it.
+//
+// # The lock discipline, and why it is the point of this split
+//
+// The dispatch half holds sess.mu. It used to be written inline in the ticker
+// goroutine with a manual `sess.mu.Unlock()` after the dispatch, and no
+// recover anywhere. Adding a per-cycle recover WITHOUT fixing that would have
+// converted a permanent wedge into a different permanent wedge: the tick would
+// survive, and every later tick — and every user interaction, and every SSE
+// resync — would block forever on a mutex the panicking tick never released.
+//
+// timeEveryDispatch therefore takes the lock with `defer sess.mu.Unlock()`, so
+// the unlock happens on the panicking path as well as the normal one. That is
+// what `TestTimeEveryPanicLeavesTheSessionMutexAcquirable` asserts, and it is
+// the assertion that matters most in this file.
+func (app *liveApp) timeEveryTick(sess *liveSession, toMsg any, t time.Time) {
+	snap, patches, prevTree, haveFrame := app.timeEveryDispatch(sess, toMsg, t)
+	// Suppress SSE write when the tick didn't change the view — prevents
+	// Time.every from pushing an identical HTML frame every interval.
+	if !haveFrame {
+		return
+	}
+	// Cycle 3 P50a / Gap C11: chooseSSEFrame picks event:patches vs
+	// event:patch per render.
+	frame := chooseSSEFrame(snap, prevTree, patches)
+	select {
+	case sess.sseCh <- frame:
+	default:
+		// Cycle 3 P42 / Gap C14: Time.every tick fired but the SSE consumer
+		// is wedged or slow; drop + count. Next tick's view-equality check
+		// (or the next user dispatch) supersedes anyway.
+		recordSseDrop(sess.sid)
+		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
+	}
+}
+
+// timeEveryDispatch is the locked half of one tick. `defer sess.mu.Unlock()`
+// is load-bearing — see timeEveryTick.
+func (app *liveApp) timeEveryDispatch(sess *liveSession, toMsg any, t time.Time) (
+	snap frameSnapshot, patches []Patch, prevTreeBeforeDispatch *VNode, haveFrame bool) {
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	msg := toMsg
+	// If toMsg is a function, call it with current time millis
+	if isFunc(msg) {
+		msg = sky_call(toMsg, t.UnixMilli())
+	}
+	// Capture lastShippedBody BEFORE dispatch so we can detect a tick whose
+	// update produced a view that byte-equals what the client already has (the
+	// typical Time.every shape — heartbeat polling, once-per-second refresh,
+	// etc.). Suppression lives at the SSE callsite (not inside dispatch)
+	// because the HTTP /_sky/event response path needs the body to compute
+	// structural patches; only the SSE tick can safely silence-drop when the
+	// view didn't move.
+	prevShipped := sess.lastShippedBody
+	// Cycle 3 P50a / Gap C11: capture prevTree BEFORE dispatch so the
+	// structural diff can run against the tree the client last saw.
+	prevTreeBeforeDispatch = sess.prevTree
+	body := app.dispatch(sess, msg)
+	newTreeAfterDispatch := sess.prevTree
+	// Cycle 3 P41 / Gap C6: snapshot under the lock, then release before the
+	// JSON marshal. Time.every ticks on every session that subscribes — the
+	// lock-held marshal previously serialised through sess.mu at every
+	// interval, amplifying contention on busy sessions. Advancing
+	// lastShippedBody stays under the lock so the next tick's prevShipped read
+	// sees the up-to-date value.
+	if body != "" && body != prevShipped {
+		snap = sess.prepareFrameSnapshot(body)
+		sess.lastShippedBody = body
+		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
+			// Cycle 3 P50a / Gap C11: structural diff for Time.every ticks —
+			// the largest win, because ticks fire periodically without user
+			// interaction so server-driven body shipping previously hit every
+			// connected session at every interval. clientState nil: the SSE
+			// tick has no fresh inputState from the client.
+			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
 		}
-	}()
+		haveFrame = true
+	}
+	return snap, patches, prevTreeBeforeDispatch, haveFrame
 }
 
 // applyTopicSubsDiff computes the diff between the session's current
@@ -7143,6 +7194,11 @@ func recordSseDrop(sid string) {
 // calls it; only the first launches the goroutine. The goroutine is
 // bounded by the session lifetime — the same shape as the Time.every
 // tick loop — and exits promptly on `done`.
+// The recover is per FRAME. This relay is started under a sync.Once, so
+// nothing restarts it: a panic in fanOutFrame ended the session's entire
+// server-to-client channel for the process lifetime, and the tab went quiet
+// with no error anywhere — the same failure the Time.every ticker had, on the
+// path that carries every frame rather than one subscription's.
 func (s *liveSession) ensureSSERelay() {
 	s.sseRelay.Do(func() {
 		go func() {
@@ -7151,7 +7207,10 @@ func (s *liveSession) ensureSSERelay() {
 				case <-s.done:
 					return
 				case fr := <-s.sseCh:
-					s.fanOutFrame(fr, "")
+					periodic.Guard("live.sse-relay", periodicReport, func() error {
+						s.fanOutFrame(fr, "")
+						return nil
+					})
 				}
 			}
 		}()

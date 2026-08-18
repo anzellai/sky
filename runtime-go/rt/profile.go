@@ -33,6 +33,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+
+	"sky-app/rt/periodic"
+
 	"os/exec"
 	"os/signal"
 	"path/filepath"
@@ -90,23 +93,31 @@ func init() {
 	}
 
 	// Memory trend sampler: cheap ReadMemStats every 250ms → leak detection.
+	// The recover is per cycle: a sampler that dies silently produces a
+	// truncated trend that still LOOKS like a complete one, which is the worst
+	// available outcome for a leak-detection tool — the graph simply stops
+	// where the leak was getting interesting.
 	go func() {
-		t := time.NewTicker(250 * time.Millisecond)
-		defer t.Stop()
 		var ms runtime.MemStats
-		for range t.C {
-			runtime.ReadMemStats(&ms)
-			s := memSample{heapAlloc: ms.HeapAlloc, numGC: ms.NumGC}
-			memMu.Lock()
-			if !memHasFirst {
-				memInitial = s
-				memHasFirst = true
-			}
-			if len(memSamples) < 12000 { // ~50 min cap; then stop growing
-				memSamples = append(memSamples, s)
-			}
-			memMu.Unlock()
-		}
+		periodic.Every(periodic.Config{
+			Name:     "profile.mem-sampler",
+			Interval: 250 * time.Millisecond,
+			Report:   periodicReport,
+			Work: func(time.Time) error {
+				runtime.ReadMemStats(&ms)
+				s := memSample{heapAlloc: ms.HeapAlloc, numGC: ms.NumGC}
+				memMu.Lock()
+				defer memMu.Unlock()
+				if !memHasFirst {
+					memInitial = s
+					memHasFirst = true
+				}
+				if len(memSamples) < 12000 { // ~50 min cap; then stop growing
+					memSamples = append(memSamples, s)
+				}
+				return nil
+			},
+		})
 	}()
 
 	var timeout time.Duration
