@@ -29,9 +29,10 @@ func packageGoSources(t *testing.T) string {
 	return b.String()
 }
 
-// devReport is the block a developer sees on a bare `sky run`.
+// devReport is the block a developer sees on a bare `sky run`: dev bind is
+// loopback ("127.0.0.1"), so the exposure note never fires here.
 func devReport(gc gcTuning) []string {
-	return startupReportLines("http://localhost:8000/_sky/console", false, gc, false)
+	return startupReportLines("http://localhost:8000/_sky/console", "127.0.0.1", false, gc, false)
 }
 
 func joinReport(lines []string) string { return strings.Join(lines, "\n") }
@@ -51,8 +52,8 @@ func joinReport(lines []string) string { return strings.Join(lines, "\n") }
 func TestNoAddedStartupLineLooksLikeAListeningLine(t *testing.T) {
 	cases := [][]string{
 		devReport(gcTuning{reason: "GOMEMLIMIT 996MB, GOGC 400 — derived from 1.9GB detected"}),
-		startupReportLines("http://localhost:8000/_sky/console", true, gcTuning{reason: "x"}, false),
-		startupReportLines("", false, gcTuning{reason: "Go defaults — 512MB detected is too little"}, false),
+		startupReportLines("http://localhost:8000/_sky/console", "", true, gcTuning{reason: "x"}, false),
+		startupReportLines("", "127.0.0.1", false, gcTuning{reason: "Go defaults — 512MB detected is too little"}, false),
 	}
 	for _, lines := range cases {
 		for _, l := range lines {
@@ -68,7 +69,7 @@ func TestNoAddedStartupLineLooksLikeAListeningLine(t *testing.T) {
 // the thing the checklist asked for, and being told off for it is how a banner
 // becomes something people silence.
 func TestProductionPrintsNoConsoleLineAndNoScolding(t *testing.T) {
-	got := joinReport(startupReportLines("http://localhost:8000/_sky/console", true,
+	got := joinReport(startupReportLines("http://localhost:8000/_sky/console", "", true,
 		gcTuning{reason: "GOMEMLIMIT 996MB, GOGC 400 — derived from 1.9GB detected"}, false))
 
 	if strings.Contains(got, "console") {
@@ -193,7 +194,7 @@ func TestAnOperatorsOwnGCSettingIsVisiblyHonoured(t *testing.T) {
 // surface this binary does not serve — `printStartupReport` passes an empty URL
 // when neither console mounted.
 func TestNoConsoleMountedMeansNoConsoleLine(t *testing.T) {
-	got := joinReport(startupReportLines("", false, gcTuning{reason: "GOMEMLIMIT 1GB"}, false))
+	got := joinReport(startupReportLines("", "127.0.0.1", false, gcTuning{reason: "GOMEMLIMIT 1GB"}, false))
 	if strings.Contains(got, "console") {
 		t.Fatalf("advertised a console that is not mounted:\n%s", got)
 	}
@@ -205,7 +206,7 @@ func TestNoConsoleMountedMeansNoConsoleLine(t *testing.T) {
 // TestSkyGcQuietDropsOnlyTheGcLine. It suppresses output, it does not change
 // what was derived — and it must not take the console checklist with it.
 func TestSkyGcQuietDropsOnlyTheGcLine(t *testing.T) {
-	got := joinReport(startupReportLines("http://localhost:8000/_sky/console", false,
+	got := joinReport(startupReportLines("http://localhost:8000/_sky/console", "127.0.0.1", false,
 		gcTuning{reason: "GOMEMLIMIT 996MB, GOGC 400"}, true))
 	if strings.Contains(got, "GOMEMLIMIT") {
 		t.Fatalf("SKY_GC_QUIET did not drop the GC line:\n%s", got)

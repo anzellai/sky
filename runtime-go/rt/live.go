@@ -3169,7 +3169,7 @@ type liveApp struct {
 	msgAdt     string
 	msgAdtOnce sync.Once
 
-	bannerCfg         liveBannerConfig // resolved env-vars + cfg.status overrides
+	bannerCfg liveBannerConfig // resolved env-vars + cfg.status overrides
 	// basePath: URL prefix this app is mounted under when running as
 	// a sub-app (e.g. "/_sky/console" when reverse-proxied behind a
 	// parent Sky.Live runtime). Empty for root-mount (the common
@@ -3493,6 +3493,15 @@ func (app *liveApp) serveAPI(ar apiRoute, params []string, w http.ResponseWriter
 		payload = sr.OkValue
 	}
 	if resp, ok := asSkyResponse(payload); ok {
+		// WebSocket upgrade returned from a Sky.Live `api` route. asSkyResponse
+		// has already drained the pending cfg into WSUpgrade; without this
+		// branch the cfg leaked forever AND the literal `__sky_ws:N` sentinel
+		// was written to the client as the body. This dispatcher owns w+r, so
+		// it can hijack exactly like the Sky.Http.Server dispatcher does.
+		if resp.WSUpgrade != nil {
+			serveWebSocketUpgrade(w, r, *resp.WSUpgrade)
+			return
+		}
 		status := resp.Status
 		if status == 0 {
 			status = 200
@@ -3868,6 +3877,45 @@ func resolveLivePort(cfg any) int {
 	return 8080
 }
 
+// resolveBindHost decides which interface the HTTP listener binds to. It is
+// SHARED by Sky.Live (Live_app, live.go) and Sky.Http.Server (Server_listen,
+// rt.go) so the two listeners can never drift apart — exactly the way
+// resolveLivePort is shared.
+//
+// Precedence (highest first):
+//
+//  1. <PREFIX>_HOST set by the OPERATOR (SKY_HOST by default, read through
+//     skyGetenv so a custom [env] prefix routes correctly). Wins in EVERY mode
+//     — an operator who names an interface means it, dev or prod.
+//  2. productionFromEnv() → "" (empty host). fmt.Sprintf("%s:%d", "", port)
+//     yields ":port", i.e. bind ALL interfaces (0.0.0.0 + ::) — the historical
+//     behaviour of both listeners. Containers, fly.io, k8s and cloud VMs need
+//     this, so preserving it byte-for-byte is the zero-risk prod choice.
+//  3. otherwise (dev — ENV/SKY_ENV unset or a dev marker) → "127.0.0.1":
+//     LOOPBACK only. In dev /_sky/console and /_sky/metrics are unauthenticated
+//     (console_auth_v2.go, observability.go); binding them to every interface
+//     exposed those surfaces to the whole LAN. Loopback is what the console's
+//     own "localhost" trust assumption already claimed — this makes it true.
+//
+// The returned string is the host portion of the "host:port" Addr; empty means
+// all interfaces, exactly as ":port" did before this function existed.
+func resolveBindHost() string {
+	if h := strings.TrimSpace(skyGetenv("HOST")); h != "" {
+		return h
+	}
+	if productionFromEnv() {
+		return ""
+	}
+	return "127.0.0.1"
+}
+
+// bindAddr formats the listener Addr ("host:port") from resolveBindHost. An
+// empty host yields ":port" — all interfaces — identical to the old
+// fmt.Sprintf(":%d", port).
+func bindAddr(port int) string {
+	return fmt.Sprintf("%s:%d", resolveBindHost(), port)
+}
+
 // Live.app — reads a record-shaped config and starts the HTTP server.
 // Blocks until the server exits.
 // Live_app: Task-shaped per Task-everywhere (2026-04-24+). The
@@ -4159,13 +4207,6 @@ func liveAppRun(cfg any) any {
 
 	// (port was resolved earlier so sub-app spawn could use it)
 
-	// Production-mode detection — gates /_sky/metrics auth. Two
-	// signals (RFC §"Resolved question 1"):
-	//   1. Explicit env: SKY_ENV=production (highest priority).
-	//   2. Heuristic: binding to all interfaces (":PORT" form, no
-	//      explicit host, or 0.0.0.0). Containers, fly.io, k8s,
-	//      cloud VMs all bind 0.0.0.0; local dev binds 127.0.0.1.
-	//
 	// Production-mode gate for /_sky/console + /_sky/metrics auth.
 	// Rule: ENV (or SKY_ENV) is SET to anything OTHER than the
 	// dev-marker set {"dev", "development", "local"} → gate.
@@ -4174,10 +4215,18 @@ func liveAppRun(cfg any) any {
 	// This is intentionally bias-to-gate: if you bother setting
 	// ENV at all (staging, qa, production, prod, etc.), you mean
 	// it's not a casual dev session and the gate should apply.
-	// Default-open for unset ENV keeps dev workflows friction-free
-	// (Docker / proxy / sidecar deploys all bind to varying
-	// addresses, so the previous addr-based heuristic was
-	// unreliable in both directions and has been removed).
+	// Default-open for unset ENV keeps dev workflows friction-free.
+	//
+	// NOTE: production-mode detection is PURELY env-based — it does
+	// NOT read the bind address. An earlier comment here claimed the
+	// mode was inferred from the interface (":PORT" ⇒ prod, 127.0.0.1
+	// ⇒ dev); that heuristic was unreliable under Docker / proxy /
+	// sidecar and was removed. The bind HOST is a SEPARATE decision,
+	// now made by resolveBindHost(): dev binds 127.0.0.1 (loopback),
+	// productionFromEnv() binds all interfaces, SKY_HOST overrides
+	// either way. So "local dev binds 127.0.0.1" — which this comment
+	// used to assert as an aspiration that was never wired — is now
+	// literally what the listener does.
 	SetProductionMode(productionFromEnv())
 
 	// Step 7 — OTel tracer init. Honours OTEL_EXPORTER_OTLP_ENDPOINT.
@@ -4226,7 +4275,9 @@ func liveAppRun(cfg any) any {
 	})
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", port),
+		// bindAddr → 127.0.0.1:port in dev, :port (all interfaces) in
+		// prod, SKY_HOST:port when set. See resolveBindHost.
+		Addr:              bindAddr(port),
 		Handler:           wrapped,
 		ReadHeaderTimeout: 10 * time.Second,
 		// IMPORTANT: do not set ReadTimeout or WriteTimeout here — the SSE
@@ -5303,10 +5354,10 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 			logEmit(logLevelError, "error",
 				"Sky.Live dispatch panic: "+kind+" (ref "+errId+") — "+hint,
 				map[string]any{
-					"errId":      errId,
-					"panicKind":  kind,
-					"panicMsg":   rawMsg,
-					"hint":       hint,
+					"errId":     errId,
+					"panicKind": kind,
+					"panicMsg":  rawMsg,
+					"hint":      hint,
 					"stackFrame": panicStackForLog("sky.live.dispatch",
 						"Msg dispatch", r, capturePanicStack(), 8),
 				})
@@ -5703,6 +5754,35 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 		// request-id (so logs correlate). Without this the spawned
 		// goroutine is untracked.
 		parentCtx := CurrentTraceContext()
+		// Concurrency note (goroutine-audit B5, assessed 2026-08-18).
+		// This spawn is UNBOUNDED — one goroutine per Cmd.perform, no
+		// per-session or global cap, no cancellation beyond each effect's
+		// own timeout. It is left that way DELIBERATELY, and the premise
+		// that motivated a bound does not hold:
+		//
+		//   - sess.mu is NOT held while the Task runs. runPerformBody runs
+		//     the user Task (sky_call at the top) with NO lock, then takes
+		//     sess.mu only to dispatch the result Msg + snapshot the SSE
+		//     frame — CPU-bound work measured in sub-ms-to-low-ms, never the
+		//     slow effect. The `go` here returns at once, so the dispatch
+		//     lock the caller may hold is released immediately, not for the
+		//     Task's duration.
+		//   - Each goroutine is time-bounded by the effect it runs
+		//     (skyHTTPClient timeout, Db timeouts, streamHeaderTimeout, …),
+		//     so it is not an unbounded-DURATION leak, only an unbounded-
+		//     COUNT one under a client that fires performs faster than they
+		//     complete.
+		//
+		// A per-session semaphore was rejected as a risky partial: a
+		// perform's completion is what would free a permit, but a Task's
+		// toMsg → update can itself emit more Cmd.perform, so a nested or
+		// dependent perform waiting on a permit an ancestor holds would
+		// DEADLOCK; and capping concurrency would serialise the common
+		// parallel-fetch pattern (multiple Cmd.perform / Task.parallel), a
+		// latency regression. A sound bound (release-on-done with deadlock
+		// analysis, or a global worker pool decoupled from the session) is
+		// a follow-up, not a drop-in — so this stays unbounded with the
+		// bound's absence documented here rather than shipped half-done.
 		go app.runPerform(sess, c.task, c.toMsg, parentCtx)
 	case "publish":
 		// Cycle 3 P48: Std.Cmd.publish dispatch. Route every publish

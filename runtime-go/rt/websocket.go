@@ -118,13 +118,13 @@ const (
 )
 
 type wsEvent struct {
-	kind      wsEventKind
-	text      string   // wsMessageEv text — UTF-8 frame
-	binary    string   // wsMessageEv binary — byte string (Sky.Core.Bytes alias)
-	isBinary  bool     // distinguishes text vs binary message
-	closeCode int      // wsCloseEv — WebSocket close code
+	kind        wsEventKind
+	text        string // wsMessageEv text — UTF-8 frame
+	binary      string // wsMessageEv binary — byte string (Sky.Core.Bytes alias)
+	isBinary    bool   // distinguishes text vs binary message
+	closeCode   int    // wsCloseEv — WebSocket close code
 	closeReason string // wsCloseEv — close reason string
-	err       any      // wsErrorEv — Sky-shaped Error ADT
+	err         any    // wsErrorEv — Sky-shaped Error ADT
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -150,8 +150,16 @@ type wsHandle struct {
 	// race the underlying conn.Write.
 	writeMu sync.Mutex
 
+	// lastActivityNano — unix-nano of the last sign of life. See the
+	// identically-named field on streamHandle: read only by the sessionless
+	// reaper to reap an OPEN sessionless socket that has gone silent.
+	lastActivityNano atomic.Int64
+
 	closeOnce sync.Once
 }
+
+func (sh *wsHandle) touch()                      { sh.lastActivityNano.Store(time.Now().UnixNano()) }
+func (sh *wsHandle) lastActivityUnixNano() int64 { return sh.lastActivityNano.Load() }
 
 // Close marks the handle closed, sends a Normal close frame, releases
 // the conn, and cancels the context (terminating the reader). Idempotent.
@@ -174,6 +182,7 @@ func (sh *wsHandle) IsClosed() bool { return sh.closed.Load() }
 // Returns true if the event landed; false if the consumer stalled past
 // wsConsumerTimeout (signal to abandon the connection).
 func (sh *wsHandle) deliver(ev wsEvent) bool {
+	sh.touch()
 	select {
 	case sh.ch <- ev:
 		return true
@@ -216,7 +225,11 @@ func nextWsID() int64 {
 
 func registerWs(sess *liveSession, sh *wsHandle) {
 	if sess == nil {
+		sh.touch()
 		sessionlessSockets.Store(sh.id, sh)
+		// No markDone reclaims a sessionless socket; the reaper is the only
+		// backstop against an abandoned open connection. Start it on first use.
+		ensureSessionlessReaper()
 		return
 	}
 	sess.socketsMu.Lock()
@@ -660,13 +673,13 @@ func Sub_subscribeWebSocket(socketID, kindArg, toMsg any) SkySub {
 //	               | InternalError | Custom Int
 
 const (
-	wsMessageTextTag    = 0
-	wsMessageBinaryTag  = 1
-	wsCloseCodeNormalTag          = 0
-	wsCloseCodeGoingAwayTag       = 1
-	wsCloseCodeUnsupportedTag     = 2
-	wsCloseCodeInternalTag        = 3
-	wsCloseCodeCustomTag          = 4
+	wsMessageTextTag          = 0
+	wsMessageBinaryTag        = 1
+	wsCloseCodeNormalTag      = 0
+	wsCloseCodeGoingAwayTag   = 1
+	wsCloseCodeUnsupportedTag = 2
+	wsCloseCodeInternalTag    = 3
+	wsCloseCodeCustomTag      = 4
 )
 
 func buildWebSocketMessageValue(ev wsEvent) any {
