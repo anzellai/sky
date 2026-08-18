@@ -111,7 +111,7 @@ the SQLite baseline at all.
 
 | Instance | Memory ceiling | **Usable** ceiling | Binds on |
 |---|---|---|---|
-| e2-micro, SQLite | **~450 sessions — reached, not derived**: asked for 500, established **447** (`runs/gcp-x86-20260815/micro-noagent.tsv`, n=500 row) with `MemAvailable` down to **~43 MB** (`micro-rss-n500-r1-memexhaustion.txt`, final samples) | **~25–50** | **CPU, ~10× before memory** |
+| e2-micro, SQLite | **~450 sessions — reached, not derived**: asked for 500, established **447** (`runs/gcp-x86-20260815/micro-noagent.tsv`, n=500 row) with `MemAvailable` down to **~43 MB** (`micro-rss-n500-r1-memexhaustion.txt`, final samples) | **~25–50** | **CPU — ≈9–18× before memory** (450 ÷ 25–50) |
 | e2-small, SQLite | **never reached** — **500 of 500** established in all three repeats (`runs/gcp-x86-20260815/small-noagent.tsv`), memory nowhere near binding | **~50** | **CPU** |
 | e2-small, embedded PostgreSQL | **never reached** — see below | **~50** | **CPU** |
 
@@ -130,8 +130,11 @@ the SQLite baseline at all.
 > instance out of memory and record where it stops.
 
 On every x86 instance measured, **CPU binds an order of magnitude before
-memory does.** Sizing either e2 machine from its RAM overstates capacity by
-10–25×. Memory sets the hard ceiling; latency sets the useful one, and the
+memory does.** On the e2-micro — the only machine whose memory ceiling was
+actually reached — sizing from RAM overstates capacity by **≈9–18×** (its
+~450-session ceiling against a 25–50-session CPU knee; a ratio of two
+observations, not a directly measured quantity). Memory sets the hard
+ceiling; latency sets the useful one, and the
 useful one arrives first by a wide margin. (This table derives from rows
 2–6's commits; the memory-ceiling figures use those runs' RSS slopes. The
 later `19-skyforum` measurement — rows 8–9 — reproduces the conclusion with

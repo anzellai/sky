@@ -194,10 +194,14 @@ non-obvious ones as questions:
    > on a *different app* — `26-ui-showcase` at 384 elements, memory store — and
    > is not the cost of a session in general.
 
-   **CPU binds ~12× before memory, measured on real GCE instances.** An
+   **CPU binds a full order of magnitude before memory on real GCE
+   instances.** The e2-micro's ~450-session memory ceiling against its
+   25–50-session CPU knee is a **≈9–18× gap** — a ratio of two measured
+   observations, not itself a directly measured quantity. An
    e2-micro *holds* ~450 sessions and is **unusable past ~50** (knee 25–50,
-   peak ~18 interactions/sec, and past 250 sessions it fails 79–96% of
-   interactions; commit `ba3c3b1d`, `docs/perf/runs/gcp-x86-20260815/`). The
+   peak ~18 interactions/sec, and at 250 sessions it fails 74–91% of
+   interactions across three repeats, 96% at 500; commit `ba3c3b1d`,
+   `docs/perf/runs/gcp-x86-20260815/micro-noagent.tsv`). The
    ~450 is an **observation, not a division**: asked for 500, that machine
    established **447** (`gcp-x86-20260815/micro-noagent.tsv`, n=500 row, which
    also records 96% of interactions failing there) with `MemAvailable` down to
@@ -210,7 +214,7 @@ non-obvious ones as questions:
    sustains 64.3 int/s at 300 sessions** (failure knee between 100 and 300),
    an **e2-medium 261.5** (knee above 500). Quote throughput with its commit
    — these figures predate later optimisation work. Sizing on memory alone
-   overstates an e2-micro twelvefold.
+   overstates an e2-micro by roughly an order of magnitude (≈9–18×).
 
    **Count physical cores, not vCPUs.** A GCE vCPU is an SMT thread:
    `e2-standard-8` is **4 cores × 2 threads**, not 8 cores. Four threads on four
