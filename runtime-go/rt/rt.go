@@ -8879,6 +8879,21 @@ type SkyResponse struct {
 	// Set by Server.Stream.stream (ServerStream_stream); never set
 	// by the buffered builders (Server.text/json/html).
 	StreamHandler any
+
+	// WSUpgrade carries the WebSocket upgrade cfg once asSkyResponse has
+	// RESOLVED it from the `__sky_ws:<token>` Body sentinel — the exact
+	// mirror of StreamHandler. Draining the token registry HERE (once, in
+	// asSkyResponse) rather than in one dispatcher is what stops the leak:
+	// every dispatcher that runs a response through asSkyResponse now takes
+	// the pending cfg out of pendingWebSocketCfgs, so a Server.WebSocket.upgrade
+	// returned from a Sky.Live api route no longer strands its onConnect/
+	// onMessage/onClose/onError closures forever (nor writes the literal
+	// sentinel to the wire). A dispatcher that CAN hijack keys off this field
+	// (nil → not an upgrade); one that cannot at least drained the registry.
+	//
+	// Invisible to Sky: the typed `Sky_Http_Server_Response_R` has no matching
+	// field, so the reflect bridge never reads it from a user struct.
+	WSUpgrade *webSocketUpgradeCfg
 }
 
 // asSkyResponse bridges a value into a SkyResponse, accepting either
@@ -8926,6 +8941,19 @@ func asSkyResponse(src any) (SkyResponse, bool) {
 			// clean up the registry entry + strip the sentinel.
 			_, _ = takePendingStreamHandler(tok)
 			r.Body = ""
+		}
+		// WebSocket upgrade sentinel — mirror of the stream token above.
+		// Resolve the cfg out of pendingWebSocketCfgs exactly once and clear
+		// the sentinel so it never lands on the wire, even for a dispatcher
+		// that has no upgrade branch.
+		if r.WSUpgrade == nil {
+			if tok, ok := extractPendingWebSocketToken(r.Body); ok {
+				if cfg, found := takePendingWebSocketCfg(tok); found {
+					c := cfg
+					r.WSUpgrade = &c
+					r.Body = ""
+				}
+			}
 		}
 		return r, true
 	}
@@ -8981,6 +9009,20 @@ func asSkyResponse(src any) (SkyResponse, bool) {
 		if tok, ok := extractPendingStreamToken(out.Body); ok {
 			if h, found := takePendingStreamHandler(tok); found {
 				out.StreamHandler = h
+				out.Body = ""
+				matched = true
+			}
+		}
+	}
+	// WebSocket upgrade sentinel on a typed record — same resolution as the
+	// stream sentinel just above. The typed `Sky_Http_Server_Response_R` has
+	// no WSUpgrade field, so this is the only place the reflect path can carry
+	// an upgrade through, and draining here is what prevents the leak.
+	if out.WSUpgrade == nil && out.Body != "" {
+		if tok, ok := extractPendingWebSocketToken(out.Body); ok {
+			if cfg, found := takePendingWebSocketCfg(tok); found {
+				c := cfg
+				out.WSUpgrade = &c
 				out.Body = ""
 				matched = true
 			}
@@ -9374,14 +9416,14 @@ func Server_listen(port any, routes any) any {
 					fmt.Fprint(w, "Internal Server Error")
 					return
 				}
-				// v0.15.46: WebSocket upgrade sentinel.  The user's
-				// handler returned Server.WebSocket.upgrade; we hijack
-				// the connection and run the upgrade-and-loop dance.
-				if tok, ok := extractPendingWebSocketToken(skyResp.Body); ok {
-					if cfg, found := takePendingWebSocketCfg(tok); found {
-						serveWebSocketUpgrade(w, req, cfg)
-						return
-					}
+				// v0.15.46: WebSocket upgrade.  The user's handler returned
+				// Server.WebSocket.upgrade; asSkyResponse has already resolved
+				// the cfg out of the pending registry into WSUpgrade (draining
+				// the token). Hijack the connection and run the upgrade-and-loop
+				// dance.
+				if skyResp.WSUpgrade != nil {
+					serveWebSocketUpgrade(w, req, *skyResp.WSUpgrade)
+					return
 				}
 				// Streaming response (Sky.Http.Server.Stream): dispatch
 				// the user's handler over a chunk-writer instead of
@@ -9491,7 +9533,10 @@ func Server_listen(port any, routes any) any {
 	observed := ObservabilityMiddleware(csrfed)
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", p),
+		// bindAddr → 127.0.0.1:port in dev, :port (all interfaces) in
+		// prod, SKY_HOST:port when set. Shared with Sky.Live so the two
+		// listeners cannot drift. See resolveBindHost (live.go).
+		Addr:              bindAddr(p),
 		Handler:           observed,
 		ReadHeaderTimeout: httpEnvTimeout("SKY_HTTP_READ_HEADER_TIMEOUT", serverReadHeaderTimeout),
 		ReadTimeout:       httpEnvTimeout("SKY_HTTP_READ_TIMEOUT", serverReadTimeout),

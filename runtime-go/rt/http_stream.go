@@ -144,8 +144,18 @@ type streamHandle struct {
 	// channel-push timeout exits promptly.
 	done chan struct{}
 
+	// lastActivityNano — unix-nano of the last sign of life (registration
+	// or a delivered chunk/done/err event). Read ONLY by the sessionless
+	// reaper (sessionless_reaper.go) to decide whether an OPEN sessionless
+	// handle has gone silent past the idle TTL. atomic because the spool
+	// goroutine writes it while the reaper goroutine reads it.
+	lastActivityNano atomic.Int64
+
 	closeOnce sync.Once
 }
+
+func (sh *streamHandle) touch()                      { sh.lastActivityNano.Store(time.Now().UnixNano()) }
+func (sh *streamHandle) lastActivityUnixNano() int64 { return sh.lastActivityNano.Load() }
 
 // ═════════════════════════════════════════════════════════════════════
 // Per-session registry helpers
@@ -200,7 +210,12 @@ func nextStreamID() int64 {
 // by id. markDone never reaches it; the caller owns the lifecycle.
 func registerStream(sess *liveSession, sh *streamHandle) {
 	if sess == nil {
+		sh.touch()
 		sessionlessStreams.Store(sh.id, sh)
+		// A sessionless handle has no markDone to reclaim it; the reaper is
+		// its only backstop against an abandoned open stream (hung upstream,
+		// handler goroutine that never drains). Start it on first use.
+		ensureSessionlessReaper()
 		return
 	}
 	sess.streamsMu.Lock()
@@ -392,6 +407,14 @@ func (sh *streamHandle) runSpool() {
 				fmt.Fprintf(os.Stderr, "[sky.stream/%d] %dms delivered Done (took %dms)\n",
 					sh.id, time.Since(startNs).Milliseconds(), time.Since(doneAt).Milliseconds())
 			}
+			// Close on clean EOF. The doc on Close (above) says the spool's
+			// body-EOF path calls it, and the error path below does — but this
+			// common EOF path used to return WITHOUT closing, leaving the
+			// response body open and its net/http transport goroutine + socket
+			// alive until session teardown (or forever for a sessionless
+			// stream whose consumer never drains). Close is idempotent, so a
+			// later HttpStream_close / forEachChunk defer is a safe no-op.
+			sh.Close()
 			return
 		}
 		if err != nil {
@@ -410,6 +433,9 @@ func (sh *streamHandle) runSpool() {
 // the consumer stalled past streamConsumerTimeout. False is the
 // signal to the spool goroutine to abandon.
 func (sh *streamHandle) deliver(ev streamEvent) bool {
+	// A delivered event is a sign of life — reset the idle clock the
+	// sessionless reaper watches.
+	sh.touch()
 	// Fast path: channel has capacity — non-blocking send.
 	select {
 	case sh.ch <- ev:
@@ -461,7 +487,7 @@ func newStreamHttpClient() *http.Client {
 			//
 			// Streaming responses are one-shot by definition; reusing
 			// the conn buys us nothing and costs us EOF latency.
-			DisableKeepAlives:     true,
+			DisableKeepAlives: true,
 			// IdleConnTimeout, ExpectContinueTimeout etc. inherit
 			// from the http stdlib defaults.
 		},
@@ -780,4 +806,3 @@ func buildChunkEventValue(ev streamEvent) any {
 	}
 	return nil
 }
-

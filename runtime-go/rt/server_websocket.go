@@ -196,8 +196,16 @@ func ServerWebSocket_upgrade(_ any, cfgArg any) any {
 			cfg.originPatterns = append(cfg.originPatterns, fmt.Sprintf("%v", it))
 		}
 	}
-	token := registerPendingWebSocketCfg(cfg)
+	// registerPendingWebSocketCfg MUST run INSIDE the returned closure, not
+	// here. This function BUILDS the Task value; the closure RUNS it. Registering
+	// at build time meant every `Server.WebSocket.upgrade req cfg` expression
+	// that was constructed but never forced (a Task discarded before Task.run,
+	// or built to inspect) leaked one registry entry plus its four closures
+	// forever. Registration is an effect and belongs on the effect side of the
+	// Task boundary — the token is only ever consumed by a dispatcher that first
+	// forced this Task, so nothing observes it before the closure runs.
 	return func() any {
+		token := registerPendingWebSocketCfg(cfg)
 		return Ok[any, any](SkyResponse{
 			Status:      200, // ignored — upgrade overrides with 101
 			ContentType: "application/octet-stream",
@@ -370,10 +378,7 @@ func serveWebSocketUpgrade(w http.ResponseWriter, r *http.Request, cfg webSocket
 		closed_ch: make(chan struct{}),
 	}
 	serverSocketHandles.Store(h.id, h)
-	defer func() {
-		serverSocketHandles.Delete(h.id)
-		h.Close()
-	}()
+	defer serverSocketHandles.Delete(h.id)
 
 	// Pass the SAME ADT value to all callbacks: opaque
 	// `WebSocketServer Int` ADT.
@@ -420,9 +425,19 @@ func serveWebSocketUpgrade(w http.ResponseWriter, r *http.Request, cfg webSocket
 			},
 		})
 	}()
+	// LIFO ordering is load-bearing here. Register the hbDone wait FIRST, then
+	// h.Close(), so on EVERY exit path — read error, graceful close, or a panic
+	// — h.Close() runs BEFORE we wait on hbDone. h.Close() closes h.closed_ch,
+	// which is the heartbeat's Stop channel, so periodic.Every returns and
+	// closes hbDone immediately. Registered the other way round (the original),
+	// <-hbDone ran first while nothing had yet told the heartbeat to stop — the
+	// read-error path at the bottom of the loop returns WITHOUT closing h — so
+	// this handler blocked for up to pingInterval+10s after the peer was gone,
+	// holding the connection, its buffers and a server goroutine that whole time.
 	defer func() {
 		<-hbDone
 	}()
+	defer h.Close()
 
 	// Read loop.
 	for {

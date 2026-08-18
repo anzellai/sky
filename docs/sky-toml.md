@@ -548,7 +548,7 @@ prefixed names too.
 What's affected by the prefix:
 
 - All Sky-internal namespaces: `LIVE_*`, `AUTH_*`, `LOG_*`,
-  `DB_*`, `ENV`, `STATIC_DIR` (and the legacy alias).
+  `DB_*`, `ENV`, `HOST`, `STATIC_DIR` (and the legacy alias).
 - All sky.toml-derived defaults — the generated init() emits
   `rt.SetSkyDefault("LIVE_TTL", "1800")`, which under prefix
   `FENCE` becomes `FENCE_LIVE_TTL=1800`.
@@ -630,6 +630,42 @@ The reason it is not a build-time key is that one binary gets promoted
 dev → staging → prod; a value baked in at compile time could not be
 right for all three. Writing `[security] env` into sky.toml now
 produces a build warning naming this variable.
+
+### Bind interface — `SKY_HOST` *(v0.20.3+)*
+
+Which network interface the HTTP listener binds to (both Sky.Live and
+`Sky.Http.Server`). Like `ENV`, it is an environment variable, not a
+sky.toml key — the same binary binds differently across dev / staging /
+prod without a rebuild.
+
+| Env var             | Default (dev)   | Default (prod)         | Meaning |
+|---------------------|-----------------|------------------------|---------|
+| `<PREFIX>_HOST`     | `127.0.0.1`     | all interfaces (`:PORT`) | Interface to bind the listener to |
+
+The default is **derived from `ENV`, not fixed**:
+
+- **Dev** (`ENV` / `<PREFIX>_ENV` unset or a dev marker) binds
+  **`127.0.0.1`** — loopback only. In dev the `/_sky/console` and
+  `/_sky/metrics` surfaces are unauthenticated, and binding them to
+  every interface exposed them to the whole LAN. Loopback matches the
+  console's own "localhost" assumption.
+- **Production** (`ENV` set to anything that is not `dev` /
+  `development` / `local`) binds **all interfaces** — exactly the
+  historical `:PORT` behaviour that containers, Cloud Run, k8s and VMs
+  need.
+- **`SKY_HOST` overrides both.** Set `SKY_HOST=0.0.0.0` to bind wide in
+  dev (e.g. to reach the app from another device on your network — the
+  startup banner then flags that an open console is reachable off-box),
+  or `SKY_HOST=127.0.0.1` to force loopback in production. Any concrete
+  address works: `SKY_HOST=10.0.0.5`.
+
+```bash
+# dev, reachable from your phone on the LAN:
+SKY_HOST=0.0.0.0 sky run src/Main.sky
+```
+
+`SKY_HOST` is prefix-affected: under `[env] prefix = "FENCE"` the runtime
+reads `FENCE_HOST`.
 
 ---
 
