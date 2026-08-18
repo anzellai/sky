@@ -167,3 +167,28 @@ REQUIRED gates (grill): (i) a BOUND-LESS session revoke still stops it; (ii) a
 SERVER-INITIATED dispatch (live Sub.every / in-flight Cmd.perform) after revocation
 mutates NOTHING. Without both, the suite certifies a hole it never touched. -race required
 (session teardown is where the periodic-goroutine work found races).
+
+## PROGRESS (2026-08-18, later still) — PR #187 MERGED
+Config+perf+security block MERGED to main @ e70e2310 (merge commit, 40 commits
+preserved). NOT tagged (user owns tag scope). CI fully green incl. sharded
+repro/repro-2 (T1 budget cleared by sharding, not by raising the ceiling).
+feat/perf-security-config remote branch deleted.
+
+NOW ON: feat/telemetry-storage-runperform (off merged main e70e2310).
+Remaining tracks D + E (see TELEMETRY_STORAGE_PLAN.md):
+  D. Telemetry storage P1-P3:
+     - P2 two live bugs (analytics_store recover/silent-swallow +
+       telemetry/persist mirror + console_analytics unbounded SELECT/indexes)
+       — VERIFY whether already merged on main (plan flags CHECK).
+     - P1 size report (pg_total_relation_size per runtime table on existing
+       prune timers; warn on ratio of free space; free space known only --embed).
+     - P3 aggregate the metric write losslessly over ~10s window (root cause:
+       msg_logging writes 2 metric rows/interaction unconditionally). Window is
+       a knob; 0 = raw as today. P4 partition only if P1 shows metric still binds.
+  E. runPerform concurrency bound (live.go) — unbounded per-Cmd.perform goroutine.
+     Must handle dependent-perform deadlock + not serialise parallel-fetch.
+     Sound: release-on-done w/ deadlock analysis OR global worker pool decoupled
+     from session. NOT a drop-in.
+Method: PIV per phase (arch-consult=verify current code vs stale plan lines,
+grill, implement, Judge). Milestone MUST include coerce-floor (the gap that
+slipped CI last wave). These are runtime-Go changes, not compiler-floor.
