@@ -87,6 +87,45 @@
 # discovered project with no golden row FAILS. Blessed with all 66 emitting in
 # one run (`sky install` restored the five FFI surfaces first): rows 61 -> 66
 # (+5), tokens 8353 -> 8372 (+19). No existing row moved.
+#
+# ── Recorded transition, 2026-08-18 — the console's observability fix pays
+#    the standing kernel-ABI narrowing, three more times ──
+# sky-bundled/console  narrow 283 -> 286 (+3); adapter unchanged at 2.
+# Cause: gate cause (2) — a SOURCE change (`10167246 fix(rt): the console
+# stops degrading the app it observes`) added view code; the new lines pay the
+# same per-call-site narrowing every existing line already pays. NOT a codegen
+# regression: same compiler binary before and after, every delta confined to
+# the functions the commit changed (AnalyticsTab scope note / windowLabel /
+# revenuePanel), adapter flat. Verified by re-emitting the console with the
+# three .sky files reverted to their pre-commit content (parent 98619b32) under
+# THIS compiler: the count returns to 283.
+#
+# The three new tokens, classified against doc 14 (§10 citation):
+#   • +2  rt.AsString(rt.String_fromInt(any(v_0.WindowDays)))  and  (…RowCap)
+#         — rendering two NEW, concretely-typed Int fields (windowDays / rowCap
+#         in State.sky) as strings. `String.fromInt` is a runtime kernel whose
+#         Go ABI is `func String_fromInt(a any) any`; the `any` result is
+#         narrowed to `string`, stamped `/* FFI return */` — MISLABELLED, it is
+#         a kernel return, not FFI (doc 14 §3.1).
+#         ORIGIN R5 (lower.rs:4429-4439). §1 floor test: slot shape = string;
+#         value's real type known to the compiler but erased to `any` by the
+#         kernel ABI → doc 14 §4.4 NOT floor, CLOSEABLE — but only by the R5
+#         lever (typed kernel entry points, §5.3 generalised to returns), a
+#         corpus-wide compiler change, NOT an app-level signature. The console's
+#         new fields are already concretely typed (Int/Bool), so there is no
+#         app-level `any` to remove; 53 existing `AsString(String_fromInt)`
+#         sites in this same file pay the identical cost.
+#   • +1  rt.Coerce[State_CurrencyTotal_R](_p0)  inside the new
+#         `List.map (currencyRowView a.rowCapHit) a.revenue` (revenuePanel).
+#         The erased list helper hands the callback its element as `any`; the
+#         element narrows to State_CurrencyTotal_R.  ORIGIN R2 `eta_narrow`
+#         (lower.rs:2771-2779) — the succeeding assertion inside the
+#         retyped-in-place callback, i.e. the CLOSED form, not a new adapter
+#         (adapter stayed at 2). §1/§9.2: per-element helper path, CLOSEABLE in
+#         principle; the residual is the boxing round trip, closed only by the
+#         §5.5 typed-instantiation compiler lever — again not an app change.
+# Verification gate: `xtask coerce-floor` (this golden). Blessed with all 66
+# emitting in one run; sky-bundled/console 283 -> 286; NO other row moved.
 00-standard-libs	adapter=1	dispatch=0	narrow=186
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=9
@@ -150,6 +189,6 @@ apps/relay	adapter=5	dispatch=0	narrow=170
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=8
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=7
 simple	adapter=0	dispatch=0	narrow=1
-sky-bundled/console	adapter=2	dispatch=0	narrow=283
+sky-bundled/console	adapter=2	dispatch=0	narrow=286
 sky-bundled/doc	adapter=0	dispatch=0	narrow=17
 test_pkg	adapter=0	dispatch=0	narrow=1
