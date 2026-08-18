@@ -144,7 +144,7 @@ non-obvious ones as questions:
    | **Base, before sessions — measured whole-machine, not a sum of the rows** | **~382 MB** app alone · **~410 MB** with embedded PostgreSQL carrying the sessions |
 
    Every row: `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed
-   in `docs/perf/skylive-interaction-cost.md:1065-1082`; the settled-app row is
+   in `docs/perf/skylive-interaction-cost.md:1044-1100`; the settled-app row is
    that document's row 7. The base line is `MemTotal − MemAvailable` on the
    measured machine (2,023,888 kB total; median idle `MemAvailable` 1,632,340
    / 1,603,636 kB for the two configurations), so it already contains the OS

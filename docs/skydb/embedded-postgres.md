@@ -989,7 +989,7 @@ small cloud instance. Measured components:
 | Observability agent, if you run one | **+86 MB** on top of that — measured, see below |
 
 Sources: `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed at
-`docs/perf/skylive-interaction-cost.md:1065-1082`; the base line is
+`docs/perf/skylive-interaction-cost.md:1044-1100`; the base line is
 `MemTotal − MemAvailable` on that machine (2,023,888 kB total; median idle
 `MemAvailable` 1,632,340 kB without the cluster, 1,603,636 kB with it), so it
 already contains the OS.

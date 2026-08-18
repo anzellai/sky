@@ -247,7 +247,7 @@ its own embedded PostgreSQL leaves the machine **~410 MB** short of its total
 before a single session exists — `MemTotal − MemAvailable`, OS included, with
 the app idle at ~21–27 MB and PostgreSQL costing **+28.4 MB** of that
 (`docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed at
-[docs/perf/skylive-interaction-cost.md](docs/perf/skylive-interaction-cost.md#1065)).
+[docs/perf/skylive-interaction-cost.md](docs/perf/skylive-interaction-cost.md#embedded-postgresql-measured)).
 Without the database it is ~382 MB. So a free-tier or entry-level cloud
 instance runs a real app with a real database, and the managed-database line
 disappears from the bill.
