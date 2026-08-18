@@ -780,6 +780,14 @@ fn sky_binary_candidates(root: &Path) -> Vec<PathBuf> {
 /// `rust/crates/xtask/tests/gates_measure_a_fresh_compiler.rs` fails the build
 /// if the two lists drift apart.
 const MEASURED_SOURCE_ROOTS: &[(&str, &[&str])] = &[
+    // `rust` covers the workspace-level pins the `rust/crates` walk cannot
+    // reach: `rust/Cargo.toml`, `rust/Cargo.lock` and `rust-toolchain.toml`
+    // all sit one level ABOVE crates/, and a lockfile or toolchain bump
+    // changes the binary as surely as a line of Rust. The shell library
+    // measured them all along (its `rust/crates` case had a second maxdepth-1
+    // find); this list could not see them — a filter divergence the root-name
+    // drift test was blind to.
+    ("rust", &["toml", "lock"]),
     ("rust/crates", &["rs", "toml"]),
     ("runtime-go", &["go", "mod", "sum"]),
     ("sky-stdlib", &["sky", "skyi"]),

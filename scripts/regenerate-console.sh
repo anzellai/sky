@@ -445,3 +445,10 @@ fi
 
 say "${_green}wrote $OUT (${_dim}$(wc -l <"$OUT") lines${_reset}${_green})${_reset}"
 say "drift check: 'git diff --exit-code runtime-go/rt/console_app/' should be clean"
+# This script writes into runtime-go/rt/ — a measured compiler input — so from
+# this moment every fresh-compiler gate will (correctly) refuse the installed
+# sky-out/sky until it is rebuilt with the regenerated file embedded. That
+# circularity is inherent and right; the operator just needs to be told the
+# next step instead of discovering it as sixteen red gates.
+say "next: ./scripts/build.sh — this regenerated a measured compiler input, so the"
+say "      installed compiler is now stale by definition until it is rebuilt"
