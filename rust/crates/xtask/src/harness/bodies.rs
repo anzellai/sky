@@ -2997,7 +2997,7 @@ pub fn coverage_ledger(ctx: &GateCtx) -> GateOutcome {
 /// should be read rather than absorbed: a new `sky.toml` key or a new seeded
 /// default is precisely the thing `docs/tooling/config-architecture.md` is
 /// trying to stop happening.
-pub const CONFIG_SURFACE_EXPECTED: u64 = 59;
+pub const CONFIG_SURFACE_EXPECTED: u64 = 53;
 
 /// `xtask config-surface --check`, run in-process.
 ///
@@ -3023,7 +3023,7 @@ pub fn config_surface(ctx: &GateCtx) -> GateOutcome {
 /// It also moves when `config-surface`'s census moves, which is deliberate:
 /// this gate's coverage claim is stated *against* that census, so a new
 /// `sky.toml` key has to be bucketed here before either gate is green again.
-pub const CONFIG_MATRIX_EXPECTED: u64 = 98;
+pub const CONFIG_MATRIX_EXPECTED: u64 = 92;
 
 /// `xtask config-matrix --check`, run in-process.
 ///

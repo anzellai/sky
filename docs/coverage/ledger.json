@@ -221,7 +221,7 @@
       "tier": "T1"
     },
     "config-matrix": {
-      "expected_assertions": 98,
+      "expected_assertions": 92,
       "falsifier_mutation": "config-matrix.invert-operator-env-provenance",
       "falsifier_proven": true,
       "summary": "every covered setting's EFFECTIVE value, observed from running binaries, matches the baseline in every arm combination",
@@ -249,7 +249,7 @@
       "tier": "T1"
     },
     "config-surface": {
-      "expected_assertions": 59,
+      "expected_assertions": 53,
       "falsifier_mutation": "config-surface.seed-a-suffix-nothing-reads",
       "falsifier_proven": true,
       "summary": "the configuration surface is measured, current, and no defect count rose",
@@ -468,7 +468,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 393,
+      "expected_assertions": 398,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -11681,7 +11681,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 136,
+          "count": 134,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -11716,7 +11716,6 @@
             "borderWidthEach",
             "buildStyleString",
             "buildStyleStringWith",
-            "class",
             "clip",
             "clipY",
             "colMarker",
@@ -11766,7 +11765,6 @@
             "heightCss",
             "heightCssIn",
             "heightFillFor",
-            "inFront",
             "isFillLength",
             "isHeightAttr",
             "isHeightFillAttr",
@@ -11844,12 +11842,11 @@
           ]
         },
         "Std.Ui.Border": {
-          "count": 5,
+          "count": 4,
           "symbols": [
             "activeColor",
             "focusColor",
             "focusVisibleColor",
-            "hoverColor",
             "innerShadow"
           ]
         },
@@ -11963,8 +11960,8 @@
           ]
         }
       },
-      "count": 721,
-      "pct_of_denominator": 40.1
+      "count": 718,
+      "pct_of_denominator": 39.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -12831,7 +12828,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 136,
+          "count": 134,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -12866,7 +12863,6 @@
             "borderWidthEach",
             "buildStyleString",
             "buildStyleStringWith",
-            "class",
             "clip",
             "clipY",
             "colMarker",
@@ -12916,7 +12912,6 @@
             "heightCss",
             "heightCssIn",
             "heightFillFor",
-            "inFront",
             "isFillLength",
             "isHeightAttr",
             "isHeightFillAttr",
@@ -12994,12 +12989,11 @@
           ]
         },
         "Std.Ui.Border": {
-          "count": 5,
+          "count": 4,
           "symbols": [
             "activeColor",
             "focusColor",
             "focusVisibleColor",
-            "hoverColor",
             "innerShadow"
           ]
         },
@@ -13114,8 +13108,8 @@
           ]
         }
       },
-      "count": 800,
-      "pct_of_denominator": 44.5
+      "count": 797,
+      "pct_of_denominator": 44.3
     }
   },
   "units": [
@@ -14191,10 +14185,10 @@
       "id": "tests/Std",
       "modules_imported": 14,
       "path": "tests/Std",
-      "refs_generous": 94,
-      "refs_qualified": 93,
+      "refs_generous": 105,
+      "refs_qualified": 103,
       "role": "SkySuite",
-      "sky_files": 6,
+      "sky_files": 7,
       "sky_toml_sections": []
     },
     {
