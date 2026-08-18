@@ -144,6 +144,13 @@ func consoleDBSchemaStmts(driver string) []string {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_log_created ON telemetry_log (created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_metric_observed ON telemetry_metric (name, observed_at DESC)`,
+		// The hourly prune deletes on a bare observed_at range, which
+		// the composite (name, observed_at) index above CANNOT serve —
+		// it leads on name. Without this single-column index the prune
+		// was a full table scan of up to ~300M rows every hour, on the
+		// pool the session store shares. IF NOT EXISTS + schema-on-open
+		// means existing databases pick it up at next boot.
+		`CREATE INDEX IF NOT EXISTS idx_metric_observed_at ON telemetry_metric (observed_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_span_started ON telemetry_span (started_at DESC)`,
 	}
 }

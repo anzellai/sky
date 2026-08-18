@@ -345,3 +345,83 @@ func TestPersistence_PrunerDropsOldRows(t *testing.T) {
 		t.Errorf("expected fresh log kept, got %d", remaining)
 	}
 }
+
+// ─── UNBOUNDED-WORK regression: the hourly metric prune ───────────
+//
+// The pruner's `DELETE FROM telemetry_metric WHERE observed_at < ?`
+// could not use the table's only index — (name, observed_at DESC)
+// leads on `name`, so a bare range on observed_at fell back to a
+// full table scan of up to ~300M rows every hour, on the shared
+// pool the session store also draws from. The schema now carries a
+// single-column observed_at index; EXPLAIN QUERY PLAN is the
+// regression oracle (SCAN vs SEARCH ... USING INDEX).
+func TestPrune_MetricDeleteUsesIndex(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "console.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	for _, stmt := range consoleDBSchemaStmts("sqlite") {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("schema: %v", err)
+		}
+	}
+	rows, err := db.Query(`EXPLAIN QUERY PLAN DELETE FROM telemetry_metric WHERE observed_at < ?`, "2020-01-01 00:00:00.000")
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	joined := strings.Join(plan, " | ")
+	if !strings.Contains(joined, "USING INDEX") || !strings.Contains(joined, "observed_at") {
+		t.Errorf("hourly metric prune runs as a full table scan; plan: %s", joined)
+	}
+}
+
+// SILENTLY-DEAD-FEATURE regression (telemetry side): the env vars
+// that select a persistence backend can legitimately appear AFTER
+// the first EnablePersistenceFromEnv call — under `./app --embed`,
+// DATABASE_URL is exported by the embed supervisor from main, long
+// after rt's init() ran the boot-time call. A later re-invocation
+// (wired in pg_embed.go; gated by
+// TestEmbeddedDSNHandoff_ReenablesTelemetryPersistence) must then
+// actually enable persistence.
+func TestEnablePersistenceFromEnv_HonoursEnvSetAfterBoot(t *testing.T) {
+	t.Setenv("SKY_CONSOLE_DB_PATH", "")
+	t.Setenv("DATABASE_URL", "")
+	s := NewStore()
+	if err := s.EnablePersistenceFromEnv(); err != nil {
+		t.Fatalf("boot-time call with empty env: %v", err)
+	}
+	s.persistMu.RLock()
+	active := s.persist != nil
+	s.persistMu.RUnlock()
+	if active {
+		t.Fatal("persistence active with no env configured")
+	}
+	// The embed supervisor exports the DSN...
+	t.Setenv("SKY_CONSOLE_DB_PATH", filepath.Join(t.TempDir(), "console.db"))
+	// ...and the handoff re-invokes.
+	if err := s.EnablePersistenceFromEnv(); err != nil {
+		t.Fatalf("re-invocation after env export: %v", err)
+	}
+	defer s.ClosePersistence()
+	s.persistMu.RLock()
+	active = s.persist != nil
+	s.persistMu.RUnlock()
+	if !active {
+		t.Fatal("persistence still dead after the env appeared and EnablePersistenceFromEnv re-ran")
+	}
+}
