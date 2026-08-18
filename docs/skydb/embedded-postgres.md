@@ -982,14 +982,14 @@ small cloud instance. Measured components:
 
 | | RAM |
 |---|---|
-| Sky app binary (Go, idle) | **~55 MB** (measured on a live e2-micro) · **21–27 MB** for a plain app on a bench e2-small |
+| Sky app binary (Go, idle) | **~56 MB** (measured mean, live e2-micro; `observe-prod-45min/summary.txt`) · **21–27 MB** for a plain app on a bench e2-small |
 | PostgreSQL — the whole tree, as `MemAvailable` actually falls | **+21.9 MB** idle · **+28.4 MB** once sessions are written through it (measured under `--embed` on an e2-small) |
 | Sky.Live sessions — **625–650 kB each on x86 at the Go-default `GOGC=100`**, PostgreSQL store (`docs/perf/runs/gcp-x86-capacity-20260816/`); the shipped `GOGC=400` raises the slope, x86 unmeasured | ~65 MB at 100 concurrent at `GOGC=100` |
 | **Base, before sessions — measured whole-machine, OS included** | **~382 MB** app alone · **~410 MB** with the cluster carrying the sessions |
 | Observability agent, if you run one | **+86 MB** on top of that — measured, see below |
 
 Sources: `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed at
-`docs/perf/skylive-interaction-cost.md:1065-1082`; the base line is
+`docs/perf/skylive-interaction-cost.md:1044-1100`; the base line is
 `MemTotal − MemAvailable` on that machine (2,023,888 kB total; median idle
 `MemAvailable` 1,632,340 kB without the cluster, 1,603,636 kB with it), so it
 already contains the OS.
@@ -999,8 +999,9 @@ already contains the OS.
 > the OS plus an idle app, so it was not a safe allowance either; the base
 > line is now a measurement instead of a sum, which is why no OS row is
 > needed. "PG backends … | **6 backends total**" carried no MB value at all
-> and so contributed nothing to the sum it sat inside; its content was a
-> process count, and the count was wrong — see below.
+> and so contributed nothing to the sum it sat inside; it was a backend
+> count, not memory — reconciled below (the app pool is 6; `pg_backends_max`
+> reads 7 with the 1-Hz sampler counted in).
 
 The session row moves with the collector and with the view; see "The
 per-session figure" below before quoting it anywhere.
@@ -1046,9 +1047,11 @@ Why those numbers:
   roughly 600 MB of RAM without `--embed`, 815 MB with it — the runtime is left
   on Go's defaults entirely, because taking a 4× heap multiplier without being
   able to afford the bound is the one combination that makes things worse. The
-  floor is calibrated against measurement: the stock collector already peaks at
-  138–145 MB at 100 sessions, so a limit we set can never bind below the
-  footprint the app has without us.
+  floor is calibrated against measurement: the stock (`GOGC=100`) collector
+  already peaks at **138–146 MB** at 100 sessions (window-peak RSS
+  137,984–145,568 kB across the `GOGC=100` n=100 runs;
+  `docs/perf/runs/gogc-postgres-20260816/results.tsv`), so a limit we set can
+  never bind below the footprint the app has without us.
 - **Serverless takes the bound but not the multiplier.** A request-billed
   container has a hard, platform-enforced ceiling where the soft limit's
   overshoot is a killed instance rather than a slow one, and the +19% is a
@@ -1092,7 +1095,7 @@ load on a throwaway e2-small. Full analysis and raw data:
 | PostgreSQL tree at idle — **`MemAvailable` cost** | **21.9 MB** |
 | PostgreSQL tree at idle — RSS sum | 76.3 MB — **do not use this**, it counts `shared_buffers` once per process and overstates by 2.6× |
 | `max_connections` rendered on 2 vCPU | **36** (= demand 14 × 2 + 3 reserved + 5 headroom) on the day of the run, matching the derivation exactly. The *derivation* has since been corrected — the demand was counting one aux-pool size per consumer rather than what each consumer asks for — so the same host renders **56** today (= demand 24 × 2 + 3 + 5). The measurement stands; the number it matched moved. |
-| Backends held under **100 concurrent sessions** | **6** — 18% of the 33 usable |
+| Peak `client backend` rows, **100 concurrent sessions** | **7** (`pg_backends_max`) — the app's 6-connection pool plus the 1-Hz sampler's own psql; the pool alone is 18% of the 33 usable |
 | Per-session cost added, `memory` session store | **~57 kB** — free, within run-to-run noise |
 | Per-session cost added, `postgres` session store | **~426 kB** (+32%), paid in the app, not in PostgreSQL |
 | Throughput cost | **none measurable** |
@@ -1109,14 +1112,18 @@ Three corrections the run forces:
    set that exercises the buffer pool can pull resident memory far above it.
 2. **"One process per active connection, ~5–10 MB each, 6–10 active" is the
    wrong shape.** The pool caps backends at
-   `dbSharedAuxPoolConfigFor(cpus, …)`, and the count did not move between 25 and
-   100 concurrent sessions: **7, flat** — `pg_backends_max` in every valid
-   config-C row of `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, and
-   **7 (occasionally 8)** at 100 / 300 / 500 sessions in
-   `docs/perf/runs/gcp-x86-capacity-20260816/README.md:49-53`. (**This said
-   6**, which is the adjacent `idle_pg_nproc` column — the idle process count
-   — read as a client-backend count. Same slip in `AGENTS.md` and
-   `docs/perf/skylive-interaction-cost.md`, corrected in the same commit.)
+   `dbSharedAuxPoolConfigFor(cpus, …)` — a **6-connection pool**
+   (`dbSharedAuxPoolSizeFor(2) = 6`), and the count did not move between 25 and
+   100 concurrent sessions. `pg_backends_max` reads **7, flat** — the 6 pool
+   backends plus the 1-Hz sampler's own psql, which counts itself as a
+   `client backend` (`sweep.tsv` at 50 and 100 sessions; one of the three
+   n=25 rows also reads 7, the other two read 0 — the mid-sweep sampler bug
+   documented in `docs/perf/runs/gcp-embed-postgres-20260815/README.md:78-82`).
+   `docs/perf/runs/gcp-x86-capacity-20260816/README.md:49-53` reads
+   **7 (occasionally 8)** at 100 / 300 / 500 sessions. (**This said 6**, which
+   is the pool — correct for the pool, but it misquoted `pg_backends_max` as 6
+   when the column reads 7. Same slip in `AGENTS.md` and
+   `docs/perf/skylive-interaction-cost.md`.)
    PostgreSQL's memory does not grow with sessions — its RSS slope against
    established sessions is zero within noise. Embedded PostgreSQL is a
    **fixed block**, not a per-session tax.
@@ -1152,8 +1159,9 @@ non-default one. `GOGC` multiplies the live heap, so it scales the per-session
 measures the slope rising **2.9×** across `GOGC` 100 → 400 on one app and store.
 The x86 slope at the shipped default is **unmeasured**: an earlier draft
 multiplied the M1 ratio into the x86 slope and quoted ~1.8–1.9 MB, and that
-projection is withdrawn — this programme's projections have been wrong by 2×,
-13× and 20×, so no number is quoted here until a run measures one. Any
+projection is withdrawn — this programme's projections have been wrong by
+several-fold, repeatedly, so no number is quoted here until a run measures
+one. Any
 capacity table that adopts a raised `GOGC` and keeps its sessions-per-instance
 column is wrong by roughly the slope multiplier.
 
@@ -1173,13 +1181,6 @@ had access to.
 > **established**, not requested — at a requested 500 the e2-micro established
 > only 447.
 
-| Concurrent sessions | Sessions | Total | Fits in 1 GB? |
-|---|---|---|---|
-| 100 | 110 MB | ~490 MB | yes |
-| 300 | 330 MB | ~710 MB | yes |
-| 500 | 550 MB | ~930 MB | at the edge |
-| 700 | 770 MB | ~1.15 GB | no |
-
 The pool ceiling is a ceiling and not an allocation — `database/sql` opens
 lazily, so a host pays for what is in flight.
 
@@ -1195,9 +1196,12 @@ lazily, so a host pays for what is in flight.
 > is the e2-micro's 447 (below). What bounds a small host at the shipped GC
 > default is the derived `GOMEMLIMIT`, which is the paragraph after next.
 
-> **That table predates the shipped GC default and now reads as an upper
-> bound, not a forecast.** It is built on ~1.1 MB per session; at `GOGC=400`
-> the slope is ~2.9× the stock one, so the same rows arrive sooner. What
+> **A "Fits in 1 GB?" session-vs-total table stood here and is deleted.** It
+> was built on ~1.1 MB per session — the retracted RSS/n figure above — so it
+> is deleted rather than adjusted (rebuilding it on the 625–650 kB `19-skyforum`
+> slope would swap one app's cost into another's budget, the error the
+> retraction is about). At `GOGC=400` the slope is ~2.9× the stock one, and no
+> run has established a session ceiling on a 1 GB or 2 GB instance. What
 > replaces "will it fit" as the question is that **it now cannot not fit**: on
 > a 1 GB machine running `--embed` the runtime derives a **389 MB** ceiling for
 > the app (1024 − 256 OS − 153 `shared_buffers` − 96 working set, three-
@@ -1207,9 +1211,10 @@ lazily, so a host pays for what is in flight.
 > class CPU still binds many times sooner — see the next section.
 
 **Observed on a live e2-micro** (sky-lang.org, `us-central1-a`, 969 MB usable,
-9 days uptime): **516 MB available**, the Sky binary at **55 MB RSS** — higher
-than the 30–40 MB this table previously guessed — and **0.09% CPU** averaged
-over 40 hours, i.e. nowhere near any ceiling at its real traffic. (This
+9 days *machine* uptime): **516 MB available**, the Sky binary at **56 MB RSS**
+(mean over the window; 52.9–58.1) — higher than the 30–40 MB this table
+previously guessed — and **0.09% CPU** averaged over the ~40 h of process
+uptime, i.e. nowhere near any ceiling at its real traffic. (This
 paragraph used to divide that 516 MB by 1.1 MB per session and report "≈ 470
 sessions, which lands inside the range above". The divisor is the retracted
 RSS/n figure and the range it agreed with was computed from the same divisor,
@@ -1314,10 +1319,12 @@ linear to within 2% across a 370× range. In practice:
 So the diff is **under 1%** of an interaction — optimising the differ buys
 nothing; at saturation the entire diff path is under 4% of a core. But the
 interaction as a whole **does track element count**, because `view(model)`
-re-runs in full on every interaction and is ~84% of the handler: measured
-across seven view sizes, `cost_ms ≈ 0.12 + 0.018 × elements` on one core, so
-a 30-element view serves ~1,500 interactions/sec per core
-(`docs/perf/runs/forum-rebaseline-20260816/`). An earlier version of this
+re-runs in full on every interaction and is ~84% of the handler:
+`cost_ms ≈ 0.124 + 0.018 × elements` over the three smallest views (30–94
+elements, R² = 0.99) on one core, so a 30-element view serves ~1,500
+interactions/sec per core (`docs/perf/runs/forum-rebaseline-20260816/`; the
+all-seven-sizes fit is `cost_ms ≈ −0.147 + 0.0197 × elements`, n=21,
+R² = 0.998). An earlier version of this
 section generalised the diff's flatness to the whole interaction; that
 generalisation is withdrawn — the full attribution of where the milliseconds
 go is in `docs/perf/skylive-interaction-cost.md`, "The attribution".

@@ -111,7 +111,7 @@ the SQLite baseline at all.
 
 | Instance | Memory ceiling | **Usable** ceiling | Binds on |
 |---|---|---|---|
-| e2-micro, SQLite | **~450 sessions — reached, not derived**: asked for 500, established **447** (`runs/gcp-x86-20260815/micro-noagent.tsv`, n=500 row) with `MemAvailable` down to **~43 MB** (`micro-rss-n500-r1-memexhaustion.txt`, final samples) | **~25–50** | **CPU, ~10× before memory** |
+| e2-micro, SQLite | **~450 sessions — reached, not derived**: asked for 500, established **447** (`runs/gcp-x86-20260815/micro-noagent.tsv`, n=500 row) with `MemAvailable` down to **~43 MB** (`micro-rss-n500-r1-memexhaustion.txt`, final samples) | **~25–50** | **CPU — ≈9–18× before memory** (450 ÷ 25–50) |
 | e2-small, SQLite | **never reached** — **500 of 500** established in all three repeats (`runs/gcp-x86-20260815/small-noagent.tsv`), memory nowhere near binding | **~50** | **CPU** |
 | e2-small, embedded PostgreSQL | **never reached** — see below | **~50** | **CPU** |
 
@@ -130,8 +130,11 @@ the SQLite baseline at all.
 > instance out of memory and record where it stops.
 
 On every x86 instance measured, **CPU binds an order of magnitude before
-memory does.** Sizing either e2 machine from its RAM overstates capacity by
-10–25×. Memory sets the hard ceiling; latency sets the useful one, and the
+memory does.** On the e2-micro — the only machine whose memory ceiling was
+actually reached — sizing from RAM overstates capacity by **≈9–18×** (its
+~450-session ceiling against a 25–50-session CPU knee; a ratio of two
+observations, not a directly measured quantity). Memory sets the hard
+ceiling; latency sets the useful one, and the
 useful one arrives first by a wide margin. (This table derives from rows
 2–6's commits; the memory-ceiling figures use those runs' RSS slopes. The
 later `19-skyforum` measurement — rows 8–9 — reproduces the conclusion with
@@ -156,13 +159,14 @@ knee, against 1.5 GB free.
 **PostgreSQL's own memory does not grow with sessions.** Regressed against
 established sessions, the postgres process tree's RSS slope is −10 kB
 (config B) and +22 kB (config C) per session — zero within noise, because
-the pool caps backends at **7** no matter how many sessions exist —
-`pg_backends_max` reads 7 in **every** valid config-C row of
-`runs/gcp-embed-postgres-20260815/sweep.tsv` at 25, 50 and 100 sessions,
-and `runs/gcp-x86-capacity-20260816/README.md:49-53` reads "7 (occasionally
-8)" at 100 / 300 / 500. (**This said 6**, which is `idle_pg_nproc` — the
-idle process count in the adjacent column — read as a client-backend
-count.) Embedded
+the pool holds a flat **6 connections** no matter how many sessions exist
+(`dbSharedAuxPoolSizeFor(2) = 6`). `pg_backends_max` reads **7** — the pool
+plus the 1-Hz sampler's own psql — in all config-C rows at 50 and 100
+sessions of `runs/gcp-embed-postgres-20260815/sweep.tsv`; at n=25 one row
+reads 7 and two read 0 (a mid-sweep sampler bug, README:78-82).
+`runs/gcp-x86-capacity-20260816/README.md:49-53` reads "7 (occasionally 8)"
+at 100 / 300 / 500. (**This said 6** — correct for the pool, but it misquoted
+`pg_backends_max` as 6 when the column reads 7.) Embedded
 PostgreSQL is a **fixed block**, not a per-session tax; the +426 kB/session
 in row 6 is paid in the *app*, not the database.
 
@@ -890,11 +894,13 @@ Stated so they are not discovered later as surprises:
    throughout here. The harness supports it (`--app`, `--label`); the
    run was not performed.
 4. ~~**Postgres backend counts were not collected**~~ — **closed.** They
-   were collected on an e2-small running embedded PostgreSQL: a flat **7
-   backends** at 25, 50 and 100 concurrent sessions (`pg_backends_max`,
-   `runs/gcp-embed-postgres-20260815/sweep.tsv` — every valid config-C row;
-   this bullet said 6, which was the idle process count), against a derived
-   `max_connections` of 36. See "Embedded PostgreSQL, measured" below. The
+   were collected on an e2-small running embedded PostgreSQL: a **6-connection
+   pool** at 25, 50 and 100 concurrent sessions (`dbSharedAuxPoolSizeFor(2)`),
+   with `pg_backends_max` reading **7** — the pool plus the 1-Hz sampler — in
+   the config-C rows at 50 and 100 sessions
+   (`runs/gcp-embed-postgres-20260815/sweep.tsv`; at n=25 one row read 7 and
+   two read 0, README:78-82; this bullet said 6, which is the pool), against a
+   derived `max_connections` of 36. See "Embedded PostgreSQL, measured" below. The
    *local* harness still reads `n/a`, because the reference app uses no
    database; the measurement was taken by switching the app's session
    store to `postgres` rather than by pointing `PGURL` anywhere.
@@ -1159,7 +1165,7 @@ Checked against demand on the deployed cluster:
 | Usable by the app | **33** |
 | Worst-case demand, one process (`process_connection_demand`) | 14 |
 | Demand with restart overlap (2 processes) | 28 ≤ 33 ✔ |
-| **Peak actually observed, 100 concurrent sessions** | **6** |
+| **Peak `client backend` rows observed, 100 concurrent sessions** | **7** (`pg_backends_max`) — the 6-connection pool plus the 1-Hz sampler |
 
 The property gate passes, and it is not vacuous: its own falsification
 witness — `TestTheHistoricalSizingViolatesTheProperty`, which asserts the
@@ -1188,10 +1194,14 @@ were driving the app with its session store in PostgreSQL:
  checkpointer / bgwriter / walwriter / autovacuum / logical repl |  1 each
 ```
 
-**6 backends for 100 sessions.** The pool does not open one connection per
-session, and `pg_backends_max` was a flat 6 across every run at 25, 50 and
-100 sessions. Against 33 usable connections that is **18% utilisation** —
-5.5× headroom at a concurrency already past the machine's knee.
+**A 6-connection pool for 100 sessions.** The pool does not open one
+connection per session; it stays at `dbSharedAuxPoolSizeFor(2) = 6`.
+`pg_backends_max` reads a flat **7** across every run at 50 and 100 sessions
+(and one of the three n=25 runs; the other two read 0 — the mid-sweep sampler
+bug documented in `runs/gcp-embed-postgres-20260815/README.md:78-82`) — the 6
+pool backends plus the sampler's own psql, visible as the `active` row above.
+The pool's 6 against 33 usable connections is **18% utilisation** — 5.5×
+headroom at a concurrency already past the machine's knee.
 
 Six is exactly `dbSharedAuxPoolSizeFor(2) = aux(2) + analyticsShare(2) +
 telemetryShare(2)` (`runtime-go/rt/db_pool.go:293`).

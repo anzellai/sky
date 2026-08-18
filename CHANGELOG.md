@@ -185,7 +185,11 @@ are in [`docs/tooling/cli.md`](docs/tooling/cli.md) and the keys in
   `SKY_DB_OP=migrate` makes a deployed binary self-migrate against the cluster
   it just started, and exit.
 
-  Cost is ~25–30 MB compressed. Cross-compilation honours `GOOS`/`GOARCH`, and
+  Cost is an estimated ~25–30 MB compressed (the only bundle measured to date
+  is `postgres-14.21-darwin-arm64` at 7.5 MB, which added 7.63 MB to the
+  binary — the archive plus ~87 kB of metadata; the 25–30 MB projects a larger
+  release bundle that is not yet published — see `docs/skydb/embedded-postgres.md`).
+  Cross-compilation honours `GOOS`/`GOARCH`, and
   a target with no published bundle is refused before the build rather than
   producing a binary carrying the host's PostgreSQL. `--embed` is a *build*
   flag: `sky run --embed` exits 2 and points at `[database] embedded = true`.

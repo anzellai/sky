@@ -138,13 +138,13 @@ non-obvious ones as questions:
    | | RAM |
    |---|---|
    | Sky app binary (Go), idle | **~21–27 MB** (measured, `26-ui-showcase` on an e2-small) |
-   | Sky app, settled under days of real traffic | **~56 MB** (measured, sky-lang.org on an e2-micro, 9 days up) |
+   | Sky app, settled under real traffic | **~56 MB** (measured mean, sky-lang.org on an e2-micro; a 45-min window after ~40 h of process uptime) |
    | Embedded PostgreSQL — the whole tree, as `MemAvailable` actually falls | **+21.9 MB** idle · **+28.4 MB** once sessions are written through it |
    | Sky.Live sessions, **625–650 kB each on x86, PostgreSQL store, stock `GOGC=100`** (the shipped default raises this — see below) | ~65 MB at 100 concurrent |
    | **Base, before sessions — measured whole-machine, not a sum of the rows** | **~382 MB** app alone · **~410 MB** with embedded PostgreSQL carrying the sessions |
 
    Every row: `docs/perf/runs/gcp-embed-postgres-20260815/sweep.tsv`, analysed
-   in `docs/perf/skylive-interaction-cost.md:1065-1082`; the settled-app row is
+   in `docs/perf/skylive-interaction-cost.md:1044-1100`; the settled-app row is
    that document's row 7. The base line is `MemTotal − MemAvailable` on the
    measured machine (2,023,888 kB total; median idle `MemAvailable` 1,632,340
    / 1,603,636 kB for the two configurations), so it already contains the OS
@@ -163,14 +163,17 @@ non-obvious ones as questions:
 
    **PostgreSQL is a fixed block, not a per-session tax.** Its tree's RSS
    slope against established sessions is −10 kB / +22 kB per session — zero
-   within noise (`docs/perf/skylive-interaction-cost.md:142-147`), because the
-   pool holds **7 client backends flat at 25, 50 and 100 concurrent sessions**
-   (`gcp-embed-postgres-20260815/sweep.tsv`, `pg_backends_max`, every valid
-   config-C row) and **7, occasionally 8, at 100 / 300 / 500**
+   within noise (`docs/perf/skylive-interaction-cost.md:156-158`), because the
+   pool holds a flat **6-connection pool** (`dbSharedAuxPoolSizeFor(2) = 6`) at
+   25, 50 and 100 concurrent sessions; `pg_backends_max` reads **7** — the pool
+   plus the 1-Hz sampler's own psql
+   (`gcp-embed-postgres-20260815/sweep.tsv`: 7 in the config-C rows at 50 and
+   100 and one of the three at n=25, the other two a documented sampler bug,
+   `README:78-82`) — and **7, occasionally 8, at 100 / 300 / 500**
    (`gcp-x86-capacity-20260816/README.md:49-53`, against
    `max_connections = 56`). Earlier text here and in
-   `skylive-interaction-cost.md` said **6**, which was `idle_pg_nproc` — the
-   idle process count — read as a backend count.
+   `skylive-interaction-cost.md` said `pg_backends_max` was **6**; the column
+   reads 7 (the 6 is the pool).
 
    **Sessions are the number that decides the instance** — and the per-session
    figure moves with the collector, which is why it changed. At the stock
@@ -182,19 +185,23 @@ non-obvious ones as questions:
    just the baseline: 100 → 400 scales it **2.9×** on the same app and store
    (`docs/perf/runs/gogc-postgres-20260816/`). The x86 slope at the shipped
    default is **unmeasured** — do not multiply the two runs together and quote
-   the product; this programme's projections have been wrong by 2×, 13× and
-   20×. What bounds memory at the shipped default is the derived `GOMEMLIMIT`
-   itself, not a per-session figure.
+   the product; this programme's projections have been wrong by several-fold,
+   repeatedly. What bounds memory at the shipped default is the derived
+   `GOMEMLIMIT` itself, not a per-session figure.
 
    > Quote a per-session number **with its view size and its `GOGC`**, or it
    > will be wrong. This table long carried ~1.35–1.42 MB, which was measured
    > on a *different app* — `26-ui-showcase` at 384 elements, memory store — and
    > is not the cost of a session in general.
 
-   **CPU binds ~12× before memory, measured on real GCE instances.** An
+   **CPU binds a full order of magnitude before memory on real GCE
+   instances.** The e2-micro's ~450-session memory ceiling against its
+   25–50-session CPU knee is a **≈9–18× gap** — a ratio of two measured
+   observations, not itself a directly measured quantity. An
    e2-micro *holds* ~450 sessions and is **unusable past ~50** (knee 25–50,
-   peak ~18 interactions/sec, and past 250 sessions it fails 79–96% of
-   interactions; commit `ba3c3b1d`, `docs/perf/runs/gcp-x86-20260815/`). The
+   peak ~18 interactions/sec, and at 250 sessions it fails 74–91% of
+   interactions across three repeats, 96% at 500; commit `ba3c3b1d`,
+   `docs/perf/runs/gcp-x86-20260815/micro-noagent.tsv`). The
    ~450 is an **observation, not a division**: asked for 500, that machine
    established **447** (`gcp-x86-20260815/micro-noagent.tsv`, n=500 row, which
    also records 96% of interactions failing there) with `MemAvailable` down to
@@ -207,7 +214,7 @@ non-obvious ones as questions:
    sustains 64.3 int/s at 300 sessions** (failure knee between 100 and 300),
    an **e2-medium 261.5** (knee above 500). Quote throughput with its commit
    — these figures predate later optimisation work. Sizing on memory alone
-   overstates an e2-micro twelvefold.
+   overstates an e2-micro by roughly an order of magnitude (≈9–18×).
 
    **Count physical cores, not vCPUs.** A GCE vCPU is an SMT thread:
    `e2-standard-8` is **4 cores × 2 threads**, not 8 cores. Four threads on four
@@ -242,8 +249,9 @@ non-obvious ones as questions:
    The **diff** is not the cost — ~128 ns per VNode, under 1% of an
    interaction — but the interaction as a whole **does track view size**,
    because `view(model)` re-runs in full every interaction:
-   `cost_ms ≈ 0.12 + 0.018 × elements` on one core
-   (`docs/perf/runs/forum-rebaseline-20260816/`). Optimising the differ buys
+   `cost_ms ≈ 0.124 + 0.018 × elements` over the three smallest views (30–94
+   elements) on one core (`docs/perf/runs/forum-rebaseline-20260816/`; the
+   all-seven-sizes fit is `−0.147 + 0.0197 × elements`). Optimising the differ buys
    nothing; trimming a large view is a real lever. And **a single instance
    has no replica**:
    `sky db provision --shared` generates a backup timer, a single `--embed` app
