@@ -142,3 +142,28 @@ BUILD ALL THREE:
     (live_store.go Broker). String subjects (JWT float64 floor >2^53, Judge-confirmed).
 Design+grill the session-binding + cross-replica invalidation BEFORE touching the hot
 path (sky_sessions is the runtime's hottest table).
+
+## revokeUser DESIGN — grilled, 2 BREAKS fixed into the impl (2026-08-18)
+G1 BREAK (unbound=silent no-op footgun): gate keys off sess.userID set only by an
+app one-shot; forgotten/OAuth/pre-feature sessions -> userID="" -> revoke silently
+misses. G2 BREAK (revoked session keeps mutating): gate only at handleEvent+SSE-connect,
+but Cmd.perform/Time.every/subscriber/stream all reach app.dispatch->update ungated,
+and writeSessionLost is browser-only (evicts nothing) -> server-side goroutines write
+as the revoked user forever. G3 HOLDS (revoked_at off the blob, boundAt immutable,
+fresh shared read). G5 leave sliding hook alone (slide-stopper; arity change buys nothing).
+FIXES (grill-prescribed, use existing machinery):
+ - Gate INSIDE the app.dispatch funnel (covers event/Time.every/perform/subscriber/
+   stream in ONE place; verify they share the funnel, else gate each). On Revoked/
+   Disabled -> EVICT: markDone -> sess.done retires every goroutine (they select on
+   it, live.go:6440-6459/6618) + drop from store. NOT just a 404.
+ - Add the gate to handleInitial (the initial authed-GET + init Cmds).
+ - Bind at the per-request identity chokepoint (live.go:4658-4660) or a Std.Auth
+   middleware that auto-stamps the app user; unbound-under-revocation = LOUD sky doctor
+   lint + runtime warning, never silent Active. Sliding-auth apps auto-bind from sub.
+ - revoked_at/disabled_at MUST NEVER be added to storableSession (test asserts blob
+   has no revocation field, else G3 reopens).
+ - disable check BEFORE verifyPassword (db_auth.go:2141).
+REQUIRED gates (grill): (i) a BOUND-LESS session revoke still stops it; (ii) a
+SERVER-INITIATED dispatch (live Sub.every / in-flight Cmd.perform) after revocation
+mutates NOTHING. Without both, the suite certifies a hole it never touched. -race required
+(session teardown is where the periodic-goroutine work found races).
