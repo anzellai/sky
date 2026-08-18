@@ -11,7 +11,6 @@
   "cli": {
     "_source": "rust/crates/sky/src/main.rs dispatch table (primary); docs/tooling/cli.md headings (cross-check)",
     "dispatched_but_undocumented": [
-      "config",
       "console-serve",
       "init",
       "migrate"

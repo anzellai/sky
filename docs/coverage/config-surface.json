@@ -35,7 +35,6 @@
     "SKY_ADT",
     "SKY_ANALYTICS_DEBUG",
     "SKY_AUTH_COOKIE",
-    "SKY_AUTH_DRIVER",
     "SKY_LIVE_MAX_SUBS_PER_SESSION",
     "SKY_LSP_DEBUG",
     "SKY_LSP_TRACE",
@@ -224,8 +223,8 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 94,
-    "documented_without_reader": 9,
+    "documented_names": 93,
+    "documented_without_reader": 8,
     "pre_binary_surfaces": 14,
     "read_without_doc": 26,
     "runtime_read_literal_sky_names": 35,
