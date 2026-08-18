@@ -36,6 +36,8 @@ module Std.Live exposing
     , withStorePath
     , withTtl
     , withIdleEvict
+    , withMaxBodyBytes
+    , withInput
     , withAnalytics
     , withAnalyticsIdentify
     , withStatus
@@ -210,6 +212,28 @@ withTtl =
 withIdleEvict : String -> AppConfig model msg -> AppConfig model msg
 withIdleEvict =
     Ffi.kernel "Live_withIdleEvict"
+
+
+-- | Maximum bytes accepted on a single TEA event request (the channel that
+-- also carries `Event.onFile` / `Event.onImage` base64 uploads). Default 5 MiB.
+--
+-- Same precedence order as `withPort`: operator env `SKY_LIVE_MAX_BODY_BYTES`
+-- (shell or `.env`) → this call → `[live] maxBodyBytes` in `sky.toml` → 5 MiB.
+-- A non-positive or unparseable value at one layer falls through to the next.
+withMaxBodyBytes : Int -> AppConfig model msg -> AppConfig model msg
+withMaxBodyBytes =
+    Ffi.kernel "Live_withMaxBodyBytes"
+
+
+-- | When the JS driver reports an input's value: `"debounce"` (after a typing
+-- pause, the default) or `"blur"` (only when the field loses focus).
+--
+-- Same precedence order as `withPort`: operator env `SKY_LIVE_INPUT_MODE`
+-- (shell or `.env`) → this call → `[live] input` in `sky.toml` → `"debounce"`.
+-- An unrecognised value falls back to `"debounce"` with a warning.
+withInput : String -> AppConfig model msg -> AppConfig model msg
+withInput =
+    Ffi.kernel "Live_withInput"
 
 
 -- | Opt into Sky.Live auto page-view analytics —

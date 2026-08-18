@@ -114,6 +114,15 @@ func Live_withTtl(ttl, cfg any) any { return liveCfgSet(cfg, "Ttl", ttl) }
 // memory store (no disk backing). See docs/skylive/tiered-session-cache.md.
 func Live_withIdleEvict(idleEvict, cfg any) any { return liveCfgSet(cfg, "IdleEvict", idleEvict) }
 
+// Live_withMaxBodyBytes — `maxBodyBytes : Int` upper bound on a single TEA
+// event request body (env `SKY_LIVE_MAX_BODY_BYTES` wins). Resolved through the
+// same `configLayers` order as the other four; see resolveMaxBodyBytes.
+func Live_withMaxBodyBytes(n, cfg any) any { return liveCfgSet(cfg, "MaxBodyBytes", n) }
+
+// Live_withInput — `input : String` input-report mode ("debounce" | "blur";
+// env `SKY_LIVE_INPUT_MODE` wins). See resolveInputMode.
+func Live_withInput(mode, cfg any) any { return liveCfgSet(cfg, "Input", mode) }
+
 // Live_withAnalytics — `analytics : { pageViews : Bool }` (invariant 4:
 // the record is stored verbatim and read via Field(a,"PageViews")).
 func Live_withAnalytics(a, cfg any) any { return liveCfgSet(cfg, "Analytics", a) }

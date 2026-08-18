@@ -3158,7 +3158,16 @@ type liveApp struct {
 	staticURL         string        // URL mount prefix (default "/static")
 	store             SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
 	sessionTTL        time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
-	locker            *sessionLocker
+	// maxBodyBytes — upper bound on a single TEA event request body, resolved
+	// once at startup through `configLayers` (operator env > Live.withMaxBodyBytes
+	// > seeded [live] maxBodyBytes > 5 MiB). handleEvent reads this instead of
+	// consulting the environment per request.
+	maxBodyBytes int64
+	// inputMode — "debounce" | "blur", resolved once at startup through
+	// `configLayers` (operator env > Live.withInput > seeded [live] input >
+	// "debounce"). handleConfig reports it to the JS driver.
+	inputMode string
+	locker    *sessionLocker
 	msgTags           map[string]int // SkyName → Tag cache for direct-send events
 	msgTagsMu         sync.Mutex
 
@@ -4046,6 +4055,12 @@ func liveAppRun(cfg any) any {
 	// one way it differs from ttl. Bounds a durable store's RAM to the ACTIVE
 	// working set. See docs/skylive/tiered-session-cache.md.
 	idleEvict := resolveIdleEvict(stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	// Event-body cap and input-report mode — resolved by the same one rule, so a
+	// Live.withMaxBodyBytes / Live.withInput builder beats a seeded sky.toml
+	// default while still losing to an operator env override. Resolved ONCE here
+	// (not per request / per /_sky/config hit) and stored on the app.
+	app.maxBodyBytes = resolveMaxBodyBytes(stringField(cfg, "MaxBodyBytes"), 5<<20)
+	app.inputMode = resolveInputMode(stringField(cfg, "Input"))
 	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
@@ -4789,38 +4804,47 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 func (app *liveApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"inputMode":    liveInputMode(),
+		"inputMode":    app.inputMode,
 		"pollInterval": 0, // 0 = SSE only
 	})
 }
 
-// liveInputMode is when the JS driver reports an input's value: after a typing
-// pause ("debounce", the default) or only when the field loses focus ("blur").
-// Set via `sky.toml [live] input` or SKY_LIVE_INPUT_MODE.
+// resolveInputMode resolves the input-report mode across all precedence layers
+// (operator env > `Live.withInput` builder > seeded `[live] input` > default),
+// with validation: the WINNING (highest-precedence non-empty) layer decides,
+// and an unrecognised winner falls back to "debounce" with a warning rather
+// than serving a mode the client cannot honour.
 //
-// This was a hardcoded "debounce" carrying the comment `// or "blur"` — a
-// choice the code named and offered no way to make. Meanwhile
-// `examples/19-skyforum` and `examples/37-composite-live-shop` both shipped
-// `[live] input = "debounce"`, the key that was evidently meant to drive it;
-// the compiler parsed no such key, so it did nothing. Same root cause as the
-// `[jobs]` section and the `[auth] session_ttl` spelling: config that reads as
-// set and is wired to nothing.
-//
-// An unrecognised value falls back to the default with a warning rather than
-// serving a mode the client cannot honour — the client would silently ignore it
-// and the operator would be left believing the setting took.
-func liveInputMode() string {
-	switch mode := skyGetenv("LIVE_INPUT_MODE"); mode {
-	case "":
-		return "debounce"
-	case "debounce", "blur":
-		return mode
-	default:
-		fmt.Printf("[sky.live] WARNING: input mode %q is not recognised "+
-			"(valid: debounce, blur) — using \"debounce\". "+
-			"Set sky.toml [live] input or SKY_LIVE_INPUT_MODE.\n", mode)
-		return "debounce"
+// Previously this read `skyGetenv("LIVE_INPUT_MODE")` directly, so a seeded
+// `[live] input` default was indistinguishable from an operator override and NO
+// builder could win — the same dead-builder shape `Live.withTtl` had before
+// stage 3. Routing through `configLayers` gives `Live.withInput` a live layer.
+func resolveInputMode(builderVal string) string {
+	for _, mode := range configLayers("LIVE_INPUT_MODE", builderVal) {
+		switch mode {
+		case "":
+			continue
+		case "debounce", "blur":
+			return mode
+		default:
+			fmt.Printf("[sky.live] WARNING: input mode %q is not recognised "+
+				"(valid: debounce, blur) — using \"debounce\". "+
+				"Set sky.toml [live] input, SKY_LIVE_INPUT_MODE, or Live.withInput.\n", mode)
+			return "debounce"
+		}
 	}
+	return "debounce"
+}
+
+// resolveMaxBodyBytes resolves the TEA event-body cap across all precedence
+// layers (operator env > `Live.withMaxBodyBytes` builder > seeded
+// `[live] maxBodyBytes` > `def`). Each layer accepts a positive integer count
+// of bytes; a non-positive or unparseable value falls through to the next.
+func resolveMaxBodyBytes(builderVal string, def int64) int64 {
+	if n := parsePortLayers(configLayers("LIVE_MAX_BODY_BYTES", builderVal)); n > 0 {
+		return int64(n)
+	}
+	return def
 }
 
 func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
@@ -4853,9 +4877,9 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// the server cap. Server-side validation in `update` is the
 	// authoritative check; this is the upper bound on what reaches
 	// the runtime at all.
-	maxBody := int64(5 << 20)
-	if n, ok := parsePositiveInt(skyGetenv("LIVE_MAX_BODY_BYTES")); ok {
-		maxBody = int64(n)
+	maxBody := app.maxBodyBytes
+	if maxBody <= 0 {
+		maxBody = 5 << 20
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	body, err := io.ReadAll(r.Body)
