@@ -1,8 +1,9 @@
 # Sky stdlib — Canonical correctness reference
 
-Pairs with `docs/architecture/sky-compiler-architecture.md`. The compiler
-doc explains HOW Sky source becomes Go; this doc explains WHAT the
-stdlib surfaces guarantee.
+Pairs with `docs/rust-rewrite/` (the primary compiler reference; the
+Haskell-era `docs/architecture/sky-compiler-architecture.md` is historical
+context only). The compiler docs explain HOW Sky source becomes Go; this doc
+explains WHAT the stdlib surfaces guarantee.
 
 This reference is grounded in the v0.17 HEAD sources at
 `sky-stdlib/`, the Rust kernel registry, and the Go runtime in
@@ -253,7 +254,7 @@ the law itself). Law-by-inspection for the algebraic content.
 
 **Files**: `Dict.sky` (127 lines), `Set.sky` (92 lines). Both are
 `Ffi.kernel` aliases — implementations live in Go runtime
-(`runtime-go/rt/dict.go` and `set.go`).
+(`runtime-go/rt/rt.go` — there are no `dict.go` / `set.go` files; the `Dict_*` / `Set_*` kernels live in `rt.go` and `stdlib_extra.go`).
 
 **Types**:
 ```elm
@@ -1390,8 +1391,9 @@ implementation step OR a clear spec to write.
 
 ## 9. Read this together with the compiler doc
 
-The companion at `docs/architecture/sky-compiler-architecture.md`
-explains:
+The companion `docs/rust-rewrite/` (`07-lowering-and-ir.md`,
+`08-go-codegen.md`, `09-runtime-and-ffi.md`, and
+`14-runtime-narrowing-taxonomy.md` for the narrowing floor) explains:
 
 * How `Ffi.kernel "Name"` is routed (canonicalisation → kernel
   registry → Go runtime).

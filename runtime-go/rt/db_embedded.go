@@ -13,9 +13,9 @@ import (
 // empty string for an app that defines no file-based migrations.
 var SkyEmbeddedMigrations string
 
-// MaybeApplyEmbeddedMigrationsAndExit is called from that generated main-package
-// init(). It lets a DEPLOYED binary self-migrate with NO source tree and NO `sky`
-// toolchain on the host:
+// MaybeApplyEmbeddedMigrationsAndExit is called from generated `main`, on the
+// line after rt.MaybeStartEmbeddedPostgres(). It lets a DEPLOYED binary
+// self-migrate with NO source tree and NO `sky` toolchain on the host:
 //
 //	SKY_DB_OP=migrate ./app   → apply the embedded migrations, print a summary, exit
 //	SKY_DB_OP=status  ./app   → report applied / pending, exit
@@ -28,11 +28,19 @@ var SkyEmbeddedMigrations string
 // `sky db migrate` CLI uses. `Db_migrateApply` prints the human summary and exits
 // the process itself under `SKY_DB_OP`, so control does not return in that path.
 //
+// The call site is `main`, NOT the generated `embedded_migrations.go` `init()`
+// that used to carry it. Every `init()` runs before `main`, and an `--embed`
+// binary starts its PostgreSQL from `main` — so from an `init()` this ran
+// against a database that did not exist yet and `SKY_DB_OP=migrate ./app
+// --embed` could not work at all. Every exit below goes through ExitProcess
+// rather than os.Exit, because `os.Exit` skips `main`'s
+// `defer rt.StopEmbeddedPostgres()` and would leave the cluster orphaned.
+//
 // Design: explicit, one-shot, run by a single deploy-time owner — replicas that
 // boot without `SKY_DB_OP` just serve. This is the safe shape for horizontal
 // scale (no concurrent migrate-on-boot across replicas).
 func MaybeApplyEmbeddedMigrationsAndExit() {
-	op := strings.ToLower(strings.TrimSpace(os.Getenv("SKY_DB_OP")))
+	op := strings.ToLower(strings.TrimSpace(skyGetenv("DB_OP")))
 	if op != "migrate" && op != "status" {
 		return
 	}
@@ -48,13 +56,13 @@ func MaybeApplyEmbeddedMigrationsAndExit() {
 		renderRes := AnyTaskRun(Db_renderMigrations(conn, SkyEmbeddedMigrations))
 		if rtag, pairs, _ := anyResultView(renderRes); rtag == 0 {
 			_ = AnyTaskRun(Db_migrateApply(conn, pairs))
-			os.Exit(0)
+			ExitProcess(0)
 		}
 		fmt.Fprintln(os.Stderr, "db: could not render embedded migrations")
-		os.Exit(1)
+		ExitProcess(1)
 	}
 	fmt.Fprintln(os.Stderr,
 		"db: could not open database for embedded migrations (set DATABASE_URL or "+
 			skyEnvName("DB_PATH")+")")
-	os.Exit(1)
+	ExitProcess(1)
 }

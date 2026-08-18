@@ -443,3 +443,274 @@ fn every_non_blocking_declaration_states_why() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Contexts a job-level key is not allowed to name
+// ---------------------------------------------------------------------------
+
+/// Contexts that are available in NO job-level key.
+///
+/// GitHub's context-availability table varies per key — `matrix` is legal in a
+/// job `env:` and not in `runs-on:`, `secrets` is legal in `env:` and not in
+/// `if:` — so this list is deliberately the intersection: four contexts that no
+/// job-level key may ever name, which is a rule with no false positives.
+///
+/// `runner` is the one that bit. `nightly-sweep.yml` carried
+///
+/// ```yaml
+///     env:
+///       OUT: ${{ runner.temp }}/bundles
+/// ```
+///
+/// on a job, and the penalty is not a warning about one variable: GitHub
+/// refuses to parse the FILE. The run is created, has zero jobs, finishes in
+/// 0 s and is attributed to whatever push arrived — so the nightly sweep, the
+/// browser tier and the real-bundle licence gate all stopped running while the
+/// red looked like a nightly problem on a branch nobody reads.
+///
+/// That is the same outage this file's header describes, reached through a
+/// different door: `every_workflow_is_parseable_yaml` passes, because the YAML
+/// is fine and it is GitHub's expression checker that refuses it.
+const NO_JOB_LEVEL_KEY_MAY_USE: [&str; 4] = ["runner", "steps", "job", "env"];
+
+/// Job-level keys evaluated BEFORE the job has a runner, a step or an
+/// environment — so an expression in one of them cannot name those.
+const JOB_LEVEL_KEYS: [&str; 5] =
+    ["env", "if", "runs-on", "timeout-minutes", "continue-on-error"];
+
+/// Every `${{ … }}` span in a string, inner text only.
+fn expressions(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find("${{") {
+        rest = &rest[open + 3..];
+        match rest.find("}}") {
+            Some(close) => {
+                out.push(&rest[..close]);
+                rest = &rest[close + 2..];
+            }
+            // Unterminated — GitHub would reject it too, but that is the
+            // parser's complaint to make, not this test's.
+            None => break,
+        }
+    }
+    out
+}
+
+/// The context names an expression reads: an identifier immediately followed
+/// by `.`. `runner.temp` yields `runner`; `fromJSON('["a"]')` yields nothing.
+fn contexts_used(expr: &str) -> Vec<String> {
+    let bytes: Vec<char> = expr.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_alphabetic() || bytes[i] == '_' {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == '_' || bytes[i] == '-') {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == '.' {
+                out.push(bytes[start..i].iter().collect());
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Every scalar string reachable from a YAML value, however nested.
+fn scalars(v: &serde_yaml::Value, out: &mut Vec<String>) {
+    match v {
+        serde_yaml::Value::String(s) => out.push(s.clone()),
+        serde_yaml::Value::Sequence(xs) => xs.iter().for_each(|x| scalars(x, out)),
+        serde_yaml::Value::Mapping(m) => m.iter().for_each(|(k, x)| {
+            scalars(k, out);
+            scalars(x, out);
+        }),
+        _ => {}
+    }
+}
+
+#[test]
+fn job_level_keys_name_only_contexts_that_exist_yet() {
+    let mut bad = Vec::new();
+    for path in workflows() {
+        let text = std::fs::read_to_string(&path).expect("read workflow");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parsed above");
+        let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else { continue };
+        for (job_name, job) in jobs {
+            let job_name = job_name.as_str().unwrap_or("<non-string>");
+            for key in JOB_LEVEL_KEYS {
+                let Some(value) = job.get(key) else { continue };
+                let mut strings = Vec::new();
+                scalars(value, &mut strings);
+                for s in &strings {
+                    for expr in expressions(s) {
+                        for ctx in contexts_used(expr) {
+                            if NO_JOB_LEVEL_KEY_MAY_USE.contains(&ctx.as_str()) {
+                                bad.push(format!(
+                                    "{}: job `{job_name}` key `{key}` uses `{ctx}.` in `${{{{{expr}}}}}`",
+                                    path.display()
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "a job-level key names a context that does not exist at job level. \
+         GitHub does not warn: it REFUSES THE WHOLE FILE, and the run then has \
+         zero jobs, zero logs and a 0 s red that reads like a flake:\n  {}\n\
+         Set the value from a step instead — `echo \"OUT=$RUNNER_TEMP/x\" >> \
+         \"$GITHUB_ENV\"` — or move the expression to the step that uses it, \
+         where `runner`/`steps`/`env` are available.",
+        bad.join("\n  ")
+    );
+}
+
+/// The gate must be able to go red. A test that only ever sees a clean tree
+/// proves nothing about what it would do with a dirty one.
+#[test]
+fn the_job_level_context_check_catches_the_shape_that_broke_nightly_sweep() {
+    let doc: serde_yaml::Value = serde_yaml::from_str(
+        "jobs:\n  b:\n    runs-on: ubuntu-latest\n    env:\n      OUT: ${{ runner.temp }}/bundles\n    steps:\n      - run: true\n",
+    )
+    .expect("fixture parses");
+    let env = doc
+        .get("jobs")
+        .and_then(|j| j.get("b"))
+        .and_then(|b| b.get("env"))
+        .expect("fixture has a job env");
+    let mut strings = Vec::new();
+    scalars(env, &mut strings);
+    let found: Vec<String> = strings
+        .iter()
+        .flat_map(|s| expressions(s))
+        .flat_map(contexts_used)
+        .filter(|c| NO_JOB_LEVEL_KEY_MAY_USE.contains(&c.as_str()))
+        .collect();
+    assert_eq!(found, vec!["runner".to_string()], "the check no longer sees the original defect");
+
+    // …and does not fire on the expressions the workflows legitimately use.
+    for ok in [
+        "${{ github.workspace }}/.gocache",
+        "${{ needs.setup.outputs.sha }}",
+        "${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('[\"both\"]'), inputs.only) }}",
+        "${{ matrix.os }}",
+        "${{ secrets.GITHUB_TOKEN }}",
+    ] {
+        let hits: Vec<String> = expressions(ok)
+            .into_iter()
+            .flat_map(contexts_used)
+            .filter(|c| NO_JOB_LEVEL_KEY_MAY_USE.contains(&c.as_str()))
+            .collect();
+        assert!(hits.is_empty(), "false positive on `{ok}`: {hits:?}");
+    }
+}
+
+/// The census + ratchet gates must run on a PR, not only at release.
+///
+/// # The defect
+///
+/// `config-surface` and `config-matrix` are both `Tier::T1`, and the repo's
+/// only `harness --tier t1` invocation lived in `release.yml`; `denominators
+/// --check` and `coverage-ledger --check` were likewise release-only steps.
+/// Gate selection is exact tier equality, so nothing on a pull request could
+/// reach any of them.
+///
+/// The consequence was live on this branch: `xtask config-surface --check` was
+/// RED on a clean tree at HEAD — `STALE — summary.documented_names: 88 -> 89` —
+/// because `SKY_HTTP_CLIENT_TIMEOUT` was added one commit AFTER the census was
+/// regenerated. The series left its own gate red at merge and nothing noticed,
+/// because nothing ran it until a tag was cut.
+///
+/// # What this asserts
+///
+/// Each invocation below appears in the `run:` body of a `rust-ci.yml` job that
+/// `ci-green` fans in — the only place a step both runs on a PR AND blocks a
+/// merge. Parsed, never grepped as raw text: a comment mentioning an invocation
+/// must not vouch for one, which is exactly how the sibling tier-invocation
+/// test was defeated once already.
+const REQUIRED_ON_PR: &[(&str, &str)] = &[
+    (
+        "config-surface --check",
+        "the sky.toml + env census. Drifts on any commit that adds a documented \
+         name or a reader, which is to say on ordinary work",
+    ),
+    (
+        "denominators --check",
+        "how much surface exists. A DECREASE is a coverage claim shrinking",
+    ),
+    (
+        "coverage-ledger --check",
+        "how strongly each surface is covered. A surface getting weaker fails here",
+    ),
+    (
+        "--only config-matrix",
+        "every covered setting's effective value, observed from running binaries",
+    ),
+];
+
+#[test]
+fn the_census_and_ratchet_gates_run_on_a_pull_request() {
+    let path = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/workflows/rust-ci.yml"
+    ));
+    let text = std::fs::read_to_string(&path).expect("read rust-ci.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("rust-ci.yml parses");
+    let jobs = doc.get("jobs").and_then(|j| j.as_mapping()).expect("`jobs` mapping");
+
+    // Only jobs the required check fans in count: a step in a job `ci-green`
+    // does not need can go red while the merge proceeds.
+    let fanned: Vec<String> = jobs
+        .get(serde_yaml::Value::from("ci-green"))
+        .and_then(|g| g.get("needs"))
+        .and_then(|n| n.as_sequence())
+        .map(|s| s.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
+        .expect("ci-green declares a `needs` list");
+    assert!(
+        fanned.len() > 5,
+        "ci-green fans in only {} job(s) — the parse is wrong",
+        fanned.len()
+    );
+
+    let mut haystack = String::new();
+    for (name, job) in jobs {
+        let Some(name) = name.as_str() else { continue };
+        if !fanned.contains(&name.to_string()) {
+            continue;
+        }
+        let Some(steps) = job.get("steps").and_then(|s| s.as_sequence()) else {
+            continue;
+        };
+        for step in steps {
+            if let Some(run) = step.get("run").and_then(|r| r.as_str()) {
+                haystack.push_str(run);
+                haystack.push('\n');
+            }
+        }
+    }
+    assert!(
+        haystack.contains("xtask"),
+        "no `xtask` invocation found in any fanned-in job's `run:` body — the \
+         scan is broken, not the repo"
+    );
+
+    let missing: Vec<String> = REQUIRED_ON_PR
+        .iter()
+        .filter(|(inv, _)| !haystack.contains(inv))
+        .map(|(inv, why)| format!("`{inv}` — {why}"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "gate invocation(s) run only at RELEASE, so drift lands on `main` \
+         unnoticed and is discovered when a tag is cut:\n  {}\n\n\
+         Add each to a `rust-ci.yml` job that `ci-green` needs.",
+        missing.join("\n  ")
+    );
+}

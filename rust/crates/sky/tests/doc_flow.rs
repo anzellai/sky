@@ -20,6 +20,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn go_on_path() -> bool {
@@ -127,8 +131,7 @@ fn kill_group(child: &std::process::Child) {
 
 #[test]
 fn doc_serve_answers_http_200() {
-    if !go_on_path() {
-        eprintln!("doc_flow: skipping --serve — needs `go` on PATH");
+    if !required(Need::Go, go_on_path()) {
         return;
     }
     let dir = scratch_project("serve");

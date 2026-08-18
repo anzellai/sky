@@ -55,8 +55,29 @@
     }
   },
   "gates": {
+    "analytics-prune-errors-are-reported": {
+      "expected_assertions": 3,
+      "falsifier_mutation": "analytics-prune.discard-the-exec-error",
+      "falsifier_proven": true,
+      "summary": "a failing analytics retention DELETE produces a warn, not silence",
+      "surfaces": [
+        "observability.analytics-store"
+      ],
+      "tier": "T1"
+    },
+    "analytics-retention-survives-a-panic": {
+      "expected_assertions": 2,
+      "falsifier_mutation": "analytics-retention.no-recover-inside-the-cycle",
+      "falsifier_proven": true,
+      "summary": "a panic in an analytics retention cycle costs the cycle, not the goroutine",
+      "surfaces": [
+        "observability.analytics-store"
+      ],
+      "tier": "T1"
+    },
     "apps-bundled": {
       "expected_assertions": 4,
+      "falsifier_mutation": "apps-bundled.reintroduce-missing-field",
       "falsifier_proven": true,
       "summary": "member F — the Sky apps shipped inside the compiler build from a wiped slate",
       "surfaces": [
@@ -67,6 +88,7 @@
     },
     "apps-dispatch": {
       "expected_assertions": 22,
+      "falsifier_mutation": "apps-dispatch.swallow-the-job-failure",
       "falsifier_proven": true,
       "summary": "member H (SQLite arm) — Std.Jobs, Std.Db.Schema/Migrate, Std.Markdown, Std.Email",
       "surfaces": [
@@ -83,6 +105,7 @@
     },
     "apps-dispatch-destructive": {
       "expected_assertions": 5,
+      "falsifier_mutation": "apps-dispatch-destructive.rename-the-quarantine-target",
       "falsifier_proven": true,
       "summary": "a destructive schema diff is quarantined, never applied",
       "surfaces": [
@@ -93,6 +116,7 @@
     },
     "apps-dispatch-postgres": {
       "expected_assertions": 22,
+      "falsifier_mutation": "apps-dispatch-postgres.break-health-driver",
       "falsifier_proven": true,
       "summary": "member H (Postgres arm) — the same source and assertions on real pgx",
       "surfaces": [
@@ -106,6 +130,7 @@
     },
     "apps-ffi-scale": {
       "expected_assertions": 3,
+      "falsifier_mutation": "apps-ffi-scale.break-an-ffi-symbol",
       "falsifier_proven": true,
       "summary": "member D — Go FFI at 76k-symbol scale (install + build, pre-release)",
       "surfaces": [
@@ -116,6 +141,7 @@
     },
     "apps-fieldbook": {
       "expected_assertions": 8,
+      "falsifier_mutation": "apps-fieldbook.diverge-one-backend",
       "falsifier_proven": true,
       "summary": "member C — one Std.Ui view renders identically across backends",
       "surfaces": [
@@ -127,6 +153,7 @@
     },
     "apps-fleet": {
       "expected_assertions": 8,
+      "falsifier_mutation": "apps-fleet.drop-the-production-gate",
       "falsifier_proven": true,
       "summary": "member E — Ledger as a multi-replica topology over one shared session store",
       "surfaces": [
@@ -137,6 +164,7 @@
     },
     "apps-ledger": {
       "expected_assertions": 11,
+      "falsifier_mutation": "apps-ledger.drop-the-ordering",
       "falsifier_proven": true,
       "summary": "member A (SQLite arm) — migrations, auth, journal ordering, money residue",
       "surfaces": [
@@ -151,6 +179,7 @@
     },
     "apps-ledger-postgres": {
       "expected_assertions": 11,
+      "falsifier_mutation": "apps-ledger-postgres.break-health-driver",
       "falsifier_proven": true,
       "summary": "member A (Postgres arm) — identical source, identical assertions, real pgx",
       "surfaces": [
@@ -161,6 +190,7 @@
     },
     "apps-relay": {
       "expected_assertions": 12,
+      "falsifier_mutation": "apps-relay.disable-rate-limiting",
       "falsifier_proven": true,
       "summary": "member B — headless HTTP: auth refusal, rate limiting, CORS, asserted live",
       "surfaces": [
@@ -171,7 +201,8 @@
       "tier": "T1"
     },
     "cli-verbs": {
-      "expected_assertions": 9,
+      "expected_assertions": 10,
+      "falsifier_mutation": "cli-verbs.break-an-expectation",
       "falsifier_proven": true,
       "summary": "member G — sky CLI verbs (init/clean/watch/db/install/update/upgrade/dispatch)",
       "surfaces": [
@@ -185,8 +216,29 @@
       ],
       "tier": "T1"
     },
+    "config-matrix": {
+      "expected_assertions": 98,
+      "falsifier_mutation": "config-matrix.invert-operator-env-provenance",
+      "falsifier_proven": true,
+      "summary": "every covered setting's EFFECTIVE value, observed from running binaries, matches the baseline in every arm combination",
+      "surfaces": [
+        "meta.config-effective-values"
+      ],
+      "tier": "T1"
+    },
+    "config-surface": {
+      "expected_assertions": 59,
+      "falsifier_mutation": "config-surface.seed-a-suffix-nothing-reads",
+      "falsifier_proven": true,
+      "summary": "the configuration surface is measured, current, and no defect count rose",
+      "surfaces": [
+        "meta.config-surface"
+      ],
+      "tier": "T1"
+    },
     "conformance": {
       "expected_assertions": 935,
+      "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
       "surfaces": [
@@ -196,8 +248,20 @@
       ],
       "tier": "T1"
     },
+    "console-analytics-queries-are-bounded": {
+      "expected_assertions": 20,
+      "falsifier_mutation": "console-analytics.unbound-the-revenue-scan",
+      "falsifier_proven": true,
+      "summary": "every console Analytics query is windowed, row-capped, and plans off an index",
+      "surfaces": [
+        "observability.analytics-store",
+        "observability.console"
+      ],
+      "tier": "T1"
+    },
     "corpus": {
       "expected_assertions": 335,
+      "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
       "surfaces": [
@@ -234,6 +298,7 @@
     },
     "corpus-emit-shape": {
       "expected_assertions": 46,
+      "falsifier_mutation": "corpus-emit-shape.delete-the-probe-use",
       "falsifier_proven": true,
       "summary": "properties of the generated Go (no `go build`): no erasure, no `any` in a concrete signature, no raw `.(T)`, declared field order, fieldset selected by TYPE",
       "surfaces": [
@@ -244,6 +309,7 @@
     },
     "corpus-isolation": {
       "expected_assertions": 24,
+      "falsifier_mutation": "corpus-isolation.perturb-batch",
       "falsifier_proven": true,
       "summary": "sampled cases give identical verdicts alone / in-batch / shuffled (v2 §3.2)",
       "surfaces": [
@@ -254,6 +320,7 @@
     },
     "corpus-manifest": {
       "expected_assertions": 481,
+      "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
       "surfaces": [
@@ -263,6 +330,7 @@
     },
     "corpus-reject": {
       "expected_assertions": 270,
+      "falsifier_mutation": "corpus-reject.break-the-twin",
       "falsifier_proven": true,
       "summary": "reject matrix: rejection by DIAGNOSTIC CODE, each with an accepted twin",
       "surfaces": [
@@ -274,6 +342,7 @@
     },
     "corpus-witness": {
       "expected_assertions": 16,
+      "falsifier_mutation": "corpus-witness.compare-against-itself",
       "falsifier_proven": true,
       "summary": "each case emits different Go from its axis-neutralised twin (v2 §4.4)",
       "surfaces": [
@@ -283,7 +352,8 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 145,
+      "expected_assertions": 149,
+      "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
       "surfaces": [
@@ -291,8 +361,40 @@
       ],
       "tier": "T1"
     },
+    "erasure-path-uses-an-index": {
+      "expected_assertions": 5,
+      "falsifier_mutation": "erasure-index.drop-the-anonymous-id-index",
+      "falsifier_proven": true,
+      "summary": "Analytics.erase — the right-to-erasure DELETE — resolves through indexes, not a full scan",
+      "surfaces": [
+        "observability.analytics-store"
+      ],
+      "tier": "T1"
+    },
+    "jobs-complete-failure-is-reported": {
+      "expected_assertions": 3,
+      "falsifier_mutation": "jobs-complete.discard-the-store-error",
+      "falsifier_proven": true,
+      "summary": "a failing jobs Complete is reported, not discarded into an infinite redelivery loop",
+      "surfaces": [
+        "runtime.periodic-goroutines"
+      ],
+      "tier": "T1"
+    },
+    "live-time-every-mutex-survives-a-panic": {
+      "expected_assertions": 2,
+      "falsifier_mutation": "time-every.unlock-only-on-the-happy-path",
+      "falsifier_proven": true,
+      "summary": "a panicking Time.every tick leaves the session mutex acquirable",
+      "surfaces": [
+        "runtime.periodic-goroutines",
+        "skylive.session-sse-csrf"
+      ],
+      "tier": "T1"
+    },
     "lsp": {
       "expected_assertions": 49,
+      "falsifier_mutation": "lsp.hover-echoes-the-token",
       "falsifier_proven": true,
       "summary": "the editor answers hover / goto-def / completion / diagnostics through a REAL Neovim LSP client, on fixtures and a real app",
       "surfaces": [
@@ -300,8 +402,19 @@
       ],
       "tier": "T1"
     },
+    "periodic-loops-recover-per-cycle": {
+      "expected_assertions": 2,
+      "falsifier_mutation": "periodic-loops.recover-at-the-goroutine-top-level",
+      "falsifier_proven": true,
+      "summary": "every detached periodic loop in runtime-go recovers per cycle, and none discards a write's error",
+      "surfaces": [
+        "runtime.periodic-goroutines"
+      ],
+      "tier": "T1"
+    },
     "reject": {
       "expected_assertions": 68,
+      "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
       "surfaces": [
@@ -312,6 +425,7 @@
     },
     "roundtrip": {
       "expected_assertions": 173,
+      "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
       "surfaces": [
@@ -322,6 +436,7 @@
     },
     "shared-world": {
       "expected_assertions": 126,
+      "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
       "surfaces": [
@@ -332,6 +447,7 @@
     },
     "sky-suites": {
       "expected_assertions": 393,
+      "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
       "surfaces": [
@@ -341,6 +457,7 @@
     },
     "sky-verify": {
       "expected_assertions": 6,
+      "falsifier_mutation": "sky-verify.break-a-suite",
       "falsifier_proven": true,
       "summary": "`sky verify` over every examples/* project that owns a tests/ suite",
       "surfaces": [
@@ -351,6 +468,7 @@
     },
     "verify-cli": {
       "expected_assertions": 13,
+      "falsifier_mutation": "verify-cli.drop-expected-output",
       "falsifier_proven": true,
       "summary": "CLI/TUI examples start, produce expected output, and do not panic",
       "surfaces": [
@@ -500,13 +618,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1776,
+    "stdlib_entries": 1782,
     "stdlib_modules": 87,
-    "surfaces_covered": 127,
-    "surfaces_covered_pct": 90.1,
+    "surfaces_covered": 131,
+    "surfaces_covered_pct": 90.3,
     "surfaces_equal": 19,
-    "surfaces_stronger": 122,
-    "surfaces_total": 141,
+    "surfaces_stronger": 126,
+    "surfaces_total": 145,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -590,6 +708,11 @@
         "evidence": [
           {
             "by": "gate `verify-cli`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
             "class": "Falsified",
             "strength": 4
           }
@@ -1087,7 +1210,7 @@
         "class": "Asserted",
         "evidence": [
           {
-            "by": ".github/workflows/release.yml: xtask coerce-floor (`xtask:coerce-floor` is not harness-registered — no proven falsifier)",
+            "by": ".github/workflows/nightly-sweep.yml: xtask coerce-floor (`xtask:coerce-floor` is not harness-registered — no proven falsifier)",
             "class": "Asserted",
             "strength": 3
           }
@@ -1893,6 +2016,62 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `config-matrix`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — no gate compared a setting's resolved value against anything",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "each covered setting's effective value, observed from a running binary in every combination of environment / sky.toml / withX, as the baseline a moved default is compared against",
+      "id": "meta.config-effective-values",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `config-surface`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — the surface was counted by hand, in prose, with no gate",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "the configuration surface is measured from source — which sky.toml keys are read pre-binary, which seeded env suffixes nothing reads, how far docs and readers drifted",
+      "id": "meta.config-surface",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "gate `coverage-ledger`",
             "class": "Falsified",
             "strength": 4
@@ -1920,6 +2099,54 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "gate `analytics-retention-survives-a-panic`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `analytics-prune-errors-are-reported`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `console-analytics-queries-are-bounded`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `erasure-path-uses-an-index`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "analytics retention keeps pruning, and the console's reads stay bounded + indexed (incl. the right-to-erasure DELETE)",
+      "id": "observability.analytics-store",
+      "verdict": "stronger"
+    },
+    {
+      "category": "observability",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `console-analytics-queries-are-bounded`",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "gate `apps-bundled`",
             "class": "Falsified",
@@ -2015,6 +2242,44 @@
       "verdict": "stronger"
     },
     {
+      "category": "runtime",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `periodic-loops-recover-per-cycle`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `live-time-every-mutex-survives-a-panic`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `jobs-complete-failure-is-reported`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "every detached periodic loop in runtime-go survives a panicking cycle, releases whatever the cycle held, and reports what it caught instead of discarding it",
+      "id": "runtime.periodic-goroutines",
+      "verdict": "stronger"
+    },
+    {
       "category": "skylive",
       "cover_new": {
         "class": "Falsified",
@@ -2057,6 +2322,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "gate `live-time-every-mutex-survives-a-panic`",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "gate `apps-bundled`",
             "class": "Falsified",
@@ -11283,7 +11553,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 130,
+          "count": 136,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -11291,6 +11561,7 @@
             "LayoutContext",
             "Length",
             "Location",
+            "MarkerFlags",
             "PseudoClass",
             "VAlign",
             "above",
@@ -11316,6 +11587,7 @@
             "borderWidth",
             "borderWidthEach",
             "buildStyleString",
+            "buildStyleStringWith",
             "class",
             "clip",
             "clipY",
@@ -11377,8 +11649,12 @@
             "joinWithPipe",
             "kernelAttr",
             "layoutContextFor",
+            "layoutContextFromFlags",
             "locationCss",
+            "markerFlagStep",
+            "markerFlags",
             "mediaQueryRulesCss",
+            "noMarkerFlags",
             "onFile",
             "onImage",
             "onKeyDown",
@@ -11559,8 +11835,8 @@
           ]
         }
       },
-      "count": 699,
-      "pct_of_denominator": 39.4
+      "count": 705,
+      "pct_of_denominator": 39.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -12406,7 +12682,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 130,
+          "count": 136,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -12414,6 +12690,7 @@
             "LayoutContext",
             "Length",
             "Location",
+            "MarkerFlags",
             "PseudoClass",
             "VAlign",
             "above",
@@ -12439,6 +12716,7 @@
             "borderWidth",
             "borderWidthEach",
             "buildStyleString",
+            "buildStyleStringWith",
             "class",
             "clip",
             "clipY",
@@ -12500,8 +12778,12 @@
             "joinWithPipe",
             "kernelAttr",
             "layoutContextFor",
+            "layoutContextFromFlags",
             "locationCss",
+            "markerFlagStep",
+            "markerFlags",
             "mediaQueryRulesCss",
+            "noMarkerFlags",
             "onFile",
             "onImage",
             "onKeyDown",
@@ -12683,8 +12965,8 @@
           ]
         }
       },
-      "count": 778,
-      "pct_of_denominator": 43.8
+      "count": 784,
+      "pct_of_denominator": 44.0
     }
   },
   "units": [

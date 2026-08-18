@@ -47,6 +47,7 @@ import { existsSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:
 import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { requireFreshCompiler } from "./lib/fresh-compiler.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
@@ -54,11 +55,11 @@ const SKY_BIN = resolve(process.env.SKY_MATRIX_BIN || `${REPO_ROOT}/sky-out/sky`
 const VIEWPORT = { width: 1280, height: 800 };
 const KEEP_DIR = !!process.env.SKY_MATRIX_KEEP;
 
-if (!existsSync(SKY_BIN)) {
-    console.error(`FAIL — missing sky binary at ${SKY_BIN}`);
-    console.error("  build first: cabal install --overwrite-policy=always --installdir=./sky-out --install-method=copy exe:sky");
-    process.exit(2);
-}
+// Absence AND staleness, in one check, with one message — and the message names
+// `./scripts/build.sh` rather than the `cabal install …` line that used to be
+// here, which invoked the Haskell compiler retired in the Rust rewrite.
+// See scripts/lib/fresh-compiler.sh.
+requireFreshCompiler(SKY_BIN, REPO_ROOT);
 
 // ─── Fixtures ────────────────────────────────────────────────────
 

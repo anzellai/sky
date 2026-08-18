@@ -1,0 +1,1 @@
+IDLE cfg=pg store=postgres app_rss_kb=30216 app_pss_kb=30928 pg_rss_kb=116008 pg_pss_kb=48458 pg_nproc=7 mem_avail_kb=3510144 elements=94 posts=5 fsync=on shared_buffers=588MB max_connections=56

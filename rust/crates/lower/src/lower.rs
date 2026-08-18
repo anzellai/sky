@@ -1637,7 +1637,27 @@ fn emit_type_decl(
                     vstruct,
                     assigns.join(", ")
                 )));
-                reg.push_str(&format!("rt.RegisterAdtTag(\"{cn}\", {i}); "));
+                // Both registries are keyed by (OWNING ADT, ctor), never by the
+                // bare ctor name: constructor names are not unique across a
+                // program (`AlignLeft` is in both `Std.Ui.HAlign` and
+                // `Std.Css.TextAlign`, see the `ctor_in_union` note above), and
+                // the wire-dispatch path resolves a CLIENT-SUPPLIED string
+                // against them (runtime-go/rt/adt_variant_factory.go).
+                //
+                // The ADT is named PACKAGE-QUALIFIED — `main.State_Msg`, not
+                // `State_Msg` — because the Go type name alone is not unique
+                // either. `rt/console_app` is a second Go package in every
+                // binary, compiled from `sky-bundled/console/src/State.sky`,
+                // so its Msg is also `State_Msg`; a user app whose own module
+                // is `State.sky` collides with it (examples 12/13/16 do).
+                // `main.` mirrors the single hardcoded package clause in
+                // codegen/src/lib.rs, and the qualified form is exactly Go's
+                // own `reflect.Type.String()`, which is what the runtime
+                // compares it against (live.go, msgAdtFromUpdate).
+                reg.push_str(&format!(
+                    "rt.RegisterAdtTag(\"main.{}\", \"{cn}\", {i}); ",
+                    decl.go_name
+                ));
                 reg.push_str(&format!(
                     "rt.RegisterMsgVariant(\"{}\", \"{cn}\", {i}, {}); ",
                     decl.go_name,
@@ -1656,7 +1676,8 @@ fn emit_type_decl(
                 let fassigns: Vec<String> =
                     (0..args.len()).map(|j| format!("V{j}: v{j}")).collect();
                 reg.push_str(&format!(
-                    "rt.RegisterAdtVariant(\"{cn}\", func(raw []rt.JsonRawMessage) any {{ {fbody}return {vstruct}{{{}}} }}); ",
+                    "rt.RegisterAdtVariant(\"main.{}\", \"{cn}\", func(raw []rt.JsonRawMessage) any {{ {fbody}return {vstruct}{{{}}} }}); ",
+                    decl.go_name,
                     fassigns.join(", ")
                 ));
             }
@@ -1697,7 +1718,12 @@ fn emit_type_decl(
                     decl.go_name,
                     fields.join(", ")
                 )));
-                reg.push_str(&format!("rt.RegisterAdtTag(\"{cn}\", {i}); "));
+                // Keyed by (package-qualified OWNING ADT, ctor) — see the
+                // sealed-union branch above for why the package matters.
+                reg.push_str(&format!(
+                    "rt.RegisterAdtTag(\"main.{}\", \"{cn}\", {i}); ",
+                    decl.go_name
+                ));
                 reg.push_str(&format!(
                     "rt.RegisterMsgVariant(\"{}\", \"{cn}\", {i}, {}); ",
                     decl.go_name,
@@ -2350,11 +2376,69 @@ impl<'a> Ctx<'a> {
         name
     }
 
+    /// `func main()`.
+    ///
+    /// The three fixed statements at the top are ordered, and the order is the
+    /// content:
+    ///
+    /// - `defer rt.LogPanicAndExit()` is deferred FIRST, so it runs LAST. It is
+    ///   the panic recovery for everything below it.
+    /// - `rt.MaybeStartEmbeddedPostgres()` runs in `main`, never from an
+    ///   `init()`. `[database] path` / `url` reach the runtime as
+    ///   `rt.SetSkyDefault("DB_PATH", …)` in the prologue `init()` above, and Go
+    ///   runs every `init()` before `main` — so calling from `main` is exactly
+    ///   what makes those two config sources visible to `--embed`'s ambiguity
+    ///   check. From a second `init()` the two run in filename order, and an app
+    ///   with `[database] path` plus `--embed` could start a cluster anyway.
+    ///   `runtime-go/rt/pg_embed_test.go`'s
+    ///   `TestASkyTomlDatabasePathIsSeenAsAConflict` is the gate.
+    /// - `defer rt.StopEmbeddedPostgres()` is deferred SECOND, so it runs
+    ///   BEFORE the panic handler: a panicking app still stops its database
+    ///   before the process reports and exits.
+    /// - `rt.MaybeApplyEmbeddedMigrationsAndExit()` runs LAST of the four, and
+    ///   in `main` rather than in the generated `embedded_migrations.go`
+    ///   `init()` that used to carry it (`write_embedded_migrations` in
+    ///   `rust/crates/project/src/build.rs`). Go runs every `init()` before
+    ///   `main`, so from there a self-migrating `SKY_DB_OP=migrate ./app
+    ///   --embed` tried to migrate BEFORE its database existed — it could not
+    ///   work at all. The migration needs a started cluster, so it has to
+    ///   follow the start call; and the start call cannot move into an `init()`
+    ///   to meet it, because `[database] path`/`url` arrive as
+    ///   `rt.SetSkyDefault` in the prologue `init()` and the `--embed`
+    ///   ambiguity check would stop seeing them (filename order would decide).
+    ///   `main`, after the start, is the only placement that satisfies both.
+    ///   The generated file still sets `rt.SkyEmbeddedMigrations` from its
+    ///   `init()` — a variable assignment has no such ordering requirement, and
+    ///   the value must be in place before `main` reads it.
+    ///
+    /// All four are emitted for every program, embedded bundle or not. A build
+    /// without `--embed` links no bundle, `MaybeStartEmbeddedPostgres` returns
+    /// on the first line unless `--embed` was actually passed,
+    /// `StopEmbeddedPostgres` is a nil check on a supervisor that was never
+    /// created, and `MaybeApplyEmbeddedMigrationsAndExit` returns immediately
+    /// unless `SKY_DB_OP` is set AND the project baked migrations in. Emitting
+    /// them conditionally would buy nothing and would make `./app --embed` on
+    /// an ordinary build ignore the flag in silence, which is the failure mode
+    /// this whole feature exists to refuse.
     fn lower_main(&mut self, _name: &str, _module: &str) -> GoItem {
-        let mut stmts = vec![GoStmt::Expr(GoExpr::new(
-            GoExprKind::Ident("defer rt.LogPanicAndExit()".into()),
-            GoTy::Unit,
-        ))];
+        let mut stmts = vec![
+            GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("defer rt.LogPanicAndExit()".into()),
+                GoTy::Unit,
+            )),
+            GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("rt.MaybeStartEmbeddedPostgres()".into()),
+                GoTy::Unit,
+            )),
+            GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("defer rt.StopEmbeddedPostgres()".into()),
+                GoTy::Unit,
+            )),
+            GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("rt.MaybeApplyEmbeddedMigrationsAndExit()".into()),
+                GoTy::Unit,
+            )),
+        ];
         let root = self.body.root;
         if let Some(r) = root {
             self.lower_main_body(r, &mut stmts);
@@ -2669,6 +2753,12 @@ impl<'a> Ctx<'a> {
         if &x.ty == expected || *expected == GoTy::Any {
             return x;
         }
+        // A func VALUE landing in a func SLOT of a different shape is not a
+        // narrowing at all — it is an ADAPTATION, and it has a static answer.
+        // See `func_shape_eta`.
+        if let Some(eta) = self.func_shape_eta(&x, expected) {
+            return eta;
+        }
         let reason = if x.ty == GoTy::Any {
             CoerceReason::FfiReturn
         } else {
@@ -2683,6 +2773,248 @@ impl<'a> Ctx<'a> {
             },
             expected.clone(),
         )
+    }
+
+    /// The narrowing performed INSIDE an eta wrapper, categorised honestly.
+    ///
+    /// [`Self::coerce_if_needed`] infers a [`CoerceReason`] from the shape alone,
+    /// and any `any → T` narrowing it sees is attributed to `FfiReturn`. Inside an
+    /// eta wrapper that attribution is wrong: the `any` did not come back from Go
+    /// FFI, it is the erased HOF slot (`func(any) bool`) being un-erased at the
+    /// boundary the wrapper exists to create. Reusing the generic inference here
+    /// would file every one of these under "FFI return" and quietly corrupt the
+    /// doc-08 §6 origin catalogue — the same catalogue that decides which
+    /// categories are lowering-closeable and which are floor. So name the reason
+    /// at the site that knows it: [`CoerceReason::GenericErase`].
+    ///
+    /// Delegates to `coerce_if_needed` for the no-op cases (`x.ty == to`, or a
+    /// widening into `any`, which Go performs implicitly) so the two paths cannot
+    /// disagree about when a narrowing is needed at all.
+    fn eta_narrow(&mut self, x: GoExpr, to: &GoTy) -> GoExpr {
+        if &x.ty == to || *to == GoTy::Any {
+            return self.coerce_if_needed(x, to);
+        }
+        GoExpr::new(
+            GoExprKind::Coerce {
+                inner: Box::new(x.clone()),
+                from: x.ty.clone(),
+                to: to.clone(),
+                reason: CoerceReason::GenericErase,
+            },
+            to.clone(),
+        )
+    }
+
+    /// A func VALUE flowing into a func SLOT of a different Go shape — doc 08
+    /// §5.3 category 6, "polymorphic kernel-fn arg". Eta-expand at the SLOT's
+    /// shape instead of emitting `rt.Coerce[func(…)…]`.
+    ///
+    /// WHY this is not a coercion. Go function types are nominal in their
+    /// parameters and result, so `rt.Coerce[func(any) bool]` applied to a
+    /// `func(Attr) bool` can never satisfy its own `v.(T)` fast path
+    /// (`runtime-go/rt/rt.go`, `Coerce`). It falls through to `makeFuncAdapter`
+    /// → `adaptFuncValueWithCapture`, a `reflect.MakeFunc` thunk that on EVERY
+    /// invocation allocates a `[]reflect.Value`, re-boxes each argument through
+    /// `reflect.ValueOf(a.Interface())`, concatenates the captured args and
+    /// `reflect.Value.Call`s. The wrapper is built once per enclosing call; the
+    /// reflect dispatch is paid once per ELEMENT. `Std.Ui`'s marker scan —
+    /// `List.any (\a -> isMarker name a) attrs` — pays it six times per element
+    /// of every layout.
+    ///
+    /// The shape is fully known HERE: `from` and `to` are both concrete `GoTy`s
+    /// at this point. So emit the adaptation the compiler can already prove —
+    /// a closure at the target shape whose params narrow inward and whose
+    /// result widens back — reusing the same eta-expansion
+    /// [`Self::kernel_value_eta`] (kernels) and [`Self::lower_ctor_value`]
+    /// (constructors) already perform for their own shape mismatches. The ABI
+    /// stays fully erased: one emit per definition, no monomorphisation, no
+    /// binary growth.
+    ///
+    /// Returns `None` — leaving the runtime coerce in place — when the bridge
+    /// is NOT statically expressible:
+    ///
+    ///   * the source is not itself a Go func (an `any`-typed thunk in a func
+    ///     slot IS a genuine runtime narrowing);
+    ///   * the ARITIES differ. That is precisely what
+    ///     `adaptFuncValueWithCapture`'s "uncurried-to-curried adaptation"
+    ///     branch exists for: Sky curries, Go does not, and a partially-applied
+    ///     N-ary function reaching an M-ary slot is finished by the runtime.
+    ///     Eta-expanding to the wrong arity would emit a call `go build`
+    ///     rejects;
+    ///   * the source expression is not a func literal, a plain identifier or a
+    ///     selector. The eta wrapper CALLS the source once per invocation, so a
+    ///     source that is itself a call (`mkPredicate cfg`) would be
+    ///     re-evaluated per element — trading a reflect dispatch for a rebuilt
+    ///     closure. Those keep the once-per-slot coerce.
+    ///
+    /// The `None` conditions live in [`Self::func_shape_eta_applies`], because a
+    /// caller needs to ask them WITHOUT running the transform.
+    fn func_shape_eta(&mut self, x: &GoExpr, expected: &GoTy) -> Option<GoExpr> {
+        if !Self::func_shape_eta_applies(x, expected) {
+            return None;
+        }
+        let (GoTy::Func(from_ps, from_r), GoTy::Func(to_ps, to_r)) = (&x.ty, expected) else {
+            return None;
+        };
+        let (from_ps, from_r) = (from_ps.clone(), (**from_r).clone());
+        let (to_ps, to_r) = (to_ps.clone(), (**to_r).clone());
+
+        // ── Source is a func LITERAL: retype it in place. ──────────────────
+        // Wrapping a literal in a second closure would build the inner closure
+        // on every call unless Go's inliner happens to fold the direct call, so
+        // rewrite the literal's own params instead: declare them at the SLOT's
+        // types under fresh names and bind the body's original names to the
+        // narrowed values. Measured (M1, Go 1.26, six probes × six attributes):
+        // in-place ~1.8-4.2 µs/op vs ~4.3-9.0 µs/op for the wrapper form, at
+        // identical allocation counts.
+        if let GoExprKind::FuncLit(ps, _, body) = &x.kind {
+            if ps.len() == to_ps.len() {
+                let (ps, body) = (ps.clone(), body.clone());
+                let mut gparams: Vec<GoParam> = Vec::new();
+                let mut prelude: Vec<GoStmt> = Vec::new();
+                for (i, p) in ps.iter().enumerate() {
+                    if p.ty == to_ps[i] {
+                        gparams.push(p.clone());
+                        continue;
+                    }
+                    let fresh = format!("_e{}", self.local_counter);
+                    self.local_counter += 1;
+                    gparams.push(GoParam {
+                        name: fresh.clone(),
+                        ty: to_ps[i].clone(),
+                    });
+                    // A blank param binds nothing, so there is nothing to
+                    // narrow — and `_ := …` is not Go.
+                    if p.name == "_" {
+                        continue;
+                    }
+                    let src = GoExpr::new(GoExprKind::Ident(fresh), to_ps[i].clone());
+                    let narrowed = self.eta_narrow(src, &p.ty);
+                    prelude.push(GoStmt::Short(p.name.clone(), narrowed));
+                    // The original param may be unused; a Go LOCAL may not be.
+                    prelude.push(GoStmt::Discard(GoExpr::new(
+                        GoExprKind::Ident(p.name.clone()),
+                        p.ty.clone(),
+                    )));
+                }
+                // Result: widening to `any` is implicit at a Go `return`, so an
+                // `any` slot needs only the declared result type changed. A
+                // CONCRETE slot needs each tail return coerced.
+                let mut body = body;
+                if to_r != from_r && to_r != GoTy::Any {
+                    body = self.coerce_tail_returns(body, &to_r);
+                }
+                prelude.extend(body);
+                return Some(GoExpr::new(
+                    GoExprKind::FuncLit(gparams, to_r, prelude),
+                    expected.clone(),
+                ));
+            }
+        }
+
+        // ── Source is a symbol: wrap it. ──────────────────────────────────
+        if !matches!(
+            &x.kind,
+            GoExprKind::Ident(_) | GoExprKind::Selector(_, _)
+        ) {
+            return None;
+        }
+        let mut gparams: Vec<GoParam> = Vec::new();
+        let mut args: Vec<GoExpr> = Vec::new();
+        for (i, to_p) in to_ps.iter().enumerate() {
+            let fresh = format!("_e{}", self.local_counter);
+            self.local_counter += 1;
+            gparams.push(GoParam {
+                name: fresh.clone(),
+                ty: to_p.clone(),
+            });
+            let a = GoExpr::new(GoExprKind::Ident(fresh), to_p.clone());
+            args.push(self.eta_narrow(a, &from_ps[i]));
+        }
+        let call = GoExpr::new(
+            GoExprKind::Call(Box::new(x.clone()), args),
+            from_r.clone(),
+        );
+        let ret = self.eta_narrow(call, &to_r);
+        Some(GoExpr::new(
+            GoExprKind::FuncLit(gparams, to_r, vec![GoStmt::Return(Some(ret))]),
+            expected.clone(),
+        ))
+    }
+
+    /// Exactly [`Self::func_shape_eta`]'s `None` conditions, as a predicate with
+    /// no side effects — so `func_shape_eta` returning `Some` is equivalent to
+    /// this returning `true`.
+    ///
+    /// `func_shape_eta` mints `_e{n}` names off `self.local_counter` as it goes,
+    /// so "call it and discard the result if I don't like the answer" is not
+    /// free: every later temporary in the same function body shifts number, and
+    /// emitted Go with nothing to do with the decision changes. A caller that
+    /// must know whether the eta will succeed BEFORE committing to it — see
+    /// [`Self::list_hof_typed`] — asks here instead. One shared predicate is
+    /// what keeps the two from drifting: a `None` condition added to the
+    /// transform without being added here would let `list_hof_typed` burn
+    /// counters on a path it then abandons.
+    fn func_shape_eta_applies(x: &GoExpr, expected: &GoTy) -> bool {
+        let (GoTy::Func(from_ps, from_r), GoTy::Func(to_ps, to_r)) = (&x.ty, expected) else {
+            return false;
+        };
+        if from_ps.len() != to_ps.len() {
+            return false;
+        }
+        // A narrowing into a SLICE or a MAP is not a type assertion — codegen
+        // renders it `rt.AsListT[T]` / `rt.AsMapT[V]`, both of which REBUILD the
+        // container element-by-element. Inside an eta closure that rebuild is
+        // paid per INVOCATION, so a `List.foldl` whose accumulator is a `Dict`
+        // would copy the whole accumulator on every element — O(n·k) where the
+        // reflect adapter hands the same map through in O(1). Never trade an
+        // O(1) reflect box for an O(n) copy: leave those to the runtime coerce.
+        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_) | GoTy::Map(_, _));
+        if from_ps
+            .iter()
+            .zip(to_ps.iter())
+            .any(|(f, t)| f != t && rebuilds(f))
+            || (to_r != from_r && rebuilds(to_r))
+        {
+            return false;
+        }
+        match &x.kind {
+            GoExprKind::FuncLit(ps, _, _) => ps.len() == to_ps.len(),
+            GoExprKind::Ident(_) | GoExprKind::Selector(_, _) => true,
+            _ => false,
+        }
+    }
+
+    /// Coerce every TAIL return of a statement list to `to`. Descends only into
+    /// STATEMENT containers — an IIFE (`GoExprKind::Block`) nested in an
+    /// expression carries its own returns, which belong to that IIFE's result
+    /// type, not to this function's.
+    fn coerce_tail_returns(&mut self, body: Vec<GoStmt>, to: &GoTy) -> Vec<GoStmt> {
+        body.into_iter()
+            .map(|s| match s {
+                GoStmt::Return(Some(e)) => GoStmt::Return(Some(self.eta_narrow(e, to))),
+                GoStmt::If(c, t, e) => GoStmt::If(
+                    c,
+                    self.coerce_tail_returns(t, to),
+                    self.coerce_tail_returns(e, to),
+                ),
+                GoStmt::IfTypeAssert {
+                    binder,
+                    ok,
+                    subj,
+                    ty,
+                    then,
+                } => GoStmt::IfTypeAssert {
+                    binder,
+                    ok,
+                    subj,
+                    ty,
+                    then: self.coerce_tail_returns(then, to),
+                },
+                GoStmt::Loop(b) => GoStmt::Loop(self.coerce_tail_returns(b, to)),
+                other => other,
+            })
+            .collect()
     }
 
     fn lower_expr_inner(&mut self, e: ExprId, actual: &GoTy, expected: &GoTy) -> GoExpr {
@@ -3718,6 +4050,24 @@ impl<'a> Ctx<'a> {
             } else {
                 (None, actual.clone(), None)
             };
+        // A pure-Sky `Sky.Core.List` HOF whose Go types this site can prove is
+        // re-pointed at its typed runtime twin (`SKY_LIST_HOF_TWINS`). The
+        // decision is taken HERE, before any argument is lowered, because it
+        // CHOOSES the slots the arguments are lowered at: proven → the typed
+        // slots (so the callback is passed by name and the list needs no
+        // `rt.AsListT[any]` rebuild), unproven → today's erased slots and
+        // today's plain `Call`, byte-identical.
+        let hof_plan = match &self.body.exprs[callee] {
+            Expr::Var(Res::Def(d)) => {
+                let d = *d;
+                self.sky_list_hof_plan(d, &args)
+            }
+            _ => None,
+        };
+        let (param_gtys, ret_goty) = match &hof_plan {
+            Some((_, _, slots, ret)) => (Some(slots.clone()), ret.clone()),
+            None => (param_gtys, ret_goty),
+        };
         // Higher-order list-combinator closure: `List.map (\x -> …) xs`,
         // `List.foldl (\x acc -> …) z xs`. When arg 0 is a lambda and the LAST arg
         // is list-shaped, the closure's element param IS the list's element type.
@@ -3819,6 +4169,19 @@ impl<'a> Ctx<'a> {
                 let cod = *cod;
                 return self.make_partial(c, largs, &Some(ps), &cod, arity);
             }
+        }
+        if let Some((sym, targs, _, ret)) = hof_plan {
+            // The type arguments name concrete Go types; register them so their
+            // decls survive the type-reachability BFS even if this is the only
+            // site that mentions them.
+            for t in &targs {
+                let mut names = Vec::new();
+                collect_named(t, &mut names);
+                for n in names {
+                    self.used_types.insert(n);
+                }
+            }
+            return GoExpr::new(GoExprKind::GenericCall(sym.to_string(), targs, largs), ret);
         }
         GoExpr::new(GoExprKind::Call(Box::new(c), largs), ret_goty)
     }
@@ -4127,6 +4490,39 @@ impl<'a> Ctx<'a> {
         // runtime `map[string]V` string key.
         let specialised = self.dict_typed_key_specialised(go, args);
         let go = specialised.as_deref().unwrap_or(go);
+        // A list HOF whose element type AND callback shape are both statically
+        // known dispatches to the typed member of the runtime's list-helper
+        // family instead of the erased one. Decided from the LOWERED argument
+        // types — see `list_hof_typed`, which owns both outcomes so nothing is
+        // lowered twice.
+        if let Some(hof) = ListHof::of(go) {
+            if args.len() == 2 {
+                let f = self.lower_expr(args[0], &GoTy::Any);
+                let xs = self.lower_expr(args[1], &GoTy::Any);
+                return self.list_hof_typed(hof, go, f, xs, actual);
+            }
+        }
+        // A UNARY list kernel that only needs the list's LENGTH, over a proven
+        // slice, goes to its typed twin. See `list_unary_prim_twin` for why the
+        // table stops where it does.
+        if args.len() == 1 {
+            if let Some((typed, ret)) = list_unary_prim_twin(go) {
+                let xs = self.lower_expr(args[0], &GoTy::Any);
+                if let GoTy::Slice(e) = &xs.ty {
+                    if provable(e) {
+                        let elem = (**e).clone();
+                        let call = GoExpr::new(
+                            GoExprKind::GenericCall(typed.to_string(), vec![elem], vec![xs]),
+                            ret,
+                        );
+                        return self.coerce_if_needed(call, actual);
+                    }
+                }
+                // Unproven: the erased call, byte-identically, over the argument
+                // already lowered above rather than lowered a second time.
+                return self.kernel_call_lowered(go, vec![widen(xs)], actual);
+            }
+        }
         let largs: Vec<GoExpr> = args
             .iter()
             .map(|a| {
@@ -4135,6 +4531,332 @@ impl<'a> Ctx<'a> {
             })
             .collect();
         self.kernel_call_lowered(go, largs, actual)
+    }
+
+    /// The typed dispatch for a two-argument kernel list HOF — doc 08 §6
+    /// category 6, "polymorphic kernel-fn arg", activating the §7.4 lever. The
+    /// per-element `rt.SkyCall` this removes is explicitly NOT the §8.3 floor:
+    /// §8.3 as rescoped at `50c8dcee` names these five helpers and says so.
+    ///
+    /// # What the erased call costs
+    ///
+    /// `List.indexedMap (postRow session) posts` on a `[]State_Post_R` emits
+    ///
+    /// ```go
+    /// rt.AsListT[Std_Ui_Element](rt.List_indexedMap(
+    ///     any(func(_p0 any, _p1 any) Std_Ui_Element { … }), any(v_1)))
+    /// ```
+    ///
+    /// and the runtime then, per call on a list of n: boxes the slice header,
+    /// `asList` reflect-walks it into a fresh `[]any` boxing every element,
+    /// `SkyCall`s the callback per element through `reflect.Value.Call` (twice
+    /// here — `indexedMap` applies the index first, so each element also builds
+    /// a curried closure), collects into a second `[]any`, and `AsListT` walks
+    /// that BACK into a `[]Std_Ui_Element`. Three slices and ~7n allocations
+    /// where a Go `for` over the typed slice costs one.
+    ///
+    /// Measured on `19-skyforum` (`docs/perf/runs/forum-rebaseline-20260816/`):
+    /// 89–91% of all allocation in an interaction happens inside a
+    /// `reflect.Value.Call`, and one fifth of every object allocated is this
+    /// round trip's own bookkeeping.
+    ///
+    /// # What is required before it fires
+    ///
+    /// Everything is read off the LOWERED Go types, which is what will actually
+    /// be emitted — not off `sky_ty_of`, which can be stronger than the lowering
+    /// path's own view (doc 13 §D3: `ty::check` seeds annotated params from the
+    /// signature and `ty::db::compute_body_types` does not, so "what type-checks"
+    /// and "what is emitted" can diverge). Concretely:
+    ///
+    ///   * the list argument lowered to a real `[]A`, and
+    ///   * `A` — and the callback's result type — are PROVABLE ([`provable`]:
+    ///     not `any`, not a Go type parameter, and not an anonymous struct), and
+    ///   * the callback is either already at the typed shape or is one
+    ///     [`Self::func_shape_eta`] can retype without minting anything first.
+    ///
+    /// Anything else emits **exactly** what it emits today: the same two
+    /// arguments, lowered once, `widen`ed, handed to `kernel_call_lowered`. That
+    /// is the whole fallback — there is no second lowering, no new coercion, and
+    /// no probe-and-relower, so an unproven site is character-for-character the
+    /// call it was.
+    ///
+    /// The one thing that is NOT invariant is the numbering of temporaries
+    /// LATER IN THE SAME BODY. `func_shape_eta` mints `_e{n}` off
+    /// `self.local_counter`, so a proven site earlier in a function shifts every
+    /// subsequent `_v{n}` / `_ok{n}` / `_p{n}` in it by the number of params it
+    /// retyped. That is a rename, not a semantic change, and it is deterministic
+    /// — `xtask repro` re-emits byte-stable across processes. It is called out
+    /// because "byte-identical fallback" would otherwise be read as covering it.
+    /// The Go type an argument WILL lower to, read WITHOUT lowering it.
+    ///
+    /// Deciding after a trial lowering would be a probe-and-relower, and
+    /// `list_hof_typed`'s doc below records why that is not allowed: minting a
+    /// temporary shifts every subsequent `_e{n}` / `_v{n}` in the enclosing
+    /// function, so the UNPROVEN fallback would stop being byte-identical and
+    /// `repro` / `roundtrip` would move for calls this change does not touch.
+    ///
+    /// Same source `combinator_elem` reads (see `lower_call`): a local's
+    /// DECLARED Go type — which is exactly what `lower_var` emits for it — else
+    /// the node's own solved type.
+    fn probe_goty(&mut self, a: ExprId) -> GoTy {
+        if let Expr::Var(Res::Local(id)) = &self.body.exprs[a] {
+            if let Some(t) = self.local_tys.get(id).cloned() {
+                return t;
+            }
+        }
+        self.expr_ty(a)
+    }
+
+    /// Can the callback argument reach the typed slot WITHOUT gaining a reflect
+    /// adapter it does not have today?
+    ///
+    /// A callback passed BY NAME lowers to exactly its probed type (`lower_var`
+    /// returns an `Ident` typed by `expr_ty`, which is what `probe_goty` read),
+    /// so no adaptation can be needed at all. Anything else — a lambda, a
+    /// partially applied def — can lower with erased `any` params despite
+    /// probing typed, and `coerce_if_needed` then has to retype it in place.
+    /// `func_shape_eta_applies` REFUSES to do that when a param or result
+    /// narrowing would rebuild a container (`rt.AsListT` / `rt.AsMapT`, paid per
+    /// INVOCATION inside an eta closure — see its own comment), and the fallback
+    /// is `rt.Coerce[func(…)…]`: a `reflect.MakeFunc` adapter this call site
+    /// does not have today, because today its callback lands in an all-`any`
+    /// slot and matches exactly.
+    ///
+    /// So the win at those sites is not a win — it trades a list rebuild for a
+    /// per-element reflect dispatch. Refuse them and keep today's emission.
+    fn callback_reaches_slot(&self, cb: ExprId, ps: &[GoTy], r: &GoTy) -> bool {
+        if matches!(&self.body.exprs[cb], Expr::Var(Res::Def(_))) {
+            return true;
+        }
+        let rebuilds = |t: &GoTy| matches!(t, GoTy::Slice(_) | GoTy::Map(_, _));
+        !ps.iter().any(rebuilds) && !rebuilds(r)
+    }
+
+    /// Decide — before any argument is lowered — whether this call to a pure-Sky
+    /// `Sky.Core.List` HOF can be re-pointed at its typed runtime twin
+    /// (`SKY_LIST_HOF_TWINS`).
+    ///
+    /// Everything is proven off the Go types the arguments will LOWER to, never
+    /// off `sky_ty_of` — doc 13 §D3: what type-checks and what is emitted can
+    /// diverge, and on this very def they do. Per-def inference of `foldl`'s body
+    /// leaves the callback's codomain a free var distinct from the accumulator's
+    /// (`fn : t4 -> t1 -> t14` against `acc : t1`; the recursive occurrence does
+    /// not feed its own result type back), and `def_param_tys` then takes the
+    /// declared type only for the params that are not a bare `Ty::Var` — so the
+    /// accumulator's var name and the callback's codomain var name are different
+    /// symbols even WITH the annotation. Reasoning over `Ty::Var` identity here
+    /// would be unsound by construction.
+    ///
+    /// All-or-nothing, and `provable()` is reused unchanged — it is what
+    /// excludes the `Any` erasure, a Go type parameter, and the anonymous-struct
+    /// shape that `lower_lambda` is still entitled to re-pin underneath us (the
+    /// #166 record-narrowing class, which passed every corpus gate twice).
+    ///
+    /// Returns `(symbol, type args, param slots, result type)`.
+    fn sky_list_hof_plan(
+        &mut self,
+        d: DefId,
+        args: &[ExprId],
+    ) -> Option<(&'static str, Vec<GoTy>, Vec<GoTy>, GoTy)> {
+        let e = self.defs.get(&d)?;
+        let (_, _, sym, arity) = SKY_LIST_HOF_TWINS
+            .iter()
+            .copied()
+            .find(|(m, n, _, _)| *m == e.module_name && *n == e.name)?;
+        // Under- or over-application yields a closure / a stepwise apply, not a
+        // direct call — those keep the erased def, whose signature is what
+        // `make_partial` and `over_apply` already build against.
+        if args.len() != arity {
+            return None;
+        }
+        match sym {
+            // foldl fn acc list — Sky applies `fn x acc`, ELEMENT first. The
+            // runtime twin matches that order (see `List_foldlElemFirstT`), so
+            // the callback needs no permuting wrapper.
+            "rt.List_foldlElemFirstT" => {
+                let GoTy::Slice(a) = self.probe_goty(args[2]) else {
+                    return None;
+                };
+                let a = *a;
+                let b = self.probe_goty(args[1]);
+                if !provable(&a) || !provable(&b) {
+                    return None;
+                }
+                let want_cb = GoTy::Func(vec![a.clone(), b.clone()], Box::new(b.clone()));
+                if self.probe_goty(args[0]) != want_cb
+                    || !self.callback_reaches_slot(args[0], &[a.clone(), b.clone()], &b)
+                {
+                    return None;
+                }
+                Some((
+                    sym,
+                    vec![a.clone(), b.clone()],
+                    vec![want_cb, b.clone(), GoTy::Slice(Box::new(a))],
+                    b,
+                ))
+            }
+            // any pred list
+            "rt.List_anyT" => {
+                let GoTy::Slice(a) = self.probe_goty(args[1]) else {
+                    return None;
+                };
+                let a = *a;
+                if !provable(&a) {
+                    return None;
+                }
+                let want_cb = GoTy::Func(vec![a.clone()], Box::new(GoTy::Bare(Prim::Bool)));
+                if self.probe_goty(args[0]) != want_cb
+                    || !self.callback_reaches_slot(args[0], &[a.clone()], &GoTy::Bare(Prim::Bool))
+                {
+                    return None;
+                }
+                Some((
+                    sym,
+                    vec![a.clone()],
+                    vec![want_cb, GoTy::Slice(Box::new(a))],
+                    GoTy::Bare(Prim::Bool),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn list_hof_typed(
+        &mut self,
+        hof: ListHof,
+        go: &str,
+        f: GoExpr,
+        xs: GoExpr,
+        actual: &GoTy,
+    ) -> GoExpr {
+        let erased =
+            |s: &mut Self, f: GoExpr, xs: GoExpr| s.kernel_call_lowered(go, vec![widen(f), widen(xs)], actual);
+
+        // The element type comes from the LIST, whose lowered slice type is the
+        // one Go will index. `make_partial` hard-codes its remaining params to
+        // `any` (a partially applied top-level def — 23% of the corpus census),
+        // so the callback's own param type is NOT a reliable source for it.
+        let GoTy::Slice(elem) = xs.ty.clone() else {
+            return erased(self, f, xs);
+        };
+        let GoTy::Func(f_ps, f_r) = f.ty.clone() else {
+            return erased(self, f, xs);
+        };
+        if !provable(&elem) {
+            return erased(self, f, xs);
+        }
+        // A KERNEL referenced as a VALUE is the one node whose `GoTy` does not
+        // describe the symbol it emits. `List.map String.toUpper xs` lowers to
+        // `Ident("rt.String_toUpper")` typed `func(string) string` — the
+        // INFERRED Sky type — while `rt.String_toUpper` is `func(s any) any`,
+        // because every runtime kernel is `any`-based. `lower_var` types it that
+        // way deliberately: at an `any` slot the bare symbol is correct output,
+        // and the bridge is `kernel_value_eta`, driven by the SLOT rather than
+        // by the reference's own type (see its doc comment, which records the
+        // same defect being introduced and caught once before).
+        //
+        // Everything above reads `f.ty`, so a raw kernel here would put
+        // `rt.List_mapT[string, string](rt.String_toUpper, …)` into the output
+        // and `go build` would reject it. Refuse. Bridging it instead —
+        // `kernel_value_eta` at the typed shape — would work and would trade a
+        // reflect dispatch for one widen and one narrow per element, but that is
+        // a coercion this does not currently emit, and the rule for an unproven
+        // site is to leave it exactly as it was.
+        if matches!(&f.kind, GoExprKind::Ident(n) if n.starts_with("rt.")) {
+            return erased(self, f, xs);
+        }
+        let elem = (*elem).clone();
+
+        // Per-HOF: the callback shape to prove, the Go type arguments, and the
+        // result type. `out` is what the typed helper returns — asserted below
+        // against what the helper's Go signature actually produces.
+        let (want_cb, targs, out) = match hof {
+            ListHof::Map => {
+                if f_ps.len() != 1 || !provable(&f_r) {
+                    return erased(self, f, xs);
+                }
+                let b = (*f_r).clone();
+                (
+                    GoTy::Func(vec![elem.clone()], Box::new(b.clone())),
+                    vec![elem.clone(), b.clone()],
+                    GoTy::Slice(Box::new(b)),
+                )
+            }
+            ListHof::Filter => {
+                // A predicate's result is `bool` by construction, so there is
+                // nothing extra to prove — but the LOWERED callback must already
+                // say so. One that came back `any`-returning is a callback the
+                // lowering could not type, not one this may retype.
+                if f_ps.len() != 1 || *f_r != GoTy::Bare(Prim::Bool) {
+                    return erased(self, f, xs);
+                }
+                (
+                    GoTy::Func(vec![elem.clone()], Box::new(GoTy::Bare(Prim::Bool))),
+                    vec![elem.clone()],
+                    GoTy::Slice(Box::new(elem.clone())),
+                )
+            }
+            ListHof::FilterMap => {
+                // `a -> Maybe b` lowers its result to `rt.SkyMaybe[B]`. Matching
+                // the NOMINAL is what proves `B`: the erased helper recovers it
+                // with `MaybeCoerce[any]` plus a reflect fallback for a typed
+                // `SkyMaybe[T]`, and neither is needed once `B` is named.
+                let GoTy::Named(n, margs) = &*f_r else {
+                    return erased(self, f, xs);
+                };
+                if f_ps.len() != 1 || n != "rt.SkyMaybe" || margs.len() != 1 || !provable(&margs[0])
+                {
+                    return erased(self, f, xs);
+                }
+                let b = margs[0].clone();
+                (
+                    GoTy::Func(vec![elem.clone()], Box::new((*f_r).clone())),
+                    vec![elem.clone(), b.clone()],
+                    GoTy::Slice(Box::new(b)),
+                )
+            }
+            ListHof::IndexedMap => {
+                // `Int -> a -> b`, spine-collapsed to a 2-ary Go func. The index
+                // param is `int` in the typed shape; today it arrives `any` and
+                // the body re-narrows it with `rt.AsInt`.
+                if f_ps.len() != 2 || !provable(&f_r) {
+                    return erased(self, f, xs);
+                }
+                let b = (*f_r).clone();
+                (
+                    GoTy::Func(
+                        vec![GoTy::Bare(Prim::Int), elem.clone()],
+                        Box::new(b.clone()),
+                    ),
+                    vec![elem.clone(), b.clone()],
+                    GoTy::Slice(Box::new(b)),
+                )
+            }
+        };
+
+        // Already at the shape (a bare top-level def whose Go signature happens
+        // to match), or retypable without side effects. `func_shape_eta_applies`
+        // is asked BEFORE `func_shape_eta` runs so a callback this cannot prove
+        // never shifts the `_e{n}` counter — the fallback stays byte-identical.
+        let typed_f = if f.ty == want_cb {
+            f.clone()
+        } else if Self::func_shape_eta_applies(&f, &want_cb) {
+            match self.func_shape_eta(&f, &want_cb) {
+                Some(e) if e.ty == want_cb => e,
+                // Unreachable while the predicate and the transform agree. If
+                // they ever stop agreeing, fall back rather than emit a call
+                // whose callback is the wrong Go shape.
+                _ => return erased(self, f, xs),
+            }
+        } else {
+            return erased(self, f, xs);
+        };
+
+        let call = GoExpr::new(
+            GoExprKind::GenericCall(hof.typed_symbol().to_string(), targs, vec![typed_f, xs]),
+            out,
+        );
+        self.coerce_if_needed(call, actual)
     }
 
     /// [`kernel_call`]'s tail, over ALREADY-LOWERED arguments. Split out so a
@@ -4355,6 +5077,41 @@ impl<'a> Ctx<'a> {
                         ),
                         GoTy::Bare(Prim::Str),
                     );
+                }
+                // A LIST `++` whose two operands carry the SAME statically-known
+                // Go slice type goes to the typed twin instead. Doc 14 §5.3
+                // (typed runtime entry point), same lever family as the Stage 2
+                // list HOFs and the Stage 3 Sky-def twins — and, like them,
+                // `rt.List_appendT` was already compiled into every Sky binary
+                // and simply unreachable.
+                //
+                // What the erased form costs, per evaluation on lists of n and
+                // m: `rt.Concat` sees two typed slices, misses its `[]any` fast
+                // path, and calls `rt.AsList` on EACH — a reflect walk boxing
+                // every element into a fresh `[]any` — concatenates those into a
+                // third slice, and the enclosing slot then reflect-narrows all
+                // n+m elements BACK with `rt.AsListT[T]`. Five slices and
+                // ~2(n+m) element boxes where one `append` into one fresh slice
+                // does it.
+                //
+                // `provable` carries its usual three refusals; note that it also
+                // rules out `[]any ++ []any`, which is deliberate — `rt.Concat`
+                // already fast-paths that pair without reflect, so re-pointing it
+                // would add a call site and buy nothing.
+                if let (GoTy::Slice(le), GoTy::Slice(re)) = (&l.ty, &r.ty) {
+                    if le == re && provable(le) {
+                        let elem = (**le).clone();
+                        let out = GoTy::Slice(Box::new(elem.clone()));
+                        let call = GoExpr::new(
+                            GoExprKind::GenericCall(
+                                "rt.List_appendT".to_string(),
+                                vec![elem],
+                                vec![l, r],
+                            ),
+                            out,
+                        );
+                        return self.coerce_if_needed(call, actual);
+                    }
                 }
                 // `rt.Concat` returns Go `any` (list `++`); type the node `Any`
                 // so the enclosing slot narrows via `rt.AsListT` rather than
@@ -5902,28 +6659,22 @@ impl<'a> Ctx<'a> {
             Pattern::Cons(h, t) => {
                 let (h, t) = (*h, *t);
                 let elem = subj_ty.elem_ty();
+                let (len_fn, elem_fn, tail_fn, head_ty, tail_ty) = destructure_ops(subj);
                 // guard: at least one element.
                 let cond = GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Ge,
-                        Box::new(call_rt(
-                            "rt.SkyLen",
-                            vec![subj.clone()],
-                            GoTy::Bare(Prim::Int),
-                        )),
+                        Box::new(call_rt(len_fn, vec![subj.clone()], GoTy::Bare(Prim::Int))),
                         Box::new(int_lit(1)),
                     ),
                     GoTy::Bare(Prim::Bool),
                 );
-                let head_raw = call_rt("rt.SkyElem", vec![subj.clone(), int_lit(0)], GoTy::Any);
+                let head_raw = call_rt(elem_fn, vec![subj.clone(), int_lit(0)], head_ty);
                 let head = self.coerce_if_needed(head_raw, &elem);
-                // `rt.SkyTailSlice` returns `[]any`; type it as such so a use
-                // in a `[]T` slot narrows via `rt.AsListT`.
-                let tail = call_rt(
-                    "rt.SkyTailSlice",
-                    vec![subj.clone()],
-                    GoTy::Slice(Box::new(GoTy::Any)),
-                );
+                // The tail keeps the subject's own element type, so a use in a
+                // `[]T` slot needs no narrowing. On the untyped path it is
+                // `[]any` and a `[]T` slot narrows it via `rt.AsListT`.
+                let tail = call_rt(tail_fn, vec![subj.clone()], tail_ty);
                 let (ch, mut binds) = self.pattern_test(&head, &elem, h);
                 let (ct, tb) = self.pattern_test(&tail, subj_ty, t);
                 binds.extend(tb);
@@ -5932,15 +6683,12 @@ impl<'a> Ctx<'a> {
             Pattern::List(pats) => {
                 let pats = pats.clone();
                 let elem = subj_ty.elem_ty();
+                let (len_fn, elem_fn, _, head_ty, _) = destructure_ops(subj);
                 // guard: exact length match.
                 let mut cond = Some(GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Eq,
-                        Box::new(call_rt(
-                            "rt.SkyLen",
-                            vec![subj.clone()],
-                            GoTy::Bare(Prim::Int),
-                        )),
+                        Box::new(call_rt(len_fn, vec![subj.clone()], GoTy::Bare(Prim::Int))),
                         Box::new(int_lit(pats.len() as i64)),
                     ),
                     GoTy::Bare(Prim::Bool),
@@ -5948,9 +6696,9 @@ impl<'a> Ctx<'a> {
                 let mut binds = Vec::new();
                 for (i, sp) in pats.iter().enumerate() {
                     let raw = call_rt(
-                        "rt.SkyElem",
+                        elem_fn,
                         vec![subj.clone(), int_lit(i as i64)],
-                        GoTy::Any,
+                        head_ty.clone(),
                     );
                     let el = self.coerce_if_needed(raw, &elem);
                     let (c, b) = self.pattern_test(&el, &elem, *sp);
@@ -6634,6 +7382,46 @@ fn any_task_run(expr: GoExpr) -> GoExpr {
     )
 }
 
+/// The list-destructuring runtime helpers to use for `subj`, as
+/// `(len, elem, tail, elem-result-ty, tail-result-ty)`.
+///
+/// The `any`-taking `rt.SkyLen` / `rt.SkyElem` / `rt.SkyTailSlice` route through
+/// `rt.AsList`. That fast-paths a `[]any`, but a `[]T` for any other T misses
+/// the assertion and falls to the reflect arm, which allocates a fresh `[]any`
+/// and boxes EVERY element into it. Measured on a 16-element `[]struct{…}`
+/// (`runtime-go/rt/sky_destructure_typed_test.go`): **18 allocations per call**,
+/// each — so a cons loop rebuilt the whole list once per iteration, quadratic in
+/// n for an O(n) walk.
+///
+/// When the subject's Go type is already a slice, the typed `…T` helpers compile
+/// to `len(xs)` / `xs[i]` / `xs[1:]` and allocate nothing. Go infers the type
+/// argument from the slice, so the call sites need no explicit one.
+///
+/// The decision keys on `subj.ty` — the Go type of the EXPRESSION being emitted
+/// — and not on the `subj_ty` type-context the caller threads alongside it.
+/// Those two can disagree, and it is `subj.ty` that decides whether the emitted
+/// Go actually type-checks: passing a non-slice to `rt.SkyLenT` is a `go build`
+/// failure, whereas an over-conservative fall back to the `any` path is only a
+/// missed optimisation.
+fn destructure_ops(subj: &GoExpr) -> (&'static str, &'static str, &'static str, GoTy, GoTy) {
+    match &subj.ty {
+        GoTy::Slice(t) => (
+            "rt.SkyLenT",
+            "rt.SkyElemT",
+            "rt.SkyTailSliceT",
+            (**t).clone(),
+            GoTy::Slice(t.clone()),
+        ),
+        _ => (
+            "rt.SkyLen",
+            "rt.SkyElem",
+            "rt.SkyTailSlice",
+            GoTy::Any,
+            GoTy::Slice(Box::new(GoTy::Any)),
+        ),
+    }
+}
+
 fn call_rt(name: &str, args: Vec<GoExpr>, ty: GoTy) -> GoExpr {
     GoExpr::new(
         GoExprKind::Call(
@@ -6649,6 +7437,153 @@ fn widen(e: GoExpr) -> GoExpr {
         e
     } else {
         GoExpr::new(GoExprKind::Widen(Box::new(e)), GoTy::Any)
+    }
+}
+
+/// The PURE-SKY `Sky.Core.List` HOFs that have a fully-typed runtime twin a
+/// provable call site can be re-pointed at.
+///
+/// `ListHof` below covers the KERNEL list HOFs — the ones `kernel_call` sees,
+/// because their Sky def is `Ffi.kernel "…"`. `foldl` and `any` are not those:
+/// they are ordinary Sky source (`sky-stdlib/Sky/Core/List.sky`), auto-TCO'd to
+/// a Go `for` loop, so no kernel symbol is ever resolved for them and
+/// `ListHof::of` never fires. Their typed runtime twins have therefore been
+/// compiled into every Sky binary and simply unreachable.
+///
+/// **The def is NOT changed.** `Sky_Core_List_foldl` keeps its erased signature
+/// (`func(func(any, any) any, any, []any) any`), and every value-position
+/// reference (`Task.map List.head`), every partial application and every
+/// unprovable call site still names it — byte-identically. Only a call site
+/// that can prove ALL of its Go types is re-pointed. That is what keeps a bare
+/// generic identifier (which `go build` rejects: "cannot use generic function
+/// without instantiation") and a `GoTy::TyVar` leaking into a caller's scope
+/// both UNREACHABLE rather than merely handled.
+///
+/// Increment 1 of a staged rollout — widening this table requires re-running
+/// the measurement. `member` and `head` are deliberately absent: they RELOCATE
+/// cost rather than remove it. `member` lowers `x == y` to `rt.Eq`, which takes
+/// `any`, so a typed element costs two heap boxes per element where today's
+/// `any` params cost none; `head`/`find` return `rt.SkyMaybe[T]` while their
+/// consumers take `rt.SkyMaybe[any]`, a distinct instantiation needing a
+/// reflective `rt.MaybeCoerce` rebuild — and neither `rt.Eq` nor
+/// `rt.MaybeCoerce` is in the `coerce-floor` gate's TRACKED set, so the gate
+/// would score both relocations as wins.
+///
+/// Fields: `(module, def name, typed runtime symbol, value arity)`.
+const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
+    ("Sky.Core.List", "foldl", "rt.List_foldlElemFirstT", 3),
+    ("Sky.Core.List", "any", "rt.List_anyT", 2),
+];
+
+/// The UNARY list kernels whose typed twin returns a Go PRIMITIVE, keyed by the
+/// erased symbol the kernel table already resolves to.
+///
+/// `rt.List_isEmpty` is `func(any) any` and its body calls the unexported
+/// `asList`, so on a typed `[]T` — which is every list in a well-typed Sky
+/// program — it MISSES the `[]any` fast path, reflect-walks the slice, and boxes
+/// every element into a fresh `[]any`, in order to compute `len(items) == 0`.
+/// The call site additionally boxes the slice header (`any(xs)`) on the way in
+/// and narrows the boxed `bool` back with `rt.AsBool` on the way out.
+/// `rt.List_isEmptyT[T]` (`rt.go:3669`) is `len(xs) == 0` — like the Stage 2 and
+/// Stage 3 twins it has been compiled into every Sky binary and unreachable.
+///
+/// **The table stops at the twins that return a Go PRIMITIVE, and that boundary
+/// is load-bearing rather than a stopping point chosen for time.** `bool` and
+/// `int` need no container rebuilt on the way out, so the twin is a strict
+/// removal. `rt.List_headT` returns `rt.SkyMaybe[A]` where its consumers take
+/// `rt.SkyMaybe[any]`, a distinct Go instantiation needing a reflective
+/// `rt.MaybeCoerce` rebuild — it RELOCATES the cost rather than removing it,
+/// which is the same reason `head` is absent from `SKY_LIST_HOF_TWINS` above.
+/// `rt.List_reverseT` returns `[]A` and would qualify on that test, but it is a
+/// different measurement (it is O(n) work, not an O(1) length read) and doc 14
+/// §5.5's staged-rollout rule is that widening the table re-runs the
+/// measurement. It is deliberately left for a later tranche.
+///
+/// Fields: `(typed runtime symbol, the twin's Go return type)`.
+fn list_unary_prim_twin(go: &str) -> Option<(&'static str, GoTy)> {
+    match go {
+        "rt.List_isEmpty" => Some(("rt.List_isEmptyT", GoTy::Bare(Prim::Bool))),
+        "rt.List_length" => Some(("rt.List_lengthT", GoTy::Bare(Prim::Int))),
+        _ => None,
+    }
+}
+
+/// The kernel list HOFs that have a fully-typed runtime twin, keyed by the
+/// erased symbol the kernel table already resolves to.
+///
+/// Deliberately NOT the whole `List.*` surface. `foldl`, `find`, `any` and
+/// `all` are pure Sky source in `sky-stdlib/Sky/Core/List.sky` — already
+/// tail-call-optimised to a Go `for` loop — so there is no `rt.List_*` call
+/// site to redirect when they are reached through `Sky.Core.List`; only the
+/// kernel pseudo-module reaches `rt.List_foldl`, and specialising one of the
+/// two routes would make performance depend on how the user spelled the import.
+/// `foldr` IS a kernel alias and IS eligible, and is left for a later tranche:
+/// it takes three arguments, so it needs its own accumulator-type proof rather
+/// than reusing the two-argument shape below.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ListHof {
+    Map,
+    Filter,
+    FilterMap,
+    IndexedMap,
+}
+
+impl ListHof {
+    fn of(go: &str) -> Option<Self> {
+        match go {
+            "rt.List_mapAny" => Some(ListHof::Map),
+            "rt.List_filterAny" => Some(ListHof::Filter),
+            "rt.List_filterMap" => Some(ListHof::FilterMap),
+            "rt.List_indexedMap" => Some(ListHof::IndexedMap),
+            _ => None,
+        }
+    }
+
+    /// The `runtime-go/rt` symbol. Each is the exact-semantics twin of the
+    /// erased helper it replaces, empty case included — see the comment above
+    /// `List_filterMapT` in `rt.go` for why that is not a formality.
+    fn typed_symbol(self) -> &'static str {
+        match self {
+            ListHof::Map => "rt.List_mapT",
+            ListHof::Filter => "rt.List_filterT",
+            ListHof::FilterMap => "rt.List_filterMapT",
+            ListHof::IndexedMap => "rt.List_indexedMapT",
+        }
+    }
+}
+
+/// Is this Go type a thing the emitter may name in a type argument and index a
+/// slice of — i.e. is it STATICALLY PROVEN, rather than merely present?
+///
+/// Three rejections, each for its own reason:
+///
+///   * `Any` — the erasure itself. A row-polymorphic record reaches here as
+///     `Any` (`goty.rs:226-228`: an OPEN row returns `GoTy::Any` so field reads
+///     route through the reflective `rt.Field` and the full runtime value
+///     survives). A CLOSED record is a `Named("Foo_R")` and is fine.
+///   * `TyVar` — a Go generic parameter. Naming it in an instantiation would
+///     leak the enclosing function's type parameter into a helper that does not
+///     declare it.
+///   * `Struct` — an ANONYMOUS struct, and this is the D2 trap, not a
+///     stylistic preference. `lower_lambda` re-pins a struct element type to
+///     `closure_elem` and WIDENS it to `any` when the body reads a field the
+///     subset struct lacks or uses it as a record-update base. A typed loop
+///     over a `GoTy::Struct` element would therefore commit to a shape the
+///     lambda lowering is still entitled to change underneath it — the same
+///     record-narrowing class as issue #166, which passed every corpus gate
+///     twice while dropping fields in `12-skyvote` and `16-skychess`.
+///
+/// Recursive, because a `Named`'s type arguments and a `Slice`'s element are
+/// just as capable of being erased as the outer type is.
+fn provable(t: &GoTy) -> bool {
+    match t {
+        GoTy::Any | GoTy::TyVar(_) | GoTy::Struct(_) => false,
+        GoTy::Bare(_) | GoTy::Unit => true,
+        GoTy::Slice(e) => provable(e),
+        GoTy::Map(k, v) => provable(k) && provable(v),
+        GoTy::Tuple(es) => es.iter().all(provable),
+        GoTy::Named(_, args) => args.iter().all(provable),
+        GoTy::Func(ps, r) => ps.iter().all(provable) && provable(r),
     }
 }
 

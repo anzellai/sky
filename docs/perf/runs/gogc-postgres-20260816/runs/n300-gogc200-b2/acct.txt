@@ -1,0 +1,16 @@
+tag n300-gogc200-b2
+sessions 300
+gogc 200
+gomemlimit none
+elements 94
+idle_rss_kb 41056
+load_rss_kb 422064
+peak_rss_kb 422064
+window_peak_rss_kb 422064
+window_mean_rss_kb 417933
+pg_peak_rss_kb 82336
+app_cpu_delta_s 293.17
+wall_s 74
+generator_rc 0
+aborted no
+load1 10.67

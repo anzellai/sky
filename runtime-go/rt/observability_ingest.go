@@ -302,6 +302,14 @@ func ingestInto(store *telemetry.Store, namespace string, p IngestPayload) inges
 		st.logs++
 	}
 	for _, m := range p.Metrics {
+		// Boundary shape gate — see ingestMetricShapeOK. The 1 MiB
+		// body limit bounds one REQUEST, not what accumulates: a
+		// metric name seeds the store's cardinality-warn dedupe and a
+		// label set becomes a process-lifetime series key, so absurd
+		// shapes are refused here rather than remembered there.
+		if !ingestMetricShapeOK(m.Name, m.Labels) {
+			continue
+		}
 		labels := withSubappLabel(m.Labels, namespace)
 		switch strings.ToLower(m.Type) {
 		case "", "counter":
@@ -332,6 +340,39 @@ func ingestInto(store *telemetry.Store, namespace string, p IngestPayload) inges
 		st.spans++
 	}
 	return st
+}
+
+// Metric-shape bounds enforced at the ingest boundary. Metrics are
+// enum-shaped by design (method names, status codes, msg names);
+// anything past these bounds is a misbehaving or malicious child,
+// and accepting it would grow process-lifetime state (series keys,
+// the cardinality-warn dedupe) from wire input. Logs and spans take
+// the generic byte bounds in telemetry/limits.go on their store
+// path; metrics additionally REJECT here because a truncated metric
+// name or label silently collides distinct series.
+const (
+	ingestMaxMetricNameBytes = 256
+	ingestMaxLabels          = 32
+	ingestMaxLabelKeyBytes   = 128
+	ingestMaxLabelValueBytes = 512
+)
+
+// ingestMetricShapeOK reports whether a pushed metric sample is
+// within the boundary bounds above. Rejection is per-sample: the
+// rest of the batch still lands.
+func ingestMetricShapeOK(name string, labels map[string]string) bool {
+	if name == "" || len(name) > ingestMaxMetricNameBytes {
+		return false
+	}
+	if len(labels) > ingestMaxLabels {
+		return false
+	}
+	for k, v := range labels {
+		if len(k) > ingestMaxLabelKeyBytes || len(v) > ingestMaxLabelValueBytes {
+			return false
+		}
+	}
+	return true
 }
 
 // withSubappLabel copies `in` and sets `subapp=<ns>`. We always

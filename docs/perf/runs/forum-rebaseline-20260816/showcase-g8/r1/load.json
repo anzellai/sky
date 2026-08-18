@@ -1,0 +1,33 @@
+{
+  "label": "showcase-g8-r1",
+  "url": "http://127.0.0.1:8531",
+  "sessions_requested": 50,
+  "sessions_established": 50,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 42563,
+  "interactions_per_sec": 945.0514368939364,
+  "p50_ms": 21.315,
+  "p95_ms": 179.534,
+  "p99_ms": 275.822,
+  "max_ms": 730.444,
+  "outcomes": {
+    "ok": 42563
+  },
+  "error_rate": 0,
+  "patches_total": 42563,
+  "interactions_with_patches": 42563,
+  "patch_rate": 1,
+  "patches_per_interaction": 1,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.7#div.1#div.0#button.click",
+  "setup_steps": 0,
+  "sse_frames_total": 250,
+  "sse_still_open_at_end": 50,
+  "generator_cpu_percent_of_machine": 2.1015856930000205,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T00:38:02Z"
+}

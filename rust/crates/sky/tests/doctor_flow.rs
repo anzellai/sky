@@ -18,6 +18,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn go_on_path() -> bool {
@@ -74,7 +78,7 @@ fn run_sky(dir: &Path, args: &[&str]) -> (i32, String) {
 #[test]
 fn doctor_healthy_project_reports_clean() {
     if !go_on_path() {
-        eprintln!("doctor_flow: skipping healthy-case — needs `go` on PATH");
+        required(Need::Go, false);
         return;
     }
     let dir = healthy_project("healthy");
@@ -160,5 +164,65 @@ fn doctor_outside_project_exits_2() {
             "doctor_flow: no-project case saw exit {code} (an ancestor sky.toml?); log:\n{log}"
         );
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A project that has opted into an embedded cluster, on a machine with no
+/// PostgreSQL, must be told at `doctor` time rather than at the first `sky run`.
+/// The check is silent for a project that has NOT opted in, and silent again as
+/// soon as a PostgreSQL is reachable — a warning that fires on every project
+/// would be trained away in a week.
+#[test]
+fn doctor_reports_an_embedded_project_with_no_postgres() {
+    let dir = healthy_project("embedded-pg");
+    let home = dir.join("home");
+    let empty = dir.join("empty-bin");
+    std::fs::create_dir_all(&empty).unwrap();
+
+    let doctor = |extra: Option<&Path>| -> String {
+        let mut c = Command::new(SKY);
+        c.arg("doctor")
+            .current_dir(&dir)
+            .env("SKY_HOME", &home)
+            .env("PATH", &empty)
+            .stdin(std::process::Stdio::null());
+        match extra {
+            Some(bin) => c.env("SKY_POSTGRES_BIN", bin),
+            None => c.env_remove("SKY_POSTGRES_BIN"),
+        };
+        let out = c.output().expect("spawn sky");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+
+    // Not opted in → silent, even with no PostgreSQL anywhere.
+    assert!(
+        !doctor(None).contains("embedded = true"),
+        "doctor warned about PostgreSQL for a project that never asked for it"
+    );
+
+    // Opted in, nothing installed → the finding, with the way out.
+    let toml = dir.join("sky.toml");
+    let base = std::fs::read_to_string(&toml).unwrap();
+    std::fs::write(&toml, format!("{base}\n[database]\nembedded = true\n")).unwrap();
+    let log = doctor(None);
+    assert!(log.contains("no PostgreSQL"), "{log}");
+    assert!(log.contains("sky db provision --embed"), "{log}");
+
+    // Opted in, a PostgreSQL reachable → silent again.
+    let bin = dir.join("pgbin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for b in ["initdb", "pg_ctl", "postgres"] {
+        std::fs::write(bin.join(b), "#!/bin/sh\nexit 0\n").unwrap();
+    }
+    let log = doctor(Some(&bin));
+    assert!(
+        !log.contains("sky db provision --embed"),
+        "doctor still asks for a provision with SKY_POSTGRES_BIN set:\n{log}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }

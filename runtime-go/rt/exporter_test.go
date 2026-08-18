@@ -320,8 +320,16 @@ func TestHubExporter_SIGTERMDrain(t *testing.T) {
 		return 200, nil
 	}
 	exp := NewHubExporterForTesting(transport)
-	// Realistic batch interval so we have items pending at flush.
-	exp.batchInt = 50 * time.Millisecond
+	// The batch ticker is pinned OUT OF REACH, so every item is still pending
+	// when Flush is called and the assertion below rests entirely on Flush.
+	//
+	// This used to be 50 ms, and that was the only reason the test passed:
+	// Flush polled `len(queue) == 0` and sent the drainer no signal at all, so
+	// the ticker was doing the work. In production `batchInt` is 2 s, which is
+	// longer than the 1 s deadline used here — meaning the shipped SIGTERM
+	// path could not have drained inside its own budget except by luck, and
+	// this test could not see that.
+	exp.batchInt = time.Hour
 	exp.Start(context.Background())
 
 	const N = 1000
@@ -363,13 +371,96 @@ func TestHubExporter_SIGTERMDrain(t *testing.T) {
 	t.Logf("received %d push attempts carrying %d fragments (submitted: %d)",
 		pushed.Load(), totalFragments, N)
 
-	deliveryPct := float64(totalFragments) / float64(N) * 100
-	t.Logf("delivery: %.1f%%", deliveryPct)
-	if deliveryPct < 95.0 {
-		t.Errorf("expected >=95%% delivery in 1s drain; got %.1f%%", deliveryPct)
+	// EVERY fragment, not 95% of them.
+	//
+	// The old bound was `>= 95.0`, with the shortfall waved through as an
+	// acceptable race against the drainer. It was not acceptable and it was not
+	// a race worth tolerating: Flush is a synchronisation, so a fragment
+	// submitted before it and missing after it is lost data on the SIGTERM
+	// path. A percentage threshold cannot distinguish "the mechanism works"
+	// from "the timing happened to favour us", which is exactly how this class
+	// of defect survives a green suite.
+	if totalFragments != N {
+		t.Errorf("expected all %d fragments delivered by Flush; got %d (%.1f%%)",
+			N, totalFragments, float64(totalFragments)/float64(N)*100)
 	}
 
 	exp.Stop()
+}
+
+// The deploy-safety gate: Stop alone must push the queue.
+//
+// No Flush here on purpose, and the batch ticker is pinned out of reach so it
+// cannot do the work either. Until this commit, Stop closed stopCh and
+// returned without waiting — the drainer's final-drain branch ran on a
+// goroutine nobody joined, and `doneCh` was closed by the drainer and received
+// on nowhere in the tree. Whatever the exporter still held at process exit was
+// lost on every deploy.
+func TestHubExporter_StopPushesTheQueue(t *testing.T) {
+	var mu sync.Mutex
+	var fragments int
+	transport := func(ctx context.Context, body []byte) (int, error) {
+		mu.Lock()
+		fragments += strings.Count(string(body), `{"x":"bye"}`)
+		mu.Unlock()
+		return 200, nil
+	}
+	exp := NewHubExporterForTesting(transport)
+	exp.batchInt = time.Hour
+	exp.Start(context.Background())
+
+	const N = 500
+	payload := []byte(`{"x":"bye"}`)
+	for i := 0; i < N; i++ {
+		exp.Submit(KindLog, payload, SevInfo)
+	}
+
+	exp.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if fragments != N {
+		t.Errorf("expected Stop to push all %d queued fragments, got %d — "+
+			"the shutdown drain does not wait for the drainer", N, fragments)
+	}
+}
+
+// Flush must be a synchronisation, not a poll that the ticker rescues.
+//
+// Deliberately fewer items than batchMax, so the size trigger cannot commit
+// anything either: the assertion rests entirely on the flushReq rendezvous.
+func TestHubExporter_FlushIsSynchronisedNotTimed(t *testing.T) {
+	var mu sync.Mutex
+	var fragments int
+	transport := func(ctx context.Context, body []byte) (int, error) {
+		mu.Lock()
+		fragments += strings.Count(string(body), `{"x":"sync"}`)
+		mu.Unlock()
+		return 200, nil
+	}
+	exp := NewHubExporterForTesting(transport)
+	exp.batchInt = time.Hour
+	exp.Start(context.Background())
+	defer exp.Stop()
+
+	const N = 10
+	if N >= exp.batchMax {
+		t.Fatalf("test is vacuous: %d items reaches the %d size trigger", N, exp.batchMax)
+	}
+	payload := []byte(`{"x":"sync"}`)
+	for i := 0; i < N; i++ {
+		exp.Submit(KindLog, payload, SevInfo)
+	}
+	if err := exp.Flush(3 * time.Second); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if fragments != N {
+		t.Errorf("expected %d fragments pushed by Flush, got %d "+
+			"(the flush returned before the drainer pushed)", N, fragments)
+	}
 }
 
 // ─── Companion smoke tests ────────────────────────────────────────

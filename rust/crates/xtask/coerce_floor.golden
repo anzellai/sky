@@ -1,70 +1,194 @@
-# coerce-floor golden — emitted-Go runtime-narrowing token counts.
-# FAIL-ON-INCREASE: a count above its golden fails `xtask coerce-floor`.
-# A DECREASE is fine (floor tightened) — re-bless to ratchet it down.
+# coerce-floor golden — emitted-Go runtime-narrowing token census, BY COST CLASS.
+#
+# adapter  — the site produces a `reflect.MakeFunc` thunk (`rt.Coerce[func(…)…]`).
+#            Cost is paid per INVOCATION of the adapted func — once per element of
+#            every traversal it reaches. Statically closeable (doc 14 §5.1).
+#            EXACT MATCH: any drift fails. `--bless` REFUSES to raise it.
+# dispatch — `rt.SkyCall`, reflect call dispatch. doc 14 §4.3 irreducible floor.
+#            FAIL-ON-INCREASE.
+# narrow   — a value narrowing: at most one assertion (or one container rebuild)
+#            per evaluation of the site. FAIL-ON-INCREASE.
+#
+# A DECREASE in dispatch/narrow is fine (floor tightened) — re-bless to ratchet down.
 # Regenerate with: cargo run -p xtask -- coerce-floor --bless
 # Re-key (adds/moves rows) with: cargo run -p xtask -- coerce-floor --rekey,
 #   which additionally asserts sum(tokens) and count(rows) did not FALL.
-# Format: <key>\t<total-rt-narrowing-token-count>
+# Format: <key>\tadapter=<n>\tdispatch=<n>\tnarrow=<n>
 #   <key> without `/` is an examples/ directory; with `/` it is a
 #   repo-root-relative Layer-2 project path (apps/manifest.toml).
-00-standard-libs	221
-01-hello-world	1
-02-go-stdlib	9
-03-tea-external	3
-04-local-pkg	2
-05-mux-server	9
-06-json	46
-07-todo-cli	126
-08-notes-app	359
-09-live-counter	71
-10-live-component	75
-11-fyne-stopwatch	10
-12-skyvote	372
-13-skyshop	1398
-14-task-demo	5
-15-http-server	13
-16-skychess	499
-17-skymon	456
-18-job-queue	146
-19-skyforum	320
-20-cli-counter	3
-21-tui-stopwatch	9
-22-tui-stopwatch-ui	13
-23-tui-todo	37
-24-tui-kitchen-sink	255
-25-sky-console	263
-26-ui-showcase	506
-27-multi-session-chat	135
-28-streaming-chat	29
-29-webview-threejs-spike	2
-30-sse-server-demo	7
-31-webview-stopwatch-ui	243
-32-sse-relay	7
-33-websocket-echo	8
-34-multi-tier-console	11
-35-composite-generics	173
-36-composite-server	247
-37-composite-live-shop	508
-38-composite-ui-multibackend	389
-40-generic-adt-field	5
-41-nested-curry	7
-42-poly-record	3
-43-composition	6
-44-record-update	3
-45-record-update-anon	2
-46-row-poly-result	5
-47-func-field-record	3
-48-tuple-unused-binding	2
-49-xmodule-adt	2
-50-open-row-closure	11
-51-kernel-variadic-arity	1
-52-blog-analytics	384
-53-record-update-map	28
-54-record-fieldset-collision	5
-55-store-partial-update	99
-apps/dispatch	607
-apps/fieldbook	756
-apps/ledger	560
-apps/relay	187
-sky-bundled/console	408
-sky-bundled/doc	22
+#
+# `dispatch` is 0 for every row: `rt.SkyCall` is reached from the runtime, not
+# emitted into main.go by this compiler. The column is an armed tripwire for a
+# lowering that starts emitting it, NOT a record of one that was eliminated.
+#
+# ── Recorded transition, 2026-08-15 — eta-expansion of func-slot values ──
+# `perf(lower): eta-expand a func value into a func slot, not rt.Coerce`
+# replaced a func-shape `rt.Coerce` with a closure at the slot's shape whose
+# parameters narrow inward. A 1-ary callback trades one coarse token for one
+# precise one; an N-ary callback trades ONE for N — so `adapter` falls and
+# `narrow` RISES on the projects whose callbacks are N-ary.
+#
+# That rise is the trade, not a regression. The token removed could never
+# satisfy its own `v.(T)` fast path and allocated a []reflect.Value on every
+# invocation; the tokens added are assertions that succeed. Measured on the
+# Std.Ui marker scan: 318 -> 126 allocations per scan, 1.36x end-to-end
+# throughput (docs/perf/runs/hof-dispatch-20260815/).
+#
+# Measured across the 56 projects that emit both before (b131e751) and after,
+# by running THIS census against both compilers:
+#     adapter  269 -> 24   (-245, -91%); 24 projects driven to 0; 0 rose
+#     narrow  8055 -> 8234 (+179)
+#     total   8324 -> 8258 (-66)
+# The 24 residual adapters are `func_shape_eta`'s documented `None` returns —
+# arity mismatch, non-symbol source, and a param/result whose narrowing would
+# REBUILD a slice or map (trading an O(1) reflect box for an O(n) copy). They
+# are locked here exactly, so closing any of them shows up as a gate failure
+# asking to record the win.
+#
+# ── Recorded transition, 2026-08-16 — the typed-lowering stages, blessed at
+#    FULL corpus coverage ──
+# This is the first bless taken with all 61 rows MEASURED in the same run.
+# The four preceding stages were each verified against whatever subset the
+# measuring machine could emit: on a clean checkout that is 56 of 61, because
+# 03-tea-external, 05-mux-server, 08-notes-app and 11-fyne-stopwatch need a
+# generated `sky-ffi/` surface and 13-skyshop an unfetched Sky dependency, and
+# both `sky-ffi/` and `.skydeps/` are .gitignore'd. The gate filed those under
+# "did not emit (not gated)" and reported PASS on the remainder, so a
+# "no project rose" verdict covered 56 rows while reading as though it
+# covered 61. That is now a hard failure with its own clause; see the module
+# header of coerce_floor_gate.rs.
+#
+# Measured with all five surfaces restored, and cross-checked in two
+# independent working trees that agreed to the token:
+#     adapter  35 -> 28   (-7): 35-composite-generics 6 -> 2, apps/fieldbook 4 -> 1
+#     narrow  9024 -> 8325 (-699) across 29 projects; NONE rose
+#     total   9059 -> 8353 (-706)
+# The `adapter` fall is the exact-match ratchet doing its job: both projects
+# closed adapters the golden still reserved slack for, and that slack is now
+# gone. The `narrow` fall is a decrease in SITE count and is not a speedup
+# measurement — nothing here weights a site by how often it runs.
+#
+# ── Recorded transition, 2026-08-16 — the corpus is discovered, not assumed ──
+# 61 rows -> 66. The five added existed on disk all along with a `sky.toml` and
+# a `src/`, and no floor was locked for any of them:
+#     apps/fieldbook/probe               narrow=2
+#     examples/39-hub-demo/billing-app   narrow=8
+#     examples/39-hub-demo/frontend-app  narrow=7
+#     simple                             narrow=1
+#     test_pkg                           narrow=1
+# The gate could not report the omission because its denominator was this file:
+# "56 of 61" is `golden.len()`, so a project missing from the golden was missing
+# from the question. Three were invisible to a NON-RECURSIVE `read_dir` on
+# `examples/` (`39-hub-demo` is a wrapper holding two projects and none of its
+# own; `apps/fieldbook/probe` nests inside a member); two were dropped by a
+# hard-coded `n != "simple" && n != "test_pkg"` with no reason attached.
+#
+# Discovery is now recursive over examples/, apps/ and sky-bundled/, and a
+# discovered project with no golden row FAILS. Blessed with all 66 emitting in
+# one run (`sky install` restored the five FFI surfaces first): rows 61 -> 66
+# (+5), tokens 8353 -> 8372 (+19). No existing row moved.
+#
+# ── Recorded transition, 2026-08-18 — the console's observability fix pays
+#    the standing kernel-ABI narrowing, three more times ──
+# sky-bundled/console  narrow 283 -> 286 (+3); adapter unchanged at 2.
+# Cause: gate cause (2) — a SOURCE change (`10167246 fix(rt): the console
+# stops degrading the app it observes`) added view code; the new lines pay the
+# same per-call-site narrowing every existing line already pays. NOT a codegen
+# regression: same compiler binary before and after, every delta confined to
+# the functions the commit changed (AnalyticsTab scope note / windowLabel /
+# revenuePanel), adapter flat. Verified by re-emitting the console with the
+# three .sky files reverted to their pre-commit content (parent 98619b32) under
+# THIS compiler: the count returns to 283.
+#
+# The three new tokens, classified against doc 14 (§10 citation):
+#   • +2  rt.AsString(rt.String_fromInt(any(v_0.WindowDays)))  and  (…RowCap)
+#         — rendering two NEW, concretely-typed Int fields (windowDays / rowCap
+#         in State.sky) as strings. `String.fromInt` is a runtime kernel whose
+#         Go ABI is `func String_fromInt(a any) any`; the `any` result is
+#         narrowed to `string`, stamped `/* FFI return */` — MISLABELLED, it is
+#         a kernel return, not FFI (doc 14 §3.1).
+#         ORIGIN R5 (lower.rs:4429-4439). §1 floor test: slot shape = string;
+#         value's real type known to the compiler but erased to `any` by the
+#         kernel ABI → doc 14 §4.4 NOT floor, CLOSEABLE — but only by the R5
+#         lever (typed kernel entry points, §5.3 generalised to returns), a
+#         corpus-wide compiler change, NOT an app-level signature. The console's
+#         new fields are already concretely typed (Int/Bool), so there is no
+#         app-level `any` to remove; 53 existing `AsString(String_fromInt)`
+#         sites in this same file pay the identical cost.
+#   • +1  rt.Coerce[State_CurrencyTotal_R](_p0)  inside the new
+#         `List.map (currencyRowView a.rowCapHit) a.revenue` (revenuePanel).
+#         The erased list helper hands the callback its element as `any`; the
+#         element narrows to State_CurrencyTotal_R.  ORIGIN R2 `eta_narrow`
+#         (lower.rs:2771-2779) — the succeeding assertion inside the
+#         retyped-in-place callback, i.e. the CLOSED form, not a new adapter
+#         (adapter stayed at 2). §1/§9.2: per-element helper path, CLOSEABLE in
+#         principle; the residual is the boxing round trip, closed only by the
+#         §5.5 typed-instantiation compiler lever — again not an app change.
+# Verification gate: `xtask coerce-floor` (this golden). Blessed with all 66
+# emitting in one run; sky-bundled/console 283 -> 286; NO other row moved.
+00-standard-libs	adapter=1	dispatch=0	narrow=186
+01-hello-world	adapter=0	dispatch=0	narrow=1
+02-go-stdlib	adapter=0	dispatch=0	narrow=9
+03-tea-external	adapter=0	dispatch=0	narrow=3
+04-local-pkg	adapter=0	dispatch=0	narrow=2
+05-mux-server	adapter=0	dispatch=0	narrow=9
+06-json	adapter=1	dispatch=0	narrow=45
+07-todo-cli	adapter=0	dispatch=0	narrow=100
+08-notes-app	adapter=0	dispatch=0	narrow=326
+09-live-counter	adapter=0	dispatch=0	narrow=68
+10-live-component	adapter=0	dispatch=0	narrow=71
+11-fyne-stopwatch	adapter=0	dispatch=0	narrow=10
+12-skyvote	adapter=0	dispatch=0	narrow=331
+13-skyshop	adapter=11	dispatch=0	narrow=1341
+14-task-demo	adapter=0	dispatch=0	narrow=5
+15-http-server	adapter=0	dispatch=0	narrow=13
+16-skychess	adapter=0	dispatch=0	narrow=429
+17-skymon	adapter=0	dispatch=0	narrow=357
+18-job-queue	adapter=0	dispatch=0	narrow=116
+19-skyforum	adapter=0	dispatch=0	narrow=256
+20-cli-counter	adapter=0	dispatch=0	narrow=3
+21-tui-stopwatch	adapter=0	dispatch=0	narrow=9
+22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=13
+23-tui-todo	adapter=0	dispatch=0	narrow=29
+24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=202
+25-sky-console	adapter=0	dispatch=0	narrow=205
+26-ui-showcase	adapter=0	dispatch=0	narrow=365
+27-multi-session-chat	adapter=0	dispatch=0	narrow=109
+28-streaming-chat	adapter=0	dispatch=0	narrow=24
+29-webview-threejs-spike	adapter=0	dispatch=0	narrow=2
+30-sse-server-demo	adapter=0	dispatch=0	narrow=7
+31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=194
+32-sse-relay	adapter=0	dispatch=0	narrow=7
+33-websocket-echo	adapter=0	dispatch=0	narrow=4
+34-multi-tier-console	adapter=0	dispatch=0	narrow=11
+35-composite-generics	adapter=2	dispatch=0	narrow=141
+36-composite-server	adapter=2	dispatch=0	narrow=209
+37-composite-live-shop	adapter=3	dispatch=0	narrow=391
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=289
+40-generic-adt-field	adapter=0	dispatch=0	narrow=5
+41-nested-curry	adapter=0	dispatch=0	narrow=7
+42-poly-record	adapter=0	dispatch=0	narrow=3
+43-composition	adapter=0	dispatch=0	narrow=5
+44-record-update	adapter=0	dispatch=0	narrow=3
+45-record-update-anon	adapter=0	dispatch=0	narrow=2
+46-row-poly-result	adapter=0	dispatch=0	narrow=5
+47-func-field-record	adapter=0	dispatch=0	narrow=3
+48-tuple-unused-binding	adapter=0	dispatch=0	narrow=2
+49-xmodule-adt	adapter=0	dispatch=0	narrow=2
+50-open-row-closure	adapter=0	dispatch=0	narrow=11
+51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=1
+52-blog-analytics	adapter=0	dispatch=0	narrow=307
+53-record-update-map	adapter=0	dispatch=0	narrow=24
+54-record-fieldset-collision	adapter=0	dispatch=0	narrow=5
+55-store-partial-update	adapter=0	dispatch=0	narrow=69
+apps/dispatch	adapter=0	dispatch=0	narrow=491
+apps/fieldbook	adapter=1	dispatch=0	narrow=556
+apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
+apps/ledger	adapter=0	dispatch=0	narrow=462
+apps/relay	adapter=5	dispatch=0	narrow=170
+examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=8
+examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=7
+simple	adapter=0	dispatch=0	narrow=1
+sky-bundled/console	adapter=2	dispatch=0	narrow=286
+sky-bundled/doc	adapter=0	dispatch=0	narrow=17
+test_pkg	adapter=0	dispatch=0	narrow=1

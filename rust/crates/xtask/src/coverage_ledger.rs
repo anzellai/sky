@@ -90,7 +90,7 @@
 //! `cover_new` fell, or when a surface is `weaker` without a `[[weakening]]`
 //! stanza naming it. An INCREASE is always fine and rewrites the file.
 
-use crate::harness::registry::{Tier, GATES};
+use crate::harness::registry::{MutationKind, Tier, GATES};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -288,6 +288,32 @@ static CROSS_CUTTING: &[CrossSurface] = &[
         ],
     },
     CrossSurface {
+        id: "observability.analytics-store",
+        category: "observability",
+        description: "analytics retention keeps pruning, and the console's reads stay \
+                      bounded + indexed (incl. the right-to-erasure DELETE)",
+        // Nothing, and that is the finding. Both defects behind this surface are
+        // SILENT: a retention goroutine that died on its first panic, and an
+        // unbounded scan on a pool shared with the session store. Neither has a
+        // symptom any existing suite could observe, which is why an adversarial
+        // review found them and no test did.
+        today: &[("nothing", 0)],
+    },
+    CrossSurface {
+        id: "runtime.periodic-goroutines",
+        category: "runtime",
+        description: "every detached periodic loop in runtime-go survives a panicking \
+                      cycle, releases whatever the cycle held, and reports what it \
+                      caught instead of discarding it",
+        // Nothing, and that is the finding rather than an omission. The class is
+        // silent by construction: the loop stops, no log line is written, and the
+        // only symptom is a table or a spool growing for a day. Eight sites
+        // carried it and every one was found by reading code — including two
+        // whose defects were exact complements, which is what a class looks like
+        // when it is closed one instance at a time.
+        today: &[("nothing", 0)],
+    },
+    CrossSurface {
         id: "lsp",
         category: "tooling",
         description: "editor parity: hover, completion, diagnostics, go-to-definition",
@@ -357,6 +383,39 @@ static CROSS_CUTTING: &[CrossSurface] = &[
                       and neither shrank without an accounted entry",
         today: &[("nothing — `xtask denominators` was invoked by no workflow", 0)],
     },
+    // The configuration surface is its own accounting, separate from the
+    // coverage one: not "how much of the product is tested" but "how much of
+    // the product's configuration is read by anything, and where from". It was
+    // measured by hand three times before `xtask config-surface` existed and
+    // produced three different answers, one of which asserted the DB pool knobs
+    // were undocumented when they are documented and read.
+    CrossSurface {
+        id: "meta.config-surface",
+        category: "meta",
+        description: "the configuration surface is measured from source — which \
+                      sky.toml keys are read pre-binary, which seeded env \
+                      suffixes nothing reads, how far docs and readers drifted",
+        today: &[(
+            "nothing — the surface was counted by hand, in prose, with no gate",
+            0,
+        )],
+    },
+    // Distinct from `meta.config-surface`, and the distinction is the whole
+    // point of the stage. That one counts WHO READS WHAT, from source. This one
+    // records WHAT VALUE ARRIVES, from a running binary — which is the only
+    // form of the question a moved default can be checked against, and the form
+    // §7 says the design's highest risk turns on.
+    CrossSurface {
+        id: "meta.config-effective-values",
+        category: "meta",
+        description: "each covered setting's effective value, observed from a running \
+                      binary in every combination of environment / sky.toml / withX, \
+                      as the baseline a moved default is compared against",
+        today: &[(
+            "nothing — no gate compared a setting's resolved value against anything",
+            0,
+        )],
+    },
 ];
 
 /// Which surfaces each REGISTERED gate covers.
@@ -410,6 +469,37 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
             "db.postgres",
         ],
     ),
+    // The analytics observability gates. The first two own the retention
+    // pruner; the last two own the console's read path, which also touches
+    // `observability.console` because the Analytics tab IS part of the console
+    // surface — an unbounded query there is a console defect that lands on the
+    // session store.
+    ("analytics-retention-survives-a-panic", &["observability.analytics-store"]),
+    ("analytics-prune-errors-are-reported", &["observability.analytics-store"]),
+    (
+        "console-analytics-queries-are-bounded",
+        &["observability.analytics-store", "observability.console"],
+    ),
+    ("erasure-path-uses-an-index", &["observability.analytics-store"]),
+    // The periodic-goroutine gates. The AST audit owns the CLASS — it is the
+    // one that fails on the next instance; the other two own the highest-cost
+    // individual instances. The Time.every gate also touches
+    // `skylive.session-sse-csrf` because the mutex it proves acquirable is the
+    // session's own: a tick that panicked used to freeze the tab permanently,
+    // which is a session-lifecycle failure that happens to be reached through a
+    // subscription.
+    (
+        "periodic-loops-recover-per-cycle",
+        &["runtime.periodic-goroutines"],
+    ),
+    (
+        "live-time-every-mutex-survives-a-panic",
+        &["runtime.periodic-goroutines", "skylive.session-sse-csrf"],
+    ),
+    (
+        "jobs-complete-failure-is-reported",
+        &["runtime.periodic-goroutines"],
+    ),
     ("roundtrip", &["compiler.parse", "lang.constructs"]),
     ("reject", &["compiler.reject", "compiler.infer"]),
     (
@@ -420,6 +510,8 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("sky-verify", &["compiler.fmt", "lang.constructs"]),
     ("shared-world", &["compiler.shared-world", "compiler.resolve"]),
     ("coverage-ledger", &["meta.coverage-accounting"]),
+    ("config-surface", &["meta.config-surface"]),
+    ("config-matrix", &["meta.config-effective-values"]),
     ("corpus-manifest", &["lang.constructs"]),
     // Family R is the combinatorial face of `compiler.reject`. The standalone
     // `reject` gate covers 63 hand-written defects, one file each; this one
@@ -622,6 +714,12 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     // anti-drift test stays total; they claim nothing.
     ("xtask:denominators", &[]),
     ("xtask:coverage-ledger", &[]),
+    // Likewise accounting: `config-surface --check` measures how much
+    // configuration surface EXISTS and ratchets its defect counts. The
+    // effective-value coverage that reads from it is scored through
+    // `config-matrix` (a registered gate, so GATE_SURFACES already carries it);
+    // claiming it here too would double-count.
+    ("xtask:config-surface", &[]),
     // The harness runs the registered gates; their coverage is already scored
     // through GATE_SURFACES, and counting it twice here would double-claim.
     ("xtask:harness", &[]),
@@ -1251,8 +1349,28 @@ fn rust_string_literals(src: &str) -> String {
 
 // ------------------------------------------------------------------- gates
 
-/// Gate name -> `PROVEN` in `docs/coverage/falsifier-proofs.json`.
-fn read_proofs(repo_root: &Path) -> BTreeMap<String, bool> {
+/// One row of `docs/coverage/falsifier-proofs.json`.
+///
+/// The `mutation` is NOT decoration. A proof says "gate G went red when
+/// mutation M was applied"; it is evidence about the PAIR, and it survives a
+/// change to G's declared mutations only if M is still one of them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordedProof {
+    pub proven: bool,
+    pub mutation: String,
+}
+
+/// Gate name -> the proof recorded in `docs/coverage/falsifier-proofs.json`.
+///
+/// This used to return `BTreeMap<String, bool>`, dropping `mutation` on the
+/// floor. That is how `config-matrix` kept a `PROVEN` record — and the
+/// strongest coverage tier the ledger can award — against
+/// `config-matrix.claim-a-dead-builder-is-alive`, a mutation commit `4a118e39`
+/// had deleted because stage 3 made it inapplicable. The registry declared
+/// `claim-a-live-builder-is-dead`; nothing compared the two, so the ledger
+/// credited a proof of a property no longer under test. Substituting
+/// `THIS-MUTATION-NEVER-EXISTED` for the id left `--check` green.
+fn read_proofs(repo_root: &Path) -> BTreeMap<String, RecordedProof> {
     let mut out = BTreeMap::new();
     let path = repo_root.join("docs/coverage/falsifier-proofs.json");
     let Ok(src) = std::fs::read_to_string(&path) else {
@@ -1265,29 +1383,163 @@ fn read_proofs(repo_root: &Path) -> BTreeMap<String, bool> {
         for (name, g) in map {
             out.insert(
                 name.clone(),
-                g["observed"].as_str() == Some("PROVEN"),
+                RecordedProof {
+                    proven: g["observed"].as_str() == Some("PROVEN"),
+                    mutation: g["mutation"].as_str().unwrap_or_default().to_string(),
+                },
             );
         }
     }
     out
 }
 
+/// Does the registry still declare `mutation` for `gate`?
+///
+/// An unregistered gate declares nothing, so a proof naming any mutation for it
+/// is stale by construction.
+fn registry_declares_mutation(gate: &str, mutation: &str) -> bool {
+    GATES
+        .iter()
+        .find(|g| g.name == gate)
+        .is_some_and(|g| g.mutations.as_slice().iter().any(|m| m.id == mutation))
+}
+
+/// Gates whose recorded proof credits a mutation the registry no longer
+/// declares, as violation strings.
+///
+/// Reported in BOTH `--check` and regeneration mode, deliberately: the fix is
+/// to re-establish the proof (`xtask harness --verify-falsifiers --only <gate>`)
+/// and only then regenerate, which is the ordering `docs/tooling/gate-harness.md`
+/// already documents. Writing a ledger over a dead proof would launder the
+/// defect into a fresh baseline.
+fn stale_proof_violations(proofs: &BTreeMap<String, RecordedProof>) -> Vec<String> {
+    let mut out = Vec::new();
+    for (gate, p) in proofs {
+        if !p.proven {
+            continue;
+        }
+        if registry_declares_mutation(gate, &p.mutation) {
+            continue;
+        }
+        let declared: Vec<&str> = GATES
+            .iter()
+            .find(|g| g.name == gate.as_str())
+            .map(|g| g.mutations.as_slice().iter().map(|m| m.id).collect())
+            .unwrap_or_default();
+        out.push(format!(
+            "STALE PROOF — `{gate}` is recorded PROVEN against mutation `{}`, which the \
+             registry no longer declares. Currently declared: {}. A proof is evidence about \
+             a (gate, mutation) PAIR; renaming or replacing the mutation retires the \
+             evidence with it. Re-establish it with \
+             `cargo run --release -p xtask -- harness --verify-falsifiers --only {gate}`, \
+             then regenerate the ledger.",
+            if p.mutation.is_empty() { "(none recorded)" } else { p.mutation.as_str() },
+            if declared.is_empty() {
+                "(the gate is not in the registry at all)".to_string()
+            } else {
+                declared.join(", ")
+            }
+        ));
+    }
+    out
+}
+
+/// Gates whose recorded proof credits a mutation that can no longer be
+/// **applied** — its `ReplaceOnce.from` no longer occurs exactly once in the
+/// target file, as violation strings.
+///
+/// This is the SOURCE-drift companion to [`stale_proof_violations`]. That
+/// function catches a proof whose mutation-id the registry has RETIRED; this one
+/// catches a proof whose mutation-id still matches the registry but whose `from`
+/// pattern has drifted out of its target file (a literal reworded, a line
+/// reordered, a `!= nil` flipped to `nil !=`). The proof then credits a
+/// falsification that can no longer be reproduced: `Patch::apply` would refuse
+/// the mutation and `harness --verify-falsifiers` would report `INCONCLUSIVE …
+/// occurs 0x … must be exactly 1`. But `--verify-falsifiers` rebuilds and
+/// mutates, so it runs deep (nightly); this is the CHEAP static form — a
+/// grep-equivalent over the cited files, no build — so it can run on every PR
+/// inside `coverage-ledger --check`, which is where the ledger reads the proofs
+/// in the first place.
+///
+/// The predicate is exactly the one `Patch::apply` computes (`occurs 1x`), and
+/// exactly the one the registry's own
+/// `every_replace_once_mutation_targets_a_real_unique_site` unit test asserts —
+/// but applied HERE it closes the specific hole that `coverage-ledger --check`
+/// credited the drifted gate as `Falsified` while the mutation was dead.
+///
+/// A `NoOp` mutation (the canary / `selftest-hang`) has no `from` to drift and
+/// is skipped. A proof whose mutation-id the registry no longer declares is
+/// [`stale_proof_violations`]' job, not this one — checked there and skipped
+/// here so a single drift is reported once, under the right diagnosis.
+fn inapplicable_proof_violations(
+    proofs: &BTreeMap<String, RecordedProof>,
+    repo_root: &Path,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (gate, p) in proofs {
+        if !p.proven {
+            continue;
+        }
+        // Retired mutation-id → stale_proof_violations reports it. Only proofs
+        // the registry STILL declares are candidates for a from-drift.
+        if !registry_declares_mutation(gate, &p.mutation) {
+            continue;
+        }
+        let Some(m) = GATES
+            .iter()
+            .find(|g| g.name == gate.as_str())
+            .and_then(|g| g.mutations.as_slice().iter().find(|m| m.id == p.mutation))
+        else {
+            continue;
+        };
+        let MutationKind::ReplaceOnce { path, from, .. } = m.kind else {
+            continue; // NoOp — nothing to drift.
+        };
+        match std::fs::read_to_string(repo_root.join(path)) {
+            Ok(src) => {
+                let hits = src.matches(from).count();
+                if hits != 1 {
+                    out.push(format!(
+                        "INAPPLICABLE PROOF — `{gate}` is recorded PROVEN against mutation \
+                         `{}`, whose `from` pattern {from:?} occurs {hits}x in {path} (must be \
+                         exactly 1). The recorded PROVEN credits a falsification that can no \
+                         longer be reproduced: 0x means the pattern drifted out of the file, \
+                         >1 means it is now ambiguous — either way `harness \
+                         --verify-falsifiers` would report INCONCLUSIVE, not PROVEN. Restore \
+                         the pattern or update the registry mutation, re-establish the proof \
+                         with `cargo run --release -p xtask -- harness --verify-falsifiers \
+                         --only {gate}`, then regenerate the ledger.",
+                        p.mutation,
+                    ));
+                }
+            }
+            Err(e) => out.push(format!(
+                "INAPPLICABLE PROOF — `{gate}` is recorded PROVEN against mutation `{}`, but \
+                 its target file {path} cannot be read: {e}. The falsification cannot be \
+                 reproduced, so the proof is worthless until the file is restored.",
+                p.mutation,
+            )),
+        }
+    }
+    out
+}
+
 /// A registered gate's coverage strength: `Falsified` only when its falsifying
-/// mutation is recorded PROVEN, `Asserted` otherwise. A registered-but-unproven
-/// gate still counts assertions; it just has not shown they can go red.
+/// mutation is recorded PROVEN **and the recorded mutation is one the registry
+/// still declares**, `Asserted` otherwise. A registered-but-unproven gate still
+/// counts assertions; it just has not shown they can go red.
 ///
 /// A **BLOCKED** gate contributes `None`. `GateState::counts_as_cover()` is
 /// false for `Blocked`, and that property is the entire reason the state was
 /// affordable: a block that still counted as coverage would be a skip with
 /// better paperwork.
-fn gate_strength(gate: &str, proofs: &BTreeMap<String, bool>) -> Strength {
+fn gate_strength(gate: &str, proofs: &BTreeMap<String, RecordedProof>) -> Strength {
     if crate::harness::registry::block_for(gate).is_some() {
         return Strength::None;
     }
-    if *proofs.get(gate).unwrap_or(&false) {
-        Strength::Falsified
-    } else {
-        Strength::Asserted
+    match proofs.get(gate) {
+        Some(p) if p.proven && registry_declares_mutation(gate, &p.mutation) => Strength::Falsified,
+        _ => Strength::Asserted,
     }
 }
 
@@ -1919,7 +2171,17 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                         "tier": g.tier.label(),
                         "expected_assertions": g.expected,
                         "summary": g.summary,
-                        "falsifier_proven": *proofs.get(g.name).unwrap_or(&false),
+                        // Both halves, because the pair is the evidence. A bare
+                        // boolean is what let a proof outlive the mutation it
+                        // was taken against; naming the credited mutation puts
+                        // the claim and its subject in the same record.
+                        "falsifier_proven": proofs
+                            .get(g.name)
+                            .is_some_and(|p| p.proven && registry_declares_mutation(g.name, &p.mutation)),
+                        "falsifier_mutation": proofs
+                            .get(g.name)
+                            .map(|p| p.mutation.clone())
+                            .unwrap_or_default(),
                         "surfaces": ids,
                     }),
                 )
@@ -2404,9 +2666,56 @@ fn baseline_weaker(base: Option<&Value>) -> Option<BTreeSet<String>> {
 /// the checked-in ledger fails in BOTH modes — the write path refuses to record
 /// it — so "just re-run the generator" is not a way to accept a weakening
 /// without writing a stanza.
+/// A `[[weakening]]` stanza only authorises a surface that is ACTUALLY weaker.
+///
+/// HOLE 2. `parse_weakenings` validated field PRESENCE and nothing else, so a
+/// stanza for `surface.that.never.existed` — or one whose surface used to be
+/// weaker and has since had its coverage RESTORED — passed `--check` and, left
+/// in place, silently licensed re-weakening that surface for ever. The docs
+/// already require the surface "match a row in the generated ledger"; this
+/// enforces it, plus the stronger condition the intent demands: the row's
+/// verdict must be `weaker`. A stanza that is absent from the ledger, or whose
+/// surface is now `equal`/`stronger`, is stale and must be removed.
+fn stale_weakening_violations(surfaces: &[Surface], weakenings: &BTreeSet<String>) -> Vec<String> {
+    let by_id: BTreeMap<&str, &Surface> =
+        surfaces.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut stale: Vec<String> = Vec::new();
+    for w in weakenings {
+        match by_id.get(w.as_str()) {
+            None => stale.push(format!("  {w} : names no surface in the generated ledger")),
+            Some(s) if s.verdict() != "weaker" => stale.push(format!(
+                "  {w} : verdict is `{}`, not `weaker` (cover_today={} -> cover_new={}) — \
+                 the surface is at or above full strength, so the stanza protects nothing",
+                s.verdict(),
+                s.today_max().label(),
+                s.new_max().label()
+            )),
+            Some(_) => {}
+        }
+    }
+    if stale.is_empty() {
+        return Vec::new();
+    }
+    vec![format!(
+        "STALE WEAKENING — {} [[weakening]] stanza(s) in docs/coverage/removals.toml no \
+         longer describe a weaker surface:\n{}\n\
+         A weakening authorises a surface to be covered LESS; a stanza whose surface is \
+         absent or at full strength authorises nothing, and leaving it in place licenses \
+         re-weakening that surface silently after its coverage was restored. Delete the \
+         stanza, or (if the surface really did get weaker) let the recomputed verdict say so.",
+        stale.len(),
+        stale.join("\n")
+    )]
+}
+
 fn ratchet(led: &Ledger, base: Option<&Value>, weakenings: &BTreeSet<String>) -> Vec<String> {
     let mut fails: Vec<String> = Vec::new();
     let grandfathered = baseline_weaker(base);
+
+    // STALE WEAKENING (HOLE 2). A `[[weakening]]` only authorises a surface that
+    // is ACTUALLY weaker; a stanza naming a non-existent or full-strength surface
+    // is stale. See [`stale_weakening_violations`].
+    fails.extend(stale_weakening_violations(&led.surfaces, weakenings));
 
     let unaccounted: Vec<&Surface> = led
         .surfaces
@@ -2876,6 +3185,15 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         .and_then(|s| serde_json::from_str(&s).ok());
 
     let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
+    // Reported in BOTH modes: a proof that credits a retired mutation must not
+    // be laundered into a freshly regenerated baseline either.
+    let proofs = read_proofs(repo_root);
+    fails.extend(stale_proof_violations(&proofs));
+    // …and a proof whose mutation-id still matches but whose `from` pattern has
+    // drifted out of the source is equally dead. Cheap enough (a grep over the
+    // cited files) to run here, which is what makes it a per-PR check rather
+    // than a nightly `--verify-falsifiers` one.
+    fails.extend(inapplicable_proof_violations(&proofs, repo_root));
 
     let text = format!("{}\n", serde_json::to_string_pretty(&led.doc).unwrap());
     if check_only {
@@ -2980,13 +3298,80 @@ fn stale_diff(base: &Value, cur: &Value) -> String {
             lines.push(format!("  {id}: (surface disappeared)"));
         }
     }
+    // The `gates` section is recomputed from `crate::harness::registry::GATES`,
+    // and one of its fields is self-referential: `gates.coverage-ledger.
+    // expected_assertions` is `bodies::COVERAGE_LEDGER_EXPECTED`, the very count
+    // this gate asserts. Bumping that const without regenerating the ledger — the
+    // exact thing a surface-count change forces you to do — leaves the checked-in
+    // ledger stale on a field that is neither a summary key nor a surface
+    // strength, so the surface/summary loops above find nothing and the run falls
+    // through to the catch-all. Naming the differing gate field here turns that
+    // otherwise-opaque "some detail differs" into "gates.coverage-ledger.
+    // expected_assertions: 148 -> 149", which points straight at the fix.
+    lines.extend(gate_field_diffs(base, cur));
     if lines.is_empty() {
-        "  (no surface or summary change; a detail field differs — evidence, sole-ownership \
-         or uncovered lists)"
+        "  (no surface, summary or gate change; a detail field differs — an evidence, \
+         sole-ownership, uncovered or units list)"
             .to_string()
     } else {
         lines.join("\n")
     }
+}
+
+/// Per-gate field differences between two ledgers' `gates` sections.
+///
+/// Named rather than summarised, because the `gates` map is where the ledger's
+/// one self-referential field lives (`expected_assertions`), and an unnamed
+/// "a detail field differs" there sends the reader to hunt evidence/uncovered
+/// lists that did not move. Reports added/removed gates and, for gates present
+/// in both, every scalar field whose value changed.
+fn gate_field_diffs(base: &Value, cur: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    let (bg, cg) = match (base["gates"].as_object(), cur["gates"].as_object()) {
+        (Some(b), Some(c)) => (b, c),
+        _ => return lines,
+    };
+    for (name, cval) in cg {
+        match bg.get(name) {
+            None => lines.push(format!("  gates.{name}: (new gate)")),
+            Some(bval) if bval != cval => {
+                let (bo, co) = (bval.as_object(), cval.as_object());
+                if let (Some(bo), Some(co)) = (bo, co) {
+                    for (field, cf) in co {
+                        // Skip list-valued fields (e.g. `surfaces`); a scalar
+                        // move is the actionable, common case and reads cleanly.
+                        if cf.is_array() || cf.is_object() {
+                            if bo.get(field) != Some(cf) {
+                                lines.push(format!("  gates.{name}.{field}: (list/object changed)"));
+                            }
+                            continue;
+                        }
+                        match bo.get(field) {
+                            Some(bf) if bf != cf => {
+                                lines.push(format!("  gates.{name}.{field}: {bf} -> {cf}"));
+                            }
+                            None => lines.push(format!("  gates.{name}.{field}: (new) -> {cf}")),
+                            _ => {}
+                        }
+                    }
+                    for field in bo.keys() {
+                        if !co.contains_key(field) {
+                            lines.push(format!("  gates.{name}.{field}: (field removed)"));
+                        }
+                    }
+                } else {
+                    lines.push(format!("  gates.{name}: (changed)"));
+                }
+            }
+            _ => {}
+        }
+    }
+    for name in bg.keys() {
+        if !cg.contains_key(name) {
+            lines.push(format!("  gates.{name}: (gate removed)"));
+        }
+    }
+    lines
 }
 
 /// Harness-gate face. Runs the same computation and the same ratchet as
@@ -3014,6 +3399,9 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
         .and_then(|s| serde_json::from_str(&s).ok());
 
     let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
+    let proofs = read_proofs(repo_root);
+    fails.extend(stale_proof_violations(&proofs));
+    fails.extend(inapplicable_proof_violations(&proofs, repo_root));
     match &baseline {
         None => fails.push(format!("{} does not exist", json_path.display())),
         Some(base) => {
@@ -3180,12 +3568,23 @@ mod tests {
     /// false for `Blocked`, and the ledger must agree — a block that still
     /// scored as coverage would be a skip with better paperwork, which is the
     /// exact thing the state was introduced to make inexpressible.
+    /// A proof entry crediting `gate` with its FIRST declared mutation.
+    fn live_proof(gate: &str) -> RecordedProof {
+        let mutation = GATES
+            .iter()
+            .find(|g| g.name == gate)
+            .and_then(|g| g.mutations.as_slice().first())
+            .map(|m| m.id.to_string())
+            .unwrap_or_default();
+        RecordedProof { proven: true, mutation }
+    }
+
     #[test]
     fn a_blocked_gate_contributes_no_cover() {
         use crate::harness::registry::BLOCKED;
-        let proofs: BTreeMap<String, bool> = BLOCKED
+        let proofs: BTreeMap<String, RecordedProof> = BLOCKED
             .iter()
-            .map(|b| (b.gate.to_string(), true))
+            .map(|b| (b.gate.to_string(), live_proof(b.gate)))
             .collect();
         assert!(
             !BLOCKED.is_empty(),
@@ -3207,9 +3606,184 @@ mod tests {
             .map(|g| g.name)
             .find(|n| crate::harness::registry::block_for(n).is_none())
             .expect("some gate is unblocked");
-        let proven: BTreeMap<String, bool> =
-            [(unblocked.to_string(), true)].into_iter().collect();
+        let proven: BTreeMap<String, RecordedProof> =
+            [(unblocked.to_string(), live_proof(unblocked))].into_iter().collect();
         assert_eq!(gate_strength(unblocked, &proven), Strength::Falsified);
+    }
+
+    /// THE REGRESSION for GAP 1. A recorded proof is evidence about a
+    /// (gate, mutation) PAIR. Keying it on the gate alone let
+    /// `config-matrix`'s `PROVEN` record — taken against
+    /// `config-matrix.claim-a-dead-builder-is-alive`, a mutation commit
+    /// `4a118e39` deleted — keep awarding `Falsified`, the strongest tier, for
+    /// a property nothing tests any more. `THIS-MUTATION-NEVER-EXISTED`
+    /// substituted for the id left `coverage-ledger --check` green.
+    #[test]
+    fn a_proof_naming_a_retired_mutation_is_not_cover() {
+        let gate = GATES
+            .iter()
+            .map(|g| g.name)
+            .find(|n| crate::harness::registry::block_for(n).is_none())
+            .expect("some gate is unblocked");
+
+        // The proof the registry still declares: strongest tier, no violation.
+        let live: BTreeMap<String, RecordedProof> =
+            [(gate.to_string(), live_proof(gate))].into_iter().collect();
+        assert_eq!(gate_strength(gate, &live), Strength::Falsified);
+        assert!(
+            stale_proof_violations(&live).is_empty(),
+            "a proof naming a declared mutation must not be reported stale"
+        );
+
+        // The same gate, same `PROVEN`, a mutation the registry never declared.
+        let dead: BTreeMap<String, RecordedProof> = [(
+            gate.to_string(),
+            RecordedProof {
+                proven: true,
+                mutation: "THIS-MUTATION-NEVER-EXISTED".to_string(),
+            },
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            gate_strength(gate, &dead),
+            Strength::Asserted,
+            "a proof naming a retired mutation still scored as Falsified"
+        );
+        let v = stale_proof_violations(&dead);
+        assert_eq!(v.len(), 1, "expected exactly one STALE PROOF violation, got {v:?}");
+        assert!(v[0].contains("THIS-MUTATION-NEVER-EXISTED"), "{}", v[0]);
+        assert!(v[0].contains(gate), "{}", v[0]);
+    }
+
+    /// Every gate recorded PROVEN in the CHECKED-IN ledger names a mutation the
+    /// registry still declares. This is the file-level form of the test above:
+    /// it is what catches the drift on the real tree rather than on a fixture.
+    #[test]
+    fn the_checked_in_proof_ledger_names_only_live_mutations() {
+        let v = stale_proof_violations(&read_proofs(&repo_root()));
+        assert!(v.is_empty(), "{}", v.join("\n"));
+    }
+
+    /// THE REGRESSION for HOLE 1. A proof whose mutation-id still matches the
+    /// registry but whose `from` pattern has drifted out of the source is dead —
+    /// `harness --verify-falsifiers` would report INCONCLUSIVE — yet
+    /// `coverage-ledger --check` credited it as `Falsified`, PASS, because
+    /// nothing checked applicability. The audit reproduced it by flipping
+    /// `err != nil` to `nil != err` in `analytics_store.go` while keeping the id.
+    #[test]
+    fn a_proof_whose_from_pattern_drifted_is_inapplicable() {
+        // The first gate carrying a ReplaceOnce mutation; its `from` is what we
+        // present, then drift, in a synthetic tree.
+        let (gate, mutation, path, from) = GATES
+            .iter()
+            .find_map(|g| {
+                g.mutations.as_slice().iter().find_map(|m| match m.kind {
+                    MutationKind::ReplaceOnce { path, from, .. } => {
+                        Some((g.name, m.id, path, from))
+                    }
+                    MutationKind::NoOp => None,
+                })
+            })
+            .expect("some gate declares a ReplaceOnce mutation");
+
+        let proofs: BTreeMap<String, RecordedProof> = [(
+            gate.to_string(),
+            RecordedProof {
+                proven: true,
+                mutation: mutation.to_string(),
+            },
+        )]
+        .into_iter()
+        .collect();
+
+        let root = std::env::temp_dir().join(format!(
+            "sky-inapplicable-proof-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let full = root.join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+
+        // Pattern present exactly once → applicable → no violation.
+        std::fs::write(&full, format!("{from}\n")).unwrap();
+        assert!(
+            inapplicable_proof_violations(&proofs, &root).is_empty(),
+            "a from-pattern present exactly once must not be flagged inapplicable"
+        );
+
+        // Drift the pattern out of the file → the proof is dead → one violation.
+        std::fs::write(&full, "the pattern is gone\n").unwrap();
+        let v = inapplicable_proof_violations(&proofs, &root);
+        assert_eq!(v.len(), 1, "expected exactly one INAPPLICABLE PROOF, got {v:?}");
+        assert!(v[0].contains("INAPPLICABLE PROOF"), "{}", v[0]);
+        assert!(v[0].contains("occurs 0x"), "{}", v[0]);
+        assert!(v[0].contains(gate), "{}", v[0]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// THE REGRESSION for the misleading-staleness class. The `gates` section
+    /// carries a self-referential field — `gates.coverage-ledger.
+    /// expected_assertions` is `bodies::COVERAGE_LEDGER_EXPECTED`, the count this
+    /// gate asserts. Bumping that const (which a surface-count change forces) and
+    /// not regenerating leaves the checked-in ledger stale on a field that is
+    /// neither a summary key nor a surface strength. Before the fix, `stale_diff`
+    /// found nothing in its summary/surface loops and fell through to
+    /// "a detail field differs — evidence, sole-ownership or uncovered lists",
+    /// which sent the reader to hunt lists that had not moved (this task's
+    /// symptom). It must instead NAME the gate field.
+    #[test]
+    fn stale_diff_names_a_changed_gate_field_not_the_evidence_catch_all() {
+        let base = json!({
+            "summary": {},
+            "surfaces": [],
+            "gates": { "coverage-ledger": { "expected_assertions": 148, "tier": "T1" } },
+        });
+        let cur = json!({
+            "summary": {},
+            "surfaces": [],
+            "gates": { "coverage-ledger": { "expected_assertions": 149, "tier": "T1" } },
+        });
+        let diff = stale_diff(&base, &cur);
+        assert!(
+            diff.contains("gates.coverage-ledger.expected_assertions: 148 -> 149"),
+            "stale_diff must name the changed gate field; got:\n{diff}"
+        );
+        assert!(
+            !diff.contains("a detail field differs"),
+            "a named gate diff must not fall through to the catch-all; got:\n{diff}"
+        );
+    }
+
+    /// A new gate and a removed gate are named too, so a `gates`-section change
+    /// is never absorbed into the opaque catch-all regardless of its shape.
+    #[test]
+    fn stale_diff_names_added_and_removed_gates() {
+        let base = json!({
+            "summary": {}, "surfaces": [],
+            "gates": { "old-gate": { "expected_assertions": 3 } },
+        });
+        let cur = json!({
+            "summary": {}, "surfaces": [],
+            "gates": { "new-gate": { "expected_assertions": 5 } },
+        });
+        let diff = stale_diff(&base, &cur);
+        assert!(diff.contains("gates.new-gate: (new gate)"), "got:\n{diff}");
+        assert!(diff.contains("gates.old-gate: (gate removed)"), "got:\n{diff}");
+    }
+
+    /// The file-level form on the real tree: every checked-in PROVEN proof names
+    /// a mutation whose `from` still occurs exactly once in its target file, so
+    /// `coverage-ledger --check` credits no dead falsifier.
+    #[test]
+    fn the_checked_in_proof_ledger_names_only_applicable_mutations() {
+        let root = repo_root();
+        let v = inapplicable_proof_violations(&read_proofs(&root), &root);
+        assert!(v.is_empty(), "{}", v.join("\n"));
     }
 
     /// The script scanner must see every invocation form CI actually uses.
@@ -3483,6 +4057,47 @@ mod tests {
         let fails = ratchet(&led, Some(&base), &BTreeSet::new());
         assert_eq!(fails.len(), 1);
         assert!(fails[0].contains("surface disappeared"), "{}", fails[0]);
+    }
+
+    /// HOLE 2 (weakening half). A `[[weakening]]` only authorises a surface that
+    /// is ACTUALLY weaker. The audit added `surface.that.never.existed` (all
+    /// fields present) and `coverage-ledger --check` stayed PASS because only
+    /// field presence was validated. A stanza naming a non-existent OR
+    /// full-strength surface must now be reported stale.
+    #[test]
+    fn a_weakening_for_a_nonexistent_or_full_strength_surface_is_stale() {
+        let mk = |id: &str, today: Strength, new: Strength| Surface {
+            id: id.to_string(),
+            category: "test".into(),
+            description: String::new(),
+            today: vec![Ev::new("t", today)],
+            new: vec![Ev::new("n", new)],
+        };
+        let surfaces = vec![
+            mk("s.weak", Strength::Asserted, Strength::Runs), // weaker
+            mk("s.full", Strength::Runs, Strength::Asserted), // stronger
+        ];
+
+        // A stanza for the genuinely-weaker surface: no violation.
+        let ok: BTreeSet<String> = ["s.weak".to_string()].into_iter().collect();
+        assert!(stale_weakening_violations(&surfaces, &ok).is_empty());
+
+        // A stanza for a surface that does not exist: stale (the audit's case).
+        let ghost: BTreeSet<String> =
+            ["surface.that.never.existed".to_string()].into_iter().collect();
+        let v = stale_weakening_violations(&surfaces, &ghost);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("STALE WEAKENING"), "{}", v[0]);
+        assert!(v[0].contains("names no surface"), "{}", v[0]);
+
+        // A stanza for a full-strength (stronger) surface: stale.
+        let full: BTreeSet<String> = ["s.full".to_string()].into_iter().collect();
+        let v = stale_weakening_violations(&surfaces, &full);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("not `weaker`"), "{}", v[0]);
+
+        // No stanzas: the current healthy state, no violation.
+        assert!(stale_weakening_violations(&surfaces, &BTreeSet::new()).is_empty());
     }
 
     /// `scripts/conformance.sh` is the load-bearing premise behind giving the

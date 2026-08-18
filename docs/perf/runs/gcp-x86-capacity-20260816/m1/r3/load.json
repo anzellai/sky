@@ -1,0 +1,33 @@
+{
+  "label": "m1-r3",
+  "url": "http://127.0.0.1:8541",
+  "sessions_requested": 25,
+  "sessions_established": 25,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 40392,
+  "interactions_per_sec": 897.0796281892916,
+  "p50_ms": 30.021,
+  "p95_ms": 55.495,
+  "p99_ms": 60.743,
+  "max_ms": 121.369,
+  "outcomes": {
+    "ok": 40392
+  },
+  "error_rate": 0,
+  "patches_total": 80784,
+  "interactions_with_patches": 40392,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 175,
+  "sse_still_open_at_end": 25,
+  "generator_cpu_percent_of_machine": 0.7333434960130505,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T03:27:20Z"
+}

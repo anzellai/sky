@@ -144,7 +144,10 @@ handleRegister db req =
                     )
 
 
--- POST /login — verifies, signs a token, sets it as an HttpOnly cookie
+-- POST /login — verifies, signs a token, sets it as an HttpOnly cookie.
+-- The attrs are spelled out: the two-and-three-argument forms of
+-- `withCookie` emit `Path=/; HttpOnly; SameSite=Lax` and add `Secure`
+-- only when the process is in production (see "Production checklist").
 handleLogin : Db -> Request -> Task Error Response
 handleLogin db req =
     case ( Server.formValue "email" req, Server.formValue "password" req ) of
@@ -162,7 +165,7 @@ handleLogin db req =
                     (\token ->
                         Task.succeed
                             (Server.text "ok"
-                                |> Server.withCookie "sky_auth" token
+                                |> Server.withCookie "sky_auth" token "Path=/; HttpOnly; Secure; SameSite=Lax"
                             )
                     )
 
@@ -194,10 +197,30 @@ handleMe db req =
 
 ```toml
 [auth]
-tokenSecret = "REPLACE-WITH-32+-BYTE-RANDOM-STRING"   # SKY_AUTH_TOKEN_SECRET
-tokenTtl    = "24h"                                    # SKY_AUTH_TOKEN_TTL (Go duration string)
-cookie      = "sky_sid"                                # SKY_AUTH_COOKIE
+cookieName = "sky_sid"     # → SKY_AUTH_COOKIE
+tokenTtl   = "24h"         # → SKY_AUTH_TOKEN_TTL (Go duration string)
+driver     = "…"           # → SKY_AUTH_DRIVER
 ```
+
+Those **three keys are the whole section** (`accepted_config_keys("auth")`,
+`rust/crates/project/src/build.rs:1106`; the seeding is at `:1045-1047`).
+
+> **Two keys were wrong here and both failed silently.** This block used to
+> show `cookie = "sky_sid"` and
+> `tokenSecret = "REPLACE-WITH-32+-BYTE-RANDOM-STRING"`.
+>
+> - The key is **`cookieName`**, not `cookie`. `cookie` is not accepted and
+>   raises an unknown-config-key warning; the cookie name silently stays at
+>   its default.
+> - **`tokenSecret` is not a `sky.toml` key at all, by design.** The
+>   build.rs comment is explicit: *"`secret` is deliberately NOT seeded from
+>   sky.toml — it must come from env"* (`:1043-1044`). `SKY_AUTH_TOKEN_SECRET`
+>   is read from the process environment only (`sky/src/main.rs:3692`). So the
+>   old example invited a reader to put a **signing secret in a committed
+>   file**, where it would then be ignored — the worst of both outcomes.
+>
+> `docs/sky-toml.md:184-188` already documented this correctly; the two docs
+> contradicted each other.
 
 Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → `sky.toml`. See [environment-variable precedence](../../CLAUDE.md#environment-variables) for the full doctrine.
 
@@ -209,7 +232,56 @@ Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → 
 
 - **Rotate `SKY_AUTH_TOKEN_SECRET` periodically.** All outstanding tokens become invalid on rotation. Plan a deploy window.
 - **Minimum 32 bytes** for the secret. `Auth.signToken` rejects shorter values with an error rather than producing weak HMACs; the runtime also refuses to start with a short `SKY_AUTH_TOKEN_SECRET`.
-- **Set cookie attrs**. `Server.withCookie` defaults to `HttpOnly; Secure; SameSite=Lax`. Use `Server.cookie` to override only when you actually need cross-site flow.
+- **`Secure` is not in the attribute default — the runtime adds it, on two
+  signals.** `Server.withCookie`'s two- and three-argument forms emit
+  `Path=/; HttpOnly; SameSite=Lax` (`Server_withCookie` in
+  `runtime-go/rt/rt.go`), with no `Secure` in the string. The runtime then
+  adds `; Secure` when either signal is true (`cookieSecureFor` in
+  `runtime-go/rt/cookie_secure.go`):
+
+  1. **the response goes back over HTTPS** — direct TLS,
+     `X-Forwarded-Proto: https`, or `X-Forwarded-Ssl: on`; or
+  2. **the production gate is on** — `ENV` (or `<PREFIX>_ENV`) set to
+     anything that is not `dev` / `development` / `local`
+     (`productionFromEnv` in `rt/observability.go`).
+
+  Signal 1 is checked at the point the response is written, where the
+  request is in hand, so it covers a deployment that forgot to set `ENV`
+  but does terminate TLS. **Neither signal fires under `sky run` on
+  `http://localhost`, or in CI over plain HTTP with no `ENV`** — and that
+  is deliberate: a `Secure` cookie on a plain-HTTP origin is never sent
+  back, so adding it there would break every local login. If your CI or
+  staging tier serves auth over plain HTTP, the cookie has no `Secure`
+  attribute and nothing will tell you.
+
+  Cookies whose name carries the `__Host-` / `__Secure-` prefix, and any
+  cookie sent `SameSite=None`, are `Secure` unconditionally — the spec
+  requires it.
+
+  To pin the attributes yourself, use the **four-argument form**,
+  `Server.withCookie name value attrs resp`, which passes your string
+  through (the runtime may still append `; Secure`, never a second copy) —
+  that is what the login handler above uses:
+
+  ```elm
+  resp |> Server.withCookie "sky_auth" token "Path=/; HttpOnly; Secure; SameSite=Strict"
+  ```
+
+  `Server.cookie` is **not** an override: it takes only a name and a value
+  (`Server_cookie` in `rt.go`, `Sky/Http/Server.sky:254`) and carries no
+  attribute control at all.
+
+  > This bullet used to read "`Server.withCookie` defaults to
+  > `HttpOnly; Secure; SameSite=Lax`. Use `Server.cookie` to override" —
+  > both halves false. A reader following it shipped a session token with
+  > no `Secure` attribute and had no way to notice, because the named
+  > remedy has no parameter that could have fixed it.
+  >
+  > It was then corrected to say `Secure` is added "only when the process
+  > is in production", which was accurate at the time and is now too
+  > narrow: the decision moved to the point the response is written, so
+  > the HTTPS signal applies as well. Line-number citations were dropped
+  > in the same pass — they were stale within a day.
 - **Bcrypt cost**. Default is 12, which is ~250ms on a 2024 laptop. Raise to 13–14 in production if you can spare the latency budget; lower to 10 only for CI/test fixtures.
 - **Rate-limit `/login` and `/register`.** Use [`Sky.Http.Middleware.withRateLimit`](../../CLAUDE.md#standard-library) on those routes — credential stuffing is the #1 attack on any auth endpoint.
 - **Validate password strength at registration**. `Auth.passwordStrength password` returns `Result Error String` where the body is `"weak" / "fair" / "strong"`; reject `"weak"` at registration as a baseline.

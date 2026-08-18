@@ -2,6 +2,7 @@ package rt
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -63,6 +64,11 @@ type PushExporter struct {
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
+	// wg is what makes "flushed on shutdown" a fact rather than a hope. The
+	// final flush runs on the exporter's OWN goroutine and this WaitGroup is
+	// what a stopping caller waits on, so a POST that is still in flight when
+	// the signal arrives is completed rather than abandoned mid-request.
+	wg sync.WaitGroup
 }
 
 // pushMetric — internal buffered representation. We mirror
@@ -94,7 +100,7 @@ func StartPushExporter() *PushExporter {
 		return existing
 	}
 	parent := os.Getenv("SKY_PARENT_URL")
-	ns := os.Getenv("SKY_LIVE_NAMESPACE")
+	ns := skyGetenv("LIVE_NAMESPACE")
 	if parent == "" || ns == "" {
 		return nil // standalone — no parent to push to
 	}
@@ -139,24 +145,77 @@ func StartPushExporter() *PushExporter {
 		// Discard our exporter; the active one stays.
 		return activeExporter.Load()
 	}
+	exp.wg.Add(1)
 	go exp.run()
+	// Registered at exporter START rather than at process init, mirroring the
+	// analytics writer and the hub exporter: a hook for a subsystem that never
+	// started would be a hook with nothing to flush.
+	//
+	// Until this existed, StopPushExporter had exactly ONE caller in the whole
+	// tree and it was a test. The doc comment said "called from the runtime's
+	// signal handler", and nothing called it — so every sub-app dropped up to
+	// a full push interval of logs, metrics and spans on every single deploy,
+	// silently, while claiming in its own documentation not to. A flush that
+	// nothing calls is not a flush.
+	RegisterShutdownHook("observability-push", func(ctx context.Context) {
+		StopPushExporterContext(ctx)
+	})
 	return exp
 }
 
-// StopPushExporter halts the exporter cleanly + flushes any
-// pending buffer. Idempotent. Called from the runtime's signal
-// handler so pending observability writes hit the parent before
-// shutdown.
+// StopPushExporter halts the exporter cleanly + flushes any pending buffer.
+// Idempotent. Blocks until the final push has been attempted.
 func StopPushExporter() {
+	StopPushExporterContext(context.Background())
+}
+
+// StopPushExporterContext is StopPushExporter bounded by a shutdown budget.
+//
+// # Why the flush moved off this goroutine
+//
+// It used to `close(stopCh)` and then call `exp.flush()` on the CALLER's
+// goroutine, described as a "best-effort final flush". Both halves leaked:
+//
+//   - Closing stopCh does not wait for `run` to return. If a tick had just
+//     fired, `run` was inside flush → send → an outstanding http.Post, and
+//     this function returned while that request was still in flight — the
+//     process then exited out from under it.
+//
+//   - Because `run` and the caller could be in `flush` simultaneously, the
+//     buffer swap raced: each took a share of the pending entries and the
+//     caller's share was whatever happened to arrive after the other swap.
+//
+// The final flush now runs on the exporter's own goroutine, preserving the
+// single-writer property, and this function waits for that goroutine to
+// finish. A drain that outruns the budget is REPORTED rather than dropped in
+// silence, because "we lost this deploy's tail" is exactly the fact an
+// operator needs and cannot recover afterwards.
+func StopPushExporterContext(ctx context.Context) {
 	exp := activeExporter.Load()
 	if exp == nil {
 		return
 	}
 	exp.stopOnce.Do(func() {
 		close(exp.stopCh)
-		// Best-effort final flush.
-		exp.flush()
 	})
+	drained := make(chan struct{})
+	go func() {
+		exp.wg.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-ctx.Done():
+		exp.mu.Lock()
+		n := len(exp.logs) + len(exp.metrics) + len(exp.spans)
+		exp.mu.Unlock()
+		if n > 0 {
+			logStructured("warn", "observability.push_shutdown_incomplete",
+				"detail", "the shutdown budget expired before the push buffer drained",
+				"unwritten", itoa64(int64(n)),
+				"parent", exp.parentURL)
+		}
+	}
 }
 
 // Active returns the running exporter for the runtime hooks to
@@ -166,8 +225,10 @@ func ActivePushExporter() *PushExporter {
 	return activeExporter.Load()
 }
 
-// run — background batcher. Drains the buffer every `interval`.
+// run — background batcher. Drains the buffer every `interval`, and once more
+// on the way out.
 func (e *PushExporter) run() {
+	defer e.wg.Done()
 	tick := time.NewTicker(e.interval)
 	defer tick.Stop()
 	for {
@@ -175,6 +236,12 @@ func (e *PushExporter) run() {
 		case <-tick.C:
 			e.flush()
 		case <-e.stopCh:
+			// The final push, on the single writer goroutine. Everything
+			// buffered before the stop is sent before this returns, and
+			// StopPushExporterContext waits on the WaitGroup — which is what
+			// makes the shutdown flush a guarantee instead of a race between
+			// the caller and this loop.
+			e.flush()
 			return
 		}
 	}
@@ -252,6 +319,11 @@ func (e *PushExporter) PushLog(entry telemetry.LogEntry) {
 	if e == nil {
 		return
 	}
+	// Byte-bound before buffering: the buffer is count-capped, but a
+	// slot holding a 1 MiB request path verbatim would let 3 × 1024
+	// buffered entries pin gigabytes on a sub-app whose parent is
+	// down (telemetry/limits.go).
+	entry = telemetry.BoundLogEntry(entry)
 	e.mu.Lock()
 	if len(e.logs) >= e.bufCap {
 		e.dropped++
@@ -278,7 +350,8 @@ func (e *PushExporter) PushMetric(name, mtype string, delta, value float64, labe
 		return
 	}
 	e.metrics = append(e.metrics, pushMetric{
-		Name: name, Type: mtype, Delta: delta, Value: value, Labels: copyMap(labels),
+		Name: name, Type: mtype, Delta: delta, Value: value,
+		Labels: copyMap(telemetry.BoundLabels(labels)),
 	})
 	e.mu.Unlock()
 }
@@ -288,6 +361,7 @@ func (e *PushExporter) PushSpan(span telemetry.TraceEntry) {
 	if e == nil {
 		return
 	}
+	span = telemetry.BoundTraceEntry(span)
 	e.mu.Lock()
 	if len(e.spans) >= e.bufCap {
 		e.dropped++

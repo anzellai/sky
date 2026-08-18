@@ -1,0 +1,33 @@
+{
+  "label": "forum-p23-g8-r1",
+  "url": "http://127.0.0.1:8531",
+  "sessions_requested": 50,
+  "sessions_established": 50,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 25007,
+  "interactions_per_sec": 554.960805643439,
+  "p50_ms": 66.48,
+  "p95_ms": 271.179,
+  "p99_ms": 401.48,
+  "max_ms": 782.887,
+  "outcomes": {
+    "ok": 25007
+  },
+  "error_rate": 0,
+  "patches_total": 50014,
+  "interactions_with_patches": 25007,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 350,
+  "sse_still_open_at_end": 50,
+  "generator_cpu_percent_of_machine": 1.4467908871838355,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T00:06:56Z"
+}

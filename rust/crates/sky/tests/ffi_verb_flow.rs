@@ -19,6 +19,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 const PKG: &str = "rsc.io/quote";
 
@@ -83,8 +87,7 @@ fn looks_like_network_failure(log: &str) -> bool {
 
 #[test]
 fn add_then_remove_roundtrips_sky_toml_and_bindings() {
-    if !go_on_path() {
-        eprintln!("ffi_verb_flow: skipping — needs `go` on PATH");
+    if !required(Need::Go, go_on_path()) {
         return;
     }
     let dir = scratch_project();
@@ -93,7 +96,7 @@ fn add_then_remove_roundtrips_sky_toml_and_bindings() {
     let (ok, log) = run_sky(&dir, &["add", PKG]);
     if !ok {
         if looks_like_network_failure(&log) {
-            eprintln!("ffi_verb_flow: skipping — `sky add {PKG}` failed (no network):\n{log}");
+            required(Need::Network, false);
             let _ = std::fs::remove_dir_all(&dir);
             return;
         }

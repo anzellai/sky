@@ -285,7 +285,11 @@ func makeTaskThunk(fn func() any) any {
 // overridable in tests so the contract can be asserted without killing the test
 // binary. Mirrors `storeFatalf` in live_store.go — the session store's
 // equivalent, whose contract this one had never been given.
-var jobsStoreFatalf = log.Fatalf
+//
+// NOT log.Fatalf, for the reason given on fatalfAndExit: it ends in os.Exit(1),
+// which runs no defers and therefore orphans an `--embed` app's postmaster on
+// the very boot that started it.
+var jobsStoreFatalf = fatalfAndExit
 
 // chooseJobsStore picks the backend implementation from SKY_JOBS_STORE +
 // SKY_JOBS_STORE_PATH, which `sky.toml [jobs]` seeds (see jobsBoot).

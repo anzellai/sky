@@ -54,6 +54,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
+# `require_fresh_compiler <bin>` — see the header of scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
 cd "$ROOT"
 
 # ANSI colours for the script's own diagnostics — only when stderr
@@ -88,10 +94,13 @@ else
 fi
 
 SKY="$ROOT/sky-out/sky"
-if [ ! -x "$SKY" ]; then
-    warn "sky-out/sky is not executable after build"
-    exit 1
-fi
+# This script writes a CHECKED-IN generated file, so a stale compiler here does
+# not merely mis-report — it commits wrong output to the repository, and the
+# `SKY_REGEN_SKIP_BUILD=1` branch above accepts any `sky-out/sky` that happens
+# to be executable. `require_fresh_compiler` covers both branches: the built one
+# passes by construction, the skipped one is checked. See the header of
+# scripts/lib/fresh-compiler.sh.
+require_fresh_compiler "$SKY" "$ROOT"
 say "using $($SKY --version 2>&1 | head -1)"
 
 CONSOLE_SRC="${SKY_CONSOLE_SRC:-$ROOT/sky-bundled/console}"
@@ -156,7 +165,7 @@ fi
     # symbol IS in the binary.
     SKY_RUNTIME_DIR="$ROOT/runtime-go" \
         SKY_BUILD_IS_INLINE_CONSOLE=1 \
-        timeout 600 "$SKY" build src/Main.sky
+        with_timeout 600 "$SKY" build src/Main.sky
 )
 
 GENERATED="$CONSOLE_SRC/sky-out/main.go"
@@ -213,6 +222,26 @@ NR == 1 {
     next
 }
 
+# The ADT registries are keyed by the PACKAGE-QUALIFIED ADT name, which
+# codegen emits as `main.<Type>` (one hardcoded package clause, see
+# rust/crates/codegen/src/lib.rs). This file is `package console_app`, so
+# its keys must say so too — `reflect.Type.String()` on a console type
+# reports `console_app.State_Msg`, and that is what the runtime compares
+# against (runtime-go/rt/live.go, msgAdtFromUpdate).
+#
+# This rewrite is load-bearing, not cosmetic. The console is compiled
+# from sky-bundled/console/src/State.sky, so its Msg IS `State_Msg` —
+# the same Go type name a user app whose own module is `State.sky` gets
+# (examples 12-skyvote, 13-skyshop, 16-skychess all do). Without the
+# package qualifier the two collide in one process-global key and a
+# client-supplied wire string resolves against whichever init() ran
+# first. rt.RegisterAdtTag panics on the conflicting tag rather than
+# picking a winner, so dropping this rewrite fails loudly at startup.
+{
+    gsub(/rt\.RegisterAdtTag\("main\./, "rt.RegisterAdtTag(\"console_app.")
+    gsub(/rt\.RegisterAdtVariant\("main\./, "rt.RegisterAdtVariant(\"console_app.")
+}
+
 # When we hit the FIRST `func init() {` whose body is the port-default
 # setup, strip the entire block (until matching closing brace at column
 # 0). We detect it by looking ahead for `rt.SetPortDefault`.
@@ -266,19 +295,51 @@ $0 ~ /^func main\(\) \{$/ {
     next
 }
 
-# v0.16.0 PR 2: drop init() blocks whose body is entirely
-# rt.RegisterAdtTag() calls. These would otherwise pollute the host
-# binarys global rt.adtTagRegistry (in rt.go) with the inline
-# consoles ADT tags — colliding with user-app Msg names that share
-# any of {Tick, SelectTab, GotOverview, ...} and silently mis-routing
-# wire-event dispatch. PR 3 reintroduces these via namespaced
-# Register/Lookup APIs. Until then PR 2 + the static-render-only
-# MountInlineConsole path dont need them.
+# OBSOLETE MITIGATION — kept only because it is now inert. Do not
+# rely on it, and do not "repair" it; the collision it defended
+# against is fixed at the source.
+#
+# v0.16.0 PR 2 added this to drop init() blocks whose body is entirely
+# rt.RegisterAdtTag() calls. Those calls would otherwise pollute the
+# NOTE: no apostrophes below this line. This comment block sits INSIDE the
+# single-quoted awk program opened at the top of this command, so an
+# apostrophe closes that quote and bash then parses the rest of the awk
+# source as shell. It did: three of them (binary+s, console+s, app+s) made
+# this whole file unparseable — `bash -n scripts/regenerate-console.sh`
+# reported a syntax error near an unexpected token — so the generator that
+# writes a CHECKED-IN file could not run at all.
+#
+# the host binary global rt.adtTagRegistry (rt.go) with the inline
+# console ADT tags — colliding with user-app Msg names sharing any of
+# {Tick, SelectTab, GotOverview, ...} and silently mis-routing wire
+# event dispatch. "PR 3 reintroduces these via namespaced
+# Register/Lookup APIs" — PR 3 never landed.
+#
+# TWO things then happened, and the second is why this block is dead:
+#
+#  1. The strip is defeated by design. It only fires on a block whose
+#     EVERY statement is a `rt.RegisterAdtTag(...)` call; the comment
+#     below even anticipated "a future combined RegisterAdtTag +
+#     RegisterGobType". `rt.RegisterMsgVariant` became exactly that
+#     future addition — codegen now emits it beside every
+#     RegisterAdtTag — so every generated init() block is "mixed" and
+#     is preserved verbatim. The mitigation stopped firing silently,
+#     and console_app/main.go carries 100 registrations today.
+#
+#  2. The collision is fixed properly. rt.adtTagRegistry and
+#     rt.adtVariantRegistry are keyed by (owning ADT, ctor), not by the
+#     bare ctor name (runtime-go/rt/adt_variant_factory.go, AdtCtorKey),
+#     and the wire path resolves a client-supplied Msg string only
+#     within the Msg ADT owned by the app. Console registrations can no longer
+#     shadow a user Msg constructor, so there is nothing to strip.
+#
+# Left in place rather than deleted because it is provably inert (no
+# generated block is strip-eligible) and removing awk state machinery
+# from a generator carries more risk than it removes.
 #
 # We detect the pattern by buffering the entire init() block, then
 # checking that EVERY non-brace / non-blank line is exactly a
-# `rt.RegisterAdtTag(...)` invocation. Mixed init blocks (e.g. a
-# future combined RegisterAdtTag + RegisterGobType) are preserved
+# `rt.RegisterAdtTag(...)` invocation. Mixed init blocks are preserved
 # verbatim — drop is conservative.
 $0 ~ /^func init\(\) \{/ {
     block = $0
@@ -384,3 +445,10 @@ fi
 
 say "${_green}wrote $OUT (${_dim}$(wc -l <"$OUT") lines${_reset}${_green})${_reset}"
 say "drift check: 'git diff --exit-code runtime-go/rt/console_app/' should be clean"
+# This script writes into runtime-go/rt/ — a measured compiler input — so from
+# this moment every fresh-compiler gate will (correctly) refuse the installed
+# sky-out/sky until it is rebuilt with the regenerated file embedded. That
+# circularity is inherent and right; the operator just needs to be told the
+# next step instead of discovering it as sixteen red gates.
+say "next: ./scripts/build.sh — this regenerated a measured compiler input, so the"
+say "      installed compiler is now stale by definition until it is rebuilt"

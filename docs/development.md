@@ -165,23 +165,29 @@ shipping a second executable, the Rust compiler embeds the helper's
 Go source at build time (alongside the runtime and stdlib embeds)
 and materialises + `go build`s it on first use, caching to
 `$XDG_CACHE_HOME/sky/tools/sky-ffi-inspect-<contentHash>/`.
-Resolution order inside the compiler:
-
-1. `$SKY_FFI_INSPECTOR` — explicit override (test harnesses, custom
-   builds).
-2. `bin/sky-ffi-inspect` walking up from the cwd — **contributor
-   workflow** hits this; that's why `scripts/build.sh` still writes
-   one into `bin/`.
-3. Embedded fallback — extract source, `go build`, cache. Released
-   binaries hit this; cold start ~4 seconds, warm calls instant.
+Resolution inside the compiler is **one step, not three**.
+`ffi::ensure_inspector` (`rust/crates/ffi/src/inspect.rs:329-351`) is the only
+resolver — three call sites, all in `project/src/ffi_ops.rs`. It goes straight
+to `<repo_root>/tools/sky-ffi-inspect`, content-hashes the sources, and
+`go build`s into `$XDG_CACHE_HOME/sky/tools/sky-ffi-inspect-<hash>/`, returning
+the cached binary if it is already there.
 
 Content-hash keying means `sky upgrade` auto-invalidates stale
 cached helpers — no manual cleanup required.
 
-If you edit `tools/sky-ffi-inspect/main.go`, rebuild the compiler
-(the Rust build re-embeds the modified source) *and* the `bin/`
-copy so your dev workflow picks the change up without paying the
-one-time go-build on first use.
+> **Two probes documented here never existed in the Rust compiler.** This
+> passage used to list a three-step order: `$SKY_FFI_INSPECTOR` override, then
+> `bin/sky-ffi-inspect` walking up from the cwd ("**contributor workflow** hits
+> this"), then the embedded fallback. Only the third is real —
+> `grep -rn 'SKY_FFI_INSPECTOR\|bin/sky-ffi-inspect' rust/crates --include='*.rs'`
+> returns nothing.
+>
+> The practical consequence is the one that wasted time: `scripts/build.sh:88`
+> still writes `bin/sky-ffi-inspect`, and **nothing consumes it**. The old
+> instruction to "rebuild the `bin/` copy so your dev workflow picks the change
+> up" had no effect. If you edit `tools/sky-ffi-inspect/`, the content hash
+> changes and the next FFI operation rebuilds the cached helper on its own —
+> that is the whole workflow.
 
 ## Releases
 

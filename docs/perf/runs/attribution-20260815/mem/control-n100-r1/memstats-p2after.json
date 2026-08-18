@@ -1,0 +1,1 @@
+{"gc_sys":3111664,"heap_alloc":896160,"heap_inuse":2252800,"heap_objects":3974,"heap_sys":19300352,"mcache_inuse":18368,"mspan_inuse":145920,"num_gc":5862,"num_goroutine":4,"other_sys":1621604,"sessions":202,"stack_inuse":1671168,"stack_sys":1671168,"sys":27543816,"total_alloc":17939277304}

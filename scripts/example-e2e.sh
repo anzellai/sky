@@ -23,11 +23,12 @@ set -o pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# `require_fresh_compiler <bin>` — a compiler that exists is not a compiler
+# built from this tree. See the header of scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+
 SKY="$ROOT/sky-out/sky"
-if [[ ! -x "$SKY" ]]; then
-    echo "error: sky-out/sky not found. Run scripts/build.sh first." >&2
-    exit 2
-fi
+require_fresh_compiler "$SKY" "$ROOT"
 
 pass=0
 fail=0

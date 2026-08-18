@@ -24,6 +24,14 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `with_timeout <secs> <cmd...>` — the one time bound. See the header of
+# scripts/lib/with-timeout.sh for what a bare `timeout` did when it went missing.
+source "$ROOT/scripts/lib/with-timeout.sh"
+# `require_fresh_compiler <bin>` — 22 of 22 suites once reported FAILED on a
+# consistent tree because this ran a compiler built before the change under
+# test. See the header of scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
 PROJ="$ROOT/tests/conformance"
 
 FILTER=""
@@ -48,33 +56,12 @@ SKY="${SKY_BIN:-}"
 if [ -z "$SKY" ]; then
     if [ -x "$ROOT/sky-out/sky" ]; then SKY="$ROOT/sky-out/sky"; else SKY="sky"; fi
 fi
+# And prefer it only if it is CURRENT with the tree. Resolving to the in-tree
+# compiler fixed "certifies a months-old installed binary"; it did not fix
+# "certifies a compiler from before the change", which is the same sentence
+# with a shorter interval.
+require_fresh_compiler "$SKY" "$ROOT"
 
-# Portable per-suite timeout. GNU coreutils `timeout` is NOT on macOS runners by
-# default (only `gtimeout` via `brew install coreutils`), so a bare `timeout`
-# fails with "command not found" and every suite errors. Resolve to whichever
-# exists; if neither, run without a per-suite timeout (the CI job still has its
-# own outer timeout, so a hang is still bounded).
-TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
-run_suite() { # run_suite <secs> <cmd...>
-    local secs="$1"; shift
-    if [ -n "$TIMEOUT_BIN" ]; then "$TIMEOUT_BIN" "$secs" "$@"; return $?; fi
-    # No GNU timeout — do NOT fall through unbounded. macOS runners ship
-    # neither `timeout` nor `gtimeout`, and the macos-determinism job that runs
-    # this script has no timeout-minutes either, so the "the CI job still has
-    # its own outer timeout" assumption in the note above was false: a wedged
-    # `sky test` burned the full 6-hour GitHub default at the macOS minute
-    # multiplier. Race a killer against the command instead (the same portable
-    # fallback example-sweep.sh and verify-ui-showcase.sh already use).
-    "$@" &
-    local cmd_pid=$!
-    ( sleep "$secs" && kill -KILL "$cmd_pid" 2>/dev/null ) &
-    local killer_pid=$!
-    local rc=0
-    wait "$cmd_pid" 2>/dev/null; rc=$?
-    kill -KILL "$killer_pid" 2>/dev/null
-    wait "$killer_pid" 2>/dev/null
-    return $rc
-}
 
 if [ ! -d "$PROJ/tests" ]; then
     echo "conformance: no suites at $PROJ/tests" >&2
@@ -124,7 +111,7 @@ throttle() { # throttle <max>
 run_one() { # run_one <suite> <base> <report>
     local suite="$1" base="$2" report="$3"
     export SKY_TEST_JSON="$report"
-    run_suite 180 "$SKY" test "$suite" --out "sky-out-conf-$base" \
+    with_timeout 180 "$SKY" test "$suite" --out "sky-out-conf-$base" \
         > "$WORK/$base.log" 2>&1
     echo $? >| "$WORK/$base.rc"
 }

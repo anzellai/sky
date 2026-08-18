@@ -1,0 +1,250 @@
+{
+  "_about": "The configuration surface, measured. See docs/tooling/config-architecture.md §12 risk 1 and rust/crates/xtask/src/config_surface.rs.",
+  "_do_not_hand_edit": true,
+  "_generated_by": "cargo run -p xtask -- config-surface",
+  "accepted_sky_toml_keys": [
+    "analytics.dbPath",
+    "analytics.retention",
+    "auth.cookieName",
+    "auth.driver",
+    "auth.tokenTtl",
+    "database.connMaxIdleTime",
+    "database.connMaxLifetime",
+    "database.driver",
+    "database.embedded",
+    "database.isolation",
+    "database.maxIdleConns",
+    "database.maxOpenConns",
+    "database.path",
+    "database.postgresVersion",
+    "database.txRetry",
+    "database.url",
+    "env.prefix",
+    "jobs.store",
+    "jobs.storePath",
+    "jobs.store_path",
+    "live.input",
+    "live.maxBodyBytes",
+    "live.port",
+    "live.static",
+    "live.store",
+    "live.storePath",
+    "live.ttl",
+    "log.format",
+    "log.level",
+    "security.csrf"
+  ],
+  "documented_without_reader": [
+    "SKY_ADT",
+    "SKY_ANALYTICS_DEBUG",
+    "SKY_AUTH_COOKIE",
+    "SKY_AUTH_DRIVER",
+    "SKY_LIVE_MAX_SUBS_PER_SESSION",
+    "SKY_LSP_DEBUG",
+    "SKY_LSP_TRACE",
+    "SKY_PERF_PPROF_ADDR",
+    "SKY_PROBE_ADDR"
+  ],
+  "pre_binary": {
+    "bin": [
+      "rust/crates/project/src/build.rs:1351 (sky_toml_project_key)"
+    ],
+    "database.driver": [
+      "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
+    ],
+    "database.embedded": [
+      "rust/crates/sky/src/db_cluster.rs:1576 (sky_toml_flag)",
+      "rust/crates/sky/src/main.rs:3450 (sky_toml_flag)"
+    ],
+    "database.maxOpenConns": [
+      "rust/crates/sky/src/db_pool_sizing.rs:143 (toml_value)"
+    ],
+    "database.path": [
+      "rust/crates/sky/src/db_cluster.rs:1658 (sky_toml_section_key)"
+    ],
+    "database.postgresVersion": [
+      "rust/crates/sky/src/db_provision.rs:158 (sky_toml_section_key)"
+    ],
+    "database.url": [
+      "rust/crates/sky/src/db_cluster.rs:1662 (sky_toml_section_key)"
+    ],
+    "dependencies": [
+      "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — reads the whole table. `sky add`/`remove`/`install`/`update` and the LSP's unfetched-dep hints all run with no binary in existence."
+    ],
+    "entry": [
+      "structural: rust/crates/sky/src/main.rs fn parse_toml_entry — its own parser, no key argument. Decides WHAT is compiled, so it is read before any compile. `sky doctor` reads it through a SECOND, looser parser (`toml_entry`) that does not stop at the first section."
+    ],
+    "env.prefix": [
+      "rust/crates/sky/src/db_cluster.rs:1585 (sky_toml_section_key)",
+      "rust/crates/sky/src/db_pool_sizing.rs:153 (toml_value)"
+    ],
+    "go.dependencies": [
+      "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."
+    ],
+    "lib": [
+      "structural: rust/crates/project/src/ffi_ops.rs fn is_sky_package_root — tests for the `[lib]` HEADER only; no key is read. `sky add`'s auto-probe uses it to tell a Sky package from a Go module."
+    ],
+    "live": [
+      "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
+    ],
+    "root": [
+      "rust/crates/project/src/build.rs:1357 (sky_toml_project_key)"
+    ]
+  },
+  "read_without_doc": [
+    "SKY_CONSOLE_DISABLED",
+    "SKY_CONSOLE_EMBED_ORIGIN",
+    "SKY_CONSOLE_HUB_DB",
+    "SKY_CONSOLE_HUB_MAX_PAYLOAD",
+    "SKY_CONSOLE_HUB_PRUNE_INTERVAL_SECONDS",
+    "SKY_CONSOLE_HUB_QUIET",
+    "SKY_CONSOLE_HUB_RETENTION_HOURS",
+    "SKY_CONSOLE_HUB_TOKEN",
+    "SKY_CONSOLE_INTERNAL_TOKEN",
+    "SKY_DB_CONN_MAX_IDLE_TIME",
+    "SKY_DB_CONN_MAX_LIFETIME",
+    "SKY_DB_ISOLATION",
+    "SKY_DB_MAX_IDLE_CONNS",
+    "SKY_DB_TX_RETRY",
+    "SKY_JOBS_STORE",
+    "SKY_JOBS_STORE_PATH",
+    "SKY_LIVE_BANNER",
+    "SKY_LIVE_INPUT_MODE",
+    "SKY_LIVE_NAMESPACE",
+    "SKY_LIVE_RETRY_BASE_MS",
+    "SKY_LIVE_RETRY_MAX_MS",
+    "SKY_LIVE_STATIC_DIR",
+    "SKY_OBSERVABILITY_DISABLED",
+    "SKY_PROFILE_DIR",
+    "SKY_PROFILE_TIMEOUT",
+    "SKY_STATIC_DIR"
+  ],
+  "runtime_read_literal_sky_names": [
+    "SKY_ADMIN_TOKEN",
+    "SKY_CONSOLE_AUTH",
+    "SKY_CONSOLE_DB_PATH",
+    "SKY_CONSOLE_EMBED",
+    "SKY_CONSOLE_EMBED_ORIGIN",
+    "SKY_CONSOLE_HUB_DB",
+    "SKY_CONSOLE_HUB_MAX_PAYLOAD",
+    "SKY_CONSOLE_HUB_PRUNE_INTERVAL_SECONDS",
+    "SKY_CONSOLE_HUB_QUIET",
+    "SKY_CONSOLE_HUB_RETENTION_HOURS",
+    "SKY_CONSOLE_HUB_TOKEN",
+    "SKY_CONSOLE_INTERNAL_TOKEN",
+    "SKY_CONSOLE_TOKEN",
+    "SKY_CONSOLE_TOKEN_SECRET",
+    "SKY_CONSOLE_URL",
+    "SKY_DEV_BANNER",
+    "SKY_EMAIL_DRY_RUN",
+    "SKY_GC_QUIET",
+    "SKY_HOME",
+    "SKY_INGEST_TOKEN",
+    "SKY_METRICS_TOKEN",
+    "SKY_OBSERVABILITY_BUFFER",
+    "SKY_OBSERVABILITY_PUSH_INTERVAL_MS",
+    "SKY_PARENT_URL",
+    "SKY_POSTGRES_BIN",
+    "SKY_PROFILE_DIR",
+    "SKY_PROFILE_TIMEOUT",
+    "SKY_RUNTIME_MODE",
+    "SKY_SERVICE_NAME",
+    "SKY_STREAM_DEBUG",
+    "SKY_TELEMETRY_SYNCHRONOUS_COMMIT",
+    "SKY_TRACE_HONOR_REMOTE_PARENT",
+    "SKY_TUI_LOG",
+    "SKY_TUI_QUIET",
+    "SKY_WEBVIEW_DEBUG"
+  ],
+  "runtime_read_suffixes": [
+    "ADMIN_TOKEN",
+    "ANALYTICS_DB_PATH",
+    "ANALYTICS_RETENTION",
+    "ANALYTICS_SYNCHRONOUS_COMMIT",
+    "CONSOLE_DISABLED",
+    "CSRF",
+    "DB_CONN_MAX_IDLE_TIME",
+    "DB_CONN_MAX_LIFETIME",
+    "DB_ISOLATION",
+    "DB_MAX_IDLE_CONNS",
+    "DB_MAX_OPEN_CONNS",
+    "DB_OP",
+    "DB_PATH",
+    "DB_TX_RETRY",
+    "ENV",
+    "HOST",
+    "JOBS_STORE",
+    "JOBS_STORE_PATH",
+    "LIVE_BANNER",
+    "LIVE_BASE_PATH",
+    "LIVE_BROKER",
+    "LIVE_BROKER_URL",
+    "LIVE_FRAME_ANCESTORS",
+    "LIVE_HEARTBEAT_TTL_MS",
+    "LIVE_HELLO_TIMEOUT_MS",
+    "LIVE_IDLE_EVICT",
+    "LIVE_INPUT_MODE",
+    "LIVE_MAX_BODY_BYTES",
+    "LIVE_NAMESPACE",
+    "LIVE_PORT",
+    "LIVE_QUEUE_MAX",
+    "LIVE_RETRY_BASE_MS",
+    "LIVE_RETRY_MAX_ATTEMPTS",
+    "LIVE_RETRY_MAX_MS",
+    "LIVE_SSE_BUFFER",
+    "LIVE_STATIC_DIR",
+    "LIVE_STORE",
+    "LIVE_STORE_PATH",
+    "LIVE_TTL",
+    "LIVE_VIEW_DETERMINISM_CHECK",
+    "LOG_FORMAT",
+    "LOG_LEVEL",
+    "OBSERVABILITY_DISABLED",
+    "STATIC_DIR"
+  ],
+  "seeded_suffixes": [
+    "ANALYTICS_DB_PATH",
+    "ANALYTICS_RETENTION",
+    "AUTH_COOKIE",
+    "AUTH_DRIVER",
+    "AUTH_TOKEN_TTL",
+    "CSRF",
+    "DB_CONN_MAX_IDLE_TIME",
+    "DB_CONN_MAX_LIFETIME",
+    "DB_ISOLATION",
+    "DB_MAX_IDLE_CONNS",
+    "DB_MAX_OPEN_CONNS",
+    "DB_PATH",
+    "DB_TX_RETRY",
+    "JOBS_STORE",
+    "JOBS_STORE_PATH",
+    "LIVE_INPUT_MODE",
+    "LIVE_MAX_BODY_BYTES",
+    "LIVE_STATIC_DIR",
+    "LIVE_STORE",
+    "LIVE_STORE_PATH",
+    "LIVE_TTL",
+    "LOG_FORMAT",
+    "LOG_LEVEL"
+  ],
+  "seeded_without_reader": [
+    "AUTH_COOKIE",
+    "AUTH_DRIVER",
+    "AUTH_TOKEN_TTL"
+  ],
+  "summary": {
+    "accepted_sky_toml_keys": 30,
+    "documented_names": 93,
+    "documented_without_reader": 9,
+    "pre_binary_surfaces": 14,
+    "read_without_doc": 26,
+    "runtime_read_literal_sky_names": 35,
+    "runtime_read_suffixes": 44,
+    "seeded_suffixes": 23,
+    "seeded_without_reader": 3,
+    "unclassified_keys": 0,
+    "unresolved_read_sites": 0
+  },
+  "unclassified_keys": [],
+  "unresolved_read_sites": []
+}

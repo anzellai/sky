@@ -843,7 +843,7 @@ pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
 /// The second is what makes deletion visible. `cargo test` on a file whose tests
 /// were removed exits 0 having run nothing, which is the same shape as the
 /// `0/0 … GATE: PASS` defect.
-pub const CLI_VERBS_EXPECTED: u64 = 9;
+pub const CLI_VERBS_EXPECTED: u64 = 10;
 
 pub fn cli_verbs(ctx: &GateCtx) -> GateOutcome {
     let suite = ctx
@@ -2939,7 +2939,16 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// silently losing surface rows while still reporting PASS. The constant moves
 /// when the surface count moves — which is a real event that should be read,
 /// not absorbed.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 145;
+///
+/// 147 -> 148: the checked-in `ledger.json` carries `surfaces_total: 144`
+/// (`check_body` returns `surfaces.len() + 4`), but this constant still expected
+/// 143. A surface was added and the ledger regenerated without bumping the
+/// count here, so the `coverage-ledger` HARNESS gate reported `148/147 FAIL` —
+/// invisibly, because only `release.yml`'s `harness --tier t1` runs that face
+/// and `config-gates`' `coverage-ledger --check` (the `run()` path) does not
+/// assert the count. Exactly the release-only-counting-gate latency this cycle
+/// is closing; brought current here.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 149;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -2951,4 +2960,294 @@ pub const COVERAGE_LEDGER_EXPECTED: u64 = 145;
 pub fn coverage_ledger(ctx: &GateCtx) -> GateOutcome {
     let (passed, assertions, detail) = crate::coverage_ledger::check_body(&ctx.repo_root);
     GateOutcome::new(passed, assertions, detail)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// config-surface — the configuration surface, and its three defect counts
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One assertion per `sky.toml` key the compiler accepts (30), one per env
+/// suffix it seeds into every program's prologue (23), plus the six fixed
+/// clauses (staleness, no unresolvable read site, and one ratchet each for
+/// `pre_binary_surfaces`, `seeded_without_reader`, `documented_without_reader`
+/// and `read_without_doc`).
+///
+/// EXACT, never a `>=`, for the reason every count here is exact: `reject.rs`
+/// asserted `>= 13` against an actual 63, so deleting 50 corpus files kept it
+/// green. The analogous failure here is the derivation silently losing keys —
+/// which would make the ratchet clauses pass over an empty set — and it is
+/// exactly what this constant catches, because a lost key moves the number.
+///
+/// It MOVES when the configuration surface moves, which is a real event that
+/// should be read rather than absorbed: a new `sky.toml` key or a new seeded
+/// default is precisely the thing `docs/tooling/config-architecture.md` is
+/// trying to stop happening.
+pub const CONFIG_SURFACE_EXPECTED: u64 = 59;
+
+/// `xtask config-surface --check`, run in-process.
+///
+/// In-process rather than shelling out, for the same reason `coverage_ledger`
+/// is: the measurement's whole claim is that it was recomputed from THIS tree,
+/// and a prebuilt binary might have been built from another one.
+pub fn config_surface(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::config_surface::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
+
+/// One assertion per observed cell, one per census entry the manifest must
+/// bucket, three per covered setting (the declared default, the
+/// arm-distinguishability check, and — where a builder exists — the
+/// `builder_reaches_runtime` verdict), plus the pre-flight sentinel check and
+/// the two fixed clauses.
+///
+/// EXACT, never a `>=`, and it MOVES when the matrix moves. That is the point:
+/// a cell quietly disappearing is how a matrix stops protecting a setting while
+/// still reporting green, and `reject.rs` shipped exactly that shape — `>= 13`
+/// against an actual 63, so deleting 50 corpus files kept it green.
+///
+/// It also moves when `config-surface`'s census moves, which is deliberate:
+/// this gate's coverage claim is stated *against* that census, so a new
+/// `sky.toml` key has to be bucketed here before either gate is green again.
+pub const CONFIG_MATRIX_EXPECTED: u64 = 98;
+
+/// `xtask config-matrix --check`, run in-process.
+///
+/// In-process for the same reason `config_surface` is: the measurement's whole
+/// claim is that it was observed from binaries THIS tree's compiler built, and
+/// a prebuilt xtask might have been built from another one.
+pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::config_matrix::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
+
+// ---------------------------------------------------------------------------
+// Analytics observability gates.
+//
+// Four gates over `runtime-go/rt/analytics_observability_gate_test.go`, added
+// with the two defects an adversarial review found on 2026-08-17:
+//
+//   * the analytics retention pruner recovered at its goroutine's TOP LEVEL,
+//     so the first panic killed retention for the process lifetime, silently;
+//     and it discarded every `Exec` error, so a pruner that had never deleted
+//     a row looked identical to a healthy one.
+//   * the console's Analytics tab ran unbounded, unindexed scans of
+//     `analytics_events` on every load, on a connection pool SHARED with the
+//     session store — the observability surface degrading the thing it
+//     observes. The right-to-erasure DELETE was a full scan for the same
+//     reason: neither subject column was indexed.
+//
+// Each gate runs ONE Go test and reads the `ASSERTIONS: <n>` line that test
+// prints. Counting is delegated to the test rather than to a source scan
+// because these assertions are dynamic (three per statement in
+// `consoleAnalyticsStatements`), and a source-counted total would go stale the
+// moment a statement is added — the failure mode the exact-count rule exists
+// to prevent.
+// ---------------------------------------------------------------------------
+
+/// Runs one Go test in `runtime-go` and returns its verdict + the assertion
+/// count it printed.
+///
+/// A missing / unrunnable Go toolchain is a **FAIL naming what to install**,
+/// never a skip: "a gate that cannot run has not passed". A test that ran but
+/// printed no `ASSERTIONS:` line is also a fail — a body that cannot establish
+/// a count reports 0, and 0 is vacuous.
+fn go_analytics_gate(ctx: &GateCtx, test: &str, expected: u64) -> GateOutcome {
+    go_runtime_gate(ctx, "./rt/", test, expected)
+}
+
+/// Runs one Go test in a named `runtime-go` package.
+///
+/// `go_analytics_gate` delegates here rather than the two existing side by
+/// side: the periodic-goroutine gates added later live in `./rt/hub/` and
+/// `./rt/jobs/`, which cannot import `rt`, so the package had to become a
+/// parameter. Everything else about the contract is unchanged — a missing Go
+/// toolchain FAILS naming what to install, and a test that printed no
+/// `ASSERTIONS:` line fails rather than reporting a vacuous 0.
+fn go_runtime_gate(ctx: &GateCtx, pkg: &str, test: &str, expected: u64) -> GateOutcome {
+    let dir = ctx.repo_root.join("runtime-go");
+    if !dir.is_dir() {
+        return GateOutcome::new(false, 0, format!("{} does not exist", dir.display()));
+    }
+    // `go test -timeout` is the inner bound (it dumps stacks and NAMES the hung
+    // test); the harness budget is the outer one.
+    let out = Command::new("go")
+        .args([
+            "test",
+            "-count=1",
+            "-timeout",
+            "300s",
+            "-run",
+            &format!("^{test}$"),
+            "-v",
+            pkg,
+        ])
+        .current_dir(&dir)
+        .env_remove("GOFLAGS")
+        .stdin(std::process::Stdio::null())
+        .output();
+
+    let o = match out {
+        Ok(o) => o,
+        Err(e) => {
+            return GateOutcome::new(
+                false,
+                0,
+                format!(
+                    "could not run `go test` for {test}: {e}. Install the Go toolchain \
+                     (https://go.dev/dl/) — this gate measures the Go runtime and cannot \
+                     be established without it."
+                ),
+            )
+        }
+    };
+    let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+    let counted = stdout
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("ASSERTIONS:"))
+        .and_then(|n| n.trim().parse::<u64>().ok());
+
+    let Some(n) = counted else {
+        return GateOutcome::new(
+            false,
+            0,
+            format!(
+                "{test} printed no `ASSERTIONS: <n>` line, so no count could be \
+                 established (exit {:?}):\n{}",
+                o.status.code(),
+                super::layer2::tail(&stdout, 25)
+            ),
+        );
+    };
+    if n != expected {
+        return GateOutcome::new(
+            false,
+            n,
+            format!(
+                "{test} reported {n} assertions, expected EXACTLY {expected}. If an \
+                 assertion was deliberately added or removed, update the gate's \
+                 `expected` in harness/registry.rs in the same commit."
+            ),
+        );
+    }
+    if o.status.success() {
+        GateOutcome::new(true, n, format!("{test}: {n} assertions green"))
+    } else {
+        GateOutcome::new(
+            false,
+            n,
+            format!(
+                "{test} failed (exit {:?}):\n{}",
+                o.status.code(),
+                super::layer2::tail(&stdout, 30)
+            ),
+        )
+    }
+}
+
+/// Two: the loop survived the panic (>= 3 cycles), and the panic was logged.
+pub const ANALYTICS_RETENTION_PANIC_EXPECTED: u64 = 2;
+
+pub fn analytics_retention_survives_a_panic(ctx: &GateCtx) -> GateOutcome {
+    go_analytics_gate(
+        ctx,
+        "TestAnalyticsRetentionSurvivesAPanic",
+        ANALYTICS_RETENTION_PANIC_EXPECTED,
+    )
+}
+
+/// Three: exactly one Exec, a warn was emitted, and it carries the driver's
+/// message.
+pub const ANALYTICS_PRUNE_ERRORS_EXPECTED: u64 = 3;
+
+pub fn analytics_prune_errors_are_reported(ctx: &GateCtx) -> GateOutcome {
+    go_analytics_gate(
+        ctx,
+        "TestAnalyticsPruneErrorsAreReported",
+        ANALYTICS_PRUNE_ERRORS_EXPECTED,
+    )
+}
+
+/// Twenty: the statement list covers the handler (1), three per statement in
+/// `consoleAnalyticsStatements` — LIMIT, window, plan — (15), the revenue cap
+/// binds and still returns data (2), the total is capped (1), and the tab
+/// renders inside its budget (1).
+pub const CONSOLE_ANALYTICS_BOUNDED_EXPECTED: u64 = 20;
+
+pub fn console_analytics_queries_are_bounded(ctx: &GateCtx) -> GateOutcome {
+    go_analytics_gate(
+        ctx,
+        "TestConsoleAnalyticsQueriesAreBounded",
+        CONSOLE_ANALYTICS_BOUNDED_EXPECTED,
+    )
+}
+
+/// Five: no full scan, each of the two indexes is in the plan, the shipped
+/// schema creates them, and the indexed DELETE still deletes.
+pub const ERASURE_INDEX_EXPECTED: u64 = 5;
+
+pub fn erasure_path_uses_an_index(ctx: &GateCtx) -> GateOutcome {
+    go_analytics_gate(ctx, "TestErasurePathUsesAnIndex", ERASURE_INDEX_EXPECTED)
+}
+
+// ---------------------------------------------------------------------------
+// Periodic-goroutine gates.
+//
+// The class the analytics retention pruner above turned out to be an instance
+// of. A background loop that recovers at its GOROUTINE's top level, or
+// discards a write's error, fails silently and permanently: one panic and the
+// loop is dead for the process lifetime with no log line, and a write that has
+// never once succeeded is indistinguishable from one that always does.
+//
+// Eight sites carried it. The gates registered here are the three that close
+// the class rather than one instance of it:
+//
+//   * the AST audit, which fails on the NEXT one;
+//   * the session-mutex discipline, the highest-severity instance — a
+//     panicking Time.every tick used to leave `sess.mu` locked forever, so the
+//     user's tab froze permanently on Sky's pinned default app shape;
+//   * the jobs worker's completion write, whose discarded error turned
+//     at-least-once delivery into an INFINITE redelivery loop.
+//
+// The remaining per-site gates run under `go test ./rt/...`; these three are
+// registered because they are the ones whose silent absence would cost most.
+// ---------------------------------------------------------------------------
+
+/// Two: the audit found loops at all (non-vacuous), and none was unaccounted.
+/// FIXED rather than the number of loops audited — a dynamic count would move
+/// with every loop added to the runtime, and the exact-count rule exists to
+/// catch a body that stopped asserting, not to track the tree's size.
+pub const PERIODIC_LOOP_AUDIT_EXPECTED: u64 = 2;
+
+pub fn periodic_loops_recover_per_cycle(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestPeriodicLoopsRecoverPerCycle",
+        PERIODIC_LOOP_AUDIT_EXPECTED,
+    )
+}
+
+/// Two: the tick fired at all, and `sess.mu` was acquirable afterwards.
+pub const TIME_EVERY_MUTEX_EXPECTED: u64 = 2;
+
+pub fn time_every_panic_leaves_the_mutex_acquirable(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestTimeEveryPanicLeavesTheSessionMutexAcquirable",
+        TIME_EVERY_MUTEX_EXPECTED,
+    )
+}
+
+/// Three: dispatch returned an error, it wraps the store's, and Complete was
+/// called exactly once.
+pub const JOBS_COMPLETE_FAILURE_EXPECTED: u64 = 3;
+
+pub fn jobs_complete_failure_is_reported(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/jobs/",
+        "TestJobsCompleteFailureIsReported",
+        JOBS_COMPLETE_FAILURE_EXPECTED,
+    )
 }

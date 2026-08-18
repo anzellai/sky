@@ -22,6 +22,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn tool_on_path(name: &str) -> bool {
@@ -119,8 +123,7 @@ fn users_ddl(db_path: &Path) -> String {
 
 #[test]
 fn committed_migration_preserves_column_constraints_and_matches_push() {
-    if !tool_on_path("go") || !tool_on_path("sqlite3") {
-        eprintln!("db_flow: skipping — needs `go` and `sqlite3` on PATH");
+    if !required(Need::Go, tool_on_path("go")) || !required(Need::Sqlite3, tool_on_path("sqlite3")) {
         return;
     }
 

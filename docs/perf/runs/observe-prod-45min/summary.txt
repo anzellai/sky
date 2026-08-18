@@ -1,0 +1,20 @@
+SAMPLES              134
+RSS min/mean/max     52.9 / 56.1 / 58.1 MB
+RSS range            5.1 MB
+conn_app min/max     1 / 2
+conn_pub max         4
+proc CPU mean/max    0.2% / 0.8% of one core
+req/s mean/max       0.050 / 0.050
+msg/s mean           0.000
+
+--- VERDICT ---------------------------------------------------
+INSUFFICIENT ACTIVITY. Concurrent-connection span over the whole
+  window was 1 (min 1, max 2).
+A per-session memory figure CANNOT be derived from this window.
+  The base RSS below is still valid; the per-session slope is not
+  measurable without sessions to vary. This is a statement about
+  the traffic, NOT evidence against the ~1.1 MB/session figure.
+
+USABLE RESULT: base RSS on this target = 56.1 MB
+  (idle, x86_64 Linux, real GCP hardware)
+---------------------------------------------------------------

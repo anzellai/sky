@@ -882,6 +882,210 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::sky_suites,
     },
+    // ---- analytics observability -------------------------------------------
+    //
+    // Two defects, four gates. Both were found by adversarial review rather
+    // than by anything failing, which is the point: the retention pruner's
+    // failure mode is SILENCE (a dead goroutine and a discarded error), and the
+    // console's is a slow query on somebody else's connection — neither has a
+    // symptom the existing suites could have noticed.
+    Gate {
+        name: "analytics-retention-survives-a-panic",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // Sub-second; the ceiling is for a cold `go test` compile of `rt`.
+        budget_s: 600,
+        expected: bodies::ANALYTICS_RETENTION_PANIC_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a panic in an analytics retention cycle costs the cycle, not the goroutine",
+        // The mutation takes the recover OUT of the prune cycle, which is the
+        // defect's substance: the panic then escapes the ticker loop and the
+        // goroutine unwinds. The test's own goroutine carries a recover that
+        // stands in for the one the shipped code had at the top level, so the
+        // consequence lands as a red assertion rather than a crashed binary.
+        //
+        // Re-adding a top-level recover was tried first and reported VACUOUS —
+        // correctly. With a recover still inside the cycle, the outer one is
+        // unreachable, so that "mutation" changed no behaviour at all. The
+        // falsifier runner caught a mutation that was a lie, which is the job.
+        mutations: Mutations::new(&[Mutation {
+            id: "analytics-retention.no-recover-inside-the-cycle",
+            description: "stop recovering inside the prune cycle — the shipped defect. \
+                          The first panic then unwinds past the ticker loop, retention \
+                          is dead for the process lifetime, and both the second-cycle \
+                          assertion and the panic-warn assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/analytics_store.go",
+                from: "if r := recover(); r != nil {",
+                to: "if r := any(nil); r != nil {",
+            },
+        }]),
+        body: bodies::analytics_retention_survives_a_panic,
+    },
+    Gate {
+        name: "analytics-prune-errors-are-reported",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::ANALYTICS_PRUNE_ERRORS_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a failing analytics retention DELETE produces a warn, not silence",
+        mutations: Mutations::new(&[Mutation {
+            id: "analytics-prune.discard-the-exec-error",
+            description: "restore `_, _ = db.Exec(...)` — the shipped defect. A \
+                          permissions failure, a lock timeout and a successful \
+                          zero-row delete become indistinguishable; the warn \
+                          assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/analytics_store.go",
+                from: "if _, err := db.Exec(analyticsQ(qAnalyticsRetentionPrune), cutoff); err != nil {",
+                to: "if _, err := db.Exec(analyticsQ(qAnalyticsRetentionPrune), cutoff); false && err != nil {",
+            },
+        }]),
+        body: bodies::analytics_prune_errors_are_reported,
+    },
+    Gate {
+        name: "console-analytics-queries-are-bounded",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // ~2 s on the dev host, of which the 200k-row fixture is the bulk.
+        // The ceiling covers a cold `go test` compile on a slow runner.
+        budget_s: 900,
+        expected: bodies::CONSOLE_ANALYTICS_BOUNDED_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every console Analytics query is windowed, row-capped, and plans off an index",
+        mutations: Mutations::new(&[Mutation {
+            id: "console-analytics.unbound-the-revenue-scan",
+            description: "restore the unbounded revenue scan — no window, no LIMIT, \
+                          the shipped defect. Its plan becomes a full table scan of \
+                          analytics_events on a pool shared with the session store, \
+                          and the plan assertion must go red. Note the TIMING \
+                          assertion alone does NOT catch this (354 ms over 200k rows, \
+                          against a 3 s budget) — which is exactly why the gate asserts \
+                          the PLAN and not only the clock",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/console_analytics.go",
+                from: "WHERE props IS NOT NULL AND ts >= ? ORDER BY ts DESC LIMIT ?",
+                to: "WHERE props IS NOT NULL AND ? >= 0 AND 0 < ?",
+            },
+        }]),
+        body: bodies::console_analytics_queries_are_bounded,
+    },
+    Gate {
+        name: "erasure-path-uses-an-index",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::ERASURE_INDEX_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "Analytics.erase — the right-to-erasure DELETE — resolves through indexes, not a full scan",
+        mutations: Mutations::new(&[Mutation {
+            id: "erasure-index.drop-the-anonymous-id-index",
+            description: "drop the `anonymous_id` index from the shipped schema — the \
+                          state this path was in. SQLite's MULTI-INDEX OR collapses to \
+                          `SCAN analytics_events` and the plan assertion must go red. \
+                          This is a compliance path: a deletion request slow enough to \
+                          time out is a deletion that did not happen",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/analytics_store.go",
+                from: "`CREATE INDEX IF NOT EXISTS idx_analytics_anonymous_id ON analytics_events(anonymous_id)`,",
+                to: "`SELECT 1`,",
+            },
+        }]),
+        body: bodies::erasure_path_uses_an_index,
+    },
+    // ---- periodic background goroutines ------------------------------------
+    //
+    // The class the analytics retention pruner turned out to be an instance of.
+    // Eight sites carried it; these three close the CLASS rather than one
+    // instance, which is why they are the ones registered.
+    Gate {
+        name: "periodic-loops-recover-per-cycle",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // Sub-second (an AST walk); the ceiling is for a cold `go test`
+        // compile of `rt`.
+        budget_s: 600,
+        expected: bodies::PERIODIC_LOOP_AUDIT_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every detached periodic loop in runtime-go recovers per cycle, and none discards a write's error",
+        // Reintroducing the shipped shape — recover at the function's top
+        // level, outside the ticker loop — is the defect's whole substance.
+        // The audit reports "recover is deferred at the function's top level"
+        // and goes red.
+        //
+        // Note this mutation was itself the thing that caught a hole in the
+        // audit: the first version reported PASS against it, because
+        // `go s.cleanupLoop()` delegates to `runCleanupLoop` and no `go`
+        // statement names the delegate, so the walk was skipping every loop it
+        // had been written to protect. goLaunched now propagates along calls.
+        mutations: Mutations::new(&[Mutation {
+            id: "periodic-loops.recover-at-the-goroutine-top-level",
+            description: "put the session-cleanup loop's recover back at the function's \
+                          top level, outside the ticker loop — the shipped defect. One \
+                          panic then ends the loop for the process lifetime and the \
+                          audit must name it",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/live_store.go",
+                from: "func (s *sqliteStore) runCleanupLoop(db liveStoreExecer, interval time.Duration) {\n\tperiodic.Every(periodic.Config{",
+                to: "func (s *sqliteStore) runCleanupLoop(db liveStoreExecer, interval time.Duration) {\n\tdefer func() { _ = recover() }()\n\tfor range time.NewTicker(interval).C {\n\t\t_ = s.cleanupOnce(db, time.Now())\n\t}\n\tperiodic.Every(periodic.Config{",
+            },
+        }]),
+        body: bodies::periodic_loops_recover_per_cycle,
+    },
+    Gate {
+        name: "live-time-every-mutex-survives-a-panic",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::TIME_EVERY_MUTEX_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a panicking Time.every tick leaves the session mutex acquirable",
+        // The manual Unlock is the defect. A per-cycle recover WITHOUT it
+        // converts a permanent wedge into a different permanent wedge — the
+        // ticker survives and every later tick, dispatch and SSE resync blocks
+        // forever on a mutex nobody will release — so the mutation removes the
+        // `defer` rather than the recover, which is the half that actually
+        // matters here.
+        mutations: Mutations::new(&[Mutation {
+            id: "time-every.unlock-only-on-the-happy-path",
+            description: "drop `defer sess.mu.Unlock()` from timeEveryDispatch — the \
+                          shipped defect. A tick that panics inside the locked region \
+                          then leaves sess.mu held for the lifetime of the process and \
+                          the user's tab is frozen; the acquirability assertion must go \
+                          red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/live.go",
+                from: "\tsess.mu.Lock()\n\tdefer sess.mu.Unlock()\n\tmsg := toMsg",
+                to: "\tsess.mu.Lock()\n\tmsg := toMsg",
+            },
+        }]),
+        body: bodies::time_every_panic_leaves_the_mutex_acquirable,
+    },
+    Gate {
+        name: "jobs-complete-failure-is-reported",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::JOBS_COMPLETE_FAILURE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a failing jobs Complete is reported, not discarded into an infinite redelivery loop",
+        mutations: Mutations::new(&[Mutation {
+            id: "jobs-complete.discard-the-store-error",
+            description: "restore `_ = w.store.Complete(rec.ID)` — the shipped defect. A \
+                          job whose handler SUCCEEDED but whose completion write failed \
+                          stays claimed, is redelivered when its lease expires, succeeds \
+                          again and fails to complete again — at-least-once delivery \
+                          becomes an infinite redelivery loop re-running the handler's \
+                          side effects forever. dispatch must return the error",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/jobs/jobs.go",
+                from: "\t\tcompleteErr := w.store.Complete(rec.ID)",
+                to: "\t\tvar completeErr error\n\t\t_ = w.store.Complete(rec.ID)",
+            },
+        }]),
+        body: bodies::jobs_complete_failure_is_reported,
+    },
     // ---- harness self-verification ----------------------------------------
     //
     // `selftest-hang` is deliberately registered BEFORE `canary`. Registry order
@@ -983,6 +1187,87 @@ pub static GATES: &[Gate] = &[
             },
         }]),
         body: bodies::coverage_ledger,
+    },
+    Gate {
+        name: "config-surface",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 120,
+        expected: bodies::CONFIG_SURFACE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the configuration surface is measured, current, and no defect count rose",
+        // The mutation is the defect the gate exists to catch, not a proxy for
+        // it: a seeded env suffix nothing reads. `[auth]` was exactly this for
+        // four minor versions — parsed, validated, emitted into every binary's
+        // prologue, and read by nothing — and two shipped examples advertised a
+        // 24-hour session while silently getting the default.
+        //
+        // The mutation edits SOURCE that the gate READS (lower.rs's emission
+        // site), not source the gate is compiled from, so no rebuild stands
+        // between applying it and observing red.
+        mutations: Mutations::new(&[Mutation {
+            id: "config-surface.seed-a-suffix-nothing-reads",
+            description: "misspell the LIVE_TTL default lower.rs seeds into every \
+                          program; `seeded_without_reader` must rise 3 -> 4 and the \
+                          checked-in measurement must go stale",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/lower/src/lower.rs",
+                from: "&[\"LIVE_TTL\", \"1800\"]",
+                to: "&[\"LIVE_TTL_TYPO\", \"1800\"]",
+            },
+        }]),
+        body: bodies::config_surface,
+    },
+    Gate {
+        name: "config-matrix",
+        tier: Tier::T1,
+        // Builds and runs five real Sky.Live apps and binds real ports;
+        // `killpg` and `process_group(0)` are what teardown depends on.
+        platforms: UNIX,
+        // Five `sky build`s (~8 s each warm, slower cold), ten
+        // start/observe/kill cycles, and — since the gate now establishes that
+        // the compiler it measures was built from THIS tree — a
+        // `cargo build --release -p sky` whenever it was not. Generous, because
+        // the alternative to a generous budget on a build-and-run gate is a
+        // flaky one, and a timeout here renders FAIL, never a fabricated pass.
+        budget_s: 1800,
+        expected: bodies::CONFIG_MATRIX_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every covered setting's EFFECTIVE value, observed from running binaries, \
+                  matches the baseline in every arm combination",
+        // THE mutation, and it is now a SOURCE mutation — the precedence rule
+        // itself, in the one file that holds it.
+        //
+        // Every previous version of this falsifier edited the gate's own TOML,
+        // and the comment here said why: a mutation in `lower.rs` or
+        // `runtime-go/` "would leave it measuring the unmutated tree and report
+        // VACUOUS", because both reach the gate only through an
+        // already-built `sky` binary. That was true, and it meant
+        // `--verify-falsifiers` proved the gate could catch a lie in its own
+        // manifest and NOTHING about production code. Demonstrated: reverting
+        // the stage-3 fix without rebuilding gave `config-matrix: OK` in 49 s;
+        // the same edit after a 17.8 s `cargo build` gave six findings.
+        //
+        // `config_matrix::sky_binary` now establishes that the compiler it
+        // measures was built from this tree and rebuilds it when it was not, so
+        // a `runtime-go/` mutation reaches the observation. Inverting
+        // `operatorSet`'s provenance test makes an operator's environment stop
+        // outranking a `withX` builder — the exact regression stage 3 closed —
+        // and moves `live.storePath/env+builder` and `live.ttl/env+builder`,
+        // which the unlisted-difference scan reports as named cell
+        // differences.
+        mutations: Mutations::new(&[Mutation {
+            id: "config-matrix.invert-operator-env-provenance",
+            description: "invert the provenance test that makes an operator's env outrank a \
+                          `withX` builder (live_config_precedence.go); the env+builder cells \
+                          must move and the unlisted-difference scan must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/live_config_precedence.go",
+                from: "operatorSet := envSet && envVal != \"\" && !isSeededDefault(name)",
+                to: "operatorSet := envSet && envVal != \"\" && isSeededDefault(name)",
+            },
+        }]),
+        body: bodies::config_matrix,
     },
     Gate {
         name: "selftest-blocked",

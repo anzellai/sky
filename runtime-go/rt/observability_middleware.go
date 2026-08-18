@@ -250,15 +250,25 @@ func generateRequestID() string {
 //     including any {wildcard} placeholders) when non-empty AND
 //     non-"/" (the bare "/" pattern means "catch-all" and would
 //     collapse every dynamic URL into one label).
-//  2. First two path segments joined with "/" — bounds label
-//     cardinality at the number of distinct top-level resources.
-//  3. "/" fallback.
+//  2. The FIRST path segment, and only when it matches a known-safe
+//     route shape (safeRouteSegment).
+//  3. The "/:dynamic" sentinel.
 //
-// Trade-off: a URL like /users/123/orders/456 becomes /users/123
-// under heuristic (2). Lossy but predictable. Users wanting true
-// route templates register their handlers with explicit patterns
-// (e.g. `mux.HandleFunc("/users/{id}", ...)`) which path 1 picks
-// up cleanly.
+// This used to take the first TWO raw segments, which put raw path
+// IDs into label values: /users/12345 minted a fresh series per
+// user, so 10k unique IDs exhausted the per-name series cap in 10k
+// requests and froze the request metrics for the process lifetime
+// (first-N-win, no eviction). And r.Pattern is EMPTY in the common
+// case — Sky.Live registers "/" and routes internally — so the
+// fallback is the path every real app takes.
+//
+// The first segment is still requester-chosen for unrouted paths,
+// which is why the series cap remains per-name with a global
+// backstop (telemetry/store.go) — this label merely stops handing
+// the requester a fresh series per URL. Users wanting true route
+// templates register explicit patterns (e.g.
+// `mux.HandleFunc("/users/{id}", ...)`) which path 1 picks up
+// cleanly.
 func routeLabelFor(r *http.Request) string {
 	if p := r.Pattern; p != "" && p != "/" {
 		return p
@@ -267,11 +277,39 @@ func routeLabelFor(r *http.Request) string {
 	if path == "" || path == "/" {
 		return "/"
 	}
-	segments := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 3)
-	if len(segments) >= 2 && segments[1] != "" {
-		return "/" + segments[0] + "/" + segments[1]
+	seg := strings.TrimPrefix(path, "/")
+	if i := strings.IndexByte(seg, '/'); i >= 0 {
+		seg = seg[:i]
 	}
-	return "/" + segments[0]
+	if safeRouteSegment(seg) {
+		return "/" + seg
+	}
+	return "/:dynamic"
+}
+
+// safeRouteSegment reports whether a path segment looks like a
+// hand-registered route name rather than data: starts with a
+// letter, continues with letters / digits / '_' / '-' / '.', and
+// stays within 64 bytes. IDs ("12345"), encodings ("%41"), and
+// junk collapse to the sentinel instead of becoming label values.
+func safeRouteSegment(s string) bool {
+	if len(s) == 0 || len(s) > 64 {
+		return false
+	}
+	c := s[0]
+	if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z',
+			c >= '0' && c <= '9', c == '_', c == '-', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ─── Status capture ───────────────────────────────────────────

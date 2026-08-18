@@ -101,6 +101,37 @@ func TestPostgresStore_PingHealthy(t *testing.T) {
 	}
 }
 
+// The offline gate (TestPostgresSessionPoolHasACeiling) asserts the ceiling on
+// the pool `openPostgresSessionPool` hands back. This asserts it on the store a
+// real engine actually produced, which is the half the offline one cannot see:
+// a newPostgresStore rewritten to call `sql.Open` for itself would satisfy the
+// offline gate and still ship an unlimited pool.
+func TestPostgresStore_PoolHasACeiling(t *testing.T) {
+	dsn := requirePostgresDSN(t)
+	// Read through the connection-demand table, NOT from
+	// `dbSharedAuxPoolConfig()` — the expression the acquire site evaluates.
+	// Comparing a pool with the config it was built from is an identity; what
+	// has to hold is that the pool matches the size the CLUSTER was sized for.
+	want, ok := dbAuxPoolConsumerMaxOpen("live-sessions")
+	if !ok {
+		t.Fatal(`"live-sessions" is not in dbAuxPoolConsumers — the session store's pool is ` +
+			`not counted in the connection demand any cluster is sized from`)
+	}
+	if want <= 0 {
+		t.Fatalf("the demand table attributes %d connections to the session store — "+
+			"this gate would prove nothing", want)
+	}
+	s, err := newPostgresStore(dsn, 30*time.Minute, 0)
+	if err != nil {
+		t.Fatalf("newPostgresStore: %v", err)
+	}
+	defer s.Close()
+	if got := s.db.Stats().MaxOpenConnections; got != want {
+		t.Errorf("session-store pool MaxOpenConnections = %d, want %d (0 means UNLIMITED, "+
+			"and this is the hottest pool in a Sky.Live app)", got, want)
+	}
+}
+
 // A read slides the TTL (L4): last_seen must advance on Get so an idle-but-active
 // session isn't reaped. Verified across instances (the reader updates the row).
 func TestPostgresStore_GetTouchesLastSeen(t *testing.T) {

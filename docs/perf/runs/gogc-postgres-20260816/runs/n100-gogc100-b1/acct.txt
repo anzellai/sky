@@ -1,0 +1,16 @@
+tag n100-gogc100-b1
+sessions 100
+gogc 100
+gomemlimit none
+elements 94
+idle_rss_kb 38512
+load_rss_kb 138800
+peak_rss_kb 138800
+window_peak_rss_kb 138800
+window_mean_rss_kb 138236
+pg_peak_rss_kb 82304
+app_cpu_delta_s 287.78
+wall_s 72
+generator_rc 0
+aborted no
+load1 7.97

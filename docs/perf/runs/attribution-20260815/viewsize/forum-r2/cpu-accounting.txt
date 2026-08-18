@@ -1,0 +1,3 @@
+run_wall_s        26
+app_cpu_delta_s   23.48
+loaded_rss_kb     67072

@@ -27,10 +27,12 @@ cd "$(dirname "$0")"
 ROOT="$(cd ../.. && pwd)"
 SKY="$ROOT/sky-out/sky"
 
-if [ ! -x "$SKY" ]; then
-    echo "✗ $SKY not found. Run 'cabal install ... exe:sky' from the repo root first." >&2
-    exit 1
-fi
+# `require_fresh_compiler <bin>` — a demo built by last month's compiler
+# demonstrates last month's compiler. The message it replaces named
+# `cabal install … exe:sky`, which builds the Haskell compiler retired in the
+# Rust rewrite. See the header of scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$SKY" "$ROOT"
 
 # Shared hub bearer (32 bytes minimum per the v0.16.1 PR4
 # HubExporter contract).

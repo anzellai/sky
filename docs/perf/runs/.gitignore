@@ -1,0 +1,5 @@
+# The harness compiles the load generator into its own run directory so
+# each run records the binary it used. That binary is ~5 MB and must not
+# be committed; the JSON, env.txt and summaries beside it are the record.
+skyliveload
+stage/

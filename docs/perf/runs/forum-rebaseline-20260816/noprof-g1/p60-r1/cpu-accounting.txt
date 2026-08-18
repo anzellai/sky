@@ -1,0 +1,4 @@
+run_wall_s        53
+app_cpu_delta_s   52.38
+loaded_rss_kb     248816
+generator_rc      0

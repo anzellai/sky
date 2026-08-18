@@ -51,6 +51,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"sky-app/rt/periodic"
+
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -334,13 +336,17 @@ func verifyCookieValue(key []byte, value string) (string, bool) {
 // traffic.
 func setConsoleV2Cookie(w http.ResponseWriter, key []byte, subject string) {
 	value := signCookieValue(key, subject, consoleAuthCookieV2MaxAge)
+	// `__Host-` mandates Secure (RFC 6265bis §4.1.3.2) — a client
+	// rejects the cookie outright without it. The shared predicate
+	// returns true for the name prefix, in dev as well as production.
+	sameSite := consoleCookieSameSite()
 	http.SetCookie(w, &http.Cookie{
 		Name:     consoleAuthCookieV2Name,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
-		SameSite: consoleCookieSameSite(),
+		Secure:   cookieSecureFor(nil, consoleAuthCookieV2Name, sameSite),
+		SameSite: sameSite,
 		MaxAge:   int(consoleAuthCookieV2MaxAge.Seconds()),
 	})
 }
@@ -369,13 +375,16 @@ func consoleCookieSameSite() http.SameSite {
 
 // clearConsoleV2Cookie zeros the cookie (logout, denial, mode change).
 func clearConsoleV2Cookie(w http.ResponseWriter) {
+	sameSite := consoleCookieSameSite()
 	http.SetCookie(w, &http.Cookie{
 		Name:     consoleAuthCookieV2Name,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
-		SameSite: consoleCookieSameSite(),
+		// `__Host-` mandates Secure; a clear must match the set's
+		// attributes or the client keeps the original cookie.
+		Secure:   cookieSecureFor(nil, consoleAuthCookieV2Name, sameSite),
+		SameSite: sameSite,
 		MaxAge:   -1,
 	})
 }
@@ -395,7 +404,7 @@ func evaluateConsoleAuth(w http.ResponseWriter, r *http.Request) bool {
 	// Sub-app context: a sub-app shouldn't host its own console
 	// (parent owns it). This is short-circuited at mount time but
 	// the per-request guard is cheap.
-	if base := os.Getenv("SKY_LIVE_BASE_PATH"); base != "" {
+	if base := skyGetenv("LIVE_BASE_PATH"); base != "" {
 		http.NotFound(w, r)
 		return false
 	}
@@ -827,14 +836,32 @@ func pruneConsumedJTI() {
 
 var jtiJanitorOnce sync.Once
 
+// jtiJanitorInterval is the JTI-prune period. A var so the regression gate can
+// drive several cycles in milliseconds — the defect is only visible ACROSS
+// cycles, and the shipped second one is five minutes after the first.
+var jtiJanitorInterval = 5 * time.Minute
+
+// startJTIJanitor spawns the consumed-JTI pruner.
+//
+// It was a bare `for { time.Sleep(...); pruneConsumedJTI() }` with no recover.
+// `pruneConsumedJTI` walks a sync.Map and deletes from it; a panic in there —
+// or in anything it grows to call — ended the janitor for the process
+// lifetime, and `consumedJTI` then grew without bound for as long as the
+// process ran. Low severity because the map only grows with successful URL
+// handshakes, but it is the same shape as the rest of the class and is fixed
+// with the same mechanism rather than left as the one that got away.
+//
+// The loop has no stop channel: it genuinely runs for the process lifetime. A
+// nil periodic.Config.Stop is how that is spelled — select on a nil channel
+// blocks forever — rather than an unreachable case nobody maintains.
 func startJTIJanitor() {
 	jtiJanitorOnce.Do(func() {
-		go func() {
-			for {
-				time.Sleep(5 * time.Minute)
-				pruneConsumedJTI()
-			}
-		}()
+		go periodic.Every(periodic.Config{
+			Name:     "console.jti-janitor",
+			Interval: jtiJanitorInterval,
+			Report:   periodicReport,
+			Work:     func(time.Time) error { pruneConsumedJTI(); return nil },
+		})
 	})
 }
 

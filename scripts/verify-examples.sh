@@ -20,6 +20,11 @@ set -o pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# `require_fresh_compiler <bin>` — a screenshot of a page rendered by last
+# week's compiler proves nothing about this week's. See the header of
+# scripts/lib/fresh-compiler.sh.
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+
 VDIR="$ROOT/_verify"
 mkdir -p "$VDIR"
 
@@ -33,10 +38,10 @@ if [[ ! -d "$ROOT/node_modules/playwright" ]]; then
     (cd "$ROOT" && npx playwright install chromium)
 fi
 
-if [[ ! -x "$ROOT/sky-out/sky" ]]; then
-    echo "[verify] sky-out/sky not found. Run scripts/build.sh first." >&2
-    exit 2
-fi
+# Was `[[ ! -x … ]]`, which answers "is there a compiler" and not "is it the
+# one this run is supposed to be verifying". scripts/verify-examples.mjs uses
+# the same path.
+require_fresh_compiler "$ROOT/sky-out/sky" "$ROOT"
 
 # Run from repo root so node finds ./node_modules/playwright.
 node "$ROOT/scripts/verify-examples.mjs" "$@"

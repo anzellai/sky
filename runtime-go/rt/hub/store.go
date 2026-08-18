@@ -37,6 +37,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"sky-app/rt"
+	"sky-app/rt/periodic"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -99,8 +102,38 @@ CREATE INDEX IF NOT EXISTS idx_span_time
 
 const timeFormat = "2006-01-02 15:04:05.000"
 
-// flushInterval governs how often the batcher commits.
-const flushInterval = 200 * time.Millisecond
+// defaultFlushInterval governs how often the batcher commits on time —
+// the "or interval" half of "size or interval, whichever comes first".
+// It bounds how long an item can sit unwritten on a hub that is not busy
+// enough to fill a batch.
+const defaultFlushInterval = 200 * time.Millisecond
+
+// flushInterval reads the batcher's tick through an override, and is a
+// function over a var rather than a const for one reason: it is the knob that
+// proves FlushSync is a real synchronisation and not a race that happens to be
+// won.
+//
+// Until this was fixed, FlushSync polled for an empty queue and then slept
+// `flushInterval + 50ms`. Raising this interval out of reach — a tuning change
+// nobody would look at twice — turned EIGHTEEN tests in this package red,
+// including `logs=384, want 500`: the exact count CI reported. Seventeen of
+// them reported zero rows, because an empty queue means the batcher has TAKEN
+// the items, not that it has committed them; only the 500-row test had enough
+// entries for the size trigger to commit three batches (3 x 128 = 384) before
+// the read. Every one of those tests was passing on the ticker rather than on
+// the flush they called.
+//
+// `TestMain` pins this to an hour for the whole package, so any regression to
+// an interval-dependent flush fails immediately and locally rather than
+// intermittently on a loaded runner.
+func flushInterval() time.Duration {
+	if d := flushIntervalOverride.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	return defaultFlushInterval
+}
+
+var flushIntervalOverride atomic.Int64
 
 // flushBatchSize triggers an early commit when the in-RAM batch
 // fills up before flushInterval elapses.
@@ -121,12 +154,49 @@ type Store struct {
 	opts storeOptions
 
 	queue chan pendingItem
-	stop  chan struct{}
-	wg    sync.WaitGroup
-	ready atomic.Bool
+	// flushReq carries a caller's request for a synchronous drain. The batcher
+	// closes the handed-in channel once every item queued before the request
+	// has been COMMITTED, which is the happens-before edge the old
+	// poll-and-sleep FlushSync never established. Unbuffered on purpose: the
+	// rendezvous is what guarantees the batcher has seen the request.
+	flushReq chan chan struct{}
+	stop     chan struct{}
+	wg       sync.WaitGroup
+	ready    atomic.Bool
+
+	// closeOnce + closed make Close a real barrier for EVERY caller, not only
+	// the one that wins the race to start the drain. See Close.
+	closeOnce sync.Once
+	closed    chan struct{}
+	closeErr  error
 
 	insertedTotal atomic.Uint64
 	droppedTotal  atomic.Uint64
+
+	// Saturation-warning epoch state. See warnSaturated.
+	//
+	// dropWarnWindowNanos is an override rather than a constructor
+	// parameter so a Store built as a literal behaves exactly like one
+	// built by newStore — there is no wiring for a caller to forget. Same
+	// shape as flushIntervalOverride.
+	dropWarnMu          sync.Mutex
+	dropWarnAt          time.Time
+	dropWarnReported    uint64
+	dropWarnWindowNanos atomic.Int64
+}
+
+// defaultDropWarnWindow bounds saturation warnings to one line per window.
+// A saturated hub drops thousands of items a second; a line each would bury
+// the one line an operator needs to see.
+const defaultDropWarnWindow = time.Minute
+
+// dropWarnWindow reads the epoch through its override, supplying the default
+// itself so a zero-valued Store cannot silently disable the rate limit.
+func (s *Store) dropWarnWindow() time.Duration {
+	if d := s.dropWarnWindowNanos.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	return defaultDropWarnWindow
 }
 
 // newStore opens / creates the hot DB under dataDir, runs the
@@ -169,11 +239,13 @@ func newStore(dataDir string, opts storeOptions) (*Store, error) {
 	}
 
 	s := &Store{
-		db:    db,
-		path:  path,
-		opts:  opts,
-		queue: make(chan pendingItem, HubBufferCap),
-		stop:  make(chan struct{}),
+		db:       db,
+		path:     path,
+		opts:     opts,
+		queue:    make(chan pendingItem, HubBufferCap),
+		flushReq: make(chan chan struct{}),
+		stop:     make(chan struct{}),
+		closed:   make(chan struct{}),
 	}
 	s.ready.Store(true)
 	s.wg.Add(2)
@@ -196,36 +268,105 @@ func (s *Store) Path() string {
 // Insert is the receiver-facing entry point. Non-blocking: enqueues
 // each item, dropping at the channel boundary when the writer is
 // saturated. A burst that fills the channel surfaces as a single
-// warn log line per epoch so the operator notices without a flood.
+// warn log line per epoch so the operator notices without a flood —
+// see warnSaturated, and TestHubStoreSaturationWarnsOncePerEpoch for
+// the gate that holds this sentence to it.
 func (s *Store) Insert(items []pendingItem) {
+	var dropped uint64
 	for i := range items {
 		select {
 		case s.queue <- items[i]:
 		default:
-			s.droppedTotal.Add(1)
+			dropped++
 		}
 	}
+	if dropped == 0 {
+		return
+	}
+	s.warnSaturated(s.droppedTotal.Add(dropped))
 }
 
-// Close drains the queue and shuts down the batcher + pruner. Idempotent.
-func (s *Store) Close() error {
-	if !s.ready.CompareAndSwap(true, false) {
-		return nil
+// warnSaturated emits at most one line per epoch, reporting every drop since
+// the previous line.
+//
+// The counter alone was not enough, and saying so is the point of this
+// function. `droppedTotal` is readable only through `Stats()`, which on the
+// hub nothing scrapes — so telemetry the hub was asked to keep disappeared
+// with nothing anywhere saying it had. Dropping is a legitimate response to
+// saturation; dropping in silence is not.
+//
+// The count is "since the last line", not "in this burst": the drops the rate
+// limit suppressed inside the epoch are carried into the next line, so the
+// rate limit cannot become a second way to lose data quietly.
+func (s *Store) warnSaturated(total uint64) {
+	s.dropWarnMu.Lock()
+	now := time.Now()
+	if !s.dropWarnAt.IsZero() && now.Sub(s.dropWarnAt) < s.dropWarnWindow() {
+		s.dropWarnMu.Unlock()
+		return
 	}
-	close(s.stop)
-	s.wg.Wait()
-	return s.db.Close()
+	since := total - s.dropWarnReported
+	s.dropWarnAt = now
+	s.dropWarnReported = total
+	s.dropWarnMu.Unlock()
+
+	log.Printf("[sky.hub] store queue saturated (cap=%d): dropped %d telemetry "+
+		"item(s) since the last warning, %d in this process; the batcher is not "+
+		"keeping up with the receiver", cap(s.queue), since, total)
+}
+
+// Close drains the queue and shuts down the batcher + pruner. Idempotent, and
+// idempotent in the sense that matters: EVERY caller blocks until the drain has
+// committed, not only the first one.
+//
+// The previous guard was `ready.CompareAndSwap(true, false)`, which returned
+// nil immediately to a second caller while the first was still draining. That
+// made "Close returned, so the data is on disk" true for one goroutine and
+// false for the other — the same defect as the old FlushSync, one layer up,
+// and the version of it that costs real data rather than a red test.
+func (s *Store) Close() error {
+	s.closeOnce.Do(func() {
+		s.ready.Store(false)
+		close(s.stop)
+		// The batcher's stop branch commits everything queued before it
+		// returns; waiting on the WaitGroup is what turns that into a promise
+		// the caller can rely on.
+		s.wg.Wait()
+		s.closeErr = s.db.Close()
+		close(s.closed)
+	})
+	<-s.closed
+	return s.closeErr
 }
 
 // batcher drains queue, flushes every flushInterval (or every
 // flushBatchSize items, whichever first). On stop, fully drains
 // the channel before exiting so a Close() right after Insert
 // doesn't lose entries.
+//
+// Three things end a batch: the size cap, the interval, and an explicit
+// synchronous flush request. The last is what gives callers read-your-writes
+// against an asynchronous writer — see FlushSync. This is the same shape as
+// `analyticsWriter.run` and `telemetry.persistence.flusher`, reused rather
+// than reinvented.
 func (s *Store) batcher() {
 	defer s.wg.Done()
-	tick := time.NewTicker(flushInterval)
+	tick := time.NewTicker(flushInterval())
 	defer tick.Stop()
 	batch := make([]pendingItem, 0, flushBatchSize)
+	// coalesce pulls everything already queued into the current batch, up to
+	// the size cap — a burst of N items becomes ceil(N/128) transactions
+	// rather than N.
+	coalesce := func() {
+		for len(batch) < flushBatchSize {
+			select {
+			case item := <-s.queue:
+				batch = append(batch, item)
+			default:
+				return
+			}
+		}
+	}
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -235,28 +376,40 @@ func (s *Store) batcher() {
 		}
 		batch = batch[:0]
 	}
+	// drainAll commits everything currently queued, not merely one batch.
+	drainAll := func() {
+		for {
+			coalesce()
+			flush()
+			if len(s.queue) == 0 {
+				return
+			}
+		}
+	}
 	for {
 		select {
 		case <-s.stop:
-			// Drain pending items so an in-flight burst at the
-			// moment of shutdown reaches disk before Close.
-			for {
-				select {
-				case item := <-s.queue:
-					batch = append(batch, item)
-					if len(batch) >= flushBatchSize {
-						flush()
-					}
-				default:
-					flush()
-					return
-				}
-			}
+			// Final drain. Everything that reached the queue before the stop
+			// is committed before this goroutine returns, and Close waits on
+			// the WaitGroup — so "the hub store is flushed on shutdown" is a
+			// guarantee the caller can rely on rather than a signal and a hope.
+			drainAll()
+			return
+
+		case done := <-s.flushReq:
+			// A caller is waiting. Drain to empty before closing `done`: every
+			// item enqueued before the request must be committed by the time
+			// the caller observes the close.
+			drainAll()
+			close(done)
+
 		case item := <-s.queue:
 			batch = append(batch, item)
+			coalesce()
 			if len(batch) >= flushBatchSize {
 				flush()
 			}
+
 		case <-tick.C:
 			flush()
 		}
@@ -384,9 +537,46 @@ func (s *Store) writeBatch(batch []pendingItem) error {
 	return nil
 }
 
+// periodicReport routes this package's background-loop failures into the hub's
+// log. periodic deliberately does no logging of its own — see that package's
+// header — because rt/hub cannot import rt and so cannot reach rt's structured
+// logger. `log.Printf` with the `[sky.hub]` tag is what this package's
+// operators already read.
+// The stack goes through rt.LogRecoveredPanic — exported for exactly this
+// reason ("a second copy of the policy is exactly the shape of the defect that
+// file closes"), and reachable because rt/hub imports rt rather than the other
+// way round.
+func periodicReport(r periodic.Report) {
+	switch {
+	case r.Recovered != nil:
+		rt.LogRecoveredPanic("sky.hub", r.Loop, r.Recovered)
+		log.Printf("[sky.hub] %s: cycle panicked: %v — this cycle is lost, the next tick will retry",
+			r.Loop, r.Recovered)
+	case r.Err != nil:
+		log.Printf("[sky.hub] %s: %v", r.Loop, r.Err)
+	}
+}
+
 // pruner runs every PruneInterval and deletes rows older than
 // RetentionHours.
-func (s *Store) pruner() {
+//
+// The recover is per cycle (periodic.Every → periodic.Guard). This loop had
+// none — the exact mirror of the analytics retention pruner, which had a
+// recover at its goroutine's top level and discarded its error while this one
+// checked its error and had no recover at all. Each was missing precisely what
+// the other had, and both end the same way: retention stops for the process
+// lifetime and the telemetry tables grow without bound.
+//
+// The panic is not hypothetical. runPrune drives a database/sql driver, and
+// modernc's SQLite panics on a closed or nil underlying handle; a driver that
+// panics once panics every interval, which is why the recover is scoped to the
+// cycle rather than to the loop.
+func (s *Store) pruner() { s.runPruner(s.db) }
+
+// runPruner is the prune loop, taking its execer as a parameter so the
+// regression gate can drive the REAL loop with a database that panics. See
+// hubPruneExecer.
+func (s *Store) runPruner(db hubPruneExecer) {
 	defer s.wg.Done()
 	// Stagger the first sweep so a busy boot doesn't immediately
 	// hammer the DB with a giant DELETE. 60 s for normal config;
@@ -395,22 +585,33 @@ func (s *Store) pruner() {
 	if s.opts.pruneInterval < first {
 		first = s.opts.pruneInterval
 	}
-	timer := time.NewTimer(first)
-	defer timer.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case <-timer.C:
-			if err := s.runPrune(); err != nil {
-				log.Printf("[sky.hub] prune: %v", err)
-			}
-			timer.Reset(s.opts.pruneInterval)
-		}
+	select {
+	case <-s.stop:
+		return
+	case <-time.After(first):
 	}
+	prune := func() error { return s.runPruneOn(db) }
+	periodic.Guard("hub.pruner", periodicReport, prune)
+	periodic.Every(periodic.Config{
+		Name:     "hub.pruner",
+		Interval: s.opts.pruneInterval,
+		Stop:     s.stop,
+		Report:   periodicReport,
+		Work:     func(time.Time) error { return prune() },
+	})
 }
 
-func (s *Store) runPrune() error {
+// hubPruneExecer is the one method the pruner needs from the store. A narrow
+// interface rather than *sql.DB so the regression gate can inject an Exec that
+// panics — the behaviour the loop has to survive, and one a real driver
+// produces only when its handle is already closed.
+type hubPruneExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func (s *Store) runPrune() error { return s.runPruneOn(s.db) }
+
+func (s *Store) runPruneOn(db hubPruneExecer) error {
 	now := time.Now().UTC()
 	cutoff := now.Add(-time.Duration(s.opts.retentionHours) * time.Hour)
 	cutoffStr := formatTime(cutoff)
@@ -419,7 +620,7 @@ func (s *Store) runPrune() error {
 		`DELETE FROM telemetry_metric WHERE time < ?`,
 		`DELETE FROM telemetry_span   WHERE time < ?`,
 	} {
-		if _, err := s.db.Exec(q, cutoffStr); err != nil {
+		if _, err := db.Exec(q, cutoffStr); err != nil {
 			return err
 		}
 	}
@@ -716,18 +917,50 @@ func (s *Store) Stats() (inserted, dropped uint64) {
 	return s.insertedTotal.Load(), s.droppedTotal.Load()
 }
 
-// FlushSync waits for any in-flight queue entries to commit. Tests
-// only — production code lets the 200 ms tick handle latency.
+// FlushSync asks the batcher to drain synchronously and waits for it. When it
+// returns, every item enqueued by the calling goroutine before the call has
+// been committed and is visible to any reader of the database.
+//
+// # Why this is a rendezvous and not a sleep
+//
+// It used to poll until `len(s.queue) == 0` and then sleep one flush interval
+// plus 50 ms. Both halves were wrong, and together they produced a package
+// that was green on a quiet laptop and red on a loaded CI runner:
+//
+//   - AN EMPTY QUEUE IS NOT A COMMITTED WRITE. The batcher moves items out of
+//     the channel into a local slice and commits them later, so the queue
+//     reaches zero at the moment the data is LEAST durable — in one
+//     goroutine's stack, in no transaction.
+//
+//   - The trailing sleep was covering that gap by out-waiting the batcher's
+//     own ticker. That is not synchronisation, it is a race with a handicap:
+//     it holds only while the runner schedules the batcher promptly and the
+//     three SQLite transactions it still owes finish inside 250 ms. Under
+//     `-race` they did not, and CI reported `logs=384, want 500` — three
+//     size-triggered batches committed, the 116-item remainder still in the
+//     batcher's hands.
+//
+// The batcher now answers an explicit request and closes the caller's channel
+// only after the drain has COMMITTED, which is a happens-before edge rather
+// than a probability. `timeout` bounds the wait so a wedged batcher degrades
+// the caller instead of hanging it.
 func (s *Store) FlushSync(timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if len(s.queue) == 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	done := make(chan struct{})
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case s.flushReq <- done:
+	case <-s.stop:
+		// Already shutting down; the stop drain commits the queue and Close is
+		// what waits for it.
+		return
+	case <-timer.C:
+		return
 	}
-	// One extra tick for the in-flight batch.
-	time.Sleep(flushInterval + 50*time.Millisecond)
+	select {
+	case <-done:
+	case <-timer.C:
+	}
 }
 
 // RunPruneNow triggers the prune sweep synchronously. Tests use

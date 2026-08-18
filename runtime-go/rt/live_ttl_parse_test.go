@@ -56,9 +56,13 @@ func TestParseTTL(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := parseTTL(c.env, c.toml, def)
+			// `env`/`toml` are now simply the FIRST and SECOND candidate
+			// layers; which layer is which is `configLayers`' decision, not
+			// this parser's. What is under test here is unchanged: the value
+			// shapes accepted, and fall-through when a layer is unparseable.
+			got := parseTTL([]string{c.env, c.toml}, def)
 			if got != c.expected {
-				t.Errorf("parseTTL(%q, %q, %v) = %v; want %v",
+				t.Errorf("parseTTL([%q, %q], %v) = %v; want %v",
 					c.env, c.toml, def, got, c.expected)
 			}
 		})

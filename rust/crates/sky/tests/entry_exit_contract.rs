@@ -22,6 +22,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn scratch(tag: &str) -> PathBuf {
@@ -119,8 +123,7 @@ fn entry_task_result_is_not_discarded_in_emitted_go() {
 /// says something about the failure.
 #[test]
 fn failing_entry_task_exits_nonzero_and_reports() {
-    if !have_go() {
-        eprintln!("skipping behavioural leg: no `go` on PATH (emission leg still asserts)");
+    if !required(Need::Go, have_go()) {
         return;
     }
     let dir = project("run", FAILING_MAIN);
@@ -152,8 +155,7 @@ fn failing_entry_task_exits_nonzero_and_reports() {
 /// made noisy. Without this the fix could "pass" by failing everything.
 #[test]
 fn succeeding_entry_still_exits_zero() {
-    if !have_go() {
-        eprintln!("skipping behavioural leg: no `go` on PATH");
+    if !required(Need::Go, have_go()) {
         return;
     }
     let dir = project("ok", OK_MAIN);

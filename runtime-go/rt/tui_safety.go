@@ -45,7 +45,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"sync"
 	"syscall"
 
@@ -228,9 +227,14 @@ func safeGo(name string, fn func()) {
 		defer func() {
 			if r := recover(); r != nil {
 				tuiTeardown()
-				fmt.Fprintf(os.Stderr, "\nSky runtime panic in %s: %v\n\n%s\n",
-					name, r, debug.Stack())
-				os.Exit(2)
+				// Terminal is restored, so it is safe to write. The
+				// stack still obeys the production policy: a TUI-shaped
+				// job on a server ships its stderr to the same
+				// aggregator as any other app.
+				LogRecoveredPanic("sky.tui", name, r)
+				// ExitProcess, not os.Exit: a goroutine ending the process
+				// skips main's `defer rt.StopEmbeddedPostgres()`.
+				ExitProcess(2)
 			}
 		}()
 		fn()
@@ -264,7 +268,7 @@ func installCleanShutdown() chan struct{} {
 			if r := recover(); r != nil {
 				tuiTeardown()
 				fmt.Fprintf(os.Stderr, "\nSky signal handler panic: %v\n", r)
-				os.Exit(2)
+				ExitProcess(2)
 			}
 		}()
 		select {
@@ -276,7 +280,7 @@ func installCleanShutdown() chan struct{} {
 			}
 			// 128 + signal-number is the POSIX convention. Lets the
 			// parent shell see "killed by SIGTERM" via $?.
-			os.Exit(128 + num)
+			ExitProcess(128 + num)
 		case <-done:
 			signal.Stop(sigCh)
 		}

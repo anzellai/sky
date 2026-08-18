@@ -1,0 +1,33 @@
+{
+  "label": "ab-control-n100-r3",
+  "url": "http://127.0.0.1:8541",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 123898,
+  "interactions_per_sec": 2752.5391278142406,
+  "p50_ms": 29.537,
+  "p95_ms": 87.287,
+  "p99_ms": 126.069,
+  "max_ms": 280.201,
+  "outcomes": {
+    "ok": 123898
+  },
+  "error_rate": 0,
+  "patches_total": 247796,
+  "interactions_with_patches": 123898,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 765,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 4.090816262659122,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T11:21:46Z"
+}

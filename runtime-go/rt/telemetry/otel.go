@@ -191,8 +191,7 @@ func InitTracer(cfg TracerConfig) error {
 				),
 			)
 			opts := []sdktrace.TracerProviderOption{
-				sdktrace.WithSampler(sdktrace.ParentBased(
-					sdktrace.TraceIDRatioBased(cfg.SampleRate))),
+				sdktrace.WithSampler(skySampler(cfg.SampleRate)),
 				sdktrace.WithResource(res),
 			}
 			for _, p := range extraProcessors {
@@ -285,15 +284,12 @@ func InitTracer(cfg TracerConfig) error {
 		resource.WithHost(),
 	)
 
-	// Sampler: ParentBased so child spans inherit the root's
-	// decision; root uses TraceIDRatioBased(cfg.SampleRate). The
+	// Sampler: see skySampler for the remote-parent policy. The
 	// AlwaysSample fallback for errors is implemented at the span
 	// level via span.SetStatus(Error) + a custom sampler hook —
 	// for v1 we accept the simpler "head-based only" model and add
 	// tail-based error sampling in v1.x.
-	sampler := sdktrace.ParentBased(
-		sdktrace.TraceIDRatioBased(cfg.SampleRate),
-	)
+	sampler := skySampler(cfg.SampleRate)
 
 	// Span processor: serverless mode flushes per span end
 	// (SimpleSpanProcessor), VM mode batches (default 5s flush).
@@ -350,6 +346,45 @@ func ShutdownTracer(timeout time.Duration) error {
 // and by Http.get/post to inject outbound headers.
 func Propagator() propagation.TextMapPropagator {
 	return otel.GetTextMapPropagator()
+}
+
+// skySampler builds the sampler both InitTracer paths install.
+//
+// An inbound W3C `traceparent` header is UNAUTHENTICATED wire
+// input: with a plain ParentBased sampler, any client sending
+// sampled=01 forced 100% sampling (export volume + span-ring churn
+// dictated by the attacker at zero cost), and sampled=00 let a
+// client suppress tracing of its own requests. Sky therefore
+// applies the configured ratio to REMOTE parents in both
+// directions: trace CONTINUITY is preserved (the inbound trace-id
+// is still adopted and propagated onward, so a collector that saw
+// the upstream spans can join them), but the local sampling
+// DECISION is Sky's own. In-process (local) parent spans keep
+// inheriting, so trace trees never fragment inside one process.
+//
+// Deployments behind a trusted head-sampling gateway — where the
+// parent decision is made by infrastructure the operator controls,
+// not by the public client — opt back in with
+// SKY_TRACE_HONOR_REMOTE_PARENT=1. Documented in
+// docs/observability.md.
+func skySampler(rate float64) sdktrace.Sampler {
+	ratio := sdktrace.TraceIDRatioBased(rate)
+	if honorRemoteParentSampling() {
+		return sdktrace.ParentBased(ratio)
+	}
+	return sdktrace.ParentBased(ratio,
+		sdktrace.WithRemoteParentSampled(ratio),
+		sdktrace.WithRemoteParentNotSampled(ratio),
+	)
+}
+
+// honorRemoteParentSampling reads the trusted-gateway opt-in.
+func honorRemoteParentSampling() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SKY_TRACE_HONOR_REMOTE_PARENT"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // ─── Helpers ──────────────────────────────────────────────────

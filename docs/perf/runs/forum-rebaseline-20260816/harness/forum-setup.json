@@ -1,0 +1,9 @@
+[
+  { "name": "nav-to-login",
+    "hid_suffix": ".click",
+    "hid_context": ">sign in<",
+    "args": [] },
+  { "name": "sign-in",
+    "hid_suffix": ".submit",
+    "args": [ { "username": "loaduser", "password": "loadpw" } ] }
+]

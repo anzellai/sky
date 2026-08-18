@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 141 |
-| covered by the new corpus (>= Asserted) | 127 |
-| verdict `stronger` | 122 |
+| surfaces | 145 |
+| covered by the new corpus (>= Asserted) | 131 |
+| verdict `stronger` | 126 |
 | verdict `equal` | 19 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
 | stdlib modules (denominator) | 87 |
-| stdlib entries (denominator) | 1776 |
+| stdlib entries (denominator) | 1782 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 6 | 6.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 778 | 43.8% |
-| symbols unreferenced under the generous rule | 699 | 39.4% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 784 | 44.0% |
+| symbols unreferenced under the generous rule | 705 | 39.6% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -133,10 +133,14 @@ None.
 | `http.sse-websocket` | http | Asserted | Falsified | stronger |
 | `lang.constructs` | language | Asserted | Falsified | stronger |
 | `lsp` | tooling | Asserted | Falsified | stronger |
+| `meta.config-effective-values` | meta | None | Falsified | stronger |
+| `meta.config-surface` | meta | None | Falsified | stronger |
 | `meta.coverage-accounting` | meta | None | Falsified | stronger |
+| `observability.analytics-store` | observability | None | Falsified | stronger |
 | `observability.console` | observability | Asserted | Falsified | stronger |
 | `runtime.go-rt` | runtime | Asserted | Asserted | equal |
 | `runtime.panic-classes` | runtime | Asserted | Falsified | stronger |
+| `runtime.periodic-goroutines` | runtime | None | Falsified | stronger |
 | `skylive.multi-replica` | skylive | Asserted | Falsified | stronger |
 | `skylive.session-sse-csrf` | skylive | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Basics` | stdlib | None | Falsified | stronger |
@@ -234,6 +238,8 @@ None.
 
 | gate | tier | falsifier | surfaces |
 |---|---|---|---|
+| `analytics-prune-errors-are-reported` | T1 | PROVEN | `observability.analytics-store` |
+| `analytics-retention-survives-a-panic` | T1 | PROVEN | `observability.analytics-store` |
 | `apps-bundled` | T1 | PROVEN | `observability.console` · `skylive.session-sse-csrf` |
 | `apps-dispatch` | T1 | PROVEN | `stdlib.Std.Jobs` · `stdlib.Std.Db.Schema` · `stdlib.Std.Db.Migrate` · `stdlib.Std.Markdown` · `stdlib.Std.Email` · `db.migrations` · `db.sqlite` · `cli.db` |
 | `apps-dispatch-destructive` | T1 | PROVEN | `db.migrations` · `cli.db` |
@@ -245,7 +251,10 @@ None.
 | `apps-ledger-postgres` | T3 | PROVEN | `db.postgres` · `db.migrations` |
 | `apps-relay` | T1 | PROVEN | `http.middleware-ratelimit` · `http.sse-websocket` · `runtime.panic-classes` |
 | `cli-verbs` | T1 | PROVEN | `cli.init` · `cli.clean` · `cli.watch` · `cli.db` · `cli.install` · `cli.update` · `cli.upgrade` |
+| `config-matrix` | T1 | PROVEN | `meta.config-effective-values` |
+| `config-surface` | T1 | PROVEN | `meta.config-surface` |
 | `conformance` | T1 | PROVEN | `db.sqlite` · `db.codec-store` · `auth.password-session` |
+| `console-analytics-queries-are-bounded` | T1 | PROVEN | `observability.analytics-store` · `observability.console` |
 | `corpus` | T2 | PROVEN | `lang.constructs` · `compiler.infer` · `compiler.lower-emit-shape` · `stdlib.Sky.Core.String` · `stdlib.Sky.Core.List` · `stdlib.Sky.Core.Dict` · `stdlib.Sky.Core.Set` · `stdlib.Sky.Core.Maybe` · `stdlib.Sky.Core.Result` · `stdlib.Sky.Core.Char` · `stdlib.Sky.Core.Encoding` · `stdlib.Sky.Core.Crypto` · `stdlib.Sky.Core.Math` · `stdlib.Sky.Core.Basics` · `stdlib.Sky.Core.ToString` · `stdlib.Sky.Core.Path` · `stdlib.Sky.Core.Error` · `stdlib.Sky.Core.Regex` · `stdlib.Sky.Core.Json.Encode` · `stdlib.Sky.Core.Json.Decode` · `stdlib.Std.Decimal` · `stdlib.Std.Money` · `stdlib.Std.Csv` · `stdlib.Sky.Core.Bytes` · `stdlib.Sky.Core.Jwt` · `stdlib.Std.Codec` · `stdlib.Std.Markdown` · `stdlib.Std.Compression` |
 | `corpus-emit-shape` | T1 | PROVEN | `compiler.lower-emit-shape` · `compiler.codegen-determinism` |
 | `corpus-isolation` | T2 | PROVEN | `compiler.shared-world` · `lang.constructs` |
@@ -253,7 +262,11 @@ None.
 | `corpus-reject` | T1 | PROVEN | `compiler.reject` · `compiler.resolve` · `lang.constructs` |
 | `corpus-witness` | T2 | PROVEN | `compiler.codegen-determinism` · `compiler.lower-emit-shape` |
 | `coverage-ledger` | T1 | PROVEN | `meta.coverage-accounting` |
+| `erasure-path-uses-an-index` | T1 | PROVEN | `observability.analytics-store` |
+| `jobs-complete-failure-is-reported` | T1 | PROVEN | `runtime.periodic-goroutines` |
+| `live-time-every-mutex-survives-a-panic` | T1 | PROVEN | `runtime.periodic-goroutines` · `skylive.session-sse-csrf` |
 | `lsp` | T1 | PROVEN | `lsp` |
+| `periodic-loops-recover-per-cycle` | T1 | PROVEN | `runtime.periodic-goroutines` |
 | `reject` | T1 | PROVEN | `compiler.reject` · `compiler.infer` |
 | `roundtrip` | T1 | PROVEN | `compiler.parse` · `lang.constructs` |
 | `shared-world` | T1 | PROVEN | `compiler.shared-world` · `compiler.resolve` |

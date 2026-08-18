@@ -1,0 +1,4 @@
+rep	ips	p50_ms	p95_ms	p99_ms	cpu_s_win	cpu_ms_per_int	app_core_pct	rss_idle_kb	rss_load_med_kb	rss_load_max_kb	ints	err	patch_rate	valid	gen_cpu_pct	gen_sat	els	cover
+1	299.3	103.254	139.858	149.594	45.16	3.3470	100.4	28596	53956	58176	13493	0	1	true	3.68	false	94	full
+2	288.9	106.585	146.341	159.384	45.16	3.4670	100.4	28272	57692	60168	13026	0	1	true	3.84	false	94	full
+3	299.7	102.676	139.597	150.238	45.16	3.3416	100.3	28008	53304	57612	13513	0	1	true	3.70	false	94	full

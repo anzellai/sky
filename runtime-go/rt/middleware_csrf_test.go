@@ -18,6 +18,16 @@ import (
 //   6. Unsafe method (POST) with cookie + matching X-Csrf-Token header → handler runs.
 //   7. Unsafe method (POST) with cookie + MISMATCHING token → 403 + "token mismatch".
 
+// NOTE — every test in this file shares the cookie-less handler below,
+// which makes the whole file structurally blind to what the handler's
+// OWN cookies do. `withCsrf` used to assign `Headers["Set-Cookie"]`
+// unconditionally and destroy them. That class is covered by
+// `TestWithCsrf_PreservesHandlerCookie` and
+// `TestWithCsrf_IssuesCookieForTypedResponseShape` in
+// response_cookies_test.go, which run handlers that DO set a cookie and
+// assert on parsed cookies rather than on substrings. Keep those in mind
+// before adding a case here.
+
 func runCsrfMiddleware(t *testing.T, req SkyRequest) SkyResponse {
 	t.Helper()
 	handlerCalled := false

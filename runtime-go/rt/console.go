@@ -139,7 +139,7 @@ func ResetConsoleHealthFlagsForTesting() {
 // is true but neither flag is set after both mount paths ran, exit
 // loudly rather than silently leave the user with a missing surface.
 func shouldHaveConsole() bool {
-	if base := os.Getenv("SKY_LIVE_BASE_PATH"); base != "" {
+	if base := skyGetenv("LIVE_BASE_PATH"); base != "" {
 		return false
 	}
 	if v := os.Getenv("SKY_CONSOLE_EMBED"); v == "off" || v == "0" || v == "false" {
@@ -153,7 +153,9 @@ func shouldHaveConsole() bool {
 // invariant. Called from Sky.Live + Sky.Http.Server boot AFTER both
 // `MountEmbeddedConsole` and `MountObservabilityEndpoints` have run.
 // When `shouldHaveConsole` is true but BOTH mount-health flags are
-// false, prints a stderr line and `os.Exit(1)`. Otherwise no-op.
+// false, prints a stderr line and exits 1 (via `ExitProcess`, so an
+// `--embed` app's database is stopped rather than orphaned).
+// Otherwise no-op.
 //
 // Idempotent: re-running with the same env + flag state is safe.
 // The exit path is OS-level so tests must drive it via subprocess
@@ -171,7 +173,7 @@ func AssertConsoleInvariantOrExit() {
 			"Either link the console_app blank import (the compiler emits this for every Sky.Live + Sky.Http.Server "+
 			"app — a hand-edited main.go may have dropped it) OR set SKY_CONSOLE_AUTH=off to declare the surface "+
 			"intentionally absent.\n", mode)
-	os.Exit(1)
+	ExitProcess(1)
 }
 
 // MountConsoleEndpoints wires the console routes onto a ServeMux.
@@ -282,7 +284,7 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	// duplicates the v0.15.x maybeAutoMountConsole guard so apps
 	// transitioning from the old runtime don't gain an unexpected
 	// sub-mount.
-	if base := os.Getenv("SKY_LIVE_BASE_PATH"); base != "" {
+	if base := skyGetenv("LIVE_BASE_PATH"); base != "" {
 		return
 	}
 	if v := os.Getenv("SKY_CONSOLE_EMBED"); v == "off" || v == "0" || v == "false" {

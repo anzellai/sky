@@ -54,11 +54,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+
+	"sky-app/rt/periodic"
+
 	"io"
 	"net/http"
-	"os"
 	"reflect"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -117,13 +118,13 @@ const (
 )
 
 type wsEvent struct {
-	kind      wsEventKind
-	text      string   // wsMessageEv text — UTF-8 frame
-	binary    string   // wsMessageEv binary — byte string (Sky.Core.Bytes alias)
-	isBinary  bool     // distinguishes text vs binary message
-	closeCode int      // wsCloseEv — WebSocket close code
+	kind        wsEventKind
+	text        string // wsMessageEv text — UTF-8 frame
+	binary      string // wsMessageEv binary — byte string (Sky.Core.Bytes alias)
+	isBinary    bool   // distinguishes text vs binary message
+	closeCode   int    // wsCloseEv — WebSocket close code
 	closeReason string // wsCloseEv — close reason string
-	err       any      // wsErrorEv — Sky-shaped Error ADT
+	err         any    // wsErrorEv — Sky-shaped Error ADT
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -149,8 +150,16 @@ type wsHandle struct {
 	// race the underlying conn.Write.
 	writeMu sync.Mutex
 
+	// lastActivityNano — unix-nano of the last sign of life. See the
+	// identically-named field on streamHandle: read only by the sessionless
+	// reaper to reap an OPEN sessionless socket that has gone silent.
+	lastActivityNano atomic.Int64
+
 	closeOnce sync.Once
 }
+
+func (sh *wsHandle) touch()                      { sh.lastActivityNano.Store(time.Now().UnixNano()) }
+func (sh *wsHandle) lastActivityUnixNano() int64 { return sh.lastActivityNano.Load() }
 
 // Close marks the handle closed, sends a Normal close frame, releases
 // the conn, and cancels the context (terminating the reader). Idempotent.
@@ -173,6 +182,7 @@ func (sh *wsHandle) IsClosed() bool { return sh.closed.Load() }
 // Returns true if the event landed; false if the consumer stalled past
 // wsConsumerTimeout (signal to abandon the connection).
 func (sh *wsHandle) deliver(ev wsEvent) bool {
+	sh.touch()
 	select {
 	case sh.ch <- ev:
 		return true
@@ -215,7 +225,11 @@ func nextWsID() int64 {
 
 func registerWs(sess *liveSession, sh *wsHandle) {
 	if sess == nil {
+		sh.touch()
 		sessionlessSockets.Store(sh.id, sh)
+		// No markDone reclaims a sessionless socket; the reaper is the only
+		// backstop against an abandoned open connection. Start it on first use.
+		ensureSessionlessReaper()
 		return
 	}
 	sess.socketsMu.Lock()
@@ -476,14 +490,23 @@ func wsExtractStringPair(v any) (string, string) {
 }
 
 // wsHeartbeat fires Ping at the given interval. Exits on socket close.
+// wsHeartbeat pings the peer on a ticker until the connection is done.
+//
+// The recover is per cycle (periodic.Every → periodic.Guard). A panic out of
+// the Ping used to end the heartbeat silently, and a connection that is never
+// pinged again is one whose death is never detected: it sits open, holding its
+// buffers, until something else notices. The `stopped` flag is how a failed
+// ping still ends the loop — periodic.Every owns the loop now, so "return"
+// from the work has to be spelled as a stop signal rather than a `return`.
 func wsHeartbeat(sh *wsHandle, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-sh.done:
-			return
-		case <-ticker.C:
+	stopped := make(chan struct{})
+	periodic.Every(periodic.Config{
+		Name:     "ws.client-heartbeat",
+		Interval: interval,
+		Stop:     sh.done,
+		AlsoStop: stopped,
+		Report:   periodicReport,
+		Work: func(time.Time) error {
 			pingCtx, cancel := context.WithTimeout(sh.ctx, 10*time.Second)
 			err := sh.conn.Ping(pingCtx)
 			cancel()
@@ -491,10 +514,11 @@ func wsHeartbeat(sh *wsHandle, interval time.Duration) {
 				// Peer dead — close the connection so the reader
 				// surfaces the error.
 				sh.Close()
-				return
+				close(stopped)
 			}
-		}
-	}
+			return nil
+		},
+	})
 }
 
 // WebSocket_send implements:
@@ -649,13 +673,13 @@ func Sub_subscribeWebSocket(socketID, kindArg, toMsg any) SkySub {
 //	               | InternalError | Custom Int
 
 const (
-	wsMessageTextTag    = 0
-	wsMessageBinaryTag  = 1
-	wsCloseCodeNormalTag          = 0
-	wsCloseCodeGoingAwayTag       = 1
-	wsCloseCodeUnsupportedTag     = 2
-	wsCloseCodeInternalTag        = 3
-	wsCloseCodeCustomTag          = 4
+	wsMessageTextTag          = 0
+	wsMessageBinaryTag        = 1
+	wsCloseCodeNormalTag      = 0
+	wsCloseCodeGoingAwayTag   = 1
+	wsCloseCodeUnsupportedTag = 2
+	wsCloseCodeInternalTag    = 3
+	wsCloseCodeCustomTag      = 4
 )
 
 func buildWebSocketMessageValue(ev wsEvent) any {
@@ -903,9 +927,8 @@ func (app *liveApp) dispatchOneWsSub(sess *liveSession, reg *wsSubReg, ev wsEven
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr,
-					"[sky.websocket] decoder panic, dropping event kind=%d: %v\n%s\n",
-					ev.kind, r, debug.Stack())
+				LogRecoveredPanic("sky.websocket",
+					fmt.Sprintf("decoder, dropping event kind=%d", ev.kind), r)
 				msg = nil
 			}
 		}()

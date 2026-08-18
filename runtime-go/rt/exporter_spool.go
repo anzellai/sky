@@ -57,6 +57,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"sky-app/rt/periodic"
 	"sky-app/rt/telemetry"
 
 	_ "modernc.org/sqlite"
@@ -697,37 +698,56 @@ func (e *HubExporter) activeSpool() spool {
 // spoolRetentionSweep runs PruneOlderThan + TruncateToSize on a tick.
 // Lives in its own goroutine so the drainer hot-loop stays clean.
 // Started by Start(); exits on stopCh.
+// The recover is per sweep (periodic.Every → periodic.Guard). It used to sit
+// at this goroutine's top level in Start(), so the first panic ended the sweep
+// for the process lifetime: the spool then grew without bound and every boot
+// replayed the whole of it. The errors below were `err == nil &&` guards that
+// silently did nothing on failure; they are now reported, so a spool that has
+// never once pruned stops looking like one with nothing to prune.
 func (e *HubExporter) spoolRetentionSweep(ctx context.Context, cfg spoolConfig) {
-	tick := time.NewTicker(cfg.sweepEvery)
-	defer tick.Stop()
-	for {
-		select {
-		case <-e.stopCh:
-			return
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-		sp := e.activeSpool()
-		if sp == nil {
-			continue
-		}
-		sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		cutoff := time.Now().Add(-cfg.retention)
-		if deleted, err := sp.PruneOlderThan(sweepCtx, cutoff); err == nil && deleted > 0 {
-			telemetry.Default().Add("sky_telemetry_spool_pruned_total",
-				map[string]string{"reason": "retention"}, float64(deleted))
-		}
-		if deleted, err := sp.TruncateToSize(sweepCtx, cfg.maxBytes); err == nil && deleted > 0 {
-			telemetry.Default().Add("sky_telemetry_spool_pruned_total",
-				map[string]string{"reason": "size-cap"}, float64(deleted))
-		}
-		if size, err := sp.Size(sweepCtx); err == nil {
-			telemetry.Default().SetGauge("sky_telemetry_spool_size_bytes",
-				map[string]string{"mode": sp.Mode().String()}, float64(size))
-		}
-		cancel()
+	periodic.Every(periodic.Config{
+		Name:     "hub-exporter.spool-sweep",
+		Interval: cfg.sweepEvery,
+		Stop:     e.stopCh,
+		AlsoStop: ctx.Done(),
+		Report:   exporterPeriodicReport,
+		Work:     func(time.Time) error { return e.spoolSweepOnce(ctx, cfg) },
+	})
+}
+
+// spoolSweepOnce is ONE retention sweep. Every step runs even if an earlier
+// one failed — the size cap and the retention window bound the spool for
+// different reasons, and a failure in one must not silently cancel the other.
+func (e *HubExporter) spoolSweepOnce(ctx context.Context, cfg spoolConfig) error {
+	sp := e.activeSpool()
+	if sp == nil {
+		return nil
 	}
+	sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var errs []error
+	cutoff := time.Now().Add(-cfg.retention)
+	if deleted, err := sp.PruneOlderThan(sweepCtx, cutoff); err != nil {
+		errs = append(errs, fmt.Errorf("pruning spool older than %s: %w — the spool "+
+			"keeps growing and every boot replays more of it", cutoff.Format(time.RFC3339), err))
+	} else if deleted > 0 {
+		telemetry.Default().Add("sky_telemetry_spool_pruned_total",
+			map[string]string{"reason": "retention"}, float64(deleted))
+	}
+	if deleted, err := sp.TruncateToSize(sweepCtx, cfg.maxBytes); err != nil {
+		errs = append(errs, fmt.Errorf("truncating spool to %d bytes: %w — the size "+
+			"cap is not being enforced", cfg.maxBytes, err))
+	} else if deleted > 0 {
+		telemetry.Default().Add("sky_telemetry_spool_pruned_total",
+			map[string]string{"reason": "size-cap"}, float64(deleted))
+	}
+	if size, err := sp.Size(sweepCtx); err != nil {
+		errs = append(errs, fmt.Errorf("reading spool size: %w — the size gauge is stale", err))
+	} else {
+		telemetry.Default().SetGauge("sky_telemetry_spool_size_bytes",
+			map[string]string{"mode": sp.Mode().String()}, float64(size))
+	}
+	return errors.Join(errs...)
 }
 
 // replaySpoolOnBoot — at the start of the drainer, pull any batches
@@ -799,6 +819,14 @@ func (e *HubExporter) spoolPersistAttempt(ctx context.Context, batch []telemetry
 // effort; a failure here means the row will be retried on the next
 // boot (idempotent — the hub already has the data, the next push
 // becomes a duplicate which the hub deduplicates by signal id).
+//
+// "Best-effort" is the RETRY policy, not a licence to say nothing. `_ =
+// sp.Ack(...)` made an Ack that never once succeeded look identical to one
+// that always did: the rows stay unacked, the spool grows without bound, and
+// every boot replays the entire backlog — the duplicates the hub dedupes are
+// real work it has to do, forever. The failure is reported and counted here;
+// the row is still left for the next boot, which is the policy that was always
+// intended.
 func (e *HubExporter) spoolAckAttempt(ctx context.Context, token int64) {
 	if token == 0 {
 		return
@@ -809,5 +837,12 @@ func (e *HubExporter) spoolAckAttempt(ctx context.Context, token int64) {
 	}
 	ackCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_ = sp.Ack(ackCtx, token)
+	if err := sp.Ack(ackCtx, token); err != nil {
+		atomic.AddInt64(&e.spoolAckFails, 1)
+		telemetry.Default().Add("sky_telemetry_spool_ack_failures_total",
+			map[string]string{"mode": sp.Mode().String()}, 1)
+		fmt.Fprintf(os.Stderr, "[sky.hub-exporter] spool ack of token %d failed: %v — "+
+			"the batch was pushed but its spool row stays unacked and will be replayed "+
+			"on the next boot\n", token, err)
+	}
 }

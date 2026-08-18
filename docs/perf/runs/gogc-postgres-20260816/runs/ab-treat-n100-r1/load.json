@@ -1,0 +1,33 @@
+{
+  "label": "ab-treat-n100-r1",
+  "url": "http://127.0.0.1:8541",
+  "sessions_requested": 100,
+  "sessions_established": 100,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 117517,
+  "interactions_per_sec": 2611.027210944979,
+  "p50_ms": 30.32,
+  "p95_ms": 94.281,
+  "p99_ms": 142.015,
+  "max_ms": 405.021,
+  "outcomes": {
+    "ok": 117517
+  },
+  "error_rate": 0,
+  "patches_total": 235034,
+  "interactions_with_patches": 117517,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 765,
+  "sse_still_open_at_end": 100,
+  "generator_cpu_percent_of_machine": 4.061638771524192,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "Macmini",
+  "gomaxprocs": 8,
+  "started_at": "2026-08-16T11:17:39Z"
+}

@@ -146,7 +146,9 @@ usage: xtask harness [options]
   --fail-fast                    stop after the first FAIL; gates not reached render
                                  NOT RUN, so the suite renders UNKNOWN
   --verify-falsifiers            apply each gate's declared mutation and prove the gate
-                                 goes red; records proofs to docs/coverage/
+                                 goes red; records proofs to docs/coverage/. Sweeps the
+                                 whole registry, or the gates of `--tier`/`--only` when
+                                 given, so nightly can verify one tier at a time.
   --list                         print the registry and exit
   -h, --help
 
@@ -628,8 +630,23 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
         if !g.platforms.contains(Platform::current()) {
             continue;
         }
-        if !o.only.is_empty() && !o.only.iter().any(|n| n == g.name) {
-            continue;
+        if !o.only.is_empty() {
+            // Deliberate selection overrides everything, as for `run_suite`.
+            if !o.only.iter().any(|n| n == g.name) {
+                continue;
+            }
+        } else if let Some(tier) = o.tier {
+            // `--tier` scopes the sweep to one tier, so a nightly job can verify
+            // the falsifiers of exactly the gates it has the environment for —
+            // the full-registry sweep needs every gate's world (Neovim, real
+            // servers, a cold FFI install) at once and cannot fit one runner.
+            // Applied ONLY when a tier is named: a bare `--verify-falsifiers`
+            // with no `--tier` and no `--only` still sweeps the whole registry,
+            // which is the behaviour `tests/harness_e2e.rs` and the release
+            // path depend on.
+            if g.tier != tier {
+                continue;
+            }
         }
         // The hang self-test never passes by design, so its baseline can never
         // be green and falsifying it is meaningless. It is exercised by the
@@ -708,12 +725,28 @@ impl Proofs {
         Proofs { entries }
     }
 
-    /// Is this gate's falsification proven within the window?
+    /// Is this gate's falsification proven within the window, AGAINST A
+    /// MUTATION THE REGISTRY STILL DECLARES?
+    ///
+    /// The last clause is not decoration. A proof is evidence about a
+    /// (gate, mutation) pair; renaming or replacing the mutation retires the
+    /// evidence with it. Reading only `observed` let `config-matrix` render
+    /// PROVEN under `--require-proofs` on a record taken against
+    /// `config-matrix.claim-a-dead-builder-is-alive`, which commit `4a118e39`
+    /// had deleted — the same defect the coverage ledger carried.
     fn fresh(&self, gate: &str) -> bool {
         let Some(e) = self.entries.get(gate) else {
             return false;
         };
         if e.get("outcome").and_then(|o| o.as_str()) != Some("as-declared") {
+            return false;
+        }
+        let recorded = e.get("mutation").and_then(|m| m.as_str()).unwrap_or_default();
+        let declared = registry::GATES
+            .iter()
+            .find(|g| g.name == gate)
+            .is_some_and(|g| g.mutations.as_slice().iter().any(|m| m.id == recorded));
+        if !declared {
             return false;
         }
         let at = e.get("proven_at_unix").and_then(|v| v.as_u64()).unwrap_or(0);

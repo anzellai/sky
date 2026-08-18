@@ -11,6 +11,297 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## Unreleased
+
+### ⚠ Breaking changes — Sky.Live config: what was silently ignored now takes effect
+
+Every Sky.Live setting (`port`, `store`, `storePath`, `ttl`, `idleEvict`) now
+resolves through ONE precedence rule, highest first:
+
+> **operator env (shell or `.env`) → `Live.withX` builder call →
+> seeded default (`sky.toml` / compiler) → hardcoded fallback**
+
+This was always the documented intent (and was already `withPort`'s behaviour),
+but the four settings actually resolved through three different orders. The
+resolution now lives in one function (`runtime-go/rt/live_config_precedence.go`),
+measured end-to-end by the `config-matrix` gate. What that changes for a running
+app — in each case, **a builder or variable that was silently ignored now takes
+effect**, so an app relying on the broken behaviour will see it change:
+
+- **`Live.withTtl` now works.** Its value could never reach the runtime before —
+  the `sky.toml`-seeded default (1800s when unset) always won. An app that calls
+  `withTtl` now gets the TTL it asked for; an operator's `SKY_LIVE_TTL` still
+  overrides it.
+- **`SKY_LIVE_STORE` and `SKY_LIVE_STORE_PATH` now beat `Live.withStore` /
+  `Live.withStorePath`.** Previously those builders silently beat the operator's
+  environment (the code read the env var only when no builder value was set), so
+  a session store could not be repointed (e.g. at a mounted volume) without a
+  recompile. If your app calls either builder AND the environment carries a
+  different operator-set value, the store now follows the environment.
+- **`SKY_STREAM_DEBUG` and `SKY_HTTP_CLIENT_TIMEOUT` now work from a `.env`
+  file.** Both were read before `.env` loading, so setting them there did
+  nothing — the latter left every outbound HTTP request pinned at the 30s
+  default even when a longer timeout was configured the documented way. Only a
+  shell `export` worked before; both routes work now.
+- **A sub-app's explicit config no longer loses to the host's `sky.toml` seed.**
+  The inline console sets its own 30m session TTL, and a host `[live] ttl` used
+  to override it; it now keeps its own value. An operator's env still overrides
+  everything.
+
+Not changed: `Live.withPort` and `Live.withIdleEvict` already resolved in this
+order, and an app that never calls a builder observes exactly what it observed
+before — verified cell-by-cell against the measured baseline
+(`docs/coverage/config-matrix.json`).
+
+## v0.20.3 — the PostgreSQL Sky ships, and the pool it never configured (2026-08-15)
+
+> **Upgrade note.** One thing you can measure changes: the PostgreSQL connection
+> pool is now sized, where it was previously left on Go's `database/sql`
+> defaults. If your app sustains more than 32 concurrent database operations, or
+> you count idle connections on a shared server, read ⚠ Breaking changes below.
+> Everything else is additive, and every knob has an override.
+
+`sky` now ships and supervises PostgreSQL across four tiers, so running the same
+engine in development that you run in production is the easy path rather than
+the one you set up yourself. Developing on SQLite and deploying on Postgres is
+how dialect differences reach users. The rule that makes it work is that **the
+app binary never knows which tier it is in** — it consumes a DSN, and only the
+provisioner changes.
+
+Getting there meant looking at what `Std.Db` does with a PostgreSQL once it has
+one, and the answer was: less than it claimed. Hence the breaking change below.
+
+### ⚠ Breaking changes
+
+- **The PostgreSQL connection pool is configured.** It previously was not:
+  `Db.connect` clamped SQLite to one connection and let every other driver fall
+  through on Go's `database/sql` zero values — `MaxOpenConns = 0`
+  (**unlimited**), `MaxIdleConns = 2`, no connection lifetime, no idle reaping —
+  behind a source comment asserting those defaults were "already sane". They
+  were not, in both directions: unlimited is how a burst reaches `FATAL: sorry,
+  too many clients already` (PostgreSQL's own `max_connections` default is 100
+  and each backend is a process), and two idle connections is how a pool that
+  briefly grew to twenty throws eighteen away and re-dials them on the next
+  burst.
+
+  The default is now **4 × CPU, clamped 4–32** on a long-lived host, and
+  **2 × CPU, clamped 2–8** when the runtime detects serverless (the same
+  `K_SERVICE` / `AWS_LAMBDA_FUNCTION_NAME` fingerprints the telemetry exporter
+  already uses; force it with `SKY_RUNTIME_MODE=vm` / `=serverless`).
+  `MaxIdleConns` is set **equal to** `MaxOpenConns`, connections retire after
+  **30 minutes**, and an idle one is reaped after **5 minutes** (**60 seconds**
+  serverless).
+
+  Two consequences deserve stating plainly:
+
+  - **An app that genuinely sustains more than 32 concurrent database
+    operations will now queue rather than open more backends.** For most apps
+    this is the fix rather than the regression — unlimited is how you reach
+    `too many clients` — but it is a change in behaviour under load, not only
+    in configuration.
+  - **Each app now holds more idle connections than before**, because idle was
+    2. On one PostgreSQL serving several Sky apps, that changes the arithmetic:
+    the server sees the sum, not any one pool.
+
+  *Migration:* nothing to do unless one of the above describes you. If it does,
+  set the number you want — `[database] maxOpenConns` / `maxIdleConns` /
+  `connMaxLifetime` / `connMaxIdleTime` in `sky.toml`, or
+  `<PREFIX>_DB_MAX_OPEN_CONNS` and friends in the environment. Raising the
+  ceiling is a decision about your server's `max_connections` budget, which is a
+  fact about your deployment the app cannot see — which is why it is explicit
+  rather than automatic. `maxOpenConns = 0` still means unlimited and is
+  honoured, with a warning saying what it means.
+
+- **The runtime's own PostgreSQL pools are bounded too.** A Sky.Live app on
+  Postgres opens several pools in one process and they share one server's
+  budget, and each was on the same unconfigured defaults — the session store,
+  the hottest of them, unbounded. The Sky.Live session store and the
+  `Std.Analytics` store are now a **quarter of the app pool, clamped 2–8**; they
+  do small point work with sub-millisecond service times, so a handful of
+  connections sustains far more than the app's query pool needs. Raising
+  `<PREFIX>_DB_MAX_OPEN_CONNS` raises them proportionally, so one knob still
+  governs the whole process's footprint. Telemetry persistence takes a fixed 4
+  (it cannot import the sizing without a cycle).
+
+  **What they add up to matters more than any one of them**, and it is worked
+  through in
+  [`docs/skydb/embedded-postgres.md`](docs/skydb/embedded-postgres.md#connections-and-capacity):
+  an 8-core process now asks for 56 connections, so **two of them exceed
+  PostgreSQL's default `max_connections = 100`** and the second is refused. That
+  is a real ceiling to plan against — and it is still the improvement, because
+  the number it replaces was unbounded.
+
+### Not changed — deliberately
+
+Recorded because each is the change a reader would reasonably expect alongside
+the above, and each was declined:
+
+- **Transaction isolation is untouched.** `Std.Db.transaction` still begins at
+  the driver default (READ COMMITTED on PostgreSQL); internally `Opts == nil`
+  reproduces the historical `Begin()` exactly. Raising the default to
+  SERIALIZABLE would start surfacing `40001 serialization_failure` to apps that
+  have never seen one and carry no retry — a breaking change wearing a bug fix's
+  clothes.
+- **The SQLite single-connection clamp stands.** It is a correctness constraint,
+  not a tuning choice: SQLite has one global writer lock, and a second
+  connection reintroduces the `SQLITE_BUSY` class. The pool keys are therefore
+  *ignored* on SQLite, with a warning naming the one you set, rather than
+  silently honoured into a regression.
+- **The emitted Go is byte-stable.** Every program's `main()` gains four
+  prologue calls for the embedded tiers; they are no-ops without a bundle. The
+  `repro` gate is 53/53 byte-identical, and `coerce-floor` and the oracle-parity
+  gates pass unchanged.
+
+### Added — `sky` ships and supervises PostgreSQL
+
+Four tiers, one app binary. Full design, trade-offs and operational detail:
+[`docs/skydb/embedded-postgres.md`](docs/skydb/embedded-postgres.md); the verbs
+are in [`docs/tooling/cli.md`](docs/tooling/cli.md) and the keys in
+[`docs/sky-toml.md`](docs/sky-toml.md).
+
+- **`sky db start` / `stop` / `ps`** — a per-project cluster in `.skydata/pg/`
+  (gitignored) on a **unix socket**, so there is no port to race over and
+  nothing on the network. Tuned small (`shared_buffers = 32MB`), so an idle
+  project cluster costs tens of megabytes. `sky db ps --all` lists every cluster
+  on the machine.
+
+  Lifetime follows the verb. `sky run` / `sky watch` are **ephemeral** — they
+  start the cluster and stop it on exit, ref-counted so two concurrent runs do
+  not stop each other's database. `sky db start` is **persistent** and stays up
+  until `sky db stop`, which is the mode for running `./sky-out/app` repeatedly.
+
+- **`sky db provision --embed`** fetches Sky's own PostgreSQL build into
+  `~/.sky/postgres/<version>/`, checksum-verified and installed atomically, and
+  pins the version in `sky.toml` as `[database] postgresVersion`. The pin is not
+  decoration: binary discovery prefers it over a newer cached build, so a
+  checkout on another machine gets the PostgreSQL the project states rather than
+  whichever that machine provisioned last. `SKY_POSTGRES_BIN` still outranks it.
+
+- **`sky build --embed src/Main.sky`** bundles PostgreSQL **into the binary** —
+  `./sky-out/app --embed` (or `SKY_EMBED_POSTGRES`) then runs its own database
+  with nothing installed on the host, in `--data-dir <path>` / `SKY_DATA_DIR` /
+  `./.skydata`. A directory the system may empty (`/tmp`, `/var/tmp`,
+  `/dev/shm`, `$TMPDIR`) is refused rather than silently used for a database.
+  `SKY_DB_OP=migrate` makes a deployed binary self-migrate against the cluster
+  it just started, and exit.
+
+  Cost is an estimated ~25–30 MB compressed (the only bundle measured to date
+  is `postgres-14.21-darwin-arm64` at 7.5 MB, which added 7.63 MB to the
+  binary — the archive plus ~87 kB of metadata; the 25–30 MB projects a larger
+  release bundle that is not yet published — see `docs/skydb/embedded-postgres.md`).
+  Cross-compilation honours `GOOS`/`GOARCH`, and
+  a target with no published bundle is refused before the build rather than
+  producing a binary carrying the host's PostgreSQL. `--embed` is a *build*
+  flag: `sky run --embed` exits 2 and points at `[database] embedded = true`.
+
+  An app stops only the cluster it **started**. One that finds a live
+  postmaster — from `sky db start`, say — adopts it, uses it, and leaves it
+  running on exit, naming it and how to stop it. Under `--embed` shutdown is
+  ordered: stop accepting, drain in-flight work to completion, then
+  `pg_ctl stop -m fast`.
+
+- **`sky db provision --shared`** provisions one host cluster serving several
+  apps: `--app <name>` issues a database and a role **per app** (that role gets
+  `CONNECT` on its own database and `PUBLIC` is revoked, so one app cannot read
+  another's), authenticating with `scram-sha-256`. `--service` writes a systemd
+  unit or launchd job; `--backup` schedules a daily per-app `pg_dump`. Tuning
+  comes from the host's real RAM and CPU (`SKY_PG_TUNE_MEM_MB` overrides it
+  inside a cgroup-limited container). Running as root is refused, re-running
+  `--app` is idempotent, and `--rotate-password` issues a new credential — the
+  stored one is a SCRAM verifier and cannot be read back.
+
+  Provisioning refuses to touch a role or database of that name that Sky does
+  not own, and refuses a cluster it did not harden (one still carrying
+  `local all all trust`), rather than adopting someone else's PostgreSQL.
+
+- **`sky doctor`** gains an `embedded-postgres-missing` check — it fires only
+  when `[database] embedded = true` and no PostgreSQL is discoverable, and
+  `sky doctor --fix` provisions one. `sky init` now gitignores `.skydata/`
+  alongside `sky-out/`, `.skycache/` and `.skydeps/`.
+
+- **`[database] embedded = true`** is the opt-in. With it, `sky run` starts this
+  project's cluster and hands the app `<PREFIX>_DB_PATH`; the app is unchanged,
+  calling `Db.connect ()` and reading a DSN exactly as it does against a managed
+  server.
+
+  **`embedded = true` (or `--embed`) alongside `path` / `url` / `SKY_DB_PATH` /
+  `DATABASE_URL` is an error, not a precedence rule** — refused before the build
+  by the toolchain, and at startup by a binary that finds both. It names the
+  first offending source. There is no safe answer: preferring the cluster means
+  the app
+  writes to a throwaway local directory while you believe it is talking to the
+  server you named, and preferring the DSN means the opt-in is a line of
+  configuration that does nothing.
+
+> **Bundles are not published yet.** `sky db provision --embed` resolves a
+> release built by `.github/workflows/postgres-bundle.yml`, and no
+> `postgres-bundle-v*` tag has been cut — so it has nothing to fetch until one
+> is. The paths that work today are `SKY_POSTGRES_BIN`, a local bundle, or a
+> system PostgreSQL, all of which `sky db start` accepts.
+
+### Added — PostgreSQL pool + transaction configuration
+
+- **`[database] maxOpenConns` / `maxIdleConns` / `connMaxLifetime` /
+  `connMaxIdleTime`**, each with a `<PREFIX>_DB_*` environment override.
+  Durations accept Go syntax (`"30m"`, `"90s"`, `"1h30m"`) or a bare integer
+  read as seconds, because that is what an operator arriving from a JDBC or
+  pgbouncer config will write; `0` disables a limit. A typo'd number warns and
+  falls back rather than silently becoming a default. **You should not need
+  these** — reach for them when you know your server's connection budget and how
+  many instances share it.
+
+- **`[database] isolation` and `txRetry`**, both opt-in and both off by default.
+  `isolation` accepts `read uncommitted` / `read committed` / `repeatable read`
+  / `serializable`, in any case and with spaces, hyphens or underscores;
+  `snapshot` and `linearizable` are deliberately refused because PostgreSQL
+  implements neither and accepting them would turn a config typo into a runtime
+  error at the first transaction. `txRetry` retries a transaction that fails
+  with `40001` / `40P01`, classified by **SQLSTATE, never by message text**,
+  with exponential backoff from 5 ms capped at 200 ms.
+
+  > `txRetry` requires a **replayable** transaction body and the runtime cannot
+  > check that for you. Retrying means running the body again — and a `Task`
+  > body may already have sent an email, charged a card or called a third-party
+  > API before the conflict was detected. `ROLLBACK` undoes none of that: the
+  > database's half of the work is atomic, the outside world's half is not.
+  > Enable it only when every effect inside the body is a write on the same
+  > transaction or genuinely idempotent.
+
+### What is in a bundle, and what is not
+
+- **Built from source in CI**, PostgreSQL **18.6** pinned, for `linux-amd64`,
+  `linux-arm64`, `darwin-amd64` and `darwin-arm64`. Windows is out of scope —
+  use a system PostgreSQL and `SKY_POSTGRES_BIN`.
+- **`psql` is deliberately excluded.** It links GNU readline, which is GPL-3.0,
+  and that would relicense the binary you ship. A bundle carries `postgres`,
+  `initdb`, `pg_ctl`, `pg_dump`, `pg_dumpall` and `pg_restore` — enough to run,
+  back up and restore, which is what an embedded database owes you. Use your own
+  `psql` against the DSN.
+- **Extensions**: `pg_trgm`, `pgcrypto`, `hstore`, `citext`, `btree_gin`,
+  `btree_gist`, `pg_stat_statements` and `postgres_fdw` from contrib, plus
+  **pgvector** 0.8.6 and **pg_partman** 5.5.0 (both PostgreSQL Licence). PostGIS
+  (GPL-2.0), TimescaleDB (TSL) and Citus (AGPL-3.0) are excluded on licence
+  grounds, not on merit.
+- **Every bundle publishes an SBOM** listing each linked library, its licence
+  and a verdict, and a **GPL / LGPL / AGPL link gate** fails the build if one
+  reaches the artifact. The gate reads the built binaries rather than the
+  configure line, walks every shared object (extensions are `dlopen`ed, so
+  checking `postgres` alone would miss them), follows symlinks — a GPL library
+  shipped as a symlink is still shipped — and refuses to report a verdict at all
+  when `objdump`/`otool` is missing rather than passing by default. It now runs
+  per-commit, so a red verdict blocks a merge.
+- `NOTICE.md` carries the PostgreSQL copyright and the `psql` rationale.
+
+### Known, and documented rather than discovered
+
+- **Ctrl-C during `sky run` does not stop the cluster.** SIGINT reaches the
+  whole process group, so `sky run` never runs its cleanup and the cluster is
+  left up holding a stale reference. It is self-healing — the next registry read
+  prunes it — and `sky db ps` / `sky db stop` see it meanwhile.
+- **Two concurrent `./app --embed` on one data directory**: the one that started
+  the cluster exiting first stops it underneath the one that adopted it. The
+  adopter prints and exits non-zero rather than losing data silently.
+
 ## v0.20.2 — the gates that only ran at release (2026-08-13)
 
 No compiler, stdlib or runtime change. Every entry here is CI enforcement, and

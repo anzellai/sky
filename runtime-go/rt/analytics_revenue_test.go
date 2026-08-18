@@ -3,6 +3,7 @@ package rt
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestAnalyticsRevenueByCurrency — Money props are summed exactly (no float
@@ -14,17 +15,28 @@ func TestAnalyticsRevenueByCurrency(t *testing.T) {
 	t.Setenv("SKY_ANALYTICS_DB_PATH", path)
 	db := analyticsStore()
 
+	// Timestamps are RECENT on purpose. The rollup is windowed to
+	// `consoleAnalyticsWindow`, so a fixture at ts=1 is an event from January
+	// 1970 and is correctly outside every window the console asks for.
+	now := time.Now().UnixMilli()
+
 	// Three USD purchases whose float sum would drift (0.1+0.2), one EUR,
 	// and a non-money "plan" prop that must be ignored.
-	analyticsStoreInsert(map[string]any{"ts": int64(1), "event": "purchase", "props": map[string]any{"total": "USD 0.10"}})
-	analyticsStoreInsert(map[string]any{"ts": int64(2), "event": "purchase", "props": map[string]any{"total": "USD 0.20"}})
-	analyticsStoreInsert(map[string]any{"ts": int64(3), "event": "purchase", "props": map[string]any{"total": "USD 19.99"}})
-	analyticsStoreInsert(map[string]any{"ts": int64(4), "event": "purchase", "props": map[string]any{"total": "EUR 5.00"}})
-	analyticsStoreInsert(map[string]any{"ts": int64(5), "event": "signup", "props": map[string]any{"plan": "pro"}})
+	analyticsStoreInsert(map[string]any{"ts": now + 1, "event": "purchase", "props": map[string]any{"total": "USD 0.10"}})
+	analyticsStoreInsert(map[string]any{"ts": now + 2, "event": "purchase", "props": map[string]any{"total": "USD 0.20"}})
+	analyticsStoreInsert(map[string]any{"ts": now + 3, "event": "purchase", "props": map[string]any{"total": "USD 19.99"}})
+	analyticsStoreInsert(map[string]any{"ts": now + 4, "event": "purchase", "props": map[string]any{"total": "EUR 5.00"}})
+	analyticsStoreInsert(map[string]any{"ts": now + 5, "event": "signup", "props": map[string]any{"plan": "pro"}})
 	// JPY has 0 minor units — must format WITHOUT decimals.
-	analyticsStoreInsert(map[string]any{"ts": int64(6), "event": "purchase", "props": map[string]any{"total": "JPY 1200"}})
+	analyticsStoreInsert(map[string]any{"ts": now + 6, "event": "purchase", "props": map[string]any{"total": "JPY 1200"}})
 
-	rev := analyticsRevenueByCurrency(db)
+	// Buffered writer — drain before reading the handle directly.
+	analyticsFlushPending()
+
+	rev, capped := analyticsRevenueByCurrency(db, consoleAnalyticsCutoff())
+	if capped {
+		t.Errorf("6 events reported as having hit the %d-row cap", consoleAnalyticsRowCap)
+	}
 	got := map[string]consoleCurrencyTotal{}
 	for _, r := range rev {
 		got[r.Currency] = r

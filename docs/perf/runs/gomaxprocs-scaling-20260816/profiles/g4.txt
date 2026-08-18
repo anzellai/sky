@@ -1,0 +1,183 @@
+### mutex delta (contention during the measurement window), GOMAXPROCS=4
+File: app-prof
+Build ID: 59bb9c9c1e860d69e8d8a814c8d03b9fc5d7ef8b
+Type: delay
+Time: 2026-08-16 09:54:47 BST
+Showing nodes accounting for 360.33s, 99.38% of 362.56s total
+Dropped 509 nodes (cum <= 1.81s)
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%    362.48s   100%  net/http.(*conn).serve
+         0     0%     0%    362.22s 99.91%  net/http.(*Server).Serve.gowrap3
+         0     0%     0%    361.92s 99.82%  net/http.HandlerFunc.ServeHTTP (partial-inline)
+         0     0%     0%    361.92s 99.82%  net/http.serverHandler.ServeHTTP
+         0     0%     0%    361.92s 99.82%  sky-app/rt.liveAppRun.CSRFMiddleware.func6
+         0     0%     0%    361.92s 99.82%  sky-app/rt.liveAppRun.ObservabilityMiddleware.WithSubAppNamespace.func8
+         0     0%     0%    361.92s 99.82%  sky-app/rt.liveAppRun.ObservabilityMiddleware.func7
+         0     0%     0%    361.92s 99.82%  sky-app/rt.liveAppRun.func2
+         0     0%     0%    361.92s 99.82%  net/http.(*ServeMux).ServeHTTP
+         0     0%     0%    361.92s 99.82%  sky-app/rt.(*liveApp).handleEvent
+         0     0%     0%    361.66s 99.75%  sky-app/rt.(*liveApp).handleEvent-fm
+   320.78s 88.47% 88.47%    320.78s 88.47%  sync.(*Mutex).Unlock (partial-inline)
+    16.25s  4.48% 92.96%    131.32s 36.22%  sync.(*RWMutex).Unlock
+         0     0% 92.96%    131.32s 36.22%  sky-app/rt.(*memoryStore).Set
+         0     0% 92.96%    131.32s 36.22%  sky-app/rt.(*memoryStore).Set.deferwrap1
+         0     0% 92.96%    120.16s 33.14%  sky-app/rt.(*liveApp).dispatch
+         0     0% 92.96%     96.15s 26.52%  sky-app/rt.(*sessionLocker).Lock
+         0     0% 92.96%     80.73s 22.27%  sky-app/rt.WithMsgSpanTraced
+         0     0% 92.96%     80.73s 22.27%  sky-app/rt.WithSpan
+         0     0% 92.96%     78.62s 21.68%  go.opentelemetry.io/otel/sdk/trace.(*TracerProvider).Tracer
+         0     0% 92.96%     78.62s 21.68%  go.opentelemetry.io/otel/sdk/trace.(*TracerProvider).Tracer.func1
+         0     0% 92.96%     78.62s 21.68%  sky-app/rt/telemetry.Tracer
+         0     0% 92.96%     17.15s  4.73%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Store (inline)
+    17.15s  4.73% 97.69%     17.15s  4.73%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Swap
+         0     0% 97.69%     17.15s  4.73%  sync.(*Map).Store (inline)
+         0     0% 97.69%     15.25s  4.21%  sky-app/rt.setGoroutineLiveSession
+         0     0% 97.69%     12.54s  3.46%  sky-app/rt.(*sessionLocker).Unlock
+         0     0% 97.69%     12.54s  3.46%  sky-app/rt.(*liveApp).handleEvent.deferwrap1
+         0     0% 97.69%      6.31s  1.74%  sky-app/rt.clearGoroutineLiveSession
+         0     0% 97.69%      6.30s  1.74%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Delete (inline)
+     6.15s  1.70% 99.38%      6.30s  1.74%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).LoadAndDelete
+         0     0% 99.38%      6.30s  1.74%  sync.(*Map).Delete (inline)
+         0     0% 99.38%      1.99s  0.55%  sky-app/rt.SetGoroutineTraceContext
+
+### block delta, GOMAXPROCS=4
+File: app-prof
+Build ID: 59bb9c9c1e860d69e8d8a814c8d03b9fc5d7ef8b
+Type: delay
+Time: 2026-08-16 09:54:47 BST
+Showing nodes accounting for 3609.04s, 98.71% of 3656.30s total
+Dropped 58 nodes (cum <= 18.28s)
+Showing top 30 nodes out of 39
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%   3535.99s 96.71%  net/http.(*Server).Serve.gowrap3
+         0     0%     0%   3535.99s 96.71%  net/http.(*conn).serve
+         0     0%     0%   3485.77s 95.34%  net/http.(*ServeMux).ServeHTTP
+         0     0%     0%   3485.77s 95.34%  net/http.HandlerFunc.ServeHTTP (partial-inline)
+         0     0%     0%   3485.77s 95.34%  net/http.serverHandler.ServeHTTP
+         0     0%     0%   3455.51s 94.51%  sky-app/rt.liveAppRun.CSRFMiddleware.func6
+         0     0%     0%   3455.51s 94.51%  sky-app/rt.liveAppRun.ObservabilityMiddleware.WithSubAppNamespace.func8
+         0     0%     0%   3455.51s 94.51%  sky-app/rt.liveAppRun.ObservabilityMiddleware.func7
+         0     0%     0%   3455.51s 94.51%  sky-app/rt.liveAppRun.func2
+  3224.57s 88.19% 88.19%   3224.57s 88.19%  runtime.selectgo
+         0     0% 88.19%   3074.56s 84.09%  sky-app/rt.(*liveApp).handleSSE
+         0     0% 88.19%   3074.56s 84.09%  sky-app/rt.(*liveApp).handleSSE-fm
+         0     0% 88.19%    380.96s 10.42%  sky-app/rt.(*liveApp).handleEvent
+         0     0% 88.19%    380.96s 10.42%  sky-app/rt.(*liveApp).handleEvent-fm
+   332.72s  9.10% 97.29%    332.72s  9.10%  sync.(*Mutex).Lock (inline)
+         0     0% 97.29%    128.60s  3.52%  sky-app/rt.(*memoryStore).Set
+     1.79s 0.049% 97.34%    128.60s  3.52%  sync.(*RWMutex).Lock
+         0     0% 97.34%    122.17s  3.34%  sky-app/rt.(*liveApp).dispatch
+         0     0% 97.34%    120.01s  3.28%  sky-app/rt.(*memoryStore).cleanupLoop
+         0     0% 97.34%    120.01s  3.28%  sky-app/rt.newMemoryStore.gowrap1
+         0     0% 97.34%     88.24s  2.41%  sky-app/rt.(*sessionLocker).Lock
+         0     0% 97.34%     80.98s  2.21%  sky-app/rt.WithMsgSpanTraced
+         0     0% 97.34%     80.98s  2.21%  sky-app/rt.WithSpan
+         0     0% 97.34%     78.96s  2.16%  go.opentelemetry.io/otel/sdk/trace.(*TracerProvider).Tracer
+         0     0% 97.34%     78.96s  2.16%  go.opentelemetry.io/otel/sdk/trace.(*TracerProvider).Tracer.func1
+         0     0% 97.34%     78.96s  2.16%  sky-app/rt/telemetry.Tracer
+         0     0% 97.34%     49.95s  1.37%  net/http.(*connReader).abortPendingRead
+         0     0% 97.34%     49.95s  1.37%  net/http.(*response).finishRequest
+    49.95s  1.37% 98.71%     49.95s  1.37%  sync.(*Cond).Wait
+         0     0% 98.71%     30.26s  0.83%  net/http/pprof.Profile
+
+### cpu flat top40, GOMAXPROCS=4
+File: app-prof
+Build ID: 59bb9c9c1e860d69e8d8a814c8d03b9fc5d7ef8b
+Type: cpu
+Time: 2026-08-16 09:54:47 BST
+Duration: 30.07s, Total samples = 117.72s (391.43%)
+Showing nodes accounting for 59.85s, 50.84% of 117.72s total
+Dropped 1102 nodes (cum <= 0.59s)
+Showing top 40 nodes out of 317
+      flat  flat%   sum%        cum   cum%
+     4.43s  3.76%  3.76%      8.54s  7.25%  runtime.tryDeferToSpanScan
+     4.19s  3.56%  7.32%      4.19s  3.56%  runtime.nextFreeFast (inline)
+     3.54s  3.01% 10.33%     25.31s 21.50%  runtime.mallocgcSmallScanNoHeader
+     2.97s  2.52% 12.85%      6.84s  5.81%  runtime.scanObjectsSmall
+     2.81s  2.39% 15.24%      2.81s  2.39%  runtime.memmove
+     2.49s  2.12% 17.35%      2.91s  2.47%  runtime.(*mspan).writeHeapBitsSmall
+     2.40s  2.04% 19.39%      2.40s  2.04%  runtime.spanClass.sizeclass (inline)
+     2.19s  1.86% 21.25%      2.59s  2.20%  runtime.step
+     2.12s  1.80% 23.05%     35.76s 30.38%  runtime.mallocgc
+     1.92s  1.63% 24.69%     64.28s 54.60%  reflect.Value.call
+     1.82s  1.55% 26.23%      1.82s  1.55%  runtime.memclrNoHeapPointers
+     1.78s  1.51% 27.74%      5.16s  4.38%  runtime.pcvalue
+     1.53s  1.30% 29.04%      1.53s  1.30%  runtime.(*mspan).base (inline)
+     1.42s  1.21% 30.25%      1.48s  1.26%  runtime.pageIndexOf (inline)
+     1.33s  1.13% 31.38%      4.90s  4.16%  reflect.Value.FieldByName
+     1.32s  1.12% 32.50%      2.35s  2.00%  reflect.(*structType).FieldByName
+     1.17s  0.99% 33.49%      1.34s  1.14%  runtime.(*spanSet).push
+     1.16s  0.99% 34.48%      1.16s  0.99%  runtime.procyieldAsm
+     1.12s  0.95% 35.43%      2.14s  1.82%  sky-app/rt.Coerce[go.shape.struct { Tag int; SkyName string; Fields []interface {} }]
+     1.10s  0.93% 36.37%      1.10s  0.93%  internal/runtime/syscall/linux.Syscall6
+     1.09s  0.93% 37.29%      2.15s  1.83%  runtime.scanObjectSmall
+     1.04s  0.88% 38.18%      3.40s  2.89%  reflect.(*rtype).FieldByName
+     1.01s  0.86% 39.03%      2.66s  2.26%  runtime.lock2
+     0.96s  0.82% 39.85%      3.67s  3.12%  runtime.bulkBarrierPreWrite
+     0.94s   0.8% 40.65%      2.89s  2.45%  runtime.(*sweepLocked).sweep
+     0.92s  0.78% 41.43%      3.10s  2.63%  sky-app/rt.AsListT[go.shape.struct { Tag int; SkyName string; Fields []interface {} }]
+     0.91s  0.77% 42.20%         1s  0.85%  runtime.heapArenaOf (inline)
+     0.89s  0.76% 42.96%      4.43s  3.76%  runtime.wbBufFlush1
+     0.88s  0.75% 43.71%      3.30s  2.80%  sky-app/rt.diffNodes
+     0.86s  0.73% 44.44%      3.75s  3.19%  runtime.gcmarknewobject
+     0.86s  0.73% 45.17%      0.86s  0.73%  runtime.getMCache (inline)
+     0.82s   0.7% 45.86%      0.87s  0.74%  runtime.(*mspan).moveInlineMarks
+     0.77s  0.65% 46.52%      0.77s  0.65%  time.runtimeNow
+     0.76s  0.65% 47.16%      2.35s  2.00%  runtime.unlock2
+     0.75s  0.64% 47.80%      2.04s  1.73%  runtime.mallocgcTiny
+     0.75s  0.64% 48.44%      4.24s  3.60%  runtime.sweepone
+     0.72s  0.61% 49.05%      0.72s  0.61%  memeqbody
+     0.71s   0.6% 49.65%      0.71s   0.6%  runtime.extractHeapBitsSmall
+     0.70s  0.59% 50.25%      3.27s  2.78%  runtime.concatstrings
+     0.70s  0.59% 50.84%      3.03s  2.57%  runtime.printlock
+
+### cpu cum top40, GOMAXPROCS=4
+File: app-prof
+Build ID: 59bb9c9c1e860d69e8d8a814c8d03b9fc5d7ef8b
+Type: cpu
+Time: 2026-08-16 09:54:47 BST
+Duration: 30.07s, Total samples = 117.72s (391.43%)
+Showing nodes accounting for 9.15s, 7.77% of 117.72s total
+Dropped 1102 nodes (cum <= 0.59s)
+Showing top 40 nodes out of 317
+      flat  flat%   sum%        cum   cum%
+     0.05s 0.042% 0.042%     96.03s 81.57%  sky-app/rt.(*liveApp).handleEvent
+     0.01s 0.0085% 0.051%     95.45s 81.08%  net/http.HandlerFunc.ServeHTTP (partial-inline)
+     0.02s 0.017% 0.068%        94s 79.85%  net/http.(*ServeMux).ServeHTTP
+     0.01s 0.0085% 0.076%     92.92s 78.93%  sky-app/rt.liveAppRun.CSRFMiddleware.func6
+     0.01s 0.0085% 0.085%     91.97s 78.13%  sky-app/rt.(*liveApp).dispatch
+         0     0% 0.085%     90.21s 76.63%  sky-app/rt.liveAppRun.ObservabilityMiddleware.WithSubAppNamespace.func8
+     0.01s 0.0085% 0.093%     87.42s 74.26%  sky-app/rt.liveAppRun.ObservabilityMiddleware.func7
+     0.01s 0.0085%   0.1%     85.63s 72.74%  sky-app/rt.liveAppRun.func2
+         0     0%   0.1%     79.09s 67.18%  net/http.(*conn).serve
+     0.01s 0.0085%  0.11%     78.90s 67.02%  net/http.serverHandler.ServeHTTP
+         0     0%  0.11%     71.49s 60.73%  sky-app/rt.(*liveApp).safeViewCall.func1
+         0     0%  0.11%     70.96s 60.28%  sky-app/rt.(*liveApp).safeViewCall
+     1.92s  1.63%  1.74%     64.28s 54.60%  reflect.Value.call
+     0.03s 0.025%  1.77%     64.12s 54.47%  reflect.Value.Call
+     0.02s 0.017%  1.78%     63.81s 54.20%  main.Main_view
+         0     0%  1.78%     62.98s 53.50%  sky-app/rt.sky_call
+     0.06s 0.051%  1.83%     56.29s 47.82%  main.Std_Ui_renderElement
+     0.31s  0.26%  2.10%     56.29s 47.82%  main.Std_Ui_renderElement.func1
+     0.05s 0.042%  2.14%     56.27s 47.80%  main.Std_Ui_renderElement.func1.1 (inline)
+     0.04s 0.034%  2.17%     56.27s 47.80%  main.Std_Ui_renderNodeAs (partial-inline)
+     0.27s  0.23%  2.40%     56.27s 47.80%  main.Std_Ui_renderNodeAs.func1
+         0     0%  2.40%     55.97s 47.55%  main.Std_Ui_layout
+     0.01s 0.0085%  2.41%     55.97s 47.55%  main.Std_Ui_layout.Std_Ui_layoutWith.func1 (inline)
+         0     0%  2.41%     55.97s 47.55%  main.Std_Ui_layoutWith (inline)
+     0.06s 0.051%  2.46%     54.95s 46.68%  sky-app/rt.List_mapT[go.shape.struct { Tag int; SkyName string; Fields []interface {} },go.shape.struct { Tag int; SkyName string; Fields []interface {} }] (inline)
+     0.09s 0.076%  2.54%     54.93s 46.66%  main.Std_Ui_renderNodeAs.func1.5 (inline)
+     2.12s  1.80%  4.34%     35.76s 30.38%  runtime.mallocgc
+     0.07s 0.059%  4.40%     33.85s 28.75%  runtime.systemstack
+     3.54s  3.01%  7.41%     25.31s 21.50%  runtime.mallocgcSmallScanNoHeader
+         0     0%  7.41%     13.15s 11.17%  runtime.gcBgMarkWorker
+         0     0%  7.41%     12.71s 10.80%  runtime.gcBgMarkWorker.func2
+     0.16s  0.14%  7.54%     12.71s 10.80%  runtime.gcDrain
+         0     0%  7.54%     12.71s 10.80%  runtime.gcDrainMarkWorkerDedicated (inline)
+     0.10s 0.085%  7.63%     12.50s 10.62%  main.Std_Ui_collectHtmlAttrs
+     0.11s 0.093%  7.72%     11.99s 10.19%  sky-app/rt.List_filterMap
+     0.04s 0.034%  7.76%     11.85s 10.07%  main.Std_Ui_renderElement.func1.Std_Ui_renderNodeAs.2
+         0     0%  7.76%     11.80s 10.02%  sky-app/rt.currentGoroutineID
+     0.01s 0.0085%  7.76%     11.77s 10.00%  runtime.Stack
+     0.01s 0.0085%  7.77%     11.76s  9.99%  runtime.Stack.func1
+         0     0%  7.77%     11.55s  9.81%  main.Std_Ui_buildStyleStringWith (partial-inline)

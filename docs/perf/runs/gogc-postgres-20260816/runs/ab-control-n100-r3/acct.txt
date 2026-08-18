@@ -1,0 +1,16 @@
+tag ab-control-n100-r3
+sessions 100
+gogc 100
+gomemlimit none
+elements 94
+idle_rss_kb 37360
+load_rss_kb 140496
+peak_rss_kb 140496
+window_peak_rss_kb 140496
+window_mean_rss_kb 140125
+pg_peak_rss_kb 82320
+app_cpu_delta_s 292.89
+wall_s 72
+generator_rc 0
+aborted no
+load1 9.05

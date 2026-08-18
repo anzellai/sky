@@ -1,0 +1,380 @@
+name: PostgreSQL bundle
+
+# Builds the redistributable PostgreSQL bundles that `sky db provision --embed`
+# (Phase 3) and `sky build --embed` (Phase 5) consume. See
+# docs/skydb/embedded-postgres.md — "Licensing and distribution", "Extensions"
+# and "The gate".
+#
+# Sky does not redistribute a third party's prebuilt PostgreSQL: doing so means
+# inheriting their configure line, their linked dependencies and their continued
+# availability, none of which we control and all of which we would be shipping.
+# So it is compiled here, from a pinned tarball with a pinned checksum, and
+# every artifact is put through a licence gate before it can be published.
+#
+# TRIGGERS: workflow_dispatch and a `postgres-bundle-v*` tag. Both run the full
+# four-platform build; PostgreSQL takes 10-20 minutes per platform, so this is a
+# per-release job, not a per-commit one.
+#
+# THERE IS DELIBERATELY NO `pull_request:` TRIGGER, and its removal was a fix.
+# This workflow used to run the gate self-test on every PR touching
+# scripts/skydb/** — which reported on the PR and could not BLOCK it, because
+# `ci-green`, the single required status check, fans in rust-ci.yml and nothing
+# else. The one gate guarding a legal obligation was advisory. The per-commit
+# self-test now lives in rust-ci.yml (`licence-gate-linux` /
+# `licence-gate-macos`), inside the fan-in, and
+# `rust/crates/xtask/tests/workflows_parse.rs` fails the build if any workflow
+# regains a per-commit trigger without that coverage.
+#
+# The `gate-self-test` job below stays, unchanged in purpose: here it is the
+# precondition of the build matrix, so a gate that cannot be shown to fail
+# blocks PUBLICATION. There it blocks the merge. Both are wanted.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the bundles as a GitHub release'
+        type: boolean
+        default: false
+  push:
+    tags: ['postgres-bundle-v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgres-bundle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  # The gate must be proven able to FAIL before anything is built.
+  #
+  # This repo's expensive lesson is that gates which look correct routinely
+  # pass against the very defect they exist to catch. scan-bundle-licences.sh
+  # is the only thing standing between a GPL-linked object and an Apache-2.0
+  # release artifact, so it runs against constructed violations — including a
+  # GPL dependency reachable only through an extension module, which is the
+  # case a gate that inspects bin/postgres alone silently passes.
+  #
+  # It runs on BOTH Linux and macOS because the dependency-enumeration paths
+  # are entirely different code (objdump/DT_NEEDED versus otool/Mach-O load
+  # commands). A gate proven on one is unproven on the other.
+  #
+  # This job gates the build matrix. If the licence gate cannot be shown to
+  # reject a bad bundle, no bundles get built.
+  # ────────────────────────────────────────────────────────────────
+  gate-self-test:
+    name: Licence gate falsification (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # A real GNU readline on the runner lets the suite include one rejection
+      # driven by a genuine GPL library rather than a stub carrying its name.
+      # The suite skips that case when readline is absent, so this is fidelity,
+      # not a hard dependency.
+      - name: Install GNU readline (fidelity fixture)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends libreadline-dev
+          else
+            brew install readline || true
+          fi
+
+      - name: Prove the licence gate rejects what it must
+        run: bash scripts/skydb/test-licence-gate.sh
+
+  # ────────────────────────────────────────────────────────────────
+  # Build matrix.
+  #
+  # Each platform builds natively. Cross-compiling PostgreSQL would defeat the
+  # purpose of this job: the licence surface we are gating IS the set of
+  # libraries the target platform's linker actually resolved, and that is only
+  # observable on the target.
+  #
+  # WINDOWS IS OUT OF SCOPE FOR THIS PHASE, deliberately and not by omission.
+  # PostgreSQL on Windows needs an MSVC toolchain and its own meson/MSVC build
+  # path; the bundle assembly here (rpath/@loader_path relocation, ELF/Mach-O
+  # dependency walking) has no Windows analogue — PE imports would need a
+  # separate scanner backend, and "no gate" is not an option for a licence
+  # gate. `--embed` on Windows therefore lands with that work, not before it.
+  # ────────────────────────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: gate-self-test
+    # No `if:` guard on the event — with `pull_request` gone from the triggers,
+    # every event that reaches this workflow is one that should build. A guard
+    # naming an event that can no longer fire reads like a live condition and
+    # verifies nothing.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            os: ubuntu-22.04
+          - platform: linux-arm64
+            os: ubuntu-22.04-arm
+          # Plain `macos-*` labels are arm64. Intel needs an explicit
+          # `-intel` image — GitHub retired macos-13, and macos-15-intel is
+          # the current x86_64 macOS runner.
+          - platform: darwin-amd64
+            os: macos-15-intel
+          - platform: darwin-arm64
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    # PostgreSQL is ~10-20 min natively; the two third-party extensions add a
+    # couple more. 45 is ~2x the estimate, erring generous because a false red
+    # here wastes a full matrix.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # NOTE: libreadline-dev is deliberately NOT installed on the build
+      # runners. --without-readline already excludes it, but not having the
+      # headers present at all means a future edit that drops the flag fails to
+      # find readline rather than silently linking it. Defence in depth behind
+      # a gate is cheap; a GPL-linked release artifact is not.
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bison flex pkg-config patchelf \
+            libssl-dev zlib1g-dev liblz4-dev libzstd-dev libicu-dev libxml2-dev
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          brew install openssl@3 icu4c lz4 zstd libxml2 bison
+
+      - name: Build the bundle
+        env:
+          SKYDB_BUILD_DIR: ${{ runner.temp }}/sky-postgres-build
+          OUT: ${{ runner.temp }}/bundles
+        run: bash scripts/skydb/build-postgres-bundle.sh --out "$OUT"
+
+      # ── THE LICENCE GATE ────────────────────────────────────────
+      # Runs against the BUILT ARTIFACTS, never against the configure line. A
+      # configure flag records an intention; only the binary records what
+      # happened, so grepping this workflow for `--without-readline` would
+      # verify nothing at all about what shipped.
+      #
+      # The scanner walks EVERY ELF/Mach-O object in the bundle, not just
+      # bin/postgres — extensions are dlopen()ed at runtime and never appear in
+      # the server executable's dependency list.
+      #
+      # This is the same script the gate-self-test job proved can fail. If it
+      # exits non-zero the artifact is never uploaded.
+      - name: SBOM + licence gate
+        id: gate
+        env:
+          OUT: ${{ runner.temp }}/bundles
+          PLATFORM: ${{ matrix.platform }}
+          TMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          # Resolve the bundle by search rather than by glob-in-assignment, and
+          # assert there is exactly one. A glob that matched nothing would
+          # otherwise expand to a literal path and the gate would scan a
+          # directory that does not exist.
+          # No `mapfile`: the macOS runners' default bash is 3.2, where it does
+          # not exist, and this step would die with "command not found" on half
+          # the matrix.
+          found=$(find "$OUT" -maxdepth 1 -type d -name "postgres-*-${PLATFORM}")
+          count=$(printf '%s\n' "$found" | command grep -c . || true)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::expected exactly 1 bundle for ${PLATFORM}, found ${count}" >&2
+            exit 1
+          fi
+          BUNDLE="$found"
+          bash scripts/skydb/scan-bundle-licences.sh "$BUNDLE" --sbom-out "$BUNDLE/sbom.json"
+          cp "$BUNDLE/sbom.json" "${TMP}/sbom-${PLATFORM}.json"
+          echo "bundle=$BUNDLE" >> "$GITHUB_OUTPUT"
+
+      # The gate-self-test job above proved the gate can fail — against
+      # FIXTURES, in a temp directory, ~11 stub objects. That is not the same
+      # claim as "it can fail against THIS artifact", which is ~600 real
+      # objects with real soname chains and a real contrib set. `--bundle` runs
+      # the two cases that need one: C8 (the bundle we would publish, accepted)
+      # and C9 (the same bundle with one GPL-linked extension planted in lib/,
+      # rejected). Without C9, the step above is satisfied by a gate that
+      # accepts everything.
+      #
+      # It runs on a COPY of the artifact's directory — test-licence-gate.sh
+      # copies the bundle before planting anything — so the tree archived below
+      # is the one the gate accepted, untouched.
+      - name: Prove the gate discriminates ON this artifact (C8 + C9)
+        env:
+          BUNDLE: ${{ steps.gate.outputs.bundle }}
+        run: bash scripts/skydb/test-licence-gate.sh --bundle "$BUNDLE"
+
+      - name: Archive
+        env:
+          BUNDLE: ${{ steps.gate.outputs.bundle }}
+          TMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          NAME="$(basename "$BUNDLE")"
+          tar -czf "${TMP}/${NAME}.tar.gz" -C "$(dirname "$BUNDLE")" "$NAME"
+          du -sh "$BUNDLE"
+          ls -la "${TMP}/${NAME}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postgres-bundle-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/postgres-*.tar.gz
+            ${{ runner.temp }}/sbom-${{ matrix.platform }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # ────────────────────────────────────────────────────────────────
+  # Publish. Phase 3 (`sky db provision --embed`) resolves a platform bundle
+  # from this release and verifies it against the checksum manifest.
+  # ────────────────────────────────────────────────────────────────
+  publish:
+    name: Publish bundles
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/postgres-bundle-v') || inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag IS the URL. `sky db provision --embed` builds its default
+      # download URL as `postgres-bundle-v<PG_VERSION>` from the version pinned
+      # in build-postgres-bundle.sh, and `tag_name` below is `github.ref_name`
+      # verbatim — so a tag carrying a build suffix (`…-v18.6-1`) publishes a
+      # release no client will ever look for, and every provision 404s against
+      # a release that visibly exists. The two are checked against each other
+      # here rather than left to whoever cuts the tag remembering the rule.
+      # NO `if:` HERE. The first version of this step carried
+      # `if: startsWith(github.ref, 'refs/tags/')` while the job itself runs on
+      # `… || inputs.publish` — so a workflow_dispatch from a branch ran the
+      # job, SKIPPED the guard, and published a release tagged with the branch
+      # name. That is exactly the unresolvable release the guard exists to
+      # prevent, reachable through the one path the guard did not cover.
+      #
+      # The tag is now DERIVED from the pin and exported, and `tag_name:` below
+      # consumes that value rather than `github.ref_name`. A tag push must match
+      # it; a manual dispatch publishes under it. Either way the published tag
+      # is the one `sky db provision --embed` computes.
+      - name: Derive the release tag from the pinned PostgreSQL version
+        id: tag
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016  # the ${PG_VERSION:-…} here is the literal
+          # text being matched in the build script, not an expansion we want.
+          pinned="$(sed -n 's/^PG_VERSION="\${PG_VERSION:-\(.*\)}"$/\1/p' \
+            scripts/skydb/build-postgres-bundle.sh)"
+          [ -n "$pinned" ] || {
+            echo "could not read PG_VERSION from scripts/skydb/build-postgres-bundle.sh —" \
+                 "the pin moved and this check is now blind" >&2
+            exit 1
+          }
+          want="postgres-bundle-v${pinned}"
+
+          # On a tag push the tag is the operator's assertion about what this
+          # release is; if it disagrees with the pin, one of the two is wrong
+          # and guessing which would be the mistake.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "$want" ]; then
+            echo "release tag '${GITHUB_REF_NAME}' does not match the pinned" \
+                 "PostgreSQL version." >&2
+            echo "expected exactly '${want}'." >&2
+            echo >&2
+            echo "sky db provision --embed derives its download URL from the pin," \
+                 "so publishing under '${GITHUB_REF_NAME}' produces a release that" \
+                 "clients cannot resolve. Retag, or move the pin in" \
+                 "scripts/skydb/build-postgres-bundle.sh first." >&2
+            exit 1
+          fi
+
+          echo "release tag: ${want} (pinned PostgreSQL ${pinned}, ref ${GITHUB_REF_NAME})"
+          echo "tag=${want}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      - name: Collect
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find staging -type f \( -name '*.tar.gz' -o -name 'sbom-*.json' \) \
+            -exec mv -f {} release/ \;
+          ls -la release
+
+      # The release IS the contract Phase 3 resolves against. `upload-artifact`
+      # having succeeded per-leg proves nothing here: a matrix leg that failed
+      # early contributes no file and, without this check, publishes a PARTIAL
+      # asset set, green — after which `sky db provision --embed` 404s for
+      # whichever platform went missing. Same failure mode, and same fix, as
+      # the asset-set assertion in release.yml.
+      - name: Assert the complete asset set is present
+        run: |
+          set -euo pipefail
+          PLATFORMS=(linux-amd64 linux-arm64 darwin-amd64 darwin-arm64)
+          missing=()
+          for p in "${PLATFORMS[@]}"; do
+            compgen -G "release/postgres-*-${p}.tar.gz" >/dev/null || missing+=("bundle:${p}")
+            [ -s "release/sbom-${p}.json" ] || missing+=("sbom:${p}")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::incomplete bundle set: ${missing[*]}" >&2
+            exit 1
+          fi
+          echo "asset set complete for: ${PLATFORMS[*]}"
+
+      # Every SBOM must carry a PASS verdict. The build job already fails on a
+      # red gate, but this re-reads the verdict from the artifact that is about
+      # to be published rather than trusting that an earlier step ran.
+      - name: Re-assert every SBOM verdict is PASS
+        run: |
+          set -euo pipefail
+          bad=0
+          for f in release/sbom-*.json; do
+            # jq -e also fails on malformed JSON, so an SBOM that is not
+            # parseable is treated as a failed verdict rather than skipped.
+            v=$(jq -r '.verdict.status' "$f") || { echo "::error::$f is not valid JSON" >&2; bad=1; continue; }
+            echo "$f: $v"
+            [ "$v" = PASS ] || bad=1
+          done
+          [ "$bad" -eq 0 ] || { echo "::error::an SBOM does not carry a PASS verdict" >&2; exit 1; }
+
+      - name: Checksum manifest
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum -- *.tar.gz *.json > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # The DERIVED tag, never github.ref_name — on a manual dispatch that
+          # is a branch name, and a release published under one is invisible to
+          # every client.
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: release/*
+          body: |
+            PostgreSQL bundles for `sky build --embed` and `sky db provision --embed`.
+
+            Built from source in CI with a pinned configure line; `psql` is
+            deliberately excluded (GNU readline is GPL-3.0). Each bundle ships
+            an SBOM and has passed the GPL/LGPL/AGPL link gate over every
+            ELF/Mach-O object it contains.
+
+            See `docs/skydb/embedded-postgres.md`.

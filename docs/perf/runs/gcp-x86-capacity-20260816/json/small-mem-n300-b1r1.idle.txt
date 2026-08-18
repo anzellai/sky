@@ -1,0 +1,1 @@
+IDLE cfg=mem store=memory app_rss_kb=27624 app_pss_kb=28632 pg_rss_kb=0 pg_pss_kb=0 pg_nproc=0 mem_avail_kb=1637732 elements=94 posts=5 fsync=NA shared_buffers=NA max_connections=NA

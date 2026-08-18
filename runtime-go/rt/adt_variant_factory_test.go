@@ -23,20 +23,20 @@ func (liveTest_Msg_Increment_V) SkyVariantName() string { return "Increment" }
 
 func TestBuildAdtFromWire_VariantFactoryPath(t *testing.T) {
 	// Register factory for UpdateEmail. Mirrors codegen's emitted init().
-	RegisterAdtVariant("liveTest_UpdateEmail", func(raw []json.RawMessage) any {
+	RegisterAdtVariant("main.liveTest_Msg", "UpdateEmail", func(raw []json.RawMessage) any {
 		var v0 string
 		if len(raw) >= 1 {
 			_ = json.Unmarshal(raw[0], &v0)
 		}
 		return liveTest_Msg_UpdateEmail_V{V0: v0}
 	})
-	RegisterAdtVariant("liveTest_Increment", func(raw []json.RawMessage) any {
+	RegisterAdtVariant("main.liveTest_Msg", "Increment", func(raw []json.RawMessage) any {
 		return liveTest_Msg_Increment_V{}
 	})
 
 	t.Run("typed-payload-decoded-from-json", func(t *testing.T) {
 		emailJSON, _ := json.Marshal("anzel@example.com")
-		got, ok := BuildAdtFromWire("liveTest_UpdateEmail", []json.RawMessage{emailJSON}, -1)
+		got, ok := BuildAdtFromWire("main.liveTest_Msg", "UpdateEmail", []json.RawMessage{emailJSON}, -1)
 		if !ok {
 			t.Fatal("expected factory hit")
 		}
@@ -50,7 +50,7 @@ func TestBuildAdtFromWire_VariantFactoryPath(t *testing.T) {
 	})
 
 	t.Run("nullary-variant", func(t *testing.T) {
-		got, ok := BuildAdtFromWire("liveTest_Increment", nil, -1)
+		got, ok := BuildAdtFromWire("main.liveTest_Msg", "Increment", nil, -1)
 		if !ok {
 			t.Fatal("expected factory hit")
 		}
@@ -62,9 +62,9 @@ func TestBuildAdtFromWire_VariantFactoryPath(t *testing.T) {
 
 	t.Run("legacy-skyadt-fallback", func(t *testing.T) {
 		// No variant factory registered for "LegacyMsg" → legacy path.
-		RegisterAdtTag("liveTest_LegacyMsg", 7)
+		RegisterAdtTag("main.liveTest_Msg", "LegacyMsg", 7)
 		argJSON, _ := json.Marshal(42)
-		got, ok := BuildAdtFromWire("liveTest_LegacyMsg", []json.RawMessage{argJSON}, -1)
+		got, ok := BuildAdtFromWire("main.liveTest_Msg", "LegacyMsg", []json.RawMessage{argJSON}, -1)
 		if !ok {
 			t.Fatal("expected legacy hit via LookupAdtTag")
 		}
@@ -72,13 +72,13 @@ func TestBuildAdtFromWire_VariantFactoryPath(t *testing.T) {
 		if !isAdt {
 			t.Fatalf("expected legacy SkyADT, got %T", got)
 		}
-		if adt.Tag != 7 || adt.SkyName != "liveTest_LegacyMsg" || len(adt.Fields) != 1 {
+		if adt.Tag != 7 || adt.SkyName != "LegacyMsg" || len(adt.Fields) != 1 {
 			t.Fatalf("unexpected SkyADT shape: %+v", adt)
 		}
 	})
 
 	t.Run("unknown-msg-name", func(t *testing.T) {
-		_, ok := BuildAdtFromWire("liveTest_NonExistent_NeverRegistered", nil, -1)
+		_, ok := BuildAdtFromWire("main.liveTest_Msg", "NonExistent_NeverRegistered", nil, -1)
 		if ok {
 			t.Fatal("expected miss for unknown Msg name")
 		}
@@ -89,12 +89,12 @@ func TestBuildAdtFromWire_VariantFactoryPath(t *testing.T) {
 		// localTag passes through, mirroring the renderer's lazy-built
 		// msgTags cache.
 		argJSON, _ := json.Marshal("xyz")
-		got, ok := BuildAdtFromWire("liveTest_OnlyKnownLocally_NoGlobal", []json.RawMessage{argJSON}, 3)
+		got, ok := BuildAdtFromWire("main.liveTest_Msg", "OnlyKnownLocally_NoGlobal", []json.RawMessage{argJSON}, 3)
 		if !ok {
 			t.Fatal("expected localTag fallback to succeed")
 		}
 		adt, isAdt := got.(SkyADT)
-		if !isAdt || adt.Tag != 3 || adt.SkyName != "liveTest_OnlyKnownLocally_NoGlobal" {
+		if !isAdt || adt.Tag != 3 || adt.SkyName != "OnlyKnownLocally_NoGlobal" {
 			t.Fatalf("unexpected local-tag fallback: %+v", got)
 		}
 	})

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,7 +19,7 @@ import (
 type fakeIngest struct {
 	mu       sync.Mutex
 	received []IngestPayload
-	status   int      // 0 = default 202
+	status   int // 0 = default 202
 	delay    time.Duration
 	calls    atomic.Int32
 }
@@ -53,11 +54,96 @@ func (f *fakeIngest) latest() (IngestPayload, bool) {
 }
 
 // resetPushExporter — clear the singleton between test cases.
+//
+// Waits for the exporter's goroutine to finish rather than merely signalling
+// it: the stop now triggers a final flush on that goroutine, and a test that
+// moved on without waiting would leave a POST in flight against an httptest
+// server the next test is about to close.
 func resetPushExporter() {
 	if exp := activeExporter.Load(); exp != nil {
 		exp.stopOnce.Do(func() { close(exp.stopCh) })
+		exp.wg.Wait()
 	}
 	activeExporter.Store(nil)
+}
+
+// TestPushExporter_IsRegisteredWithTheShutdownChain proves the shutdown flush
+// is WIRED, not merely implemented.
+//
+// TestPushExporter_FlushOnStop below calls StopPushExporter directly, and it
+// passed for the exporter's entire existence while `StopPushExporter` had
+// exactly ONE caller in the tree — that test. Its doc comment claimed the
+// runtime's signal handler called it. Nothing did. Every sub-app therefore
+// dropped up to a full push interval of logs, metrics and spans on every
+// deploy, and the suite reported that as healthy. This asserts the
+// registration itself, which is the half a direct-call test cannot see.
+func TestPushExporter_IsRegisteredWithTheShutdownChain(t *testing.T) {
+	resetPushExporter()
+	resetShutdownHooksForTesting()
+	t.Cleanup(func() {
+		resetPushExporter()
+		resetShutdownHooksForTesting()
+	})
+
+	before := shutdownHookNames()
+	if containsName(before, "observability-push") {
+		t.Fatal("the hook registry was not reset — this gate cannot see its own effect")
+	}
+
+	srv := httptest.NewServer((&fakeIngest{}).handler())
+	defer srv.Close()
+	t.Setenv("SKY_PARENT_URL", srv.URL)
+	t.Setenv("SKY_LIVE_NAMESPACE", "test")
+	t.Setenv("SKY_OBSERVABILITY_PUSH_INTERVAL_MS", "10000")
+	if StartPushExporter() == nil {
+		t.Fatal("no exporter")
+	}
+
+	after := shutdownHookNames()
+	if !containsName(after, "observability-push") {
+		t.Fatalf("starting the push exporter registered no shutdown hook (registry: %v) — "+
+			"the buffered logs, metrics and spans would be dropped on SIGTERM", after)
+	}
+}
+
+// The deploy-safety gate, driven through the REAL shutdown chain.
+//
+// The push interval is pinned to ten seconds so the ticker provably cannot
+// fire during the test: if the buffer reaches the parent, it is because the
+// shutdown hook drained it. This is the assertion that would have caught the
+// missing wiring, and it exercises the same entry point production uses
+// (RunShutdownHooks) rather than reaching for StopPushExporter directly.
+func TestPushExporter_ShutdownChainDrainsTheBuffer(t *testing.T) {
+	resetPushExporter()
+	resetShutdownHooksForTesting()
+	t.Cleanup(func() {
+		resetPushExporter()
+		resetShutdownHooksForTesting()
+	})
+
+	fake := &fakeIngest{}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	t.Setenv("SKY_PARENT_URL", srv.URL)
+	t.Setenv("SKY_LIVE_NAMESPACE", "test")
+	t.Setenv("SKY_INGEST_TOKEN", "tok")
+	t.Setenv("SKY_OBSERVABILITY_PUSH_INTERVAL_MS", "10000")
+	exp := StartPushExporter()
+	if exp == nil {
+		t.Fatal("no exporter")
+	}
+	exp.PushLog(telemetry.LogEntry{Level: "info", Message: "the tail of the deploy"})
+
+	RunShutdownHooks(5 * time.Second)
+
+	if got := fake.calls.Load(); got != 1 {
+		t.Fatalf("the shutdown chain delivered %d pushes, want 1 — the buffered "+
+			"entry was dropped on shutdown", got)
+	}
+	payload, ok := fake.latest()
+	if !ok || len(payload.Logs) != 1 || payload.Logs[0].Message != "the tail of the deploy" {
+		t.Fatalf("shutdown push did not carry the buffered log: %+v", payload)
+	}
 }
 
 func TestPushExporter_NoopWithoutEnv(t *testing.T) {
@@ -152,7 +238,7 @@ func TestPushExporter_DropsOnOverflow(t *testing.T) {
 	t.Setenv("SKY_PARENT_URL", srv.URL)
 	t.Setenv("SKY_LIVE_NAMESPACE", "test")
 	t.Setenv("SKY_INGEST_TOKEN", "tok")
-	t.Setenv("SKY_OBSERVABILITY_BUFFER", "5")            // tiny cap
+	t.Setenv("SKY_OBSERVABILITY_BUFFER", "5")                // tiny cap
 	t.Setenv("SKY_OBSERVABILITY_PUSH_INTERVAL_MS", "10_000") // don't auto-flush during test
 	defer resetPushExporter()
 	exp := StartPushExporter()
@@ -267,4 +353,36 @@ func TestPushExporter_RoundTrip_LogEmit_ToParentStore(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("expected subapp=myapp log entry to round-trip through parent ingest")
+}
+
+// ─── UNBOUNDED-MEMORY regression: push buffers hold bounded entries ──
+//
+// The exporter's buffers are count-capped (bufCap, default 1024)
+// but each slot used to hold whatever it was handed — the same
+// attacker-sized strings the rings used to pin (1 MiB request paths
+// in log messages, uncapped span attributes). 3 × 1024 × 1 MiB is
+// ~3 GiB of heap on a sub-app whose parent is down. Entries are now
+// byte-bounded at buffering time via telemetry.BoundLogEntry /
+// BoundTraceEntry (limits.go).
+func TestPushExporter_BuffersAreByteBounded(t *testing.T) {
+	mega := strings.Repeat("m", 1<<20)
+	e := &PushExporter{bufCap: 8}
+	e.PushLog(telemetry.LogEntry{Level: "info", Message: mega,
+		Fields: map[string]string{"path": mega}})
+	e.PushSpan(telemetry.TraceEntry{TraceID: "t", SpanID: "s", Name: mega,
+		Attributes: map[string]string{"db.statement": mega}})
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if got := len(e.logs[0].Message); got > 4096+64 {
+		t.Errorf("buffered log message holds %d bytes; want <= 4096 (+marker)", got)
+	}
+	if got := len(e.logs[0].Fields["path"]); got > 4096+64 {
+		t.Errorf("buffered log field holds %d bytes; want <= 4096 (+marker)", got)
+	}
+	if got := len(e.spans[0].Name); got > 4096+64 {
+		t.Errorf("buffered span name holds %d bytes; want <= 4096 (+marker)", got)
+	}
+	if got := len(e.spans[0].Attributes["db.statement"]); got > 8192+64 {
+		t.Errorf("buffered db.statement holds %d bytes; want <= 8192 (+marker)", got)
+	}
 }

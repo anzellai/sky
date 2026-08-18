@@ -264,6 +264,14 @@ cookie =
 --   * `withCookie name value attrs resp` — full control over
 --     attribute string (e.g. `"Path=/; HttpOnly; Max-Age=0"`).
 --
+-- Every shape defaults to `Path=/; HttpOnly; SameSite=Lax`, and the
+-- runtime adds `Secure` when the response goes back over HTTPS or the
+-- production gate is on (`ENV` set to any non-dev value) — the same
+-- rule it applies to its own session and CSRF cookies.  It is NOT
+-- added on a plain-HTTP dev session, where the browser would refuse
+-- to send the cookie back.  Write `Secure` into the 4-arg attribute
+-- string to force it.
+--
 -- The Sky signature is left untyped (`any -> any`) to admit all
 -- three shapes; consider migrating to the `cookie` + 2-arg form for
 -- typed call sites in new code.

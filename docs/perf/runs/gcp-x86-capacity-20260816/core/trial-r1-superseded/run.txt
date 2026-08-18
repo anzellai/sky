@@ -1,0 +1,36 @@
+GEN_RC=0
+APPPID=1167
+CLK_TCK=100
+{
+  "label": "core-mem-p5-n25-r1",
+  "url": "http://127.0.0.1:8000",
+  "sessions_requested": 25,
+  "sessions_established": 25,
+  "duration": "45s",
+  "think_time": "0s",
+  "interactions_counted": 13475,
+  "interactions_per_sec": 298.8686876921313,
+  "p50_ms": 103.253,
+  "p95_ms": 141.631,
+  "p99_ms": 153.244,
+  "max_ms": 181.386,
+  "outcomes": {
+    "ok": 13475
+  },
+  "error_rate": 0,
+  "patches_total": 26950,
+  "interactions_with_patches": 13475,
+  "patch_rate": 1,
+  "patches_per_interaction": 2,
+  "patches_naming_absent_ids": 0,
+  "handler_id": "r.1#div.1#div.0#div.1#div.0#button.click",
+  "setup_steps": 2,
+  "sse_frames_total": 175,
+  "sse_still_open_at_end": 25,
+  "generator_cpu_percent_of_machine": 3.730920886200067,
+  "generator_possibly_saturated": false,
+  "valid": true,
+  "host": "skyperf-core",
+  "gomaxprocs": 4,
+  "started_at": "2026-08-16T03:28:38Z"
+}

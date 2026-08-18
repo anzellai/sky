@@ -28,6 +28,7 @@ package rt
 //                     verification + dashboards.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -71,6 +72,24 @@ func init() {
 			Fields:  map[string]string{"error": err.Error()},
 		})
 	}
+	// Drain the telemetry queue on shutdown.
+	//
+	// `ClosePersistence` has always done the right thing — stop the flusher,
+	// let it drain, close the handle — and it documented itself as "test-only;
+	// production code lets the goroutines run for the process lifetime". The
+	// consequence was that in production, whatever sat in the 1024-deep queue
+	// at SIGTERM was dropped: the last fraction of a second of logs, metrics
+	// and spans before every deploy, which is exactly the window an operator
+	// looks at when a deploy goes wrong. A correct flush that nothing calls is
+	// not a flush. This is the same wiring the analytics writer gets, and under
+	// `--embed` it likewise runs before PostgreSQL is stopped.
+	//
+	// The hook's context is PASSED THROUGH rather than discarded, so a drain
+	// that outruns the shutdown budget says so in the log instead of dropping
+	// the tail of the queue in silence.
+	RegisterShutdownHook("telemetry-persistence", func(ctx context.Context) {
+		telemetry.Default().ClosePersistenceContext(ctx)
+	})
 }
 
 // RegisterReadinessProbe adds a health check to the readyz endpoint.
@@ -206,7 +225,11 @@ func HandleMetrics(w http.ResponseWriter, r *http.Request) {
 	if isProductionMode() && !hasAdminAuth(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="sky-metrics"`)
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"unauthorized","hint":"set [security] env or sign in with admin role"}`))
+		// The hint must name something that WORKS. It used to say "set
+		// [security] env", a sky.toml key no version of the compiler has
+		// ever parsed — telling an operator already locked out of their
+		// own metrics endpoint to do a thing that could not help.
+		w.Write([]byte(`{"status":"unauthorized","hint":"set SKY_ADMIN_TOKEN and send it as 'Authorization: Bearer <token>', or set ENV=dev to open metrics locally"}`))
 		return
 	}
 	w.Header().Set("Content-Type", telemetry.ContentType)
@@ -234,10 +257,14 @@ func HandleBuildInfo(w http.ResponseWriter, r *http.Request) {
 // to skip when conflicts exist.
 func MountObservabilityEndpoints(mux *http.ServeMux) {
 	if skyGetenv("OBSERVABILITY_DISABLED") == "1" {
-		// Explicit opt-out — used by tests that want to test the
-		// non-observability path. Production users opt out via
-		// sky.toml [observability] enabled = false, surfaced by
-		// the compiler as the same env var.
+		// Explicit opt-out. Set <PREFIX>_OBSERVABILITY_DISABLED=1 on
+		// the deployment.
+		//
+		// This used to claim production users opt out via sky.toml
+		// `[observability] enabled = false`, "surfaced by the compiler
+		// as the same env var". There is no `[observability]` section
+		// and the compiler surfaces nothing — the env var is the only
+		// way, and now the only thing documented here.
 		return
 	}
 	safeMount(mux, "/_sky/healthz", HandleHealthz)
@@ -271,25 +298,77 @@ func safeMount(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
 
 // ─── Production-mode + auth helpers ────────────────────────────
 
-// productionMode is set by the runtime at startup based on:
+// productionMode is the BOOT SNAPSHOT of the production gate, and it is a
+// TRI-STATE on purpose.
 //
-//   - sky.toml `[security] env = "production"` (explicit, wins)
-//   - OR the binary binding to 0.0.0.0 (rough heuristic — containers
-//     and cloud VMs invariably bind 0.0.0.0; local dev binds localhost)
+// It is set from `productionFromEnv()` by the two real serving paths —
+// `Server_listen` (rt.go:9468) and `liveAppRun` (live.go:4183) — and may be
+// overridden by an embedder afterwards. NOT from sky.toml
+// `[security] env = "production"`: no version of the compiler has parsed that
+// key, and which environment a binary runs in is a property of the deployment,
+// not of the build. (An earlier comment here also claimed a 0.0.0.0-binding
+// heuristic; no code has implemented one.)
 //
-// Both paths set this atomic via SetProductionMode(). Endpoint
-// handlers consult it to gate metrics auth.
-var productionMode atomic.Bool
+// # Why tri-state
+//
+// It used to be an `atomic.Bool`, so NEVER SET was indistinguishable from
+// EXPLICITLY FALSE, and the default was the open one. Under `ENV=production`
+// in a process that had not reached either serving path, `isProd()` said true
+// while `isProductionMode()` said false — and `isProductionMode()` is what
+// guards `/_sky/metrics` admin auth (HandleMetrics, this file), the
+// `consoleAuthModeDevOpen` re-tightening (console_auth_v2.go:443) and the mode
+// the console reports (console.go:492). That is a genuine divergence between
+// two production predicates, in the fail-OPEN direction, on the endpoints most
+// worth gating.
+//
+// The processes it reaches are real: `startWebviewLoopback` (webview.go:428)
+// serves HTTP and never calls `SetProductionMode`; a sub-app installed by
+// `MountLiveSubAppInProcess` is safe only because some parent happened to call
+// it; and every `go test` starts at false.
+//
+// `unset` now falls back to the live predicate, so the snapshot can only ever
+// be a DELIBERATE statement. An explicit `SetProductionMode(false)` still wins,
+// which is what keeps the embedder override and the existing tests meaningful.
+type productionModeState = int32
 
-// SetProductionMode toggles the production auth gate. Called from
-// the Sky.Live startup path after reading sky.toml + inspecting the
-// listen address.
+const (
+	productionModeUnset productionModeState = 0
+	productionModeOff   productionModeState = 1
+	productionModeOn    productionModeState = 2
+)
+
+var productionMode atomic.Int32
+
+// SetProductionMode toggles the production auth gate. Called from the
+// Sky.Live and Sky.Http.Server startup paths, and available to an embedder.
 func SetProductionMode(on bool) {
-	productionMode.Store(on)
+	if on {
+		productionMode.Store(productionModeOn)
+	} else {
+		productionMode.Store(productionModeOff)
+	}
+}
+
+// clearProductionMode returns the snapshot to "never set", so the live
+// predicate is consulted again. Exists for tests: the state is process-global
+// and a `SetProductionMode(false)` in one test would otherwise pin every later
+// one to an explicit answer.
+func clearProductionMode() {
+	productionMode.Store(productionModeUnset)
 }
 
 func isProductionMode() bool {
-	return productionMode.Load()
+	switch productionMode.Load() {
+	case productionModeOn:
+		return true
+	case productionModeOff:
+		return false
+	default:
+		// Never set. Fall back to the live predicate rather than to `false`:
+		// an absent snapshot is not evidence that this is not production, and
+		// treating it as such opens the endpoints this flag exists to close.
+		return productionFromEnv()
+	}
 }
 
 // productionFromEnv — single source of truth for whether the
@@ -312,12 +391,17 @@ func isProductionMode() bool {
 // the common case, and the previous addr-based heuristic broke
 // every Docker / reverse-proxy / sidecar pattern.
 func productionFromEnv() bool {
-	// Plain `ENV` first (the var users actually type), then
-	// `SKY_ENV` fallback (the namespaced variant the compiler
-	// emits from `sky.toml [security] env = ...`).
+	// Plain `ENV` first (the var users actually type), then the
+	// namespaced `<PREFIX>_ENV` fallback — `SKY_ENV` by default, or
+	// `FENCE_ENV` when sky.toml declares `[env] prefix = "FENCE"`.
+	//
+	// The fallback MUST route through skyGetenv rather than reading a
+	// hardcoded "SKY_ENV": a custom-prefix project sets FENCE_ENV, and
+	// hardcoding the default prefix meant such a project could not turn
+	// the production gate on through its own namespace at all.
 	envFlag := strings.ToLower(os.Getenv("ENV"))
 	if envFlag == "" {
-		envFlag = strings.ToLower(os.Getenv("SKY_ENV"))
+		envFlag = strings.ToLower(skyGetenv("ENV"))
 	}
 	if envFlag == "" {
 		return false
@@ -328,7 +412,6 @@ func productionFromEnv() bool {
 	}
 	return true
 }
-
 
 // hasAdminAuth checks for a valid Std.Auth admin session on the
 // request. v1.0 implementation: looks for a session cookie holding

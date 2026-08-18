@@ -52,6 +52,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"sky-app/rt/periodic"
 	"sky-app/rt/telemetry"
 )
 
@@ -159,6 +160,13 @@ type HubExporter struct {
 	// Hot-path state. We accept on this channel; drainer consumes.
 	queue chan telemetryItem
 
+	// flushReq carries a caller's request for a synchronous drain. The drainer
+	// closes the handed-in channel once everything queued before the request
+	// has been PUSHED, which is the happens-before edge the old poll-based
+	// Flush never established. Unbuffered on purpose: the rendezvous is what
+	// guarantees the drainer has seen the request.
+	flushReq chan chan struct{}
+
 	// In-memory byte accounting (approx; used for backpressure).
 	queueBytes atomic.Int64
 
@@ -187,7 +195,21 @@ type HubExporter struct {
 	stopOnce  sync.Once
 	stopCh    chan struct{}
 	doneCh    chan struct{}
-	draining  atomic.Bool
+	// drained records that the drainer has left: `queue` has no reader and,
+	// because Start is startOnce-guarded, never will again. Submit consults
+	// it — an item enqueued past this point would be neither pushed nor
+	// counted, which is the one outcome the drop counters exist to prevent.
+	//
+	// This replaces a `draining` flag that was set by Flush and by
+	// StopContext, read NOWHERE, and described by StopContext as the gate
+	// Submit consults. It could not have been that gate: Flush also set it,
+	// and a Flush is not a shutdown — gating Submit on it would have thrown
+	// away telemetry the still-running drainer was about to push.
+	drained atomic.Bool
+	// started records whether the drainer goroutine actually exists, so Stop
+	// can wait on doneCh without hanging forever on an exporter that was
+	// constructed but never started.
+	started atomic.Bool
 
 	// Durability (PR 5). The spool persists batches that haven't
 	// been acked by the hub. Attached via attachSpool; nil means
@@ -197,7 +219,12 @@ type HubExporter struct {
 	spool           spool
 	spoolCfg        spoolConfig
 	spoolWriteFails int64 // atomic
-	spoolReplayed   atomic.Bool
+	// spoolAckFails counts Acks that failed after a successful push. Each one
+	// is a spool row that will be replayed on the next boot; a rising count is
+	// the signal that the spool is growing without bound, which the discarded
+	// `_ = sp.Ack(...)` used to hide completely.
+	spoolAckFails int64 // atomic
+	spoolReplayed atomic.Bool
 
 	// Test hooks — set via SetTransport for in-test stub server.
 	// nil → use httpC.
@@ -326,6 +353,7 @@ func NewHubExporter() *HubExporter {
 		circuitOpenWindow: 30 * time.Second,
 		stopCh:            make(chan struct{}),
 		doneCh:            make(chan struct{}),
+		flushReq:          make(chan chan struct{}),
 	}
 	exp.circuit.Store(int32(circuitClosed))
 
@@ -368,6 +396,7 @@ func NewHubExporterForTesting(transport func(ctx context.Context, body []byte) (
 		circuitOpenWindow: 200 * time.Millisecond, // accelerated for tests
 		stopCh:            make(chan struct{}),
 		doneCh:            make(chan struct{}),
+		flushReq:          make(chan chan struct{}),
 		transportOverride: transport,
 	}
 	exp.circuit.Store(int32(circuitClosed))
@@ -386,6 +415,16 @@ func NewHubExporterForTesting(transport func(ctx context.Context, body []byte) (
 // encode + Submit in one step.
 func (e *HubExporter) Submit(kind TelemetryKind, payload []byte, level Severity) {
 	if e == nil {
+		return
+	}
+	// The drainer is gone: a send would be accepted into a channel with no
+	// reader, so the item would be lost without ever appearing in the drop
+	// total. Count it instead. The shutdown-hook chain is LIFO and the
+	// exporter registers late, so hooks that log AFTER it has drained land
+	// here — as does anything the process emits between the last hook and
+	// exit.
+	if e.drained.Load() {
+		e.recordDrop(level)
 		return
 	}
 	// Priority drop-at-source — when the queue is at >80% capacity,
@@ -514,35 +553,42 @@ func (e *HubExporter) Start(ctx context.Context) {
 		// Make ourselves the active singleton. Subsequent
 		// ActiveHubExporter() calls return us.
 		activeHubExporter.Store(e)
-		// Use SafeGo-equivalent — the drainer runs under defer/
-		// recover so any panic inside batching/push doesn't kill
-		// the process. We don't import SafeGo here because the rt
-		// package init ordering means SafeGo might not be wired
-		// when tests construct the exporter directly; using a
-		// local defer/recover keeps the test surface simple.
+		// Recorded before the goroutine is spawned, so a Stop racing Start
+		// either waits for a drainer that exists or skips a wait for one that
+		// never will.
+		e.started.Store(true)
+		// The drainer's recover is INSIDE drain(), scoped to one loop
+		// iteration — see drain() for why. This deferred function is the
+		// goroutine's exit bookkeeping only; it keeps a recover as a last
+		// resort so a panic from the bookkeeping itself still closes doneCh
+		// rather than deadlocking every Stop, and that recover is now
+		// unreachable from the work.
+		//
+		// It used to be the ONLY recover: a panic anywhere in batching or
+		// push unwound past the loop, was swallowed here, and export stopped
+		// permanently — while `doneCh` still closed, so `Stop()` reported a
+		// clean drain. A silent failure that actively lied about itself.
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
 					fmt.Fprintf(os.Stderr,
-						"[sky.hub-exporter] drainer panicked: %v\n", r)
+						"[sky.hub-exporter] drainer exit path panicked: %v\n", r)
 				}
+				// Before doneCh, so a Stop that returns on doneCh cannot
+				// observe a queue that still looks live. Ordered after the
+				// recover so a panicking drainer also stops pretending to
+				// accept work.
+				e.markDrained()
 				close(e.doneCh)
 			}()
 			e.drain(ctx)
 		}()
 		// Spool retention sweep (PR 5). Runs in its own goroutine
 		// so the drainer hot loop stays clean. Skipped when no
-		// spool is attached (memory-only / disabled).
+		// spool is attached (memory-only / disabled). Its recover is per
+		// sweep, inside spoolRetentionSweep.
 		if e.activeSpool() != nil {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Fprintf(os.Stderr,
-							"[sky.hub-exporter] spool sweep panicked: %v\n", r)
-					}
-				}()
-				e.spoolRetentionSweep(ctx, e.spoolCfg)
-			}()
+			go e.spoolRetentionSweep(ctx, e.spoolCfg)
 		}
 		// Register shutdown hook — runs before srv.Close so any
 		// pending push reaches the hub within the orchestrator
@@ -559,70 +605,175 @@ func (e *HubExporter) Start(ctx context.Context) {
 				}
 			}
 			_ = e.Flush(deadline)
-			e.Stop()
+			// StopContext rather than Stop: the stop branch is the drain that
+			// covers anything Submitted between the Flush above and this call,
+			// and the hook must wait for it inside the budget rather than
+			// signalling and returning.
+			e.StopContext(hookCtx)
 		})
 	})
 }
 
-// Stop signals the drainer to exit. Does NOT wait — pair with Flush
-// for the SIGTERM-drain path.
+// defaultStopWait bounds a Stop that was given no budget of its own.
+//
+// A wedged hub must DEGRADE the caller, not hang it — the same property
+// `persistFlushWait` and `analyticsFlushWait` give the sibling writers. The
+// drainer can be parked inside a push against an unresponsive endpoint, and an
+// unbounded wait there would turn a stalled collector into a stalled shutdown
+// (and, in the test suite, into a hang: TestHubExporter_HotPathNeverBlocks
+// wedges its transport on purpose). The production shutdown path does not rely
+// on this value — the hook passes its real remaining budget to StopContext.
+const defaultStopWait = 5 * time.Second
+
+// Stop signals the drainer to exit and WAITS for its final drain, bounded by
+// defaultStopWait.
 func (e *HubExporter) Stop() {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultStopWait)
+	defer cancel()
+	e.StopContext(ctx)
+}
+
+// StopContext is Stop bounded by a shutdown budget.
+//
+// # What the wait fixes
+//
+// Stop used to close stopCh and return immediately, documented as "Does NOT
+// wait — pair with Flush for the SIGTERM-drain path". Pairing it with Flush
+// did not close the gap, because the drainer's own final-drain branch — the
+// entire "flushed on shutdown" claim — ran on a goroutine nobody joined.
+// `doneCh` was closed by the drainer at `:529` and received on NOWHERE in the
+// tree. Whatever the exporter still held when the process exited was lost.
+//
+// The spool close is now sequenced AFTER the drain rather than concurrently
+// with it. Previously Stop nil'd out the spool while the drainer could still
+// be inside its final flushBatch calling spoolPersistAttempt on it, so the
+// shutdown path could drop the very batches the durability layer exists to
+// preserve.
+func (e *HubExporter) StopContext(ctx context.Context) {
 	if e == nil {
 		return
 	}
 	e.stopOnce.Do(func() {
-		e.draining.Store(true)
 		close(e.stopCh)
-		// Close the spool — releases the SQLite handle (file mode)
-		// or zeroes the RAM buffer (memory mode). Best-effort; a
-		// close error doesn't propagate because Stop has no return.
-		e.spoolMu.Lock()
-		sp := e.spool
-		e.spool = nil
-		e.spoolMu.Unlock()
-		if sp != nil {
-			_ = sp.Close()
-		}
-		// Don't clear activeHubExporter — Stop is typically called
-		// during shutdown, after which the runtime exits. Leaving
-		// the singleton in place keeps any in-flight Submit() calls
-		// no-op-safe (they'll select+default into a closed channel,
-		// which panics — handled below by gating on e.draining).
 	})
+	// Wait for the drainer's final push before tearing down the spool. Skipped
+	// when no drainer was ever started, since doneCh would never close.
+	if e.started.Load() {
+		select {
+		case <-e.doneCh:
+		case <-ctx.Done():
+			// Budget exhausted. Say so rather than exiting quietly: "we lost
+			// this deploy's telemetry tail" is exactly the fact an operator
+			// needs and cannot recover afterwards.
+			//
+			// `drained` stays false here on purpose: the drainer is still
+			// alive and may yet push what is queued. It flips when that
+			// goroutine actually exits.
+			if n := len(e.queue); n > 0 {
+				fmt.Fprintf(os.Stderr,
+					"[sky.hub-exporter] shutdown budget expired with %d items unpushed\n", n)
+			}
+		}
+	} else {
+		// No drainer exists and none ever will, so nothing can push what is
+		// queued. Close the books here — the drainer's own exit path is
+		// otherwise the only place that does.
+		e.markDrained()
+	}
+	// Close the spool — releases the SQLite handle (file mode)
+	// or zeroes the RAM buffer (memory mode). Best-effort; a
+	// close error doesn't propagate because Stop has no return.
+	e.spoolMu.Lock()
+	sp := e.spool
+	e.spool = nil
+	e.spoolMu.Unlock()
+	if sp != nil {
+		_ = sp.Close()
+	}
+	// Don't clear activeHubExporter — Stop is typically called during
+	// shutdown, after which the runtime exits. Leaving the singleton in
+	// place keeps late Submit() calls safe: the queue is never closed, so
+	// nothing panics, and `drained` turns what would be a silent enqueue
+	// into a counted drop.
 }
 
-// Flush blocks until the in-flight queue is drained OR deadline
-// expires. Used by SIGTERM hook. Returns nil on clean drain, a
-// deadline-exceeded error otherwise. The drainer continues to run
-// — caller should pair with Stop() to actually shut down.
+// markDrained closes the books on the queue: it records that no reader
+// remains and counts whatever is still sitting there as dropped.
 //
-// Internally: marks draining=true so new Submits short-circuit;
-// signals the drainer to flush eagerly; waits up to deadline for
-// the queue to empty.
+// The count matters as much as the flag. `drained` is set by the drainer on
+// its way out, so a Submit that had already passed the check can still land an
+// item behind it. That item is unpushable, and leaving it uncounted would make
+// the drop total wrong by however many callers were mid-Submit — the exact
+// "empty queue is not a committed write" error the Flush rewrite removed one
+// layer up.
+func (e *HubExporter) markDrained() {
+	e.drained.Store(true)
+	for {
+		select {
+		case it := <-e.queue:
+			e.queueBytes.Add(-int64(len(it.payload)))
+			e.recordDrop(it.severity)
+		default:
+			return
+		}
+	}
+}
+
+// Flush blocks until everything queued at the time of the call has been
+// PUSHED, or the deadline expires. Used by the SIGTERM hook. Returns nil on a
+// clean drain, a deadline-exceeded error otherwise. The drainer continues to
+// run — callers pair this with Stop to actually shut down.
+//
+// # Why this is a rendezvous and not a poll
+//
+// It used to spin every 25 ms until `len(e.queue) == 0 && queueBytes == 0`,
+// under a doc comment claiming it "signals the drainer to flush eagerly". It
+// sent no signal. There was no channel and no flag the drainer read, so the
+// only thing that ever moved a batch was the `batchInt` ticker — 2 s in
+// production. `Flush(deadline)` with a deadline shorter than that interval
+// could not succeed except by luck, and the two tests covering this path both
+// hid it: one hand-set `batchInt` to 50 ms, and the other asserted merely that
+// 95% of events arrived, with a comment calling the shortfall a "tiny
+// tolerance for race with the drainer goroutine". That tolerance WAS the
+// defect, written down and accepted.
+//
+// The poll predicate was independently unsound. `queueBytes` is decremented
+// after a push, but it counts `len(payload)`, so a zero-length payload sitting
+// in the drainer's local batch made both terms zero while the item was still
+// unpushed — the empty-queue-is-not-a-committed-write error in its purest form.
+//
+// The drainer now answers an explicit request and closes the caller's channel
+// only after the drain has been pushed.
+//
+// Flush does NOT close Submit. It used to set a `draining` flag here, which
+// StopContext described as the gate Submit consults; Submit never read it, and
+// could not have — a flush is not a shutdown, so a Submit arriving during one
+// is destined for the drainer that is running right now, not for the drop
+// counter. The gate Submit does consult is `drained`, and only the drainer's
+// exit sets that.
 func (e *HubExporter) Flush(deadline time.Duration) error {
 	if e == nil {
 		return nil
 	}
-	e.draining.Store(true)
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
-	defer cancel()
-	// Eagerly drain whatever's queued. We drain in-process — the
-	// drainer goroutine is also pulling, so we use a separate sync
-	// wait: poll the channel length every 25 ms.
-	tick := time.NewTicker(25 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		// Channel empty AND no in-flight bytes → drained.
-		if len(e.queue) == 0 && e.queueBytes.Load() == 0 {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("hub-exporter: flush deadline exceeded with %d items queued",
-				len(e.queue))
-		case <-tick.C:
-			// Continue polling.
-		}
+	done := make(chan struct{})
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+	select {
+	case e.flushReq <- done:
+	case <-e.stopCh:
+		// Already stopping; the drainer's stop branch pushes the queue and
+		// Stop is what waits for it.
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("hub-exporter: flush deadline exceeded with %d items queued",
+			len(e.queue))
+	}
+	select {
+	case <-done:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("hub-exporter: flush deadline exceeded with %d items queued",
+			len(e.queue))
 	}
 }
 
@@ -699,35 +850,94 @@ func (e *HubExporter) drain(ctx context.Context) {
 		batchBytes = 0
 	}
 
+	// coalesce pulls everything already queued into the current batch, up to
+	// the size and byte caps.
+	coalesce := func() {
+		for len(batch) < e.batchMax && batchBytes < e.batchBytes {
+			select {
+			case it := <-e.queue:
+				batch = append(batch, it)
+				batchBytes += len(it.payload)
+			default:
+				return
+			}
+		}
+	}
+	// drainAll pushes everything currently queued, not merely one batch. It is
+	// the body shared by the shutdown drain and the synchronous Flush, so the
+	// two cannot drift apart.
+	drainAll := func() {
+		for {
+			coalesce()
+			flushBatch()
+			if len(e.queue) == 0 {
+				return
+			}
+		}
+	}
+
 	for {
 		select {
 		case <-e.stopCh:
-			// Final drain — pull everything pending without blocking,
-			// then flush + exit.
-			for {
-				select {
-				case it := <-e.queue:
-					batch = append(batch, it)
-					batchBytes += len(it.payload)
-				default:
-					flushBatch()
-					return
-				}
-				if len(batch) >= e.batchMax || batchBytes >= e.batchBytes {
-					flushBatch()
-				}
-			}
+			// Final drain. Everything that reached the queue before the stop is
+			// pushed before this goroutine returns, and Stop waits on doneCh —
+			// which is what makes "the exporter drains on SIGTERM" a guarantee
+			// rather than a signal and a hope.
+			//
+			// Guarded like every other cycle: a panic in the final drain must
+			// not skip the exit bookkeeping that closes doneCh, or Stop blocks
+			// for its whole budget and reports a lost tail it did not lose.
+			periodic.Guard("hub-exporter.drain-final", exporterPeriodicReport,
+				func() error { drainAll(); return nil })
+			return
+
+		case done := <-e.flushReq:
+			// A caller is waiting. Drain to empty before closing `done`: every
+			// item enqueued before the request must have been pushed by the
+			// time the caller observes the close.
+			//
+			// `close(done)` is DEFERRED inside the guard rather than written
+			// after it. A panic in drainAll would otherwise leave the waiting
+			// Flush caller blocked until its own timeout with no explanation —
+			// so the guard must not merely keep the drainer alive, it has to
+			// release whoever is waiting on this cycle.
+			periodic.Guard("hub-exporter.drain-flush", exporterPeriodicReport, func() error {
+				defer close(done)
+				drainAll()
+				return nil
+			})
 
 		case <-tick.C:
-			flushBatch()
+			periodic.Guard("hub-exporter.drain-tick", exporterPeriodicReport,
+				func() error { flushBatch(); return nil })
 
 		case it := <-e.queue:
 			batch = append(batch, it)
 			batchBytes += len(it.payload)
 			if len(batch) >= e.batchMax || batchBytes >= e.batchBytes {
-				flushBatch()
+				periodic.Guard("hub-exporter.drain-full-batch", exporterPeriodicReport,
+					func() error { flushBatch(); return nil })
 			}
 		}
+	}
+}
+
+// exporterPeriodicReport routes the exporter's loop failures to stderr, the
+// same channel every other line in this file uses. It is NOT the telemetry
+// ring: the exporter is what drains that ring, so reporting an export failure
+// into it would make the failure's own record depend on the machinery that
+// just failed.
+func exporterPeriodicReport(r periodic.Report) {
+	switch {
+	case r.Recovered != nil:
+		// LogRecoveredPanic is the one production-gated stack path
+		// (rt/panic_log.go); it prints the class and persists the frame rather
+		// than putting internal frames in a production log.
+		LogRecoveredPanic("sky.hub-exporter", r.Loop, r.Recovered)
+		fmt.Fprintf(os.Stderr, "[sky.hub-exporter] %s: cycle panicked: %v — "+
+			"this cycle is lost, the exporter continues\n", r.Loop, r.Recovered)
+	case r.Err != nil:
+		fmt.Fprintf(os.Stderr, "[sky.hub-exporter] %s: %v\n", r.Loop, r.Err)
 	}
 }
 

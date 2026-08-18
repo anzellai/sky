@@ -1,0 +1,127 @@
+// zz_perfprobe.go — MEASUREMENT-ONLY instrumentation for the Sky.Live
+// interaction-cost investigation (docs/perf/skylive-interaction-cost.md).
+//
+// This file is NOT part of the shipped runtime. It is dropped into a
+// generated `sky-out/rt/` tree (which is gitignored build output) so the app
+// under test can be profiled without modifying runtime-go/rt/ and without
+// rebuilding the Rust compiler. An archived copy lives beside the run data so
+// the measurement is reproducible.
+//
+// Everything here is gated on SKY_PERF_PPROF_ADDR being set. When it is unset
+// the init returns immediately and the binary behaves exactly as shipped —
+// which is what makes the "profiler off" control run meaningful.
+//
+// Why an HTTP listener rather than the built-in `sky run --profile`:
+//
+//   * `--profile` covers the WHOLE process lifetime (startup + ramp + idle)
+//     and writes only at exit. This investigation needs CPU profiles over an
+//     exact steady-state window, so that startup and session-establishment
+//     are not folded into a per-interaction figure.
+//   * It needs two heap snapshots from the SAME process (1 session, then N)
+//     to diff, which an at-exit-only profile cannot provide.
+//   * /debug/pprof/goroutine?debug=1 attributes goroutines to their creation
+//     site, which is how "goroutines per session" gets answered.
+//
+// net/http/pprof registers its handlers on http.DefaultServeMux as an import
+// side effect. The Sky runtime serves on its own mux (see safeMount in
+// console.go), never on DefaultServeMux, so serving DefaultServeMux on a
+// separate loopback port adds no route to the application's own surface.
+package rt
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+	"runtime"
+	"strconv"
+	"time"
+)
+
+func init() {
+	addr := os.Getenv("SKY_PERF_PPROF_ADDR")
+	if addr == "" {
+		return
+	}
+
+	// MemProfileRate: one sample per N bytes allocated (default 512 KiB).
+	// Attributing ~1.4 MB per session across ~100 sessions at the default rate
+	// yields only a few hundred samples, which is too coarse to name the
+	// retentions. A smaller rate buys proportionally more samples at the cost
+	// of per-allocation profiling work — so the rate used is recorded with
+	// every result, and the throughput of a profiled run is compared against
+	// an unprofiled control.
+	//
+	// Allocations made before this init runs (other rt package inits) are
+	// sampled at the default rate. That is harmless here: the memory result is
+	// a DIFF between two session counts in the same process, and fixed startup
+	// allocations cancel exactly.
+	if s := os.Getenv("SKY_PERF_MEMPROFILERATE"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			runtime.MemProfileRate = n
+		}
+	}
+
+	// /perf/memstats — the full runtime.MemStats, so the RSS attribution can
+	// separate Go heap from goroutine stacks from runtime metadata. The heap
+	// pprof profile alone covers only the first of those three.
+	http.HandleFunc("/perf/memstats", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("gc") != "0" {
+			runtime.GC()
+		}
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"t":              time.Now().UTC().Format(time.RFC3339Nano),
+			"num_goroutine":  runtime.NumGoroutine(),
+			"heap_alloc":     ms.HeapAlloc,
+			"heap_inuse":     ms.HeapInuse,
+			"heap_idle":      ms.HeapIdle,
+			"heap_released":  ms.HeapReleased,
+			"heap_sys":       ms.HeapSys,
+			"heap_objects":   ms.HeapObjects,
+			"stack_inuse":    ms.StackInuse,
+			"stack_sys":      ms.StackSys,
+			"mspan_inuse":    ms.MSpanInuse,
+			"mspan_sys":      ms.MSpanSys,
+			"mcache_inuse":   ms.MCacheInuse,
+			"mcache_sys":     ms.MCacheSys,
+			"buck_hash_sys":  ms.BuckHashSys,
+			"gc_sys":         ms.GCSys,
+			"other_sys":      ms.OtherSys,
+			"sys":            ms.Sys,
+			"next_gc":        ms.NextGC,
+			"num_gc":         ms.NumGC,
+			"total_alloc":    ms.TotalAlloc,
+			"mallocs":        ms.Mallocs,
+			"frees":          ms.Frees,
+			"gc_cpu_frac":    ms.GCCPUFraction,
+			"pause_total_ns": ms.PauseTotalNs,
+		})
+	})
+
+	// /perf/ping — readiness for the probe listener itself, so a harness can
+	// tell "app not up yet" from "probe not enabled".
+	http.HandleFunc("/perf/ping", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "perfprobe ok")
+	})
+
+	// Mutex and block profiling are OFF unless explicitly asked for: both add
+	// per-operation cost and would perturb the very CPU measurement this
+	// investigation is making. The harness enables them only for the
+	// dedicated contention run, and that run's throughput is reported
+	// separately rather than pooled with the clean CPU runs.
+	if os.Getenv("SKY_PERF_MUTEX_PROFILE") != "" {
+		runtime.SetMutexProfileFraction(1)
+		runtime.SetBlockProfileRate(1)
+	}
+
+	go func() {
+		srv := &http.Server{Addr: addr, Handler: http.DefaultServeMux}
+		if err := srv.ListenAndServe(); err != nil {
+			fmt.Fprintf(os.Stderr, "perfprobe: listener on %s died: %v\n", addr, err)
+		}
+	}()
+}

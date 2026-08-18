@@ -31,6 +31,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"sky-app/rt/dbshare"
 	"time"
 )
 
@@ -44,6 +46,14 @@ var (
 	analyticsStoreDB          *sql.DB
 	analyticsNoStoreWarnOnce  sync.Once
 	analyticsWriteErrWarnOnce sync.Once
+	// analyticsWriterInst is the single buffered writer for this process,
+	// created alongside the store inside analyticsStoreOnce. See
+	// analytics_writer.go.
+	analyticsWriterInst *analyticsWriter
+	// analyticsPool is the shared-pool handle on PostgreSQL, nil on SQLite.
+	// Held so the reference can be released; the pool itself closes when the
+	// last consumer lets go.
+	analyticsPool *dbshare.Handle
 )
 
 // analyticsDriverName is "sqlite" or "pgx", set when the store opens. It drives
@@ -63,8 +73,22 @@ func analyticsBackend(path string) (driver, dsn string) {
 // analyticsQ rewrites `?` placeholders to `$1,$2,…` for pgx; SQLite keeps `?`.
 // Queries are AUTHORED with `?` and passed through this once so there is a single
 // SQL string per query, not a per-dialect fork.
+//
+// This overload reads the process-wide `analyticsDriverName`, which is set when
+// the store opens. That is correct for the query helpers below, which only ever
+// run against the one store this process opened — but it is a trap for anything
+// holding its OWN handle, so such code calls analyticsQFor with the driver it
+// actually has. The buffered writer does; a version of it that did not silently
+// sent `?` placeholders to PostgreSQL and every batch failed with
+// `syntax error at or near ","`.
 func analyticsQ(sql string) string {
-	if analyticsDriverName != "pgx" {
+	return analyticsQFor(analyticsDriverName, sql)
+}
+
+// analyticsQFor is analyticsQ with the driver passed explicitly, mirroring
+// telemetryQ in the telemetry package.
+func analyticsQFor(driver, sql string) string {
+	if driver != "pgx" {
 		return sql
 	}
 	var b strings.Builder
@@ -101,6 +125,14 @@ func analyticsSchemaStmts(driver string) []string {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_analytics_ts ON analytics_events(ts)`,
 		`CREATE INDEX IF NOT EXISTS idx_analytics_event ON analytics_events(event)`,
+		// The two subject columns. Without these, `Analytics.erase` — the
+		// right-to-erasure path — was a full table scan of every event ever
+		// recorded, and so was the console's unique-user count. A GDPR/CCPA
+		// deletion request is not a query you want to be O(all history):
+		// on a busy store it is slow enough to time out, and a timed-out
+		// erasure is an erasure that did not happen.
+		`CREATE INDEX IF NOT EXISTS idx_analytics_anonymous_id ON analytics_events(anonymous_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_analytics_user_id ON analytics_events(user_id)`,
 	}
 }
 
@@ -122,6 +154,52 @@ func analyticsStorePath() string {
 	return analyticsDefaultStorePath
 }
 
+// analyticsOpenPool opens the analytics store's connection pool.
+//
+// On PostgreSQL it goes through the shared registry (see the dbshare
+// package), so when the analytics DSN resolves to the same string as the
+// session store's or telemetry's — the normal case, since "one database for
+// everything" is what `DATABASE_URL` and `sky db provision --embed` both
+// produce — the three consumers share ONE pool rather than opening three sets
+// of backends against the same server.
+//
+// The cap keeps the bulkhead, and it is worth being exact about what it
+// covers. It bounds the buffered WRITER, which is the only high-volume
+// analytics user: one goroutine, batching, so `dbAnalyticsShare` slots are
+// more than it can occupy. The read paths — the console's Analytics tab,
+// `erase`, `openStore` — use the pool directly and are NOT capped, because
+// they are admin-facing and already bounded by request concurrency, and
+// because routing them through the semaphore would let a slow write stall an
+// operator trying to look at why it is slow.
+//
+// On SQLite it opens its own handle, deliberately. The connection-count
+// problem is a PostgreSQL problem — a SQLite "connection" is a file handle,
+// not a server process — and the consumers want genuinely different SQLite
+// pools: analytics is pinned to one connection under the global write lock,
+// while telemetry deliberately runs a small plural pool so the console can
+// read while it writes. Sharing one handle would have to pick one of those.
+func analyticsOpenPool(driver, dsn string) (*sql.DB, *dbshare.Handle, error) {
+	if driver != "pgx" {
+		db, err := sql.Open(driver, dsn)
+		if err != nil {
+			return nil, nil, err
+		}
+		sqlitePoolConfig().applyTo(db)
+		return db, nil, nil
+	}
+	c := dbSharedAuxPoolConfig()
+	h, err := dbshare.Acquire("analytics", driver, dsn, dbshare.Config{
+		MaxOpenConns:    c.MaxOpenConns,
+		MaxIdleConns:    c.MaxIdleConns,
+		ConnMaxLifetime: c.ConnMaxLifetime,
+		ConnMaxIdleTime: c.ConnMaxIdleTime,
+	}, dbAnalyticsShare)
+	if err != nil {
+		return nil, nil, err
+	}
+	return h.DB(), h, nil
+}
+
 // analyticsStore lazily opens (once) the analytics store, or nil when no path is
 // configured / the open fails.
 func analyticsStore() *sql.DB {
@@ -138,15 +216,14 @@ func analyticsStore() *sql.DB {
 				_ = os.MkdirAll(dir, 0o755)
 			}
 		}
-		db, err := sql.Open(driver, dsn)
+		db, handle, err := analyticsOpenPool(driver, dsn)
 		if err != nil {
 			return
 		}
+		analyticsPool = handle
 		if driver == "sqlite" {
-			// SQLite is single-file: serialise this process's writes + WAL so the
-			// console reader coexists. Postgres handles concurrency natively — no
-			// single-conn cap, no PRAGMAs.
-			db.SetMaxOpenConns(1)
+			// SQLite is single-file: WAL so the console reader coexists with
+			// this process's writes.
 			for _, p := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`} {
 				if _, err := db.Exec(p); err != nil {
 					db.Close()
@@ -161,9 +238,30 @@ func analyticsStore() *sql.DB {
 			}
 		}
 		analyticsStoreDB = db
+		analyticsWriterInst = newAnalyticsWriter(db, driver, handle)
 		analyticsStartRetention(db)
 	})
 	return analyticsStoreDB
+}
+
+// analyticsFlushPending drains the buffered writer synchronously.
+//
+// Called by every path that READS the analytics store, so that buffering is
+// invisible to a reader: the console's Analytics tab, `Analytics.erase` and
+// `Analytics.openStore` all see the events emitted before they were called.
+// For `erase` this is a correctness requirement rather than a nicety — a
+// right-to-erasure request that deleted the rows on disk while leaving the
+// same subject's events sitting in the queue would re-materialise them a
+// quarter of a second later.
+//
+// No-op when no writer exists (unconfigured store, or a test that never
+// opened one).
+func analyticsFlushPending() {
+	w := analyticsWriterInst
+	if w == nil {
+		return
+	}
+	w.flushNow()
 }
 
 // analyticsStartRetention launches a periodic pruner when
@@ -176,19 +274,81 @@ func analyticsStartRetention(db *sql.DB) {
 	if window <= 0 {
 		return
 	}
-	go func() {
-		defer func() { _ = recover() }()
-		prune := func() {
-			cutoff := time.Now().Add(-window).UnixMilli()
-			_, _ = db.Exec(analyticsQ(`DELETE FROM analytics_events WHERE ts < ?`), cutoff)
-		}
-		prune() // once at startup
-		t := time.NewTicker(6 * time.Hour)
-		defer t.Stop()
-		for range t.C {
-			prune()
+	go analyticsRetentionLoop(db, window, nil)
+}
+
+// analyticsPruneExecer is the one method the pruner needs from the store. A
+// narrow interface rather than *sql.DB so the retention gates can inject an
+// Exec that panics or fails — the two behaviours the loop has to survive.
+type analyticsPruneExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// analyticsRetentionInterval is the prune period. A var, not a const, so the
+// regression gate can drive several cycles in milliseconds instead of waiting
+// six hours for the second one — which is what made this defect invisible.
+var analyticsRetentionInterval = 6 * time.Hour
+
+// qAnalyticsRetentionPrune is the retention DELETE. `ts` is indexed
+// (idx_analytics_ts), so this is a range delete, not a table scan.
+const qAnalyticsRetentionPrune = `DELETE FROM analytics_events WHERE ts < ?`
+
+// analyticsPruneOnce runs ONE retention cycle.
+//
+// # Why recover lives here and not around the loop
+//
+// It used to sit at the retention goroutine's top level:
+//
+//	go func() {
+//	    defer func() { _ = recover() }()
+//	    ...
+//	    for range t.C { prune() }
+//	}()
+//
+// which is the shape that looks defensive and is the opposite. A panic
+// anywhere inside a cycle unwinds PAST the ticker loop, the deferred recover
+// swallows it, and the goroutine returns — retention is then dead for the
+// whole process lifetime, silently, and the table grows without bound. The
+// recover has to be scoped to the unit of work you are willing to lose. Here
+// that is one cycle: the next tick tries again six hours later.
+//
+// The panic is also LOGGED. A recover that discards what it caught is how a
+// permanently-dead pruner produced no evidence at all.
+func analyticsPruneOnce(db analyticsPruneExecer, window time.Duration) {
+	defer func() {
+		if r := recover(); r != nil {
+			logStructured("warn", "analytics.retention_prune_panicked",
+				"detail", "analytics retention prune panicked — this cycle is lost, the next tick will retry",
+				"panic", fmt.Sprintf("%v", r))
 		}
 	}()
+	cutoff := time.Now().Add(-window).UnixMilli()
+	// The error is CHECKED. `_, _ = db.Exec(...)` made a permissions failure,
+	// a lock timeout and a dropped table indistinguishable from success, so a
+	// pruner that had never once deleted a row looked identical to a healthy
+	// one.
+	if _, err := db.Exec(analyticsQ(qAnalyticsRetentionPrune), cutoff); err != nil {
+		logStructured("warn", "analytics.retention_prune_failed",
+			"detail", "analytics retention prune failed — events older than the window are still on disk",
+			"error", err.Error())
+	}
+}
+
+// analyticsRetentionLoop prunes once at startup and then on every tick, until
+// `stop` closes (nil for the process-lifetime pruner). It carries NO recover
+// of its own — see analyticsPruneOnce for why that is the point.
+func analyticsRetentionLoop(db analyticsPruneExecer, window time.Duration, stop <-chan struct{}) {
+	analyticsPruneOnce(db, window) // once at startup
+	t := time.NewTicker(analyticsRetentionInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			analyticsPruneOnce(db, window)
+		}
+	}
 }
 
 // analyticsRetentionWindow parses SKY_ANALYTICS_RETENTION — a Go duration
@@ -210,8 +370,44 @@ func analyticsRetentionWindow() time.Duration {
 	return 0
 }
 
-// analyticsStoreInsert persists one already-gated event row. No-op when no
-// store is configured. Called from analyticsEmit (main app — sole writer).
+// analyticsStoreInsert queues one already-gated event row for the buffered
+// writer. No-op when no store is configured. Called from analyticsEmit (main
+// app — sole writer).
+//
+// # This is an ENQUEUE, not an INSERT
+//
+// It used to execute the INSERT inline, which put an fsync on whatever
+// goroutine emitted the event — usually a request handler rendering a page.
+// It now marshals the row and hands it to the single writer goroutine, which
+// batches it (see analytics_writer.go). The function keeps its name because
+// its CONTRACT to the caller is unchanged: "record this event, best effort,
+// do not fail my request over it".
+//
+// # Overflow policy: DROP-NEWEST, counted
+//
+// When the queue is full the incoming event is dropped and the drop is
+// counted — the send is non-blocking.
+//
+// BLOCKING was rejected: it reinstates exactly the coupling this change
+// removes, and worse, because a full queue means the store is already
+// struggling, so blocking would apply the back-pressure of a stalled disk
+// directly to every request handler in the app. Analytics must never be able
+// to take the app down.
+//
+// DROP-OLDEST was rejected as the wrong trade for THIS data. It costs a
+// second synchronisation point on the hot path (a channel cannot evict its
+// own head, so it needs a ring plus a lock) to buy a property analytics does
+// not want: under sustained overload drop-oldest keeps the most recent events
+// and discards the beginning of the incident, whereas the events adjacent to
+// the START of a burst are the ones that explain it. Drop-newest also leaves
+// the retained events a contiguous prefix in time rather than a window with a
+// hole in it, which is what makes a funnel or a session reconstruction from
+// the survivors honest rather than subtly wrong.
+//
+// Dropping is correct for analytics; dropping SILENTLY is not. Drops are
+// counted in `analyticsWriter.dropped`, warned about once per process with a
+// running total, and republished every flush as the
+// `sky_analytics_events_dropped_total` counter.
 func analyticsStoreInsert(payload map[string]any) {
 	db := analyticsStore()
 	if db == nil {
@@ -226,23 +422,25 @@ func analyticsStoreInsert(payload map[string]any) {
 		})
 		return
 	}
+	w := analyticsWriterInst
+	if w == nil {
+		return
+	}
 	ts, _ := payload["ts"].(int64)
 	event, _ := payload["event"].(string)
 	anonID, _ := payload["anonymous_id"].(string)
 	userID, _ := payload["user_id"].(string)
-	if _, err := db.Exec(
-		analyticsQ(`INSERT INTO analytics_events (ts, anonymous_id, user_id, event, props, context) VALUES (?, ?, ?, ?, ?, ?)`),
-		ts, nullableStr(anonID), nullableStr(userID), event,
-		analyticsJSONText(payload["props"]), analyticsJSONText(payload["context"]),
-	); err != nil {
-		// A write failure used to be dropped silently — warn ONCE so a broken
-		// store (disk full, locked, permissions) is diagnosable.
-		analyticsWriteErrWarnOnce.Do(func() {
-			logStructured("warn", "analytics.write_failed",
-				"detail", "an analytics event failed to persist",
-				"error", err.Error())
-		})
-	}
+	// Marshalled HERE, on the emitting goroutine, so the caller's map is not
+	// retained past this call. Handing the map itself to the queue would make
+	// any later mutation by the caller a data race with the writer.
+	w.enqueue(analyticsRow{
+		ts:     ts,
+		anonID: nullableStr(anonID),
+		userID: nullableStr(userID),
+		event:  event,
+		props:  analyticsJSONText(payload["props"]),
+		ctx:    analyticsJSONText(payload["context"]),
+	})
 }
 
 func nullableStr(s string) any {
@@ -260,14 +458,27 @@ func nullableStr(s string) any {
 // the LOCAL store, returning the row count. Events already exported to a
 // provider must be erased there (out of the stdlib's reach). No-op (Ok 0) when
 // no store is configured.
+// qAnalyticsErase is the right-to-erasure DELETE. Named so the
+// `erasure-path-uses-an-index` gate EXPLAINs the exact string this path
+// executes rather than a copy of it that could drift.
+//
+// Both columns are indexed (see analyticsSchemaStmts) — SQLite resolves the
+// `OR` as a MULTI-INDEX OR over the two, PostgreSQL as a BitmapOr. Drop
+// either index and this reverts to the full scan it was.
+const qAnalyticsErase = `DELETE FROM analytics_events WHERE anonymous_id = ? OR user_id = ?`
+
 func Analytics_erase(idArg any) any {
 	return func() any {
 		db := analyticsStore()
 		if db == nil {
 			return Ok[any, any](int64(0))
 		}
+		// Erasure must see the queue. See analyticsFlushPending: a subject's
+		// events still buffered when the DELETE ran would land on disk
+		// moments after the app reported them erased.
+		analyticsFlushPending()
 		id := fmt.Sprintf("%v", unwrapAny(idArg))
-		res, err := db.Exec(analyticsQ(`DELETE FROM analytics_events WHERE anonymous_id = ? OR user_id = ?`), id, id)
+		res, err := db.Exec(analyticsQ(qAnalyticsErase), id, id)
 		if err != nil {
 			return Err[any, any](ErrUnexpected("analytics.erase: " + err.Error()))
 		}
@@ -293,6 +504,10 @@ func Analytics_openStore(_ any) any {
 		if db == nil {
 			return Err[any, any](ErrIo("analytics store is not configured — set [analytics] dbPath (or SKY_CONSOLE_DB_PATH), or run under the dev console"))
 		}
+		// Hand back a store whose queued writes are already on disk, so the
+		// first query through this handle is not missing the events the app
+		// emitted a moment ago.
+		analyticsFlushPending()
 		driver, _ := analyticsBackend(analyticsStorePath())
 		return Ok[any, any](&SkyDb{conn: db, driver: driver, name: "analytics"})
 	}

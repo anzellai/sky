@@ -206,10 +206,69 @@ impl Server {
     /// leaves the real server holding the port. The group is what `killpg`
     /// reaches.
     pub fn spawn(binary: &Path, dir: &Path, port: u16, env: &[(&str, String)]) -> Result<Server, String> {
+        Server::spawn_inner(binary, dir, port, env, false)
+    }
+
+    /// As [`Server::spawn`], but with the ambient environment CLEARED — only
+    /// `PATH`, `HOME` and `TMPDIR` pass through, plus `env`.
+    ///
+    /// For a gate that measures what a configuration setting resolves to. A
+    /// developer with `SKY_LIVE_TTL` exported in their shell would otherwise
+    /// contaminate every observation, and the contamination reads as a real
+    /// difference in the value under test rather than as an artefact of whose
+    /// machine it ran on.
+    pub fn spawn_isolated(
+        binary: &Path,
+        dir: &Path,
+        port: u16,
+        env: &[(&str, String)],
+    ) -> Result<Server, String> {
+        Server::spawn_inner(binary, dir, port, env, true)
+    }
+
+    /// As [`Server::spawn_isolated`], but with the port **unknown**.
+    ///
+    /// For the caller whose measurement IS the port. Passing the port in and
+    /// then waiting for the app to bind it makes readiness assert the expected
+    /// answer: a wrong port stops looking like a wrong value and starts looking
+    /// like a hang, so the difference is never produced. `port == 0` means "not
+    /// yet known" — [`Server::wait_ready`] then waits on the log alone, and the
+    /// caller calls [`Server::adopt_port`] with what the app announced.
+    pub fn spawn_isolated_unbound(
+        binary: &Path,
+        dir: &Path,
+        env: &[(&str, String)],
+    ) -> Result<Server, String> {
+        Server::spawn_inner(binary, dir, 0, env, true)
+    }
+
+    /// Record the port the app announced, so teardown asserts ITS release.
+    ///
+    /// Also the point at which the announcement stops being a claim: the
+    /// caller is expected to confirm the port is genuinely bound.
+    pub fn adopt_port(&mut self, port: u16) {
+        self.port = port;
+    }
+
+    fn spawn_inner(
+        binary: &Path,
+        dir: &Path,
+        port: u16,
+        env: &[(&str, String)],
+        isolate: bool,
+    ) -> Result<Server, String> {
         if !binary.is_file() {
             return Err(format!("no app binary at {}", binary.display()));
         }
         let mut cmd = Command::new(binary);
+        if isolate {
+            cmd.env_clear();
+            for pass in ["PATH", "HOME", "TMPDIR"] {
+                if let Some(v) = std::env::var_os(pass) {
+                    cmd.env(pass, v);
+                }
+            }
+        }
         cmd.current_dir(dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -282,15 +341,22 @@ impl Server {
                     tail(&self.log(), 40)
                 ));
             }
-            if self.log().contains(needle) && port_in_use(self.port) {
+            // `self.port == 0` means the port is the thing being observed and
+            // is not known yet; readiness is then the log line alone. Anything
+            // else and readiness means "announced AND actually bound".
+            if self.log().contains(needle) && (self.port == 0 || port_in_use(self.port)) {
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(50));
         }
         Err(format!(
-            "app did not become ready within {:?} (looking for {needle:?} on port {}); output:\n{}",
+            "app did not become ready within {:?} (looking for {needle:?}{}); output:\n{}",
             deadline,
-            self.port,
+            if self.port == 0 {
+                String::new()
+            } else {
+                format!(" on port {}", self.port)
+            },
             tail(&self.log(), 40)
         ))
     }
@@ -328,6 +394,11 @@ impl Server {
         self.shut = true;
         kill_group(&mut self.child);
         let _ = self.child.wait();
+        // Port 0 means the app never announced one (it died before binding);
+        // there is no listener to assert the release of.
+        if self.port == 0 {
+            return Ok(());
+        }
         if !wait_port_released(self.port, Duration::from_secs(10)) {
             return Err(format!(
                 "port {} still held after killpg — a leaked listener would satisfy \

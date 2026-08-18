@@ -201,12 +201,16 @@ func consoleTokenAuth(secret string, inner http.Handler) http.Handler {
 			consoleAuth401(w, r)
 			return
 		}
+		// SameSite=None is only honoured on a Secure cookie
+		// (RFC 6265bis §5.4.7), so this one is unconditionally Secure —
+		// the shared predicate returns true for that reason, not by
+		// coincidence.
 		http.SetCookie(w, &http.Cookie{
 			Name:     consoleAuthCookieName,
 			Value:    sessionTok,
 			Path:     "/_sky/console",
 			HttpOnly: true,
-			Secure:   true,
+			Secure:   cookieSecureFor(r, consoleAuthCookieName, http.SameSiteNoneMode),
 			SameSite: http.SameSiteNoneMode,
 			MaxAge:   int(consoleAuthSessionTTL.Seconds()),
 		})

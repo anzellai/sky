@@ -1,0 +1,104 @@
+goroutine profile: total 411
+101 @ 0x48ce4e 0x469285 0x10d721a 0x494ba1
+#	0x10d7219	sky-app/rt.(*liveSession).ensureSSERelay.func1.1+0xb9	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/live.go:7058
+
+100 @ 0x48ce4e 0x44e677 0x48c025 0x503607 0x50482e 0x50481c 0x5d9ec5 0x5e9845 0x796193 0x494ba1
+#	0x48c024	internal/poll.runtime_pollWait+0x84		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/netpoll.go:351
+#	0x503606	internal/poll.(*pollDesc).wait+0x26		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x50482d	internal/poll.(*pollDesc).waitRead+0x2ad	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x50481b	internal/poll.(*FD).Read+0x29b			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_unix.go:165
+#	0x5d9ec4	net.(*netFD).Read+0x24				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/fd_posix.go:68
+#	0x5e9844	net.(*conn).Read+0x44				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/net.go:196
+#	0x796192	net/http.(*connReader).backgroundRead+0x32	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:702
+
+100 @ 0x48ce4e 0x469285 0x10d5925 0x79e4c9 0x7a02c7 0x10c5409 0x79e4c9 0x10c4bf9 0x79e4c9 0x10c4b0f 0x10c3bed 0x10c3bdb 0x79e4c9 0x7bdaee 0x79c5b0 0x494ba1
+#	0x10d5924	sky-app/rt.(*liveApp).handleSSE+0x1384						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/live.go:6638
+#	0x79e4c8	net/http.HandlerFunc.ServeHTTP+0x28						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x7a02c6	net/http.(*ServeMux).ServeHTTP+0x1c6						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2828
+#	0x10c5408	sky-app/rt.liveAppRun.CSRFMiddleware.func6+0x6c8				/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/csrf_middleware.go:159
+#	0x79e4c8	net/http.HandlerFunc.ServeHTTP+0x28						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x10c4bf8	sky-app/rt.liveAppRun.ObservabilityMiddleware.WithSubAppNamespace.func8+0x98	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/telemetry_namespace.go:90
+#	0x79e4c8	net/http.HandlerFunc.ServeHTTP+0x28						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x10c4b0e	sky-app/rt.liveAppRun.ObservabilityMiddleware.func7+0xc4e			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/observability_middleware.go:110
+#	0x10c3bec	net/http.HandlerFunc.ServeHTTP+0x6c						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x10c3bda	sky-app/rt.liveAppRun.func2+0x5a						/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/live.go:4177
+#	0x79e4c8	net/http.HandlerFunc.ServeHTTP+0x28						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x7bdaed	net/http.serverHandler.ServeHTTP+0x8d						/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3311
+#	0x79c5af	net/http.(*conn).serve+0x64f							/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2073
+
+98 @ 0x48ce4e 0x44e677 0x48c025 0x503607 0x50482e 0x50481c 0x5d9ec5 0x5e9845 0x7965f4 0x5392e3 0x539413 0x79c713 0x494ba1
+#	0x48c024	internal/poll.runtime_pollWait+0x84		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/netpoll.go:351
+#	0x503606	internal/poll.(*pollDesc).wait+0x26		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x50482d	internal/poll.(*pollDesc).waitRead+0x2ad	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x50481b	internal/poll.(*FD).Read+0x29b			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_unix.go:165
+#	0x5d9ec4	net.(*netFD).Read+0x24				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/fd_posix.go:68
+#	0x5e9844	net.(*conn).Read+0x44				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/net.go:196
+#	0x7965f3	net/http.(*connReader).Read+0x153		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:812
+#	0x5392e2	bufio.(*Reader).fill+0x102			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/bufio/bufio.go:113
+#	0x539412	bufio.(*Reader).Peek+0x52			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/bufio/bufio.go:152
+#	0x79c712	net/http.(*conn).serve+0x7b2			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2109
+
+3 @ 0x494ba1
+
+2 @ 0x48ce4e 0x469285 0x10e0405 0x494ba1
+#	0x10e0404	sky-app/rt.(*memoryStore).cleanupLoop+0x104	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/live_store.go:528
+
+2 @ 0x48ce4e 0x48e973 0x48e953 0x4a1853 0x796376 0x79b807 0x79c5f5 0x494ba1
+#	0x48e952	sync.runtime_notifyListWait+0x192		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/sema.go:617
+#	0x4a1852	sync.(*Cond).Wait+0x72				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/sync/cond.go:71
+#	0x796375	net/http.(*connReader).abortPendingRead+0x95	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:750
+#	0x79b806	net/http.(*response).finishRequest+0x86		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:1676
+#	0x79c5f4	net/http.(*conn).serve+0x694			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2080
+
+1 @ 0x422e69 0x48f318 0xb9fe13 0x494ba1
+#	0x48f317	os/signal.signal_recv+0x97	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/sigqueue.go:152
+#	0xb9fe12	os/signal.loop+0x12		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/os/signal/signal_unix.go:23
+
+1 @ 0x44b131 0x48bc7d 0x1076311 0x1076145 0x1072fc9 0x12e638a 0x12e6e1a 0x79e4c9 0x7a02c7 0x7bdaee 0x79c5b0 0x494ba1
+#	0x1076310	runtime/pprof.writeRuntimeProfile+0xb0	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/pprof/pprof.go:851
+#	0x1076144	runtime/pprof.writeGoroutine+0x44	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/pprof/pprof.go:784
+#	0x1072fc8	runtime/pprof.(*Profile).WriteTo+0x148	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/pprof/pprof.go:408
+#	0x12e6389	net/http/pprof.handler.ServeHTTP+0x529	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/pprof/pprof.go:273
+#	0x12e6e19	net/http/pprof.Index+0xd9		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/pprof/pprof.go:397
+#	0x79e4c8	net/http.HandlerFunc.ServeHTTP+0x28	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2286
+#	0x7a02c6	net/http.(*ServeMux).ServeHTTP+0x1c6	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2828
+#	0x7bdaed	net/http.serverHandler.ServeHTTP+0x8d	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3311
+#	0x79c5af	net/http.(*conn).serve+0x64f		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:2073
+
+1 @ 0x48ce4e 0x41c66e 0x41c192 0x10c39ab 0x494ba1
+#	0x10c39aa	sky-app/rt.liveAppRun.func4+0x2a	/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/live.go:4212
+
+1 @ 0x48ce4e 0x44e677 0x48c025 0x503607 0x50868c 0x50867a 0x5dbc09 0x5f257b 0x5f1810 0x7a1dac 0x7a1992 0x10c35f2 0x12eedbb 0x1112112 0x12eec68 0x4be786 0x4bd639 0x11124ab 0x11129fc 0x12eea35 0x455b35 0x494ba1
+#	0x48c024	internal/poll.runtime_pollWait+0x84		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/netpoll.go:351
+#	0x503606	internal/poll.(*pollDesc).wait+0x26		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x50868b	internal/poll.(*pollDesc).waitRead+0x28b	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x508679	internal/poll.(*FD).Accept+0x279		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_unix.go:613
+#	0x5dbc08	net.(*netFD).accept+0x28			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/fd_unix.go:150
+#	0x5f257a	net.(*TCPListener).accept+0x1a			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/tcpsock_posix.go:159
+#	0x5f180f	net.(*TCPListener).Accept+0x2f			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/tcpsock.go:387
+#	0x7a1dab	net/http.(*Server).Serve+0x30b			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3434
+#	0x7a1991	net/http.(*Server).ListenAndServe+0x71		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3360
+#	0x10c35f1	sky-app/rt.liveAppRun+0x14d1			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/live.go:4263
+#	0x12eedba	main.main.Live_app.func1+0x1a			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/live.go:3879
+#	0x1112111	sky-app/rt.anyTaskInvoke+0x71			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/rt.go:6349
+#	0x12eec67	main.main.TaskCoerceT[...].func2+0x47		/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/rt.go:5924
+#	0x4be785	reflect.Value.call+0xf05			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:586
+#	0x4bd638	reflect.Value.Call+0xb8				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/reflect/value.go:369
+#	0x11124aa	sky-app/rt.anyTaskInvoke+0x40a			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/rt.go:6362
+#	0x11129fb	sky-app/rt.AnyTaskRun+0x11b			/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/rt/rt.go:6719
+#	0x12eea34	main.main+0x1f4					/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/main.go:430
+#	0x455b34	runtime.main+0x2d4				/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/proc.go:290
+
+1 @ 0x48ce4e 0x44e677 0x48c025 0x503607 0x50868c 0x50867a 0x5dbc09 0x5f257b 0x5f1810 0x7a1dac 0x7a1992 0x1331e25 0x1331de1 0x494ba1
+#	0x48c024	internal/poll.runtime_pollWait+0x84		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/runtime/netpoll.go:351
+#	0x503606	internal/poll.(*pollDesc).wait+0x26		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x50868b	internal/poll.(*pollDesc).waitRead+0x28b	/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x508679	internal/poll.(*FD).Accept+0x279		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/internal/poll/fd_unix.go:613
+#	0x5dbc08	net.(*netFD).accept+0x28			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/fd_unix.go:150
+#	0x5f257a	net.(*TCPListener).accept+0x1a			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/tcpsock_posix.go:159
+#	0x5f180f	net.(*TCPListener).Accept+0x2f			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/tcpsock.go:387
+#	0x7a1dab	net/http.(*Server).Serve+0x30b			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3434
+#	0x7a1991	net/http.(*Server).ListenAndServe+0x71		/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3360
+#	0x1331e24	net/http.ListenAndServe+0x64			/nix/store/kh43nhaz1qcpwws2xq805lrmwpmn9i3k-go-1.26.1/share/go/src/net/http/server.go:3675
+#	0x1331de0	main.init.30.func1+0x20				/private/tmp/claude-501/-Users-anzel-works-playground-sky/ba286308-b681-4813-93c0-d314aeae3cc9/scratchpad/gmp/goapp-prof/zz_gmpprobe.go:45
+
