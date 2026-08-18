@@ -535,8 +535,11 @@ prefixed names too.
 
 What's affected by the prefix:
 
-- All Sky-internal namespaces: `LIVE_*`, `AUTH_*`, `LOG_*`,
-  `DB_*`, `ENV`, `HOST`, `STATIC_DIR` (and the legacy alias).
+- All Sky-internal namespaces: `LIVE_*`, `LOG_*`,
+  `DB_*`, `ENV`, `HOST`, `STATIC_DIR` (and the legacy alias). Note
+  `AUTH_*` is **not** here — the `[auth]` block was removed and the
+  runtime reads no `AUTH_*` var; `SKY_AUTH_*` is a convention in your
+  own code (read via `System.getenv`), unaffected by the prefix.
 - All sky.toml-derived defaults — the generated init() emits
   `rt.SetSkyDefault("LIVE_TTL", "1800")`, which under prefix
   `FENCE` becomes `FENCE_LIVE_TTL=1800`.

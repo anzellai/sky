@@ -2,7 +2,7 @@
 //! setting.
 //!
 //! `docs/sky-toml.md` promises that all Sky-internal namespaces — `LIVE_*`,
-//! `AUTH_*`, `LOG_*`, `DB_*`, `ENV`, `STATIC_DIR` — move with the configured
+//! `LOG_*`, `DB_*`, `ENV`, `STATIC_DIR` — move with the configured
 //! prefix, so `[env] prefix = "FENCE"` makes the runtime read
 //! `FENCE_LIVE_PORT`. The runtime reads them through `skyGetenv`
 //! (`runtime-go/rt/env_prefix.go`), which prepends the prefix.
@@ -42,7 +42,7 @@ fn repo_root() -> PathBuf {
 
 /// Namespaces `docs/sky-toml.md` says the `[env] prefix` moves. A raw read of
 /// one of these is unreachable for any project that sets a prefix.
-const PREFIXED_NAMESPACES: &[&str] = &["LIVE_", "AUTH_", "LOG_", "DB_", "STATIC_DIR"];
+const PREFIXED_NAMESPACES: &[&str] = &["LIVE_", "LOG_", "DB_", "STATIC_DIR"];
 
 /// `ENV` is prefix-affected as a whole name, not a namespace prefix.
 const PREFIXED_EXACT: &[&str] = &["ENV"];
