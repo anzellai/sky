@@ -38,7 +38,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use project::config_migration::MIGRATIONS;
+use project::config_migration::{MigrationKind, MIGRATIONS};
 
 /// Parse a `var <name> = map[string]string{ "k": "v", … }` block out of Go
 /// source, returning its `k → v` pairs. Deliberately small: the maps it reads
@@ -177,17 +177,41 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
         }
     }
 
-    // ── clause 3: every legacy key a row names is one the parser accepts ──
+    // ── clause 3: a legacy key a row names must be accepted IFF it still runs ──
+    //
+    // A Moved / DefaultChanged key is still honoured by the build (seeded as a
+    // default), so it MUST be in `accepted_config_keys` — otherwise the hint
+    // advertises a migration FROM a key the build silently drops. A REMOVED key
+    // is the opposite: `[auth]` is deliberately dropped (its parse arms and
+    // prologue seeds are gone), and its row says "delete it — it does nothing",
+    // which is correct ONLY because the build no longer accepts it. So a Removed
+    // key must NOT be accepted. Asserting both directions keeps every `from` row
+    // covered — a Removed key that crept back into `accepted_config_keys`, or a
+    // Moved key that fell out, both go red.
     for entry in MIGRATIONS {
         if let Some((section, key)) = entry.from {
             assertions += 1;
             let dotted = format!("{section}.{key}");
-            if !accepted.contains(&dotted) {
-                fails.push(format!(
-                    "MIGRATIONS names a legacy key `[{section}] {key}` that \
-                     accepted_config_keys does not recognise — a build would drop it, so the \
-                     migration hint would advertise a migration FROM a key that does nothing"
-                ));
+            let accepted_here = accepted.contains(&dotted);
+            match entry.kind {
+                MigrationKind::Removed => {
+                    if accepted_here {
+                        fails.push(format!(
+                            "MIGRATIONS marks `[{section}] {key}` REMOVED (its row says \
+                             delete it), yet accepted_config_keys still accepts it — a \
+                             removed key must be dropped by the build, not seeded"
+                        ));
+                    }
+                }
+                _ => {
+                    if !accepted_here {
+                        fails.push(format!(
+                            "MIGRATIONS names a legacy key `[{section}] {key}` that \
+                             accepted_config_keys does not recognise — a build would drop it, so the \
+                             migration hint would advertise a migration FROM a key that does nothing"
+                        ));
+                    }
+                }
             }
         }
     }
@@ -198,7 +222,7 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
             assertions,
             format!(
                 "{} suffixes + {} literals covered by MIGRATIONS; {} builder labels match; \
-                 {} legacy keys are accepted",
+                 {} legacy keys classified (honoured keys accepted, removed keys dropped)",
                 suffixes.len(),
                 literals.len(),
                 builders.len(),

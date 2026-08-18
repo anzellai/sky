@@ -202,10 +202,14 @@ needs  = "a published postgres bundle, or a local-bundle fixture"
 # ---------------------------------------------------------------------------
 # Unobservable — there is no effective value to compare.
 # ---------------------------------------------------------------------------
-
-[[unobservable]]
-ids    = ["auth.cookieName", "auth.driver", "auth.tokenTtl", "AUTH_COOKIE", "AUTH_DRIVER", "AUTH_TOKEN_TTL"]
-reason = "NOTHING READS THEM. `lower.rs:823-825` seeds all three into every program's prologue and `config-surface` counts them as `seeded_without_reader = 3` — §1.11's write-only `[auth]` block, parsed, validated, emitted and ignored for four minor versions. A cell cannot compare an effective value where no consumer produces one, and inventing an observation would manufacture the appearance of coverage over a setting that does nothing. When stage 3 gives them a reader they move to [[setting]] and this bucket shrinks."
+#
+# Currently EMPTY. This bucket held the whole `[auth]` block
+# (auth.cookieName / auth.driver / auth.tokenTtl and the AUTH_* suffixes) while
+# it was seeded-but-read-by-nothing (§1.11). That block is now DELETED — the
+# build no longer accepts or seeds it — so those ids left the census entirely
+# and are no longer settings the matrix must account for. A future
+# seeded-but-unobservable setting lands here (with a reason) rather than in a
+# cell that would compare a constant to itself.
 
 # ---------------------------------------------------------------------------
 # Listed differences — the ONLY way an observed value may change.

@@ -59,7 +59,6 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
-	"time"
 )
 
 // csrfCookieMaxAgeSeconds is the CSRF cookie's lifetime. It MUST outlive the
@@ -79,13 +78,20 @@ import (
 // in ONE place rather than being re-derived per cookie — the drift that left
 // sky_sid on a TTL-keyed Max-Age after this one was fixed.
 func csrfCookieMaxAgeSeconds() int {
-	// §1.7's THIRD `LIVE_TTL` reader, and the one with a different default (30
-	// days here against live.go's 30 minutes). It has no builder layer of its
-	// own — there is no `withCsrfTtl` — so it passes "" and resolves through
-	// the same shared rule as the other two. Routing it through `resolveTTL`
-	// does not change what it reads today; it means the reader cannot acquire
-	// a fourth precedence order later without the shared gate noticing.
-	return slidingCookieMaxAgeSeconds(resolveTTL("", 30*24*time.Hour))
+	// Derive from the RESOLVED session TTL, not a second independent LIVE_TTL
+	// default. `resolveSessionTTL` resolves LIVE_TTL through the same shared rule
+	// live.go applies to the session (default `defaultSessionTTL` = 30m), so the
+	// CSRF cookie tracks the session it guards. §1.7 recorded this reader keying
+	// its Max-Age to an independent 30-DAY default while the session used 30
+	// minutes: with `SKY_LIVE_TTL=30m` (the documented production pattern) the
+	// two resolved the SAME variable against DIFFERENT defaults. The long cookie
+	// window an idle-sliding session needs is supplied by
+	// slidingCookieMaxAgeSeconds's floor (30 days), NOT by a TTL default here —
+	// so a short resolved TTL still yields a floor-length cookie (bug #11) while
+	// a longer configured TTL lengthens BOTH cookie and session in lock-step.
+	// There is no builder layer (`withCsrfTtl` does not exist); passing no
+	// builder keeps this to the one shared LIVE_TTL read.
+	return slidingCookieMaxAgeSeconds(resolveSessionTTL())
 }
 
 const (
