@@ -1,8 +1,11 @@
 package rt
 
 import (
+	"context"
 	"sync"
 	"testing"
+
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // Step 2 — goroutine-local request-id propagation. Verifies the
@@ -193,4 +196,52 @@ func itoaInt(n int) string {
 		buf[pos] = '-'
 	}
 	return string(buf[pos:])
+}
+
+// ─── UNBOUNDED-MEMORY regression: WithSpan on an unstamped goroutine ──
+//
+// goroutineCtx is keyed by goroutine ID, which is monotonic and never
+// reused. WithSpan's save/restore pair used to read
+// CurrentTraceContext() — which returns the NON-NIL
+// context.Background() when the goroutine has no stamp — and restore
+// it via SetGoroutineTraceContext, which only deleted on nil. Every
+// unstamped goroutine that touched one auto-instrumented kernel
+// (every Db_* via WithDbSpan) therefore left a PERMANENT map entry:
+// ~80 B each, forever, plus O(N) sync.Map promotion stalls.
+//
+// The assertion is an EXACT count back to baseline, not "roughly".
+func TestWithSpan_UnstampedGoroutineLeavesNoEntry(t *testing.T) {
+	const N = 200
+	baseline := goroutineCtxSize()
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// No prior stamp on this goroutine — the exact shape of a
+			// Cmd.perform / background worker goroutine calling an
+			// auto-instrumented kernel.
+			_ = WithSpan("leak-probe", oteltrace.SpanKindInternal, nil, func() any {
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	if after := goroutineCtxSize(); after != baseline {
+		t.Fatalf("goroutineCtx leaked %d entries: baseline %d, after %d (unstamped goroutines must leave the map exactly as they found it)",
+			after-baseline, baseline, after)
+	}
+}
+
+// The nested case: a goroutine that WAS stamped must get its stamp
+// back after WithSpan (stack discipline), and a goroutine whose
+// stamp is cleared mid-flight must not resurrect it.
+func TestWithSpan_StampedGoroutineRestoresStamp(t *testing.T) {
+	ctx := WithRequestID(context.Background(), "outer-req")
+	SetGoroutineTraceContext(ctx)
+	defer ClearGoroutineTraceContext()
+	_ = WithSpan("inner", oteltrace.SpanKindInternal, nil, func() any { return nil })
+	if got := CurrentRequestID(); got != "outer-req" {
+		t.Fatalf("stamp not restored after WithSpan: got %q, want %q", got, "outer-req")
+	}
 }
