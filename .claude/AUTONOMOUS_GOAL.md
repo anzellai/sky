@@ -45,3 +45,32 @@ SECONDARY:
 - Don't bloat one branch: merge coherent phases; split a branch if it grows.
 - Grill every phase. The recurring class this session found is "the check
   measures a proxy for the thing." Assume each phase breaches.
+
+## CONFIG SCOPE DECISION (user, 2026-08-18)
+"withX full overhaul, and if user uses legacy sky toml config, print migration
+LIST on console."
+
+=> FULL Sky.Config cross-cutting builder module (withDatabase/withSessions/
+   withJobs/withLog/withCsrf/withTelemetry) + Sky.Env + second entry point.
+=> Legacy sky.toml detected => print the migration LIST on console (build-time
+   AND runtime startup): which keys move to which withX builders.
+
+MANDATORY SEQUENCING (grill found the crux BROKEN — do not skip):
+  CRUX-FIX FIRST: the precedence is INVERTED as designed. Legacy seeds run in
+  Go init(), ApplyConfig in main(), init-before-main + set-if-unset => legacy
+  seed WINS over withX (the reads-and-discards defect). BEFORE any Sky.Config
+  builder ships:
+   1. ApplyConfig must be SEED-AWARE — clear-and-override a seeded value, defer
+      to an operator value via isSeededDefault (mirror resolveLivePort), NOT
+      plain set-if-unset. Reconcile with the existing configLayers
+      (live_config_precedence.go:51-66) so Sky.Config.withX and Live.withX
+      cannot disagree — one precedence, not three.
+   2. DCE/entry-point trap (G2): a `config` binding not referenced by main is
+      pruned by DCE (lower.rs:613 roots at main only) => silent no-op. config_def
+      must be added to the DCE work-list + a second discovery pass.
+   3. REAL end-to-end oracle (G5 fix): config-matrix is 4/111 — a proxy. Need an
+      actual app serving a request under legacy-vs-migrated config producing
+      identical output. Judge bar is behavioural, not census-green.
+  Grill verdicts: G1 BREAKS(precedence) G2 UNPROVEN(DCE) G3 HOLDS(auth-del safe)
+  G4 BREAKS(migrate self-proof proxy) G5 BREAKS(4/111) G6 was over-scope — user
+  chose full scope anyway, so the crux-fix is now REQUIRED not optional.
