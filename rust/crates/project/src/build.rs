@@ -71,6 +71,12 @@ pub struct BuildReport {
     /// after the preferred static build failed). `None` for the common
     /// static-first success. The CLI prints it; batch gates ignore it.
     pub cgo_note: Option<String>,
+    /// The legacy-`sky.toml` → `withX` migration LIST for this project, when its
+    /// `sky.toml` still carries a runtime key that has moved into typed app
+    /// config. `None` for a fully-migrated (or never-legacy) project — the
+    /// self-extinguishing property (design §8.2). The CLI prints it on the same
+    /// stderr channel as `warning:`, on both `sky build` and `sky run`.
+    pub migration_hint: Option<String>,
 }
 
 /// The product of assembling the source db, lowering, and emitting Go — the
@@ -83,6 +89,11 @@ struct Emitted {
     registry: ffi::FfiRegistry,
     ffi_used: std::collections::BTreeSet<String>,
     warnings: Vec<String>,
+    /// The legacy-`sky.toml` → `withX` migration LIST (design §8.2), or `None`
+    /// when nothing present has moved. Derived from the project's `sky.toml`
+    /// alone — deterministic, no environment read — so `emit_example_source`
+    /// stays reproducible and this never reaches emitted bytes.
+    migration_hint: Option<String>,
     /// True when the emitted `main.go` blank-imports `sky-app/rt/console_app`
     /// (Sky.Live / Sky.Http.Server app) — the driver must then materialise the
     /// `rt/console_app` subpackage so the import resolves at `go build`.
@@ -391,6 +402,11 @@ fn assemble_and_emit_with(
     // Captured for the same reason as `db_driver_diag`: `cfg` is moved into the
     // lowering config below, and these are reported after the emit.
     let unknown_keys = cfg.unknown_config_keys.clone();
+    // The legacy→`withX` migration LIST for this project (design §8.2): computed
+    // from the runtime keys the parser actually saw, mapped through the ONE
+    // migration table. Captured before `cfg` is moved. Self-extinguishing —
+    // `None` once no migratable key remains, so a clean project prints nothing.
+    let migration_hint = crate::config_migration::migration_hint(&cfg.present_runtime_config_keys);
     // Load the pinned Go-FFI surface (doc 09): the committed `sky-ffi/`
     // directory is preferred; the oracle's gitignored `.skycache/` cache is the
     // fallback so a project that hasn't yet migrated to the committed layout
@@ -458,6 +474,7 @@ fn assemble_and_emit_with(
         registry,
         ffi_used: prog.ffi_used.clone(),
         warnings,
+        migration_hint,
         console_needed: prog.console_needed,
     })
 }
@@ -511,6 +528,7 @@ fn build_inner(
     ) {
         Ok(e) => {
             report.warnings = e.warnings;
+            report.migration_hint = e.migration_hint;
             (e.source, e.registry, e.ffi_used, e.console_needed)
         }
         Err(note) => {
@@ -908,7 +926,21 @@ pub fn db_driver_conflict(declared: Option<&str>, dsn: Option<&str>) -> Option<S
     ))
 }
 
-fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
+/// The legacy-`sky.toml` → `withX` migration LIST for a project directory, or
+/// `None` when its `sky.toml` carries no migratable runtime key (design §8.2).
+///
+/// This is the SAME derivation the build path uses — it parses `sky.toml`
+/// through [`read_sky_toml_config`] (so section tracking, key recognition and
+/// the `store_path` alias all match exactly what a build honours) and maps the
+/// recognised keys through the ONE table in [`crate::config_migration`]. Exposed
+/// so a fixture gate can pin the LIST without a Go toolchain, and so a future
+/// `sky config` verb reuses one derivation rather than a second parser (§1.3).
+pub fn migration_hint_for(project_dir: &Path) -> Option<String> {
+    let cfg = read_sky_toml_config(&project_dir.join("sky.toml"));
+    crate::config_migration::migration_hint(&cfg.present_runtime_config_keys)
+}
+
+pub(crate) fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
     let mut cfg = lower::LowerConfig::default();
     let Ok(text) = std::fs::read_to_string(path) else {
         return cfg;
@@ -931,6 +963,25 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         };
         let key = k.trim();
         let val = parse_toml_scalar(v);
+        // Record every key the migration LIST speaks to, for the legacy→`withX`
+        // hint. Two sources, unioned: a key the runtime still HONOURS
+        // (`accepted_config_keys` — the same set the match below arms on, so a
+        // Moved/DefaultChanged key stays in lockstep with what is parsed), OR a
+        // key the migration table names — which is how a REMOVED key survives
+        // here after it is dropped from `accepted_config_keys`. `[auth]` is the
+        // live case: it is no longer a runtime key (its parse arms and prologue
+        // seeds are gone, so a residual `[auth]` key ALSO gets the standard
+        // inert-key warning), yet its Removed migration rows must still fire the
+        // "delete it, it does nothing" block. The table (`config_migration`)
+        // classifies each into moved / changed / removed; a key in neither the
+        // accepted set nor the table (pool knobs, `embedded`, `[env] prefix`)
+        // produces no hint, so a legitimately sky.toml-only key never nags.
+        if accepted_config_keys(&section).contains(&key)
+            || crate::config_migration::lookup(&section, key).is_some()
+        {
+            cfg.present_runtime_config_keys
+                .push((section.clone(), key.to_string(), val.clone()));
+        }
         match (section.as_str(), key) {
             ("", "port") => cfg.port = Some(val),
             // `driver` is RECORDED, never emitted. Nothing in runtime-go reads
@@ -1038,13 +1089,17 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             ("jobs", "storePath" | "store_path") => {
                 cfg.extra_defaults.push(("JOBS_STORE_PATH".into(), val))
             }
-            // `[auth]` keys (canonical names per docs/sky-toml.md) → the suffixes
-            // the runtime's fixed AUTH defaults use, so sky.toml overrides them
-            // (the prologue emits these fallbacks AFTER extra_defaults). `secret`
-            // is deliberately NOT seeded from sky.toml — it must come from env.
-            ("auth", "cookieName") => cfg.extra_defaults.push(("AUTH_COOKIE".into(), val)),
-            ("auth", "tokenTtl") => cfg.extra_defaults.push(("AUTH_TOKEN_TTL".into(), val)),
-            ("auth", "driver") => cfg.extra_defaults.push(("AUTH_DRIVER".into(), val)),
+            // `[auth]` is GONE. The block (driver/cookieName/tokenTtl) was
+            // parsed, seeded into every prologue, and read by NOTHING for four
+            // minor versions (config-architecture §1.11; config-surface counted
+            // it `seeded_without_reader = 3`). Std.Auth is a library that takes
+            // its secret + TTL as Sky arguments — there is no framework layer to
+            // wire these into. So there is no parse arm: a residual `[auth]` key
+            // falls through to the `_` arm and gets the standard inert-key
+            // warning, while its Removed migration row (config_migration) prints
+            // "delete it — it does nothing". `SKY_AUTH_TOKEN_SECRET`, the one
+            // auth-related name that matters, is an env convention `sky doctor`
+            // knows about, never a sky.toml key.
             // [log] → the suffixes Std.Log reads (skyGetenv LOG_FORMAT/LOG_LEVEL).
             ("log", "format") => cfg.extra_defaults.push(("LOG_FORMAT".into(), val)),
             ("log", "level") => cfg.extra_defaults.push(("LOG_LEVEL".into(), val)),
@@ -1145,7 +1200,10 @@ fn accepted_config_keys(section: &str) -> &'static [&'static str] {
             "embedded",
             "postgresVersion",
         ],
-        "auth" => &["cookieName", "tokenTtl", "driver"],
+        // `auth` is deliberately absent — the inert `[auth]` block was removed
+        // (config-architecture §1.11). A residual `[auth]` key is now reported by
+        // `unknown_config_keys` (and its Removed migration row) rather than
+        // silently seeded.
         "log" => &["format", "level"],
         "analytics" => &["dbPath", "retention"],
         "jobs" => &["store", "storePath", "store_path"],
@@ -1223,7 +1281,7 @@ pub fn unknown_config_keys(keys: &[(String, String)]) -> Vec<String> {
                 msg.push_str(section);
                 msg.push_str(
                     "]` is not a section Sky reads. Runtime sections are: \
-                     `[live]`, `[database]`, `[auth]`, `[log]`, `[analytics]`, \
+                     `[live]`, `[database]`, `[log]`, `[analytics]`, \
                      `[jobs]`, `[env]`, `[security]`. ",
                 );
             } else {
@@ -2224,7 +2282,7 @@ mod sky_toml_tests {
     }
 
     #[test]
-    fn live_and_auth_keys_map_to_runtime_default_suffixes() {
+    fn live_keys_map_to_runtime_default_suffixes_and_auth_is_inert() {
         let dir = std::env::temp_dir().join(format!("skytoml-cfg-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sky.toml");
@@ -2251,10 +2309,14 @@ mod sky_toml_tests {
         assert!(has("LIVE_STORE_PATH", "s.db"));
         assert!(has("LIVE_TTL", "24h"));
         assert!(has("LIVE_MAX_BODY_BYTES", "10485760"));
-        // [auth] keys override the fixed AUTH fallbacks.
-        assert!(has("AUTH_COOKIE", "my_sid"));
-        assert!(has("AUTH_TOKEN_TTL", "3600"));
-        assert!(has("AUTH_DRIVER", "jwt"));
+        // [auth] is DELETED (§1.11): its keys seed NOTHING — no AUTH_* suffix is
+        // emitted for any program. They are picked up by the inert-key warning
+        // and their Removed migration rows instead.
+        assert!(
+            !cfg.extra_defaults.iter().any(|(s, _)| s.starts_with("AUTH_")),
+            "no AUTH_* suffix may be seeded: {:?}",
+            cfg.extra_defaults
+        );
         // [log] keys → Std.Log's LOG_FORMAT / LOG_LEVEL.
         assert!(has("LOG_FORMAT", "json"));
         assert!(has("LOG_LEVEL", "debug"));
@@ -2441,10 +2503,12 @@ mod sky_toml_tests {
     /// A key in a runtime config section that Sky does not read must be
     /// REPORTED, not dropped.
     ///
-    /// The four `[auth]` keys below are not hypothetical: `examples/08-notes-app`
-    /// and `examples/12-skyvote` both shipped exactly these. Three are not keys
-    /// at all, and `session_ttl` is `tokenTtl` misspelled — so both examples
-    /// advertised a 24-hour session and silently got the default.
+    /// The `[auth]` keys below are not hypothetical: `examples/08-notes-app`
+    /// and `examples/12-skyvote` both shipped exactly these. `[auth]` is now a
+    /// DELETED section (its parse arms and prologue seeds are gone, §1.11), so
+    /// EVERY key under it — including `cookieName`, once half-accepted — is
+    /// reported as inert, and the message names `[auth]` as not a section Sky
+    /// reads. A `[live]` typo (`prot`) is the other half of the class.
     #[test]
     fn unknown_keys_in_config_sections_are_reported() {
         let dir = std::env::temp_dir().join("sky-unknown-key-test");
@@ -2470,22 +2534,32 @@ mod sky_toml_tests {
         assert!(flagged.contains(&"email_verification"), "{flagged:?}");
         // A typo in a real section is the other half of the class.
         assert!(flagged.contains(&"prot"), "{flagged:?}");
-        // Keys Sky DOES read are not flagged.
-        assert!(!flagged.contains(&"cookieName"), "{flagged:?}");
+        // `[auth]` is gone: even `cookieName`, once an accepted key, is now inert
+        // and must be flagged. (It is ALSO named by its Removed migration row —
+        // the two are complementary, not exclusive.)
+        assert!(flagged.contains(&"cookieName"), "{flagged:?}");
         // Sections consumed elsewhere are out of scope — flagging `root` or a Go
         // module path would be noise, and noise is what gets warnings ignored.
         assert!(!flagged.contains(&"root"), "{flagged:?}");
         assert!(!flagged.contains(&"\"os\""), "{flagged:?}");
 
-        // The message has to name the fix, or it just tells you something is
-        // wrong and leaves you guessing.
+        // The message has to name what to do. An `[auth]` key now warns that
+        // `[auth]` is not a section Sky reads (naming the real runtime sections),
+        // rather than suggesting a sibling `[auth]` key — because there are none.
         let msgs = unknown_config_keys(&cfg.unknown_config_keys);
-        let ttl = msgs
+        let auth_msg = msgs
             .iter()
             .find(|m| m.contains("session_ttl"))
             .expect("session_ttl warned");
-        assert!(ttl.contains("tokenTtl"), "{ttl}");
-        assert!(ttl.contains("no effect"), "{ttl}");
+        assert!(auth_msg.contains("no effect"), "{auth_msg}");
+        assert!(
+            auth_msg.contains("not a section Sky reads"),
+            "{auth_msg}"
+        );
+        // And the runtime-sections list it names must no longer advertise
+        // `[auth]` as a section (it opens with the key `[auth] session_ttl`, so
+        // we check the section LIST fragment specifically).
+        assert!(!auth_msg.contains("`[database]`, `[auth]`"), "{auth_msg}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2688,9 +2762,9 @@ mod sky_toml_tests {
              ttl          = 2592000          # 30 days\n\
              static       = public            # bare unquoted value + comment\n\
              storePath    = \"data/a#b.db\"    # a # inside quotes is preserved\n\
-             [auth]\n\
-             tokenTtl     = \"720h\"           # 30 days\n\
-             driver       = jwt\n",
+             [log]\n\
+             format       = \"json\"           # structured\n\
+             level        = debug\n",
         )
         .unwrap();
         let cfg = read_sky_toml_config(&path);
@@ -2703,8 +2777,8 @@ mod sky_toml_tests {
         assert!(has("LIVE_TTL", "2592000"));
         assert!(has("LIVE_STATIC_DIR", "public"));
         assert!(has("LIVE_STORE_PATH", "data/a#b.db")); // '#' inside quotes kept
-        assert!(has("AUTH_TOKEN_TTL", "720h"));
-        assert!(has("AUTH_DRIVER", "jwt"));
+        assert!(has("LOG_FORMAT", "json")); // quoted value + trailing comment
+        assert!(has("LOG_LEVEL", "debug")); // bare value
         let _ = std::fs::remove_dir_all(&dir);
     }
 

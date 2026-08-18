@@ -36,9 +36,14 @@ module Std.Live exposing
     , withStorePath
     , withTtl
     , withIdleEvict
+    , withMaxBodyBytes
+    , withInput
     , withAnalytics
     , withAnalyticsIdentify
     , withStatus
+    , withAuthSliding
+    , withRevocation
+    , bindSessionUser
     )
 
 import Sky.Ffi as Ffi
@@ -212,6 +217,28 @@ withIdleEvict =
     Ffi.kernel "Live_withIdleEvict"
 
 
+-- | Maximum bytes accepted on a single TEA event request (the channel that
+-- also carries `Event.onFile` / `Event.onImage` base64 uploads). Default 5 MiB.
+--
+-- Same precedence order as `withPort`: operator env `SKY_LIVE_MAX_BODY_BYTES`
+-- (shell or `.env`) → this call → `[live] maxBodyBytes` in `sky.toml` → 5 MiB.
+-- A non-positive or unparseable value at one layer falls through to the next.
+withMaxBodyBytes : Int -> AppConfig model msg -> AppConfig model msg
+withMaxBodyBytes =
+    Ffi.kernel "Live_withMaxBodyBytes"
+
+
+-- | When the JS driver reports an input's value: `"debounce"` (after a typing
+-- pause, the default) or `"blur"` (only when the field loses focus).
+--
+-- Same precedence order as `withPort`: operator env `SKY_LIVE_INPUT_MODE`
+-- (shell or `.env`) → this call → `[live] input` in `sky.toml` → `"debounce"`.
+-- An unrecognised value falls back to `"debounce"` with a warning.
+withInput : String -> AppConfig model msg -> AppConfig model msg
+withInput =
+    Ffi.kernel "Live_withInput"
+
+
 -- | Opt into Sky.Live auto page-view analytics —
 -- `withAnalytics { pageViews = True }`.
 withAnalytics : { pageViews : Bool } -> AppConfig model msg -> AppConfig model msg
@@ -238,3 +265,73 @@ withStatus : { reconnecting : String
 } -> AppConfig model msg -> AppConfig model msg
 withStatus =
     Ffi.kernel "Live_withStatus"
+
+
+-- | Opt into SLIDING (rolling) auth tokens — the middleware re-issues a
+-- signed JWT on activity, keeping active users signed in while an idle token
+-- still lapses, under a hard absolute-lifetime cap.
+--
+--     |> Live.withAuthSliding
+--         { cookie = "sky_auth"
+--         , secretEnv = "SKY_AUTH_TOKEN_SECRET"
+--         , sameSite = "Strict"
+--         , revokedCheck = Nothing
+--         }
+--
+-- Fields:
+--
+--   - `cookie` — the auth cookie name the token rides in.
+--   - `secretEnv` — the ENV-VAR NAME holding the HMAC secret (never the secret
+--     value — the operator owns it). The middleware reads it at request time.
+--   - `sameSite` — `"Strict"` (default; pass `""` for the default), `"Lax"`,
+--     or `"None"`. Applied to BOTH login and re-issue via the builder-owned
+--     setter so the attributes cannot drift.
+--   - `revokedCheck` — `Just (\sub -> …)` runs a per-subject revocation check
+--     (`String -> Task Error Bool`) at RE-ISSUE time only (not per request);
+--     `True` stops the slide. `Nothing` disables the check (revocation latency
+--     then equals the absolute cap).
+--
+-- Issue tokens with `Auth.signSlidingToken` and set the cookie with
+-- `Auth.setSlidingCookie` — a hand-rolled `Server.withCookie` for the sliding
+-- cookie is unsupported (its attributes would drift from the re-issue).
+withAuthSliding : { cookie : String
+, secretEnv : String
+, sameSite : String
+, revokedCheck : Maybe (String -> Task Error Bool)
+} -> AppConfig model msg -> AppConfig model msg
+withAuthSliding =
+    Ffi.kernel "Live_withAuthSliding"
+
+
+-- | Opt into PULL-model user revocation + suspension. Hand the runtime the
+-- application `Db` where the shared revocation state lives
+-- (`sky_revocations` + `users.disabled_at`) — the SAME `Db` you pass to
+-- `Std.Auth`, NOT the session store. This is the enabling signal: the per-
+-- session gate is inert until you register it.
+--
+-- Once registered, every session dispatch (interaction, `Cmd.perform`
+-- completion, `Time.every` tick, subscriber) checks — fresh from the shared
+-- table each time — whether its bound user is revoked or disabled, and EVICTS
+-- the session (retiring its goroutines and replying session-lost) if so. Bind
+-- sessions to users with `bindSessionUser` at login (or auto-bind via
+-- `withAuthSliding`), or the gate has no subject to check and warns loudly.
+--
+--     |> Live.withRevocation db
+withRevocation : Db -> AppConfig model msg -> AppConfig model msg
+withRevocation =
+    Ffi.kernel "Live_withRevocation"
+
+
+-- | `bindSessionUser userId` — bind the CURRENT live session to an application
+-- user at auth time, so `Auth.revokeUser` / `Auth.disableUser` can evict it.
+-- Call it (via `Cmd.perform`) in your login flow once the user is
+-- authenticated. `userId` is a String (an OAuth subject or a stringified id).
+-- Outside a live-session dispatch (a CLI `Task.run`) it is a harmless no-op.
+--
+--     LoggedIn userId ->
+--         ( { model | user = Just userId }
+--         , Cmd.perform (Live.bindSessionUser userId) (\_ -> Ignore)
+--         )
+bindSessionUser : String -> Task Error ()
+bindSessionUser =
+    Ffi.kernel "Live_bindSessionUser"

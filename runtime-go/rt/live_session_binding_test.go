@@ -79,6 +79,11 @@ func newBindingTestApp(cookieName string) *liveApp {
 		locker:        newSessionLocker(),
 		msgTags:       map[string]int{},
 		cookieName:    cookieName,
+		// Mirror liveAppRun: resolve the event-body cap and input mode once at
+		// construction through the shared precedence rule (no builder here, so an
+		// operator env like SKY_LIVE_MAX_BODY_BYTES set before this call wins).
+		maxBodyBytes: resolveMaxBodyBytes("", 5<<20),
+		inputMode:    resolveInputMode(""),
 	}
 }
 

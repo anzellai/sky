@@ -54,6 +54,12 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
             | ("JsonEnc", "null")
             | ("JsonDec", "string" | "int" | "float" | "bool")
             | ("Config", "string" | "int" | "float" | "bool")
+            // `Sky.Config.default : Config` — the empty cross-cutting config
+            // value (`func Config_default() any`). Shares the `Config_` runtime
+            // prefix with `Std.Config`'s decoders above; the func names are
+            // distinct. Must be CALLED in a value slot so the builder chain
+            // starts from the real empty map, not an uncalled `func() any`.
+            | ("Config", "default")
             | ("Math", "pi" | "e" | "phi" | "sqrt2" | "inf" | "nan")
     )
 }

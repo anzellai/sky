@@ -302,18 +302,39 @@ func mountLiveSubAppInProcessWithGate(
 		panic("rt.MountLiveSubAppInProcess: prefix must be non-empty (use Live_app for root-mounted host apps)")
 	}
 
+	// The sanitised identifier drives THREE namespaces that must stay
+	// per-app-unique: the CSRF + session cookie names, the sky-id prefix,
+	// and the telemetry `service.namespace`. sanitiseBasePathForCookie maps
+	// every non-alphanumeric char to "_", so distinct prefixes can collapse
+	// to the SAME identifier — "/billing-v2" and "/billing_v2" both become
+	// "billing_v2". The registry is keyed on the raw prefix, so both WOULD
+	// mount, then silently share cookie names / sky-ids / telemetry labels —
+	// a cross-app leak. Refuse the second mount with a clear message instead
+	// of merging the two apps' identities. (This is caught at mount time,
+	// which is process startup, so it fails loud and early, never in prod
+	// traffic.)
+	sanitised := sanitiseBasePathForCookie(prefix)
+
 	inProcessSubAppsMu.Lock()
 	if existing, ok := inProcessSubApps[prefix]; ok {
 		inProcessSubAppsMu.Unlock()
 		panic(fmt.Sprintf("rt.MountLiveSubAppInProcess: sub-app already mounted at %q (existing: %p)", prefix, existing))
+	}
+	for other := range inProcessSubApps {
+		if other != prefix && sanitiseBasePathForCookie(other) == sanitised {
+			inProcessSubAppsMu.Unlock()
+			panic(fmt.Sprintf(
+				"rt.MountLiveSubAppInProcess: sub-app prefix %q collides with already-mounted %q — "+
+					"both sanitise to %q, which would share CSRF/session cookie names, sky-id prefixes, "+
+					"and telemetry namespaces. Choose prefixes that differ in more than punctuation.",
+				prefix, other, sanitised))
+		}
 	}
 	// Reserve the slot eagerly so a re-entrant call from
 	// init/update during construction (unlikely but possible) doesn't
 	// double-mount.
 	inProcessSubApps[prefix] = nil
 	inProcessSubAppsMu.Unlock()
-
-	sanitised := sanitiseBasePathForCookie(prefix)
 	opts := liveMountOpts{
 		basePath:    prefix,
 		isSubApp:    true,
@@ -409,6 +430,12 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	// sub-app cannot drift into a fourth precedence order.
 	ttl := resolveTTL(stringField(cfg, "Ttl"), defaultSubAppSessionTTL())
 	idleEvict := resolveIdleEvict(stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	// maxBodyBytes / inputMode resolve through the shared rule like ttl above —
+	// the sub-app honours the host's operator env (the pre-refactor behaviour,
+	// when handleEvent / handleConfig read the environment directly) and lets a
+	// sub-app that sets its own builder win.
+	app.maxBodyBytes = resolveMaxBodyBytes(stringField(cfg, "MaxBodyBytes"), 5<<20)
+	app.inputMode = resolveInputMode(stringField(cfg, "Input"))
 	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	app.topics = app.store.Broker()
@@ -427,11 +454,11 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	return app
 }
 
-// defaultSubAppSessionTTL — sub-apps default to the same 30m as the
-// host. Pulled out so a future env knob (SKY_LIVE_SUBAPP_TTL) can
-// hook here without touching newLiveAppFromCfg.
+// defaultSubAppSessionTTL — sub-apps default to the same `defaultSessionTTL`
+// (30m) as the host, from the ONE shared constant. Pulled out so a future env
+// knob (SKY_LIVE_SUBAPP_TTL) can hook here without touching newLiveAppFromCfg.
 func defaultSubAppSessionTTL() time.Duration {
-	return 30 * time.Minute
+	return defaultSessionTTL
 }
 
 // registerSubAppRoutes wires `app`'s handler methods onto the parent

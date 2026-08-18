@@ -856,6 +856,26 @@ type Sessions  = Memory | SessionsSqlite String | SharedWithDatabase | Redis Str
 type JobStore  = JobsMemory | JobsSqlite String | JobsSharedWithDatabase
 ```
 
+> **BUILT** — `sky-stdlib/Sky/Config.sky`, on the seed-aware `rt.ApplyConfig`
+> foundation. `default` + `withLog` + `withDatabase` + `withSessions` +
+> `withJobs` + `withCsrf` + `withTelemetry` all ship, each an ADT normalised to
+> an env string by a total `case` in Sky, applied under the one precedence rule
+> (§3). Two live consumers gained the app-shape builders the gap table named too:
+> `Live.withMaxBodyBytes` and `Live.withInput`.
+>
+> **`withConsole` is deliberately NOT built.** The console/telemetry *tokens* are
+> operator-owned secrets (residual R6, §4.3.1) — a secret belongs to the
+> deployment, not the source — so there is no token builder; `withTelemetry`
+> carries only the OTLP *endpoint*.
+>
+> **The legacy→new migration LIST also ships.** A build/run that detects legacy
+> runtime keys in `sky.toml` prints the moved / removed / changed list
+> (`build.rs` `migration_hint` → `main.rs:795`; §8.2), self-extinguishing once
+> the keys are gone; and `sky config migrate [--dry-run|--check]` rewrites the
+> legacy `sky.toml` into a typed `config` binding. Both the hint and the verb
+> derive from the ONE `config_migration::MIGRATIONS` table. Still to come in
+> this slice: `Sky.Env`.
+
 Every strategy is an ADT. `store = "postgress"` (§1.13's class) becomes a
 compile error rather than a runtime fallback to memory.
 

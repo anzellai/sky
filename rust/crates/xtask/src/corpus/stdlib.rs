@@ -591,11 +591,20 @@ pub const ASSERTED_MODULES: &[&str] = &[
 ///
 /// 87 modules in the inventory, 25 asserted ⇒ 62 dark. Item 3 was written when
 /// it was 67 and predicted "~62"; this is that number, measured rather than
-/// estimated. A new stdlib module that nothing asserts pushes it to 63 and turns
+/// estimated. A new stdlib module that nothing asserts pushes it up and turns
 /// this red — which is the intended conversation, not an accident: the module is
 /// either coverable (cover it) or it is `Task`/`Element`-shaped (say so here and
 /// raise the ceiling in the same commit).
-pub const DARK_MODULE_CEILING: usize = 62;
+///
+/// Raised 62 → 63 (2026-08-18) for `Sky.Config`: it is config-shaped, not
+/// value-producing. Its surface is `default` + `withX` builders that produce an
+/// opaque `Config` consumed for its EFFECT by the compiler-emitted
+/// `rt.ApplyConfig(Main_config())`, exactly the `Task`/`Element`-shaped case
+/// this comment names — the Family-S value corpus has no value to assert on. Its
+/// behaviour is covered instead by `runtime-go/rt/sky_config_test.go` (the
+/// precedence gate + mutation proof + behavioural oracle) and
+/// `rust/crates/project/tests/sky_config_entry.rs` (discovery / DCE / emission).
+pub const DARK_MODULE_CEILING: usize = 63;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
@@ -1001,7 +1010,12 @@ mod ratchet_tests {
     #[test]
     fn a_new_dark_module_is_caught() {
         let a = live();
-        let fails = super::check_pins(&a, 88);
+        // One more uncovered module than the tree actually has: derived from the
+        // real inventory so this arm does not rot when a module is added (adding
+        // `Sky.Config` moved the total 87 → 88, which is exactly the ceiling
+        // bump this arm must stay one ahead of).
+        let one_more = super::inventory(&repo_root()).expect("stdlib inventory").len() + 1;
+        let fails = super::check_pins(&a, one_more);
         assert!(
             fails.iter().any(|f| f.contains("dark to Family S")),
             "one more uncovered stdlib module must breach the ceiling, got: {fails:?}"

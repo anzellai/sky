@@ -1270,6 +1270,64 @@ pub static GATES: &[Gate] = &[
         body: bodies::config_matrix,
     },
     Gate {
+        name: "config-migration",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 60,
+        expected: bodies::CONFIG_MIGRATION_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the legacy→withX migration table covers every Sky.Config env target and \
+                  every legacy key it names is one the compiler accepts",
+        // The mutation edits SOURCE the gate READS — the runtime's builder-label
+        // map — not source the gate is compiled from, so red is observable
+        // without a rebuild standing between. Emptying the `Csrf` builder label
+        // makes `parse_go_string_map` drop the key (it skips empty values), so
+        // the runtime could no longer name a builder for the seeded `CSRF`
+        // suffix: clause 2 (builder-label completeness) goes red. This is the
+        // exact defect the gate exists to catch — a suffix whose legacy key
+        // would be silently dropped from the migration LIST.
+        mutations: Mutations::new(&[Mutation {
+            id: "config-migration.drop-a-builder-label",
+            description: "empty the Csrf builder label in sky_config.go; the runtime migration \
+                          list could no longer name a builder for the seeded CSRF suffix, so \
+                          the builder-label coverage clause must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/sky_config.go",
+                from: "\"Sky.Config.withCsrf\"",
+                to: "\"\"",
+            },
+        }]),
+        body: bodies::config_migration,
+    },
+    Gate {
+        name: "config-migrate",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 60,
+        expected: bodies::CONFIG_MIGRATE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "sky config migrate rewrites a legacy fixture end-to-end (every key leaves \
+                  sky.toml, the builders land in the right destination, a re-check is clean) and \
+                  proposes zero undeclared changes when planning a copy of examples/19-skyforum",
+        // The mutation edits a file the gate READS at run time — the real
+        // examples/19-skyforum/sky.toml it copies — so red is observable without
+        // a rebuild. Renaming its `port` key leaves the real project with only
+        // one migratable key, so clause 4's "port + input are both recognised"
+        // assertion goes red. This is the exact defect the clause exists to
+        // catch: a runtime key the rewriter would fail to see.
+        mutations: Mutations::new(&[Mutation {
+            id: "config-migrate.hide-a-real-legacy-key",
+            description: "rename examples/19-skyforum's [live] port key so the rewriter no longer \
+                          sees it; the real-project plan clause must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/19-skyforum/sky.toml",
+                from: "port = 8000",
+                to: "porto = 8000",
+            },
+        }]),
+        body: bodies::config_migrate,
+    },
+    Gate {
         name: "selftest-blocked",
         tier: Tier::SelfTest,
         platforms: ALL_PLATFORMS,

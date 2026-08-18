@@ -416,6 +416,38 @@ static CROSS_CUTTING: &[CrossSurface] = &[
             0,
         )],
     },
+    // The legacy→withX migration LIST is derived in two languages (the Rust
+    // table for the build-time hint, the Go maps for the runtime startup list);
+    // this surface is the cross-language coverage that keeps them one source.
+    CrossSurface {
+        id: "meta.config-migration",
+        category: "meta",
+        description: "the legacy sky.toml → withX migration table covers every Sky.Config \
+                      env target the runtime names, every builder label is present, and \
+                      every legacy key the table names is one the compiler accepts",
+        today: &[(
+            "nothing — the migration mapping lived in prose, in two languages, ungated",
+            0,
+        )],
+    },
+    // `sky config migrate` rewrites a legacy sky.toml into a typed `config`
+    // binding, deriving from the same MIGRATIONS table. Distinct from
+    // meta.config-migration (which gates the TABLE's completeness): this gates
+    // the REWRITER — that it applies the mapping end-to-end, self-proves the
+    // migrated project's effective config is identical, and refuses an
+    // undeclared move rather than dropping the key.
+    CrossSurface {
+        id: "meta.config-migrate",
+        category: "meta",
+        description: "the `sky config migrate` rewriter applies the migration table \
+                      end-to-end (sky.toml stripped, a typed config binding written), \
+                      proves the migrated effective config identical to the legacy one, \
+                      and hard-errors on an undeclared move",
+        today: &[(
+            "nothing — no automatic legacy→withX converter existed",
+            0,
+        )],
+    },
 ];
 
 /// Which surfaces each REGISTERED gate covers.
@@ -512,6 +544,8 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("coverage-ledger", &["meta.coverage-accounting"]),
     ("config-surface", &["meta.config-surface"]),
     ("config-matrix", &["meta.config-effective-values"]),
+    ("config-migration", &["meta.config-migration"]),
+    ("config-migrate", &["meta.config-migrate"]),
     ("corpus-manifest", &["lang.constructs"]),
     // Family R is the combinatorial face of `compiler.reject`. The standalone
     // `reject` gate covers 63 hand-written defects, one file each; this one

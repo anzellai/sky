@@ -88,13 +88,13 @@ func TestLiveWithAnalyticsSubRecordReadable(t *testing.T) {
 // connected at neither.
 func TestLiveInputModeIsConfigurable(t *testing.T) {
 	t.Setenv("SKY_LIVE_INPUT_MODE", "")
-	if got := liveInputMode(); got != "debounce" {
+	if got := resolveInputMode(""); got != "debounce" {
 		t.Fatalf("unset must default to debounce, got %q", got)
 	}
 
 	// The alternative the runtime named but could not serve.
 	t.Setenv("SKY_LIVE_INPUT_MODE", "blur")
-	if got := liveInputMode(); got != "blur" {
+	if got := resolveInputMode(""); got != "blur" {
 		t.Fatalf(`SKY_LIVE_INPUT_MODE=blur must select blur, got %q — if this `+
 			`reads "debounce" the key is inert again`, got)
 	}
@@ -103,7 +103,7 @@ func TestLiveInputModeIsConfigurable(t *testing.T) {
 	// through: the driver would ignore it and the operator would believe the
 	// setting had taken.
 	t.Setenv("SKY_LIVE_INPUT_MODE", "onKeystroke")
-	if got := liveInputMode(); got != "debounce" {
+	if got := resolveInputMode(""); got != "debounce" {
 		t.Fatalf("unrecognised mode must fall back to debounce, got %q", got)
 	}
 }

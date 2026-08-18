@@ -2517,7 +2517,18 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///   returned `""` until this suite ran it.
 ///
 /// 384 + 9 = 393.
-pub const SKY_SUITES_EXPECTED: u64 = 393;
+///
+/// 393 -> 398:
+///
+/// * `Std/UiRenderConcatTest` (5) — the byte-identical regression fence for the
+///   `renderNodeAs` append-on-empty optimization (Std.Ui Element->Html pass).
+///   It pins the exact HTML of the four `++`-on-`[]` code paths the guards
+///   touch (allAttrs, attrList, renderedChildren, collectTransitions), so a
+///   change to any element's attributes / child order / style bytes turns it
+///   red.
+///
+/// 393 + 5 = 398.
+pub const SKY_SUITES_EXPECTED: u64 = 398;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -2948,7 +2959,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// and `config-gates`' `coverage-ledger --check` (the `run()` path) does not
 /// assert the count. Exactly the release-only-counting-gate latency this cycle
 /// is closing; brought current here.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 149;
+///
+/// 151 -> 153: `sky config migrate` shipped — a new CLI verb and a new
+/// registered `config-migrate` gate — which added two surfaces (`surfaces_total`
+/// 147 -> 149), so `surfaces.len() + 4` is now 153.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 154;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -2982,7 +2997,7 @@ pub fn coverage_ledger(ctx: &GateCtx) -> GateOutcome {
 /// should be read rather than absorbed: a new `sky.toml` key or a new seeded
 /// default is precisely the thing `docs/tooling/config-architecture.md` is
 /// trying to stop happening.
-pub const CONFIG_SURFACE_EXPECTED: u64 = 59;
+pub const CONFIG_SURFACE_EXPECTED: u64 = 53;
 
 /// `xtask config-surface --check`, run in-process.
 ///
@@ -3008,7 +3023,7 @@ pub fn config_surface(ctx: &GateCtx) -> GateOutcome {
 /// It also moves when `config-surface`'s census moves, which is deliberate:
 /// this gate's coverage claim is stated *against* that census, so a new
 /// `sky.toml` key has to be bucketed here before either gate is green again.
-pub const CONFIG_MATRIX_EXPECTED: u64 = 98;
+pub const CONFIG_MATRIX_EXPECTED: u64 = 92;
 
 /// `xtask config-matrix --check`, run in-process.
 ///
@@ -3017,6 +3032,48 @@ pub const CONFIG_MATRIX_EXPECTED: u64 = 98;
 /// a prebuilt xtask might have been built from another one.
 pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
     let (passed, assertions, detail) = crate::config_matrix::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// config-migration — the legacy→withX migration table, cross-checked
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One assertion per Sky.Config env target that must be covered by a migration
+/// row (8 `configKeyToEnvSuffix` suffixes + 2 `configKeyToLiteralEnv`
+/// literals), one per builder-label coverage direction (8 + 8), and one per
+/// migration row that names a legacy `sky.toml` key (18): 8+2+8+8+18 = 44.
+///
+/// EXACT, never `>=`, and it MOVES when the config surface moves — a new
+/// `withX` builder adds a suffix (and its label and its migration row), which
+/// is precisely the event this gate exists to force through the migration
+/// table. `reject.rs` shipped `>= 13` against an actual 63; an exact count is
+/// what stops a shrinking set passing green.
+pub const CONFIG_MIGRATION_EXPECTED: u64 = 44;
+
+/// `xtask config-migration`, run in-process. In-process for the same reason
+/// `config_surface` is: it recomputes the cross-language coverage from THIS
+/// tree's sources (the Go maps + the Rust table), and a prebuilt binary might
+/// have read another tree's.
+pub fn config_migration(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::config_migration_gate::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
+
+/// One assertion per fixture end-to-end check (17: start-dirty, count, wrote,
+/// keys-left, two residual survivals, dropped/kept sections, exposed, imported,
+/// binding, four generated `withX`, re-check clean) + 3 for the 19-skyforum
+/// real-project plan (keys recognised, builders generated, no write) = 20.
+///
+/// EXACT: a change that adds or drops one of the migration's observable effects
+/// moves this count, which is the event the gate exists to force review of.
+pub const CONFIG_MIGRATE_EXPECTED: u64 = 20;
+
+/// `xtask config-migrate`, run in-process — it drives `project::config_migrate`
+/// against an in-code fixture and a copy of `examples/19-skyforum`, both read
+/// from THIS tree.
+pub fn config_migrate(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::config_migrate_gate::check_body(&ctx.repo_root);
     GateOutcome::new(passed, assertions, detail)
 }
 

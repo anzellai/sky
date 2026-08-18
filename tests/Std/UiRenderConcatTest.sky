@@ -1,0 +1,163 @@
+module Std.UiRenderConcatTest exposing (tests)
+
+-- Byte-identical regression fence for the `renderNodeAs`
+-- append-on-empty optimization (Std.Ui Element->Html pass).
+--
+-- `renderNodeAs` builds each element's attribute list and child list
+-- with `++`. The common element carries no extra attrs (`extraAttrs`),
+-- no nearby children, and no pseudo/transition/animation attrs, so
+-- several of those `++` are appends onto `[]` — each of which
+-- `List.append`-copies the other operand. The optimization skips those
+-- copies:
+--   * `allAttrs`  : `[] ++ attrs == attrs`      (extraAttrs empty)
+--   * `attrList`  : `[] ++ [] ++ [] ++ htmlAttrs == htmlAttrs`
+--                   (no pseudo/transition/animation attrs)
+--   * `renderedChildren` : `main ++ [] == main` (no nearby children)
+--   * `collectTransitions` short-circuits `String.join` on an empty
+--     rule list.
+--
+-- Each guard preserves the emitted HTML byte-for-byte. This suite
+-- pins the exact output of the four code paths the guards touch, so a
+-- future edit that changes an element's attributes, child order, or
+-- style-string bytes turns this suite red. The expected strings were
+-- captured from the pre-optimization compiler and confirmed identical
+-- after the change (differential build diff, byte-for-byte).
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Transition as Transition
+import Std.Html as Html
+import Sky.Test as Test exposing (Test)
+
+
+type Msg
+    = Noop
+
+
+blue : Ui.Color
+blue =
+    Ui.rgb 0 122 255
+
+
+white : Ui.Color
+white =
+    Ui.rgb 255 255 255
+
+
+render : Element Msg -> String
+render el =
+    Html.render (Ui.layout [] el)
+
+
+wrap : String -> String
+wrap inner =
+    "<div style=\"min-height: 100vh; display: flex; flex-direction: column;\">"
+        ++ "<style>html,body{min-height:100%;margin:0;padding:0}</style>"
+        ++ inner
+        ++ "</div>"
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui renderNodeAs append-on-empty (byte-identical)"
+          [ -- attrList: htmlAttrs present, no pseudo/transition/animation
+            -- (the `[] ++ [] ++ [] ++ htmlAttrs == htmlAttrs` guard).
+            Test.test
+                "html attrs, no extras — class survives, style intact"
+                (\_ ->
+                    Test.equal
+                        (wrap
+                            ("<div class=\"card primary\" style=\"display: flex; "
+                                ++ "flex-direction: column; padding: 8px 8px 8px 8px;\">"
+                                ++ "html-attrs</div>"))
+                        (render
+                            (Ui.el
+                                [ Ui.class "card primary", Ui.padding 8 ]
+                                (Ui.text "html-attrs"))))
+          , -- allAttrs empty for children + renderedChildren no-nearby
+            -- branch (`main ++ [] == main`).
+            Test.test
+                "container of children — no nearby, children in order"
+                (\_ ->
+                    Test.equal
+                        (wrap
+                            ("<div style=\"display: flex; flex-direction: column; "
+                                ++ "gap: 8px; padding: 4px 4px 4px 4px;\">a"
+                                ++ "<div style=\"display: flex; flex-direction: column; "
+                                ++ "padding: 2px 2px 2px 2px;\">b</div>"
+                                ++ "<div style=\"display: flex; flex-direction: row; "
+                                ++ "gap: 3px;\">cd</div></div>"))
+                        (render
+                            (Ui.column
+                                [ Ui.spacing 8, Ui.padding 4 ]
+                                [ Ui.text "a"
+                                , Ui.el [ Ui.padding 2 ] (Ui.text "b")
+                                , Ui.row [ Ui.spacing 3 ] [ Ui.text "c", Ui.text "d" ]
+                                ])))
+          , -- renderedChildren else-branch: nearby child appended after
+            -- the main child (`main ++ nearby`).
+            Test.test
+                "nearby child — position: relative + absolute overlay appended"
+                (\_ ->
+                    Test.equal
+                        (wrap
+                            ("<div style=\"position: relative; display: flex; "
+                                ++ "flex-direction: column; padding: 8px 8px 8px 8px;\">host"
+                                ++ "<div style=\"position: absolute; display: flex; left: 0; "
+                                ++ "right: 0; top: 0; bottom: 0; z-index: 1;\">"
+                                ++ "<div style=\"display: flex; flex-direction: column; "
+                                ++ "background-color: rgba(0, 122, 255, 1);\">badge</div></div></div>"))
+                        (render
+                            (Ui.el
+                                [ Ui.padding 8
+                                , Ui.inFront
+                                    (Ui.el [ Background.color blue ] (Ui.text "badge"))
+                                ]
+                                (Ui.text "host"))))
+          , -- attrList else-branch (extras present) + collectTransitions
+            -- non-empty rule path.
+            Test.test
+                "transition present — data-sky-tr-* emitted, style intact"
+                (\_ ->
+                    Test.equal
+                        (wrap
+                            ("<div data-sky-tr-respect=\"1\" data-sky-tr-rules=\""
+                                ++ "background-color 200ms ease-in-out\" style=\"display: flex; "
+                                ++ "flex-direction: column; padding: 8px 8px 8px 8px; "
+                                ++ "background-color: rgba(0, 122, 255, 1);\">transition</div>"))
+                        (render
+                            (Ui.el
+                                [ Ui.padding 8
+                                , Background.color blue
+                                , Transition.attribute
+                                    [ Transition.property "background-color"
+                                    , Transition.duration 200
+                                    , Transition.easing Transition.easeInOut
+                                    ]
+                                ]
+                                (Ui.text "transition"))))
+          , -- attrList else-branch with pseudo rules (data-sky-pc-rules).
+            Test.test
+                "pseudo rules present — data-sky-pc-rules joined + escaped"
+                (\_ ->
+                    Test.equal
+                        (wrap
+                            ("<div data-sky-pc-rules=\"h| background-color: "
+                                ++ "rgba(255, 255, 255, 1);||h| border-color: rgba(0, 122, 255, 1);\" "
+                                ++ "style=\"display: flex; flex-direction: column; "
+                                ++ "padding: 8px 8px 8px 8px; background-color: rgba(0, 122, 255, 1);\">"
+                                ++ "pseudo</div>"))
+                        (render
+                            (Ui.el
+                                [ Ui.padding 8
+                                , Background.color blue
+                                , Background.hoverColor white
+                                , Border.hoverColor blue
+                                ]
+                                (Ui.text "pseudo"))))
+          ]
+    ]

@@ -1,8 +1,8 @@
-// env_prefix.go — env-var namespace prefix for Sky.Live / Std.Auth /
-// Std.Log / Std.Db runtime reads.
+// env_prefix.go — env-var namespace prefix for Sky.Live / Std.Log /
+// Std.Db runtime reads.
 //
 // Default prefix is "SKY", so the runtime reads `SKY_LIVE_PORT`,
-// `SKY_AUTH_TOKEN_TTL`, `SKY_LOG_FORMAT`, etc. — the documented names.
+// `SKY_LIVE_TTL`, `SKY_LOG_FORMAT`, etc. — the documented names.
 //
 // Projects that need a private namespace (e.g. running multiple Sky
 // binaries on the same host where SKY_LIVE_PORT would collide) can
@@ -13,10 +13,10 @@
 //
 // The compiler emits a single `rt.SetEnvPrefix("FENCE")` call at the
 // top of the generated `init()` block. From that point on, the runtime
-// reads `FENCE_LIVE_PORT`, `FENCE_AUTH_TOKEN_TTL`, etc. The user's
+// reads `FENCE_LIVE_PORT`, `FENCE_LIVE_TTL`, etc. The user's
 // shell / .env / docker env supplies the prefixed names too.
 //
-// The prefix only affects Sky's INTERNAL namespace (LIVE_*, AUTH_*,
+// The prefix only affects Sky's INTERNAL namespace (LIVE_*,
 // LOG_*, DB_*, ENV, STATIC_DIR, plus the legacy STATIC_DIR alias).
 // User code calling `System.getenv "DATABASE_URL"` reads the raw name
 // — only the runtime's own SKY_* reads route through the prefix.

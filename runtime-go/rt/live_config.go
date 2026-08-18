@@ -114,6 +114,15 @@ func Live_withTtl(ttl, cfg any) any { return liveCfgSet(cfg, "Ttl", ttl) }
 // memory store (no disk backing). See docs/skylive/tiered-session-cache.md.
 func Live_withIdleEvict(idleEvict, cfg any) any { return liveCfgSet(cfg, "IdleEvict", idleEvict) }
 
+// Live_withMaxBodyBytes — `maxBodyBytes : Int` upper bound on a single TEA
+// event request body (env `SKY_LIVE_MAX_BODY_BYTES` wins). Resolved through the
+// same `configLayers` order as the other four; see resolveMaxBodyBytes.
+func Live_withMaxBodyBytes(n, cfg any) any { return liveCfgSet(cfg, "MaxBodyBytes", n) }
+
+// Live_withInput — `input : String` input-report mode ("debounce" | "blur";
+// env `SKY_LIVE_INPUT_MODE` wins). See resolveInputMode.
+func Live_withInput(mode, cfg any) any { return liveCfgSet(cfg, "Input", mode) }
+
 // Live_withAnalytics — `analytics : { pageViews : Bool }` (invariant 4:
 // the record is stored verbatim and read via Field(a,"PageViews")).
 func Live_withAnalytics(a, cfg any) any { return liveCfgSet(cfg, "Analytics", a) }
@@ -128,3 +137,20 @@ func Live_withAnalyticsIdentify(f, cfg any) any {
 // Live_withStatus — `status : { reconnecting : String, offline : String }`
 // connection-banner string overrides (invariant 4).
 func Live_withStatus(status, cfg any) any { return liveCfgSet(cfg, "Status", status) }
+
+// Live_withAuthSliding — opt into rolling JWT re-issue (invariant 4: the record
+// — including its `revokedCheck : Maybe (String -> Task Error Bool)` closure —
+// is stored verbatim under "AuthSliding" and parsed by SetAuthSlidingConfig in
+// liveAppRun). Registers the AuthSlidingMiddleware. See auth_sliding.go.
+//   `{ cookie : String, secretEnv : String, sameSite : String
+//    , revokedCheck : Maybe (String -> Task Error Bool) }`
+func Live_withAuthSliding(rec, cfg any) any { return liveCfgSet(cfg, "AuthSliding", rec) }
+
+// Live_withRevocation — opt into PULL-model user revocation + suspension. The
+// app hands the runtime the application `Db` the gate reads its shared
+// sky_revocations / users.disabled_at state from (invariant 4: the *SkyDb is
+// stored verbatim under "Revocation" and installed by setRevocationGate in
+// liveAppRun). This is the enabling signal — the gate is inert until it is
+// called. See auth_revocation.go / live_revocation.go.
+//   `Live.withRevocation : Db -> AppConfig -> AppConfig`
+func Live_withRevocation(db, cfg any) any { return liveCfgSet(cfg, "Revocation", db) }

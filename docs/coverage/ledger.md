@@ -20,33 +20,35 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 145 |
-| covered by the new corpus (>= Asserted) | 131 |
-| verdict `stronger` | 126 |
-| verdict `equal` | 19 |
+| surfaces | 150 |
+| covered by the new corpus (>= Asserted) | 134 |
+| verdict `stronger` | 129 |
+| verdict `equal` | 21 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
-| stdlib modules (denominator) | 87 |
-| stdlib entries (denominator) | 1782 |
+| stdlib modules (denominator) | 88 |
+| stdlib entries (denominator) | 1810 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 6 | 6.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 784 | 44.0% |
-| symbols unreferenced under the generous rule | 705 | 39.6% |
+| stdlib modules imported by nothing | 7 | 8.0% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 809 | 44.7% |
+| symbols unreferenced under the generous rule | 730 | 40.3% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
 
 - `cli.check`
+- `cli.config`
 - `cli.console`
 - `cli.console-serve`
 - `cli.fmt`
 - `cli.lsp`
 - `cli.upgrade-claude`
 - `cli.verify`
+- `stdlib.Sky.Config`
 - `stdlib.Sky.Core.Io`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Live.Console`
@@ -93,6 +95,7 @@ None.
 | `cli.build` | cli | Runs | Falsified | stronger |
 | `cli.check` | cli | None | None | equal |
 | `cli.clean` | cli | None | Falsified | stronger |
+| `cli.config` | cli | None | None | equal |
 | `cli.console` | cli | None | None | equal |
 | `cli.console-serve` | cli | None | None | equal |
 | `cli.db` | cli | None | Falsified | stronger |
@@ -102,6 +105,7 @@ None.
 | `cli.init` | cli | None | Falsified | stronger |
 | `cli.install` | cli | Runs | Falsified | stronger |
 | `cli.lsp` | cli | None | None | equal |
+| `cli.migrate` | cli | None | Falsified | stronger |
 | `cli.remove` | cli | None | Falsified | stronger |
 | `cli.run` | cli | None | Falsified | stronger |
 | `cli.test` | cli | None | Falsified | stronger |
@@ -134,6 +138,8 @@ None.
 | `lang.constructs` | language | Asserted | Falsified | stronger |
 | `lsp` | tooling | Asserted | Falsified | stronger |
 | `meta.config-effective-values` | meta | None | Falsified | stronger |
+| `meta.config-migrate` | meta | None | Asserted | stronger |
+| `meta.config-migration` | meta | None | Falsified | stronger |
 | `meta.config-surface` | meta | None | Falsified | stronger |
 | `meta.coverage-accounting` | meta | None | Falsified | stronger |
 | `observability.analytics-store` | observability | None | Falsified | stronger |
@@ -143,6 +149,7 @@ None.
 | `runtime.periodic-goroutines` | runtime | None | Falsified | stronger |
 | `skylive.multi-replica` | skylive | Asserted | Falsified | stronger |
 | `skylive.session-sse-csrf` | skylive | Asserted | Falsified | stronger |
+| `stdlib.Sky.Config` | stdlib | None | None | equal |
 | `stdlib.Sky.Core.Basics` | stdlib | None | Falsified | stronger |
 | `stdlib.Sky.Core.Bytes` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Char` | stdlib | None | Falsified | stronger |
@@ -252,6 +259,8 @@ None.
 | `apps-relay` | T1 | PROVEN | `http.middleware-ratelimit` · `http.sse-websocket` · `runtime.panic-classes` |
 | `cli-verbs` | T1 | PROVEN | `cli.init` · `cli.clean` · `cli.watch` · `cli.db` · `cli.install` · `cli.update` · `cli.upgrade` |
 | `config-matrix` | T1 | PROVEN | `meta.config-effective-values` |
+| `config-migrate` | T1 | not proven | `meta.config-migrate` |
+| `config-migration` | T1 | PROVEN | `meta.config-migration` |
 | `config-surface` | T1 | PROVEN | `meta.config-surface` |
 | `conformance` | T1 | PROVEN | `db.sqlite` · `db.codec-store` · `auth.password-session` |
 | `console-analytics-queries-are-bounded` | T1 | PROVEN | `observability.analytics-store` · `observability.console` |

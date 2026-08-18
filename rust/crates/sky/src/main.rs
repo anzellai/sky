@@ -64,6 +64,7 @@ fn main() -> ExitCode {
         Some("init") => cmd_init(&args[1..]),
         Some("doc") => cmd_doc(&args[1..]),
         Some("watch") => cmd_watch(&args[1..]),
+        Some("config") => cmd_config(&args[1..]),
         Some("db") => cmd_db(&args[1..]),
         Some("add") => cmd_add(&args[1..]),
         Some("remove") => cmd_remove(&args[1..]),
@@ -786,6 +787,14 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     for w in &report.warnings {
         eprintln!("warning: {w}");
     }
+    // The legacy→`withX` migration LIST (design §8.2): printed on the same
+    // stderr channel as the warnings above, self-extinguishing (silent once the
+    // keys are gone). Not `warning:`-prefixed — it is a distinct block a user
+    // reads to act, and the three classes inside it (moved / removed / changed)
+    // are already visually distinct.
+    if let Some(hint) = &report.migration_hint {
+        eprintln!("\n{hint}\n");
+    }
     if !report.emitted {
         eprintln!("sky {}: {}", verb(check_only), report.note);
         return ExitCode::FAILURE;
@@ -902,6 +911,11 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let report = build_example(&opts);
     for w in &report.warnings {
         eprintln!("warning: {w}");
+    }
+    // Same migration LIST as `sky build` — the person performing an upgrade
+    // often runs `sky run` (design §8.2, "sky build as well as sky run").
+    if let Some(hint) = &report.migration_hint {
+        eprintln!("\n{hint}\n");
     }
     if !report.emitted {
         eprintln!("sky run: {}", report.note);
@@ -2747,6 +2761,90 @@ report applied =
 /// same env var and runs the project). The Std.Db migration engine lives in the
 /// Go runtime, so this is a thin build+run+env wrapper — no separate rust DB
 /// introspection is needed.
+/// `sky config migrate [--dry-run|--check]` — rewrite a legacy `sky.toml`'s
+/// runtime keys into a typed `config` binding (+ `Live.withX` pipeline), reusing
+/// the ONE `project::config_migration::MIGRATIONS` table. Operates on the
+/// current directory's project.
+fn cmd_config(args: &[String]) -> ExitCode {
+    match args.first().map(String::as_str) {
+        Some("migrate") => cmd_config_migrate(&args[1..]),
+        Some(other) => {
+            eprintln!("sky config: unknown subcommand `{other}`. Try `sky config migrate`.");
+            ExitCode::from(2)
+        }
+        None => {
+            eprintln!("sky config: missing subcommand. Usage: `sky config migrate [--dry-run|--check]`.");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn cmd_config_migrate(args: &[String]) -> ExitCode {
+    use project::config_migrate::{self, Mode};
+    let check = args.iter().any(|a| a == "--check");
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    if check && dry_run {
+        eprintln!("sky config migrate: --check and --dry-run are mutually exclusive.");
+        return ExitCode::from(2);
+    }
+    let mode = if check {
+        Mode::Check
+    } else if dry_run {
+        Mode::DryRun
+    } else {
+        Mode::Apply
+    };
+    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    let outcome = match config_migrate::run(&project_dir, mode) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("sky config migrate: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if check {
+        if outcome.clean {
+            println!("sky config migrate --check: clean — no legacy sky.toml runtime keys.");
+            return ExitCode::SUCCESS;
+        }
+        eprintln!(
+            "sky config migrate --check: {} legacy runtime key(s) still in sky.toml:",
+            outcome.legacy_count
+        );
+        for line in &outcome.summary {
+            eprintln!("{line}");
+        }
+        eprintln!("Run `sky config migrate` to move them into a typed `config` binding.");
+        return ExitCode::FAILURE;
+    }
+
+    if outcome.clean {
+        println!("sky config migrate: nothing to do — no legacy sky.toml runtime keys.");
+        return ExitCode::SUCCESS;
+    }
+
+    if dry_run {
+        println!("sky config migrate --dry-run — {} legacy key(s), no files written:\n", outcome.legacy_count);
+        for line in &outcome.summary {
+            println!("{line}");
+        }
+        println!("\n{}", outcome.diff);
+        return ExitCode::SUCCESS;
+    }
+
+    // Apply.
+    println!("sky config migrate — moved {} legacy key(s) into typed config:", outcome.legacy_count);
+    for line in &outcome.summary {
+        println!("{line}");
+    }
+    if outcome.wrote {
+        println!("\nWrote sky.toml and the entry module. Review with `git diff`, then `sky check`.");
+    }
+    ExitCode::SUCCESS
+}
+
 fn cmd_db(args: &[String]) -> ExitCode {
     // `sky db migrate --gen [name]` — file-based migration generation (no DB).
     if args.first().map(String::as_str) == Some("migrate") && args.iter().any(|a| a == "--gen") {
@@ -4654,6 +4752,7 @@ fn print_help() {
          \x20 console [--port N] [--tui]   run the Sky Console mini-app\n\
          \x20 console-serve [...]          run the Sky Console hub daemon\n\
          \x20 watch <file>     rebuild + restart on source change\n\
+         \x20 config migrate [--dry-run|--check]  rewrite legacy sky.toml → typed config\n\
          \x20 db    <status|migrate> [file]  Std.Db migrations\n\
          \x20 db    <start|stop|ps>          local PostgreSQL cluster (--all for ps/stop)\n\
          \x20 db    provision --embed        fetch PostgreSQL into ~/.sky/postgres\n\

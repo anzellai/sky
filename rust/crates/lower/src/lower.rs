@@ -179,6 +179,16 @@ pub struct LowerConfig {
     /// stayed a section that the runtime's error messages told operators to set
     /// while the compiler ignored it.
     pub unknown_config_keys: Vec<(String, String)>,
+    /// `(section, key, value)` for every RECOGNISED runtime-config key the
+    /// parser saw — the raw material for the legacy→`withX` migration LIST
+    /// (`project::config_migration`). Distinct from `unknown_config_keys`: these
+    /// are keys the runtime DOES honour today, some of which have moved into
+    /// typed app config (`Sky.Config.withX` / `Live.withX`). The migration hint
+    /// maps each through the ONE migration table; a fully-migrated project has
+    /// none of the *migratable* ones and the hint is silent (design §8.2). Read
+    /// only for the warning — never reaches emitted bytes — so it does not
+    /// affect the golden/repro prologue.
+    pub present_runtime_config_keys: Vec<(String, String, String)>,
     /// The pinned Go-FFI surface (doc 09) for this project — empty when the
     /// project imports no Go packages.
     pub ffi: FfiTable,
@@ -608,9 +618,75 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         };
     };
 
+    // ---- find the `Sky.Config` entry point in the entry module ----
+    //
+    // A top-level `config` VALUE of type `Sky.Config.Config` is the app's
+    // cross-cutting config; the compiler applies it via the emitted
+    // `rt.ApplyConfig(Main_config())` (see `lower_main`). It is discovered like
+    // `main`, but recognised by TYPE, not name alone: `config` is a common user
+    // identifier (a helper function, a record), and only a binding whose type is
+    // the opaque `Sky.Config.Config` can be one — you cannot produce that type
+    // without `Sky.Config`. Any other `config` binding is left entirely alone
+    // (no reservation, no error), so this cannot break existing code — the same
+    // false-negative-over-false-rejection discipline `ty::nominal` applies.
+    //
+    // Recognising it here closes the SILENT-NO-OP the design's grill flagged
+    // (G2): a well-typed `config` not referenced by `main` would be pruned by
+    // the DCE work-list below (which roots at `main` alone), so
+    // `rt.ApplyConfig(Main_config())` would call a function that does not exist.
+    // Rooting `config` in the work-list fixes it. An annotated
+    // `config : Sky.Config.Config` whose body does NOT produce one is still a
+    // loud error — from the type checker (identically in build/run/test/LSP) —
+    // rather than a value silently applied against.
+    let config_def = defs.iter().find_map(|(d, e)| {
+        if e.name != "config"
+            || module_prefix(&e.module_name) != module_prefix(db.module_name(entry))
+        {
+            return None;
+        }
+        // Zero value params (a config is a VALUE, not a function) and a type of
+        // `Sky.Config.Config`. `e.sig` (declared, else the derived scheme) is
+        // the whole type of a zero-param binding; fall back to the inferred
+        // result. A function-typed `config` (`Fun(..)`) or a differently-typed
+        // one never matches.
+        if !e.body.params.is_empty() {
+            return None;
+        }
+        let ty = e.sig.clone().or_else(|| e.types.result.clone());
+        // Recognise ONLY the stdlib `Sky.Config.Config`, by CONFIDENT nominal
+        // identity — never by the bare base `"Config"`. `ty::nominal` qualifies a
+        // user-declared type with its DECLARING module (`ty::sig`), so the genuine
+        // type — whether annotated `config : Config.Config`, import-aliased
+        // `config : C.Config`, or inferred from an unannotated
+        // `config = Config.default |> …` — always arrives fully qualified as
+        // `Sky.Config.Config` (the declaring module wins over any alias). A user's
+        // own `type Config` in module `Main` arrives as the equally-confident
+        // `Main.Config`, and keying on the bare base — or on `ty::nominal::same`,
+        // which treats a bare name as a WILDCARD (`nominal.rs`) — would let it
+        // hijack this entry point. Requiring the full qualified key is the only
+        // discipline that separates the two. A bare `"Config"` (module unknown)
+        // deliberately does NOT match: a resolution gap must yield a false
+        // NEGATIVE (config silently not this app's), never a false hijack of an
+        // unrelated binding.
+        let is_config = matches!(&ty, Some(Ty::App(n, _))
+            if ty::nominal::is_qualified(n.as_str())
+                && n.as_str() == ty::nominal::qualify("Sky.Config", "Config"));
+        is_config.then_some(*d)
+    });
+    let config_go_name: Option<String> = config_def.map(|cd| {
+        let e = &defs[&cd];
+        top_go_name(&e.module_name, &e.name)
+    });
+
     // ---- DCE: lower reachable defs, discovering refs as we go ----
     let mut seen: HashSet<DefId> = HashSet::new();
+    // Root the work-list at `main` AND (when present) the `config` entry point,
+    // so a `config` not referenced by `main` is still lowered — otherwise
+    // `rt.ApplyConfig(Main_config())` would call a function DCE pruned.
     let mut work: Vec<DefId> = vec![main_def];
+    if let Some(cd) = config_def {
+        work.push(cd);
+    }
     let mut funcs: Vec<GoItem> = Vec::new();
     let mut used_go_types: HashSet<String> = HashSet::new();
     let mut ffi_used: BTreeSet<String> = BTreeSet::new();
@@ -661,6 +737,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             cur_module: e.module_name.clone(),
             cur_def: d,
             tco: None,
+            // Only `lower_main` reads this; harmless to carry on every Ctx.
+            apply_config: config_go_name.clone(),
         };
         let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
         // determinism (L4): `discovered` is a Vec (ordered), and the two set
@@ -813,16 +891,17 @@ fn prologue_init(cfg: &LowerConfig) -> GoItem {
     }
     stmts.push(call("rt.SetPortDefault", &[&port]));
     // sky.toml-derived values FIRST so they win: `SetSkyDefault` is set-if-unset,
-    // so the first call for a suffix wins and the fixed fallbacks below become
-    // no-ops when sky.toml already provided the key. (Emitting the fixed defaults
-    // first silently clobbered `[live] ttl` / `[auth] *` from sky.toml.)
+    // so the first call for a suffix wins and the fixed fallback below becomes a
+    // no-op when sky.toml already provided the key. (Emitting the fixed default
+    // first silently clobbered `[live] ttl` from sky.toml.)
     for (suffix, value) in &cfg.extra_defaults {
         stmts.push(call("rt.SetSkyDefault", &[suffix, value]));
     }
     stmts.push(call("rt.SetSkyDefault", &["LIVE_TTL", "1800"]));
-    stmts.push(call("rt.SetSkyDefault", &["AUTH_TOKEN_TTL", "86400"]));
-    stmts.push(call("rt.SetSkyDefault", &["AUTH_COOKIE", "sky_auth"]));
-    stmts.push(call("rt.SetSkyDefault", &["AUTH_DRIVER", "jwt"]));
+    // The AUTH_TOKEN_TTL / AUTH_COOKIE / AUTH_DRIVER seeds were REMOVED: nothing
+    // in runtime-go/ ever read an AUTH_* suffix (config-architecture §1.11), so
+    // seeding them into every program was write-only. Std.Auth takes its TTL and
+    // cookie name as Sky arguments; there is no runtime auth layer to feed.
     GoItem::Init(stmts)
 }
 
@@ -1926,6 +2005,13 @@ struct Ctx<'a> {
     /// a saturated self-call reached in tail position under this context becomes
     /// a param-reassignment + `continue` instead of a recursive Go call.
     tco: Option<TcoCtx>,
+    /// The Go accessor name of the entry module's `config` binding (e.g.
+    /// `Main_config`), when one exists. Read ONLY by `lower_main`, which emits
+    /// `rt.ApplyConfig(<name>())` as the first statement of `main` so the
+    /// `Sky.Config` value is applied — seed-aware — before the runtime reads
+    /// anything. `None` for a program with no `config` binding, which keeps its
+    /// emitted `main` byte-identical to before this feature.
+    apply_config: Option<String>,
 }
 
 /// The tail-call-optimisation context for one def. Present only while the def's
@@ -2421,11 +2507,24 @@ impl<'a> Ctx<'a> {
     /// an ordinary build ignore the flag in silence, which is the failure mode
     /// this whole feature exists to refuse.
     fn lower_main(&mut self, _name: &str, _module: &str) -> GoItem {
-        let mut stmts = vec![
-            GoStmt::Expr(GoExpr::new(
-                GoExprKind::Ident("defer rt.LogPanicAndExit()".into()),
+        let mut stmts = vec![GoStmt::Expr(GoExpr::new(
+            GoExprKind::Ident("defer rt.LogPanicAndExit()".into()),
+            GoTy::Unit,
+        ))];
+        // Apply the app's `Sky.Config` value FIRST (after the panic guard is
+        // deferred), before `MaybeStartEmbeddedPostgres` reads the DSN and
+        // before any handler runs. `ApplyConfig` is seed-aware, so a `withX`
+        // value beats a legacy `sky.toml` seed emitted by the prologue `init()`
+        // while still deferring to an operator's environment override. Emitted
+        // ONLY when the entry module declares `config`, so a program without one
+        // is byte-identical (repro / golden / coerce-floor baselines unmoved).
+        if let Some(cfg) = &self.apply_config {
+            stmts.push(GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident(format!("rt.ApplyConfig({cfg}())")),
                 GoTy::Unit,
-            )),
+            )));
+        }
+        stmts.extend([
             GoStmt::Expr(GoExpr::new(
                 GoExprKind::Ident("rt.MaybeStartEmbeddedPostgres()".into()),
                 GoTy::Unit,
@@ -2438,7 +2537,7 @@ impl<'a> Ctx<'a> {
                 GoExprKind::Ident("rt.MaybeApplyEmbeddedMigrationsAndExit()".into()),
                 GoTy::Unit,
             )),
-        ];
+        ]);
         let root = self.body.root;
         if let Some(r) = root {
             self.lower_main_body(r, &mut stmts);

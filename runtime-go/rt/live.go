@@ -110,12 +110,26 @@ func HtmlToVNode(node any) VNode {
 	if vn, ok := node.(VNode); ok {
 		return vn
 	}
+	// Fast path: a legacy SkyADT Html value (the shape every Std.Html /
+	// Std.Ui builder produces). Skips unwrapADTShape's interface
+	// re-dispatch and, below, the reflect-boxing of typed child/attr
+	// slices — the single largest render-path allocation site.
+	if adt, ok := node.(SkyADT); ok {
+		return htmlShapeToVNode(adt.SkyName, adt.Fields)
+	}
 	name, _, fields, ok := unwrapADTShape(node)
 	if !ok {
 		// Defensive: a non-Html value reached the converter — render
 		// it as text rather than panicking.
 		return vtext(fmt.Sprintf("%v", node))
 	}
+	return htmlShapeToVNode(name, fields)
+}
+
+// htmlShapeToVNode lowers an already-introspected Html ADT (its variant
+// name + fields) into a VNode. Shared by HtmlToVNode's fast and reflect
+// paths so both produce byte-identical output.
+func htmlShapeToVNode(name string, fields []any) VNode {
 	switch name {
 	case "HText":
 		if len(fields) > 0 {
@@ -149,15 +163,66 @@ func HtmlToVNode(node any) VNode {
 			Kind: "element",
 			Tag:  AsString(fields[0]),
 		}
-		for _, a := range asList(fields[1]) {
-			applyHtmlAttr(&vn, a)
-		}
-		for _, c := range asList(fields[2]) {
-			vn.Children = append(vn.Children, HtmlToVNode(c))
-		}
+		appendHtmlAttrs(&vn, fields[1])
+		appendHtmlChildren(&vn, fields[2])
 		return vn
 	default:
 		return vtext("")
+	}
+}
+
+// appendHtmlAttrs folds an HElement's attribute field into a VNode.
+//
+// Std.Html / Std.Ui emit the attribute list as a typed `[]SkyADT`
+// (`Std_Html_Attributes_Attribute` is a type alias for `rt.SkyADT`), which
+// arrives here boxed in a single `any`. Iterating it directly — rather
+// than through `asList` — avoids allocating a `[]any` copy AND avoids
+// `reflect.Value.Interface` boxing every element (`reflect.unsafe_New`),
+// which the render profile attributed ~22% of all objects to. The `[]any`
+// and reflect branches preserve behaviour for the erased/mixed case.
+func appendHtmlAttrs(vn *VNode, attrsField any) {
+	switch attrs := attrsField.(type) {
+	case []SkyADT:
+		for i := range attrs {
+			applyHtmlAttrADT(vn, attrs[i])
+		}
+	case []any:
+		for _, a := range attrs {
+			applyHtmlAttr(vn, a)
+		}
+	default:
+		for _, a := range asList(attrsField) {
+			applyHtmlAttr(vn, a)
+		}
+	}
+}
+
+// appendHtmlChildren lowers an HElement's child field into vn.Children.
+// Mirrors appendHtmlAttrs: the typed `[]SkyADT` path recurses without
+// boxing, and pre-sizes Children (each child yields exactly one VNode) so
+// the slice does not grow through repeated reallocation.
+func appendHtmlChildren(vn *VNode, kidsField any) {
+	switch kids := kidsField.(type) {
+	case []SkyADT:
+		if len(kids) == 0 {
+			return
+		}
+		vn.Children = make([]VNode, 0, len(kids))
+		for i := range kids {
+			vn.Children = append(vn.Children, htmlShapeToVNode(kids[i].SkyName, kids[i].Fields))
+		}
+	case []any:
+		if len(kids) == 0 {
+			return
+		}
+		vn.Children = make([]VNode, 0, len(kids))
+		for _, c := range kids {
+			vn.Children = append(vn.Children, HtmlToVNode(c))
+		}
+	default:
+		for _, c := range asList(kidsField) {
+			vn.Children = append(vn.Children, HtmlToVNode(c))
+		}
 	}
 }
 
@@ -185,6 +250,22 @@ func applyHtmlAttr(vn *VNode, a any) {
 	if !ok {
 		return
 	}
+	applyHtmlAttrShape(vn, name, fields)
+}
+
+// applyHtmlAttrADT is applyHtmlAttr's fast path for a legacy SkyADT
+// attribute — the shape every Std.Html / Std.Ui builder produces. It skips
+// unwrapAny (a no-op for a plain SkyADT: that struct has no OkValue /
+// JustValue field to unwrap) and unwrapADTShape's interface re-dispatch,
+// reading .SkyName / .Fields directly. Behaviour is identical to
+// applyHtmlAttr for SkyADT inputs.
+func applyHtmlAttrADT(vn *VNode, adt SkyADT) {
+	applyHtmlAttrShape(vn, adt.SkyName, adt.Fields)
+}
+
+// applyHtmlAttrShape folds one introspected attribute (variant name +
+// fields) into a VNode. Shared by applyHtmlAttr and applyHtmlAttrADT.
+func applyHtmlAttrShape(vn *VNode, name string, fields []any) {
 	switch name {
 	case "Attr":
 		if len(fields) >= 2 {
@@ -2339,6 +2420,28 @@ type liveSession struct {
 	// and replicas (sqlite / postgres / redis / firestore).
 	identity      ConsoleIdentity
 	identityValid bool
+	// userID / boundAt — PULL-model revocation binding (auth_revocation.go).
+	// The APPLICATION user this session is authenticated as, set once at auth
+	// time by Live.bindSessionUser (session apps) or auto-stamped from a
+	// verified sliding-auth token's `sub` (token apps). userID is the
+	// canonicalSub string; boundAt is the immutable bind epoch that plays the
+	// `iat` role in the revocation check (revoke != ban: a bind AFTER a revoke
+	// has boundAt >= revoked_at and survives). Both persist through
+	// storableSession so a resumed/replica-reshuffled session keeps its binding.
+	// The revocation STATE (revoked_at / disabled_at) is deliberately NEVER on
+	// the blob — the gate reads it fresh from the shared Db so replica B cannot
+	// serve a stale verdict.
+	userID  string
+	boundAt int64
+	// app — back-pointer to the owning liveApp, stamped on every dispatch +
+	// initial render so a session-scoped kernel (Live.bindSessionUser) can
+	// reach app.store to persist a binding. Never persisted (a runtime pointer);
+	// re-stamped whenever the session is dispatched, so a decoded-from-blob
+	// session acquires it on first use. atomic.Pointer because it is written by
+	// the dispatch goroutine (under sess.mu) AND read by a Cmd.perform task
+	// goroutine (which binds without holding sess.mu) — same value every time,
+	// but the write/read must be synchronised for the race detector.
+	app atomic.Pointer[liveApp]
 	// analytics — per-session Std.Analytics state (random anon id, consent
 	// posture, identified user). Session-scoped so one user's identity never
 	// leaks into another's events. In-memory only (re-established per session
@@ -3158,7 +3261,16 @@ type liveApp struct {
 	staticURL         string        // URL mount prefix (default "/static")
 	store             SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
 	sessionTTL        time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
-	locker            *sessionLocker
+	// maxBodyBytes — upper bound on a single TEA event request body, resolved
+	// once at startup through `configLayers` (operator env > Live.withMaxBodyBytes
+	// > seeded [live] maxBodyBytes > 5 MiB). handleEvent reads this instead of
+	// consulting the environment per request.
+	maxBodyBytes int64
+	// inputMode — "debounce" | "blur", resolved once at startup through
+	// `configLayers` (operator env > Live.withInput > seeded [live] input >
+	// "debounce"). handleConfig reports it to the JS driver.
+	inputMode string
+	locker    *sessionLocker
 	msgTags           map[string]int // SkyName → Tag cache for direct-send events
 	msgTagsMu         sync.Mutex
 
@@ -4041,11 +4153,17 @@ func liveAppRun(cfg any) any {
 	// value falls through to the next layer rather than to the fallback.
 	storeKind := resolveStoreKind(stringField(cfg, "Store"))
 	storePath := resolveStorePath(stringField(cfg, "StorePath"))
-	ttl := resolveTTL(stringField(cfg, "Ttl"), 30*time.Minute)
+	ttl := resolveTTL(stringField(cfg, "Ttl"), defaultSessionTTL)
 	// "0"/"off"/"none"/"disable(d)" disables idle-evict outright, which is the
 	// one way it differs from ttl. Bounds a durable store's RAM to the ACTIVE
 	// working set. See docs/skylive/tiered-session-cache.md.
 	idleEvict := resolveIdleEvict(stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	// Event-body cap and input-report mode — resolved by the same one rule, so a
+	// Live.withMaxBodyBytes / Live.withInput builder beats a seeded sky.toml
+	// default while still losing to an operator env override. Resolved ONCE here
+	// (not per request / per /_sky/config hit) and stored on the app.
+	app.maxBodyBytes = resolveMaxBodyBytes(stringField(cfg, "MaxBodyBytes"), 5<<20)
+	app.inputMode = resolveInputMode(stringField(cfg, "Input"))
 	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
@@ -4116,6 +4234,19 @@ func liveAppRun(cfg any) any {
 	// inside the `app`-mode gate. nil → token-mode / production-mode
 	// fallback per evaluateConsoleAuth.
 	SetConsoleAuthCallback(app.consoleAuth)
+	// Sliding auth token (opt-in via Live.withAuthSliding). Register the config
+	// so AuthSlidingMiddleware (mounted below, alongside CSRF) and the
+	// builder-owned login setter (Auth.setSlidingCookie) both read ONE source of
+	// the cookie name / SameSite / revocation hook. Absent field ⇒ nil ⇒ inert.
+	SetAuthSlidingConfig(Field(cfg, "AuthSliding"))
+	// PULL-model revocation gate (opt-in via Live.withRevocation). The app-
+	// supplied Db is where the shared sky_revocations / users.disabled_at state
+	// lives (NOT the session store). Absent field ⇒ nil ⇒ the gate stays inert.
+	if dbAny := Field(cfg, "Revocation"); dbAny != nil {
+		if d, ok := dbAny.(*SkyDb); ok {
+			setRevocationGate(d, revocationCacheTTLFromEnv())
+		}
+	}
 	// v0.16.1 PR7 — seed SKY_PARENT_URL so the inline console_app's
 	// init_ reads OUR OWN listener's loopback when it builds the
 	// initial Model. The /_sky/console/api/* endpoints serve real
@@ -4247,7 +4378,15 @@ func liveAppRun(cfg any) any {
 	// see CSRF rejection rates as a metric — sudden spike = attack
 	// or misconfiguration).
 	csrfed := CSRFMiddleware(mux)
-	observed := ObservabilityMiddleware(csrfed)
+	// Sliding-auth re-issue — mounted ONLY when Live.withAuthSliding registered a
+	// config (getAuthSlidingConfig != nil). Sits inside observability (like CSRF)
+	// so a re-issue still meters as a request, and inside the auth-cookie flow it
+	// re-signs on activity. See auth_sliding.go.
+	authSlid := csrfed
+	if getAuthSlidingConfig() != nil {
+		authSlid = AuthSlidingMiddleware(csrfed)
+	}
+	observed := ObservabilityMiddleware(authSlid)
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			rec := recover()
@@ -4555,6 +4694,13 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// persistent stores (which load `sess` without the sid field
 	// populated). Cheap; idempotent on equal sids.
 	sess.sid = sid
+	// PULL-model revocation: stamp the owning app (so Live.bindSessionUser can
+	// persist) and auto-bind from a verified sliding-auth token `sub` on the
+	// request context. sess.mu is not yet held here; bindSessionUserTo takes it.
+	sess.app.Store(app)
+	if sub := autoBindSubFromContext(r.Context()); sub != "" {
+		app.bindSessionUserTo(sess, canonicalSub(sub), time.Now().Unix())
+	}
 
 	// Cycle 4 HS: stamp the session on the handler goroutine for the
 	// init + view + runCmd + setupSubscriptions block so synchronous
@@ -4616,6 +4762,14 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// (handleEvent, dispatchBatched, the SSE reconnect-resync all hold
 	// sess.mu around their renderVNode call).
 	sess.mu.Lock()
+	// PULL-model revocation gate on the initial authed GET: a revoked/disabled
+	// user's GET gets session-lost and does NOT run init Cmds or render. Placed
+	// under sess.mu (the gate's precondition) but before init Cmds spawn.
+	if app.accessGateBlocks(sess) {
+		sess.mu.Unlock()
+		writeSessionLost(w)
+		return
+	}
 	sess.model = model
 	sess.handlers = map[string]any{}
 
@@ -4674,7 +4828,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// impose font choice, line-height, or colour scheme. Apps that
 	// need a "designed" look still attach their own typography via
 	// view-level style attrs or a styleNode at the top of view.
-	csrfToken := CurrentCsrfToken(r)
+	// Per-app CSRF token: a sub-app (basePath != "") must embed its OWN
+	// token, which lives under a per-app cookie name (__sky_csrf_<basePath>),
+	// not the host's __sky_csrf — otherwise the sub-app page would echo the
+	// host's token and every sub-app POST would 403. Host apps (basePath == "")
+	// resolve to the identical bare-name read.
+	csrfToken := CurrentCsrfTokenForBasePath(r, app.basePath)
 	// devBanner is "" in production; injected as a sibling of sky-root
 	// so it survives every diff/patch cycle (root replacement won't
 	// blow it away) and stays pinned bottom-right via position:fixed.
@@ -4789,38 +4948,47 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 func (app *liveApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"inputMode":    liveInputMode(),
+		"inputMode":    app.inputMode,
 		"pollInterval": 0, // 0 = SSE only
 	})
 }
 
-// liveInputMode is when the JS driver reports an input's value: after a typing
-// pause ("debounce", the default) or only when the field loses focus ("blur").
-// Set via `sky.toml [live] input` or SKY_LIVE_INPUT_MODE.
+// resolveInputMode resolves the input-report mode across all precedence layers
+// (operator env > `Live.withInput` builder > seeded `[live] input` > default),
+// with validation: the WINNING (highest-precedence non-empty) layer decides,
+// and an unrecognised winner falls back to "debounce" with a warning rather
+// than serving a mode the client cannot honour.
 //
-// This was a hardcoded "debounce" carrying the comment `// or "blur"` — a
-// choice the code named and offered no way to make. Meanwhile
-// `examples/19-skyforum` and `examples/37-composite-live-shop` both shipped
-// `[live] input = "debounce"`, the key that was evidently meant to drive it;
-// the compiler parsed no such key, so it did nothing. Same root cause as the
-// `[jobs]` section and the `[auth] session_ttl` spelling: config that reads as
-// set and is wired to nothing.
-//
-// An unrecognised value falls back to the default with a warning rather than
-// serving a mode the client cannot honour — the client would silently ignore it
-// and the operator would be left believing the setting took.
-func liveInputMode() string {
-	switch mode := skyGetenv("LIVE_INPUT_MODE"); mode {
-	case "":
-		return "debounce"
-	case "debounce", "blur":
-		return mode
-	default:
-		fmt.Printf("[sky.live] WARNING: input mode %q is not recognised "+
-			"(valid: debounce, blur) — using \"debounce\". "+
-			"Set sky.toml [live] input or SKY_LIVE_INPUT_MODE.\n", mode)
-		return "debounce"
+// Previously this read `skyGetenv("LIVE_INPUT_MODE")` directly, so a seeded
+// `[live] input` default was indistinguishable from an operator override and NO
+// builder could win — the same dead-builder shape `Live.withTtl` had before
+// stage 3. Routing through `configLayers` gives `Live.withInput` a live layer.
+func resolveInputMode(builderVal string) string {
+	for _, mode := range configLayers("LIVE_INPUT_MODE", builderVal) {
+		switch mode {
+		case "":
+			continue
+		case "debounce", "blur":
+			return mode
+		default:
+			fmt.Printf("[sky.live] WARNING: input mode %q is not recognised "+
+				"(valid: debounce, blur) — using \"debounce\". "+
+				"Set sky.toml [live] input, SKY_LIVE_INPUT_MODE, or Live.withInput.\n", mode)
+			return "debounce"
+		}
 	}
+	return "debounce"
+}
+
+// resolveMaxBodyBytes resolves the TEA event-body cap across all precedence
+// layers (operator env > `Live.withMaxBodyBytes` builder > seeded
+// `[live] maxBodyBytes` > `def`). Each layer accepts a positive integer count
+// of bytes; a non-positive or unparseable value falls through to the next.
+func resolveMaxBodyBytes(builderVal string, def int64) int64 {
+	if n := parsePortLayers(configLayers("LIVE_MAX_BODY_BYTES", builderVal)); n > 0 {
+		return int64(n)
+	}
+	return def
 }
 
 func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
@@ -4853,9 +5021,9 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// the server cap. Server-side validation in `update` is the
 	// authoritative check; this is the upper bound on what reaches
 	// the runtime at all.
-	maxBody := int64(5 << 20)
-	if n, ok := parsePositiveInt(skyGetenv("LIVE_MAX_BODY_BYTES")); ok {
-		maxBody = int64(n)
+	maxBody := app.maxBodyBytes
+	if maxBody <= 0 {
+		maxBody = 5 << 20
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	body, err := io.ReadAll(r.Body)
@@ -4896,6 +5064,16 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// activity via touchLastSeen — that would 404 every subsequent click on
 	// a session that is demonstrably alive.
 	writeSessionCookie(r, w, app.cookieNameOrDefault(), sid, app.sessionTTL)
+	// PULL-model revocation: auto-bind from a verified sliding-auth token `sub`
+	// (stamped on the request context by AuthSlidingMiddleware) so token apps
+	// never forget to bind. No-op for session apps (they call
+	// Live.bindSessionUser) and anonymous requests. bindSessionUserTo acquires
+	// sess.mu, so concurrent event handlers for one session serialise on it.
+	// (sess.app is set by handleInitial + dispatch under their own locks — not
+	// re-set here, to avoid an unsynchronised write racing a concurrent event.)
+	if sub := autoBindSubFromContext(r.Context()); sub != "" {
+		app.bindSessionUserTo(sess, canonicalSub(sub), time.Now().Unix())
+	}
 	// Per-session serial mutex: prevents two concurrent event handlers
 	// for the SAME session from racing each other's model updates.
 	// Different sessions proceed in parallel.
@@ -5054,6 +5232,15 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	respSeq := sess.nextLocalSeq()
 	respAck := ackInputsForPrevTree(sess)
 	sess.mu.Unlock()
+	// PULL-model revocation: the dispatch gate evicted this session (revoked /
+	// disabled user). Reply session-lost so the browser clears + re-inits, and
+	// DO NOT persist — a Set here would race the eviction's store.Delete and
+	// (for the memory store) resurrect the corpse. The evicted flag makes
+	// store.Set a no-op anyway, but returning first is unambiguous.
+	if sess.evicted.Load() {
+		writeSessionLost(w)
+		return
+	}
 	// Persist the mutated session so DB-backed stores see the new
 	// state. Memory store is a no-op on Set for an already-tracked sid.
 	app.store.Set(sid, sess)
@@ -5308,6 +5495,19 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// — symmetric with RunWithTraceContext's discipline.
 	setGoroutineLiveSession(sess)
 	defer clearGoroutineLiveSession()
+	// Stamp the owning app so a session-scoped kernel (Live.bindSessionUser)
+	// invoked from this dispatch can reach app.store to persist its binding.
+	sess.app.Store(app)
+	// PULL-model revocation gate. This is the ONE chokepoint every mutation
+	// path funnels through (handleEvent, Cmd.perform completion, Time.every
+	// ticks, pub/sub + stream subscribers), so gating here covers all of them:
+	// a Revoked/Disabled verdict evicts the session and BLOCKS the update, so a
+	// revoked session mutates nothing and fires no effect. Returns "" (an empty
+	// patch) so callers ship no frame; handleEvent additionally detects the
+	// eviction (sess.evicted) and replies session-lost.
+	if app.accessGateBlocks(sess) {
+		return ""
+	}
 	// Step 5 — diff-based Msg logging. Snapshot the pre-update
 	// model + start time so ObserveMsgLog (called near the end of
 	// dispatch) can decide whether to emit a log line. Lifecycle

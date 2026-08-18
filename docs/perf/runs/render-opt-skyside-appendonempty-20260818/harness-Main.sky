@@ -1,0 +1,240 @@
+module Main exposing (main, renderForum, forumView, postRow)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Std.Html as Html
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Transition as Transition
+import Std.Ui.Animation as Animation
+import Std.Ui.Transform as Transform
+
+
+type Msg
+    = Noop
+
+
+-- Render one Element through the full Std.Ui Element->Html pass and
+-- serialise to a byte-exact HTML string. `Ui.layout` drives
+-- `renderElement`/`renderNodeAs` — exactly the pass under test.
+render : Element Msg -> String
+render el =
+    Html.render (Ui.layout [] el)
+
+
+blue : Ui.Color
+blue =
+    Ui.rgb 0 122 255
+
+
+white : Ui.Color
+white =
+    Ui.rgb 255 255 255
+
+
+-- ─── corpus ─────────────────────────────────────────────────────────
+-- Each case exercises a code path the optimization touches:
+--   allAttrs (extraAttrs empty), attrList (pseudo/transition/animation
+--   empty vs present), renderedChildren (nearby empty vs present),
+--   collectTransitions (empty vs present).
+
+emptyEl : Element Msg
+emptyEl =
+    Ui.el [] (Ui.text "empty")
+
+
+oneStyle : Element Msg
+oneStyle =
+    Ui.el [ Ui.padding 8 ] (Ui.text "one")
+
+
+manyStyle : Element Msg
+manyStyle =
+    Ui.el
+        [ Ui.padding 12
+        , Ui.spacing 6
+        , Background.color blue
+        , Font.color white
+        , Font.size 16
+        , Border.width 2
+        , Border.rounded 4
+        , Border.color white
+        ]
+        (Ui.text "many")
+
+
+withHtmlAttrs : Element Msg
+withHtmlAttrs =
+    Ui.el
+        [ Ui.class "card primary"
+        , Ui.padding 8
+        ]
+        (Ui.text "html-attrs")
+
+
+container : Element Msg
+container =
+    Ui.column
+        [ Ui.spacing 8, Ui.padding 4 ]
+        [ Ui.text "a"
+        , Ui.el [ Ui.padding 2 ] (Ui.text "b")
+        , Ui.row [ Ui.spacing 3 ] [ Ui.text "c", Ui.text "d" ]
+        ]
+
+
+fillContainer : Element Msg
+fillContainer =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.height (Ui.px 180) ]
+        [ Ui.el
+            [ Ui.width Ui.fill, Ui.height Ui.fill, Background.color blue ]
+            (Ui.el [ Font.color white ] (Ui.text "fill-child"))
+        ]
+
+
+withNearby : Element Msg
+withNearby =
+    Ui.el
+        [ Ui.padding 8
+        , Ui.inFront (Ui.el [ Background.color blue ] (Ui.text "badge"))
+        ]
+        (Ui.text "host")
+
+
+withPseudo : Element Msg
+withPseudo =
+    Ui.el
+        [ Ui.padding 8
+        , Background.color blue
+        , Background.hoverColor white
+        , Border.hoverColor blue
+        ]
+        (Ui.text "pseudo")
+
+
+withTransition : Element Msg
+withTransition =
+    Ui.el
+        [ Ui.padding 8
+        , Background.color blue
+        , Transition.attribute
+            [ Transition.property "background-color"
+            , Transition.duration 200
+            , Transition.easing Transition.easeInOut
+            ]
+        ]
+        (Ui.text "transition")
+
+
+withAnimation : Element Msg
+withAnimation =
+    Ui.el
+        [ Ui.padding 8
+        , Animation.attribute
+            (Animation.withKeyframes
+                [ ( 0, [ Transform.opacity 0.0 ] )
+                , ( 100, [ Transform.opacity 1.0 ] )
+                ]
+                (Animation.defaultSpec "fade")
+            )
+        ]
+        (Ui.text "anim")
+
+
+kitchenSink : Element Msg
+kitchenSink =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.spacing 10
+        , Ui.padding 16
+        , Background.color blue
+        , Ui.class "sink"
+        , Ui.inFront (Ui.el [ Ui.padding 2 ] (Ui.text "overlay"))
+        , Background.hoverColor white
+        , Transition.attribute [ Transition.property "opacity", Transition.duration 150 ]
+        ]
+        [ withHtmlAttrs
+        , manyStyle
+        , Ui.row
+            [ Ui.spacing 4 ]
+            [ oneStyle, withNearby, withPseudo ]
+        ]
+
+
+corpus : List ( String, Element Msg )
+corpus =
+    [ ( "empty", emptyEl )
+    , ( "oneStyle", oneStyle )
+    , ( "manyStyle", manyStyle )
+    , ( "withHtmlAttrs", withHtmlAttrs )
+    , ( "container", container )
+    , ( "fillContainer", fillContainer )
+    , ( "withNearby", withNearby )
+    , ( "withPseudo", withPseudo )
+    , ( "withTransition", withTransition )
+    , ( "withAnimation", withAnimation )
+    , ( "kitchenSink", kitchenSink )
+    ]
+
+
+-- A forum-shaped post row: ~16 Std.Ui elements, mirroring the
+-- render re-baseline's forum view (6 rows ~= 94 sky-id elements,
+-- 60 rows ~= 974). No pseudo/transition/animation/nearby attrs, so
+-- it exercises the common-case append-on-empty paths this
+-- optimization targets.
+postRow : Int -> Element Msg
+postRow i =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 8, Ui.padding 8 ]
+        [ Ui.column
+            [ Ui.spacing 2 ]
+            [ Ui.el [ Ui.class "up" ] (Ui.text "▲")
+            , Ui.el [ Ui.class "score" ] (Ui.text (String.fromInt i))
+            , Ui.el [ Ui.class "down" ] (Ui.text "▼")
+            ]
+        , Ui.column
+            [ Ui.width Ui.fill, Ui.spacing 4 ]
+            [ Ui.el [ Ui.class "title", Font.size 16 ] (Ui.text ("Post " ++ String.fromInt i))
+            , Ui.row
+                [ Ui.spacing 6 ]
+                [ Ui.el [ Ui.class "meta" ] (Ui.text ("by user" ++ String.fromInt i))
+                , Ui.el [ Ui.class "meta" ] (Ui.text "• 3h ago")
+                ]
+            ]
+        ]
+
+
+forumView : Int -> Element Msg
+forumView nPosts =
+    Ui.column
+        [ Ui.width Ui.fill, Ui.spacing 6, Ui.padding 12 ]
+        (List.map postRow (List.range 1 nPosts))
+
+
+-- Rendered string of the forum view — the entry the Go benchmark
+-- calls to measure the Std.Ui Element->Html pass allocations.
+renderForum : Int -> String
+renderForum nPosts =
+    render (forumView nPosts)
+
+
+renderCase : ( String, Element Msg ) -> String
+renderCase pair =
+    case pair of
+
+        ( name, el ) ->
+            "===CASE " ++ name ++ "===\n" ++ render el
+
+
+main =
+    let
+        -- Force `renderForum`/`forumView`/`postRow` into the call graph so
+        -- codegen emits them for the Go allocation benchmark. Rendering an
+        -- empty forum (range 1 0 = []) adds nothing to stdout.
+        _ =
+            String.length (renderForum 0)
+    in
+        println (String.join "\n" (List.map renderCase corpus))

@@ -90,6 +90,12 @@
       "outcome": "as-declared",
       "proven_at_unix": 1786907177
     },
+    "config-migration": {
+      "mutation": "config-migration.drop-a-builder-label",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1787064345
+    },
     "config-surface": {
       "mutation": "config-surface.seed-a-suffix-nothing-reads",
       "observed": "PROVEN",

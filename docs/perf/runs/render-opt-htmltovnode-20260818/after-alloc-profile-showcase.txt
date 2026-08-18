@@ -1,0 +1,19 @@
+File: sky-app.test
+Type: alloc_objects
+Time: 2026-08-18 15:07:01 BST
+Showing nodes accounting for 28879473, 59.60% of 48459491 total
+Dropped 195 nodes (cum <= 242297)
+Showing top 12 nodes out of 136
+      flat  flat%   sum%        cum   cum%
+   6272726 12.94% 12.94%    6272726 12.94%  reflect.unsafe_New
+   3386140  6.99% 19.93%    9491167 19.59%  sky-app.Std_Ui_renderNodeAs.func1.Std_Ui_buildStyleStringWith.Std_Ui_renderNodeAs.func1.Std_Ui_buildStyleStringWith.7.17
+   2719770  5.61% 25.54%    2981915  6.15%  sky-app/rt.String_fromInt
+   2589074  5.34% 30.89%    2589074  5.34%  sky-app/rt.(*VNode).setAttr
+   2343052  4.84% 35.72%    3424412  7.07%  sky-app.Std_Ui_toAttrAttribute.func1
+   2206425  4.55% 40.28%    8186795 16.89%  reflect.Value.call
+   1856707  3.83% 44.11%    6400581 13.21%  sky-app.Std_Ui_collectStyle.func1
+   1778736  3.67% 47.78%    1778736  3.67%  sky-app/rt.List_appendT[go.shape.struct { Tag int; SkyName string; Fields []interface {} }]
+   1452753  3.00% 50.78%   37687495 77.77%  sky-app.Std_Ui_renderNodeAs.func1
+   1441830  2.98% 53.75%    1441830  2.98%  sky-app/rt.assignSkyIDs
+   1416579  2.92% 56.67%    1416579  2.92%  fmt.Sprintf
+   1415681  2.92% 59.60%    2974935  6.14%  sky-app/rt.List_cons

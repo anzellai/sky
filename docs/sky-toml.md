@@ -33,11 +33,17 @@ That's enough — every other field has a sensible default.
 | `[go.dependencies]`  | Go packages to auto-bind via `sky add`               |
 | `[dependencies]`     | Sky-source dependencies (other Sky projects)         |
 | `[live]`             | Sky.Live runtime config (port, sessions, …)          |
-| `[auth]`             | Std.Auth defaults (JWT secret, cookie, TTL)          |
 | `[database]`         | Std.Db default connection (the DSN selects the driver) |
+| `[jobs]`             | Std.Jobs queue backend (v0.19.14+)                   |
 | `[log]`              | Std.Log default format and level                     |
 | `[env]`              | Env-var namespace prefix (v0.11.5+)                  |
 | `[security]`         | CSRF opt-out                                         |
+
+> **There is no `[auth]` section.** `Std.Auth` is a library, not a framework
+> layer — it takes the JWT secret and TTL as Sky arguments — so there is nothing
+> to seed. The block was parsed, seeded and read by nothing for four minor
+> versions; it was deleted, and a residual `[auth]` key now raises the standard
+> inert-key build warning. See [Std.Auth configuration](#stdauth-configuration-no-auth-section).
 
 Every key seeded into the runtime is **only applied when the
 corresponding env var is unset**. So shell env / `.env` always wins
@@ -151,14 +157,19 @@ Connection-status banner config is env-only (not in sky.toml):
 
 ---
 
-## `[auth]`
+## Std.Auth configuration (no `[auth]` section)
 
-Std.Auth defaults. `Std.Auth` is a library, not a framework layer:
-`signToken secret claims expirySeconds` takes the secret + TTL as
+**`[auth]` is not a sky.toml section.** `Std.Auth` is a library, not a framework
+layer: `signToken secret claims expirySeconds` takes the secret + TTL as
 **arguments**, and the session cookie is set by your handler
-(`Server.setCookie`). So these keys don't reconfigure the runtime
-directly — each is **seeded into a `SKY_AUTH_*` env var that your
-code reads** at the call site:
+(`Server.withCookie`). There is nothing for the runtime to reconfigure, so there
+is nothing to seed. The block (`driver` / `cookieName` / `tokenTtl`) was parsed,
+seeded into `SKY_AUTH_*` env vars and read by nothing for four minor versions;
+it was **deleted**. A residual `[auth]` key now falls through to the standard
+inert-key build warning — it does nothing.
+
+Configure `Std.Auth` from your code, reading whatever environment variables you
+choose at the call site:
 
 ```elm
 secret = System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret"
@@ -168,46 +179,23 @@ cookie = System.getenvOr "SKY_AUTH_COOKIE" "sky_auth"
 token  = Auth.signToken secret claims ttl
 ```
 
-`tokenTtl` / `cookieName` / `driver` are seeded from `sky.toml`. **The secret
-is not** — see the note below — so the first line reads an env var nothing
-seeds, which is the point.
+These `SKY_AUTH_*` reads are a **convention in your own code**, not runtime
+settings — nothing in `runtime-go/` reads them, and the compiler no longer seeds
+any of them from `sky.toml`. Set them in the environment (shell, `.env`, secret
+manager). Because your code reads them with `System.getenv` / `System.getenvOr`,
+the name is passed through **raw** — `[env] prefix` does not rewrite it (see
+[`[env]`](#env-v0115)); choose whatever variable names you like.
 
-Production overrides via shell env / `.env` win over the sky.toml
-seed (same precedence as every other key).
+> **The signing secret is never a config file value.** `SKY_AUTH_TOKEN_SECRET`
+> lives in the environment (shell, `.env`, secret manager), never in a committed
+> file. It must be ≥ 32 bytes. `sky init` writes it into the generated `.env`
+> (`rust/crates/sky/src/main.rs:1300`) and the production gate reads the literal,
+> unprefixed name (`main.rs:3791`). Nothing reads `SKY_AUTH_SECRET` (prefixed or
+> not); using that name silently fails the `ENV=production` gate.
 
-```toml
-[auth]
-secret     = "do-not-ship-this-default"
-tokenTtl   = 86400             # 24 h
-cookieName = "sky_auth"
-driver     = "jwt"             # jwt / session / oauth
-```
-
-| Key          | Env var                       | Default      | Meaning                              |
-|--------------|-------------------------------|--------------|--------------------------------------|
-| `tokenTtl`   | `<PREFIX>_AUTH_TOKEN_TTL`     | `86400`      | JWT lifetime in seconds              |
-| `cookieName` | `<PREFIX>_AUTH_COOKIE`        | `sky_auth`   | Session cookie name                  |
-| `driver`     | `<PREFIX>_AUTH_DRIVER`        | `jwt`        | `jwt` / `session` / `oauth`          |
-
-> **`secret` is NOT a sky.toml key.** It appears in the example block above only
-> to be explicit that it does not work: the compiler deliberately refuses to
-> seed a signing key from a file that is normally committed to source control.
-> Set **`SKY_AUTH_TOKEN_SECRET`** in the environment (shell, `.env`, secret
-> manager). A `secret = "…"` line in sky.toml is inert, and since v0.19.14 the
-> build warns about it rather than ignoring it silently.
->
-> **The name matters and this note used to give the wrong one.** It said
-> `<PREFIX>_AUTH_SECRET`. The production gate reads the literal, unprefixed
-> `SKY_AUTH_TOKEN_SECRET` (`rust/crates/sky/src/main.rs:3692`), and that is
-> the name `sky init` writes into the generated `.env` (`main.rs:1300`).
-> Nothing in the tree reads `SKY_AUTH_SECRET`, prefixed or not — so a reader
-> who followed the old instruction would set a variable no one looks at and
-> still fail the `ENV=production` gate.
-
-Keys are **camelCase**. `session_ttl` is not `tokenTtl`; it is nothing, and two
-examples in this repository shipped it for months advertising a 24-hour session
-they never got. Any key in a runtime config section that Sky does not read now
-produces a build warning naming the accepted keys.
+Any key in a runtime config section that Sky does not read produces a build
+warning naming the accepted keys — including any leftover `[auth]` key from an
+older project.
 
 ---
 
@@ -439,6 +427,7 @@ drop policy and its counter, the shutdown flush, and connection sharing — is i
 | `SKY_TELEMETRY_SYNCHRONOUS_COMMIT` | `off` | The same, for the console's log / metric / span writes. |
 | `SKY_ANALYTICS_DB_PATH` | `.sky/analytics.db` | Where analytics persists. A `postgres://` value puts it in that database; anything else is a local SQLite file. Falls back to `SKY_CONSOLE_DB_PATH`, then `DATABASE_URL` when that is a PostgreSQL DSN. |
 | `SKY_ANALYTICS_RETENTION` | (unset — keep everything) | Delete events older than this. Go duration (`720h`) or a day form (`90d`). |
+| `SKY_LIVE_REVOCATION_CACHE_TTL` | `0` (fresh read every gate eval) | Per-replica cache window, in whole seconds, for the `Live.withRevocation` gate's `revoked_at` / `disabled_at` lookup. A positive value trades **≤TTL of revocation latency** for fewer shared-table reads on the interaction hot path; `0` reads fresh every time (instant cross-replica revocation). A same-replica `revokeUser` / `disableUser` invalidates that user's entry immediately. Prefix-affected. |
 
 ### Garbage collection
 
@@ -547,8 +536,11 @@ prefixed names too.
 
 What's affected by the prefix:
 
-- All Sky-internal namespaces: `LIVE_*`, `AUTH_*`, `LOG_*`,
-  `DB_*`, `ENV`, `HOST`, `STATIC_DIR` (and the legacy alias).
+- All Sky-internal namespaces: `LIVE_*`, `LOG_*`,
+  `DB_*`, `ENV`, `HOST`, `STATIC_DIR` (and the legacy alias). Note
+  `AUTH_*` is **not** here — the `[auth]` block was removed and the
+  runtime reads no `AUTH_*` var; `SKY_AUTH_*` is a convention in your
+  own code (read via `System.getenv`), unaffected by the prefix.
 - All sky.toml-derived defaults — the generated init() emits
   `rt.SetSkyDefault("LIVE_TTL", "1800")`, which under prefix
   `FENCE` becomes `FENCE_LIVE_TTL=1800`.
@@ -701,6 +693,64 @@ this". The one rule, spelled out:
 So an operator can always override the binary without a rebuild,
 and an explicit `withX` call in code always beats the `sky.toml`
 seed while still losing to the operator.
+
+---
+
+## Typed config in code — `Sky.Config`
+
+The cross-cutting settings above (`[log]`, `[database]`, `[live] store`,
+`[jobs]`, `[security] csrf`, telemetry) can also be declared **in Sky**, as a
+top-level `config` binding the compiler discovers the way it discovers `main`:
+
+```elm
+-- doc-example: skip  (illustrative fragment; `main` is elided)
+module Main exposing (main, config)
+
+import Sky.Config as Config exposing (LogFormat(..), LogLevel(..), Database(..))
+
+config : Config.Config
+config =
+    Config.default
+        |> Config.withLog Json Warn
+        |> Config.withDatabase (Postgres "postgres://localhost/app")
+        |> Config.withSessions Config.SharedWithDatabase
+
+main =
+    ...
+```
+
+Each `withX` value is an ADT, so `store = "postgress"` becomes a compile error
+rather than a runtime fallback to memory. A `withX` value beats the legacy
+`sky.toml` seed and still loses to the operator's environment — the **same one
+precedence rule** as everything else (operator env → `withX` → `sky.toml` seed →
+fallback). Where a setting has both a `Sky.Config.withX` and a more-specific
+`Live.withX` (only the session store — `withSessions` vs
+`Live.withStore`/`withStorePath`), the app-shape `Live.withX` wins.
+
+The full surface — `default`, `withLog`, `withDatabase`, `withSessions`,
+`withJobs`, `withCsrf`, `withTelemetry`, and the strategy ADTs — is the live
+API: **`sky doc Sky.Config`** (generated from source, never drifts). The design
+of record is [config-architecture.md](tooling/config-architecture.md).
+
+> Console / telemetry **tokens** are deliberately NOT builders — a secret
+> belongs to the deployment, not the source — so `withTelemetry` carries only
+> the OTLP endpoint; the tokens stay operator-owned environment.
+
+### Migrating a legacy `sky.toml` — `sky config migrate`
+
+When a build or run finds legacy runtime keys in `sky.toml`, the compiler prints
+a migration LIST (moved / removed / changed), self-extinguishing once the keys
+are gone. `sky config migrate` rewrites them into a typed `config` binding:
+
+```bash
+sky config migrate            # rewrite sky.toml → typed config, in place
+sky config migrate --dry-run  # show the diff, write nothing
+sky config migrate --check    # exit non-zero if legacy runtime keys remain (CI gate)
+```
+
+`--check` and `--dry-run` are mutually exclusive. Both the build-time hint and
+the verb derive from the same migration table, so what the hint names is exactly
+what the verb rewrites. See [CLI reference](tooling/cli.md#sky-config-migrate).
 
 ---
 

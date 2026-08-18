@@ -1448,9 +1448,21 @@ collectTransitions : List (Attribute msg) -> ( String, Bool )
 collectTransitions attrs =
     let
         rules = List.filterMap pickTransitionShorthand attrs
-        anyOptOut = List.any isTransitionOptOut attrs
     in
-        ( String.join ", " rules, anyOptOut )
+        -- The overwhelming majority of elements declare no transition, so
+        -- `rules` is empty. Short-circuit before the `String.join` on an
+        -- empty list (which boxes its arguments and allocates) and the
+        -- second `List.any` traversal. `renderNodeAs` matches `( "", _ )`
+        -- and discards the Bool whenever the joined string is empty, so
+        -- returning `False` here instead of the `anyOptOut` scan is
+        -- byte-identical in the emitted HTML.
+        case rules of
+
+            [] ->
+                ( "", False )
+
+            _ ->
+                ( String.join ", " rules, List.any isTransitionOptOut attrs )
 
 
 pickTransitionShorthand : Attribute msg -> Maybe String
@@ -1934,7 +1946,17 @@ tagForDescription defaultTag d =
 renderNodeAs : String -> LayoutContext -> List (Attribute msg) -> List (Attribute msg) -> List (Element msg) -> any
 renderNodeAs tag ctx extraAttrs attrs children =
     let
-        allAttrs = extraAttrs ++ attrs
+        -- `extraAttrs` is `[]` for every non-root element — the recursive
+        -- `renderElement renderCtx []` below passes no extras — so the `++`
+        -- would `List.append`-copy `attrs` on every child in the tree.
+        -- `[] ++ attrs == attrs`; return `attrs` directly when there are no
+        -- extras. Byte-identical (same elements, same order).
+        allAttrs =
+            if List.isEmpty extraAttrs then
+                attrs
+
+            else
+                extraAttrs ++ attrs
         -- One traversal answers the four layout-context markers here
         -- and, below, the two style markers -- six independent
         -- `List.any` scans before. The style side re-scans
@@ -2012,10 +2034,29 @@ renderNodeAs tag ctx extraAttrs attrs children =
                 ]
         renderedMain = List.map (renderElement renderCtx []) children
         renderedNearby = List.map renderNearby nearbyChildren
-        renderedChildren = renderedMain ++ renderedNearby
+        -- Nearby children are rare; when there are none `renderedNearby` is
+        -- `[]` and the `++` would `List.append`-copy the whole main-child
+        -- list per container. `xs ++ [] == xs`; skip the copy. Byte-identical.
+        renderedChildren =
+            if List.isEmpty renderedNearby then
+                renderedMain
+
+            else
+                renderedMain ++ renderedNearby
+        -- Pseudo/transition/animation attrs are absent on the overwhelming
+        -- majority of elements; when all three are empty the three `++` each
+        -- `List.append`-copy `htmlAttrs`. `[] ++ [] ++ [] ++ htmlAttrs ==
+        -- htmlAttrs`; go straight to it. Byte-identical.
+        tailAttrs =
+            if List.isEmpty pseudoAttrs
+                && List.isEmpty transitionAttrs
+                && List.isEmpty animationAttrs then
+                htmlAttrs
+
+            else
+                pseudoAttrs ++ transitionAttrs ++ animationAttrs ++ htmlAttrs
         attrList =
-            Attr.style styleStr
-                :: (pseudoAttrs ++ transitionAttrs ++ animationAttrs ++ htmlAttrs)
+            Attr.style styleStr :: tailAttrs
     in
         dispatchTag tag attrList renderedChildren
 

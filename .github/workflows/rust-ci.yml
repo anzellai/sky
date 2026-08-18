@@ -321,11 +321,17 @@ jobs:
         run: cargo run -q -p xtask -- reject
 
   # ── Byte-stable codegen across fresh processes (~15.5m) ─────────────────────
+  # repro was the setup-dependent critical path: the config+auth wave added
+  # stdlib surface (Sky.Config, the auth modules), which slowed the per-example
+  # go build and took the full-corpus repro from ~690s to 790s, pushing the
+  # setup→repro chain to 1048s against the 990s T1 ceiling. Sharded across two
+  # sibling jobs (--shard=0/2 + --shard=1/2, the same flag macos-determinism
+  # uses), each ~half the corpus; the union is asserted disjoint-and-total by
+  # `repro_gate::tests::shards_are_disjoint_and_total`, so every example is
+  # still covered. Both remain setup-dependent; the chain drops to setup + ~395s.
   repro:
     needs: setup
     runs-on: ubuntu-latest
-    # repro ~15.5 min (this file's own header) + debug workspace build ~4 min
-    # ≈ 20 min. 1.5x = 30.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -336,8 +342,24 @@ jobs:
           shared-key: sky-linux
           save-if: 'false'
       - run: cargo build --workspace --locked
-      - name: Gate — repro (byte-stable Go across fresh processes, L4)
-        run: cargo run -q -p xtask -- repro
+      - name: Gate — repro (byte-stable Go across fresh processes, L4, shard 0/2)
+        run: cargo run -q -p xtask -- repro --shard=0/2
+
+  repro-2:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - run: cargo build --workspace --locked
+      - name: Gate — repro (byte-stable Go across fresh processes, L4, shard 1/2)
+        run: cargo run -q -p xtask -- repro --shard=1/2
 
   # ── Codegen emit + go build + runtime (needs Go; cached) ────────────────────
   codegen-build:
@@ -1017,6 +1039,7 @@ jobs:
       - parity-accept
       - parity-reject
       - repro
+      - repro-2
       - codegen-build
       - build-corpus
       - behaviour-docs

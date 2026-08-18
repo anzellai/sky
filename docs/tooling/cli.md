@@ -258,6 +258,34 @@ Output lines: `  ok: <name>`, `  FAIL build: …`, `  FAIL go-build: …`,
 
 Run a Sky test module. See [`testing.md`](testing.md).
 
+## Configuration
+
+### `sky config migrate`
+
+Rewrite a legacy `sky.toml`'s runtime keys into a typed `config` binding (the
+`Sky.Config` / `Live.withX` surface — see
+[`sky.toml` typed config](../sky-toml.md#typed-config-in-code--skyconfig)).
+
+```bash
+sky config migrate            # move legacy runtime keys → typed config, in place
+sky config migrate --dry-run  # print the summary + diff, write nothing
+sky config migrate --check    # exit non-zero if legacy runtime keys remain (CI gate)
+```
+
+- **`migrate`** rewrites `sky.toml` and the entry module, then tells you to
+  review with `git diff` and run `sky check`.
+- **`--dry-run`** shows the moved / removed / changed key summary and the diff
+  without writing any files.
+- **`--check`** is the CI gate: exit `0` when no legacy runtime keys remain,
+  non-zero (listing them) when they do. `--check` and `--dry-run` are mutually
+  exclusive.
+
+The same legacy keys, when present, are also reported by a **migration LIST
+printed on every `sky build` / `sky run`** (moved / removed / changed),
+self-extinguishing once the keys are gone. Both the build-time hint and this
+verb derive from one migration table, so the hint names exactly what the verb
+rewrites.
+
 ## Database
 
 ### `sky db status [FILE]` · `sky db migrate [FILE]`

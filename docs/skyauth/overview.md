@@ -191,42 +191,48 @@ handleMe db req =
 
 `Task.andThenResult` is the bridge that chains `Auth.signToken` (Result) after `Auth.login` (Task) without nested case-matching. See [Effect Boundary](../../CLAUDE.md#effect-boundary-task-everywhere-v0100) for the bridge cheatsheet.
 
-## Configuration — `[auth]` section
+> The `Server.withCookie "sky_auth" token "…"` above sets a **fixed-expiry**
+> cookie, which is the right shape for this Sky.Http.Server flow. For a
+> **rolling** Sky.Live session that re-issues on activity under an absolute cap,
+> use `Auth.signSlidingToken` + `Live.withAuthSliding` + the builder-owned
+> `Auth.setSlidingCookie` setter instead — a hand-rolled `Server.withCookie` for
+> the sliding cookie is unsupported (its attributes would drift from the
+> re-issue). See [Sliding session tokens](#sliding-rolling-session-tokens).
 
-`sky.toml` keys seed env vars at startup (process env still wins):
+## Configuration — there is no `[auth]` section
 
-```toml
-[auth]
-cookieName = "sky_sid"     # → SKY_AUTH_COOKIE
-tokenTtl   = "24h"         # → SKY_AUTH_TOKEN_TTL (Go duration string)
-driver     = "…"           # → SKY_AUTH_DRIVER
+**`Std.Auth` is not configured from `sky.toml`.** It is a library: `signToken`
+takes the secret + TTL as **arguments**, and your handler sets the session
+cookie (`Server.withCookie`). There was nothing for a config layer to seed, so
+the inert `[auth]` block (`driver` / `cookieName` / `tokenTtl`) was **deleted** —
+it was parsed, seeded into `SKY_AUTH_*` and read by nothing for four minor
+versions. A residual `[auth]` key now raises the standard inert-key build
+warning.
+
+Configure `Std.Auth` from your own code, reading whatever environment variables
+you choose at the call site:
+
+```elm
+secret = System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret"
+ttl    = System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400" |> String.toInt |> Result.withDefault 86400
+
+token  = Auth.signToken secret claims ttl
 ```
 
-Those **three keys are the whole section** (`accepted_config_keys("auth")`,
-`rust/crates/project/src/build.rs:1106`; the seeding is at `:1045-1047`).
+These `SKY_AUTH_*` reads are a **convention in your code**, not runtime settings —
+nothing in `runtime-go/` reads them, and the compiler no longer seeds any of
+them from `sky.toml`. Set them in the environment (shell, `.env`, secret
+manager).
 
-> **Two keys were wrong here and both failed silently.** This block used to
-> show `cookie = "sky_sid"` and
-> `tokenSecret = "REPLACE-WITH-32+-BYTE-RANDOM-STRING"`.
->
-> - The key is **`cookieName`**, not `cookie`. `cookie` is not accepted and
->   raises an unknown-config-key warning; the cookie name silently stays at
->   its default.
-> - **`tokenSecret` is not a `sky.toml` key at all, by design.** The
->   build.rs comment is explicit: *"`secret` is deliberately NOT seeded from
->   sky.toml — it must come from env"* (`:1043-1044`). `SKY_AUTH_TOKEN_SECRET`
->   is read from the process environment only (`sky/src/main.rs:3692`). So the
->   old example invited a reader to put a **signing secret in a committed
->   file**, where it would then be ignored — the worst of both outcomes.
->
-> `docs/sky-toml.md:184-188` already documented this correctly; the two docs
-> contradicted each other.
+> **`SKY_AUTH_TOKEN_SECRET` is an environment variable, never a config-file
+> value.** The production gate reads the literal, unprefixed name
+> (`rust/crates/sky/src/main.rs:3791`) and `sky init` writes it into the
+> generated `.env`. It must be ≥ 32 bytes; `Auth.signToken` and the runtime both
+> reject a shorter one. Putting a signing key in a committed file is the worst
+> outcome — it is ignored *and* leaked.
 
-Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → `sky.toml`. See [environment-variable precedence](../../CLAUDE.md#environment-variables) for the full doctrine.
-
-**Never commit a real secret to `sky.toml`.** The intended pattern is:
-- `sky.toml` ships the *defaults* (timeouts, cookie name) so a fresh `sky build` works
-- `SKY_AUTH_TOKEN_SECRET` lives in `.env` (gitignored) for local dev and in the deployment env for production. Sky's runtime errors at startup when this is set but shorter than 32 bytes.
+**Never commit a real secret.** `SKY_AUTH_TOKEN_SECRET` lives in `.env`
+(gitignored) for local dev and in the deployment env for production.
 
 ## Production checklist
 
@@ -336,6 +342,199 @@ update msg model =
 ```
 
 For password fields specifically, see [the form-with-passwords pattern](../../CLAUDE.md#forms-with-passwords-and-other-sensitive-inputs) — submit on form submit, never round-trip the secret through Model.
+
+## Sliding (rolling) session tokens
+
+A fixed-expiry token forces a bad trade: a **short** `exp` logs active users
+out mid-session; a **long** `exp` means a stolen token is valid for the whole
+window. Sky.Live offers an **opt-in sliding token** that re-issues a fresh short
+window on activity — so an active user stays signed in while an **idle** token
+still lapses on schedule — under a hard **absolute-lifetime cap** that no amount
+of activity can extend.
+
+It has three parts:
+
+1. **`Auth.signSlidingToken secret claims { windowSeconds, maxLifetimeSeconds }`**
+   — issue the token at login. It stamps `iat`, `exp = iat + windowSeconds`,
+   `aexp = iat + maxLifetimeSeconds` (the immutable cap), and `w = windowSeconds`
+   as its own signed claim. It rejects `windowSeconds > maxLifetimeSeconds` with
+   an `Err`.
+2. **`Live.withAuthSliding { cookie, secretEnv, sameSite, revokedCheck }`** — the
+   builder that mounts the re-issue middleware and OWNS the cookie's attributes.
+3. **`Auth.setSlidingCookie req token resp`** — the builder-owned setter the
+   **login handler** uses to write the cookie with the SAME attributes the
+   re-issue will use.
+
+The one-line opt-in — a Sky.Live app with a login `api` route:
+
+```elm
+secret =
+    System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret-min-32-bytes-please-rotate"
+
+
+-- login handler: sign a sliding token and set it with the builder-owned setter
+login req =
+    case Auth.signSlidingToken secret { sub = "42" } { windowSeconds = 900, maxLifetimeSeconds = 86400 } of
+        Ok token ->
+            Task.succeed (Server.json "{\"ok\":true}" |> Auth.setSlidingCookie req token)
+
+        Err _ ->
+            Task.succeed (Server.withStatus 500 (Server.text "sign failed"))
+
+
+main =
+    Live.app
+        (Live.config
+            { init = init, update = update, view = view
+            , subscriptions = subscriptions
+            , routes = [ Live.route "/" Home, Live.api "POST /login" login ]
+            , notFound = Home
+            }
+            |> Live.withAuthSliding
+                { cookie = "sky_auth"
+                , secretEnv = "SKY_AUTH_TOKEN_SECRET"
+                , sameSite = "Strict"
+                , revokedCheck = Nothing
+                }
+        )
+```
+
+**The login handler MUST use `Auth.setSlidingCookie`, not a hand-rolled
+`Server.withCookie`.** The middleware re-issues the cookie on later requests, but
+it **cannot read cookie attributes off a request** — browsers send only
+`name=value`, never `Path` / `SameSite` / `Secure`. So the login setter and the
+re-issue both build the cookie from the ONE config the builder registered
+(`Path=/`, HttpOnly, the builder's `SameSite`, `Secure` by the shared
+`cookieSecureFor` rule, and the sliding Max-Age). A hand-rolled
+`Server.withCookie` for the sliding cookie would drift from the re-issue's
+attributes and is **unsupported**.
+
+`secretEnv` is the **name** of the environment variable holding the HMAC secret
+— never the secret value. The operator owns it; the middleware reads it at
+request time.
+
+### The stolen-token exposure delta
+
+This is the standard sliding-session trade-off, stated plainly: **continuous use
+of a stolen token slides it all the way to `aexp`, not just to the next `exp`.**
+An attacker who keeps a stolen token active holds the session until the absolute
+cap — the window does not save you against *continuous* abuse; it only expires an
+*idle* token. Two things bound the exposure:
+
+- **The absolute cap (`maxLifetimeSeconds`).** No activity extends the token past
+  `aexp`. Pick a cap you are willing to have a stolen token live to.
+- **`revokedCheck` — a per-subject revocation hook** `sub -> Task Error Bool`,
+  consulted at **re-issue time only** (not per request — the hot path stays
+  cheap). Return `True` to stop the slide; the token then lapses at its current
+  `exp`. Wire it to your "session revoked / password changed / user disabled"
+  check so a compromised session can be cut off within one window instead of
+  waiting for the cap. If you pass `Nothing`, there is no check and
+  **revocation latency equals `maxLifetimeSeconds`** — so keep the cap short when
+  you skip the hook. (A revocation-check error fails **closed**: the slide stops,
+  the token still lives to its current `exp`.)
+
+### The SSE caveat
+
+The token slides on **interaction** — an event `POST` or a page `GET`, where the
+server writes response headers — **not on the SSE heartbeat.** An SSE stream's
+headers are written once, at connect, so the heartbeat that keeps the *server*
+session alive cannot re-issue the *cookie* mid-stream (the same limitation the
+`sky_sid` session cookie has). A tab that sits idle under a live SSE longer than
+`windowSeconds` between interactions will let its auth token lapse. **Set
+`windowSeconds` comfortably above your expected SSE-idle gaps** (a few minutes of
+inactivity between clicks is typical; `900` = 15 min is a reasonable floor).
+
+## User revocation & suspension (PULL model)
+
+Sliding `revokedCheck` stops a *token* from re-issuing, but it does nothing for a
+session that is already live inside a Sky.Live app. For that — "log this user
+out **now**", "ban this account" — Sky ships a **pull-model** revocation gate:
+the state lives in one shared table, and every session checks **itself** against
+it on each interaction, with no broker, no cross-instance fan-out, and no
+session index.
+
+There are **two independent states**, and the distinction matters:
+
+| API | Meaning | Enforced by |
+|---|---|---|
+| `Auth.revokeUser db userId` | **Kill existing sessions/tokens.** Stamps `revoked_at = now`. Anything issued *before* now stops working; a **fresh login afterwards is fine**. Revoke ≠ ban. | The session gate + the sliding `revokedCheck` (wire it to `Auth.isRevoked`). |
+| `Auth.disableUser db userId` | **Ban the account.** Sets `users.disabled_at`. The user **cannot log in again** (checked *before* the password verify) and any live session is evicted. Reverse with `Auth.enableUser`. | `Auth.login` + the session gate. |
+
+Read the combined verdict with `Auth.userAccessState db userId issuedAt : Task Error AccessState` (`Active` / `Revoked` / `Disabled`, with `Disabled` taking precedence), or the booleans `Auth.isRevoked` / `Auth.isDisabled`.
+
+### Wiring it into a Sky.Live app
+
+Three steps:
+
+1. **Register the gate** with `Live.withRevocation db` — hand it the **same `Db`
+   you pass to `Std.Auth`** (the shared table lives there, *not* on the session
+   store, which defaults to in-memory and is not shared across replicas). This
+   is the enabling signal: until you call it, the gate is inert and public
+   apps pay nothing.
+2. **Bind sessions to users at login** with `Live.bindSessionUser userId`
+   (performed as a `Cmd`), so the gate has a subject to check. A sliding-auth
+   (token) app **auto-binds** from the verified token `sub` and never needs
+   this call; a session-based app must make it. A session that reaches the gate
+   **unbound** under an enabled gate raises a **loud runtime warning** and
+   `sky doctor` lint — it is never silently treated as allowed.
+3. **Revoke / disable** from an admin action. **Sky provides the mechanism; your
+   app owns the "is the caller an admin?" authorization** — call `revokeUser` /
+   `disableUser` only after your own admin check.
+
+```elm
+import Std.Live as Live exposing (app, config, withRevocation, bindSessionUser)
+import Std.Auth as Auth
+
+-- At login, bind the session so revocation can reach it:
+update msg model =
+    case msg of
+        LoggedIn userId ->
+            ( { model | user = Just userId }
+            , Cmd.perform (Live.bindSessionUser userId) (\_ -> Ignore)
+            )
+        -- Admin action (gate on YOUR OWN is-admin check first):
+        AdminRevoke targetId ->
+            ( model, Cmd.perform (Auth.revokeUser model.db targetId) (\_ -> Ignore) )
+        AdminBan targetId ->
+            ( model, Cmd.perform (Auth.disableUser model.db targetId) (\_ -> Ignore) )
+
+main =
+    app
+        (config { init = init, update = update, view = view
+                , subscriptions = subscriptions
+                , routes = [ {- … -} ], notFound = Home }
+            |> Live.withRevocation db   -- the SAME db Std.Auth uses
+        )
+```
+
+On a `Revoked` / `Disabled` verdict the session is **evicted**: its goroutines
+(tickers, subscribers, in-flight `Cmd.perform` completions) are retired, its
+blob is dropped from the store, and the browser gets the standard
+`session-lost` signal (a full reload). The gate sits inside the one dispatch
+funnel every mutation path shares, so a revoked session **mutates nothing** —
+not even a `Sub.every` tick or a completing effect races through.
+
+### `userId` is a String — key it exactly
+
+The admin APIs take a **`String`** user id, not an `Int`. That is deliberate:
+an OAuth subject is a string, and a numeric id passed as a String is stored
+**exactly**. A numeric JWT `sub` decodes as a float64 and **loses precision
+above 2⁵³** — so if your ids can get that large, carry them as Strings
+end-to-end. The runtime canonicalises every id (string verbatim; an integer to
+its decimal text) on **both** the write and the read, so `revokeUser db 42`-style
+callers and the gate never disagree.
+
+### Read freshness and the ≤TTL latency knob
+
+The gate reads `revoked_at` / `disabled_at` **fresh from the shared table on
+every evaluation** by default, so a revoke on replica A stops a dispatch on
+replica B immediately — the verdict is **never** stored on the session blob. If
+that read is too hot for your scale, set **`SKY_LIVE_REVOCATION_CACHE_TTL`** to a
+whole number of seconds: each replica then caches a user's verdict for up to
+that window, trading **≤TTL of revocation latency** for fewer reads. The default
+(`0`) is a fresh read every time — instant, at the cost of one indexed
+point-lookup per interaction. A same-replica `revokeUser` / `disableUser`
+invalidates that user's cache entry immediately regardless of the TTL.
 
 ## See also
 

@@ -12,7 +12,8 @@
     "_source": "rust/crates/sky/src/main.rs dispatch table (primary); docs/tooling/cli.md headings (cross-check)",
     "dispatched_but_undocumented": [
       "console-serve",
-      "init"
+      "init",
+      "migrate"
     ],
     "documented_but_not_dispatched": [],
     "verbs": [
@@ -20,6 +21,7 @@
       "build",
       "check",
       "clean",
+      "config",
       "console",
       "console-serve",
       "db",
@@ -29,6 +31,7 @@
       "init",
       "install",
       "lsp",
+      "migrate",
       "remove",
       "run",
       "test",
@@ -217,7 +220,7 @@
       "tier": "T1"
     },
     "config-matrix": {
-      "expected_assertions": 98,
+      "expected_assertions": 92,
       "falsifier_mutation": "config-matrix.invert-operator-env-provenance",
       "falsifier_proven": true,
       "summary": "every covered setting's EFFECTIVE value, observed from running binaries, matches the baseline in every arm combination",
@@ -226,8 +229,28 @@
       ],
       "tier": "T1"
     },
+    "config-migrate": {
+      "expected_assertions": 20,
+      "falsifier_mutation": "",
+      "falsifier_proven": false,
+      "summary": "sky config migrate rewrites a legacy fixture end-to-end (every key leaves sky.toml, the builders land in the right destination, a re-check is clean) and proposes zero undeclared changes when planning a copy of examples/19-skyforum",
+      "surfaces": [
+        "meta.config-migrate"
+      ],
+      "tier": "T1"
+    },
+    "config-migration": {
+      "expected_assertions": 44,
+      "falsifier_mutation": "config-migration.drop-a-builder-label",
+      "falsifier_proven": true,
+      "summary": "the legacy→withX migration table covers every Sky.Config env target and every legacy key it names is one the compiler accepts",
+      "surfaces": [
+        "meta.config-migration"
+      ],
+      "tier": "T1"
+    },
     "config-surface": {
-      "expected_assertions": 59,
+      "expected_assertions": 53,
       "falsifier_mutation": "config-surface.seed-a-suffix-nothing-reads",
       "falsifier_proven": true,
       "summary": "the configuration surface is measured, current, and no defect count rose",
@@ -352,7 +375,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 149,
+      "expected_assertions": 154,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -446,7 +469,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 393,
+      "expected_assertions": 398,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -618,13 +641,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1782,
-    "stdlib_modules": 87,
-    "surfaces_covered": 131,
-    "surfaces_covered_pct": 90.3,
-    "surfaces_equal": 19,
-    "surfaces_stronger": 126,
-    "surfaces_total": 145,
+    "stdlib_entries": 1810,
+    "stdlib_modules": 88,
+    "surfaces_covered": 134,
+    "surfaces_covered_pct": 89.3,
+    "surfaces_equal": 21,
+    "surfaces_stronger": 129,
+    "surfaces_total": 150,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -776,6 +799,22 @@
       "description": "`sky clean`",
       "id": "cli.clean",
       "verdict": "stronger"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky config`",
+      "id": "cli.config",
+      "verdict": "equal"
     },
     {
       "category": "cli",
@@ -986,6 +1025,28 @@
       "description": "`sky lsp`",
       "id": "cli.lsp",
       "verdict": "equal"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky migrate`",
+      "id": "cli.migrate",
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -2041,6 +2102,62 @@
     {
       "category": "meta",
       "cover_new": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "gate `config-migrate`",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — no automatic legacy→withX converter existed",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "the `sky config migrate` rewriter applies the migration table end-to-end (sky.toml stripped, a typed config binding written), proves the migrated effective config identical to the legacy one, and hard-errors on an undeclared move",
+      "id": "meta.config-migrate",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `config-migration`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — the migration mapping lived in prose, in two languages, ungated",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "the legacy sky.toml → withX migration table covers every Sky.Config env target the runtime names, every builder label is present, and every legacy key the table names is one the compiler accepts",
+      "id": "meta.config-migration",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
         "class": "Falsified",
         "evidence": [
           {
@@ -2369,6 +2486,22 @@
       "description": "sessions, the persistent SSE channel, and CSRF refusal",
       "id": "skylive.session-sse-csrf",
       "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Sky.Config public API",
+      "id": "stdlib.Sky.Config",
+      "verdict": "equal"
     },
     {
       "category": "stdlib",
@@ -10758,8 +10891,9 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 6,
+      "count": 7,
       "modules": [
+        "Sky.Config",
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
@@ -10767,7 +10901,7 @@
         "Std.Db.Table",
         "Std.Live.Console"
       ],
-      "pct_of_denominator": 6.9
+      "pct_of_denominator": 8.0
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -10778,15 +10912,17 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 10,
+      "count": 12,
       "surfaces": [
         "cli.check",
+        "cli.config",
         "cli.console",
         "cli.console-serve",
         "cli.fmt",
         "cli.lsp",
         "cli.upgrade-claude",
         "cli.verify",
+        "stdlib.Sky.Config",
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Live.Console"
@@ -10794,6 +10930,25 @@
     },
     "symbols_unreferenced_generous": {
       "by_module": {
+        "Sky.Config": {
+          "count": 14,
+          "symbols": [
+            "Config",
+            "Database",
+            "JobStore",
+            "LogFormat",
+            "LogLevel",
+            "Sessions",
+            "Telemetry",
+            "default",
+            "withCsrf",
+            "withDatabase",
+            "withJobs",
+            "withLog",
+            "withSessions",
+            "withTelemetry"
+          ]
+        },
         "Sky.Core.Basics": {
           "count": 6,
           "symbols": [
@@ -11088,11 +11243,20 @@
           ]
         },
         "Std.Auth": {
-          "count": 3,
+          "count": 12,
           "symbols": [
+            "AccessState",
+            "disableUser",
+            "enableUser",
+            "isDisabled",
+            "isRevoked",
             "login",
             "register",
-            "setRole"
+            "revokeUser",
+            "setRole",
+            "setSlidingCookie",
+            "signSlidingToken",
+            "userAccessState"
           ]
         },
         "Std.Cache": {
@@ -11458,14 +11622,19 @@
           ]
         },
         "Std.Live": {
-          "count": 11,
+          "count": 16,
           "symbols": [
             "AppConfig",
+            "bindSessionUser",
             "lifecycle",
             "withAnalyticsIdentify",
+            "withAuthSliding",
             "withConsoleAuth",
             "withIdleEvict",
+            "withInput",
+            "withMaxBodyBytes",
             "withOnNavigate",
+            "withRevocation",
             "withStatic",
             "withStaticUrl",
             "withStatus",
@@ -11553,7 +11722,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 136,
+          "count": 134,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -11588,7 +11757,6 @@
             "borderWidthEach",
             "buildStyleString",
             "buildStyleStringWith",
-            "class",
             "clip",
             "clipY",
             "colMarker",
@@ -11638,7 +11806,6 @@
             "heightCss",
             "heightCssIn",
             "heightFillFor",
-            "inFront",
             "isFillLength",
             "isHeightAttr",
             "isHeightFillAttr",
@@ -11716,12 +11883,11 @@
           ]
         },
         "Std.Ui.Border": {
-          "count": 5,
+          "count": 4,
           "symbols": [
             "activeColor",
             "focusColor",
             "focusVisibleColor",
-            "hoverColor",
             "innerShadow"
           ]
         },
@@ -11835,11 +12001,30 @@
           ]
         }
       },
-      "count": 705,
-      "pct_of_denominator": 39.6
+      "count": 730,
+      "pct_of_denominator": 40.3
     },
     "symbols_unreferenced_strict": {
       "by_module": {
+        "Sky.Config": {
+          "count": 14,
+          "symbols": [
+            "Config",
+            "Database",
+            "JobStore",
+            "LogFormat",
+            "LogLevel",
+            "Sessions",
+            "Telemetry",
+            "default",
+            "withCsrf",
+            "withDatabase",
+            "withJobs",
+            "withLog",
+            "withSessions",
+            "withTelemetry"
+          ]
+        },
         "Sky.Core.Basics": {
           "count": 6,
           "symbols": [
@@ -12148,11 +12333,20 @@
           ]
         },
         "Std.Auth": {
-          "count": 3,
+          "count": 12,
           "symbols": [
+            "AccessState",
+            "disableUser",
+            "enableUser",
+            "isDisabled",
+            "isRevoked",
             "login",
             "register",
-            "setRole"
+            "revokeUser",
+            "setRole",
+            "setSlidingCookie",
+            "signSlidingToken",
+            "userAccessState"
           ]
         },
         "Std.Cache": {
@@ -12584,17 +12778,22 @@
           ]
         },
         "Std.Live": {
-          "count": 14,
+          "count": 19,
           "symbols": [
             "AppConfig",
             "api",
+            "bindSessionUser",
             "lifecycle",
             "withAnalytics",
             "withAnalyticsIdentify",
+            "withAuthSliding",
             "withConsoleAuth",
             "withGuard",
             "withIdleEvict",
+            "withInput",
+            "withMaxBodyBytes",
             "withOnNavigate",
+            "withRevocation",
             "withStatic",
             "withStaticUrl",
             "withStatus",
@@ -12682,7 +12881,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 136,
+          "count": 134,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -12717,7 +12916,6 @@
             "borderWidthEach",
             "buildStyleString",
             "buildStyleStringWith",
-            "class",
             "clip",
             "clipY",
             "colMarker",
@@ -12767,7 +12965,6 @@
             "heightCss",
             "heightCssIn",
             "heightFillFor",
-            "inFront",
             "isFillLength",
             "isHeightAttr",
             "isHeightFillAttr",
@@ -12845,12 +13042,11 @@
           ]
         },
         "Std.Ui.Border": {
-          "count": 5,
+          "count": 4,
           "symbols": [
             "activeColor",
             "focusColor",
             "focusVisibleColor",
-            "hoverColor",
             "innerShadow"
           ]
         },
@@ -12965,8 +13161,8 @@
           ]
         }
       },
-      "count": 784,
-      "pct_of_denominator": 44.0
+      "count": 809,
+      "pct_of_denominator": 44.7
     }
   },
   "units": [
@@ -14042,10 +14238,10 @@
       "id": "tests/Std",
       "modules_imported": 14,
       "path": "tests/Std",
-      "refs_generous": 94,
-      "refs_qualified": 93,
+      "refs_generous": 105,
+      "refs_qualified": 103,
       "role": "SkySuite",
-      "sky_files": 6,
+      "sky_files": 7,
       "sky_toml_sections": []
     },
     {
