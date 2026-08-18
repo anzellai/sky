@@ -37,6 +37,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"sky-app/rt"
 	"sky-app/rt/periodic"
 
 	_ "modernc.org/sqlite"
@@ -541,11 +542,16 @@ func (s *Store) writeBatch(batch []pendingItem) error {
 // header — because rt/hub cannot import rt and so cannot reach rt's structured
 // logger. `log.Printf` with the `[sky.hub]` tag is what this package's
 // operators already read.
+// The stack goes through rt.LogRecoveredPanic — exported for exactly this
+// reason ("a second copy of the policy is exactly the shape of the defect that
+// file closes"), and reachable because rt/hub imports rt rather than the other
+// way round.
 func periodicReport(r periodic.Report) {
 	switch {
 	case r.Recovered != nil:
-		log.Printf("[sky.hub] %s: cycle panicked: %v — this cycle is lost, the next tick will retry\n%s",
-			r.Loop, r.Recovered, r.Stack)
+		rt.LogRecoveredPanic("sky.hub", r.Loop, r.Recovered)
+		log.Printf("[sky.hub] %s: cycle panicked: %v — this cycle is lost, the next tick will retry",
+			r.Loop, r.Recovered)
 	case r.Err != nil:
 		log.Printf("[sky.hub] %s: %v", r.Loop, r.Err)
 	}

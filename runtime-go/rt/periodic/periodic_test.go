@@ -65,9 +65,11 @@ func TestGuardConfinesAPanicToTheCycle(t *testing.T) {
 		if r.Recovered == nil {
 			t.Errorf("report %d has no Panic — a recover that discards what it caught is the defect", i)
 		}
-		if len(r.Stack) == 0 {
-			t.Errorf("report %d has no Stack — the operator cannot find the panic site", i)
-		}
+		// No Stack is asserted, because Report deliberately carries none:
+		// capturing a Go stack is production-gated policy owned by
+		// rt/panic_log.go, and this package cannot import rt. The reporter is
+		// still on the panicking goroutine, so a caller that wants a stack
+		// takes one there under its own policy — see Guard.
 		if r.Loop != "test.loop" {
 			t.Errorf("report %d names loop %q, want %q", i, r.Loop, "test.loop")
 		}

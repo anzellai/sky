@@ -300,6 +300,20 @@ static CROSS_CUTTING: &[CrossSurface] = &[
         today: &[("nothing", 0)],
     },
     CrossSurface {
+        id: "runtime.periodic-goroutines",
+        category: "runtime",
+        description: "every detached periodic loop in runtime-go survives a panicking \
+                      cycle, releases whatever the cycle held, and reports what it \
+                      caught instead of discarding it",
+        // Nothing, and that is the finding rather than an omission. The class is
+        // silent by construction: the loop stops, no log line is written, and the
+        // only symptom is a table or a spool growing for a day. Eight sites
+        // carried it and every one was found by reading code — including two
+        // whose defects were exact complements, which is what a class looks like
+        // when it is closed one instance at a time.
+        today: &[("nothing", 0)],
+    },
+    CrossSurface {
         id: "lsp",
         category: "tooling",
         description: "editor parity: hover, completion, diagnostics, go-to-definition",
@@ -467,6 +481,25 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
         &["observability.analytics-store", "observability.console"],
     ),
     ("erasure-path-uses-an-index", &["observability.analytics-store"]),
+    // The periodic-goroutine gates. The AST audit owns the CLASS — it is the
+    // one that fails on the next instance; the other two own the highest-cost
+    // individual instances. The Time.every gate also touches
+    // `skylive.session-sse-csrf` because the mutex it proves acquirable is the
+    // session's own: a tick that panicked used to freeze the tab permanently,
+    // which is a session-lifecycle failure that happens to be reached through a
+    // subscription.
+    (
+        "periodic-loops-recover-per-cycle",
+        &["runtime.periodic-goroutines"],
+    ),
+    (
+        "live-time-every-mutex-survives-a-panic",
+        &["runtime.periodic-goroutines", "skylive.session-sse-csrf"],
+    ),
+    (
+        "jobs-complete-failure-is-reported",
+        &["runtime.periodic-goroutines"],
+    ),
     ("roundtrip", &["compiler.parse", "lang.constructs"]),
     ("reject", &["compiler.reject", "compiler.infer"]),
     (

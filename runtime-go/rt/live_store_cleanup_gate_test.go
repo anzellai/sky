@@ -36,9 +36,17 @@ import (
 	"time"
 )
 
+// gateCleanupInterval drives several cycles in milliseconds. It is passed to
+// `runCleanupLoop` as an ARGUMENT rather than assigned over the package-level
+// `liveStoreCleanupInterval`, and that is not tidiness: the first version
+// lowered the global, which raced every concurrently-starting store's read of
+// it. `go test -race ./rt/` caught it, and only under the FULL suite — in
+// isolation this gate passed clean.
+const gateCleanupInterval = 5 * time.Millisecond
+
 // bothSQLStores runs a subtest against each SQL store, since the two carried
 // byte-identical defects and a fix to one is worthless if the other drifts.
-func bothSQLStores(t *testing.T, run func(t *testing.T, loop func(liveStoreExecer), stop chan struct{})) {
+func bothSQLStores(t *testing.T, run func(t *testing.T, loop func(liveStoreExecer, time.Duration), stop chan struct{})) {
 	t.Helper()
 	t.Run("sqlite", func(t *testing.T) {
 		stop := make(chan struct{})
@@ -58,12 +66,8 @@ func bothSQLStores(t *testing.T, run func(t *testing.T, loop func(liveStoreExece
 // The discriminating assertion is about cycles 2 and 3. "Cycle 1 panicked" is
 // true under the broken and the fixed shape alike.
 func TestLiveSessionCleanupSurvivesAPanic(t *testing.T) {
-	restore := liveStoreCleanupInterval
-	liveStoreCleanupInterval = 5 * time.Millisecond
-	t.Cleanup(func() { liveStoreCleanupInterval = restore })
-
 	n := 0
-	bothSQLStores(t, func(t *testing.T, loop func(liveStoreExecer), stop chan struct{}) {
+	bothSQLStores(t, func(t *testing.T, loop func(liveStoreExecer, time.Duration), stop chan struct{}) {
 		ex := &scriptedExecer{panicOn: map[int]bool{1: true}}
 		done := make(chan struct{})
 		go func() {
@@ -74,7 +78,7 @@ func TestLiveSessionCleanupSurvivesAPanic(t *testing.T) {
 				_ = recover()
 				close(done)
 			}()
-			loop(ex)
+			loop(ex, gateCleanupInterval)
 		}()
 
 		deadline := time.Now().Add(5 * time.Second)
@@ -115,16 +119,12 @@ func TestLiveSessionCleanupSurvivesAPanic(t *testing.T) {
 // session looked exactly like a healthy one, while sessions accumulated on
 // disk forever.
 func TestLiveSessionReapErrorsAreReported(t *testing.T) {
-	restore := liveStoreCleanupInterval
-	liveStoreCleanupInterval = 5 * time.Millisecond
-	t.Cleanup(func() { liveStoreCleanupInterval = restore })
-
 	n := 0
-	bothSQLStores(t, func(t *testing.T, loop func(liveStoreExecer), stop chan struct{}) {
+	bothSQLStores(t, func(t *testing.T, loop func(liveStoreExecer, time.Duration), stop chan struct{}) {
 		wantErr := errors.New("attempt to write a readonly database")
 		ex := &scriptedExecer{failOn: map[int]bool{1: true, 2: true, 3: true}, err: wantErr}
 		done := make(chan struct{})
-		go func() { loop(ex); close(done) }()
+		go func() { loop(ex, gateCleanupInterval); close(done) }()
 
 		deadline := time.Now().Add(5 * time.Second)
 		for ex.count() < 2 && time.Now().Before(deadline) {

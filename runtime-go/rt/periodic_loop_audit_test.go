@@ -125,6 +125,12 @@ func TestPeriodicLoopsRecoverPerCycle(t *testing.T) {
 	}
 	sort.Strings(unaccounted)
 
+	// Two assertions, and the count is deliberately FIXED rather than the
+	// number of loops audited: a dynamic count would change with every loop
+	// added to the runtime, and the harness's exact-count rule exists to catch
+	// a body that quietly stopped asserting, not to track the tree's size.
+	reportAssertions(t, 2)
+
 	if len(seen) == 0 {
 		t.Fatal("the audit found no periodic loops at all in runtime-go — it would " +
 			"pass vacuously. The walk or the detector is broken, not the runtime.")
@@ -174,6 +180,9 @@ func TestPeriodicLoopAllowlistHasNoStaleEntries(t *testing.T) {
 	}
 
 	sort.Strings(stale)
+
+	reportAssertions(t, 1)
+
 	if len(stale) > 0 {
 		t.Fatalf("allowlist entr(ies) no longer match anything in the tree:\n\n  %s\n\n"+
 			"Delete them. A stale exclusion reads as a live decision, so the next reader "+
@@ -192,6 +201,8 @@ func TestPeriodicLoopsDoNotDiscardWriteErrors(t *testing.T) {
 		}
 	}
 	sort.Strings(unaccounted)
+
+	reportAssertions(t, 1)
 
 	if len(unaccounted) > 0 {
 		t.Fatalf("database write result(s) discarded:\n\n  %s\n\n"+

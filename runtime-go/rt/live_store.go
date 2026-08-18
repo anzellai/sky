@@ -892,11 +892,20 @@ type liveStoreExecer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-// liveStoreCleanupInterval is the session-cleanup period. A var, not a const,
-// so the regression gate can drive several cycles in milliseconds instead of
-// waiting a minute for the second one — the defect is only visible ACROSS
-// cycles, which is what made it invisible.
-var liveStoreCleanupInterval = 60 * time.Second
+// liveStoreCleanupInterval is the session-cleanup period.
+//
+// A CONST, and the loops take their interval as a PARAMETER rather than
+// reading this directly, so the regression gates can drive several cycles in
+// milliseconds — the defect is only visible ACROSS cycles, which is what made
+// it invisible — without mutating process-wide state.
+//
+// It was briefly a `var` the gates reassigned, which is the shape the
+// analytics pruner's interval still has. That works there because its loop
+// starts once at init; here three stores start cleanup loops and the runtime's
+// own tests start more, so a gate lowering the global raced every concurrent
+// `runCleanupLoop` reading it. `go test -race ./rt/` reported the race, and
+// only under the full suite — in isolation the gate passed.
+const liveStoreCleanupInterval = 60 * time.Second
 
 // The session-cleanup statements, named so the gates assert on the exact
 // string the loop executes rather than a copy that could drift.
@@ -970,7 +979,7 @@ func evictExpiredFromCache(memMu *sync.RWMutex, memCache map[string]*liveSession
 	}
 }
 
-func (s *sqliteStore) cleanupLoop() { s.runCleanupLoop(s.db) }
+func (s *sqliteStore) cleanupLoop() { s.runCleanupLoop(s.db, liveStoreCleanupInterval) }
 
 // runCleanupLoop is the session-cleanup ticker, taking its execer as a
 // parameter so the regression gate can drive the REAL loop with a database
@@ -982,10 +991,10 @@ func (s *sqliteStore) cleanupLoop() { s.runCleanupLoop(s.db) }
 // Time.every goroutines, a dead cleanup loop means sessions never expire on
 // disk AND their subscription goroutines run forever. It compounds with the
 // Time.every defect rather than merely sitting beside it.
-func (s *sqliteStore) runCleanupLoop(db liveStoreExecer) {
+func (s *sqliteStore) runCleanupLoop(db liveStoreExecer, interval time.Duration) {
 	periodic.Every(periodic.Config{
 		Name:     "live.session-cleanup.sqlite",
-		Interval: liveStoreCleanupInterval,
+		Interval: interval,
 		Stop:     s.stop,
 		Report:   periodicReport,
 		Work:     func(now time.Time) error { return s.cleanupOnce(db, now) },
@@ -1259,13 +1268,13 @@ func (s *postgresStore) Close() error {
 	return s.closeErr
 }
 
-func (s *postgresStore) cleanupLoop() { s.runCleanupLoop(s.db) }
+func (s *postgresStore) cleanupLoop() { s.runCleanupLoop(s.db, liveStoreCleanupInterval) }
 
 // runCleanupLoop — see sqliteStore.runCleanupLoop.
-func (s *postgresStore) runCleanupLoop(db liveStoreExecer) {
+func (s *postgresStore) runCleanupLoop(db liveStoreExecer, interval time.Duration) {
 	periodic.Every(periodic.Config{
 		Name:     "live.session-cleanup.postgres",
-		Interval: liveStoreCleanupInterval,
+		Interval: interval,
 		Stop:     s.stop,
 		Report:   periodicReport,
 		Work:     func(now time.Time) error { return s.cleanupOnce(db, now) },

@@ -930,8 +930,12 @@ func (e *HubExporter) drain(ctx context.Context) {
 func exporterPeriodicReport(r periodic.Report) {
 	switch {
 	case r.Recovered != nil:
+		// LogRecoveredPanic is the one production-gated stack path
+		// (rt/panic_log.go); it prints the class and persists the frame rather
+		// than putting internal frames in a production log.
+		LogRecoveredPanic("sky.hub-exporter", r.Loop, r.Recovered)
 		fmt.Fprintf(os.Stderr, "[sky.hub-exporter] %s: cycle panicked: %v — "+
-			"this cycle is lost, the exporter continues\n%s\n", r.Loop, r.Recovered, r.Stack)
+			"this cycle is lost, the exporter continues\n", r.Loop, r.Recovered)
 	case r.Err != nil:
 		fmt.Fprintf(os.Stderr, "[sky.hub-exporter] %s: %v\n", r.Loop, r.Err)
 	}

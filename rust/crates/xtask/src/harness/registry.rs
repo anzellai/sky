@@ -994,6 +994,98 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::erasure_path_uses_an_index,
     },
+    // ---- periodic background goroutines ------------------------------------
+    //
+    // The class the analytics retention pruner turned out to be an instance of.
+    // Eight sites carried it; these three close the CLASS rather than one
+    // instance, which is why they are the ones registered.
+    Gate {
+        name: "periodic-loops-recover-per-cycle",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // Sub-second (an AST walk); the ceiling is for a cold `go test`
+        // compile of `rt`.
+        budget_s: 600,
+        expected: bodies::PERIODIC_LOOP_AUDIT_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every detached periodic loop in runtime-go recovers per cycle, and none discards a write's error",
+        // Reintroducing the shipped shape — recover at the function's top
+        // level, outside the ticker loop — is the defect's whole substance.
+        // The audit reports "recover is deferred at the function's top level"
+        // and goes red.
+        //
+        // Note this mutation was itself the thing that caught a hole in the
+        // audit: the first version reported PASS against it, because
+        // `go s.cleanupLoop()` delegates to `runCleanupLoop` and no `go`
+        // statement names the delegate, so the walk was skipping every loop it
+        // had been written to protect. goLaunched now propagates along calls.
+        mutations: Mutations::new(&[Mutation {
+            id: "periodic-loops.recover-at-the-goroutine-top-level",
+            description: "put the session-cleanup loop's recover back at the function's \
+                          top level, outside the ticker loop — the shipped defect. One \
+                          panic then ends the loop for the process lifetime and the \
+                          audit must name it",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/live_store.go",
+                from: "func (s *sqliteStore) runCleanupLoop(db liveStoreExecer, interval time.Duration) {\n\tperiodic.Every(periodic.Config{",
+                to: "func (s *sqliteStore) runCleanupLoop(db liveStoreExecer, interval time.Duration) {\n\tdefer func() { _ = recover() }()\n\tfor range time.NewTicker(interval).C {\n\t\t_ = s.cleanupOnce(db, time.Now())\n\t}\n\tperiodic.Every(periodic.Config{",
+            },
+        }]),
+        body: bodies::periodic_loops_recover_per_cycle,
+    },
+    Gate {
+        name: "live-time-every-mutex-survives-a-panic",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::TIME_EVERY_MUTEX_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a panicking Time.every tick leaves the session mutex acquirable",
+        // The manual Unlock is the defect. A per-cycle recover WITHOUT it
+        // converts a permanent wedge into a different permanent wedge — the
+        // ticker survives and every later tick, dispatch and SSE resync blocks
+        // forever on a mutex nobody will release — so the mutation removes the
+        // `defer` rather than the recover, which is the half that actually
+        // matters here.
+        mutations: Mutations::new(&[Mutation {
+            id: "time-every.unlock-only-on-the-happy-path",
+            description: "drop `defer sess.mu.Unlock()` from timeEveryDispatch — the \
+                          shipped defect. A tick that panics inside the locked region \
+                          then leaves sess.mu held for the lifetime of the process and \
+                          the user's tab is frozen; the acquirability assertion must go \
+                          red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/live.go",
+                from: "\tsess.mu.Lock()\n\tdefer sess.mu.Unlock()\n\tmsg := toMsg",
+                to: "\tsess.mu.Lock()\n\tmsg := toMsg",
+            },
+        }]),
+        body: bodies::time_every_panic_leaves_the_mutex_acquirable,
+    },
+    Gate {
+        name: "jobs-complete-failure-is-reported",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 600,
+        expected: bodies::JOBS_COMPLETE_FAILURE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a failing jobs Complete is reported, not discarded into an infinite redelivery loop",
+        mutations: Mutations::new(&[Mutation {
+            id: "jobs-complete.discard-the-store-error",
+            description: "restore `_ = w.store.Complete(rec.ID)` — the shipped defect. A \
+                          job whose handler SUCCEEDED but whose completion write failed \
+                          stays claimed, is redelivered when its lease expires, succeeds \
+                          again and fails to complete again — at-least-once delivery \
+                          becomes an infinite redelivery loop re-running the handler's \
+                          side effects forever. dispatch must return the error",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/jobs/jobs.go",
+                from: "\t\tcompleteErr := w.store.Complete(rec.ID)",
+                to: "\t\tvar completeErr error\n\t\t_ = w.store.Complete(rec.ID)",
+            },
+        }]),
+        body: bodies::jobs_complete_failure_is_reported,
+    },
     // ---- harness self-verification ----------------------------------------
     //
     // `selftest-hang` is deliberately registered BEFORE `canary`. Registry order

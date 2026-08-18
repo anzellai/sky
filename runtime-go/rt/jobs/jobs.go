@@ -381,11 +381,18 @@ func (w *Worker) Stop(timeout time.Duration) bool {
 // header — because rt/jobs cannot import rt and so cannot reach rt's
 // structured logger. `log.Printf` with the `[sky.jobs]` tag is what this
 // package's operators already read.
+// No stack is logged, deliberately. Capturing one is production-gated policy
+// that lives in exactly one place (rt/panic_log.go's LogRecoveredPanic), and
+// rt/jobs cannot import rt — rt imports jobs. Keeping a second copy of the
+// policy here is the shape of defect that file exists to close, and an
+// ungated capture would put internal frames in a production log, so the panic
+// value is logged without one. rt/hub, which imports rt the other way round,
+// does route through LogRecoveredPanic.
 func periodicReport(r periodic.Report) {
 	switch {
 	case r.Recovered != nil:
-		log.Printf("[sky.jobs] %s: cycle panicked: %v — this job is lost, the worker continues\n%s",
-			r.Loop, r.Recovered, r.Stack)
+		log.Printf("[sky.jobs] %s: cycle panicked: %v — this job is lost, the worker continues",
+			r.Loop, r.Recovered)
 	case r.Err != nil:
 		log.Printf("[sky.jobs] %s: %v", r.Loop, r.Err)
 	}

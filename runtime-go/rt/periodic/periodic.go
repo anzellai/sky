@@ -54,14 +54,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"runtime/debug"
 	"time"
 )
 
 // Report is one thing that went wrong in one cycle of one loop.
 //
-// Exactly one of Recovered and Err is set. Recovered carries the panic value
-// with the stack that produced it; Err carries what Work returned.
+// Exactly one of Recovered and Err is set. Recovered carries the panic value;
+// Err carries what Work returned. There is deliberately no stack — see Guard.
 type Report struct {
 	// Loop names the loop, for the log line. Free-form, but it should be
 	// greppable back to the call site — "live.time-every", "hub.pruner".
@@ -79,8 +78,6 @@ type Report struct {
 	// never stops either. A field rename is the cheaper side of that trade,
 	// and `Recovered` says what the value is anyway.
 	Recovered any
-	// Stack is the stack at the point of recovery. Set with Recovered.
-	Stack []byte
 	// Err is what Work returned, non-nil when the cycle failed without
 	// panicking.
 	Err error
@@ -124,10 +121,26 @@ func (r Reporter) emit(rep Report) {
 // Guard never panics: a panic from `work` is recovered and reported, and a
 // panic from `report` itself is recovered and dumped to stderr, because a
 // reporting bug must not be able to kill the loop it was added to protect.
+//
+// # Why no stack is captured here
+//
+// This package does NOT call debug.Stack(). Capturing a Go stack is
+// production-gated policy that lives in one place — rt/panic_log.go, whose
+// `LogRecoveredPanic` writes the frame to `.skylog/panic.log` in production
+// and prints only the class, so internal frames never reach a production log.
+// `rt/xtask`'s `panic_stacks_are_production_gated` test enforces that there is
+// exactly one such place, and it caught this file doing its own capture.
+//
+// Since `periodic` cannot import `rt`, the resolution is that it captures
+// nothing and the REPORTER does. Guard's deferred function is still on the
+// panicking goroutine when it calls the reporter, so a reporter that wants a
+// stack can take one under its own package's policy — `rt` and `rt/hub` route
+// through `rt.LogRecoveredPanic`; `rt/jobs`, which also cannot import `rt`,
+// deliberately logs without one rather than keeping a second copy of the
+// policy.
 func Guard(loop string, report Reporter, work func() error) {
 	defer func() {
 		if r := recover(); r != nil {
-			stack := debug.Stack()
 			// The reporter runs inside its own recover. A Reporter that
 			// panics — a nil map write in a log adapter, say — would
 			// otherwise re-panic out of THIS deferred function, past the
@@ -136,11 +149,11 @@ func Guard(loop string, report Reporter, work func() error) {
 			func() {
 				defer func() {
 					if rr := recover(); rr != nil {
-						log.Printf("[sky.periodic] %s: Reporter panicked (%v) while reporting a cycle panic (%v)\n%s",
-							loop, rr, r, stack)
+						log.Printf("[sky.periodic] %s: Reporter panicked (%v) while reporting a cycle panic (%v)",
+							loop, rr, r)
 					}
 				}()
-				report.emit(Report{Loop: loop, Recovered: r, Stack: stack})
+				report.emit(Report{Loop: loop, Recovered: r})
 			}()
 		}
 	}()
