@@ -98,6 +98,9 @@ const (
 	// SkyCsrfCookieName is the cookie that holds the session's CSRF
 	// token. Read by the middleware on state-mutating requests;
 	// also returned to the page for JS to echo in the header.
+	//
+	// This is the HOST app's name. In-process sub-apps use a per-app
+	// name derived from their basePath — see csrfCookieNameForBasePath.
 	SkyCsrfCookieName = "__sky_csrf"
 
 	// SkyCsrfHeaderName is the request header that carries the
@@ -105,6 +108,51 @@ const (
 	// runtime-go/rt/live.go __skySend.
 	SkyCsrfHeaderName = "X-Sky-Csrf"
 )
+
+// csrfCookieNameForBasePath returns the CSRF cookie name for an app mounted
+// at `basePath`. The host (basePath == "") uses the bare SkyCsrfCookieName;
+// an in-process sub-app uses a PER-APP name — __sky_csrf_<sanitised(basePath)>
+// — mirroring the session cookie's per-app name (sky_<sanitised>_sid, see
+// subapp_inprocess.go / live.go cookieNameOrDefault).
+//
+// WHY A PER-APP NAME, not a per-app Path. The session cookie isolates apps by
+// NAME at Path=/ (writeSessionCookie in live.go hardcodes Path=/); the CSRF
+// cookie must do the same, for two reasons. (1) Consistency: one isolation
+// mechanism across both cookies rather than two. (2) Correctness: path-scoping
+// ALONE (same name "__sky_csrf" at Path=/ for the host and Path=/billing/ for
+// the sub-app) is fragile, because a request to /billing/... matches BOTH
+// cookies and `r.Cookie(name)` returns the first by header order, which is not
+// guaranteed most-specific-path-first — so the middleware could read the
+// host's token on a sub-app request. Distinct names remove that ambiguity
+// outright, and unlike a Path this name never carries a "__Host-"/"__Secure-"
+// prefix, so cookieSecureFor keeps the host's exact Secure decision.
+func csrfCookieNameForBasePath(basePath string) string {
+	bp := normaliseBasePath(basePath)
+	if bp == "" {
+		return SkyCsrfCookieName
+	}
+	return SkyCsrfCookieName + "_" + sanitiseBasePathForCookie(bp)
+}
+
+// csrfCookieNameForPath resolves the CSRF cookie name for a request path by
+// consulting the in-process sub-app registry (subapp_inprocess.go). The
+// snapshot is longest-prefix-first, so "/billing/v2" wins over "/billing".
+// A path that falls under a mounted sub-app's prefix gets that sub-app's
+// per-app name; everything else is the host.
+//
+// The registry is the authority on which prefixes are sub-app BOUNDARIES: a
+// host app may legitimately own a route at "/billing/foo" without "/billing"
+// being a sub-app, so the name cannot be guessed from the path alone. The
+// CSRFMiddleware wraps the parent mux ONCE (live.go), so this per-request
+// lookup is how the single middleware serves both host and sub-apps.
+func csrfCookieNameForPath(path string) string {
+	for _, route := range snapshotInProcessSubAppRoutes() {
+		if pathInBasePath(path, route.prefix) {
+			return csrfCookieNameForBasePath(route.prefix)
+		}
+	}
+	return SkyCsrfCookieName
+}
 
 // csrfEnabled — global on/off switch. Default ON. Turned off by
 // `<PREFIX>_CSRF=off|false|0`, which sky.toml's `[security] csrf =
@@ -213,8 +261,14 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 		// GET) so a flow that starts with a POST still gets a
 		// usable token issued; that POST will fail CSRF (no
 		// header) but subsequent requests will succeed.
+		// Per-app cookie name: the host uses SkyCsrfCookieName, an
+		// in-process sub-app its own __sky_csrf_<basePath>, so the two
+		// never collide in the one cookie jar the browser keeps per origin
+		// (see csrfCookieNameForPath). Resolved once from the request path
+		// and used for every read / set / re-inject below.
+		cookieName := csrfCookieNameForPath(r.URL.Path)
 		cookieToken := ""
-		if c, err := r.Cookie(SkyCsrfCookieName); err == nil {
+		if c, err := r.Cookie(cookieName); err == nil {
 			cookieToken = c.Value
 		}
 		newlyIssued := cookieToken == ""
@@ -253,13 +307,13 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			sameSite = http.SameSiteNoneMode
 		}
 		http.SetCookie(w, &http.Cookie{
-			Name:     SkyCsrfCookieName,
+			Name:     cookieName,
 			Value:    cookieToken,
 			Path:     "/",
 			HttpOnly: true,
 			MaxAge:   csrfCookieMaxAgeSeconds(),
 			SameSite: sameSite,
-			Secure:   cookieSecureFor(r, SkyCsrfCookieName, sameSite),
+			Secure:   cookieSecureFor(r, cookieName, sameSite),
 		})
 		if newlyIssued {
 			// Stash the freshly-generated token on the request so downstream
@@ -269,7 +323,7 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			// load got `__skyCsrfToken = ""` baked in, every state-mutating POST
 			// had no `X-Sky-Csrf` header, and the middleware 403'd every click.
 			r.AddCookie(&http.Cookie{
-				Name:  SkyCsrfCookieName,
+				Name:  cookieName,
 				Value: cookieToken,
 			})
 		}
@@ -560,11 +614,29 @@ func generateSkyCsrfToken() string {
 //
 // Returns empty string when the cookie is absent — the next
 // response will set it.
+//
+// This reads the HOST app's cookie. A Sky.Live app mounted as an in-process
+// sub-app must embed ITS OWN token (a per-app cookie name), so its render
+// path calls CurrentCsrfTokenForBasePath(r, app.basePath) instead — otherwise
+// the sub-app page would echo the host's token and every sub-app POST would
+// 403. Host apps (basePath == "") get identical behaviour through either.
 func CurrentCsrfToken(r *http.Request) string {
+	return CurrentCsrfTokenForBasePath(r, "")
+}
+
+// CurrentCsrfTokenForBasePath reads the CSRF token an app mounted at
+// `basePath` should embed into its page. It reads the SAME per-app cookie
+// name the CSRFMiddleware writes for that app (csrfCookieNameForBasePath), so
+// the double-submit halves — the token baked into the page and the cookie the
+// browser sends back — always name-match. The middleware derives the name
+// from the request path via the sub-app registry; the render derives it from
+// the app's own basePath; both route through csrfCookieNameForBasePath, so
+// they agree.
+func CurrentCsrfTokenForBasePath(r *http.Request, basePath string) string {
 	if r == nil {
 		return ""
 	}
-	if c, err := r.Cookie(SkyCsrfCookieName); err == nil {
+	if c, err := r.Cookie(csrfCookieNameForBasePath(basePath)); err == nil {
 		return c.Value
 	}
 	return ""

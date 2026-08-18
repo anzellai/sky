@@ -4770,7 +4770,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// impose font choice, line-height, or colour scheme. Apps that
 	// need a "designed" look still attach their own typography via
 	// view-level style attrs or a styleNode at the top of view.
-	csrfToken := CurrentCsrfToken(r)
+	// Per-app CSRF token: a sub-app (basePath != "") must embed its OWN
+	// token, which lives under a per-app cookie name (__sky_csrf_<basePath>),
+	// not the host's __sky_csrf — otherwise the sub-app page would echo the
+	// host's token and every sub-app POST would 403. Host apps (basePath == "")
+	// resolve to the identical bare-name read.
+	csrfToken := CurrentCsrfTokenForBasePath(r, app.basePath)
 	// devBanner is "" in production; injected as a sibling of sky-root
 	// so it survives every diff/patch cycle (root replacement won't
 	// blow it away) and stays pinned bottom-right via position:fixed.
