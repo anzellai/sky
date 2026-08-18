@@ -145,6 +145,21 @@ opt back in with `SKY_TRACE_HONOR_REMOTE_PARENT=1`.
 | `SKY_SERVICE_NAME` / `OTEL_SERVICE_NAME` | `sky-app` | `service.name` the backend groups by. |
 | `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma-separated `k=v` headers (auth tokens for managed collectors). |
 | `SKY_CONSOLE_DB_PATH` | (unset) | When set, dual-writes every log / metric / span to the SQLite file at this path so the bundled console mini-app can render history beyond the 10 k-line / 1 k-span in-RAM caps. WAL mode, 24 h log/span retention, 7 d metric retention. Unset keeps the pure in-RAM path. |
+| `SKY_TELEMETRY_AGGREGATION_WINDOW` | `0` (off) | A Go duration (e.g. `10s`). When `> 0`, **counter** metric rows are coalesced within the window: only the last cumulative value per `(name, labels)` is persisted, so a busy app writes one row per counter per window instead of one per interaction. Lossless for rate/delta reads — only sub-window time-resolution is lost. **Gauges and histograms are never coalesced** (a gauge's intra-window peaks and a histogram's per-observation distribution would be lost; the remote console rebuilds histograms from raw rows). Off by default because it changes the persisted-row resolution the remote SkyDeploy console sees; `10s` is the recommended production value on a busy Sky.Live app. |
+
+## Database size report
+
+Every hour, on the same cadence as retention pruning, the runtime measures the
+on-disk footprint of its own tables (`telemetry_log`, `telemetry_metric`,
+`telemetry_span`) and emits one structured `telemetry.storage_size` log event —
+per-table bytes on Postgres (and on SQLite when the `dbstat` vtable is present;
+the default build degrades to whole-database bytes), a `growth_bytes_per_day`
+projection, and — where the runtime owns the filesystem path (SQLite, embedded
+Postgres) — free space, warning when the telemetry footprint exceeds the
+remaining free space. It is a *log* event, never a metric row, so the
+measurement never feeds the table it measures. This is the only real
+measurement of database size; every figure in the perf docs before it was
+arithmetic.
 
 ## How analytics and telemetry reach the database
 

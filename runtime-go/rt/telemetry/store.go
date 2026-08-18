@@ -254,6 +254,7 @@ func (s *Store) Add(name string, labels map[string]string, delta float64) {
 					name:       name,
 					labels:     labels,
 					value:      nv,
+					mtype:      "counter",
 					observedAt: time.Now(),
 				},
 			})
@@ -311,6 +312,7 @@ func (s *Store) SetGauge(name string, labels map[string]string, v float64) {
 			name:       name,
 			labels:     labels,
 			value:      v,
+			mtype:      "gauge",
 			observedAt: time.Now(),
 		},
 	})
@@ -332,6 +334,7 @@ func (s *Store) AddGauge(name string, labels map[string]string, delta float64) {
 					name:       name,
 					labels:     labels,
 					value:      nv,
+					mtype:      "gauge",
 					observedAt: time.Now(),
 				},
 			})
@@ -405,14 +408,17 @@ func (s *Store) Observe(name string, labels map[string]string, v float64) {
 		ns := float64FromBits(old) + v
 		if ser.sumBits.CompareAndSwap(old, bitsFromFloat64(ns)) {
 			// Persist the raw observation, NOT the rolling sum — the
-			// console UI's histogram rendering rebuilds from
-			// per-observation rows.
+			// out-of-repo SkyDeploy console rebuilds histograms from
+			// per-observation rows, so these are NEVER window-coalesced
+			// (mtype "histogram"). The in-repo console reads the in-RAM
+			// snapshot, not these rows.
 			s.enqueuePersist(persistEntry{
 				kind: "metric",
 				metric: persistMetric{
 					name:       name,
 					labels:     labels,
 					value:      v,
+					mtype:      "histogram",
 					observedAt: time.Now(),
 				},
 			})

@@ -301,6 +301,35 @@ func persistFlushInterval() time.Duration {
 	return 200 * time.Millisecond
 }
 
+// metricAggregationWindowOverride lets a test force a window without touching
+// the process environment (positive = that duration; 0 = read the env). Tests
+// never need to force-0 because 0 is already the default.
+var metricAggregationWindowOverride atomic.Int64
+
+// metricAggregationWindow is the counter-coalescing window: within it, all but
+// the last persisted row per (name,labels) counter series is redundant (the
+// value is cumulative), so the flusher keeps only the survivor. 0 DISABLES
+// coalescing — every row is written, exactly as before this landed. That is
+// the DEFAULT: a non-zero window reduces the persisted-row time-resolution of
+// the out-of-repo SkyDeploy console's counter graphs (lossless for rate/delta,
+// only sub-window points are lost), which is a change to an external contract
+// the runtime cannot see — so it is opt-in via SKY_TELEMETRY_AGGREGATION_WINDOW
+// (a Go duration, e.g. "10s"). Gauges and histograms are never coalesced.
+func metricAggregationWindow() time.Duration {
+	if d := metricAggregationWindowOverride.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	v := strings.TrimSpace(os.Getenv("SKY_TELEMETRY_AGGREGATION_WINDOW"))
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0 // unparseable or non-positive → disabled, never a surprise window
+	}
+	return d
+}
+
 // persistEntry — a single record queued for the flusher goroutine.
 // The `kind` field discriminates the variant; only the matching
 // payload field is populated per entry.
@@ -312,9 +341,17 @@ type persistEntry struct {
 }
 
 type persistMetric struct {
-	name       string
-	labels     map[string]string
-	value      float64
+	name   string
+	labels map[string]string
+	value  float64
+	// mtype is the metric family — "counter" | "gauge" | "histogram". It is
+	// NOT persisted (the telemetry_metric schema has no type column); it only
+	// tells the flusher which rows are safe to window-coalesce. Counters
+	// persist a cumulative value, so all but the last row per (name,labels)
+	// window are redundant — losslessly droppable. Gauges (spiky) and
+	// histograms (per-observation, rebuilt by the out-of-repo SkyDeploy
+	// reader) are never coalesced.
+	mtype      string
 	observedAt time.Time
 }
 
@@ -541,14 +578,42 @@ func (p *persistence) flusher(s *Store) {
 	tick := time.NewTicker(persistFlushInterval())
 	defer tick.Stop()
 	batch := make([]persistEntry, 0, persistBatchSize)
-	// coalesce pulls everything already queued into the current batch, up to
-	// the size cap — a burst of N entries becomes ceil(N/128) transactions
-	// rather than N.
-	coalesce := func() {
+
+	// Counter-coalescing state. `window` is read ONCE at flusher start (it is a
+	// deployment setting, not a per-request one). When window > 0, counter
+	// entries are held in `coalesced` — keyed (name,labels), overwritten by
+	// each later sample so only the last cumulative value per key survives —
+	// and emitted every `window` instead of per-row. Memory is O(counter
+	// cardinality) (already capped by checkCardinality), NOT O(rows). When
+	// window == 0 the map stays empty and the windowTick never fires, so the
+	// path below is byte-for-byte the old behaviour.
+	window := metricAggregationWindow()
+	coalesced := map[string]persistEntry{}
+	var windowTickC <-chan time.Time
+	if window > 0 {
+		wt := time.NewTicker(window)
+		defer wt.Stop()
+		windowTickC = wt.C
+	}
+
+	// ingest routes ONE dequeued entry: a coalescable counter (only when a
+	// window is configured) overwrites its survivor in `coalesced`; everything
+	// else — logs, spans, gauges, histograms, and all counters when window==0
+	// — appends to the batch exactly as before.
+	ingest := func(e persistEntry) {
+		if window > 0 && e.kind == "metric" && e.metric.mtype == "counter" {
+			coalesced[e.metric.name+"\x00"+encodeAttrs(e.metric.labels)] = e
+			return
+		}
+		batch = append(batch, e)
+	}
+	// drainQueue pulls everything already queued through ingest, until the
+	// batch reaches the size cap or the queue empties.
+	drainQueue := func() {
 		for len(batch) < persistBatchSize {
 			select {
 			case e := <-p.queue:
-				batch = append(batch, e)
+				ingest(e)
 			default:
 				return
 			}
@@ -568,12 +633,26 @@ func (p *persistence) flusher(s *Store) {
 		}
 		batch = batch[:0]
 	}
-	// drainAll writes everything currently queued, not merely one batch.
+	// flushCoalesced moves every counter survivor into the batch and clears the
+	// map. Caller flushes the batch. This is the LOAD-BEARING step for
+	// read-your-writes + shutdown-drain: a survivor still sitting in `coalesced`
+	// has not been committed, so drainAll (flushReq + stop) MUST call this or a
+	// FlushPersistence would return before an enqueued counter is visible and a
+	// shutdown would lose it.
+	flushCoalesced := func() {
+		for k, e := range coalesced {
+			batch = append(batch, e)
+			delete(coalesced, k)
+		}
+	}
+	// drainAll writes everything currently queued AND every held counter
+	// survivor, not merely one batch.
 	drainAll := func() {
 		for {
-			coalesce()
+			drainQueue()
+			flushCoalesced()
 			flush()
-			if len(p.queue) == 0 {
+			if len(p.queue) == 0 && len(coalesced) == 0 {
 				return
 			}
 		}
@@ -592,18 +671,26 @@ func (p *persistence) flusher(s *Store) {
 		case done := <-p.flushReq:
 			// A caller is waiting. Drain to empty before closing `done`: every
 			// entry enqueued before the request must be committed by the time
-			// the caller observes the close.
+			// the caller observes the close — including held counter survivors.
 			drainAll()
 			close(done)
 
 		case e := <-p.queue:
-			batch = append(batch, e)
-			coalesce()
+			ingest(e)
+			drainQueue()
 			if len(batch) >= persistBatchSize {
 				flush()
 			}
 
 		case <-tick.C:
+			// 200ms cadence: commit the non-coalesced batch (logs / spans /
+			// gauges / histograms / all counters when window==0).
+			flush()
+
+		case <-windowTickC:
+			// Window boundary: emit the coalesced counter survivors. Never
+			// fires when window==0 (windowTickC is nil).
+			flushCoalesced()
 			flush()
 		}
 	}
