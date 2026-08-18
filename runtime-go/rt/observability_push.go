@@ -319,6 +319,11 @@ func (e *PushExporter) PushLog(entry telemetry.LogEntry) {
 	if e == nil {
 		return
 	}
+	// Byte-bound before buffering: the buffer is count-capped, but a
+	// slot holding a 1 MiB request path verbatim would let 3 × 1024
+	// buffered entries pin gigabytes on a sub-app whose parent is
+	// down (telemetry/limits.go).
+	entry = telemetry.BoundLogEntry(entry)
 	e.mu.Lock()
 	if len(e.logs) >= e.bufCap {
 		e.dropped++
@@ -345,7 +350,8 @@ func (e *PushExporter) PushMetric(name, mtype string, delta, value float64, labe
 		return
 	}
 	e.metrics = append(e.metrics, pushMetric{
-		Name: name, Type: mtype, Delta: delta, Value: value, Labels: copyMap(labels),
+		Name: name, Type: mtype, Delta: delta, Value: value,
+		Labels: copyMap(telemetry.BoundLabels(labels)),
 	})
 	e.mu.Unlock()
 }
@@ -355,6 +361,7 @@ func (e *PushExporter) PushSpan(span telemetry.TraceEntry) {
 	if e == nil {
 		return
 	}
+	span = telemetry.BoundTraceEntry(span)
 	e.mu.Lock()
 	if len(e.spans) >= e.bufCap {
 		e.dropped++

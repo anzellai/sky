@@ -48,6 +48,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"sky-app/rt/telemetry"
 )
 
 // ---------------------------------------------------------------------------
@@ -507,6 +509,23 @@ func startEmbeddedPostgres() error {
 	// already — embeddedDSNConflict refused that above.
 	_ = os.Setenv(skyEnvName("DB_PATH"), s.dsn)
 	_ = os.Setenv("DATABASE_URL", s.dsn)
+
+	// Re-invoke telemetry persistence now that DATABASE_URL exists.
+	// The boot-time call runs from rt's init() (observability.go) —
+	// BEFORE main reaches this function — so under --embed it saw an
+	// empty environment and telemetry persistence stayed silently
+	// off on exactly the deployment shape (one self-contained
+	// binary) most likely to rely on it. EnablePersistence is
+	// idempotent, so on the non-embed paths where the operator set a
+	// DSN up front this is a no-op. Failure is warn-level, like the
+	// init()-time call: observability must never block boot.
+	if err := telemetry.Default().EnablePersistenceFromEnv(); err != nil {
+		telemetry.Default().AppendLog(telemetry.LogEntry{
+			Level:   "warn",
+			Message: "telemetry persistence init failed after embedded DSN handoff",
+			Fields:  map[string]string{"error": err.Error()},
+		})
+	}
 
 	verb := "started"
 	if s.adopted {

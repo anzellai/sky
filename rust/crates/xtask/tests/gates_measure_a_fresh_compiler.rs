@@ -40,6 +40,11 @@
 //! 1. A script with a non-comment reference to `sky-out/sky` also references
 //!    the freshness check — unless it is a declared PRODUCER, which installs
 //!    the binary itself immediately before use.
+//! 1b. Every declared PRODUCER still CONTAINS its install line. The exemption
+//!    was prose-only: renaming every `install_binary` call in
+//!    `scripts/build.sh` left all tests here green, so a producer that
+//!    stopped installing kept its consume-without-check exemption forever —
+//!    the exclusion outliving its excuse.
 //! 2. A script that CALLS `require_fresh_compiler` / `sky_compiler_freshness`
 //!    also sources the library. An unsourced function is `command not found`.
 //! 3. The shell library's source roots and
@@ -203,6 +208,57 @@ fn every_consumer_of_the_installed_compiler_checks_that_it_is_fresh() {
          Source {LIB} and call `require_fresh_compiler \"$SKY\" \"$ROOT\"` (Node: import \
          {LIB_MJS}), or add the script to PRODUCERS in {SELF} if it installs the binary \
          itself.\n\n  {}",
+        offenders.join("\n  ")
+    );
+}
+
+/// Rule 1b: the PRODUCERS exemption must keep earning itself. Each entry's
+/// "why" says "it installs the binary in one checkable line" — so check that
+/// line. A producer whose install step disappears (renamed helper, refactor,
+/// deletion) must FAIL here, naming the file, and either regain its install
+/// step or move to the consumer list and take the freshness check.
+///
+/// Falsifying mutation (verified red): rename `install_binary` in
+/// scripts/build.sh — before this test existed, all 10 tests in this file
+/// stayed green under that mutation.
+#[test]
+fn every_declared_producer_still_installs_the_compiler() {
+    let root = repo();
+    let mut offenders = Vec::new();
+    for (rel, why) in PRODUCERS {
+        let text = match std::fs::read_to_string(root.join(rel)) {
+            Ok(t) => t,
+            Err(e) => {
+                offenders.push(format!(
+                    "{rel}: unreadable ({e}) — a producer that no longer exists must lose its exemption, not keep it"
+                ));
+                continue;
+            }
+        };
+        // Word-match the helper, not substring-match it: the first draft of
+        // this check used `contains("install_binary")`, and the very mutation
+        // it exists to catch — renaming the call to `install_binary_gone` —
+        // still contained that substring and stayed green.
+        let installs = text.lines().any(|l| {
+            !is_comment(l)
+                && l.contains("sky-out/sky")
+                && l.split_whitespace().any(|w| w == "install_binary")
+        });
+        if !installs {
+            offenders.push(format!(
+                "{rel}: declared a producer (\"{why}\") but no non-comment line installs \
+                 sky-out/sky via install_binary"
+            ));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these PRODUCERS no longer install the compiler they are exempted for. The \
+         exemption exists because \"it builds it first\" is checkable in one line of the \
+         named file — that line is gone, so the file now consumes sky-out/sky with \
+         neither an install step nor a freshness check. Restore the `install_binary … \
+         sky-out/sky` step, or remove the file from PRODUCERS in {SELF} so rule 1 \
+         requires the freshness check.\n\n  {}",
         offenders.join("\n  ")
     );
 }

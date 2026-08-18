@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -352,4 +353,36 @@ func TestPushExporter_RoundTrip_LogEmit_ToParentStore(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("expected subapp=myapp log entry to round-trip through parent ingest")
+}
+
+// ─── UNBOUNDED-MEMORY regression: push buffers hold bounded entries ──
+//
+// The exporter's buffers are count-capped (bufCap, default 1024)
+// but each slot used to hold whatever it was handed — the same
+// attacker-sized strings the rings used to pin (1 MiB request paths
+// in log messages, uncapped span attributes). 3 × 1024 × 1 MiB is
+// ~3 GiB of heap on a sub-app whose parent is down. Entries are now
+// byte-bounded at buffering time via telemetry.BoundLogEntry /
+// BoundTraceEntry (limits.go).
+func TestPushExporter_BuffersAreByteBounded(t *testing.T) {
+	mega := strings.Repeat("m", 1<<20)
+	e := &PushExporter{bufCap: 8}
+	e.PushLog(telemetry.LogEntry{Level: "info", Message: mega,
+		Fields: map[string]string{"path": mega}})
+	e.PushSpan(telemetry.TraceEntry{TraceID: "t", SpanID: "s", Name: mega,
+		Attributes: map[string]string{"db.statement": mega}})
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if got := len(e.logs[0].Message); got > 4096+64 {
+		t.Errorf("buffered log message holds %d bytes; want <= 4096 (+marker)", got)
+	}
+	if got := len(e.logs[0].Fields["path"]); got > 4096+64 {
+		t.Errorf("buffered log field holds %d bytes; want <= 4096 (+marker)", got)
+	}
+	if got := len(e.spans[0].Name); got > 4096+64 {
+		t.Errorf("buffered span name holds %d bytes; want <= 4096 (+marker)", got)
+	}
+	if got := len(e.spans[0].Attributes["db.statement"]); got > 8192+64 {
+		t.Errorf("buffered db.statement holds %d bytes; want <= 8192 (+marker)", got)
+	}
 }

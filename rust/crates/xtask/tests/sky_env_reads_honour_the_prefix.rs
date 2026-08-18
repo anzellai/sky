@@ -102,6 +102,12 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
         "telemetry durability knob, read in rt/telemetry which CANNOT import rt \
          (import cycle) and so has no access to skyGetenv",
     ),
+    (
+        "SKY_TRACE_HONOR_REMOTE_PARENT",
+        "trusted-gateway sampling opt-in; a deployment property set by the \
+         operator, and read in rt/telemetry which cannot import rt's skyGetenv \
+         (import cycle) — same situation as SKY_TELEMETRY_SYNCHRONOUS_COMMIT",
+    ),
     ("SKY_TUI_LOG", "developer trace switch"),
     ("SKY_TUI_QUIET", "developer trace switch"),
     ("SKY_WEBVIEW_DEBUG", "developer trace switch"),

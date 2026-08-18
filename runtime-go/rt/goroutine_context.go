@@ -26,11 +26,16 @@ package rt
 // format that is part of Go's effective ABI.
 //
 // RELIABILITY CONTRACT: every goroutine-spawn site in the runtime
-// must wrap its child in `RunWithTraceContext` (or the no-op when
-// there is no parent). A CI grep-gate forbids a bare `go func` in
-// `runtime-go/rt/` outside the blessed spawn helpers so a future
-// un-wrapped spawn fails the build rather than silently dropping
-// the trace.
+// that should inherit a parent trace wraps its child in
+// `RunWithTraceContext` (live.go's Cmd.perform / subscription /
+// tick spawns and websocket.go's dispatch spawn do). This used to
+// claim a CI grep-gate forbids a bare `go func` in `runtime-go/rt/`;
+// no such gate has ever existed, and plenty of legitimate bare
+// spawns do (flushers, pruners, listeners). The real invariant —
+// enforced by TestWithSpan_UnstampedGoroutineLeavesNoEntry — is
+// MEMORY-side: an un-wrapped spawn merely loses trace parentage; it
+// can never grow this map, because storing an absent stamp
+// (context.Background) is a delete, not a write.
 
 import (
 	"context"
@@ -65,9 +70,26 @@ func CurrentTraceContext() context.Context {
 // SetGoroutineTraceContext stamps the calling goroutine with a
 // trace context. Pairs with `defer ClearGoroutineTraceContext()`.
 // Passing a nil ctx deletes the stamp.
+//
+// context.Background() ALSO deletes rather than stores. This is the
+// unbounded-leak guard, not an optimisation: CurrentTraceContext()
+// returns Background when the goroutine has no stamp, so every
+// save/restore pair written as
+//
+//	prev := CurrentTraceContext()
+//	SetGoroutineTraceContext(child)
+//	defer SetGoroutineTraceContext(prev)
+//
+// (WithSpan, and any future site with the same shape) restores
+// Background on a goroutine that was never stamped. Goroutine IDs
+// are monotonic and never reused, so storing that restore left one
+// permanent sync.Map entry per unstamped goroutine that touched an
+// auto-instrumented kernel — ~80 B each, forever. Deleting here is
+// semantically identical (Current returns Background either way)
+// and closes the whole site class at the single write point.
 func SetGoroutineTraceContext(ctx context.Context) {
 	gid := currentGoroutineID()
-	if ctx == nil {
+	if ctx == nil || ctx == context.Background() {
 		goroutineCtx.Delete(gid)
 		return
 	}
@@ -143,6 +165,20 @@ func RunWithRequestID(id string, fn func()) {
 		defer ClearGoroutineTraceContext()
 	}
 	fn()
+}
+
+// goroutineCtxSize counts currently-stamped goroutines. O(N) Range
+// walk — diagnostic / test use only, never on a hot path. The leak
+// regression test (TestWithSpan_UnstampedGoroutineLeavesNoEntry)
+// asserts this returns EXACTLY to baseline after a burst of
+// unstamped goroutines runs WithSpan and exits.
+func goroutineCtxSize() int {
+	n := 0
+	goroutineCtx.Range(func(_, _ any) bool {
+		n++
+		return true
+	})
+	return n
 }
 
 // ─── goroutine-ID parse ────────────────────────────────────────────

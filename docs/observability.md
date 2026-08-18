@@ -120,12 +120,28 @@ Captured (OTEL semantic conventions):
 
 Override with `OTEL_TRACES_SAMPLER_ARG=<0.0–1.0>`.
 
+**Inbound `traceparent` cannot override the sampling rate.** The header is
+unauthenticated wire input, and with a plain parent-based sampler any client
+sending `sampled=01` forced 100% sampling (export volume and span-ring churn
+dictated by the client, at zero cost to it), while `sampled=00` let a client
+suppress tracing of its own requests. Sky therefore applies the configured
+ratio to *remote* parents in both directions: trace **continuity** is
+preserved — the inbound trace-id is adopted and propagated onward, so a
+collector that saw the upstream spans can still join them — but the local
+sampling **decision** is Sky's own. In-process (local) parent spans keep
+inheriting, so trace trees never fragment inside one process.
+
+Deployments behind a trusted head-sampling gateway — where the parent decision
+is made by infrastructure the operator controls, not by the public client —
+opt back in with `SKY_TRACE_HONOR_REMOTE_PARENT=1`.
+
 ## Environment variables
 
 | Env | Default | Meaning |
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (unset) | Export OTLP here in addition to the in-process ring. |
 | `OTEL_TRACES_SAMPLER_ARG` | (mode default) | Fixed sample fraction `0.0–1.0`. |
+| `SKY_TRACE_HONOR_REMOTE_PARENT` | (unset) | `1` restores parent-based inheritance for *remote* `traceparent` sampling decisions. Set only behind a trusted head-sampling gateway — the default treats the inbound flag as untrusted and ratio-samples instead. |
 | `SKY_SERVICE_NAME` / `OTEL_SERVICE_NAME` | `sky-app` | `service.name` the backend groups by. |
 | `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma-separated `k=v` headers (auth tokens for managed collectors). |
 | `SKY_CONSOLE_DB_PATH` | (unset) | When set, dual-writes every log / metric / span to the SQLite file at this path so the bundled console mini-app can render history beyond the 10 k-line / 1 k-span in-RAM caps. WAL mode, 24 h log/span retention, 7 d metric retention. Unset keeps the pure in-RAM path. |

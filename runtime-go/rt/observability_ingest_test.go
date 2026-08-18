@@ -264,3 +264,46 @@ func TestIngestToken_HonoursEnv(t *testing.T) {
 // deleted. v0.16.1 reintroduces a similar helper for the
 // exporter-side namespacing, at which point the test moves into
 // its companion spec.)
+
+// ─── UNBOUNDED-MEMORY regression: ingest boundary shape limits ────
+//
+// The 1 MiB body limit is not a cardinality limit: ingestInto used
+// to hand any metric name / label set straight off the JSON wire to
+// the store, where names seed the cardinality-warn accumulator and
+// label sets become process-lifetime series keys. Absurd shapes are
+// now rejected at the boundary: empty names, names past 256 bytes,
+// more than 32 labels, label keys past 128 bytes, label values past
+// 512 bytes. Rejection is per-sample — in-shape samples in the same
+// batch still land.
+func TestIngest_RejectsAbsurdMetricShapes(t *testing.T) {
+	store := telemetry.NewStore()
+	bigName := strings.Repeat("n", 100000)
+	manyLabels := make(map[string]string, 33)
+	for i := 0; i < 33; i++ {
+		manyLabels["k"+itoaInt(i)] = "v"
+	}
+	stats := ingestInto(store, "ns", IngestPayload{
+		Metrics: []IngestMetric{
+			{Name: bigName, Delta: 1},
+			{Name: "", Delta: 1},
+			{Name: "too_many_labels", Delta: 1, Labels: manyLabels},
+			{Name: "huge_label_key", Delta: 1, Labels: map[string]string{strings.Repeat("k", 4096): "v"}},
+			{Name: "huge_label_value", Delta: 1, Labels: map[string]string{"k": strings.Repeat("v", 100000)}},
+			{Name: "good_metric", Delta: 1, Labels: map[string]string{"a": "b"}},
+		},
+	})
+	if stats.metrics != 1 {
+		t.Errorf("accepted %d metrics; want exactly 1 (only good_metric is in-shape)", stats.metrics)
+	}
+	sawGood := false
+	for _, m := range store.Snapshot() {
+		if m.Name == "good_metric" {
+			sawGood = true
+			continue
+		}
+		t.Errorf("out-of-shape metric reached the store: %.64q (len %d)", m.Name, len(m.Name))
+	}
+	if !sawGood {
+		t.Error("in-shape metric was not ingested")
+	}
+}

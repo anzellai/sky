@@ -19,9 +19,13 @@
 //     HTTP middleware) must not block on read traffic.
 //
 //   - High-cardinality safe: each metric's label combinations are
-//     capped at 10,000 entries (Prometheus convention). Beyond the
-//     cap we drop new combinations with a one-shot warning, instead
-//     of unbounded growth.
+//     capped at 10,000 entries (Prometheus convention) — per metric
+//     NAME, so one noisy family cannot freeze its neighbours — with
+//     a 50,000-series global backstop across all families (wire
+//     input can mint unlimited names). Beyond a cap we drop new
+//     combinations with a one-shot warning, instead of unbounded
+//     growth; the warning dedupe map is itself capped (a guard must
+//     not accumulate what it guards against).
 //
 //   - Tick noise: counters and histograms always bump; log lines
 //     emit only when the dispatcher decides (state-change-based —
@@ -30,6 +34,7 @@ package telemetry
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,8 +64,27 @@ type Store struct {
 	// Label-combination cap per metric name. Beyond this we drop new
 	// label sets to prevent unbounded growth from
 	// high-cardinality bugs.
-	cardinalityCap   int
-	cardinalityWarns sync.Map // map[string]bool — one warning per overflowed metric name
+	cardinalityCap int
+	// cardinalityWarned dedupes the one-per-name overflow warning.
+	// Guarded by metricsMu (checkCardinality only runs under the
+	// write lock). BOUNDED at cardinalityWarnCap: it is written
+	// exclusively AFTER the series cap trips, on names that arrive
+	// straight off the ingest wire — it used to be the unbounded
+	// accumulator that survived the very guard it reported on. Once
+	// the cap fills, ONE summary line is emitted
+	// (cardinalityWarnsSummarised) and further names are dropped
+	// unremembered — a duplicate warning line is a far smaller cost
+	// than an unbounded map.
+	cardinalityWarned          map[string]bool
+	cardinalityWarnsSummarised bool
+	// globalSeriesCap backstops the per-name cap: per-name bounds
+	// each family, but wire input can mint unlimited FAMILIES.
+	// Total series across counters+gauges+histograms stay bounded.
+	// Guarded by metricsMu, like the counts below.
+	globalSeriesCap int
+	totalSeries     int
+	seriesPerName   map[string]int
+	globalCapWarned bool
 
 	// Ring buffers.
 	logs   *logRing
@@ -90,13 +114,16 @@ type seriesKey struct {
 // total ~7 MB steady-state).
 func NewStore() *Store {
 	return &Store{
-		counters:       make(map[seriesKey]*counterSeries),
-		gauges:         make(map[seriesKey]*gaugeSeries),
-		hists:          make(map[seriesKey]*histogramSeries),
-		cardinalityCap: 10000,
-		logs:           newLogRing(10000),
-		traces:         newTraceRing(1000),
-		startedAt:      time.Now(),
+		counters:          make(map[seriesKey]*counterSeries),
+		gauges:            make(map[seriesKey]*gaugeSeries),
+		hists:             make(map[seriesKey]*histogramSeries),
+		cardinalityCap:    10000,
+		globalSeriesCap:   50000,
+		seriesPerName:     make(map[string]int),
+		cardinalityWarned: make(map[string]bool),
+		logs:              newLogRing(10000),
+		traces:            newTraceRing(1000),
+		startedAt:         time.Now(),
 	}
 }
 
@@ -137,11 +164,13 @@ func ResetDefault() {
 // the seriesKey, so {a=1,b=2} and {b=2,a=1} hash to the same
 // series.
 //
-// Values are NOT escaped — the caller must not put commas or equals
-// signs in label values. Sky's emitted metrics use enum-shaped
-// values (method name, status code, msg name), so escaping isn't
-// load-bearing today. If we ever expose user-controlled label
-// values, this gets a real escape pass.
+// Keys and values ARE escaped (labelEscaper) so canonicalisation is
+// injective. This comment used to say escaping "isn't load-bearing
+// today" because Sky's own labels are enum-shaped — but label
+// values are user-controlled the moment a path reaches a label (the
+// route fallback) or a sub-app pushes over the ingest wire, and
+// without escaping {"a": "1,b=2"} and {"a": "1", "b": "2"} were
+// literally the SAME series: silent metric mixing from a URL.
 func canonicaliseLabels(labels map[string]string) string {
 	if len(labels) == 0 {
 		return ""
@@ -156,11 +185,29 @@ func canonicaliseLabels(labels map[string]string) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(k)
+		b.WriteString(escapeLabelComponent(k))
 		b.WriteByte('=')
-		b.WriteString(labels[k])
+		b.WriteString(escapeLabelComponent(labels[k]))
 	}
 	return b.String()
+}
+
+// labelEscaper escapes the three structural characters of the
+// canonical form (plus backslash, so the escape itself round-trips).
+// An injective encoding — two distinct label maps can never produce
+// one canonical string.
+var labelEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	`=`, `\=`,
+	`,`, `\,`,
+	"\n", `\n`,
+)
+
+func escapeLabelComponent(s string) string {
+	if !strings.ContainsAny(s, "=,\\\n") {
+		return s // common case: no allocation
+	}
+	return labelEscaper.Replace(s)
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -188,6 +235,11 @@ func (s *Store) Add(name string, labels map[string]string, delta float64) {
 	if delta < 0 {
 		return
 	}
+	// Byte-bound name + labels BEFORE the series key is built: a
+	// series key lives for the process lifetime, so an oversized
+	// label value would be pinned forever (limits.go).
+	name = boundMetricName(name)
+	labels = BoundLabels(labels)
 	ser := s.counterSeries(name, labels)
 	if ser == nil {
 		return // cardinality cap hit
@@ -224,11 +276,12 @@ func (s *Store) counterSeries(name string, labels map[string]string) *counterSer
 	if ser, ok := s.counters[key]; ok {
 		return ser
 	}
-	if !s.checkCardinality(name, len(s.counters)) {
+	if !s.checkCardinality(name) {
 		return nil
 	}
 	ser = &counterSeries{labels: copyLabels(labels)}
 	s.counters[key] = ser
+	s.noteSeriesCreated(name)
 	return ser
 }
 
@@ -245,6 +298,8 @@ type gaugeSeries struct {
 
 // SetGauge overwrites a gauge value.
 func (s *Store) SetGauge(name string, labels map[string]string, v float64) {
+	name = boundMetricName(name)
+	labels = BoundLabels(labels)
 	ser := s.gaugeSeries(name, labels)
 	if ser == nil {
 		return
@@ -298,11 +353,12 @@ func (s *Store) gaugeSeries(name string, labels map[string]string) *gaugeSeries 
 	if ser, ok := s.gauges[key]; ok {
 		return ser
 	}
-	if !s.checkCardinality(name, len(s.gauges)) {
+	if !s.checkCardinality(name) {
 		return nil
 	}
 	ser = &gaugeSeries{labels: copyLabels(labels)}
 	s.gauges[key] = ser
+	s.noteSeriesCreated(name)
 	return ser
 }
 
@@ -331,6 +387,8 @@ type histogramSeries struct {
 // every bucket whose `le` boundary is >= v (Prometheus cumulative
 // convention).
 func (s *Store) Observe(name string, labels map[string]string, v float64) {
+	name = boundMetricName(name)
+	labels = BoundLabels(labels)
 	ser := s.histogramSeries(name, labels)
 	if ser == nil {
 		return
@@ -376,7 +434,7 @@ func (s *Store) histogramSeries(name string, labels map[string]string) *histogra
 	if ser, ok := s.hists[key]; ok {
 		return ser
 	}
-	if !s.checkCardinality(name, len(s.hists)) {
+	if !s.checkCardinality(name) {
 		return nil
 	}
 	bounds := bucketsFor(name)
@@ -386,6 +444,7 @@ func (s *Store) histogramSeries(name string, labels map[string]string) *histogra
 		labels:     copyLabels(labels),
 	}
 	s.hists[key] = ser
+	s.noteSeriesCreated(name)
 	return ser
 }
 
@@ -403,25 +462,83 @@ func (s *Store) histogramSeries(name string, labels map[string]string) *histogra
 // placeholder). Without the cap, each unique URL spawns a fresh
 // series and the metrics map balloons until OOM. Prometheus's
 // own client libs ship with the same default.
-func (s *Store) checkCardinality(name string, current int) bool {
-	if current < s.cardinalityCap {
+// cardinalityWarnCap bounds the warn dedupe map. 128 distinct
+// overflowing metric NAMES is already a pathology worth one summary
+// line, not 129 remembered names — the map's only job is warning
+// hygiene, so it must never itself grow with attacker input.
+const cardinalityWarnCap = 128
+
+// checkCardinality runs under metricsMu's WRITE lock (its callers
+// are the series getters' locked slow path) — the plain maps it
+// touches need no further synchronisation.
+//
+// The cap is PER METRIC NAME, which is what the package comment and
+// this guard's own doc always promised. It used to receive the
+// GLOBAL series count of the kind (len(s.counters)), so one bombed
+// metric — e.g. a label accidentally derived from a URL — froze
+// series creation for EVERY other metric of that kind, for the
+// process lifetime. The global backstop below still bounds total
+// memory (wire input can mint unlimited metric NAMES), but tripping
+// it is a separate, louder event than one noisy family.
+func (s *Store) checkCardinality(name string) bool {
+	if s.totalSeries >= s.globalSeriesCap {
+		if !s.globalCapWarned {
+			s.globalCapWarned = true
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "telemetry global series cap exceeded; dropping ALL new series",
+				Fields: map[string]string{
+					"global_cap": strconv.Itoa(s.globalSeriesCap),
+				},
+			})
+		}
+		return false
+	}
+	if s.seriesPerName[name] < s.cardinalityCap {
 		return true
 	}
-	if _, loaded := s.cardinalityWarns.LoadOrStore(name, true); !loaded {
-		// First overflow on this metric — emit a single warning
-		// log line (avoid recursive log → telemetry by writing
-		// directly to the ring buffer, not to a logger).
-		s.logs.append(LogEntry{
-			TS:      time.Now(),
-			Level:   "warn",
-			Message: "telemetry cardinality cap exceeded; dropping new label combinations",
-			Fields: map[string]string{
-				"metric": name,
-				"cap":    "10000",
-			},
-		})
+	if s.cardinalityWarned[name] {
+		return false
 	}
+	if len(s.cardinalityWarned) >= cardinalityWarnCap {
+		if !s.cardinalityWarnsSummarised {
+			s.cardinalityWarnsSummarised = true
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "further telemetry cardinality warnings suppressed; the warn dedupe cap is full",
+				Fields: map[string]string{
+					"warned_names": strconv.Itoa(cardinalityWarnCap),
+				},
+			})
+		}
+		return false
+	}
+	s.cardinalityWarned[name] = true
+	// First overflow on this metric — emit a single warning
+	// log line (avoid recursive log → telemetry by writing
+	// directly to the ring buffer, not to a logger).
+	s.logs.append(LogEntry{
+		TS:      time.Now(),
+		Level:   "warn",
+		Message: "telemetry cardinality cap exceeded; dropping new label combinations",
+		Fields: map[string]string{
+			"metric": name,
+			// Derived, not a literal — a hand-copied cap would
+			// misreport the first time the field moved.
+			"cap": strconv.Itoa(s.cardinalityCap),
+		},
+	})
 	return false
+}
+
+// noteSeriesCreated bumps the per-name + global series counts.
+// Callers hold metricsMu's write lock (the series getters' slow
+// path, immediately after inserting the new series).
+func (s *Store) noteSeriesCreated(name string) {
+	s.seriesPerName[name]++
+	s.totalSeries++
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -505,8 +622,10 @@ func (s *Store) StartedAt() time.Time {
 
 // AppendLog stores a single structured log entry in the ring buffer.
 // O(1). Safe for concurrent writers. Oldest entry is overwritten
-// when the buffer fills.
+// when the buffer fills. Entries are byte-bounded on the way in
+// (limits.go) — the ring caps COUNT; this caps what each slot pins.
 func (s *Store) AppendLog(e LogEntry) {
+	e = BoundLogEntry(e)
 	s.logs.append(e)
 	s.enqueuePersist(persistEntry{kind: "log", log: e})
 }
@@ -517,8 +636,10 @@ func (s *Store) RecentLogs(limit int) []LogEntry {
 	return s.logs.recent(limit)
 }
 
-// AppendTrace stores a span in the trace ring buffer.
+// AppendTrace stores a span in the trace ring buffer. Byte-bounded
+// on the way in (limits.go), like AppendLog.
 func (s *Store) AppendTrace(e TraceEntry) {
+	e = BoundTraceEntry(e)
 	s.traces.append(e)
 	s.enqueuePersist(persistEntry{kind: "span", span: e})
 }

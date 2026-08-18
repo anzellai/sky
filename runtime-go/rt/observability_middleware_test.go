@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
 	"testing"
 
 	"sky-app/rt/telemetry"
@@ -188,22 +191,52 @@ func TestMiddleware_SkipsObservabilityEndpoints(t *testing.T) {
 
 // ─── Route label normalisation ────────────────────────────────
 
-func TestRouteLabelFor_HeuristicTwoSegments(t *testing.T) {
+// UNBOUNDED-MEMORY regression: the fallback label (used whenever
+// r.Pattern is empty — every Sky.Live app, whose mux registers "/")
+// used to be the first TWO raw path segments, so /users/12345 put
+// the raw ID into a label value. 10k unique second segments filled
+// the per-name series cap in 10k requests, permanently freezing the
+// request metrics (first-10k-win, no eviction). The fallback is now
+// the FIRST segment only, and only when it matches a known-safe
+// route shape; anything else collapses to the "/:dynamic" sentinel.
+func TestRouteLabelFor_LowCardinalityFallback(t *testing.T) {
 	cases := map[string]string{
-		"/":                              "/",
-		"/users":                         "/users",
-		"/users/123":                     "/users/123",
-		"/users/123/orders":              "/users/123",
-		"/users/123/orders/456/items":    "/users/123",
-		"/api/v1":                        "/api/v1",
-		"/static":                        "/static",
+		"/":                           "/",
+		"/users":                      "/users",
+		"/users/123":                  "/users",
+		"/users/123/orders":           "/users",
+		"/users/123/orders/456/items": "/users",
+		"/api/v1":                     "/api",
+		"/static":                     "/static",
+		"/index.html":                 "/index.html",
+		// Unsafe first segments — IDs, encodings, junk — collapse.
+		"/12345":            "/:dynamic",
+		"/123abc":           "/:dynamic",
+		"/%41%42":           "/:dynamic",
+		"/a b":              "/:dynamic",
+		"/" + strings.Repeat("s", 65): "/:dynamic",
 	}
 	for path, want := range cases {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		// Built directly rather than via httptest.NewRequest, which
+		// refuses the very shapes an attacker sends ("/a b").
+		req := &http.Request{Method: http.MethodGet, URL: &url.URL{Path: path}}
 		got := routeLabelFor(req)
 		if got != want {
 			t.Errorf("routeLabelFor(%q): got %q, want %q", path, got, want)
 		}
+	}
+}
+
+// The bomb itself: unique numeric second segments must all land on
+// ONE route label, not one series each.
+func TestRouteLabel_PathIDCardinalityBombNeutralised(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 1000; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/users/"+strconv.Itoa(i), nil)
+		seen[routeLabelFor(req)] = true
+	}
+	if len(seen) != 1 {
+		t.Errorf("1000 /users/<id> requests produced %d distinct route labels; want 1", len(seen))
 	}
 }
 
