@@ -478,12 +478,35 @@ These apply to any Sky code you write or any compiler change you make:
   it runs the shell library rather than reimplementing it). It FAILS naming
   `./scripts/build.sh`, and unlike `require_tool` it has **no opt-out** — a tree
   that has the sources can always rebuild, so "I cannot fix this" is never true.
+  The check is content-aware where content is provable: the build bakes a
+  fingerprint of the embedded asset trees into the binary
+  (`sky-embed-fp-v1:<sha256>`, `rust/crates/ffi/build.rs::fingerprint`), so a
+  legitimate prebuilt binary under fresh-checkout mtimes passes when only
+  embed-root mtimes moved and the content matches, and a `touch`ed binary whose
+  embedded content is from another tree FAILS regardless of mtimes — never
+  `touch sky-out/sky`. The compiler's own Rust sources carry no baked witness
+  and remain mtime-compared.
   `rust/crates/xtask/tests/gates_measure_a_fresh_compiler.rs` fails the build on
-  a new consumer that skips the check, on a script bash 3.2 cannot parse, and on
-  the shell roots drifting from `config_matrix.rs`'s. The loud symptom cost a
-  full diagnosis: a sweep after a bare `cargo build` reported 22 of 22
+  a new consumer that skips the check, on a script bash 3.2 cannot parse, on
+  the root lists drifting from the `stage(…)` calls in
+  `rust/crates/ffi/build.rs` (the staging authority — parsed, not copied), and
+  on the shell and Rust fingerprint constructions disagreeing. The loud symptom
+  cost a full diagnosis: a sweep after a bare `cargo build` reported 22 of 22
   conformance suites FAILED on a consistent tree. The quiet one is worse — a
   stale binary that PASSES certifies source it never compiled.
+- **The embed never contains a hidden or gitignored file.** `build.rs` staging
+  drops dot-files and dot-directories as a class: running a bundled console
+  writes a runtime secret at `sky-bundled/<app>/.sky/console-token`
+  (gitignored, 0600), and before the class rule it was staged into
+  `embedded-assets/` and baked into every locally-built `sky` binary —
+  recoverable by `grep` from the binary and re-materialised into
+  `~/.cache/sky/assets/<hash>/` by any standalone run. Two gates in
+  `gates_measure_a_fresh_compiler.rs` enforce it: staging a planted
+  `.sky`/`.env`/`.skydata` fixture must drop them, and everything staged from
+  the real repo is `git check-ignore`d. Consequence for contributors: a file a
+  build must embed may not be hidden, and a hidden file is never a compiler
+  input (the freshness walks skip them too, so a runtime-written token cannot
+  turn gates red).
 - **Disk hygiene.** `scripts/build.sh` + `scripts/example-sweep.sh` auto-prune the
   Go build cache at a 5 GB threshold; the `xtask build-run` gate self-guards
   disk before the sweep. Reclaim manually (`go clean -cache`, worktree cleanup)

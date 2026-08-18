@@ -72,6 +72,59 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The REAL staging + fingerprint code, not a reimplementation. `build.rs` is
+/// dependency-free by construction, so it includes cleanly; every test below
+/// that stages a tree or fingerprints one exercises the same functions the
+/// build script runs, which is what makes "remove `.sky` from `skip_dir`" a
+/// mutation these tests actually catch instead of a drift they tolerate.
+#[allow(dead_code)]
+mod embed {
+    include!("../../ffi/build.rs");
+}
+
+/// Stage `repo`'s five embed roots into `dest` exactly as `build.rs::main`
+/// does. If `main` gains a sixth `stage(…)` call, the parse-derived roots test
+/// and the real-repo fingerprint-parity test both go red, which is the prompt
+/// to extend this mirror.
+fn stage_like_build_rs(repo: &Path, dest: &Path) {
+    embed::stage(&repo.join("sky-stdlib"), &dest.join("sky-stdlib"));
+    embed::stage_runtime(&repo.join("runtime-go"), &dest.join("runtime-go"));
+    embed::stage(
+        &repo.join("tools").join("sky-ffi-inspect"),
+        &dest.join("tools").join("sky-ffi-inspect"),
+    );
+    embed::stage(&repo.join("templates"), &dest.join("templates"));
+    embed::stage(&repo.join("sky-bundled"), &dest.join("sky-bundled"));
+}
+
+/// Every file under `dir`, as `/`-separated paths relative to `dir`, sorted.
+fn rel_files(dir: &Path) -> Vec<String> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dir, &mut files);
+    let mut rels: Vec<String> = files
+        .into_iter()
+        .map(|f| {
+            f.strip_prefix(dir)
+                .unwrap_or(&f)
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    rels.sort();
+    rels
+}
+
 /// The one shell file that defines what "fresh" means.
 const LIB: &str = "scripts/lib/fresh-compiler.sh";
 /// Its Node face — it runs [`LIB`] rather than reimplementing it.
@@ -481,11 +534,12 @@ fn synthetic_tree(tag: &str) -> PathBuf {
         std::fs::write(&p, body).expect("write fixture file");
     };
 
-    // The per-root floors in the library are 100/50/50/1/5/1.
+    // The per-root floors in the library are 2/100/50/50/1/5/1.
     for i in 0..110 {
         write(&format!("rust/crates/ty/src/f{i}.rs"), "fn f() {}\n");
     }
     write("rust/Cargo.toml", "[workspace]\n");
+    write("rust/Cargo.lock", "version = 3\n");
     for i in 0..60 {
         write(&format!("sky-stdlib/Std/M{i}.sky", ), "module M exposing (..)\n");
     }
@@ -684,5 +738,577 @@ fn a_walk_that_finds_nothing_refuses_to_answer() {
         stderr.contains("runtime-go"),
         "the refusal must name the root it could not measure. stderr:\n{stderr}"
     );
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+// ─── The guard cannot be deleted from outside ────────────────────────────
+
+/// An INHERITED `_SKY_FRESH_COMPILER_SOURCED` in the environment used to make
+/// sourcing the library define NOTHING: the double-source guard keyed on an env
+/// var, children inherit env vars, and 14 of the 16 consumers run without
+/// `set -e` — so `require_fresh_compiler: command not found` (status 127) was
+/// swallowed and the script measured the unverified binary anyway. Reproduced
+/// before the fix: the consumer below printed `command not found`, then
+/// `REACHED THE BODY`, and exited 0. The guard is gone (the library is
+/// idempotent to source); this is the test that keeps it gone.
+#[test]
+fn an_inherited_source_guard_env_var_does_not_delete_the_gate() {
+    let tree = synthetic_tree("env-guard");
+    // No binary at all — the strongest possible reason to refuse.
+    let consumer = tree.join("consumer.sh");
+    std::fs::write(
+        &consumer,
+        format!(
+            "#!/usr/bin/env bash\n\
+             # Deliberately NO set -e: most consumers do not set it, and a\n\
+             # swallowed 127 is exactly the defect under test.\n\
+             source {lib}\n\
+             require_fresh_compiler {bin} {tree}\n\
+             echo 'REACHED THE BODY'\n",
+            lib = repo().join(LIB).display(),
+            bin = tree.join("sky-out/sky").display(),
+            tree = tree.display(),
+        ),
+    )
+    .expect("write consumer");
+
+    let out = Command::new("/bin/bash")
+        .arg(&consumer)
+        .env("_SKY_FRESH_COMPILER_SOURCED", "1")
+        .output()
+        .expect("run consumer");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "with the guard env var inherited, the gate must still run and refuse the \
+         absent binary. stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("REACHED THE BODY"),
+        "the consumer must not proceed past the check. stdout:\n{stdout}"
+    );
+    assert!(
+        !stderr.contains("command not found"),
+        "sourcing the library must define the check — an unsourced function is the \
+         deleted gate this test exists to refuse. stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("./scripts/build.sh"), "stderr:\n{stderr}");
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+// ─── The embed never contains a hidden or gitignored file ────────────────
+
+/// Staging must drop hidden files and directories as a CLASS. The instance
+/// that motivated the class: running a bundled console writes a 0600
+/// `sky-bundled/<app>/.sky/console-token` (gitignored, regenerated at
+/// runtime), and `skip_dir` did not know `.sky` — so a runtime SECRET was
+/// staged into `embedded-assets/` and baked into every locally-built compiler
+/// binary. Confirmed in an installed `sky-out/sky` before the fix: the live
+/// token's bytes were present in the binary, and `ffi::extract_assets_root`
+/// would re-materialise them into `~/.cache/sky/assets/<hash>/` on any machine
+/// running that binary standalone.
+///
+/// The mutation this catches: remove the `starts_with('.')` arm from either
+/// `skip_dir` or `skip_file` in `rust/crates/ffi/build.rs` and this goes red.
+#[test]
+fn staging_never_embeds_hidden_files_or_dirs() {
+    let tree = synthetic_tree("hidden");
+    let plant = |rel: &str, body: &str| {
+        let p = tree.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, body).unwrap();
+    };
+    // The real incident, plus the neighbours of its class.
+    plant("sky-bundled/console/.sky/console-token", "SECRET-TOKEN\n");
+    plant("sky-bundled/console/.env", "DATABASE_URL=postgres://secret\n");
+    plant("runtime-go/rt/.skydata/kv.db", "runtime state\n");
+    plant("sky-stdlib/.DS_Store", "junk");
+
+    let dest = tree.join("_staged");
+    stage_like_build_rs(&tree, &dest);
+
+    let staged = rel_files(&dest);
+    let hidden: Vec<&String> = staged
+        .iter()
+        .filter(|r| r.split('/').any(|c| c.starts_with('.')))
+        .collect();
+    assert!(
+        hidden.is_empty(),
+        "staging embedded hidden paths — the shape that once baked a runtime \
+         console-token into the compiler binary:\n  {hidden:?}"
+    );
+    assert!(
+        !staged.iter().any(|r| r.contains("console-token")),
+        "the planted console-token was staged: {staged:?}"
+    );
+    // And the filter did not become "drop everything": real sources survive.
+    assert!(
+        staged.iter().any(|r| r == "sky-bundled/console/src/M0.sky"),
+        "a real bundled source must still be staged. staged: {staged:?}"
+    );
+    assert!(
+        staged.iter().any(|r| r == "runtime-go/rt/f0.go"),
+        "a real runtime source must still be staged. staged: {staged:?}"
+    );
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+/// Nothing staged from the REAL repo may be gitignored. The hidden-name class
+/// above catches the known shapes; this closes the class the other way round —
+/// whatever `.gitignore` declares to be a local artefact or secret, in any
+/// spelling, present or future, must not reach the embed. `git check-ignore`
+/// is the same authority the repository itself uses.
+#[test]
+fn the_staged_embed_contains_no_gitignored_file() {
+    let root = repo();
+    let dest = std::env::temp_dir().join(format!(
+        "sky-embed-checkignore-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&dest);
+    stage_like_build_rs(&root, &dest);
+    let staged = rel_files(&dest);
+    assert!(
+        staged.len() > 200,
+        "the real staging walk found only {} files — a walk that finds nothing \
+         cannot prove anything about what it embeds",
+        staged.len()
+    );
+
+    use std::io::Write as _;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["check-ignore", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("run git — this gate REQUIRES git; install it rather than skipping");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(staged.join("\n").as_bytes())
+        .expect("feed git check-ignore");
+    let out = child.wait_with_output().expect("git check-ignore");
+    let ignored = String::from_utf8_lossy(&out.stdout).into_owned();
+    // Exit 0 = at least one path IS ignored; 1 = none are; anything else is a
+    // git failure, which must not pass as "nothing ignored".
+    match out.status.code() {
+        Some(1) => {}
+        Some(0) => panic!(
+            "these gitignored files were staged into the embed — a gitignored file is \
+             by definition a local artefact or secret, and baking one into the \
+             compiler binary is how a runtime console-token shipped inside \
+             sky-out/sky:\n  {}",
+            ignored.trim().replace('\n', "\n  ")
+        ),
+        code => panic!(
+            "git check-ignore failed (exit {code:?}): {}",
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    }
+    let _ = std::fs::remove_dir_all(&dest);
+}
+
+// ─── The root lists are DERIVED from build.rs, not merely mutually equal ──
+
+/// The staged roots, parsed from `build.rs`'s own `stage(…)` /
+/// `stage_runtime(…)` call sites in `main`.
+///
+/// The previous drift test compared the shell list to the Rust list — two
+/// COPIES. A sixth `stage(…)` call in build.rs left both lists agreeing and
+/// both wrong, which is the original defect (three roots invisible to the
+/// freshness check) recurring with a green gate. Parsing the authority breaks
+/// that symmetry: the union check below fails until BOTH lists learn the new
+/// root.
+fn parse_staged_roots(build_rs: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut search = 0;
+    while let Some(pos) = build_rs[search..].find("&repo.join(\"") {
+        let abs = search + pos;
+        search = abs + 1;
+        // Only the first argument of a stage call names a staged SOURCE root;
+        // `rerun(&repo.join(…))` and destination expressions must not count.
+        let head = build_rs[..abs].trim_end();
+        if !(head.ends_with("stage(") || head.ends_with("stage_runtime(")) {
+            continue;
+        }
+        let arg = &build_rs[abs..];
+        let arg = &arg[..arg.find(',').unwrap_or(arg.len())];
+        let mut components = Vec::new();
+        let mut rest = arg;
+        while let Some(j) = rest.find(".join(\"") {
+            let after = &rest[j + 7..];
+            let Some(end) = after.find('"') else { break };
+            components.push(after[..end].to_string());
+            rest = &after[end..];
+        }
+        if !components.is_empty() {
+            out.push(components.join("/"));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The falsifier for the parser itself: a parse that cannot see a NEW stage
+/// call would let the drift recur, so prove on a doctored copy that it does.
+#[test]
+fn the_stage_call_parser_detects_a_new_root() {
+    let real = std::fs::read_to_string(repo().join("rust/crates/ffi/build.rs"))
+        .expect("read build.rs");
+    let baseline = parse_staged_roots(&real);
+    assert_eq!(
+        baseline,
+        vec![
+            "runtime-go".to_string(),
+            "sky-bundled".to_string(),
+            "sky-stdlib".to_string(),
+            "templates".to_string(),
+            "tools/sky-ffi-inspect".to_string(),
+        ],
+        "the parser must recover exactly the five roots build.rs stages today"
+    );
+
+    // THE MUTATION, applied to a scratch copy: a sixth tree quietly staged.
+    let doctored = format!(
+        "{real}\nfn extra(repo: &Path, dest: &Path) {{ stage(&repo.join(\"secret-cache\"), &dest.join(\"secret-cache\")); }}\n"
+    );
+    let mutated = parse_staged_roots(&doctored);
+    assert!(
+        mutated.contains(&"secret-cache".to_string()),
+        "the parser missed a new stage call — with a blind parser, a sixth staged \
+         tree would be embedded into the binary and invisible to every freshness \
+         list. parsed: {mutated:?}"
+    );
+}
+
+/// The roots in build.rs (parsed), the shell library and `config_matrix.rs`
+/// must be ONE set: every staged tree plus the compiler's own Rust roots.
+#[test]
+fn the_measured_roots_are_derived_from_build_rs_stage_calls() {
+    let root = repo();
+    let staged = parse_staged_roots(
+        &std::fs::read_to_string(root.join("rust/crates/ffi/build.rs")).expect("read build.rs"),
+    );
+    assert!(!staged.is_empty(), "parsed no stage calls out of build.rs");
+
+    // The compiler's own sources are measured but not staged.
+    let rust_roots = ["rust", "rust/crates"];
+    let mut expected: Vec<String> = staged;
+    expected.extend(rust_roots.iter().map(|s| s.to_string()));
+    expected.sort();
+
+    let sh = std::fs::read_to_string(root.join(LIB)).expect("read the shell library");
+    let block = sh
+        .split("_SKY_COMPILER_INPUT_ROOTS='")
+        .nth(1)
+        .and_then(|s| s.split('\'').next())
+        .expect("the shell library must declare _SKY_COMPILER_INPUT_ROOTS");
+    let mut shell_roots: Vec<String> = block
+        .lines()
+        .filter_map(|l| l.split(':').next())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .collect();
+    shell_roots.sort();
+
+    assert_eq!(
+        shell_roots, expected,
+        "{LIB} does not measure exactly what build.rs stages (plus the Rust roots \
+         {rust_roots:?}). build.rs is the authority — a staged tree the list does \
+         not name is embedded into the binary and invisible to the freshness check."
+    );
+}
+
+// ─── The Rust ext filters cover everything actually staged ───────────────
+
+/// `config_matrix.rs` filters by extension per root. A staged file whose
+/// extension is not in that root's list is embedded into the binary and
+/// invisible to the Rust gate's freshness walk — the same one-sided blindness
+/// the root-name drift test missed for whole trees, one level down. The shell
+/// walk and the staging filter are compared by CONTENT (the fingerprint-parity
+/// test); this closes the remaining side.
+#[test]
+fn config_matrix_ext_filters_cover_every_staged_file() {
+    let root = repo();
+    let rs = std::fs::read_to_string(root.join(CONFIG_MATRIX)).expect("read config_matrix.rs");
+    let block = rs
+        .split("const MEASURED_SOURCE_ROOTS")
+        .nth(1)
+        .and_then(|s| s.split("];").next())
+        .expect("config_matrix.rs must declare MEASURED_SOURCE_ROOTS");
+    // ("root", &["a", "b"]),  →  (root, [a, b])
+    let mut exts_by_root: Vec<(String, Vec<String>)> = Vec::new();
+    for l in block.lines() {
+        let l = l.trim();
+        let Some(rest) = l.strip_prefix("(\"") else { continue };
+        let Some(name) = rest.split('"').next() else { continue };
+        let exts: Vec<String> = rest
+            .split('[')
+            .nth(1)
+            .and_then(|s| s.split(']').next())
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|e| e.trim().strip_prefix('"'))
+                    .filter_map(|e| e.strip_suffix('"'))
+                    .map(|e| e.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        exts_by_root.push((name.to_string(), exts));
+    }
+    assert!(!exts_by_root.is_empty(), "parsed no roots from config_matrix.rs");
+
+    let dest = std::env::temp_dir().join(format!(
+        "sky-embed-extcover-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&dest);
+    stage_like_build_rs(&root, &dest);
+
+    let mut uncovered = Vec::new();
+    for rel in rel_files(&dest) {
+        let staged_root = if rel.starts_with("tools/") {
+            "tools/sky-ffi-inspect"
+        } else {
+            rel.split('/').next().unwrap_or("")
+        };
+        let Some((_, exts)) = exts_by_root.iter().find(|(r, _)| r == staged_root) else {
+            uncovered.push(format!("{rel}: staged root '{staged_root}' is not in MEASURED_SOURCE_ROOTS"));
+            continue;
+        };
+        let ext = Path::new(&rel).extension().and_then(|e| e.to_str());
+        match ext {
+            Some(e) if exts.iter().any(|x| x == e) => {}
+            _ => uncovered.push(format!(
+                "{rel}: extension {ext:?} is not in {staged_root}'s list {exts:?}"
+            )),
+        }
+    }
+    assert!(
+        uncovered.is_empty(),
+        "these files are staged into the compiler binary but INVISIBLE to \
+         config_matrix.rs's freshness walk — editing one changes the binary and \
+         the Rust gate calls it fresh. Extend the ext list in \
+         {CONFIG_MATRIX}::MEASURED_SOURCE_ROOTS:\n  {}",
+        uncovered.join("\n  ")
+    );
+    let _ = std::fs::remove_dir_all(&dest);
+}
+
+// ─── One fingerprint, two constructions, provably equal ──────────────────
+
+/// Compute the shell library's expected embed fingerprint for a tree.
+fn shell_fingerprint(tree: &Path) -> String {
+    let out = Command::new("/bin/bash")
+        .arg("-c")
+        .arg(format!(
+            "source {lib} && sky_embed_fingerprint_expected {tree}",
+            lib = repo().join(LIB).display(),
+            tree = tree.display(),
+        ))
+        .output()
+        .expect("run sky_embed_fingerprint_expected");
+    assert!(
+        out.status.success(),
+        "sky_embed_fingerprint_expected failed — a sha256 tool (sha256sum/shasum) \
+         is REQUIRED for this gate; install one rather than skipping. stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// `build.rs::fingerprint` (Rust, over the staged tree) and
+/// `sky_embed_fingerprint_expected` (shell, over the source tree with the
+/// staging filters) must produce the same value — on a synthetic tree AND on
+/// the real repo. This is the gate that makes the two spellings of the staging
+/// filter ONE definition: any divergence in what they include, how they sort,
+/// or how they hash shows up as a mismatch here, not as a wrong freshness
+/// verdict in a sweep three weeks later.
+#[test]
+fn the_shell_and_rust_fingerprints_agree() {
+    // Synthetic: includes hidden files that BOTH sides must drop.
+    let tree = synthetic_tree("fp-parity");
+    let plant = |rel: &str, body: &str| {
+        let p = tree.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, body).unwrap();
+    };
+    plant("sky-bundled/console/.sky/console-token", "SECRET\n");
+    plant("runtime-go/rt/helpers_test.go", "package rt // dropped\n");
+    let dest = tree.join("_staged");
+    stage_like_build_rs(&tree, &dest);
+    let rust_fp = embed::fingerprint(&dest);
+    let shell_fp = shell_fingerprint(&tree);
+    assert_eq!(
+        rust_fp,
+        format!("sky-embed-fp-v1:{shell_fp}"),
+        "the Rust and shell fingerprint constructions disagree on a synthetic tree"
+    );
+    let _ = std::fs::remove_dir_all(&tree);
+
+    // Real repo: catches filter drift on content the fixture did not think of.
+    let root = repo();
+    let dest = std::env::temp_dir().join(format!(
+        "sky-embed-fp-real-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&dest);
+    stage_like_build_rs(&root, &dest);
+    let rust_fp = embed::fingerprint(&dest);
+    let shell_fp = shell_fingerprint(&root);
+    assert_eq!(
+        rust_fp,
+        format!("sky-embed-fp-v1:{shell_fp}"),
+        "the Rust and shell fingerprint constructions disagree on the real repo — \
+         the shell walk no longer replicates build.rs's staging filters"
+    );
+    let _ = std::fs::remove_dir_all(&dest);
+}
+
+// ─── Content beats mtime, in both false directions ───────────────────────
+
+/// Write a fake compiler binary carrying a baked fingerprint marker.
+fn write_marked_binary(p: &Path, marked_fp: &str, secs_ago: u64) {
+    std::fs::create_dir_all(p.parent().unwrap()).ok();
+    std::fs::write(p, format!("#!/bin/sh\n# {marked_fp}\nexit 0\n")).expect("write binary");
+    let t = std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago);
+    let f = std::fs::File::options().write(true).open(p).expect("open");
+    f.set_modified(t).expect("set mtime");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+/// FALSE-STALE direction: a legitimate prebuilt binary under fresh-checkout
+/// mtimes (Docker multi-stage, artifact download, `git worktree add`) used to
+/// fail on mtime alone, and the message taught readers that the practical
+/// workaround was `touch sky-out/sky` — a silent false green. Content settles
+/// it: when only EMBED-root files are mtime-newer and the binary's baked
+/// fingerprint matches the tree, it passes; the moment the embedded content
+/// actually differs, it fails again.
+#[test]
+fn a_prebuilt_binary_with_matching_embed_content_passes_despite_mtimes() {
+    let tree = synthetic_tree("prebuilt");
+    let dest = tree.join("_staged");
+    stage_like_build_rs(&tree, &dest);
+    let fp = embed::fingerprint(&dest);
+    let _ = std::fs::remove_dir_all(&dest);
+
+    let bin = tree.join("sky-out/sky");
+    write_marked_binary(&bin, &fp, 300);
+
+    // Fresh-checkout mtimes on the embed trees: newer than the binary, content
+    // unchanged. (rust/ stays older — Rust sources have no content witness, so
+    // an mtime-newer rust/ file is stale by design; see the library header.)
+    touch_at(&tree.join("sky-stdlib/Std/M1.sky"), 0);
+    touch_at(&tree.join("runtime-go/rt/f3.go"), 0);
+    touch_at(&tree.join("templates/CLAUDE.md"), 0);
+
+    let (status, stderr) = run_check(&bin, &tree);
+    assert_eq!(
+        status, 0,
+        "a prebuilt binary whose embedded content MATCHES the tree must pass even \
+         when embed mtimes postdate it. stderr:\n{stderr}"
+    );
+
+    // THE MUTATION: the content now genuinely differs.
+    std::fs::write(tree.join("sky-stdlib/Std/M1.sky"), "module M exposing (changed)\n")
+        .expect("edit source");
+    let (status, stderr) = run_check(&bin, &tree);
+    assert_eq!(
+        status, 1,
+        "a real content change must fail even though the previous state passed on \
+         identical mtimes. stderr:\n{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+/// FALSE-FRESH direction: `touch sky-out/sky` (or a `cp` without `-p`) makes a
+/// stale binary mtime-newest, and mtime alone reported PASS — certifying a
+/// tree the binary does not embed. The baked fingerprint contradicts the tree,
+/// so it now fails, and the message says why without suggesting mtime surgery.
+#[test]
+fn a_touched_binary_with_stale_embed_content_fails() {
+    let tree = synthetic_tree("touched");
+    let dest = tree.join("_staged");
+    stage_like_build_rs(&tree, &dest);
+    let fp_of_old_tree = embed::fingerprint(&dest);
+    let _ = std::fs::remove_dir_all(&dest);
+
+    // The tree moves on: an embedded source changes CONTENT, but its mtime is
+    // aged back — a restored backup, a clock artefact, any content change that
+    // mtime cannot see.
+    let f = tree.join("sky-stdlib/Std/M2.sky");
+    std::fs::write(&f, "module M exposing (drifted)\n").expect("edit source");
+    let fh = std::fs::File::options().write(true).open(&f).expect("open");
+    fh.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600))
+        .expect("age the edit");
+
+    // The binary still bakes the OLD tree's fingerprint — and is touched newest.
+    let bin = tree.join("sky-out/sky");
+    write_marked_binary(&bin, &fp_of_old_tree, 0);
+
+    let (status, stderr) = run_check(&bin, &tree);
+    assert_eq!(
+        status, 1,
+        "an mtime-newest binary whose embedded content is not from this tree must \
+         FAIL — this is the `touch` loophole. stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("EMBEDDED CONTENT"),
+        "the failure must say the CONTENT mismatched, so the reader does not go \
+         hunting for a newer source file that does not exist. stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("./scripts/build.sh"), "stderr:\n{stderr}");
+    let _ = std::fs::remove_dir_all(&tree);
+}
+
+/// The staleness witness is the NEWEST changed file. It used to be the first
+/// line of the walk output — traversal order — which pointed the reader at
+/// whichever root happened to be walked first rather than at what they just
+/// edited. `config_matrix.rs::newest_source_mtime` tracks newest for the same
+/// reason; the two instruments should tell the same story.
+#[test]
+fn a_stale_witness_names_the_newest_changed_file() {
+    let tree = synthetic_tree("witness");
+    let bin = tree.join("sky-out/sky");
+    touch_at(&bin, 120);
+
+    // Two edits: an older one in the FIRST-walked root (rust/crates), a newer
+    // one in a later root. Traversal-order head-1 names the bystander; the
+    // witness must be the newest.
+    touch_at(&tree.join("rust/crates/ty/src/f1.rs"), 60);
+    touch_at(&tree.join("sky-bundled/console/src/M2.sky"), 0);
+
+    let (status, stderr) = run_check(&bin, &tree);
+    assert_eq!(status, 1, "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("sky-bundled/console/src/M2.sky"),
+        "the witness must be the NEWEST changed file, not the first in traversal \
+         order. stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("Newest:"), "stderr:\n{stderr}");
     let _ = std::fs::remove_dir_all(&tree);
 }

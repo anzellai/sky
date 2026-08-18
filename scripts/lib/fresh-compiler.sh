@@ -4,7 +4,7 @@
 #
 # Why this exists
 # ---------------
-# Fifteen scripts consume the compiler at `sky-out/sky`. Not one of them checked
+# Sixteen scripts consume the compiler at `sky-out/sky`. Not one of them checked
 # that it was built from the tree they were about to measure. `sky-out/sky` is
 # installed there by exactly one line — `scripts/build.sh:80`
 # (`install_binary "$(cargo_bin_path …)" "$ROOT/sky-out/sky"`) — so any workflow
@@ -54,6 +54,39 @@
 # stance `scripts/lib/require-tool.sh` takes for a prerequisite that is missing,
 # applied to a prerequisite that is out of date.
 #
+# Two instruments, because mtime lies in both directions
+# ------------------------------------------------------
+# mtime comparison alone was wrong two ways at once:
+#
+#   * FALSE STALE — a legitimate prebuilt binary in a fresh checkout (Docker
+#     multi-stage, artifact download, `git worktree add`) sits under sources
+#     whose mtimes are all "now", so it failed even when its content matched the
+#     tree byte-for-byte. The practical workaround became `touch sky-out/sky`,
+#     which is the next bullet.
+#   * FALSE FRESH — `touch`ing the binary (or copying it in without `-p`) makes
+#     it mtime-newest while its content is from another tree entirely, and
+#     mtime-only reported PASS.
+#
+# So the check now also compares CONTENT where content is provable: the build
+# bakes a fingerprint of the embedded asset tree into the binary as
+# `sky-embed-fp-v1:<sha256hex>` (`rust/crates/ffi/build.rs::fingerprint`), and
+# `sky_embed_fingerprint_expected` recomputes the same value from the tree here
+# in shell. A binary whose baked fingerprint MISMATCHES the tree fails no matter
+# how new its mtime is; a binary whose fingerprint MATCHES passes even when
+# embed-root mtimes postdate it.
+#
+# What remains mtime-based — stated plainly
+# -----------------------------------------
+# The fingerprint covers the EMBEDDED trees only (sky-stdlib/, runtime-go/,
+# templates/, sky-bundled/, tools/sky-ffi-inspect/ — exactly what
+# `rust/crates/ffi/build.rs` stages). The compiler's own Rust sources
+# (`rust/…`) bake no content witness into the binary, so for them mtime is
+# still the instrument: a prebuilt binary under rust/ sources that are
+# mtime-newer FAILS even if it was in fact built from them, and a `touch`ed
+# binary whose staleness is purely in rust/ sources still passes. Closing that
+# would need a source fingerprint baked by the `sky` crate's own build — a
+# separate change, not claimed here.
+#
 # Usage
 # -----
 #     source "$ROOT/scripts/lib/fresh-compiler.sh"
@@ -61,10 +94,13 @@
 #     require_fresh_compiler "$SKY"          # exits non-zero if stale/absent
 #
 # Contract
-#   * Returns 0 when `$1` is an executable file at least as new as every source
-#     input that determines what a `sky` binary does.
-#   * EXITS 1 otherwise, naming the source file that is newer (the witness) and
-#     the exact command that fixes it.
+#   * Returns 0 when `$1` is an executable file that is (a) at least as new as
+#     every source input that determines what a `sky` binary does, or (b) newer
+#     only than EMBED-tree inputs while its baked embed fingerprint matches the
+#     tree's content — and, in either case, whose baked fingerprint (when
+#     present and computable) does not CONTRADICT the tree.
+#   * EXITS 1 otherwise, naming the newest source file that postdates the
+#     binary (the witness) and the exact command that fixes it.
 #   * EXITS 1 when the binary is absent, for the same reason and with the same
 #     command.
 #   * EXITS 2 when it cannot establish the answer at all — a declared source
@@ -83,21 +119,33 @@
 #
 # What this does NOT catch
 # ------------------------
-#   * A binary from a DIFFERENT tree that happens to be newer — an installed
-#     release copied in this morning, say. mtime answers "is this older than the
-#     sources", not "was this built from them". That is the same instrument
-#     `config_matrix.rs` uses, and replacing it belongs in one place, not two.
+#   * A binary from a DIFFERENT tree whose RUST sources differ but whose embed
+#     trees are identical, when it is also mtime-newer than everything here.
+#     The embed fingerprint clears the embedded content; nothing vouches for
+#     the Rust (see "what remains mtime-based" above).
 #   * A source edit that does not change the mtime (a restored backup with
-#     `-p`, a clock moved backwards). `git checkout`/`git merge` DO update the
-#     mtimes of the files they touch, which is the common case and is caught.
+#     `-p`, a clock moved backwards) in `rust/…`. In the embed trees the
+#     fingerprint catches it.
 #   * Whether the build itself was correct. `scripts/lib/cargo-target.sh`
 #     covers the neighbouring failure — `cp`ing a binary cargo did not just
 #     produce.
-
-if [ -n "${_SKY_FRESH_COMPILER_SOURCED:-}" ]; then
-    return 0 2>/dev/null || true
-fi
-_SKY_FRESH_COMPILER_SOURCED=1
+#
+# NO source guard. There used to be one —
+#
+#     if [ -n "${_SKY_FRESH_COMPILER_SOURCED:-}" ]; then return 0 …
+#
+# — and it keyed on an ENVIRONMENT variable, which children inherit. Any
+# process whose ancestor had sourced this file got a shell in which sourcing
+# the library defined NOTHING, `require_fresh_compiler` was `command not
+# found` (status 127), and the 14 of 16 consumers that run without `set -e`
+# swallowed that status and measured the unverified binary anyway — the gate
+# deleted by its own guard. Reproduced before removal: a consumer with the
+# variable exported printed `command not found` and proceeded, rc=0. This file
+# is a set of function definitions and `:=` defaults; sourcing it twice is
+# harmless, so the guard bought nothing and could lose everything.
+# `gates_measure_a_fresh_compiler.rs::an_inherited_source_guard_env_var_does_not_delete_the_gate`
+# goes red if one comes back.
+unset _SKY_FRESH_COMPILER_SOURCED
 
 # The command that fixes every failure this file reports. Named once.
 : "${SKY_FRESH_COMPILER_FIX:=./scripts/build.sh}"
@@ -111,74 +159,103 @@ _SKY_FRESH_COMPILER_SOURCED=1
 # `$OUT_DIR/embedded-assets/`, and `rust/crates/ffi/src/assets.rs` embeds that
 # tree with `include_dir!`. An edit to any of them with no recompile is exactly
 # as stale as an edit to the compiler's own Rust.
+# `gates_measure_a_fresh_compiler.rs` parses build.rs's `stage(…)` calls and
+# fails the build if this list, `config_matrix.rs::MEASURED_SOURCE_ROOTS` and
+# build.rs stop naming the same trees.
+#
+# `rust` (the workspace manifest, `Cargo.lock`, `rust-toolchain.toml`) is its
+# own root: those files pin every version compiled in, they live one level
+# ABOVE `rust/crates`, and keeping them inside the `rust/crates` walk was a
+# filter divergence from `config_matrix.rs`, which could not see them at all.
 #
 # The per-root minimum is the vacuity guard. A walk that finds nothing makes
 # every binary look fresh, so a root that has moved or emptied must fail rather
 # than quietly contribute zero. The floors are set well under the current counts
-# (rust/crates 132, sky-stdlib 87, runtime-go 127, templates 2, sky-bundled 15,
-# tools/sky-ffi-inspect 4) — they catch a root that has vanished, not ordinary
-# growth and pruning.
+# — they catch a root that has vanished, not ordinary growth and pruning.
 #
 # `rust/crates/xtask` is excluded deliberately, matching
 # `config_matrix.rs::MEASURED_SOURCE_ROOTS`: xtask is not linked into `sky`, so
 # editing a gate does not change what an already-built compiler emits, and
 # demanding a compiler rebuild for a comment in a test file would train people
 # to bypass this check.
-_SKY_COMPILER_INPUT_ROOTS='rust/crates:100
+_SKY_COMPILER_INPUT_ROOTS='rust:2
+rust/crates:100
 sky-stdlib:50
 runtime-go:50
 templates:1
 sky-bundled:5
 tools/sky-ffi-inspect:1'
 
+# The embed roots — the subset of the roots above that build.rs stages into the
+# binary and the fingerprint therefore covers. Order matters ONLY for the walk;
+# the fingerprint sorts.
+_SKY_EMBED_ROOTS='sky-stdlib
+runtime-go
+templates
+sky-bundled
+tools/sky-ffi-inspect'
+
+# Walk one directory with EXACTLY the staging filters of
+# `rust/crates/ffi/build.rs::{skip_dir,skip_file}` — one definition of "what is
+# embedded", spelled twice, gated together (the fingerprint-parity test fails
+# if they drift). Extra `find` predicates are passed through before `-print`.
+#
+# Hidden entries are pruned as a CLASS, mirroring build.rs and
+# `config_matrix.rs::walk_newest` (`name.starts_with('.')`). That is both a
+# filter-alignment fix and a correctness fix here: running a bundled console
+# writes a runtime `sky-bundled/<app>/.sky/console-token`, and counting it as a
+# "source" made every gate report the compiler stale until the next rebuild —
+# a red caused by the check's own instrument, and the same class of file the
+# embed must never contain (it is a SECRET).
+_sky_embed_files() { # <dir> [find predicates...]
+    local dir="$1"
+    shift
+    [ -d "$dir" ] || return 0
+    find "$dir" \
+        \( -name '.*' -o -name sky-out -o -name testdata -o -name node_modules \) -prune -o \
+        -type f \
+        ! -name '.*' ! -name '*_test.go' \
+        ! -name 'sky-ffi-inspect' ! -name 'sky-ffi-inspect.exe' \
+        ! -name '*.bak' ! -name '*.swp' ! -name '*~' \
+        "$@" -print
+}
+
 # Print every source file under one root, applying that root's filters.
 #
-# Extra `find` predicates are passed through before `-print`, so the same walk
-# serves both passes: no predicates counts the inputs, `-newer <bin>` lists the
-# ones that postdate the binary.
+# The same walk serves three passes: no predicates counts the inputs,
+# `-newer <bin>` lists the ones that postdate the binary, and the embed roots'
+# output feeds the fingerprint.
 _sky_compiler_inputs_in_root() { # <repo-root> <root-rel> [find predicates...]
     local repo="$1" rel="$2"
     shift 2
     case "$rel" in
+        rust)
+            # The workspace manifest, lockfile and toolchain/format pins —
+            # maxdepth 1, matching what actually lives there.
+            find "$repo/rust" -maxdepth 1 \
+                -type f \( -name '*.toml' -o -name 'Cargo.lock' \) "$@" -print
+            ;;
         rust/crates)
             # The compiler crates plus their manifests: a dependency bump in a
             # Cargo.toml changes the binary as surely as a line of Rust.
             find "$repo/rust/crates" \
-                \( -name target -o -name xtask -o -name node_modules -o -name .git \) -prune -o \
-                -type f \( -name '*.rs' -o -name 'Cargo.toml' \) "$@" -print
-            # The workspace manifest and lockfile pin every version compiled in.
-            find "$repo/rust" -maxdepth 1 \
-                -type f \( -name 'Cargo.toml' -o -name 'Cargo.lock' \) "$@" -print
+                \( -name '.*' -o -name target -o -name xtask -o -name node_modules \) -prune -o \
+                -type f ! -name '.*' \( -name '*.rs' -o -name 'Cargo.toml' \) "$@" -print
             ;;
         runtime-go)
             # Exactly what `stage_runtime` copies: go.mod, go.sum, rt/, cmd/.
-            # `*_test.go` and `testdata/` are dropped at stage time, so they are
-            # not inputs to the binary (`skip_file` / `skip_dir` in build.rs).
             find "$repo/runtime-go" -maxdepth 1 \
                 -type f \( -name 'go.mod' -o -name 'go.sum' \) "$@" -print
-            find "$repo/runtime-go/rt" "$repo/runtime-go/cmd" \
-                \( -name testdata -o -name node_modules -o -name .git \) -prune -o \
-                -type f ! -name '*_test.go' ! -name '.DS_Store' "$@" -print
-            ;;
-        sky-bundled)
-            # Source only. The committed build outputs under each bundled app
-            # are dropped by `skip_dir`, and they change on every local build —
-            # counting them would make the check fire on its own artefacts.
-            find "$repo/sky-bundled" \
-                \( -name sky-out -o -name .skycache -o -name .skydeps -o -name node_modules -o -name .git \) -prune -o \
-                -type f ! -name '.DS_Store' "$@" -print
-            ;;
-        tools/sky-ffi-inspect)
-            # The Go introspector source. The committed prebuilt binary of the
-            # same name is an output, dropped by `skip_file`.
-            find "$repo/tools/sky-ffi-inspect" \
-                \( -name node_modules -o -name .git \) -prune -o \
-                -type f ! -name 'sky-ffi-inspect' ! -name 'sky-ffi-inspect.exe' ! -name '.DS_Store' "$@" -print
+            _sky_embed_files "$repo/runtime-go/rt" "$@"
+            _sky_embed_files "$repo/runtime-go/cmd" "$@"
             ;;
         *)
-            find "$repo/$rel" \
-                \( -name node_modules -o -name .git \) -prune -o \
-                -type f ! -name '.DS_Store' "$@" -print
+            # sky-stdlib, templates, sky-bundled, tools/sky-ffi-inspect: the
+            # plain staging walk. Committed build outputs (`sky-out/` under
+            # `sky-bundled/*`) and the committed prebuilt inspector binary are
+            # dropped by the shared filters, exactly as build.rs drops them
+            # from the embed.
+            _sky_embed_files "$repo/$rel" "$@"
             ;;
     esac
 }
@@ -199,6 +276,65 @@ _sky_fresh_repo_root() {
     (cd "$(dirname "$self")/../.." && pwd)
 }
 
+# The sha256 line tool available on this host, or nothing. GNU `sha256sum` and
+# BSD/perl `shasum -a 256` print the identical `"<hex>  <path>"` line format,
+# which is exactly the manifest-line format build.rs constructs.
+_sky_sha256_tool() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        echo "sha256sum"
+    elif command -v shasum >/dev/null 2>&1; then
+        echo "shasum -a 256"
+    fi
+}
+
+# sky_embed_fingerprint_expected <repo-root>
+#
+# The sha256 fingerprint (bare 64-hex) the embedded asset tree of a binary
+# built from THIS tree would carry — the same construction as
+# `rust/crates/ffi/build.rs::fingerprint`, computed from the sources:
+# per staged file one line `"<sha256(bytes)>  <relpath>"`, lines sorted by
+# relpath as bytes (`LC_ALL=C`), fingerprint = sha256 of that manifest.
+# Returns 1 (prints nothing) when no sha256 tool exists or the walk is empty.
+sky_embed_fingerprint_expected() {
+    local repo="${1:?repo root required}" tool
+    tool=$(_sky_sha256_tool)
+    [ -n "$tool" ] || return 1
+    # Walk with repo="." from inside the repo so the paths are relpaths — the
+    # manifest must contain relpaths, and stripping an absolute prefix with sed
+    # would make the strip pattern out of the repo PATH, which may contain
+    # regex metacharacters.
+    local rels
+    rels=$(
+        cd "$repo" || exit 1
+        while IFS= read -r r; do
+            [ -n "$r" ] || continue
+            _sky_compiler_inputs_in_root "." "$r"
+        done <<EOF
+$_SKY_EMBED_ROOTS
+EOF
+    ) || return 1
+    rels=$(printf '%s\n' "$rels" | sed 's|^\./||' | LC_ALL=C sort)
+    [ -n "$rels" ] || return 1
+    (
+        cd "$repo" || exit 1
+        printf '%s\n' "$rels" | tr '\n' '\0' | xargs -0 $tool | $tool | awk '{print $1}'
+    )
+}
+
+# _sky_embed_fp_from_binary <binary>
+#
+# The embed fingerprint baked into the binary (bare 64-hex), recovered by
+# scanning for the `sky-embed-fp-v1:` marker `build.rs` emits. Returns 1 when
+# the binary carries no marker (a build from before the marker existed) or —
+# refusing to guess — more than one DISTINCT value.
+_sky_embed_fp_from_binary() {
+    local vals
+    vals=$(LC_ALL=C grep -a -o 'sky-embed-fp-v1:[0-9a-f]\{64\}' "$1" 2>/dev/null | LC_ALL=C sort -u) || true
+    [ -n "$vals" ] || return 1
+    [ "$(printf '%s\n' "$vals" | wc -l | tr -d ' ')" = "1" ] || return 1
+    printf '%s\n' "${vals#sky-embed-fp-v1:}"
+}
+
 # sky_compiler_freshness <binary> [<repo-root>]
 #
 # The whole decision, and it prints nothing — so a caller that wants to REBUILD
@@ -210,7 +346,10 @@ _sky_fresh_repo_root() {
 #   1  stale or absent      — $SKY_FRESH_REASON, $SKY_FRESH_WITNESS, $SKY_FRESH_COUNT
 #   2  cannot be determined — $SKY_FRESH_REASON
 #
-# $SKY_FRESH_BIN is the resolved binary path in every case.
+# $SKY_FRESH_REASON on 1 is "absent", "stale" (mtime), or "embed-mismatch"
+# (the binary's baked embed fingerprint contradicts the tree's content — a
+# `touch`ed or foreign binary). $SKY_FRESH_BIN is the resolved binary path in
+# every case.
 sky_compiler_freshness() {
     local bin="${1:-}" repo="${2:-}"
     SKY_FRESH_REASON=""; SKY_FRESH_WITNESS=""; SKY_FRESH_COUNT=0; SKY_FRESH_BIN="$bin"
@@ -223,9 +362,9 @@ sky_compiler_freshness() {
     # A bare name is resolved on PATH first. `scripts/conformance.sh` and
     # `scripts/sky-suites.sh` fall back to `sky` when the tree has no build, and
     # an unresolved name would make this check answer "absent" for a compiler
-    # that is very much present. Resolving it means the mtime comparison
-    # actually runs against the binary the suite is about to use — an installed
-    # `sky` older than the tree is the "certifies a months-old installed binary"
+    # that is very much present. Resolving it means the comparison actually
+    # runs against the binary the suite is about to use — an installed `sky`
+    # older than the tree is the "certifies a months-old installed binary"
     # defect those scripts' own comments describe, and it fails here.
     case "$bin" in
         */*) ;;
@@ -280,14 +419,64 @@ EOF
         true
     ) || true
 
+    # Pass 3 — content, where content is provable. The baked fingerprint, when
+    # the binary carries one, settles the embed trees in BOTH directions.
+    local baked=""
+    baked=$(_sky_embed_fp_from_binary "$bin") || baked=""
+
     if [ -z "$newer" ]; then
+        # mtime says fresh. A `touch`ed or copied-in binary looks exactly like
+        # this, so when the binary can testify about its own content, make it:
+        # a fingerprint mismatch is a stale embed no matter what the mtimes say.
+        if [ -n "$baked" ]; then
+            local expected=""
+            expected=$(sky_embed_fingerprint_expected "$repo") || expected=""
+            if [ -n "$expected" ] && [ "$baked" != "$expected" ]; then
+                SKY_FRESH_REASON="embed-mismatch"
+                return 1
+            fi
+        fi
         return 0
+    fi
+
+    # mtime says stale. When every newer file is in an EMBED root and the
+    # binary's baked fingerprint matches the tree's content byte-for-byte, the
+    # mtimes are the artefact (fresh checkout, prebuilt binary) — the binary
+    # embeds exactly this tree. Rust sources carry no content witness, so any
+    # newer file under rust/ keeps the mtime verdict.
+    local rust_newer=0 f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        case "$f" in
+            "$repo/rust/"*) rust_newer=1 ;;
+        esac
+    done <<EOF
+$newer
+EOF
+    if [ "$rust_newer" -eq 0 ] && [ -n "$baked" ]; then
+        local expected=""
+        expected=$(sky_embed_fingerprint_expected "$repo") || expected=""
+        if [ -n "$expected" ] && [ "$baked" = "$expected" ]; then
+            return 0
+        fi
     fi
 
     SKY_FRESH_REASON="stale"
     SKY_FRESH_COUNT=$(printf '%s\n' "$newer" | wc -l | tr -d ' ')
-    SKY_FRESH_WITNESS=$(printf '%s\n' "$newer" | head -1)
-    SKY_FRESH_WITNESS="${SKY_FRESH_WITNESS#"$repo"/}"
+    # The witness is the NEWEST changed file — the traversal-order head of the
+    # list was whatever root happened to be walked first, which pointed readers
+    # at a bystander. (`config_matrix.rs::newest_source_mtime` tracks newest for
+    # the same reason.)
+    local best=""
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ -z "$best" ] || [ "$f" -nt "$best" ]; then
+            best="$f"
+        fi
+    done <<EOF
+$newer
+EOF
+    SKY_FRESH_WITNESS="${best#"$repo"/}"
     return 1
 }
 
@@ -328,8 +517,19 @@ require_fresh_compiler() {
         exit 1
     fi
 
+    if [ "$SKY_FRESH_REASON" = "embed-mismatch" ]; then
+        echo "FAIL: '$SKY_FRESH_BIN' is mtime-current but its EMBEDDED CONTENT is not from this tree." >&2
+        echo "  The fingerprint baked into the binary (sky-embed-fp-v1:…) does not match the" >&2
+        echo "  fingerprint of this tree's embeddable sources. mtime cannot see this — a" >&2
+        echo "  touched or copied-in binary looks brand new — which is exactly why the check" >&2
+        echo "  compares content. Measuring this binary would certify a different tree." >&2
+        echo "" >&2
+        echo "  Rebuild and install it:  $SKY_FRESH_COMPILER_FIX" >&2
+        exit 1
+    fi
+
     echo "FAIL: '$SKY_FRESH_BIN' is older than the source it would be measuring." >&2
-    echo "  $SKY_FRESH_COUNT input file(s) have changed since it was built. First one:" >&2
+    echo "  $SKY_FRESH_COUNT input file(s) have changed since it was built. Newest:" >&2
     echo "    $SKY_FRESH_WITNESS" >&2
     echo "  Measuring this binary would report a verdict about a different tree." >&2
     echo "  That is how a sweep once reported 22 of 22 conformance suites FAILED on a" >&2
@@ -339,6 +539,10 @@ require_fresh_compiler() {
     echo "  Rebuild and install it:  $SKY_FRESH_COMPILER_FIX" >&2
     echo "  (a bare 'cargo build --release -p sky' writes rust/target/release/sky and" >&2
     echo "   does NOT install it to sky-out/sky — that gap is this failure.)" >&2
+    echo "  A prebuilt binary whose embedded assets match this tree passes by content" >&2
+    echo "  even with these mtimes — but a change under rust/ has no content witness," >&2
+    echo "  so only a rebuild can clear it. Do not touch(1) the binary: a fingerprint" >&2
+    echo "  mismatch fails regardless of mtimes." >&2
     exit 1
 }
 
