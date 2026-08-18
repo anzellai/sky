@@ -608,9 +608,59 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         };
     };
 
+    // ---- find the `Sky.Config` entry point in the entry module ----
+    //
+    // A top-level `config` VALUE of type `Sky.Config.Config` is the app's
+    // cross-cutting config; the compiler applies it via the emitted
+    // `rt.ApplyConfig(Main_config())` (see `lower_main`). It is discovered like
+    // `main`, but recognised by TYPE, not name alone: `config` is a common user
+    // identifier (a helper function, a record), and only a binding whose type is
+    // the opaque `Sky.Config.Config` can be one — you cannot produce that type
+    // without `Sky.Config`. Any other `config` binding is left entirely alone
+    // (no reservation, no error), so this cannot break existing code — the same
+    // false-negative-over-false-rejection discipline `ty::nominal` applies.
+    //
+    // Recognising it here closes the SILENT-NO-OP the design's grill flagged
+    // (G2): a well-typed `config` not referenced by `main` would be pruned by
+    // the DCE work-list below (which roots at `main` alone), so
+    // `rt.ApplyConfig(Main_config())` would call a function that does not exist.
+    // Rooting `config` in the work-list fixes it. An annotated
+    // `config : Sky.Config.Config` whose body does NOT produce one is still a
+    // loud error — from the type checker (identically in build/run/test/LSP) —
+    // rather than a value silently applied against.
+    let config_def = defs.iter().find_map(|(d, e)| {
+        if e.name != "config"
+            || module_prefix(&e.module_name) != module_prefix(db.module_name(entry))
+        {
+            return None;
+        }
+        // Zero value params (a config is a VALUE, not a function) and a type of
+        // `Sky.Config.Config`. `e.sig` (declared, else the derived scheme) is
+        // the whole type of a zero-param binding; fall back to the inferred
+        // result. A function-typed `config` (`Fun(..)`) or a differently-typed
+        // one never matches.
+        if !e.body.params.is_empty() {
+            return None;
+        }
+        let ty = e.sig.clone().or_else(|| e.types.result.clone());
+        let is_config =
+            matches!(&ty, Some(Ty::App(n, _)) if ty::nominal::base(n.as_str()) == "Config");
+        is_config.then_some(*d)
+    });
+    let config_go_name: Option<String> = config_def.map(|cd| {
+        let e = &defs[&cd];
+        top_go_name(&e.module_name, &e.name)
+    });
+
     // ---- DCE: lower reachable defs, discovering refs as we go ----
     let mut seen: HashSet<DefId> = HashSet::new();
+    // Root the work-list at `main` AND (when present) the `config` entry point,
+    // so a `config` not referenced by `main` is still lowered — otherwise
+    // `rt.ApplyConfig(Main_config())` would call a function DCE pruned.
     let mut work: Vec<DefId> = vec![main_def];
+    if let Some(cd) = config_def {
+        work.push(cd);
+    }
     let mut funcs: Vec<GoItem> = Vec::new();
     let mut used_go_types: HashSet<String> = HashSet::new();
     let mut ffi_used: BTreeSet<String> = BTreeSet::new();
@@ -661,6 +711,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             cur_module: e.module_name.clone(),
             cur_def: d,
             tco: None,
+            // Only `lower_main` reads this; harmless to carry on every Ctx.
+            apply_config: config_go_name.clone(),
         };
         let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
         // determinism (L4): `discovered` is a Vec (ordered), and the two set
@@ -1926,6 +1978,13 @@ struct Ctx<'a> {
     /// a saturated self-call reached in tail position under this context becomes
     /// a param-reassignment + `continue` instead of a recursive Go call.
     tco: Option<TcoCtx>,
+    /// The Go accessor name of the entry module's `config` binding (e.g.
+    /// `Main_config`), when one exists. Read ONLY by `lower_main`, which emits
+    /// `rt.ApplyConfig(<name>())` as the first statement of `main` so the
+    /// `Sky.Config` value is applied — seed-aware — before the runtime reads
+    /// anything. `None` for a program with no `config` binding, which keeps its
+    /// emitted `main` byte-identical to before this feature.
+    apply_config: Option<String>,
 }
 
 /// The tail-call-optimisation context for one def. Present only while the def's
@@ -2421,11 +2480,24 @@ impl<'a> Ctx<'a> {
     /// an ordinary build ignore the flag in silence, which is the failure mode
     /// this whole feature exists to refuse.
     fn lower_main(&mut self, _name: &str, _module: &str) -> GoItem {
-        let mut stmts = vec![
-            GoStmt::Expr(GoExpr::new(
-                GoExprKind::Ident("defer rt.LogPanicAndExit()".into()),
+        let mut stmts = vec![GoStmt::Expr(GoExpr::new(
+            GoExprKind::Ident("defer rt.LogPanicAndExit()".into()),
+            GoTy::Unit,
+        ))];
+        // Apply the app's `Sky.Config` value FIRST (after the panic guard is
+        // deferred), before `MaybeStartEmbeddedPostgres` reads the DSN and
+        // before any handler runs. `ApplyConfig` is seed-aware, so a `withX`
+        // value beats a legacy `sky.toml` seed emitted by the prologue `init()`
+        // while still deferring to an operator's environment override. Emitted
+        // ONLY when the entry module declares `config`, so a program without one
+        // is byte-identical (repro / golden / coerce-floor baselines unmoved).
+        if let Some(cfg) = &self.apply_config {
+            stmts.push(GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident(format!("rt.ApplyConfig({cfg}())")),
                 GoTy::Unit,
-            )),
+            )));
+        }
+        stmts.extend([
             GoStmt::Expr(GoExpr::new(
                 GoExprKind::Ident("rt.MaybeStartEmbeddedPostgres()".into()),
                 GoTy::Unit,
@@ -2438,7 +2510,7 @@ impl<'a> Ctx<'a> {
                 GoExprKind::Ident("rt.MaybeApplyEmbeddedMigrationsAndExit()".into()),
                 GoTy::Unit,
             )),
-        ];
+        ]);
         let root = self.body.root;
         if let Some(r) = root {
             self.lower_main_body(r, &mut stmts);

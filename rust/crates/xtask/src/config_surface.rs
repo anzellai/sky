@@ -181,6 +181,14 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          resolveStoreKind/resolveStorePath, and resolveLivePort, which calls \
          configLayers directly)",
     ),
+    (
+        "runtime-go/rt/sky_config.go",
+        "ApplyConfig resolves each Sky.Config key's env suffix with \
+         skyEnvName(suffix), so the write is non-literal HERE while every suffix \
+         is a literal VALUE in the configKeyToEnvSuffix table (LOG_FORMAT / \
+         LOG_LEVEL today). It is a seed-aware WRITE of the withX layer, not a \
+         new read of a hidden suffix",
+    ),
 ];
 
 const SEEDED_WITHOUT_READER: &[(&str, &str)] = &[

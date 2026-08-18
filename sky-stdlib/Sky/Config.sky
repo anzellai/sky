@@ -1,0 +1,107 @@
+-- | Sky.Config — the app's cross-cutting configuration value.
+--
+-- A Sky app declares WHAT IT IS in a top-level `config` binding, built from
+-- `Sky.Config.default` and refined with `withX` builders — the same shape
+-- `Std.Live` already uses for app-shape config, extended to the concerns that
+-- used to live in `sky.toml` (log, database, sessions, jobs, csrf, telemetry).
+--
+-- The compiler discovers `config` exactly as it discovers `main` (it is a
+-- reserved entry point in the entry module) and applies it before the runtime
+-- reads anything, so a value set here beats the legacy `sky.toml` seed while
+-- still losing to an operator's environment override. See
+-- `docs/tooling/config-architecture.md` §3–§4 and `rt.ApplyConfig`.
+--
+-- ```elm
+-- module Main exposing (main, config)
+--
+-- import Sky.Config as Config exposing (LogFormat(..), LogLevel(..))
+--
+-- config : Config.Config
+-- config =
+--     Config.default
+--         |> Config.withLog Json Warn
+--
+-- main =
+--     ...
+-- ```
+--
+-- This is the FOUNDATION module: it ships `default` + `withLog` to prove the
+-- discovery → DCE → `Main_config()` → `rt.ApplyConfig` pipeline end-to-end. The
+-- remaining cross-cutting builders (withDatabase / withSessions / withJobs /
+-- withCsrf / withTelemetry) are mechanical repetition added in a later phase.
+module Sky.Config exposing (Config, default, LogFormat(..), LogLevel(..), withLog)
+
+import Sky.Ffi as Ffi
+
+-- | The app's cross-cutting configuration. Opaque — produced by `default`,
+-- refined by the `withX` builders, consumed by the compiler-emitted
+-- `rt.ApplyConfig(Main_config())` at the top of `main`.
+type Config
+    = Config_OPAQUE
+
+-- | Structured-log output format. `Json` sets `<PREFIX>_LOG_FORMAT=json`;
+-- `Text` selects the plain one-line-per-record format.
+type LogFormat
+    = Json
+    | Text
+
+-- | Minimum log level emitted. Maps to `<PREFIX>_LOG_LEVEL`.
+type LogLevel
+    = Debug
+    | Info
+    | Warn
+    | Error
+
+
+-- | The empty config — every setting takes its runtime default. An app that
+-- writes no `config` binding gets exactly this.
+default : Config
+default =
+    Ffi.kernel "Config_default"
+
+
+-- | Set the structured-log format and minimum level.
+--
+-- Precedence (one rule, shared with `Live.withX` — see `rt.configLayers`):
+-- an operator's `<PREFIX>_LOG_FORMAT` / `<PREFIX>_LOG_LEVEL` still wins; this
+-- builder beats a legacy `sky.toml [log]` seed; and both beat the hardcoded
+-- runtime fallback.
+withLog : LogFormat -> LogLevel -> Config -> Config
+withLog format level cfg =
+    setLog (logFormatName format) (logLevelName level) cfg
+
+
+-- The raw kernel takes already-normalised strings, so the ADT → env-string
+-- mapping stays a total `case` in Sky (type-safe, robust to constructor
+-- reordering) rather than a fragile tag-index read in Go.
+setLog : String -> String -> Config -> Config
+setLog =
+    Ffi.kernel "Config_withLog"
+
+
+logFormatName : LogFormat -> String
+logFormatName format =
+    case format of
+
+        Json ->
+            "json"
+
+        Text ->
+            "text"
+
+
+logLevelName : LogLevel -> String
+logLevelName level =
+    case level of
+
+        Debug ->
+            "debug"
+
+        Info ->
+            "info"
+
+        Warn ->
+            "warn"
+
+        Error ->
+            "error"

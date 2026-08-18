@@ -51,17 +51,28 @@ import (
 func configLayers(suffix, builderVal string) []string {
 	name := skyEnvName(suffix)
 	envVal, envSet := lookupEnvRaw(name)
-	operatorSet := envSet && envVal != "" && !isSeededDefault(name)
+	// A value written into this env by `rt.ApplyConfig` (a `Sky.Config.withX`
+	// value) is the BUILDER layer, not an operator override — the same layer as
+	// the explicit `builderVal` a `Live.withX` passes. Distinguishing it keeps
+	// ONE precedence: Sky.Config.withX and Live.withX resolve identically and
+	// cannot disagree.
+	cfgApplied := envSet && envVal != "" && isConfigApplied(name)
+	operatorSet := envSet && envVal != "" && !isSeededDefault(name) && !cfgApplied
 
 	out := make([]string, 0, 3)
 	if operatorSet {
 		out = append(out, envVal)
 	}
+	// The builder layer. An explicit `Live.withX` argument is more specific than
+	// a `Sky.Config.withX`-applied env value, so it comes first; they are the
+	// same layer, and when a caller sets both the app-shape builder wins.
 	if builderVal != "" {
 		out = append(out, builderVal)
+	} else if cfgApplied {
+		out = append(out, envVal)
 	}
-	// The seeded layer, only when it was not already emitted as layer 1.
-	if envSet && envVal != "" && !operatorSet {
+	// The seeded layer, only when it was not already emitted as layer 1 or 2.
+	if envSet && envVal != "" && !operatorSet && !cfgApplied {
 		out = append(out, envVal)
 	}
 	return out
