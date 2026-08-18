@@ -641,7 +641,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1801,
+    "stdlib_entries": 1810,
     "stdlib_modules": 88,
     "surfaces_covered": 134,
     "surfaces_covered_pct": 89.3,
@@ -11243,13 +11243,20 @@
           ]
         },
         "Std.Auth": {
-          "count": 5,
+          "count": 12,
           "symbols": [
+            "AccessState",
+            "disableUser",
+            "enableUser",
+            "isDisabled",
+            "isRevoked",
             "login",
             "register",
+            "revokeUser",
             "setRole",
             "setSlidingCookie",
-            "signSlidingToken"
+            "signSlidingToken",
+            "userAccessState"
           ]
         },
         "Std.Cache": {
@@ -11615,9 +11622,10 @@
           ]
         },
         "Std.Live": {
-          "count": 14,
+          "count": 16,
           "symbols": [
             "AppConfig",
+            "bindSessionUser",
             "lifecycle",
             "withAnalyticsIdentify",
             "withAuthSliding",
@@ -11626,6 +11634,7 @@
             "withInput",
             "withMaxBodyBytes",
             "withOnNavigate",
+            "withRevocation",
             "withStatic",
             "withStaticUrl",
             "withStatus",
@@ -11992,8 +12001,8 @@
           ]
         }
       },
-      "count": 721,
-      "pct_of_denominator": 40.0
+      "count": 730,
+      "pct_of_denominator": 40.3
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -12324,13 +12333,20 @@
           ]
         },
         "Std.Auth": {
-          "count": 5,
+          "count": 12,
           "symbols": [
+            "AccessState",
+            "disableUser",
+            "enableUser",
+            "isDisabled",
+            "isRevoked",
             "login",
             "register",
+            "revokeUser",
             "setRole",
             "setSlidingCookie",
-            "signSlidingToken"
+            "signSlidingToken",
+            "userAccessState"
           ]
         },
         "Std.Cache": {
@@ -12762,10 +12778,11 @@
           ]
         },
         "Std.Live": {
-          "count": 17,
+          "count": 19,
           "symbols": [
             "AppConfig",
             "api",
+            "bindSessionUser",
             "lifecycle",
             "withAnalytics",
             "withAnalyticsIdentify",
@@ -12776,6 +12793,7 @@
             "withInput",
             "withMaxBodyBytes",
             "withOnNavigate",
+            "withRevocation",
             "withStatic",
             "withStaticUrl",
             "withStatus",
@@ -13143,8 +13161,8 @@
           ]
         }
       },
-      "count": 800,
-      "pct_of_denominator": 44.4
+      "count": 809,
+      "pct_of_denominator": 44.7
     }
   },
   "units": [
