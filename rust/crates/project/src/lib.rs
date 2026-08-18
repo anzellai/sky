@@ -11,13 +11,18 @@
 // second definition of "the runtime's arity", and second definitions drift.
 pub mod abi_guard;
 mod build;
+/// The ONE legacy-`sky.toml` → `withX` migration table (design §8.1). `pub` so
+/// the `config-migration` xtask gate can assert it covers every Sky.Config env
+/// target in `runtime-go/rt/sky_config.go` — a new builder cannot ship without
+/// its migration entry.
+pub mod config_migration;
 mod doc;
 mod driver;
 mod ffi_ops;
 pub use build::{
     build_example, build_project, configured_bin_name, configured_source_root, db_driver_conflict,
     driver_for_dsn, emit_example_source, emit_example_warnings, enumerate_skydep_files,
-    load_ffi_surface, sky_toml_flag, sky_toml_section_key, BuildOptions,
+    load_ffi_surface, migration_hint_for, sky_toml_flag, sky_toml_section_key, BuildOptions,
     BuildReport, EMBEDDED_BUNDLE_FILENAME,
 };
 pub use doc::{

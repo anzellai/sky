@@ -132,6 +132,15 @@ func printStartupReport(port int) {
 		consoleURL = fmt.Sprintf("http://%s:%d/_sky/console", consoleDisplayHost(bindHost), port)
 	}
 	lines := startupReportLines(consoleURL, bindHost, productionFromEnv(), gcStartupDecision, os.Getenv("SKY_GC_QUIET") != "")
+	// The legacy-sky.toml → withX migration LIST (design §8.2), appended AFTER
+	// the checklist rather than woven into `startupReportLines`: it depends on
+	// the process's seeded-default provenance, not on the pure inputs that
+	// function takes, and it must surface in production too (a legacy config
+	// deployed unmigrated is worth naming, not just in dev). Self-extinguishing
+	// — `legacyMigrationNotices` returns nil once the keys are migrated, so a
+	// clean app's startup output is byte-identical to before. None of its lines
+	// contains "listening" (the substring the supervisor + verify.sh parse).
+	lines = append(lines, legacyMigrationNotices()...)
 	if len(lines) == 0 {
 		return
 	}

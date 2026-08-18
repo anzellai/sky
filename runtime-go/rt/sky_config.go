@@ -31,7 +31,9 @@
 package rt
 
 import (
+	"fmt"
 	"os"
+	"sort"
 	"sync"
 )
 
@@ -169,6 +171,93 @@ var configKeyToEnvSuffix = map[string]string{
 var configKeyToLiteralEnv = map[string]string{
 	"DatabaseUrl":  "DATABASE_URL",
 	"OtelEndpoint": "OTEL_EXPORTER_OTLP_ENDPOINT",
+}
+
+// configKeyToBuilder names the `withX` builder each config key is set by — the
+// "which builder sets each" the migration LIST inverts. It is colocated with
+// configKeyToEnvSuffix ON PURPOSE: the two describe the same setting from two
+// sides (its env suffix, its builder), so keeping them adjacent is what stops
+// a suffix and its builder name from drifting apart (design §1.3, the failure
+// this whole config layer exists to close). The `config-migration` xtask gate
+// asserts this map's keys are EXACTLY configKeyToEnvSuffix's, so a new builder
+// cannot add a suffix without naming its builder here.
+var configKeyToBuilder = map[string]string{
+	"LogFormat":     "Sky.Config.withLog",
+	"LogLevel":      "Sky.Config.withLog",
+	"DbPath":        "Sky.Config.withDatabase",
+	"LiveStore":     "Sky.Config.withSessions",
+	"LiveStorePath": "Sky.Config.withSessions",
+	"JobsStore":     "Sky.Config.withJobs",
+	"JobsStorePath": "Sky.Config.withJobs",
+	"Csrf":          "Sky.Config.withCsrf",
+}
+
+// legacyMigrationNotices lists the legacy `sky.toml` runtime settings that
+// seeded THIS process's environment and were NOT overridden by a `withX`
+// builder or an operator — the migration LIST the user asked for, printed on
+// the running app's console (startup_report.go).
+//
+// # Why `isSeededDefault` is the SOUND detector here (design §8.2)
+//
+// The runtime never sees `sky.toml`; it sees the environment the compiler's
+// generated prologue seeded. `SetSkyDefault` marks each value it seeds in
+// `seededDefaults`, and `ApplyConfig` CLEARS that mark when a `withX` value
+// overrides the suffix (`clearSeededDefault`), while an operator's own env var
+// is never marked at all. So for a suffix in `configKeyToEnvSuffix`,
+// `isSeededDefault` is true IFF the value came from a legacy `sky.toml` key and
+// nothing in code or the environment replaced it — exactly the "legacy key
+// present AND withX not used" condition. It is self-extinguishing: migrate the
+// key into a `withX` and the mark clears, so this block falls silent.
+//
+// This is sound ONLY for the `configKeyToEnvSuffix` suffixes, and that is why
+// it is keyed off that map rather than a broader one: those eight suffixes are
+// seeded ONLY from their `sky.toml` key. The unconditional prologue fallbacks —
+// `LIVE_TTL`, `LIVE_PORT`, the `AUTH_*` block (lower.rs `prologue_init`) — are
+// seeded for EVERY program regardless of `sky.toml`, so `isSeededDefault` would
+// false-positive on them; none is in `configKeyToEnvSuffix`, so none is
+// considered here. Those (the `[auth]` REMOVED class, the `[live] ttl`
+// DefaultChanged class) are surfaced by the build-time hint, which reads the
+// actual `sky.toml` and can tell them apart.
+//
+// Returns nil when nothing legacy is seeded — the common, fully-configured
+// case, and the reason a clean app's startup output is unchanged.
+func legacyMigrationNotices() []string {
+	type notice struct{ env, builder string }
+	var found []notice
+	for key, suffix := range configKeyToEnvSuffix {
+		name := skyEnvName(suffix)
+		if !isSeededDefault(name) {
+			continue
+		}
+		builder := configKeyToBuilder[key]
+		if builder == "" {
+			// A suffix with no builder label would be a drift the gate is meant
+			// to catch; skip it here rather than print a half-line, so a gate
+			// gap never becomes a garbled console message.
+			continue
+		}
+		found = append(found, notice{env: name, builder: builder})
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].env < found[j].env })
+
+	width := 0
+	for _, n := range found {
+		if len(n.env) > width {
+			width = len(n.env)
+		}
+	}
+	lines := make([]string, 0, len(found)+2)
+	lines = append(lines,
+		fmt.Sprintf("  %-11s  legacy sky.toml settings are seeding this app — move them into a `config` binding:", "migrate"))
+	for _, n := range found {
+		lines = append(lines, fmt.Sprintf("  %-11s  %-*s  ->  %s", "", width, n.env, n.builder))
+	}
+	lines = append(lines,
+		fmt.Sprintf("  %-11s  they still work as defaults; run `sky build` for the full list", ""))
+	return lines
 }
 
 // configApplied records the env vars a `withX` config value wrote — distinct

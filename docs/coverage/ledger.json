@@ -226,6 +226,16 @@
       ],
       "tier": "T1"
     },
+    "config-migration": {
+      "expected_assertions": 44,
+      "falsifier_mutation": "config-migration.drop-a-builder-label",
+      "falsifier_proven": true,
+      "summary": "the legacy→withX migration table covers every Sky.Config env target and every legacy key it names is one the compiler accepts",
+      "surfaces": [
+        "meta.config-migration"
+      ],
+      "tier": "T1"
+    },
     "config-surface": {
       "expected_assertions": 59,
       "falsifier_mutation": "config-surface.seed-a-suffix-nothing-reads",
@@ -618,13 +628,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1782,
-    "stdlib_modules": 87,
-    "surfaces_covered": 131,
-    "surfaces_covered_pct": 90.3,
-    "surfaces_equal": 19,
-    "surfaces_stronger": 126,
-    "surfaces_total": 145,
+    "stdlib_entries": 1798,
+    "stdlib_modules": 88,
+    "surfaces_covered": 132,
+    "surfaces_covered_pct": 89.8,
+    "surfaces_equal": 20,
+    "surfaces_stronger": 127,
+    "surfaces_total": 147,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -2044,6 +2054,34 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `config-migration`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — the migration mapping lived in prose, in two languages, ungated",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "the legacy sky.toml → withX migration table covers every Sky.Config env target the runtime names, every builder label is present, and every legacy key the table names is one the compiler accepts",
+      "id": "meta.config-migration",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "gate `config-surface`",
             "class": "Falsified",
             "strength": 4
@@ -2369,6 +2407,22 @@
       "description": "sessions, the persistent SSE channel, and CSRF refusal",
       "id": "skylive.session-sse-csrf",
       "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Sky.Config public API",
+      "id": "stdlib.Sky.Config",
+      "verdict": "equal"
     },
     {
       "category": "stdlib",
@@ -10758,8 +10812,9 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 6,
+      "count": 7,
       "modules": [
+        "Sky.Config",
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
@@ -10767,7 +10822,7 @@
         "Std.Db.Table",
         "Std.Live.Console"
       ],
-      "pct_of_denominator": 6.9
+      "pct_of_denominator": 8.0
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -10778,7 +10833,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 10,
+      "count": 11,
       "surfaces": [
         "cli.check",
         "cli.console",
@@ -10787,6 +10842,7 @@
         "cli.lsp",
         "cli.upgrade-claude",
         "cli.verify",
+        "stdlib.Sky.Config",
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Live.Console"
@@ -10794,6 +10850,25 @@
     },
     "symbols_unreferenced_generous": {
       "by_module": {
+        "Sky.Config": {
+          "count": 14,
+          "symbols": [
+            "Config",
+            "Database",
+            "JobStore",
+            "LogFormat",
+            "LogLevel",
+            "Sessions",
+            "Telemetry",
+            "default",
+            "withCsrf",
+            "withDatabase",
+            "withJobs",
+            "withLog",
+            "withSessions",
+            "withTelemetry"
+          ]
+        },
         "Sky.Core.Basics": {
           "count": 6,
           "symbols": [
@@ -11458,13 +11533,15 @@
           ]
         },
         "Std.Live": {
-          "count": 11,
+          "count": 13,
           "symbols": [
             "AppConfig",
             "lifecycle",
             "withAnalyticsIdentify",
             "withConsoleAuth",
             "withIdleEvict",
+            "withInput",
+            "withMaxBodyBytes",
             "withOnNavigate",
             "withStatic",
             "withStaticUrl",
@@ -11835,11 +11912,30 @@
           ]
         }
       },
-      "count": 705,
-      "pct_of_denominator": 39.6
+      "count": 721,
+      "pct_of_denominator": 40.1
     },
     "symbols_unreferenced_strict": {
       "by_module": {
+        "Sky.Config": {
+          "count": 14,
+          "symbols": [
+            "Config",
+            "Database",
+            "JobStore",
+            "LogFormat",
+            "LogLevel",
+            "Sessions",
+            "Telemetry",
+            "default",
+            "withCsrf",
+            "withDatabase",
+            "withJobs",
+            "withLog",
+            "withSessions",
+            "withTelemetry"
+          ]
+        },
         "Sky.Core.Basics": {
           "count": 6,
           "symbols": [
@@ -12584,7 +12680,7 @@
           ]
         },
         "Std.Live": {
-          "count": 14,
+          "count": 16,
           "symbols": [
             "AppConfig",
             "api",
@@ -12594,6 +12690,8 @@
             "withConsoleAuth",
             "withGuard",
             "withIdleEvict",
+            "withInput",
+            "withMaxBodyBytes",
             "withOnNavigate",
             "withStatic",
             "withStaticUrl",
@@ -12965,8 +13063,8 @@
           ]
         }
       },
-      "count": 784,
-      "pct_of_denominator": 44.0
+      "count": 800,
+      "pct_of_denominator": 44.5
     }
   },
   "units": [

@@ -416,6 +416,20 @@ static CROSS_CUTTING: &[CrossSurface] = &[
             0,
         )],
     },
+    // The legacy→withX migration LIST is derived in two languages (the Rust
+    // table for the build-time hint, the Go maps for the runtime startup list);
+    // this surface is the cross-language coverage that keeps them one source.
+    CrossSurface {
+        id: "meta.config-migration",
+        category: "meta",
+        description: "the legacy sky.toml → withX migration table covers every Sky.Config \
+                      env target the runtime names, every builder label is present, and \
+                      every legacy key the table names is one the compiler accepts",
+        today: &[(
+            "nothing — the migration mapping lived in prose, in two languages, ungated",
+            0,
+        )],
+    },
 ];
 
 /// Which surfaces each REGISTERED gate covers.
@@ -512,6 +526,7 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("coverage-ledger", &["meta.coverage-accounting"]),
     ("config-surface", &["meta.config-surface"]),
     ("config-matrix", &["meta.config-effective-values"]),
+    ("config-migration", &["meta.config-migration"]),
     ("corpus-manifest", &["lang.constructs"]),
     // Family R is the combinatorial face of `compiler.reject`. The standalone
     // `reject` gate covers 63 hand-written defects, one file each; this one
