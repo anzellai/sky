@@ -2939,7 +2939,16 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// silently losing surface rows while still reporting PASS. The constant moves
 /// when the surface count moves — which is a real event that should be read,
 /// not absorbed.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 147;
+///
+/// 147 -> 148: the checked-in `ledger.json` carries `surfaces_total: 144`
+/// (`check_body` returns `surfaces.len() + 4`), but this constant still expected
+/// 143. A surface was added and the ledger regenerated without bumping the
+/// count here, so the `coverage-ledger` HARNESS gate reported `148/147 FAIL` —
+/// invisibly, because only `release.yml`'s `harness --tier t1` runs that face
+/// and `config-gates`' `coverage-ledger --check` (the `run()` path) does not
+/// assert the count. Exactly the release-only-counting-gate latency this cycle
+/// is closing; brought current here.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 148;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

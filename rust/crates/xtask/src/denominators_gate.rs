@@ -95,6 +95,31 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
             );
             return 1;
         }
+        // ANTI-BANKING (HOLE 2). removals.toml may not carry more [[removal]]
+        // stanzas than the checked-in baseline has ACCOUNTED. In every committed
+        // state the two are equal: a real removal drops a denominator AND bumps
+        // `removals_accounted` in the SAME `xtask denominators` run. A surplus is
+        // unspent credit — a spare [[removal]] banked so the next unexplained
+        // single-metric decrease sails through (`newly_accounted = removals_now -
+        // removals_before`). It is also how a fabricated removal for a symbol that
+        // never existed hides: it raises the count without moving any metric, so
+        // `same_metrics` below never notices. Only meaningful under `--check`,
+        // where the baseline is authoritative; the regenerate path WRITES the two
+        // equal by construction.
+        if check_only && !removals_all_accounted(removals, base) {
+            let accounted = base["removals_accounted"].as_i64().unwrap_or(0).max(0) as usize;
+            eprintln!(
+                "\nxtask denominators --check: FAIL — docs/coverage/removals.toml carries {removals} \
+                 [[removal]] stanza(s), but the checked-in {} accounts for {accounted}.\n\
+                 Every removal is accounted the moment it lands. A mismatch is banked or fabricated \
+                 credit: a spare [[removal]] left in the file lets a later decrease pass without an \
+                 honest entry, and a removal for a symbol that never left raises the count while \
+                 moving no metric. Run `xtask denominators` and commit the result, or delete the \
+                 stanza.",
+                out_path.display()
+            );
+            return 1;
+        }
         if check_only && !same_metrics(base, &current) {
             eprintln!(
                 "\nxtask denominators --check: FAIL — {} is STALE.\n\
@@ -483,6 +508,16 @@ fn vacuity_ratchet(base: &Value, cur: &Value) -> Result<(), String> {
     ))
 }
 
+/// ANTI-BANKING (HOLE 2). `removals.toml` may not carry more `[[removal]]`
+/// stanzas than the checked-in baseline has ACCOUNTED. Every committed state has
+/// them equal — a real removal drops a denominator AND bumps `removals_accounted`
+/// in the same regeneration — so a surplus is unspent/fabricated credit that
+/// `same_metrics` cannot see (a spare removal moves no metric).
+fn removals_all_accounted(removals_now: usize, base: &Value) -> bool {
+    let accounted = base["removals_accounted"].as_i64().unwrap_or(0).max(0) as usize;
+    removals_now <= accounted
+}
+
 fn ratchet(base: &Value, cur: &Value, removals_now: usize) -> Result<(), String> {
     vacuity_ratchet(base, cur)?;
 
@@ -697,6 +732,23 @@ mod tests {
                 "by_assertion_fn": { "fail": fail_calls, "equal": 100 }
             }}
         })
+    }
+
+    /// ANTI-BANKING (HOLE 2). A `[[removal]]` beyond what the baseline accounts
+    /// for is unspent/fabricated credit. The audit added `Std.Never.existedThing`
+    /// (4 stanzas vs 3 accounted) and `denominators --check` stayed PASS because
+    /// `same_metrics` skips `removals_accounted` and a fabricated symbol moves no
+    /// metric.
+    #[test]
+    fn a_removal_surplus_over_the_accounted_baseline_is_rejected() {
+        // Steady state: as many stanzas as the baseline accounts → fine.
+        assert!(removals_all_accounted(3, &doc(1746, 3)));
+        // Fewer (a deleted stanza, under-credit) is harmless, not banking.
+        assert!(removals_all_accounted(2, &doc(1746, 3)));
+        // One MORE than accounted — the banked/fabricated case — is rejected.
+        assert!(!removals_all_accounted(4, &doc(1746, 3)));
+        // The exact audit shape: 4 stanzas, baseline accounts 3.
+        assert!(!removals_all_accounted(4, &doc(1746, 3)));
     }
 
     /// REMOVING a vacuous `Test.pass` must not owe paperwork.

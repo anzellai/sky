@@ -90,7 +90,7 @@
 //! `cover_new` fell, or when a surface is `weaker` without a `[[weakening]]`
 //! stanza naming it. An INCREASE is always fine and rewrites the file.
 
-use crate::harness::registry::{Tier, GATES};
+use crate::harness::registry::{MutationKind, Tier, GATES};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -1411,6 +1411,86 @@ fn stale_proof_violations(proofs: &BTreeMap<String, RecordedProof>) -> Vec<Strin
     out
 }
 
+/// Gates whose recorded proof credits a mutation that can no longer be
+/// **applied** — its `ReplaceOnce.from` no longer occurs exactly once in the
+/// target file, as violation strings.
+///
+/// This is the SOURCE-drift companion to [`stale_proof_violations`]. That
+/// function catches a proof whose mutation-id the registry has RETIRED; this one
+/// catches a proof whose mutation-id still matches the registry but whose `from`
+/// pattern has drifted out of its target file (a literal reworded, a line
+/// reordered, a `!= nil` flipped to `nil !=`). The proof then credits a
+/// falsification that can no longer be reproduced: `Patch::apply` would refuse
+/// the mutation and `harness --verify-falsifiers` would report `INCONCLUSIVE …
+/// occurs 0x … must be exactly 1`. But `--verify-falsifiers` rebuilds and
+/// mutates, so it runs deep (nightly); this is the CHEAP static form — a
+/// grep-equivalent over the cited files, no build — so it can run on every PR
+/// inside `coverage-ledger --check`, which is where the ledger reads the proofs
+/// in the first place.
+///
+/// The predicate is exactly the one `Patch::apply` computes (`occurs 1x`), and
+/// exactly the one the registry's own
+/// `every_replace_once_mutation_targets_a_real_unique_site` unit test asserts —
+/// but applied HERE it closes the specific hole that `coverage-ledger --check`
+/// credited the drifted gate as `Falsified` while the mutation was dead.
+///
+/// A `NoOp` mutation (the canary / `selftest-hang`) has no `from` to drift and
+/// is skipped. A proof whose mutation-id the registry no longer declares is
+/// [`stale_proof_violations`]' job, not this one — checked there and skipped
+/// here so a single drift is reported once, under the right diagnosis.
+fn inapplicable_proof_violations(
+    proofs: &BTreeMap<String, RecordedProof>,
+    repo_root: &Path,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (gate, p) in proofs {
+        if !p.proven {
+            continue;
+        }
+        // Retired mutation-id → stale_proof_violations reports it. Only proofs
+        // the registry STILL declares are candidates for a from-drift.
+        if !registry_declares_mutation(gate, &p.mutation) {
+            continue;
+        }
+        let Some(m) = GATES
+            .iter()
+            .find(|g| g.name == gate.as_str())
+            .and_then(|g| g.mutations.as_slice().iter().find(|m| m.id == p.mutation))
+        else {
+            continue;
+        };
+        let MutationKind::ReplaceOnce { path, from, .. } = m.kind else {
+            continue; // NoOp — nothing to drift.
+        };
+        match std::fs::read_to_string(repo_root.join(path)) {
+            Ok(src) => {
+                let hits = src.matches(from).count();
+                if hits != 1 {
+                    out.push(format!(
+                        "INAPPLICABLE PROOF — `{gate}` is recorded PROVEN against mutation \
+                         `{}`, whose `from` pattern {from:?} occurs {hits}x in {path} (must be \
+                         exactly 1). The recorded PROVEN credits a falsification that can no \
+                         longer be reproduced: 0x means the pattern drifted out of the file, \
+                         >1 means it is now ambiguous — either way `harness \
+                         --verify-falsifiers` would report INCONCLUSIVE, not PROVEN. Restore \
+                         the pattern or update the registry mutation, re-establish the proof \
+                         with `cargo run --release -p xtask -- harness --verify-falsifiers \
+                         --only {gate}`, then regenerate the ledger.",
+                        p.mutation,
+                    ));
+                }
+            }
+            Err(e) => out.push(format!(
+                "INAPPLICABLE PROOF — `{gate}` is recorded PROVEN against mutation `{}`, but \
+                 its target file {path} cannot be read: {e}. The falsification cannot be \
+                 reproduced, so the proof is worthless until the file is restored.",
+                p.mutation,
+            )),
+        }
+    }
+    out
+}
+
 /// A registered gate's coverage strength: `Falsified` only when its falsifying
 /// mutation is recorded PROVEN **and the recorded mutation is one the registry
 /// still declares**, `Asserted` otherwise. A registered-but-unproven gate still
@@ -2553,9 +2633,56 @@ fn baseline_weaker(base: Option<&Value>) -> Option<BTreeSet<String>> {
 /// the checked-in ledger fails in BOTH modes — the write path refuses to record
 /// it — so "just re-run the generator" is not a way to accept a weakening
 /// without writing a stanza.
+/// A `[[weakening]]` stanza only authorises a surface that is ACTUALLY weaker.
+///
+/// HOLE 2. `parse_weakenings` validated field PRESENCE and nothing else, so a
+/// stanza for `surface.that.never.existed` — or one whose surface used to be
+/// weaker and has since had its coverage RESTORED — passed `--check` and, left
+/// in place, silently licensed re-weakening that surface for ever. The docs
+/// already require the surface "match a row in the generated ledger"; this
+/// enforces it, plus the stronger condition the intent demands: the row's
+/// verdict must be `weaker`. A stanza that is absent from the ledger, or whose
+/// surface is now `equal`/`stronger`, is stale and must be removed.
+fn stale_weakening_violations(surfaces: &[Surface], weakenings: &BTreeSet<String>) -> Vec<String> {
+    let by_id: BTreeMap<&str, &Surface> =
+        surfaces.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut stale: Vec<String> = Vec::new();
+    for w in weakenings {
+        match by_id.get(w.as_str()) {
+            None => stale.push(format!("  {w} : names no surface in the generated ledger")),
+            Some(s) if s.verdict() != "weaker" => stale.push(format!(
+                "  {w} : verdict is `{}`, not `weaker` (cover_today={} -> cover_new={}) — \
+                 the surface is at or above full strength, so the stanza protects nothing",
+                s.verdict(),
+                s.today_max().label(),
+                s.new_max().label()
+            )),
+            Some(_) => {}
+        }
+    }
+    if stale.is_empty() {
+        return Vec::new();
+    }
+    vec![format!(
+        "STALE WEAKENING — {} [[weakening]] stanza(s) in docs/coverage/removals.toml no \
+         longer describe a weaker surface:\n{}\n\
+         A weakening authorises a surface to be covered LESS; a stanza whose surface is \
+         absent or at full strength authorises nothing, and leaving it in place licenses \
+         re-weakening that surface silently after its coverage was restored. Delete the \
+         stanza, or (if the surface really did get weaker) let the recomputed verdict say so.",
+        stale.len(),
+        stale.join("\n")
+    )]
+}
+
 fn ratchet(led: &Ledger, base: Option<&Value>, weakenings: &BTreeSet<String>) -> Vec<String> {
     let mut fails: Vec<String> = Vec::new();
     let grandfathered = baseline_weaker(base);
+
+    // STALE WEAKENING (HOLE 2). A `[[weakening]]` only authorises a surface that
+    // is ACTUALLY weaker; a stanza naming a non-existent or full-strength surface
+    // is stale. See [`stale_weakening_violations`].
+    fails.extend(stale_weakening_violations(&led.surfaces, weakenings));
 
     let unaccounted: Vec<&Surface> = led
         .surfaces
@@ -3027,7 +3154,13 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
     let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
     // Reported in BOTH modes: a proof that credits a retired mutation must not
     // be laundered into a freshly regenerated baseline either.
-    fails.extend(stale_proof_violations(&read_proofs(repo_root)));
+    let proofs = read_proofs(repo_root);
+    fails.extend(stale_proof_violations(&proofs));
+    // …and a proof whose mutation-id still matches but whose `from` pattern has
+    // drifted out of the source is equally dead. Cheap enough (a grep over the
+    // cited files) to run here, which is what makes it a per-PR check rather
+    // than a nightly `--verify-falsifiers` one.
+    fails.extend(inapplicable_proof_violations(&proofs, repo_root));
 
     let text = format!("{}\n", serde_json::to_string_pretty(&led.doc).unwrap());
     if check_only {
@@ -3166,7 +3299,9 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
         .and_then(|s| serde_json::from_str(&s).ok());
 
     let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
-    fails.extend(stale_proof_violations(&read_proofs(repo_root)));
+    let proofs = read_proofs(repo_root);
+    fails.extend(stale_proof_violations(&proofs));
+    fails.extend(inapplicable_proof_violations(&proofs, repo_root));
     match &baseline {
         None => fails.push(format!("{} does not exist", json_path.display())),
         Some(base) => {
@@ -3427,6 +3562,77 @@ mod tests {
     #[test]
     fn the_checked_in_proof_ledger_names_only_live_mutations() {
         let v = stale_proof_violations(&read_proofs(&repo_root()));
+        assert!(v.is_empty(), "{}", v.join("\n"));
+    }
+
+    /// THE REGRESSION for HOLE 1. A proof whose mutation-id still matches the
+    /// registry but whose `from` pattern has drifted out of the source is dead —
+    /// `harness --verify-falsifiers` would report INCONCLUSIVE — yet
+    /// `coverage-ledger --check` credited it as `Falsified`, PASS, because
+    /// nothing checked applicability. The audit reproduced it by flipping
+    /// `err != nil` to `nil != err` in `analytics_store.go` while keeping the id.
+    #[test]
+    fn a_proof_whose_from_pattern_drifted_is_inapplicable() {
+        // The first gate carrying a ReplaceOnce mutation; its `from` is what we
+        // present, then drift, in a synthetic tree.
+        let (gate, mutation, path, from) = GATES
+            .iter()
+            .find_map(|g| {
+                g.mutations.as_slice().iter().find_map(|m| match m.kind {
+                    MutationKind::ReplaceOnce { path, from, .. } => {
+                        Some((g.name, m.id, path, from))
+                    }
+                    MutationKind::NoOp => None,
+                })
+            })
+            .expect("some gate declares a ReplaceOnce mutation");
+
+        let proofs: BTreeMap<String, RecordedProof> = [(
+            gate.to_string(),
+            RecordedProof {
+                proven: true,
+                mutation: mutation.to_string(),
+            },
+        )]
+        .into_iter()
+        .collect();
+
+        let root = std::env::temp_dir().join(format!(
+            "sky-inapplicable-proof-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let full = root.join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+
+        // Pattern present exactly once → applicable → no violation.
+        std::fs::write(&full, format!("{from}\n")).unwrap();
+        assert!(
+            inapplicable_proof_violations(&proofs, &root).is_empty(),
+            "a from-pattern present exactly once must not be flagged inapplicable"
+        );
+
+        // Drift the pattern out of the file → the proof is dead → one violation.
+        std::fs::write(&full, "the pattern is gone\n").unwrap();
+        let v = inapplicable_proof_violations(&proofs, &root);
+        assert_eq!(v.len(), 1, "expected exactly one INAPPLICABLE PROOF, got {v:?}");
+        assert!(v[0].contains("INAPPLICABLE PROOF"), "{}", v[0]);
+        assert!(v[0].contains("occurs 0x"), "{}", v[0]);
+        assert!(v[0].contains(gate), "{}", v[0]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The file-level form on the real tree: every checked-in PROVEN proof names
+    /// a mutation whose `from` still occurs exactly once in its target file, so
+    /// `coverage-ledger --check` credits no dead falsifier.
+    #[test]
+    fn the_checked_in_proof_ledger_names_only_applicable_mutations() {
+        let root = repo_root();
+        let v = inapplicable_proof_violations(&read_proofs(&root), &root);
         assert!(v.is_empty(), "{}", v.join("\n"));
     }
 
@@ -3701,6 +3907,47 @@ mod tests {
         let fails = ratchet(&led, Some(&base), &BTreeSet::new());
         assert_eq!(fails.len(), 1);
         assert!(fails[0].contains("surface disappeared"), "{}", fails[0]);
+    }
+
+    /// HOLE 2 (weakening half). A `[[weakening]]` only authorises a surface that
+    /// is ACTUALLY weaker. The audit added `surface.that.never.existed` (all
+    /// fields present) and `coverage-ledger --check` stayed PASS because only
+    /// field presence was validated. A stanza naming a non-existent OR
+    /// full-strength surface must now be reported stale.
+    #[test]
+    fn a_weakening_for_a_nonexistent_or_full_strength_surface_is_stale() {
+        let mk = |id: &str, today: Strength, new: Strength| Surface {
+            id: id.to_string(),
+            category: "test".into(),
+            description: String::new(),
+            today: vec![Ev::new("t", today)],
+            new: vec![Ev::new("n", new)],
+        };
+        let surfaces = vec![
+            mk("s.weak", Strength::Asserted, Strength::Runs), // weaker
+            mk("s.full", Strength::Runs, Strength::Asserted), // stronger
+        ];
+
+        // A stanza for the genuinely-weaker surface: no violation.
+        let ok: BTreeSet<String> = ["s.weak".to_string()].into_iter().collect();
+        assert!(stale_weakening_violations(&surfaces, &ok).is_empty());
+
+        // A stanza for a surface that does not exist: stale (the audit's case).
+        let ghost: BTreeSet<String> =
+            ["surface.that.never.existed".to_string()].into_iter().collect();
+        let v = stale_weakening_violations(&surfaces, &ghost);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("STALE WEAKENING"), "{}", v[0]);
+        assert!(v[0].contains("names no surface"), "{}", v[0]);
+
+        // A stanza for a full-strength (stronger) surface: stale.
+        let full: BTreeSet<String> = ["s.full".to_string()].into_iter().collect();
+        let v = stale_weakening_violations(&surfaces, &full);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("not `weaker`"), "{}", v[0]);
+
+        // No stanzas: the current healthy state, no violation.
+        assert!(stale_weakening_violations(&surfaces, &BTreeSet::new()).is_empty());
     }
 
     /// `scripts/conformance.sh` is the load-bearing premise behind giving the
