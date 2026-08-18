@@ -188,6 +188,11 @@ func (s *Store) Add(name string, labels map[string]string, delta float64) {
 	if delta < 0 {
 		return
 	}
+	// Byte-bound name + labels BEFORE the series key is built: a
+	// series key lives for the process lifetime, so an oversized
+	// label value would be pinned forever (limits.go).
+	name = boundMetricName(name)
+	labels = BoundLabels(labels)
 	ser := s.counterSeries(name, labels)
 	if ser == nil {
 		return // cardinality cap hit
@@ -245,6 +250,8 @@ type gaugeSeries struct {
 
 // SetGauge overwrites a gauge value.
 func (s *Store) SetGauge(name string, labels map[string]string, v float64) {
+	name = boundMetricName(name)
+	labels = BoundLabels(labels)
 	ser := s.gaugeSeries(name, labels)
 	if ser == nil {
 		return
@@ -331,6 +338,8 @@ type histogramSeries struct {
 // every bucket whose `le` boundary is >= v (Prometheus cumulative
 // convention).
 func (s *Store) Observe(name string, labels map[string]string, v float64) {
+	name = boundMetricName(name)
+	labels = BoundLabels(labels)
 	ser := s.histogramSeries(name, labels)
 	if ser == nil {
 		return
@@ -505,8 +514,10 @@ func (s *Store) StartedAt() time.Time {
 
 // AppendLog stores a single structured log entry in the ring buffer.
 // O(1). Safe for concurrent writers. Oldest entry is overwritten
-// when the buffer fills.
+// when the buffer fills. Entries are byte-bounded on the way in
+// (limits.go) — the ring caps COUNT; this caps what each slot pins.
 func (s *Store) AppendLog(e LogEntry) {
+	e = BoundLogEntry(e)
 	s.logs.append(e)
 	s.enqueuePersist(persistEntry{kind: "log", log: e})
 }
@@ -517,8 +528,10 @@ func (s *Store) RecentLogs(limit int) []LogEntry {
 	return s.logs.recent(limit)
 }
 
-// AppendTrace stores a span in the trace ring buffer.
+// AppendTrace stores a span in the trace ring buffer. Byte-bounded
+// on the way in (limits.go), like AppendLog.
 func (s *Store) AppendTrace(e TraceEntry) {
+	e = BoundTraceEntry(e)
 	s.traces.append(e)
 	s.enqueuePersist(persistEntry{kind: "span", span: e})
 }
