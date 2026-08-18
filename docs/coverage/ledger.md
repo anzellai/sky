@@ -20,9 +20,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 144 |
-| covered by the new corpus (>= Asserted) | 130 |
-| verdict `stronger` | 125 |
+| surfaces | 145 |
+| covered by the new corpus (>= Asserted) | 131 |
+| verdict `stronger` | 126 |
 | verdict `equal` | 19 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
@@ -140,6 +140,7 @@ None.
 | `observability.console` | observability | Asserted | Falsified | stronger |
 | `runtime.go-rt` | runtime | Asserted | Asserted | equal |
 | `runtime.panic-classes` | runtime | Asserted | Falsified | stronger |
+| `runtime.periodic-goroutines` | runtime | None | Falsified | stronger |
 | `skylive.multi-replica` | skylive | Asserted | Falsified | stronger |
 | `skylive.session-sse-csrf` | skylive | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Basics` | stdlib | None | Falsified | stronger |
@@ -262,7 +263,10 @@ None.
 | `corpus-witness` | T2 | PROVEN | `compiler.codegen-determinism` · `compiler.lower-emit-shape` |
 | `coverage-ledger` | T1 | PROVEN | `meta.coverage-accounting` |
 | `erasure-path-uses-an-index` | T1 | PROVEN | `observability.analytics-store` |
+| `jobs-complete-failure-is-reported` | T1 | PROVEN | `runtime.periodic-goroutines` |
+| `live-time-every-mutex-survives-a-panic` | T1 | PROVEN | `runtime.periodic-goroutines` · `skylive.session-sse-csrf` |
 | `lsp` | T1 | PROVEN | `lsp` |
+| `periodic-loops-recover-per-cycle` | T1 | PROVEN | `runtime.periodic-goroutines` |
 | `reject` | T1 | PROVEN | `compiler.reject` · `compiler.infer` |
 | `roundtrip` | T1 | PROVEN | `compiler.parse` · `lang.constructs` |
 | `shared-world` | T1 | PROVEN | `compiler.shared-world` · `compiler.resolve` |
