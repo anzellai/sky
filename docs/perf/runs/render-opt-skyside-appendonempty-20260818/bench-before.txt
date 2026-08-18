@@ -1,0 +1,8 @@
+BenchmarkRenderForum/posts=6_~94el-8         	    6771	    171607 ns/op	  179477 B/op	    3526 allocs/op
+BenchmarkRenderForum/posts=6_~94el-8         	    6588	    171500 ns/op	  179477 B/op	    3526 allocs/op
+BenchmarkRenderForum/posts=6_~94el-8         	    6764	    171563 ns/op	  179478 B/op	    3526 allocs/op
+BenchmarkRenderForum/posts=60_~974el-8       	     730	   1646289 ns/op	 1779609 B/op	   34206 allocs/op
+BenchmarkRenderForum/posts=60_~974el-8       	     728	   1641107 ns/op	 1779609 B/op	   34206 allocs/op
+BenchmarkRenderForum/posts=60_~974el-8       	     715	   1647093 ns/op	 1779608 B/op	   34206 allocs/op
+PASS
+ok  	sky-app	7.620s

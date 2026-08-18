@@ -2517,7 +2517,18 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///   returned `""` until this suite ran it.
 ///
 /// 384 + 9 = 393.
-pub const SKY_SUITES_EXPECTED: u64 = 393;
+///
+/// 393 -> 398:
+///
+/// * `Std/UiRenderConcatTest` (5) — the byte-identical regression fence for the
+///   `renderNodeAs` append-on-empty optimization (Std.Ui Element->Html pass).
+///   It pins the exact HTML of the four `++`-on-`[]` code paths the guards
+///   touch (allAttrs, attrList, renderedChildren, collectTransitions), so a
+///   change to any element's attributes / child order / style bytes turns it
+///   red.
+///
+/// 393 + 5 = 398.
+pub const SKY_SUITES_EXPECTED: u64 = 398;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
