@@ -77,9 +77,8 @@ Examples:
 ### Request: `POST /_sky/event`
 
 **The session cookie is the authority.** The server resolves the session
-*only* from the session cookie — `sky_sid` by default, or the app's
-configured `cookieName` (sub-apps mounted in-process use
-`sky_<name>_sid`). The `sessionId` in the body is **advisory**: it may
+*only* from the session cookie — `sky_sid` for the host app (sub-apps
+mounted in-process use `sky_<name>_sid`). The `sessionId` in the body is **advisory**: it may
 agree with the cookie or be omitted, but it can never select a different
 session. A request whose body names a session other than the cookie's,
 or that carries no session cookie at all, is rejected with the same

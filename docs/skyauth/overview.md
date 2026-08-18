@@ -191,42 +191,40 @@ handleMe db req =
 
 `Task.andThenResult` is the bridge that chains `Auth.signToken` (Result) after `Auth.login` (Task) without nested case-matching. See [Effect Boundary](../../CLAUDE.md#effect-boundary-task-everywhere-v0100) for the bridge cheatsheet.
 
-## Configuration — `[auth]` section
+## Configuration — there is no `[auth]` section
 
-`sky.toml` keys seed env vars at startup (process env still wins):
+**`Std.Auth` is not configured from `sky.toml`.** It is a library: `signToken`
+takes the secret + TTL as **arguments**, and your handler sets the session
+cookie (`Server.withCookie`). There was nothing for a config layer to seed, so
+the inert `[auth]` block (`driver` / `cookieName` / `tokenTtl`) was **deleted** —
+it was parsed, seeded into `SKY_AUTH_*` and read by nothing for four minor
+versions. A residual `[auth]` key now raises the standard inert-key build
+warning.
 
-```toml
-[auth]
-cookieName = "sky_sid"     # → SKY_AUTH_COOKIE
-tokenTtl   = "24h"         # → SKY_AUTH_TOKEN_TTL (Go duration string)
-driver     = "…"           # → SKY_AUTH_DRIVER
+Configure `Std.Auth` from your own code, reading whatever environment variables
+you choose at the call site:
+
+```elm
+secret = System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret"
+ttl    = System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400" |> String.toInt |> Result.withDefault 86400
+
+token  = Auth.signToken secret claims ttl
 ```
 
-Those **three keys are the whole section** (`accepted_config_keys("auth")`,
-`rust/crates/project/src/build.rs:1106`; the seeding is at `:1045-1047`).
+These `SKY_AUTH_*` reads are a **convention in your code**, not runtime settings —
+nothing in `runtime-go/` reads them, and the compiler no longer seeds any of
+them from `sky.toml`. Set them in the environment (shell, `.env`, secret
+manager).
 
-> **Two keys were wrong here and both failed silently.** This block used to
-> show `cookie = "sky_sid"` and
-> `tokenSecret = "REPLACE-WITH-32+-BYTE-RANDOM-STRING"`.
->
-> - The key is **`cookieName`**, not `cookie`. `cookie` is not accepted and
->   raises an unknown-config-key warning; the cookie name silently stays at
->   its default.
-> - **`tokenSecret` is not a `sky.toml` key at all, by design.** The
->   build.rs comment is explicit: *"`secret` is deliberately NOT seeded from
->   sky.toml — it must come from env"* (`:1043-1044`). `SKY_AUTH_TOKEN_SECRET`
->   is read from the process environment only (`sky/src/main.rs:3692`). So the
->   old example invited a reader to put a **signing secret in a committed
->   file**, where it would then be ignored — the worst of both outcomes.
->
-> `docs/sky-toml.md:184-188` already documented this correctly; the two docs
-> contradicted each other.
+> **`SKY_AUTH_TOKEN_SECRET` is an environment variable, never a config-file
+> value.** The production gate reads the literal, unprefixed name
+> (`rust/crates/sky/src/main.rs:3791`) and `sky init` writes it into the
+> generated `.env`. It must be ≥ 32 bytes; `Auth.signToken` and the runtime both
+> reject a shorter one. Putting a signing key in a committed file is the worst
+> outcome — it is ignored *and* leaked.
 
-Three-layer precedence (highest wins): `SKY_AUTH_*` env var → `.env` file → `sky.toml`. See [environment-variable precedence](../../CLAUDE.md#environment-variables) for the full doctrine.
-
-**Never commit a real secret to `sky.toml`.** The intended pattern is:
-- `sky.toml` ships the *defaults* (timeouts, cookie name) so a fresh `sky build` works
-- `SKY_AUTH_TOKEN_SECRET` lives in `.env` (gitignored) for local dev and in the deployment env for production. Sky's runtime errors at startup when this is set but shorter than 32 bytes.
+**Never commit a real secret.** `SKY_AUTH_TOKEN_SECRET` lives in `.env`
+(gitignored) for local dev and in the deployment env for production.
 
 ## Production checklist
 
