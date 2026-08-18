@@ -643,8 +643,24 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             return None;
         }
         let ty = e.sig.clone().or_else(|| e.types.result.clone());
-        let is_config =
-            matches!(&ty, Some(Ty::App(n, _)) if ty::nominal::base(n.as_str()) == "Config");
+        // Recognise ONLY the stdlib `Sky.Config.Config`, by CONFIDENT nominal
+        // identity — never by the bare base `"Config"`. `ty::nominal` qualifies a
+        // user-declared type with its DECLARING module (`ty::sig`), so the genuine
+        // type — whether annotated `config : Config.Config`, import-aliased
+        // `config : C.Config`, or inferred from an unannotated
+        // `config = Config.default |> …` — always arrives fully qualified as
+        // `Sky.Config.Config` (the declaring module wins over any alias). A user's
+        // own `type Config` in module `Main` arrives as the equally-confident
+        // `Main.Config`, and keying on the bare base — or on `ty::nominal::same`,
+        // which treats a bare name as a WILDCARD (`nominal.rs`) — would let it
+        // hijack this entry point. Requiring the full qualified key is the only
+        // discipline that separates the two. A bare `"Config"` (module unknown)
+        // deliberately does NOT match: a resolution gap must yield a false
+        // NEGATIVE (config silently not this app's), never a false hijack of an
+        // unrelated binding.
+        let is_config = matches!(&ty, Some(Ty::App(n, _))
+            if ty::nominal::is_qualified(n.as_str())
+                && n.as_str() == ty::nominal::qualify("Sky.Config", "Config"));
         is_config.then_some(*d)
     });
     let config_go_name: Option<String> = config_def.map(|cd| {
