@@ -409,6 +409,12 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	// sub-app cannot drift into a fourth precedence order.
 	ttl := resolveTTL(stringField(cfg, "Ttl"), defaultSubAppSessionTTL())
 	idleEvict := resolveIdleEvict(stringField(cfg, "IdleEvict"), defaultIdleEvict)
+	// maxBodyBytes / inputMode resolve through the shared rule like ttl above —
+	// the sub-app honours the host's operator env (the pre-refactor behaviour,
+	// when handleEvent / handleConfig read the environment directly) and lets a
+	// sub-app that sets its own builder win.
+	app.maxBodyBytes = resolveMaxBodyBytes(stringField(cfg, "MaxBodyBytes"), 5<<20)
+	app.inputMode = resolveInputMode(stringField(cfg, "Input"))
 	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	app.topics = app.store.Broker()

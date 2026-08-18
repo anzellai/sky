@@ -137,6 +137,63 @@ main =
     println \"hi\"
 ";
 
+// The second-wave builders (withDatabase / withSessions / withJobs / withCsrf /
+// withTelemetry) chained together — proving each kernel is reachable from
+// `config` and the whole chain is rooted through `rt.ApplyConfig(Main_config())`.
+const SECOND_WAVE_CONFIG_APP: &str = "\
+module Main exposing (main, config)
+
+import Std.Log exposing (println)
+import Sky.Config as Config exposing (Database(..), Sessions(..), JobStore(..), Telemetry(..))
+
+config : Config.Config
+config =
+    Config.default
+        |> Config.withDatabase (Postgres \"postgres://localhost/app\")
+        |> Config.withSessions SharedWithDatabase
+        |> Config.withJobs JobsSharedWithDatabase
+        |> Config.withCsrf False
+        |> Config.withTelemetry (Otlp \"http://collector:4318\")
+
+main =
+    println \"hi\"
+";
+
+#[test]
+fn second_wave_builders_reach_the_runtime_via_apply_config() {
+    // Every new builder's kernel must be emitted AND reachable from `config`,
+    // and the whole value must flow through `rt.ApplyConfig(Main_config())` — the
+    // emission-level "the builder's value reaches the runtime" proof (the DCE
+    // root that made the dead `withTtl` impossible for this surface).
+    let repo = repo_root();
+    let project = scratch_project("secondwave", SECOND_WAVE_CONFIG_APP);
+    let source = project::emit_example_source(&repo, &project)
+        .unwrap_or_else(|e| panic!("a second-wave config app must build: {e}"));
+    let _ = std::fs::remove_dir_all(&project);
+
+    assert!(
+        source.contains("rt.ApplyConfig(Main_config())"),
+        "the config chain must be applied via rt.ApplyConfig(Main_config()):\n{source}"
+    );
+    for kernel in [
+        "rt.Config_withDatabase",
+        "rt.Config_withSessions",
+        "rt.Config_withJobs",
+        "rt.Config_withCsrf",
+        "rt.Config_withTelemetry",
+    ] {
+        assert!(
+            source.contains(kernel),
+            "the {kernel} kernel must be reachable from `config` (DCE root):\n{source}"
+        );
+    }
+    // The chain starts from the real empty map — `Config.default` CALLED.
+    assert!(
+        source.contains("rt.Config_default()"),
+        "`Config.default` must be emitted as a call:\n{source}"
+    );
+}
+
 #[test]
 fn a_user_config_type_does_not_hijack_the_entry_point() {
     // THE HOLE. A user's own `type Config` + zero-param `config : Config` value,
