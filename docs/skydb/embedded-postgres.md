@@ -1047,9 +1047,11 @@ Why those numbers:
   roughly 600 MB of RAM without `--embed`, 815 MB with it — the runtime is left
   on Go's defaults entirely, because taking a 4× heap multiplier without being
   able to afford the bound is the one combination that makes things worse. The
-  floor is calibrated against measurement: the stock collector already peaks at
-  138–145 MB at 100 sessions, so a limit we set can never bind below the
-  footprint the app has without us.
+  floor is calibrated against measurement: the stock (`GOGC=100`) collector
+  already peaks at **138–146 MB** at 100 sessions (window-peak RSS
+  137,984–145,568 kB across the `GOGC=100` n=100 runs;
+  `docs/perf/runs/gogc-postgres-20260816/results.tsv`), so a limit we set can
+  never bind below the footprint the app has without us.
 - **Serverless takes the bound but not the multiplier.** A request-billed
   container has a hard, platform-enforced ceiling where the soft limit's
   overshoot is a killed instance rather than a slow one, and the +19% is a
@@ -1179,13 +1181,6 @@ had access to.
 > **established**, not requested — at a requested 500 the e2-micro established
 > only 447.
 
-| Concurrent sessions | Sessions | Total | Fits in 1 GB? |
-|---|---|---|---|
-| 100 | 110 MB | ~490 MB | yes |
-| 300 | 330 MB | ~710 MB | yes |
-| 500 | 550 MB | ~930 MB | at the edge |
-| 700 | 770 MB | ~1.15 GB | no |
-
 The pool ceiling is a ceiling and not an allocation — `database/sql` opens
 lazily, so a host pays for what is in flight.
 
@@ -1201,9 +1196,12 @@ lazily, so a host pays for what is in flight.
 > is the e2-micro's 447 (below). What bounds a small host at the shipped GC
 > default is the derived `GOMEMLIMIT`, which is the paragraph after next.
 
-> **That table predates the shipped GC default and now reads as an upper
-> bound, not a forecast.** It is built on ~1.1 MB per session; at `GOGC=400`
-> the slope is ~2.9× the stock one, so the same rows arrive sooner. What
+> **A "Fits in 1 GB?" session-vs-total table stood here and is deleted.** It
+> was built on ~1.1 MB per session — the retracted RSS/n figure above — so it
+> is deleted rather than adjusted (rebuilding it on the 625–650 kB `19-skyforum`
+> slope would swap one app's cost into another's budget, the error the
+> retraction is about). At `GOGC=400` the slope is ~2.9× the stock one, and no
+> run has established a session ceiling on a 1 GB or 2 GB instance. What
 > replaces "will it fit" as the question is that **it now cannot not fit**: on
 > a 1 GB machine running `--embed` the runtime derives a **389 MB** ceiling for
 > the app (1024 − 256 OS − 153 `shared_buffers` − 96 working set, three-
@@ -1321,10 +1319,12 @@ linear to within 2% across a 370× range. In practice:
 So the diff is **under 1%** of an interaction — optimising the differ buys
 nothing; at saturation the entire diff path is under 4% of a core. But the
 interaction as a whole **does track element count**, because `view(model)`
-re-runs in full on every interaction and is ~84% of the handler: measured
-across seven view sizes, `cost_ms ≈ 0.12 + 0.018 × elements` on one core, so
-a 30-element view serves ~1,500 interactions/sec per core
-(`docs/perf/runs/forum-rebaseline-20260816/`). An earlier version of this
+re-runs in full on every interaction and is ~84% of the handler:
+`cost_ms ≈ 0.124 + 0.018 × elements` over the three smallest views (30–94
+elements, R² = 0.99) on one core, so a 30-element view serves ~1,500
+interactions/sec per core (`docs/perf/runs/forum-rebaseline-20260816/`; the
+all-seven-sizes fit is `cost_ms ≈ −0.147 + 0.0197 × elements`, n=21,
+R² = 0.998). An earlier version of this
 section generalised the diff's flatness to the whole interaction; that
 generalisation is withdrawn — the full attribution of where the milliseconds
 go is in `docs/perf/skylive-interaction-cost.md`, "The attribution".

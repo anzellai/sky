@@ -249,8 +249,9 @@ non-obvious ones as questions:
    The **diff** is not the cost — ~128 ns per VNode, under 1% of an
    interaction — but the interaction as a whole **does track view size**,
    because `view(model)` re-runs in full every interaction:
-   `cost_ms ≈ 0.12 + 0.018 × elements` on one core
-   (`docs/perf/runs/forum-rebaseline-20260816/`). Optimising the differ buys
+   `cost_ms ≈ 0.124 + 0.018 × elements` over the three smallest views (30–94
+   elements) on one core (`docs/perf/runs/forum-rebaseline-20260816/`; the
+   all-seven-sizes fit is `−0.147 + 0.0197 × elements`). Optimising the differ buys
    nothing; trimming a large view is a real lever. And **a single instance
    has no replica**:
    `sky db provision --shared` generates a backup timer, a single `--embed` app
