@@ -147,6 +147,26 @@ error[E0080]: evaluation panicked: every gate must declare at least one
 Proofs are recorded in `docs/coverage/falsifier-proofs.json`. A gate whose proof
 is missing or older than the window renders `UNPROVEN` under `--require-proofs`.
 
+### Where the proofs are checked
+
+A recorded proof is evidence about a **(gate, mutation)** pair, and two things
+can rot it. Both are now caught, at two depths:
+
+- **From-pattern drift, statically, per-PR.** If a mutation's `ReplaceOnce.from`
+  string drifts out of its target file (a literal reworded, a `!= nil` flipped
+  to `nil !=`), the recorded `PROVEN` credits a falsification that can no longer
+  be reproduced. `coverage-ledger --check` asserts every proven proof's `from`
+  still occurs **exactly once** in its target — a grep over the cited files, no
+  build — so a drift reddens the per-PR `config-gates` job, not just a release.
+
+- **Does-it-still-bite, deeply, nightly.** `--verify-falsifiers` actually applies
+  each mutation and confirms the gate reddens. It rebuilds `xtask` per
+  Rust-source mutation and runs every selected gate **twice** (baseline +
+  mutated), so it is the deepest and slowest check here and runs in the nightly
+  `falsifier-verification` job (`nightly-sweep.yml`), scoped `--tier t1` — the
+  merge-blocking tier the per-PR gates lean on. It accepts `--tier` / `--only`
+  to verify one slice at a time; with neither it sweeps the whole registry.
+
 ## The canary
 
 One gate — `canary` — is deliberately vacuous and paired with a **no-op** patch.
