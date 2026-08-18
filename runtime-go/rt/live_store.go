@@ -30,6 +30,7 @@ import (
 	"os"
 	"reflect"
 	"sky-app/rt/dbshare"
+	"sky-app/rt/periodic"
 	"sky-app/rt/telemetry"
 	"strconv"
 	"strings"
@@ -709,8 +710,9 @@ func (s *sqliteStore) Get(sid string) (*liveSession, bool) {
 	s.memMu.Unlock()
 	// Touch last_seen on disk so the TTL reap doesn't delete the blob under a
 	// freshly-resurrected session.
-	_, _ = s.db.Exec(`UPDATE sky_sessions SET last_seen = ? WHERE sid = ?`,
-		sess.lastSeenTime().Unix(), sid)
+	reportSessionWriteError("live.session-touch.sqlite", sid,
+		execIgnoringRows(s.db, `UPDATE sky_sessions SET last_seen = ? WHERE sid = ?`,
+			sess.lastSeenTime().Unix(), sid))
 	return sess, true
 }
 
@@ -787,7 +789,8 @@ func (s *sqliteStore) Delete(sid string) {
 	if sess != nil {
 		sess.markDone()
 	}
-	_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE sid = ?`, sid)
+	reportSessionWriteError("live.session-delete.sqlite", sid,
+		execIgnoringRows(s.db, `DELETE FROM sky_sessions WHERE sid = ?`, sid))
 }
 
 func (s *sqliteStore) NewID() string { return generateSkySessionID() }
@@ -877,59 +880,162 @@ func idleEvictPass(
 	}
 }
 
-func (s *sqliteStore) cleanupLoop() {
-	t := time.NewTicker(60 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case now := <-t.C:
-			_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE last_seen < ?`,
-				now.Add(-s.ttl).Unix())
-			// Cycle 3 P36 / Gap C4: also evict the matching memCache
-			// entries and signal terminal teardown. The memCache holds
-			// the LIVE pointer (the one that owns Time.every goroutines);
-			// without this, a session whose blob expires on disk still
-			// keeps its in-process pointer + subscription goroutines alive
-			// for the lifetime of the process.
-			cutoff := now.Add(-s.ttl)
-			s.memMu.Lock()
-			var expired []*liveSession
-			for sid, sess := range s.memCache {
-				if sess.lastSeenTime().Before(cutoff) {
-					expired = append(expired, sess)
-					delete(s.memCache, sid)
-				}
-			}
-			s.memMu.Unlock()
-			for _, sess := range expired {
-				sess.markDone()
-			}
-			// Tiered-session-cache idle-evict pass (docs/skylive/
-			// tiered-session-cache.md). Runs AFTER the TTL reap so an
-			// already-expired session is reaped (blob deleted), not evicted
-			// (blob kept).
-			s.runIdleEvictOnce(now)
+// liveStoreExecer is the one method the session-cleanup loop needs from its
+// store. A narrow interface rather than *sql.DB so the regression gates can
+// inject an Exec that panics or fails — the two behaviours the loop has to
+// survive, and neither reachable through a real driver on demand.
+type liveStoreExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// liveStoreCleanupInterval is the session-cleanup period. A var, not a const,
+// so the regression gate can drive several cycles in milliseconds instead of
+// waiting a minute for the second one — the defect is only visible ACROSS
+// cycles, which is what made it invisible.
+var liveStoreCleanupInterval = 60 * time.Second
+
+// The session-cleanup statements, named so the gates assert on the exact
+// string the loop executes rather than a copy that could drift.
+const (
+	qSqliteReapSessions   = `DELETE FROM sky_sessions WHERE last_seen < ?`
+	qPostgresReapSessions = `DELETE FROM sky_sessions WHERE last_seen < $1`
+
+	qSqlitePersistEvicted = `
+				INSERT INTO sky_sessions (sid, blob, last_seen) VALUES (?, ?, ?)
+				ON CONFLICT(sid) DO UPDATE SET blob=excluded.blob, last_seen=excluded.last_seen`
+	qPostgresPersistEvicted = `
+				INSERT INTO sky_sessions (sid, blob, last_seen) VALUES ($1, $2, $3)
+				ON CONFLICT (sid) DO UPDATE SET blob = EXCLUDED.blob, last_seen = EXCLUDED.last_seen`
+)
+
+// execIgnoringRows runs a statement whose RowsAffected nobody needs and
+// returns only its error.
+//
+// It exists so that "this write's row count is uninteresting" and "this
+// write's failure is uninteresting" stop being the same line of Go.
+// `_, _ = db.Exec(...)` says both at once, and only the first was ever meant:
+// the second is what let a session store that could not write a single row
+// look exactly like one that was working.
+func execIgnoringRows(db liveStoreExecer, query string, args ...any) error {
+	_, err := db.Exec(query, args...)
+	return err
+}
+
+// reportSessionWriteError logs a failed session-store write. These sites sit
+// on SessionStore interface methods that return nothing, so logging is the
+// only channel available — but it is a channel, which is the whole point
+// against a discarded error.
+//
+// A failure here is not cosmetic. A dropped `last_seen` touch means the TTL
+// reap deletes a session that is actively in use; a dropped DELETE means a
+// signed-out session's blob stays readable on disk.
+func reportSessionWriteError(op, sid string, err error) {
+	if err == nil {
+		return
+	}
+	logStructured("warn", op+".failed",
+		"detail", "a session-store write failed; session state on disk is now out of step with memory",
+		"sid", sid,
+		"error", err.Error())
+}
+
+// reapExpiredSessions deletes the session rows older than the cutoff and
+// REPORTS what happened. Shared by both SQL stores so the two cannot drift.
+func reapExpiredSessions(db liveStoreExecer, query string, cutoffUnix int64) error {
+	if _, err := db.Exec(query, cutoffUnix); err != nil {
+		return fmt.Errorf("reaping expired sessions: %w — sessions older than the "+
+			"TTL are still on disk", err)
+	}
+	return nil
+}
+
+// evictExpiredFromCache drops the live pointers whose last_seen is before the
+// cutoff and signals their terminal teardown. markDone runs OUTSIDE memMu.
+func evictExpiredFromCache(memMu *sync.RWMutex, memCache map[string]*liveSession, cutoff time.Time) {
+	memMu.Lock()
+	var expired []*liveSession
+	for sid, sess := range memCache {
+		if sess.lastSeenTime().Before(cutoff) {
+			expired = append(expired, sess)
+			delete(memCache, sid)
 		}
+	}
+	memMu.Unlock()
+	for _, sess := range expired {
+		sess.markDone()
 	}
 }
 
-// runIdleEvictOnce performs one tiered-session-cache idle-evict pass. Called
-// each 60s tick by cleanupLoop AND directly by tests. No-op unless
-// 0 < idleEvict < ttl. The persist closure writes a FRESH blob + last_seen so
-// the TTL reap doesn't delete a resurrectable blob (fix #8).
-func (s *sqliteStore) runIdleEvictOnce(now time.Time) {
+func (s *sqliteStore) cleanupLoop() { s.runCleanupLoop(s.db) }
+
+// runCleanupLoop is the session-cleanup ticker, taking its execer as a
+// parameter so the regression gate can drive the REAL loop with a database
+// that fails or panics. See liveStoreExecer.
+//
+// The recover is per cycle (periodic.Every → periodic.Guard). This loop
+// previously had none: one panic out of the driver ended it for the process
+// lifetime, and because it also evicts the memCache pointers that OWN the
+// Time.every goroutines, a dead cleanup loop means sessions never expire on
+// disk AND their subscription goroutines run forever. It compounds with the
+// Time.every defect rather than merely sitting beside it.
+func (s *sqliteStore) runCleanupLoop(db liveStoreExecer) {
+	periodic.Every(periodic.Config{
+		Name:     "live.session-cleanup.sqlite",
+		Interval: liveStoreCleanupInterval,
+		Stop:     s.stop,
+		Report:   periodicReport,
+		Work:     func(now time.Time) error { return s.cleanupOnce(db, now) },
+	})
+}
+
+// cleanupOnce is ONE cleanup cycle: reap expired rows on disk, evict the
+// matching live pointers, then run the idle-evict pass.
+//
+// It RETURNS its error. `_, _ = s.db.Exec(...)` made a permissions failure, a
+// locked database and a dropped table indistinguishable from a successful
+// zero-row delete — a store that had never once reaped a session looked
+// exactly like a healthy one, while sessions accumulated on disk forever.
+//
+// The reap failing does NOT skip the eviction work: the two halves fix
+// different leaks (disk rows vs live goroutine-owning pointers), so a failure
+// in one must not silently cancel the other. Both errors are joined.
+func (s *sqliteStore) cleanupOnce(db liveStoreExecer, now time.Time) error {
+	cutoff := now.Add(-s.ttl)
+	reapErr := reapExpiredSessions(db, qSqliteReapSessions, cutoff.Unix())
+	// Cycle 3 P36 / Gap C4: also evict the matching memCache entries and
+	// signal terminal teardown. The memCache holds the LIVE pointer (the one
+	// that owns Time.every goroutines); without this, a session whose blob
+	// expires on disk still keeps its in-process pointer + subscription
+	// goroutines alive for the lifetime of the process.
+	evictExpiredFromCache(&s.memMu, s.memCache, cutoff)
+	// Tiered-session-cache idle-evict pass (docs/skylive/
+	// tiered-session-cache.md). Runs AFTER the TTL reap so an already-expired
+	// session is reaped (blob deleted), not evicted (blob kept).
+	return errors.Join(reapErr, s.idleEvictOnce(db, now))
+}
+
+// runIdleEvictOnce performs one tiered-session-cache idle-evict pass against
+// the store's own database. Kept for the tests that call it directly.
+func (s *sqliteStore) runIdleEvictOnce(now time.Time) { _ = s.idleEvictOnce(s.db, now) }
+
+// idleEvictOnce is the idle-evict pass with its write errors COLLECTED rather
+// than dropped. No-op unless 0 < idleEvict < ttl. The persist closure writes a
+// FRESH blob + last_seen so the TTL reap doesn't delete a resurrectable blob
+// (fix #8) — which is exactly why its failure matters: a discarded error here
+// means the blob was never refreshed and the next reap deletes a session that
+// was supposed to survive.
+func (s *sqliteStore) idleEvictOnce(db liveStoreExecer, now time.Time) error {
 	if s.idleEvict <= 0 || s.idleEvict >= s.ttl {
-		return
+		return nil
 	}
+	var errs []error
 	idleEvictPass(now, s.idleEvict, &s.memMu, s.memCache,
 		func(sid string, blob []byte, lastSeenUnix int64) {
-			_, _ = s.db.Exec(`
-				INSERT INTO sky_sessions (sid, blob, last_seen) VALUES (?, ?, ?)
-				ON CONFLICT(sid) DO UPDATE SET blob=excluded.blob, last_seen=excluded.last_seen`,
-				sid, blob, lastSeenUnix)
+			if _, err := db.Exec(qSqlitePersistEvicted, sid, blob, lastSeenUnix); err != nil {
+				errs = append(errs, fmt.Errorf("idle-evict persist of session %s: %w", sid, err))
+			}
 		})
+	return errors.Join(errs...)
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1069,8 +1175,9 @@ func (s *postgresStore) Get(sid string) (*liveSession, bool) {
 	s.memCache[sid] = sess
 	s.memMu.Unlock()
 	// fix #8: re-arm disk last_seen so the TTL reap doesn't delete the blob.
-	_, _ = s.db.Exec(`UPDATE sky_sessions SET last_seen = $1 WHERE sid = $2`,
-		sess.lastSeenTime().Unix(), sid)
+	reportSessionWriteError("live.session-touch.postgres", sid,
+		execIgnoringRows(s.db, `UPDATE sky_sessions SET last_seen = $1 WHERE sid = $2`,
+			sess.lastSeenTime().Unix(), sid))
 	return sess, true
 }
 
@@ -1134,7 +1241,8 @@ func (s *postgresStore) Delete(sid string) {
 	if sess != nil {
 		sess.markDone()
 	}
-	_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE sid = $1`, sid)
+	reportSessionWriteError("live.session-delete.postgres", sid,
+		execIgnoringRows(s.db, `DELETE FROM sky_sessions WHERE sid = $1`, sid))
 }
 
 func (s *postgresStore) NewID() string { return generateSkySessionID() }
@@ -1147,50 +1255,46 @@ func (s *postgresStore) Close() error {
 	return s.closeErr
 }
 
-func (s *postgresStore) cleanupLoop() {
-	t := time.NewTicker(60 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case now := <-t.C:
-			_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE last_seen < $1`,
-				now.Add(-s.ttl).Unix())
-			// Cycle 3 P36 / Gap C4: also evict the matching memCache
-			// entries and signal terminal teardown. See sqliteStore
-			// cleanupLoop for the full rationale.
-			cutoff := now.Add(-s.ttl)
-			s.memMu.Lock()
-			var expired []*liveSession
-			for sid, sess := range s.memCache {
-				if sess.lastSeenTime().Before(cutoff) {
-					expired = append(expired, sess)
-					delete(s.memCache, sid)
-				}
-			}
-			s.memMu.Unlock()
-			for _, sess := range expired {
-				sess.markDone()
-			}
-			// Tiered-session-cache idle-evict pass. See sqliteStore.cleanupLoop.
-			s.runIdleEvictOnce(now)
-		}
-	}
+func (s *postgresStore) cleanupLoop() { s.runCleanupLoop(s.db) }
+
+// runCleanupLoop — see sqliteStore.runCleanupLoop.
+func (s *postgresStore) runCleanupLoop(db liveStoreExecer) {
+	periodic.Every(periodic.Config{
+		Name:     "live.session-cleanup.postgres",
+		Interval: liveStoreCleanupInterval,
+		Stop:     s.stop,
+		Report:   periodicReport,
+		Work:     func(now time.Time) error { return s.cleanupOnce(db, now) },
+	})
+}
+
+// cleanupOnce — see sqliteStore.cleanupOnce.
+func (s *postgresStore) cleanupOnce(db liveStoreExecer, now time.Time) error {
+	cutoff := now.Add(-s.ttl)
+	reapErr := reapExpiredSessions(db, qPostgresReapSessions, cutoff.Unix())
+	// Cycle 3 P36 / Gap C4: also evict the matching memCache entries and
+	// signal terminal teardown. See sqliteStore.cleanupOnce for the full
+	// rationale.
+	evictExpiredFromCache(&s.memMu, s.memCache, cutoff)
+	return errors.Join(reapErr, s.idleEvictOnce(db, now))
 }
 
 // runIdleEvictOnce — see sqliteStore.runIdleEvictOnce.
-func (s *postgresStore) runIdleEvictOnce(now time.Time) {
+func (s *postgresStore) runIdleEvictOnce(now time.Time) { _ = s.idleEvictOnce(s.db, now) }
+
+// idleEvictOnce — see sqliteStore.idleEvictOnce.
+func (s *postgresStore) idleEvictOnce(db liveStoreExecer, now time.Time) error {
 	if s.idleEvict <= 0 || s.idleEvict >= s.ttl {
-		return
+		return nil
 	}
+	var errs []error
 	idleEvictPass(now, s.idleEvict, &s.memMu, s.memCache,
 		func(sid string, blob []byte, lastSeenUnix int64) {
-			_, _ = s.db.Exec(`
-				INSERT INTO sky_sessions (sid, blob, last_seen) VALUES ($1, $2, $3)
-				ON CONFLICT (sid) DO UPDATE SET blob = EXCLUDED.blob, last_seen = EXCLUDED.last_seen`,
-				sid, blob, lastSeenUnix)
+			if _, err := db.Exec(qPostgresPersistEvicted, sid, blob, lastSeenUnix); err != nil {
+				errs = append(errs, fmt.Errorf("idle-evict persist of session %s: %w", sid, err))
+			}
 		})
+	return errors.Join(errs...)
 }
 
 // ═════════════════════════════════════════════════════════════════════
