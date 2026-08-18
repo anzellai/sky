@@ -3020,6 +3020,31 @@ pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
     GateOutcome::new(passed, assertions, detail)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// config-migration — the legacy→withX migration table, cross-checked
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One assertion per Sky.Config env target that must be covered by a migration
+/// row (8 `configKeyToEnvSuffix` suffixes + 2 `configKeyToLiteralEnv`
+/// literals), one per builder-label coverage direction (8 + 8), and one per
+/// migration row that names a legacy `sky.toml` key (18): 8+2+8+8+18 = 44.
+///
+/// EXACT, never `>=`, and it MOVES when the config surface moves — a new
+/// `withX` builder adds a suffix (and its label and its migration row), which
+/// is precisely the event this gate exists to force through the migration
+/// table. `reject.rs` shipped `>= 13` against an actual 63; an exact count is
+/// what stops a shrinking set passing green.
+pub const CONFIG_MIGRATION_EXPECTED: u64 = 44;
+
+/// `xtask config-migration`, run in-process. In-process for the same reason
+/// `config_surface` is: it recomputes the cross-language coverage from THIS
+/// tree's sources (the Go maps + the Rust table), and a prebuilt binary might
+/// have read another tree's.
+pub fn config_migration(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::config_migration_gate::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
+
 // ---------------------------------------------------------------------------
 // Analytics observability gates.
 //

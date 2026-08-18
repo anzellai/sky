@@ -179,6 +179,16 @@ pub struct LowerConfig {
     /// stayed a section that the runtime's error messages told operators to set
     /// while the compiler ignored it.
     pub unknown_config_keys: Vec<(String, String)>,
+    /// `(section, key, value)` for every RECOGNISED runtime-config key the
+    /// parser saw — the raw material for the legacy→`withX` migration LIST
+    /// (`project::config_migration`). Distinct from `unknown_config_keys`: these
+    /// are keys the runtime DOES honour today, some of which have moved into
+    /// typed app config (`Sky.Config.withX` / `Live.withX`). The migration hint
+    /// maps each through the ONE migration table; a fully-migrated project has
+    /// none of the *migratable* ones and the hint is silent (design §8.2). Read
+    /// only for the warning — never reaches emitted bytes — so it does not
+    /// affect the golden/repro prologue.
+    pub present_runtime_config_keys: Vec<(String, String, String)>,
     /// The pinned Go-FFI surface (doc 09) for this project — empty when the
     /// project imports no Go packages.
     pub ffi: FfiTable,

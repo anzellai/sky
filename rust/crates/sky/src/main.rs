@@ -786,6 +786,14 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     for w in &report.warnings {
         eprintln!("warning: {w}");
     }
+    // The legacy→`withX` migration LIST (design §8.2): printed on the same
+    // stderr channel as the warnings above, self-extinguishing (silent once the
+    // keys are gone). Not `warning:`-prefixed — it is a distinct block a user
+    // reads to act, and the three classes inside it (moved / removed / changed)
+    // are already visually distinct.
+    if let Some(hint) = &report.migration_hint {
+        eprintln!("\n{hint}\n");
+    }
     if !report.emitted {
         eprintln!("sky {}: {}", verb(check_only), report.note);
         return ExitCode::FAILURE;
@@ -902,6 +910,11 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let report = build_example(&opts);
     for w in &report.warnings {
         eprintln!("warning: {w}");
+    }
+    // Same migration LIST as `sky build` — the person performing an upgrade
+    // often runs `sky run` (design §8.2, "sky build as well as sky run").
+    if let Some(hint) = &report.migration_hint {
+        eprintln!("\n{hint}\n");
     }
     if !report.emitted {
         eprintln!("sky run: {}", report.note);

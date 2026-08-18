@@ -71,6 +71,12 @@ pub struct BuildReport {
     /// after the preferred static build failed). `None` for the common
     /// static-first success. The CLI prints it; batch gates ignore it.
     pub cgo_note: Option<String>,
+    /// The legacy-`sky.toml` → `withX` migration LIST for this project, when its
+    /// `sky.toml` still carries a runtime key that has moved into typed app
+    /// config. `None` for a fully-migrated (or never-legacy) project — the
+    /// self-extinguishing property (design §8.2). The CLI prints it on the same
+    /// stderr channel as `warning:`, on both `sky build` and `sky run`.
+    pub migration_hint: Option<String>,
 }
 
 /// The product of assembling the source db, lowering, and emitting Go — the
@@ -83,6 +89,11 @@ struct Emitted {
     registry: ffi::FfiRegistry,
     ffi_used: std::collections::BTreeSet<String>,
     warnings: Vec<String>,
+    /// The legacy-`sky.toml` → `withX` migration LIST (design §8.2), or `None`
+    /// when nothing present has moved. Derived from the project's `sky.toml`
+    /// alone — deterministic, no environment read — so `emit_example_source`
+    /// stays reproducible and this never reaches emitted bytes.
+    migration_hint: Option<String>,
     /// True when the emitted `main.go` blank-imports `sky-app/rt/console_app`
     /// (Sky.Live / Sky.Http.Server app) — the driver must then materialise the
     /// `rt/console_app` subpackage so the import resolves at `go build`.
@@ -391,6 +402,11 @@ fn assemble_and_emit_with(
     // Captured for the same reason as `db_driver_diag`: `cfg` is moved into the
     // lowering config below, and these are reported after the emit.
     let unknown_keys = cfg.unknown_config_keys.clone();
+    // The legacy→`withX` migration LIST for this project (design §8.2): computed
+    // from the runtime keys the parser actually saw, mapped through the ONE
+    // migration table. Captured before `cfg` is moved. Self-extinguishing —
+    // `None` once no migratable key remains, so a clean project prints nothing.
+    let migration_hint = crate::config_migration::migration_hint(&cfg.present_runtime_config_keys);
     // Load the pinned Go-FFI surface (doc 09): the committed `sky-ffi/`
     // directory is preferred; the oracle's gitignored `.skycache/` cache is the
     // fallback so a project that hasn't yet migrated to the committed layout
@@ -458,6 +474,7 @@ fn assemble_and_emit_with(
         registry,
         ffi_used: prog.ffi_used.clone(),
         warnings,
+        migration_hint,
         console_needed: prog.console_needed,
     })
 }
@@ -511,6 +528,7 @@ fn build_inner(
     ) {
         Ok(e) => {
             report.warnings = e.warnings;
+            report.migration_hint = e.migration_hint;
             (e.source, e.registry, e.ffi_used, e.console_needed)
         }
         Err(note) => {
@@ -908,6 +926,20 @@ pub fn db_driver_conflict(declared: Option<&str>, dsn: Option<&str>) -> Option<S
     ))
 }
 
+/// The legacy-`sky.toml` → `withX` migration LIST for a project directory, or
+/// `None` when its `sky.toml` carries no migratable runtime key (design §8.2).
+///
+/// This is the SAME derivation the build path uses — it parses `sky.toml`
+/// through [`read_sky_toml_config`] (so section tracking, key recognition and
+/// the `store_path` alias all match exactly what a build honours) and maps the
+/// recognised keys through the ONE table in [`crate::config_migration`]. Exposed
+/// so a fixture gate can pin the LIST without a Go toolchain, and so a future
+/// `sky config` verb reuses one derivation rather than a second parser (§1.3).
+pub fn migration_hint_for(project_dir: &Path) -> Option<String> {
+    let cfg = read_sky_toml_config(&project_dir.join("sky.toml"));
+    crate::config_migration::migration_hint(&cfg.present_runtime_config_keys)
+}
+
 fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
     let mut cfg = lower::LowerConfig::default();
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -931,6 +963,17 @@ fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         };
         let key = k.trim();
         let val = parse_toml_scalar(v);
+        // Record every RECOGNISED runtime-config key (one the runtime honours),
+        // for the legacy→`withX` migration LIST. `accepted_config_keys` is the
+        // same set the match below arms on, so this stays in lockstep with what
+        // is actually parsed — no second key list to drift. The migration table
+        // (`config_migration`) decides which of these have moved / been removed;
+        // a key not in that table (pool knobs, `embedded`, `[env] prefix`)
+        // produces no hint, so a legitimately sky.toml-only key never nags.
+        if accepted_config_keys(&section).contains(&key) {
+            cfg.present_runtime_config_keys
+                .push((section.clone(), key.to_string(), val.clone()));
+        }
         match (section.as_str(), key) {
             ("", "port") => cfg.port = Some(val),
             // `driver` is RECORDED, never emitted. Nothing in runtime-go reads

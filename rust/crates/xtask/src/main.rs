@@ -12,6 +12,7 @@ mod build_run_gate;
 mod ci_scan;
 mod coerce_floor_gate;
 mod config_matrix;
+mod config_migration_gate;
 mod config_surface;
 mod corpus;
 mod corpus_bench;
@@ -88,6 +89,9 @@ const GATES: &[(&str, GateFn)] = &[
     }),
     ("config-matrix", |args| {
         config_matrix::run(args, &repo_root())
+    }),
+    ("config-migration", |args| {
+        config_migration_gate::run(args, &repo_root())
     }),
     ("harness", |args| harness::run(args, &repo_root())),
     ("errloc", errloc),

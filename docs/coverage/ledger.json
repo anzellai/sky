@@ -226,6 +226,16 @@
       ],
       "tier": "T1"
     },
+    "config-migration": {
+      "expected_assertions": 44,
+      "falsifier_mutation": "config-migration.drop-a-builder-label",
+      "falsifier_proven": true,
+      "summary": "the legacy→withX migration table covers every Sky.Config env target and every legacy key it names is one the compiler accepts",
+      "surfaces": [
+        "meta.config-migration"
+      ],
+      "tier": "T1"
+    },
     "config-surface": {
       "expected_assertions": 59,
       "falsifier_mutation": "config-surface.seed-a-suffix-nothing-reads",
@@ -352,7 +362,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 150,
+      "expected_assertions": 149,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -620,11 +630,11 @@
   "summary": {
     "stdlib_entries": 1798,
     "stdlib_modules": 88,
-    "surfaces_covered": 131,
-    "surfaces_covered_pct": 89.7,
+    "surfaces_covered": 132,
+    "surfaces_covered_pct": 89.8,
     "surfaces_equal": 20,
-    "surfaces_stronger": 126,
-    "surfaces_total": 146,
+    "surfaces_stronger": 127,
+    "surfaces_total": 147,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -2036,6 +2046,34 @@
       },
       "description": "each covered setting's effective value, observed from a running binary in every combination of environment / sky.toml / withX, as the baseline a moved default is compared against",
       "id": "meta.config-effective-values",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `config-migration`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — the migration mapping lived in prose, in two languages, ungated",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "the legacy sky.toml → withX migration table covers every Sky.Config env target the runtime names, every builder label is present, and every legacy key the table names is one the compiler accepts",
+      "id": "meta.config-migration",
       "verdict": "stronger"
     },
     {
