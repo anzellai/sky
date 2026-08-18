@@ -2948,7 +2948,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// and `config-gates`' `coverage-ledger --check` (the `run()` path) does not
 /// assert the count. Exactly the release-only-counting-gate latency this cycle
 /// is closing; brought current here.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 151;
+///
+/// 151 -> 153: `sky config migrate` shipped — a new CLI verb and a new
+/// registered `config-migrate` gate — which added two surfaces (`surfaces_total`
+/// 147 -> 149), so `surfaces.len() + 4` is now 153.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 153;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -3042,6 +3046,23 @@ pub const CONFIG_MIGRATION_EXPECTED: u64 = 44;
 /// have read another tree's.
 pub fn config_migration(ctx: &GateCtx) -> GateOutcome {
     let (passed, assertions, detail) = crate::config_migration_gate::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
+
+/// One assertion per fixture end-to-end check (17: start-dirty, count, wrote,
+/// keys-left, two residual survivals, dropped/kept sections, exposed, imported,
+/// binding, four generated `withX`, re-check clean) + 3 for the 19-skyforum
+/// real-project plan (keys recognised, builders generated, no write) = 20.
+///
+/// EXACT: a change that adds or drops one of the migration's observable effects
+/// moves this count, which is the event the gate exists to force review of.
+pub const CONFIG_MIGRATE_EXPECTED: u64 = 20;
+
+/// `xtask config-migrate`, run in-process — it drives `project::config_migrate`
+/// against an in-code fixture and a copy of `examples/19-skyforum`, both read
+/// from THIS tree.
+pub fn config_migrate(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::config_migrate_gate::check_body(&ctx.repo_root);
     GateOutcome::new(passed, assertions, detail)
 }
 

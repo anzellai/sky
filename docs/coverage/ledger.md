@@ -20,10 +20,10 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 147 |
-| covered by the new corpus (>= Asserted) | 132 |
-| verdict `stronger` | 127 |
-| verdict `equal` | 20 |
+| surfaces | 149 |
+| covered by the new corpus (>= Asserted) | 133 |
+| verdict `stronger` | 128 |
+| verdict `equal` | 21 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
 | stdlib modules (denominator) | 88 |
@@ -41,6 +41,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 ### Surfaces with zero new cover
 
 - `cli.check`
+- `cli.config`
 - `cli.console`
 - `cli.console-serve`
 - `cli.fmt`
@@ -94,6 +95,7 @@ None.
 | `cli.build` | cli | Runs | Falsified | stronger |
 | `cli.check` | cli | None | None | equal |
 | `cli.clean` | cli | None | Falsified | stronger |
+| `cli.config` | cli | None | None | equal |
 | `cli.console` | cli | None | None | equal |
 | `cli.console-serve` | cli | None | None | equal |
 | `cli.db` | cli | None | Falsified | stronger |
@@ -103,6 +105,7 @@ None.
 | `cli.init` | cli | None | Falsified | stronger |
 | `cli.install` | cli | Runs | Falsified | stronger |
 | `cli.lsp` | cli | None | None | equal |
+| `cli.migrate` | cli | None | Falsified | stronger |
 | `cli.remove` | cli | None | Falsified | stronger |
 | `cli.run` | cli | None | Falsified | stronger |
 | `cli.test` | cli | None | Falsified | stronger |
@@ -255,6 +258,7 @@ None.
 | `apps-relay` | T1 | PROVEN | `http.middleware-ratelimit` · `http.sse-websocket` · `runtime.panic-classes` |
 | `cli-verbs` | T1 | PROVEN | `cli.init` · `cli.clean` · `cli.watch` · `cli.db` · `cli.install` · `cli.update` · `cli.upgrade` |
 | `config-matrix` | T1 | PROVEN | `meta.config-effective-values` |
+| `config-migrate` | T1 | not proven | — (none declared) |
 | `config-migration` | T1 | PROVEN | `meta.config-migration` |
 | `config-surface` | T1 | PROVEN | `meta.config-surface` |
 | `conformance` | T1 | PROVEN | `db.sqlite` · `db.codec-store` · `auth.password-session` |

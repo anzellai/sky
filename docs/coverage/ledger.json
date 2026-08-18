@@ -11,8 +11,10 @@
   "cli": {
     "_source": "rust/crates/sky/src/main.rs dispatch table (primary); docs/tooling/cli.md headings (cross-check)",
     "dispatched_but_undocumented": [
+      "config",
       "console-serve",
-      "init"
+      "init",
+      "migrate"
     ],
     "documented_but_not_dispatched": [],
     "verbs": [
@@ -20,6 +22,7 @@
       "build",
       "check",
       "clean",
+      "config",
       "console",
       "console-serve",
       "db",
@@ -29,6 +32,7 @@
       "init",
       "install",
       "lsp",
+      "migrate",
       "remove",
       "run",
       "test",
@@ -226,6 +230,14 @@
       ],
       "tier": "T1"
     },
+    "config-migrate": {
+      "expected_assertions": 20,
+      "falsifier_mutation": "",
+      "falsifier_proven": false,
+      "summary": "sky config migrate rewrites a legacy fixture end-to-end (every key leaves sky.toml, the builders land in the right destination, a re-check is clean) and proposes zero undeclared changes when planning a copy of examples/19-skyforum",
+      "surfaces": [],
+      "tier": "T1"
+    },
     "config-migration": {
       "expected_assertions": 44,
       "falsifier_mutation": "config-migration.drop-a-builder-label",
@@ -362,7 +374,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 151,
+      "expected_assertions": 153,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -630,11 +642,11 @@
   "summary": {
     "stdlib_entries": 1798,
     "stdlib_modules": 88,
-    "surfaces_covered": 132,
-    "surfaces_covered_pct": 89.8,
-    "surfaces_equal": 20,
-    "surfaces_stronger": 127,
-    "surfaces_total": 147,
+    "surfaces_covered": 133,
+    "surfaces_covered_pct": 89.3,
+    "surfaces_equal": 21,
+    "surfaces_stronger": 128,
+    "surfaces_total": 149,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -786,6 +798,22 @@
       "description": "`sky clean`",
       "id": "cli.clean",
       "verdict": "stronger"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky config`",
+      "id": "cli.config",
+      "verdict": "equal"
     },
     {
       "category": "cli",
@@ -996,6 +1024,28 @@
       "description": "`sky lsp`",
       "id": "cli.lsp",
       "verdict": "equal"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky migrate`",
+      "id": "cli.migrate",
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -10833,9 +10883,10 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 11,
+      "count": 12,
       "surfaces": [
         "cli.check",
+        "cli.config",
         "cli.console",
         "cli.console-serve",
         "cli.fmt",

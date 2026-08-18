@@ -16,6 +16,9 @@ mod build;
 /// target in `runtime-go/rt/sky_config.go` — a new builder cannot ship without
 /// its migration entry.
 pub mod config_migration;
+/// `sky config migrate` — the automatic legacy-`sky.toml` → typed-`config`
+/// rewriter. Reuses the ONE `config_migration::MIGRATIONS` table, never a copy.
+pub mod config_migrate;
 mod doc;
 mod driver;
 mod ffi_ops;

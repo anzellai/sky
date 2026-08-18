@@ -940,7 +940,7 @@ pub fn migration_hint_for(project_dir: &Path) -> Option<String> {
     crate::config_migration::migration_hint(&cfg.present_runtime_config_keys)
 }
 
-fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
+pub(crate) fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
     let mut cfg = lower::LowerConfig::default();
     let Ok(text) = std::fs::read_to_string(path) else {
         return cfg;

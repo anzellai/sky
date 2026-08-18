@@ -1300,6 +1300,34 @@ pub static GATES: &[Gate] = &[
         body: bodies::config_migration,
     },
     Gate {
+        name: "config-migrate",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 60,
+        expected: bodies::CONFIG_MIGRATE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "sky config migrate rewrites a legacy fixture end-to-end (every key leaves \
+                  sky.toml, the builders land in the right destination, a re-check is clean) and \
+                  proposes zero undeclared changes when planning a copy of examples/19-skyforum",
+        // The mutation edits a file the gate READS at run time — the real
+        // examples/19-skyforum/sky.toml it copies — so red is observable without
+        // a rebuild. Renaming its `port` key leaves the real project with only
+        // one migratable key, so clause 4's "port + input are both recognised"
+        // assertion goes red. This is the exact defect the clause exists to
+        // catch: a runtime key the rewriter would fail to see.
+        mutations: Mutations::new(&[Mutation {
+            id: "config-migrate.hide-a-real-legacy-key",
+            description: "rename examples/19-skyforum's [live] port key so the rewriter no longer \
+                          sees it; the real-project plan clause must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/19-skyforum/sky.toml",
+                from: "port = 8000",
+                to: "porto = 8000",
+            },
+        }]),
+        body: bodies::config_migrate,
+    },
+    Gate {
         name: "selftest-blocked",
         tier: Tier::SelfTest,
         platforms: ALL_PLATFORMS,
