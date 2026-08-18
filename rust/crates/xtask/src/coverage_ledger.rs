@@ -90,7 +90,7 @@
 //! `cover_new` fell, or when a surface is `weaker` without a `[[weakening]]`
 //! stanza naming it. An INCREASE is always fine and rewrites the file.
 
-use crate::harness::registry::{Tier, GATES};
+use crate::harness::registry::{MutationKind, Tier, GATES};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -1407,6 +1407,86 @@ fn stale_proof_violations(proofs: &BTreeMap<String, RecordedProof>) -> Vec<Strin
                 declared.join(", ")
             }
         ));
+    }
+    out
+}
+
+/// Gates whose recorded proof credits a mutation that can no longer be
+/// **applied** — its `ReplaceOnce.from` no longer occurs exactly once in the
+/// target file, as violation strings.
+///
+/// This is the SOURCE-drift companion to [`stale_proof_violations`]. That
+/// function catches a proof whose mutation-id the registry has RETIRED; this one
+/// catches a proof whose mutation-id still matches the registry but whose `from`
+/// pattern has drifted out of its target file (a literal reworded, a line
+/// reordered, a `!= nil` flipped to `nil !=`). The proof then credits a
+/// falsification that can no longer be reproduced: `Patch::apply` would refuse
+/// the mutation and `harness --verify-falsifiers` would report `INCONCLUSIVE …
+/// occurs 0x … must be exactly 1`. But `--verify-falsifiers` rebuilds and
+/// mutates, so it runs deep (nightly); this is the CHEAP static form — a
+/// grep-equivalent over the cited files, no build — so it can run on every PR
+/// inside `coverage-ledger --check`, which is where the ledger reads the proofs
+/// in the first place.
+///
+/// The predicate is exactly the one `Patch::apply` computes (`occurs 1x`), and
+/// exactly the one the registry's own
+/// `every_replace_once_mutation_targets_a_real_unique_site` unit test asserts —
+/// but applied HERE it closes the specific hole that `coverage-ledger --check`
+/// credited the drifted gate as `Falsified` while the mutation was dead.
+///
+/// A `NoOp` mutation (the canary / `selftest-hang`) has no `from` to drift and
+/// is skipped. A proof whose mutation-id the registry no longer declares is
+/// [`stale_proof_violations`]' job, not this one — checked there and skipped
+/// here so a single drift is reported once, under the right diagnosis.
+fn inapplicable_proof_violations(
+    proofs: &BTreeMap<String, RecordedProof>,
+    repo_root: &Path,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (gate, p) in proofs {
+        if !p.proven {
+            continue;
+        }
+        // Retired mutation-id → stale_proof_violations reports it. Only proofs
+        // the registry STILL declares are candidates for a from-drift.
+        if !registry_declares_mutation(gate, &p.mutation) {
+            continue;
+        }
+        let Some(m) = GATES
+            .iter()
+            .find(|g| g.name == gate.as_str())
+            .and_then(|g| g.mutations.as_slice().iter().find(|m| m.id == p.mutation))
+        else {
+            continue;
+        };
+        let MutationKind::ReplaceOnce { path, from, .. } = m.kind else {
+            continue; // NoOp — nothing to drift.
+        };
+        match std::fs::read_to_string(repo_root.join(path)) {
+            Ok(src) => {
+                let hits = src.matches(from).count();
+                if hits != 1 {
+                    out.push(format!(
+                        "INAPPLICABLE PROOF — `{gate}` is recorded PROVEN against mutation \
+                         `{}`, whose `from` pattern {from:?} occurs {hits}x in {path} (must be \
+                         exactly 1). The recorded PROVEN credits a falsification that can no \
+                         longer be reproduced: 0x means the pattern drifted out of the file, \
+                         >1 means it is now ambiguous — either way `harness \
+                         --verify-falsifiers` would report INCONCLUSIVE, not PROVEN. Restore \
+                         the pattern or update the registry mutation, re-establish the proof \
+                         with `cargo run --release -p xtask -- harness --verify-falsifiers \
+                         --only {gate}`, then regenerate the ledger.",
+                        p.mutation,
+                    ));
+                }
+            }
+            Err(e) => out.push(format!(
+                "INAPPLICABLE PROOF — `{gate}` is recorded PROVEN against mutation `{}`, but \
+                 its target file {path} cannot be read: {e}. The falsification cannot be \
+                 reproduced, so the proof is worthless until the file is restored.",
+                p.mutation,
+            )),
+        }
     }
     out
 }
@@ -3027,7 +3107,13 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
     let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
     // Reported in BOTH modes: a proof that credits a retired mutation must not
     // be laundered into a freshly regenerated baseline either.
-    fails.extend(stale_proof_violations(&read_proofs(repo_root)));
+    let proofs = read_proofs(repo_root);
+    fails.extend(stale_proof_violations(&proofs));
+    // …and a proof whose mutation-id still matches but whose `from` pattern has
+    // drifted out of the source is equally dead. Cheap enough (a grep over the
+    // cited files) to run here, which is what makes it a per-PR check rather
+    // than a nightly `--verify-falsifiers` one.
+    fails.extend(inapplicable_proof_violations(&proofs, repo_root));
 
     let text = format!("{}\n", serde_json::to_string_pretty(&led.doc).unwrap());
     if check_only {
@@ -3166,7 +3252,9 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
         .and_then(|s| serde_json::from_str(&s).ok());
 
     let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
-    fails.extend(stale_proof_violations(&read_proofs(repo_root)));
+    let proofs = read_proofs(repo_root);
+    fails.extend(stale_proof_violations(&proofs));
+    fails.extend(inapplicable_proof_violations(&proofs, repo_root));
     match &baseline {
         None => fails.push(format!("{} does not exist", json_path.display())),
         Some(base) => {
@@ -3427,6 +3515,77 @@ mod tests {
     #[test]
     fn the_checked_in_proof_ledger_names_only_live_mutations() {
         let v = stale_proof_violations(&read_proofs(&repo_root()));
+        assert!(v.is_empty(), "{}", v.join("\n"));
+    }
+
+    /// THE REGRESSION for HOLE 1. A proof whose mutation-id still matches the
+    /// registry but whose `from` pattern has drifted out of the source is dead —
+    /// `harness --verify-falsifiers` would report INCONCLUSIVE — yet
+    /// `coverage-ledger --check` credited it as `Falsified`, PASS, because
+    /// nothing checked applicability. The audit reproduced it by flipping
+    /// `err != nil` to `nil != err` in `analytics_store.go` while keeping the id.
+    #[test]
+    fn a_proof_whose_from_pattern_drifted_is_inapplicable() {
+        // The first gate carrying a ReplaceOnce mutation; its `from` is what we
+        // present, then drift, in a synthetic tree.
+        let (gate, mutation, path, from) = GATES
+            .iter()
+            .find_map(|g| {
+                g.mutations.as_slice().iter().find_map(|m| match m.kind {
+                    MutationKind::ReplaceOnce { path, from, .. } => {
+                        Some((g.name, m.id, path, from))
+                    }
+                    MutationKind::NoOp => None,
+                })
+            })
+            .expect("some gate declares a ReplaceOnce mutation");
+
+        let proofs: BTreeMap<String, RecordedProof> = [(
+            gate.to_string(),
+            RecordedProof {
+                proven: true,
+                mutation: mutation.to_string(),
+            },
+        )]
+        .into_iter()
+        .collect();
+
+        let root = std::env::temp_dir().join(format!(
+            "sky-inapplicable-proof-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let full = root.join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+
+        // Pattern present exactly once → applicable → no violation.
+        std::fs::write(&full, format!("{from}\n")).unwrap();
+        assert!(
+            inapplicable_proof_violations(&proofs, &root).is_empty(),
+            "a from-pattern present exactly once must not be flagged inapplicable"
+        );
+
+        // Drift the pattern out of the file → the proof is dead → one violation.
+        std::fs::write(&full, "the pattern is gone\n").unwrap();
+        let v = inapplicable_proof_violations(&proofs, &root);
+        assert_eq!(v.len(), 1, "expected exactly one INAPPLICABLE PROOF, got {v:?}");
+        assert!(v[0].contains("INAPPLICABLE PROOF"), "{}", v[0]);
+        assert!(v[0].contains("occurs 0x"), "{}", v[0]);
+        assert!(v[0].contains(gate), "{}", v[0]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The file-level form on the real tree: every checked-in PROVEN proof names
+    /// a mutation whose `from` still occurs exactly once in its target file, so
+    /// `coverage-ledger --check` credits no dead falsifier.
+    #[test]
+    fn the_checked_in_proof_ledger_names_only_applicable_mutations() {
+        let root = repo_root();
+        let v = inapplicable_proof_violations(&read_proofs(&root), &root);
         assert!(v.is_empty(), "{}", v.join("\n"));
     }
 
