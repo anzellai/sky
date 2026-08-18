@@ -110,12 +110,26 @@ func HtmlToVNode(node any) VNode {
 	if vn, ok := node.(VNode); ok {
 		return vn
 	}
+	// Fast path: a legacy SkyADT Html value (the shape every Std.Html /
+	// Std.Ui builder produces). Skips unwrapADTShape's interface
+	// re-dispatch and, below, the reflect-boxing of typed child/attr
+	// slices — the single largest render-path allocation site.
+	if adt, ok := node.(SkyADT); ok {
+		return htmlShapeToVNode(adt.SkyName, adt.Fields)
+	}
 	name, _, fields, ok := unwrapADTShape(node)
 	if !ok {
 		// Defensive: a non-Html value reached the converter — render
 		// it as text rather than panicking.
 		return vtext(fmt.Sprintf("%v", node))
 	}
+	return htmlShapeToVNode(name, fields)
+}
+
+// htmlShapeToVNode lowers an already-introspected Html ADT (its variant
+// name + fields) into a VNode. Shared by HtmlToVNode's fast and reflect
+// paths so both produce byte-identical output.
+func htmlShapeToVNode(name string, fields []any) VNode {
 	switch name {
 	case "HText":
 		if len(fields) > 0 {
@@ -149,15 +163,66 @@ func HtmlToVNode(node any) VNode {
 			Kind: "element",
 			Tag:  AsString(fields[0]),
 		}
-		for _, a := range asList(fields[1]) {
-			applyHtmlAttr(&vn, a)
-		}
-		for _, c := range asList(fields[2]) {
-			vn.Children = append(vn.Children, HtmlToVNode(c))
-		}
+		appendHtmlAttrs(&vn, fields[1])
+		appendHtmlChildren(&vn, fields[2])
 		return vn
 	default:
 		return vtext("")
+	}
+}
+
+// appendHtmlAttrs folds an HElement's attribute field into a VNode.
+//
+// Std.Html / Std.Ui emit the attribute list as a typed `[]SkyADT`
+// (`Std_Html_Attributes_Attribute` is a type alias for `rt.SkyADT`), which
+// arrives here boxed in a single `any`. Iterating it directly — rather
+// than through `asList` — avoids allocating a `[]any` copy AND avoids
+// `reflect.Value.Interface` boxing every element (`reflect.unsafe_New`),
+// which the render profile attributed ~22% of all objects to. The `[]any`
+// and reflect branches preserve behaviour for the erased/mixed case.
+func appendHtmlAttrs(vn *VNode, attrsField any) {
+	switch attrs := attrsField.(type) {
+	case []SkyADT:
+		for i := range attrs {
+			applyHtmlAttrADT(vn, attrs[i])
+		}
+	case []any:
+		for _, a := range attrs {
+			applyHtmlAttr(vn, a)
+		}
+	default:
+		for _, a := range asList(attrsField) {
+			applyHtmlAttr(vn, a)
+		}
+	}
+}
+
+// appendHtmlChildren lowers an HElement's child field into vn.Children.
+// Mirrors appendHtmlAttrs: the typed `[]SkyADT` path recurses without
+// boxing, and pre-sizes Children (each child yields exactly one VNode) so
+// the slice does not grow through repeated reallocation.
+func appendHtmlChildren(vn *VNode, kidsField any) {
+	switch kids := kidsField.(type) {
+	case []SkyADT:
+		if len(kids) == 0 {
+			return
+		}
+		vn.Children = make([]VNode, 0, len(kids))
+		for i := range kids {
+			vn.Children = append(vn.Children, htmlShapeToVNode(kids[i].SkyName, kids[i].Fields))
+		}
+	case []any:
+		if len(kids) == 0 {
+			return
+		}
+		vn.Children = make([]VNode, 0, len(kids))
+		for _, c := range kids {
+			vn.Children = append(vn.Children, HtmlToVNode(c))
+		}
+	default:
+		for _, c := range asList(kidsField) {
+			vn.Children = append(vn.Children, HtmlToVNode(c))
+		}
 	}
 }
 
@@ -185,6 +250,22 @@ func applyHtmlAttr(vn *VNode, a any) {
 	if !ok {
 		return
 	}
+	applyHtmlAttrShape(vn, name, fields)
+}
+
+// applyHtmlAttrADT is applyHtmlAttr's fast path for a legacy SkyADT
+// attribute — the shape every Std.Html / Std.Ui builder produces. It skips
+// unwrapAny (a no-op for a plain SkyADT: that struct has no OkValue /
+// JustValue field to unwrap) and unwrapADTShape's interface re-dispatch,
+// reading .SkyName / .Fields directly. Behaviour is identical to
+// applyHtmlAttr for SkyADT inputs.
+func applyHtmlAttrADT(vn *VNode, adt SkyADT) {
+	applyHtmlAttrShape(vn, adt.SkyName, adt.Fields)
+}
+
+// applyHtmlAttrShape folds one introspected attribute (variant name +
+// fields) into a VNode. Shared by applyHtmlAttr and applyHtmlAttrADT.
+func applyHtmlAttrShape(vn *VNode, name string, fields []any) {
 	switch name {
 	case "Attr":
 		if len(fields) >= 2 {
