@@ -891,16 +891,17 @@ fn prologue_init(cfg: &LowerConfig) -> GoItem {
     }
     stmts.push(call("rt.SetPortDefault", &[&port]));
     // sky.toml-derived values FIRST so they win: `SetSkyDefault` is set-if-unset,
-    // so the first call for a suffix wins and the fixed fallbacks below become
-    // no-ops when sky.toml already provided the key. (Emitting the fixed defaults
-    // first silently clobbered `[live] ttl` / `[auth] *` from sky.toml.)
+    // so the first call for a suffix wins and the fixed fallback below becomes a
+    // no-op when sky.toml already provided the key. (Emitting the fixed default
+    // first silently clobbered `[live] ttl` from sky.toml.)
     for (suffix, value) in &cfg.extra_defaults {
         stmts.push(call("rt.SetSkyDefault", &[suffix, value]));
     }
     stmts.push(call("rt.SetSkyDefault", &["LIVE_TTL", "1800"]));
-    stmts.push(call("rt.SetSkyDefault", &["AUTH_TOKEN_TTL", "86400"]));
-    stmts.push(call("rt.SetSkyDefault", &["AUTH_COOKIE", "sky_auth"]));
-    stmts.push(call("rt.SetSkyDefault", &["AUTH_DRIVER", "jwt"]));
+    // The AUTH_TOKEN_TTL / AUTH_COOKIE / AUTH_DRIVER seeds were REMOVED: nothing
+    // in runtime-go/ ever read an AUTH_* suffix (config-architecture §1.11), so
+    // seeding them into every program was write-only. Std.Auth takes its TTL and
+    // cookie name as Sky arguments; there is no runtime auth layer to feed.
     GoItem::Init(stmts)
 }
 

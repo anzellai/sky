@@ -195,25 +195,15 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
     ),
 ];
 
-const SEEDED_WITHOUT_READER: &[(&str, &str)] = &[
-    (
-        "AUTH_COOKIE",
-        "design §1.11 — `[auth]` is parsed, accepted, emitted and read by \
-         nothing. `startup_report_test.go` asserts the banner must not name \
-         SKY_AUTH_TOKEN_SECRET 'which no runtime code reads'.",
-    ),
-    (
-        "AUTH_TOKEN_TTL",
-        "design §1.11 — same block. Also the key two examples misspelled as \
-         `session_ttl`, advertising a 24h session and getting the default.",
-    ),
-    (
-        "AUTH_DRIVER",
-        "design §1.11 — same block. lower.rs prologue_init seeds it as `jwt` for \
-         every program ever compiled; no skyGetenv/os.Getenv in runtime-go takes \
-         an AUTH_* suffix, so the value has never selected anything.",
-    ),
-];
+/// Empty by design. This list once held the whole `[auth]` block
+/// (`AUTH_COOKIE` / `AUTH_TOKEN_TTL` / `AUTH_DRIVER`) — parsed, seeded into every
+/// prologue, and read by nothing (design §1.11). That block is now DELETED: the
+/// `build.rs` parse arms and the `lower.rs` `SetSkyDefault` seeds are gone, so
+/// none of the three is emitted any longer and `seeded_without_reader` falls to
+/// 0. An entry belongs here only while a suffix is BOTH seeded and unread; a
+/// newly-seeded, unread suffix must be wired to a reader or deleted, and lands
+/// here (with a citation) only as a deliberately-recorded, ratcheted defect.
+const SEEDED_WITHOUT_READER: &[(&str, &str)] = &[];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Derivation
@@ -938,7 +928,7 @@ fn compute(root: &Path) -> Result<Measured, String> {
             let section = k.split('.').next().unwrap_or("");
             matches!(
                 section,
-                "live" | "database" | "auth" | "log" | "analytics" | "jobs" | "security" | "env"
+                "live" | "database" | "log" | "analytics" | "jobs" | "security" | "env"
             )
         })
         .cloned()
@@ -1457,8 +1447,9 @@ pub fn pinned_version(d: &Path) -> Option<String> {
             "the accepted-key derivation lost `[live] ttl`: {accepted:?}"
         );
         assert!(
-            accepted.contains("auth.tokenTtl"),
-            "the accepted-key derivation lost `[auth] tokenTtl`"
+            !accepted.contains("auth.tokenTtl"),
+            "the inert `[auth]` block was removed (design §1.11); \
+             `auth.tokenTtl` must NOT be an accepted runtime key"
         );
 
         let seeded = seeded_suffixes(&root).expect("seeded suffixes");

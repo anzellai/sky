@@ -47,13 +47,13 @@
   "stray_census_ids": [],
   "summary": {
     "cells": 30,
-    "census_entries": 53,
+    "census_entries": 47,
     "covered_settings": 4,
     "deferred_settings": 41,
     "deferred_stanzas": 8,
     "listed_differences": 7,
-    "uncovered_settings": 47,
-    "unobservable_settings": 6
+    "uncovered_settings": 41,
+    "unobservable_settings": 0
   },
   "verdicts": {
     "live.idleEvict.builder_reaches_runtime": true,
