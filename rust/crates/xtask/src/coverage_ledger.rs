@@ -3298,13 +3298,80 @@ fn stale_diff(base: &Value, cur: &Value) -> String {
             lines.push(format!("  {id}: (surface disappeared)"));
         }
     }
+    // The `gates` section is recomputed from `crate::harness::registry::GATES`,
+    // and one of its fields is self-referential: `gates.coverage-ledger.
+    // expected_assertions` is `bodies::COVERAGE_LEDGER_EXPECTED`, the very count
+    // this gate asserts. Bumping that const without regenerating the ledger — the
+    // exact thing a surface-count change forces you to do — leaves the checked-in
+    // ledger stale on a field that is neither a summary key nor a surface
+    // strength, so the surface/summary loops above find nothing and the run falls
+    // through to the catch-all. Naming the differing gate field here turns that
+    // otherwise-opaque "some detail differs" into "gates.coverage-ledger.
+    // expected_assertions: 148 -> 149", which points straight at the fix.
+    lines.extend(gate_field_diffs(base, cur));
     if lines.is_empty() {
-        "  (no surface or summary change; a detail field differs — evidence, sole-ownership \
-         or uncovered lists)"
+        "  (no surface, summary or gate change; a detail field differs — an evidence, \
+         sole-ownership, uncovered or units list)"
             .to_string()
     } else {
         lines.join("\n")
     }
+}
+
+/// Per-gate field differences between two ledgers' `gates` sections.
+///
+/// Named rather than summarised, because the `gates` map is where the ledger's
+/// one self-referential field lives (`expected_assertions`), and an unnamed
+/// "a detail field differs" there sends the reader to hunt evidence/uncovered
+/// lists that did not move. Reports added/removed gates and, for gates present
+/// in both, every scalar field whose value changed.
+fn gate_field_diffs(base: &Value, cur: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    let (bg, cg) = match (base["gates"].as_object(), cur["gates"].as_object()) {
+        (Some(b), Some(c)) => (b, c),
+        _ => return lines,
+    };
+    for (name, cval) in cg {
+        match bg.get(name) {
+            None => lines.push(format!("  gates.{name}: (new gate)")),
+            Some(bval) if bval != cval => {
+                let (bo, co) = (bval.as_object(), cval.as_object());
+                if let (Some(bo), Some(co)) = (bo, co) {
+                    for (field, cf) in co {
+                        // Skip list-valued fields (e.g. `surfaces`); a scalar
+                        // move is the actionable, common case and reads cleanly.
+                        if cf.is_array() || cf.is_object() {
+                            if bo.get(field) != Some(cf) {
+                                lines.push(format!("  gates.{name}.{field}: (list/object changed)"));
+                            }
+                            continue;
+                        }
+                        match bo.get(field) {
+                            Some(bf) if bf != cf => {
+                                lines.push(format!("  gates.{name}.{field}: {bf} -> {cf}"));
+                            }
+                            None => lines.push(format!("  gates.{name}.{field}: (new) -> {cf}")),
+                            _ => {}
+                        }
+                    }
+                    for field in bo.keys() {
+                        if !co.contains_key(field) {
+                            lines.push(format!("  gates.{name}.{field}: (field removed)"));
+                        }
+                    }
+                } else {
+                    lines.push(format!("  gates.{name}: (changed)"));
+                }
+            }
+            _ => {}
+        }
+    }
+    for name in bg.keys() {
+        if !cg.contains_key(name) {
+            lines.push(format!("  gates.{name}: (gate removed)"));
+        }
+    }
+    lines
 }
 
 /// Harness-gate face. Runs the same computation and the same ratchet as
@@ -3657,6 +3724,56 @@ mod tests {
         assert!(v[0].contains(gate), "{}", v[0]);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// THE REGRESSION for the misleading-staleness class. The `gates` section
+    /// carries a self-referential field — `gates.coverage-ledger.
+    /// expected_assertions` is `bodies::COVERAGE_LEDGER_EXPECTED`, the count this
+    /// gate asserts. Bumping that const (which a surface-count change forces) and
+    /// not regenerating leaves the checked-in ledger stale on a field that is
+    /// neither a summary key nor a surface strength. Before the fix, `stale_diff`
+    /// found nothing in its summary/surface loops and fell through to
+    /// "a detail field differs — evidence, sole-ownership or uncovered lists",
+    /// which sent the reader to hunt lists that had not moved (this task's
+    /// symptom). It must instead NAME the gate field.
+    #[test]
+    fn stale_diff_names_a_changed_gate_field_not_the_evidence_catch_all() {
+        let base = json!({
+            "summary": {},
+            "surfaces": [],
+            "gates": { "coverage-ledger": { "expected_assertions": 148, "tier": "T1" } },
+        });
+        let cur = json!({
+            "summary": {},
+            "surfaces": [],
+            "gates": { "coverage-ledger": { "expected_assertions": 149, "tier": "T1" } },
+        });
+        let diff = stale_diff(&base, &cur);
+        assert!(
+            diff.contains("gates.coverage-ledger.expected_assertions: 148 -> 149"),
+            "stale_diff must name the changed gate field; got:\n{diff}"
+        );
+        assert!(
+            !diff.contains("a detail field differs"),
+            "a named gate diff must not fall through to the catch-all; got:\n{diff}"
+        );
+    }
+
+    /// A new gate and a removed gate are named too, so a `gates`-section change
+    /// is never absorbed into the opaque catch-all regardless of its shape.
+    #[test]
+    fn stale_diff_names_added_and_removed_gates() {
+        let base = json!({
+            "summary": {}, "surfaces": [],
+            "gates": { "old-gate": { "expected_assertions": 3 } },
+        });
+        let cur = json!({
+            "summary": {}, "surfaces": [],
+            "gates": { "new-gate": { "expected_assertions": 5 } },
+        });
+        let diff = stale_diff(&base, &cur);
+        assert!(diff.contains("gates.new-gate: (new gate)"), "got:\n{diff}");
+        assert!(diff.contains("gates.old-gate: (gate removed)"), "got:\n{diff}");
     }
 
     /// The file-level form on the real tree: every checked-in PROVEN proof names

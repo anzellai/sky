@@ -352,7 +352,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 148,
+      "expected_assertions": 149,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -371,6 +371,27 @@
       ],
       "tier": "T1"
     },
+    "jobs-complete-failure-is-reported": {
+      "expected_assertions": 3,
+      "falsifier_mutation": "jobs-complete.discard-the-store-error",
+      "falsifier_proven": true,
+      "summary": "a failing jobs Complete is reported, not discarded into an infinite redelivery loop",
+      "surfaces": [
+        "runtime.periodic-goroutines"
+      ],
+      "tier": "T1"
+    },
+    "live-time-every-mutex-survives-a-panic": {
+      "expected_assertions": 2,
+      "falsifier_mutation": "time-every.unlock-only-on-the-happy-path",
+      "falsifier_proven": true,
+      "summary": "a panicking Time.every tick leaves the session mutex acquirable",
+      "surfaces": [
+        "runtime.periodic-goroutines",
+        "skylive.session-sse-csrf"
+      ],
+      "tier": "T1"
+    },
     "lsp": {
       "expected_assertions": 49,
       "falsifier_mutation": "lsp.hover-echoes-the-token",
@@ -378,6 +399,16 @@
       "summary": "the editor answers hover / goto-def / completion / diagnostics through a REAL Neovim LSP client, on fixtures and a real app",
       "surfaces": [
         "lsp"
+      ],
+      "tier": "T1"
+    },
+    "periodic-loops-recover-per-cycle": {
+      "expected_assertions": 2,
+      "falsifier_mutation": "periodic-loops.recover-at-the-goroutine-top-level",
+      "falsifier_proven": true,
+      "summary": "every detached periodic loop in runtime-go recovers per cycle, and none discards a write's error",
+      "surfaces": [
+        "runtime.periodic-goroutines"
       ],
       "tier": "T1"
     },
@@ -589,11 +620,11 @@
   "summary": {
     "stdlib_entries": 1782,
     "stdlib_modules": 87,
-    "surfaces_covered": 130,
+    "surfaces_covered": 131,
     "surfaces_covered_pct": 90.3,
     "surfaces_equal": 19,
-    "surfaces_stronger": 125,
-    "surfaces_total": 144,
+    "surfaces_stronger": 126,
+    "surfaces_total": 145,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -2211,6 +2242,44 @@
       "verdict": "stronger"
     },
     {
+      "category": "runtime",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `periodic-loops-recover-per-cycle`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `live-time-every-mutex-survives-a-panic`",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `jobs-complete-failure-is-reported`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "every detached periodic loop in runtime-go survives a panicking cycle, releases whatever the cycle held, and reports what it caught instead of discarding it",
+      "id": "runtime.periodic-goroutines",
+      "verdict": "stronger"
+    },
+    {
       "category": "skylive",
       "cover_new": {
         "class": "Falsified",
@@ -2253,6 +2322,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "gate `live-time-every-mutex-survives-a-panic`",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "gate `apps-bundled`",
             "class": "Falsified",
