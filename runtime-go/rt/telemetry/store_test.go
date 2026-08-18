@@ -444,3 +444,53 @@ func BenchmarkCounter_Inc_HighContention(b *testing.B) {
 		b.Skip("zero ops")
 	}
 }
+
+// ─── UNBOUNDED-MEMORY regression: the warn dedupe map ─────────────
+//
+// cardinalityWarns is written exclusively AFTER the series cap
+// trips — it was the accumulator that survived the guard. Every
+// distinct metric NAME that overflowed stored one entry forever,
+// and ingestInto passes names straight off the JSON wire
+// (token-gated but arbitrary). The dedupe map exists only to keep
+// warnings quiet; it is now capped at a small fixed size, with ONE
+// summary warning once the cap itself fills.
+func TestCardinalityWarns_DedupeMapIsCapped(t *testing.T) {
+	s := NewStore()
+	s.cardinalityCap = 0 // every series creation overflows immediately
+	const distinct = 500
+	for i := 0; i < distinct; i++ {
+		s.Inc("wire_metric_"+itoaT(i), nil)
+	}
+	warnLines := 0
+	summaryLines := 0
+	for _, l := range s.RecentLogs(0) {
+		if strings.Contains(l.Message, "cardinality cap exceeded") {
+			warnLines++
+		}
+		if strings.Contains(l.Message, "cardinality warnings suppressed") {
+			summaryLines++
+		}
+	}
+	// One warn line per REMEMBERED name — so the line count is the
+	// dedupe map's size. 128 remembered + 1 summary, never 500.
+	if warnLines > 128 {
+		t.Errorf("%d per-name cardinality warnings emitted (= names remembered forever); want <= 128", warnLines)
+	}
+	if summaryLines != 1 {
+		t.Errorf("expected exactly 1 suppression summary once the warn cap filled, got %d", summaryLines)
+	}
+}
+
+func itoaT(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [20]byte
+	p := len(b)
+	for n > 0 {
+		p--
+		b[p] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[p:])
+}

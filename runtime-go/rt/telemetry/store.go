@@ -30,6 +30,7 @@ package telemetry
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,8 +60,19 @@ type Store struct {
 	// Label-combination cap per metric name. Beyond this we drop new
 	// label sets to prevent unbounded growth from
 	// high-cardinality bugs.
-	cardinalityCap   int
-	cardinalityWarns sync.Map // map[string]bool — one warning per overflowed metric name
+	cardinalityCap int
+	// cardinalityWarned dedupes the one-per-name overflow warning.
+	// Guarded by metricsMu (checkCardinality only runs under the
+	// write lock). BOUNDED at cardinalityWarnCap: it is written
+	// exclusively AFTER the series cap trips, on names that arrive
+	// straight off the ingest wire — it used to be the unbounded
+	// accumulator that survived the very guard it reported on. Once
+	// the cap fills, ONE summary line is emitted
+	// (cardinalityWarnsSummarised) and further names are dropped
+	// unremembered — a duplicate warning line is a far smaller cost
+	// than an unbounded map.
+	cardinalityWarned          map[string]bool
+	cardinalityWarnsSummarised bool
 
 	// Ring buffers.
 	logs   *logRing
@@ -90,13 +102,14 @@ type seriesKey struct {
 // total ~7 MB steady-state).
 func NewStore() *Store {
 	return &Store{
-		counters:       make(map[seriesKey]*counterSeries),
-		gauges:         make(map[seriesKey]*gaugeSeries),
-		hists:          make(map[seriesKey]*histogramSeries),
-		cardinalityCap: 10000,
-		logs:           newLogRing(10000),
-		traces:         newTraceRing(1000),
-		startedAt:      time.Now(),
+		counters:          make(map[seriesKey]*counterSeries),
+		gauges:            make(map[seriesKey]*gaugeSeries),
+		hists:             make(map[seriesKey]*histogramSeries),
+		cardinalityCap:    10000,
+		cardinalityWarned: make(map[string]bool),
+		logs:              newLogRing(10000),
+		traces:            newTraceRing(1000),
+		startedAt:         time.Now(),
 	}
 }
 
@@ -412,24 +425,51 @@ func (s *Store) histogramSeries(name string, labels map[string]string) *histogra
 // placeholder). Without the cap, each unique URL spawns a fresh
 // series and the metrics map balloons until OOM. Prometheus's
 // own client libs ship with the same default.
+// cardinalityWarnCap bounds the warn dedupe map. 128 distinct
+// overflowing metric NAMES is already a pathology worth one summary
+// line, not 129 remembered names — the map's only job is warning
+// hygiene, so it must never itself grow with attacker input.
+const cardinalityWarnCap = 128
+
+// checkCardinality runs under metricsMu's WRITE lock (its callers
+// are the series getters' locked slow path) — the plain maps it
+// touches need no further synchronisation.
 func (s *Store) checkCardinality(name string, current int) bool {
 	if current < s.cardinalityCap {
 		return true
 	}
-	if _, loaded := s.cardinalityWarns.LoadOrStore(name, true); !loaded {
-		// First overflow on this metric — emit a single warning
-		// log line (avoid recursive log → telemetry by writing
-		// directly to the ring buffer, not to a logger).
-		s.logs.append(LogEntry{
-			TS:      time.Now(),
-			Level:   "warn",
-			Message: "telemetry cardinality cap exceeded; dropping new label combinations",
-			Fields: map[string]string{
-				"metric": name,
-				"cap":    "10000",
-			},
-		})
+	if s.cardinalityWarned[name] {
+		return false
 	}
+	if len(s.cardinalityWarned) >= cardinalityWarnCap {
+		if !s.cardinalityWarnsSummarised {
+			s.cardinalityWarnsSummarised = true
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "further telemetry cardinality warnings suppressed; the warn dedupe cap is full",
+				Fields: map[string]string{
+					"warned_names": strconv.Itoa(cardinalityWarnCap),
+				},
+			})
+		}
+		return false
+	}
+	s.cardinalityWarned[name] = true
+	// First overflow on this metric — emit a single warning
+	// log line (avoid recursive log → telemetry by writing
+	// directly to the ring buffer, not to a logger).
+	s.logs.append(LogEntry{
+		TS:      time.Now(),
+		Level:   "warn",
+		Message: "telemetry cardinality cap exceeded; dropping new label combinations",
+		Fields: map[string]string{
+			"metric": name,
+			// Derived, not a literal — a hand-copied cap would
+			// misreport the first time the field moved.
+			"cap": strconv.Itoa(s.cardinalityCap),
+		},
+	})
 	return false
 }
 
