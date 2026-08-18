@@ -145,3 +145,12 @@ func Live_withStatus(status, cfg any) any { return liveCfgSet(cfg, "Status", sta
 //   `{ cookie : String, secretEnv : String, sameSite : String
 //    , revokedCheck : Maybe (String -> Task Error Bool) }`
 func Live_withAuthSliding(rec, cfg any) any { return liveCfgSet(cfg, "AuthSliding", rec) }
+
+// Live_withRevocation — opt into PULL-model user revocation + suspension. The
+// app hands the runtime the application `Db` the gate reads its shared
+// sky_revocations / users.disabled_at state from (invariant 4: the *SkyDb is
+// stored verbatim under "Revocation" and installed by setRevocationGate in
+// liveAppRun). This is the enabling signal — the gate is inert until it is
+// called. See auth_revocation.go / live_revocation.go.
+//   `Live.withRevocation : Db -> AppConfig -> AppConfig`
+func Live_withRevocation(db, cfg any) any { return liveCfgSet(cfg, "Revocation", db) }

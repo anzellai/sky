@@ -42,6 +42,8 @@ module Std.Live exposing
     , withAnalyticsIdentify
     , withStatus
     , withAuthSliding
+    , withRevocation
+    , bindSessionUser
     )
 
 import Sky.Ffi as Ffi
@@ -299,3 +301,37 @@ withAuthSliding : { cookie : String
 } -> AppConfig model msg -> AppConfig model msg
 withAuthSliding =
     Ffi.kernel "Live_withAuthSliding"
+
+
+-- | Opt into PULL-model user revocation + suspension. Hand the runtime the
+-- application `Db` where the shared revocation state lives
+-- (`sky_revocations` + `users.disabled_at`) — the SAME `Db` you pass to
+-- `Std.Auth`, NOT the session store. This is the enabling signal: the per-
+-- session gate is inert until you register it.
+--
+-- Once registered, every session dispatch (interaction, `Cmd.perform`
+-- completion, `Time.every` tick, subscriber) checks — fresh from the shared
+-- table each time — whether its bound user is revoked or disabled, and EVICTS
+-- the session (retiring its goroutines and replying session-lost) if so. Bind
+-- sessions to users with `bindSessionUser` at login (or auto-bind via
+-- `withAuthSliding`), or the gate has no subject to check and warns loudly.
+--
+--     |> Live.withRevocation db
+withRevocation : Db -> AppConfig model msg -> AppConfig model msg
+withRevocation =
+    Ffi.kernel "Live_withRevocation"
+
+
+-- | `bindSessionUser userId` — bind the CURRENT live session to an application
+-- user at auth time, so `Auth.revokeUser` / `Auth.disableUser` can evict it.
+-- Call it (via `Cmd.perform`) in your login flow once the user is
+-- authenticated. `userId` is a String (an OAuth subject or a stringified id).
+-- Outside a live-session dispatch (a CLI `Task.run`) it is a harmless no-op.
+--
+--     LoggedIn userId ->
+--         ( { model | user = Just userId }
+--         , Cmd.perform (Live.bindSessionUser userId) (\_ -> Ignore)
+--         )
+bindSessionUser : String -> Task Error ()
+bindSessionUser =
+    Ffi.kernel "Live_bindSessionUser"

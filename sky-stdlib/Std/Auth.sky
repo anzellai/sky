@@ -23,11 +23,19 @@ module Std.Auth exposing
     , verifyTokenWithAlgorithm
     , signSlidingToken
     , setSlidingCookie
+    , AccessState(..)
+    , revokeUser
+    , disableUser
+    , enableUser
+    , isRevoked
+    , isDisabled
+    , userAccessState
     )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Jwt as Jwt
+import Sky.Core.Task as Task
 
 
 -- ─── DB-touching flows (Task) ──────────────────────────────────────
@@ -126,6 +134,90 @@ signSlidingToken =
 setSlidingCookie : Request -> String -> Response -> Response
 setSlidingCookie =
     Ffi.kernel "Auth_setSlidingCookie"
+
+-- ─── PULL-model revocation + suspension ────────────────────────────
+-- | The access state of a user, as reported by `userAccessState`.
+--
+--   - `Disabled` — the user is BANNED (`disableUser`); checked FIRST, and
+--     enforced in `login` before the password verify (the re-login lock-out).
+--   - `Revoked` — the user's existing sessions/tokens were invalidated
+--     (`revokeUser`); a token/session whose issue time predates the revoke is
+--     revoked, but a FRESH login after the revoke is Active again (revoke != ban).
+--   - `Active` — neither disabled nor revoked.
+type AccessState
+    = Active
+    | Revoked
+    | Disabled
+
+
+-- | `revokeUser db userId` — invalidate the user's EXISTING sessions/tokens
+-- (== invalidateSessions): stamps `revoked_at = now` in the shared
+-- `sky_revocations` table on the app `Db`. A live Sky.Live session bound to
+-- this user (via `Live.bindSessionUser` / sliding-auth auto-bind) is EVICTED on
+-- its next interaction, and a sliding token stops re-issuing. A fresh login
+-- afterwards is NOT affected — this kills existing sessions, it does not ban the
+-- user (use `disableUser` for a ban). `userId` is a String so an OAuth subject
+-- or a large integer id both key exactly (an Int id passed as a String avoids
+-- the JWT float64 precision floor at 2^53).
+--
+-- Sky provides the MECHANISM; your app owns the "is the caller an admin?"
+-- authorization check before calling it.
+revokeUser : Db -> String -> Task Error ()
+revokeUser =
+    Ffi.kernel "Auth_revokeUser"
+
+
+-- | `disableUser db userId` — BAN the user: sets `users.disabled_at`. The
+-- built-in `login` rejects a disabled user BEFORE the bcrypt verify, so they
+-- cannot re-authenticate, and a live session is evicted on its next
+-- interaction. Reverse with `enableUser`.
+disableUser : Db -> String -> Task Error ()
+disableUser =
+    Ffi.kernel "Auth_disableUser"
+
+
+-- | `enableUser db userId` — clear a `disableUser` ban. (Independent of
+-- revocation: it does not clear a `revokeUser` stamp.)
+enableUser : Db -> String -> Task Error ()
+enableUser =
+    Ffi.kernel "Auth_enableUser"
+
+
+-- | `isRevoked db userId issuedAt` — True iff a token/session issued at
+-- `issuedAt` (unix seconds) for `userId` predates the user's `revoked_at`. This
+-- is the natural wiring for `Live.withAuthSliding`'s `revokedCheck` slide-stopper.
+isRevoked : Db -> String -> Int -> Task Error Bool
+isRevoked =
+    Ffi.kernel "Auth_isRevoked"
+
+
+-- | `isDisabled db userId` — True iff the user is banned (`disableUser`).
+isDisabled : Db -> String -> Task Error Bool
+isDisabled =
+    Ffi.kernel "Auth_isDisabled"
+
+
+-- | `userAccessState db userId issuedAt` — the combined verdict, with
+-- `Disabled` (ban) taking precedence over `Revoked`. `issuedAt` is the unix
+-- second the session/token was minted (its `iat`, or a live session's bind
+-- time). Built on `isDisabled` + `isRevoked`.
+userAccessState : Db -> String -> Int -> Task Error AccessState
+userAccessState db userId issuedAt =
+    isDisabled db userId
+        |> Task.andThen
+               (\disabled ->
+                   if disabled then
+                       Task.succeed Disabled
+
+                   else
+                       isRevoked db userId issuedAt
+                           |> Task.map
+                                  (\revoked ->
+                                      if revoked then
+                                          Revoked
+
+                                      else
+                                          Active))
 
 
 -- | `signTokenWithClaims alg claims` — typed-builder alternative

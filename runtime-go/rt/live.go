@@ -2420,6 +2420,28 @@ type liveSession struct {
 	// and replicas (sqlite / postgres / redis / firestore).
 	identity      ConsoleIdentity
 	identityValid bool
+	// userID / boundAt — PULL-model revocation binding (auth_revocation.go).
+	// The APPLICATION user this session is authenticated as, set once at auth
+	// time by Live.bindSessionUser (session apps) or auto-stamped from a
+	// verified sliding-auth token's `sub` (token apps). userID is the
+	// canonicalSub string; boundAt is the immutable bind epoch that plays the
+	// `iat` role in the revocation check (revoke != ban: a bind AFTER a revoke
+	// has boundAt >= revoked_at and survives). Both persist through
+	// storableSession so a resumed/replica-reshuffled session keeps its binding.
+	// The revocation STATE (revoked_at / disabled_at) is deliberately NEVER on
+	// the blob — the gate reads it fresh from the shared Db so replica B cannot
+	// serve a stale verdict.
+	userID  string
+	boundAt int64
+	// app — back-pointer to the owning liveApp, stamped on every dispatch +
+	// initial render so a session-scoped kernel (Live.bindSessionUser) can
+	// reach app.store to persist a binding. Never persisted (a runtime pointer);
+	// re-stamped whenever the session is dispatched, so a decoded-from-blob
+	// session acquires it on first use. atomic.Pointer because it is written by
+	// the dispatch goroutine (under sess.mu) AND read by a Cmd.perform task
+	// goroutine (which binds without holding sess.mu) — same value every time,
+	// but the write/read must be synchronised for the race detector.
+	app atomic.Pointer[liveApp]
 	// analytics — per-session Std.Analytics state (random anon id, consent
 	// posture, identified user). Session-scoped so one user's identity never
 	// leaks into another's events. In-memory only (re-established per session
@@ -4217,6 +4239,14 @@ func liveAppRun(cfg any) any {
 	// builder-owned login setter (Auth.setSlidingCookie) both read ONE source of
 	// the cookie name / SameSite / revocation hook. Absent field ⇒ nil ⇒ inert.
 	SetAuthSlidingConfig(Field(cfg, "AuthSliding"))
+	// PULL-model revocation gate (opt-in via Live.withRevocation). The app-
+	// supplied Db is where the shared sky_revocations / users.disabled_at state
+	// lives (NOT the session store). Absent field ⇒ nil ⇒ the gate stays inert.
+	if dbAny := Field(cfg, "Revocation"); dbAny != nil {
+		if d, ok := dbAny.(*SkyDb); ok {
+			setRevocationGate(d, revocationCacheTTLFromEnv())
+		}
+	}
 	// v0.16.1 PR7 — seed SKY_PARENT_URL so the inline console_app's
 	// init_ reads OUR OWN listener's loopback when it builds the
 	// initial Model. The /_sky/console/api/* endpoints serve real
@@ -4664,6 +4694,13 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// persistent stores (which load `sess` without the sid field
 	// populated). Cheap; idempotent on equal sids.
 	sess.sid = sid
+	// PULL-model revocation: stamp the owning app (so Live.bindSessionUser can
+	// persist) and auto-bind from a verified sliding-auth token `sub` on the
+	// request context. sess.mu is not yet held here; bindSessionUserTo takes it.
+	sess.app.Store(app)
+	if sub := autoBindSubFromContext(r.Context()); sub != "" {
+		app.bindSessionUserTo(sess, canonicalSub(sub), time.Now().Unix())
+	}
 
 	// Cycle 4 HS: stamp the session on the handler goroutine for the
 	// init + view + runCmd + setupSubscriptions block so synchronous
@@ -4725,6 +4762,14 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// (handleEvent, dispatchBatched, the SSE reconnect-resync all hold
 	// sess.mu around their renderVNode call).
 	sess.mu.Lock()
+	// PULL-model revocation gate on the initial authed GET: a revoked/disabled
+	// user's GET gets session-lost and does NOT run init Cmds or render. Placed
+	// under sess.mu (the gate's precondition) but before init Cmds spawn.
+	if app.accessGateBlocks(sess) {
+		sess.mu.Unlock()
+		writeSessionLost(w)
+		return
+	}
 	sess.model = model
 	sess.handlers = map[string]any{}
 
@@ -5019,6 +5064,16 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// activity via touchLastSeen — that would 404 every subsequent click on
 	// a session that is demonstrably alive.
 	writeSessionCookie(r, w, app.cookieNameOrDefault(), sid, app.sessionTTL)
+	// PULL-model revocation: auto-bind from a verified sliding-auth token `sub`
+	// (stamped on the request context by AuthSlidingMiddleware) so token apps
+	// never forget to bind. No-op for session apps (they call
+	// Live.bindSessionUser) and anonymous requests. bindSessionUserTo acquires
+	// sess.mu, so concurrent event handlers for one session serialise on it.
+	// (sess.app is set by handleInitial + dispatch under their own locks — not
+	// re-set here, to avoid an unsynchronised write racing a concurrent event.)
+	if sub := autoBindSubFromContext(r.Context()); sub != "" {
+		app.bindSessionUserTo(sess, canonicalSub(sub), time.Now().Unix())
+	}
 	// Per-session serial mutex: prevents two concurrent event handlers
 	// for the SAME session from racing each other's model updates.
 	// Different sessions proceed in parallel.
@@ -5177,6 +5232,15 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	respSeq := sess.nextLocalSeq()
 	respAck := ackInputsForPrevTree(sess)
 	sess.mu.Unlock()
+	// PULL-model revocation: the dispatch gate evicted this session (revoked /
+	// disabled user). Reply session-lost so the browser clears + re-inits, and
+	// DO NOT persist — a Set here would race the eviction's store.Delete and
+	// (for the memory store) resurrect the corpse. The evicted flag makes
+	// store.Set a no-op anyway, but returning first is unambiguous.
+	if sess.evicted.Load() {
+		writeSessionLost(w)
+		return
+	}
 	// Persist the mutated session so DB-backed stores see the new
 	// state. Memory store is a no-op on Set for an already-tracked sid.
 	app.store.Set(sid, sess)
@@ -5431,6 +5495,19 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// — symmetric with RunWithTraceContext's discipline.
 	setGoroutineLiveSession(sess)
 	defer clearGoroutineLiveSession()
+	// Stamp the owning app so a session-scoped kernel (Live.bindSessionUser)
+	// invoked from this dispatch can reach app.store to persist its binding.
+	sess.app.Store(app)
+	// PULL-model revocation gate. This is the ONE chokepoint every mutation
+	// path funnels through (handleEvent, Cmd.perform completion, Time.every
+	// ticks, pub/sub + stream subscribers), so gating here covers all of them:
+	// a Revoked/Disabled verdict evicts the session and BLOCKS the update, so a
+	// revoked session mutates nothing and fires no effect. Returns "" (an empty
+	// patch) so callers ship no frame; handleEvent additionally detects the
+	// eviction (sess.evicted) and replies session-lost.
+	if app.accessGateBlocks(sess) {
+		return ""
+	}
 	// Step 5 — diff-based Msg logging. Snapshot the pre-update
 	// model + start time so ObserveMsgLog (called near the end of
 	// dispatch) can decide whether to emit a log line. Lifecycle
