@@ -641,7 +641,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1798,
+    "stdlib_entries": 1801,
     "stdlib_modules": 88,
     "surfaces_covered": 134,
     "surfaces_covered_pct": 89.3,
@@ -11243,11 +11243,13 @@
           ]
         },
         "Std.Auth": {
-          "count": 3,
+          "count": 5,
           "symbols": [
             "login",
             "register",
-            "setRole"
+            "setRole",
+            "setSlidingCookie",
+            "signSlidingToken"
           ]
         },
         "Std.Cache": {
@@ -11613,11 +11615,12 @@
           ]
         },
         "Std.Live": {
-          "count": 13,
+          "count": 14,
           "symbols": [
             "AppConfig",
             "lifecycle",
             "withAnalyticsIdentify",
+            "withAuthSliding",
             "withConsoleAuth",
             "withIdleEvict",
             "withInput",
@@ -11989,8 +11992,8 @@
           ]
         }
       },
-      "count": 718,
-      "pct_of_denominator": 39.9
+      "count": 721,
+      "pct_of_denominator": 40.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -12321,11 +12324,13 @@
           ]
         },
         "Std.Auth": {
-          "count": 3,
+          "count": 5,
           "symbols": [
             "login",
             "register",
-            "setRole"
+            "setRole",
+            "setSlidingCookie",
+            "signSlidingToken"
           ]
         },
         "Std.Cache": {
@@ -12757,13 +12762,14 @@
           ]
         },
         "Std.Live": {
-          "count": 16,
+          "count": 17,
           "symbols": [
             "AppConfig",
             "api",
             "lifecycle",
             "withAnalytics",
             "withAnalyticsIdentify",
+            "withAuthSliding",
             "withConsoleAuth",
             "withGuard",
             "withIdleEvict",
@@ -13137,8 +13143,8 @@
           ]
         }
       },
-      "count": 797,
-      "pct_of_denominator": 44.3
+      "count": 800,
+      "pct_of_denominator": 44.4
     }
   },
   "units": [

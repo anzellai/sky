@@ -207,17 +207,27 @@ func TestSliding_TamperedTokenNoReissue(t *testing.T) {
 	tok := slidingSign(t, map[string]any{
 		"sub": "u1", "iat": now - 3600, "exp": now + 100, "aexp": now + 100000, "w": int64(900),
 	})
-	// Flip the last char of the signature segment.
+	// Flip a MIDDLE byte of the signature segment. NOT the last char: a
+	// base64url signature's final char carries only its top bits (a 43-char
+	// segment encodes 32 bytes = 256 significant bits of 258), so {A,B,C,D}
+	// all decode to the same trailing byte — flipping the last char to 'A'/'B'
+	// leaves ~6.25% of tokens byte-identical, which verifies and makes this
+	// gate both flaky-RED and vacuous. A middle byte always changes the
+	// decoded signature. Assert the token string actually changed as a guard.
 	i := strings.LastIndexByte(tok, '.')
-	if i < 0 || i+1 >= len(tok) {
+	if i < 0 || i+3 >= len(tok) {
 		t.Fatal("unexpected JWT shape")
 	}
-	last := tok[len(tok)-1]
+	mid := i + 1 + (len(tok)-i-1)/2 // middle of the signature segment
+	orig := tok[mid]
 	repl := byte('A')
-	if last == 'A' {
+	if orig == 'A' {
 		repl = 'B'
 	}
-	tampered := tok[:len(tok)-1] + string(repl)
+	tampered := tok[:mid] + string(repl) + tok[mid+1:]
+	if tampered == tok {
+		t.Fatal("tamper did not change the token — the mutation is vacuous")
+	}
 	lines, _ := runSliding(t, stdCfg(), slidingTestCookie, tampered, true)
 	if c := reissuedCookie(t, lines, slidingTestCookie); c != nil {
 		t.Fatalf("tampered token was re-issued: %q", c.Value)
