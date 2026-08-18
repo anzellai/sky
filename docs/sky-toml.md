@@ -427,6 +427,7 @@ drop policy and its counter, the shutdown flush, and connection sharing — is i
 | `SKY_TELEMETRY_SYNCHRONOUS_COMMIT` | `off` | The same, for the console's log / metric / span writes. |
 | `SKY_ANALYTICS_DB_PATH` | `.sky/analytics.db` | Where analytics persists. A `postgres://` value puts it in that database; anything else is a local SQLite file. Falls back to `SKY_CONSOLE_DB_PATH`, then `DATABASE_URL` when that is a PostgreSQL DSN. |
 | `SKY_ANALYTICS_RETENTION` | (unset — keep everything) | Delete events older than this. Go duration (`720h`) or a day form (`90d`). |
+| `SKY_LIVE_REVOCATION_CACHE_TTL` | `0` (fresh read every gate eval) | Per-replica cache window, in whole seconds, for the `Live.withRevocation` gate's `revoked_at` / `disabled_at` lookup. A positive value trades **≤TTL of revocation latency** for fewer shared-table reads on the interaction hot path; `0` reads fresh every time (instant cross-replica revocation). A same-replica `revokeUser` / `disableUser` invalidates that user's entry immediately. Prefix-affected. |
 
 ### Garbage collection
 

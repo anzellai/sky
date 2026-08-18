@@ -2072,7 +2072,8 @@ func authRegisterBody(capDb, capEmail, capPw any) any {
 			email TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
 			role TEXT DEFAULT 'user',
-			created_at BIGINT NOT NULL
+			created_at BIGINT NOT NULL,
+			disabled_at BIGINT
 		)`
 		if _, err := d.conn.Exec(schema); err != nil {
 			return Err[any, any](ErrFfi("auth.register create: " + err.Error()))
@@ -2129,14 +2130,28 @@ func Auth_login(db any, email any, password any) any {
 			if !ok {
 				return Err[any, any](ErrInvalidInput("auth.login: not a Db"))
 			}
+			// Migrate users.disabled_at in idempotently so the SELECT below can
+			// read it on a pre-feature table (register now creates the column,
+			// but existing tables predate it). Dialect-safe; no-op when present.
+			if err := ensureUsersDisabledColumn(d); err != nil {
+				return Err[any, any](ErrFfi("auth.login migrate: " + err.Error()))
+			}
 			row := d.conn.QueryRow(
-				fmt.Sprintf("SELECT id, email, password_hash, role FROM users WHERE email = %s", d.placeholder(1)),
+				fmt.Sprintf("SELECT id, email, password_hash, role, disabled_at FROM users WHERE email = %s", d.placeholder(1)),
 				fmt.Sprintf("%v", capEmail),
 			)
 			var id int
 			var em, hash, role string
-			if err := row.Scan(&id, &em, &hash, &role); err != nil {
+			var disabledAt sql.NullInt64
+			if err := row.Scan(&id, &em, &hash, &role, &disabledAt); err != nil {
 				return Err[any, any](ErrFfi("auth.login: " + err.Error()))
+			}
+			// Lock-out (disableUser): a disabled user is rejected BEFORE the
+			// bcrypt verify — the re-login lock-out. verifyPassword is never
+			// reached, so a disabled user cannot re-authenticate even with the
+			// correct password.
+			if disabledAt.Valid && disabledAt.Int64 > 0 {
+				return Err[any, any](ErrPermissionDenied("auth.login: account disabled"))
 			}
 			ok2 := Auth_verifyPassword(capPw, hash)
 			if b, isB := ok2.(bool); !isB || !b {

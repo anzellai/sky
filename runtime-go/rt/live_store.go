@@ -502,8 +502,19 @@ func (s *memoryStore) Get(sid string) (*liveSession, bool) {
 }
 
 func (s *memoryStore) Set(sid string, sess *liveSession) {
+	// Never re-insert an evicted (corpse) pointer — mirrors the durable
+	// stores' guard (sqliteStore.Set fix #2). A revocation eviction sets
+	// `evicted` before Delete; a late async dispatch's Set (handleEvent,
+	// runPerformBody, a tick) that raced the evict must NOT resurrect the
+	// markDone'd session into the live map.
+	if sess.evicted.Load() {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if sess.evicted.Load() {
+		return // re-check under the lock — mutually exclusive with the evict
+	}
 	sess.touchLastSeen()
 	s.sessions[sid] = sess
 }
@@ -1608,6 +1619,16 @@ type storableSession struct {
 	AnalyticsConsentExplicit bool
 	AnalyticsAnonID          string
 	AnalyticsUserID          string
+	// PULL-model revocation binding (auth_revocation.go). Persist the
+	// session's application user + immutable bind epoch so a DB-backed store
+	// keeps the binding across restart / replica reshuffle, EXACTLY the
+	// Identity/HasAnalytics additive-decode precedent above: a pre-feature blob
+	// decodes UserID="" / BoundAt=0 → an UNBOUND session (the gate no-ops it),
+	// so no migration is needed. The revocation STATE (revoked_at/disabled_at)
+	// is intentionally NOT here — a stored verdict would let a stale replica
+	// serve a revoked user; the gate always reads the shared table fresh.
+	UserID  string
+	BoundAt int64
 }
 
 func encodeSession(s *liveSession) ([]byte, error) {
@@ -1634,6 +1655,8 @@ func encodeSession(s *liveSession) ([]byte, error) {
 		OutSeq:        s.localSeq,
 		Identity:      s.identity,
 		IdentityValid: s.identityValid,
+		UserID:        s.userID,
+		BoundAt:       s.boundAt,
 	}
 	if s.analytics != nil {
 		c, anon, user := s.analytics.snapshot()
@@ -1736,6 +1759,8 @@ func decodeSession(blob []byte) (*liveSession, error) {
 		model:         st.Model,
 		identity:      st.Identity,
 		identityValid: st.IdentityValid,
+		userID:        st.UserID,
+		boundAt:       st.BoundAt,
 		prevTree:      nil, // rebuilt on next render via handleEvent
 		handlers:      map[string]any{},
 		sseCh:         make(chan sseFrame, sseChanBuffer),

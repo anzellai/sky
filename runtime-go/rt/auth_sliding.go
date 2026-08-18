@@ -175,7 +175,13 @@ func AuthSlidingMiddleware(next http.Handler) http.Handler {
 		if cfg := getAuthSlidingConfig(); cfg != nil {
 			// Set the re-issued cookie BEFORE the handler runs (like CSRF), so
 			// the Set-Cookie header is on the response the handler completes.
-			maybeSlideAuthToken(w, r, cfg)
+			// The verified token subject is returned for PULL-model auto-bind:
+			// stash it on the request context so the Sky.Live session handlers
+			// bind the session to this user automatically — a token app never
+			// has to remember Live.bindSessionUser.
+			if sub := maybeSlideAuthToken(w, r, cfg); sub != "" {
+				r = r.WithContext(withAutoBindSub(r.Context(), sub))
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -186,12 +192,16 @@ func AuthSlidingMiddleware(next http.Handler) http.Handler {
 var slidingSecretWarnOnce sync.Once
 
 // maybeSlideAuthToken runs the ordered sliding decision. The ORDER is the
-// security gate (G1). See the numbered steps.
-func maybeSlideAuthToken(w http.ResponseWriter, r *http.Request, cfg *authSlidingConfig) {
+// security gate (G1). See the numbered steps. Returns the VERIFIED token
+// subject (canonicalised) for PULL-model auto-bind — "" whenever the token is
+// absent / unverifiable / carries no usable sub. The subject is returned even
+// when the token does NOT re-issue (auto-bind must work on every authenticated
+// request, not only past half-life), and is derived only from VERIFIED claims.
+func maybeSlideAuthToken(w http.ResponseWriter, r *http.Request, cfg *authSlidingConfig) (verifiedSub string) {
 	// 1. Auth cookie present? Absent ⇒ unauthenticated; not our job to mint.
 	c, err := r.Cookie(cfg.cookie)
 	if err != nil || c.Value == "" {
-		return
+		return ""
 	}
 	// 2. Secret readable? Empty ⇒ fail-OPEN on the read (never mint), warn once.
 	//    secretEnv is the operator-chosen env-var NAME, read verbatim (no prefix
@@ -203,14 +213,19 @@ func maybeSlideAuthToken(w http.ResponseWriter, r *http.Request, cfg *authSlidin
 				"[WARN] auth.sliding secretEnv=%s is unset; sliding re-issue disabled\n",
 				cfg.secretEnv)
 		})
-		return
+		return ""
 	}
 	// 3. VERIFY FIRST via the existing Auth_verifyToken. An expired / tampered
 	//    token fails here — BEFORE any claim is decodable — so it can never be
 	//    resurrected (this ordering IS the no-resurrection guarantee).
 	claims, ok := slidingVerifiedClaims(secret, c.Value)
 	if !ok {
-		return
+		return ""
+	}
+	// Capture the VERIFIED subject for auto-bind. Returned in every post-verify
+	// path below, whether or not the token re-issues.
+	if s, hasSub := slidingClaimString(claims, "sub"); hasSub {
+		verifiedSub = canonicalSub(s)
 	}
 	// 4. Read aexp/iat/exp/w from the VERIFIED claims. Fail CLOSED (no slide)
 	//    on any missing/malformed value. An old cap-less token has no aexp and
@@ -220,12 +235,12 @@ func maybeSlideAuthToken(w http.ResponseWriter, r *http.Request, cfg *authSlidin
 	_, ok3 := slidingClaimFloat(claims, "exp")
 	wsec, ok4 := slidingClaimFloat(claims, "w")
 	if !ok1 || !ok2 || !ok3 || !ok4 {
-		return
+		return verifiedSub
 	}
 	now := float64(time.Now().Unix())
 	// 5. Absolute cap: at/after aexp, let the token lapse — never re-issue.
 	if now >= aexp {
-		return
+		return verifiedSub
 	}
 	// 6. Revocation hook (if configured), consulted at RE-ISSUE time only.
 	if cfg.revokedCheck != nil {
@@ -233,16 +248,16 @@ func maybeSlideAuthToken(w http.ResponseWriter, r *http.Request, cfg *authSlidin
 		if !hasSub {
 			// Cannot identify the subject ⇒ cannot check revocation ⇒ fail
 			// closed (no slide) rather than re-issue an unattributable token.
-			return
+			return verifiedSub
 		}
 		if slidingIsRevoked(cfg.revokedCheck, sub) {
-			return
+			return verifiedSub
 		}
 	}
 	// 7. Past half-life? Re-issue only once per w/2 so a burst of requests does
 	//    not re-sign on every hit (one HMAC + Set-Cookie per half-window, G6).
 	if now < iat+wsec/2 {
-		return
+		return verifiedSub
 	}
 	// Re-sign: iat'=now, exp'=min(now+w, aexp), aexp'=aexp (verbatim), w'=w,
 	// carrying every other (user) claim unchanged.
@@ -263,6 +278,7 @@ func maybeSlideAuthToken(w http.ResponseWriter, r *http.Request, cfg *authSlidin
 		return
 	}
 	http.SetCookie(w, buildSlidingAuthCookie(r, cfg.cookie, signed, cfg.sameSite))
+	return verifiedSub
 }
 
 // slidingVerifiedClaims verifies `token` with `secret` via the existing

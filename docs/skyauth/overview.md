@@ -444,6 +444,98 @@ session alive cannot re-issue the *cookie* mid-stream (the same limitation the
 `windowSeconds` comfortably above your expected SSE-idle gaps** (a few minutes of
 inactivity between clicks is typical; `900` = 15 min is a reasonable floor).
 
+## User revocation & suspension (PULL model)
+
+Sliding `revokedCheck` stops a *token* from re-issuing, but it does nothing for a
+session that is already live inside a Sky.Live app. For that — "log this user
+out **now**", "ban this account" — Sky ships a **pull-model** revocation gate:
+the state lives in one shared table, and every session checks **itself** against
+it on each interaction, with no broker, no cross-instance fan-out, and no
+session index.
+
+There are **two independent states**, and the distinction matters:
+
+| API | Meaning | Enforced by |
+|---|---|---|
+| `Auth.revokeUser db userId` | **Kill existing sessions/tokens.** Stamps `revoked_at = now`. Anything issued *before* now stops working; a **fresh login afterwards is fine**. Revoke ≠ ban. | The session gate + the sliding `revokedCheck` (wire it to `Auth.isRevoked`). |
+| `Auth.disableUser db userId` | **Ban the account.** Sets `users.disabled_at`. The user **cannot log in again** (checked *before* the password verify) and any live session is evicted. Reverse with `Auth.enableUser`. | `Auth.login` + the session gate. |
+
+Read the combined verdict with `Auth.userAccessState db userId issuedAt : Task Error AccessState` (`Active` / `Revoked` / `Disabled`, with `Disabled` taking precedence), or the booleans `Auth.isRevoked` / `Auth.isDisabled`.
+
+### Wiring it into a Sky.Live app
+
+Three steps:
+
+1. **Register the gate** with `Live.withRevocation db` — hand it the **same `Db`
+   you pass to `Std.Auth`** (the shared table lives there, *not* on the session
+   store, which defaults to in-memory and is not shared across replicas). This
+   is the enabling signal: until you call it, the gate is inert and public
+   apps pay nothing.
+2. **Bind sessions to users at login** with `Live.bindSessionUser userId`
+   (performed as a `Cmd`), so the gate has a subject to check. A sliding-auth
+   (token) app **auto-binds** from the verified token `sub` and never needs
+   this call; a session-based app must make it. A session that reaches the gate
+   **unbound** under an enabled gate raises a **loud runtime warning** and
+   `sky doctor` lint — it is never silently treated as allowed.
+3. **Revoke / disable** from an admin action. **Sky provides the mechanism; your
+   app owns the "is the caller an admin?" authorization** — call `revokeUser` /
+   `disableUser` only after your own admin check.
+
+```elm
+import Std.Live as Live exposing (app, config, withRevocation, bindSessionUser)
+import Std.Auth as Auth
+
+-- At login, bind the session so revocation can reach it:
+update msg model =
+    case msg of
+        LoggedIn userId ->
+            ( { model | user = Just userId }
+            , Cmd.perform (Live.bindSessionUser userId) (\_ -> Ignore)
+            )
+        -- Admin action (gate on YOUR OWN is-admin check first):
+        AdminRevoke targetId ->
+            ( model, Cmd.perform (Auth.revokeUser model.db targetId) (\_ -> Ignore) )
+        AdminBan targetId ->
+            ( model, Cmd.perform (Auth.disableUser model.db targetId) (\_ -> Ignore) )
+
+main =
+    app
+        (config { init = init, update = update, view = view
+                , subscriptions = subscriptions
+                , routes = [ {- … -} ], notFound = Home }
+            |> Live.withRevocation db   -- the SAME db Std.Auth uses
+        )
+```
+
+On a `Revoked` / `Disabled` verdict the session is **evicted**: its goroutines
+(tickers, subscribers, in-flight `Cmd.perform` completions) are retired, its
+blob is dropped from the store, and the browser gets the standard
+`session-lost` signal (a full reload). The gate sits inside the one dispatch
+funnel every mutation path shares, so a revoked session **mutates nothing** —
+not even a `Sub.every` tick or a completing effect races through.
+
+### `userId` is a String — key it exactly
+
+The admin APIs take a **`String`** user id, not an `Int`. That is deliberate:
+an OAuth subject is a string, and a numeric id passed as a String is stored
+**exactly**. A numeric JWT `sub` decodes as a float64 and **loses precision
+above 2⁵³** — so if your ids can get that large, carry them as Strings
+end-to-end. The runtime canonicalises every id (string verbatim; an integer to
+its decimal text) on **both** the write and the read, so `revokeUser db 42`-style
+callers and the gate never disagree.
+
+### Read freshness and the ≤TTL latency knob
+
+The gate reads `revoked_at` / `disabled_at` **fresh from the shared table on
+every evaluation** by default, so a revoke on replica A stops a dispatch on
+replica B immediately — the verdict is **never** stored on the session blob. If
+that read is too hot for your scale, set **`SKY_LIVE_REVOCATION_CACHE_TTL`** to a
+whole number of seconds: each replica then caches a user's verdict for up to
+that window, trading **≤TTL of revocation latency** for fewer reads. The default
+(`0`) is a fresh read every time — instant, at the cost of one indexed
+point-lookup per interaction. A same-replica `revokeUser` / `disableUser`
+invalidates that user's cache entry immediately regardless of the TTL.
+
 ## See also
 
 - [`examples/12-skyvote`](../../examples/12-skyvote/) — full Sky.Live voting app with email + password auth
