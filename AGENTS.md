@@ -138,7 +138,7 @@ non-obvious ones as questions:
    | | RAM |
    |---|---|
    | Sky app binary (Go), idle | **~21–27 MB** (measured, `26-ui-showcase` on an e2-small) |
-   | Sky app, settled under days of real traffic | **~56 MB** (measured, sky-lang.org on an e2-micro, 9 days up) |
+   | Sky app, settled under real traffic | **~56 MB** (measured mean, sky-lang.org on an e2-micro; a 45-min window after ~40 h of process uptime) |
    | Embedded PostgreSQL — the whole tree, as `MemAvailable` actually falls | **+21.9 MB** idle · **+28.4 MB** once sessions are written through it |
    | Sky.Live sessions, **625–650 kB each on x86, PostgreSQL store, stock `GOGC=100`** (the shipped default raises this — see below) | ~65 MB at 100 concurrent |
    | **Base, before sessions — measured whole-machine, not a sum of the rows** | **~382 MB** app alone · **~410 MB** with embedded PostgreSQL carrying the sessions |
@@ -185,9 +185,9 @@ non-obvious ones as questions:
    just the baseline: 100 → 400 scales it **2.9×** on the same app and store
    (`docs/perf/runs/gogc-postgres-20260816/`). The x86 slope at the shipped
    default is **unmeasured** — do not multiply the two runs together and quote
-   the product; this programme's projections have been wrong by 2×, 13× and
-   20×. What bounds memory at the shipped default is the derived `GOMEMLIMIT`
-   itself, not a per-session figure.
+   the product; this programme's projections have been wrong by several-fold,
+   repeatedly. What bounds memory at the shipped default is the derived
+   `GOMEMLIMIT` itself, not a per-session figure.
 
    > Quote a per-session number **with its view size and its `GOGC`**, or it
    > will be wrong. This table long carried ~1.35–1.42 MB, which was measured

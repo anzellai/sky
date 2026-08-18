@@ -982,7 +982,7 @@ small cloud instance. Measured components:
 
 | | RAM |
 |---|---|
-| Sky app binary (Go, idle) | **~55 MB** (measured on a live e2-micro) · **21–27 MB** for a plain app on a bench e2-small |
+| Sky app binary (Go, idle) | **~56 MB** (measured mean, live e2-micro; `observe-prod-45min/summary.txt`) · **21–27 MB** for a plain app on a bench e2-small |
 | PostgreSQL — the whole tree, as `MemAvailable` actually falls | **+21.9 MB** idle · **+28.4 MB** once sessions are written through it (measured under `--embed` on an e2-small) |
 | Sky.Live sessions — **625–650 kB each on x86 at the Go-default `GOGC=100`**, PostgreSQL store (`docs/perf/runs/gcp-x86-capacity-20260816/`); the shipped `GOGC=400` raises the slope, x86 unmeasured | ~65 MB at 100 concurrent at `GOGC=100` |
 | **Base, before sessions — measured whole-machine, OS included** | **~382 MB** app alone · **~410 MB** with the cluster carrying the sessions |
@@ -1157,8 +1157,9 @@ non-default one. `GOGC` multiplies the live heap, so it scales the per-session
 measures the slope rising **2.9×** across `GOGC` 100 → 400 on one app and store.
 The x86 slope at the shipped default is **unmeasured**: an earlier draft
 multiplied the M1 ratio into the x86 slope and quoted ~1.8–1.9 MB, and that
-projection is withdrawn — this programme's projections have been wrong by 2×,
-13× and 20×, so no number is quoted here until a run measures one. Any
+projection is withdrawn — this programme's projections have been wrong by
+several-fold, repeatedly, so no number is quoted here until a run measures
+one. Any
 capacity table that adopts a raised `GOGC` and keeps its sessions-per-instance
 column is wrong by roughly the slope multiplier.
 
@@ -1212,9 +1213,10 @@ lazily, so a host pays for what is in flight.
 > class CPU still binds many times sooner — see the next section.
 
 **Observed on a live e2-micro** (sky-lang.org, `us-central1-a`, 969 MB usable,
-9 days uptime): **516 MB available**, the Sky binary at **55 MB RSS** — higher
-than the 30–40 MB this table previously guessed — and **0.09% CPU** averaged
-over 40 hours, i.e. nowhere near any ceiling at its real traffic. (This
+9 days *machine* uptime): **516 MB available**, the Sky binary at **56 MB RSS**
+(mean over the window; 52.9–58.1) — higher than the 30–40 MB this table
+previously guessed — and **0.09% CPU** averaged over the ~40 h of process
+uptime, i.e. nowhere near any ceiling at its real traffic. (This
 paragraph used to divide that 516 MB by 1.1 MB per session and report "≈ 470
 sessions, which lands inside the range above". The divisor is the retracted
 RSS/n figure and the range it agreed with was computed from the same divisor,
