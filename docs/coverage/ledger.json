@@ -352,7 +352,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 147,
+      "expected_assertions": 148,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
