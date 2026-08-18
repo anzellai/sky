@@ -2633,9 +2633,56 @@ fn baseline_weaker(base: Option<&Value>) -> Option<BTreeSet<String>> {
 /// the checked-in ledger fails in BOTH modes — the write path refuses to record
 /// it — so "just re-run the generator" is not a way to accept a weakening
 /// without writing a stanza.
+/// A `[[weakening]]` stanza only authorises a surface that is ACTUALLY weaker.
+///
+/// HOLE 2. `parse_weakenings` validated field PRESENCE and nothing else, so a
+/// stanza for `surface.that.never.existed` — or one whose surface used to be
+/// weaker and has since had its coverage RESTORED — passed `--check` and, left
+/// in place, silently licensed re-weakening that surface for ever. The docs
+/// already require the surface "match a row in the generated ledger"; this
+/// enforces it, plus the stronger condition the intent demands: the row's
+/// verdict must be `weaker`. A stanza that is absent from the ledger, or whose
+/// surface is now `equal`/`stronger`, is stale and must be removed.
+fn stale_weakening_violations(surfaces: &[Surface], weakenings: &BTreeSet<String>) -> Vec<String> {
+    let by_id: BTreeMap<&str, &Surface> =
+        surfaces.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut stale: Vec<String> = Vec::new();
+    for w in weakenings {
+        match by_id.get(w.as_str()) {
+            None => stale.push(format!("  {w} : names no surface in the generated ledger")),
+            Some(s) if s.verdict() != "weaker" => stale.push(format!(
+                "  {w} : verdict is `{}`, not `weaker` (cover_today={} -> cover_new={}) — \
+                 the surface is at or above full strength, so the stanza protects nothing",
+                s.verdict(),
+                s.today_max().label(),
+                s.new_max().label()
+            )),
+            Some(_) => {}
+        }
+    }
+    if stale.is_empty() {
+        return Vec::new();
+    }
+    vec![format!(
+        "STALE WEAKENING — {} [[weakening]] stanza(s) in docs/coverage/removals.toml no \
+         longer describe a weaker surface:\n{}\n\
+         A weakening authorises a surface to be covered LESS; a stanza whose surface is \
+         absent or at full strength authorises nothing, and leaving it in place licenses \
+         re-weakening that surface silently after its coverage was restored. Delete the \
+         stanza, or (if the surface really did get weaker) let the recomputed verdict say so.",
+        stale.len(),
+        stale.join("\n")
+    )]
+}
+
 fn ratchet(led: &Ledger, base: Option<&Value>, weakenings: &BTreeSet<String>) -> Vec<String> {
     let mut fails: Vec<String> = Vec::new();
     let grandfathered = baseline_weaker(base);
+
+    // STALE WEAKENING (HOLE 2). A `[[weakening]]` only authorises a surface that
+    // is ACTUALLY weaker; a stanza naming a non-existent or full-strength surface
+    // is stale. See [`stale_weakening_violations`].
+    fails.extend(stale_weakening_violations(&led.surfaces, weakenings));
 
     let unaccounted: Vec<&Surface> = led
         .surfaces
@@ -3860,6 +3907,47 @@ mod tests {
         let fails = ratchet(&led, Some(&base), &BTreeSet::new());
         assert_eq!(fails.len(), 1);
         assert!(fails[0].contains("surface disappeared"), "{}", fails[0]);
+    }
+
+    /// HOLE 2 (weakening half). A `[[weakening]]` only authorises a surface that
+    /// is ACTUALLY weaker. The audit added `surface.that.never.existed` (all
+    /// fields present) and `coverage-ledger --check` stayed PASS because only
+    /// field presence was validated. A stanza naming a non-existent OR
+    /// full-strength surface must now be reported stale.
+    #[test]
+    fn a_weakening_for_a_nonexistent_or_full_strength_surface_is_stale() {
+        let mk = |id: &str, today: Strength, new: Strength| Surface {
+            id: id.to_string(),
+            category: "test".into(),
+            description: String::new(),
+            today: vec![Ev::new("t", today)],
+            new: vec![Ev::new("n", new)],
+        };
+        let surfaces = vec![
+            mk("s.weak", Strength::Asserted, Strength::Runs), // weaker
+            mk("s.full", Strength::Runs, Strength::Asserted), // stronger
+        ];
+
+        // A stanza for the genuinely-weaker surface: no violation.
+        let ok: BTreeSet<String> = ["s.weak".to_string()].into_iter().collect();
+        assert!(stale_weakening_violations(&surfaces, &ok).is_empty());
+
+        // A stanza for a surface that does not exist: stale (the audit's case).
+        let ghost: BTreeSet<String> =
+            ["surface.that.never.existed".to_string()].into_iter().collect();
+        let v = stale_weakening_violations(&surfaces, &ghost);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("STALE WEAKENING"), "{}", v[0]);
+        assert!(v[0].contains("names no surface"), "{}", v[0]);
+
+        // A stanza for a full-strength (stronger) surface: stale.
+        let full: BTreeSet<String> = ["s.full".to_string()].into_iter().collect();
+        let v = stale_weakening_violations(&surfaces, &full);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("not `weaker`"), "{}", v[0]);
+
+        // No stanzas: the current healthy state, no violation.
+        assert!(stale_weakening_violations(&surfaces, &BTreeSet::new()).is_empty());
     }
 
     /// `scripts/conformance.sh` is the load-bearing premise behind giving the
