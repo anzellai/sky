@@ -124,3 +124,21 @@ REQUIRED reshape:
     string subs -> would be green while broken).
 PENDING: sliding-auth IMPLEMENTATION landing first (it owns the revokedCheck hook +
 whether the sliding token carries sub). Then synthesize + user decides Live-kill scope.
+
+## revokeUser SCOPE — user corrected the infeasibility (2026-08-18)
+USER: "follow 1 & 2, but you CAN derive the session, as you Auth the user session
+you know what user it is for the session, then just need to remove the session and
+response to user for the state."
+=> The grill's "Live-kill infeasible" was about REVERSE lookup on the current store.
+   The unlock: bind userId<->session AT AUTH TIME (the app has both; it declares it
+   once — the runtime need not guess). Then revokeUser removes the user's sessions.
+BUILD ALL THREE:
+ 1. invalidateSessions/revoked_at token kill (plugs into shipped revokedCheck hook).
+ 2. disableUser lock-out (users.disabled flag checked in login pre-pw-verify).
+ 3. Live-session removal via auth-time binding: an app API tags the session with the
+    userId at login (app provides it); session store gains a userId index; revokeUser
+    Delete()s the user's sids + session-lost response. Cross-replica: the in-mem
+    memCache pointers on OTHER replicas must drop too -> the pub/sub Broker fan-out
+    (live_store.go Broker). String subjects (JWT float64 floor >2^53, Judge-confirmed).
+Design+grill the session-binding + cross-replica invalidation BEFORE touching the hot
+path (sky_sessions is the runtime's hottest table).
