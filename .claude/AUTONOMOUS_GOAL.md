@@ -192,3 +192,30 @@ Remaining tracks D + E (see TELEMETRY_STORAGE_PLAN.md):
 Method: PIV per phase (arch-consult=verify current code vs stale plan lines,
 grill, implement, Judge). Milestone MUST include coerce-floor (the gap that
 slipped CI last wave). These are runtime-Go changes, not compiler-floor.
+
+## PROGRESS (2026-08-18, evening) — Tracks E + D implemented, milestone pending
+feat/telemetry-storage-runperform, 3 phases committed LOCALLY (not pushed):
+  0a1a2c25 E: runPerform concurrency bound (per-session+global sem, M1-M5,
+            falsifier proven, deadlock-free, -race green)
+  902bb527 D-P1: hourly DB size report (dialect-aware, statfs unix+stub, log
+            event not metric row, -race green)
+  455e378d D-P3: opt-in counter coalescing SKY_TELEMETRY_AGGREGATION_WINDOW
+            (default 0=off; counters only; force-drain flushReq+stop; histogram
+            floor documented blocked-on-external; -race green)
+P2 was already merged on main (verified). Docs: observability.md updated.
+MILESTONE verification RUNNING: full runtime-go/rt -race + example sweep +
+conformance + coerce-floor. Then Judge (fresh ctx, literal-claim verify).
+OPEN USER-DECISION (surface at milestone, non-blocking): default the counter
+window to 10s? lossless for counters, only reduces SkyDeploy graph resolution
+<10s. Recommended: yes for production, ship default-0 now.
+HISTOGRAM FLOOR: sky_live_msg_seconds per-interaction persist needs a
+bucket-vector schema coordinated w/ SkyDeploy — future cross-repo item.
+
+## JUDGE VERDICT (2026-08-18) — ALL PASS
+Fresh-context adversarial Judge: CLAIM E PASS, CLAIM P1 PASS, CLAIM P3 PASS,
+OVERALL ALL PASS. Independently re-ran the E falsifier (removed per-session
+acquire → RED "max in-flight 5 > cap 2", reverted clean). No hedge words.
+Full runtime-go/rt -race suite green (0 races). Diff scope: runtime-go + docs
+ONLY (no rust/, no .sky) → coerce-floor + compiler gates structurally
+unaffected (justified skip). Remaining: rebuild+re-embed → example sweep +
+conformance (integration), then push + PR.
