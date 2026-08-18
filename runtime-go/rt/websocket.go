@@ -54,6 +54,9 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+
+	"sky-app/rt/periodic"
+
 	"io"
 	"net/http"
 	"reflect"
@@ -474,14 +477,23 @@ func wsExtractStringPair(v any) (string, string) {
 }
 
 // wsHeartbeat fires Ping at the given interval. Exits on socket close.
+// wsHeartbeat pings the peer on a ticker until the connection is done.
+//
+// The recover is per cycle (periodic.Every → periodic.Guard). A panic out of
+// the Ping used to end the heartbeat silently, and a connection that is never
+// pinged again is one whose death is never detected: it sits open, holding its
+// buffers, until something else notices. The `stopped` flag is how a failed
+// ping still ends the loop — periodic.Every owns the loop now, so "return"
+// from the work has to be spelled as a stop signal rather than a `return`.
 func wsHeartbeat(sh *wsHandle, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-sh.done:
-			return
-		case <-ticker.C:
+	stopped := make(chan struct{})
+	periodic.Every(periodic.Config{
+		Name:     "ws.client-heartbeat",
+		Interval: interval,
+		Stop:     sh.done,
+		AlsoStop: stopped,
+		Report:   periodicReport,
+		Work: func(time.Time) error {
 			pingCtx, cancel := context.WithTimeout(sh.ctx, 10*time.Second)
 			err := sh.conn.Ping(pingCtx)
 			cancel()
@@ -489,10 +501,11 @@ func wsHeartbeat(sh *wsHandle, interval time.Duration) {
 				// Peer dead — close the connection so the reader
 				// surfaces the error.
 				sh.Close()
-				return
+				close(stopped)
 			}
-		}
-	}
+			return nil
+		},
+	})
 }
 
 // WebSocket_send implements:

@@ -543,9 +543,9 @@ func (s *Store) writeBatch(batch []pendingItem) error {
 // operators already read.
 func periodicReport(r periodic.Report) {
 	switch {
-	case r.Panic != nil:
+	case r.Recovered != nil:
 		log.Printf("[sky.hub] %s: cycle panicked: %v — this cycle is lost, the next tick will retry\n%s",
-			r.Loop, r.Panic, r.Stack)
+			r.Loop, r.Recovered, r.Stack)
 	case r.Err != nil:
 		log.Printf("[sky.hub] %s: %v", r.Loop, r.Err)
 	}

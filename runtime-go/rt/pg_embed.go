@@ -39,6 +39,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+
+	"sky-app/rt/periodic"
+
 	"os"
 	"os/exec"
 	"os/signal"
@@ -706,11 +709,20 @@ func (s *pgSupervisor) watchChild() {
 // is no child to wait for, so its liveness is polled. The same rule applies —
 // the database going away is fatal to the app.
 func (s *pgSupervisor) watchAdopted(pid int) {
-	go func() {
-		for {
-			time.Sleep(2 * time.Second)
+	// The recover is per cycle. This is a watchdog, so a silently dead
+	// watchdog is the worst possible failure: the adopted postmaster could
+	// then vanish and the app would carry on against a database that is gone,
+	// which is exactly the state this loop exists to turn into a restart.
+	stopped := make(chan struct{})
+	go periodic.Every(periodic.Config{
+		Name:     "pg.adopted-watchdog",
+		Interval: 2 * time.Second,
+		Stop:     stopped,
+		Report:   periodicReport,
+		Work: func(time.Time) error {
 			if s.stopping.Load() {
-				return
+				close(stopped)
+				return nil
 			}
 			if !isPostgresProcess(pid) {
 				fmt.Fprintf(os.Stderr,
@@ -718,8 +730,9 @@ func (s *pgSupervisor) watchAdopted(pid int) {
 						"[sky.pg] app's supervisor can restart the tree.\n", pid)
 				os.Exit(1)
 			}
-		}
-	}()
+			return nil
+		},
+	})
 }
 
 // waitReady blocks until the cluster accepts connections, the deadline passes,

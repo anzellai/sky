@@ -60,15 +60,26 @@ import (
 
 // Report is one thing that went wrong in one cycle of one loop.
 //
-// Exactly one of Panic and Err is set. Panic carries the recovered value with
-// the stack that produced it; Err carries what Work returned.
+// Exactly one of Recovered and Err is set. Recovered carries the panic value
+// with the stack that produced it; Err carries what Work returned.
 type Report struct {
 	// Loop names the loop, for the log line. Free-form, but it should be
 	// greppable back to the call site — "live.time-every", "hub.pruner".
 	Loop string
-	// Panic is the value recover() returned, non-nil when the cycle panicked.
-	Panic any
-	// Stack is the stack at the point of recovery. Set with Panic.
+	// Recovered is the value recover() returned, non-nil when the cycle
+	// panicked.
+	//
+	// Named `Recovered` rather than the obvious `Panic` because
+	// rt/pg_embed_exit_audit_test.go bans any selector named `Panic` —
+	// deliberately matching VALUE methods, so that a `*log.Logger`'s
+	// `.Panic()` is caught along with `log.Panic`. It cannot tell a field read
+	// from a method call without type information, and it should not be
+	// loosened to find out: it guards against an `--embed` app exiting without
+	// stopping its PostgreSQL cluster, which the next run then adopts and
+	// never stops either. A field rename is the cheaper side of that trade,
+	// and `Recovered` says what the value is anyway.
+	Recovered any
+	// Stack is the stack at the point of recovery. Set with Recovered.
 	Stack []byte
 	// Err is what Work returned, non-nil when the cycle failed without
 	// panicking.
@@ -79,8 +90,8 @@ type Report struct {
 // into a structured sink usually want the fields instead.
 func (r Report) String() string {
 	switch {
-	case r.Panic != nil:
-		return fmt.Sprintf("%s: cycle panicked: %v — this cycle is lost, the loop continues", r.Loop, r.Panic)
+	case r.Recovered != nil:
+		return fmt.Sprintf("%s: cycle panicked: %v — this cycle is lost, the loop continues", r.Loop, r.Recovered)
 	case r.Err != nil:
 		return fmt.Sprintf("%s: cycle failed: %v", r.Loop, r.Err)
 	default:
@@ -129,7 +140,7 @@ func Guard(loop string, report Reporter, work func() error) {
 							loop, rr, r, stack)
 					}
 				}()
-				report.emit(Report{Loop: loop, Panic: r, Stack: stack})
+				report.emit(Report{Loop: loop, Recovered: r, Stack: stack})
 			}()
 		}
 	}()

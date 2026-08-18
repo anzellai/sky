@@ -62,7 +62,7 @@ func TestGuardConfinesAPanicToTheCycle(t *testing.T) {
 		t.Fatalf("got %d reports, want 3", len(reps))
 	}
 	for i, r := range reps {
-		if r.Panic == nil {
+		if r.Recovered == nil {
 			t.Errorf("report %d has no Panic — a recover that discards what it caught is the defect", i)
 		}
 		if len(r.Stack) == 0 {
@@ -87,8 +87,8 @@ func TestGuardReportsAReturnedError(t *testing.T) {
 	if !errors.Is(reps[0].Err, want) {
 		t.Errorf("report carries err %v, want %v", reps[0].Err, want)
 	}
-	if reps[0].Panic != nil {
-		t.Errorf("report carries a Panic %v for a plain error return", reps[0].Panic)
+	if reps[0].Recovered != nil {
+		t.Errorf("report carries a Panic %v for a plain error return", reps[0].Recovered)
 	}
 }
 

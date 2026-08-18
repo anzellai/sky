@@ -383,9 +383,9 @@ func (w *Worker) Stop(timeout time.Duration) bool {
 // package's operators already read.
 func periodicReport(r periodic.Report) {
 	switch {
-	case r.Panic != nil:
+	case r.Recovered != nil:
 		log.Printf("[sky.jobs] %s: cycle panicked: %v — this job is lost, the worker continues\n%s",
-			r.Loop, r.Panic, r.Stack)
+			r.Loop, r.Recovered, r.Stack)
 	case r.Err != nil:
 		log.Printf("[sky.jobs] %s: %v", r.Loop, r.Err)
 	}

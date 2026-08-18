@@ -19,10 +19,10 @@ import (
 // dashboard filter for `.cycle_` catches the whole class at once.
 func periodicReport(r periodic.Report) {
 	switch {
-	case r.Panic != nil:
+	case r.Recovered != nil:
 		logStructured("warn", r.Loop+".cycle_panicked",
 			"detail", "this cycle is lost; the loop continues and the next tick will retry",
-			"panic", fmt.Sprintf("%v", r.Panic),
+			"panic", fmt.Sprintf("%v", r.Recovered),
 			"stack", string(r.Stack))
 	case r.Err != nil:
 		logStructured("warn", r.Loop+".cycle_failed",

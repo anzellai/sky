@@ -7194,6 +7194,11 @@ func recordSseDrop(sid string) {
 // calls it; only the first launches the goroutine. The goroutine is
 // bounded by the session lifetime — the same shape as the Time.every
 // tick loop — and exits promptly on `done`.
+// The recover is per FRAME. This relay is started under a sync.Once, so
+// nothing restarts it: a panic in fanOutFrame ended the session's entire
+// server-to-client channel for the process lifetime, and the tab went quiet
+// with no error anywhere — the same failure the Time.every ticker had, on the
+// path that carries every frame rather than one subscription's.
 func (s *liveSession) ensureSSERelay() {
 	s.sseRelay.Do(func() {
 		go func() {
@@ -7202,7 +7207,10 @@ func (s *liveSession) ensureSSERelay() {
 				case <-s.done:
 					return
 				case fr := <-s.sseCh:
-					s.fanOutFrame(fr, "")
+					periodic.Guard("live.sse-relay", periodicReport, func() error {
+						s.fanOutFrame(fr, "")
+						return nil
+					})
 				}
 			}
 		}()

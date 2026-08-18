@@ -530,14 +530,17 @@ func (s *memoryStore) Close() error {
 	return nil
 }
 
+// cleanupLoop — the memory store's TTL reap. Same per-cycle recover as its two
+// SQL siblings: this loop also evicts the pointers that own Time.every
+// goroutines, so one panic here strands both the sessions and their tickers for
+// the process lifetime.
 func (s *memoryStore) cleanupLoop() {
-	t := time.NewTicker(60 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case now := <-t.C:
+	periodic.Every(periodic.Config{
+		Name:     "live.session-cleanup.memory",
+		Interval: liveStoreCleanupInterval,
+		Stop:     s.stop,
+		Report:   periodicReport,
+		Work: func(now time.Time) error {
 			// Cycle 3 P36 / Gap C4: collect expired sessions under
 			// the lock, but signal their terminal teardown OUTSIDE
 			// the lock — markDone is fast (a sync.Once gate + a
@@ -557,8 +560,9 @@ func (s *memoryStore) cleanupLoop() {
 			for _, sess := range expired {
 				sess.markDone()
 			}
-		}
-	}
+			return nil
+		},
+	})
 }
 
 // ═════════════════════════════════════════════════════════════════════

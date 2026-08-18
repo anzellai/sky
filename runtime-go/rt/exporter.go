@@ -929,9 +929,9 @@ func (e *HubExporter) drain(ctx context.Context) {
 // just failed.
 func exporterPeriodicReport(r periodic.Report) {
 	switch {
-	case r.Panic != nil:
+	case r.Recovered != nil:
 		fmt.Fprintf(os.Stderr, "[sky.hub-exporter] %s: cycle panicked: %v — "+
-			"this cycle is lost, the exporter continues\n%s\n", r.Loop, r.Panic, r.Stack)
+			"this cycle is lost, the exporter continues\n%s\n", r.Loop, r.Recovered, r.Stack)
 	case r.Err != nil:
 		fmt.Fprintf(os.Stderr, "[sky.hub-exporter] %s: %v\n", r.Loop, r.Err)
 	}
