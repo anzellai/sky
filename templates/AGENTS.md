@@ -391,9 +391,9 @@ ttl   = 1800
 driver = "sqlite"
 path   = "app.db"
 
-[auth]                   # Std.Auth
-driver     = "jwt"
-cookieName = "sky_sid"   # INERT: [auth] keys are parsed and read by nothing
+# There is no [auth] section — Std.Auth is a library. signToken takes the
+# secret + TTL as arguments; SKY_AUTH_TOKEN_SECRET (≥32 bytes) comes from the
+# environment, never sky.toml. A residual [auth] key warns and does nothing.
 
 [log]                    # structured logging
 format = "plain"         # plain (dev) | json (production)
@@ -433,11 +433,12 @@ is dev-only (per-process, lost on restart).
 - **`[database]`** — your APPLICATION data (separate from sessions). `sqlite` for a
   prototype / single host; `postgres` for production / multiple instances. Leave
   the real connection string to `DATABASE_URL` (env), not the committed file.
-- **`[auth]`** — **currently inert.** `driver`, `cookieName` and `tokenTtl` are
-  parsed and read by nothing, so setting them has no effect (a known gap, not a
-  design). Use `Std.Auth` from code: `Auth.signToken` takes its secret as an
-  argument, so pass one from your own environment variable (≥32 bytes) rather
-  than expecting the file or the runtime to supply it.
+- **No `[auth]` section** — `Std.Auth` is a library, not a config layer, so
+  there is nothing to seed. The inert block was deleted; a residual `[auth]`
+  key now warns. Configure it from code: `Auth.signToken` takes its secret + TTL
+  as arguments, so pass the secret from your own environment variable
+  (`SKY_AUTH_TOKEN_SECRET`, ≥32 bytes) rather than expecting the file or the
+  runtime to supply it.
 - **`[log]`** — `plain`/`info` while developing; `json`/`warn` in production (JSON
   logs are what a log aggregator ingests).
 

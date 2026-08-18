@@ -866,8 +866,15 @@ type JobStore  = JobsMemory | JobsSqlite String | JobsSharedWithDatabase
 > **`withConsole` is deliberately NOT built.** The console/telemetry *tokens* are
 > operator-owned secrets (residual R6, §4.3.1) — a secret belongs to the
 > deployment, not the source — so there is no token builder; `withTelemetry`
-> carries only the OTLP *endpoint*. Still to come in this slice: `Sky.Env` and
-> the legacy→new migration LIST printed when a legacy `sky.toml` is detected.
+> carries only the OTLP *endpoint*.
+>
+> **The legacy→new migration LIST also ships.** A build/run that detects legacy
+> runtime keys in `sky.toml` prints the moved / removed / changed list
+> (`build.rs` `migration_hint` → `main.rs:795`; §8.2), self-extinguishing once
+> the keys are gone; and `sky config migrate [--dry-run|--check]` rewrites the
+> legacy `sky.toml` into a typed `config` binding. Both the hint and the verb
+> derive from the ONE `config_migration::MIGRATIONS` table. Still to come in
+> this slice: `Sky.Env`.
 
 Every strategy is an ADT. `store = "postgress"` (§1.13's class) becomes a
 compile error rather than a runtime fallback to memory.

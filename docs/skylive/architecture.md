@@ -36,7 +36,7 @@ Technical reference for how Sky.Live dispatches events, renders, and diffs. For 
 
 ## Session lifecycle
 
-1. **Page load** — server renders `init ()`. The resulting model + view are cached under a session id taken **from the session cookie** (`sky_sid` by default, or the app's configured `cookieName`; sub-apps use `sky_<name>_sid`). The cookie is set `HttpOnly; SameSite=Lax` (the CSRF cookie is separately `SameSite=Strict`). There is no query-param session path.
+1. **Page load** — server renders `init ()`. The resulting model + view are cached under a session id taken **from the session cookie** (`sky_sid` for the host app; sub-apps mounted in-process use `sky_<name>_sid`). The cookie is set `HttpOnly; SameSite=Lax` (the CSRF cookie is separately `SameSite=Strict`). There is no query-param session path.
 2. **SSE open** — client connects to `/_sky/sse`. The session comes from the cookie; no cookie is a `400`. Server locks the session and emits a `hello` event.
 3. **Event post** — client sends `POST /_sky/event`. The session is resolved from the **cookie only** — the body's `sessionId` is advisory and must match it, so a leaked session id cannot be used to drive someone else's session (see `docs/skylive/input-authority-protocol.md` §Request). Server decodes `msg`, locks the session, runs `update`, diffs, emits patch over SSE.
 4. **Cmd dispatch** — if `update` returned a non-none `cmd`, server spawns a goroutine per command. Each goroutine holds the session lock only to apply the resulting `Msg`, not while the task runs — so long-running HTTP requests don't block other events.

@@ -318,10 +318,9 @@ ttl = "30m"
 driver = "sqlite"         # sqlite / postgres
 url = "DATABASE_URL"
 
-[auth]
-cookie = "sky_sid"
-ttl = "24h"
-# tokenSecret read from SKY_AUTH_TOKEN_SECRET (never put secrets in sky.toml)
+# Std.Auth has no [auth] section — it's a library. signToken takes the
+# secret + TTL as arguments; SKY_AUTH_TOKEN_SECRET (≥32 bytes) comes from
+# the environment, never a committed file.
 
 [log]
 format = "json"           # plain / json
