@@ -4212,6 +4212,11 @@ func liveAppRun(cfg any) any {
 	// inside the `app`-mode gate. nil → token-mode / production-mode
 	// fallback per evaluateConsoleAuth.
 	SetConsoleAuthCallback(app.consoleAuth)
+	// Sliding auth token (opt-in via Live.withAuthSliding). Register the config
+	// so AuthSlidingMiddleware (mounted below, alongside CSRF) and the
+	// builder-owned login setter (Auth.setSlidingCookie) both read ONE source of
+	// the cookie name / SameSite / revocation hook. Absent field ⇒ nil ⇒ inert.
+	SetAuthSlidingConfig(Field(cfg, "AuthSliding"))
 	// v0.16.1 PR7 — seed SKY_PARENT_URL so the inline console_app's
 	// init_ reads OUR OWN listener's loopback when it builds the
 	// initial Model. The /_sky/console/api/* endpoints serve real
@@ -4343,7 +4348,15 @@ func liveAppRun(cfg any) any {
 	// see CSRF rejection rates as a metric — sudden spike = attack
 	// or misconfiguration).
 	csrfed := CSRFMiddleware(mux)
-	observed := ObservabilityMiddleware(csrfed)
+	// Sliding-auth re-issue — mounted ONLY when Live.withAuthSliding registered a
+	// config (getAuthSlidingConfig != nil). Sits inside observability (like CSRF)
+	// so a re-issue still meters as a request, and inside the auth-cookie flow it
+	// re-signs on activity. See auth_sliding.go.
+	authSlid := csrfed
+	if getAuthSlidingConfig() != nil {
+		authSlid = AuthSlidingMiddleware(csrfed)
+	}
+	observed := ObservabilityMiddleware(authSlid)
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			rec := recover()

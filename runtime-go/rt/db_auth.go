@@ -1881,6 +1881,47 @@ func logAuthBoundaryLeak(callerTag string, v any) {
 		callerTag, v)
 }
 
+// authClaimsToMap normalises the `claims` argument of the Auth sign kernels
+// into a plain map[string]any. It accepts BOTH shapes typed codegen can hand
+// us: a Dict (map — handled by dbAnyToStringMap, the pre-existing path) AND a
+// RECORD literal, which lowers to a Go STRUCT (`{ sub = uid }` →
+// `struct{ Sub string }`). Before this, a struct claims value fell through
+// dbAnyToStringMap's map-only test and EVERY field was silently dropped — the
+// JWT shipped with only exp/iat and no `sub`, which the sliding middleware's
+// revocation hook needs to identify the user. Struct field names are mapped
+// back to Sky's lowerCamelCase source convention with lowerFirst, so `Sub`
+// becomes the `sub` claim. Purely additive: a map claims value takes the
+// dbAnyToStringMap path unchanged.
+func authClaimsToMap(v any) map[string]any {
+	if m, ok := dbAnyToStringMap(v); ok {
+		// COPY: dbAnyToStringMap may return the caller's own map, and the sign
+		// kernels stamp exp/iat/aexp/w onto the result — never mutate the
+		// caller's claims.
+		out := make(map[string]any, len(m)+4)
+		for k, val := range m {
+			out[k] = val
+		}
+		return out
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr && !rv.IsNil() {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return map[string]any{}
+	}
+	out := make(map[string]any, rv.NumField())
+	t := rv.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue // unexported — not a Sky record field
+		}
+		out[lowerFirst(f.Name)] = rv.Field(i).Interface()
+	}
+	return out
+}
+
 // Auth.signToken : String -> Dict String any -> Int -> Result Error String
 // (secret, claims, expirySeconds)
 func Auth_signToken(secret any, claims any, expirySeconds any) any {
@@ -1898,16 +1939,22 @@ func Auth_signToken(secret any, claims any, expirySeconds any) any {
 	// claim-based gates (e.g. SkyDeploy's #552 console handshake's
 	// `slug` claim) saw empty strings, breaking signature-valid
 	// tokens at the application layer.
-	m := map[string]any{}
-	if c, ok := dbAnyToStringMap(claims); ok {
-		for k, v := range c {
-			m[k] = v
-		}
-	}
+	m := authClaimsToMap(claims)
 	exp := AsInt(expirySeconds)
 	m["exp"] = time.Now().Add(time.Duration(exp) * time.Second).Unix()
 	m["iat"] = time.Now().Unix()
 
+	return signHS256Claims(keyBytes, m, "signToken")
+}
+
+// signHS256Claims is the ONE HMAC-SHA256 JWT signing site shared by
+// Auth_signToken and Auth_signSlidingToken (and the sliding-token
+// re-issue in auth_sliding.go). It builds the jwt.MapClaims, signs with
+// the caller's key bytes, and returns a Sky `Result Error String`.
+// `callerTag` prefixes any signing error so the source kernel is legible.
+// Factored out so the sliding-token path REUSES the proven JWT emit
+// (db_auth.go:1911-1916) rather than re-implementing it.
+func signHS256Claims(keyBytes []byte, m map[string]any, callerTag string) any {
 	mc := jwt.MapClaims{}
 	for k, v := range m {
 		mc[k] = v
@@ -1915,9 +1962,51 @@ func Auth_signToken(secret any, claims any, expirySeconds any) any {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, mc)
 	signed, err := token.SignedString(keyBytes)
 	if err != nil {
-		return Err[any, any](ErrFfi("signToken: " + err.Error()))
+		return Err[any, any](ErrFfi(callerTag + ": " + err.Error()))
 	}
 	return Ok[any, any](signed)
+}
+
+// Auth.signSlidingToken : String -> a -> { windowSeconds : Int, maxLifetimeSeconds : Int } -> Result Error String
+// (secret, claims, { windowSeconds, maxLifetimeSeconds })
+//
+// Stamps a rolling-session JWT: `iat = now`, `exp = now + windowSeconds`
+// (the idle-timeout window the AuthSlidingMiddleware re-issues against),
+// `aexp = now + maxLifetimeSeconds` (the ABSOLUTE lifetime cap — immutable,
+// carried verbatim through every re-issue), and `w = windowSeconds` as its
+// OWN signed claim. `w` is signed rather than derived from `exp - iat` at
+// re-issue time because after the token has slid to the cap (`exp = aexp`)
+// the `exp - iat` gap SHRINKS below the intended window, which would
+// silently tighten the idle timeout near the cap; a standalone `w` claim
+// keeps the window constant for the token's whole life.
+//
+// GATE: `windowSeconds > maxLifetimeSeconds` is rejected HERE, at issue,
+// because it would stamp `exp > aexp` on a brand-new token and break the
+// `exp <= aexp` invariant the middleware and the cap rely on.
+//
+// Signs exactly as Auth_signToken (shared signHS256Claims). Returns
+// `Result Error String` like signToken. Auth_signToken / Auth_verifyToken
+// stay UNTOUCHED (backward-compat).
+func Auth_signSlidingToken(secret any, claims any, opts any) any {
+	keyBytes, errRes := coerceAuthSecret(secret, "signSlidingToken")
+	if errRes != nil {
+		return errRes
+	}
+	window := AsInt(Field(opts, "WindowSeconds"))
+	maxLife := AsInt(Field(opts, "MaxLifetimeSeconds"))
+	// GATE: window must not exceed the absolute cap — else exp>aexp at issue.
+	if window > maxLife {
+		return Err[any, any](ErrInvalidInput(
+			"signSlidingToken: windowSeconds (" + strconv.Itoa(window) +
+				") must be <= maxLifetimeSeconds (" + strconv.Itoa(maxLife) + ")"))
+	}
+	m := authClaimsToMap(claims)
+	now := time.Now().Unix()
+	m["iat"] = now
+	m["exp"] = now + int64(window)
+	m["aexp"] = now + int64(maxLife)
+	m["w"] = int64(window)
+	return signHS256Claims(keyBytes, m, "signSlidingToken")
 }
 
 // Auth.verifyToken : String -> String -> Result Error (Dict String any)

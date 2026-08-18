@@ -21,6 +21,8 @@ module Std.Auth exposing
     , verifyToken
     , signTokenWithClaims
     , verifyTokenWithAlgorithm
+    , signSlidingToken
+    , setSlidingCookie
     )
 
 import Sky.Ffi as Ffi
@@ -87,6 +89,43 @@ signToken =
 verifyToken : String -> String -> Result Error a
 verifyToken =
     Ffi.kernel "Auth_verifyToken"
+
+
+-- | `signSlidingToken secret claims { windowSeconds, maxLifetimeSeconds }` —
+-- issue a ROLLING-session JWT for use with `Live.withAuthSliding`.
+--
+-- Stamps `iat = now`, `exp = now + windowSeconds` (the idle-timeout window
+-- the sliding middleware re-issues against), `aexp = now + maxLifetimeSeconds`
+-- (the ABSOLUTE lifetime cap, carried verbatim through every re-issue and
+-- never extended), and `w = windowSeconds` as its own signed claim.
+--
+-- Rejects `windowSeconds > maxLifetimeSeconds` with an `Err` — that would
+-- stamp `exp > aexp` on a fresh token and break the cap invariant. Otherwise
+-- signs exactly as `signToken` (same HMAC-SHA256 path). Use it at login; set
+-- the cookie with `setSlidingCookie` so the builder owns the attributes.
+--
+--     Auth.signSlidingToken secret { sub = uid }
+--         { windowSeconds = 900, maxLifetimeSeconds = 86400 }
+signSlidingToken : String -> a -> { windowSeconds : Int
+, maxLifetimeSeconds : Int
+} -> Result Error String
+signSlidingToken =
+    Ffi.kernel "Auth_signSlidingToken"
+
+
+-- | `setSlidingCookie req token resp` — set the sliding auth cookie on a
+-- response at LOGIN time with the SAME attributes the re-issue middleware
+-- uses (`Path=/`, HttpOnly, the builder's `SameSite`, `Secure` by the shared
+-- rule, and the sliding Max-Age). Both this and the middleware build the
+-- cookie from the ONE config `Live.withAuthSliding` registered, so the login
+-- and re-issue attributes cannot drift.
+--
+-- The middleware cannot read cookie attributes off a later request (browsers
+-- send only `name=value`), so the login handler MUST use this setter — a
+-- hand-rolled `Server.withCookie` for the sliding cookie is unsupported.
+setSlidingCookie : Request -> String -> Response -> Response
+setSlidingCookie =
+    Ffi.kernel "Auth_setSlidingCookie"
 
 
 -- | `signTokenWithClaims alg claims` — typed-builder alternative

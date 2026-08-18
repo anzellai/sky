@@ -137,3 +137,11 @@ func Live_withAnalyticsIdentify(f, cfg any) any {
 // Live_withStatus — `status : { reconnecting : String, offline : String }`
 // connection-banner string overrides (invariant 4).
 func Live_withStatus(status, cfg any) any { return liveCfgSet(cfg, "Status", status) }
+
+// Live_withAuthSliding — opt into rolling JWT re-issue (invariant 4: the record
+// — including its `revokedCheck : Maybe (String -> Task Error Bool)` closure —
+// is stored verbatim under "AuthSliding" and parsed by SetAuthSlidingConfig in
+// liveAppRun). Registers the AuthSlidingMiddleware. See auth_sliding.go.
+//   `{ cookie : String, secretEnv : String, sameSite : String
+//    , revokedCheck : Maybe (String -> Task Error Bool) }`
+func Live_withAuthSliding(rec, cfg any) any { return liveCfgSet(cfg, "AuthSliding", rec) }

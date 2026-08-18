@@ -41,6 +41,7 @@ module Std.Live exposing
     , withAnalytics
     , withAnalyticsIdentify
     , withStatus
+    , withAuthSliding
     )
 
 import Sky.Ffi as Ffi
@@ -262,3 +263,39 @@ withStatus : { reconnecting : String
 } -> AppConfig model msg -> AppConfig model msg
 withStatus =
     Ffi.kernel "Live_withStatus"
+
+
+-- | Opt into SLIDING (rolling) auth tokens — the middleware re-issues a
+-- signed JWT on activity, keeping active users signed in while an idle token
+-- still lapses, under a hard absolute-lifetime cap.
+--
+--     |> Live.withAuthSliding
+--         { cookie = "sky_auth"
+--         , secretEnv = "SKY_AUTH_TOKEN_SECRET"
+--         , sameSite = "Strict"
+--         , revokedCheck = Nothing
+--         }
+--
+-- Fields:
+--
+--   - `cookie` — the auth cookie name the token rides in.
+--   - `secretEnv` — the ENV-VAR NAME holding the HMAC secret (never the secret
+--     value — the operator owns it). The middleware reads it at request time.
+--   - `sameSite` — `"Strict"` (default; pass `""` for the default), `"Lax"`,
+--     or `"None"`. Applied to BOTH login and re-issue via the builder-owned
+--     setter so the attributes cannot drift.
+--   - `revokedCheck` — `Just (\sub -> …)` runs a per-subject revocation check
+--     (`String -> Task Error Bool`) at RE-ISSUE time only (not per request);
+--     `True` stops the slide. `Nothing` disables the check (revocation latency
+--     then equals the absolute cap).
+--
+-- Issue tokens with `Auth.signSlidingToken` and set the cookie with
+-- `Auth.setSlidingCookie` — a hand-rolled `Server.withCookie` for the sliding
+-- cookie is unsupported (its attributes would drift from the re-issue).
+withAuthSliding : { cookie : String
+, secretEnv : String
+, sameSite : String
+, revokedCheck : Maybe (String -> Task Error Bool)
+} -> AppConfig model msg -> AppConfig model msg
+withAuthSliding =
+    Ffi.kernel "Live_withAuthSliding"

@@ -191,6 +191,14 @@ handleMe db req =
 
 `Task.andThenResult` is the bridge that chains `Auth.signToken` (Result) after `Auth.login` (Task) without nested case-matching. See [Effect Boundary](../../CLAUDE.md#effect-boundary-task-everywhere-v0100) for the bridge cheatsheet.
 
+> The `Server.withCookie "sky_auth" token "…"` above sets a **fixed-expiry**
+> cookie, which is the right shape for this Sky.Http.Server flow. For a
+> **rolling** Sky.Live session that re-issues on activity under an absolute cap,
+> use `Auth.signSlidingToken` + `Live.withAuthSliding` + the builder-owned
+> `Auth.setSlidingCookie` setter instead — a hand-rolled `Server.withCookie` for
+> the sliding cookie is unsupported (its attributes would drift from the
+> re-issue). See [Sliding session tokens](#sliding-rolling-session-tokens).
+
 ## Configuration — there is no `[auth]` section
 
 **`Std.Auth` is not configured from `sky.toml`.** It is a library: `signToken`
@@ -334,6 +342,107 @@ update msg model =
 ```
 
 For password fields specifically, see [the form-with-passwords pattern](../../CLAUDE.md#forms-with-passwords-and-other-sensitive-inputs) — submit on form submit, never round-trip the secret through Model.
+
+## Sliding (rolling) session tokens
+
+A fixed-expiry token forces a bad trade: a **short** `exp` logs active users
+out mid-session; a **long** `exp` means a stolen token is valid for the whole
+window. Sky.Live offers an **opt-in sliding token** that re-issues a fresh short
+window on activity — so an active user stays signed in while an **idle** token
+still lapses on schedule — under a hard **absolute-lifetime cap** that no amount
+of activity can extend.
+
+It has three parts:
+
+1. **`Auth.signSlidingToken secret claims { windowSeconds, maxLifetimeSeconds }`**
+   — issue the token at login. It stamps `iat`, `exp = iat + windowSeconds`,
+   `aexp = iat + maxLifetimeSeconds` (the immutable cap), and `w = windowSeconds`
+   as its own signed claim. It rejects `windowSeconds > maxLifetimeSeconds` with
+   an `Err`.
+2. **`Live.withAuthSliding { cookie, secretEnv, sameSite, revokedCheck }`** — the
+   builder that mounts the re-issue middleware and OWNS the cookie's attributes.
+3. **`Auth.setSlidingCookie req token resp`** — the builder-owned setter the
+   **login handler** uses to write the cookie with the SAME attributes the
+   re-issue will use.
+
+The one-line opt-in — a Sky.Live app with a login `api` route:
+
+```elm
+secret =
+    System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret-min-32-bytes-please-rotate"
+
+
+-- login handler: sign a sliding token and set it with the builder-owned setter
+login req =
+    case Auth.signSlidingToken secret { sub = "42" } { windowSeconds = 900, maxLifetimeSeconds = 86400 } of
+        Ok token ->
+            Task.succeed (Server.json "{\"ok\":true}" |> Auth.setSlidingCookie req token)
+
+        Err _ ->
+            Task.succeed (Server.withStatus 500 (Server.text "sign failed"))
+
+
+main =
+    Live.app
+        (Live.config
+            { init = init, update = update, view = view
+            , subscriptions = subscriptions
+            , routes = [ Live.route "/" Home, Live.api "POST /login" login ]
+            , notFound = Home
+            }
+            |> Live.withAuthSliding
+                { cookie = "sky_auth"
+                , secretEnv = "SKY_AUTH_TOKEN_SECRET"
+                , sameSite = "Strict"
+                , revokedCheck = Nothing
+                }
+        )
+```
+
+**The login handler MUST use `Auth.setSlidingCookie`, not a hand-rolled
+`Server.withCookie`.** The middleware re-issues the cookie on later requests, but
+it **cannot read cookie attributes off a request** — browsers send only
+`name=value`, never `Path` / `SameSite` / `Secure`. So the login setter and the
+re-issue both build the cookie from the ONE config the builder registered
+(`Path=/`, HttpOnly, the builder's `SameSite`, `Secure` by the shared
+`cookieSecureFor` rule, and the sliding Max-Age). A hand-rolled
+`Server.withCookie` for the sliding cookie would drift from the re-issue's
+attributes and is **unsupported**.
+
+`secretEnv` is the **name** of the environment variable holding the HMAC secret
+— never the secret value. The operator owns it; the middleware reads it at
+request time.
+
+### The stolen-token exposure delta
+
+This is the standard sliding-session trade-off, stated plainly: **continuous use
+of a stolen token slides it all the way to `aexp`, not just to the next `exp`.**
+An attacker who keeps a stolen token active holds the session until the absolute
+cap — the window does not save you against *continuous* abuse; it only expires an
+*idle* token. Two things bound the exposure:
+
+- **The absolute cap (`maxLifetimeSeconds`).** No activity extends the token past
+  `aexp`. Pick a cap you are willing to have a stolen token live to.
+- **`revokedCheck` — a per-subject revocation hook** `sub -> Task Error Bool`,
+  consulted at **re-issue time only** (not per request — the hot path stays
+  cheap). Return `True` to stop the slide; the token then lapses at its current
+  `exp`. Wire it to your "session revoked / password changed / user disabled"
+  check so a compromised session can be cut off within one window instead of
+  waiting for the cap. If you pass `Nothing`, there is no check and
+  **revocation latency equals `maxLifetimeSeconds`** — so keep the cap short when
+  you skip the hook. (A revocation-check error fails **closed**: the slide stops,
+  the token still lives to its current `exp`.)
+
+### The SSE caveat
+
+The token slides on **interaction** — an event `POST` or a page `GET`, where the
+server writes response headers — **not on the SSE heartbeat.** An SSE stream's
+headers are written once, at connect, so the heartbeat that keeps the *server*
+session alive cannot re-issue the *cookie* mid-stream (the same limitation the
+`sky_sid` session cookie has). A tab that sits idle under a live SSE longer than
+`windowSeconds` between interactions will let its auth token lapse. **Set
+`windowSeconds` comfortably above your expected SSE-idle gaps** (a few minutes of
+inactivity between clicks is typical; `900` = 15 min is a reasonable floor).
 
 ## See also
 
