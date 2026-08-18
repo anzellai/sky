@@ -4131,7 +4131,7 @@ func liveAppRun(cfg any) any {
 	// value falls through to the next layer rather than to the fallback.
 	storeKind := resolveStoreKind(stringField(cfg, "Store"))
 	storePath := resolveStorePath(stringField(cfg, "StorePath"))
-	ttl := resolveTTL(stringField(cfg, "Ttl"), 30*time.Minute)
+	ttl := resolveTTL(stringField(cfg, "Ttl"), defaultSessionTTL)
 	// "0"/"off"/"none"/"disable(d)" disables idle-evict outright, which is the
 	// one way it differs from ttl. Bounds a durable store's RAM to the ACTIVE
 	// working set. See docs/skylive/tiered-session-cache.md.

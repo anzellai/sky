@@ -433,11 +433,11 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	return app
 }
 
-// defaultSubAppSessionTTL — sub-apps default to the same 30m as the
-// host. Pulled out so a future env knob (SKY_LIVE_SUBAPP_TTL) can
-// hook here without touching newLiveAppFromCfg.
+// defaultSubAppSessionTTL — sub-apps default to the same `defaultSessionTTL`
+// (30m) as the host, from the ONE shared constant. Pulled out so a future env
+// knob (SKY_LIVE_SUBAPP_TTL) can hook here without touching newLiveAppFromCfg.
 func defaultSubAppSessionTTL() time.Duration {
-	return 30 * time.Minute
+	return defaultSessionTTL
 }
 
 // registerSubAppRoutes wires `app`'s handler methods onto the parent

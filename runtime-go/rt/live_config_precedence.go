@@ -89,6 +89,18 @@ func firstNonEmpty(vals []string) string {
 	return ""
 }
 
+// defaultSessionTTL is the ONE default for a resolved Sky.Live session TTL — the
+// value used when neither an operator env, a `withX` builder, nor a seeded
+// sky.toml default supplies one. Both the sliding session (live.go /
+// subapp_inprocess.go) and the CSRF cookie that guards it (csrf_middleware.go)
+// derive their sliding window from a session TTL resolved with THIS default, so
+// the two cannot key to two different defaults. It replaces the 30-minute /
+// 30-day split §1.7 recorded: the session resolved LIVE_TTL with a 30-minute
+// default while the CSRF cookie re-resolved the SAME variable with an
+// independent 30-day default. The long cookie window is now purely a property of
+// slidingCookieMaxAgeSeconds's floor, not of a second TTL default.
+const defaultSessionTTL = 30 * time.Minute
+
 // resolveTTL — the session TTL, resolved across all layers.
 //
 // `builderVal` is `Live.withTtl`'s value, absent as "". Each layer accepts
@@ -96,6 +108,21 @@ func firstNonEmpty(vals []string) string {
 // as seconds; empty or unparseable values fall through to the next layer.
 func resolveTTL(builderVal string, def time.Duration) time.Duration {
 	return parseTTL(configLayers("LIVE_TTL", builderVal), def)
+}
+
+// resolveSessionTTL resolves the sliding session TTL through the shared
+// precedence with no per-cookie builder override — the value the CSRF cookie's
+// Max-Age derives from. It is deliberately the SAME resolution live.go applies
+// to the session itself (default `defaultSessionTTL`), so the CSRF window tracks
+// the resolved session it guards rather than a second, independent LIVE_TTL
+// default.
+//
+// It is NOT a THIRD LIVE_TTL reader: the CSRF path already resolved LIVE_TTL
+// here (via `resolveTTL("", …)`); this only names that read and aligns its
+// default with the session's. Every LIVE_TTL read still funnels through the one
+// `configLayers("LIVE_TTL", …)` above.
+func resolveSessionTTL() time.Duration {
+	return resolveTTL("", defaultSessionTTL)
 }
 
 // resolveIdleEvict — the tiered-session-cache idle-evict window.
