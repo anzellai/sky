@@ -343,6 +343,21 @@ type persistence struct {
 	// onceClose protects Close() against double-close from test
 	// teardown + the eventual process-exit hook.
 	onceClose sync.Once
+	// dsn is the resolved backend target (a SQLite file path, or a
+	// postgres:// URL). Retained so the hourly size report can statfs the
+	// SQLite file's directory for free space — the only tier where free
+	// space is knowable from here (a remote Postgres data dir is not).
+	dsn string
+	// Size-report growth tracking. Written and read ONLY from the pruner
+	// goroutine (reportSizes runs inside pruneCycle), so no lock is needed —
+	// documenting the single-writer contract rather than guarding it.
+	lastSizeBytes map[string]int64
+	lastSizeAt    time.Time
+	// dbstatChecked / dbstatOK memoise the one-time probe for the SQLite
+	// dbstat vtable (absent in the default modernc build), so the size
+	// report degrades to whole-DB bytes without re-probing every hour.
+	dbstatChecked bool
+	dbstatOK      bool
 }
 
 // EnablePersistence opens (or creates) the console.db at `path` and
@@ -395,6 +410,7 @@ func (s *Store) EnablePersistence(path string) error {
 		db:            db,
 		pool:          handle,
 		driver:        driver,
+		dsn:           dsn,
 		syncCommitOff: driver == "pgx" && SynchronousCommitOff(),
 		queue:         make(chan persistEntry, persistQueueCap),
 		flushReq:      make(chan chan struct{}),
@@ -799,6 +815,11 @@ func (p *persistence) pruneCycle(s *Store) {
 			Fields:  map[string]string{"error": err.Error()},
 		})
 	}
+	// P1 — measure the runtime-owned tables' on-disk footprint on the same
+	// hourly cadence, POST-prune (so the number reflects steady state). Runs
+	// under this cycle's recover, so a driver that panics on the size query
+	// costs one report, not the retention loop.
+	p.reportSizes(s, time.Now())
 }
 
 func (p *persistence) runPrune() error {
@@ -816,6 +837,152 @@ func (p *persistence) runPrune() error {
 		return err
 	}
 	return nil
+}
+
+// telemetryOwnedTables are the runtime-owned tables the size report measures.
+// Fixed allowlist — never user input — so interpolating a name into a
+// COUNT/SUM query below is not an injection surface.
+var telemetryOwnedTables = []string{"telemetry_log", "telemetry_metric", "telemetry_span"}
+
+// reportSizes measures the on-disk footprint of the runtime-owned telemetry
+// tables and emits ONE structured telemetry_log event per prune cycle. It is
+// the only measurement of database size in the runtime — every figure in the
+// perf docs before this was arithmetic.
+//
+// It deliberately emits a LOG event, never a telemetry_metric row: measuring
+// the table you are trying to keep small by writing into it every hour is the
+// trap this avoids (grill P1 attack 6). The event lands in the in-RAM ring
+// (console-visible) and, via AppendLog, in telemetry_log (24h retention).
+//
+// Per-table BYTES are available on Postgres (pg_total_relation_size, a
+// non-locking catalog function) and on SQLite only when the dbstat vtable is
+// compiled in (it is NOT in the default modernc build) — so SQLite degrades to
+// whole-database bytes (page_count*page_size, an O(1) header read). It never
+// falls back to per-table COUNT(*): that is a full scan of the very
+// telemetry_metric table whose growth is the concern, self-defeating on the
+// shared pool.
+//
+// Free space is knowable only where the runtime owns the filesystem path — the
+// SQLite file's directory. For a remote Postgres the data dir is unknown from
+// here, so the report states absolute size + growth rate and leaves free space
+// unreported. The low-space warning is a RATIO (free < total telemetry bytes),
+// not a byte constant, so it scales with the disk.
+func (p *persistence) reportSizes(s *Store, now time.Time) {
+	fields := map[string]string{}
+	sizes := map[string]int64{}
+	var totalBytes int64
+	perTableBytes := false
+
+	switch p.driver {
+	case "pgx":
+		perTableBytes = true
+		for _, t := range telemetryOwnedTables {
+			var n int64
+			// to_regclass tolerates a not-yet-created table (NULL → 0).
+			row := p.db.QueryRow(
+				`SELECT COALESCE(pg_total_relation_size(to_regclass($1)), 0)`, t)
+			if err := row.Scan(&n); err == nil {
+				sizes[t] = n
+				totalBytes += n
+			}
+		}
+	default: // sqlite
+		if p.sqliteHasDbstat() {
+			perTableBytes = true
+			for _, t := range telemetryOwnedTables {
+				var n sql.NullInt64
+				row := p.db.QueryRow(`SELECT SUM(pgsize) FROM dbstat WHERE name = ?`, t)
+				if err := row.Scan(&n); err == nil && n.Valid {
+					sizes[t] = n.Int64
+					totalBytes += n.Int64
+				}
+			}
+		} else {
+			// No per-table breakdown without dbstat — report whole-DB bytes
+			// only (O(1)), never a COUNT(*) scan.
+			var pageCount, pageSize int64
+			if err := p.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err == nil {
+				if err := p.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err == nil {
+					totalBytes = pageCount * pageSize
+				}
+			}
+			fields["breakdown"] = "whole-db (dbstat vtable absent)"
+		}
+	}
+
+	if perTableBytes {
+		for _, t := range telemetryOwnedTables {
+			fields[t+"_bytes"] = strconv.FormatInt(sizes[t], 10)
+		}
+	}
+	fields["telemetry_total_bytes"] = strconv.FormatInt(totalBytes, 10)
+	fields["driver"] = p.driver
+
+	// Growth rate vs the previous report (bytes/day projection), single-writer
+	// state so no lock. First cycle has no prior — report rate as unknown.
+	if !p.lastSizeAt.IsZero() {
+		if dt := now.Sub(p.lastSizeAt).Seconds(); dt > 0 {
+			deltaBytes := totalBytes - p.lastSizeBytes["telemetry_total_bytes"]
+			perDay := int64(float64(deltaBytes) / dt * 86400)
+			fields["growth_bytes_per_day"] = strconv.FormatInt(perDay, 10)
+		}
+	}
+	if p.lastSizeBytes == nil {
+		p.lastSizeBytes = map[string]int64{}
+	}
+	p.lastSizeBytes["telemetry_total_bytes"] = totalBytes
+	p.lastSizeAt = now
+
+	// Free space — SQLite only (statfs the file's directory).
+	level := "info"
+	if p.driver == "sqlite" {
+		if free, ok := freeBytesForPath(p.sqlitePath()); ok {
+			fields["fs_free_bytes"] = strconv.FormatInt(free, 10)
+			// Ratio warn: free space has fallen below the telemetry footprint
+			// itself — one more doubling risks filling the disk.
+			if totalBytes > 0 && free < totalBytes {
+				level = "warn"
+				fields["warning"] = "telemetry footprint exceeds remaining free space"
+			}
+		} else {
+			fields["fs_free_bytes"] = "unknown"
+		}
+	} else {
+		fields["fs_free_bytes"] = "unknown (remote backend)"
+	}
+
+	s.AppendLog(LogEntry{
+		TS:      now,
+		Level:   level,
+		Message: "telemetry.storage_size",
+		Fields:  fields,
+	})
+}
+
+// sqlitePath strips any DSN query suffix so the bare file path can be handed
+// to statfs. SQLite DSNs are usually a plain path but may carry `?_pragma=…`.
+func (p *persistence) sqlitePath() string {
+	if i := strings.IndexByte(p.dsn, '?'); i >= 0 {
+		return p.dsn[:i]
+	}
+	return p.dsn
+}
+
+// sqliteHasDbstat probes once for the dbstat virtual table. The default
+// modernc SQLite build omits it, so the probe (not a version guess) decides
+// whether per-table bytes are available. Memoised — the answer can't change
+// for the life of the handle.
+func (p *persistence) sqliteHasDbstat() bool {
+	if p.dbstatChecked {
+		return p.dbstatOK
+	}
+	p.dbstatChecked = true
+	// count(*) always returns exactly one row when the vtable exists (0 on an
+	// empty DB) and errors "no such table" when it does not — so a nil Scan
+	// error is a reliable presence signal, where `SELECT 1 … LIMIT 1` would
+	// false-negative (ErrNoRows) on an empty dbstat.
+	p.dbstatOK = p.db.QueryRow(`SELECT count(*) FROM dbstat`).Scan(new(int)) == nil
+	return p.dbstatOK
 }
 
 // FlushPersistence asks the writer to drain synchronously and waits for it.
