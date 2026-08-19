@@ -21,16 +21,16 @@ import (
 // Concrete fields outside the named ones are kept in Fields so the
 // JSON serialiser can flatten them at the top level.
 type LogEntry struct {
-	TS       time.Time
-	Level    string // "debug" | "info" | "warn" | "error"
-	Message  string
-	ReqID    string
-	TraceID  string
-	SpanID   string
-	Route    string
-	Status   int
+	TS        time.Time
+	Level     string // "debug" | "info" | "warn" | "error"
+	Message   string
+	ReqID     string
+	TraceID   string
+	SpanID    string
+	Route     string
+	Status    int
 	LatencyMS float64
-	ErrorStr string
+	ErrorStr  string
 	// Sub-app namespace this log was emitted from. Empty for entries
 	// produced by the parent process; populated by the observability
 	// ingest endpoint when accepting cross-process pushes from sub-
@@ -54,11 +54,11 @@ type LogEntry struct {
 // log_ring_bench_test.go) which is well within the per-request
 // latency budget for an access log.
 type logRing struct {
-	mu       sync.Mutex
-	buf      []LogEntry
-	cap      int
-	head     int  // next write index
-	full     bool // true once we've wrapped at least once
+	mu   sync.Mutex
+	buf  []LogEntry
+	cap  int
+	head int  // next write index
+	full bool // true once we've wrapped at least once
 }
 
 func newLogRing(capacity int) *logRing {

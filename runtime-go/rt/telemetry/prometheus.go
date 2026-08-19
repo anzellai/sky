@@ -77,28 +77,27 @@ func (s *Store) WriteProm(w io.Writer) {
 		map[string]string{"kind": "trace"}, float64(s.traces.snapshotCount()))
 }
 
-
 // helpTexts — short HELP descriptions for each kernel metric. Loose
 // match: helpTexts[name] looked up, else a default. Keep in sync
 // with the RFC's metric list.
 var helpTexts = map[string]string{
-	"sky_live_requests_total":      "HTTP requests handled, partitioned by method/route/status",
-	"sky_live_msg_total":           "Sky.Live Msg dispatches, partitioned by name/outcome/noop",
+	"sky_live_requests_total":        "HTTP requests handled, partitioned by method/route/status",
+	"sky_live_msg_total":             "Sky.Live Msg dispatches, partitioned by name/outcome/noop",
 	"sky_live_sse_connections_total": "Sky.Live SSE connection lifecycle events",
-	"sky_live_sessions_active":     "Active Sky.Live sessions (open SSE channels)",
-	"sky_live_request_seconds":     "HTTP request latency histogram (seconds)",
-	"sky_live_msg_seconds":         "Msg dispatch + update + diff latency histogram (seconds)",
-	"sky_db_query_total":           "Std.Db queries executed, partitioned by table/outcome",
-	"sky_db_query_seconds":         "Std.Db query latency histogram (seconds)",
-	"sky_db_pool_in_use":           "Std.Db connections currently leased",
-	"sky_db_pool_idle":             "Std.Db connections currently idle",
-	"sky_jobs_total":               "Std.Jobs runs, partitioned by queue/outcome",
-	"sky_jobs_duration_seconds":    "Std.Jobs job duration histogram (seconds)",
-	"sky_jobs_inflight":            "Std.Jobs currently-running jobs",
-	"sky_jobs_queue_depth":         "Std.Jobs pending jobs per queue",
-	"sky_ffi_calls_total":          "Go FFI invocations, partitioned by pkg/outcome",
-	"sky_telemetry_buffer_used":    "Hot-tier ring buffer occupancy (entries)",
-	"process_start_time_seconds":   "Process start time (seconds since epoch)",
+	"sky_live_sessions_active":       "Active Sky.Live sessions (open SSE channels)",
+	"sky_live_request_seconds":       "HTTP request latency histogram (seconds)",
+	"sky_live_msg_seconds":           "Msg dispatch + update + diff latency histogram (seconds)",
+	"sky_db_query_total":             "Std.Db queries executed, partitioned by table/outcome",
+	"sky_db_query_seconds":           "Std.Db query latency histogram (seconds)",
+	"sky_db_pool_in_use":             "Std.Db connections currently leased",
+	"sky_db_pool_idle":               "Std.Db connections currently idle",
+	"sky_jobs_total":                 "Std.Jobs runs, partitioned by queue/outcome",
+	"sky_jobs_duration_seconds":      "Std.Jobs job duration histogram (seconds)",
+	"sky_jobs_inflight":              "Std.Jobs currently-running jobs",
+	"sky_jobs_queue_depth":           "Std.Jobs pending jobs per queue",
+	"sky_ffi_calls_total":            "Go FFI invocations, partitioned by pkg/outcome",
+	"sky_telemetry_buffer_used":      "Hot-tier ring buffer occupancy (entries)",
+	"process_start_time_seconds":     "Process start time (seconds since epoch)",
 }
 
 func writeHeader(w io.Writer, name, mtype string) {
@@ -126,43 +125,67 @@ func writeLine(w io.Writer, name string, labels map[string]string, v float64) {
 }
 
 func writeHistogram(w io.Writer, name string, sm MetricSample) {
-	// Emit one _bucket line per boundary, in sorted order. The
-	// snapshot already holds cumulative counts (Observe bumps every
-	// bucket whose `le` >= v), so emit them as-is — no second
-	// accumulation pass.
+	// Stream each row straight to the writer — no intermediate slice, so a
+	// /_sky/metrics scrape allocates nothing here. The row SHAPE is defined
+	// once in emitHistogramSeries and shared with the persist exploder.
+	emitHistogramSeries(name, sm, func(rowName, leValue string, value float64, isCount bool) {
+		io.WriteString(w, rowName)
+		if leValue != "" {
+			writeLabels(w, sm.Labels, "le", leValue)
+		} else {
+			writeLabels(w, sm.Labels, "", "")
+		}
+		io.WriteString(w, " ")
+		if isCount {
+			io.WriteString(w, strconv.FormatUint(uint64(value), 10))
+		} else {
+			io.WriteString(w, formatFloat(value))
+		}
+		io.WriteString(w, "\n")
+	})
+}
+
+// emitHistogramSeries renders a histogram MetricSample as OpenMetrics rows —
+// `<name>_bucket{le=…}` (cumulative counts), `<name>_bucket{le="+Inf"}`,
+// `<name>_sum`, `<name>_count` — invoking `emit` once per row. It is the SINGLE
+// definition of the histogram wire shape, shared by the Prometheus text writer
+// (above) and the persist exploder (persist.go), so the two can never drift.
+//
+// `emit(rowName, leValue, value, isCount)`: leValue is "" for _sum/_count and
+// the raw name for a bucket ("+Inf" for the inf bucket); isCount marks integer
+// rows so a text sink formats them without a decimal point.
+//
+// CLAMP (load-bearing for the persist path): Snapshot reads each bucket / sum /
+// count as a SEPARATE atomic load (store.go), so a concurrent Observe can skew
+// them — a finite bucket momentarily above a higher `le`, or above count —
+// yielding a NON-monotonic cumulative vector. On a live scrape that self-heals
+// next tick; PERSISTED and later diffed as window deltas it is a permanent
+// malformed-histogram artifact (a bucket share > 1). Emitting a running maximum
+// guarantees a monotonic non-decreasing vector. Absent skew the running max
+// equals each value, so this is a no-op — the text output is byte-identical to
+// the pre-refactor writer for any consistent snapshot.
+func emitHistogramSeries(name string, sm MetricSample, emit func(rowName, leValue string, value float64, isCount bool)) {
 	keys := make([]float64, 0, len(sm.Buckets))
 	for k := range sm.Buckets {
 		keys = append(keys, k)
 	}
 	sort.Float64s(keys)
+	var running uint64
 	for _, b := range keys {
-		io.WriteString(w, name)
-		io.WriteString(w, "_bucket")
-		writeLabels(w, sm.Labels, "le", formatFloat(b))
-		io.WriteString(w, " ")
-		io.WriteString(w, strconv.FormatUint(sm.Buckets[b], 10))
-		io.WriteString(w, "\n")
+		if c := sm.Buckets[b]; c > running {
+			running = c
+		}
+		emit(name+"_bucket", formatFloat(b), float64(running), true)
 	}
-	// +Inf bucket
-	io.WriteString(w, name)
-	io.WriteString(w, "_bucket")
-	writeLabels(w, sm.Labels, "le", "+Inf")
-	io.WriteString(w, " ")
-	io.WriteString(w, strconv.FormatUint(sm.Count, 10))
-	io.WriteString(w, "\n")
-	// _sum + _count
-	io.WriteString(w, name)
-	io.WriteString(w, "_sum")
-	writeLabels(w, sm.Labels, "", "")
-	io.WriteString(w, " ")
-	io.WriteString(w, formatFloat(sm.Sum))
-	io.WriteString(w, "\n")
-	io.WriteString(w, name)
-	io.WriteString(w, "_count")
-	writeLabels(w, sm.Labels, "", "")
-	io.WriteString(w, " ")
-	io.WriteString(w, strconv.FormatUint(sm.Count, 10))
-	io.WriteString(w, "\n")
+	// +Inf == count, clamped up to the running finite maximum so the whole
+	// cumulative vector is monotonic non-decreasing.
+	inf := sm.Count
+	if running > inf {
+		inf = running
+	}
+	emit(name+"_bucket", "+Inf", float64(inf), true)
+	emit(name+"_sum", "", sm.Sum, false)
+	emit(name+"_count", "", float64(inf), true)
 }
 
 // writeLabels emits the Prometheus label block — `{k1="v1",k2="v2"}`.

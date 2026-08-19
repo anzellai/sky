@@ -219,3 +219,23 @@ Full runtime-go/rt -race suite green (0 races). Diff scope: runtime-go + docs
 ONLY (no rust/, no .sky) → coerce-floor + compiler gates structurally
 unaffected (justified skip). Remaining: rebuild+re-embed → example sweep +
 conformance (integration), then push + PR.
+
+## NEW SUB-MANDATE (2026-08-19) — histogram coalescing (full telemetry close)
+User: "PIV and ensure solutions are accurate, correct and scalable +
+maintainable + perf. please proceed." => implement lossless histogram
+coalescing (the deferred half of P3) via cumulative bucket-vector rows per
+window (Prometheus _bucket{le}/_sum/_count representation, schema-free), gated
+behind the SAME SKY_TELEMETRY_AGGREGATION_WINDOW knob (default OFF). Extends the
+P3 flusher pending-map + window ticker.
+METHOD: full PIV. Phase0 Architecture-Consult (verify vs real code; find the
+CANONICAL bucket representation already used for /_sky/metrics or OTLP export
+and REUSE it, don't invent; resolve the reader coupling — do local console /
+hub/store.go / SkyDeploy read raw rows or aggregated? does exploding require a
+reader change, and is it in-repo or cross-repo?). Phase0b Grill (G1 false-neg /
+G2 false-pos / G3 cost+cardinality scalability / G4 layering / G5
+lossless-for-every-reader). Then implement + Judge (fresh ctx, literal claim).
+CORRECTNESS BAR: reconstructed percentiles from the exploded rows must equal
+what raw rows would yield (lossless). SCALABILITY BAR: rows/window bounded by
+bucket_count × series_cardinality, NOT observation rate. MAINTAINABILITY: reuse
+the P3 mechanism + the existing bucket representation; no parallel impl.
+Default OFF preserves the external-reader contract until opt-in.

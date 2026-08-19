@@ -330,6 +330,33 @@ func metricAggregationWindow() time.Duration {
 	return d
 }
 
+// metricHistogramWindowOverride — test hook, parallel to the counter one.
+var metricHistogramWindowOverride atomic.Int64
+
+// histogramAggregationWindow is the histogram-coalescing window, gated by
+// SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW (a Go duration; default 0 = off).
+// It is DELIBERATELY separate from the counter window: coalescing a histogram
+// is a lossy, BUCKET-RESOLUTION aggregation — today's rows carry the raw
+// full-precision observation, so a reader can compute exact quantiles / max,
+// which bucket rows cannot — and it is a BREAKING representation change for the
+// out-of-repo SkyDeploy console (which reconstructs from per-observation rows).
+// So it ships default-off and enabling it requires a bucket-aware reader; the
+// counter window (lossless for rate/delta) must not silently drag it along.
+func histogramAggregationWindow() time.Duration {
+	if d := metricHistogramWindowOverride.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	v := strings.TrimSpace(os.Getenv("SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW"))
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
+}
+
 // persistEntry — a single record queued for the flusher goroutine.
 // The `kind` field discriminates the variant; only the matching
 // payload field is populated per entry.
@@ -351,7 +378,14 @@ type persistMetric struct {
 	// window are redundant — losslessly droppable. Gauges (spiky) and
 	// histograms (per-observation, rebuilt by the out-of-repo SkyDeploy
 	// reader) are never coalesced.
-	mtype      string
+	mtype string
+	// hist — for a histogram observation, the live in-RAM series (source of
+	// truth for the cumulative bucket vector). Carried so the flusher can
+	// snapshot it at a window boundary when histogram coalescing is on; nil
+	// for non-histogram metrics and unused when the histogram window is off
+	// (then the raw per-observation row is persisted, as before). The series
+	// is never deleted, so the pointer is stable for the process lifetime.
+	hist       *histogramSeries
 	observedAt time.Time
 }
 
@@ -596,13 +630,36 @@ func (p *persistence) flusher(s *Store) {
 		windowTickC = wt.C
 	}
 
-	// ingest routes ONE dequeued entry: a coalescable counter (only when a
-	// window is configured) overwrites its survivor in `coalesced`; everything
-	// else — logs, spans, gauges, histograms, and all counters when window==0
-	// — appends to the batch exactly as before.
+	// Histogram-coalescing state — SEPARATE knob + window from counters (a
+	// histogram is a lossy bucket-resolution change with a distinct reader
+	// contract; see histogramAggregationWindow). `dirtyHists` is a dirty-SET,
+	// not a value cache: the in-RAM *histogramSeries is the source of truth for
+	// the cumulative vector, so the map only records WHICH series were touched
+	// this window (keyed by the stable series pointer, 1:1 with identity) and
+	// its name (histogramSeries doesn't store its own name). At the window tick
+	// each is snapshotted + exploded into cumulative bucket rows. O(dirty
+	// series), independent of observation rate.
+	histWindow := histogramAggregationWindow()
+	dirtyHists := map[*histogramSeries]string{}
+	var histTickC <-chan time.Time
+	if histWindow > 0 {
+		ht := time.NewTicker(histWindow)
+		defer ht.Stop()
+		histTickC = ht.C
+	}
+
+	// ingest routes ONE dequeued entry: a coalescable counter (counter window
+	// on) overwrites its survivor in `coalesced`; a coalescable histogram
+	// (histogram window on) marks its series dirty; everything else — logs,
+	// spans, gauges, raw counters/histograms when their window is off — appends
+	// to the batch exactly as before.
 	ingest := func(e persistEntry) {
 		if window > 0 && e.kind == "metric" && e.metric.mtype == "counter" {
 			coalesced[e.metric.name+"\x00"+encodeAttrs(e.metric.labels)] = e
+			return
+		}
+		if histWindow > 0 && e.kind == "metric" && e.metric.mtype == "histogram" && e.metric.hist != nil {
+			dirtyHists[e.metric.hist] = e.metric.name
 			return
 		}
 		batch = append(batch, e)
@@ -645,14 +702,48 @@ func (p *persistence) flusher(s *Store) {
 			delete(coalesced, k)
 		}
 	}
+	// flushDirtyHists snapshots each dirty histogram series and explodes it into
+	// cumulative bucket rows (`_bucket{le}` / `_sum` / `_count`) appended to the
+	// batch, then clears the set. Same LOAD-BEARING role as flushCoalesced for
+	// read-your-writes + shutdown-drain. The rows are appended DIRECTLY to the
+	// batch (not re-enqueued), so they never re-enter ingest. emitHistogramSeries
+	// clamps the vector monotonic (the per-field atomic-read skew is durable once
+	// on disk). ~len(boundaries)+3 rows per dirty series per window.
+	flushDirtyHists := func() {
+		if len(dirtyHists) == 0 {
+			return
+		}
+		ts := time.Now()
+		for ser, name := range dirtyHists {
+			sm := s.snapshotHistogram(name, ser)
+			emitHistogramSeries(name, sm, func(rowName, leValue string, value float64, _ bool) {
+				labels := sm.Labels
+				if leValue != "" {
+					labels = withLabel(sm.Labels, "le", leValue)
+				}
+				batch = append(batch, persistEntry{
+					kind: "metric",
+					metric: persistMetric{
+						name:       rowName,
+						labels:     labels,
+						value:      value,
+						mtype:      "histogram",
+						observedAt: ts,
+					},
+				})
+			})
+			delete(dirtyHists, ser)
+		}
+	}
 	// drainAll writes everything currently queued AND every held counter
-	// survivor, not merely one batch.
+	// survivor AND every dirty histogram, not merely one batch.
 	drainAll := func() {
 		for {
 			drainQueue()
 			flushCoalesced()
+			flushDirtyHists()
 			flush()
-			if len(p.queue) == 0 && len(coalesced) == 0 {
+			if len(p.queue) == 0 && len(coalesced) == 0 && len(dirtyHists) == 0 {
 				return
 			}
 		}
@@ -691,6 +782,13 @@ func (p *persistence) flusher(s *Store) {
 			// Window boundary: emit the coalesced counter survivors. Never
 			// fires when window==0 (windowTickC is nil).
 			flushCoalesced()
+			flush()
+
+		case <-histTickC:
+			// Histogram window boundary: explode each dirty series into
+			// cumulative bucket rows. Never fires when the histogram window is
+			// off (histTickC is nil).
+			flushDirtyHists()
 			flush()
 		}
 	}
