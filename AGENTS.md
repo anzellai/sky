@@ -368,11 +368,15 @@ own; an operator sets a DSN; a shared host cluster issues one per app. Opt in
 with `[database] embedded = true`. `--embed` alongside an explicit DSN is an
 **error**, not a precedence rule.
 
-> **Bundles are not published yet.** `sky db provision --embed` resolves a
-> release built by `.github/workflows/postgres-bundle.yml`, and no
-> `postgres-bundle-v*` tag has been cut — so it 404s until one is, unless
-> pointed at a local bundle. `SKY_POSTGRES_BIN` or a system PostgreSQL works
-> today for `sky db start`. Full design: `docs/skydb/embedded-postgres.md`.
+> **Bundles are published.** `sky db provision --embed` resolves
+> **`postgres-bundle-v18.6`** (built by `.github/workflows/postgres-bundle.yml`,
+> cut 2026-08-19) and fetches a self-contained, licence-clean PostgreSQL 18.6
+> tarball for the host platform — linux/darwin × amd64/arm64, each with an SBOM
+> and verified against the release's `SHA256SUMS`. The tree vendors its
+> permissive deps (openssl/icu/xml2/zstd/lz4/zlib) under `@rpath`/`$ORIGIN`, so
+> it drops into a distroless or `FROM scratch`-plus-glibc image. `SKY_POSTGRES_BIN`
+> or a system PostgreSQL still works for `sky db start` if you'd rather not
+> fetch. Full design: `docs/skydb/embedded-postgres.md`.
 
 **Never run `sky build` from the repo root** — it overwrites the compiler binary
 in `sky-out/`. Always `cd` into the example/project dir first.

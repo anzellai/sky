@@ -9,9 +9,10 @@
 > pinned for bundles is 18.6** (`scripts/skydb/build-postgres-bundle.sh`); where
 > this document quotes a measurement taken against 14.21, that is the version
 > the measurement was actually run on and the figure is left as measured rather
-> than restated. And **no `postgres-bundle-v*` release is cut yet**, so
-> `sky db provision --embed` cannot fetch one — `SKY_POSTGRES_BIN`, a local
-> bundle, or a system PostgreSQL are the working paths today.
+> than restated. **`postgres-bundle-v18.6` is now published** (2026-08-19), so
+> `sky db provision --embed` fetches a self-contained PostgreSQL 18.6 for the
+> host platform; `SKY_POSTGRES_BIN`, a local bundle, or a system PostgreSQL
+> remain the alternatives.
 
 Sky's data story has a seam in it. `Std.Db` is dialect-safe across SQLite and
 Postgres, which means every feature must be designed twice and the differences
@@ -1585,8 +1586,11 @@ Six properties of that gate are load-bearing:
    module set, which is the surface the module allowlist and the unvendored arm
    were actually written against. The only caller that passed one was
    `postgres-bundle.yml`, which fires on `workflow_dispatch` and a
-   `postgres-bundle-v*` tag — and no such tag has been cut, so the answer to
-   "what happens when this gate meets a real bundle" was unknown. A nightly
+   `postgres-bundle-v*` tag — first cut as `postgres-bundle-v18.6` (2026-08-19),
+   which is when "what happens when this gate meets a real bundle" was first
+   answered: two real defects surfaced — the build's `is_system_lib()` skipped
+   the permissive libs Linux keeps in `/usr/lib`, and macOS's dyld-cache
+   `/usr/lib/libz` had to be classified PLATFORM like `libiconv`. A nightly
    `postgres-bundle-licence` job now builds one linux-amd64 bundle and runs
    both the scanner and the two real-bundle discrimination cases against it, so
    the first cut cannot be the first meeting.
