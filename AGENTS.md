@@ -27,7 +27,7 @@ errors, batteries-included stdlib.
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
 Haskell compiler lives under `legacy-haskell-compiler/` and serves as a
 **differential oracle** (`sky-out/sky`) the Rust output is checked against
-byte-for-byte. Current line: **v0.20.x**.
+byte-for-byte. Current line: **v0.21.x**.
 
 ## Language essentials
 

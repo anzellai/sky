@@ -53,6 +53,98 @@ order, and an app that never calls a builder observes exactly what it observed
 before — verified cell-by-cell against the measured baseline
 (`docs/coverage/config-matrix.json`).
 
+## v0.21.0 — one config front door, and telemetry you can afford to keep (2026-08-19)
+
+> **Upgrade note.** Two things change behaviour. (1) The `[auth]` `sky.toml`
+> section is **removed** — `driver` / `tokenTtl` / `cookieName` were seeded into
+> every app and read by nothing; a build now prints a migration LIST telling you
+> to delete them (nothing else to do). (2) In **development** the server now
+> binds **loopback (127.0.0.1)**, not every interface — so a zero-config app no
+> longer publishes its unauthenticated dev console to your LAN. Set `SKY_HOST` to
+> override either way; production still binds all interfaces. Everything else is
+> additive, opt-in, or a fix.
+
+This release gives cross-cutting configuration a single typed front door, makes
+authenticated sessions survive activity instead of a hard cutoff, and makes the
+telemetry the console records something you can keep on a real database without
+watching it eat the disk.
+
+### New — the `Sky.Config` front door
+
+- **Typed cross-cutting config.** A top-level `config` binding, built with
+  `Sky.Config` `withX` builders — `withLog` / `withDatabase` / `withSessions` /
+  `withJobs` / `withCsrf` / `withTelemetry` — replaces the stringly-typed
+  `sky.toml` sections for everything but the app's own shape. One precedence,
+  shared with `Live.withX`: **operator env > `withX` > seeded `sky.toml` default
+  > fallback**. An app that writes no `config` binding is unchanged.
+- **Legacy config prints a migration LIST.** When a legacy `sky.toml` key is
+  seeding an app, `sky build` / `sky run` name each key and the `withX` builder
+  it moves to, so the port from `sky.toml` to `config` is mechanical.
+- **`sky config migrate`** rewrites a legacy `sky.toml` into a typed `config`
+  binding.
+
+### New — auth that survives activity
+
+- **Sliding (rolling) `Std.Auth` JWTs.** Opt-in re-issue on an authenticated
+  request past half the token's life, with an **absolute-lifetime cap** (a
+  never-logged-out session can't live forever) and a builder-owned cookie (no
+  SameSite downgrade on re-issue). The non-auth `sky_sid` session already slid;
+  this brings the JWT in line, so an active user is not cut off at a fixed time.
+- **User revocation + suspension.** `Auth.revokeUser` / `disableUser` — a single
+  shared-table gate each session evaluates about itself; a revoked verdict
+  **evicts** the session (retiring its server-side goroutines), not just a 404.
+  No broker, no cross-replica fan-out.
+
+### New — telemetry you can afford to keep
+
+- **A real database size report.** On startup and hourly, one
+  `telemetry.storage_size` log event: per-table + whole-database bytes, a
+  growth-per-day projection, and — where the runtime owns the disk (SQLite,
+  embedded PostgreSQL) — free space with a "disk nearly full" flag. For a remote
+  database, set `SKY_TELEMETRY_DB_CAPACITY` (e.g. `100GB`) for a quota-based
+  flag. Every figure before this was arithmetic.
+- **Counter coalescing** (`SKY_TELEMETRY_AGGREGATION_WINDOW`, default off) keeps
+  one cumulative counter row per window instead of one per interaction —
+  lossless for rate/delta.
+- **Histogram coalescing** (`SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW`, default
+  off) persists a histogram as cumulative OpenMetrics `_bucket`/`_sum`/`_count`
+  rows per window — a lossy, bucket-resolution trade for a reader that consumes
+  bucket rows.
+- Each `SKY_TELEMETRY_*` storage setting also has a `Sky.Config` builder
+  (`withTelemetryAggregationWindow`, `withTelemetryHistogramWindow`,
+  `withTelemetryDbCapacity`, `withTelemetrySynchronousCommit`); env still wins.
+
+### ⚠ Breaking changes
+
+- **`[auth]` `sky.toml` section removed.** `driver` / `tokenTtl` / `cookieName`
+  were read by no runtime code (`Auth.signToken` takes its TTL as a Sky
+  argument; the auth cookie name is not a runtime setting). A build prints the
+  migration list; delete the section.
+- **Development binds loopback.** The dev listener was on `0.0.0.0`, exposing the
+  unauthenticated dev console + `/_sky/metrics` on the LAN. Dev now binds
+  `127.0.0.1`; production binds all interfaces; `SKY_HOST` overrides either.
+
+### Fixed / Security
+
+- **CSRF cookie isolation for bundled sub-apps.** The CSRF cookie was a global
+  name at `Path=/`, so a host and its in-process sub-apps shared it (403s after a
+  sub-app visit). Now per-app named, mirroring the session cookie.
+- Two silent telemetry/analytics retention failures (a `recover()` that
+  swallowed a panic and killed retention; an unbounded shared-pool `SELECT` on
+  every Analytics-tab load) fixed with per-cycle recover + windowed/indexed
+  queries.
+
+### Performance
+
+- **`Cmd.perform` concurrency is bounded** (per-session + global permits) so a
+  client firing effects faster than they complete can no longer spawn unbounded
+  concurrent effect work; deadlock-free (the dependent-perform spawn is
+  fire-and-forget) and parallel-fetch is not serialised.
+- **`Std.Ui` render fast path** — a typed `HtmlToVNode` path removes the top
+  allocator on attribute-heavy views.
+
+---
+
 ## v0.20.3 — the PostgreSQL Sky ships, and the pool it never configured (2026-08-15)
 
 > **Upgrade note.** One thing you can measure changes: the PostgreSQL connection

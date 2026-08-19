@@ -2,7 +2,7 @@
 
 [sky-lang.org](https://sky-lang.org) · [Docs & tour](https://anzellai.github.io/sky/) · [Examples](examples/)
 
-> **Status: v0.20.x release candidate.** Public APIs are stable for the
+> **Status: v0.21.x** — public APIs are stable for the
 > v1.0 line; minor versions ship features additively. Internals can
 > still change between minor versions. The compiler is now written in
 > Rust (cargo workspace at `rust/`) — the typed-Go output and the
