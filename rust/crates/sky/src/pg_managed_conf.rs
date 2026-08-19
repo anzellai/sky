@@ -43,6 +43,11 @@ pub enum LegacyExtent<'a> {
     ManagedKeys(&'a [String]),
     /// Treat the rest of the file as part of the block. For a conf Sky
     /// generates whole, where a missing end marker means a torn write.
+    ///
+    /// Constructed only by the shared cluster (`db_shared`, unix-only) and this
+    /// module's tests; the variant stays in the enum for the match arm on it, so
+    /// the "never constructed" lint is silenced only where neither builds it.
+    #[cfg_attr(not(any(unix, test)), allow(dead_code))]
     ToEndOfFile,
 }
 

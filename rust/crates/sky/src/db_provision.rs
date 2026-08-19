@@ -642,15 +642,34 @@ pub fn bundle_is_complete(bin_dir: &Path) -> bool {
 /// trusts it.
 pub fn bundle_runs(bin_dir: &Path) -> Result<(), String> {
     let exe = bin_dir.join("postgres");
-    match Command::new(&exe).arg("--version").output() {
-        Ok(o) if o.status.success() => Ok(()),
-        Ok(o) => Err(format!(
-            "{} exited {} without reporting a version",
-            exe.display(),
-            o.status.code().map(|c| c.to_string()).unwrap_or_else(|| "on a signal".into())
-        )),
-        Err(e) => Err(format!("cannot run {}: {e}", exe.display())),
+    // A binary that was just written (extracted from the bundle, or copied into
+    // the cache) can be transiently ETXTBSY — "Text file busy" — when the
+    // writer's file handle has not yet been released by the kernel. Exec'ing it
+    // in that window fails even though the file is a perfectly good executable.
+    // This is a real race in the install path (extract-then-run) and it flaked
+    // the release gate on a loaded CI runner, so retry a few times with a short
+    // backoff before giving up. ETXTBSY is errno 26 on Linux and macOS; on
+    // platforms where it never occurs the first attempt simply succeeds.
+    const ETXTBSY: i32 = 26;
+    let mut last_busy = String::new();
+    for attempt in 0..5u32 {
+        match Command::new(&exe).arg("--version").output() {
+            Ok(o) if o.status.success() => return Ok(()),
+            Ok(o) => {
+                return Err(format!(
+                    "{} exited {} without reporting a version",
+                    exe.display(),
+                    o.status.code().map(|c| c.to_string()).unwrap_or_else(|| "on a signal".into())
+                ));
+            }
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) => {
+                last_busy = format!("cannot run {}: {e}", exe.display());
+                std::thread::sleep(std::time::Duration::from_millis(50 * u64::from(attempt + 1)));
+            }
+            Err(e) => return Err(format!("cannot run {}: {e}", exe.display())),
+        }
     }
+    Err(last_busy)
 }
 
 /// Fetch the release archive for `version`/`platform` and verify it against the

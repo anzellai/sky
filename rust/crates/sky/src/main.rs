@@ -14,6 +14,14 @@ mod db_embed;
 mod db_migrate;
 mod db_pool_sizing;
 mod db_provision;
+/// The shared host cluster (`sky db provision --shared`, phase 6) speaks the
+/// PostgreSQL wire protocol over a **unix domain socket** (see [`pg_wire`]),
+/// so the whole module is unix-only. On non-unix a stub keeps the CLI verb
+/// dispatchable — [`db_shared::cmd_shared`] exists and returns a clear error.
+#[cfg(unix)]
+mod db_shared;
+#[cfg(not(unix))]
+#[path = "db_shared_windows.rs"]
 mod db_shared;
 /// Test-only: the one place a live test is allowed to not run. Also `#[path]`-
 /// included by the integration tests under `tests/`, which cannot import from a
@@ -21,6 +29,10 @@ mod db_shared;
 #[cfg(test)]
 mod live_gate;
 mod pg_managed_conf;
+/// A PostgreSQL wire-protocol client over a **unix domain socket**, used only
+/// by the shared host cluster (phase 6). `std::os::unix` does not exist on
+/// Windows, so the module — and every path that reaches it — is unix-only.
+#[cfg(unix)]
 mod pg_wire;
 use std::time::{Duration, Instant};
 

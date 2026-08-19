@@ -293,6 +293,10 @@ pub const OPERATOR_HEADROOM: u32 = 5;
 /// connections are still being reaped. Sizing for exactly one process makes
 /// every restart under load a `too many clients` incident, and the arithmetic
 /// that produced it looks correct in isolation.
+// Shared-cluster-only sizing: consumed by `db_shared` (unix-only) and this
+// module's tests. `#[cfg(any(unix, test))]` keeps it off the Windows build,
+// where the shared cluster does not compile, without a dead-code warning.
+#[cfg(any(unix, test))]
 pub const RESTART_OVERLAP_FACTOR: u32 = 2;
 
 /// Bounds on a SHARED cluster's `max_connections`.
@@ -304,7 +308,9 @@ pub const RESTART_OVERLAP_FACTOR: u32 = 2;
 ///
 /// Both bound what sky DERIVES from the host. Neither bounds what the operator
 /// asked for through the pool knob — see [`shared_cluster_max_connections`].
+#[cfg(any(unix, test))]
 pub const SHARED_MAX_CONNECTIONS_FLOOR: u32 = 25;
+#[cfg(any(unix, test))]
 pub const SHARED_MAX_CONNECTIONS_CEILING: u32 = 500;
 
 /// Bounds on the DEVELOPMENT cluster's `max_connections`.
@@ -439,6 +445,7 @@ fn operator_excess(i: &PoolInputs) -> u32 {
 /// actually run there. One-per-four-cores keeps the derived default within
 /// sight of the flat 200 it replaces on a mid-sized host, while making it
 /// track the host in both directions.
+#[cfg(any(unix, test))]
 pub fn expected_apps_per_host(cpus: u32) -> u32 {
     clamp(cpus.max(1) / 4, 1, 4)
 }
@@ -453,6 +460,7 @@ pub fn expected_apps_per_host(cpus: u32) -> u32 {
 /// The clamp is applied to the MACHINE-DERIVED demand, and whatever the
 /// operator's pool knob adds on top passes through it — see
 /// [`dev_cluster_max_connections`] for the argument.
+#[cfg(any(unix, test))]
 pub fn shared_cluster_max_connections(i: &PoolInputs) -> u32 {
     let apps = expected_apps_per_host(i.cpus);
     let n = derived_process_connection_demand(i.cpus) * apps * RESTART_OVERLAP_FACTOR
