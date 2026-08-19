@@ -60,7 +60,7 @@ func TestAckInputsEvictsUnmounted(t *testing.T) {
 	sess := &liveSession{
 		prevTree: &tree,
 		inputSeqs: map[string]int64{
-			emailID:            7,
+			emailID:           7,
 			"r.0#input:stale": 3, // unmounted in this render
 		},
 	}
@@ -101,8 +101,8 @@ func TestAckInputsFindsEveryDirtyIdWhereverItSits(t *testing.T) {
 	sess := &liveSession{
 		prevTree: &tree,
 		inputSeqs: map[string]int64{
-			firstID:           4,
-			lastID:            11,
+			firstID:          4,
+			lastID:           11,
 			"r.9#input:gone": 2,
 		},
 	}

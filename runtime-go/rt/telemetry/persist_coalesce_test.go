@@ -165,3 +165,19 @@ func TestCoalesce_WindowTickerEmitsSurvivor(t *testing.T) {
 		}
 	}
 }
+
+// The read side of the withX chain: with no test override, the window functions
+// read their literal env var (which rt.ApplyConfig populates from a
+// withTelemetry* builder). Proves telemetry honors the env ApplyConfig writes.
+func TestAggregationWindows_ReadEnv(t *testing.T) {
+	metricAggregationWindowOverride.Store(0)
+	metricHistogramWindowOverride.Store(0)
+	t.Setenv("SKY_TELEMETRY_AGGREGATION_WINDOW", "15s")
+	t.Setenv("SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW", "45s")
+	if got := metricAggregationWindow(); got != 15*time.Second {
+		t.Fatalf("metricAggregationWindow env read: got %v want 15s", got)
+	}
+	if got := histogramAggregationWindow(); got != 45*time.Second {
+		t.Fatalf("histogramAggregationWindow env read: got %v want 45s", got)
+	}
+}

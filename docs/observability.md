@@ -149,6 +149,15 @@ opt back in with `SKY_TRACE_HONOR_REMOTE_PARENT=1`.
 | `SKY_TELEMETRY_DB_CAPACITY` | (unset) | Operator-declared database capacity in human units (`100GB`, `1.5TB`, `512MB`, `100GiB`, or a bare byte count). The size report warns when the whole database exceeds 90% of it — the only "near full" signal available for a **remote** database, whose host disk the app cannot see. Unset → size + growth reported, no capacity danger flag. A malformed value logs one warning and disables the check (never silently). See "Database size report". |
 | `SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW` | `0` (off) | A Go duration, **separate** from the counter window. When `> 0`, a histogram series is persisted once per window as cumulative OpenMetrics rows — `<name>_bucket{le=…}`, `<name>_bucket{le="+Inf"}`, `<name>_sum`, `<name>_count` — instead of one raw row per observation, cutting a busy histogram from thousands of rows/window to ~`buckets+3`. **This is a lossy, bucket-resolution change, and a breaking one for readers of the raw rows** — today a persisted histogram row carries the *raw full-precision observation*, so a reader can compute exact quantiles / max; bucket rows give only bucket-interpolated quantiles (`_sum`/`_count`, hence the mean, stay exact). It is a **separate opt-in** precisely because the out-of-repo SkyDeploy console reconstructs from per-observation rows: enable it only with a reader that understands cumulative `_bucket`/`_sum`/`_count` rows (and Prometheus-style counter-reset handling across restarts). The in-repo console is unaffected (it reads the in-RAM snapshot). Note the crossover: it only *reduces* rows above ~`buckets+3` observations/window — a sparse histogram (one observation per window) writes more rows, not fewer. |
 
+Each of the four `SKY_TELEMETRY_*` storage settings above also has a
+`Sky.Config` builder — `withTelemetryAggregationWindow` (Int seconds),
+`withTelemetryHistogramWindow` (Int seconds), `withTelemetryDbCapacity`
+(`Bytes`/`Megabytes`/`Gigabytes n`), and `withTelemetrySynchronousCommit`
+(`Bool`) — so an app can set them in its `config` binding. The env var always
+**overrides** the builder (operator env > withX > default); if you set neither,
+the safe default applies. Set the builder for a value your app should ship with,
+the env var to let a deployment override it.
+
 ## Database size report
 
 **On startup and then hourly**, the runtime measures its database and emits one

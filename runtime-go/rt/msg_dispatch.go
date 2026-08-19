@@ -263,9 +263,9 @@ var fastPathFallthroughCount uint64
 // invoked at 'sky_call2' entry.  It classifies the call site
 // and looks up the typed dispatch table:
 //
-//   * If 'a' is not a SkyADT, increment fastPathFallthroughCount
+//   - If 'a' is not a SkyADT, increment fastPathFallthroughCount
 //     and return (nil, false).
-//   * Otherwise it must resolve the OWNING ADT of the value to key
+//   - Otherwise it must resolve the OWNING ADT of the value to key
 //     LookupMsgUpdate — and it cannot. See below.
 //
 // Stage 5 callers (sky_call2) IGNORE the returned table and

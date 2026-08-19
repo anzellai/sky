@@ -120,9 +120,10 @@ func callShouldRetry(fn any, errValue any) bool {
 
 // readShouldRetry pulls (ctorName, args) off a ShouldRetry value.
 // Two shapes accepted:
-//   1. SkyADT (runtime-constructed values; codegen sets SkyName).
-//   2. Any reflect-readable struct exposing SkyName + Fields fields
-//      (the typed Go struct shape codegen emits for user-declared ADTs).
+//  1. SkyADT (runtime-constructed values; codegen sets SkyName).
+//  2. Any reflect-readable struct exposing SkyName + Fields fields
+//     (the typed Go struct shape codegen emits for user-declared ADTs).
+//
 // Numeric-Tag fallback uses the Sky-source declaration order:
 // RetryAlways = 0, RetryWhen = 1.
 func readShouldRetry(v any) (string, []any) {

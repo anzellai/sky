@@ -7,10 +7,10 @@
 // cleanly (introspection via `codecTableColumns`), so passing the whole project's
 // declared table set is safe even if some tables were never created.
 //
-// - Db_resetTables EMPTIES the given tables and resets their autoincrement
-//   counters, keeping the schema + the `_sky_migrations` ledger.
-// - Db_dropTables DROPs the given tables (the CLI includes `_sky_migrations` in
-//   the drop-all case to return to a fresh "never migrated" state).
+//   - Db_resetTables EMPTIES the given tables and resets their autoincrement
+//     counters, keeping the schema + the `_sky_migrations` ledger.
+//   - Db_dropTables DROPs the given tables (the CLI includes `_sky_migrations` in
+//     the drop-all case to return to a fresh "never migrated" state).
 package rt
 
 import (

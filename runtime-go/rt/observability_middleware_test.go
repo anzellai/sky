@@ -210,10 +210,10 @@ func TestRouteLabelFor_LowCardinalityFallback(t *testing.T) {
 		"/static":                     "/static",
 		"/index.html":                 "/index.html",
 		// Unsafe first segments — IDs, encodings, junk — collapse.
-		"/12345":            "/:dynamic",
-		"/123abc":           "/:dynamic",
-		"/%41%42":           "/:dynamic",
-		"/a b":              "/:dynamic",
+		"/12345":                      "/:dynamic",
+		"/123abc":                     "/:dynamic",
+		"/%41%42":                     "/:dynamic",
+		"/a b":                        "/:dynamic",
 		"/" + strings.Repeat("s", 65): "/:dynamic",
 	}
 	for path, want := range cases {

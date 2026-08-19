@@ -147,11 +147,11 @@ func parseSlidingSameSite(s string) http.SameSite {
 //   - HttpOnly         — JS must never read the auth token.
 //   - SameSite         — the builder's value (default Strict).
 //   - Secure           — cookieSecureFor(r, name, sameSite): the SHARED helper
-//                        the session / CSRF / console cookies all use, so the
-//                        Secure decision cannot drift from them.
+//     the session / CSRF / console cookies all use, so the
+//     Secure decision cannot drift from them.
 //   - MaxAge           — slidingCookieMaxAgeSeconds(resolveSessionTTL()): a
-//                        long floor that outlives the session it carries,
-//                        exactly like sky_sid / __sky_csrf.
+//     long floor that outlives the session it carries,
+//     exactly like sky_sid / __sky_csrf.
 func buildSlidingAuthCookie(r *http.Request, name, value, sameSite string) *http.Cookie {
 	ss := parseSlidingSameSite(sameSite)
 	return &http.Cookie{

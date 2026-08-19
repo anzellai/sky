@@ -141,9 +141,9 @@ func TestPaintRadio_GlyphAndFocus(t *testing.T) {
 func TestPaintBox_LinkIsFocusable(t *testing.T) {
 	grid := makeTestGrid(20, 1)
 	link := layoutBox{
-		kind:   "node",
-		tag:    "a",
-		width:  10, height: 1,
+		kind:  "node",
+		tag:   "a",
+		width: 10, height: 1,
 		axis: layoutAxisRow,
 		// Note: empty events slice — Ui.link sets href but no onClick.
 		children: []layoutBox{
@@ -166,9 +166,9 @@ func TestPaintBox_LinkIsFocusable(t *testing.T) {
 func TestPaintBox_FocusedLinkUnderlines(t *testing.T) {
 	grid := makeTestGrid(20, 1)
 	link := layoutBox{
-		kind:   "node",
-		tag:    "a",
-		width:  10, height: 1,
+		kind:  "node",
+		tag:   "a",
+		width: 10, height: 1,
 		axis: layoutAxisRow,
 		children: []layoutBox{
 			{kind: "text", text: "go", width: 2, height: 1},

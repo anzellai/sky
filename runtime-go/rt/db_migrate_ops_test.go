@@ -8,9 +8,9 @@ import (
 func TestRenderMigOp(t *testing.T) {
 	zero := int64(0)
 	cases := []struct {
-		op       migOp
-		sqlite   string
-		pg       string
+		op     migOp
+		sqlite string
+		pg     string
 	}{
 		{migOp{Kind: "addColumn", Table: "users", Column: "age", Type: "int", Nullable: true},
 			"ALTER TABLE users ADD COLUMN age INTEGER", "ALTER TABLE users ADD COLUMN age BIGINT"},

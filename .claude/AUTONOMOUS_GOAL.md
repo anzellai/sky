@@ -278,3 +278,73 @@ grill (capacity parse/edge cases, owned-path false pos/neg, startup timing,
 double-report), implement, Judge. Remember: new env var trips
 sky_env_reads + config-surface ratchets — handle proactively (see
 [[ci_only_ratchets_env_and_census]]).
+
+## SIZE REPORT v2 — SHIPPED + JUDGE ALL-PASS (2026-08-19)
+ab06b015. Full PIV: arch-consult (PROCEED, embedded data-dir reachable via
+supervisor cfg.dataDir), grill (PROCEED-w/-5-mods: own-recover startup, don't
+bump prune timer, danger=free% not free<consumed, warn-loud on bad capacity,
+stable page_count not WAL-sum), implement, Judge ALL-PASS 8/8 (crux item5
+embedded plumbing verified). Full rt -race GREEN. 4 CI ratchets handled
+proactively. Answers user's 2 questions: external DB near-full via
+SKY_TELEMETRY_DB_CAPACITY quota (can't statfs remote disk); startup+hourly
+cadence for immediate baseline. Pushed; CI full matrix running (32254483043).
+
+## NEW SUB-MANDATE (2026-08-19) — withX coverage for system env vars
+User principle (VERBATIM intent): "system/sky's reading env vars should be able
+to set withX patterns, NO EXCEPTION. The exception is for user-defined env vars."
+Precedence: operator .env OVERRIDES withX > withX value > safe default.
+ - No withX used → read .env → else safe default (safe for simple prod).
+ - withX used → user sets value; .env still OVERRIDES if present.
+ - withX builder DOCS must hint the corresponding env var.
+IMMEDIATE: the 3 telemetry storage settings (SKY_TELEMETRY_AGGREGATION_WINDOW,
+_HISTOGRAM_AGGREGATION_WINDOW, DB_CAPACITY) — currently .env-only — get withX
+builders. Consider SYNCHRONOUS_COMMIT too. Follow the EXISTING withTelemetry
+mechanism (Config_withTelemetry / ApplyConfig, "operator env still wins").
+CRUX TO GRILL: TIMING. withX/ApplyConfig runs in main(); telemetry flusher reads
+the window ONCE at EnablePersistence (rt init() OR embed handoff) — if ApplyConfig
+runs AFTER, a withX-set env var is too late for the read-once windows (capacity is
+re-read each cycle, more forgiving). Must resolve ordering so env-overrides-withX
+actually works for the read-once settings.
+BROADER: the "no exception" principle implies an AUDIT (every system FIXED_NAME_READS
+env var has a withX builder) + maybe a GATE enforcing it. Assess scope in grill.
+METHOD: full PIV — arch-consult (existing mechanism + timing), grill, implement, Judge.
+
+## withX-TELEMETRY — grilled, LOCKED (2026-08-19)
+Consult: PROCEED+REVISE. Timing crux REAL: EnablePersistenceFromEnv runs in
+observability.go init() BEFORE main's ApplyConfig → read-once windows miss withX
+in the operator-enabled normal path (silent failure). Fix = MOVE enable to
+lower_main after ApplyConfig.
+Grill: PROCEED-WITH-MODIFICATIONS. 5 mods:
+ M1(blocker): emit rt.EnableConsolePersistence() UNCONDITIONALLY, OUTSIDE the
+   `if let Some(cfg)=apply_config` block in lower_main, between config block +
+   MaybeStartEmbeddedPostgres. (config-less apps must keep persistence.)
+ M2(blocker): observability.go init() — remove ONLY the EnablePersistenceFromEnv
+   call+warn; KEEP RegisterShutdownHook("telemetry-persistence") or drain lost.
+ M3(gate-red): add 4 MigrationKind::BornInCode rows to config_migration.rs for
+   the SKY_TELEMETRY_* literals (like DATABASE_URL/OTEL_EXPORTER_OTLP_ENDPOINT).
+ M4: capacity builder takes a Capacity ADT (Bytes/Megabytes/Gigabytes)→human
+   string, NOT raw Int bytes. Keys go in configKeyToLiteralEnv ONLY, never seeded.
+ M5: crux emission test — assert find(ApplyConfig)<find(EnableConsolePersistence)
+   in main AND EnableConsolePersistence present for a config-LESS program.
+Precedence (HOLDS): operator env > withX (ApplyConfig applyConfigValue defers to
+operator via !isSeededDefault) > Go default 0/off. New keys literal-env + never
+seeded → Go-default reachable. Builders: Int seconds (windows), Capacity ADT,
+Bool→on/off (synccommit). Touches Sky stdlib + rt + lower.rs(compiler) + gates →
+full gate suite + rebuild + Judge required.
+
+## withX-TELEMETRY — IMPLEMENTED (2026-08-19), milestone pending
+All 5 mods done + unit-verified:
+ M1 lower.rs: rt.EnableConsolePersistence() emitted unconditionally, after
+   ApplyConfig, before MaybeStartEmbeddedPostgres. sky_config_entry gate updated
+   (order + unconditional-presence) — 9/9 green.
+ M2 observability.go: init() enable removed, shutdown hook kept + new
+   EnableConsolePersistence() exported func.
+ M3 config_migration.rs: 4 BornInCode rows. config-migration gate PASS (6 literals).
+ M4 Sky/Config.sky: Capacity ADT + 4 builders (Int seconds / Capacity / Bool);
+   Go kernels normalise (Int→"Ns", bytes→decimal, Bool→on/off); keys in
+   configKeyToLiteralEnv only.
+ M5 sky_config_entry emission test (ApplyConfig<EnableConsolePersistence + present
+   for config-less program). Go precedence tests (withX-sets / operator-overrides
+   /neither) + telemetry env-read tests. config-surface --check PASS (unaffected).
+Rebuilding compiler now → smoke app (4 builders + Gigabytes 100) → milestone
+(example sweep + conformance + coerce-floor + rt -race + full config gates) → Judge.

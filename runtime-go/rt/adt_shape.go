@@ -46,9 +46,9 @@ import (
 // interface + reflected `V0..VN` fields.
 //
 // Convention (must match Compile.hs's `emitSealedIfaceUnion`):
-//   * Variant struct names end with `_V` (e.g. `Main_Msg_Increment_V`)
-//   * Methods `SkyVariantTag() int` and `SkyVariantName() string`
-//   * Payload fields named `V0`, `V1`, `V2`, ... in declaration order
+//   - Variant struct names end with `_V` (e.g. `Main_Msg_Increment_V`)
+//   - Methods `SkyVariantTag() int` and `SkyVariantName() string`
+//   - Payload fields named `V0`, `V1`, `V2`, ... in declaration order
 //
 // Sites that need only one of (tag, name, fields) can pass the
 // others through `_`.  Sites that hot-loop over many values may

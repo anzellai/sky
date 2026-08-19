@@ -255,7 +255,6 @@ func TestInjectPseudoClassStyles_UnknownTagSkipped(t *testing.T) {
 	}
 }
 
-
 // TestInjectPseudoClassStyles_VoidElementSiblingHoist — v0.15.57 #409.
 // A pseudo-class attached to a void element (<input>, <img>, <br>, …)
 // must NOT be silently dropped just because void HTML elements can't

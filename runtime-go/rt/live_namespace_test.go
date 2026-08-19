@@ -95,7 +95,7 @@ func TestDispatchRoot_ReservedSkyNamespace_ReturnsPlain404(t *testing.T) {
 	cases := []string{
 		"/_sky/foo",
 		"/_sky/console/missing",
-		"/_sky/conslole",  // typoed probe — the original #438 surface
+		"/_sky/conslole", // typoed probe — the original #438 surface
 		"/_sky/notamount/deep/path",
 	}
 	for _, p := range cases {

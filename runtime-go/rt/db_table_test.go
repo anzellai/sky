@@ -7,12 +7,12 @@ import (
 
 func TestDbFieldToColumn(t *testing.T) {
 	cases := map[string]string{
-		"Id":          "id",
-		"Slug":        "slug",
-		"PriceMinor":  "price_minor",
-		"ImageUrl":    "image_url",
-		"CreatedAt":   "created_at",
-		"IsGuest":     "is_guest",
+		"Id":            "id",
+		"Slug":          "slug",
+		"PriceMinor":    "price_minor",
+		"ImageUrl":      "image_url",
+		"CreatedAt":     "created_at",
+		"IsGuest":       "is_guest",
 		"ShippingClass": "shipping_class",
 	}
 	for in, want := range cases {

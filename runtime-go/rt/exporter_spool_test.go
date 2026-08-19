@@ -499,8 +499,8 @@ func TestSpool_CrashResilience(t *testing.T) {
 // Used to simulate a slow disk (Cloud Run boot volume + occasional
 // fsync stalls) and verify Submit doesn't regress.
 type slowSpool struct {
-	inner    spool
-	delay    time.Duration
+	inner spool
+	delay time.Duration
 }
 
 func (s *slowSpool) Persist(ctx context.Context, batch []telemetryItem) (int64, error) {

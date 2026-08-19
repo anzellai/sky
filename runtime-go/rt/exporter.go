@@ -151,10 +151,10 @@ type HubExporter struct {
 	token        string
 	httpC        *http.Client
 	batchInt     time.Duration
-	batchMax     int    // events per batch
-	batchBytes   int    // bytes per batch (1 MiB target)
-	ringCap      int    // entries the bounded channel can hold
-	ringBytesCap int64  // approx in-memory bytes cap
+	batchMax     int   // events per batch
+	batchBytes   int   // bytes per batch (1 MiB target)
+	ringCap      int   // entries the bounded channel can hold
+	ringBytesCap int64 // approx in-memory bytes cap
 	insecureTLS  bool
 
 	// Hot-path state. We accept on this channel; drainer consumes.
@@ -171,23 +171,23 @@ type HubExporter struct {
 	queueBytes atomic.Int64
 
 	// Circuit breaker — int32 for atomic load/store.
-	circuit          atomic.Int32
-	consecFailures   atomic.Int32
-	circuitOpenedAt  atomic.Int64 // unix-nano
+	circuit           atomic.Int32
+	consecFailures    atomic.Int32
+	circuitOpenedAt   atomic.Int64 // unix-nano
 	circuitOpenWindow time.Duration
 
 	// Self-observability counters. Mirrored to telemetry.Default()
 	// for /_sky/metrics emission; held atomically here for cheap
 	// per-call increment + Metrics() snapshot.
-	droppedDebug   atomic.Int64
-	droppedInfo    atomic.Int64
-	droppedWarn    atomic.Int64
-	droppedError   atomic.Int64
-	pushAttempts   atomic.Int64
-	pushFailNet    atomic.Int64
-	pushFailTime   atomic.Int64
-	pushFail4xx    atomic.Int64
-	pushFail5xx    atomic.Int64
+	droppedDebug    atomic.Int64
+	droppedInfo     atomic.Int64
+	droppedWarn     atomic.Int64
+	droppedError    atomic.Int64
+	pushAttempts    atomic.Int64
+	pushFailNet     atomic.Int64
+	pushFailTime    atomic.Int64
+	pushFail4xx     atomic.Int64
+	pushFail5xx     atomic.Int64
 	pushFailCircuit atomic.Int64
 
 	// Lifecycle.
@@ -335,7 +335,7 @@ func NewHubExporter() *HubExporter {
 	}
 
 	httpC := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:   5 * time.Second,
 		Transport: defaultHubTransport(insecure),
 	}
 
@@ -1300,7 +1300,7 @@ type otlpAttribute struct {
 
 type otlpAnyValue struct {
 	StringValue string  `json:"stringValue,omitempty"`
-	IntValue    string  `json:"intValue,omitempty"`    // OTLP spec: int as string
+	IntValue    string  `json:"intValue,omitempty"` // OTLP spec: int as string
 	DoubleValue float64 `json:"doubleValue,omitempty"`
 	BoolValue   *bool   `json:"boolValue,omitempty"`
 }

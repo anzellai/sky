@@ -165,12 +165,12 @@ func TestFederation_TraceSpanRoundTrip(t *testing.T) {
 
 	now := time.Now()
 	RecordTrace(telemetry.TraceEntry{
-		TraceID:   "trace-a",
-		SpanID:    "span-1",
-		Name:      "GET /charge",
-		Kind:      "server",
-		StartTime: now,
-		EndTime:   now.Add(100 * time.Millisecond),
+		TraceID:    "trace-a",
+		SpanID:     "span-1",
+		Name:       "GET /charge",
+		Kind:       "server",
+		StartTime:  now,
+		EndTime:    now.Add(100 * time.Millisecond),
 		StatusCode: "ok",
 	})
 

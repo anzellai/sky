@@ -104,8 +104,8 @@ func TestApplyMsgArgs_NarrowsFormDataMap(t *testing.T) {
 // TestApplyMsgArgs_NarrowsFormDataToRecordStruct — `<form onSubmit=...>`
 // can also feed a typed record-alias Msg constructor:
 //
-//   type alias AuthCreds = { email : String, password : String }
-//   type Msg = DoSignIn AuthCreds
+//	type alias AuthCreds = { email : String, password : String }
+//	type Msg = DoSignIn AuthCreds
 //
 // Sky lowers `AuthCreds` to a Go struct (`State_AuthCreds_R{Email, Password}`)
 // and the constructor expects that struct, but the wire arg is JSON-decoded

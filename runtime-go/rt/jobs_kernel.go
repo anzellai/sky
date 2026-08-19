@@ -56,18 +56,19 @@ const jobsDefaultQueue = "default"
 // worker. Lazy-init on first Jobs.* call so binaries that don't
 // import the module pay zero overhead.
 var (
-	jobsRuntimeMu     sync.Mutex
+	jobsRuntimeMu      sync.Mutex
 	jobsRuntimeStarted bool
-	jobsStore         jobs.Store
-	jobsWorker        *jobs.Worker
+	jobsStore          jobs.Store
+	jobsWorker         *jobs.Worker
 )
 
 // jobsBoot starts the default worker on first use. Idempotent.
 //
 // Backend selection is read via skyGetenv (honouring the `[env] prefix`):
-//   SKY_JOBS_STORE       — "memory" (default) | "sqlite" | "postgres"
-//   SKY_JOBS_STORE_PATH  — file path (sqlite, default "./_sky/jobs.db")
-//                          or URL (postgres; falls back to DATABASE_URL)
+//
+//	SKY_JOBS_STORE       — "memory" (default) | "sqlite" | "postgres"
+//	SKY_JOBS_STORE_PATH  — file path (sqlite, default "./_sky/jobs.db")
+//	                       or URL (postgres; falls back to DATABASE_URL)
 //
 // `sky.toml [jobs] store` / `storePath` seed those two, exactly as `[live]`
 // seeds the session store (`rust/crates/project/src/build.rs`). Shell env still

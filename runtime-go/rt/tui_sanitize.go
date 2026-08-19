@@ -36,17 +36,17 @@ package rt
 // sanitiseRune returns a safe substitute for a control character or
 // the rune itself if it's printable. The substitution table:
 //
-//   \t (0x09)        →  ' ' (single space; tabs don't have a fixed
-//                       cell width in our grid)
-//   \n (0x0A)        →  '␤' (SYMBOL FOR NEWLINE — visible cue
-//                       that a newline appeared in single-line text)
-//   \r (0x0D)        →  '' (return ' ' — \r is "carriage return",
-//                       has no place in a cell-painted line)
-//   \x1B (ESC)       →  '·' (middle dot; signals control char)
-//   0x00-0x1F other  →  '·'
-//   0x7F (DEL)       →  '·'
-//   everything else  →  unchanged (incl. printable ASCII, UTF-8,
-//                       CJK, emoji — width handling is separate)
+//	\t (0x09)        →  ' ' (single space; tabs don't have a fixed
+//	                    cell width in our grid)
+//	\n (0x0A)        →  '␤' (SYMBOL FOR NEWLINE — visible cue
+//	                    that a newline appeared in single-line text)
+//	\r (0x0D)        →  '' (return ' ' — \r is "carriage return",
+//	                    has no place in a cell-painted line)
+//	\x1B (ESC)       →  '·' (middle dot; signals control char)
+//	0x00-0x1F other  →  '·'
+//	0x7F (DEL)       →  '·'
+//	everything else  →  unchanged (incl. printable ASCII, UTF-8,
+//	                    CJK, emoji — width handling is separate)
 //
 // The replacement keeps the rune-count of the source intact (one
 // rune in, one rune out) so existing layout / wrap / cursor logic

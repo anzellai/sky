@@ -59,19 +59,15 @@ func init() {
 	readinessReady.Store(true)
 	probes := []func() error{}
 	readinessProbes.Store(&probes)
-	// SkyDeploy Pro+ tenants get /data/console.db mounted and
-	// SKY_CONSOLE_DB_PATH injected — when present, dual-write every
-	// log / metric / span to the file so the bundled console
-	// mini-app can render history beyond the 10k-line / 1k-span
-	// in-RAM caps.  Failure is logged warn-level (visible at
-	// /_sky/console) but never blocks the runtime.
-	if err := telemetry.Default().EnablePersistenceFromEnv(); err != nil {
-		telemetry.Default().AppendLog(telemetry.LogEntry{
-			Level:   "warn",
-			Message: "telemetry persistence init failed",
-			Fields:  map[string]string{"error": err.Error()},
-		})
-	}
+	// Telemetry console-DB persistence is NO LONGER enabled here. It is enabled
+	// by rt.EnableConsolePersistence(), emitted into main() AFTER rt.ApplyConfig
+	// (lower.rs lower_main). This init() ran before main's ApplyConfig, so the
+	// flusher latched the telemetry aggregation windows / synchronous-commit at
+	// enable time BEFORE a Sky.Config.withTelemetry* value was applied — the
+	// withX value was silently ignored in the operator-enabled path. Moving the
+	// enable after ApplyConfig closes that. The shutdown hook stays here (it is
+	// registered once at init and drains whatever persistence main brought up).
+	//
 	// Drain the telemetry queue on shutdown.
 	//
 	// `ClosePersistence` has always done the right thing — stop the flusher,
@@ -90,6 +86,26 @@ func init() {
 	RegisterShutdownHook("telemetry-persistence", func(ctx context.Context) {
 		telemetry.Default().ClosePersistenceContext(ctx)
 	})
+}
+
+// EnableConsolePersistence brings up telemetry console-DB persistence
+// (SKY_CONSOLE_DB_PATH, or a Postgres DATABASE_URL). It is emitted into main()
+// by lower_main IMMEDIATELY AFTER rt.ApplyConfig and before
+// MaybeStartEmbeddedPostgres, so a Sky.Config.withTelemetry* value is already in
+// the environment when the flusher latches the aggregation windows /
+// synchronous-commit at enable time. Operator env still wins (ApplyConfig writes
+// withX values set-if-unset). Unconditional + idempotent: a no-op when no
+// console DB is configured, and under --embed it no-ops here (the DSN is not yet
+// exported) so the later embed handoff — which also supplies the cluster data
+// dir — is the creator. Failure is warn-level; observability never blocks boot.
+func EnableConsolePersistence() {
+	if err := telemetry.Default().EnablePersistenceFromEnv(); err != nil {
+		telemetry.Default().AppendLog(telemetry.LogEntry{
+			Level:   "warn",
+			Message: "telemetry persistence init failed",
+			Fields:  map[string]string{"error": err.Error()},
+		})
+	}
 }
 
 // RegisterReadinessProbe adds a health check to the readyz endpoint.

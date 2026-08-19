@@ -378,13 +378,13 @@ func DbDec_andThen(fn any, dec any) any {
 // applicative-style decoder combine. Cornerstone of the Pipeline
 // shape (required / optional). Reverses Sky's `|>` order:
 //
-//   succeed Ctor
-//      |> andMap (DbDec.string "name")
-//      |> andMap (DbDec.int "age")
+//	succeed Ctor
+//	   |> andMap (DbDec.string "name")
+//	   |> andMap (DbDec.int "age")
 //
 // becomes
 //
-//   andMap (DbDec.int "age")  (andMap (DbDec.string "name") (succeed Ctor))
+//	andMap (DbDec.int "age")  (andMap (DbDec.string "name") (succeed Ctor))
 //
 // — the outer call processes the inner-most fields LAST.
 func DbDec_andMap(decA any, decFn any) any {

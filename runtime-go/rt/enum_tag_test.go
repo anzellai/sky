@@ -12,7 +12,6 @@ package rt
 
 import "testing"
 
-
 // A simulated user-generated zero-arg ADT enum — matches the
 // `type Sky_Core_Error_ErrorKind int` + iota pattern codegen emits.
 type fixtureKind int
@@ -22,7 +21,6 @@ const (
 	fixtureNetwork
 	fixtureFfi
 )
-
 
 func TestEnumTagIs_TypedIntConstant(t *testing.T) {
 	if !EnumTagIs(any(fixtureIo), 0) {
@@ -36,7 +34,6 @@ func TestEnumTagIs_TypedIntConstant(t *testing.T) {
 	}
 }
 
-
 func TestEnumTagIs_SkyADTFromRuntime(t *testing.T) {
 	// rt-built kind (SkyADT) compared against the tag codegen would
 	// emit for the typed-int enum — both sides must be comparable.
@@ -48,7 +45,6 @@ func TestEnumTagIs_SkyADTFromRuntime(t *testing.T) {
 		t.Fatalf("SkyADT kind with Tag=7 must not match EnumTagIs(0)")
 	}
 }
-
 
 // End-to-end: pull the kind out of an rt.ErrIo just as Sky codegen
 // does via rt.AdtField, and dispatch it against the integer tag.

@@ -19,7 +19,6 @@ import (
 	"testing"
 )
 
-
 // dispatchTestApp builds a minimal liveApp where view is identity
 // over a model-string (so we can force view-stability by keeping the
 // model unchanged).
@@ -34,7 +33,6 @@ func dispatchTestApp(viewResult VNode) *liveApp {
 		},
 	}
 }
-
 
 func TestDispatch_returnsBodyForIdenticalView(t *testing.T) {
 	vn := velement("div", nil, []any{vtext("hello")})
@@ -60,7 +58,6 @@ func TestDispatch_returnsBodyForIdenticalView(t *testing.T) {
 	}
 }
 
-
 func TestDispatch_emitsWhenViewChanges(t *testing.T) {
 	// Return a different VNode each time the view fn is called.
 	counter := 0
@@ -84,5 +81,3 @@ func TestDispatch_emitsWhenViewChanges(t *testing.T) {
 		t.Fatalf("distinct views must render distinct bodies, got %q == %q", first, second)
 	}
 }
-
-

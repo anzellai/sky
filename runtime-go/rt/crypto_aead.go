@@ -30,8 +30,8 @@ import (
 )
 
 const (
-	aeadKeyBytes    = 32 // AES-256 + ChaCha20-Poly1305 both want 32-byte keys
-	aeadNonceBytes  = 12 // GCM standard nonce + ChaCha20-Poly1305 standard nonce
+	aeadKeyBytes     = 32 // AES-256 + ChaCha20-Poly1305 both want 32-byte keys
+	aeadNonceBytes   = 12 // GCM standard nonce + ChaCha20-Poly1305 standard nonce
 	pbkdf2Iterations = 100_000
 )
 

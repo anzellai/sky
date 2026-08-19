@@ -75,4 +75,3 @@ func injectDevBanner(body, banner string) string {
 	}
 	return body + banner
 }
-

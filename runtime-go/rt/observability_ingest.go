@@ -58,27 +58,27 @@ import (
 // may push a logs-only batch, a metrics-only batch, etc., to
 // minimise overhead.
 type IngestPayload struct {
-	Namespace string              `json:"namespace"`
-	Logs      []IngestLog         `json:"logs,omitempty"`
-	Metrics   []IngestMetric      `json:"metrics,omitempty"`
-	Spans     []IngestSpan        `json:"spans,omitempty"`
+	Namespace string         `json:"namespace"`
+	Logs      []IngestLog    `json:"logs,omitempty"`
+	Metrics   []IngestMetric `json:"metrics,omitempty"`
+	Spans     []IngestSpan   `json:"spans,omitempty"`
 }
 
 // IngestLog mirrors telemetry.LogEntry on the wire. Time arrives
 // as an RFC3339 string (parsed lazily; missing TS gets a server-
 // side timestamp so children can omit it for "now").
 type IngestLog struct {
-	TS       string            `json:"ts,omitempty"`
-	Level    string            `json:"level"`
-	Message  string            `json:"msg"`
-	ReqID    string            `json:"req_id,omitempty"`
-	TraceID  string            `json:"trace_id,omitempty"`
-	SpanID   string            `json:"span_id,omitempty"`
-	Route    string            `json:"route,omitempty"`
-	Status   int               `json:"status,omitempty"`
-	LatencyMS float64          `json:"latency_ms,omitempty"`
-	ErrorStr string            `json:"error,omitempty"`
-	Fields   map[string]string `json:"fields,omitempty"`
+	TS        string            `json:"ts,omitempty"`
+	Level     string            `json:"level"`
+	Message   string            `json:"msg"`
+	ReqID     string            `json:"req_id,omitempty"`
+	TraceID   string            `json:"trace_id,omitempty"`
+	SpanID    string            `json:"span_id,omitempty"`
+	Route     string            `json:"route,omitempty"`
+	Status    int               `json:"status,omitempty"`
+	LatencyMS float64           `json:"latency_ms,omitempty"`
+	ErrorStr  string            `json:"error,omitempty"`
+	Fields    map[string]string `json:"fields,omitempty"`
 }
 
 // IngestMetric — one counter / gauge sample. For counters, `Delta`
@@ -203,11 +203,12 @@ func MountObservabilityIngestEndpoint(mux *http.ServeMux) {
 // field; metrics add it to their labels map).
 //
 // Status codes:
-//   202 Accepted  — payload valid, written; no body
-//   400 Bad Request — JSON parse failure or missing namespace
-//   401 Unauthorized — missing / wrong X-Sky-Ingest-Token
-//   413 Payload Too Large — body exceeds ingestMaxBytes
-//   405 Method Not Allowed — anything other than POST
+//
+//	202 Accepted  — payload valid, written; no body
+//	400 Bad Request — JSON parse failure or missing namespace
+//	401 Unauthorized — missing / wrong X-Sky-Ingest-Token
+//	413 Payload Too Large — body exceeds ingestMaxBytes
+//	405 Method Not Allowed — anything other than POST
 //
 // Returns 202 instead of 200 because the write happens but a
 // future async-to-disk pipeline could be a different latency

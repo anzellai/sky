@@ -43,7 +43,7 @@ func TestIsServerless_ExplicitOverride_VM(t *testing.T) {
 
 func TestIsServerless_ExplicitOverride_Longlived(t *testing.T) {
 	withServerlessEnv(t, map[string]string{
-		"SKY_RUNTIME_MODE": "longlived",
+		"SKY_RUNTIME_MODE":         "longlived",
 		"AWS_LAMBDA_FUNCTION_NAME": "fn",
 	})
 	if IsServerless() {

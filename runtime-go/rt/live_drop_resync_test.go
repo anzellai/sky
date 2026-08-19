@@ -34,8 +34,8 @@ func newResyncTestSession() *liveSession {
 	}
 }
 
-// 1. Egress drop (a full connection buffer) flags ONLY the dropped connection,
-//    and signals its resync — while a healthy sibling is untouched.
+//  1. Egress drop (a full connection buffer) flags ONLY the dropped connection,
+//     and signals its resync — while a healthy sibling is untouched.
 func TestEgressDropFlagsOnlyDroppedConn(t *testing.T) {
 	sess := newResyncTestSession()
 	idFull, _, resyncFull := sess.registerSSEConn("tabA")
@@ -72,8 +72,8 @@ func TestEgressDropFlagsOnlyDroppedConn(t *testing.T) {
 	}
 }
 
-// 2. Ingress drop (sess.sseCh full → every connection misses the frame) flags ALL
-//    connections and signals each resync.
+//  2. Ingress drop (sess.sseCh full → every connection misses the frame) flags ALL
+//     connections and signals each resync.
 func TestIngressDropFlagsAllConns(t *testing.T) {
 	sess := newResyncTestSession()
 	id1, _, r1 := sess.registerSSEConn("t1")
@@ -169,8 +169,8 @@ func TestRenderResyncFrameProducesFullBody(t *testing.T) {
 	}
 }
 
-// 7. Concurrency: fan-out, marking, and register/unregister must be race-free
-//    (run the package with -race to exercise).
+//  7. Concurrency: fan-out, marking, and register/unregister must be race-free
+//     (run the package with -race to exercise).
 func TestSSEConnStateConcurrent(t *testing.T) {
 	sess := newResyncTestSession()
 	var wg sync.WaitGroup

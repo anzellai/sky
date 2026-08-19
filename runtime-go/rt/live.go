@@ -3284,8 +3284,8 @@ type liveApp struct {
 	// "debounce"). handleConfig reports it to the JS driver.
 	inputMode string
 	locker    *sessionLocker
-	msgTags           map[string]int // SkyName → Tag cache for direct-send events
-	msgTagsMu         sync.Mutex
+	msgTags   map[string]int // SkyName → Tag cache for direct-send events
+	msgTagsMu sync.Mutex
 
 	// msgAdt is the Go type name of THIS app's Msg ADT (e.g. "Main_Msg").
 	// It scopes every wire-string → constructor resolution, so a

@@ -287,6 +287,20 @@ fn config_binding_emits_apply_config_first_in_main() {
         at_defer < at_apply && at_apply < at_pg,
         "ApplyConfig must sit between the panic guard and the embedded-PG start:\n{body}"
     );
+
+    // The crux for `Sky.Config.withTelemetry*`: telemetry console-DB persistence
+    // is enabled AFTER ApplyConfig (so a withTelemetry* value is in the env
+    // before the flusher latches the aggregation windows at enable time) and
+    // BEFORE the embedded-PG start (so the --embed handoff remains the creator
+    // in that path). Without this ordering a withTelemetry* builder silently
+    // does nothing in the operator-enabled path.
+    let at_enable = body
+        .find("rt.EnableConsolePersistence()")
+        .expect("no EnableConsolePersistence — telemetry withX would silently do nothing");
+    assert!(
+        at_apply < at_enable && at_enable < at_pg,
+        "EnableConsolePersistence must sit AFTER ApplyConfig and BEFORE the embedded-PG start:\n{body}"
+    );
 }
 
 #[test]
@@ -325,9 +339,14 @@ fn config_not_referenced_by_main_is_still_lowered() {
 }
 
 #[test]
-fn no_config_binding_emits_no_apply_config() {
-    // Byte-stability: a program without `config` must be UNCHANGED — no
-    // ApplyConfig anywhere in the emitted file.
+fn no_config_binding_emits_no_apply_config_but_enables_persistence() {
+    // A program without `config` emits NO ApplyConfig (that stays conditional on
+    // a `config` binding — repro / golden / coerce-floor output baselines do not
+    // move). But `rt.EnableConsolePersistence()` is UNCONDITIONAL: it replaces an
+    // rt init() enable that every program already had, and an operator may point
+    // SKY_CONSOLE_DB_PATH at any app shape — a config-less app must keep console
+    // persistence. Emitting it conditionally would silently drop persistence for
+    // every config-less app.
     let repo = repo_root();
     let project = scratch_project("stable", NO_CONFIG_APP);
     let source = project::emit_example_source(&repo, &project)
@@ -337,6 +356,11 @@ fn no_config_binding_emits_no_apply_config() {
     assert!(
         !source.contains("ApplyConfig"),
         "a program with no `config` binding must emit no ApplyConfig call:\n{source}"
+    );
+    assert!(
+        source.contains("rt.EnableConsolePersistence()"),
+        "EnableConsolePersistence must be emitted UNCONDITIONALLY, even without a \
+         `config` binding — otherwise a config-less app loses console persistence:\n{source}"
     );
 }
 

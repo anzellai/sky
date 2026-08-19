@@ -2,10 +2,10 @@
 //
 // Every Sky binary imports `rt`, so this init() runs before main(). The loader
 // is conservative:
-//   * only reads `.env` in the current working directory (no recursive search)
-//   * never overrides an already-set env var (precedence: shell > .env)
-//   * silently no-ops if `.env` doesn't exist
-//   * tolerant parser (KEY=VALUE, strips matching quote pairs, ignores blank
+//   - only reads `.env` in the current working directory (no recursive search)
+//   - never overrides an already-set env var (precedence: shell > .env)
+//   - silently no-ops if `.env` doesn't exist
+//   - tolerant parser (KEY=VALUE, strips matching quote pairs, ignores blank
 //     lines and `#` comments)
 //
 // Surface: Process_loadEnv(path) — explicit API for reloading a specific file.
@@ -174,11 +174,11 @@ func loadDotEnvFile(path string, override bool) error {
 
 // stripDotEnvValue normalises a raw `KEY=…` RHS into its actual value,
 // matching godotenv / python-dotenv / Foreman semantics:
-//   * unquoted `value` — trim surrounding whitespace
-//   * unquoted `value  # comment` — strip the trailing comment when
+//   - unquoted `value` — trim surrounding whitespace
+//   - unquoted `value  # comment` — strip the trailing comment when
 //     `#` is preceded by whitespace (so `tag#1` stays intact and only
 //     `tag #1` becomes `tag`)
-//   * quoted `"value"` / `'value'` — strip the matching outer quotes and
+//   - quoted `"value"` / `'value'` — strip the matching outer quotes and
 //     preserve the inner content verbatim (a `#` inside quotes is part
 //     of the value)
 //

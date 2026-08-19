@@ -108,13 +108,13 @@ const consoleAuthSessionTTL = 4 * time.Hour
 // any http.Handler.
 //
 // Flow:
-//   1. Read sky_console_sid cookie. If present + signature valid +
-//      not expired → pass through.
-//   2. Else read ?token=<JWT> query param. If valid → set cookie +
-//      redirect to same path with token stripped (keep history /
-//      Referer clean).
-//   3. Else → 401 with a small landing page suggesting the user
-//      open the console from their skydeploy.app dashboard.
+//  1. Read sky_console_sid cookie. If present + signature valid +
+//     not expired → pass through.
+//  2. Else read ?token=<JWT> query param. If valid → set cookie +
+//     redirect to same path with token stripped (keep history /
+//     Referer clean).
+//  3. Else → 401 with a small landing page suggesting the user
+//     open the console from their skydeploy.app dashboard.
 //
 // v0.16.0 PR 3 hardening:
 //   - URL-handshake disabled by default. Set

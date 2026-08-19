@@ -275,13 +275,13 @@ func TestTuiDecodeKey_SgrMouse(t *testing.T) {
 
 func TestParseMouseEvent(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		wantBtn    int
-		wantCol    int
-		wantRow    int
-		wantPress  bool
-		wantOk     bool
+		name      string
+		input     string
+		wantBtn   int
+		wantCol   int
+		wantRow   int
+		wantPress bool
+		wantOk    bool
 	}{
 		{"basic press", "0;5;3:M", 0, 5, 3, true, true},
 		{"basic release", "0;5;3:m", 0, 5, 3, false, true},
@@ -318,9 +318,9 @@ func TestParseMouseEvent(t *testing.T) {
 
 func TestHitTestFocusables(t *testing.T) {
 	focusables := []focusable{
-		{col: 0, row: 0, w: 10, h: 1},  // top bar
-		{col: 0, row: 2, w: 5, h: 1},   // left button
-		{col: 6, row: 2, w: 5, h: 1},   // right button
+		{col: 0, row: 0, w: 10, h: 1}, // top bar
+		{col: 0, row: 2, w: 5, h: 1},  // left button
+		{col: 6, row: 2, w: 5, h: 1},  // right button
 	}
 	tests := []struct {
 		name     string

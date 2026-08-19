@@ -101,40 +101,41 @@ func tuiUninstallState() {
 // Order matters — and the ordering here is the result of debugging
 // "readline messed up after exiting a Sky.Tui app on mosh":
 //
-//   1. (raw mode, alt-screen)  Disable mouse + bracketed paste —
-//      the codes need raw mode so the terminal driver consumes
-//      them rather than echoing them to the user.
-//   2. (raw mode, alt-screen)  SGR reset (\x1b[m) so any sticky
-//      colour / bold / underline doesn't carry across the screen
-//      transition.
-//   3. (raw mode, alt-screen)  Show cursor — must be before alt-
-//      screen exit so the cursor is visible the moment the user's
-//      primary screen comes back.
-//   4. (raw mode, alt-screen)  Exit alt-screen → user's primary
-//      screen content + cursor position are restored.
-//   5. (raw mode, PRIMARY screen)  NOW send DECSTR + charset reset
-//      + DECCKM/DECPAM resets. These reset state the user's actual
-//      shell will inherit. Sending them in step 1-3 instead would
-//      affect the alt-screen (which we're about to discard) AND
-//      the alt-screen exit on some terminals (notably mosh) does
-//      not propagate the resets to the primary screen.
-//   6. Restore TTY → cooked mode.
+//  1. (raw mode, alt-screen)  Disable mouse + bracketed paste —
+//     the codes need raw mode so the terminal driver consumes
+//     them rather than echoing them to the user.
+//  2. (raw mode, alt-screen)  SGR reset (\x1b[m) so any sticky
+//     colour / bold / underline doesn't carry across the screen
+//     transition.
+//  3. (raw mode, alt-screen)  Show cursor — must be before alt-
+//     screen exit so the cursor is visible the moment the user's
+//     primary screen comes back.
+//  4. (raw mode, alt-screen)  Exit alt-screen → user's primary
+//     screen content + cursor position are restored.
+//  5. (raw mode, PRIMARY screen)  NOW send DECSTR + charset reset
+//     + DECCKM/DECPAM resets. These reset state the user's actual
+//     shell will inherit. Sending them in step 1-3 instead would
+//     affect the alt-screen (which we're about to discard) AND
+//     the alt-screen exit on some terminals (notably mosh) does
+//     not propagate the resets to the primary screen.
+//  6. Restore TTY → cooked mode.
 //
 // The codes in step 5:
-//   \x1b[m       — reset SGR (belt-and-braces)
-//   \x0f         — Shift-In: select G0 character set (cancels any
-//                  prior \x0e Shift-Out that left G1 active — DEC
-//                  special graphics for box drawing)
-//   \x1b(B       — Designate G0 = ASCII
-//   \x1b[?1l     — DECCKM normal (cursor keys send CSI A/B/C/D, not
-//                  SS3 OA/OB/OC/OD which break shell history recall)
-//   \x1b>        — DECPAM normal (numeric keypad mode — application
-//                  keypad mode breaks number-row in some shells)
-//   \x1b[!p      — DECSTR soft reset (insert mode, origin mode,
-//                  scroll region, ~12 other modes. Does NOT clear
-//                  screen, so user's primary screen content stays.)
-//   \x1b[r       — Reset scroll region to full screen (belt-and-
-//                  braces — DECSTR should cover this)
+//
+//	\x1b[m       — reset SGR (belt-and-braces)
+//	\x0f         — Shift-In: select G0 character set (cancels any
+//	               prior \x0e Shift-Out that left G1 active — DEC
+//	               special graphics for box drawing)
+//	\x1b(B       — Designate G0 = ASCII
+//	\x1b[?1l     — DECCKM normal (cursor keys send CSI A/B/C/D, not
+//	               SS3 OA/OB/OC/OD which break shell history recall)
+//	\x1b>        — DECPAM normal (numeric keypad mode — application
+//	               keypad mode breaks number-row in some shells)
+//	\x1b[!p      — DECSTR soft reset (insert mode, origin mode,
+//	               scroll region, ~12 other modes. Does NOT clear
+//	               screen, so user's primary screen content stays.)
+//	\x1b[r       — Reset scroll region to full screen (belt-and-
+//	               braces — DECSTR should cover this)
 //
 // Writes go to os.Stdout via WriteString (not fmt.Print which routes
 // through a Println-aware buffered formatter that may not flush
@@ -211,9 +212,9 @@ func tuiTeardown() {
 }
 
 // safeGo spawns fn in a goroutine guarded by defer-recover. On panic:
-//   1. Run tuiTeardown so the terminal is usable.
-//   2. Print the panic + stack to stderr (now safe — terminal restored).
-//   3. Exit with code 2 (Go's conventional unhandled-panic code).
+//  1. Run tuiTeardown so the terminal is usable.
+//  2. Print the panic + stack to stderr (now safe — terminal restored).
+//  3. Exit with code 2 (Go's conventional unhandled-panic code).
 //
 // `name` identifies the goroutine in the panic message (e.g.
 // "Cmd.perform task", "key reader", "SIGWINCH watcher") so a user

@@ -280,7 +280,9 @@ func WithSessionSpan(op, store string, fn func() any) any {
 // -> Task e a` preserves `a`; the value flows through untouched.
 
 // Trace_span wraps a Task in a named child span. Sky:
-//   Trace.span : String -> Task e a -> Task e a
+//
+//	Trace.span : String -> Task e a -> Task e a
+//
 // Returns a Task thunk; when forced it opens the span, runs the
 // inner task under it, and returns the inner task's value verbatim.
 func Trace_span(name any, task any) any {

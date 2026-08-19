@@ -8,8 +8,8 @@
 // binaries on the same host where SKY_LIVE_PORT would collide) can
 // declare a custom prefix in sky.toml:
 //
-//     [env]
-//     prefix = "FENCE"
+//	[env]
+//	prefix = "FENCE"
 //
 // The compiler emits a single `rt.SetEnvPrefix("FENCE")` call at the
 // top of the generated `init()` block. From that point on, the runtime

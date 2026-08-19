@@ -142,8 +142,9 @@ func Live_withStatus(status, cfg any) any { return liveCfgSet(cfg, "Status", sta
 // — including its `revokedCheck : Maybe (String -> Task Error Bool)` closure —
 // is stored verbatim under "AuthSliding" and parsed by SetAuthSlidingConfig in
 // liveAppRun). Registers the AuthSlidingMiddleware. See auth_sliding.go.
-//   `{ cookie : String, secretEnv : String, sameSite : String
-//    , revokedCheck : Maybe (String -> Task Error Bool) }`
+//
+//	`{ cookie : String, secretEnv : String, sameSite : String
+//	 , revokedCheck : Maybe (String -> Task Error Bool) }`
 func Live_withAuthSliding(rec, cfg any) any { return liveCfgSet(cfg, "AuthSliding", rec) }
 
 // Live_withRevocation — opt into PULL-model user revocation + suspension. The
@@ -152,5 +153,6 @@ func Live_withAuthSliding(rec, cfg any) any { return liveCfgSet(cfg, "AuthSlidin
 // stored verbatim under "Revocation" and installed by setRevocationGate in
 // liveAppRun). This is the enabling signal — the gate is inert until it is
 // called. See auth_revocation.go / live_revocation.go.
-//   `Live.withRevocation : Db -> AppConfig -> AppConfig`
+//
+//	`Live.withRevocation : Db -> AppConfig -> AppConfig`
 func Live_withRevocation(db, cfg any) any { return liveCfgSet(cfg, "Revocation", db) }

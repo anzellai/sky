@@ -172,7 +172,6 @@ func TestConsoleAuthRejectsNoCredentials(t *testing.T) {
 	}
 }
 
-
 // TestAdminTokenSecretPrefersAdminToken — the canonical
 // SKY_ADMIN_TOKEN beats both legacy aliases.
 func TestAdminTokenSecretPrefersAdminToken(t *testing.T) {
