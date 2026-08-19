@@ -127,7 +127,14 @@ make_object() {
   else
     echo 'int sky_mod_symbol(void) { return 0; }' >| "$src"
     if [ "$HOST_OS" = darwin ]; then
-      $CC -dynamiclib -o "$out" "$src" "$@" 2>/dev/null
+      # An explicit -install_name is mandatory, not cosmetic: without it the
+      # macOS-14 linker derives compatibility/current versions from a
+      # multi-dotted output name (e.g. libpq.5.18.dylib) and fails the link.
+      # make_dylib already sets one for the same reason; make_object must too.
+      # Capture stderr so a future build failure is not swallowed by -e.
+      if ! $CC -dynamiclib -o "$out" "$src" -install_name "@rpath/$(basename "$out")" "$@" 2>"${WORK}/cc.err"; then
+        echo "make_object: dylib build failed for $out:" >&2; cat "${WORK}/cc.err" >&2; return 1
+      fi
     else
       $CC -shared -fPIC -o "$out" "$src" $(ld_keep) "$@" 2>/dev/null
     fi
