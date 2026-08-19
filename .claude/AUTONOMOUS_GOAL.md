@@ -348,3 +348,21 @@ All 5 mods done + unit-verified:
    /neither) + telemetry env-read tests. config-surface --check PASS (unaffected).
 Rebuilding compiler now → smoke app (4 builders + Gigabytes 100) → milestone
 (example sweep + conformance + coerce-floor + rt -race + full config gates) → Judge.
+
+## DOCS SWEEP (2026-08-19, user-requested)
+User: "ensure docs sweep + readme up to date, incl claude+claude.md+agents.md
+template for auto-discovery + APIs; ensure kernel fns exposed to sky have a sky
+ffi fn for docs+LSP."
+KERNEL/FFI/LSP: VERIFIED in place — `sky doc Sky.Config` shows all 4 new builders
++ Capacity type with signatures+docs (LSP reads same .sky source). Config
+builders are .sky-backed FFI wrappers, not kernel-only → no kernel_api.rs entry;
+kernel gate GREEN.
+DOCS updated: docs/sky-toml.md (3 new SKY_TELEMETRY_* env rows + builder names),
+docs/observability.md (done earlier), AGENTS.md (observability row → telemetry
+storage tuning + Sky.Config), README.md (observability section), templates/
+AGENTS.md (config front door: Sky.Config withX incl telemetry storage tuning +
+sky doc pointer). templates/CLAUDE.md + CLAUDE.md import AGENTS.md → covered.
+Version banner v0.20.x current (matches CHANGELOG v0.20.3).
+BUILD SNAG: gofmt-after-build left sky-out/sky embedding stale content
+(fingerprint mismatch — freshness gate caught it). Fix: touch ffi/build.rs +
+rebuild to force re-stage. LESSON: gofmt/format BEFORE the milestone build.

@@ -294,7 +294,7 @@ for UX/DX/security/scalability, not by accident.
 | **Money / decimals** | `Std.Money` on `Std.Decimal`. **Never** raw `Float` for currency. |
 | **Errors** | `Result Error a` / `Task Error a`. **Never** `String` as an error type. |
 | **Concurrency** | `Cmd.batch` / `Task.parallel`; in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
-| **Observability** | `Std.Log` structured logs; the dev console auto-mounts at `/_sky/console`; `OTEL_EXPORTER_OTLP_ENDPOINT` for an external collector. |
+| **Observability** | `Std.Log` structured logs; the dev console auto-mounts at `/_sky/console`; `OTEL_EXPORTER_OTLP_ENDPOINT` for an external collector. Telemetry **storage** is tunable via `Sky.Config.withTelemetry*` builders (or `SKY_TELEMETRY_*` env, which overrides them): counter/histogram coalescing windows to cut DB rows, and `withTelemetryDbCapacity` for the hourly size-report "near full" flag. See `docs/observability.md` + `sky doc Sky.Config`. |
 | **Sky.Live navigation** | Every internal link is `sky-nav` (one persistent SSE per session). Bare `<a href>` only to deliberately leave the app. |
 | **Password forms** | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record; never per-keystroke `onInput` on a password field. |
 | **No raw HTML/JS** | `Std.Ui` HTML-escapes everything; `data-sky-eval` is forbidden. |
