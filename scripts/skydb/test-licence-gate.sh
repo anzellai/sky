@@ -259,6 +259,7 @@ expect_accept() {
 
 # ─────────────────────────────────────────────────────────────────────
 hdr "Gate discrimination — synthesised fixtures (${HOST_OS})"
+set -x  # TEMP DIAGNOSTIC: trace the exact command that exits on the macOS-14 runner
 
 # C1. A clean bundle MUST pass. Without this, a gate that rejects unconditionally
 #     would score full marks on every rejection case below and still be worthless.
@@ -388,7 +389,6 @@ fi
 #      itself. `libpq.5.dylib -> libpq.5.18.dylib` is how shared libraries are
 #      shipped, and a gate that failed on it would be turned off within the day.
 #      A link whose chain stays inside the bundle is a name, not a violation.
-set -x  # TEMP DIAGNOSTIC: trace the exact command that exits on macOS-14 at C13
 C13="${WORK}/c13"; make_base_bundle "$C13"
 make_object "$C13/lib/libpq.5.18.${DL}" lib
 # make_base_bundle already created a real libpq.5.dylib; C13 replaces it with a
