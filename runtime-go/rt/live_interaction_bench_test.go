@@ -208,8 +208,8 @@ func prepared(nItems int, titleSuffix string) *VNode {
 // them. Each item contributes 4 elements, plus 8 elements of page
 // chrome, so:
 //
-//	 21 items ->  92 elements ~= 19-skyforum's     94
-//	 94 items -> 384 elements ==  26-ui-showcase's 384
+//	21 items ->  92 elements ~= 19-skyforum's     94
+//	94 items -> 384 elements ==  26-ui-showcase's 384
 //
 // The larger counts exist to establish the slope, not because any
 // current example is that big.
@@ -218,10 +218,10 @@ var benchItemCounts = []int{1, 21, 94, 250, 500, 1000, 2000}
 // The two reference-app anchor points, named so the calibration test
 // and the fixture sweep cannot drift apart silently.
 const (
-	skyforumItems  = 21 // ~= 94 elements
-	showcaseItems  = 94 // == 384 elements
-	skyforumElems  = 94
-	showcaseElems  = 384
+	skyforumItems = 21 // ~= 94 elements
+	showcaseItems = 94 // == 384 elements
+	skyforumElems = 94
+	showcaseElems = 384
 )
 
 // ---------------------------------------------------------------------

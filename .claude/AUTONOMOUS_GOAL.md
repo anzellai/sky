@@ -167,3 +167,202 @@ REQUIRED gates (grill): (i) a BOUND-LESS session revoke still stops it; (ii) a
 SERVER-INITIATED dispatch (live Sub.every / in-flight Cmd.perform) after revocation
 mutates NOTHING. Without both, the suite certifies a hole it never touched. -race required
 (session teardown is where the periodic-goroutine work found races).
+
+## PROGRESS (2026-08-18, later still) — PR #187 MERGED
+Config+perf+security block MERGED to main @ e70e2310 (merge commit, 40 commits
+preserved). NOT tagged (user owns tag scope). CI fully green incl. sharded
+repro/repro-2 (T1 budget cleared by sharding, not by raising the ceiling).
+feat/perf-security-config remote branch deleted.
+
+NOW ON: feat/telemetry-storage-runperform (off merged main e70e2310).
+Remaining tracks D + E (see TELEMETRY_STORAGE_PLAN.md):
+  D. Telemetry storage P1-P3:
+     - P2 two live bugs (analytics_store recover/silent-swallow +
+       telemetry/persist mirror + console_analytics unbounded SELECT/indexes)
+       — VERIFY whether already merged on main (plan flags CHECK).
+     - P1 size report (pg_total_relation_size per runtime table on existing
+       prune timers; warn on ratio of free space; free space known only --embed).
+     - P3 aggregate the metric write losslessly over ~10s window (root cause:
+       msg_logging writes 2 metric rows/interaction unconditionally). Window is
+       a knob; 0 = raw as today. P4 partition only if P1 shows metric still binds.
+  E. runPerform concurrency bound (live.go) — unbounded per-Cmd.perform goroutine.
+     Must handle dependent-perform deadlock + not serialise parallel-fetch.
+     Sound: release-on-done w/ deadlock analysis OR global worker pool decoupled
+     from session. NOT a drop-in.
+Method: PIV per phase (arch-consult=verify current code vs stale plan lines,
+grill, implement, Judge). Milestone MUST include coerce-floor (the gap that
+slipped CI last wave). These are runtime-Go changes, not compiler-floor.
+
+## PROGRESS (2026-08-18, evening) — Tracks E + D implemented, milestone pending
+feat/telemetry-storage-runperform, 3 phases committed LOCALLY (not pushed):
+  0a1a2c25 E: runPerform concurrency bound (per-session+global sem, M1-M5,
+            falsifier proven, deadlock-free, -race green)
+  902bb527 D-P1: hourly DB size report (dialect-aware, statfs unix+stub, log
+            event not metric row, -race green)
+  455e378d D-P3: opt-in counter coalescing SKY_TELEMETRY_AGGREGATION_WINDOW
+            (default 0=off; counters only; force-drain flushReq+stop; histogram
+            floor documented blocked-on-external; -race green)
+P2 was already merged on main (verified). Docs: observability.md updated.
+MILESTONE verification RUNNING: full runtime-go/rt -race + example sweep +
+conformance + coerce-floor. Then Judge (fresh ctx, literal-claim verify).
+OPEN USER-DECISION (surface at milestone, non-blocking): default the counter
+window to 10s? lossless for counters, only reduces SkyDeploy graph resolution
+<10s. Recommended: yes for production, ship default-0 now.
+HISTOGRAM FLOOR: sky_live_msg_seconds per-interaction persist needs a
+bucket-vector schema coordinated w/ SkyDeploy — future cross-repo item.
+
+## JUDGE VERDICT (2026-08-18) — ALL PASS
+Fresh-context adversarial Judge: CLAIM E PASS, CLAIM P1 PASS, CLAIM P3 PASS,
+OVERALL ALL PASS. Independently re-ran the E falsifier (removed per-session
+acquire → RED "max in-flight 5 > cap 2", reverted clean). No hedge words.
+Full runtime-go/rt -race suite green (0 races). Diff scope: runtime-go + docs
+ONLY (no rust/, no .sky) → coerce-floor + compiler gates structurally
+unaffected (justified skip). Remaining: rebuild+re-embed → example sweep +
+conformance (integration), then push + PR.
+
+## NEW SUB-MANDATE (2026-08-19) — histogram coalescing (full telemetry close)
+User: "PIV and ensure solutions are accurate, correct and scalable +
+maintainable + perf. please proceed." => implement lossless histogram
+coalescing (the deferred half of P3) via cumulative bucket-vector rows per
+window (Prometheus _bucket{le}/_sum/_count representation, schema-free), gated
+behind the SAME SKY_TELEMETRY_AGGREGATION_WINDOW knob (default OFF). Extends the
+P3 flusher pending-map + window ticker.
+METHOD: full PIV. Phase0 Architecture-Consult (verify vs real code; find the
+CANONICAL bucket representation already used for /_sky/metrics or OTLP export
+and REUSE it, don't invent; resolve the reader coupling — do local console /
+hub/store.go / SkyDeploy read raw rows or aggregated? does exploding require a
+reader change, and is it in-repo or cross-repo?). Phase0b Grill (G1 false-neg /
+G2 false-pos / G3 cost+cardinality scalability / G4 layering / G5
+lossless-for-every-reader). Then implement + Judge (fresh ctx, literal claim).
+CORRECTNESS BAR: reconstructed percentiles from the exploded rows must equal
+what raw rows would yield (lossless). SCALABILITY BAR: rows/window bounded by
+bucket_count × series_cardinality, NOT observation rate. MAINTAINABILITY: reuse
+the P3 mechanism + the existing bucket representation; no parallel impl.
+Default OFF preserves the external-reader contract until opt-in.
+
+## HISTOGRAM COALESCING — SHIPPED + JUDGE ALL-PASS (2026-08-19)
+a2e035b6. Full PIV: arch-consult (REVISE→separate opt-in), grill
+(PROCEED-w/-mods: lossy-not-lossless + monotonic clamp + zero-alloc sink + name),
+implement, Judge ALL-PASS 7/7 (falsifier empirically RED, tree pristine).
+Full rt -race GREEN. 4 CI ratchets fixed proactively (env-reads, config-surface,
+denominators, coverage-ledger). Pushed; CI full matrix running (32247715507).
+Telemetry storage is now FULLY addressable: counters coalesce (lossless),
+histograms coalesce (lossy bucket-resolution, separate opt-in), P1 size report
+measures whether either binds. Remaining floor is purely a SkyDeploy cross-repo
+reader update to consume _bucket/_sum/_count rows — out of this repo.
+
+## PR #188 FULLY GREEN (2026-08-19) — histogram sub-mandate CLOSED
+a1ae3aff. CI ALL JOBS SUCCESS. T1 budget cleared by splitting the sky crate into
+test-sky (test-rest 375s + test-sky 485s parallel; chain well under 990). PR #188
+now carries: perform bound + P1 size report + P3 counter coalescing + histogram
+coalescing (lossy bucket-resolution, separate opt-in), all Judge-verified.
+Awaiting user merge decision (no tag). Open user calls: counter-window default
+(0 vs 10s), histogram-window rollout (needs bucket-aware reader), + the
+SkyDeploy cross-repo reader update to consume _bucket/_sum/_count (out of repo).
+
+## NEW SUB-MANDATE (2026-08-19) — P1 size report v2 (startup + capacity + tiers)
+User spec: on startup AND hourly, tiered size/free/danger reporting:
+ - SQLite / embedded / same-server PG: server free space + DB consumed + danger flag
+ - External/remote PG: DB consumed (pg_database_size) + danger flag ONLY if a
+   capacity is configured (can't statfs another machine's disk).
+Defaults: SKY_TELEMETRY_DB_CAPACITY (human units e.g. 100GB); unset => remote =
+size+growth only. "Same server" = runtime can reach the DB's files (sqlite file
+or the embedded cluster it manages); localhost system PG = external. Danger =
+free < consumed (owned-path) OR consumed > ratio×capacity (external+capacity).
+Add total-DB-size (pg_database_size / sqlite file size) alongside the existing
+per-telemetry-table breakdown. Run once at boot + keep hourly.
+METHOD: full PIV. Arch-consult crux: can the telemetry persistence obtain the
+EMBEDDED cluster data dir (today it has only the DSN)? + owned-path detection +
+pg_database_size cost on shared pool + startup hook (EnablePersistence). Then
+grill (capacity parse/edge cases, owned-path false pos/neg, startup timing,
+double-report), implement, Judge. Remember: new env var trips
+sky_env_reads + config-surface ratchets — handle proactively (see
+[[ci_only_ratchets_env_and_census]]).
+
+## SIZE REPORT v2 — SHIPPED + JUDGE ALL-PASS (2026-08-19)
+ab06b015. Full PIV: arch-consult (PROCEED, embedded data-dir reachable via
+supervisor cfg.dataDir), grill (PROCEED-w/-5-mods: own-recover startup, don't
+bump prune timer, danger=free% not free<consumed, warn-loud on bad capacity,
+stable page_count not WAL-sum), implement, Judge ALL-PASS 8/8 (crux item5
+embedded plumbing verified). Full rt -race GREEN. 4 CI ratchets handled
+proactively. Answers user's 2 questions: external DB near-full via
+SKY_TELEMETRY_DB_CAPACITY quota (can't statfs remote disk); startup+hourly
+cadence for immediate baseline. Pushed; CI full matrix running (32254483043).
+
+## NEW SUB-MANDATE (2026-08-19) — withX coverage for system env vars
+User principle (VERBATIM intent): "system/sky's reading env vars should be able
+to set withX patterns, NO EXCEPTION. The exception is for user-defined env vars."
+Precedence: operator .env OVERRIDES withX > withX value > safe default.
+ - No withX used → read .env → else safe default (safe for simple prod).
+ - withX used → user sets value; .env still OVERRIDES if present.
+ - withX builder DOCS must hint the corresponding env var.
+IMMEDIATE: the 3 telemetry storage settings (SKY_TELEMETRY_AGGREGATION_WINDOW,
+_HISTOGRAM_AGGREGATION_WINDOW, DB_CAPACITY) — currently .env-only — get withX
+builders. Consider SYNCHRONOUS_COMMIT too. Follow the EXISTING withTelemetry
+mechanism (Config_withTelemetry / ApplyConfig, "operator env still wins").
+CRUX TO GRILL: TIMING. withX/ApplyConfig runs in main(); telemetry flusher reads
+the window ONCE at EnablePersistence (rt init() OR embed handoff) — if ApplyConfig
+runs AFTER, a withX-set env var is too late for the read-once windows (capacity is
+re-read each cycle, more forgiving). Must resolve ordering so env-overrides-withX
+actually works for the read-once settings.
+BROADER: the "no exception" principle implies an AUDIT (every system FIXED_NAME_READS
+env var has a withX builder) + maybe a GATE enforcing it. Assess scope in grill.
+METHOD: full PIV — arch-consult (existing mechanism + timing), grill, implement, Judge.
+
+## withX-TELEMETRY — grilled, LOCKED (2026-08-19)
+Consult: PROCEED+REVISE. Timing crux REAL: EnablePersistenceFromEnv runs in
+observability.go init() BEFORE main's ApplyConfig → read-once windows miss withX
+in the operator-enabled normal path (silent failure). Fix = MOVE enable to
+lower_main after ApplyConfig.
+Grill: PROCEED-WITH-MODIFICATIONS. 5 mods:
+ M1(blocker): emit rt.EnableConsolePersistence() UNCONDITIONALLY, OUTSIDE the
+   `if let Some(cfg)=apply_config` block in lower_main, between config block +
+   MaybeStartEmbeddedPostgres. (config-less apps must keep persistence.)
+ M2(blocker): observability.go init() — remove ONLY the EnablePersistenceFromEnv
+   call+warn; KEEP RegisterShutdownHook("telemetry-persistence") or drain lost.
+ M3(gate-red): add 4 MigrationKind::BornInCode rows to config_migration.rs for
+   the SKY_TELEMETRY_* literals (like DATABASE_URL/OTEL_EXPORTER_OTLP_ENDPOINT).
+ M4: capacity builder takes a Capacity ADT (Bytes/Megabytes/Gigabytes)→human
+   string, NOT raw Int bytes. Keys go in configKeyToLiteralEnv ONLY, never seeded.
+ M5: crux emission test — assert find(ApplyConfig)<find(EnableConsolePersistence)
+   in main AND EnableConsolePersistence present for a config-LESS program.
+Precedence (HOLDS): operator env > withX (ApplyConfig applyConfigValue defers to
+operator via !isSeededDefault) > Go default 0/off. New keys literal-env + never
+seeded → Go-default reachable. Builders: Int seconds (windows), Capacity ADT,
+Bool→on/off (synccommit). Touches Sky stdlib + rt + lower.rs(compiler) + gates →
+full gate suite + rebuild + Judge required.
+
+## withX-TELEMETRY — IMPLEMENTED (2026-08-19), milestone pending
+All 5 mods done + unit-verified:
+ M1 lower.rs: rt.EnableConsolePersistence() emitted unconditionally, after
+   ApplyConfig, before MaybeStartEmbeddedPostgres. sky_config_entry gate updated
+   (order + unconditional-presence) — 9/9 green.
+ M2 observability.go: init() enable removed, shutdown hook kept + new
+   EnableConsolePersistence() exported func.
+ M3 config_migration.rs: 4 BornInCode rows. config-migration gate PASS (6 literals).
+ M4 Sky/Config.sky: Capacity ADT + 4 builders (Int seconds / Capacity / Bool);
+   Go kernels normalise (Int→"Ns", bytes→decimal, Bool→on/off); keys in
+   configKeyToLiteralEnv only.
+ M5 sky_config_entry emission test (ApplyConfig<EnableConsolePersistence + present
+   for config-less program). Go precedence tests (withX-sets / operator-overrides
+   /neither) + telemetry env-read tests. config-surface --check PASS (unaffected).
+Rebuilding compiler now → smoke app (4 builders + Gigabytes 100) → milestone
+(example sweep + conformance + coerce-floor + rt -race + full config gates) → Judge.
+
+## DOCS SWEEP (2026-08-19, user-requested)
+User: "ensure docs sweep + readme up to date, incl claude+claude.md+agents.md
+template for auto-discovery + APIs; ensure kernel fns exposed to sky have a sky
+ffi fn for docs+LSP."
+KERNEL/FFI/LSP: VERIFIED in place — `sky doc Sky.Config` shows all 4 new builders
++ Capacity type with signatures+docs (LSP reads same .sky source). Config
+builders are .sky-backed FFI wrappers, not kernel-only → no kernel_api.rs entry;
+kernel gate GREEN.
+DOCS updated: docs/sky-toml.md (3 new SKY_TELEMETRY_* env rows + builder names),
+docs/observability.md (done earlier), AGENTS.md (observability row → telemetry
+storage tuning + Sky.Config), README.md (observability section), templates/
+AGENTS.md (config front door: Sky.Config withX incl telemetry storage tuning +
+sky doc pointer). templates/CLAUDE.md + CLAUDE.md import AGENTS.md → covered.
+Version banner v0.20.x current (matches CHANGELOG v0.20.3).
+BUILD SNAG: gofmt-after-build left sky-out/sky embedding stale content
+(fingerprint mismatch — freshness gate caught it). Fix: touch ffi/build.rs +
+rebuild to force re-stage. LESSON: gofmt/format BEFORE the milestone build.

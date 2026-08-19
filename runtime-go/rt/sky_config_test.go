@@ -134,8 +134,8 @@ func TestApplyConfigMutationContrast(t *testing.T) {
 
 	t.Run("naive_set_if_unset_inverts_legacy_wins", func(t *testing.T) {
 		resetEnvFor(t, suffix)
-		seedLegacy(suffix, "legacyval")            // prologue seed, runs first
-		applyConfigValueNaive(name, "withxval")    // the mutant, set-if-unset
+		seedLegacy(suffix, "legacyval")         // prologue seed, runs first
+		applyConfigValueNaive(name, "withxval") // the mutant, set-if-unset
 		if got := skyGetenv(suffix); got != "legacyval" {
 			t.Fatalf("the set-if-unset mutant must invert precedence (legacy wins); got %q "+
 				"— if this is not \"legacyval\", the gate no longer catches the inversion", got)
@@ -259,5 +259,83 @@ func TestConfigKernels(t *testing.T) {
 	// Shallow-clone invariant: the base map must be untouched.
 	if len(empty) != 0 {
 		t.Fatalf("Config_withLog mutated its base map (must shallow-clone): %v", empty)
+	}
+}
+
+// Telemetry withX builders → literal env → precedence. The four SKY_TELEMETRY_*
+// settings are LITERAL env vars (not [env]-prefixed), given withX builders so
+// the config front door is complete. This proves the full chain: the Sky kernel
+// normalises (Int→"10s", Capacity-bytes→decimal, Bool→on/off), ApplyConfig
+// writes it deferring to an operator, and os.Getenv (what telemetry reads) sees
+// the right value.
+func resetLiteralEnvFor(t *testing.T, name string) {
+	t.Helper()
+	orig, had := os.LookupEnv(name)
+	clearSeededDefault(name)
+	clearConfigApplied(name)
+	_ = os.Unsetenv(name)
+	t.Cleanup(func() {
+		clearSeededDefault(name)
+		clearConfigApplied(name)
+		if had {
+			_ = os.Setenv(name, orig)
+		} else {
+			_ = os.Unsetenv(name)
+		}
+	})
+}
+
+func TestTelemetryWithXPrecedence(t *testing.T) {
+	const name = "SKY_TELEMETRY_AGGREGATION_WINDOW"
+
+	t.Run("withx_sets_when_unset", func(t *testing.T) {
+		resetLiteralEnvFor(t, name)
+		ApplyConfig(Config_withTelemetryAggregationWindow(10, Config_default()))
+		if got := os.Getenv(name); got != "10s" {
+			t.Fatalf("withX should set %s=10s, got %q", name, got)
+		}
+	})
+
+	// FALSIFIER: if applyConfigValue did not defer to an operator value, this
+	// would return "10s" (withX) instead of the operator's "30s".
+	t.Run("operator_env_overrides_withx", func(t *testing.T) {
+		resetLiteralEnvFor(t, name)
+		_ = os.Setenv(name, "30s") // operator
+		ApplyConfig(Config_withTelemetryAggregationWindow(10, Config_default()))
+		if got := os.Getenv(name); got != "30s" {
+			t.Fatalf("operator env MUST override withX: got %q want 30s", got)
+		}
+	})
+
+	t.Run("neither_leaves_env_unset_for_go_default", func(t *testing.T) {
+		resetLiteralEnvFor(t, name)
+		ApplyConfig(Config_default())
+		if got, has := os.LookupEnv(name); has {
+			t.Fatalf("no withX + no operator → env unset (Go default applies), got %q", got)
+		}
+	})
+}
+
+// The Capacity ADT reduces to bytes in Sky; the kernel stores a decimal byte
+// string that parseHumanBytes accepts. Bool→on/off; Int seconds→"Ns".
+func TestTelemetryWithXNormalisation(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  any
+		env  string
+		want string
+	}{
+		{"histogram_window", Config_withTelemetryHistogramWindow(30, Config_default()), "SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW", "30s"},
+		{"db_capacity_bytes", Config_withTelemetryDbCapacity(107374182400, Config_default()), "SKY_TELEMETRY_DB_CAPACITY", "107374182400"},
+		{"synchronous_commit_on", Config_withTelemetrySynchronousCommit("on", Config_default()), "SKY_TELEMETRY_SYNCHRONOUS_COMMIT", "on"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetLiteralEnvFor(t, tc.env)
+			ApplyConfig(tc.cfg)
+			if got := os.Getenv(tc.env); got != tc.want {
+				t.Fatalf("%s: got %q want %q", tc.env, got, tc.want)
+			}
+		})
 	}
 }

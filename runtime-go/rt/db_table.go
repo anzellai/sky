@@ -24,9 +24,9 @@ import (
 
 // ── Table spec access (the map[string]any the .sky builders produce) ─────────
 
-func dbTableName(t any) string    { return fmt.Sprintf("%v", Field(t, "Name")) }
-func dbTableSample(t any) any     { return Field(t, "Sample") }
-func dbTablePk(t any) string      { return fmt.Sprintf("%v", Field(t, "Pk")) }
+func dbTableName(t any) string { return fmt.Sprintf("%v", Field(t, "Name")) }
+func dbTableSample(t any) any  { return Field(t, "Sample") }
+func dbTablePk(t any) string   { return fmt.Sprintf("%v", Field(t, "Pk")) }
 func dbTableStrList(t any, k string) []string {
 	out := []string{}
 	for _, v := range AsList(Field(t, k)) {

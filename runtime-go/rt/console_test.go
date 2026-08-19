@@ -233,12 +233,12 @@ func TestConsoleTraces_ReturnsRecent(t *testing.T) {
 	resetTelemetry(t)
 	start := time.Now()
 	telemetry.Default().AppendTrace(telemetry.TraceEntry{
-		TraceID:   "abc123",
-		SpanID:    "span1",
-		Name:      "GET /foo",
-		Kind:      "server",
-		StartTime: start,
-		EndTime:   start.Add(50 * time.Millisecond),
+		TraceID:    "abc123",
+		SpanID:     "span1",
+		Name:       "GET /foo",
+		Kind:       "server",
+		StartTime:  start,
+		EndTime:    start.Add(50 * time.Millisecond),
 		StatusCode: "Ok",
 	})
 	resp := serveOnce(HandleConsoleTraces, http.MethodGet, "/_sky/console/api/traces")

@@ -56,7 +56,7 @@ func TestAppendLog_AdversarialEntryIsByteBounded(t *testing.T) {
 
 func TestAppendTrace_AdversarialAttributesAreByteBounded(t *testing.T) {
 	s := NewStore()
-	mega := strings.Repeat("q", 1 << 20)
+	mega := strings.Repeat("q", 1<<20)
 	s.AppendTrace(TraceEntry{
 		TraceID: "t1", SpanID: "s1", Name: "db.query " + mega,
 		StatusMessage: mega,

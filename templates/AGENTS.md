@@ -403,12 +403,22 @@ level  = "info"          # debug | info | warn | error
 ### How to pick — and what to change as you grow
 
 Only `name` / `version` / `entry` are required; add a section **only when you use
-that feature**. Config precedence is **process env > `.env` > `Live.withX`
-builder calls in code > `sky.toml`**, so every value here can be overridden at
-deploy time without editing the file (and secrets / connection strings should
-be — never commit them). An explicit builder call (`Live.withPort`,
-`Live.withStore`, `Live.withStorePath`, `Live.withTtl`, `Live.withIdleEvict`)
-beats the `sky.toml` seed but still loses to the operator's environment.
+that feature**. Config precedence is **process env > `.env` > `withX` builder
+calls in code > `sky.toml`**, so every value here can be overridden at deploy
+time without editing the file (and secrets / connection strings should be —
+never commit them). An explicit builder call (`Live.withPort`, `Live.withStore`,
+`Live.withStorePath`, `Live.withTtl`, `Live.withIdleEvict`) beats the `sky.toml`
+seed but still loses to the operator's environment.
+
+Cross-cutting config (log, database, sessions, jobs, csrf, telemetry) also has a
+typed front door — a top-level `config` binding built with **`Sky.Config`**
+`withX` builders (`config = Config.default |> Config.withDatabase (…) |> …`),
+resolving through the SAME precedence (operator env still wins). It includes
+telemetry **storage** tuning — `withTelemetryAggregationWindow` /
+`withTelemetryHistogramWindow` (coalesce metric rows to cut DB growth) and
+`withTelemetryDbCapacity` (the size-report "near full" flag). Run
+`sky doc Sky.Config` for the full set; each builder names its `SKY_TELEMETRY_*`
+env override.
 
 **Persistence tier by traffic (the quick call — pick one, set `[live] store` +
 `[database]` to match):**

@@ -44,10 +44,10 @@ import (
 // Created at the top of liveApp.dispatch; consumed by Observe()
 // after update + view return.
 type MsgLogContext struct {
-	MsgName      string  // constructor name (e.g. "EditDraft", "Tick")
-	IsLifecycle  bool    // marked via Std.Live.lifecycle
+	MsgName      string // constructor name (e.g. "EditDraft", "Tick")
+	IsLifecycle  bool   // marked via Std.Live.lifecycle
 	StartTime    time.Time
-	OldModelHash uint64  // hash(model) BEFORE update
+	OldModelHash uint64 // hash(model) BEFORE update
 	// SessionID — the Sky.Live session this dispatch belongs to.
 	// Populated by BeginMsgLogForSession (the dispatcher knows the
 	// session; pass it through). Empty for non-Live dispatch sites.
@@ -100,15 +100,15 @@ func BeginMsgLogForSession(msgValue, model any, sid string) MsgLogContext {
 //
 // Decision tree:
 //
-//   1. Compute newModelHash.
-//   2. noop = (oldHash == newHash) && cmdIsNone(cmd) && err == nil.
-//   3. Always bump sky_live_msg_total{name, noop, outcome}.
-//   4. Always observe sky_live_msg_seconds{name}.
-//   5. Lifecycle + noop → done (skip log even at info level).
-//   6. Non-lifecycle + noop → log at debug level (filterable
-//      via SKY_LOG_LEVEL=info to drop).
-//   7. State change / cmd / error → log at info (or error) level
-//      with the diff summary.
+//  1. Compute newModelHash.
+//  2. noop = (oldHash == newHash) && cmdIsNone(cmd) && err == nil.
+//  3. Always bump sky_live_msg_total{name, noop, outcome}.
+//  4. Always observe sky_live_msg_seconds{name}.
+//  5. Lifecycle + noop → done (skip log even at info level).
+//  6. Non-lifecycle + noop → log at debug level (filterable
+//     via SKY_LOG_LEVEL=info to drop).
+//  7. State change / cmd / error → log at info (or error) level
+//     with the diff summary.
 //
 // Serverless mode: writes to stderr via the access-log path
 // instead of the ring buffer (container evicts before ring readers
@@ -227,15 +227,15 @@ var serverlessStderr = func() io.Writer { return os.Stderr }
 // ExtractMsgName returns the human-readable Msg constructor name.
 // Three sources, in priority order:
 //
-//   1. lifecycleMsg wrapper — unwrap and recurse.
-//   2. SkyADT.SkyName field set by codegen for typed ADT
-//      constructors (the canonical case for almost every Msg
-//      written by hand or AI).
-//   3. Function values: runtime.FuncForPC name parsing (the
-//      msgDisplayName path already used by the wire dispatcher).
-//      Falls back to "<func>" when reflection can't recover a
-//      readable name.
-//   4. Anything else: "<unknown>".
+//  1. lifecycleMsg wrapper — unwrap and recurse.
+//  2. SkyADT.SkyName field set by codegen for typed ADT
+//     constructors (the canonical case for almost every Msg
+//     written by hand or AI).
+//  3. Function values: runtime.FuncForPC name parsing (the
+//     msgDisplayName path already used by the wire dispatcher).
+//     Falls back to "<func>" when reflection can't recover a
+//     readable name.
+//  4. Anything else: "<unknown>".
 func ExtractMsgName(msg any) string {
 	if msg == nil {
 		return "<nil>"
@@ -473,7 +473,7 @@ func walkHash(h *hashState, rv reflect.Value, depth int, deadline time.Time) {
 // trivially fast at ~1 GB/s — within our 1 ms budget for any
 // model up to ~1 MB.
 type hashState struct {
-	buf [16]byte // scratch for int/uint encoding
+	buf    [16]byte // scratch for int/uint encoding
 	digest hashAccumulator
 }
 
@@ -489,9 +489,9 @@ var hashPool = sync.Pool{
 	},
 }
 
-func (h *hashState) reset()                    { h.digest.Reset() }
-func (h *hashState) writeString(s string)      { h.digest.Write([]byte(s)) }
-func (h *hashState) writeInt(n int64)          {
+func (h *hashState) reset()               { h.digest.Reset() }
+func (h *hashState) writeString(s string) { h.digest.Write([]byte(s)) }
+func (h *hashState) writeInt(n int64) {
 	binary.LittleEndian.PutUint64(h.buf[:8], uint64(n))
 	h.digest.Write(h.buf[:8])
 }

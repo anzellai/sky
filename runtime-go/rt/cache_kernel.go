@@ -192,9 +192,9 @@ func Cache_stats(idArg any) any {
 			return Err[any, any](ErrInvalidInput("cache.stats: cache not found"))
 		}
 		return Ok[any, any](map[string]any{
-			"hits":       int(h.hits.Load()),
-			"misses":     int(h.misses.Load()),
-			"evictions":  int(h.evictions.Load()),
+			"hits":      int(h.hits.Load()),
+			"misses":    int(h.misses.Load()),
+			"evictions": int(h.evictions.Load()),
 		})
 	}
 }

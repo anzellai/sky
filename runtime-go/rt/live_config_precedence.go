@@ -29,10 +29,10 @@ import (
 // configLayers returns the candidate raw values for a setting, in precedence
 // order, skipping layers that supplied nothing.
 //
-//	1. the environment, set by the OPERATOR (shell or .env)
-//	2. an explicit `withX` builder call in the app's own code
-//	3. the environment, SEEDED by the generated prologue from sky.toml
-//	   (or from the compiler's hardcoded fallback)
+//  1. the environment, set by the OPERATOR (shell or .env)
+//  2. an explicit `withX` builder call in the app's own code
+//  3. the environment, SEEDED by the generated prologue from sky.toml
+//     (or from the compiler's hardcoded fallback)
 //
 // Layers 1 and 3 are the same variable, which is why this used to be wrong.
 // `<PREFIX>_LIVE_TTL` set by an operator and the same name seeded by

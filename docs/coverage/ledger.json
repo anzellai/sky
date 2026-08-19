@@ -641,7 +641,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1810,
+    "stdlib_entries": 1815,
     "stdlib_modules": 88,
     "surfaces_covered": 134,
     "surfaces_covered_pct": 89.3,
@@ -10931,8 +10931,9 @@
     "symbols_unreferenced_generous": {
       "by_module": {
         "Sky.Config": {
-          "count": 14,
+          "count": 19,
           "symbols": [
+            "Capacity",
             "Config",
             "Database",
             "JobStore",
@@ -10946,7 +10947,11 @@
             "withJobs",
             "withLog",
             "withSessions",
-            "withTelemetry"
+            "withTelemetry",
+            "withTelemetryAggregationWindow",
+            "withTelemetryDbCapacity",
+            "withTelemetryHistogramWindow",
+            "withTelemetrySynchronousCommit"
           ]
         },
         "Sky.Core.Basics": {
@@ -12001,14 +12006,15 @@
           ]
         }
       },
-      "count": 730,
-      "pct_of_denominator": 40.3
+      "count": 735,
+      "pct_of_denominator": 40.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
         "Sky.Config": {
-          "count": 14,
+          "count": 19,
           "symbols": [
+            "Capacity",
             "Config",
             "Database",
             "JobStore",
@@ -12022,7 +12028,11 @@
             "withJobs",
             "withLog",
             "withSessions",
-            "withTelemetry"
+            "withTelemetry",
+            "withTelemetryAggregationWindow",
+            "withTelemetryDbCapacity",
+            "withTelemetryHistogramWindow",
+            "withTelemetrySynchronousCommit"
           ]
         },
         "Sky.Core.Basics": {
@@ -13161,8 +13171,8 @@
           ]
         }
       },
-      "count": 809,
-      "pct_of_denominator": 44.7
+      "count": 814,
+      "pct_of_denominator": 44.8
     }
   },
   "units": [

@@ -32,7 +32,6 @@ import (
 	"time"
 )
 
-
 func TestMarkDone_idempotent(t *testing.T) {
 	sess := &liveSession{done: make(chan struct{})}
 	// First call closes the channel.
@@ -49,7 +48,6 @@ func TestMarkDone_idempotent(t *testing.T) {
 	sess.markDone()
 	sess.markDone()
 }
-
 
 func TestMarkDone_lazyInit(t *testing.T) {
 	// Some test-constructed sessions don't bother initialising `done`
@@ -72,7 +70,6 @@ func TestMarkDone_lazyInit(t *testing.T) {
 	}
 }
 
-
 func TestMemoryStore_Delete_signalsDone(t *testing.T) {
 	store := newMemoryStore(30 * time.Minute)
 	defer store.Close()
@@ -90,7 +87,6 @@ func TestMemoryStore_Delete_signalsDone(t *testing.T) {
 		t.Fatalf("Delete did not close sess.done within 100ms")
 	}
 }
-
 
 func TestMemoryStore_cleanupLoop_signalsDoneOnExpiry(t *testing.T) {
 	// Drive cleanupLoop manually: build the store with a tiny TTL and
@@ -135,7 +131,6 @@ func TestMemoryStore_cleanupLoop_signalsDoneOnExpiry(t *testing.T) {
 	}
 }
 
-
 // TestEveryGoroutine_exitsOnDelete is the load-bearing regression
 // test for Gap C4. It builds a real liveApp + setupSubscriptions
 // chain, observes that the Tick goroutine has spawned, deletes the
@@ -170,11 +165,11 @@ func TestEveryGoroutine_exitsOnDelete(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 
 	sess := &liveSession{
-		model:     "seed",
-		handlers:  map[string]any{},
-		sseCh:     make(chan sseFrame, 16),
-		cancelSub: make(chan struct{}),
-		done:      make(chan struct{}),
+		model:            "seed",
+		handlers:         map[string]any{},
+		sseCh:            make(chan sseFrame, 16),
+		cancelSub:        make(chan struct{}),
+		done:             make(chan struct{}),
 		lastComputedBody: "<div>hi</div>",
 		lastShippedBody:  "<div>hi</div>",
 	}
@@ -218,7 +213,6 @@ func TestEveryGoroutine_exitsOnDelete(t *testing.T) {
 		baseline, runtime.NumGoroutine(), leak)
 }
 
-
 // TestEveryGoroutine_exitsOnCleanupExpiry is the same shape as the
 // Delete test but drives the eviction via the cleanupLoop body
 // (TTL expiry) rather than an explicit Delete call. Both paths
@@ -246,11 +240,11 @@ func TestEveryGoroutine_exitsOnCleanupExpiry(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 
 	sess := &liveSession{
-		model:     "seed",
-		handlers:  map[string]any{},
-		sseCh:     make(chan sseFrame, 16),
-		cancelSub: make(chan struct{}),
-		done:      make(chan struct{}),
+		model:            "seed",
+		handlers:         map[string]any{},
+		sseCh:            make(chan sseFrame, 16),
+		cancelSub:        make(chan struct{}),
+		done:             make(chan struct{}),
 		lastComputedBody: "<div>hi</div>",
 		lastShippedBody:  "<div>hi</div>",
 	}

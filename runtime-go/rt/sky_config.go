@@ -143,6 +143,34 @@ func Config_withTelemetry(endpoint, cfg any) any {
 	return configSetStr(cfg, "OtelEndpoint", endpoint)
 }
 
+// Config_withTelemetryAggregationWindow sets the counter-coalescing window (the
+// literal SKY_TELEMETRY_AGGREGATION_WINDOW). The Sky surface passes Int seconds;
+// stored as a Go-duration string ("10s") the flusher parses. Operator env wins.
+func Config_withTelemetryAggregationWindow(seconds, cfg any) any {
+	return configSetStr(cfg, "TelemetryAggregationWindow", fmt.Sprintf("%ds", AsInt(seconds)))
+}
+
+// Config_withTelemetryHistogramWindow sets the histogram-coalescing window (the
+// literal SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW). Int seconds → "10s".
+func Config_withTelemetryHistogramWindow(seconds, cfg any) any {
+	return configSetStr(cfg, "TelemetryHistogramWindow", fmt.Sprintf("%ds", AsInt(seconds)))
+}
+
+// Config_withTelemetryDbCapacity sets the DB capacity for the size-report danger
+// flag (the literal SKY_TELEMETRY_DB_CAPACITY). The Sky Capacity ADT is reduced
+// to a byte count (pure Sky arithmetic) and stored as a decimal string, which
+// parseHumanBytes accepts as a bare byte count.
+func Config_withTelemetryDbCapacity(bytes, cfg any) any {
+	return configSetStr(cfg, "TelemetryDbCapacity", fmt.Sprintf("%d", AsInt(bytes)))
+}
+
+// Config_withTelemetrySynchronousCommit sets synchronous_commit for the
+// telemetry writer's Postgres batches (the literal SKY_TELEMETRY_SYNCHRONOUS_COMMIT).
+// The Sky surface passes the already-normalised "on"/"off" string.
+func Config_withTelemetrySynchronousCommit(mode, cfg any) any {
+	return configSetStr(cfg, "TelemetrySynchronousCommit", mode)
+}
+
 // ── Application into the env namespace ──────────────────────────────────────
 
 // configKeyToEnvSuffix maps a Sky.Config map key to the internal env SUFFIX the
@@ -171,6 +199,13 @@ var configKeyToEnvSuffix = map[string]string{
 var configKeyToLiteralEnv = map[string]string{
 	"DatabaseUrl":  "DATABASE_URL",
 	"OtelEndpoint": "OTEL_EXPORTER_OTLP_ENDPOINT",
+	// Telemetry storage/tuning — operator/deploy settings the runtime reads
+	// verbatim (never `[env]`-prefixed, never seeded), given withX builders so
+	// the config front door is complete. Operator env still wins.
+	"TelemetryAggregationWindow": "SKY_TELEMETRY_AGGREGATION_WINDOW",
+	"TelemetryHistogramWindow":   "SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW",
+	"TelemetryDbCapacity":        "SKY_TELEMETRY_DB_CAPACITY",
+	"TelemetrySynchronousCommit": "SKY_TELEMETRY_SYNCHRONOUS_COMMIT",
 }
 
 // configKeyToBuilder names the `withX` builder each config key is set by — the

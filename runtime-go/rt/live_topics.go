@@ -367,8 +367,8 @@ func (r *topicRegistry) SubscriberCount(topic string) int {
 //   - ch    — the broker-supplied event channel (receive-only).
 //   - cancel — the broker-supplied teardown func; idempotent.
 //   - toMsg — the user's `any -> msg` decoder (called by the
-//             subscriber goroutine in P48). P46 stores it but does
-//             not invoke it.
+//     subscriber goroutine in P48). P46 stores it but does
+//     not invoke it.
 type subRegistration struct {
 	topic  string
 	ch     <-chan SessionEvent
@@ -384,10 +384,10 @@ type subRegistration struct {
 // Diff-mode (vs blow-up-and-rebuild) avoids two costs the design doc
 // §4.1 calls out:
 //
-//   1. The race-window between cancel + re-subscribe where a
-//      broadcast fires + is silently lost.
-//   2. Registry-mutex contention proportional to dispatch rate ×
-//      number of subscribed topics.
+//  1. The race-window between cancel + re-subscribe where a
+//     broadcast fires + is silently lost.
+//  2. Registry-mutex contention proportional to dispatch rate ×
+//     number of subscribed topics.
 //
 // Pure function — no I/O, no registry mutation. Callers apply the
 // returned actions to the registry. Order of operations matters: P48

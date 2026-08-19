@@ -243,6 +243,37 @@ pub const MIGRATIONS: &[MigrationEntry] = &[
         detail: "|> Sky.Config.withTelemetry (Otlp \"http://collector:4317\")",
         kind: MigrationKind::BornInCode,
     },
+    // Telemetry storage/tuning — literal env vars given withX builders. No
+    // legacy sky.toml key; present so the coverage gate sees each literal has an
+    // entry. Operator env still wins over the builder in every case.
+    MigrationEntry {
+        from: None,
+        env: "SKY_TELEMETRY_AGGREGATION_WINDOW",
+        builder: "Sky.Config.withTelemetryAggregationWindow",
+        detail: "|> Sky.Config.withTelemetryAggregationWindow 10  (seconds; 0 = off)",
+        kind: MigrationKind::BornInCode,
+    },
+    MigrationEntry {
+        from: None,
+        env: "SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW",
+        builder: "Sky.Config.withTelemetryHistogramWindow",
+        detail: "|> Sky.Config.withTelemetryHistogramWindow 10  (seconds; 0 = off)",
+        kind: MigrationKind::BornInCode,
+    },
+    MigrationEntry {
+        from: None,
+        env: "SKY_TELEMETRY_DB_CAPACITY",
+        builder: "Sky.Config.withTelemetryDbCapacity",
+        detail: "|> Sky.Config.withTelemetryDbCapacity (Gigabytes 100)",
+        kind: MigrationKind::BornInCode,
+    },
+    MigrationEntry {
+        from: None,
+        env: "SKY_TELEMETRY_SYNCHRONOUS_COMMIT",
+        builder: "Sky.Config.withTelemetrySynchronousCommit",
+        detail: "|> Sky.Config.withTelemetrySynchronousCommit False",
+        kind: MigrationKind::BornInCode,
+    },
 ];
 
 /// Look up the migration row for a legacy `(section, key)`, if any.

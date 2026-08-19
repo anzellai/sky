@@ -120,9 +120,9 @@ func TestRuneLen(t *testing.T) {
 	}{
 		{"", 0},
 		{"hello", 5},
-		{"héllo", 5},        // é is 1 cell (BMP, narrow)
-		{"日本語", 6},          // 3 CJK chars × 2 cells each
-		{"emoji😀here", 11},  // 5 + 😀(2) + 4
+		{"héllo", 5},       // é is 1 cell (BMP, narrow)
+		{"日本語", 6},         // 3 CJK chars × 2 cells each
+		{"emoji😀here", 11}, // 5 + 😀(2) + 4
 	}
 	for _, tt := range tests {
 		got := runeLen(tt.s)

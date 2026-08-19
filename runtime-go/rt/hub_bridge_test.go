@@ -18,16 +18,16 @@ import (
 // numbers; the QueryXJSON methods accept a builder so per-test
 // scenarios can vary the output without hand-rolling JSON.
 type fakeHubStoreReader struct {
-	logs       int
-	metrics    int
-	spans      int
-	rowsLog    string
-	rowsMet    string
-	rowsSpn    string
-	rowsErr    string
-	rowsStats  string
-	svcs       []string
-	err        error
+	logs      int
+	metrics   int
+	spans     int
+	rowsLog   string
+	rowsMet   string
+	rowsSpn   string
+	rowsErr   string
+	rowsStats string
+	svcs      []string
+	err       error
 }
 
 func (f *fakeHubStoreReader) Counts() (int, int, int, error) {

@@ -55,15 +55,15 @@ var (
 // that calls Observe on an un-mapped metric name gets BucketsLatency.
 var MetricBuckets = map[string]BucketProfile{
 	// HTTP / Live hot paths
-	"sky_live_request_seconds":  BucketsLatency,
-	"sky_live_msg_seconds":      BucketsLatency,
+	"sky_live_request_seconds": BucketsLatency,
+	"sky_live_msg_seconds":     BucketsLatency,
 	// Database
-	"sky_db_query_seconds":      BucketsLatency,
+	"sky_db_query_seconds": BucketsLatency,
 	// Background jobs (Phase 1.3)
 	"sky_jobs_duration_seconds": BucketsDuration,
 	// Payload sizes
-	"sky_http_response_bytes":   BucketsBytes,
-	"sky_http_request_bytes":    BucketsBytes,
+	"sky_http_response_bytes": BucketsBytes,
+	"sky_http_request_bytes":  BucketsBytes,
 }
 
 // bucketsFor returns the profile a metric name maps to, falling back

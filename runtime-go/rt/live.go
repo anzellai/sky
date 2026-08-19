@@ -2579,6 +2579,19 @@ type liveSession struct {
 	done     chan struct{}
 	doneOnce sync.Once
 
+	// Per-session Cmd.perform concurrency permit (goroutine-audit B5
+	// follow-up — the bound the comment at runCmd's "perform" arm
+	// deferred). A buffered channel sized clampInt(GOMAXPROCS,4,16); a
+	// perform acquires one permit for the duration of runPerformBody so a
+	// single session cannot occupy every GLOBAL permit (performSemGlobal)
+	// and starve other tenants — one 64-element Cmd.batch of slow Http.get
+	// would otherwise freeze the whole box. Lazily made via performSemOnce
+	// (zero-value-ready) so it works no matter which construction path —
+	// fresh init() vs resume-from-store decode — built this session; call
+	// perfSem(), never touch the field directly.
+	performSemOnce sync.Once
+	performSem     chan struct{}
+
 	// evicted — set true (under the store's memMu.Lock, before release)
 	// when the tiered-session-cache idle-evict pass removes this session's
 	// live pointer from the store's memCache while KEEPING its blob on disk
@@ -3271,8 +3284,8 @@ type liveApp struct {
 	// "debounce"). handleConfig reports it to the JS driver.
 	inputMode string
 	locker    *sessionLocker
-	msgTags           map[string]int // SkyName → Tag cache for direct-send events
-	msgTagsMu         sync.Mutex
+	msgTags   map[string]int // SkyName → Tag cache for direct-send events
+	msgTagsMu sync.Mutex
 
 	// msgAdt is the Go type name of THIS app's Msg ADT (e.g. "Main_Msg").
 	// It scopes every wire-string → constructor resolution, so a
@@ -5954,35 +5967,24 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 		// request-id (so logs correlate). Without this the spawned
 		// goroutine is untracked.
 		parentCtx := CurrentTraceContext()
-		// Concurrency note (goroutine-audit B5, assessed 2026-08-18).
-		// This spawn is UNBOUNDED — one goroutine per Cmd.perform, no
-		// per-session or global cap, no cancellation beyond each effect's
-		// own timeout. It is left that way DELIBERATELY, and the premise
-		// that motivated a bound does not hold:
+		// Concurrency note (goroutine-audit B5 — bound shipped 2026-08-18).
+		// This spawn stays fire-and-forget (`go`), so it never blocks the
+		// caller — which may be holding sess.mu (dispatch → runCmd at the
+		// `runCmd(sess, cmd)` call inside dispatch). The CONCURRENCY BOUND
+		// lives inside runPerform (a per-session + global permit acquired
+		// before the trace/session wrappers), NOT here: acquiring at the
+		// submit site would block a held sess.mu.
 		//
-		//   - sess.mu is NOT held while the Task runs. runPerformBody runs
-		//     the user Task (sky_call at the top) with NO lock, then takes
-		//     sess.mu only to dispatch the result Msg + snapshot the SSE
-		//     frame — CPU-bound work measured in sub-ms-to-low-ms, never the
-		//     slow effect. The `go` here returns at once, so the dispatch
-		//     lock the caller may hold is released immediately, not for the
-		//     Task's duration.
-		//   - Each goroutine is time-bounded by the effect it runs
-		//     (skyHTTPClient timeout, Db timeouts, streamHeaderTimeout, …),
-		//     so it is not an unbounded-DURATION leak, only an unbounded-
-		//     COUNT one under a client that fires performs faster than they
-		//     complete.
-		//
-		// A per-session semaphore was rejected as a risky partial: a
-		// perform's completion is what would free a permit, but a Task's
-		// toMsg → update can itself emit more Cmd.perform, so a nested or
-		// dependent perform waiting on a permit an ancestor holds would
-		// DEADLOCK; and capping concurrency would serialise the common
-		// parallel-fetch pattern (multiple Cmd.perform / Task.parallel), a
-		// latency regression. A sound bound (release-on-done with deadlock
-		// analysis, or a global worker pool decoupled from the session) is
-		// a follow-up, not a drop-in — so this stays unbounded with the
-		// bound's absence documented here rather than shipped half-done.
+		// The bound is deadlock-free precisely because THIS spawn is
+		// fire-and-forget. An earlier version of this comment claimed a
+		// per-session semaphore "would DEADLOCK" because a perform's
+		// toMsg → update can emit more Cmd.perform — but the parent never
+		// JOINS the child it spawns here, so it never holds a permit while
+		// blocked on a descendant acquiring one. The dependent-perform
+		// chain queues against the caps; it does not cycle. (Task.parallel
+		// fans out below the perform layer and consumes no permit, so
+		// parallel-fetch is not serialised.) See runPerform for the full
+		// argument.
 		go app.runPerform(sess, c.task, c.toMsg, parentCtx)
 	case "publish":
 		// Cycle 3 P48: Std.Cmd.publish dispatch. Route every publish
@@ -6018,7 +6020,67 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 	}
 }
 
+// performSemGlobal bounds the TOTAL number of Cmd.perform effects running
+// concurrently across every session on this process. Sized
+// clampInt(GOMAXPROCS*8,64,512): generous enough that normal multi-tenant
+// load never queues, so the cap only bites under a storm — where queuing is
+// the correct backpressure against OOM / DB-pool exhaustion, not a latency
+// regression on healthy traffic. Paired with the per-session performSem so
+// the global permits can't all be captured by one busy session.
+var performSemGlobal = make(chan struct{}, clampInt(runtime.GOMAXPROCS(0)*8, 64, 512))
+
+// perfSem lazily makes and returns the per-session perform permit channel.
+// sync.Once is zero-value-ready, so this is correct on ANY liveSession
+// regardless of whether it came from the init() constructor or a
+// resume-from-store decode — no construction-site has to remember to wire it.
+func (sess *liveSession) perfSem() chan struct{} {
+	sess.performSemOnce.Do(func() {
+		sess.performSem = make(chan struct{}, clampInt(runtime.GOMAXPROCS(0), 4, 16))
+	})
+	return sess.performSem
+}
+
 func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentCtx context.Context) {
+	// Concurrency bound (goroutine-audit B5 follow-up). Acquire a
+	// per-session permit, then a global one, BEFORE stamping any
+	// goroutine-local trace/session state below — so a perform that parks
+	// on a full permit (or bails because its session was evicted) carries
+	// no sync.Map stamps while it waits.
+	//
+	// Deadlock-free by construction: a perform's toMsg → update can emit
+	// MORE Cmd.perform, but that spawn is fire-and-forget (`go runPerform`
+	// in runCmd's "perform" arm) — the parent never JOINS the child, so it
+	// never holds a permit while blocked on a descendant acquiring one. The
+	// dependent-perform chain QUEUES against the caps; it does not cycle.
+	// Task.parallel fans out below this layer (its goroutines call SkyCall
+	// directly, not runPerform) so parallel-fetch consumes no permit and is
+	// never serialised by these caps.
+	//
+	// Session-FIRST then global: a single session can hold at most its
+	// sub-cap (perfSem) of goroutines waiting on the global permit, so a
+	// backlogged session can't pin global permits idle behind its own
+	// throttle. Releases are deferred (LIFO → global first, then session).
+	//
+	// This bounds concurrent effect WORK (the expensive resource: DB conns,
+	// effect memory, CPU) — the plan-sanctioned "release-on-done" option. A
+	// hard bound on the raw PARKED-submitter goroutine count would need a
+	// worker pool that submits Cmds out from under sess.mu; that is a larger
+	// refactor, deliberately not folded in here.
+	sessDone := sess.done // snapshot once (race-clean; matches the :6524 idiom)
+	ssem := sess.perfSem()
+	select {
+	case ssem <- struct{}{}:
+	case <-sessDone:
+		return
+	}
+	defer func() { <-ssem }()
+	select {
+	case performSemGlobal <- struct{}{}:
+	case <-sessDone:
+		return
+	}
+	defer func() { <-performSemGlobal }()
+
 	// Stamp the parent request's trace context on this goroutine so
 	// kernels running inside the Task (Db.query, Http.get, Log.info,
 	// …) emit spans + logs correlated to the user's request. Cleared

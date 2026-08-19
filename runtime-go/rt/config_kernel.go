@@ -13,8 +13,8 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/BurntSushi/toml"

@@ -124,8 +124,8 @@ func isCheckboxOrRadio(f focusable) bool {
 // (uncontrolled inputs work) and the cursor position survives when
 // the model changes for unrelated reasons.
 type tuiInput struct {
-	buffer string
-	cursor int    // rune index 0..len([]rune(buffer))
+	buffer        string
+	cursor        int    // rune index 0..len([]rune(buffer))
 	lastValueAttr string // detect user-driven resets (model.draft = "")
 }
 
@@ -178,14 +178,14 @@ func (r *scrollRegistry) get(idx int) *tuiScroll {
 // Mirrors Sky.Live's guard semantics so the same auth-check function
 // works under both runtimes:
 //
-//   guard : Msg -> Model -> Result Error ()
+//	guard : Msg -> Model -> Result Error ()
 //
-//   Ok ()       → dispatch the msg through update normally
-//   Err reason  → SKIP update and stamp model.Notification = reason
-//                 + model.NotificationType = "error" (if those
-//                 fields exist on the user's record). The view
-//                 inspects the notification field to render an
-//                 in-app banner / toast / status line.
+//	Ok ()       → dispatch the msg through update normally
+//	Err reason  → SKIP update and stamp model.Notification = reason
+//	              + model.NotificationType = "error" (if those
+//	              fields exist on the user's record). The view
+//	              inspects the notification field to render an
+//	              in-app banner / toast / status line.
 //
 // Use case: auth-gated screens. e.g. user model has session field,
 // guard rejects every Msg except Login until session is Just _.
@@ -804,7 +804,6 @@ func tuiAppRun(cfg any) any {
 	}
 }
 
-
 // ensureFocusVisible adjusts scrollY so the focused element is within
 // the visible viewport [scrollY .. scrollY+rows). Called after Tab /
 // Shift-Tab so the user sees the just-focused element even when it
@@ -1365,12 +1364,12 @@ type layoutBox struct {
 	nameAttr    string // for inputs in forms: form field name
 	inputType   string // "text" | "password" | "checkbox" | "radio" | "range" | "textarea" | …
 	children    []layoutBox
-	wrapped     bool   // wrappedRow flag — children break into rows
-	paragraph   bool   // paragraph flag — text children word-wrap
-	textColumn  bool   // textColumn flag — reading-width column
-	gridLayout  bool   // grid flag — children flow into auto NxM grid
-	gridColumns int    // columns for grid (0 = auto)
-	clip        [2]bool // [clipX, clipY]
+	wrapped     bool      // wrappedRow flag — children break into rows
+	paragraph   bool      // paragraph flag — text children word-wrap
+	textColumn  bool      // textColumn flag — reading-width column
+	gridLayout  bool      // grid flag — children flow into auto NxM grid
+	gridColumns int       // columns for grid (0 = auto)
+	clip        [2]bool   // [clipX, clipY]
 	overflow    [2]string // [x, y] — "clip", "scrollbars", ""
 	nearby      []nearbyEntry
 	borderWidth [4]int // top, right, bottom, left — 1 cell each if border present
@@ -1381,8 +1380,8 @@ type layoutBox struct {
 // layoutElement walks one Element node + computes its box for the
 // given parent constraints. Recursive.
 //
-//   maxW, maxH: parent-imposed upper bounds in cells
-//   parentAxis: how this element is being laid out by its parent
+//	maxW, maxH: parent-imposed upper bounds in cells
+//	parentAxis: how this element is being laid out by its parent
 func layoutElement(elem any, ctx tuiLayoutCtx, maxW, maxH int, parentAxis layoutAxis) layoutBox {
 	_, tag, fields, ok := unwrapADTShape(elem)
 	if !ok {
@@ -1542,7 +1541,7 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 			alignY:      la.alignY,
 			events:      la.events,
 			nameAttr:    la.nameAttr,
-		inputType:   la.inputType,
+			inputType:   la.inputType,
 			paragraph:   la.isParagraph,
 			textColumn:  la.isTextColumn,
 			clip:        la.clip,
@@ -1622,7 +1621,7 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 			alignY:      la.alignY,
 			events:      la.events,
 			nameAttr:    la.nameAttr,
-		inputType:   la.inputType,
+			inputType:   la.inputType,
 			gridLayout:  true,
 			gridColumns: numCols,
 			clip:        la.clip,
@@ -1937,34 +1936,34 @@ func isInternalMarker(k string) bool {
 }
 
 type walkedAttrs struct {
-	width       any    // raw Length value
-	height      any
-	padding     [4]int // top, right, bottom, left in cells
-	spacing     int
-	fg, bg      tuiColor
-	bold        bool
-	italic      bool
-	underline   bool
-	strike      bool   // text-decoration: line-through
-	overline    bool   // text-decoration: overline (SGR 53)
-	textAlign   string // "left" | "center" | "right" — for text painting within box
+	width        any // raw Length value
+	height       any
+	padding      [4]int // top, right, bottom, left in cells
+	spacing      int
+	fg, bg       tuiColor
+	bold         bool
+	italic       bool
+	underline    bool
+	strike       bool   // text-decoration: line-through
+	overline     bool   // text-decoration: overline (SGR 53)
+	textAlign    string // "left" | "center" | "right" — for text painting within box
 	alignX       string // "" (unset, default left/main-axis), "left", "center", "right"
 	alignY       string // "" (unset), "top", "center", "bottom"
-	isRow       bool
+	isRow        bool
 	isWrappedRow bool
-	isParagraph bool
+	isParagraph  bool
 	isTextColumn bool
 	isGrid       bool
 	gridColumns  int
-	clip         [2]bool // [clipX, clipY]
-	overflow     [2]string // [x, y] — "", "clip", "scrollbars"
-	nameAttr     string  // AttrAttribute "name" — for form-submit collection
-	inputType    string  // AttrAttribute "type" — text/password/checkbox/radio/range/textarea/etc.
+	clip         [2]bool       // [clipX, clipY]
+	overflow     [2]string     // [x, y] — "", "clip", "scrollbars"
+	nameAttr     string        // AttrAttribute "name" — for form-submit collection
+	inputType    string        // AttrAttribute "type" — text/password/checkbox/radio/range/textarea/etc.
 	nearby       []nearbyEntry // captured AttrNearby items
-	events       []any  // every AttrEvent payload
-	valueAttr    string // AttrAttribute "value" — initial value for inputs
-	placeholder  string // AttrAttribute "placeholder" — shown on empty input
-	borderWidth  [4]int // top, right, bottom, left — 1 if border present, 0 otherwise
+	events       []any         // every AttrEvent payload
+	valueAttr    string        // AttrAttribute "value" — initial value for inputs
+	placeholder  string        // AttrAttribute "placeholder" — shown on empty input
+	borderWidth  [4]int        // top, right, bottom, left — 1 if border present, 0 otherwise
 	borderColor  tuiColor
 	borderStyle  string // "solid" (default), "dashed", "dotted"
 }
@@ -2716,7 +2715,6 @@ func lighten(c uint8, delta int) uint8 {
 	return uint8(v)
 }
 
-
 // paintInputBufferAdvanced renders an input's buffer + cursor.
 // `masked` (password type) replaces each char with ● in the visual
 // rendering (the underlying buffer keeps real chars). `multiline`
@@ -3027,12 +3025,13 @@ func boxOwnStyle(box layoutBox) textStyle {
 
 // paintNearby places a nearby Element relative to the host box's
 // bounds. Location tags (from Std.Ui.Location):
-//   0 Above   row = hostRow - childHeight
-//   1 Below   row = hostRow + hostHeight
-//   2 OnRight col = hostCol + hostWidth
-//   3 OnLeft  col = hostCol - childWidth
-//   4 InFront same coords as host (overlay)
-//   5 Behind  same coords (handled in caller before children paint)
+//
+//	0 Above   row = hostRow - childHeight
+//	1 Below   row = hostRow + hostHeight
+//	2 OnRight col = hostCol + hostWidth
+//	3 OnLeft  col = hostCol - childWidth
+//	4 InFront same coords as host (overlay)
+//	5 Behind  same coords (handled in caller before children paint)
 //
 // The renderer measures the child against a generous bound (host's
 // own size in the relevant axis) then offsets accordingly.

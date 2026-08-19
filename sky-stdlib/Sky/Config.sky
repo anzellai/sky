@@ -55,6 +55,11 @@ module Sky.Config exposing
     , withCsrf
     , Telemetry(..)
     , withTelemetry
+    , Capacity(..)
+    , withTelemetryAggregationWindow
+    , withTelemetryHistogramWindow
+    , withTelemetryDbCapacity
+    , withTelemetrySynchronousCommit
     )
 
 import Sky.Ffi as Ffi
@@ -129,6 +134,19 @@ type Telemetry
     = Otlp String
 
 
+-- | An operator-declared database capacity for the telemetry size-report danger
+-- flag. Choose the unit that reads best at the call site; all reduce to a byte
+-- count. Decimal units (1000-based), matching how disk/plan sizes are quoted.
+--
+--   * `Bytes n`     — n bytes.
+--   * `Megabytes n` — n × 1,000,000.
+--   * `Gigabytes n` — n × 1,000,000,000.
+type Capacity
+    = Bytes Int
+    | Megabytes Int
+    | Gigabytes Int
+
+
 -- | The empty config — every setting takes its runtime default. An app that
 -- writes no `config` binding gets exactly this.
 default : Config
@@ -184,6 +202,40 @@ withTelemetry telemetry cfg =
     setTelemetry (telemetryEndpoint telemetry) cfg
 
 
+-- | Counter-coalescing window in SECONDS (`SKY_TELEMETRY_AGGREGATION_WINDOW`);
+-- `0` disables it (the default). Coalesces counter metric rows to one per window
+-- to cut storage. Operator env still wins. See `docs/observability.md`.
+withTelemetryAggregationWindow : Int -> Config -> Config
+withTelemetryAggregationWindow seconds cfg =
+    setTelemetryAggregationWindow seconds cfg
+
+
+-- | Histogram-coalescing window in SECONDS
+-- (`SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW`); `0` disables it (the default).
+-- A lossy, bucket-resolution change with its own reader contract — see
+-- `docs/observability.md`. Operator env still wins.
+withTelemetryHistogramWindow : Int -> Config -> Config
+withTelemetryHistogramWindow seconds cfg =
+    setTelemetryHistogramWindow seconds cfg
+
+
+-- | Declared database capacity (`SKY_TELEMETRY_DB_CAPACITY`) for the size-report
+-- "near full" danger flag — the only such signal available for a REMOTE database
+-- whose host disk the app cannot see. Operator env still wins.
+withTelemetryDbCapacity : Capacity -> Config -> Config
+withTelemetryDbCapacity capacity cfg =
+    setTelemetryDbCapacity (capacityBytes capacity) cfg
+
+
+-- | Whether the telemetry writer waits for the Postgres WAL fsync on its batches
+-- (`SKY_TELEMETRY_SYNCHRONOUS_COMMIT`). `True` = durable (waits); `False` =
+-- faster, may lose a few hundred ms of telemetry on a server crash (the default
+-- for this sampled, best-effort surface). Operator env still wins.
+withTelemetrySynchronousCommit : Bool -> Config -> Config
+withTelemetrySynchronousCommit durable cfg =
+    setTelemetrySynchronousCommit (onOff durable) cfg
+
+
 -- The raw kernels take already-normalised strings, so the ADT → env-string
 -- mapping stays a total `case` in Sky (type-safe, robust to constructor
 -- reordering) rather than a fragile tag-index read in Go.
@@ -215,6 +267,55 @@ setCsrf =
 setTelemetry : String -> Config -> Config
 setTelemetry =
     Ffi.kernel "Config_withTelemetry"
+
+
+-- The window/capacity kernels take Int (seconds / bytes); the Go kernel
+-- normalises to the stored env string ("10s" / a decimal byte count). The
+-- Capacity ADT is reduced to bytes in pure Sky (capacityBytes) so no ADT tag is
+-- read in Go. synchronous-commit is already the normalised "on"/"off" string.
+setTelemetryAggregationWindow : Int -> Config -> Config
+setTelemetryAggregationWindow =
+    Ffi.kernel "Config_withTelemetryAggregationWindow"
+
+
+setTelemetryHistogramWindow : Int -> Config -> Config
+setTelemetryHistogramWindow =
+    Ffi.kernel "Config_withTelemetryHistogramWindow"
+
+
+setTelemetryDbCapacity : Int -> Config -> Config
+setTelemetryDbCapacity =
+    Ffi.kernel "Config_withTelemetryDbCapacity"
+
+
+setTelemetrySynchronousCommit : String -> Config -> Config
+setTelemetrySynchronousCommit =
+    Ffi.kernel "Config_withTelemetrySynchronousCommit"
+
+
+-- Reduce a Capacity to a byte count (decimal units, pure arithmetic — no String
+-- import, no Go tag read).
+capacityBytes : Capacity -> Int
+capacityBytes capacity =
+    case capacity of
+
+        Bytes n ->
+            n
+
+        Megabytes n ->
+            n * 1000000
+
+        Gigabytes n ->
+            n * 1000000000
+
+
+onOff : Bool -> String
+onOff durable =
+    if durable then
+        "on"
+
+    else
+        "off"
 
 
 logFormatName : LogFormat -> String

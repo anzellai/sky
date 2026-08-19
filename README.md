@@ -300,6 +300,13 @@ for the multi-service dashboard, tenant isolation, and the
 OpenTelemetry collector — point at Honeycomb, Grafana Tempo,
 Datadog, etc.
 
+Telemetry **storage** tunes from your `config` binding (or
+`SKY_TELEMETRY_*` env, which overrides it): counter/histogram
+coalescing windows shrink the telemetry tables on a busy app, and
+`Sky.Config.withTelemetryDbCapacity` drives an hourly database
+size report that warns before you run out of room. See
+[docs/observability.md](docs/observability.md).
+
 ## Going to production
 
 ```toml

@@ -51,13 +51,13 @@ func TestSqlValue_E2E_MixedTypes(t *testing.T) {
 		db,
 		"INSERT INTO items (id, name, qty, ratio, active, payload, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		[]any{
-			sqlValue("SqlInt", 1),                          // id = 1
-			sqlValue("SqlString", "widget"),                // name
-			sqlValue("SqlInt", 42),                         // qty
-			sqlValue("SqlFloat", 3.14),                     // ratio
-			sqlValue("SqlBool", true),                      // active
-			sqlValue("SqlBytes", "binary\x00data"),         // payload
-			sqlValue("SqlNull", sqlValue("SqlInt", 0)),     // updated_at = NULL
+			sqlValue("SqlInt", 1),                      // id = 1
+			sqlValue("SqlString", "widget"),            // name
+			sqlValue("SqlInt", 42),                     // qty
+			sqlValue("SqlFloat", 3.14),                 // ratio
+			sqlValue("SqlBool", true),                  // active
+			sqlValue("SqlBytes", "binary\x00data"),     // payload
+			sqlValue("SqlNull", sqlValue("SqlInt", 0)), // updated_at = NULL
 		},
 	)
 	res := AnyTaskRun(insertTask)

@@ -105,7 +105,6 @@ func TestCsrfIssue_FreshTokenEachCall(t *testing.T) {
 	}
 }
 
-
 // TestCsrfEnvVarOff — SKY_CSRF=off disables the middleware before
 // the first request. Mirrors the path that pure-API services like
 // skydeploy's sky-tools take to authenticate via Bearer alone.

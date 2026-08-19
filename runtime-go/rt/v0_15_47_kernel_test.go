@@ -135,8 +135,8 @@ func TestCacheStats(t *testing.T) {
 	id := Cache_new(cfg).(func() any)().(SkyResult[any, any]).OkValue.(int)
 
 	_ = Cache_put(id, "x", 1).(func() any)()
-	_ = Cache_get(id, "x").(func() any)()     // hit
-	_ = Cache_get(id, "miss").(func() any)()  // miss
+	_ = Cache_get(id, "x").(func() any)()    // hit
+	_ = Cache_get(id, "miss").(func() any)() // miss
 
 	s := Cache_stats(id).(func() any)().(SkyResult[any, any])
 	stats := s.OkValue.(map[string]any)

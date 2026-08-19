@@ -245,7 +245,12 @@ func TestRedisBroker_ConcurrentPublish_NoRace(t *testing.T) {
 	const n = 50
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); for i := 0; i < n; i++ { a.Publish("busy", SessionEvent{Payload: i, Origin: "sidA"}) } }()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			a.Publish("busy", SessionEvent{Payload: i, Origin: "sidA"})
+		}
+	}()
 	go func() {
 		defer wg.Done()
 		// A second concurrent publisher on the SAME instance (B) — local

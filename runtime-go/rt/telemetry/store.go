@@ -254,6 +254,7 @@ func (s *Store) Add(name string, labels map[string]string, delta float64) {
 					name:       name,
 					labels:     labels,
 					value:      nv,
+					mtype:      "counter",
 					observedAt: time.Now(),
 				},
 			})
@@ -311,6 +312,7 @@ func (s *Store) SetGauge(name string, labels map[string]string, v float64) {
 			name:       name,
 			labels:     labels,
 			value:      v,
+			mtype:      "gauge",
 			observedAt: time.Now(),
 		},
 	})
@@ -332,6 +334,7 @@ func (s *Store) AddGauge(name string, labels map[string]string, delta float64) {
 					name:       name,
 					labels:     labels,
 					value:      nv,
+					mtype:      "gauge",
 					observedAt: time.Now(),
 				},
 			})
@@ -404,15 +407,22 @@ func (s *Store) Observe(name string, labels map[string]string, v float64) {
 		old := ser.sumBits.Load()
 		ns := float64FromBits(old) + v
 		if ser.sumBits.CompareAndSwap(old, bitsFromFloat64(ns)) {
-			// Persist the raw observation, NOT the rolling sum — the
-			// console UI's histogram rendering rebuilds from
-			// per-observation rows.
+			// Enqueue the raw observation. By DEFAULT the flusher persists
+			// it verbatim (full precision) — the out-of-repo SkyDeploy
+			// console rebuilds histograms from per-observation rows. Only
+			// when SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW is set does the
+			// flusher instead coalesce this series into cumulative bucket
+			// rows once per window (a lossy, bucket-resolution change gated
+			// separately for exactly that reader) — for which it needs the
+			// live series, carried here in `hist`.
 			s.enqueuePersist(persistEntry{
 				kind: "metric",
 				metric: persistMetric{
 					name:       name,
 					labels:     labels,
 					value:      v,
+					mtype:      "histogram",
+					hist:       ser,
 					observedAt: time.Now(),
 				},
 			})
@@ -609,6 +619,30 @@ func (s *Store) Snapshot() []MetricSample {
 	return out
 }
 
+// snapshotHistogram builds a MetricSample for ONE histogram series — the
+// per-series equivalent of the histogram arm of Snapshot, so the flusher can
+// coalesce a dirty series at a window boundary in O(1) instead of walking every
+// counter+gauge+histogram via Snapshot(). Reads under the same RLock and the
+// same per-field atomic loads Snapshot uses (the cross-field skew that implies
+// is handled by emitHistogramSeries's monotonic clamp). `name` is passed in
+// because histogramSeries does not store its own name (it lives in the map key).
+func (s *Store) snapshotHistogram(name string, ser *histogramSeries) MetricSample {
+	s.metricsMu.RLock()
+	defer s.metricsMu.RUnlock()
+	bs := make(map[float64]uint64, len(ser.boundaries)+1)
+	for i, b := range ser.boundaries {
+		bs[b] = ser.buckets[i].Load()
+	}
+	return MetricSample{
+		Name:    name,
+		Labels:  copyLabels(ser.labels),
+		Type:    "histogram",
+		Buckets: bs,
+		Sum:     float64FromBits(ser.sumBits.Load()),
+		Count:   ser.count.Load(),
+	}
+}
+
 // StartedAt returns the time the store was created (== process
 // start time, approximately). Used for the `process_start_time_seconds`
 // Prometheus convention metric.
@@ -662,5 +696,17 @@ func copyLabels(in map[string]string) map[string]string {
 	for k, v := range in {
 		out[k] = v
 	}
+	return out
+}
+
+// withLabel returns a copy of `in` with key=value added — used to fold the `le`
+// boundary into a histogram bucket row's label set without mutating the shared
+// series labels. Never mutates the input.
+func withLabel(in map[string]string, key, value string) map[string]string {
+	out := make(map[string]string, len(in)+1)
+	for k, v := range in {
+		out[k] = v
+	}
+	out[key] = value
 	return out
 }

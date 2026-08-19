@@ -40,6 +40,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -301,6 +302,133 @@ func persistFlushInterval() time.Duration {
 	return 200 * time.Millisecond
 }
 
+// metricAggregationWindowOverride lets a test force a window without touching
+// the process environment (positive = that duration; 0 = read the env). Tests
+// never need to force-0 because 0 is already the default.
+var metricAggregationWindowOverride atomic.Int64
+
+// metricAggregationWindow is the counter-coalescing window: within it, all but
+// the last persisted row per (name,labels) counter series is redundant (the
+// value is cumulative), so the flusher keeps only the survivor. 0 DISABLES
+// coalescing — every row is written, exactly as before this landed. That is
+// the DEFAULT: a non-zero window reduces the persisted-row time-resolution of
+// the out-of-repo SkyDeploy console's counter graphs (lossless for rate/delta,
+// only sub-window points are lost), which is a change to an external contract
+// the runtime cannot see — so it is opt-in via SKY_TELEMETRY_AGGREGATION_WINDOW
+// (a Go duration, e.g. "10s"). Gauges and histograms are never coalesced.
+func metricAggregationWindow() time.Duration {
+	if d := metricAggregationWindowOverride.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	v := strings.TrimSpace(os.Getenv("SKY_TELEMETRY_AGGREGATION_WINDOW"))
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0 // unparseable or non-positive → disabled, never a surprise window
+	}
+	return d
+}
+
+// parseHumanBytes parses an operator capacity string ("100GB", "1.5TiB",
+// "512mb", "100 GB", "0", or a bare byte count) into bytes. ok=false on any
+// non-empty-but-malformed input (bad number, negative, unknown unit, int64
+// overflow) — the CALLER turns that into a one-shot warning, never a silent
+// zero, so a typo cannot quietly drop the capacity danger flag. Decimal units
+// are powers of 1000 (GB=1e9, the marketing/cloud convention); binary units
+// (GiB=2^30) are powers of 1024; a bare number is bytes. "0" is a valid
+// explicit disable.
+func parseHumanBytes(v string) (int64, bool) {
+	v = strings.ReplaceAll(strings.TrimSpace(v), " ", "")
+	if v == "" {
+		return 0, false
+	}
+	upper := strings.ToUpper(v)
+	var mult float64 = 1
+	numPart := v
+	switch {
+	case strings.HasSuffix(upper, "TIB"):
+		mult, numPart = 1<<40, v[:len(v)-3]
+	case strings.HasSuffix(upper, "GIB"):
+		mult, numPart = 1<<30, v[:len(v)-3]
+	case strings.HasSuffix(upper, "MIB"):
+		mult, numPart = 1<<20, v[:len(v)-3]
+	case strings.HasSuffix(upper, "KIB"):
+		mult, numPart = 1<<10, v[:len(v)-3]
+	case strings.HasSuffix(upper, "TB"):
+		mult, numPart = 1e12, v[:len(v)-2]
+	case strings.HasSuffix(upper, "GB"):
+		mult, numPart = 1e9, v[:len(v)-2]
+	case strings.HasSuffix(upper, "MB"):
+		mult, numPart = 1e6, v[:len(v)-2]
+	case strings.HasSuffix(upper, "KB"):
+		mult, numPart = 1e3, v[:len(v)-2]
+	case strings.HasSuffix(upper, "B"):
+		mult, numPart = 1, v[:len(v)-1]
+	}
+	f, err := strconv.ParseFloat(numPart, 64)
+	if err != nil || f < 0 {
+		return 0, false
+	}
+	b := f * mult
+	if b > math.MaxInt64 { // overflow — never wrap to a negative threshold
+		return 0, false
+	}
+	return int64(b), true
+}
+
+// capacityBytes resolves SKY_TELEMETRY_DB_CAPACITY to a byte quota (0 =
+// disabled). Unset → 0, silently (the operator did not ask). Set-but-malformed
+// → 0 AND a one-shot WARN (a typo like "100 gigs" must not silently drop the
+// danger flag the operator believes protects them).
+func (p *persistence) capacityBytes(s *Store) int64 {
+	raw := os.Getenv("SKY_TELEMETRY_DB_CAPACITY")
+	if strings.TrimSpace(raw) == "" {
+		return 0
+	}
+	b, ok := parseHumanBytes(raw)
+	if !ok {
+		p.capacityWarnOnce.Do(func() {
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "SKY_TELEMETRY_DB_CAPACITY is set but unparseable; the DB-capacity danger flag is disabled",
+				Fields:  map[string]string{"value": raw},
+			})
+		})
+		return 0
+	}
+	return b
+}
+
+// metricHistogramWindowOverride — test hook, parallel to the counter one.
+var metricHistogramWindowOverride atomic.Int64
+
+// histogramAggregationWindow is the histogram-coalescing window, gated by
+// SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW (a Go duration; default 0 = off).
+// It is DELIBERATELY separate from the counter window: coalescing a histogram
+// is a lossy, BUCKET-RESOLUTION aggregation — today's rows carry the raw
+// full-precision observation, so a reader can compute exact quantiles / max,
+// which bucket rows cannot — and it is a BREAKING representation change for the
+// out-of-repo SkyDeploy console (which reconstructs from per-observation rows).
+// So it ships default-off and enabling it requires a bucket-aware reader; the
+// counter window (lossless for rate/delta) must not silently drag it along.
+func histogramAggregationWindow() time.Duration {
+	if d := metricHistogramWindowOverride.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	v := strings.TrimSpace(os.Getenv("SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW"))
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
+}
+
 // persistEntry — a single record queued for the flusher goroutine.
 // The `kind` field discriminates the variant; only the matching
 // payload field is populated per entry.
@@ -312,9 +440,24 @@ type persistEntry struct {
 }
 
 type persistMetric struct {
-	name       string
-	labels     map[string]string
-	value      float64
+	name   string
+	labels map[string]string
+	value  float64
+	// mtype is the metric family — "counter" | "gauge" | "histogram". It is
+	// NOT persisted (the telemetry_metric schema has no type column); it only
+	// tells the flusher which rows are safe to window-coalesce. Counters
+	// persist a cumulative value, so all but the last row per (name,labels)
+	// window are redundant — losslessly droppable. Gauges (spiky) and
+	// histograms (per-observation, rebuilt by the out-of-repo SkyDeploy
+	// reader) are never coalesced.
+	mtype string
+	// hist — for a histogram observation, the live in-RAM series (source of
+	// truth for the cumulative bucket vector). Carried so the flusher can
+	// snapshot it at a window boundary when histogram coalescing is on; nil
+	// for non-histogram metrics and unused when the histogram window is off
+	// (then the raw per-observation row is persisted, as before). The series
+	// is never deleted, so the pointer is stable for the process lifetime.
+	hist       *histogramSeries
 	observedAt time.Time
 }
 
@@ -343,6 +486,35 @@ type persistence struct {
 	// onceClose protects Close() against double-close from test
 	// teardown + the eventual process-exit hook.
 	onceClose sync.Once
+	// dsn is the resolved backend target (a SQLite file path, or a
+	// postgres:// URL). Retained so the size report can statfs the SQLite
+	// file's directory for free space.
+	dsn string
+	// localDataDir is the filesystem path of a Postgres data directory THIS
+	// process owns — set only for the EMBEDDED cluster (plumbed from the
+	// supervisor's cfg.dataDir via EnablePersistenceFromEnvWithLocalDir). Empty
+	// for SQLite (its own path drives statfs) and for any external/remote pg
+	// (whose disk this process cannot see). It is the "same server, I can
+	// statfs the DB's disk" signal for Postgres. Set at construction, before
+	// the flusher/pruner goroutines spawn, so it is single-writer like the
+	// growth fields below. (A non-default PGDATA tablespace on a different mount
+	// would desync this from the DB's real disk; the embedded provisioner never
+	// creates one.)
+	localDataDir string
+	// Size-report growth tracking. Written and read ONLY from the pruner
+	// goroutine (reportSizes runs inside pruneCycle / at startup), so no lock is
+	// needed — documenting the single-writer contract rather than guarding it.
+	lastSizeBytes map[string]int64
+	lastSizeAt    time.Time
+	// capacityWarnOnce fires a single WARN when SKY_TELEMETRY_DB_CAPACITY is set
+	// but unparseable, so a typo disables the quota danger flag loudly (once),
+	// never silently.
+	capacityWarnOnce sync.Once
+	// dbstatChecked / dbstatOK memoise the one-time probe for the SQLite
+	// dbstat vtable (absent in the default modernc build), so the size
+	// report degrades to whole-DB bytes without re-probing every hour.
+	dbstatChecked bool
+	dbstatOK      bool
 }
 
 // EnablePersistence opens (or creates) the console.db at `path` and
@@ -355,6 +527,14 @@ type persistence struct {
 // helpers) checks `os.Getenv("SKY_CONSOLE_DB_PATH")` and forwards
 // to `Default().EnablePersistence(path)`.
 func (s *Store) EnablePersistence(path string) error {
+	return s.EnablePersistenceWithLocalDir(path, "")
+}
+
+// EnablePersistenceWithLocalDir is EnablePersistence plus the filesystem path of
+// a Postgres data directory THIS process owns (the embedded cluster). Pass ""
+// for SQLite or a remote/external Postgres. Setting it lets the size report
+// statfs the embedded cluster's disk for a real free-space + danger signal.
+func (s *Store) EnablePersistenceWithLocalDir(path, localDataDir string) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 	if s.persist != nil {
@@ -391,10 +571,18 @@ func (s *Store) EnablePersistence(path string) error {
 			return err
 		}
 	}
+	// localDataDir applies only to a Postgres cluster this process owns; a
+	// stray value on SQLite would mis-drive statfs, so ignore it there.
+	ownedDir := ""
+	if driver == "pgx" {
+		ownedDir = localDataDir
+	}
 	p := &persistence{
 		db:            db,
 		pool:          handle,
 		driver:        driver,
+		dsn:           dsn,
+		localDataDir:  ownedDir,
 		syncCommitOff: driver == "pgx" && SynchronousCommitOff(),
 		queue:         make(chan persistEntry, persistQueueCap),
 		flushReq:      make(chan chan struct{}),
@@ -411,6 +599,16 @@ func (s *Store) EnablePersistence(path string) error {
 // to EnablePersistence when set.  Convenience used by the runtime's
 // dual-write boot path so callers don't have to repeat the env check.
 func (s *Store) EnablePersistenceFromEnv() error {
+	return s.EnablePersistenceFromEnvWithLocalDir("")
+}
+
+// EnablePersistenceFromEnvWithLocalDir is EnablePersistenceFromEnv plus the
+// embedded cluster's data-dir path. The embedded-Postgres boot path calls this
+// (with the supervisor's cfg.dataDir) after it has exported DATABASE_URL, so the
+// size report can statfs the cluster's disk. The localDataDir is used only if
+// the resolved backend is that Postgres (EnablePersistenceWithLocalDir ignores
+// it on SQLite).
+func (s *Store) EnablePersistenceFromEnvWithLocalDir(localDataDir string) error {
 	path := os.Getenv(persistEnvVar)
 	// One-DB-for-everything: fall back to a Postgres DATABASE_URL (the same var
 	// the app DB, sessions, and analytics use) so console telemetry lands in the
@@ -423,7 +621,7 @@ func (s *Store) EnablePersistenceFromEnv() error {
 	if path == "" {
 		return nil
 	}
-	return s.EnablePersistence(path)
+	return s.EnablePersistenceWithLocalDir(path, localDataDir)
 }
 
 // ClosePersistence stops the flusher + pruner, waits for the queue to be
@@ -525,14 +723,65 @@ func (p *persistence) flusher(s *Store) {
 	tick := time.NewTicker(persistFlushInterval())
 	defer tick.Stop()
 	batch := make([]persistEntry, 0, persistBatchSize)
-	// coalesce pulls everything already queued into the current batch, up to
-	// the size cap — a burst of N entries becomes ceil(N/128) transactions
-	// rather than N.
-	coalesce := func() {
+
+	// Counter-coalescing state. `window` is read ONCE at flusher start (it is a
+	// deployment setting, not a per-request one). When window > 0, counter
+	// entries are held in `coalesced` — keyed (name,labels), overwritten by
+	// each later sample so only the last cumulative value per key survives —
+	// and emitted every `window` instead of per-row. Memory is O(counter
+	// cardinality) (already capped by checkCardinality), NOT O(rows). When
+	// window == 0 the map stays empty and the windowTick never fires, so the
+	// path below is byte-for-byte the old behaviour.
+	window := metricAggregationWindow()
+	coalesced := map[string]persistEntry{}
+	var windowTickC <-chan time.Time
+	if window > 0 {
+		wt := time.NewTicker(window)
+		defer wt.Stop()
+		windowTickC = wt.C
+	}
+
+	// Histogram-coalescing state — SEPARATE knob + window from counters (a
+	// histogram is a lossy bucket-resolution change with a distinct reader
+	// contract; see histogramAggregationWindow). `dirtyHists` is a dirty-SET,
+	// not a value cache: the in-RAM *histogramSeries is the source of truth for
+	// the cumulative vector, so the map only records WHICH series were touched
+	// this window (keyed by the stable series pointer, 1:1 with identity) and
+	// its name (histogramSeries doesn't store its own name). At the window tick
+	// each is snapshotted + exploded into cumulative bucket rows. O(dirty
+	// series), independent of observation rate.
+	histWindow := histogramAggregationWindow()
+	dirtyHists := map[*histogramSeries]string{}
+	var histTickC <-chan time.Time
+	if histWindow > 0 {
+		ht := time.NewTicker(histWindow)
+		defer ht.Stop()
+		histTickC = ht.C
+	}
+
+	// ingest routes ONE dequeued entry: a coalescable counter (counter window
+	// on) overwrites its survivor in `coalesced`; a coalescable histogram
+	// (histogram window on) marks its series dirty; everything else — logs,
+	// spans, gauges, raw counters/histograms when their window is off — appends
+	// to the batch exactly as before.
+	ingest := func(e persistEntry) {
+		if window > 0 && e.kind == "metric" && e.metric.mtype == "counter" {
+			coalesced[e.metric.name+"\x00"+encodeAttrs(e.metric.labels)] = e
+			return
+		}
+		if histWindow > 0 && e.kind == "metric" && e.metric.mtype == "histogram" && e.metric.hist != nil {
+			dirtyHists[e.metric.hist] = e.metric.name
+			return
+		}
+		batch = append(batch, e)
+	}
+	// drainQueue pulls everything already queued through ingest, until the
+	// batch reaches the size cap or the queue empties.
+	drainQueue := func() {
 		for len(batch) < persistBatchSize {
 			select {
 			case e := <-p.queue:
-				batch = append(batch, e)
+				ingest(e)
 			default:
 				return
 			}
@@ -552,12 +801,60 @@ func (p *persistence) flusher(s *Store) {
 		}
 		batch = batch[:0]
 	}
-	// drainAll writes everything currently queued, not merely one batch.
+	// flushCoalesced moves every counter survivor into the batch and clears the
+	// map. Caller flushes the batch. This is the LOAD-BEARING step for
+	// read-your-writes + shutdown-drain: a survivor still sitting in `coalesced`
+	// has not been committed, so drainAll (flushReq + stop) MUST call this or a
+	// FlushPersistence would return before an enqueued counter is visible and a
+	// shutdown would lose it.
+	flushCoalesced := func() {
+		for k, e := range coalesced {
+			batch = append(batch, e)
+			delete(coalesced, k)
+		}
+	}
+	// flushDirtyHists snapshots each dirty histogram series and explodes it into
+	// cumulative bucket rows (`_bucket{le}` / `_sum` / `_count`) appended to the
+	// batch, then clears the set. Same LOAD-BEARING role as flushCoalesced for
+	// read-your-writes + shutdown-drain. The rows are appended DIRECTLY to the
+	// batch (not re-enqueued), so they never re-enter ingest. emitHistogramSeries
+	// clamps the vector monotonic (the per-field atomic-read skew is durable once
+	// on disk). ~len(boundaries)+3 rows per dirty series per window.
+	flushDirtyHists := func() {
+		if len(dirtyHists) == 0 {
+			return
+		}
+		ts := time.Now()
+		for ser, name := range dirtyHists {
+			sm := s.snapshotHistogram(name, ser)
+			emitHistogramSeries(name, sm, func(rowName, leValue string, value float64, _ bool) {
+				labels := sm.Labels
+				if leValue != "" {
+					labels = withLabel(sm.Labels, "le", leValue)
+				}
+				batch = append(batch, persistEntry{
+					kind: "metric",
+					metric: persistMetric{
+						name:       rowName,
+						labels:     labels,
+						value:      value,
+						mtype:      "histogram",
+						observedAt: ts,
+					},
+				})
+			})
+			delete(dirtyHists, ser)
+		}
+	}
+	// drainAll writes everything currently queued AND every held counter
+	// survivor AND every dirty histogram, not merely one batch.
 	drainAll := func() {
 		for {
-			coalesce()
+			drainQueue()
+			flushCoalesced()
+			flushDirtyHists()
 			flush()
-			if len(p.queue) == 0 {
+			if len(p.queue) == 0 && len(coalesced) == 0 && len(dirtyHists) == 0 {
 				return
 			}
 		}
@@ -576,18 +873,33 @@ func (p *persistence) flusher(s *Store) {
 		case done := <-p.flushReq:
 			// A caller is waiting. Drain to empty before closing `done`: every
 			// entry enqueued before the request must be committed by the time
-			// the caller observes the close.
+			// the caller observes the close — including held counter survivors.
 			drainAll()
 			close(done)
 
 		case e := <-p.queue:
-			batch = append(batch, e)
-			coalesce()
+			ingest(e)
+			drainQueue()
 			if len(batch) >= persistBatchSize {
 				flush()
 			}
 
 		case <-tick.C:
+			// 200ms cadence: commit the non-coalesced batch (logs / spans /
+			// gauges / histograms / all counters when window==0).
+			flush()
+
+		case <-windowTickC:
+			// Window boundary: emit the coalesced counter survivors. Never
+			// fires when window==0 (windowTickC is nil).
+			flushCoalesced()
+			flush()
+
+		case <-histTickC:
+			// Histogram window boundary: explode each dirty series into
+			// cumulative bucket rows. Never fires when the histogram window is
+			// off (histTickC is nil).
+			flushDirtyHists()
 			flush()
 		}
 	}
@@ -746,6 +1058,12 @@ func encodeAttrs(m map[string]string) string {
 // file for too long under load.
 func (p *persistence) pruner(s *Store) {
 	defer p.wg.Done()
+	// STARTUP size report — an immediate baseline the moment persistence is up,
+	// so an already-large / already-near-full DB is visible at boot rather than
+	// a minute later, and growth tracking starts from t=0. Under its own recover
+	// (it is outside pruneCycle's). It does NOT prune — the prune timer below is
+	// unchanged, so the first retention DELETE still waits the deliberate ~1 min.
+	p.reportSizesRecovered(s)
 	// First sweep ~1 minute after open so a busy reboot doesn't
 	// stall on startup with a giant first-pass delete.
 	timer := time.NewTimer(1 * time.Minute)
@@ -799,6 +1117,11 @@ func (p *persistence) pruneCycle(s *Store) {
 			Fields:  map[string]string{"error": err.Error()},
 		})
 	}
+	// P1 — measure the runtime-owned tables' on-disk footprint on the same
+	// hourly cadence, POST-prune (so the number reflects steady state). Runs
+	// under this cycle's recover, so a driver that panics on the size query
+	// costs one report, not the retention loop.
+	p.reportSizes(s, time.Now())
 }
 
 func (p *persistence) runPrune() error {
@@ -816,6 +1139,228 @@ func (p *persistence) runPrune() error {
 		return err
 	}
 	return nil
+}
+
+// telemetryOwnedTables are the runtime-owned tables the size report measures.
+// Fixed allowlist — never user input — so interpolating a name into a
+// COUNT/SUM query below is not an injection surface.
+var telemetryOwnedTables = []string{"telemetry_log", "telemetry_metric", "telemetry_span"}
+
+// reportSizes measures the on-disk footprint of the runtime-owned telemetry
+// tables and emits ONE structured telemetry_log event per prune cycle. It is
+// the only measurement of database size in the runtime — every figure in the
+// perf docs before this was arithmetic.
+//
+// It deliberately emits a LOG event, never a telemetry_metric row: measuring
+// the table you are trying to keep small by writing into it every hour is the
+// trap this avoids (grill P1 attack 6). The event lands in the in-RAM ring
+// (console-visible) and, via AppendLog, in telemetry_log (24h retention).
+//
+// Per-table BYTES are available on Postgres (pg_total_relation_size, a
+// non-locking catalog function) and on SQLite only when the dbstat vtable is
+// compiled in (it is NOT in the default modernc build) — so SQLite degrades to
+// whole-database bytes (page_count*page_size, an O(1) header read). It never
+// falls back to per-table COUNT(*): that is a full scan of the very
+// telemetry_metric table whose growth is the concern, self-defeating on the
+// shared pool.
+//
+// Free space is knowable only where the runtime owns the filesystem path — the
+// SQLite file's directory. For a remote Postgres the data dir is unknown from
+// here, so the report states absolute size + growth rate and leaves free space
+// unreported. The low-space warning is a RATIO (free < total telemetry bytes),
+// not a byte constant, so it scales with the disk.
+// Danger thresholds (documented, overridable later if needed):
+//   - owned-path: warn when free disk drops below this fraction of total disk
+//     (the standard "disk near full" signal — captures ALL disk use, incl. WAL
+//     and other databases, not just the figure this app can name).
+//   - capacity: warn when the whole database exceeds this fraction of the
+//     operator-declared SKY_TELEMETRY_DB_CAPACITY.
+const (
+	dangerFreeRatio     = 0.10
+	dangerCapacityRatio = 0.90
+)
+
+func (p *persistence) reportSizes(s *Store, now time.Time) {
+	// Bound every query so a wedged connection at startup can't stall the
+	// pruner goroutine (and thus the first retention prune) indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fields := map[string]string{}
+	sizes := map[string]int64{}
+	var telemetryBytes int64 // the runtime-owned telemetry tables only
+	var dbTotalBytes int64   // the WHOLE database (app + sessions + telemetry)
+	perTableBytes := false
+
+	switch p.driver {
+	case "pgx":
+		perTableBytes = true
+		for _, t := range telemetryOwnedTables {
+			var n int64
+			// to_regclass tolerates a not-yet-created table (NULL → 0).
+			row := p.db.QueryRowContext(ctx,
+				`SELECT COALESCE(pg_total_relation_size(to_regclass($1)), 0)`, t)
+			if err := row.Scan(&n); err == nil {
+				sizes[t] = n
+				telemetryBytes += n
+			}
+		}
+		// Whole-DB size — cheap, non-locking, works remotely. Measures only
+		// THIS database (excludes WAL / other DBs), so it under-counts true disk
+		// use — which is why the owned-path danger flag keys on statfs free, not
+		// on this figure.
+		_ = p.db.QueryRowContext(ctx,
+			`SELECT pg_database_size(current_database())`).Scan(&dbTotalBytes)
+	default: // sqlite
+		if p.sqliteHasDbstat() {
+			perTableBytes = true
+			for _, t := range telemetryOwnedTables {
+				var n sql.NullInt64
+				row := p.db.QueryRowContext(ctx, `SELECT SUM(pgsize) FROM dbstat WHERE name = ?`, t)
+				if err := row.Scan(&n); err == nil && n.Valid {
+					sizes[t] = n.Int64
+					telemetryBytes += n.Int64
+				}
+			}
+		} else {
+			fields["breakdown"] = "whole-db (dbstat vtable absent)"
+		}
+		// Whole-DB size = page_count*page_size (an O(1) header read, never a
+		// COUNT(*) scan). Deliberately the STABLE logical size, not
+		// stat(main)+stat(-wal): the WAL balloons then checkpoints to ~0, so a
+		// file-sum would make this figure oscillate and flap any threshold keyed
+		// on it. WAL disk use still shows up correctly in statfs free space.
+		var pageCount, pageSize int64
+		if err := p.db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err == nil {
+			if err := p.db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err == nil {
+				dbTotalBytes = pageCount * pageSize
+			}
+		}
+		if !perTableBytes {
+			telemetryBytes = dbTotalBytes // best available without dbstat
+		}
+	}
+
+	if perTableBytes {
+		for _, t := range telemetryOwnedTables {
+			fields[t+"_bytes"] = strconv.FormatInt(sizes[t], 10)
+		}
+	}
+	// Distinct names: telemetry-tables-only vs the whole database, so neither is
+	// misread as the other.
+	fields["telemetry_total_bytes"] = strconv.FormatInt(telemetryBytes, 10)
+	fields["db_total_bytes"] = strconv.FormatInt(dbTotalBytes, 10)
+	fields["driver"] = p.driver
+
+	// Growth rate vs the previous report (bytes/day projection), single-writer
+	// state so no lock. First cycle has no prior — report rate as unknown.
+	if !p.lastSizeAt.IsZero() {
+		if dt := now.Sub(p.lastSizeAt).Seconds(); dt > 0 {
+			deltaBytes := telemetryBytes - p.lastSizeBytes["telemetry_total_bytes"]
+			perDay := int64(float64(deltaBytes) / dt * 86400)
+			fields["growth_bytes_per_day"] = strconv.FormatInt(perDay, 10)
+		}
+	}
+	if p.lastSizeBytes == nil {
+		p.lastSizeBytes = map[string]int64{}
+	}
+	p.lastSizeBytes["telemetry_total_bytes"] = telemetryBytes
+	p.lastSizeAt = now
+
+	level := "info"
+	warn := func(msg string) {
+		level = "warn"
+		fields["warning"] = msg
+	}
+
+	// Owned path = this process can statfs the DB's own disk: SQLite (its file)
+	// or the EMBEDDED cluster (its data dir). External/remote pg cannot.
+	statfsPath := ""
+	switch {
+	case p.driver == "sqlite":
+		statfsPath = p.sqlitePath()
+	case p.localDataDir != "":
+		statfsPath = p.localDataDir
+	}
+
+	capacity := p.capacityBytes(s)
+	if capacity > 0 {
+		fields["db_capacity_bytes"] = strconv.FormatInt(capacity, 10)
+	}
+
+	if statfsPath != "" {
+		if free, total, ok := freeBytesForPath(statfsPath); ok {
+			fields["fs_free_bytes"] = strconv.FormatInt(free, 10)
+			fields["fs_total_bytes"] = strconv.FormatInt(total, 10)
+			// Primary owned-path danger: disk near full (free < 10% of total).
+			if total > 0 && float64(free) < dangerFreeRatio*float64(total) {
+				warn("disk nearly full: free space below 10% of the volume")
+			}
+		} else {
+			fields["fs_free_bytes"] = "unknown"
+		}
+	} else {
+		fields["fs_free_bytes"] = "unknown (remote backend)"
+	}
+
+	// Capacity danger applies on EVERY tier when the operator declared a quota —
+	// it is the only signal available for a remote DB, and a useful extra one on
+	// an owned path.
+	if capacity > 0 && dbTotalBytes > 0 && float64(dbTotalBytes) > dangerCapacityRatio*float64(capacity) {
+		warn("database size is above 90% of SKY_TELEMETRY_DB_CAPACITY")
+	}
+
+	s.AppendLog(LogEntry{
+		TS:      now,
+		Level:   level,
+		Message: "telemetry.storage_size",
+		Fields:  fields,
+	})
+}
+
+// reportSizesRecovered runs reportSizes under its own recover, for the STARTUP
+// call that sits outside pruneCycle's recover. Without this a driver panic on a
+// cold handle at boot (modernc/pgx panic on a nil/closed handle) would kill the
+// pruner goroutine and end retention for the process lifetime — the exact
+// permanent-silence trap pruneCycle is structured to avoid.
+func (p *persistence) reportSizesRecovered(s *Store) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "telemetry startup size report panicked",
+				Fields:  map[string]string{"panic": fmt.Sprintf("%v", r)},
+			})
+		}
+	}()
+	p.reportSizes(s, time.Now())
+}
+
+// sqlitePath strips any DSN query suffix so the bare file path can be handed
+// to statfs. SQLite DSNs are usually a plain path but may carry `?_pragma=…`.
+func (p *persistence) sqlitePath() string {
+	if i := strings.IndexByte(p.dsn, '?'); i >= 0 {
+		return p.dsn[:i]
+	}
+	return p.dsn
+}
+
+// sqliteHasDbstat probes once for the dbstat virtual table. The default
+// modernc SQLite build omits it, so the probe (not a version guess) decides
+// whether per-table bytes are available. Memoised — the answer can't change
+// for the life of the handle.
+func (p *persistence) sqliteHasDbstat() bool {
+	if p.dbstatChecked {
+		return p.dbstatOK
+	}
+	p.dbstatChecked = true
+	// count(*) always returns exactly one row when the vtable exists (0 on an
+	// empty DB) and errors "no such table" when it does not — so a nil Scan
+	// error is a reliable presence signal, where `SELECT 1 … LIMIT 1` would
+	// false-negative (ErrNoRows) on an empty dbstat.
+	p.dbstatOK = p.db.QueryRow(`SELECT count(*) FROM dbstat`).Scan(new(int)) == nil
+	return p.dbstatOK
 }
 
 // FlushPersistence asks the writer to drain synchronously and waits for it.

@@ -2524,6 +2524,19 @@ impl<'a> Ctx<'a> {
                 GoTy::Unit,
             )));
         }
+        // Bring up telemetry console-DB persistence AFTER ApplyConfig — so a
+        // `Sky.Config.withTelemetry*` value is in the environment before the
+        // flusher latches the aggregation windows / synchronous-commit at enable
+        // time — and BEFORE MaybeStartEmbeddedPostgres. UNCONDITIONAL and OUTSIDE
+        // the `config` block on purpose: it replaces an rt init() enable that
+        // always ran, an operator may point SKY_CONSOLE_DB_PATH at any app shape,
+        // and a program with no `config` binding must keep persistence. It is a
+        // no-op when no console DB is configured (repro / golden / coerce-floor
+        // baselines are output-based and unmoved by this silent side effect).
+        stmts.push(GoStmt::Expr(GoExpr::new(
+            GoExprKind::Ident("rt.EnableConsolePersistence()".into()),
+            GoTy::Unit,
+        )));
         stmts.extend([
             GoStmt::Expr(GoExpr::new(
                 GoExprKind::Ident("rt.MaybeStartEmbeddedPostgres()".into()),

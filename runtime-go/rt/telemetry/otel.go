@@ -94,7 +94,7 @@ type TracerConfig struct {
 var (
 	tracerMu       sync.Mutex
 	currentCfg     TracerConfig
-	tracerInited   bool                    // distinguishes "never called" from "called with empty"
+	tracerInited   bool // distinguishes "never called" from "called with empty"
 	currentTracer  trace.Tracer
 	tracerProvider *sdktrace.TracerProvider
 )

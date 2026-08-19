@@ -12,7 +12,6 @@ import (
 	"testing"
 )
 
-
 // p34IsErr / okValue handle both legacy eager Result returns and the
 // new Task-everywhere thunk returns by routing through AnyTaskRun
 // (which forces thunks and passes Results through).
@@ -25,7 +24,6 @@ func okValue(r any) any {
 	sr, _ := AnyTaskRun(r).(SkyResult[any, any])
 	return sr.OkValue
 }
-
 
 // --- passwords ---------------------------------------------------------
 
@@ -67,7 +65,8 @@ func TestDbConnect_unitFallsBackToSkyDbPath(t *testing.T) {
 	t.Setenv("SKY_DB_PATH", ":memory:")
 	r := Db_connect(struct{}{})
 	if isErr := func() bool {
-		sr, ok := r.(SkyResult[any, any]); return ok && sr.Tag == 1
+		sr, ok := r.(SkyResult[any, any])
+		return ok && sr.Tag == 1
 	}(); isErr {
 		t.Fatalf("Db.connect () must succeed when SKY_DB_PATH is set, got %+v", r)
 	}

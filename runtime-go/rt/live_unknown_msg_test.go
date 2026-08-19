@@ -60,7 +60,6 @@ func TestUnknownMsg_DirectSend_Returns400(t *testing.T) {
 	}
 }
 
-
 // TestUnknownMsg_SkySentinel_Returns200 — Sky.Live's client posts
 // `__skySessionPing` as a liveness probe. It's intentionally NOT a
 // real Msg constructor; the client just cares about session
