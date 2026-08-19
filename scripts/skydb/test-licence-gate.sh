@@ -259,7 +259,6 @@ expect_accept() {
 
 # ─────────────────────────────────────────────────────────────────────
 hdr "Gate discrimination — synthesised fixtures (${HOST_OS})"
-set -x  # TEMP DIAGNOSTIC: trace the exact command that exits on the macOS-14 runner
 
 # C1. A clean bundle MUST pass. Without this, a gate that rejects unconditionally
 #     would score full marks on every rejection case below and still be worthless.
@@ -379,12 +378,16 @@ ln -s "${WORK}/libreadline.8.${DL}" "$C12/lib/libreadline.8.${DL}"
 # dependency would make it pass by having nothing to look at.
 if requires_dep "$C12/bin/postgres" readline; then
   expect_reject "C12 symlink launders an out-of-bundle dependency" "$C12" "escapes:" "COPYLEFT UNVENDORED"
-  # Nested ifs, NOT `[ -n … ] && grep …`: the grep at the end of an `&&`
-  # condition returns 1 on the (correct, expected) no-match, and on the
-  # macОS-14 runner's bash that aborts the whole script under `set -e` before
-  # C13 ever runs. This is the same set-e/&& trap expect_reject documents.
+  # A plain `command grep` returning 1 (the correct, expected no-match) in an
+  # if-condition aborts the whole script under `set -e` on the macOS-14 runner's
+  # bash — before C13 ever runs, with no diagnostic. A builtin `[ … ]` or a
+  # `!`-negated grep is exempt there (which is why expect_reject's `if ! command
+  # grep` and expect_accept's `|| { … }` both survive), but this plain
+  # `if command grep` did not. Capture the status with `set -e` suspended, the
+  # way run_gate already does, and branch on a builtin test.
   if [ -n "${LAST_OUT:-}" ]; then
-    if command grep -q "bundle:lib/libreadline" "$LAST_OUT"; then
+    set +e; command grep -q "bundle:lib/libreadline" "$LAST_OUT"; _laundered=$?; set -e
+    if [ "$_laundered" -eq 0 ]; then
       bad "C12: the dependency is still reported as bundle:lib/libreadline — a link out of the bundle is being counted as vendored"
     fi
   fi
@@ -395,7 +398,6 @@ fi
 #      itself. `libpq.5.dylib -> libpq.5.18.dylib` is how shared libraries are
 #      shipped, and a gate that failed on it would be turned off within the day.
 #      A link whose chain stays inside the bundle is a name, not a violation.
-{ set +x; } 2>/dev/null; echo "=== BREADCRUMB: C12 block completed, entering C13 ===" >&2; set -x
 C13="${WORK}/c13"; make_base_bundle "$C13"
 make_object "$C13/lib/libpq.5.18.${DL}" lib
 # make_base_bundle already created a real libpq.5.dylib; C13 replaces it with a
