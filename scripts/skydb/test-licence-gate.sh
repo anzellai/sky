@@ -390,8 +390,12 @@ fi
 #      A link whose chain stays inside the bundle is a name, not a violation.
 C13="${WORK}/c13"; make_base_bundle "$C13"
 make_object "$C13/lib/libpq.5.18.${DL}" lib
-ln -sf "libpq.5.18.${DL}" "$C13/lib/libpq.5.${DL}"
-ln -sf "libpq.5.${DL}" "$C13/lib/libpq.${DL}"
+# make_base_bundle already created a real libpq.5.dylib; C13 replaces it with a
+# symlink to form the soname chain. `ln -sf` over an existing regular file is
+# not portable (it flaked the macOS-14 runner under `set -e`), so remove first.
+rm -f "$C13/lib/libpq.5.${DL}" "$C13/lib/libpq.${DL}"
+ln -s "libpq.5.18.${DL}" "$C13/lib/libpq.5.${DL}"
+ln -s "libpq.5.${DL}" "$C13/lib/libpq.${DL}"
 expect_accept "C13 in-bundle soname chain (relative, two hops)" "$C13"
 
 # C14. A STATIC ARCHIVE IS PART OF WHAT WE SHIP. `is_object` kept only Mach-O
