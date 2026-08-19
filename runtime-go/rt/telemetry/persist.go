@@ -40,6 +40,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -330,6 +331,77 @@ func metricAggregationWindow() time.Duration {
 	return d
 }
 
+// parseHumanBytes parses an operator capacity string ("100GB", "1.5TiB",
+// "512mb", "100 GB", "0", or a bare byte count) into bytes. ok=false on any
+// non-empty-but-malformed input (bad number, negative, unknown unit, int64
+// overflow) — the CALLER turns that into a one-shot warning, never a silent
+// zero, so a typo cannot quietly drop the capacity danger flag. Decimal units
+// are powers of 1000 (GB=1e9, the marketing/cloud convention); binary units
+// (GiB=2^30) are powers of 1024; a bare number is bytes. "0" is a valid
+// explicit disable.
+func parseHumanBytes(v string) (int64, bool) {
+	v = strings.ReplaceAll(strings.TrimSpace(v), " ", "")
+	if v == "" {
+		return 0, false
+	}
+	upper := strings.ToUpper(v)
+	var mult float64 = 1
+	numPart := v
+	switch {
+	case strings.HasSuffix(upper, "TIB"):
+		mult, numPart = 1<<40, v[:len(v)-3]
+	case strings.HasSuffix(upper, "GIB"):
+		mult, numPart = 1<<30, v[:len(v)-3]
+	case strings.HasSuffix(upper, "MIB"):
+		mult, numPart = 1<<20, v[:len(v)-3]
+	case strings.HasSuffix(upper, "KIB"):
+		mult, numPart = 1<<10, v[:len(v)-3]
+	case strings.HasSuffix(upper, "TB"):
+		mult, numPart = 1e12, v[:len(v)-2]
+	case strings.HasSuffix(upper, "GB"):
+		mult, numPart = 1e9, v[:len(v)-2]
+	case strings.HasSuffix(upper, "MB"):
+		mult, numPart = 1e6, v[:len(v)-2]
+	case strings.HasSuffix(upper, "KB"):
+		mult, numPart = 1e3, v[:len(v)-2]
+	case strings.HasSuffix(upper, "B"):
+		mult, numPart = 1, v[:len(v)-1]
+	}
+	f, err := strconv.ParseFloat(numPart, 64)
+	if err != nil || f < 0 {
+		return 0, false
+	}
+	b := f * mult
+	if b > math.MaxInt64 { // overflow — never wrap to a negative threshold
+		return 0, false
+	}
+	return int64(b), true
+}
+
+// capacityBytes resolves SKY_TELEMETRY_DB_CAPACITY to a byte quota (0 =
+// disabled). Unset → 0, silently (the operator did not ask). Set-but-malformed
+// → 0 AND a one-shot WARN (a typo like "100 gigs" must not silently drop the
+// danger flag the operator believes protects them).
+func (p *persistence) capacityBytes(s *Store) int64 {
+	raw := os.Getenv("SKY_TELEMETRY_DB_CAPACITY")
+	if strings.TrimSpace(raw) == "" {
+		return 0
+	}
+	b, ok := parseHumanBytes(raw)
+	if !ok {
+		p.capacityWarnOnce.Do(func() {
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "SKY_TELEMETRY_DB_CAPACITY is set but unparseable; the DB-capacity danger flag is disabled",
+				Fields:  map[string]string{"value": raw},
+			})
+		})
+		return 0
+	}
+	return b
+}
+
 // metricHistogramWindowOverride — test hook, parallel to the counter one.
 var metricHistogramWindowOverride atomic.Int64
 
@@ -415,15 +487,29 @@ type persistence struct {
 	// teardown + the eventual process-exit hook.
 	onceClose sync.Once
 	// dsn is the resolved backend target (a SQLite file path, or a
-	// postgres:// URL). Retained so the hourly size report can statfs the
-	// SQLite file's directory for free space — the only tier where free
-	// space is knowable from here (a remote Postgres data dir is not).
+	// postgres:// URL). Retained so the size report can statfs the SQLite
+	// file's directory for free space.
 	dsn string
+	// localDataDir is the filesystem path of a Postgres data directory THIS
+	// process owns — set only for the EMBEDDED cluster (plumbed from the
+	// supervisor's cfg.dataDir via EnablePersistenceFromEnvWithLocalDir). Empty
+	// for SQLite (its own path drives statfs) and for any external/remote pg
+	// (whose disk this process cannot see). It is the "same server, I can
+	// statfs the DB's disk" signal for Postgres. Set at construction, before
+	// the flusher/pruner goroutines spawn, so it is single-writer like the
+	// growth fields below. (A non-default PGDATA tablespace on a different mount
+	// would desync this from the DB's real disk; the embedded provisioner never
+	// creates one.)
+	localDataDir string
 	// Size-report growth tracking. Written and read ONLY from the pruner
-	// goroutine (reportSizes runs inside pruneCycle), so no lock is needed —
-	// documenting the single-writer contract rather than guarding it.
+	// goroutine (reportSizes runs inside pruneCycle / at startup), so no lock is
+	// needed — documenting the single-writer contract rather than guarding it.
 	lastSizeBytes map[string]int64
 	lastSizeAt    time.Time
+	// capacityWarnOnce fires a single WARN when SKY_TELEMETRY_DB_CAPACITY is set
+	// but unparseable, so a typo disables the quota danger flag loudly (once),
+	// never silently.
+	capacityWarnOnce sync.Once
 	// dbstatChecked / dbstatOK memoise the one-time probe for the SQLite
 	// dbstat vtable (absent in the default modernc build), so the size
 	// report degrades to whole-DB bytes without re-probing every hour.
@@ -441,6 +527,14 @@ type persistence struct {
 // helpers) checks `os.Getenv("SKY_CONSOLE_DB_PATH")` and forwards
 // to `Default().EnablePersistence(path)`.
 func (s *Store) EnablePersistence(path string) error {
+	return s.EnablePersistenceWithLocalDir(path, "")
+}
+
+// EnablePersistenceWithLocalDir is EnablePersistence plus the filesystem path of
+// a Postgres data directory THIS process owns (the embedded cluster). Pass ""
+// for SQLite or a remote/external Postgres. Setting it lets the size report
+// statfs the embedded cluster's disk for a real free-space + danger signal.
+func (s *Store) EnablePersistenceWithLocalDir(path, localDataDir string) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 	if s.persist != nil {
@@ -477,11 +571,18 @@ func (s *Store) EnablePersistence(path string) error {
 			return err
 		}
 	}
+	// localDataDir applies only to a Postgres cluster this process owns; a
+	// stray value on SQLite would mis-drive statfs, so ignore it there.
+	ownedDir := ""
+	if driver == "pgx" {
+		ownedDir = localDataDir
+	}
 	p := &persistence{
 		db:            db,
 		pool:          handle,
 		driver:        driver,
 		dsn:           dsn,
+		localDataDir:  ownedDir,
 		syncCommitOff: driver == "pgx" && SynchronousCommitOff(),
 		queue:         make(chan persistEntry, persistQueueCap),
 		flushReq:      make(chan chan struct{}),
@@ -498,6 +599,16 @@ func (s *Store) EnablePersistence(path string) error {
 // to EnablePersistence when set.  Convenience used by the runtime's
 // dual-write boot path so callers don't have to repeat the env check.
 func (s *Store) EnablePersistenceFromEnv() error {
+	return s.EnablePersistenceFromEnvWithLocalDir("")
+}
+
+// EnablePersistenceFromEnvWithLocalDir is EnablePersistenceFromEnv plus the
+// embedded cluster's data-dir path. The embedded-Postgres boot path calls this
+// (with the supervisor's cfg.dataDir) after it has exported DATABASE_URL, so the
+// size report can statfs the cluster's disk. The localDataDir is used only if
+// the resolved backend is that Postgres (EnablePersistenceWithLocalDir ignores
+// it on SQLite).
+func (s *Store) EnablePersistenceFromEnvWithLocalDir(localDataDir string) error {
 	path := os.Getenv(persistEnvVar)
 	// One-DB-for-everything: fall back to a Postgres DATABASE_URL (the same var
 	// the app DB, sessions, and analytics use) so console telemetry lands in the
@@ -510,7 +621,7 @@ func (s *Store) EnablePersistenceFromEnv() error {
 	if path == "" {
 		return nil
 	}
-	return s.EnablePersistence(path)
+	return s.EnablePersistenceWithLocalDir(path, localDataDir)
 }
 
 // ClosePersistence stops the flusher + pruner, waits for the queue to be
@@ -947,6 +1058,12 @@ func encodeAttrs(m map[string]string) string {
 // file for too long under load.
 func (p *persistence) pruner(s *Store) {
 	defer p.wg.Done()
+	// STARTUP size report — an immediate baseline the moment persistence is up,
+	// so an already-large / already-near-full DB is visible at boot rather than
+	// a minute later, and growth tracking starts from t=0. Under its own recover
+	// (it is outside pruneCycle's). It does NOT prune — the prune timer below is
+	// unchanged, so the first retention DELETE still waits the deliberate ~1 min.
+	p.reportSizesRecovered(s)
 	// First sweep ~1 minute after open so a busy reboot doesn't
 	// stall on startup with a giant first-pass delete.
 	timer := time.NewTimer(1 * time.Minute)
@@ -1052,10 +1169,27 @@ var telemetryOwnedTables = []string{"telemetry_log", "telemetry_metric", "teleme
 // here, so the report states absolute size + growth rate and leaves free space
 // unreported. The low-space warning is a RATIO (free < total telemetry bytes),
 // not a byte constant, so it scales with the disk.
+// Danger thresholds (documented, overridable later if needed):
+//   - owned-path: warn when free disk drops below this fraction of total disk
+//     (the standard "disk near full" signal — captures ALL disk use, incl. WAL
+//     and other databases, not just the figure this app can name).
+//   - capacity: warn when the whole database exceeds this fraction of the
+//     operator-declared SKY_TELEMETRY_DB_CAPACITY.
+const (
+	dangerFreeRatio     = 0.10
+	dangerCapacityRatio = 0.90
+)
+
 func (p *persistence) reportSizes(s *Store, now time.Time) {
+	// Bound every query so a wedged connection at startup can't stall the
+	// pruner goroutine (and thus the first retention prune) indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	fields := map[string]string{}
 	sizes := map[string]int64{}
-	var totalBytes int64
+	var telemetryBytes int64 // the runtime-owned telemetry tables only
+	var dbTotalBytes int64   // the WHOLE database (app + sessions + telemetry)
 	perTableBytes := false
 
 	switch p.driver {
@@ -1064,34 +1198,46 @@ func (p *persistence) reportSizes(s *Store, now time.Time) {
 		for _, t := range telemetryOwnedTables {
 			var n int64
 			// to_regclass tolerates a not-yet-created table (NULL → 0).
-			row := p.db.QueryRow(
+			row := p.db.QueryRowContext(ctx,
 				`SELECT COALESCE(pg_total_relation_size(to_regclass($1)), 0)`, t)
 			if err := row.Scan(&n); err == nil {
 				sizes[t] = n
-				totalBytes += n
+				telemetryBytes += n
 			}
 		}
+		// Whole-DB size — cheap, non-locking, works remotely. Measures only
+		// THIS database (excludes WAL / other DBs), so it under-counts true disk
+		// use — which is why the owned-path danger flag keys on statfs free, not
+		// on this figure.
+		_ = p.db.QueryRowContext(ctx,
+			`SELECT pg_database_size(current_database())`).Scan(&dbTotalBytes)
 	default: // sqlite
 		if p.sqliteHasDbstat() {
 			perTableBytes = true
 			for _, t := range telemetryOwnedTables {
 				var n sql.NullInt64
-				row := p.db.QueryRow(`SELECT SUM(pgsize) FROM dbstat WHERE name = ?`, t)
+				row := p.db.QueryRowContext(ctx, `SELECT SUM(pgsize) FROM dbstat WHERE name = ?`, t)
 				if err := row.Scan(&n); err == nil && n.Valid {
 					sizes[t] = n.Int64
-					totalBytes += n.Int64
+					telemetryBytes += n.Int64
 				}
 			}
 		} else {
-			// No per-table breakdown without dbstat — report whole-DB bytes
-			// only (O(1)), never a COUNT(*) scan.
-			var pageCount, pageSize int64
-			if err := p.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err == nil {
-				if err := p.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err == nil {
-					totalBytes = pageCount * pageSize
-				}
-			}
 			fields["breakdown"] = "whole-db (dbstat vtable absent)"
+		}
+		// Whole-DB size = page_count*page_size (an O(1) header read, never a
+		// COUNT(*) scan). Deliberately the STABLE logical size, not
+		// stat(main)+stat(-wal): the WAL balloons then checkpoints to ~0, so a
+		// file-sum would make this figure oscillate and flap any threshold keyed
+		// on it. WAL disk use still shows up correctly in statfs free space.
+		var pageCount, pageSize int64
+		if err := p.db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err == nil {
+			if err := p.db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err == nil {
+				dbTotalBytes = pageCount * pageSize
+			}
+		}
+		if !perTableBytes {
+			telemetryBytes = dbTotalBytes // best available without dbstat
 		}
 	}
 
@@ -1100,14 +1246,17 @@ func (p *persistence) reportSizes(s *Store, now time.Time) {
 			fields[t+"_bytes"] = strconv.FormatInt(sizes[t], 10)
 		}
 	}
-	fields["telemetry_total_bytes"] = strconv.FormatInt(totalBytes, 10)
+	// Distinct names: telemetry-tables-only vs the whole database, so neither is
+	// misread as the other.
+	fields["telemetry_total_bytes"] = strconv.FormatInt(telemetryBytes, 10)
+	fields["db_total_bytes"] = strconv.FormatInt(dbTotalBytes, 10)
 	fields["driver"] = p.driver
 
 	// Growth rate vs the previous report (bytes/day projection), single-writer
 	// state so no lock. First cycle has no prior — report rate as unknown.
 	if !p.lastSizeAt.IsZero() {
 		if dt := now.Sub(p.lastSizeAt).Seconds(); dt > 0 {
-			deltaBytes := totalBytes - p.lastSizeBytes["telemetry_total_bytes"]
+			deltaBytes := telemetryBytes - p.lastSizeBytes["telemetry_total_bytes"]
 			perDay := int64(float64(deltaBytes) / dt * 86400)
 			fields["growth_bytes_per_day"] = strconv.FormatInt(perDay, 10)
 		}
@@ -1115,19 +1264,37 @@ func (p *persistence) reportSizes(s *Store, now time.Time) {
 	if p.lastSizeBytes == nil {
 		p.lastSizeBytes = map[string]int64{}
 	}
-	p.lastSizeBytes["telemetry_total_bytes"] = totalBytes
+	p.lastSizeBytes["telemetry_total_bytes"] = telemetryBytes
 	p.lastSizeAt = now
 
-	// Free space — SQLite only (statfs the file's directory).
 	level := "info"
-	if p.driver == "sqlite" {
-		if free, ok := freeBytesForPath(p.sqlitePath()); ok {
+	warn := func(msg string) {
+		level = "warn"
+		fields["warning"] = msg
+	}
+
+	// Owned path = this process can statfs the DB's own disk: SQLite (its file)
+	// or the EMBEDDED cluster (its data dir). External/remote pg cannot.
+	statfsPath := ""
+	switch {
+	case p.driver == "sqlite":
+		statfsPath = p.sqlitePath()
+	case p.localDataDir != "":
+		statfsPath = p.localDataDir
+	}
+
+	capacity := p.capacityBytes(s)
+	if capacity > 0 {
+		fields["db_capacity_bytes"] = strconv.FormatInt(capacity, 10)
+	}
+
+	if statfsPath != "" {
+		if free, total, ok := freeBytesForPath(statfsPath); ok {
 			fields["fs_free_bytes"] = strconv.FormatInt(free, 10)
-			// Ratio warn: free space has fallen below the telemetry footprint
-			// itself — one more doubling risks filling the disk.
-			if totalBytes > 0 && free < totalBytes {
-				level = "warn"
-				fields["warning"] = "telemetry footprint exceeds remaining free space"
+			fields["fs_total_bytes"] = strconv.FormatInt(total, 10)
+			// Primary owned-path danger: disk near full (free < 10% of total).
+			if total > 0 && float64(free) < dangerFreeRatio*float64(total) {
+				warn("disk nearly full: free space below 10% of the volume")
 			}
 		} else {
 			fields["fs_free_bytes"] = "unknown"
@@ -1136,12 +1303,38 @@ func (p *persistence) reportSizes(s *Store, now time.Time) {
 		fields["fs_free_bytes"] = "unknown (remote backend)"
 	}
 
+	// Capacity danger applies on EVERY tier when the operator declared a quota —
+	// it is the only signal available for a remote DB, and a useful extra one on
+	// an owned path.
+	if capacity > 0 && dbTotalBytes > 0 && float64(dbTotalBytes) > dangerCapacityRatio*float64(capacity) {
+		warn("database size is above 90% of SKY_TELEMETRY_DB_CAPACITY")
+	}
+
 	s.AppendLog(LogEntry{
 		TS:      now,
 		Level:   level,
 		Message: "telemetry.storage_size",
 		Fields:  fields,
 	})
+}
+
+// reportSizesRecovered runs reportSizes under its own recover, for the STARTUP
+// call that sits outside pruneCycle's recover. Without this a driver panic on a
+// cold handle at boot (modernc/pgx panic on a nil/closed handle) would kill the
+// pruner goroutine and end retention for the process lifetime — the exact
+// permanent-silence trap pruneCycle is structured to avoid.
+func (p *persistence) reportSizesRecovered(s *Store) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logs.append(LogEntry{
+				TS:      time.Now(),
+				Level:   "warn",
+				Message: "telemetry startup size report panicked",
+				Fields:  map[string]string{"panic": fmt.Sprintf("%v", r)},
+			})
+		}
+	}()
+	p.reportSizes(s, time.Now())
 }
 
 // sqlitePath strips any DSN query suffix so the bare file path can be handed

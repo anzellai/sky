@@ -95,6 +95,11 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
         "telemetry histogram-coalescing window; same operator/deploy storage \
          setting class as the counter window, host-wide not per-app",
     ),
+    (
+        "SKY_TELEMETRY_DB_CAPACITY",
+        "operator-declared DB capacity for the size-report danger flag; a \
+         deploy/host storage setting, not per-app",
+    ),
     ("SKY_OBSERVABILITY_PUSH_INTERVAL_MS", "push-exporter tuning"),
     ("SKY_PARENT_URL", "control-plane callback URL; injected by the plane"),
     (

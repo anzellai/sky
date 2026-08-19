@@ -56,7 +56,10 @@ func TestPersistence_DualWriteRoundTrip(t *testing.T) {
 	defer rdb.Close()
 
 	var logCount, metricCount, spanCount int
-	if err := rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log`).Scan(&logCount); err != nil {
+	// Filter to this test's own rows: the pruner emits a `telemetry.storage_size`
+	// log at startup, so counting ALL telemetry_log rows would be off-by-one and
+	// racy (the report is async).
+	if err := rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log WHERE message = 'test log line'`).Scan(&logCount); err != nil {
 		t.Fatalf("count logs: %v", err)
 	}
 	if err := rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_metric`).Scan(&metricCount); err != nil {
@@ -77,7 +80,7 @@ func TestPersistence_DualWriteRoundTrip(t *testing.T) {
 
 	// Read one log row and assert shape.
 	var level, message, attrs string
-	if err := rdb.QueryRow(`SELECT level, message, attrs FROM telemetry_log LIMIT 1`).
+	if err := rdb.QueryRow(`SELECT level, message, attrs FROM telemetry_log WHERE message = 'test log line' LIMIT 1`).
 		Scan(&level, &message, &attrs); err != nil {
 		t.Fatalf("read log row: %v", err)
 	}
@@ -145,7 +148,7 @@ func TestPersistence_FlushIsSynchronisedNotTimed(t *testing.T) {
 	}
 	defer rdb.Close()
 	var got int
-	if err := rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log`).Scan(&got); err != nil {
+	if err := rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log WHERE message = 'sync'`).Scan(&got); err != nil {
 		t.Fatalf("count logs: %v", err)
 	}
 	if got != n {
@@ -183,7 +186,7 @@ func TestPersistence_ShutdownCommitsTheQueue(t *testing.T) {
 	}
 	defer rdb.Close()
 	var got int
-	if err := rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log`).Scan(&got); err != nil {
+	if err := rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log WHERE message = 'bye'`).Scan(&got); err != nil {
 		t.Fatalf("count logs: %v", err)
 	}
 	if got != n {
@@ -260,7 +263,7 @@ func TestPersistence_EnableFromEnv(t *testing.T) {
 	rdb, _ := sql.Open("sqlite", dbPath)
 	defer rdb.Close()
 	var count int
-	_ = rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log`).Scan(&count)
+	_ = rdb.QueryRow(`SELECT COUNT(*) FROM telemetry_log WHERE message = 'env-driven'`).Scan(&count)
 	if count != 1 {
 		t.Errorf("expected 1 log row, got %d", count)
 	}

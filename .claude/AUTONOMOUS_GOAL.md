@@ -239,3 +239,42 @@ what raw rows would yield (lossless). SCALABILITY BAR: rows/window bounded by
 bucket_count × series_cardinality, NOT observation rate. MAINTAINABILITY: reuse
 the P3 mechanism + the existing bucket representation; no parallel impl.
 Default OFF preserves the external-reader contract until opt-in.
+
+## HISTOGRAM COALESCING — SHIPPED + JUDGE ALL-PASS (2026-08-19)
+a2e035b6. Full PIV: arch-consult (REVISE→separate opt-in), grill
+(PROCEED-w/-mods: lossy-not-lossless + monotonic clamp + zero-alloc sink + name),
+implement, Judge ALL-PASS 7/7 (falsifier empirically RED, tree pristine).
+Full rt -race GREEN. 4 CI ratchets fixed proactively (env-reads, config-surface,
+denominators, coverage-ledger). Pushed; CI full matrix running (32247715507).
+Telemetry storage is now FULLY addressable: counters coalesce (lossless),
+histograms coalesce (lossy bucket-resolution, separate opt-in), P1 size report
+measures whether either binds. Remaining floor is purely a SkyDeploy cross-repo
+reader update to consume _bucket/_sum/_count rows — out of this repo.
+
+## PR #188 FULLY GREEN (2026-08-19) — histogram sub-mandate CLOSED
+a1ae3aff. CI ALL JOBS SUCCESS. T1 budget cleared by splitting the sky crate into
+test-sky (test-rest 375s + test-sky 485s parallel; chain well under 990). PR #188
+now carries: perform bound + P1 size report + P3 counter coalescing + histogram
+coalescing (lossy bucket-resolution, separate opt-in), all Judge-verified.
+Awaiting user merge decision (no tag). Open user calls: counter-window default
+(0 vs 10s), histogram-window rollout (needs bucket-aware reader), + the
+SkyDeploy cross-repo reader update to consume _bucket/_sum/_count (out of repo).
+
+## NEW SUB-MANDATE (2026-08-19) — P1 size report v2 (startup + capacity + tiers)
+User spec: on startup AND hourly, tiered size/free/danger reporting:
+ - SQLite / embedded / same-server PG: server free space + DB consumed + danger flag
+ - External/remote PG: DB consumed (pg_database_size) + danger flag ONLY if a
+   capacity is configured (can't statfs another machine's disk).
+Defaults: SKY_TELEMETRY_DB_CAPACITY (human units e.g. 100GB); unset => remote =
+size+growth only. "Same server" = runtime can reach the DB's files (sqlite file
+or the embedded cluster it manages); localhost system PG = external. Danger =
+free < consumed (owned-path) OR consumed > ratio×capacity (external+capacity).
+Add total-DB-size (pg_database_size / sqlite file size) alongside the existing
+per-telemetry-table breakdown. Run once at boot + keep hourly.
+METHOD: full PIV. Arch-consult crux: can the telemetry persistence obtain the
+EMBEDDED cluster data dir (today it has only the DSN)? + owned-path detection +
+pg_database_size cost on shared pool + startup hook (EnablePersistence). Then
+grill (capacity parse/edge cases, owned-path false pos/neg, startup timing,
+double-report), implement, Judge. Remember: new env var trips
+sky_env_reads + config-surface ratchets — handle proactively (see
+[[ci_only_ratchets_env_and_census]]).

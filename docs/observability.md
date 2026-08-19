@@ -146,21 +146,40 @@ opt back in with `SKY_TRACE_HONOR_REMOTE_PARENT=1`.
 | `OTEL_EXPORTER_OTLP_HEADERS` | (unset) | Comma-separated `k=v` headers (auth tokens for managed collectors). |
 | `SKY_CONSOLE_DB_PATH` | (unset) | When set, dual-writes every log / metric / span to the SQLite file at this path so the bundled console mini-app can render history beyond the 10 k-line / 1 k-span in-RAM caps. WAL mode, 24 h log/span retention, 7 d metric retention. Unset keeps the pure in-RAM path. |
 | `SKY_TELEMETRY_AGGREGATION_WINDOW` | `0` (off) | A Go duration (e.g. `10s`). When `> 0`, **counter** metric rows are coalesced within the window: only the last cumulative value per `(name, labels)` is persisted, so a busy app writes one row per counter per window instead of one per interaction. Lossless for rate/delta reads — only sub-window time-resolution is lost. **Gauges are never coalesced** (intra-window peaks would be lost); histograms have their own knob below. Off by default because it changes the persisted-row resolution the remote SkyDeploy console sees; `10s` is the recommended production value on a busy Sky.Live app. |
+| `SKY_TELEMETRY_DB_CAPACITY` | (unset) | Operator-declared database capacity in human units (`100GB`, `1.5TB`, `512MB`, `100GiB`, or a bare byte count). The size report warns when the whole database exceeds 90% of it — the only "near full" signal available for a **remote** database, whose host disk the app cannot see. Unset → size + growth reported, no capacity danger flag. A malformed value logs one warning and disables the check (never silently). See "Database size report". |
 | `SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW` | `0` (off) | A Go duration, **separate** from the counter window. When `> 0`, a histogram series is persisted once per window as cumulative OpenMetrics rows — `<name>_bucket{le=…}`, `<name>_bucket{le="+Inf"}`, `<name>_sum`, `<name>_count` — instead of one raw row per observation, cutting a busy histogram from thousands of rows/window to ~`buckets+3`. **This is a lossy, bucket-resolution change, and a breaking one for readers of the raw rows** — today a persisted histogram row carries the *raw full-precision observation*, so a reader can compute exact quantiles / max; bucket rows give only bucket-interpolated quantiles (`_sum`/`_count`, hence the mean, stay exact). It is a **separate opt-in** precisely because the out-of-repo SkyDeploy console reconstructs from per-observation rows: enable it only with a reader that understands cumulative `_bucket`/`_sum`/`_count` rows (and Prometheus-style counter-reset handling across restarts). The in-repo console is unaffected (it reads the in-RAM snapshot). Note the crossover: it only *reduces* rows above ~`buckets+3` observations/window — a sparse histogram (one observation per window) writes more rows, not fewer. |
 
 ## Database size report
 
-Every hour, on the same cadence as retention pruning, the runtime measures the
-on-disk footprint of its own tables (`telemetry_log`, `telemetry_metric`,
-`telemetry_span`) and emits one structured `telemetry.storage_size` log event —
-per-table bytes on Postgres (and on SQLite when the `dbstat` vtable is present;
-the default build degrades to whole-database bytes), a `growth_bytes_per_day`
-projection, and — where the runtime owns the filesystem path (SQLite, embedded
-Postgres) — free space, warning when the telemetry footprint exceeds the
-remaining free space. It is a *log* event, never a metric row, so the
-measurement never feeds the table it measures. This is the only real
-measurement of database size; every figure in the perf docs before it was
-arithmetic.
+**On startup and then hourly**, the runtime measures its database and emits one
+structured `telemetry.storage_size` log event (a *log*, never a metric row — the
+measurement never feeds the table it measures). The startup reading gives an
+immediate baseline: an already-large or already-near-full database is visible the
+moment the app boots, not a minute later. It reports:
+
+- **Per-table telemetry bytes** — `telemetry_log`/`telemetry_metric`/`telemetry_span`
+  (Postgres, and SQLite when the `dbstat` vtable is present; else omitted).
+- **`db_total_bytes`** — the *whole* database (app + sessions + telemetry), so you
+  see total consumption, not just the telemetry tables.
+- **`growth_bytes_per_day`** — projected from the previous reading.
+- **Free space + a danger flag**, tiered by where the database lives:
+
+| Database | Free space | Danger flag |
+|---|---|---|
+| **SQLite** / **embedded Postgres** / same-server (the app can reach the files) | `fs_free_bytes` + `fs_total_bytes` | **disk nearly full** — free below 10% of the volume |
+| **External / remote Postgres** | unknown (can't see another machine's disk) | **only if you declare a capacity** — see below |
+
+For a remote database the runtime cannot see the server's disk, so the danger
+flag comes from an operator-declared quota: set **`SKY_TELEMETRY_DB_CAPACITY`**
+(human units — `100GB`, `1.5TB`, `512MB`, `100GiB`, or a bare byte count) and the
+report warns when the whole database exceeds 90% of it. Unset → the remote report
+gives size + growth with no danger flag (honest — no invented warning). A capacity
+is honored on the local tiers too, as an extra quota alarm alongside the disk-free
+one. A malformed value logs a one-shot warning and disables the check — it never
+silently drops the protection you thought you set.
+
+This is the only real measurement of database size; every figure in the perf docs
+before it was arithmetic.
 
 ## How analytics and telemetry reach the database
 

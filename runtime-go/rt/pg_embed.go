@@ -522,7 +522,13 @@ func startEmbeddedPostgres() error {
 	// idempotent, so on the non-embed paths where the operator set a
 	// DSN up front this is a no-op. Failure is warn-level, like the
 	// init()-time call: observability must never block boot.
-	if err := telemetry.Default().EnablePersistenceFromEnv(); err != nil {
+	//
+	// Hand the cluster's data dir through so the size report can statfs the
+	// embedded DB's own disk (free space + a "disk nearly full" flag) — the
+	// only place in-process that knows this path. Because this is the CREATING
+	// call under --embed (init() saw an empty env and returned before
+	// constructing anything), the data dir actually takes effect here.
+	if err := telemetry.Default().EnablePersistenceFromEnvWithLocalDir(s.cfg.dataDir); err != nil {
 		telemetry.Default().AppendLog(telemetry.LogEntry{
 			Level:   "warn",
 			Message: "telemetry persistence init failed after embedded DSN handoff",
