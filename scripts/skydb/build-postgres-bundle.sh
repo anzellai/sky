@@ -379,9 +379,28 @@ rm -rf "${BUNDLE}/share/doc" "${BUNDLE}/share/man"
 # describe.
 # ─────────────────────────────────────────────────────────────────────
 is_system_lib() {
-  case "$1" in
-    /usr/lib/*|/System/Library/*|/lib/*|/lib64/*|/usr/lib64/*) return 0 ;;
-    /usr/lib/x86_64-linux-gnu/lib[cm].so*|/usr/lib/aarch64-linux-gnu/lib[cm].so*) return 0 ;;
+  local base; base="$(basename "$1")"
+  if [ "$OS" = darwin ]; then
+    # macOS system libs live in the dyld shared cache (/usr/lib, /System/Library)
+    # — OS-provided, and there is no on-disk file to copy out. Homebrew deps
+    # under /opt are real files and get vendored. Matches the licence gate's
+    # darwin PLATFORM classification (incl. its /usr/lib libz + libiconv rules).
+    case "$1" in
+      /usr/lib/*|/System/Library/*) return 0 ;;
+    esac
+    return 1
+  fi
+  # Linux: /usr/lib and /lib hold BOTH the base toolchain (glibc, the dynamic
+  # loader, libgcc_s/libstdc++) AND optional libraries (openssl, icu, xml2,
+  # zstd, lz4, zlib) that scan-bundle-licences.sh classifies PERMISSIVE and
+  # REQUIRES vendored. The old broad `/usr/lib/*|/lib/*` rule treated those as
+  # system and skipped them, so the bundle shipped non-self-contained and the
+  # SBOM gate rejected it. Classify by basename against the gate's PLATFORM set
+  # (glibc family + loader + GCC runtime); vendor everything else.
+  case "$base" in
+    libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libutil.so*|libresolv.so*|libnsl.so*|libanl.so*) return 0 ;;
+    ld-linux*.so*|ld.so*|ld64.so*) return 0 ;;
+    libgcc_s.so*|libstdc++.so*) return 0 ;;
     *) return 1 ;;
   esac
 }

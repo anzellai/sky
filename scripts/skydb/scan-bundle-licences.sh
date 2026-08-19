@@ -192,7 +192,17 @@ classify() {
     libssl|libcrypto)
       echo "Apache-2.0|PERMISSIVE|OpenSSL 3.x" ;;
     libz)
-      echo "Zlib|PERMISSIVE|zlib" ;;
+      # Like libiconv, path-sensitive on macOS: /usr/lib/libz.*.dylib is the
+      # system zlib in the dyld shared cache — OS-provided, no on-disk file to
+      # vendor, referenced not redistributed → PLATFORM. A libz resolved from
+      # anywhere else (Linux, or a vendored Homebrew copy) IS redistributed by
+      # us and must sit inside the bundle → PERMISSIVE.
+      case "${HOST_OS}:${path}" in
+        darwin:/usr/lib/*|darwin:/System/Library/*)
+          echo "Zlib|PLATFORM|macOS system zlib; OS-provided (dyld shared cache), referenced not redistributed" ;;
+        *)
+          echo "Zlib|PERMISSIVE|zlib" ;;
+      esac ;;
     liblz4)
       echo "BSD-2-Clause|PERMISSIVE|LZ4" ;;
     libzstd)
