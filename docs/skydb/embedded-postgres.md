@@ -724,6 +724,46 @@ or an internal host. The version sky asks for is checked against the build
 script's `PG_VERSION` by a unit test — the two files are the only places the
 number lives, and a bump to one and not the other is a 404 for every user.
 
+## Where a bundle can run — the platform matrix
+
+The bundle is a **glibc-linked** PostgreSQL. Three things it needs from the host,
+and everything below follows from them:
+
+1. **A glibc userland** — the binaries' ELF interpreter is `ld-linux-*.so`, and
+   the vendored ICU pulls C++ symbols from **`libstdc++`**. musl (Alpine) and a
+   bare `FROM scratch` have neither; `apk add gcompat` gets past the loader but
+   still dies on `libstdc++` and glibc `_FORTIFY` symbols.
+2. **A durable, writable, single-owner data directory** — a database is stateful;
+   ephemeral or shared-across-instances storage silently defeats it.
+3. **The run user present in `/etc/passwd`** — PostgreSQL does a `getpwuid` on
+   startup. The runtime's created-user path satisfies this; a bare `--user 1000`
+   with no passwd entry does not.
+
+Verified empirically with `sky db provision --embed` and a Sky app querying the
+cluster, under Apple's `container` CLI (linux-arm64 bundle):
+
+| Target | Embedded PG | Why |
+|---|---|---|
+| macOS laptop (arm64/amd64) | ✅ verified | glibc-equivalent userland; dev with prod parity |
+| Linux laptop / **EC2 / GCE / any glibc VM** | ✅ **ideal** | glibc + a real persistent disk — the sweet spot |
+| Container: `debian-slim`, `ubuntu`, **`distroless-base`** **+ a mounted volume** | ✅ verified (`server_version=18.6`) | has glibc + `libstdc++`; the volume gives durable storage |
+| Container: **Alpine** (musl) | ❌ | app runs (static Go), but the bundle's `postgres` can't exec — `gcompat` insufficient |
+| Container: **`FROM scratch`** | ❌ | no loader/libc at all — strictly worse than Alpine |
+| **Cloud Run** | ⚠️ conditional | binary runs, but the FS is in-memory/ephemeral: OK for a **warm single instance with a mounted volume**, otherwise data is lost on scale-to-zero |
+| **AWS Lambda / GCP Cloud Functions** | ❌ | stateless, ephemeral `/tmp`, ~15-min lifetime — a persistent DB is the wrong shape; use managed PG |
+| **Windows** (native) | ❌ | no Windows bundle, and the cluster machinery is unix-socket only — use **WSL2** (it is Linux) or a **system PostgreSQL via `DATABASE_URL`** |
+
+When the bundle cannot run, the install check reports
+`the PostgreSQL binaries in … do not run` and refuses — a misconfigured host
+fails loudly at startup rather than corrupting or vanishing data.
+
+**If Alpine or `scratch` is a hard requirement**, it needs a separate
+**musl-native or fully static** PostgreSQL build published as a `-musl` platform
+variant in `postgres-bundle.yml` — real work (a static ICU/OpenSSL toolchain),
+tracked but not built. **If native Windows is needed**, it needs a Windows
+PostgreSQL bundle plus a TCP-socket path in the runtime (Windows has no unix
+socket) — likewise scoped, low priority, since Sky's server target is Linux.
+
 ## Lifecycle
 
 Two entry points, deliberately different, so casual use does not accumulate

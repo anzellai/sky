@@ -217,6 +217,25 @@ Passing `--embed` *and* an explicit DSN is an error, not a precedence rule.
 `sky db start` needs PostgreSQL binaries — `SKY_POSTGRES_BIN`, a provisioned
 bundle, or a system install.
 
+**Where embedded PostgreSQL can run.** `sky db provision --embed` fetches a
+self-contained, **glibc**-linked bundle (`postgres-bundle-v18.6`) — it needs a
+glibc userland with `libstdc++`, a **durable writable data dir**, and the run
+user present in `/etc/passwd` (the runtime's created-user path handles the last):
+
+| Target | Embedded PG |
+|---|---|
+| macOS / glibc-Linux laptop · EC2 / GCE / any glibc Linux VM | ✅ (a VM's persistent disk is ideal) |
+| Container: `debian-slim` / `distroless-base` **+ a mounted volume** | ✅ |
+| Container: **Alpine** (musl) or **`FROM scratch`** | ❌ needs a musl/static build |
+| **Cloud Run** | ⚠️ warm single instance **+ a mounted volume** only |
+| **AWS Lambda / GCP Cloud Functions** | ❌ stateless/ephemeral → use managed PG |
+| **Windows** (native) | ❌ use WSL2, or a system PostgreSQL via `DATABASE_URL` |
+
+Rule of thumb: storage that must survive a restart and be single-owner → embedded
+PG on a **VM or a container-with-a-volume**; stateless functions → **managed PG**
+(Cloud SQL / RDS). Not glibc / not durable → the runtime refuses loudly (a "the
+PostgreSQL binaries do not run" check), it does not corrupt or vanish data.
+
 Expose a `db : Store.Project` binding for `--gen`:
 `db = Store.project [ Store.toTable products, Store.toTable orders ]`, from
 `module Main exposing (main, db, seed)`. On deploy `sky build` embeds the

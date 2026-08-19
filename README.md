@@ -240,7 +240,15 @@ sky db provision --shared --app myapp    # one host cluster; a database + role p
 provisioner changes, so the same binary runs against a dev cluster, its own
 embedded PostgreSQL, or a managed database, with no code change. Bundles are
 built from source in CI (PostgreSQL 18.6, pinned) with an SBOM and a
-GPL/LGPL/AGPL link gate.
+GPL/LGPL/AGPL link gate, and published as `postgres-bundle-v18.6`.
+
+**Where the embedded bundle runs:** it's a self-contained, **glibc**-linked
+PostgreSQL, so it works on any normal Linux VM (EC2/GCE), a macOS/Linux laptop,
+and `debian-slim`/`distroless` containers **with a mounted volume** — verified
+end-to-end. It does **not** run on Alpine (musl), bare `FROM scratch`, or Windows
+(use WSL2 or a system Postgres), and a stateful database is the wrong fit for
+stateless functions (Lambda / Cloud Functions → pair with managed PG). Full
+matrix: [docs/skydb/embedded-postgres.md](docs/skydb/embedded-postgres.md).
 
 **It fits in 1 GB.** On the e2-small this was measured on, a Sky.Live app plus
 its own embedded PostgreSQL leaves the machine **~410 MB** short of its total

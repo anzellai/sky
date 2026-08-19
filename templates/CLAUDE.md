@@ -43,9 +43,13 @@ it; `--shared` provisions against a host cluster. Both are deliberate,
 side-effecting acts an operator makes once — not something to try in order to
 see what happens. Ask the user first.
 
-`provision --embed` also **cannot succeed yet** — no bundle release has been
-published, so it 404s. For a local PostgreSQL today, use `sky db start` with
-`SKY_POSTGRES_BIN`, a local bundle, or a system install.
+`provision --embed` fetches a **published** bundle (`postgres-bundle-v18.6`) for
+the host platform — **linux and macOS only** (amd64/arm64). It needs a **glibc**
+userland: it runs on any normal Linux VM/laptop and on debian-slim/distroless
+containers, but **not** on Alpine (musl), bare `FROM scratch`, or Windows — and a
+database wants durable storage, so it fits a VM or a container-with-a-volume, not
+a stateless function. On an unsupported host use `sky db start` with a system
+PostgreSQL, or a `DATABASE_URL`. Full matrix: `docs/skydb/embedded-postgres.md`.
 
 ### Embedded PostgreSQL and an explicit DSN together are an error
 

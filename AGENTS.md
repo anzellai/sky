@@ -374,9 +374,28 @@ with `[database] embedded = true`. `--embed` alongside an explicit DSN is an
 > tarball for the host platform — linux/darwin × amd64/arm64, each with an SBOM
 > and verified against the release's `SHA256SUMS`. The tree vendors its
 > permissive deps (openssl/icu/xml2/zstd/lz4/zlib) under `@rpath`/`$ORIGIN`, so
-> it drops into a distroless or `FROM scratch`-plus-glibc image. `SKY_POSTGRES_BIN`
-> or a system PostgreSQL still works for `sky db start` if you'd rather not
-> fetch. Full design: `docs/skydb/embedded-postgres.md`.
+> it drops into a **glibc** image (debian-slim, distroless-base) with no host
+> packages. `SKY_POSTGRES_BIN` or a system PostgreSQL still works for `sky db
+> start` if you'd rather not fetch. Full design: `docs/skydb/embedded-postgres.md`.
+
+**Where embedded PostgreSQL can run.** The bundle is glibc-linked and needs a
+glibc userland (with `libstdc++`), a **durable writable data dir**, and the run
+user in `/etc/passwd`. Verified empirically (`sky db provision --embed` + a Sky
+app querying it, under Apple `container`):
+
+| Target | Embedded PG |
+|---|---|
+| macOS / glibc-Linux laptop · EC2 / GCE / any glibc Linux VM | ✅ (a VM's persistent disk is ideal) |
+| Container: `debian-slim` / `distroless-base` **+ a mounted volume** | ✅ (`server_version=18.6` returned) |
+| Container: **Alpine** (musl) or **`FROM scratch`** | ❌ no glibc loader; `gcompat` still dies on libstdc++ + glibc-fortify symbols — needs a musl/static bundle |
+| **Cloud Run** | ⚠️ warm single instance **+ a mounted volume** only (FS is in-memory/ephemeral) |
+| **AWS Lambda / GCP Cloud Functions** | ❌ stateless/ephemeral — pair with managed PG |
+| **Windows** (native) | ❌ no Windows bundle + the machinery is unix-socket only → WSL2 or a system PostgreSQL via `DATABASE_URL` |
+
+Rule of thumb: durable, single-owner storage → embedded PG on a **VM or a
+container-with-a-volume**; stateless serverless → **managed PG** (Cloud SQL /
+RDS). Where the bundle cannot run the runtime **refuses loudly** (the "PostgreSQL
+binaries do not run" check), it does not silently lose data.
 
 **Never run `sky build` from the repo root** — it overwrites the compiler binary
 in `sky-out/`. Always `cd` into the example/project dir first.
