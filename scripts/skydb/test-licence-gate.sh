@@ -259,7 +259,6 @@ expect_accept() {
 
 # ─────────────────────────────────────────────────────────────────────
 hdr "Gate discrimination — synthesised fixtures (${HOST_OS})"
-set -x  # TEMP DIAGNOSTIC: trace the exact command that exits on the macOS-14 runner
 
 # C1. A clean bundle MUST pass. Without this, a gate that rejects unconditionally
 #     would score full marks on every rejection case below and still be worthless.
@@ -379,8 +378,14 @@ ln -s "${WORK}/libreadline.8.${DL}" "$C12/lib/libreadline.8.${DL}"
 # dependency would make it pass by having nothing to look at.
 if requires_dep "$C12/bin/postgres" readline; then
   expect_reject "C12 symlink launders an out-of-bundle dependency" "$C12" "escapes:" "COPYLEFT UNVENDORED"
-  if [ -n "${LAST_OUT:-}" ] && command grep -q "bundle:lib/libreadline" "$LAST_OUT"; then
-    bad "C12: the dependency is still reported as bundle:lib/libreadline — a link out of the bundle is being counted as vendored"
+  # Nested ifs, NOT `[ -n … ] && grep …`: the grep at the end of an `&&`
+  # condition returns 1 on the (correct, expected) no-match, and on the
+  # macОS-14 runner's bash that aborts the whole script under `set -e` before
+  # C13 ever runs. This is the same set-e/&& trap expect_reject documents.
+  if [ -n "${LAST_OUT:-}" ]; then
+    if command grep -q "bundle:lib/libreadline" "$LAST_OUT"; then
+      bad "C12: the dependency is still reported as bundle:lib/libreadline — a link out of the bundle is being counted as vendored"
+    fi
   fi
 fi
 
