@@ -253,7 +253,7 @@ jobs:
           done
           echo "SKY_POSTGRES_BIN=$dir" >> "$GITHUB_ENV"
 
-      - name: Tests — workspace except ty
+      - name: Tests — workspace except ty and sky
         env:
           # Debian's PostgreSQL binaries are NOT on PATH — they live under
           # /usr/lib/postgresql/<major>/bin — so this is set explicitly rather
@@ -263,9 +263,71 @@ jobs:
           # job rather than let a test return. The opt-out is `skip`, and no CI
           # job sets it.
           SKY_LIVE_TESTS: require
-        run: cargo test --workspace --exclude ty --locked
+        # `sky` is split into its own `test-sky` job: its postgres-live +
+        # db_*_flow integration tests are the tallest setup-dependent pole (the
+        # T1 chain was setup+test-rest). Excluding it here + running it in
+        # parallel drops the chain under the ceiling without weakening coverage
+        # (every sky test still runs, in test-sky). Postgres stays provisioned
+        # here as a safety net for any non-sky live test.
+        run: cargo test --workspace --exclude ty --exclude sky --locked
       - name: Doctests
         run: cargo test --workspace --locked --doc
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── The `sky` crate, split off test-rest (T1 critical-path trim) ────────────
+  # The sky crate owns the postgres-live shared-cluster tests + the db_*_flow
+  # suites (each provisions a real cluster, one `go build`s a real app). At ~400s
+  # they made setup+test-rest the tallest T1 dependent chain (1074s > 990s).
+  # Running them here IN PARALLEL with the rest of the workspace drops the chain
+  # to setup + the next pole (~repro), under the ceiling. Same env as test-rest
+  # (Go 1.26 pin + PostgreSQL 16 + SKY_LIVE_TESTS=require); clippy + doctests are
+  # NOT repeated (test-rest's `--all-targets` clippy and `--workspace --doc`
+  # already cover sky). Setup-dependent (needs: setup) — NOT in
+  # SETUP_INDEPENDENT_JOBS.
+  test-sky:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-test-sky-
+      - name: PostgreSQL + sqlite3 for the live tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 sqlite3
+          for b in initdb pg_ctl postgres psql; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+          done
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Tests — sky crate (postgres-live + db_*_flow integration)
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1036,6 +1098,7 @@ jobs:
       - setup
       - test-ty
       - test-rest
+      - test-sky
       - parity-accept
       - parity-reject
       - repro
