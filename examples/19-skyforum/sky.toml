@@ -4,3 +4,16 @@ entry = "src/Main.sky"
 
 [source]
 root = "src"
+
+# DELIBERATELY kept on legacy [live] config (not migrated to the typed
+# Sky.Config front door like the other examples). This project is the
+# config-migrate gate's real-world regression subject: config_migrate_gate.rs
+# clause 4 dry-plans a copy of this sky.toml, and the gate's falsifying mutation
+# (harness/registry.rs `config-migrate.hide-a-real-legacy-key`) renames the port
+# key below to prove the migrator would notice. Migrating this file removes the
+# gate's subject and turns two xtask tests red (the mutation also requires a
+# UNIQUE port-key site, so keep that literal off this comment). If you migrate
+# it, move the gate to a dedicated fixture first.
+[live]
+port = 8000
+input = "debounce"

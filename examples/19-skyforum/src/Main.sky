@@ -210,6 +210,4 @@ main =
             , subscriptions = subscriptions
             , routes = []
             , notFound = ()
-            }
-            |> Std.Live.withPort 8000
-            |> Std.Live.withInput "debounce")
+            })

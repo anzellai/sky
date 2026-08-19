@@ -53,7 +53,7 @@
       "[analytics]": 1,
       "[database]": 10,
       "[dependencies]": 1,
-      "[live]": 4,
+      "[live]": 5,
       "[source]": 47
     }
   },
@@ -13670,11 +13670,12 @@
       "id": "examples/19-skyforum",
       "modules_imported": 12,
       "path": "examples/19-skyforum",
-      "refs_generous": 56,
-      "refs_qualified": 52,
+      "refs_generous": 54,
+      "refs_qualified": 50,
       "role": "Example",
       "sky_files": 9,
       "sky_toml_sections": [
+        "[live]",
         "[source]"
       ]
     },
