@@ -21,9 +21,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 150 |
-| covered by the new corpus (>= Asserted) | 134 |
-| verdict `stronger` | 129 |
-| verdict `equal` | 21 |
+| covered by the new corpus (>= Asserted) | 135 |
+| verdict `stronger` | 130 |
+| verdict `equal` | 20 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
 | stdlib modules (denominator) | 88 |
@@ -33,9 +33,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 7 | 8.0% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 814 | 44.8% |
-| symbols unreferenced under the generous rule | 735 | 40.5% |
+| stdlib modules imported by nothing | 6 | 6.8% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 807 | 44.5% |
+| symbols unreferenced under the generous rule | 726 | 40.0% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -48,7 +48,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.lsp`
 - `cli.upgrade-claude`
 - `cli.verify`
-- `stdlib.Sky.Config`
 - `stdlib.Sky.Core.Io`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Live.Console`
@@ -149,7 +148,7 @@ None.
 | `runtime.periodic-goroutines` | runtime | None | Falsified | stronger |
 | `skylive.multi-replica` | skylive | Asserted | Falsified | stronger |
 | `skylive.session-sse-csrf` | skylive | Asserted | Falsified | stronger |
-| `stdlib.Sky.Config` | stdlib | None | None | equal |
+| `stdlib.Sky.Config` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Basics` | stdlib | None | Falsified | stronger |
 | `stdlib.Sky.Core.Bytes` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Char` | stdlib | None | Falsified | stronger |

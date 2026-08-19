@@ -47,13 +47,13 @@
     "database_drivers": {
       "sqlite": 10
     },
-    "paths_with_sky_toml": 57,
+    "paths_with_sky_toml": 51,
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
       "[database]": 10,
       "[dependencies]": 1,
-      "[live]": 20,
+      "[live]": 4,
       "[source]": 47
     }
   },
@@ -643,10 +643,10 @@
   "summary": {
     "stdlib_entries": 1815,
     "stdlib_modules": 88,
-    "surfaces_covered": 134,
-    "surfaces_covered_pct": 89.3,
-    "surfaces_equal": 21,
-    "surfaces_stronger": 129,
+    "surfaces_covered": 135,
+    "surfaces_covered_pct": 90.0,
+    "surfaces_equal": 20,
+    "surfaces_stronger": 130,
     "surfaces_total": 150,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -2490,18 +2490,105 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:storefront (gate `apps-ffi-scale`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "examples/12-skyvote (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/13-skyshop (also a Layer 2 member path)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/16-skychess (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/17-skymon (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/27-multi-session-chat (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/37-composite-live-shop (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/38-composite-ui-multibackend (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/52-blog-analytics (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "examples/12-skyvote (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/13-skyshop (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/16-skychess (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/17-skymon (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/27-multi-session-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/37-composite-live-shop (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/38-composite-ui-multibackend (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/52-blog-analytics (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 3
       },
       "description": "the Sky.Config public API",
       "id": "stdlib.Sky.Config",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -10891,9 +10978,8 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 7,
+      "count": 6,
       "modules": [
-        "Sky.Config",
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
@@ -10901,7 +10987,7 @@
         "Std.Db.Table",
         "Std.Live.Console"
       ],
-      "pct_of_denominator": 8.0
+      "pct_of_denominator": 6.8
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -10912,7 +10998,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 12,
+      "count": 11,
       "surfaces": [
         "cli.check",
         "cli.config",
@@ -10922,7 +11008,6 @@
         "cli.lsp",
         "cli.upgrade-claude",
         "cli.verify",
-        "stdlib.Sky.Config",
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Live.Console"
@@ -10931,22 +11016,16 @@
     "symbols_unreferenced_generous": {
       "by_module": {
         "Sky.Config": {
-          "count": 19,
+          "count": 13,
           "symbols": [
             "Capacity",
-            "Config",
-            "Database",
             "JobStore",
             "LogFormat",
             "LogLevel",
-            "Sessions",
             "Telemetry",
-            "default",
             "withCsrf",
-            "withDatabase",
             "withJobs",
             "withLog",
-            "withSessions",
             "withTelemetry",
             "withTelemetryAggregationWindow",
             "withTelemetryDbCapacity",
@@ -11627,7 +11706,7 @@
           ]
         },
         "Std.Live": {
-          "count": 16,
+          "count": 13,
           "symbols": [
             "AppConfig",
             "bindSessionUser",
@@ -11636,15 +11715,12 @@
             "withAuthSliding",
             "withConsoleAuth",
             "withIdleEvict",
-            "withInput",
             "withMaxBodyBytes",
             "withOnNavigate",
             "withRevocation",
-            "withStatic",
             "withStaticUrl",
             "withStatus",
-            "withStorePath",
-            "withTtl"
+            "withStorePath"
           ]
         },
         "Std.Live.Console": {
@@ -12006,28 +12082,24 @@
           ]
         }
       },
-      "count": 735,
-      "pct_of_denominator": 40.5
+      "count": 726,
+      "pct_of_denominator": 40.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
         "Sky.Config": {
-          "count": 19,
+          "count": 15,
           "symbols": [
             "Capacity",
-            "Config",
             "Database",
             "JobStore",
             "LogFormat",
             "LogLevel",
             "Sessions",
             "Telemetry",
-            "default",
             "withCsrf",
-            "withDatabase",
             "withJobs",
             "withLog",
-            "withSessions",
             "withTelemetry",
             "withTelemetryAggregationWindow",
             "withTelemetryDbCapacity",
@@ -12788,7 +12860,7 @@
           ]
         },
         "Std.Live": {
-          "count": 19,
+          "count": 16,
           "symbols": [
             "AppConfig",
             "api",
@@ -12800,15 +12872,12 @@
             "withConsoleAuth",
             "withGuard",
             "withIdleEvict",
-            "withInput",
             "withMaxBodyBytes",
             "withOnNavigate",
             "withRevocation",
-            "withStatic",
             "withStaticUrl",
             "withStatus",
-            "withStorePath",
-            "withTtl"
+            "withStorePath"
           ]
         },
         "Std.Live.Console": {
@@ -13171,8 +13240,8 @@
           ]
         }
       },
-      "count": 814,
-      "pct_of_denominator": 44.8
+      "count": 807,
+      "pct_of_denominator": 44.5
     }
   },
   "units": [
@@ -13287,16 +13356,15 @@
       "db_drivers": [],
       "gate": "apps-ffi-scale",
       "id": "apps:storefront",
-      "modules_imported": 16,
+      "modules_imported": 17,
       "path": "examples/13-skyshop",
-      "refs_generous": 96,
-      "refs_qualified": 45,
+      "refs_generous": 102,
+      "refs_qualified": 51,
       "role": "Layer2",
       "sky_files": 19,
       "sky_toml_sections": [
         "[\"go.dependencies\"]",
         "[dependencies]",
-        "[live]",
         "[source]"
       ]
     },
@@ -13452,13 +13520,11 @@
       "id": "examples/09-live-counter",
       "modules_imported": 9,
       "path": "examples/09-live-counter",
-      "refs_generous": 46,
-      "refs_qualified": 3,
+      "refs_generous": 47,
+      "refs_qualified": 4,
       "role": "Example",
       "sky_files": 1,
-      "sky_toml_sections": [
-        "[live]"
-      ]
+      "sky_toml_sections": []
     },
     {
       "db_drivers": [],
@@ -13466,13 +13532,11 @@
       "id": "examples/10-live-component",
       "modules_imported": 8,
       "path": "examples/10-live-component",
-      "refs_generous": 46,
-      "refs_qualified": 3,
+      "refs_generous": 47,
+      "refs_qualified": 4,
       "role": "Example",
       "sky_files": 2,
-      "sky_toml_sections": [
-        "[live]"
-      ]
+      "sky_toml_sections": []
     },
     {
       "db_drivers": [],
@@ -13495,15 +13559,14 @@
       ],
       "gate": null,
       "id": "examples/12-skyvote",
-      "modules_imported": 22,
+      "modules_imported": 23,
       "path": "examples/12-skyvote",
-      "refs_generous": 131,
-      "refs_qualified": 41,
+      "refs_generous": 138,
+      "refs_qualified": 47,
       "role": "Example",
       "sky_files": 17,
       "sky_toml_sections": [
         "[database]",
-        "[live]",
         "[source]"
       ]
     },
@@ -13511,16 +13574,15 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/13-skyshop",
-      "modules_imported": 16,
+      "modules_imported": 17,
       "path": "examples/13-skyshop",
-      "refs_generous": 96,
-      "refs_qualified": 45,
+      "refs_generous": 102,
+      "refs_qualified": 51,
       "role": "Example",
       "sky_files": 19,
       "sky_toml_sections": [
         "[\"go.dependencies\"]",
         "[dependencies]",
-        "[live]",
         "[source]"
       ]
     },
@@ -13558,16 +13620,15 @@
       ],
       "gate": null,
       "id": "examples/16-skychess",
-      "modules_imported": 22,
+      "modules_imported": 23,
       "path": "examples/16-skychess",
-      "refs_generous": 138,
-      "refs_qualified": 51,
+      "refs_generous": 145,
+      "refs_qualified": 57,
       "role": "Example",
       "sky_files": 14,
       "sky_toml_sections": [
         "[\"go.dependencies\"]",
         "[database]",
-        "[live]",
         "[source]"
       ]
     },
@@ -13577,16 +13638,15 @@
       ],
       "gate": null,
       "id": "examples/17-skymon",
-      "modules_imported": 22,
+      "modules_imported": 23,
       "path": "examples/17-skymon",
-      "refs_generous": 107,
-      "refs_qualified": 63,
+      "refs_generous": 114,
+      "refs_qualified": 69,
       "role": "Example",
       "sky_files": 19,
       "sky_toml_sections": [
         "[\"go.dependencies\"]",
         "[database]",
-        "[live]",
         "[source]"
       ]
     },
@@ -13596,12 +13656,11 @@
       "id": "examples/18-job-queue",
       "modules_imported": 17,
       "path": "examples/18-job-queue",
-      "refs_generous": 46,
-      "refs_qualified": 31,
+      "refs_generous": 47,
+      "refs_qualified": 32,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
-        "[live]",
         "[source]"
       ]
     },
@@ -13611,12 +13670,11 @@
       "id": "examples/19-skyforum",
       "modules_imported": 12,
       "path": "examples/19-skyforum",
-      "refs_generous": 54,
-      "refs_qualified": 50,
+      "refs_generous": 56,
+      "refs_qualified": 52,
       "role": "Example",
       "sky_files": 9,
       "sky_toml_sections": [
-        "[live]",
         "[source]"
       ]
     },
@@ -13696,13 +13754,11 @@
       "id": "examples/25-sky-console",
       "modules_imported": 9,
       "path": "examples/25-sky-console",
-      "refs_generous": 41,
-      "refs_qualified": 37,
+      "refs_generous": 42,
+      "refs_qualified": 38,
       "role": "Example",
       "sky_files": 3,
-      "sky_toml_sections": [
-        "[live]"
-      ]
+      "sky_toml_sections": []
     },
     {
       "db_drivers": [],
@@ -13710,13 +13766,11 @@
       "id": "examples/26-ui-showcase",
       "modules_imported": 14,
       "path": "examples/26-ui-showcase",
-      "refs_generous": 93,
-      "refs_qualified": 92,
+      "refs_generous": 94,
+      "refs_qualified": 93,
       "role": "Example",
       "sky_files": 2,
-      "sky_toml_sections": [
-        "[live]"
-      ]
+      "sky_toml_sections": []
     },
     {
       "db_drivers": [
@@ -13724,15 +13778,14 @@
       ],
       "gate": null,
       "id": "examples/27-multi-session-chat",
-      "modules_imported": 17,
+      "modules_imported": 18,
       "path": "examples/27-multi-session-chat",
-      "refs_generous": 63,
-      "refs_qualified": 31,
+      "refs_generous": 70,
+      "refs_qualified": 37,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
         "[database]",
-        "[live]",
         "[source]"
       ]
     },
@@ -13742,13 +13795,11 @@
       "id": "examples/28-streaming-chat",
       "modules_imported": 13,
       "path": "examples/28-streaming-chat",
-      "refs_generous": 42,
-      "refs_qualified": 12,
+      "refs_generous": 43,
+      "refs_qualified": 13,
       "role": "Example",
       "sky_files": 1,
-      "sky_toml_sections": [
-        "[live]"
-      ]
+      "sky_toml_sections": []
     },
     {
       "db_drivers": [],
@@ -13827,13 +13878,11 @@
       "id": "examples/34-multi-tier-console",
       "modules_imported": 9,
       "path": "examples/34-multi-tier-console",
-      "refs_generous": 21,
-      "refs_qualified": 5,
+      "refs_generous": 22,
+      "refs_qualified": 6,
       "role": "Example",
       "sky_files": 1,
-      "sky_toml_sections": [
-        "[live]"
-      ]
+      "sky_toml_sections": []
     },
     {
       "db_drivers": [],
@@ -13867,14 +13916,13 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/37-composite-live-shop",
-      "modules_imported": 19,
+      "modules_imported": 20,
       "path": "examples/37-composite-live-shop",
-      "refs_generous": 107,
-      "refs_qualified": 99,
+      "refs_generous": 113,
+      "refs_qualified": 105,
       "role": "Example",
       "sky_files": 12,
       "sky_toml_sections": [
-        "[live]",
         "[source]"
       ]
     },
@@ -13882,14 +13930,13 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/38-composite-ui-multibackend",
-      "modules_imported": 21,
+      "modules_imported": 22,
       "path": "examples/38-composite-ui-multibackend",
-      "refs_generous": 85,
-      "refs_qualified": 82,
+      "refs_generous": 90,
+      "refs_qualified": 86,
       "role": "Example",
       "sky_files": 6,
       "sky_toml_sections": [
-        "[live]",
         "[source]"
       ]
     },
@@ -14061,16 +14108,15 @@
       ],
       "gate": null,
       "id": "examples/52-blog-analytics",
-      "modules_imported": 19,
+      "modules_imported": 20,
       "path": "examples/52-blog-analytics",
-      "refs_generous": 73,
-      "refs_qualified": 64,
+      "refs_generous": 80,
+      "refs_qualified": 70,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
         "[analytics]",
         "[database]",
-        "[live]",
         "[source]"
       ]
     },
