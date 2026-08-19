@@ -151,7 +151,7 @@ onKey k =
     else
         NoOp
 
+
 config : Config.Config
 config =
-    Config.default
-        |> Config.withSessions Memory
+    Config.default |> Config.withSessions Memory

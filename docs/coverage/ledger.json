@@ -231,8 +231,8 @@
     },
     "config-migrate": {
       "expected_assertions": 20,
-      "falsifier_mutation": "",
-      "falsifier_proven": false,
+      "falsifier_mutation": "config-migrate.hide-a-real-legacy-key",
+      "falsifier_proven": true,
       "summary": "sky config migrate rewrites a legacy fixture end-to-end (every key leaves sky.toml, the builders land in the right destination, a re-check is clean) and proposes zero undeclared changes when planning a copy of examples/19-skyforum",
       "surfaces": [
         "meta.config-migrate"
@@ -240,7 +240,7 @@
       "tier": "T1"
     },
     "config-migration": {
-      "expected_assertions": 44,
+      "expected_assertions": 48,
       "falsifier_mutation": "config-migration.drop-a-builder-label",
       "falsifier_proven": true,
       "summary": "the legacy→withX migration table covers every Sky.Config env target and every legacy key it names is one the compiler accepts",
@@ -2102,15 +2102,15 @@
     {
       "category": "meta",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "gate `config-migrate`",
-            "class": "Asserted",
-            "strength": 3
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "None",

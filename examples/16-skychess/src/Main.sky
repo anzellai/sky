@@ -504,8 +504,8 @@ handleDeleteGame gameId model =
     in
         ( { model | savedGames = games, notification = notif }, Cmd.none )
 
+
 config : Config.Config
 config =
-    Config.default
-        |> Config.withDatabase (Sqlite "skychess.db")
+    Config.default |> Config.withDatabase (Sqlite "skychess.db")
         |> Config.withSessions (SessionsSqlite "skychess.db")

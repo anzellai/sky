@@ -3049,7 +3049,7 @@ pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
 /// is precisely the event this gate exists to force through the migration
 /// table. `reject.rs` shipped `>= 13` against an actual 63; an exact count is
 /// what stops a shrinking set passing green.
-pub const CONFIG_MIGRATION_EXPECTED: u64 = 44;
+pub const CONFIG_MIGRATION_EXPECTED: u64 = 48;
 
 /// `xtask config-migration`, run in-process. In-process for the same reason
 /// `config_surface` is: it recomputes the cross-language coverage from THIS
