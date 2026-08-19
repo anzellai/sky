@@ -89,7 +89,8 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" CounterPage, route "/about" AboutPage ]
             , notFound = CounterPage
-            })
+            }
+            |> Std.Live.withPort 8000)
 
 
 -- ======================================================

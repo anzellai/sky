@@ -6,13 +6,8 @@ port = 8052
 [source]
 root = "src"
 
-[live]
-store = "memory"
-ttl = "30m"
-
 [database]
 driver = "sqlite"
-path = "blog.db"
 
 [analytics]
 dbPath = "analytics.db"

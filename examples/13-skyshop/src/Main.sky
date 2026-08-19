@@ -1,4 +1,4 @@
-module Main exposing (main)
+module Main exposing (main, config)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -9,7 +9,7 @@ import Sky.Core.Dict as Dict
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live exposing (app, route, config, withGuard)
+import Std.Live as Live exposing (app, route, withGuard)
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -31,6 +31,7 @@ import Page.Orders as OrdersView
 import Page.AuthPage as AuthPage
 import Page.Admin as Admin
 import Page.Static as Static
+import Sky.Config as Config exposing (Sessions(..))
 
 
 -- ══════════════════════════════════════════════════════
@@ -1195,7 +1196,7 @@ requireAdmin model =
 -- ══════════════════════════════════════════════════════
 main =
     app
-        (config
+        (Live.config
             { init = init
             , update = update
             , view = view
@@ -1219,4 +1220,11 @@ main =
                 ]
             , notFound = NotFoundPage
             }
+            |> Live.withPort 8000
+            |> Live.withStatic "static"
             |> withGuard guard)
+
+config : Config.Config
+config =
+    Config.default
+        |> Config.withSessions (SessionsSqlite "skyshop_sessions.db")

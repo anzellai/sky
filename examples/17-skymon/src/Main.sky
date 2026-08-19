@@ -1,4 +1,4 @@
-module Main exposing (main)
+module Main exposing (main, config)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -9,7 +9,7 @@ import Sky.Core.Result as Result
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live exposing (app, route, config)
+import Std.Live as Live exposing (app, route)
 import Std.Html.Events exposing (onClick, onInput)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -27,6 +27,7 @@ import Page.MonitorDetail as MonitorDetail
 import Page.MetricDetail as MetricDetail
 import Page.Alerts as AlertsPage
 import Lib.Alerts as Alerts
+import Sky.Config as Config exposing (Database(..), Sessions(..))
 
 
 init : a -> ( Model, Cmd Msg )
@@ -52,7 +53,7 @@ init _req =
 
 main =
     app
-        (config
+        (Live.config
             { init = init
             , update = update
             , view = view
@@ -65,7 +66,8 @@ main =
                 , route "/auth" AuthPage
                 ]
             , notFound = NotFoundPage
-            })
+            }
+            |> Live.withPort 8000)
 
 
 view : Model -> Html Msg
@@ -584,3 +586,9 @@ rowToAlert row =
     , notifyTarget = row.notifyTarget
     , enabled = row.enabled == 1
     }
+
+config : Config.Config
+config =
+    Config.default
+        |> Config.withDatabase (Sqlite "skymon.db")
+        |> Config.withSessions (SessionsSqlite "skymon.db")

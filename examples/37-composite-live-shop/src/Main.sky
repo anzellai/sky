@@ -1,4 +1,4 @@
-module Main exposing (main)
+module Main exposing (main, config)
 
 -- examples/37-composite-live-shop — Sky.Live composite test app.
 --
@@ -10,7 +10,7 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
-import Std.Live exposing (app, route, config, withHead)
+import Std.Live as Live exposing (app, route, withHead)
 import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
@@ -26,6 +26,7 @@ import View.Common as Common
 import View.Home exposing (homeView)
 import View.Product exposing (productView)
 import View.SignIn exposing (signInView)
+import Sky.Config as Config exposing (Sessions(..))
 
 
 init : a -> ( Model, Cmd Msg )
@@ -98,7 +99,7 @@ subscriptions _ =
 
 main =
     app
-        (config
+        (Live.config
             { init = init
             , update = update
             , view = view
@@ -112,4 +113,11 @@ main =
                 ]
             , notFound = HomePage
             }
+            |> Live.withPort 8005
+            |> Live.withInput "debounce"
             |> withHead Head.headFor)
+
+config : Config.Config
+config =
+    Config.default
+        |> Config.withSessions Memory

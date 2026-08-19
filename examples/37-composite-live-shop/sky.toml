@@ -4,8 +4,3 @@ entry = "src/Main.sky"
 
 [source]
 root = "src"
-
-[live]
-port = 8005
-store = "memory"
-input = "debounce"

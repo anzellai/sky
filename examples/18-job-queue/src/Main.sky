@@ -450,4 +450,5 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" DashboardPage ]
             , notFound = DashboardPage
-            })
+            }
+            |> Live.withPort 8000)

@@ -340,4 +340,5 @@ main =
                 , route "/auth" AuthPage
                 ]
             , notFound = HostPage
-            })
+            }
+            |> Std.Live.withPort 8034)

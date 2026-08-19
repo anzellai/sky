@@ -1,4 +1,4 @@
-module Main exposing (main)
+module Main exposing (main, config)
 
 -- examples/38-composite-ui-multibackend — ONE Sky source rendering
 -- IDENTICALLY across Sky.Live (web), Sky.Tui (terminal), and
@@ -31,6 +31,7 @@ import Head
 import State exposing (..)
 import Update exposing (update)
 import View exposing (view, viewElement)
+import Sky.Config as Config exposing (Sessions(..))
 
 
 -- ─── Init ───────────────────────────────────────────────────────────
@@ -119,6 +120,7 @@ main =
                     , routes = [ Live.route "/" HomePage ]
                     , notFound = HomePage
                     }
+                    |> Live.withPort 8006
                     |> Live.withHead Head.headFor)
                 |> Task.run
 
@@ -148,3 +150,8 @@ onKey k =
 
     else
         NoOp
+
+config : Config.Config
+config =
+    Config.default
+        |> Config.withSessions Memory

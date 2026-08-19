@@ -1,4 +1,4 @@
-module Main exposing (main)
+module Main exposing (main, config)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
@@ -9,7 +9,7 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live exposing (app, route, config)
+import Std.Live as Live exposing (app, route)
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -24,6 +24,7 @@ import Chess.Move as Move
 import Page.Home as Home
 import Page.Game as Game
 import Ui.Layout as Layout
+import Sky.Config as Config exposing (Database(..), Sessions(..))
 
 
 init : a -> ( Model, Cmd Msg )
@@ -66,14 +67,15 @@ init _req =
 
 main =
     app
-        (config
+        (Live.config
             { init = init
             , update = update
             , view = view
             , subscriptions = subscriptions
             , routes = [ route "/" HomePage, route "/game" GamePage ]
             , notFound = NotFoundPage
-            })
+            }
+            |> Live.withPort 8000)
 
 
 view : Model -> Html Msg
@@ -501,3 +503,9 @@ handleDeleteGame gameId model =
                             model.notification
     in
         ( { model | savedGames = games, notification = notif }, Cmd.none )
+
+config : Config.Config
+config =
+    Config.default
+        |> Config.withDatabase (Sqlite "skychess.db")
+        |> Config.withSessions (SessionsSqlite "skychess.db")

@@ -623,4 +623,5 @@ main =
             , subscriptions = subscriptions
             , routes = []
             , notFound = ()
-            })
+            }
+            |> Live.withPort 8000)

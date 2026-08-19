@@ -69,4 +69,5 @@ main =
             , subscriptions = subscriptions
             , routes = [ route "/" () ]
             , notFound = ()
-            })
+            }
+            |> Std.Live.withPort 8025)

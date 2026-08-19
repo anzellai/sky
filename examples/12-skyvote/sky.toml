@@ -5,14 +5,8 @@ entry = "src/Main.sky"
 [source]
 root = "src"
 
-[live]
-port = 8000
-store = "sqlite"
-storePath = "skyvote.db"
-
 [database]
 driver = "sqlite"
-path = "skyvote.db"
 
 # No `[auth]` block — this app manages its own sessions in `Lib/Auth.sky` and
 # reads neither a signing secret nor a TTL from configuration. The `method` /

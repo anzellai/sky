@@ -67,65 +67,6 @@
 # closed adapters the golden still reserved slack for, and that slack is now
 # gone. The `narrow` fall is a decrease in SITE count and is not a speedup
 # measurement — nothing here weights a site by how often it runs.
-#
-# ── Recorded transition, 2026-08-16 — the corpus is discovered, not assumed ──
-# 61 rows -> 66. The five added existed on disk all along with a `sky.toml` and
-# a `src/`, and no floor was locked for any of them:
-#     apps/fieldbook/probe               narrow=2
-#     examples/39-hub-demo/billing-app   narrow=8
-#     examples/39-hub-demo/frontend-app  narrow=7
-#     simple                             narrow=1
-#     test_pkg                           narrow=1
-# The gate could not report the omission because its denominator was this file:
-# "56 of 61" is `golden.len()`, so a project missing from the golden was missing
-# from the question. Three were invisible to a NON-RECURSIVE `read_dir` on
-# `examples/` (`39-hub-demo` is a wrapper holding two projects and none of its
-# own; `apps/fieldbook/probe` nests inside a member); two were dropped by a
-# hard-coded `n != "simple" && n != "test_pkg"` with no reason attached.
-#
-# Discovery is now recursive over examples/, apps/ and sky-bundled/, and a
-# discovered project with no golden row FAILS. Blessed with all 66 emitting in
-# one run (`sky install` restored the five FFI surfaces first): rows 61 -> 66
-# (+5), tokens 8353 -> 8372 (+19). No existing row moved.
-#
-# ── Recorded transition, 2026-08-18 — the console's observability fix pays
-#    the standing kernel-ABI narrowing, three more times ──
-# sky-bundled/console  narrow 283 -> 286 (+3); adapter unchanged at 2.
-# Cause: gate cause (2) — a SOURCE change (`10167246 fix(rt): the console
-# stops degrading the app it observes`) added view code; the new lines pay the
-# same per-call-site narrowing every existing line already pays. NOT a codegen
-# regression: same compiler binary before and after, every delta confined to
-# the functions the commit changed (AnalyticsTab scope note / windowLabel /
-# revenuePanel), adapter flat. Verified by re-emitting the console with the
-# three .sky files reverted to their pre-commit content (parent 98619b32) under
-# THIS compiler: the count returns to 283.
-#
-# The three new tokens, classified against doc 14 (§10 citation):
-#   • +2  rt.AsString(rt.String_fromInt(any(v_0.WindowDays)))  and  (…RowCap)
-#         — rendering two NEW, concretely-typed Int fields (windowDays / rowCap
-#         in State.sky) as strings. `String.fromInt` is a runtime kernel whose
-#         Go ABI is `func String_fromInt(a any) any`; the `any` result is
-#         narrowed to `string`, stamped `/* FFI return */` — MISLABELLED, it is
-#         a kernel return, not FFI (doc 14 §3.1).
-#         ORIGIN R5 (lower.rs:4429-4439). §1 floor test: slot shape = string;
-#         value's real type known to the compiler but erased to `any` by the
-#         kernel ABI → doc 14 §4.4 NOT floor, CLOSEABLE — but only by the R5
-#         lever (typed kernel entry points, §5.3 generalised to returns), a
-#         corpus-wide compiler change, NOT an app-level signature. The console's
-#         new fields are already concretely typed (Int/Bool), so there is no
-#         app-level `any` to remove; 53 existing `AsString(String_fromInt)`
-#         sites in this same file pay the identical cost.
-#   • +1  rt.Coerce[State_CurrencyTotal_R](_p0)  inside the new
-#         `List.map (currencyRowView a.rowCapHit) a.revenue` (revenuePanel).
-#         The erased list helper hands the callback its element as `any`; the
-#         element narrows to State_CurrencyTotal_R.  ORIGIN R2 `eta_narrow`
-#         (lower.rs:2771-2779) — the succeeding assertion inside the
-#         retyped-in-place callback, i.e. the CLOSED form, not a new adapter
-#         (adapter stayed at 2). §1/§9.2: per-element helper path, CLOSEABLE in
-#         principle; the residual is the boxing round trip, closed only by the
-#         §5.5 typed-instantiation compiler lever — again not an app change.
-# Verification gate: `xtask coerce-floor` (this golden). Blessed with all 66
-# emitting in one run; sky-bundled/console 283 -> 286; NO other row moved.
 00-standard-libs	adapter=1	dispatch=0	narrow=186
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=9
@@ -138,12 +79,12 @@
 09-live-counter	adapter=0	dispatch=0	narrow=68
 10-live-component	adapter=0	dispatch=0	narrow=71
 11-fyne-stopwatch	adapter=0	dispatch=0	narrow=10
-12-skyvote	adapter=0	dispatch=0	narrow=331
-13-skyshop	adapter=11	dispatch=0	narrow=1341
+12-skyvote	adapter=0	dispatch=0	narrow=335
+13-skyshop	adapter=11	dispatch=0	narrow=1343
 14-task-demo	adapter=0	dispatch=0	narrow=5
 15-http-server	adapter=0	dispatch=0	narrow=13
-16-skychess	adapter=0	dispatch=0	narrow=429
-17-skymon	adapter=0	dispatch=0	narrow=357
+16-skychess	adapter=0	dispatch=0	narrow=433
+17-skymon	adapter=0	dispatch=0	narrow=361
 18-job-queue	adapter=0	dispatch=0	narrow=116
 19-skyforum	adapter=0	dispatch=0	narrow=256
 20-cli-counter	adapter=0	dispatch=0	narrow=3
@@ -153,7 +94,7 @@
 24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=202
 25-sky-console	adapter=0	dispatch=0	narrow=205
 26-ui-showcase	adapter=0	dispatch=0	narrow=365
-27-multi-session-chat	adapter=0	dispatch=0	narrow=109
+27-multi-session-chat	adapter=0	dispatch=0	narrow=113
 28-streaming-chat	adapter=0	dispatch=0	narrow=24
 29-webview-threejs-spike	adapter=0	dispatch=0	narrow=2
 30-sse-server-demo	adapter=0	dispatch=0	narrow=7
@@ -163,8 +104,8 @@
 34-multi-tier-console	adapter=0	dispatch=0	narrow=11
 35-composite-generics	adapter=2	dispatch=0	narrow=141
 36-composite-server	adapter=2	dispatch=0	narrow=209
-37-composite-live-shop	adapter=3	dispatch=0	narrow=391
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=289
+37-composite-live-shop	adapter=3	dispatch=0	narrow=393
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=291
 40-generic-adt-field	adapter=0	dispatch=0	narrow=5
 41-nested-curry	adapter=0	dispatch=0	narrow=7
 42-poly-record	adapter=0	dispatch=0	narrow=3
@@ -177,7 +118,7 @@
 49-xmodule-adt	adapter=0	dispatch=0	narrow=2
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=1
-52-blog-analytics	adapter=0	dispatch=0	narrow=307
+52-blog-analytics	adapter=0	dispatch=0	narrow=311
 53-record-update-map	adapter=0	dispatch=0	narrow=24
 54-record-fieldset-collision	adapter=0	dispatch=0	narrow=5
 55-store-partial-update	adapter=0	dispatch=0	narrow=69

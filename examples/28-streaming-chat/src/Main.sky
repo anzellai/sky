@@ -309,6 +309,7 @@ main =
             , routes = [ route "/" HomePage ]
             , notFound = HomePage
             }
+            |> Std.Live.withPort 8000
         )
 
 

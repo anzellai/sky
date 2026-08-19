@@ -5,14 +5,8 @@ entry = "src/Main.sky"
 [source]
 root = "src"
 
-[live]
-port = 8000
-store = "sqlite"
-storePath = "skymon.db"
-
 [database]
 driver = "sqlite"
-path = "skymon.db"
 
 ["go.dependencies"]
 "crypto/sha256" = "latest"
