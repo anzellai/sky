@@ -3385,7 +3385,46 @@ impl<'a> Ctx<'a> {
                             call_ty,
                         )
                     } else {
-                        GoExpr::new(GoExprKind::Ident(go), actual.clone())
+                        // A def WITH params referenced as a first-class VALUE (a
+                        // HOF callback: `List.map bump xs`). The emitted symbol
+                        // `Main_bump` has exactly the Go signature `lower_def`
+                        // produced, and `def_param_tys`/`def_result_tys` ARE that
+                        // signature by invariant. The caller's `actual` is its own
+                        // region inference for the callback slot, which can be MORE
+                        // typed than the symbol really is: a row-polymorphic
+                        // annotated def (`bump : { r | a : Int } -> { r | a : Int }`)
+                        // emits `func(any) any` (open row → `GoTy::Any`,
+                        // goty.rs:226-228), while a `List.map bump [rec]` site infers
+                        // the callback slot as `func(Rec) Rec`. Typing the reference
+                        // by `actual` there LIES about the symbol, and the typed-map
+                        // path (`list_hof_typed`) then trusts `f.ty`, proves the
+                        // shape, and emits `rt.List_mapT[Rec, Rec](Main_bump, …)` —
+                        // which `go build` rejects because `Main_bump` is
+                        // `func(any) any` (the two emission decisions disagree). Type
+                        // the reference by the symbol's REAL Go signature so the
+                        // `provable` check downstream refuses the typed twin and
+                        // falls back to the erased `rt.List_mapAny`, whose `any` slot
+                        // the `func(any) any` symbol fits. Mirrors the zero-param
+                        // `def_result_tys` rule above; byte-identical whenever `actual`
+                        // already agrees with the emitted signature (a closed-record
+                        // callback, the common case).
+                        let callee_mod = e.module_name.clone();
+                        let real_params: Option<Vec<GoTy>> =
+                            self.def_param_tys.get(&d).cloned().map(|ptys| {
+                                ptys.iter()
+                                    .map(|t| self.goty_in(t, &callee_mod))
+                                    .collect()
+                            });
+                        let real_ret = self
+                            .def_result_tys
+                            .get(&d)
+                            .cloned()
+                            .map(|t| self.goty_in(&t, &callee_mod));
+                        let ref_ty = match (real_params, real_ret) {
+                            (Some(ps), Some(r)) => GoTy::Func(ps, Box::new(r)),
+                            _ => actual.clone(),
+                        };
+                        GoExpr::new(GoExprKind::Ident(go), ref_ty)
                     }
                 } else {
                     GoExpr::new(GoExprKind::Ident("nil".into()), GoTy::Any)
