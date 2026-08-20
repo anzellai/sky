@@ -78,7 +78,6 @@
 08-notes-app	adapter=0	dispatch=0	narrow=326
 09-live-counter	adapter=0	dispatch=0	narrow=68
 10-live-component	adapter=0	dispatch=0	narrow=71
-11-fyne-stopwatch	adapter=0	dispatch=0	narrow=10
 12-skyvote	adapter=0	dispatch=0	narrow=335
 13-skyshop	adapter=11	dispatch=0	narrow=1343
 14-task-demo	adapter=0	dispatch=0	narrow=5

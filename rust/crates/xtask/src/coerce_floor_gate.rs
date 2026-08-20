@@ -1442,7 +1442,17 @@ fn dir_for_key(root: &Path, key: &str) -> PathBuf {
 ///
 /// A key listed here that does NOT exist on disk fails the gate: stale
 /// accounting is how an exclusion outlives the thing it excused.
-const EXCLUDED_FROM_FLOOR: &[(&str, &str)] = &[];
+const EXCLUDED_FROM_FLOOR: &[(&str, &str)] = &[(
+    "11-fyne-stopwatch",
+    "Fyne GUI example: its generated Go FFI bindings link the Fyne toolkit, whose \
+     build needs X11/OpenGL/GLFW system libraries that the headless Linux CI \
+     runners do not carry, so `sky install` cannot produce a `sky-ffi/` surface \
+     and the project cannot emit there. It emits only on a desktop (macOS) \
+     checkout — measuring it would write a floor no CI run can reproduce, which \
+     is exactly the non-portable golden this list exists to prevent. (A stray \
+     bless from a macOS machine added an 11-fyne-stopwatch row once; that is why \
+     the exclusion is spelled out rather than assumed.)",
+)];
 
 /// The ratchet's corpus: every Sky project DISCOVERED ON DISK, minus the
 /// accounted exclusions.
