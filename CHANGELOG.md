@@ -53,6 +53,32 @@ order, and an app that never calls a builder observes exactly what it observed
 before — verified cell-by-cell against the measured baseline
 (`docs/coverage/config-matrix.json`).
 
+## v0.21.1 — a codegen fix the nightly caught the morning after v0.21.0 (2026-08-20)
+
+**Codegen fix (the reason to upgrade).** An **annotated row-polymorphic
+record-update function** passed as a value to a typed higher-order function
+(`List.map bump xs`, where `bump : { r | n : Int } -> { r | n : Int }` updates a
+record and `xs`'s element type is concrete) emitted the callback with an erased
+Go signature while the call site emitted the monomorphised `rt.List_mapT` twin —
+so the generated Go failed `go build` with a `func(any) any` vs
+`func(Rec) Rec` type error. It type-checked, so `sky check`/`sky build` surfaced
+it as a confusing Go error rather than a clean Sky one; no program that built
+was ever wrong from it. The reference is now typed by the symbol's real emitted
+signature, so it falls back to the erased `rt.List_mapAny` and builds. v0.21.0
+shipped with this; v0.21.1 does not.
+
+**Why v0.21.0 missed it.** The trigger is a synthetic combination real code
+avoids (all 60 examples and two production apps built and deployed fine); only
+the exhaustive **T2 build-run corpus**, which is nightly-only, exercises it — and
+it caught it the morning after the tag. The release gate now runs the full suite
+(CLAUDE.md §0.2.1), so a gate we own can no longer find a regression one tier too
+late.
+
+**Gate hygiene (no user-facing effect).** `11-fyne-stopwatch` (a Fyne GUI
+example whose FFI can't build on headless CI) is excluded from the coerce-floor
+floor with a reason, undoing a stray macOS re-bless that broke the nightly
+example-sweep.
+
 ## v0.21.0 — one config front door, and telemetry you can afford to keep (2026-08-19)
 
 > **Upgrade note.** Two things change behaviour. (1) The `[auth]` `sky.toml`
