@@ -244,6 +244,49 @@ Concrete cadence:
     gate suite (`cargo run -p xtask -- <gate>`) + example-sweep +
     verify-cli, in background, notified when complete
 
+### 0.2.1 Merge-to-main + release gate — the FULL suite, nothing deferred to nightly — INVIOLABLE
+
+The per-commit `ci-green` fan-in runs a deliberately **light** tier so
+commits stay fast, and the heaviest gates — the **T2 `behaviour-corpus`**
+(which `go build`s **and runs** every combinatorial corpus fixture), the
+**full `example-sweep`** (build **and run** every example, not just
+`sky check`), `--verify-falsifiers`, and the coverage census — run **only in
+the nightly**. That split is correct for a commit. It is **wrong** for a
+merge to `main` or a release: those are the points where *everything we know
+how to test must be green* is the gate.
+
+**The lesson (2026-08-20), which is why this rule exists.** A `record_update`
+typed-emit **codegen regression shipped in v0.21.0**. It type-checked, all 60
+examples built, and both sky-lang.org and darraghstudio deployed cleanly —
+because the trigger (an annotated row-poly record-update function passed to a
+typed `List.map`) is a synthetic pattern real code avoids. Per-commit CI and
+the Release gate ran the light tier and passed. The **nightly** T2
+behaviour-corpus caught it — the morning *after* the release, after users
+could already `sky upgrade` to it. A gate we own found a defect a gate we own
+should have blocked, one tier too late.
+
+So before I **merge to `main`** or **cut / move a release tag**, the gate is
+the FULL suite run to green — not the per-commit subset. Run it locally in the
+background (per §0.2's milestone cadence), *or* confirm the workflow itself
+runs every tier; then hold the merge/tag until green:
+
+1. `cargo test --workspace` (every crate, incl. `sky` + `ty`).
+2. The whole xtask gate suite at **every tier** — `cargo run -p xtask --
+   harness` (T1) **and** the T2 `behaviour-corpus` (`corpus --run` / the T2
+   harness), plus `--verify-falsifiers` (refresh **and** prove the falsifier
+   proofs) and the census (`config-surface`, `denominators`,
+   `coverage-ledger`, `config-migration`).
+3. The **full** `scripts/example-sweep.sh` — build **and run** every example
+   on a clean slate (incl. the Std.Db / FFI / Postgres examples), not `sky
+   check`.
+4. `scripts/conformance.sh` + `verify-cli`.
+
+**A gate that only runs nightly still gates the release.** If a tier is not
+wired into the release/merge gate, either wire it in or run it locally and
+hold the tag until it is green — never rely on the next nightly to find a
+regression after the tag is public. "The per-commit gate was green" is **not**
+a release verdict; the full suite is.
+
 ### 0.3 Architectural-mechanism citation — INVIOLABLE for compiler workflows
 
 A compiler-level workflow that proposes closing a strategic goal via
