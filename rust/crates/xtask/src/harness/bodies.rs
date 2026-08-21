@@ -2963,7 +2963,15 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// 151 -> 153: `sky config migrate` shipped — a new CLI verb and a new
 /// registered `config-migrate` gate — which added two surfaces (`surfaces_total`
 /// 147 -> 149), so `surfaces.len() + 4` is now 153.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 154;
+///
+/// 154 -> 155: the Sky.Spa partition landed the `Std.Spa` stdlib module
+/// (`sky-stdlib/Std/Spa.sky`, config/app), which adds one surface
+/// (`surfaces_total` 150 -> 151), so `surfaces.len() + 4` is now 155. The new
+/// surface is registered-gate-uncovered by design — `Std.Spa` is config/Task-
+/// shaped (see the DARK_MODULE_CEILING note in `corpus/stdlib.rs`) and is
+/// covered instead by the wasm render harness (`spa-counter/run_headless.cjs`)
+/// and the kernel-surface gate.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 155;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
