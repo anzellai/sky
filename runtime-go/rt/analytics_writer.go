@@ -1,3 +1,5 @@
+//go:build !js
+
 // analytics_writer.go — the buffered, single-writer, batching path for
 // Std.Analytics events.
 //

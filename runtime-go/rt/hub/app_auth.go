@@ -1,3 +1,5 @@
+//go:build !js
+
 // App-auth callback registry for the Sky Console Hub (v0.16.4 B8).
 //
 // When `sky console serve --auth app` is run, the hub gates every

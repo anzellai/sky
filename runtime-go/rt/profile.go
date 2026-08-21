@@ -1,3 +1,5 @@
+//go:build !js
+
 // profile.go — opt-in runtime profiling for `sky run --profile`.
 //
 // A Sky app hanging or spiking CPU/memory is otherwise opaque to a dev without

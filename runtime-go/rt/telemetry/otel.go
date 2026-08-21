@@ -1,3 +1,5 @@
+//go:build !js
+
 package telemetry
 
 // OpenTelemetry trace export — Phase 1.1a Step 7.

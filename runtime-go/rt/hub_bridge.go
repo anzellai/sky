@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — hub-store bridge for the bundled console.
 //
 // v0.16.4 Option B B4. When the bundled console (sky-bundled/console)

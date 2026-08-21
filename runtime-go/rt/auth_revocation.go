@@ -1,3 +1,5 @@
+//go:build !js
+
 // auth_revocation.go — PULL-model user revocation + suspension for Std.Auth.
 //
 // The model (user-confirmed, single gate, PULL). Revocation and suspension are

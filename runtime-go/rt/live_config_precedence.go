@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Where the precedence of a Sky.Live setting is decided — for all of them, in

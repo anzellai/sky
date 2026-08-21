@@ -1,3 +1,5 @@
+//go:build !js
+
 // console_analytics.go — the Std.Analytics console API endpoint.
 //
 // Serves GET /_sky/console/api/analytics for the console's Analytics

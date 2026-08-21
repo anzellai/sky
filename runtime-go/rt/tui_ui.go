@@ -1,3 +1,5 @@
+//go:build !js
+
 // Sky.Tui — Element-shape variant.
 //
 // Tui.app accepts a `view : Model -> Element Msg` (typed Std.Ui tree)

@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // v0.16.0 PR 3 — Sky Console production auth gate.

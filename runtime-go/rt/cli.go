@@ -1,3 +1,5 @@
+//go:build !js
+
 // Sky.Cli — line-oriented TEA backend.
 //
 // A Sky.Cli program follows the same shape as Sky.Live (init / update /

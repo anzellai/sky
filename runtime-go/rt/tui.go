@@ -1,3 +1,5 @@
+//go:build !js
+
 // Sky.Tui — full-screen terminal UI backend.
 //
 // A Sky.Tui program follows the same TEA shape as Sky.Live / Sky.Cli

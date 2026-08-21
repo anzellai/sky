@@ -1,3 +1,5 @@
+//go:build !js
+
 // panic_log.go — the ONE place the Go runtime decides what a recovered
 // panic is allowed to say out loud.
 //

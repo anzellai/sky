@@ -1,3 +1,5 @@
+//go:build !js
+
 // live_revocation.go — the Sky.Live side of PULL-model revocation: the
 // session<->user binding, the in-funnel access gate, and eviction.
 //

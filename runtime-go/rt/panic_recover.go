@@ -1,3 +1,5 @@
+//go:build !js
+
 // panic_recover.go — top-level Sky main() panic→Err recovery.
 //
 // Cycle 6 PC (v0.15.43) closes the synchronous-panic class. Today

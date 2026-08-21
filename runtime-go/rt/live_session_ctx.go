@@ -1,3 +1,5 @@
+//go:build !js
+
 // live_session_ctx.go — goroutine-local liveSession lookup
 // (Cycle 4 HS prereq).
 //

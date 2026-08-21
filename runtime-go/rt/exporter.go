@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // HubExporter — in-process OTLP push pipeline (v0.16.1 PR 4).

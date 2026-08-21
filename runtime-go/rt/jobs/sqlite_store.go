@@ -1,3 +1,5 @@
+//go:build !js
+
 package jobs
 
 // SQLite-backed job store. Phase 1.3.x — gives single-host Sky

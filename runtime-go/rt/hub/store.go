@@ -1,3 +1,5 @@
+//go:build !js
+
 package hub
 
 // SQLite-backed hot store for the hub. Schema mirrors the embedded

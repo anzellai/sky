@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // postgresql.conf for a cluster that shares a machine with the app it serves.

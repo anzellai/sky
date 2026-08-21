@@ -1,3 +1,5 @@
+//go:build !js
+
 // response_cookies.go — the one place a SkyResponse's headers (and, in
 // particular, its cookies) are turned into wire headers.
 //

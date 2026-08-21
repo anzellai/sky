@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Phase 1.1b — /_sky/console dashboard.

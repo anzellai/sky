@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 import "sync/atomic"

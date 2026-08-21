@@ -1,3 +1,5 @@
+//go:build !js
+
 // subapp_inprocess.go — in-process Sky.Live sub-app mounting (v0.16.1 PR10-B/C).
 //
 // `MountLiveSubAppInProcess(parentMux, prefix, cfg)` lets a host

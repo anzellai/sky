@@ -1,3 +1,5 @@
+//go:build !js
+
 // server_stream.go — Sky.Http.Server.Stream server-side streaming
 // HTTP response runtime (Cycle 4 HS-Server).
 //

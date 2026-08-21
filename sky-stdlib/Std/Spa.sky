@@ -1,0 +1,62 @@
+-- | Std.Spa — client-side TEA (Sky.Spa), the browser counterpart of Std.Live.
+--
+-- An app is written EXACTLY like a Sky.Live app — the same `Model`, `Msg`,
+-- pure `update`, and `view` over the renderer-agnostic `Std.Html` /
+-- `Std.Ui` — but the TEA loop runs on the CLIENT, compiled to
+-- `GOOS=js GOARCH=wasm`. Pure `update` branches run in the browser with zero
+-- round-trip; there is no server session, no SSE.
+--
+-- ```elm
+-- main =
+--     Spa.app
+--         (Spa.config
+--             { init = Model.init, update = Update.update, view = View.view }
+--         )
+-- ```
+--
+-- Every binding is an `Ffi.kernel` alias carrying its real HM signature, so the
+-- type-checker, LSP hover, and `sky doc` all read this ONE file. The runtime
+-- kernels are `rt.Spa_config` / `rt.Spa_app` (spa_core.go); the client driver
+-- is `live_wasm.go` (`//go:build js`).
+--
+-- This is the experimental `exp/spa` surface: minimal on purpose (config + app,
+-- init/update/view). Routing, subscriptions, and an explicit server boundary
+-- are the later phases in `docs/skyspa/design.md`.
+module Std.Spa exposing
+    ( AppConfig
+    , app
+    , config
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Std.Html exposing (Html)
+
+-- | The built Sky.Spa app configuration. Opaque — produced by `config`,
+-- consumed by `app`. Phantom `model` / `msg` thread the TEA types through.
+type AppConfig model msg
+    = AppConfig_OPAQUE
+
+
+-- | Build the client app config from the three required fields.
+--
+--     main =
+--         Spa.app
+--             (Spa.config
+--                 { init = init, update = update, view = view }
+--             )
+config :
+    { init : a -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg )
+    , view : model -> Html msg
+    }
+    -> AppConfig model msg
+config =
+    Ffi.kernel "Spa_config"
+
+
+-- | Run the Sky.Spa client app. Returns a `Task` so `main` forces it exactly
+-- like `Live.app` — the wasm driver then owns the browser event loop.
+app : AppConfig model msg -> Task Error ()
+app =
+    Ffi.kernel "Spa_app"

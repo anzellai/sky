@@ -1,3 +1,5 @@
+//go:build !js
+
 // telemetry_namespace.go — `service.namespace` context propagation (v0.16.1 PR10-D).
 //
 // When multiple Sky.Live apps run in the same process (one host via
