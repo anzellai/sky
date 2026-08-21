@@ -52,6 +52,43 @@ already-renderer-agnostic `Element`, desktop/mobile-first, with an *explicit* (n
 auto-derived) server boundary for v1 — is sound and worth building. The **thesis
 as first written, and the production-web pillar, are not yet earned.**
 
+## 0.1 The auto-split measurement — FALSIFIED for real apps
+
+The G1 prototype ran (a reproducible classifier, `spike/spa_classify.py`, over
+**111 `update` branches across 8 real TEA apps**, 5 with real persistence). The
+result kills the *automatic* split as a transparent, no-API-routes mechanism:
+
+- **Ceiling: 47% of branches (52/111) classify cleanly; it does not improve under
+  the real-persistent-app projection.** The clean 47% is almost entirely pure-ui
+  setters (form fields, nav, toggles); the collapsing 53% *is the entire
+  persistence surface* of the apps.
+- **The design's own §4 mechanism — "classify by the returned Cmd's effect target"
+  — is structurally blind.** Because Sky.Live runs `update` *server-side*, real
+  apps do blocking effects **inline in the model expression and return
+  `Cmd.none`** (verified: `examples/13-skyshop/src/Main.sky:248,251,295` call
+  `refreshProducts` — which reads the DB — then return `Cmd.none`;
+  `12-skyvote`/`27-multi-session-chat` do the same). A per-branch classifier keyed
+  on the `Cmd` would see **98% "pure"** and ship the DB read path to the client.
+  **The effects are not in the AST's `Cmd` at all** — so "the AST already knows
+  which update is effectful" does **not** hold for real Sky code.
+- **Write-sets are inter-procedural where it matters** — `skyshop` delegates 14
+  branches, `skyvote` 12, `job-queue` 6, to `handle*` helpers → whole-model
+  write-set → "reject everything."
+- **0 of 8 apps have a `{ui, data}`-separated model** — all flat; the disjointness
+  the thesis needs is retrofit into every one.
+- **Mixed `Cmd.batch` (the case §0 led with) is rare (2 branches)** — the real,
+  common killer is effects-hidden-from-the-`Cmd`, not batches.
+
+**Verdict: the auto-split is not "still Sky.Live with smart logic" — it requires a
+new dialect** today's Sky apps do not use: a `{ui,data}` model, no optimistic
+writes to `data`, no boundary-crossing batches, **and effects moved out of the
+model position into `Cmd`/`Task`** (a rewrite of the sync-DB idiom of every real
+persistent app in the corpus). So **v1 uses an explicit boundary, full stop**;
+auto-RPC (former Phase 6) is **struck**, not deferred. The realistic Sky.Spa is a
+client renderer + explicit, author-declared server calls — its win is one
+language, one type system, one `Element`, and a shared `Codec` across the wire,
+not an effect-partition oracle.
+
 ## 1. Thesis (as originally stated — see §0 for the correction)
 
 > The original headline below is retained for the record; §0 documents why it does
@@ -283,11 +320,13 @@ pillar are what actually gate the direction.
 | **3. Runtime-partition** | split `live.go` → `live_core.go` + `live_server.go`; build-tag `rt` for `js`; single-threaded wasm effect interpreter over `cmdT`. **Extraction only, no behavior change**; gated by the full example sweep + a real Sky.Live app per CLAUDE.md §0.2.1 | |
 | **4. Client renderer** | `Element→DOM` renderer reusing `__skyApplyPatches` focus/cursor logic; client-side `diffTrees` | |
 | **5. Reconciliation** | per-`data`-field versioning / optimistic-concurrency tokens; a typed `Conflict` variant surfaced to the author (concurrent `data` writes are **not** trivially mergeable — G4) | |
-| **6. AST boundary (research)** | *only if 1c says reachable* — per-branch effect classification + the disjointness check; the server **ignores the client read-set** for anything authoritative and re-reads from the DB; any `Db`/secret-reaching branch must pass a **required typed authz combinator** (G3) | conditional |
+| ~~6. AST boundary (auto-RPC)~~ | **STRUCK** — 1c falsified it (§0.1): 47% ceiling, and the classify-by-`Cmd` mechanism is blind to inline effects. Not deferred; removed. | ✗ struck |
 
 Phases 2–5 are a bounded, shippable **explicit-boundary** Sky.Spa (desktop/mobile
-first). Phase 6 (the auto-split) is gated on the 1c verdict and is a research
-track, not a delivery commitment.
+first). The auto-split (former Phase 6) is **struck** — the 1c measurement
+(§0.1) showed it is not reachable without a new effect dialect. Sky.Spa's
+value proposition is the client renderer + explicit boundary + shared types, not
+compiler-derived routing.
 
 ## 9. Evidence (Phase 1, measured on `exp/spa`)
 
