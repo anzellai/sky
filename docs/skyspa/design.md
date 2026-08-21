@@ -1,10 +1,62 @@
 # Sky.Spa — client-side TEA, statically partitioned (design)
 
-> **Status:** experimental (`exp/spa`). Phase 1 (de-risk) complete with measured
-> evidence (see [§9](#9-evidence)). This document is the design of record; it is
-> grounded in the *actual* Sky surfaces (file:line cited), not aspiration.
+> **Status:** experimental (`exp/spa`). Phase 1 de-risk done — and an adversarial
+> grill then found **two BLOCKING realities** the first spike dodged. Read §0
+> first: the thesis as originally written does **not** hold for real apps, and the
+> production-web path is **not** de-risked. The rest of this document is the
+> design of record with those corrections folded in; every load-bearing claim is
+> grounded in *actual* Sky surfaces (file:line), verified against the code.
 
-## 1. Thesis
+## 0. Phase-1 grill findings — the two blocking realities (READ FIRST)
+
+The Phase-1 spike (`docs/skyspa/spike/`) proved a *hand-written, reflection-free*
+Go→wasm TEA loop runs client-side. That was necessary but it **dodged what real
+Sky-emitted code actually is**. An adversarial grill, verified against the code,
+found two walls:
+
+1. **The TinyGo web-bundle lever is dead (G2 — verified).** Real Sky dispatch is
+   reflection-native: `msg_dispatch.go`'s own header says *"every TEA-shaped
+   backend routes every user event through a reflection-driven adapter (`sky_call`
+   / `adaptFuncValue` / `reflect.MakeFunc`)"*; `Std.Codec.auto` is reflection-driven
+   (`runtime-go/rt/codec_auto.go`), and `reflect` appears in **41 of the rt
+   files**. TinyGo implements neither `reflect.MakeFunc` nor `reflect.Value.Call`.
+   So the only named lever to get the 579 KB wasm down to web-viable size (~30 KB)
+   **cannot compile the real core**. Production web therefore requires *either* a
+   reflection-free rewrite of dispatch+codec+ADT (large, touches the shipping
+   runtime) *or* a from-scratch Sky→JS backend (enormous). **Standard Go→wasm
+   works but is desktop/mobile-embed weight; web is unproven.**
+
+2. **The "compile-time-sound split" thesis is not computable as written (G1 —
+   verified).** It depends on the compiler knowing, per `update` branch, the
+   *effect target* + read-set + write-set. **None of that exists:** every effect
+   is an opaque `Task Error a` (`sky-stdlib/Sky/Core/Task.sky`) with no
+   server/client distinction, and a grep of `ty`/`hir` for any effect
+   classification returns empty. Building it is greenfield whole-program dataflow,
+   and it is **undecidable** through `Task.andThen`/`Cmd.batch` (one branch can be
+   pure-write *and* server *and* client at once — `Cmd.batch` is used across 6
+   examples), inter-procedural `update` helpers, and **row-polymorphic
+   record-update** (`{ m | x = … }` lowers to a reflective result typed `any` —
+   `lower.rs`; 19-skyforum's `Update.sky` alone has 17 record-update sites), where
+   the write-set becomes unrecoverable → conservative fallback "writes the whole
+   Model" → every server branch conflicts with every client branch → the check
+   degenerates to "reject everything." Worse, the disjoint-`ui`/`data` rule
+   **bans the optimistic update** (a pure branch appending to `data.comments`
+   before the server confirms) — the single most important SPA pattern — or forces
+   the per-field versioning/merge machinery §4.1 claimed to avoid.
+
+**Consequence for the plan:** Phase 2 (`live.go` surgery) is the *low-risk* part
+and is **deferred** — doing it first is motion, not progress. The real next work
+is de-risking G1 and G2 for real and restating the thesis honestly (see the
+revised [§8](#8-staged-plan)). The **direction** — a client renderer over the
+already-renderer-agnostic `Element`, desktop/mobile-first, with an *explicit* (not
+auto-derived) server boundary for v1 — is sound and worth building. The **thesis
+as first written, and the production-web pillar, are not yet earned.**
+
+## 1. Thesis (as originally stated — see §0 for the correction)
+
+> The original headline below is retained for the record; §0 documents why it does
+> not hold for real apps as written. A defensible restatement is at the end of this
+> section.
 
 **Sky.Spa is the Sky.Live TEA loop, statically partitioned so the pure part runs
 on the client.** One Sky program; the compiler decides what runs where. The one
@@ -21,6 +73,18 @@ TS/React has a backend but no shared type system across the wire (OpenAPI/TS
 drift); server-driven frameworks (Sky.Live, LiveView) keep the loop on the server
 and pay the SSE/session/sticky tax. Sky.Spa is the only point that gets the
 client loop *and* a proven-sound boundary.
+
+**Honest restatement (post-grill).** The auto-derived, compile-time-sound split
+is a *research goal*, not a v1 feature, and it holds — if ever — only for a narrow
+subset (closed-record models, disjoint `ui`/`data`, no optimistic writes to
+`data`, no boundary-crossing `Cmd.batch`). For a shippable Sky.Spa the boundary is
+**explicit**: the author declares which effects are server calls (as they would in
+Sky.Live), the client owns `ui`, and concurrent `data` writes are reconciled with
+**per-field versioning** (not "trivially"). The compiler's contribution to
+soundness is what it *already* gives — one type system, one `Element`, one shared
+`Codec` across the wire — not a new effect-partition oracle. Whether the
+auto-split is ever reachable is decided by the G1 feasibility prototype
+([§8](#8-staged-plan)), not asserted here.
 
 ## 2. Why — the scalability argument
 
@@ -206,19 +270,24 @@ on the user's machine → **untrusted**. Therefore, unavoidably:
 
 ## 8. Staged plan
 
+Reordered post-grill: the two blocking unknowns (§0) are de-risked **before** any
+`live.go` surgery, because the surgery is the low-risk part and the thesis + web
+pillar are what actually gate the direction.
+
 | Phase | Deliverable | Status |
 |---|---|---|
-| **1. De-risk** | wasm feasibility + bundle number + headless renderer/loop proof + arch map | ✅ **done** ([§9](#9-evidence)) |
-| **2. Runtime-partition** | split `live.go` → `live_core.go` (portable) + `live_server.go`; build-tag `rt` for `js`; wasm effect interpreter over `cmdT` | next |
-| **3. Emit path** | `Spa.app` config surface + a `spa` emit target that imports the portable core; `sky build --target spa` → `main.wasm` + JS glue; **decide web bundle lever** (TinyGo vs Sky→JS) on evidence | |
+| **1. De-risk (loop)** | wasm feasibility + bundle number + headless renderer/loop proof + arch map | ✅ done ([§9](#9-evidence)) |
+| **1b. De-risk G2 (web bundle)** | empirically confirm the reflection-based core cannot TinyGo-compile (verified by code inspection; a TinyGo compile attempt is the empirical seal); **record the web decision** — reflection-free rewrite *vs* Sky→JS *vs* web out-of-scope (desktop/mobile only) | ⚠️ **blocking — needs the decision** |
+| **1c. De-risk G1 (thesis)** | prototype the effect-classification + read/write-set pass on `19-skyforum`/`13-skyshop`; **measure** what fraction of real `update` branches classify cleanly vs collapse to whole-model write-set; verdict: is the auto-split reachable or empty? | ⚠️ **blocking** |
+| **2. Emit path (explicit boundary)** | `Spa.app` config + a `spa` emit target importing a portable core; author-declared server calls (explicit `Http`, shared `Codec`); `sky build --target spa` → `main.wasm` + JS glue | after 1b/1c |
+| **3. Runtime-partition** | split `live.go` → `live_core.go` + `live_server.go`; build-tag `rt` for `js`; single-threaded wasm effect interpreter over `cmdT`. **Extraction only, no behavior change**; gated by the full example sweep + a real Sky.Live app per CLAUDE.md §0.2.1 | |
 | **4. Client renderer** | `Element→DOM` renderer reusing `__skyApplyPatches` focus/cursor logic; client-side `diffTrees` | |
-| **5. AST boundary** | per-branch effect classification + read/write-set analysis in `hir`/`ty`/`lower`; the **disjointness check**; explicit `Http` boundary first | |
-| **6. Auto-RPC** | auto-generated server-effect endpoints (read-set in, write-set delta out) + required per-branch trust hook | |
+| **5. Reconciliation** | per-`data`-field versioning / optimistic-concurrency tokens; a typed `Conflict` variant surfaced to the author (concurrent `data` writes are **not** trivially mergeable — G4) | |
+| **6. AST boundary (research)** | *only if 1c says reachable* — per-branch effect classification + the disjointness check; the server **ignores the client read-set** for anything authoritative and re-reads from the DB; any `Db`/secret-reaching branch must pass a **required typed authz combinator** (G3) | conditional |
 
-Each phase is additive and independently verifiable. Phase 2 is surgery on the
-most critical runtime file (`live.go`) — it is **extraction only, no behavior
-change** (Sky.Live keeps importing the extracted core), gated by the full example
-sweep + a real Sky.Live app per CLAUDE.md §0.2.1.
+Phases 2–5 are a bounded, shippable **explicit-boundary** Sky.Spa (desktop/mobile
+first). Phase 6 (the auto-split) is gated on the 1c verdict and is a research
+track, not a delivery commitment.
 
 ## 9. Evidence (Phase 1, measured on `exp/spa`)
 
