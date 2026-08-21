@@ -79,15 +79,24 @@ result kills the *automatic* split as a transparent, no-API-routes mechanism:
 - **Mixed `Cmd.batch` (the case §0 led with) is rare (2 branches)** — the real,
   common killer is effects-hidden-from-the-`Cmd`, not batches.
 
-**Verdict: the auto-split is not "still Sky.Live with smart logic" — it requires a
-new dialect** today's Sky apps do not use: a `{ui,data}` model, no optimistic
-writes to `data`, no boundary-crossing batches, **and effects moved out of the
-model position into `Cmd`/`Task`** (a rewrite of the sync-DB idiom of every real
-persistent app in the corpus). So **v1 uses an explicit boundary, full stop**;
-auto-RPC (former Phase 6) is **struck**, not deferred. The realistic Sky.Spa is a
-client renderer + explicit, author-declared server calls — its win is one
-language, one type system, one `Element`, and a shared `Codec` across the wire,
-not an effect-partition oracle.
+**Verdict: the auto-split is not "still Sky.Live with smart logic" *as it applies
+to today's apps* — but it is not dead either.** What the measurement falsified is
+the *weak* mechanism (classify a branch by its returned `Cmd`) on apps written in
+the *inline-effect* idiom. A **stronger mechanism survives it** — trace `Task` in
+the branch **body** (the effect is visible at the `Task.run` site, even though the
+`Cmd` looks pure) — and it becomes clean and sound once the app is written to a
+**mandated dialect**: `Model = { ui, data }` **and** effects only via `Cmd`/`Task`
+(the Elm discipline, no inline `Task.run` in `update`). That full mechanism — the
+body-`Task`-trace, the kernel client/server table, the dialect compile-gates, the
+generated RPC, and the honest residuals (optimistic-write reconciliation, authz) —
+is specified in **[auto-split.md](auto-split.md)**.
+
+So the accurate framing: **v1 uses an explicit boundary** (author-declared server
+calls); **v2 is the dialect + auto-split** of `auto-split.md`, and **v1 apps
+written in the dialect are forward-compatible** with it. The auto-RPC is a **v2
+target reached by the stronger mechanism**, not struck. Sky.Spa's near-term win is
+one language, one type system, one `Element`, and a shared `Codec` across the wire;
+its v2 win is the compiler-derived split on top of that.
 
 ## 1. Thesis (as originally stated — see §0 for the correction)
 
@@ -320,13 +329,14 @@ pillar are what actually gate the direction.
 | **3. Runtime-partition** | split `live.go` → `live_core.go` + `live_server.go`; build-tag `rt` for `js`; single-threaded wasm effect interpreter over `cmdT`. **Extraction only, no behavior change**; gated by the full example sweep + a real Sky.Live app per CLAUDE.md §0.2.1 | |
 | **4. Client renderer** | `Element→DOM` renderer reusing `__skyApplyPatches` focus/cursor logic; client-side `diffTrees` | |
 | **5. Reconciliation** | per-`data`-field versioning / optimistic-concurrency tokens; a typed `Conflict` variant surfaced to the author (concurrent `data` writes are **not** trivially mergeable — G4) | |
-| ~~6. AST boundary (auto-RPC)~~ | **STRUCK** — 1c falsified it (§0.1): 47% ceiling, and the classify-by-`Cmd` mechanism is blind to inline effects. Not deferred; removed. | ✗ struck |
+| **6. Dialect + auto-split (v2)** | the `{ui,data}` + effects-via-`Cmd` dialect (compile-gated) + the body-`Task`-trace partition + generated RPC — full mechanism in **[auto-split.md](auto-split.md)**. Falsified only for the *weak* classify-by-`Cmd` mechanism on inline-effect apps; reachable via the stronger body-trace mechanism under the dialect. | v2 target |
 
 Phases 2–5 are a bounded, shippable **explicit-boundary** Sky.Spa (desktop/mobile
-first). The auto-split (former Phase 6) is **struck** — the 1c measurement
-(§0.1) showed it is not reachable without a new effect dialect. Sky.Spa's
-value proposition is the client renderer + explicit boundary + shared types, not
-compiler-derived routing.
+first). Phase 6 is the **v2 auto-split** — the classify-by-`Cmd` mechanism was
+falsified (§0.1), but the body-`Task`-trace mechanism under a mandated dialect is
+reachable (`auto-split.md`), and v1-dialect apps are forward-compatible with it.
+Sky.Spa's near-term value is the client renderer + explicit boundary + shared
+types; its v2 value is the compiler-derived split.
 
 ## 9. Evidence (Phase 1, measured on `exp/spa`)
 
