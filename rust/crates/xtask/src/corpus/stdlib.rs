@@ -604,7 +604,18 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// behaviour is covered instead by `runtime-go/rt/sky_config_test.go` (the
 /// precedence gate + mutation proof + behavioural oracle) and
 /// `rust/crates/project/tests/sky_config_entry.rs` (discovery / DCE / emission).
-pub const DARK_MODULE_CEILING: usize = 63;
+///
+/// Raised 63 → 64 (2026-08-22) for `Std.Spa`: it is the client-side TEA entry
+/// module (Sky.Spa), config-shaped in exactly the same way. Its surface is
+/// `config` (produces an opaque `AppConfig` consumed for its EFFECT by
+/// `Spa_app`) + `app` (returns `Task Error ()`, forced at `main`), so the
+/// Family-S value corpus has no value to assert on. Its behaviour is covered
+/// instead by the wasm render harness (`spa-counter/run_headless.cjs` — a real
+/// Sky.Spa app compiled to `GOOS=js GOARCH=wasm`, headless DOM, init/+1/Reset/-1
+/// transitions asserted) and the kernel-surface gate
+/// (`rust/crates/project/tests/kernel_surface.rs`, which pins `Std/Spa.sky`'s
+/// `config`/`app` bindings + `Spa_config`/`Spa_app` runtime symbols in sync).
+pub const DARK_MODULE_CEILING: usize = 64;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`

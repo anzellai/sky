@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 150 |
+| surfaces | 151 |
 | covered by the new corpus (>= Asserted) | 135 |
 | verdict `stronger` | 130 |
-| verdict `equal` | 20 |
+| verdict `equal` | 21 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
-| stdlib modules (denominator) | 88 |
-| stdlib entries (denominator) | 1815 |
+| stdlib modules (denominator) | 89 |
+| stdlib entries (denominator) | 1818 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 6 | 6.8% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 807 | 44.5% |
-| symbols unreferenced under the generous rule | 726 | 40.0% |
+| stdlib modules imported by nothing | 7 | 7.9% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 810 | 44.6% |
+| symbols unreferenced under the generous rule | 729 | 40.1% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -51,6 +51,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `stdlib.Sky.Core.Io`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Live.Console`
+- `stdlib.Std.Spa`
 
 ## Sole ownership
 
@@ -216,6 +217,7 @@ None.
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Spa` | stdlib | None | None | equal |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |

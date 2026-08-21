@@ -38,6 +38,10 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
         &["app", "config", "route", "api", "lifecycle", "withHead"],
     ),
     (
+        "sky-stdlib/Std/Spa.sky",
+        &["app", "config"],
+    ),
+    (
         "sky-stdlib/Std/Tui.sky",
         &["app", "program", "config", "withOnKey"],
     ),
