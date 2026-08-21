@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Std.Jobs kernel bindings. Phase 1.3 — bridges Sky source

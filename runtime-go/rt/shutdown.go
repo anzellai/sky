@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Process-wide shutdown-hook registry. Multiple subsystems (Sky.Live

@@ -1,3 +1,5 @@
+//go:build !js
+
 // Sky terminal runtime safety net — guarantees the user's shell is
 // returned to a usable state regardless of how the program ends.
 //

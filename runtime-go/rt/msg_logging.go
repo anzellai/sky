@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Diff-based Msg logging — Phase 1.1a Step 5. The Tick noise killer.

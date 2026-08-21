@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — Sky.Cli typed-builder config kernels (v0.19 Path A).
 //
 // Mirror of live_config.go / tui_config.go for the one-shot CLI backend.

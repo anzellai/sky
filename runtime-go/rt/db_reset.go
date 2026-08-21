@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — data-reset / table-drop kernels for `sky db reset` / `sky db drop`.
 //
 // Both take a `Db` connection and a `List String` of table names and return a

@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — codec-driven DB bridge for Std.Db.Store.
 //
 // A `Codec a` (Std.Codec) maps a record to/from a JSON object; this bridge turns

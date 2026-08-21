@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // trace_ring_processor.go — bridges OTEL spans into the Sky Console

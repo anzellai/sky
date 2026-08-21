@@ -1,3 +1,5 @@
+//go:build !js
+
 // live_redis_broker.go — cross-instance pub/sub Broker (Phase 2).
 //
 // The in-process *topicRegistry (live_topics.go) fans a broadcast out to

@@ -1,3 +1,5 @@
+//go:build !js
+
 // websocket.go — Sky.Core.WebSocket client-side runtime (v0.15.46).
 //
 // Outbound WebSocket connections from a Sky program: open a socket,

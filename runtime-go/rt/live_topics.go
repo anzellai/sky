@@ -1,3 +1,5 @@
+//go:build !js
+
 // live_topics.go — Sky.Live pub/sub registry (Cycle 3 P46).
 //
 // In-process, ref-counted topic registry. Subscribers register a unique

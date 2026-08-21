@@ -1,3 +1,5 @@
+//go:build !js
+
 // Sky.Tui — control-byte sanitisation for user-supplied text.
 //
 // Why this matters:

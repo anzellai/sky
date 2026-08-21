@@ -1,3 +1,5 @@
+//go:build !js
+
 // Public accessors used by the inline console_app subpackage to
 // hydrate its initial Model directly from rt-side state instead of
 // blocking the first HTTP render on a localhost loopback fetch.

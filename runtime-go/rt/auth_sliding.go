@@ -1,3 +1,5 @@
+//go:build !js
+
 // auth_sliding.go — opt-in rolling JWT re-issue with an absolute-lifetime cap.
 //
 // The problem this solves. A fixed-expiry auth token forces a hard choice:

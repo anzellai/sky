@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — Sky.Tui typed-builder config kernels (v0.19 Path A).
 //
 // Mirror of live_config.go for the terminal backend. `Tui.config { init,

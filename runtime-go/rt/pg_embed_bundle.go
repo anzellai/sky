@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Where the embedded PostgreSQL comes from, and how the supervisor decides

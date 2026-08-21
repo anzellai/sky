@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // CSRF protection — Phase 1.2. Default-on for Sky.Live's POST

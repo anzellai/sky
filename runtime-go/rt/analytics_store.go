@@ -1,3 +1,5 @@
+//go:build !js
+
 // analytics_store.go — Std.Analytics SQLite persistence.
 //
 // Events are persisted to a SQLite store so the console can render history +

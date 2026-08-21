@@ -1,3 +1,5 @@
+//go:build !js
+
 package hub
 
 // OTLP/HTTP receiver. Exposes:

@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Embedded PostgreSQL — the runtime supervisor behind `./app --embed`.

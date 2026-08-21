@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // HubExporter spool — durability layer behind the in-memory ring.

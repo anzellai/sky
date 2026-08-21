@@ -1,3 +1,5 @@
+//go:build !js
+
 // live_store.go — SessionStore abstraction + memory / SQLite / Postgres /
 // Redis implementations. The store persists the raw Go `any` model +
 // rendered VNode tree between HTTP requests for the same session id.

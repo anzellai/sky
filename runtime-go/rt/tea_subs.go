@@ -1,3 +1,5 @@
+//go:build !js
+
 // Subscription manager shared across non-Live TEA backends (Sky.Cli,
 // Sky.Tui, future Sky.Gui). Sky.Live owns its own per-session manager
 // in live.go (different lifetime + locking model — sessions, SSE,

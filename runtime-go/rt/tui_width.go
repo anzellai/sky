@@ -1,3 +1,5 @@
+//go:build !js
+
 // Sky.Tui — display-width + grapheme-cluster helpers.
 //
 // All Sky.Tui code that asks "how wide is this string in cells?" or

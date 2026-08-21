@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — Sky.Live typed-builder config kernels (v0.19 Path A).
 //
 // `Live.app` used to take a row-open record literal; v0.19 replaces that

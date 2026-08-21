@@ -1,3 +1,5 @@
+//go:build !js
+
 package console_app
 
 // register.go — stub remainder of the PR 1 hook shim (v0.16.1 PR10-G).
