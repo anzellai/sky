@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sky.Spa counter</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="wasm_exec.js"></script>
+    <script>
+      // Instantiate the REAL Sky-emitted Sky.Spa app. The TEA loop + renderer
+      // run entirely client-side in wasm — no server.
+      const go = new Go();
+      WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((res) => {
+        go.run(res.instance);
+      });
+    </script>
+  </body>
+</html>
