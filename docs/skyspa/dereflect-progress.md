@@ -97,3 +97,10 @@
   19-skyforum build + serve HTTP 200; standard-Go spa-counter + spa-input
   still render. `gates_measure_a_fresh_compiler` (21), project suite,
   `denominators --check`, `coverage-ledger --check` all PASS.
+
+## D1+D2 DONE (@e825d428, pushed) + D3 plan (consult)
+- D1: typed-closure SPA dispatch (lower.rs try_lower_spa_fns; rt.SpaFns) — server byte-unchanged.
+- D2: TinyGo-clean client carve (option A tag-split; rt_server_kernels.go + stdlib_http_server.go). REAL spa-counter TinyGo-compiles+renders. Bundle 521 KB gz. Sky.Live 09/19 HTTP 200.
+- D3 consult: hand-written codecs DON'T touch codec_auto (no codec rewrite). D3 = ONE mechanism ("apply a boxed Sky func value without reflect" = func(any)any wrap-at-emission + client driver `.(func(any)any)`), at dispatch cold-paths (perform/onInput/onNavigate/Sub.every/param-routes; live_wasm.go:430/431, dom_render_wasm.go:144) AND the codec applicative (JsonDec_map2→pipelineApply; stdlib_extra.go:1190).
+- SIZE IS A CLIFF: TinyGo keeps reflect metadata until ZERO reachable reflect.Value.Call/MakeFunc. Need dispatch (D3a)+codec applicative (D3b)+HtmlToVNode unwrapADTShape ref removed + codec_auto/adt_shape/adaptFuncValue tagged !js (D3c). Measure at D3c.
+- Phases: D3a cold-path dispatch · D3b codec applicative · D3c render+reflect isolation (size unlock, "zero reachable reflect" gate) · D3d(=D4) todos TinyGo + e2e + measure.
