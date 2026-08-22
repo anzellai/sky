@@ -183,6 +183,9 @@ fn emit_type(w: &mut Writer, name: &str, def: &GoTypeDef) {
         GoTypeDef::AdtAlias => {
             w.line(&format!("type {name} = rt.SkyADT"));
         }
+        GoTypeDef::RuntimeAlias(rt_ty) => {
+            w.line(&format!("type {name} = {rt_ty}"));
+        }
         GoTypeDef::SealedIface(variants) => {
             // The sealed interface every variant satisfies.
             w.line(&format!("type {name} interface {{"));

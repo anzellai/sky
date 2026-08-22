@@ -1550,6 +1550,22 @@ fn builtin_ctor_arity(cname: &str) -> usize {
 /// first-appearance order (the Go generic param order `T1, T2, …`). `"any"` is
 /// the per-occurrence wildcard floor (`ty::is_polymorphic`), never a real
 /// generic parameter — a `{ onPress : msg, blob : any }` alias has arity 1.
+/// Stdlib records whose canonical representation IS a runtime struct with
+/// byte-identical fields, keyed by emitted Go name → the `rt` type to alias.
+/// Emitting `type <go_name> = <rt.Type>` (a transparent Go alias) lets a value
+/// the runtime kernel already produces as the `rt` type narrow to the emitted
+/// type by a reflection-free `v.(rt.Type)` assertion, avoiding the reflect
+/// `ConvertibleTo` the distinct-struct form forces (unimplemented under
+/// TinyGo). Extend only when the runtime struct's fields match the record's
+/// exactly (name + Go type); a mismatch would make the alias unsound.
+fn runtime_backed_record(go_name: &str) -> Option<&'static str> {
+    match go_name {
+        // rt.HttpResponse { Status int; Body string; Headers map[string]string }
+        "Sky_Core_Http_HttpResponse_R" => Some("rt.HttpResponse"),
+        _ => None,
+    }
+}
+
 fn record_type_params(fields: &[(String, Ty)]) -> Vec<Name> {
     let mut out: Vec<Name> = Vec::new();
     for (_, t) in fields {
@@ -1608,14 +1624,6 @@ fn emit_type_decl(
 
             if param_vars.is_empty() {
                 // ---- non-generic (baseline, byte-identical) ----
-                let mut items = vec![GoItem::Type(
-                    decl.go_name.clone(),
-                    GoTypeDef::Struct(go_fields.clone()),
-                )];
-                items.push(GoItem::Raw(format!(
-                    "func init() {{ rt.RegisterGobType({}{{}}) }}",
-                    decl.go_name
-                )));
                 let ctor_name = decl.go_name.trim_end_matches("_R").to_string();
                 let params: Vec<String> = go_fields
                     .iter()
@@ -1627,6 +1635,44 @@ fn emit_type_decl(
                     .enumerate()
                     .map(|(i, (f, _))| format!("{f}: p{i}"))
                     .collect();
+                // A record whose canonical representation IS a runtime struct
+                // with identical fields (e.g. Sky.Core.Http.HttpResponse →
+                // rt.HttpResponse): emit a transparent Go alias so a value the
+                // runtime kernel produces as the `rt` type (Http_get returns
+                // `rt.HttpResponse`) narrows to the emitted type by a
+                // reflection-free `v.(rt.HttpResponse)` assertion. The distinct-
+                // struct form forces reflect `ConvertibleTo`, which TinyGo
+                // cannot run (the Sky.Spa/wasm client panics). The ctor + gob
+                // registration stay identical — the alias is transparent, so
+                // building/registering by field name is unchanged.
+                if let Some(rt_ty) = runtime_backed_record(&decl.go_name) {
+                    let items = vec![
+                        GoItem::Type(
+                            decl.go_name.clone(),
+                            GoTypeDef::RuntimeAlias(rt_ty.to_string()),
+                        ),
+                        GoItem::Raw(format!(
+                            "func init() {{ rt.RegisterGobType({}{{}}) }}",
+                            decl.go_name
+                        )),
+                        GoItem::Raw(format!(
+                            "func {ctor_name}({}) {} {{ return {}{{{}}} }}",
+                            params.join(", "),
+                            decl.go_name,
+                            decl.go_name,
+                            assigns.join(", ")
+                        )),
+                    ];
+                    return (items, more);
+                }
+                let mut items = vec![GoItem::Type(
+                    decl.go_name.clone(),
+                    GoTypeDef::Struct(go_fields.clone()),
+                )];
+                items.push(GoItem::Raw(format!(
+                    "func init() {{ rt.RegisterGobType({}{{}}) }}",
+                    decl.go_name
+                )));
                 items.push(GoItem::Raw(format!(
                     "func {ctor_name}({}) {} {{ return {}{{{}}} }}",
                     params.join(", "),
