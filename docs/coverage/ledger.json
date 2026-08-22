@@ -641,7 +641,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1818,
+    "stdlib_entries": 1825,
     "stdlib_modules": 89,
     "surfaces_covered": 135,
     "surfaces_covered_pct": 89.4,
@@ -11788,11 +11788,18 @@
           ]
         },
         "Std.Spa": {
-          "count": 3,
+          "count": 10,
           "symbols": [
             "AppConfig",
+            "Route",
             "app",
-            "config"
+            "config",
+            "getJson",
+            "postJson",
+            "route",
+            "withNotFound",
+            "withOnNavigate",
+            "withRoutes"
           ]
         },
         "Std.Time": {
@@ -12108,8 +12115,8 @@
           ]
         }
       },
-      "count": 729,
-      "pct_of_denominator": 40.1
+      "count": 736,
+      "pct_of_denominator": 40.3
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -12953,11 +12960,18 @@
           ]
         },
         "Std.Spa": {
-          "count": 3,
+          "count": 10,
           "symbols": [
             "AppConfig",
+            "Route",
             "app",
-            "config"
+            "config",
+            "getJson",
+            "postJson",
+            "route",
+            "withNotFound",
+            "withOnNavigate",
+            "withRoutes"
           ]
         },
         "Std.Time": {
@@ -13274,8 +13288,8 @@
           ]
         }
       },
-      "count": 810,
-      "pct_of_denominator": 44.6
+      "count": 817,
+      "pct_of_denominator": 44.8
     }
   },
   "units": [
