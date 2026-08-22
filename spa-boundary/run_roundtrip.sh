@@ -15,6 +15,14 @@ SKY="${SKY:-$(cd .. && pwd)/sky-out/sky}"
 PORT="${PORT:-8942}"
 GOROOT_WASM="$(go env GOROOT)/lib/wasm/wasm_exec.js"
 
+# Never measure a compiler older than this tree: a bare `cargo build -p sky`
+# leaves sky-out/sky untouched, so a stale binary could "prove" a round-trip it
+# never compiled. (scripts/lib/fresh-compiler.sh; enforced by the xtask gate
+# gates_measure_a_fresh_compiler.)
+ROOT="$(cd .. && pwd)"
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$SKY" "$ROOT"
+
 echo "==> building stateless backend (server/)"
 ( cd server && "$SKY" build src/Main.sky >/dev/null )
 
