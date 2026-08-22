@@ -33,7 +33,12 @@ echo "==> building backend + wasm client"
 ( cd client && "$SKY" build src/Main.sky >/dev/null \
     && cd sky-out && GOOS=js GOARCH=wasm go build -o ../main.wasm . )
 cp -f client/main.wasm public/main.wasm
-cp -f client/wasm_exec.js public/wasm_exec.js 2>/dev/null || cp -f "$GOROOT_WASM" public/wasm_exec.js
+# The client is built with the STANDARD Go toolchain above (GOOS=js GOARCH=wasm),
+# so its loader MUST be that Go's wasm_exec.js — always. A stale
+# client/wasm_exec.js left by a TinyGo build has different runtime imports
+# (no runtime.scheduleTimeoutEvent) and the browser rejects the module with a
+# LinkError, so never prefer it here.
+cp -f "$GOROOT_WASM" public/wasm_exec.js
 
 echo ""
 echo "==> open  http://localhost:${TODOS_PORT}/  in your browser"
