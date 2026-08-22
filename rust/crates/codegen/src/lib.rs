@@ -598,8 +598,13 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
             let p0 = render_ty(&ps[0]);
             let rty = render_ty(r);
             let narrowed = narrow_call(r, "_g(any(_a0))");
+            // `_s` binds through an explicit `any(...)` conversion: a boxed source
+            // reaches here as `any`, but a point-free monomorphic value keeps its
+            // CONCRETE Go func type (`rt.Basics_identity[any]` is `func(any) any`,
+            // not an interface), and `_s.(T)` on a non-interface is a Go compile
+            // error. The conversion is a no-op when `inner` is already `any`.
             format!(
-                "func() {tgt} {{ _s := {inner}; if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _g, _ok := _s.(func(any) any); _ok {{ return func(_a0 {p0}) {rty} {{ return {narrowed} }} }}; return rt.Coerce[{tgt}](_s) }}()"
+                "func() {tgt} {{ _s := any({inner}); if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _g, _ok := _s.(func(any) any); _ok {{ return func(_a0 {p0}) {rty} {{ return {narrowed} }} }}; return rt.Coerce[{tgt}](_s) }}()"
             )
         }
         GoTy::Func(_, _) => {
@@ -607,8 +612,11 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
             // exact-shape boxed source reflection-free; reflect fallback only for
             // a divergent shape.
             let tgt = render_ty(to);
+            // `any(...)`: same reason as the 1-arg arm — a concrete-typed func
+            // source (`func()T`, `func(A,B)C`) is not an interface, so assert
+            // through an explicit box. No-op when `inner` is already `any`.
             format!(
-                "func() {tgt} {{ if _f, _ok := ({}).({tgt}); _ok {{ return _f }}; return rt.Coerce[{tgt}]({}) }}()",
+                "func() {tgt} {{ if _f, _ok := (any({})).({tgt}); _ok {{ return _f }}; return rt.Coerce[{tgt}]({}) }}()",
                 inner, inner
             )
         }
