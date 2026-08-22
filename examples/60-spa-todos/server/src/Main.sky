@@ -1,0 +1,271 @@
+module Main exposing (main)
+
+-- The STATELESS Sky.Http.Server backend for the Sky.Spa Todos app. It owns the
+-- durable todo list in a SQLite store and answers a tiny JSON API. There is NO
+-- per-user Model, NO session, NO SSE — every request stands alone, so the
+-- backend scales horizontally like any stateless API (the DB is the only shared
+-- axis). It also serves the client's static assets (../public) so the whole
+-- demo runs same-origin from one binary.
+--
+-- SECURITY — the client runs on the user's machine and is UNTRUSTED. Every
+-- handler RE-VALIDATES its input (trims + length-clamps the title, rejects an
+-- empty title, ignores an unknown id) and RE-READS the authoritative list from
+-- its own store before answering. The client can never dictate durable state:
+-- it may only propose a mutation, which the server validates and applies. Ids
+-- are assigned by the DB (a serial PK); a client-sent id or done flag on create
+-- is discarded.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Http.Server as Server exposing (Request, Response, Handler)
+import Sky.Core.Error as Error exposing (Error)
+import Std.Log exposing (println)
+import Std.Codec as Codec
+import Std.Db as Db exposing (Db)
+import Std.Db.Store as Store exposing (Store)
+import Shared exposing (Todo, todoListCodec, newTodoCodec, idReqCodec, renameReqCodec)
+
+
+-- ─── Store (SQLite; one codec drives schema + reads + writes) ───────
+-- A memoised CAF: `Db.connect ()` opens exactly one shared pool for the whole
+-- process, reused by every request (per the Sky effect model).
+dbConn : Db
+dbConn =
+    case Task.run (Db.connect ()) of
+
+        Ok c ->
+            c
+
+        Err e ->
+            let
+                _ =
+                    println
+                        ("[FATAL] spa-todos: cannot open db: "
+                            ++ Error.toString e)
+            in
+                System.exit 1
+
+
+-- `Codec.auto` reflects the Todo record into snake_case columns (id, title,
+-- done); `Store.serial "id"` makes id an auto-increment PK the DATABASE fills,
+-- so `insert` omits it and a client-sent id is structurally impossible to honor.
+todosStore : Store Todo
+todosStore =
+    Store.fromCodec "todos" (Codec.auto { id = 0, title = "", done = False })
+        |> Store.serial "id"
+
+
+-- Create the table once at startup (idempotent). Memoised CAF → runs one time.
+ensureSchema : ()
+ensureSchema =
+    let
+        _ = Task.run (Store.create dbConn todosStore)
+    in
+        ()
+
+
+-- ─── Validation (the untrusted-client boundary) ────────────────────
+-- Trim surrounding whitespace and clamp to 200 chars. The server NEVER stores a
+-- client string verbatim.
+sanitize : String -> String
+sanitize raw =
+    String.left 200 (String.trim raw)
+
+
+-- ─── Reads ─────────────────────────────────────────────────────────
+listTodos : () -> List Todo
+listTodos _ =
+    case Task.run
+             (Store.query todosStore |> Store.orderAsc "id"
+                 |> Store.toList dbConn) of
+
+        Ok rows ->
+            rows
+
+        Err _ ->
+            []
+
+
+-- Every mutation answers with the FULL authoritative list, freshly re-read from
+-- the store — the client replaces its cached projection wholesale.
+todosResponse : () -> Response
+todosResponse _ =
+    Server.json (Codec.toJson todoListCodec (listTodos ()))
+
+
+badRequest : String -> Response
+badRequest msg =
+    Server.withStatus 400 (Server.text msg)
+
+
+-- ─── Mutations (validated, then applied to the store) ──────────────
+applyAdd : String -> ()
+applyAdd rawTitle =
+    let
+        title = sanitize rawTitle
+    in
+        if String.isEmpty title then
+            ()
+
+        else
+            let
+                _ =
+                    Task.run
+                        (Store.insert
+                            dbConn
+                            todosStore
+                            { id = 0, title = title, done = False })
+            in
+                ()
+
+
+applyToggle : Int -> ()
+applyToggle id =
+    case Task.run (Store.findBy dbConn todosStore "id" (String.fromInt id)) of
+
+        Ok (Just t) ->
+            let
+                _ =
+                    Task.run
+                        (Store.update dbConn todosStore { t | done = not t.done })
+            in
+                ()
+
+        _ ->
+            ()
+
+
+applyDelete : Int -> ()
+applyDelete id =
+    let
+        _ =
+            Task.run (Store.delete dbConn todosStore "id" (String.fromInt id))
+    in
+        ()
+
+
+applyRename : Int -> String -> ()
+applyRename id rawTitle =
+    let
+        title = sanitize rawTitle
+    in
+        if String.isEmpty title then
+            ()
+
+        else
+            case Task.run
+                     (Store.findBy dbConn todosStore "id" (String.fromInt id)) of
+
+                Ok (Just t) ->
+                    let
+                        _ =
+                            Task.run
+                                (Store.update
+                                    dbConn
+                                    todosStore
+                                    { t | title = title })
+                    in
+                        ()
+
+                _ ->
+                    ()
+
+
+-- ─── Handlers ──────────────────────────────────────────────────────
+getTodos : Handler
+getTodos _ =
+    Task.succeed (todosResponse ())
+
+
+addTodo : Handler
+addTodo req =
+    case Codec.fromJson newTodoCodec req.body of
+
+        Ok payload ->
+            let
+                _ = applyAdd payload.title
+            in
+                Task.succeed (todosResponse ())
+
+        Err e ->
+            Task.succeed (badRequest (Error.toString e))
+
+
+toggleTodo : Handler
+toggleTodo req =
+    case Codec.fromJson idReqCodec req.body of
+
+        Ok payload ->
+            let
+                _ = applyToggle payload.id
+            in
+                Task.succeed (todosResponse ())
+
+        Err e ->
+            Task.succeed (badRequest (Error.toString e))
+
+
+deleteTodo : Handler
+deleteTodo req =
+    case Codec.fromJson idReqCodec req.body of
+
+        Ok payload ->
+            let
+                _ = applyDelete payload.id
+            in
+                Task.succeed (todosResponse ())
+
+        Err e ->
+            Task.succeed (badRequest (Error.toString e))
+
+
+renameTodo : Handler
+renameTodo req =
+    case Codec.fromJson renameReqCodec req.body of
+
+        Ok payload ->
+            let
+                _ = applyRename payload.id payload.title
+            in
+                Task.succeed (todosResponse ())
+
+        Err e ->
+            Task.succeed (badRequest (Error.toString e))
+
+
+-- ─── Wiring ────────────────────────────────────────────────────────
+-- Port from TODOS_PORT (default 8951) so the runner can pick a free port.
+serverPort : Int
+serverPort =
+    case String.toInt (System.getenvOr "TODOS_PORT" "8951") of
+
+        Just p ->
+            p
+
+        Nothing ->
+            8951
+
+
+main : Task Error ()
+main =
+    let
+        _ = ensureSchema
+    in
+        Server.listen
+            serverPort
+            [ Server.api "GET /api/todos" getTodos
+            , Server.api "POST /api/todos" addTodo
+            , Server.api "POST /api/todos/toggle" toggleTodo
+            , Server.api "POST /api/todos/delete" deleteTodo
+            , Server.api "POST /api/todos/rename" renameTodo
+            , Server.static "/" "../public"
+            ]
+
+    -- These are `Server.api` routes (not `Server.get`/`post`): a Sky.Spa client
+    -- talks to a STATELESS JSON API — there is no cookie session, so browser-form
+    -- CSRF (which protects cookie-authenticated POSTs) guards nothing here and is
+    -- correctly bypassed. Security does NOT rest on CSRF; it rests on each handler
+    -- re-validating and re-reading authoritative data (see the handlers above). A
+    -- real app adds an `Authorization` header the backend verifies with Std.Auth.
