@@ -4,6 +4,7 @@ package rt
 
 import (
 	"fmt"
+	"strings"
 	"syscall/js"
 )
 
@@ -36,6 +37,13 @@ var (
 	// browser setInterval handle, the js.Func callback (released on stop), and
 	// the current msg/toMsg to dispatch each tick.
 	spaTimers = map[int]*spaTimer{}
+	// Routing (P4). spaRoutes is the registered client-side routes (empty ⇒ no
+	// routing; a route-less app keeps native <a href> behaviour). spaNotFound is
+	// the 404 page value (nil ⇒ leave the model's Page unchanged on a miss).
+	// spaOnNavigate is the optional (page -> msg) hook fired after each nav.
+	spaRoutes     []spaRoute
+	spaNotFound   any
+	spaOnNavigate any
 )
 
 type spaTimer struct {
@@ -57,6 +65,11 @@ func spaRun(cfg any) any {
 	// for an absent field so an older/partial config degrades to "no subs"
 	// rather than trapping.
 	spaSubs = Field(cfg, "Subscriptions")
+	// Routing config (P4). All optional — a route-less app leaves these empty
+	// and behaves exactly as before P4.
+	spaRoutes = asSpaRoutes(Field(cfg, "Routes"))
+	spaNotFound = Field(cfg, "NotFound")
+	spaOnNavigate = Field(cfg, "OnNavigate")
 
 	doc := js.Global().Get("document")
 	spaRoot = doc.Call("getElementById", "app")
@@ -74,11 +87,186 @@ func spaRun(cfg any) any {
 	spaModel = tupleFirst(pair)
 	cmd0 := tupleSecond(pair)
 
+	// Deep-link: resolve the initial URL and set the model's Page BEFORE the
+	// first paint, so a load straight onto /about renders About. Only when the
+	// app registered routes.
+	if len(spaRoutes) > 0 {
+		spaApplyURL(spaCurrentPath())
+	}
+
 	renderCurrent()
 	interpretCmd(asCmdT(cmd0), spaDispatch)
 	reconcileSubs()
 
+	// Install link interception + Back/Forward only when the app routes — a
+	// route-less app (a counter) must keep native <a href> behaviour, so we
+	// never preventDefault its links.
+	if len(spaRoutes) > 0 {
+		spaInstallRouter()
+		spaFireOnNavigate() // initial-mount navigation hook (mirrors Sky.Live)
+	}
+
 	select {} // keep the Go runtime alive to service events
+}
+
+// spaCurrentPath reads location.pathname, defaulting to "/".
+func spaCurrentPath() string {
+	loc := js.Global().Get("location")
+	if !loc.Truthy() {
+		return "/"
+	}
+	if p := loc.Get("pathname"); p.Type() == js.TypeString && p.String() != "" {
+		return p.String()
+	}
+	return "/"
+}
+
+// spaApplyURL resolves path against the registered routes and writes the matched
+// page into the model's Page field (RecordUpdate — the same field-set Sky.Live's
+// applyRoute uses, live.go). An unmatched path falls back to the notFound page
+// when one is set; otherwise the model's Page is left unchanged.
+func spaApplyURL(path string) {
+	if len(spaRoutes) == 0 {
+		return
+	}
+	page, ok := spaResolveRoutes(spaRoutes, path)
+	if !ok {
+		if spaNotFound == nil {
+			return
+		}
+		page = spaNotFound
+	}
+	spaModel = RecordUpdate(spaModel, map[string]any{"Page": page})
+}
+
+// spaFireOnNavigate dispatches onNavigate(model.Page) through the TEA step —
+// mirrors Sky.Live's dispatchOnNavigate (live.go). step runs update + render +
+// effects + subs, so a navigation that triggers an effect (e.g. fetch the
+// destination's data) is handled uniformly. No-op when the hook is unset.
+func spaFireOnNavigate() {
+	if spaOnNavigate == nil {
+		return
+	}
+	page := Field(spaModel, "Page")
+	if page == nil {
+		return
+	}
+	if msg := sky_call(spaOnNavigate, page); msg != nil {
+		step(msg)
+	}
+}
+
+// spaNavigate applies a new URL to the model and repaints, then fires the
+// navigation hook. Called by the click interceptor (after pushState updates the
+// URL) and by popstate. When an onNavigate hook is set, its step does the
+// render; otherwise we render + reconcile here.
+func spaNavigate(path string) {
+	spaApplyURL(path)
+	if spaOnNavigate != nil {
+		spaFireOnNavigate()
+		return
+	}
+	renderCurrent()
+	reconcileSubs()
+}
+
+// spaInstallRouter wires the History-API client router: a document-level click
+// listener that intercepts internal-link clicks into pushState + in-app
+// navigation, and a popstate listener for Back/Forward. Both js.Funcs live for
+// the app's lifetime (global singletons), so they are intentionally not
+// released. This is the wasm counterpart of Sky.Live's sky-nav JS blob
+// (live.go), minus the fetch (the loop is already client-side).
+func spaInstallRouter() {
+	doc := js.Global().Get("document")
+
+	clickFn := js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) == 0 {
+			return nil
+		}
+		ev := args[0]
+		if ev.Get("defaultPrevented").Truthy() {
+			return nil
+		}
+		// Only a plain left-click navigates in-app; a modified or middle click
+		// is the user's explicit "open in a new tab/window".
+		if b := ev.Get("button"); b.Type() == js.TypeNumber && b.Int() != 0 {
+			return nil
+		}
+		if ev.Get("metaKey").Truthy() || ev.Get("ctrlKey").Truthy() ||
+			ev.Get("shiftKey").Truthy() || ev.Get("altKey").Truthy() {
+			return nil
+		}
+		a := spaClosestAnchor(ev.Get("target"))
+		if !a.Truthy() {
+			return nil
+		}
+		// Explicit escapes to a real browser navigation.
+		if spaHasAttr(a, "sky-external") || spaHasAttr(a, "download") {
+			return nil
+		}
+		if t := a.Call("getAttribute", "target"); t.Type() == js.TypeString && t.String() == "_blank" {
+			return nil
+		}
+		href := a.Call("getAttribute", "href")
+		if href.Type() != js.TypeString {
+			return nil
+		}
+		h := href.String()
+		// Empty, in-page fragment, or a non-navigation scheme (mailto:/tel:) —
+		// leave it to the browser.
+		if h == "" || strings.HasPrefix(h, "#") {
+			return nil
+		}
+		// Same-origin only: compare the anchor's resolved origin to location's.
+		// (A relative href resolves against the document base, so its .origin is
+		// the app's origin.)
+		loc := js.Global().Get("location")
+		if ao := a.Get("origin"); ao.Type() == js.TypeString && loc.Truthy() {
+			if lo := loc.Get("origin"); lo.Type() == js.TypeString && ao.String() != lo.String() {
+				return nil
+			}
+		}
+		path := "/"
+		if p := a.Get("pathname"); p.Type() == js.TypeString && p.String() != "" {
+			path = p.String()
+		}
+		ev.Call("preventDefault")
+		if hist := js.Global().Get("history"); hist.Truthy() {
+			hist.Call("pushState", js.Null(), "", h)
+		}
+		spaNavigate(path)
+		return nil
+	})
+	doc.Call("addEventListener", "click", clickFn)
+
+	popFn := js.FuncOf(func(this js.Value, args []js.Value) any {
+		spaNavigate(spaCurrentPath())
+		return nil
+	})
+	// popstate is a window/global event; js.Global() is the browser window.
+	js.Global().Call("addEventListener", "popstate", popFn)
+}
+
+// spaHasAttr reports whether el has attribute name (guarding hasAttribute's
+// presence for non-element nodes).
+func spaHasAttr(el js.Value, name string) bool {
+	if el.Get("hasAttribute").Type() != js.TypeFunction {
+		return false
+	}
+	return el.Call("hasAttribute", name).Truthy()
+}
+
+// spaClosestAnchor walks up from node to the nearest <a> ancestor (inclusive),
+// or Undefined when there is none — so a click on a <span> inside a link still
+// resolves to the link.
+func spaClosestAnchor(node js.Value) js.Value {
+	for node.Truthy() {
+		if tn := node.Get("tagName"); tn.Type() == js.TypeString && tn.String() == "A" {
+			return node
+		}
+		node = node.Get("parentNode")
+	}
+	return js.Undefined()
 }
 
 // step is the TEA transition: msg -> pure update -> re-render -> interpret Cmd

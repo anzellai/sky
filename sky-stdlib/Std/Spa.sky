@@ -15,37 +15,94 @@
 --             , view = View.view
 --             , subscriptions = Subs.subscriptions
 --             }
+--             |> Spa.withRoutes
+--                 [ Spa.route "/" Home
+--                 , Spa.route "/about" About
+--                 ]
+--             |> Spa.withNotFound NotFound
 --         )
 -- ```
 --
--- Every binding is an `Ffi.kernel` alias carrying its real HM signature, so the
--- type-checker, LSP hover, and `sky doc` all read this ONE file. The runtime
--- kernels are `rt.Spa_config` / `rt.Spa_app` (spa_core.go); the client driver
--- is `live_wasm.go` (`//go:build js`).
+-- Every binding is an `Ffi.kernel` alias carrying its real HM signature (the
+-- routing kernels), so the type-checker, LSP hover, and `sky doc` all read this
+-- ONE file; the boundary helpers (`getJson` / `postJson`) are ordinary Sky over
+-- `Cmd.perform` + `Http` + `Codec`, so they add no runtime surface. The runtime
+-- kernels are `rt.Spa_config` / `rt.Spa_app` / `rt.Spa_route` /
+-- `rt.Spa_withRoutes` / `rt.Spa_withNotFound` / `rt.Spa_withOnNavigate`
+-- (spa_core.go); the client driver is `live_wasm.go` (`//go:build js`).
 --
--- This is the experimental `exp/spa` surface: minimal on purpose
--- (config + app; init/update/view + `subscriptions`). Client effects run
--- through the single-threaded wasm interpreter — `Cmd.perform` (sync kernels
--- like `Time.now`/`Random`/`Uuid` inline, async `Http` via `fetch`), and
--- `Sub.every` timers. Routing and an explicit server boundary are the later
--- phases in `docs/skyspa/design.md`.
+-- Client effects run through the single-threaded wasm interpreter —
+-- `Cmd.perform` (sync kernels like `Time.now`/`Random`/`Uuid` inline, async
+-- `Http` via `fetch`), and `Sub.every` timers.
+--
+-- ## Routing (opt-in, History API)
+--
+-- Routing is attached with the `withX` builders, not the core `config` record,
+-- so a single-view app (a counter) needs no `routes`/`notFound`. `route`,
+-- `withRoutes`, `withNotFound`, and `withOnNavigate` read exactly like Sky.Live
+-- (same names, same convention). The convention (inherited from Sky.Live): a
+-- routed app's `Model` has a `page` field; on navigation the runtime resolves
+-- `location.pathname` to a route and sets `model.page`, re-renders, and — if
+-- `withOnNavigate` is set — dispatches `onNavigate page` through `update`.
+-- Internal `<a href>` clicks are intercepted (History `pushState`, no page
+-- reload); Back/Forward (`popstate`) is honoured; an external host, a
+-- `target="_blank"`, a `download`, a `sky-external` mark, or a modified click
+-- is left to the browser as a real navigation.
+--
+-- ## The explicit typed server boundary
+--
+-- `getJson` / `postJson` are the ergonomic path for talking to a STATELESS Sky
+-- backend over `Http`, decoding the response with a `Std.Codec` that is the
+-- SAME codec compiled into the backend — one type, one codec, one wire
+-- contract (no OpenAPI/TS drift). They hand `update` a `Result Error a`
+-- directly (2xx + decoded, or an `Err`), so the app writes one `case`, not two.
+--
+-- SECURITY — the client runs on the USER'S machine and is UNTRUSTED. These
+-- helpers are transport, not trust: they carry no ambient authority. The
+-- backend MUST re-validate and re-authorize every request and re-read
+-- authoritative data (price, role, ownership) from its own store — it may never
+-- trust a client-sent field for anything security-relevant. Auth is an explicit
+-- header/cookie the author adds and the backend verifies with `Std.Auth` on
+-- every call; there is no session a client can spoof, because the backend is
+-- stateless. Typed secrets (`Auth.signToken` takes `String`) + the production
+-- gate carry over unchanged.
 module Std.Spa exposing
     ( AppConfig
+    , Route
     , app
     , config
+    , route
+    , withRoutes
+    , withNotFound
+    , withOnNavigate
+    , getJson
+    , postJson
     )
 
 import Sky.Ffi as Ffi
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.Http as Http exposing (HttpResponse)
+import Std.Cmd as Cmd
+import Sky.Core.Task as Task
+import Std.Codec as Codec exposing (Codec)
 import Std.Html exposing (Html)
 
 -- | The built Sky.Spa app configuration. Opaque — produced by `config`,
--- consumed by `app`. Phantom `model` / `msg` thread the TEA types through.
+-- refined by the `withX` builders, consumed by `app`. Phantom `model` / `msg`
+-- thread the TEA types through the builder chain.
 type AppConfig model msg
     = AppConfig_OPAQUE
 
 
--- | Build the client app config from the four required fields.
+-- | A client-side route, produced by `route` and registered with `withRoutes`.
+-- Opaque — its runtime shape (`rt.spaRoute`) is an implementation detail.
+type Route
+    = Route_OPAQUE
+
+
+-- | Build the client app config from the four required TEA fields. Attach
+-- routing with `withRoutes` / `withNotFound` / `withOnNavigate`.
 --
 --     main =
 --         Spa.app
@@ -77,3 +134,86 @@ config =
 app : AppConfig model msg -> Task Error ()
 app =
     Ffi.kernel "Spa_app"
+
+
+-- | `route path page` — register a client-side page route. `path` may contain
+-- `:param` segments (`/thing/:id`); a captured segment is passed to the page
+-- value if it is a constructor (`ThingPage : String -> Page`). Put literal
+-- routes before `:param` patterns (declaration order matters).
+route : String -> page -> Route
+route =
+    Ffi.kernel "Spa_route"
+
+
+-- | Register the client-side routes. The runtime resolves `location.pathname`
+-- against them on mount, on an intercepted internal-link click, and on
+-- Back/Forward, setting the model's `page` field to the matched route's page.
+withRoutes : List Route -> AppConfig model msg -> AppConfig model msg
+withRoutes =
+    Ffi.kernel "Spa_withRoutes"
+
+
+-- | The page to show when no route matches (the 404). Without it, an unmatched
+-- URL leaves the model's `page` unchanged.
+withNotFound : page -> AppConfig model msg -> AppConfig model msg
+withNotFound =
+    Ffi.kernel "Spa_withNotFound"
+
+
+-- | Hook fired on in-app navigation (initial mount, intercepted click,
+-- popstate) AFTER the route is applied — the runtime passes the new page value
+-- and dispatches the resulting `msg` through `update`. Ignore the page
+-- (`\_ -> ResetBanner`) to run one effect on every navigation, or pattern-match
+-- it (`\page -> case page of …`) to react per-destination.
+withOnNavigate : (page -> msg) -> AppConfig model msg -> AppConfig model msg
+withOnNavigate =
+    Ffi.kernel "Spa_withOnNavigate"
+
+
+-- | `getJson codec url toMsg` — GET `url` from the stateless backend and decode
+-- the 2xx body with the shared `codec`, handing `update` a `Result Error a`.
+--
+--     Refresh ->
+--         ( { model | items = Loading }
+--         , Spa.getJson itemsCodec (model.apiBase ++ "/items") GotItems )
+--
+--     GotItems (Ok items) -> ( { model | items = Loaded items }, Cmd.none )
+--     GotItems (Err e)    -> ( { model | items = Failed e }, Cmd.none )
+--
+-- A non-2xx status or a decode failure is an `Err`; a network/fetch failure is
+-- an `Err`. SECURITY: see the module note — the backend re-validates every
+-- request; the client is untrusted.
+getJson : Codec a -> String -> (Result Error a -> msg) -> Cmd msg
+getJson codec url toMsg =
+    Cmd.perform (Task.andThenResult (decodeResponse codec) (Http.get url)) toMsg
+
+
+-- | `postJson bodyCodec respCodec url payload toMsg` — encode `payload` with
+-- `bodyCodec`, POST it as JSON to `url`, and decode the 2xx response with
+-- `respCodec`, handing `update` a `Result Error a`. Same shared-codec + typed
+-- `Result` contract as `getJson`. SECURITY: the backend re-validates every
+-- request; never trust the posted body for anything authoritative.
+postJson : Codec body -> Codec a -> String -> body -> (Result Error a -> msg) -> Cmd msg
+postJson bodyCodec respCodec url payload toMsg =
+    Cmd.perform
+        (Task.andThenResult (decodeResponse respCodec)
+            (Http.post url (Codec.toJson bodyCodec payload))
+        )
+        toMsg
+
+
+-- | Decode an HTTP response body with a codec, treating a non-2xx status as an
+-- error rather than attempting to decode an error page as the success type. A
+-- 4xx/5xx is a completed round trip (a value, not a transport failure — see
+-- `http_wasm.go`), so it arrives here as `Ok resp`; we turn it into an `Err`
+-- carrying the status + body so the app can surface it.
+decodeResponse : Codec a -> HttpResponse -> Result Error a
+decodeResponse codec resp =
+    if resp.status >= 200 && resp.status < 300 then
+        Codec.fromJson codec resp.body
+
+    else
+        Err
+            (Error.unexpected
+                ("HTTP " ++ String.fromInt resp.status ++ ": " ++ resp.body)
+            )
