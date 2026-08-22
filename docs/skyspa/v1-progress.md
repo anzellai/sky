@@ -5,12 +5,12 @@
 > Sky.Spa v1. Updated at every phase boundary. Work branch: `exp/spa`. Verified
 > prototype baseline: `exp/spa-prototype`.
 
-## Status: P1 in progress (productionize + land the partition)
+## Status: P1 DONE ✅ — P2 next (client-side diff renderer)
 
 | Phase | State | Notes |
 |---|---|---|
-| P1 — productionize + land partition | 🔨 in progress | prototype merged into `exp/spa` (merge commit); now: rebuild compiler, full §0.2.1 gates green, Sky.Live unbroken |
-| P2 — client-side diff renderer | ⏳ | diffTrees + __skyApplyPatches reuse; focus/cursor test |
+| P1 — productionize + land partition | ✅ **done** | partition + census/kernel/coverage fixes on `exp/spa` (@c39dd8a0). Full §0.2.1 verified SERIALLY green: `cargo test --workspace`=0, example-sweep=0, conformance=0, 29 harness gates pass, entry_exit_contract 3/3, `GOOS=js` rt build=0, Sky.Live 09/19 build=0, spa render ALL PASS. |
+| P2 — client-side diff renderer | 🔨 in progress | diffTrees + __skyApplyPatches reuse; focus/cursor test |
 | P3 — interpretCmd real effects | ⏳ | perform async, Time/Http, subscriptions |
 | P4 — Std.Spa v1 + explicit boundary | ⏳ | config(routes/subs), routing, Http+Codec server boundary |
 | P5 — real e2e example + verify | ⏳ | client UI + stateless Sky backend; browser e2e; bundle number |
@@ -45,3 +45,8 @@
 
 - (P0) auto-split (v2) deferred; v1 is explicit-boundary. Web (TinyGo/JS)
   deferred. Both per user greenlight of option (a).
+- (P1) LESSON: never run two heavy suites (cargo test / example-sweep) concurrently
+  in ONE worktree — they clobber shared `examples/*/sky-out` + Go/sky caches and
+  produce FALSE failures (a spurious entry_exit_contract + sweep fail that both
+  vanished when re-run serially in a quiet tree). Run suites serially; verify a
+  failure in isolation before treating it as real.
