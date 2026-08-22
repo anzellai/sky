@@ -1,0 +1,26 @@
+-- | Shared — the ONE type + codec compiled into BOTH the Sky.Spa client and the
+-- stateless Sky.Http.Server backend. This is the wire contract: the backend
+-- encodes a `Widget` with `widgetCodec`, the client decodes the response with
+-- the SAME `widgetCodec` from this SAME file (symlinked into both projects'
+-- src/). Change `Widget` here and BOTH client and server fail to compile — one
+-- type, one codec, one wire contract, no OpenAPI/TS drift.
+module Shared exposing (Widget, widgetCodec)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+
+
+type alias Widget =
+    { name : String
+    , qty : Int
+    , active : Bool
+    }
+
+
+widgetCodec : Codec Widget
+widgetCodec =
+    Codec.object Widget
+        |> Codec.field "name" .name Codec.string
+        |> Codec.field "qty" .qty Codec.int
+        |> Codec.field "active" .active Codec.bool
+        |> Codec.buildObject
