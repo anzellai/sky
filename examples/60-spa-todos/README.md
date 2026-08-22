@@ -40,6 +40,7 @@ server/                the STATELESS Sky.Http.Server backend (SQLite store)
   src/Shared.sky         → ../../shared/Shared.sky (symlink)
 public/index.html      the Go/wasm bootstrap page (served by the backend)
 run_roundtrip.sh       reproducible headless full-loop acceptance (below)
+run_e2e_db.sh          DB-backed boundary acceptance — curl as a hostile client (below)
 run.sh                 serve for a real browser (prints the URL)
 ```
 
@@ -86,6 +87,18 @@ persistence, the zero-round-trip property, routing, and reload rehydration:
 ```bash
 ./run_roundtrip.sh                 # defaults to port 8951
 TODOS_PORT=8971 ./run_roundtrip.sh # pick another port
+```
+
+DB-backed boundary acceptance — `curl` as a **hostile** client (raw requests
+that bypass the wasm UI), proving the untrusted-boundary + durable-store
+properties: server-side re-validation (trim / 200-char clamp / reject-empty),
+server-owned identity (DB serial id; client-sent `id`/`done` ignored), unknown-id
+no-op, malformed→400, full-authoritative-list responses, cross-client shared
+state, durability across a **backend restart**, and concurrent parallel writes
+with no lost updates (18 assertions):
+
+```bash
+./run_e2e_db.sh                    # defaults to port 8952
 ```
 
 In a real browser (same-origin, one binary serves the client and the API):
