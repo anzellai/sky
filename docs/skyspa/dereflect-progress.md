@@ -174,3 +174,27 @@ scoped. Resume here.
   (c) runtime typed struct-copy helpers keyed on the rt source type.
   Await the compiler-wide strategy consult (a05aa819) for the general approach +
   inventory before choosing.
+
+## Re-classification (N-strikes on the dispatch lever) — first-class-function ABI
+LANDED on exp/spa (general, compiler-wide reflection-free wins, committed):
+- rt.ResultCoerceOk + codegen recursive `narrow_call` (struct arm narrows a
+  structural-struct Coerce reflection-free from the canonical all-any boxed form
+  w/ reflect fallback; Result-of-a via ResultCoerceOk). Closes coercion narrows.
+- RuntimeAlias (Sky.Core.Http.HttpResponse = rt.HttpResponse) — cross-type struct
+  narrow reflection-free.
+- filterMap typed-twin routing allows B=any (List any → List_filterMapT).
+- SkyCall func(any)any / func(any,any)any / func()any fast paths.
+- lower boxed-closure CONSTRUCTORS: arity>=2, or arity-1 into a boxed slot
+  (any / func(any...)any), emit curried func(any)any nests.
+
+Todos client under TinyGo now: renders + routes + filters + persists to backend.
+RESIDUAL (re-classified — NOT another per-site fix): first-class FUNCTION VALUES
+and HOF PARAMS lower to DIVERSE typed Go func shapes. Root example:
+`Std.Spa.getJson`'s toMsg param lowers to `func(rt.SkyResult[Error,any]) any`
+(typed param), a Msg ctor is `func(any) Main_Msg`; neither matches the runtime
+fast paths, and the SPA/Cmd runtime SkyCalls it → reflect.NumIn panic. This is a
+first-class-function ABI matter (make HOF params + fn values uniformly
+func(any)any WITHOUT breaking the typed HOF twins that need func(A)B). An
+Architecture-Consult (agent a1b267019) is designing the systematic lever
+(erase-fn-param-types vs box-at-widen) + grilling regressions before implementing.
+Verification of the landed batch (server regression) is running (/tmp/verify.log).
