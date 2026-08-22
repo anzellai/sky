@@ -328,6 +328,15 @@ func ResultCoerce[E any, A any](src any) SkyResult[E, A] {
 	if r, ok := src.(SkyResult[E, A]); ok {
 		return r
 	}
+	// E-typed, A-erased source (`SkyResult[E, any]`) — the Sky.Spa client's
+	// Cmd.perform result (Error == SkyADT, value erased to any). Reconstruct by
+	// typed assertion so a TinyGo client never reaches the reflect fallback.
+	if r, ok := src.(SkyResult[E, any]); ok {
+		if r.Tag == 0 {
+			return Ok[E, A](coerceInner[A](r.OkValue))
+		}
+		return Err[E, A](r.ErrValue)
+	}
 	// Generic fallback via reflect: any SkyResult[X, Y] shape.
 	rv := reflect.ValueOf(src)
 	if rv.Kind() == reflect.Struct {
