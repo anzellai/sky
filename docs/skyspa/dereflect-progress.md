@@ -227,3 +227,27 @@ per-site patch):
   `func(any,…) any` and give pipelineApply/apply-N matching fast paths. Either is
   a coordinated whole-program ABI change across the call-lowering path — a fresh
   Architecture-Consult + grill cycle, not another per-site fix.
+
+## ABI-design consult verdict (2026-08-22): RECOMMEND-STOP at checkpoint 1430e4c0
+The residual is CLOSEABLE, not floor. The coherent fix is **Option C** (curried
+boxing at `coerce_if_needed`'s Any path @ lower.rs:2911 + curry-aware chained
+application `c(a)(b)` of a boxed func VALUE at lower.rs:4526/4554 + curried
+`make_partial` nests @ lower.rs:4653). It is NOT floor-touching (touches lowering
+only; no §0.3-rule-5 site) and emits NO `dispatch` token (unlike routing through
+SkyCall, which would trip the armed coerce-floor `dispatch` tripwire + brush the
+§4.3 TEA-boundary floor).
+
+WHY STOP NOW (not "impossible" — deliberately deferred):
+1. The verification leg does not exist: `examples/60-spa-todos/run.sh:34` builds
+   the client with STANDARD `GOOS=js GOARCH=wasm go build` (full reflect), so the
+   residual is INERT on the shipping path and the TinyGo path is unbuilt/ungated.
+   Can't ratchet a property nothing tests. A TinyGo build+run gate must land first.
+2. The residual bites ONLY under TinyGo, which is not the current build path.
+3. Option C edits a central hot path (`coerce_if_needed`) already reverted once —
+   an N-strikes signal for a separate, scoped, gated effort, not an inline grind.
+
+DISCIPLINED PATH FORWARD (when authorized): (a) land a TinyGo build+run gate for
+the SPA client; (b) execute Option C with the exact loci above, re-blessing
+coerce-floor (`adapter` down, `dispatch` stays 0, justified `narrow` movement);
+(c) until then, codec-decode-under-TinyGo is a documented known limitation.
+The app runs correctly on the standard-Go-wasm path (this is what `run.sh` serves).
