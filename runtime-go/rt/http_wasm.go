@@ -10,23 +10,32 @@ import (
 
 // http_wasm.go — the Sky.Spa client (GOOS=js GOARCH=wasm) implementation of
 // the untyped Http.get / Http.post kernels. The host build (http_notjs.go)
-// uses net/http and blocks the goroutine; the client has no goroutine
-// scheduler to hide a blocking round trip behind, so it calls the browser
-// `fetch` API and returns a jsAsync (see live_wasm.go) that the single-threaded
-// Sky.Spa effect interpreter resolves via the Promise's .then/.catch — no
-// goroutine, no blocking of the browser event loop.
+// uses net/http; the client calls the browser `fetch` API.
 //
-// The returned Sky value is identical to the host build:
-// `Task Error HttpResponse` — a thunk producing `Ok[any,any](HttpResponse)` on
-// a completed response (any HTTP status, including 4xx/5xx — an error STATUS is
-// still a successful round trip) and `Err[any,any](ErrNetwork …)` when the
-// fetch itself rejects (network failure, CORS, DNS). This mirrors Go's
-// net/http, where a non-2xx response is a value, not an `err`.
+// # Why this returns a real Result (and blocks), not a Promise placeholder
+//
+// Typed codegen wraps a `Cmd.perform`'s Task in `rt.TaskCoerceT[E, A]`
+// (rt.go), which RUNS the task and coerces its synchronous return value to the
+// declared result type — `HttpResponse` here. So the task thunk MUST return a
+// `SkyResult` when it is called; a "pending" placeholder (e.g. a Promise) is
+// coerced to HttpResponse and panics before it can settle. The client kernel
+// therefore issues fetch, BLOCKS the calling goroutine on a channel that the
+// fetch Promise's .then/.catch callbacks fill, and returns the settled Sky
+// Result — the canonical Go/wasm "await a JS Promise" pattern. The perform
+// interpreter runs this on a cooperatively-scheduled goroutine (NOT an OS
+// thread — wasm is single-threaded), so the block yields to the browser event
+// loop rather than freezing it (see live_wasm.go performTask).
+//
+// The returned Sky value is identical to the host build: a
+// `Task Error HttpResponse` thunk producing `Ok[any,any](HttpResponse)` on a
+// completed response (any HTTP status — a 4xx/5xx is a successful round trip,
+// a value not an error, matching net/http) and `Err[any,any](ErrNetwork …)`
+// when the fetch itself rejects (network failure, CORS, DNS).
 
 // Http.get : String -> Task Error HttpResponse
 func Http_get(url any) any {
 	u := fmt.Sprintf("%v", url)
-	return func() any { return fetchAsync("GET", u, "") }
+	return func() any { return fetchBlocking("GET", u, "") }
 }
 
 // Http.post : String -> String -> Task Error HttpResponse
@@ -34,22 +43,19 @@ func Http_get(url any) any {
 func Http_post(url any, body any) any {
 	u := fmt.Sprintf("%v", url)
 	b := fmt.Sprintf("%v", body)
-	return func() any { return fetchAsync("POST", u, b) }
+	return func() any { return fetchBlocking("POST", u, b) }
 }
 
-// fetchAsync issues `globalThis.fetch(url, opts)` and returns a jsAsync whose
-// promise resolves to a plain `{status, body}` JS object. Reading the response
-// body is itself async (`Response.text()` is a Promise), so the chain is
-// fetch → resp.text() → {status, body}. toResult/onReject build the Sky Result
-// in Go, so no Go value ever has to survive a trip through a JS Promise.
-func fetchAsync(method, url, body string) jsAsync {
+// fetchBlocking issues globalThis.fetch(url, opts) and blocks until the
+// response (and its body text) settle, returning the Sky Result. It MUST be
+// called from a goroutine (the perform goroutine) so the block yields control
+// to the browser event loop that resolves the Promise.
+func fetchBlocking(method, url, body string) SkyResult[any, any] {
+	lower := strings.ToLower(method)
 	global := js.Global()
 	fetch := global.Get("fetch")
 	if fetch.Type() != js.TypeFunction {
-		// No fetch in this environment: surface a resolved-Err jsAsync so the
-		// error branch fires rather than a silent drop.
-		return resolvedErr(ErrNetwork("http." + strings.ToLower(method) +
-			": fetch is unavailable in this runtime"))
+		return Err[any, any](ErrNetwork("http." + lower + ": fetch is unavailable in this runtime"))
 	}
 
 	opts := global.Get("Object").New()
@@ -61,75 +67,79 @@ func fetchAsync(method, url, body string) jsAsync {
 		opts.Set("headers", hdr)
 	}
 
-	respPromise := fetch.Invoke(url, opts)
-
-	// resp => resp.text().then(text => ({ status: resp.status, body: text }))
-	var toShape js.Func
-	toShape = js.FuncOf(func(this js.Value, args []js.Value) any {
-		defer toShape.Release()
-		var resp js.Value
-		if len(args) > 0 {
-			resp = args[0]
+	ch := make(chan SkyResult[any, any], 1)
+	done := false
+	finish := func(r SkyResult[any, any]) {
+		if done {
+			return
 		}
-		status := resp.Get("status")
-		textPromise := resp.Call("text")
-		var wrap js.Func
-		wrap = js.FuncOf(func(this js.Value, a2 []js.Value) any {
-			defer wrap.Release()
-			obj := global.Get("Object").New()
-			obj.Set("status", status)
-			if len(a2) > 0 {
-				obj.Set("body", a2[0])
-			} else {
-				obj.Set("body", "")
-			}
-			return obj
-		})
-		// Returning a Promise from a .then handler chains it into the outer
-		// promise, so `chained` resolves to the {status, body} object.
-		return textPromise.Call("then", wrap)
-	})
-	chained := respPromise.Call("then", toShape)
-
-	return jsAsync{
-		promise: chained,
-		toResult: func(v js.Value) any {
-			status := 0
-			if s := v.Get("status"); s.Type() == js.TypeNumber {
-				status = s.Int()
-			}
-			bodyStr := ""
-			if b := v.Get("body"); b.Type() == js.TypeString {
-				bodyStr = b.String()
-			}
-			return Ok[any, any](HttpResponse{
-				Status:  status,
-				Body:    bodyStr,
-				Headers: map[string]string{},
-			})
-		},
-		onReject: func(v js.Value) any {
-			detail := "request failed"
-			if v.Truthy() {
-				if m := v.Get("message"); m.Type() == js.TypeString {
-					detail = m.String()
-				} else {
-					detail = v.Call("toString").String()
-				}
-			}
-			return Err[any, any](ErrNetwork("http." + strings.ToLower(method) + ": " + detail))
-		},
+		done = true
+		ch <- r
 	}
+
+	var onResp, onErr, onText, onTextErr js.Func
+	status := 0
+
+	onText = js.FuncOf(func(this js.Value, a []js.Value) any {
+		b := ""
+		if len(a) > 0 && a[0].Type() == js.TypeString {
+			b = a[0].String()
+		}
+		finish(Ok[any, any](HttpResponse{
+			Status:  status,
+			Body:    b,
+			Headers: map[string]string{},
+		}))
+		return nil
+	})
+	onTextErr = js.FuncOf(func(this js.Value, a []js.Value) any {
+		finish(Err[any, any](ErrNetwork("http." + lower + ": read failed: " + rejectReason(a))))
+		return nil
+	})
+	onResp = js.FuncOf(func(this js.Value, a []js.Value) any {
+		var resp js.Value
+		if len(a) > 0 {
+			resp = a[0]
+		}
+		if s := resp.Get("status"); s.Type() == js.TypeNumber {
+			status = s.Int()
+		}
+		// Response.text() is itself a Promise; chain it.
+		resp.Call("text").Call("then", onText).Call("catch", onTextErr)
+		return nil
+	})
+	onErr = js.FuncOf(func(this js.Value, a []js.Value) any {
+		finish(Err[any, any](ErrNetwork("http." + lower + ": " + rejectReason(a))))
+		return nil
+	})
+
+	fetch.Invoke(url, opts).Call("then", onResp).Call("catch", onErr)
+
+	result := <-ch
+	// Settled exactly once; the other callbacks will never fire now, so it is
+	// safe to release them all from here (outside any callback invocation).
+	onResp.Release()
+	onErr.Release()
+	onText.Release()
+	onTextErr.Release()
+	return result
 }
 
-// resolvedErr wraps an already-computed Sky Err value in a jsAsync backed by a
-// resolved Promise, so the interpreter's uniform .then delivery path fires the
-// error branch exactly once.
-func resolvedErr(errResult any) jsAsync {
-	promise := js.Global().Get("Promise").Call("resolve", js.Null())
-	return jsAsync{
-		promise:  promise,
-		toResult: func(js.Value) any { return errResult },
-		onReject: func(js.Value) any { return errResult },
+// rejectReason extracts a human-readable message from a Promise rejection
+// value (an Error, a string, or anything else).
+func rejectReason(a []js.Value) string {
+	if len(a) == 0 {
+		return "request failed"
 	}
+	v := a[0]
+	if !v.Truthy() {
+		return "request failed"
+	}
+	if m := v.Get("message"); m.Type() == js.TypeString {
+		return m.String()
+	}
+	if v.Type() == js.TypeString {
+		return v.String()
+	}
+	return v.Call("toString").String()
 }

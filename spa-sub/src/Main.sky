@@ -1,0 +1,73 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Sub as Sub
+import Std.Html as Html exposing (Html)
+import Std.Html.Attributes as Attr
+import Std.Html.Events as Events
+
+
+-- P3 subscription acceptance app. `subscriptions model` returns
+-- `Sub.every 1000 Tick` while `model.ticking` is True; each interval must
+-- dispatch `Tick`, increment the counter, and re-render (via the P2 diff).
+-- Clicking "Stop" flips `ticking` to False, so the next reconcile must stop
+-- the timer and no further ticks fire.
+
+
+type alias Model =
+    { n : Int
+    , ticking : Bool
+    }
+
+
+type Msg
+    = Tick
+    | Stop
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, ticking = True }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Tick ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        Stop ->
+            ( { model | ticking = False }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Html.div []
+        [ Html.h1 [] [ Html.text "Sky.Spa subscription" ]
+        , Html.p [ Attr.id "n" ] [ Html.text (String.fromInt model.n) ]
+        , Html.button [ Attr.id "stop", Events.onClick Stop ]
+            [ Html.text "Stop" ]
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    if model.ticking then
+        Sub.every 1000 Tick
+
+    else
+        Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

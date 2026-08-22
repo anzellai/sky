@@ -162,10 +162,10 @@ func asSubT(v any) subT {
 	return subT{kind: "none"}
 }
 
-// interpretCmd is the single-threaded wasm effect interpreter over the same
-// cmdT value the server runs through runCmd. It replaces the server's
-// goroutine + SSE dispatch with direct calls (sync effects) and Promise
-// .then/.catch (async effects) — no goroutine, no lock.
+// interpretCmd is the wasm effect interpreter over the same cmdT value the
+// server runs through runCmd. It replaces the server's goroutine + SSE + lock
+// machinery with a per-perform goroutine that dispatches directly (no SSE, no
+// lock) — cooperatively scheduled on wasm's single thread.
 func interpretCmd(cmd cmdT, dispatch func(any)) {
 	switch cmd.kind {
 	case "", "none":
@@ -175,7 +175,18 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 			interpretCmd(asCmdT(c), dispatch)
 		}
 	case "perform":
-		performTask(cmd.task, cmd.toMsg, dispatch)
+		// Run each perform on its own cooperatively-scheduled goroutine (NOT
+		// an OS thread — wasm is single-threaded). This is required, not
+		// optional: typed codegen wraps the Task in rt.TaskCoerceT, which runs
+		// the task and coerces its SYNCHRONOUS return to the declared result
+		// type, so an async client effect (Http via fetch) must BLOCK inside
+		// the task until the Promise settles and return a real Result (see
+		// http_wasm.go). Blocking inline in the event handler would freeze the
+		// browser event loop the fetch Promise needs; a goroutine's block
+		// yields to that loop instead. A synchronous task (Time.now / Random)
+		// simply returns immediately on its goroutine and dispatches. This
+		// mirrors the server's `go runPerform` (live.go), minus the SSE/lock.
+		go performTask(cmd.task, cmd.toMsg, dispatch)
 	case "publish", "publishNoEcho":
 		// v1 DECISION: Cmd.publish / publishNoEcho are a documented no-op on
 		// the Sky.Spa client. In-process pub/sub in Sky.Live fans a message
@@ -190,21 +201,23 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 	}
 }
 
-// performTask runs a Cmd.perform Task and dispatches toMsg(result).
+// performTask runs a Cmd.perform Task and dispatches toMsg(result). It runs on
+// its own goroutine (see interpretCmd's "perform" arm) so an async task can
+// BLOCK until it settles without freezing the browser event loop.
 //
 //   - A SYNCHRONOUS client task (pure code, Time.now, Random, Uuid — the
-//     kernels compute a value immediately) returns a Sky Result directly; we
-//     map it through toMsg and dispatch inline, same turn.
-//   - An ASYNCHRONOUS client task (Http via fetch) returns a jsAsync carrying a
-//     Promise; we attach .then/.catch that build the Sky Result and dispatch
-//     when it settles — single-threaded, no goroutine.
+//     kernels compute a value immediately) returns a Sky Result at once.
+//   - An ASYNCHRONOUS client task (Http via fetch, http_wasm.go) blocks the
+//     goroutine on a channel the fetch Promise's .then/.catch fill, then
+//     returns the settled Sky Result. Either way the task returns a real
+//     `SkyResult` — which is what typed codegen's rt.TaskCoerceT requires.
 //
+// toMsg maps the Result to a Msg (its Ok/Err branch), and step dispatches it.
 // A task that FAILS reports through the Result Err branch (the kernels return
-// Err on failure; fetch rejection maps to Err via jsAsync.onReject), never a
+// Err on failure; a fetch rejection maps to Err in fetchBlocking), never a
 // silent drop. A panic escaping the task/toMsg is recovered and logged rather
-// than killing the browser event loop (mirrors the server's per-perform
-// recover); it cannot be re-dispatched as a typed Msg, so it is reported, not
-// swallowed silently.
+// than killing the goroutine silently (mirrors the server's per-perform
+// recover); it cannot be re-dispatched as a typed Msg, so it is reported.
 func performTask(task, toMsg any, dispatch func(any)) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -216,74 +229,7 @@ func performTask(task, toMsg any, dispatch func(any)) {
 	}()
 
 	result := sky_call(task, nil)
-
-	if a, ok := result.(jsAsync); ok {
-		a.attach(func(settled any) {
-			// This runs from the Promise callback (a fresh browser turn), so
-			// wrap toMsg + dispatch in their own recover — a panic here has no
-			// caller to unwind to.
-			defer func() {
-				if r := recover(); r != nil {
-					logEmit(logLevelError, "error",
-						"Sky.Spa Cmd.perform: async completion panicked", map[string]any{
-							"panic": fmt.Sprintf("%v", r),
-						})
-				}
-			}()
-			dispatch(sky_call(toMsg, settled))
-		})
-		return
-	}
-
 	dispatch(sky_call(toMsg, result))
-}
-
-// jsAsync is an asynchronous client effect: a browser Promise plus the Go
-// functions that turn its settled value into a Sky Result. The Promise only
-// ever carries JS values (a Go value can't survive a trip through JS), so the
-// Sky Result is BUILT in Go by toResult (resolve) / onReject (reject) and
-// handed straight to the interpreter — never marshalled into the Promise.
-type jsAsync struct {
-	promise  js.Value
-	toResult func(js.Value) any // resolved JS value -> Sky Result (Ok …)
-	onReject func(js.Value) any // rejection reason -> Sky Result (Err …)
-}
-
-// attach wires the Promise to `deliver`, which receives the Sky Result exactly
-// once (on resolve OR reject) and is expected to run toMsg + dispatch. The two
-// js.Funcs are released after the single settlement so they don't leak.
-func (a jsAsync) attach(deliver func(any)) {
-	var onOk, onErr js.Func
-	released := false
-	release := func() {
-		if released {
-			return
-		}
-		released = true
-		onOk.Release()
-		onErr.Release()
-	}
-	onOk = js.FuncOf(func(this js.Value, args []js.Value) any {
-		var v js.Value
-		if len(args) > 0 {
-			v = args[0]
-		}
-		r := a.toResult(v)
-		release()
-		deliver(r)
-		return nil
-	})
-	onErr = js.FuncOf(func(this js.Value, args []js.Value) any {
-		var v js.Value
-		if len(args) > 0 {
-			v = args[0]
-		}
-		r := a.onReject(v)
-		release()
-		deliver(r)
-		return nil
-	})
-	a.promise.Call("then", onOk).Call("catch", onErr)
 }
 
 // reconcileSubs evaluates subscriptions(model) and reconciles the active

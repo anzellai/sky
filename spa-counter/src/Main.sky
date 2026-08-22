@@ -3,6 +3,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Spa as Spa
+import Std.Sub as Sub
 import Std.Html as Html exposing (Html)
 import Std.Html.Events as Events
 
@@ -44,9 +45,18 @@ view count =
         ]
 
 
+subscriptions : Int -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
 main : Task Error ()
 main =
     Spa.app
         (Spa.config
-            { init = init, update = update, view = view }
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
         )
