@@ -80,7 +80,11 @@ proceed through everything I can decide myself.
 Unattended: drive phase-by-phase with agents (worktree-isolated for invasive
 runtime surgery), grill each phase's plan + result, fresh-context Judge at the
 close against the DONE list. Agent completion notifications re-invoke the loop;
-ScheduleWakeup is the heartbeat/safety-net (not a pacing mechanism). Checkpoint
-with commits + the progress tracker at every boundary. Do NOT push to origin or
-merge to `main` without explicit user ask (durable feedback). Continue until the
-Judge returns 100% on the DONE list.
+ScheduleWakeup is the heartbeat/safety-net (not a pacing mechanism). Checkpoint with commits + the progress tracker at every boundary.
+
+**Autonomy scope (granted 2026-08-22, unattended run):** full local autonomy
+(bash build/test/git/cleanup, file writes in repo+worktrees+scratchpad, agent
+spawns) AND **push `exp/spa` to origin at phase milestones** (for CI validation) —
+without prompting. **Merge to `main` remains gated** — ask before merging to main
+(the Judge must verify the full DONE list first). Continue until the Judge returns
+100% on the DONE list.
