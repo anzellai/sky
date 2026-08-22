@@ -140,11 +140,23 @@ func dispatchEvent(handler any, payload string) {
 	if spaDispatch == nil {
 		return
 	}
-	if isFunc(handler) {
-		spaDispatch(sky_call(handler, payload))
-		return
+	// Reflection-free (Sky.Spa client): a payload handler emits as
+	// `func(string) any` (onInput/onChange) or `func(any) any`; apply by TYPED
+	// ASSERTION rather than `reflect.Value.Call` (TinyGo cannot compile it). A
+	// plain Msg value (onClick Increment) is not a func → dispatched as-is. The
+	// reflect `sky_call` fallback is unreached for a real Spa client.
+	switch h := handler.(type) {
+	case func(string) any:
+		spaDispatch(h(payload))
+	case func(any) any:
+		spaDispatch(h(payload))
+	default:
+		if isFunc(handler) {
+			spaDispatch(sky_call(handler, payload))
+		} else {
+			spaDispatch(handler)
+		}
 	}
-	spaDispatch(handler)
 }
 
 // spaApplyPatches applies a []Patch (produced by diffTrees) to the live DOM,

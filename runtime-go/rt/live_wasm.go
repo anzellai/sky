@@ -427,7 +427,29 @@ func performTask(task, toMsg any, dispatch func(any)) {
 		}
 	}()
 
-	result := sky_call(task, nil)
+	// Reflection-free perform (Sky.Spa client). `Sky.Core.Error` aliases to
+	// rt.SkyADT (codegen: `type Sky_Core_Error_Error = rt.SkyADT`) and the
+	// Cmd.perform boundary is uniformly `SkyTask[SkyADT, any]` with
+	// `toMsg : func(SkyResult[SkyADT, any]) any`, so both are invoked by TYPED
+	// ASSERTION — no `reflect.Value.Call`, which TinyGo cannot compile. The
+	// reflect `sky_call` fallbacks below are unreached for a real Spa client and
+	// exist only for a non-standard task/toMsg shape (and are DCE-stripped once
+	// no client path references reflect).
+	var result SkyResult[SkyADT, any]
+	switch t := task.(type) {
+	case SkyTask[SkyADT, any]:
+		result = t()
+	case func() SkyResult[SkyADT, any]:
+		result = t()
+	default:
+		r := anyTaskInvoke(task) // reflection-free (RunAny); erases E to any
+		ev, _ := r.ErrValue.(SkyADT)
+		result = SkyResult[SkyADT, any]{Tag: r.Tag, OkValue: r.OkValue, ErrValue: ev}
+	}
+	if tm, ok := toMsg.(func(SkyResult[SkyADT, any]) any); ok {
+		dispatch(tm(result))
+		return
+	}
 	dispatch(sky_call(toMsg, result))
 }
 
