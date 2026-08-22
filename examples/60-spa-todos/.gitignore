@@ -18,3 +18,4 @@ client/main.wasm
 client/wasm_exec.js
 public/main.wasm
 public/wasm_exec.js
+mobile-ios/build/
