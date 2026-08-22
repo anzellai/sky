@@ -199,3 +199,79 @@ and the prod gate carry over unchanged.
 The auto-split is therefore **not struck** — it is **reachable via body-level
 `Task`-type tracing once effects are mandated into `Cmd`.** The measurement priced
 it (a dialect); this document is the mechanism that spends that price soundly.
+
+## 11. Architecture-consult (2026-08-22): the design vs the real Rust compiler
+
+A fresh-context consult mapped every §2–§9 claim onto the actual `hir` / `ty` /
+`lower` / `project` crates (file:line). The **effect-detection** half holds; the
+**Rule 1 codec-boundary** half does **not**; the **codegen** half hits a
+structural wall. Corrections, so a future session does not re-derive them:
+
+**Holds — effect detection is decidable against real structures:**
+- **Identify `update`** — `Spa.config` is a top-level `Def` (`Std/Spa.sky:129`),
+  so its call is `Expr::Call(Var(Res::Def(config)), [Record …])`; the `update`
+  field value is `Var(Res::Def(update))`, statically resolvable
+  (`hir/src/hir.rs:24-38`). Reject non-name shapes (inline lambda / partial app)
+  conservatively.
+- **`Task`-trace** — per-expression solved types are in **`BodyTypes.exprs :
+  HashMap<ExprId, Ty>`** (`ty/check.rs:60-71`), and `lower::expr_is_task`
+  (`lower/src/lower.rs:2182-2196`) is the **reference implementation** to lift
+  into shared analysis (do not re-implement — `feedback_reuse_dont_parallel`).
+  The auto-force site is a `let _ = <task>` empty-binder `LocalDef`
+  (`lower/src/lower.rs:2708-2711`). A call graph does **not** exist — it is a
+  greenfield arena walk over `resolve(module).bodies` (`hir/src/resolve.rs:135`),
+  bounded but real (medium).
+- **Kernel classification (§3)** — key off `Res::Kernel.module`; the tables exist
+  (`hir/src/kernel.rs:29-117`, `lower/src/kernel.rs:104-640`). Two soft edges:
+  `Http` is one pseudo-module (cannot split own-backend vs external — default
+  **server** for soundness), and `Auth.*` is all one module (all correctly
+  server).
+
+**Does NOT hold — Rule 1's "has a codec ⇒ server-backed" is not decidable:**
+- A `Codec a` is an ordinary **runtime value**, not a type-class instance:
+  `Codec.auto : a -> Codec a` is reflection-driven and works for essentially any
+  type (`Std/Codec.sky:250`), and there is no codec-derivability predicate or
+  type-keyed registry. So a type cannot be asked "do you have a codec." The
+  `{ui,data}` **structural** check is fine (the Model is already detected as a
+  closed record, `lower/src/lower.rs:306-346`), but the *boundary* must be
+  **nominal/syntactic** — e.g. `data`-field types declared in a designated
+  `Shared` module, or an explicit marker — not "has a codec." **This is the open
+  design fork to settle before Phase 1 codes the Model-shape gate.** (The coarse
+  `ui`/`data` write-set benefit is separable and survives; keep the check coarse
+  — per-field write-sets would hit the row-poly `any`-update floor, doc 14.)
+
+**Structural wall — the codegen half (§6) is not a small extension:**
+- The build emits exactly **one** artifact, native binary *or* `main.wasm`
+  (`project/src/build.rs:57-63,686`). Auto-split needs **dual-target emission**
+  (one source → wasm client + native stateless server) — a new build-driver
+  capability that does not exist.
+- There is **no endpoint-generation facility**: `Server.api`
+  (`runtime-go/rt/rt_server.go:402`) registers a route from user code at runtime;
+  `Spa.getJson/postJson` are the client half only. Synthesizing the matching
+  server handler + shared-codec wiring + the §7 authz gate is greenfield.
+
+**Where a Phase-1 gate lives:** model on `ty::check_modules`'s `[E2008]`
+precedent (`ty/src/check.rs:459-522`) — a post-inference, pre-lowering pass
+emitting typed `Diagnostic`s; wire it **whole-program** between
+`project/src/build.rs:319` (`ty::check_modules`) and `:442` (lowering).
+
+**Opt-in:** a new `Spa.autoApp` kernel sibling of `Spa.app`/`config`
+(`Std/Spa.sky:129-137`); the gate fires iff the entry calls it (same
+callee-DefId match as identifying `update`). This avoids wrongly gating existing
+v1 inline-`Task.run` apps.
+
+**Revised phasing (grounded):**
+1. **Phase 1 — opt-in dialect-conformance gate** (Rules 1&2, no codegen).
+   SMALL–MEDIUM, floor-free. Blocked only on settling the Rule 1 mechanism
+   (above). Ships standalone value: "your app is auto-split-ready / here is the
+   inline effect that isn't."
+2. **Phase 2 — partition report** (`sky` sub-command emitting the derived
+   per-branch client/server/mixed split, still no codegen). Cheap given Phase 1;
+   de-risks classification.
+3. **Phase 3 — the RPC-generating auto-split** (Candidate B). LARGE; needs
+   **explicit user authorization** for (i) dual-target emission and (ii) the
+   security-relevant §7 authz-required gate, and a dedicated doc-14 consult
+   before touching emission.
+
+Phase 1 + Phase 2 touch **no runtime-narrowing floor** (read-only analysis over
+typed HIR). Phase 3 does and must be re-consulted at that point.
