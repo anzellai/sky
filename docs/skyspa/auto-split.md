@@ -275,3 +275,60 @@ v1 inline-`Task.run` apps.
 
 Phase 1 + Phase 2 touch **no runtime-narrowing floor** (read-only analysis over
 typed HIR). Phase 3 does and must be re-consulted at that point.
+
+## 12. Settled approach (2026-08-23): source-to-source + infer-first with effectful-origin taint
+
+The user reframed the mechanism away from §6's in-compiler dual emission. It is
+**simpler and does not touch the compiler IR at all**, which dissolves the §11
+"dual-target emission" and "endpoint-generation" walls:
+
+**Source-to-source into two ordinary Sky projects.** The auto-split is a
+**generator** that reads one annotated/inferred project and emits **two normal
+Sky source projects**, each built by the *existing* compiler + targets:
+
+- **Backend** = the app as a normal Sky server, unchanged, **plus generated
+  RPC endpoints** — one per effectful `update` branch (`POST /_rpc/<Msg>`), each
+  running that branch's real effect server-side and returning the updated
+  `Model` (JSON via the shared codec). This is exactly the per-action
+  `Server.api` shape the todos server already hand-writes.
+- **Frontend** = the same app built to **wasm**, with each effectful branch
+  **rewritten to an RPC call** (`Spa.postJson … "/_rpc/<Msg>" … Applied`) whose
+  response *is* the updated `Model`; pure branches run client-local (zero
+  round-trip). Server-only helpers + secret env vars are **not emitted** into the
+  frontend project.
+
+**`examples/60-spa-todos` (client + server + shared) IS the hand-written target
+shape** — the generator's job is to produce that split from one project. Parse
+↔ render already exists (`sky fmt`: syntax parses, fmt pretty-prints), so the
+generator is "parse the one project → rewrite `update` → emit two projects."
+
+**Inference (infer-first; annotation is the fallback).** "Non-pure updates are
+server-side" is the rule. A branch is **server** iff it transitively:
+1. performs a **server effect** — a `Db`/`File`/`Auth`/server-`Http` kernel, or
+   an inline `Task.run` / `let _ =` auto-force over one; **or**
+2. references an **effectful-origin value** — a top-level binding whose
+   initialiser reaches an effect: a `Task.run` CAF (`db = Task.run (Db.connect …)`),
+   an env/secret read (`System.getenv…`). These values are **tainted**; anything
+   touching them is server, and they are excluded from the client build.
+
+Both seeds propagate transitively over the call/reference graph; the analysis
+**over-approximates to server on any ambiguity** (e.g. `Http` whose target it
+cannot prove is external) — sound direction: a needless RPC, never a client
+leak. The compiler already detects effectful CAFs (the memoised-fresh-value
+warning) and has the `Task`-type + kernel machinery (§11), so both seeds are
+recoverable.
+
+**Fallback if inference proves ambiguous / bad DX** (open question — the user
+is unsure it infers cleanly): mark server branches explicitly, via either a
+**comment pragma** or a **Msg-constructor marker** (`Private T`). Infer-with-
+annotation-override is the likely end state.
+
+**First build = the inference + an inspectable report, no codegen.** For one
+project it prints each `update` branch as *client* / *server* with the taint
+reason (which effect or tainted value forced it), and flags a value used by both
+a client branch and a server-tainted path. This is read-only, floor-free,
+needs no authorization, and it **directly answers "can it be inferred well?"**
+before any generator or RPC exists. If the split it derives on a real app
+(todos, + a crafted effectful-CAF/env fixture) is correct and unambiguous,
+Infer wins; if not, we add the annotation fallback. Only then: the generator
+(source-to-source) + the runtime RPC glue.
