@@ -684,11 +684,16 @@ struct GoBuildOutcome {
 /// has full reflect, so no de-reflection is needed; the bundle is larger but runs
 /// in any browser / WKWebView / Android WebView.
 fn run_wasm_build(out_dir: &Path) -> Result<(), String> {
+    // `-ldflags=-s -w` strips the symbol table (`-s`) and DWARF (`-w`). A
+    // browser never reads either, and for GOARCH=wasm they are pure download
+    // weight — the client is delivered over the wire, so this is the one target
+    // where stripping is unambiguously right. (Passed as a SINGLE argv element
+    // so `-s -w` is the flag VALUE, not two separate build flags.)
     let out = Command::new("go")
         .current_dir(out_dir)
         .env("GOOS", "js")
         .env("GOARCH", "wasm")
-        .args(["build", "-o", "main.wasm", "."])
+        .args(["build", "-ldflags=-s -w", "-o", "main.wasm", "."])
         .output()
         .map_err(|e| format!("failed to run `go build` (GOOS=js GOARCH=wasm): {e}"))?;
     if !out.status.success() {
