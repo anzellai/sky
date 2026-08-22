@@ -920,23 +920,53 @@ fn cmd_build_target(target: &str, project_dir: &Path, out_dir: &Path) -> ExitCod
             );
         }
         "desktop" => {
-            println!(
-                "\nWrap it in a native desktop window with a tiny Sky.Webview shell:\n  \
-                 Webview.url \"http://127.0.0.1:<port>/\" (Webview.defaultWindow |> Webview.withTitle \"App\")\n\
-                 point it at the backend that serves this bundle. macOS/Windows/Linux."
-            );
+            // Generate a tiny Sky.Webview shell and build it to a native binary.
+            match build_desktop_shell(project_dir, out_dir) {
+                Ok(bin) => println!(
+                    "\nDesktop app built → {}\n  \
+                     A native window over the SAME wasm client. Start your backend\n  \
+                     (serving the dist/ bundle on PORT, default 8951), then run the binary.",
+                    bin.display()
+                ),
+                Err(e) => {
+                    eprintln!("sky build --target desktop: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
         }
         "ios" => {
-            println!(
-                "\niOS toolchain OK. Host the bundle from your backend and load it in a\n\
-                 WKWebView app (see examples/60-spa-todos/mobile-ios for the shell + build)."
-            );
+            // Generate a SwiftUI + WKWebView shell + build it for the simulator.
+            match build_ios_app(project_dir, out_dir) {
+                Ok(app) => println!(
+                    "\niOS app built → {}\n  \
+                     Install:  xcrun simctl install booted {}\n  \
+                     A WKWebView over the SAME client. The simulator shares the host\n  \
+                     network, so it loads http://localhost:8951/ — start your backend first.",
+                    app.display(),
+                    app.display()
+                ),
+                Err(e) => {
+                    eprintln!("sky build --target ios: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
         }
         "android" => {
-            println!(
-                "\nAndroid toolchain OK. Host the bundle from your backend and load it in a\n\
-                 WebView app (see examples/60-spa-todos/mobile-android + build-apk.sh)."
-            );
+            // Generate a WebView shell project + build a signed APK.
+            match build_android_apk(project_dir, out_dir) {
+                Ok(apk) => println!(
+                    "\nAndroid APK built → {}\n  \
+                     Install:  adb install -r {}\n  \
+                     A WebView over the SAME client. It loads http://10.0.2.2:8951/\n  \
+                     (the emulator's alias for the host) — start your backend on the host first.",
+                    apk.display(),
+                    apk.display()
+                ),
+                Err(e) => {
+                    eprintln!("sky build --target android: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
         }
         _ => {}
     }
@@ -963,6 +993,407 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Generate a Sky.Webview desktop shell for the freshly-built client and build
+/// it to a native binary, returning the binary path. The shell is NOT a second
+/// copy of the app: it opens a native system-webview window over the SAME wasm
+/// client the web build serves, talking to the SAME stateless backend — only the
+/// window is native. Built by shelling out to THIS `sky` binary so it reuses the
+/// full cgo/WebKit build path (`Webview.url` → cgo).
+fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+    let app = project_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app".to_string());
+    // The shell PROJECT is generated in a temp dir, NOT under `out_dir`: the
+    // project resolver refuses a sky.toml nested inside a `sky-out/` build tree
+    // ("no .sky under src/"). Build there, then copy the binary into `out_dir`
+    // so the user's project tree stays clean and the artifact lands under
+    // sky-out with everything else.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let shell = std::env::temp_dir().join(format!("sky-desktop-shell-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(shell.join("src"))
+        .map_err(|e| format!("create {}: {e}", shell.display()))?;
+    std::fs::write(
+        shell.join("sky.toml"),
+        format!("name = \"{app}-desktop\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
+    )
+    .map_err(|e| format!("write sky.toml: {e}"))?;
+    let title = format!("{app} — Desktop");
+    std::fs::write(
+        shell.join("src").join("Main.sky"),
+        DESKTOP_SHELL_MAIN.replace("{{TITLE}}", &title),
+    )
+    .map_err(|e| format!("write Main.sky: {e}"))?;
+
+    // Build the shell with THIS compiler (cgo-WebKit path via Webview.url).
+    let sky = std::env::current_exe().map_err(|e| format!("locate the sky binary: {e}"))?;
+    let entry = shell.join("src").join("Main.sky");
+    let status = Command::new(&sky)
+        .arg("build")
+        .arg(&entry)
+        .status()
+        .map_err(|e| format!("run `sky build` on the desktop shell: {e}"))?;
+    if !status.success() {
+        let _ = std::fs::remove_dir_all(&shell);
+        return Err("the desktop shell failed to build (see the errors above)".to_string());
+    }
+    let bin_name = project::configured_bin_name(&shell);
+    let built = shell.join("sky-out").join(&bin_name);
+    let dest_dir = out_dir.join("desktop");
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(|e| format!("create {}: {e}", dest_dir.display()))?;
+    let dest = dest_dir.join(&bin_name);
+    let _ = std::fs::remove_file(&dest);
+    std::fs::copy(&built, &dest)
+        .map_err(|e| format!("copy the desktop binary to {}: {e}", dest.display()))?;
+    let _ = std::fs::remove_dir_all(&shell);
+    Ok(dest)
+}
+
+/// Desktop shell template. `{{TITLE}}` is substituted with the app's window
+/// title. Reads `PORT` (default 8951) for the backend it points the window at,
+/// matching the web-served bundle's origin.
+const DESKTOP_SHELL_MAIN: &str = r#"module Main exposing (main)
+
+-- Native desktop shell for a Sky.Spa client (generated by `sky build --target
+-- desktop`). It opens a system-webview window over the SAME wasm client the web
+-- build serves, talking to the SAME stateless backend over the SAME typed
+-- shared-codec boundary. One client, one server; only the window is native.
+--
+-- Start the backend first (serving the dist/ bundle on PORT, default 8951),
+-- then run this binary.
+
+import Std.Webview as Webview
+import Sky.Core.System as System
+
+
+main : Task Error ()
+main =
+    let
+        port =
+            System.getenvOr "PORT" "8951"
+
+        appUrl =
+            "http://127.0.0.1:" ++ port ++ "/"
+    in
+    Webview.url appUrl
+        (Webview.defaultWindow
+            |> Webview.withTitle "{{TITLE}}"
+            |> Webview.withSize 480 760
+        )
+"#;
+
+/// Lowercase-alnum sanitisation for a Java/Android package segment; empty →
+/// "app". Package segments cannot start with a digit, so a leading digit is
+/// prefixed with `a`.
+fn sanitize_pkg_segment(name: &str) -> String {
+    let mut s: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if s.is_empty() {
+        s = "app".to_string();
+    }
+    if s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        s.insert(0, 'a');
+    }
+    s
+}
+
+/// Generate a native Android WebView shell for the client and build a signed,
+/// installable APK, returning its path. Not a second copy of the app: a thin
+/// WebView over the SAME wasm client, loading it from the backend (client and
+/// server stay separate; only the shell is native). Uses the SDK tools directly
+/// (aapt2 → javac → d8 → zipalign → apksigner) via a generated build script — no
+/// Gradle, no Android Studio. Requires the SDK (checked before the build ran)
+/// plus a JDK on PATH.
+fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+    let app = project_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app".to_string());
+    let seg = sanitize_pkg_segment(&app);
+    let package = format!("sky.spa.{seg}");
+    let pkg_path = package.replace('.', "/");
+
+    let root = out_dir.join("android");
+    let java_dir = root.join("app/src/main/java").join(&pkg_path);
+    let res_dir = root.join("app/src/main/res/values");
+    std::fs::create_dir_all(&java_dir).map_err(|e| format!("create {}: {e}", java_dir.display()))?;
+    std::fs::create_dir_all(&res_dir).map_err(|e| format!("create {}: {e}", res_dir.display()))?;
+
+    std::fs::write(
+        root.join("app/src/main/AndroidManifest.xml"),
+        ANDROID_MANIFEST
+            .replace("{{PACKAGE}}", &package)
+            .replace("{{LABEL}}", &app),
+    )
+    .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
+    std::fs::write(
+        res_dir.join("strings.xml"),
+        ANDROID_STRINGS.replace("{{LABEL}}", &app),
+    )
+    .map_err(|e| format!("write strings.xml: {e}"))?;
+    std::fs::write(
+        java_dir.join("MainActivity.java"),
+        ANDROID_MAIN_ACTIVITY.replace("{{PACKAGE}}", &package),
+    )
+    .map_err(|e| format!("write MainActivity.java: {e}"))?;
+    let apk_name = format!("{seg}.apk");
+    std::fs::write(
+        root.join("build-apk.sh"),
+        ANDROID_BUILD_APK.replace("{{APK}}", &apk_name),
+    )
+    .map_err(|e| format!("write build-apk.sh: {e}"))?;
+
+    let status = Command::new("bash")
+        .arg("build-apk.sh")
+        .current_dir(&root)
+        .status()
+        .map_err(|e| format!("run build-apk.sh: {e}"))?;
+    if !status.success() {
+        return Err("the APK build failed (see the errors above)".to_string());
+    }
+    Ok(root.join("build").join(&apk_name))
+}
+
+/// Generate a SwiftUI + WKWebView iOS shell for the client and build it for the
+/// SIMULATOR with swiftc (no .xcodeproj), returning the `.app` bundle path. A
+/// thin WKWebView over the SAME wasm client, loading it from the backend; only
+/// the shell is native. Requires full Xcode + the simulator SDK (checked before
+/// the build ran). The simulator shares the host network, so it points at
+/// `http://localhost:8951/`.
+fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+    let app = project_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app".to_string());
+    let seg = sanitize_pkg_segment(&app);
+    // Executable + .app basename: capitalise the sanitised segment.
+    let name = {
+        let mut c = seg.chars();
+        match c.next() {
+            Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
+            None => "App".to_string(),
+        }
+    };
+    let bundle_id = format!("sky.spa.{seg}");
+
+    let root = out_dir.join("ios");
+    let src = root.join(&name);
+    std::fs::create_dir_all(&src).map_err(|e| format!("create {}: {e}", src.display()))?;
+    std::fs::write(
+        src.join("App.swift"),
+        IOS_APP_SWIFT.replace("{{NAME}}", &name),
+    )
+    .map_err(|e| format!("write App.swift: {e}"))?;
+    std::fs::write(src.join("WebView.swift"), IOS_WEBVIEW_SWIFT)
+        .map_err(|e| format!("write WebView.swift: {e}"))?;
+    std::fs::write(
+        src.join("Info.plist"),
+        IOS_INFO_PLIST
+            .replace("{{NAME}}", &name)
+            .replace("{{DISPLAY}}", &app)
+            .replace("{{BUNDLE_ID}}", &bundle_id),
+    )
+    .map_err(|e| format!("write Info.plist: {e}"))?;
+    std::fs::write(
+        root.join("build-app.sh"),
+        IOS_BUILD_APP.replace("{{NAME}}", &name),
+    )
+    .map_err(|e| format!("write build-app.sh: {e}"))?;
+
+    let status = Command::new("bash")
+        .arg("build-app.sh")
+        .current_dir(&root)
+        .status()
+        .map_err(|e| format!("run build-app.sh: {e}"))?;
+    if !status.success() {
+        return Err("the iOS app failed to build (see the errors above)".to_string());
+    }
+    Ok(root.join("build").join(format!("{name}.app")))
+}
+
+const IOS_APP_SWIFT: &str = r#"import SwiftUI
+
+// Native iOS/iPadOS shell for a Sky.Spa client (generated by
+// `sky build --target ios`). A thin WKWebView over the SAME wasm client the web
+// / desktop / Android builds use, served over HTTP by its own stateless backend.
+// Client and server stay separate; only the shell is native.
+//
+// The iOS SIMULATOR shares the host network, so http://localhost:8951/ (a dev
+// backend on the host) works as-is. A REAL device cannot see the host's
+// localhost — point appURL at the deployed backend over https.
+@main
+struct {{NAME}}App: App {
+    static let appURL = URL(string: "http://localhost:8951/")!
+
+    var body: some Scene {
+        WindowGroup {
+            WebView(url: Self.appURL)
+                .ignoresSafeArea()
+        }
+    }
+}
+"#;
+
+const IOS_WEBVIEW_SWIFT: &str = r#"import SwiftUI
+import WebKit
+
+/// SwiftUI wrapper over WKWebView. WKWebView runs JavaScript and WebAssembly by
+/// default, so the Sky.Spa wasm client boots with no extra configuration.
+struct WebView: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> WKWebView {
+        let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        web.load(URLRequest(url: url))
+        return web
+    }
+
+    func updateUIView(_ web: WKWebView, context: Context) {}
+}
+"#;
+
+const IOS_INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>{{NAME}}</string>
+    <key>CFBundleDisplayName</key><string>{{DISPLAY}}</string>
+    <key>CFBundleIdentifier</key><string>{{BUNDLE_ID}}</string>
+    <key>CFBundleExecutable</key><string>{{NAME}}</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSRequiresIPhoneOS</key><true/>
+    <key>MinimumOSVersion</key><string>17.0</string>
+    <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+    <key>UILaunchScreen</key><dict/>
+    <!-- Dev only: allow cleartext to the local backend (localhost). Production
+         uses https, so remove this. -->
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsLocalNetworking</key><true/></dict>
+</dict>
+</plist>
+"#;
+
+const IOS_BUILD_APP: &str = r#"#!/usr/bin/env bash
+# Build a SwiftUI + WKWebView shell for the iOS SIMULATOR with swiftc — no
+# .xcodeproj. Requires full Xcode (not just Command Line Tools).
+#   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./build-app.sh
+set -euo pipefail
+cd "$(dirname "$0")"
+: "${DEVELOPER_DIR:=/Applications/Xcode.app/Contents/Developer}"; export DEVELOPER_DIR; unset SDKROOT || true
+SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+rm -rf build && mkdir -p "build/{{NAME}}.app"
+xcrun --sdk iphonesimulator swiftc -sdk "$SDK" -target arm64-apple-ios17.0-simulator \
+  -parse-as-library {{NAME}}/App.swift {{NAME}}/WebView.swift \
+  -o "build/{{NAME}}.app/{{NAME}}"
+cp {{NAME}}/Info.plist "build/{{NAME}}.app/Info.plist"
+echo "OK -> build/{{NAME}}.app"
+"#;
+
+const ANDROID_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="{{PACKAGE}}">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="{{LABEL}}"
+        android:usesCleartextTraffic="true"
+        android:supportsRtl="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+"#;
+
+const ANDROID_STRINGS: &str = r#"<resources>
+    <string name="app_name">{{LABEL}}</string>
+</resources>
+"#;
+
+const ANDROID_MAIN_ACTIVITY: &str = r#"package {{PACKAGE}};
+
+import android.app.Activity;
+import android.os.Bundle;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+
+/**
+ * Native Android WebView shell for a Sky.Spa client (generated by
+ * `sky build --target android`). A thin WebView over the SAME wasm client the
+ * web + desktop builds use, served over HTTP by its own stateless backend.
+ * Client and server stay separate; only the shell is native.
+ *
+ * 10.0.2.2 is the emulator's alias for the host's localhost, so this loads a
+ * backend started on the host (default port 8951). For a real device /
+ * production, point APP_URL at the deployed backend over https.
+ */
+public class MainActivity extends Activity {
+
+    private static final String APP_URL = "http://10.0.2.2:8951/";
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        WebView web = new WebView(this);
+        WebSettings s = web.getSettings();
+        s.setJavaScriptEnabled(true);   // the wasm bootstrap needs JS
+        s.setDomStorageEnabled(true);
+        web.setWebViewClient(new WebViewClient());  // keep navigation inside the WebView
+        setContentView(web);
+        web.loadUrl(APP_URL);
+    }
+}
+"#;
+
+const ANDROID_BUILD_APK: &str = r#"#!/usr/bin/env bash
+# Build + sign a WebView shell APK with the Android SDK tools directly
+# (aapt2 -> javac -> d8 -> zipalign -> apksigner) — no Gradle, no Studio.
+# Requires: ANDROID_HOME (SDK with build-tools + a platform), a JDK (javac),
+# and ~/.android/debug.keystore (generated here if missing).
+set -euo pipefail
+cd "$(dirname "$0")"
+
+: "${ANDROID_HOME:=$HOME/Library/Android/sdk}"
+BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+PLAT="$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)/android.jar"
+KS="$HOME/.android/debug.keystore"
+[ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass android -keypass android \
+  -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname "CN=Android Debug,O=Android,C=US"
+
+rm -rf build && mkdir -p build/gen build/classes
+"$BT/aapt2" compile --dir app/src/main/res -o build/res.zip
+"$BT/aapt2" link -o build/base.apk -I "$PLAT" \
+  --manifest app/src/main/AndroidManifest.xml -R build/res.zip --java build/gen \
+  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay
+javac --release 11 -cp "$PLAT" -d build/classes \
+  $(find build/gen -name '*.java') $(find app/src/main/java -name '*.java')
+"$BT/d8" --lib "$PLAT" --min-api 24 --output build/ $(find build/classes -name '*.class')
+( cd build && zip -q base.apk classes.dex )
+"$BT/zipalign" -f 4 build/base.apk build/aligned.apk
+"$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
+  --min-sdk-version 24 --out build/{{APK}} build/aligned.apk
+"$BT/apksigner" verify build/{{APK}} && echo "OK -> build/{{APK}}"
+"#;
 
 const WASM_INDEX_HTML: &str = r#"<!doctype html>
 <html lang="en">
@@ -4979,6 +5410,19 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_pkg_segment_yields_a_valid_android_segment() {
+        // lowercased, alnum-only
+        assert_eq!(sanitize_pkg_segment("Spa-Todos"), "spatodos");
+        assert_eq!(sanitize_pkg_segment("my client!"), "myclient");
+        // empty / all-punctuation → the "app" fallback
+        assert_eq!(sanitize_pkg_segment(""), "app");
+        assert_eq!(sanitize_pkg_segment("---"), "app");
+        // a leading digit is not a legal package-segment start → prefixed
+        assert_eq!(sanitize_pkg_segment("2048"), "a2048");
+        assert_eq!(sanitize_pkg_segment("3d-viewer"), "a3dviewer");
+    }
 
     #[test]
     fn parse_semver_handles_v_prefix_and_suffixes() {

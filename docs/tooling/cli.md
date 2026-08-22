@@ -35,25 +35,35 @@ so it runs in any browser / WKWebView / Android WebView.
 sky build --wasm src/Main.sky        # -> sky-out/main.wasm + wasm_exec.js
 ```
 
-**`--target <t>`** builds the wasm client (implies `--wasm`) and bundles it for a
-delivery surface into `dist/` (index.html + main.wasm + wasm_exec.js):
+**`--target <t>`** builds the wasm client (implies `--wasm`), always stages the
+servable `dist/` bundle (index.html + main.wasm + wasm_exec.js), and then — for a
+native surface — **generates a shell and builds it** into a real artifact. Each
+shell is a thin native window over the SAME wasm client, loading it from your
+backend; client and server stay separate, only the shell is native.
 
-| `--target` | Bundles | Notes |
+| `--target` | Produces | Notes |
 |---|---|---|
 | `web` / `tablet` | `dist/` ready to serve | serve statically, or same-origin via `Server.static "/" "../dist"`; tablet == responsive web |
-| `desktop` | `dist/` + a `Std.Webview.url` recipe | a native WKWebView / WebView2 / webkit2gtk window around the client |
-| `ios` | `dist/` + iOS shell pointer | **requires full Xcode + the iOS Simulator runtime**; missing → warns + exits |
-| `android` | `dist/` + Android shell pointer | **requires the Android SDK** (`ANDROID_HOME` / `adb`); missing → warns + exits |
+| `desktop` | `sky-out/desktop/<app>` (native binary) | generates a `Std.Webview.url` shell + builds it (cgo — WKWebView / WebView2 / webkit2gtk) |
+| `ios` | `sky-out/ios/build/<App>.app` | generates a SwiftUI + WKWebView shell + builds it for the Simulator (swiftc). **Requires full Xcode + the iOS Simulator runtime**; missing → warns + exits |
+| `android` | `sky-out/android/build/<app>.apk` (signed) | generates a WebView shell + builds a signed APK (aapt2 → javac → d8 → zipalign → apksigner, no Gradle). **Requires the Android SDK** (`ANDROID_HOME` / `adb`) + a JDK; missing → warns + exits |
 
 ```bash
 sky build --target web src/Main.sky      # -> dist/ (serve it)
-sky build --target android src/Main.sky  # -> dist/ (+ builds nothing if no SDK: warns + exits)
+sky build --target desktop src/Main.sky  # -> sky-out/desktop/<app>  (run after starting your backend)
+sky build --target ios src/Main.sky      # -> sky-out/ios/build/<App>.app  (xcrun simctl install booted …)
+sky build --target android src/Main.sky  # -> sky-out/android/build/<app>.apk  (adb install -r …)
 ```
 
-For `ios` / `android` the platform toolchain is checked **before** the build, so
-a missing SDK fails fast with an install hint rather than half-building. The
-native shells (WKWebView / Android WebView / `Std.Webview.url`) that host the
-bundle live in `examples/60-spa-todos/{mobile-ios,mobile-android,desktop}`.
+The generated shells point at `http://127.0.0.1:8951/` (desktop, via `PORT`),
+`http://localhost:8951/` (iOS Simulator — shares the host network), and
+`http://10.0.2.2:8951/` (Android emulator's host alias) — start your backend
+first. For a real device / production, host the `dist/` bundle from your backend
+over https and point the shell there. For `ios` / `android` the platform
+toolchain is checked **before** the (slower) build, so a missing SDK fails fast
+with an install hint rather than half-building. The hand-written reference shells
+live in `examples/60-spa-todos/{mobile-ios,mobile-android,desktop}` if you want
+to eject and customize (icons, permissions, package id).
 
 **`--embed`** bundles a PostgreSQL distribution into the binary, so
 `./sky-out/app --embed` is a self-contained app *and* database on a bare host —
