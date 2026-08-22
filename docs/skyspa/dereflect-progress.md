@@ -24,3 +24,27 @@
 ## Decisions / findings
 - (D0) isolation is a hard requirement: de-reflection in a `//go:build js`/spa
   client runtime; server reflect path byte-unchanged.
+
+## D0 findings (consult, verified on-machine)
+- **Isolation is the dominant blocker, NOT dispatch.** `tinygo build -target wasm`
+  on the emitted counter fails FIRST on `net/http` (roundtrip_js.go gap) — an
+  IMPORT typecheck failure (not reachability), via untagged `rt.go` importing
+  net/http(:45)/os(:47)/os/exec(:48)/crypto/rsa(:31)/crypto/x509(:37) +
+  database/sql (rt_core_shims_js.go). DCE can't save it. Client must stop
+  importing the server stdlib.
+- **Dispatch: typed-closure emission (confirmed), NOT Stage-6.** Codegen has the
+  concrete types at the `Spa_config` site (`lower.rs:5901 lower_record`, all-`any`
+  anon-struct branch ~5972/6079) → emit `rt.SpaFns{Init,Update,View,Subs}` adapters
+  that call `Main_update(m.(Msg),md.(int))` directly + unpack `T2.V0/.V1` at
+  concrete type → removes `reflect.Value.Call` (live_core.go:2425/2436/2516) + T2
+  tuple reflect. Stage 6 is the server wire-decode problem the client lacks + still
+  routes through reflect.Call — wrong lever.
+- Counter's reflect surface = ONLY the 4 sky_call sites + T2. HtmlToVNode/adt_shape
+  (SkyADT fast path) + codec_auto NOT reached by the counter — those are D3 (todos).
+- Isolation options: (A) tag-split rt.go server funcs `//go:build !js` (no dup,
+  extends the P1 live_core/rt_server carve, driven by the tinygo build oracle) vs
+  (B) separate `rt_spa` client package (perfect isolation, duplication tax).
+  Default A (server files stay, just tagged → non-js server build byte-unchanged);
+  fall to B only if rt.go won't split cleanly.
+- D-plan: D1 typed-closure dispatch → D2 isolation carve + counter TinyGo → D3
+  codec/adt → D4 todos TinyGo+e2e.
