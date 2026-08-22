@@ -2055,7 +2055,7 @@ func liveAppRun(cfg any) any {
 			prefix += "/"
 		}
 		mux.Handle(prefix,
-			http.StripPrefix(prefix, http.FileServer(http.Dir(app.staticDir))))
+			gzipStatic(http.StripPrefix(prefix, http.FileServer(http.Dir(app.staticDir)))))
 	}
 	// API handler dispatcher — matches method + pattern before page handler.
 	mux.HandleFunc("/", app.dispatchRoot)

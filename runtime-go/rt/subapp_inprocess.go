@@ -503,7 +503,7 @@ func registerSubAppRoutes(
 		if !strings.HasSuffix(sp, "/") {
 			sp += "/"
 		}
-		fileHandler := http.StripPrefix(sp, http.FileServer(http.Dir(app.staticDir)))
+		fileHandler := gzipStatic(http.StripPrefix(sp, http.FileServer(http.Dir(app.staticDir))))
 		if gate == nil {
 			parentMux.Handle(sp, fileHandler)
 		} else {

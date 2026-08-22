@@ -89,7 +89,7 @@ func Server_listen(port any, routes any) any {
 			if len(stripPattern) > 1 && stripPattern[len(stripPattern)-1] == '/' {
 				stripPattern = stripPattern[:len(stripPattern)-1]
 			}
-			mux.Handle(pattern, http.StripPrefix(stripPattern, http.FileServer(http.Dir(route.StaticDir))))
+			mux.Handle(pattern, gzipStatic(http.StripPrefix(stripPattern, http.FileServer(http.Dir(route.StaticDir)))))
 			continue
 		}
 

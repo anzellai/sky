@@ -437,7 +437,7 @@ func startWebviewLoopback(staticDir string, state *webviewState) (*http.Server, 
 	// Sky.Live convention (rt.live.go:2458-2465) so the same view
 	// source paints identically under both backends.
 	mux.Handle("/static/",
-		http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
+		gzipStatic(http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))))
 	// `/` (and any unknown path) — serves the current rendered
 	// body. The body is wrapped with webviewPageWrap to add the
 	// CSS reset + <div id="sky-root"> shell, matching what
