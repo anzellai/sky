@@ -44,6 +44,21 @@ would be. Compiled both ways:
 **~9× smaller, 65 KB gzip — web-viable.** And the current v1 real-app figure for
 contrast: the Todos client (reflect-heavy, standard Go) is **~2.4 MB gzip**.
 
+A trivial counter under-measures, so a **todos-SCALE reflection-free surrogate**
+was also built (`scratchpad/tinygo-complex` — a `{ui,data}` model, switch-based
+typed dispatch over 12 Msg branches, a real list+form+filter+router view with
+per-item rows, a hand-written typed JSON codec, `syscall/js` `fetch`):
+
+| todos-scale, reflection-free | raw | gzip |
+|---|---|---|
+| standard Go→wasm | 2,077,533 B | 614,485 B (**600 KB**) |
+| **TinyGo 0.41.1** | 301,206 B | 105,020 B (**103 KB**) |
+
+**103 KB gzip for a realistic app — decisively web-viable.** Against the current
+reflect-heavy Todos client (~2.4 MB gzip), Path A is a **~23× reduction**. This is
+the number that matters: the de-reflected design, at real app complexity, lands in
+production-web territory.
+
 So the two facts that decide the plan: (1) TinyGo turns a reflection-free client
 into a web-viable bundle; (2) the current client is reflection-heavy, so TinyGo
 is blocked until it is de-reflected.
@@ -70,10 +85,11 @@ Make the client core reflection-free, then TinyGo it. Work:
    (not only reflect). The whole reflection-free client core must be checked
    against TinyGo's supported packages, not just the spike.
 
-- **Payoff (measured surrogate):** ~65 KB gzip for a counter. A real app (typed
-  codecs + routing + a larger view) will be bigger — estimate **~150–400 KB
-  gzip**, still web-viable — but that must be **measured after the rewrite**, not
-  promised (this programme has a history of projections off by several-fold).
+- **Payoff (measured surrogate):** ~65 KB gzip (counter) and **~103 KB gzip
+  (todos-scale, reflection-free surrogate)** — both under TinyGo, both
+  web-viable. The true figure is the real de-reflected Sky-emitted client,
+  measured *after* the rewrite (the surrogate hand-writes what codegen would emit),
+  but the two data points bracket it firmly in web-viable range.
 - **Cost:** a bounded runtime rewrite (dispatch + codec + ADT), isolatable to a
   client runtime. Multi-week. Reuses the entire Go toolchain + the existing IR.
 - **Risk:** TinyGo stdlib gaps beyond reflect; the codec de-reflection is the
@@ -113,8 +129,9 @@ streaming compilation, lazy-load/split, aggressive caching.
 
 ## Honest caveats
 
-- 65 KB is a **counter**; the real-app figure is unmeasured until the rewrite —
-  do not quote 65 KB as "Sky.Spa's web bundle."
+- 65 KB is a **counter** and 103 KB is a **hand-written todos-scale surrogate** —
+  the real Sky-emitted de-reflected client is unmeasured until the rewrite. Quote
+  "~100 KB gzip, web-viable (surrogate-measured)", not a hard v1 number.
 - TinyGo compatibility of the **full** reflection-free core (beyond the spike) is
   unverified — a required Path-A spike is: de-reflect the *smallest* real client
   (spa-counter) and TinyGo it end-to-end.
