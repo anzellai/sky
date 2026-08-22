@@ -1,0 +1,356 @@
+module Main exposing (main)
+
+-- The Sky.Spa CLIENT — a full TEA app that runs ENTIRELY in the browser (wasm).
+--
+-- The whole Model is client-owned (the loop runs on the client), expressed in
+-- the `{ page, ui, data }` discipline from the Sky.Spa design:
+--
+--   * `page` — the routed filter (All / Active / Completed). The router owns it:
+--     an intercepted `<a href>` click or Back/Forward sets `model.page` and
+--     re-renders, with NO page reload and NO server call. Client-owned.
+--   * `ui`   — ephemeral client state: the new-todo input text, the in-place
+--     edit buffer, the fetch status. NEVER serialized, no codec, never leaves
+--     the browser. Editing these is a PURE `update` branch → zero round-trip.
+--   * `data` — a cached projection of server truth: the todo list. It has a
+--     `Std.Codec` (in Shared.sky) because it crosses the wire and hits the DB.
+--     "Has a codec ⇒ server-backed" is the boundary.
+--
+-- The performance story: typing a new title, switching filters, and opening the
+-- edit buffer are all pure client-local transitions — they never touch the
+-- network. Only add / toggle / delete / rename round-trip to the stateless
+-- backend through the EXPLICIT typed boundary (`Spa.getJson` / `Spa.postJson`)
+-- using the SHARED codecs from Shared.sky — one type, one codec, one wire shape.
+--
+-- SECURITY: the client is untrusted. It only PROPOSES mutations; the backend
+-- re-validates and re-reads authoritative data. See Shared.sky + the server.
+--
+-- View is written in `Std.Ui` (the renderer-agnostic Element DSL), so the SAME
+-- view could render on Sky.Live (web), Sky.Tui (terminal), and Sky.Webview
+-- (desktop) — no Std.Html-only lock-in. The Sky.Spa client renderer paints the
+-- `Element` tree to the DOM.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Error as Error exposing (Error)
+import Std.Spa as Spa
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Events as Ev
+import Shared
+    exposing
+        ( Todo
+        , todoListCodec
+        , newTodoCodec
+        , idReqCodec
+        , renameReqCodec
+        )
+
+
+
+-- ─── Model = { page, ui, data } ────────────────────────────────────
+
+
+type Filter
+    = All
+    | Active
+    | Completed
+
+
+type Status
+    = Loading
+    | Ready
+    | Failed String
+
+
+type alias Ui =
+    { newTitle : String
+    , editing : Maybe Int
+    , editBuffer : String
+    , status : Status
+    }
+
+
+type alias Data =
+    { todos : List Todo }
+
+
+type alias Model =
+    { page : Filter
+    , ui : Ui
+    , data : Data
+    }
+
+
+type Msg
+    = -- client-owned UI (pure, zero round-trip)
+      NewTitleChanged String
+    | StartEdit Int String
+    | EditBufferChanged String
+    | CancelEdit
+      -- durable data via the explicit typed boundary (round-trip)
+    | GotTodos (Result Error (List Todo))
+    | AddTodo
+    | ToggleTodo Int
+    | DeleteTodo Int
+    | CommitEdit Int
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { page = All
+      , ui = { newTitle = "", editing = Nothing, editBuffer = "", status = Loading }
+      , data = { todos = [] }
+      }
+    , Spa.getJson todoListCodec "/api/todos" GotTodos
+    )
+
+
+
+-- ─── update ────────────────────────────────────────────────────────
+
+
+setUi : (Ui -> Ui) -> Model -> Model
+setUi f model =
+    { model | ui = f model.ui }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        -- Pure client-local transitions — NO Cmd, NO server call.
+        NewTitleChanged t ->
+            ( setUi (\u -> { u | newTitle = t }) model, Cmd.none )
+
+        StartEdit id current ->
+            ( setUi (\u -> { u | editing = Just id, editBuffer = current }) model
+            , Cmd.none
+            )
+
+        EditBufferChanged t ->
+            ( setUi (\u -> { u | editBuffer = t }) model, Cmd.none )
+
+        CancelEdit ->
+            ( setUi (\u -> { u | editing = Nothing, editBuffer = "" }) model
+            , Cmd.none
+            )
+
+        -- The server answers every mutation with the full list; replace the
+        -- cached projection wholesale.
+        GotTodos (Ok todos) ->
+            ( { model
+                | data = { todos = todos }
+                , ui = (\u -> { u | status = Ready }) model.ui
+              }
+            , Cmd.none
+            )
+
+        GotTodos (Err e) ->
+            ( setUi (\u -> { u | status = Failed (Error.toString e) }) model
+            , Cmd.none
+            )
+
+        AddTodo ->
+            let
+                title =
+                    String.trim model.ui.newTitle
+            in
+            if String.isEmpty title then
+                ( model, Cmd.none )
+
+            else
+                ( setUi (\u -> { u | newTitle = "" }) model
+                , Spa.postJson newTodoCodec todoListCodec "/api/todos" { title = title } GotTodos
+                )
+
+        ToggleTodo id ->
+            ( model
+            , Spa.postJson idReqCodec todoListCodec "/api/todos/toggle" { id = id } GotTodos
+            )
+
+        DeleteTodo id ->
+            ( model
+            , Spa.postJson idReqCodec todoListCodec "/api/todos/delete" { id = id } GotTodos
+            )
+
+        CommitEdit id ->
+            let
+                title =
+                    String.trim model.ui.editBuffer
+            in
+            if String.isEmpty title then
+                ( setUi (\u -> { u | editing = Nothing, editBuffer = "" }) model
+                , Cmd.none
+                )
+
+            else
+                ( setUi (\u -> { u | editing = Nothing, editBuffer = "" }) model
+                , Spa.postJson renameReqCodec todoListCodec "/api/todos/rename" { id = id, title = title } GotTodos
+                )
+
+
+
+-- ─── Derived (pure) ────────────────────────────────────────────────
+
+
+visibleTodos : Model -> List Todo
+visibleTodos model =
+    case model.page of
+        All ->
+            model.data.todos
+
+        Active ->
+            List.filter (\t -> not t.done) model.data.todos
+
+        Completed ->
+            List.filter (\t -> t.done) model.data.todos
+
+
+remainingCount : Model -> Int
+remainingCount model =
+    List.length (List.filter (\t -> not t.done) model.data.todos)
+
+
+filterName : Filter -> String
+filterName f =
+    case f of
+        All ->
+            "all"
+
+        Active ->
+            "active"
+
+        Completed ->
+            "completed"
+
+
+statusText : Status -> String
+statusText s =
+    case s of
+        Loading ->
+            "loading"
+
+        Ready ->
+            "ready"
+
+        Failed e ->
+            "failed: " ++ e
+
+
+
+-- ─── view (Std.Ui Element — cross-platform) ────────────────────────
+
+
+ids : String -> Ui.Attribute msg
+ids v =
+    Ui.htmlAttribute "id" v
+
+
+todoRow : Model -> Todo -> Element Msg
+todoRow model todo =
+    let
+        idStr =
+            String.fromInt todo.id
+
+        toggle =
+            Ui.el
+                [ ids ("toggle-" ++ idStr), Ev.onClick (ToggleTodo todo.id) ]
+                (Ui.text
+                    (if todo.done then
+                        "[x]"
+
+                     else
+                        "[ ]"
+                    )
+                )
+
+        body =
+            if model.ui.editing == Just todo.id then
+                Ui.row [ Ui.spacing 6 ]
+                    [ Ui.input
+                        [ ids "edit-input"
+                        , Ui.htmlAttribute "value" model.ui.editBuffer
+                        , Ev.onInput EditBufferChanged
+                        ]
+                    , Ui.el [ ids "edit-save", Ev.onClick (CommitEdit todo.id) ]
+                        (Ui.text "save")
+                    , Ui.el [ ids "edit-cancel", Ev.onClick CancelEdit ]
+                        (Ui.text "cancel")
+                    ]
+
+            else
+                Ui.el
+                    [ ids ("title-" ++ idStr)
+                    , Ev.onClick (StartEdit todo.id todo.title)
+                    ]
+                    (Ui.text todo.title)
+    in
+    Ui.row [ ids ("row-" ++ idStr), Ui.spacing 8 ]
+        [ toggle
+        , body
+        , Ui.el [ ids ("del-" ++ idStr), Ev.onClick (DeleteTodo todo.id) ]
+            (Ui.text "delete")
+        ]
+
+
+filterLink : Filter -> String -> String -> Element Msg
+filterLink current path label =
+    Ui.link
+        [ ids ("f-" ++ label) ]
+        { url = path
+        , label = Ui.text label
+        }
+
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 12, Ui.padding 16 ]
+            [ Ui.el [ ids "heading" ] (Ui.text "Sky.Spa Todos")
+            , Ui.el [ ids "status" ] (Ui.text (statusText model.ui.status))
+            , Ui.row [ Ui.spacing 6 ]
+                [ Ui.input
+                    [ ids "new-input"
+                    , Ui.htmlAttribute "value" model.ui.newTitle
+                    , Ev.onInput NewTitleChanged
+                    ]
+                , Ui.el [ ids "add-btn", Ev.onClick AddTodo ] (Ui.text "Add")
+                ]
+            , Ui.row [ Ui.spacing 10 ]
+                [ filterLink model.page "/" "all"
+                , filterLink model.page "/active" "active"
+                , filterLink model.page "/completed" "completed"
+                ]
+            , Ui.el [ ids "filter" ] (Ui.text (filterName model.page))
+            , Ui.el [ ids "count" ]
+                (Ui.text (String.fromInt (List.length (visibleTodos model))))
+            , Ui.el [ ids "total" ]
+                (Ui.text (String.fromInt (List.length model.data.todos)))
+            , Ui.el [ ids "remaining" ]
+                (Ui.text (String.fromInt (remainingCount model)))
+            , Ui.column [ ids "list", Ui.spacing 6 ]
+                (List.map (todoRow model) (visibleTodos model))
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> Spa.withRoutes
+                [ Spa.route "/" All
+                , Spa.route "/active" Active
+                , Spa.route "/completed" Completed
+                ]
+        )
