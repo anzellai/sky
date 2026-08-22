@@ -5,13 +5,13 @@
 > Sky.Spa v1. Updated at every phase boundary. Work branch: `exp/spa`. Verified
 > prototype baseline: `exp/spa-prototype`.
 
-## Status: P2 DONE ✅ — P3 next (interpretCmd real effects)
+## Status: P3 DONE ✅ — P4 next (Std.Spa v1 + explicit boundary)
 
 | Phase | State | Notes |
 |---|---|---|
 | P1 — productionize + land partition | ✅ **done** | partition + census/kernel/coverage fixes on `exp/spa` (@c39dd8a0). Full §0.2.1 verified SERIALLY green: `cargo test --workspace`=0, example-sweep=0, conformance=0, 29 harness gates pass, entry_exit_contract 3/3, `GOOS=js` rt build=0, Sky.Live 09/19 build=0, spa render ALL PASS. |
 | P2 — client-side diff renderer | ✅ **done** | Full re-render replaced by `diffTrees(prev,new,clientState)` → `[]Patch` applied by sky-id (`spaApplyPatches`); `spaPrev *VNode` kept across dispatches; first render still full-mounts. Focus/caret/dirty-input authority ported from `__skyApplyPatches` to the Go/syscall.js Patch VALUE model. `spa-input/` acceptance test 23/23 PASS (focus retained, caret preserved mid-string + across programmatic value write, value not clobbered, node identity stable, 0 elements created per keystroke = minimal patch); `spa-counter/` still ALL PASS. `diffTrees`/`live_core.go` UNCHANGED — all edits in the two `//go:build js` files, so Sky.Live server diff is untouched. |
-| P3 — interpretCmd real effects | ⏳ | perform async, Time/Http, subscriptions |
+| P3 — interpretCmd real effects | ✅ **done** | `interpretCmd` runs real effects: `Cmd.perform` on a per-perform cooperatively-scheduled goroutine (wasm single thread, NOT an OS thread) that dispatches `toMsg(result)`; sync kernels (`Time.now`/`Random`) return inline; async `Http.get`/`post` split to a browser-`fetch` kernel (`http_wasm.go`) that BLOCKS on a channel the Promise fills and returns a real `Result` (required by typed-emit's `TaskCoerceT`). `subscriptions : model -> Sub msg` added to `Std.Spa.config`; the driver reconciles `Sub.every` timers after every dispatch (start/stop/leave via setInterval/clearInterval). `Cmd.publish` = documented client no-op. Headless acceptance: spa-perform / spa-sub / spa-http ALL PASS; spa-counter + spa-input (23/23) still PASS. `live_core.go` + all `!js` runtime UNCHANGED; only shared change is the `Http_get`/`Http_post` build-split (host net/http impl moved verbatim to `http_notjs.go`). |
 | P4 — Std.Spa v1 + explicit boundary | ⏳ | config(routes/subs), routing, Http+Codec server boundary |
 | P5 — real e2e example + verify | ⏳ | client UI + stateless Sky backend; browser e2e; bundle number |
 | P6 — Judge + docs/templates + final sweep | ⏳ | fresh-context Judge vs DONE list |
@@ -71,3 +71,45 @@
   the parsed HTML (`__skyReplaceHTMLPreservingFocus`). Client-side node-splice is
   deferred — not needed for the P2 typing acceptance gate, flagged for a later
   pass if a real app hits it.
+- (P3) FINDING that overrode the spec's async tactic: typed codegen wraps a
+  `Cmd.perform` Task in `rt.TaskCoerceT[E,A]` (rt.go:6007), which RUNS the task
+  and coerces its **synchronous** return to the declared result type. The spec
+  proposed "async Http returns a Promise; dispatch from `.then`/`.catch`, no
+  goroutine" — but a Promise/placeholder return is coerced to `HttpResponse`
+  the instant the task is invoked and panics (`rt.jsAsync cannot be cast to
+  HttpResponse`) before it can settle. So the task MUST return a real
+  `SkyResult` when called. Correct mechanism (verified): the client `Http.get`
+  kernel (`http_wasm.go`) issues `globalThis.fetch` and **blocks the goroutine
+  on a channel** the Promise's `.then`/`.catch` fill, returning the settled
+  `Result` — the canonical Go/wasm "await a JS Promise" pattern. Each
+  `Cmd.perform` runs on its own **cooperatively-scheduled goroutine** (wasm is
+  single-threaded — this is NOT an OS thread) so the block yields to the browser
+  event loop rather than freezing it, mirroring the server's `go runPerform`
+  minus the SSE/lock. A sync task (`Time.now`/`Random`) returns at once on its
+  goroutine and dispatches. So "no goroutine" from the P3 brief could not hold
+  under typed-emit; a single cooperative goroutine per perform is the minimal
+  correct shape.
+- (P3) DECISION — `Cmd.publish` / `publishNoEcho` are a **documented client
+  no-op** (not a silent TODO — the interpreter arm carries the rationale, and
+  it never drops silently in a way that matters because there is nothing to
+  deliver to). Sky.Live pub/sub fans a message across *sessions* (other
+  users/tabs) through the server broker; a Sky.Spa client is a single browser
+  tab with no peer and no session bus, so an in-tab bus would be surface with
+  no consumer in the single-tab TEA model. Cross-tab / cross-user fan-out is a
+  server concern and routes through P4's explicit boundary. (Also out of the
+  P3 "subscriptions = timers" scope: `Sub.subscribeTopic`/stream/websocket subs
+  are not wired on the client in v1 — only `Sub.every`.)
+- (P3) SHARED-FILE TOUCH (verified no-regression): the only non-`//go:build js`
+  change is splitting `Http_get`/`Http_post` out of `stdlib_extra.go` — the
+  net/http bodies moved **verbatim** into `http_notjs.go` (`//go:build !js`),
+  the browser-fetch impls into `http_wasm.go` (`//go:build js`); both return
+  the identical `Task Error HttpResponse` shape. `Http_getT` / `Http_request` /
+  `parseQuery` stay in `stdlib_extra.go` (host net/http; not on the P3 client
+  path). Verified: `go test ./rt/...` green, examples 09/19 build + run.
+- (P3) LESSON (shared scratchpad): the first `scripts/build.sh` run wrote to
+  `scratchpad/build.log`, which a sibling agent (a `wt-perfinv` worktree)
+  clobbered — the log showed a foreign tree's crates and a bogus `BUILD_EXIT=1`
+  that isn't even a string `build.sh` emits. Re-running with a **unique** log
+  filename (`build-a4026-*.log`) showed the real build: green, crates from THIS
+  worktree, `sky-out/sky` installed here. Parallel agents share one scratchpad;
+  never use a fixed filename there.
