@@ -14,9 +14,9 @@
 ## Phases
 | Phase | State | Notes |
 |---|---|---|
-| D0 — Architecture-Consult | 🔨 | map spa-counter client reflection surface + de-reflection mechanism + TinyGo constraints + phased plan |
-| D1 — dispatch de-reflection | ⏳ | typed dispatch (perMsgTypedDispatch Stage 6 or equiv), client-only |
-| D2 — spa-counter → TinyGo | ⏳ | real Sky-emitted counter compiles+renders under TinyGo; measure |
+| D0 — Architecture-Consult | ✅ | map spa-counter client reflection surface + de-reflection mechanism + TinyGo constraints + phased plan |
+| D1 — dispatch de-reflection | ✅ | typed-closure emission (rt.SpaFns) — the 4 dispatch sites, client-only |
+| D2 — spa-counter → TinyGo | ✅ | real Sky-emitted counter compiles+renders under TinyGo; 1.59 MB raw / 521 KB gz |
 | D3 — codec + ADT de-reflection | ⏳ | reflection-free client codec/adt for data-decoding (todos) |
 | D4 — todos → TinyGo + e2e | ⏳ | real todos client TinyGo build + render + e2e; measure |
 | D5 — Judge + isolation proof + full sweep | ⏳ | Sky.Live untouched; §0.2.1 green; DONE list |
@@ -48,3 +48,52 @@
   fall to B only if rt.go won't split cleanly.
 - D-plan: D1 typed-closure dispatch → D2 isolation carve + counter TinyGo → D3
   codec/adt → D4 todos TinyGo+e2e.
+
+## D1 findings (implemented)
+- **Codegen** (`rust/crates/lower/src/lower.rs`, `kernel_call` hook +
+  `try_lower_spa_fns`/`spa_adapter`): the `rt.Spa_config` kernel call now emits
+  `rt.SpaFns{Init,Update,View,Subs}` of typed adapter closures
+  (`func(a0 any, a1 any) rt.SkyTuple2 { p := Main_update(a0.(Main_Msg), a1.(int)); return rt.SkyTuple2{V0: p.V0, V1: p.V1} }`)
+  instead of the all-`any` anon struct. Type assertions `.(T)`, no reflect.
+  Gated on `rt.Spa_config` only ⇒ Sky.Live/Tui/Webview (`Live_config`, a
+  different kernel) is byte-unchanged and still reflect-dispatches.
+- **Runtime**: `rt.SpaFns` + `asSpaFns` (`spa_core.go`); `Spa_config` stores the
+  SpaFns under "Fns"; the wasm driver (`live_wasm.go`
+  spaRun/step/renderCurrent/reconcileSubs) invokes the closures directly, reads
+  `.V0`/`.V1` — no `sky_call`/`sky_call2`/`tupleFirst` on the counter path.
+- Verified: standard-Go `GOOS=js` build + `run_headless.cjs` pass
+  (0→+1×3→3→Reset→0→−1); `cargo test -p sky/lower/codegen` + `go test ./rt/...`
+  green.
+
+## D2 findings (implemented — option A, tag-split, one `rt` package)
+- **os + net/url COMPILE under TinyGo 0.41.1** (verified with a probe) ⇒ only
+  net/http, os/exec, crypto/rsa, crypto/x509, encoding/pem were true blockers.
+  Much smaller carve than feared.
+- Split to `//go:build !js`: `rt_server_kernels.go` (Process_run, RSA/PKCS
+  Crypto), `stdlib_http_server.go` (net/http outbound client); tagged
+  console_inline / console_internal_token / email_kernel / email_mime `!js`;
+  dropped net/http from rt_core_shims_js.go; inlined `http.TimeFormat` literal
+  in rt.go. Client HTTP stays browser-`fetch` (http_wasm.go).
+- **Task entry reflect**: `AnyTaskRun(TaskCoerceT[Error,()](Spa_app(cfg)))`
+  hit `reflect.Type.NumIn()` (unimplemented in TinyGo → runtime panic). Fixed
+  reflect-free with `SkyTask[E,A].RunAny()` + an interface assertion in
+  `anyTaskInvoke` (portable; identical result to the old reflect fallback,
+  faster on the server too).
+- **Result**: `tinygo build -no-debug -opt=z -target wasm` on the REAL emitted
+  spa-counter SUCCEEDS and RENDERS/runs the TEA loop headless on TinyGo's
+  wasm_exec.js. **Bundle 1,623,321 B raw / 534,039 B gzip (1.59 MB / 521 KB).**
+  Larger than the hand-written surrogate (191 KB / 65 KB) because the real
+  client links the whole `rt` package (all pure kernels + reflect-based
+  codec/ADT machinery DCE can't yet strip). Shrinking toward the surrogate is
+  D3+ (codec/ADT de-reflection + DCE tuning).
+- **Reflect status**: the 4 DISPATCH sites are reflect-free (proven by render).
+  `reflect.Value.Call`/`MakeFunc` remain in js-compiled files
+  (`sky_call`/`sky_call2` live_core.go, `pipelineApply`/`SkyCall`/MakeFunc
+  rt.go) on COLD client paths the counter never executes (Cmd.perform,
+  onNavigate, Sub.every timers, JSON-pipeline decode). TinyGo compiles them as
+  panic-stubs; de-reflecting them (so a perform/router/timer Spa app also
+  TinyGo-runs) is D3+.
+- **Sky.Live untouched**: `go test ./rt/...` green; 09-live-counter +
+  19-skyforum build + serve HTTP 200; standard-Go spa-counter + spa-input
+  still render. `gates_measure_a_fresh_compiler` (21), project suite,
+  `denominators --check`, `coverage-ledger --check` all PASS.
