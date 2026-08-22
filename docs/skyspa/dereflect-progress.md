@@ -127,3 +127,35 @@
   spa-counter FULLY works under TinyGo (D1+D2, CI-green); todos COMPILES under
   TinyGo (644 KB gz, size cliff not yet tripped) but panics at runtime on the next
   coercion-reflect site. Size (zero-reflect DCE) awaits the coercion de-reflection.
+
+## D3 DEFINITIVE finding — the coercion narrow needs CODEGEN, not runtime fast-paths
+Chasing the runtime panic forward (FieldByName→ResultCoerce ✓ → ConvertibleTo→
+coerceInner/Coerce) reaches a FUNDAMENTAL wall: `coerceInner[[]Todo_R]` /
+`Coerce[[]Todo_R]` must narrow `[]any` (each element a BOXED Todo_R) into a typed
+`[]Todo_R`. In the generic runtime helper the element type is erased, so the narrow
+is inherently reflect (`ConvertibleTo`/`reflect.Convert`) — TinyGo-unimplemented.
+Narrowing it reflection-free requires the STATIC element type, which exists only at
+CODEGEN (the emit site knows `Todo_R`). So the emit must either (a) produce
+already-typed decode results (no post-decode coerce), or (b) emit the narrow using
+the known element type (e.g. `AsListT[Todo_R]` directly on an `A=any` result rather
+than `coerceInner[[]Todo_R]`). This is the pervasive "reflection-free coercion"
+codegen work (prod-web.md's large lever), NOT a bounded runtime patch.
+
+### Achieved (committed, verified)
+- **spa-counter FULLY works under TinyGo** (D1+D2, CI-green, 521 KB gz) — a real
+  Sky-emitted client running client-side under TinyGo. SHIPPED.
+- Dispatch (performTask/dispatchEvent), codec-applicative (pipelineApply), and
+  ResultCoerce de-reflected (client-only/safe short-circuits); todos COMPILES
+  under TinyGo (644 KB gz). Server byte-unchanged; `go build ./...`=0.
+
+### Remaining for functional todos (record-app) under TinyGo + the size cliff
+1. Codegen: emit the client's any→typed coercion reflection-free using the static
+   element/field types (route slice narrows through `AsListT[Elem]` on `A=any`
+   results; struct narrows via typed field assigns) — gated on the SPA client
+   target so the server reflect coercion is unchanged.
+2. Then D3c isolation (client-only reflection-free variants of the residual
+   reflect refs: sky_call cold-fallbacks, unwrapADTShape in HtmlToVNode,
+   adaptFuncValue) so the client graph reaches ZERO reflect → DCE trips the size
+   cliff (644 KB → target ~100 KB).
+This is a bounded-but-substantial codegen effort (multi-session), now precisely
+scoped. Resume here.
