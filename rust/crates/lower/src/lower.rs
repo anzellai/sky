@@ -3708,8 +3708,8 @@ impl<'a> Ctx<'a> {
             let mut lambda: Option<GoExpr> = None;
             for pn in pnames.iter().rev() {
                 let ret_body = match lambda.take() {
-                    None => widen(ctor_val.clone()),
-                    Some(inner) => widen(inner),
+                    None => self.widen(ctor_val.clone()),
+                    Some(inner) => self.widen(inner),
                 };
                 lambda = Some(GoExpr::new(
                     GoExprKind::FuncLit(
@@ -3747,6 +3747,100 @@ impl<'a> Ctx<'a> {
             GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
             fn_ty,
         )
+    }
+
+    /// Widen a lowered expression to the `any` slot it crosses into.
+    ///
+    /// For a non-function value this is the identity `any(e)` wrap (`Widen`),
+    /// byte-identical to the historical free `widen`. For a FUNCTION VALUE whose
+    /// Go shape is not already the uniform all-`any` form, it emits a curried
+    /// `func(any) any` nest (the boxed-Sky-closure convention) instead of
+    /// `any(func(T0,…) R)`: the adapter calls `e` as a DIRECT typed Go call
+    /// (reflection-free) with each `any` param narrowed to `e`'s declared param
+    /// type, and its result re-widened.
+    ///
+    /// Why here: `widen` is invoked ONLY at an `any` slot, and a Sky function
+    /// value reaches the runtime's reflect appliers (`SkyCall` / `pipelineApply`
+    /// / `sky_call` / `performTask`) exactly once it has been erased to `any`.
+    /// Boxing at this boundary makes every dynamically-dispatched function value
+    /// hit one `func(any) any` fast path (reflection-free — TinyGo implements no
+    /// `reflect.Value.Call` / `reflect.Type.NumIn`), while every TYPED-slot
+    /// callback stays untouched: the typed HOF twin (`rt.List_mapT[A,B]`) passes
+    /// its `func(A) B` callback UN-widened, so this never regresses it. Mirrors
+    /// `lower_ctor_value`'s boxed nest; see doc 14 §5.1 (eta at the slot shape)
+    /// + §9.2 (the closeable `rt.SkyCall` dispatch population).
+    fn widen(&mut self, e: GoExpr) -> GoExpr {
+        if e.ty == GoTy::Any {
+            return e;
+        }
+        // Box a function value into the uniform `func(any) any` shape (callable),
+        // then wrap in the explicit `any(...)`. A non-function value boxes to
+        // itself, so this stays byte-identical (`any(e)`).
+        let boxed = self.box_func_value(e);
+        GoExpr::new(GoExprKind::Widen(Box::new(boxed)), GoTy::Any)
+    }
+
+    /// Box a function VALUE into the uniform curried `func(any) any` convention
+    /// and return the CALLABLE func value (NOT an `any(...)` wrap). A value that
+    /// is already the all-`any` shape, or not a function, is returned unchanged.
+    ///
+    /// The result is callable directly (`box(f)(x)`) AND upcasts to `any`
+    /// implicitly when stored, so `coerce_if_needed`'s Any path can box a func
+    /// crossing into an `any` slot WITHOUT breaking a caller that applies it as a
+    /// Go call (a pipeline `x |> f`); `widen` wraps this for an explicit slot.
+    fn box_func_value(&mut self, e: GoExpr) -> GoExpr {
+        let (ps, r) = match &e.ty {
+            GoTy::Func(ps, r)
+                if !ps.is_empty()
+                    && !(ps.iter().all(|p| *p == GoTy::Any) && **r == GoTy::Any) =>
+            {
+                (ps.clone(), (**r).clone())
+            }
+            _ => return e,
+        };
+        let arity = ps.len();
+        let pnames: Vec<String> = (0..arity)
+            .map(|_| {
+                let n = format!("_w{}", self.local_counter);
+                self.local_counter += 1;
+                n
+            })
+            .collect();
+        // Direct typed call `e(narrow(_w0), …)`, each `any` param narrowed to
+        // `e`'s declared param type — reflection-free after the landed
+        // ResultCoerceOk / narrow_call struct arm.
+        let call_args: Vec<GoExpr> = pnames
+            .iter()
+            .zip(ps.iter())
+            .map(|(pn, pty)| {
+                let id = GoExpr::new(GoExprKind::Ident(pn.clone()), GoTy::Any);
+                self.coerce_if_needed(id, pty)
+            })
+            .collect();
+        let call = GoExpr::new(GoExprKind::Call(Box::new(e), call_args), r);
+        // innermost body = the call result widened to `any` (recurses: a
+        // func-returning `e` boxes its result too).
+        let mut inner_body = Some(self.widen(call));
+        let mut lambda: Option<GoExpr> = None;
+        for pn in pnames.iter().rev() {
+            let ret_body = match lambda.take() {
+                None => inner_body.take().expect("innermost body set once"),
+                Some(inner) => self.widen(inner),
+            };
+            lambda = Some(GoExpr::new(
+                GoExprKind::FuncLit(
+                    vec![GoParam {
+                        name: pn.clone(),
+                        ty: GoTy::Any,
+                    }],
+                    GoTy::Any,
+                    vec![GoStmt::Return(Some(ret_body))],
+                ),
+                GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any)),
+            ));
+        }
+        // The outermost `func(any) any` lambda — returned CALLABLE (not wrapped).
+        lambda.expect("arity ≥ 1 → ≥ 1 lambda")
     }
 
     /// Lower a constructor application (0+ args). Handles builtin Ok/Err/Just/
@@ -4773,7 +4867,8 @@ impl<'a> Ctx<'a> {
         if go == "rt.Spa_config" && args.len() == 1 {
             let saved = self.local_counter;
             if let Some(fns) = self.try_lower_spa_fns(args[0]) {
-                return self.kernel_call_lowered(go, vec![widen(fns)], actual);
+                let wfns = self.widen(fns);
+                return self.kernel_call_lowered(go, vec![wfns], actual);
             }
             self.local_counter = saved;
         }
@@ -4813,14 +4908,15 @@ impl<'a> Ctx<'a> {
                 }
                 // Unproven: the erased call, byte-identically, over the argument
                 // already lowered above rather than lowered a second time.
-                return self.kernel_call_lowered(go, vec![widen(xs)], actual);
+                let wxs = self.widen(xs);
+                return self.kernel_call_lowered(go, vec![wxs], actual);
             }
         }
         let largs: Vec<GoExpr> = args
             .iter()
             .map(|a| {
                 let e = self.lower_expr(*a, &GoTy::Any);
-                widen(e)
+                self.widen(e)
             })
             .collect();
         self.kernel_call_lowered(go, largs, actual)
@@ -4943,16 +5039,18 @@ impl<'a> Ctx<'a> {
         let (ret, body) = if tuple_result {
             // p := <call>; return rt.SkyTuple2{V0: any(p.V0), V1: any(p.V1)}
             let p = || GoExpr::new(GoExprKind::Ident("p".into()), GoTy::Any);
-            let sel = |f: &str| {
-                widen(GoExpr::new(
-                    GoExprKind::Selector(Box::new(p()), f.into()),
-                    GoTy::Any,
-                ))
-            };
+            let v0 = self.widen(GoExpr::new(
+                GoExprKind::Selector(Box::new(p()), "V0".into()),
+                GoTy::Any,
+            ));
+            let v1 = self.widen(GoExpr::new(
+                GoExprKind::Selector(Box::new(p()), "V1".into()),
+                GoTy::Any,
+            ));
             let repack = GoExpr::new(
                 GoExprKind::StructLit(
                     "rt.SkyTuple2".into(),
-                    vec![("V0".into(), sel("V0")), ("V1".into(), sel("V1"))],
+                    vec![("V0".into(), v0), ("V1".into(), v1)],
                 ),
                 GoTy::Named("rt.SkyTuple2".into(), vec![]),
             );
@@ -4961,7 +5059,7 @@ impl<'a> Ctx<'a> {
                 vec![GoStmt::Short("p".into(), call), GoStmt::Return(Some(repack))],
             )
         } else {
-            (GoTy::Any, vec![GoStmt::Return(Some(widen(call)))])
+            (GoTy::Any, vec![GoStmt::Return(Some(self.widen(call)))])
         };
 
         let fn_ty = GoTy::Func(vec![GoTy::Any; arity], Box::new(ret.clone()));
@@ -5165,7 +5263,7 @@ impl<'a> Ctx<'a> {
         actual: &GoTy,
     ) -> GoExpr {
         let erased =
-            |s: &mut Self, f: GoExpr, xs: GoExpr| s.kernel_call_lowered(go, vec![widen(f), widen(xs)], actual);
+            |s: &mut Self, f: GoExpr, xs: GoExpr| { let wf = s.widen(f); let wx = s.widen(xs); s.kernel_call_lowered(go, vec![wf, wx], actual) };
 
         // The element type comes from the LIST, whose lowered slice type is the
         // one Go will index. `make_partial` hard-codes its remaining params to
@@ -5400,7 +5498,8 @@ impl<'a> Ctx<'a> {
         }
         // Not a statically typed pair — the unchanged reflective call, built from
         // the argument already lowered above.
-        Some(self.kernel_call_lowered(go, vec![widen(t)], actual))
+        let wt = self.widen(t);
+        Some(self.kernel_call_lowered(go, vec![wt], actual))
     }
 
     /// A kernel applied to MORE arguments than its runtime symbol takes.
@@ -5468,7 +5567,7 @@ impl<'a> Ctx<'a> {
             .iter()
             .map(|a| {
                 let e = self.lower_expr(*a, &GoTy::Any);
-                widen(e)
+                self.widen(e)
             })
             .collect();
         let n_rest = arity - given.len();
@@ -5485,7 +5584,7 @@ impl<'a> Ctx<'a> {
                 ty: pty.clone(),
             });
             // The kernel symbol takes `any` params — widen the typed closure param.
-            arg_exprs.push(widen(GoExpr::new(GoExprKind::Ident(pname), pty.clone())));
+            arg_exprs.push(self.widen(GoExpr::new(GoExprKind::Ident(pname), pty.clone())));
         }
         let call = GoExpr::new(
             GoExprKind::Call(
@@ -5562,7 +5661,7 @@ impl<'a> Ctx<'a> {
                 // `rt.Concat` returns Go `any` (list `++`); type the node `Any`
                 // so the enclosing slot narrows via `rt.AsListT` rather than
                 // feeding `any` into a `[]T` slot.
-                call_rt("rt.Concat", vec![widen(l), widen(r)], GoTy::Any)
+                call_rt("rt.Concat", vec![self.widen(l), self.widen(r)], GoTy::Any)
             }
             "::" => {
                 let elem = actual.elem_ty();
@@ -5573,7 +5672,7 @@ impl<'a> Ctx<'a> {
                 // (`lower_expr`) coerces to the expected `[]T` via `rt.AsListT`.
                 // Typing it `[]T` here would suppress that coercion and feed an
                 // `any` value into a `[]T` slot (`go build` rejects it).
-                call_rt("rt.List_cons", vec![widen(l), widen(r)], GoTy::Any)
+                call_rt("rt.List_cons", vec![self.widen(l), self.widen(r)], GoTy::Any)
             }
             "|>" => {
                 // a |> f  ==  f a. Flatten when `f` is a partial application
@@ -5660,7 +5759,7 @@ impl<'a> Ctx<'a> {
                         ">=" => "rt.Gte",
                         _ => "rt.Add",
                     };
-                    call_rt(helper, vec![widen(l), widen(r)], GoTy::Any)
+                    call_rt(helper, vec![self.widen(l), self.widen(r)], GoTy::Any)
                 } else {
                     let rtname = match op {
                         "//" => "rt.IntDiv",
@@ -5677,7 +5776,7 @@ impl<'a> Ctx<'a> {
                     // the use site — matching the oracle. Typing it `actual`
                     // (e.g. `int`) is a lie: Go's `:=` infers `any` and the value
                     // then fails to satisfy an `int` slot.
-                    call_rt(rtname, vec![widen(l), widen(r)], GoTy::Any)
+                    call_rt(rtname, vec![self.widen(l), self.widen(r)], GoTy::Any)
                 }
             }
         }
@@ -6441,7 +6540,8 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .map(|(n, v)| {
                     let cap = capitalize(n.as_str());
-                    let lowered = widen(self.lower_expr(*v, &GoTy::Any));
+                    let inner = self.lower_expr(*v, &GoTy::Any);
+                    let lowered = self.widen(inner);
                     (format!("\"{cap}\""), lowered)
                 })
                 .collect();
@@ -6449,13 +6549,14 @@ impl<'a> Ctx<'a> {
                 GoExprKind::StructLit("map[string]any".to_string(), pairs),
                 GoTy::Any,
             );
+            let widen_b = self.widen(b);
             return GoExpr::new(
                 GoExprKind::Call(
                     Box::new(GoExpr::new(
                         GoExprKind::Ident("rt.RecordUpdate".into()),
                         GoTy::Any,
                     )),
-                    vec![widen(b), map_lit],
+                    vec![widen_b, map_lit],
                 ),
                 GoTy::Any,
             );
@@ -6542,7 +6643,10 @@ impl<'a> Ctx<'a> {
         }
         // arity ≥10 → `rt.SkyTupleN{ Vs: []any{…} }` (slice-backed, heterogeneous).
         let vs = GoExpr::new(
-            GoExprKind::SliceLit(GoTy::Any, args.into_iter().map(widen).collect()),
+            GoExprKind::SliceLit(
+                GoTy::Any,
+                args.into_iter().map(|a| self.widen(a)).collect(),
+            ),
             GoTy::Any,
         );
         GoExpr::new(
@@ -7878,13 +7982,6 @@ fn call_rt(name: &str, args: Vec<GoExpr>, ty: GoTy) -> GoExpr {
     )
 }
 
-fn widen(e: GoExpr) -> GoExpr {
-    if e.ty == GoTy::Any {
-        e
-    } else {
-        GoExpr::new(GoExprKind::Widen(Box::new(e)), GoTy::Any)
-    }
-}
 
 /// The PURE-SKY `Sky.Core.List` HOFs that have a fully-typed runtime twin a
 /// provable call site can be re-pointed at.

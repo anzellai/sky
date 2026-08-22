@@ -2417,6 +2417,18 @@ func sky_call(f any, arg any) any {
 	if f == nil {
 		return nil
 	}
+	// Reflection-free fast paths for the boxed-Sky-closure convention: a
+	// first-class Sky function value is emitted as `func(any) any` (see
+	// lower::Ctx::widen). Type-assert + call directly so event dispatch,
+	// task-completion `toMsg`, route-param fill, and sub mapping carry no
+	// reflect.Value — TinyGo implements neither reflect.Value.Call nor
+	// reflect.Type.NumIn, so this is also what lets sky_call run there.
+	if g, ok := f.(func(any) any); ok {
+		return g(arg)
+	}
+	if g, ok := f.(func() any); ok {
+		return g()
+	}
 	rv := reflect.ValueOf(f)
 	if rv.Kind() != reflect.Func {
 		return f

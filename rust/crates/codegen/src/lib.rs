@@ -583,6 +583,35 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
         GoTy::Bare(Prim::Int) => format!("rt.AsInt({})", inner),
         GoTy::Bare(Prim::Bool) => format!("rt.AsBool({})", inner),
         GoTy::Bare(Prim::Float) => format!("rt.AsFloat({})", inner),
+        GoTy::Func(ps, r) if ps.len() == 1 => {
+            // Narrow to a 1-arg typed func target (a codec's `EncFields func(any)
+            // []T`, a decoder, …) reflection-free. Two boxed source shapes occur
+            // and both are handled by assertion, never `reflect.MakeFunc`:
+            //   * the exact target func type (a func value boxed into `any` keeps
+            //     its concrete Go func type) → return it directly;
+            //   * the canonical boxed `func(any) any` (from `Ctx::widen`) → wrap
+            //     it in an adapter that calls it and narrows the result to `R`.
+            // `rt.Coerce` on a func target calls `adaptFuncValue` /
+            // `reflect.MakeFunc` (unimplemented under TinyGo); it stays only as a
+            // last-resort fallback for a genuinely divergent shape.
+            let tgt = render_ty(to);
+            let p0 = render_ty(&ps[0]);
+            let rty = render_ty(r);
+            let narrowed = narrow_call(r, "_g(any(_a0))");
+            format!(
+                "func() {tgt} {{ _s := {inner}; if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _g, _ok := _s.(func(any) any); _ok {{ return func(_a0 {p0}) {rty} {{ return {narrowed} }} }}; return rt.Coerce[{tgt}](_s) }}()"
+            )
+        }
+        GoTy::Func(_, _) => {
+            // 0- or multi-arg func target: a direct type assertion recovers the
+            // exact-shape boxed source reflection-free; reflect fallback only for
+            // a divergent shape.
+            let tgt = render_ty(to);
+            format!(
+                "func() {tgt} {{ if _f, _ok := ({}).({tgt}); _ok {{ return _f }}; return rt.Coerce[{tgt}]({}) }}()",
+                inner, inner
+            )
+        }
         GoTy::Struct(fs) if !fs.is_empty() => {
             // A structural (anonymous) record target — e.g. the applicative
             // `Std.Codec` record `{Dec, Enc, Shp}` pulled from its ADT bag. Every
