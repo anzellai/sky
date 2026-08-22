@@ -13,6 +13,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 SKY="${SKY:-$(cd ../.. && pwd)/sky-out/sky}"
+
+# Never measure a compiler older than this tree: a bare `cargo build -p sky`
+# leaves sky-out/sky untouched, so a stale binary could "prove" a round-trip it
+# never compiled. (scripts/lib/fresh-compiler.sh; enforced by the xtask gate
+# gates_measure_a_fresh_compiler.)
+ROOT="$(cd ../.. && pwd)"
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$SKY" "$ROOT"
+
 TODOS_PORT="${TODOS_PORT:-8951}"
 export TODOS_PORT
 export TODOS_BASE="http://localhost:${TODOS_PORT}"

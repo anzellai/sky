@@ -15,6 +15,13 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 SKY="${SKY:-$(cd ../.. && pwd)/sky-out/sky}"
+
+# Never measure a compiler older than this tree (scripts/lib/fresh-compiler.sh;
+# enforced by the xtask gate gates_measure_a_fresh_compiler).
+ROOT="$(cd ../.. && pwd)"
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$SKY" "$ROOT"
+
 TODOS_PORT="${TODOS_PORT:-8951}"
 export TODOS_PORT
 # The backend runs with cwd=server/, so the SQLite file lands at server/app.db.
