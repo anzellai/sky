@@ -10,7 +10,11 @@
 -- main =
 --     Spa.app
 --         (Spa.config
---             { init = Model.init, update = Update.update, view = View.view }
+--             { init = Model.init
+--             , update = Update.update
+--             , view = View.view
+--             , subscriptions = Subs.subscriptions
+--             }
 --         )
 -- ```
 --
@@ -19,9 +23,12 @@
 -- kernels are `rt.Spa_config` / `rt.Spa_app` (spa_core.go); the client driver
 -- is `live_wasm.go` (`//go:build js`).
 --
--- This is the experimental `exp/spa` surface: minimal on purpose (config + app,
--- init/update/view). Routing, subscriptions, and an explicit server boundary
--- are the later phases in `docs/skyspa/design.md`.
+-- This is the experimental `exp/spa` surface: minimal on purpose
+-- (config + app; init/update/view + `subscriptions`). Client effects run
+-- through the single-threaded wasm interpreter — `Cmd.perform` (sync kernels
+-- like `Time.now`/`Random`/`Uuid` inline, async `Http` via `fetch`), and
+-- `Sub.every` timers. Routing and an explicit server boundary are the later
+-- phases in `docs/skyspa/design.md`.
 module Std.Spa exposing
     ( AppConfig
     , app
@@ -38,17 +45,27 @@ type AppConfig model msg
     = AppConfig_OPAQUE
 
 
--- | Build the client app config from the three required fields.
+-- | Build the client app config from the four required fields.
 --
 --     main =
 --         Spa.app
 --             (Spa.config
---                 { init = init, update = update, view = view }
+--                 { init = init
+--                 , update = update
+--                 , view = view
+--                 , subscriptions = subscriptions
+--                 }
 --             )
+--
+-- `subscriptions : model -> Sub msg` is evaluated after every `update`; the
+-- client driver reconciles the active `Sub.every` timers against the result
+-- (starts new intervals, stops removed ones, leaves unchanged ones running).
+-- Use `\_ -> Sub.none` when the app has no ongoing subscriptions.
 config :
     { init : a -> ( model, Cmd msg )
     , update : msg -> model -> ( model, Cmd msg )
     , view : model -> Html msg
+    , subscriptions : model -> Sub msg
     }
     -> AppConfig model msg
 config =

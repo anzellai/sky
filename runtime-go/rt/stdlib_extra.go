@@ -1372,40 +1372,10 @@ func readBoundedBody(body io.ReadCloser) (string, error) {
 }
 
 // Http.get : String -> Task String HttpResponse
-func Http_get(url any) any {
-	u := fmt.Sprintf("%v", url)
-	return func() any {
-		return WithHTTPClientSpan("GET", u, func() any {
-			req, err := http.NewRequest("GET", u, nil)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.get: " + err.Error()))
-			}
-			// Carry the current trace context + inject W3C traceparent
-			// so the downstream service nests under this client span.
-			req = req.WithContext(CurrentTraceContext())
-			InjectTraceHeaders(req)
-			resp, err := skyHTTPClient().Do(req)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.get: " + err.Error()))
-			}
-			body, err := readBoundedBody(resp.Body)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.get read: " + err.Error()))
-			}
-			hdrs := map[string]string{}
-			for k, v := range resp.Header {
-				if len(v) > 0 {
-					hdrs[k] = v[0]
-				}
-			}
-			return Ok[any, any](HttpResponse{
-				Status:  resp.StatusCode,
-				Body:    body,
-				Headers: hdrs,
-			})
-		})
-	}
-}
+// Http_get / Http_post (the untyped `Http.get`/`Http.post` kernels) are
+// build-split: the net/http host implementation is in http_notjs.go
+// (//go:build !js); the browser-`fetch` client implementation is in
+// http_wasm.go (//go:build js). Both return the identical Sky shape.
 
 // P8/Http typed companion — Task-shaped string in, HttpResponse out.
 func Http_getT(url string) func() SkyResult[string, HttpResponse] {
@@ -1428,43 +1398,6 @@ func Http_getT(url string) func() SkyResult[string, HttpResponse] {
 			Status:  resp.StatusCode,
 			Body:    body,
 			Headers: hdrs,
-		})
-	}
-}
-
-// Http.post : String -> String -> Task String HttpResponse
-// (url, body)
-func Http_post(url any, body any) any {
-	u := fmt.Sprintf("%v", url)
-	b := fmt.Sprintf("%v", body)
-	return func() any {
-		return WithHTTPClientSpan("POST", u, func() any {
-			req, err := http.NewRequest("POST", u, strings.NewReader(b))
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.post: " + err.Error()))
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req = req.WithContext(CurrentTraceContext())
-			InjectTraceHeaders(req)
-			resp, err := skyHTTPClient().Do(req)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.post: " + err.Error()))
-			}
-			rb, err := readBoundedBody(resp.Body)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.post read: " + err.Error()))
-			}
-			hdrs := map[string]string{}
-			for k, v := range resp.Header {
-				if len(v) > 0 {
-					hdrs[k] = v[0]
-				}
-			}
-			return Ok[any, any](HttpResponse{
-				Status:  resp.StatusCode,
-				Body:    rb,
-				Headers: hdrs,
-			})
 		})
 	}
 }
