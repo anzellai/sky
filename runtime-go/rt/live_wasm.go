@@ -21,12 +21,18 @@ import (
 
 // The live application state (single-threaded ⇒ plain package vars).
 var (
-	spaModel  any
-	spaUpdate any
-	spaView   any
+	spaModel any
+	// Typed adapter closures from the rt.SpaFns codegen emits for the
+	// Spa.config record — the reflect-free client dispatch table. Each is
+	// invoked directly (a plain Go call), NOT via reflect.Value.Call, so the
+	// steady-state TEA loop carries no reflection. spaInit/spaUpdate repack
+	// their ( model, Cmd ) tuple result into SkyTuple2 (V0=model, V1=cmd).
+	spaInit   func(any) SkyTuple2
+	spaUpdate func(any, any) SkyTuple2
+	spaView   func(any) any
 	// spaSubs is the config's `subscriptions : model -> Sub msg` (nil when the
 	// config omits it). Evaluated after every dispatch to reconcile timers.
-	spaSubs any
+	spaSubs func(any) any
 	spaRoot js.Value
 	// spaPrev is the previously-rendered VNode tree (sky-id-stamped). Kept
 	// across dispatches so each render can diff against it and apply a minimal
@@ -58,13 +64,17 @@ type spaTimer struct {
 // starts any initial subscriptions, then parks the Go runtime so the browser
 // can deliver events. It never returns.
 func spaRun(cfg any) any {
-	initFn := Field(cfg, "Init")
-	spaUpdate = Field(cfg, "Update")
-	spaView = Field(cfg, "View")
-	// subscriptions is a required config field as of P3, but Field returns nil
-	// for an absent field so an older/partial config degrades to "no subs"
+	// The Sky.Spa target always emits an rt.SpaFns (typed adapter closures);
+	// asSpaFns unwraps it reflect-free. A missing/foreign config yields nil
+	// closures — but codegen guarantees a SpaFns for every real client.
+	fns := asSpaFns(Field(cfg, "Fns"))
+	spaInit = fns.Init
+	spaUpdate = fns.Update
+	spaView = fns.View
+	// subscriptions is a required config field as of P3, but SpaFns.Subs is nil
+	// when the config omits it so an older/partial config degrades to "no subs"
 	// rather than trapping.
-	spaSubs = Field(cfg, "Subscriptions")
+	spaSubs = fns.Subs
 	// Routing config (P4). All optional — a route-less app leaves these empty
 	// and behaves exactly as before P4.
 	spaRoutes = asSpaRoutes(Field(cfg, "Routes"))
@@ -82,10 +92,11 @@ func spaRun(cfg any) any {
 	spaDispatch = step
 
 	// init : a -> ( model, Cmd msg ) — the flags arg is unused by the client
-	// (no server request); pass nil.
-	pair := sky_call(initFn, nil)
-	spaModel = tupleFirst(pair)
-	cmd0 := tupleSecond(pair)
+	// (no server request); pass nil. The adapter closure returns the ( model,
+	// Cmd ) tuple already repacked as SkyTuple2, read reflect-free.
+	pair := spaInit(nil)
+	spaModel = pair.V0
+	cmd0 := pair.V1
 
 	// Deep-link: resolve the initial URL and set the model's Page BEFORE the
 	// first paint, so a load straight onto /about renders About. Only when the
@@ -275,9 +286,9 @@ func spaClosestAnchor(node js.Value) js.Value {
 // funnel through here, so the model mutation + render + effect + subscription
 // reconciliation always happen together and in order.
 func step(msg any) {
-	pair := sky_call2(spaUpdate, msg, spaModel)
-	spaModel = tupleFirst(pair)
-	cmd := tupleSecond(pair)
+	pair := spaUpdate(msg, spaModel)
+	spaModel = pair.V0
+	cmd := pair.V1
 	renderCurrent()
 	interpretCmd(asCmdT(cmd), spaDispatch)
 	reconcileSubs()
@@ -289,7 +300,7 @@ func step(msg any) {
 // identity — and therefore a focused input's focus/caret/uncommitted value — is
 // preserved across updates.
 func renderCurrent() {
-	vn := HtmlToVNode(sky_call(spaView, spaModel))
+	vn := HtmlToVNode(spaView(spaModel))
 	assignSkyIDs(&vn, "r")
 	if spaPrev == nil {
 		spaMount(spaRoot, vn)
@@ -435,7 +446,7 @@ func performTask(task, toMsg any, dispatch func(any)) {
 func reconcileSubs() {
 	desired := map[int]any{} // interval ms -> msg (last-write-wins per interval)
 	if spaSubs != nil {
-		collectEvery(asSubT(sky_call(spaSubs, spaModel)), desired)
+		collectEvery(asSubT(spaSubs(spaModel)), desired)
 	}
 
 	// Stop intervals no longer desired.

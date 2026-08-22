@@ -4635,6 +4635,25 @@ impl<'a> Ctx<'a> {
     }
 
     fn kernel_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        // Sky.Spa client dispatch de-reflection (docs/skyspa/prod-web.md Path A).
+        // `Spa.config { init, update, view, subscriptions }` normally lowers its
+        // record to an all-`any` anonymous struct the wasm driver
+        // reflect-dispatches (`sky_call`/`sky_call2` → `reflect.Value.Call`),
+        // which TinyGo cannot compile. For the Sky.Spa target emit an
+        // `rt.SpaFns{…}` of typed adapter CLOSURES that call the app's concrete
+        // `Main_update`/`Main_view`/… directly (type assertions, not reflect).
+        // The Sky.Live / Tui / Webview SERVER path lowers `Live.config` — a
+        // DIFFERENT kernel — so it is untouched and still emits the all-`any`
+        // reflect form. On any shape it cannot handle this returns to the normal
+        // path, which stays byte-identical (the runtime `Spa_config` keeps a
+        // reflect fallback for a non-literal config).
+        if go == "rt.Spa_config" && args.len() == 1 {
+            let saved = self.local_counter;
+            if let Some(fns) = self.try_lower_spa_fns(args[0]) {
+                return self.kernel_call_lowered(go, vec![widen(fns)], actual);
+            }
+            self.local_counter = saved;
+        }
         // A Dict operation that lets the KEY out routes to the typed-key entry
         // point for that key type (`rt.Dict_toListIntKey` / `rt.Dict_foldlCharKey`
         // / …) so the key decodes back to its Sky type instead of leaking the
@@ -4682,6 +4701,148 @@ impl<'a> Ctx<'a> {
             })
             .collect();
         self.kernel_call_lowered(go, largs, actual)
+    }
+
+    /// Build the reflect-free `rt.SpaFns{…}` client dispatch table from a
+    /// `Spa.config` record literal. Returns `None` (→ the caller keeps the
+    /// byte-identical all-`any` reflect path) when the argument is not a record
+    /// literal carrying the `init`/`update`/`view` TEA fields.
+    fn try_lower_spa_fns(&mut self, record_id: ExprId) -> Option<GoExpr> {
+        let fields = match &self.body.exprs[record_id] {
+            Expr::Record(fs) => fs.clone(),
+            _ => return None,
+        };
+        let find = |name: &str| {
+            fields
+                .iter()
+                .find(|(n, _)| n.as_str() == name)
+                .map(|(_, e)| *e)
+        };
+        let init = find("init")?;
+        let update = find("update")?;
+        let view = find("view")?;
+        let subs = find("subscriptions"); // optional (config omits ⇒ no subs)
+
+        let init_c = self.spa_adapter(init, 1, true)?;
+        let update_c = self.spa_adapter(update, 2, true)?;
+        let view_c = self.spa_adapter(view, 1, false)?;
+        let subs_c = match subs {
+            Some(s) => self.spa_adapter(s, 1, false)?,
+            None => GoExpr::new(GoExprKind::Nil, GoTy::Any),
+        };
+
+        Some(GoExpr::new(
+            GoExprKind::StructLit(
+                "rt.SpaFns".into(),
+                vec![
+                    ("Init".into(), init_c),
+                    ("Update".into(), update_c),
+                    ("View".into(), view_c),
+                    ("Subs".into(), subs_c),
+                ],
+            ),
+            GoTy::Named("rt.SpaFns".into(), vec![]),
+        ))
+    }
+
+    /// One typed adapter closure for a Sky.Spa config field. `arity` is the
+    /// number of leading `any` parameters the driver invokes it with (1 for
+    /// init/view/subscriptions, 2 for update). When `tuple_result` the
+    /// `( model, Cmd )` return is repacked into `rt.SkyTuple2` (so the driver
+    /// reads `.V0`/`.V1` without reflect); otherwise the result is widened to
+    /// `any` (view→Html, subscriptions→Sub). `None` when the field's lowered Go
+    /// type is not a function of the expected arity — the caller then falls back
+    /// to the reflect path.
+    fn spa_adapter(&mut self, field: ExprId, arity: usize, tuple_result: bool) -> Option<GoExpr> {
+        // Lower the field value; peel the `any(…)` widen a func-into-`any` slot
+        // adds so we see the concrete function value + its Go func type.
+        let mut target = self.lower_expr(field, &GoTy::Any);
+        while let GoExprKind::Widen(inner) = target.kind {
+            target = *inner;
+        }
+        // Determine param types + call style. An uncurried n-ary Go func
+        // (`func(A, B) R` — how 2-arg Sky funcs emit) is called in one go; a
+        // curried unary chain (`func(A) func(B) R`) is peeled arrow-by-arrow.
+        let (in_tys, uncurried) = match &target.ty {
+            GoTy::Func(ins, _) if ins.len() == arity => (ins.clone(), true),
+            _ => {
+                let mut ins = Vec::new();
+                let mut cur = target.ty.clone();
+                for _ in 0..arity {
+                    match cur {
+                        GoTy::Func(i, out) if i.len() == 1 => {
+                            ins.push(i[0].clone());
+                            cur = *out;
+                        }
+                        _ => return None,
+                    }
+                }
+                (ins, false)
+            }
+        };
+        if in_tys.len() != arity {
+            return None;
+        }
+
+        // Asserted argument for parameter i: `ai.(InTy)`, or bare `ai` when the
+        // parameter is already `any` (e.g. init's flags). Type assertions are
+        // typed dispatch, not reflect.
+        let arg = |i: usize, in_ty: &GoTy| -> GoExpr {
+            let a = GoExpr::new(GoExprKind::Ident(format!("a{i}")), GoTy::Any);
+            if *in_ty == GoTy::Any {
+                a
+            } else {
+                GoExpr::new(
+                    GoExprKind::TypeAssert(Box::new(a), in_ty.clone()),
+                    in_ty.clone(),
+                )
+            }
+        };
+
+        let call = if uncurried {
+            let cargs: Vec<GoExpr> = in_tys.iter().enumerate().map(|(i, t)| arg(i, t)).collect();
+            GoExpr::new(GoExprKind::Call(Box::new(target), cargs), GoTy::Any)
+        } else {
+            let mut acc = target;
+            for (i, t) in in_tys.iter().enumerate() {
+                acc = GoExpr::new(GoExprKind::Call(Box::new(acc), vec![arg(i, t)]), GoTy::Any);
+            }
+            acc
+        };
+
+        let params: Vec<GoParam> = (0..arity)
+            .map(|i| GoParam {
+                name: format!("a{i}"),
+                ty: GoTy::Any,
+            })
+            .collect();
+
+        let (ret, body) = if tuple_result {
+            // p := <call>; return rt.SkyTuple2{V0: any(p.V0), V1: any(p.V1)}
+            let p = || GoExpr::new(GoExprKind::Ident("p".into()), GoTy::Any);
+            let sel = |f: &str| {
+                widen(GoExpr::new(
+                    GoExprKind::Selector(Box::new(p()), f.into()),
+                    GoTy::Any,
+                ))
+            };
+            let repack = GoExpr::new(
+                GoExprKind::StructLit(
+                    "rt.SkyTuple2".into(),
+                    vec![("V0".into(), sel("V0")), ("V1".into(), sel("V1"))],
+                ),
+                GoTy::Named("rt.SkyTuple2".into(), vec![]),
+            );
+            (
+                GoTy::Named("rt.SkyTuple2".into(), vec![]),
+                vec![GoStmt::Short("p".into(), call), GoStmt::Return(Some(repack))],
+            )
+        } else {
+            (GoTy::Any, vec![GoStmt::Return(Some(widen(call)))])
+        };
+
+        let fn_ty = GoTy::Func(vec![GoTy::Any; arity], Box::new(ret.clone()));
+        Some(GoExpr::new(GoExprKind::FuncLit(params, ret, body), fn_ty))
     }
 
     /// The typed dispatch for a two-argument kernel list HOF — doc 08 §6

@@ -26,20 +26,55 @@ import (
 // mirroring Sky.Live's Live_config / Live_withX / Live_app shape (live_config.go
 // / live.go), so the existing task-forcing codegen path drives it unchanged.
 
-// Spa_config materialises the config record `{ init, update, view,
-// subscriptions }` into a map[string]any keyed by the PascalCase names spaRun
-// reads via rt.Field, exactly as Live_config does — so the withX builders can
-// attach optional fields (Routes / NotFound / OnNavigate) onto the same map.
-// (It used to be the identity on the record; a map is required now that the
-// builders clone-and-set. spaRun's Field(cfg,"…") reads a map by key, so this is
-// transparent to an app that attaches no builders.)
+// SpaFns is the reflect-free client dispatch table (docs/skyspa/prod-web.md
+// Path A). Codegen emits it for a Sky.Spa app in place of the all-`any` TEA
+// config struct: each field is a typed adapter CLOSURE that calls the app's
+// concrete update/view/init/subscriptions directly (type assertions, not
+// `reflect.Value.Call`) and repacks the tuple result at concrete type. The
+// wasm driver invokes these closures, so the client TEA loop dispatches with
+// zero reflection — the prerequisite for a TinyGo-compiled web client. The
+// server (Sky.Live/Tui/Webview) path never constructs a SpaFns; it keeps its
+// reflect-based dispatch unchanged.
+//
+//   - Init  : flags        -> ( model, Cmd msg ) repacked as SkyTuple2
+//   - Update: msg, model   -> ( model, Cmd msg ) repacked as SkyTuple2
+//   - View  : model        -> Html msg  (as any)
+//   - Subs  : model        -> Sub msg   (as any; nil when the config omits it)
+type SpaFns struct {
+	Init   func(any) SkyTuple2
+	Update func(any, any) SkyTuple2
+	View   func(any) any
+	Subs   func(any) any
+}
+
+// Spa_config materialises the config into a map[string]any that the withX
+// builders (Routes / NotFound / OnNavigate) clone-and-set onto and spaRun reads
+// via rt.Field. The Sky.Spa target passes a reflect-free `SpaFns` (typed
+// adapter closures); it is stored whole under "Fns" and the driver invokes its
+// closures directly. A non-SpaFns argument (host `sky build` go-build, or an
+// older/foreign emit) falls back to the record-reflect form so the code still
+// links — the wasm client always receives a SpaFns from codegen.
 func Spa_config(req any) any {
+	if fns, ok := req.(SpaFns); ok {
+		return map[string]any{"Fns": fns}
+	}
 	return map[string]any{
 		"Init":          Field(req, "Init"),
 		"Update":        Field(req, "Update"),
 		"View":          Field(req, "View"),
 		"Subscriptions": Field(req, "Subscriptions"),
 	}
+}
+
+// asSpaFns unwraps the SpaFns the driver reads from the config map ("Fns"
+// key), reflect-free (a plain type assertion). A zero SpaFns (nil closures) is
+// returned when the value is absent/foreign — codegen guarantees a SpaFns for
+// every real Sky.Spa client, so this only guards the host-build no-op path.
+func asSpaFns(v any) SpaFns {
+	if f, ok := v.(SpaFns); ok {
+		return f
+	}
+	return SpaFns{}
 }
 
 // Spa_app wraps the client TEA loop in a Task thunk. AnyTaskRun forces it at
