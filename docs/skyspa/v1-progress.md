@@ -250,3 +250,35 @@ auto-split (auto-split.md), `Cmd.publish` client fan-out, typed-Int route params
 **Awaiting the user:** (1) final sign-off / independent review if wanted; (2) the
 merge-to-main decision (gated per standing rule — NOT merged); (3) connect the
 Chrome extension for the visual browser check if desired.
+
+## Post-v1 — multi-target build pipeline + a codegen regression fixed (2026-08-22)
+
+Landed on `exp/spa` after the six phases, per the user's "keep going on with the
+Sky.Spa work ... extremely flexible for users who want separate client/server":
+
+- **`sky build --wasm`** — compiles the client to `GOOS=js GOARCH=wasm`, emitting
+  `sky-out/main.wasm` + `wasm_exec.js` (copied from `GOROOT`). `BuildOptions`
+  gains a `wasm` flag; `build_inner` branches to `run_wasm_build` before the
+  native `go build`. (@99de620b)
+- **`sky build --target <web|tablet|desktop|ios|android>`** — builds then stages a
+  per-target bundle. `web`/`tablet` stage `dist/` (index.html + main.wasm +
+  wasm_exec.js); `desktop`/`ios`/`android` emit shell-build guidance pointing at
+  the `examples/60-spa-todos/{desktop,mobile-ios,mobile-android}` shells.
+- **Fail-fast dep detection** — `detect_ios_toolchain` (xcrun `--show-sdk-path`)
+  and `detect_android_toolchain` (`ANDROID_HOME`/`adb`) run BEFORE the build and
+  exit 1 with an install hint, per the mandate ("IF any deps are missing ... warn
+  users to install and exit"). Verified: android with no SDK → exit 1 + hint.
+
+**Codegen regression caught + fixed (@6aa4904f).** The de-reflection func-value
+narrow (`1430e4c0`) bound `_s := INNER` in its reflection-free comma-ok adapter
+(`narrow_call` func-target arm). A boxed source arrives as `any` (assertion
+legal), but a point-free MONOMORPHIC value keeps its CONCRETE Go func type
+(`idish = identity` → `rt.Basics_identity[any]`, statically `func(any) any`, not
+an interface), so `_s.(T)` failed `go build`: "invalid operation: _s ... is not
+an interface". Fixed by binding through an explicit `any(...)` conversion (no-op
+when already `any`; a legal box when concrete) in both the 1-arg and 0/multi-arg
+arms. The existing `kernel_value_slot_contract` tests
+(`guard_boundary_shapes_still_build_and_behave`,
+`kernel_value_slots_behave_at_runtime`) had shipped RED in `1430e4c0` and covered
+exactly `idish = identity`; both green now, and `test_verb_flow` +
+`db_cluster_flow` (which build+run apps through the same path) recovered too.
