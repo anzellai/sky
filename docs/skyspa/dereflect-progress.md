@@ -104,3 +104,26 @@
 - D3 consult: hand-written codecs DON'T touch codec_auto (no codec rewrite). D3 = ONE mechanism ("apply a boxed Sky func value without reflect" = func(any)any wrap-at-emission + client driver `.(func(any)any)`), at dispatch cold-paths (perform/onInput/onNavigate/Sub.every/param-routes; live_wasm.go:430/431, dom_render_wasm.go:144) AND the codec applicative (JsonDec_map2→pipelineApply; stdlib_extra.go:1190).
 - SIZE IS A CLIFF: TinyGo keeps reflect metadata until ZERO reachable reflect.Value.Call/MakeFunc. Need dispatch (D3a)+codec applicative (D3b)+HtmlToVNode unwrapADTShape ref removed + codec_auto/adt_shape/adaptFuncValue tagged !js (D3c). Measure at D3c.
 - Phases: D3a cold-path dispatch · D3b codec applicative · D3c render+reflect isolation (size unlock, "zero reachable reflect" gate) · D3d(=D4) todos TinyGo + e2e + measure.
+
+## D3 progress (coordinator, hands-on foreground)
+- D3a DONE (@..): performTask + dispatchEvent reflection-free (typed asserts on
+  SkyADT-aliased boundary: SkyTask[SkyADT,any], toMsg func(SkyResult[SkyADT,any])any,
+  onInput func(string)any). Pure runtime, client-only, no codegen. Counter renders
+  under TinyGo, no regression.
+- D3b DONE (@ec930641): pipelineApply 2-arg fast-path (codec applicative
+  func(func(any)any,any)any). Todos client TinyGo-COMPILES.
+- D3c-partial (@..): ResultCoerce SkyResult[E,any] fast-path.
+- **BLOCKER MAPPED (honest): full functional todos-under-TinyGo needs the any→typed
+  COERCION MACHINERY de-reflected, not just dispatch/codec.** The runtime panic
+  walks forward as each site is fixed: FieldByName (ResultCoerce ✓) → now
+  (reflect.Type).ConvertibleTo() in coerceInner/Coerce/AsListT narrowing the
+  decoded list to []Todo_R. Root cause: the client decode yields values that are
+  then reflect-narrowed to typed structs/slices; the clean fix is either (a) make
+  the client codec decode produce already-typed values (no post-decode coerce), or
+  (b) client-only reflection-free variants of coerceInner/Coerce/AsListT/
+  narrowReflectValue/mapToRecordStruct. Multi-site, iterative — a bounded-but-
+  substantial remaining effort (the "reflection-free coercion" piece).
+- STATE: dispatch + codec-applicative + result-coerce de-reflected + committed;
+  spa-counter FULLY works under TinyGo (D1+D2, CI-green); todos COMPILES under
+  TinyGo (644 KB gz, size cliff not yet tripped) but panics at runtime on the next
+  coercion-reflect site. Size (zero-reflect DCE) awaits the coercion de-reflection.
