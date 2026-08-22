@@ -159,3 +159,18 @@ codegen work (prod-web.md's large lever), NOT a bounded runtime patch.
    cliff (644 KB → target ~100 KB).
 This is a bounded-but-substantial codegen effort (multi-session), now precisely
 scoped. Resume here.
+
+## Compiler-wide de-reflection (post-mandate) — coercion, general
+- DONE (@..): `ResultCoerce[E,[]Elem]` → `ResultCoerceOk[E,[]Elem](x, AsListT[Elem])`
+  (runtime helper + codegen render). Compiler-wide (server too). Result-of-list
+  narrow reflection-free. Todos: 9 ResultCoerceOk; panic moves to the STRUCT narrow.
+- NEXT (found): the struct narrow. `Http_get` returns `rt.HttpResponse` (runtime
+  struct), client emits `Coerce[Sky_Core_Http_HttpResponse_R]` — a CROSS-TYPE
+  struct conversion (rt type → emitted `_R` type, same fields) that reflect
+  (ConvertibleTo) handles but TinyGo cannot. General fixes to weigh:
+  (a) make runtime types that cross into emitted code ALIAS the emitted type (like
+      Error = SkyADT) so no conversion — bounded set (HttpResponse, ...);
+  (b) codegen emits a field-wise struct converter for Coerce[StructR];
+  (c) runtime typed struct-copy helpers keyed on the rt source type.
+  Await the compiler-wide strategy consult (a05aa819) for the general approach +
+  inventory before choosing.
