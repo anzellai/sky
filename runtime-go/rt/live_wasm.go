@@ -18,6 +18,10 @@ var (
 	spaUpdate any
 	spaView   any
 	spaRoot   js.Value
+	// spaPrev is the previously-rendered VNode tree (sky-id-stamped). Kept
+	// across dispatches so each render can diff against it and apply a minimal
+	// patch set instead of rebuilding the whole DOM. nil before the first mount.
+	spaPrev *VNode
 )
 
 // spaRun is the js/wasm implementation of the Spa_app task thunk (the host stub
@@ -61,10 +65,52 @@ func step(msg any) {
 }
 
 // renderCurrent runs view(model) -> Html -> VNode and paints it to the DOM.
+// The FIRST render is a full mount; every subsequent render diffs against the
+// previous tree (diffTrees) and applies only the resulting patches, so DOM node
+// identity — and therefore a focused input's focus/caret/uncommitted value — is
+// preserved across updates.
 func renderCurrent() {
 	vn := HtmlToVNode(sky_call(spaView, spaModel))
 	assignSkyIDs(&vn, "r")
-	renderVNodeToDOM(spaRoot, vn)
+	if spaPrev == nil {
+		spaMount(spaRoot, vn)
+	} else {
+		// clientState tells diffTrees what the focused input actually shows
+		// right now, so it skips emitting a value patch that would only
+		// re-assert (and caret-reset) the user's own in-flight typing. This is
+		// what keeps the typing case a MINIMAL patch set.
+		patches := diffTrees(spaPrev, &vn, snapshotFocusedInput())
+		spaApplyPatches(patches, spaPrev, &vn)
+	}
+	spaPrev = &vn
+}
+
+// snapshotFocusedInput reports the currently-focused form field's live DOM
+// value keyed by its sky-id (or nil when nothing input-like is focused). Fed to
+// diffTrees as clientState for input-authority alignment.
+func snapshotFocusedInput() map[string]string {
+	active := js.Global().Get("document").Get("activeElement")
+	if !active.Truthy() {
+		return nil
+	}
+	if t := active.Get("tagName"); t.Type() != js.TypeString {
+		return nil
+	} else {
+		switch t.String() {
+		case "INPUT", "TEXTAREA", "SELECT":
+		default:
+			return nil
+		}
+	}
+	sid := active.Call("getAttribute", "sky-id")
+	if sid.Type() != js.TypeString || sid.String() == "" {
+		return nil
+	}
+	val := ""
+	if v := active.Get("value"); v.Type() == js.TypeString {
+		val = v.String()
+	}
+	return map[string]string{sid.String(): val}
 }
 
 // asCmdT narrows a Cmd value (tupleSecond of update's result) to cmdT. A
