@@ -641,7 +641,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1825,
+    "stdlib_entries": 1827,
     "stdlib_modules": 89,
     "surfaces_covered": 135,
     "surfaces_covered_pct": 89.4,
@@ -11788,7 +11788,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 10,
+          "count": 11,
           "symbols": [
             "AppConfig",
             "Route",
@@ -11797,6 +11797,7 @@
             "getJson",
             "postJson",
             "route",
+            "routeInt",
             "withNotFound",
             "withOnNavigate",
             "withRoutes"
@@ -12105,18 +12106,19 @@
           ]
         },
         "Std.Webview": {
-          "count": 5,
+          "count": 6,
           "symbols": [
             "AppCfg",
             "WindowCfg",
             "defaultWindow",
+            "url",
             "withSize",
             "withTitle"
           ]
         }
       },
-      "count": 736,
-      "pct_of_denominator": 40.3
+      "count": 738,
+      "pct_of_denominator": 40.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -12960,7 +12962,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 10,
+          "count": 11,
           "symbols": [
             "AppConfig",
             "Route",
@@ -12969,6 +12971,7 @@
             "getJson",
             "postJson",
             "route",
+            "routeInt",
             "withNotFound",
             "withOnNavigate",
             "withRoutes"
@@ -13278,17 +13281,18 @@
           ]
         },
         "Std.Webview": {
-          "count": 5,
+          "count": 6,
           "symbols": [
             "AppCfg",
             "WindowCfg",
             "defaultWindow",
+            "url",
             "withSize",
             "withTitle"
           ]
         }
       },
-      "count": 817,
+      "count": 819,
       "pct_of_denominator": 44.8
     }
   },

@@ -2,6 +2,7 @@ package rt
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -92,6 +93,12 @@ func Spa_app(cfg any) any {
 type spaRoute struct {
 	path string
 	page any
+	// intParam marks a route whose `:param` segments are Ints (Spa_routeInt):
+	// each captured segment is parsed with strconv.Atoi before it is applied to
+	// the page constructor, and a segment that is NOT a valid integer makes the
+	// route fail to match (so `/todo/abc` falls through to the next route / the
+	// 404 rather than constructing a bogus page).
+	intParam bool
 }
 
 // Spa_route builds a route from a path pattern and a page value/constructor.
@@ -99,6 +106,16 @@ type spaRoute struct {
 // driver can read it without depending on any //go:build !js type.
 func Spa_route(path any, page any) any {
 	return spaRoute{path: fmt.Sprintf("%v", path), page: page}
+}
+
+// Spa_routeInt builds a route whose captured `:param` segments are Ints: the
+// page is a constructor taking Int(s) (`TodoPage : Int -> Page`). The captured
+// segment is parsed to an int before it reaches the constructor, and a
+// non-integer segment makes the route not match. This is the typed-Int route
+// param — the runtime cannot introspect the constructor's expected type under
+// the erased ABI, so the Int-ness is declared at the route, not inferred.
+func Spa_routeInt(path any, page any) any {
+	return spaRoute{path: fmt.Sprintf("%v", path), page: page, intParam: true}
 }
 
 // spaCfgSet returns a shallow clone of the AppConfig map with key=val set. It
@@ -174,6 +191,14 @@ func spaMatchRoute(pattern, path string) ([]string, bool) {
 func spaResolveRoutes(routes []spaRoute, path string) (any, bool) {
 	for _, r := range routes {
 		if params, ok := spaMatchRoute(r.path, path); ok {
+			if r.intParam {
+				// A non-integer segment means this Int route does not match;
+				// keep looking (fall through to the next route / the 404).
+				if page, filled := spaFillPageInt(r.page, params); filled {
+					return page, true
+				}
+				continue
+			}
 			return spaFillPage(r.page, params), true
 		}
 	}
@@ -194,6 +219,29 @@ func spaFillPage(page any, params []string) any {
 		curr = sky_call(curr, p)
 	}
 	return curr
+}
+
+// spaFillPageInt is spaFillPage for an Int route: each captured segment is
+// parsed with strconv.Atoi and applied to the constructor as a Go int (Sky Int
+// == Go int, per rt.AsInt). Returns (_, false) when a segment is not a valid
+// integer, so the route does not match. A plain (non-function) page value has
+// nothing to parse and is returned as-is.
+func spaFillPageInt(page any, params []string) (any, bool) {
+	if len(params) == 0 || !isFunc(page) {
+		return page, true
+	}
+	curr := page
+	for _, p := range params {
+		if !isFunc(curr) {
+			break
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil, false
+		}
+		curr = sky_call(curr, n)
+	}
+	return curr, true
 }
 
 // asSpaRoutes narrows the "Routes" config value (a Sky list of Route) to a

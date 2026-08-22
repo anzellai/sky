@@ -134,8 +134,15 @@ Routing is opt-in via the `withX` builders (a single-view app needs none). The
 names read exactly like Sky.Live:
 
 - `Spa.route path page` — register a route; `path` may contain `:param` segments
-  (`/thing/:id`), captured and passed to a page constructor. Put literal routes
-  before `:param` patterns.
+  (`/thing/:id`), captured as a **String** and passed to a page constructor
+  (`ThingPage : String -> Page`). Put literal routes before `:param` patterns.
+- `Spa.routeInt path toPage` — a `:param` route whose captured segment is an
+  **Int** (`TodoDetail : Int -> Page`); the segment is parsed before it reaches
+  the constructor, so the page carries a typed `Int`, not a `String` you
+  re-parse in `view`. A non-integer segment makes the route **not match**, so
+  `/todo/abc` falls through to the next route or `withNotFound` — exactly as an
+  invalid id should. (The runtime can't see the constructor's parameter type
+  under the erased ABI, so the Int-ness is declared at the route.)
 - `Spa.withRoutes routes` — resolves `location.pathname` on mount, on an
   intercepted internal-link click, and on Back/Forward, setting `model.page`.
 - `Spa.withNotFound page` — the page shown when nothing matches.

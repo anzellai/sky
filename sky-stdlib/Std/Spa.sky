@@ -72,6 +72,7 @@ module Std.Spa exposing
     , app
     , config
     , route
+    , routeInt
     , withRoutes
     , withNotFound
     , withOnNavigate
@@ -143,6 +144,25 @@ app =
 route : String -> page -> Route
 route =
     Ffi.kernel "Spa_route"
+
+
+-- | `routeInt path toPage` — a route whose `:param` segment(s) are **Ints**.
+-- `toPage` is a constructor taking Int (`TodoPage : Int -> Page`); the captured
+-- segment is parsed to an Int before it reaches the constructor, so the page
+-- carries a typed `Int`, not a `String` you re-parse in `view`. A segment that
+-- is not a valid integer makes the route **not match** — `/todo/abc` falls
+-- through to the next route or `withNotFound`, exactly as an invalid id should.
+--
+--     |> Spa.withRoutes
+--         [ Spa.route "/" Home
+--         , Spa.routeInt "/todo/:id" TodoDetail   -- TodoDetail : Int -> Page
+--         ]
+--
+-- (The runtime cannot see the constructor's parameter type under the erased ABI,
+-- so the Int-ness is declared here at the route rather than inferred.)
+routeInt : String -> (Int -> page) -> Route
+routeInt =
+    Ffi.kernel "Spa_routeInt"
 
 
 -- | Register the client-side routes. The runtime resolves `location.pathname`
