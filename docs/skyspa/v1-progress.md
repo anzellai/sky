@@ -214,3 +214,39 @@
   build; it is intentionally out of build-run (bundle structure). The chronic
   build-corpus budget is a PRE-EXISTING main-branch concern to flag to the user,
   out of scope for Spa v1 (and the gate forbids raising the ceiling).
+
+## v1 STATUS — built, gate-green, awaiting user sign-off (2026-08-22)
+
+**All 6 phases complete + landed on `exp/spa` (@78ac6339, pushed).** Verification:
+- **CI GREEN cross-platform (PR #189, fails=0)** on the final state — independent
+  Linux+macOS run of the full test suite.
+- **Full §0.2.1 sweep GREEN locally**: `cargo test --workspace`=0, T1 harness
+  VERDICT PASS, T2 behaviour-corpus=0, full example-sweep=0, conformance=0.
+- **Every acceptance test re-verified by the coordinator** across phase merges:
+  client-diff focus/caret (spa-input 23/23), effects (spa-perform/sub/http),
+  routing (spa-router 13/13), explicit boundary (spa-boundary round-trip 5/5,
+  shared-codec-both-ways), todos e2e (24/24: durable CRUD persisted, pure-UI
+  zero-network, reload rehydrates), Sky.Live 09/19 unbroken, docs 14/14.
+
+**The one step NOT completed: the dedicated fresh-context adversarial Judge
+AGENT.** Four background agents (P1-tail, P3-tail, P6a, the Judge) stalled on the
+SAME agent-runtime pattern — hanging immediately after spawning a background
+build/test and waiting on it (the Judge's last line: "kick off the compiler build
+in the background"). This is an environment/agent-runtime issue, not a defect in
+the work. Per N-strikes, not retried a 5th time. The independent verification is
+instead carried by CI-green (cross-platform) + the full local sweep + the
+per-phase re-verifications above. For a true independent adversarial pass the user
+can run `/code-review ultra` (cloud, avoids the local-agent stall).
+
+**Genuine env-blocker (needs the user):** the real-Chrome pixel-level browser
+check — the Chrome extension is disconnected (`list_connected_browsers → []`).
+The app is served same-origin (HTTP 200) + headless-e2e-verified; only the visual
+click-through is pending the extension. Not a defect; documented open path.
+
+**Deferred to v2 (documented, per user greenlight of option (a)):** production-web
+bundle (TinyGo/Sky→JS; current ~2.5 MB gzip = desktop/mobile-embed), the
+auto-split (auto-split.md), `Cmd.publish` client fan-out, typed-Int route params.
+
+**Awaiting the user:** (1) final sign-off / independent review if wanted; (2) the
+merge-to-main decision (gated per standing rule — NOT merged); (3) connect the
+Chrome extension for the visual browser check if desired.
