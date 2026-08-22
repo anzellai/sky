@@ -671,7 +671,7 @@ fn run_go_build_detecting_cgo(
     // Sky.Webview: the stub (`webview_stub.go`, `!cgo || !darwin`) compiles fine
     // under CGO=0, producing a binary that silently no-ops on `Webview.app`.
     // Force cgo up front so the real WKWebView-backed `webview.go` links.
-    if source.contains("rt.Webview_app") {
+    if source.contains("rt.Webview_app") || source.contains("rt.Webview_url") {
         let attempt = run_go_build_once(out_dir, "1", bin_name)?;
         return Ok(GoBuildOutcome {
             ok: attempt.status_ok,

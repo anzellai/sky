@@ -1,71 +1,58 @@
-# AUTONOMOUS GOAL — compiler-wide reflection-free codegen (branch `exp/spa`)
+# AUTONOMOUS GOAL — Sky.Spa across web + desktop + mobile (branch `exp/spa`)
 
 ## Verbatim mandate (user, 2026-08-22)
 
-> ok please do the de reflection whole site, and coercion work. in fact I wanted
-> fully non-reflected codegen anyway so the work we will do eventually benefits
-> what sky compiler is. fully autonomous+ unattended + ask perms & continuity
-> upfront so you can carry out e2e without any of my inputs or decisions
+> we're on complete spa branch features and goals, can render separate client
+> and server with same TEA arch in sky.live semantics.
+>
+> until we have fully working web, desktop and mobile don't stop
+>
+> same as before fully autonomous+unattended, so no asking perms or continuity.
+> unless you're blocked genuinely. e2e fully autonomous until completed
 
-## Decisions captured upfront (so no further input is needed)
+## What "done" means
 
-1. **Scope = COMPILER-WIDE reflection-free codegen.** Build the de-reflection
-   mechanism GENERALLY so emitted Go eliminates `reflect.Value.Call` /
-   `reflect.MakeFunc` (and the reflect-based coercion) across targets — a general
-   Sky-compiler improvement, not only the SPA client. Land INCREMENTALLY with the
-   **todos client running under TinyGo (web-viable)** as the first e2e proof.
-2. **Merge to `main` = GATED to the user.** Land everything verified on `exp/spa`
-   (PR #189, kept green). Do NOT merge to `main`.
-3. **Release = NONE.** Do NOT bump version / tag / cut a release. Leave to the user.
+Sky.Spa completes its branch features: ONE TEA architecture (Model / Msg /
+update / view, Sky.Live semantics), ONE `Std.Ui.Element` view, rendering a
+SEPARATE client and server, working END-TO-END on all THREE targets:
 
-## What "done" means (Judge verifies the LITERAL list)
+1. **Web** — the Sky.Spa client (TEA loop in wasm) + a stateless typed-boundary
+   server. Renders, routes, does the CRUD round-trip, persists. (Standard-Go
+   wasm is the shipping path; gzip-on-the-wire landed. TinyGo small-bundle is an
+   optimization, not a gate.)
+2. **Desktop** — the SAME app as a native desktop window (Sky.Webview), same
+   `Std.Ui` view + TEA loop.
+3. **Mobile** — the SAME app running on mobile (mobile-web wasm at minimum; a
+   native mobile shell if the arch supports it), same view + TEA loop.
 
-1. **The real `examples/60-spa-todos` client runs under TinyGo** — compiles,
-   renders, and passes its e2e (durable CRUD round-trip + rehydrate) with the
-   TinyGo-built wasm; real bundle recorded (target ~100 KB gz once the size cliff
-   trips).
-2. **Reflection-free emission, generally.** Emitted Go for the client reaches
-   ZERO reachable `reflect.Value.Call`/`reflect.MakeFunc` (proven), via a GENERAL
-   codegen mechanism (typed coercion + typed dispatch/HOF + typed codec), not
-   client-only hacks. The mechanism reduces the reflect surface for other targets
-   too; document the compiler-wide reflect inventory + how much is eliminated vs
-   residual (with each residual's reason).
-3. **Coercion de-reflected at codegen** — the any→typed narrows (`Coerce` /
-   `coerceInner` / `ResultCoerce` / `narrowReflectValue` / `mapToRecordStruct` /
-   slice+struct+container narrows) emit reflection-free using the STATIC element/
-   field types codegen knows (route slices through `AsListT[Elem]`, structs
-   field-wise, containers via the typed fast-paths). This is the crux finding from
-   `docs/skyspa/dereflect-progress.md`.
-4. **Dispatch/HOF de-reflected** — `sky_call`/`sky_call2`/`SkyCall`/`pipelineApply`
-   eliminated from the client graph (typed closures / typed HOF twins), extending
-   D3a/D3b generally.
-5. **NO regressions, everything green** — full §0.2.1 suite (workspace + harness
-   T1/T2 + census + example-sweep + conformance) green; Sky.Live/Tui/CLI byte-
-   behaviour unchanged (09/19 build+run); all prior Sky.Spa acceptance + DB e2e
-   pass; PR #189 CI green. Server correctness is never traded for de-reflection.
-6. **Honesty** — real bundle numbers measured (not projected); the reflect
-   inventory + residuals stated plainly; nothing marked shipped/released.
-   Forbidden in a PASS verdict: but/except/however/caveat/mostly/essentially/
-   for-the-scope-of/modulo.
+Each target ships a WORKING demo (build + run + verified interaction), not a
+stub. The shared-code story (one `Shared.sky`, one view, one Model/Msg) is the
+whole point — no per-platform divergence in app logic.
 
-## Progress already landed (exp/spa @ 15354f12)
-D1+D2 (spa-counter runs under TinyGo, CI-green, 521 KB), D3a (client dispatch),
-D3b (codec applicative), D3c-partial (ResultCoerce). The wall: functional
-record-app needs CODEGEN-level coercion de-reflection (element type known only at
-emit). See `docs/skyspa/dereflect-progress.md` for the precise resume point.
+## Decisions captured upfront (fully autonomous, no check-ins)
 
-## Autonomy scope
-Full local + push `exp/spa` to origin at milestones (PR #189 CI). Agents +
-worktrees allowed. TinyGo at /opt/homebrew/bin. NO merge-to-main, NO release.
+- Fully autonomous + unattended. No asking permissions or continuity. Proceed
+  e2e until all three targets work. Halt ONLY on a genuine blocker (external
+  auth wall, an irreversible action needing sign-off, a real ambiguity I cannot
+  resolve from the code/goal).
+- Branch: `exp/spa`. NO merge to `main`, NO release/tag unless the user says so.
+- Verify continuously: full server-safe (tests + example build/run), the todos
+  web demo keeps working, and each new platform demo is verified before moving on.
 
-## Agent-stall mitigation (5 agents stalled this session)
-Do critical codegen surgery MYSELF, foreground + bounded. Use agents only for
-read-heavy research (consults) + parallelizable verify, with explicit "no
-run_in_background+wait" and "commit before any long step". Coordinator verifies
-each phase itself, foreground.
+## State at mandate start (checkpoint 4733b4dd)
+
+- Web: `examples/60-spa-todos` — Sky.Spa client (wasm) + stateless SQLite backend
+  — renders/routes/filters/persists on standard-Go wasm. gzip static landed
+  (7.8 MB → 2.0 MB on the wire).
+- Systematic reflection-free codegen landed + verified (coercion narrows,
+  boxed-closure constructors, sky_call fast paths, function-value boxing at
+  widen sites). TinyGo residual = first-class-function ABI (Option C designed,
+  deferred — NOT a gate for web/desktop/mobile since standard-Go wasm works).
+- Desktop (Sky.Webview) + Mobile: TO ASSESS — do they run the SPA/TEA arch today?
 
 ## Loop / durable state
-Progress tracker: `docs/skyspa/dereflect-progress.md` (update every phase).
-Drive phase-by-phase; ScheduleWakeup is the safety-net heartbeat; agent-completions
-+ my own foreground gates are the primary signals. Continue until the fresh-context
-Judge verifies the DONE list on `exp/spa`, then STOP and report (user merges).
+
+Progress tracker: `docs/skyspa/` (v1-progress, design, dereflect-progress) +
+this file. Drive platform-by-platform (web ✓ → desktop → mobile), each verified
+build+run before moving on. Continue until all three targets have a working,
+verified demo on `exp/spa`, then report. Genuine blocker → describe + await.

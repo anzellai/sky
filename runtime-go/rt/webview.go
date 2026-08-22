@@ -67,6 +67,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -80,6 +81,55 @@ func Webview_app(cfg any) any {
 	return func() any {
 		return webviewAppRun(cfg)
 	}
+}
+
+// Webview_url implements:
+//
+//	Std.Webview.url : String -> WindowCfg -> Task Error ()
+//
+// A native-webview SHELL around an existing web app: it opens a system webview
+// window and navigates to `url`, rather than running an in-process Sky TEA loop.
+// This is how a Sky.Spa client (the TEA loop compiled to wasm, served over HTTP
+// by its own stateless backend) becomes a DESKTOP app — and the same mechanism
+// is what a mobile-embed webview does. The client + server stay SEPARATE; only
+// the shell is native. Blocks until the window closes (like Webview.app).
+func Webview_url(urlArg any, windowCfg any) any {
+	return func() any {
+		return webviewURLRun(urlArg, windowCfg)
+	}
+}
+
+func webviewURLRun(urlArg any, windowCfg any) any {
+	url := strings.TrimSpace(fmt.Sprintf("%v", urlArg))
+	if url == "" {
+		return Err[any, any](ErrInvalidInput("Webview.url: url must be non-empty"))
+	}
+	if windowCfg == nil {
+		return Err[any, any](ErrInvalidInput("Webview.url: window cfg required"))
+	}
+	title := webviewFieldString(windowCfg, "Title", "Sky.Webview")
+	width, height := webviewWindowSize(windowCfg)
+
+	debug := os.Getenv("SKY_WEBVIEW_DEBUG") != "0" &&
+		os.Getenv("SKY_WEBVIEW_DEBUG") != "false"
+
+	w := webview.New(debug)
+	if w == nil {
+		msg := "Webview.url: webview.New returned nil — system webview backend unavailable " +
+			"(macOS: WKWebView ships with the OS; Windows: install Edge WebView2 runtime; " +
+			"Linux: install libwebkit2gtk-4.0-37 or webkit2gtk4.0)"
+		fmt.Fprintln(os.Stderr, msg)
+		return Err[any, any](ErrIo(msg))
+	}
+	defer w.Destroy()
+
+	w.SetTitle(title)
+	w.SetSize(width, height, webview.HintNone)
+	w.Navigate(url)
+	// Blocks on the native event loop until the window closes; the loaded page
+	// (the Sky.Spa client) owns all rendering + interaction.
+	w.Run()
+	return Ok[any, any](struct{}{})
 }
 
 // webviewMsgChCap is the bounded msgCh capacity. Matches Sky.Tui's
