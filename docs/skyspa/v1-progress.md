@@ -5,14 +5,14 @@
 > Sky.Spa v1. Updated at every phase boundary. Work branch: `exp/spa`. Verified
 > prototype baseline: `exp/spa-prototype`.
 
-## Status: P3 DONE ✅ — P4 next (Std.Spa v1 + explicit boundary)
+## Status: P4 DONE ✅ — P5 next (real e2e example + browser + bundle number)
 
 | Phase | State | Notes |
 |---|---|---|
 | P1 — productionize + land partition | ✅ **done** | partition + census/kernel/coverage fixes on `exp/spa` (@c39dd8a0). Full §0.2.1 verified SERIALLY green: `cargo test --workspace`=0, example-sweep=0, conformance=0, 29 harness gates pass, entry_exit_contract 3/3, `GOOS=js` rt build=0, Sky.Live 09/19 build=0, spa render ALL PASS. |
 | P2 — client-side diff renderer | ✅ **done** | Full re-render replaced by `diffTrees(prev,new,clientState)` → `[]Patch` applied by sky-id (`spaApplyPatches`); `spaPrev *VNode` kept across dispatches; first render still full-mounts. Focus/caret/dirty-input authority ported from `__skyApplyPatches` to the Go/syscall.js Patch VALUE model. `spa-input/` acceptance test 23/23 PASS (focus retained, caret preserved mid-string + across programmatic value write, value not clobbered, node identity stable, 0 elements created per keystroke = minimal patch); `spa-counter/` still ALL PASS. `diffTrees`/`live_core.go` UNCHANGED — all edits in the two `//go:build js` files, so Sky.Live server diff is untouched. |
 | P3 — interpretCmd real effects | ✅ **done** | `interpretCmd` runs real effects: `Cmd.perform` on a per-perform cooperatively-scheduled goroutine (wasm single thread, NOT an OS thread) that dispatches `toMsg(result)`; sync kernels (`Time.now`/`Random`) return inline; async `Http.get`/`post` split to a browser-`fetch` kernel (`http_wasm.go`) that BLOCKS on a channel the Promise fills and returns a real `Result` (required by typed-emit's `TaskCoerceT`). `subscriptions : model -> Sub msg` added to `Std.Spa.config`; the driver reconciles `Sub.every` timers after every dispatch (start/stop/leave via setInterval/clearInterval). `Cmd.publish` = documented client no-op. Headless acceptance: spa-perform / spa-sub / spa-http ALL PASS; spa-counter + spa-input (23/23) still PASS. `live_core.go` + all `!js` runtime UNCHANGED; only shared change is the `Http_get`/`Http_post` build-split (host net/http impl moved verbatim to `http_notjs.go`). |
-| P4 — Std.Spa v1 + explicit boundary | ⏳ | config(routes/subs), routing, Http+Codec server boundary |
+| P4 — Std.Spa v1 + explicit boundary | ✅ **done** | Client-side routing (History API) + the explicit typed server boundary. `Std.Spa` gains `Route`/`route`/`withRoutes`/`withNotFound`/`withOnNavigate` (opt-in builders — config stays the 4 TEA fields so the 5 route-less spa apps keep compiling; same `route`/`withOnNavigate` names as Sky.Live) and `getJson`/`postJson` (pure Sky over `Cmd.perform`+`Http`+`Codec`, NO new kernel). Runtime: `spa_core.go` (portable) config-map + `Spa_route`/`Spa_with*` + `spaMatchRoute`/`spaResolveRoutes` (reimplements Sky.Live's `matchRoute`/`splitPath` client-side — **`live.go` NOT touched**); `live_wasm.go` (js-only) deep-link at mount + document-click interception (pushState, skips external/target=_blank/download/sky-external/modified-click) + popstate + `RecordUpdate` sets `model.Page` (Live convention) + onNavigate via TEA `step`. Router installed ONLY when routes exist. **shared vs js:** shared portable changes = `spa_core.go`, `Std/Spa.sky`, `kernel_surface.rs`, `docs/coverage/`; js-only = `live_wasm.go`. Tests: `spa-router/` routing ALL PASS (deep-link, intercepted no-reload nav, pushState, onNavigate, popstate, notFound, external passthrough); `spa-boundary/` real wasm-client↔stateless-Sky-backend round-trip ALL PASS with ONE symlinked `Shared.sky` (shared-type-flows-both-ways proven: a field added to Shared breaks BOTH compiles). Verify (serial): build.sh=0, `GOOS=js` rt build=0, `go build ./...`+`go test ./rt/...`=0, `cargo test -p sky`=0, kernel_surface+dark-module ratchets+both census `--check`=PASS, `sky doc Std.Spa` OK, Sky.Live 09+19 clean-slate build + run HTTP 200 (sky-nav intact), all 5 prior spa apps rebuilt+headless ALL PASS. |
 | P5 — real e2e example + verify | ⏳ | client UI + stateless Sky backend; browser e2e; bundle number |
 | P6 — Judge + docs/templates + final sweep | ⏳ | fresh-context Judge vs DONE list |
 
@@ -123,6 +123,34 @@
   add P4/P5 surface, FIX THE CRITICAL PATH (build-corpus), do NOT raise the
   ceiling (the gate forbids it). Re-check on each push; must be green before
   asking to merge to main.
+- (P4) DEVIATION from the literal brief ("routes in `config`"): routing is
+  attached with **opt-in builders** (`withRoutes`/`withNotFound`/`withOnNavigate`)
+  and `config` stays the four TEA fields. Rationale: a required `routes`/
+  `notFound` field would break all five shipped route-less spa apps and force a
+  meaningless `notFound` on a counter; Sky.Live itself attaches every optional
+  via `withX`, so a routed Spa app reads the same (same `route`/`withOnNavigate`
+  names). Full Phase-0 findings + API + five-pillar check:
+  `docs/skyspa/p4-routing-and-boundary.md`.
+- (P4) The boundary helpers (`getJson`/`postJson`) are **pure Sky** over
+  `Cmd.perform` + `Http.get`/`post` + `Codec.fromJson`/`toJson` +
+  `Task.andThenResult` — NO new runtime kernel, so zero census/kernel surface
+  for them (only the routing kernels register). `decodeResponse` treats a
+  non-2xx as `Err` (a 4xx/5xx is a completed round trip carrying a value, per
+  `http_wasm.go`, not a transport failure). Untrusted-client SECURITY is
+  first-class in the module doc + the design note (backend re-validates/
+  re-authorizes; helpers carry no ambient authority).
+- (P4) `live.go` is **NOT touched** — client route matching
+  (`spaMatchRoute`/`spaSplitPath`) reimplements the server algorithm in the
+  portable `spa_core.go`, so the Sky.Live server path is byte-identical. Only
+  `live_wasm.go` (js-only) gained the router; the shared portable change is
+  `spa_core.go` (config-map materialisation + route kernels + matcher).
+- (P4) Boundary test structure: ONE `spa-boundary/shared/Shared.sky`
+  **symlinked** into both `client/src/` and `server/src/` (committed as git
+  symlinks, mode 120000), so it is literally one source. Two `module Main`
+  entries in one project co-compile (dir-scan pulls both), which made the client
+  wasm reference `Server_listen` — so client and server are **separate
+  projects** sharing the symlinked module. `run_roundtrip.sh` reproduces the
+  whole thing.
 - (P3) deferred to P4/later (in scope there): `Cmd.publish` client fan-out is a
   server-boundary concern (P4); only `Sub.every` timers are wired (topic/stream/
   ws subs later); client `HttpResponse.Headers` empty (status+body only);
