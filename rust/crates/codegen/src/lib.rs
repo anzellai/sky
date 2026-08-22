@@ -607,14 +607,50 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
                 "func() {tgt} {{ _s := any({inner}); if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _g, _ok := _s.(func(any) any); _ok {{ return func(_a0 {p0}) {rty} {{ return {narrowed} }} }}; return rt.Coerce[{tgt}](_s) }}()"
             )
         }
-        GoTy::Func(_, _) => {
-            // 0- or multi-arg func target: a direct type assertion recovers the
-            // exact-shape boxed source reflection-free; reflect fallback only for
-            // a divergent shape.
+        GoTy::Func(ps, r) if ps.len() >= 2 => {
+            // A MULTI-arg func target (`func(A,B,C) R`, e.g. `Result.map3`'s
+            // uncurried callback slot). A function VALUE reaches here boxed as the
+            // canonical CURRIED `func(any) any` nest (`Ctx::widen` /
+            // `lower_ctor_value`: `func(_p0)(func(_p1)(func(_p2)…))`), but the slot
+            // is a FLAT N-ary Go func — the arity mismatch the reflect
+            // `adaptFuncValueWithCapture` used to (mis-)bridge. Uncurry it
+            // STATICALLY here — the target arity is known — so map3 calling
+            // `v_0(a,b,c)` threads all N args through the curried source
+            // reflection-free:
+            //   func(_a0 A,_a1 B,_a2 C) R {
+            //     return narrow_R( _c(any(_a0)).(func(any)any)(any(_a1)).(func(any)any)(any(_a2)) ) }
+            // The exact-shape assertion still short-circuits an already-flat
+            // source; reflect stays only as the last-resort divergent-shape path.
             let tgt = render_ty(to);
-            // `any(...)`: same reason as the 1-arg arm — a concrete-typed func
-            // source (`func()T`, `func(A,B)C`) is not an interface, so assert
-            // through an explicit box. No-op when `inner` is already `any`.
+            let n = ps.len();
+            let params = ps
+                .iter()
+                .enumerate()
+                .map(|(i, p)| format!("_a{i} {}", render_ty(p)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut app = String::from("_c");
+            for i in 0..n {
+                if i == 0 {
+                    app = format!("{app}(any(_a0))");
+                } else {
+                    app = format!("({app}).(func(any) any)(any(_a{i}))");
+                }
+            }
+            let rty = render_ty(r);
+            let narrowed = narrow_call(r, &app);
+            format!(
+                "func() {tgt} {{ _s := any({inner}); if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _c, _ok := _s.(func(any) any); _ok {{ return func({params}) {rty} {{ return {narrowed} }} }}; return rt.Coerce[{tgt}](_s) }}()"
+            )
+        }
+        GoTy::Func(_, _) => {
+            // 0-arg func target (`func() T`): a curried nest never applies (only
+            // arity ≥ 1 boxes), so a direct assertion recovers the exact-shape
+            // boxed source reflection-free; reflect fallback only for a divergent
+            // shape. `any(...)`: a concrete-typed func source is not an interface,
+            // so assert through an explicit box. No-op when `inner` is already
+            // `any`.
+            let tgt = render_ty(to);
             format!(
                 "func() {tgt} {{ if _f, _ok := (any({})).({tgt}); _ok {{ return _f }}; return rt.Coerce[{tgt}]({}) }}()",
                 inner, inner
@@ -694,5 +730,59 @@ mod tests {
             GoTy::Any,
         );
         assert_eq!(render_expr(&e), "rt.Log_println(\"hi\")");
+    }
+
+    // Regression (de-reflection 1430e4c0): a point-free MONOMORPHIC value keeps
+    // its CONCRETE Go func type (`rt.Basics_identity[any]` is `func(any) any`,
+    // not an interface), so the func-narrow adapter must bind `_s` through an
+    // explicit `any(...)` — `_s.(T)` on a non-interface fails `go build`
+    // ("invalid operation: _s ... is not an interface").
+    #[test]
+    fn narrow_to_func_boxes_source_through_any() {
+        let one = GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any));
+        let g1 = narrow_call(&one, "rt.Basics_identity[any]");
+        assert!(
+            g1.contains("_s := any(rt.Basics_identity[any])"),
+            "1-arg func narrow must box _s through any(): {g1}"
+        );
+        // 0-arg target: no curried nest applies, but still box before asserting.
+        let zero = GoTy::Func(vec![], Box::new(GoTy::Bare(Prim::Str)));
+        let g0 = narrow_call(&zero, "src");
+        assert!(
+            g0.contains("(any(src))."),
+            "0-arg func narrow must box through any(): {g0}"
+        );
+    }
+
+    // Regression (de-reflection 1430e4c0, surfaced by 06-json `Result.map3`): a
+    // function VALUE reaches a MULTI-arg callback slot boxed CURRIED
+    // (`func(any) any` nest), but the slot is a flat N-ary Go func. The narrow
+    // must UNCURRY statically at the target arity (reflection-free) — otherwise
+    // the reflect fallback mis-adapts and map3's `v_0(a,b,c)` yields a leftover
+    // `func(any) any` that panics `rt.Coerce[Profile]`.
+    #[test]
+    fn narrow_to_multiarg_func_uncurries_boxed_source() {
+        let to = GoTy::Func(
+            vec![GoTy::Any, GoTy::Any, GoTy::Any],
+            Box::new(GoTy::Any),
+        );
+        let g = narrow_call(&to, "boxedCtor");
+        assert!(
+            g.contains("_s.(func(any, any, any) any)"),
+            "exact-shape short-circuit for an already-flat source missing: {g}"
+        );
+        assert!(
+            g.contains("func(_a0 any, _a1 any, _a2 any) any"),
+            "uncurry closure at the target arity missing: {g}"
+        );
+        assert!(
+            g.contains(".(func(any) any)(any(_a1))")
+                && g.contains(".(func(any) any)(any(_a2))"),
+            "curried-application chain (apply each arg through the nest) missing: {g}"
+        );
+        assert!(
+            !g.contains("MakeFunc") && !g.contains("reflect."),
+            "the uncurry must be reflection-free: {g}"
+        );
     }
 }
