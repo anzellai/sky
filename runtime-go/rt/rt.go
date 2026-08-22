@@ -24,28 +24,22 @@ package rt
 import (
 	"bufio"
 	"context"
-	"crypto"
 	"crypto/hmac"
 	"crypto/md5"
 	cryptorand "crypto/rand"
-	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"math"
 	mrand "math/rand"
-	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"reflect"
 	"regexp"
 	"sort"
@@ -1097,6 +1091,20 @@ func coerceSliceValue(src reflect.Value, target reflect.Type) reflect.Value {
 // ═══════════════════════════════════════════════════════════
 
 type SkyTask[E any, A any] func() SkyResult[E, A]
+
+// RunAny forces the task and value-erases its result to SkyResult[any, any]. It
+// exists so anyTaskInvoke can invoke a CONCRETE-generic SkyTask[E, A] (E/A that
+// a plain type switch cannot case on) through an interface assertion instead of
+// reflect — the reflect route panics under TinyGo (reflect.Type.NumIn is
+// unimplemented), which the Sky.Spa client build hits at its `main` entry
+// (`AnyTaskRun(TaskCoerceT[Error, ()](...))`). The E→any / A→any conversion is
+// exactly what anyTaskInvoke's reflect fallback did via Tag/OkValue/ErrValue
+// field extraction, so this is a reflect-free equivalent — faster on the server
+// too, identical result.
+func (t SkyTask[E, A]) RunAny() SkyResult[any, any] {
+	r := t()
+	return SkyResult[any, any]{Tag: r.Tag, OkValue: r.OkValue, ErrValue: r.ErrValue}
+}
 
 func Task_succeed[E any, A any](v A) SkyTask[E, A] {
 	return func() SkyResult[E, A] { return Ok[E, A](v) }
@@ -6441,10 +6449,19 @@ func anyTaskInvoke(task any) SkyResult[any, any] {
 		return Ok[any, any](r)
 	}
 	// Typed codegen may produce `SkyTask[E, A]` with concrete E/A that
-	// Go's type switch can't case on generically. Reflect into the
-	// task: if it's a `func() SkyResult[E, A]`, call it and convert
-	// the result to SkyResult[any, any] via the Tag/OkValue/ErrValue
-	// field extraction pattern used elsewhere in this file.
+	// Go's type switch can't case on generically. Its RunAny method
+	// (bound by the receiver's E/A) value-erases the result reflect-free
+	// — required for the Sky.Spa/TinyGo client, whose reflect fallback
+	// below panics (reflect.Type.NumIn unimplemented). Faster than reflect
+	// on the server too, identical result.
+	if rt, ok := task.(interface{ RunAny() SkyResult[any, any] }); ok {
+		return rt.RunAny()
+	}
+	// Fallback for a bare `func() SkyResult[E, A]` (unnamed, no RunAny
+	// method): reflect into the task. Unreachable under TinyGo, which does
+	// not compile a reflect.Value.Call path — but the typed tasks codegen
+	// emits are all named SkyTask (caught above), so the client never
+	// reaches here.
 	rv := reflect.ValueOf(task)
 	if rv.IsValid() && rv.Kind() == reflect.Func && rv.Type().NumIn() == 0 && rv.Type().NumOut() == 1 {
 		out := rv.Call(nil)
@@ -7143,12 +7160,18 @@ func Time_formatRFC3339(ms any) any {
 	return t.Format(time.RFC3339Nano)
 }
 
+// httpTimeFormat is the RFC1123-GMT layout `net/http.TimeFormat` uses for the
+// Date/Last-Modified/Expires headers. Inlined as a literal (rather than
+// importing net/http) so this pure time-formatting kernel compiles under the
+// Sky.Spa client target — TinyGo's net/http does not build (docs/skyspa).
+const httpTimeFormat = "Mon, 02 Jan 2006 15:04:05 GMT"
+
 // Time.formatHTTP : Int -> String
 // (unixMillis) → HTTP date header format: "Mon, 02 Jan 2006 15:04:05 GMT".
 // Use for Last-Modified, Date, Expires headers.
 func Time_formatHTTP(ms any) any {
 	t := time.UnixMilli(int64(AsInt(ms))).UTC()
-	return t.Format(http.TimeFormat)
+	return t.Format(httpTimeFormat)
 }
 
 func Time_formatISO8601T(ms int) string {
@@ -7158,7 +7181,7 @@ func Time_formatRFC3339T(ms int) string {
 	return time.UnixMilli(int64(ms)).UTC().Format(time.RFC3339Nano)
 }
 func Time_formatHTTPT(ms int) string {
-	return time.UnixMilli(int64(ms)).UTC().Format(http.TimeFormat)
+	return time.UnixMilli(int64(ms)).UTC().Format(httpTimeFormat)
 }
 
 // Time.format : String -> Int -> String
@@ -7437,22 +7460,9 @@ func seedStep(zIn int64) int64 {
 // Process
 // ═══════════════════════════════════════════════════════════
 
-func Process_run(cmd any, args any) any {
-	return func() any {
-		cmdStr := fmt.Sprintf("%v", cmd)
-		argList := AsList(args)
-		strArgs := make([]string, len(argList))
-		for i, a := range argList {
-			strArgs[i] = fmt.Sprintf("%v", a)
-		}
-		c := exec.Command(cmdStr, strArgs...)
-		out, err := c.CombinedOutput()
-		if err != nil {
-			return Err[any, any](ErrIo(fmt.Sprintf("%s: %v", string(out), err)))
-		}
-		return Ok[any, any](string(out))
-	}
-}
+// Process_run (subprocess execution) is server-only — it moved to
+// rt_server_kernels.go (//go:build !js) so the Sky.Spa client does not import
+// os/exec, which TinyGo cannot compile. A browser client runs no subprocess.
 
 // Process.exit / getEnv / getCwd / loadEnv all migrated to System.*
 // in v0.10.0. Process now keeps only `run` (subprocess execution).
@@ -7836,62 +7846,11 @@ func Crypto_sha1(s any) any {
 	return hex.EncodeToString(h[:])
 }
 
-// Crypto.rsaSha256Sign : String -> String -> Result Error String
-// (PEM private key, message) → standard-base64 RSASSA-PKCS1-v1_5
-// signature over the SHA-256 digest. Accepts PKCS#1 and PKCS#8 PEM
-// keys. The signing key never leaves this process.
-func Crypto_rsaSha256Sign(pemKey any, msg any) any {
-	block, _ := pem.Decode([]byte(fmt.Sprintf("%v", pemKey)))
-	if block == nil {
-		return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: not a PEM-encoded key"))
-	}
-	var priv *rsa.PrivateKey
-	if k, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
-		priv = k
-	} else if k, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
-		rk, ok := k.(*rsa.PrivateKey)
-		if !ok {
-			return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: PEM key is not RSA"))
-		}
-		priv = rk
-	} else {
-		return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: could not parse the private key"))
-	}
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%v", msg)))
-	sig, err := rsa.SignPKCS1v15(cryptorand.Reader, priv, crypto.SHA256, digest[:])
-	if err != nil {
-		return Err[any, any](ErrFfi("Crypto.rsaSha256Sign: " + err.Error()))
-	}
-	return Ok[any, any](base64.StdEncoding.EncodeToString(sig))
-}
-
-// Crypto.rsaSha256Verify : String -> String -> String -> Bool
-// (PEM public key, message, standard-base64 signature) → valid?
-// False on any parse or verification failure.
-func Crypto_rsaSha256Verify(pemKey any, msg any, sigB64 any) any {
-	block, _ := pem.Decode([]byte(fmt.Sprintf("%v", pemKey)))
-	if block == nil {
-		return false
-	}
-	var pub *rsa.PublicKey
-	if k, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
-		rk, ok := k.(*rsa.PublicKey)
-		if !ok {
-			return false
-		}
-		pub = rk
-	} else if k, err := x509.ParsePKCS1PublicKey(block.Bytes); err == nil {
-		pub = k
-	} else {
-		return false
-	}
-	sig, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", sigB64))
-	if err != nil {
-		return false
-	}
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%v", msg)))
-	return rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], sig) == nil
-}
+// Crypto.rsaSha256Sign / Crypto.rsaSha256Verify (RSA/PKCS PEM parsing +
+// RSASSA-PKCS1-v1_5) are server-only — they moved to rt_server_kernels.go
+// (//go:build !js) so the Sky.Spa client does not import crypto/rsa,
+// crypto/x509 or encoding/pem, none of which TinyGo compiles. A browser client
+// holds no RSA signing key.
 
 // Crypto.constantTimeEqual : String -> String -> Bool
 // Compares two strings in constant time — use when comparing secrets (tokens,
@@ -8772,7 +8731,6 @@ func List_find(fn any, list any) any {
 // Suppress unused import warnings
 var _ = bufio.NewReader
 var _ = io.EOF
-var _ = exec.Command
 var _ = time.Now
 var _ = mrand.Intn
 var _ = sha256.Sum256

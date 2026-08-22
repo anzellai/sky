@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — Std.Email runtime kernels.
 //
 // v0.15.47 stdlib batch (#380): provider-abstract email send for

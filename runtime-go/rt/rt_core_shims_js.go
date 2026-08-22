@@ -4,7 +4,6 @@ package rt
 
 import (
 	"context"
-	"net/http"
 
 	"sky-app/rt/telemetry"
 )
@@ -21,7 +20,9 @@ func WithFileSpan(op, path string, fn func() any) any { return fn() }
 
 func WithHTTPClientSpan(method, url string, fn func() any) any { return fn() }
 
-func InjectTraceHeaders(req *http.Request) {}
+// InjectTraceHeaders is server-only (tracing.go, //go:build !js): a Sky.Spa
+// client issues its HTTP via the browser `fetch` (http_wasm.go), which never
+// touches a *http.Request, so no js-build code calls it and no stub is needed.
 
 // --- pending stream / websocket handoff (real impls in server_stream.go /
 // server_websocket.go, //go:build !js) ---
