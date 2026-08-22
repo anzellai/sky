@@ -198,3 +198,32 @@ func(any)any WITHOUT breaking the typed HOF twins that need func(A)B). An
 Architecture-Consult (agent a1b267019) is designing the systematic lever
 (erase-fn-param-types vs box-at-widen) + grilling regressions before implementing.
 Verification of the landed batch (server regression) is running (/tmp/verify.log).
+
+## Function-value boxing landed (commit 1430e4c0) + the ABI residual
+LANDED + verified server-safe (cargo test workspace, roundtrip 178/178,
+09-live-counter build+run HTTP 200, 19-skyforum build):
+- `Ctx::box_func_value` + `widen` (lower.rs): a function value crossing into an
+  EXPLICIT `any` slot (the 17 widen() sites) is boxed to a curried `func(any)any`
+  nest (callable; Go upcasts to any). Typed HOF twins pass callbacks un-widened.
+- `narrow_call` Func arm (codegen): func-typed Coerce narrows reflection-free
+  (exact assert | boxed-func(any)any adapter | reflect fallback).
+- `sky_call` func(any)any/func()any fast paths (rt) — SPA dispatch convergence.
+
+Todos client under TinyGo: renders + routes + filters + persists to backend.
+
+THE RESIDUAL — first-class-function ABI (needs a coordinated design, NOT a
+per-site patch):
+- Boxing a func to a CURRIED `func(any)any` is right for pipelineApply (curried
+  dispatch) but a MULTI-ARG func value applied FLAT as a Go call
+  (`decodeResponse(codec, resp)`) then breaks (`too many arguments`, the boxed
+  form is 1-arg). Boxing at `coerce_if_needed`'s Any path (tried, reverted)
+  therefore emits invalid Go for flat multi-arg applications.
+- Root: the codec-applicative decode still coerces a typed `func(any)X` (a codec
+  record field `enc : List x -> Value` lowered `func([]any) any`; a 2-arg
+  `decodeResponse`) to `func(any) any`, hitting `rt.Coerce` → `adaptFuncValue`
+  → `reflect.MakeFunc` (unimplemented on TinyGo).
+- To close it: make EVERY application of a boxed func value emit curried /
+  `SkyCall` dispatch (never a flat Go multi-arg call), OR box to a flat
+  `func(any,…) any` and give pipelineApply/apply-N matching fast paths. Either is
+  a coordinated whole-program ABI change across the call-lowering path — a fresh
+  Architecture-Consult + grill cycle, not another per-site fix.
