@@ -5,7 +5,7 @@
 > Sky.Spa v1. Updated at every phase boundary. Work branch: `exp/spa`. Verified
 > prototype baseline: `exp/spa-prototype`.
 
-## Status: P4 DONE ✅ — P5 next (real e2e example + browser + bundle number)
+## Status: P5 DONE ✅ — P6 next (Judge + docs/templates + final sweep)
 
 | Phase | State | Notes |
 |---|---|---|
@@ -13,7 +13,7 @@
 | P2 — client-side diff renderer | ✅ **done** | Full re-render replaced by `diffTrees(prev,new,clientState)` → `[]Patch` applied by sky-id (`spaApplyPatches`); `spaPrev *VNode` kept across dispatches; first render still full-mounts. Focus/caret/dirty-input authority ported from `__skyApplyPatches` to the Go/syscall.js Patch VALUE model. `spa-input/` acceptance test 23/23 PASS (focus retained, caret preserved mid-string + across programmatic value write, value not clobbered, node identity stable, 0 elements created per keystroke = minimal patch); `spa-counter/` still ALL PASS. `diffTrees`/`live_core.go` UNCHANGED — all edits in the two `//go:build js` files, so Sky.Live server diff is untouched. |
 | P3 — interpretCmd real effects | ✅ **done** | `interpretCmd` runs real effects: `Cmd.perform` on a per-perform cooperatively-scheduled goroutine (wasm single thread, NOT an OS thread) that dispatches `toMsg(result)`; sync kernels (`Time.now`/`Random`) return inline; async `Http.get`/`post` split to a browser-`fetch` kernel (`http_wasm.go`) that BLOCKS on a channel the Promise fills and returns a real `Result` (required by typed-emit's `TaskCoerceT`). `subscriptions : model -> Sub msg` added to `Std.Spa.config`; the driver reconciles `Sub.every` timers after every dispatch (start/stop/leave via setInterval/clearInterval). `Cmd.publish` = documented client no-op. Headless acceptance: spa-perform / spa-sub / spa-http ALL PASS; spa-counter + spa-input (23/23) still PASS. `live_core.go` + all `!js` runtime UNCHANGED; only shared change is the `Http_get`/`Http_post` build-split (host net/http impl moved verbatim to `http_notjs.go`). |
 | P4 — Std.Spa v1 + explicit boundary | ✅ **done** | Client-side routing (History API) + the explicit typed server boundary. `Std.Spa` gains `Route`/`route`/`withRoutes`/`withNotFound`/`withOnNavigate` (opt-in builders — config stays the 4 TEA fields so the 5 route-less spa apps keep compiling; same `route`/`withOnNavigate` names as Sky.Live) and `getJson`/`postJson` (pure Sky over `Cmd.perform`+`Http`+`Codec`, NO new kernel). Runtime: `spa_core.go` (portable) config-map + `Spa_route`/`Spa_with*` + `spaMatchRoute`/`spaResolveRoutes` (reimplements Sky.Live's `matchRoute`/`splitPath` client-side — **`live.go` NOT touched**); `live_wasm.go` (js-only) deep-link at mount + document-click interception (pushState, skips external/target=_blank/download/sky-external/modified-click) + popstate + `RecordUpdate` sets `model.Page` (Live convention) + onNavigate via TEA `step`. Router installed ONLY when routes exist. **shared vs js:** shared portable changes = `spa_core.go`, `Std/Spa.sky`, `kernel_surface.rs`, `docs/coverage/`; js-only = `live_wasm.go`. Tests: `spa-router/` routing ALL PASS (deep-link, intercepted no-reload nav, pushState, onNavigate, popstate, notFound, external passthrough); `spa-boundary/` real wasm-client↔stateless-Sky-backend round-trip ALL PASS with ONE symlinked `Shared.sky` (shared-type-flows-both-ways proven: a field added to Shared breaks BOTH compiles). Verify (serial): build.sh=0, `GOOS=js` rt build=0, `go build ./...`+`go test ./rt/...`=0, `cargo test -p sky`=0, kernel_surface+dark-module ratchets+both census `--check`=PASS, `sky doc Std.Spa` OK, Sky.Live 09+19 clean-slate build + run HTTP 200 (sky-nav intact), all 5 prior spa apps rebuilt+headless ALL PASS. |
-| P5 — real e2e example + verify | ⏳ | client UI + stateless Sky backend; browser e2e; bundle number |
+| P5 — real e2e example + verify | ✅ **done** | **`examples/60-spa-todos`** — the culminating full-stack Sky.Spa app. Client (wasm) = `Model { page, ui, data }`, **`Std.Ui` Element view** (cross-platform; DONE-list criterion 6 — the Spa client renderer paints `Element` to the DOM, verified headlessly), pure client-local UI (new-todo text, filter, edit buffer) with zero round-trip, durable data via `Spa.getJson`/`postJson` + shared `Std.Codec`, History-API filter routes. Server = stateless `Sky.Http.Server` + SQLite (`Std.Db.Store`), re-validates every request, `Server.api` (CSRF-bypassed stateless JSON API), serves the client same-origin. `shared/Shared.sky` symlinked (mode 120000) into both — one wire contract. **e2e** `run_roundtrip.sh` (real wasm client ↔ real backend, headless): **24/24 PASS** — durable add/toggle/rename/delete persist (backend curl truth), pure UI (typing + 3 filter navs + edit buffer) makes provably **0** network calls, routing changes the view without reload, a reloaded client rehydrates from the backend. **Bundle:** `main.wasm` **9,493,611 B raw / 2,519,062 B gzip** (desktop/mobile-embed weight; web is the documented v2 open decision). **Browser:** extension DISCONNECTED (`list_connected_browsers` → `[]`); app serves same-origin (`/`, `/main.wasm`, `/wasm_exec.js` all HTTP 200), `run.sh` + README give the exact URL/steps — headless is the acceptance proof, real-browser pixel check pending the extension. **Verify (serial):** build.sh=0, `GOOS=js` rt build=0, `go build ./...`+`go test ./rt/...`=0, `cargo test -p sky`=0, `gates_measure_a_fresh_compiler` 21/21 (both run scripts carry the fresh-compiler guard; also fixed the pre-existing boundary-script miss on the branch base), denominators+coverage-ledger `--check`=PASS (no regen needed), coerce-floor golden gains the two measured rows (client narrow=238, server narrow=131), example builds clean-slate, Sky.Live 09+19 build+run HTTP 200, all 7 prior spa apps PASS. |
 | P6 — Judge + docs/templates + final sweep | ⏳ | fresh-context Judge vs DONE list |
 
 ## Verified baseline (do not re-litigate)
@@ -156,3 +156,46 @@
   ws subs later); client `HttpResponse.Headers` empty (status+body only);
   `Http_getT`/`Http_request` still net/http under js (latent, not on the client
   path). None block P3's acceptance.
+- (P5) FINDING — **`Std.Ui` renders under the Spa client renderer** (criterion 6
+  is met, not deferred). `Std.Ui.layout` is pure Sky that lowers `Element` →
+  `Std.Html` VNodes, and `dom_render_wasm.go`'s `buildDOM` paints any VNode
+  (tag + attrs incl. `class`/`style`, text, raw-HTML span) — so no renderer
+  change was needed. Confirmed with a throwaway `Std.Ui` Spa probe (rendered +
+  updated client-side) BEFORE committing the app to `Std.Ui`; the app's headless
+  e2e is the standing proof. So the app view is `Std.Ui`, NOT `Std.Html` — the
+  same `Element` view could target Live/Tui/Webview.
+- (P5) DECISION — the backend's `/api/*` are **`Server.api`** routes, not
+  `Server.get`/`post`. A Sky.Spa client talks to a STATELESS JSON API with no
+  cookie session; `Server.post` applies browser-form CSRF (a 403
+  `csrf_missing`), which guards nothing here and broke the round-trip. `Server.api`
+  bypasses CSRF by design; security rests on the handler re-validating +
+  re-reading authoritative data (it does), and a real app adds an
+  `Authorization` header the backend verifies. (Diagnosed live: the first
+  headless run's POST returned the CSRF JSON and nothing persisted.)
+- (P5) DECISION — client uses **relative** API URLs (`/api/todos`), so the
+  browser path is same-origin (the backend serves the client via
+  `Server.static "/" "../public"`) with no CORS, and the headless runner wraps
+  `fetch` to resolve relative URLs against the backend base. `SKY_DB_PATH` (not
+  a sky.toml `[database].path`, which trips the config-migration advisory) sets
+  the SQLite file; `TODOS_PORT` picks a unique high port (default 8951).
+- (P5) GATE — `gates_measure_a_fresh_compiler` scans EVERY `.sh` for a
+  non-comment `sky-out/sky` and fails it unless the script also sources
+  `scripts/lib/fresh-compiler.sh` + calls `require_fresh_compiler`. Both P5 run
+  scripts carry it; also fixed `spa-boundary/run_roundtrip.sh`, a **pre-existing**
+  miss on this worktree's exp/spa base (the coordinator had fixed it on exp/spa
+  after the branch point). A `.cjs` harness running a pre-built `main.wasm` does
+  NOT trip it.
+- (P5) CENSUS — `examples/60-spa-todos/{client,server}` are each a
+  `sky.toml`+`src/` project, so coerce-floor's recursive walk discovers them and
+  they need golden rows (like `examples/39-hub-demo/*`). `--bless` refuses under
+  a subset shortfall, so the two rows were measured with
+  `xtask coerce-floor --only=…` (client narrow=238, server narrow=131; adapter=0,
+  dispatch=0 both) and hand-added — the header sanctions hand-editing. denominators
+  + coverage-ledger `--check` both PASS unchanged (the app uses only
+  already-covered stdlib surface).
+- (P5) BROWSER — the Chrome extension is DISCONNECTED
+  (`mcp__claude-in-chrome__list_connected_browsers` → `[]`), so the pixel-level
+  in-browser check is env-blocked, exactly as design.md §9 anticipated. Not a
+  blocker: the app serves same-origin and `run.sh`/README document the exact URL
+  (`http://localhost:8951/`) and click-through; the 24/24 headless full-loop is
+  the acceptance proof.
