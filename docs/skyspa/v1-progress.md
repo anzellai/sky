@@ -113,3 +113,18 @@
   filename (`build-a4026-*.log`) showed the real build: green, crates from THIS
   worktree, `sky-out/sky` installed here. Parallel agents share one scratchpad;
   never use a fixed filename there.
+- (P3) WATCH-ITEM before merge-to-main: CI `ci-green` = the T1 tier-budget gate
+  (`scripts/ci/assert-tier-budget.sh`, ceiling 990s incl. grace) went red once at
+  `build-corpus`=999s. main's build-corpus is very noisy (763/901/918s observed),
+  the js files are `//go:build js` so they DON'T add to the normal build-corpus
+  compile, and my net non-js additions are small (extractions + one stdlib
+  module) — so 999 reads as a noisy outlier nudged over the line, not a real
+  regression. A fresh CI run gets a fresh timing. IF it recurs persistently as we
+  add P4/P5 surface, FIX THE CRITICAL PATH (build-corpus), do NOT raise the
+  ceiling (the gate forbids it). Re-check on each push; must be green before
+  asking to merge to main.
+- (P3) deferred to P4/later (in scope there): `Cmd.publish` client fan-out is a
+  server-boundary concern (P4); only `Sub.every` timers are wired (topic/stream/
+  ws subs later); client `HttpResponse.Headers` empty (status+body only);
+  `Http_getT`/`Http_request` still net/http under js (latent, not on the client
+  path). None block P3's acceptance.
