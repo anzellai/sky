@@ -54,6 +54,13 @@ pub struct BuildOptions {
     /// library every gate and harness builds through — none of which should be
     /// able to reach the network as a side effect of compiling.
     pub embed_bundle: Option<PathBuf>,
+    /// `sky build --wasm`: compile the emitted Go for `GOOS=js GOARCH=wasm`
+    /// (a Sky.Spa client) instead of a native binary, and drop the matching
+    /// `wasm_exec.js` beside it. The output is `<out>/main.wasm` +
+    /// `<out>/wasm_exec.js` rather than the native `<out>/<bin>`. The native
+    /// cgo-detection path is skipped: a wasm client links no system webview and
+    /// must not flip to cgo.
+    pub wasm: bool,
 }
 
 #[derive(Default)]
@@ -608,6 +615,16 @@ fn build_inner(
     // the oracle (`app/Main.hs`) + CLAUDE.md §"Sky.Webview" cgo-detect note.
     // Output binary name honours the sky.toml `bin` key (default `app`).
     let bin_name = configured_bin_name(&opts.example_dir);
+    // `--wasm`: compile the client for the browser (GOOS=js GOARCH=wasm) and
+    // drop the matching wasm_exec.js. The native cgo-detection path is skipped —
+    // a Sky.Spa client imports `syscall/js` and must NOT native-build.
+    if opts.wasm {
+        match run_wasm_build(&out_dir) {
+            Ok(()) => report.go_build_ok = true,
+            Err(e) => report.go_build_stderr = e,
+        }
+        return report;
+    }
     match run_go_build_detecting_cgo(&out_dir, &source, &bin_name) {
         Ok(outcome) => {
             report.go_build_ok = outcome.ok;
@@ -658,6 +675,44 @@ struct GoBuildOutcome {
     stderr: String,
     /// See [`BuildReport::cgo_note`].
     cgo_note: Option<String>,
+}
+
+/// `sky build --wasm`: compile `out_dir` for `GOOS=js GOARCH=wasm` into
+/// `out_dir/main.wasm`, then copy the toolchain's `wasm_exec.js` beside it — the
+/// browser loader the emitted client is paired with (a loader from a different
+/// toolchain, e.g. TinyGo, fails with a WebAssembly LinkError). Standard-Go wasm
+/// has full reflect, so no de-reflection is needed; the bundle is larger but runs
+/// in any browser / WKWebView / Android WebView.
+fn run_wasm_build(out_dir: &Path) -> Result<(), String> {
+    let out = Command::new("go")
+        .current_dir(out_dir)
+        .env("GOOS", "js")
+        .env("GOARCH", "wasm")
+        .args(["build", "-o", "main.wasm", "."])
+        .output()
+        .map_err(|e| format!("failed to run `go build` (GOOS=js GOARCH=wasm): {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+    }
+    let goroot = Command::new("go")
+        .args(["env", "GOROOT"])
+        .output()
+        .map_err(|e| format!("`go env GOROOT`: {e}"))?;
+    let goroot = String::from_utf8_lossy(&goroot.stdout).trim().to_string();
+    // Go 1.21+ ships wasm_exec.js under lib/wasm; older toolchains, misc/wasm.
+    let candidates = [
+        Path::new(&goroot).join("lib").join("wasm").join("wasm_exec.js"),
+        Path::new(&goroot).join("misc").join("wasm").join("wasm_exec.js"),
+    ];
+    let src = candidates.iter().find(|p| p.exists()).ok_or_else(|| {
+        format!("wasm_exec.js not found under GOROOT ({goroot}); looked in lib/wasm and misc/wasm")
+    })?;
+    let dest = out_dir.join("wasm_exec.js");
+    // The GOROOT copy is read-only (0444); a prior build left a read-only dest,
+    // so overwriting it would EPERM. Remove it first (best-effort).
+    let _ = std::fs::remove_file(&dest);
+    std::fs::copy(src, &dest).map_err(|e| format!("copy wasm_exec.js -> {}: {e}", dest.display()))?;
+    Ok(())
 }
 
 /// Run `go build` with static-first cgo detection. `source` is the emitted

@@ -26,6 +26,35 @@ Pipeline:
 3. Resolve modules, type-check, lower to Go under `sky-out/`.
 4. Invoke `go build` → `sky-out/app` (or the `bin` name set in `sky.toml`).
 
+**`--wasm`** compiles a **Sky.Spa client** for the browser (`GOOS=js
+GOARCH=wasm`) instead of a native binary, writing `sky-out/main.wasm` +
+`sky-out/wasm_exec.js` (the matching loader). Standard-Go wasm has full reflect,
+so it runs in any browser / WKWebView / Android WebView.
+
+```bash
+sky build --wasm src/Main.sky        # -> sky-out/main.wasm + wasm_exec.js
+```
+
+**`--target <t>`** builds the wasm client (implies `--wasm`) and bundles it for a
+delivery surface into `dist/` (index.html + main.wasm + wasm_exec.js):
+
+| `--target` | Bundles | Notes |
+|---|---|---|
+| `web` / `tablet` | `dist/` ready to serve | serve statically, or same-origin via `Server.static "/" "../dist"`; tablet == responsive web |
+| `desktop` | `dist/` + a `Std.Webview.url` recipe | a native WKWebView / WebView2 / webkit2gtk window around the client |
+| `ios` | `dist/` + iOS shell pointer | **requires full Xcode + the iOS Simulator runtime**; missing → warns + exits |
+| `android` | `dist/` + Android shell pointer | **requires the Android SDK** (`ANDROID_HOME` / `adb`); missing → warns + exits |
+
+```bash
+sky build --target web src/Main.sky      # -> dist/ (serve it)
+sky build --target android src/Main.sky  # -> dist/ (+ builds nothing if no SDK: warns + exits)
+```
+
+For `ios` / `android` the platform toolchain is checked **before** the build, so
+a missing SDK fails fast with an install hint rather than half-building. The
+native shells (WKWebView / Android WebView / `Std.Webview.url`) that host the
+bundle live in `examples/60-spa-todos/{mobile-ios,mobile-android,desktop}`.
+
 **`--embed`** bundles a PostgreSQL distribution into the binary, so
 `./sky-out/app --embed` is a self-contained app *and* database on a bare host —
 one file, no system PostgreSQL, no `DATABASE_URL`.

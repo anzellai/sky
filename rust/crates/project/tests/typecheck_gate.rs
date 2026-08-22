@@ -59,6 +59,7 @@ fn opts_for(repo: &Path, project: &Path, out: &Path) -> BuildOptions {
         entry_module: None,
         progress: false,
         embed_bundle: None,
+        wasm: false,
     }
 }
 

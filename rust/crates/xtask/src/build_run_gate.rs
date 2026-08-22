@@ -580,6 +580,7 @@ fn verify_one(
         entry_module: None,
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let rep = build_example(&opts);
     let out_dir = dir.join("sky-out-rust");

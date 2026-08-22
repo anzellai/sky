@@ -733,6 +733,40 @@ fn entry_module_name(file: &Path) -> Option<String> {
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let (positional, out_override) = parse_out(args);
     let embed = args.iter().any(|a| a == "--embed");
+    // Sky.Spa client build: `--wasm` compiles the emitted Go for the browser
+    // (GOOS=js GOARCH=wasm) + drops wasm_exec.js; `--target <t>` bundles that
+    // client for a delivery surface (web / desktop / ios / android). See
+    // `cmd_build_target`.
+    let wasm = args.iter().any(|a| a == "--wasm");
+    let target = args
+        .iter()
+        .position(|a| a == "--target")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    if let Some(t) = &target {
+        if !matches!(t.as_str(), "web" | "desktop" | "ios" | "android" | "tablet") {
+            eprintln!(
+                "sky build --target: unknown target `{t}`\n  \
+                 supported: web · desktop · ios · android · tablet (= responsive web)"
+            );
+            return ExitCode::FAILURE;
+        }
+        // Every Sky.Spa delivery target is a wasm client under a native/browser
+        // shell, so --target implies --wasm.
+        //
+        // Verify the platform toolchain BEFORE the (slower) wasm build, so a
+        // missing SDK is the first thing the user sees — not a half-built bundle.
+        let toolchain = match t.as_str() {
+            "ios" => detect_ios_toolchain(),
+            "android" => detect_android_toolchain(),
+            _ => Ok(()),
+        };
+        if let Err(hint) = toolchain {
+            eprintln!("{hint}");
+            return ExitCode::FAILURE;
+        }
+    }
+    let wasm = wasm || target.is_some();
     let file = match resolve_entry_arg(
         &positional,
         &format!(
@@ -794,6 +828,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         entry_module: entry_module_name(file),
         progress: true,
         embed_bundle,
+        wasm,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -811,7 +846,14 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         eprintln!("sky {}: {}", verb(check_only), report.note);
         return ExitCode::FAILURE;
     }
-    println!("Running go build...");
+    println!(
+        "{}",
+        if wasm {
+            "Building wasm client (GOOS=js GOARCH=wasm)..."
+        } else {
+            "Running go build..."
+        }
+    );
     if !report.go_build_ok {
         if check_only {
             eprintln!(
@@ -820,6 +862,8 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
                  program but Go did not.\n\nGo errors:\n{}",
                 report.go_build_stderr
             );
+        } else if wasm {
+            eprintln!("wasm build failed:\n{}", report.go_build_stderr);
         } else {
             eprintln!("go build failed:\n{}", report.go_build_stderr);
         }
@@ -830,12 +874,153 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     }
     if check_only {
         println!("No errors found.");
+        return ExitCode::SUCCESS;
+    }
+    println!("Compilation successful");
+    let out_dir = opts
+        .out_dir_abs
+        .clone()
+        .unwrap_or_else(|| project_dir.join(&out_dir_name));
+    if wasm {
+        println!("Build complete: {out_dir_name}/main.wasm  (+ {out_dir_name}/wasm_exec.js)");
     } else {
-        println!("Compilation successful");
         let bin_name = project::configured_bin_name(&project_dir);
         println!("Build complete: {out_dir_name}/{bin_name}");
     }
+    // `--target`: bundle the freshly-built wasm client for a delivery surface.
+    if let Some(t) = &target {
+        return cmd_build_target(t, &project_dir, &out_dir);
+    }
     ExitCode::SUCCESS
+}
+
+/// `sky build --target <t>`: take the freshly-built wasm client (`out_dir`) and
+/// stage a servable web bundle in `<project>/dist/` (index.html + main.wasm +
+/// wasm_exec.js), then, per delivery surface, either finish (web/tablet), point
+/// the user at the native shell (desktop), or — for ios/android — verify the
+/// platform toolchain is installed, warning + exiting if it is not.
+fn cmd_build_target(target: &str, project_dir: &Path, out_dir: &Path) -> ExitCode {
+    // (Platform toolchains for ios/android were verified in cmd_build before the
+    // build ran — see the --target parse block there.)
+    // Stage the servable bundle (shared by every surface).
+    let dist = project_dir.join("dist");
+    if let Err(e) = stage_web_bundle(out_dir, &dist) {
+        eprintln!("sky build --target {target}: {e}");
+        return ExitCode::FAILURE;
+    }
+    let dist_name = "dist";
+    println!("Bundled web client → {dist_name}/ (index.html + main.wasm + wasm_exec.js)");
+
+    match target {
+        "web" | "tablet" => {
+            println!(
+                "\nServe it with any static host, or from a Sky backend:\n  \
+                 Server.static \"/\" \"../{dist_name}\"   -- serves the client same-origin with your /api routes\n\
+                 (tablet == responsive web — Std.Ui adapts to the viewport)"
+            );
+        }
+        "desktop" => {
+            println!(
+                "\nWrap it in a native desktop window with a tiny Sky.Webview shell:\n  \
+                 Webview.url \"http://127.0.0.1:<port>/\" (Webview.defaultWindow |> Webview.withTitle \"App\")\n\
+                 point it at the backend that serves this bundle. macOS/Windows/Linux."
+            );
+        }
+        "ios" => {
+            println!(
+                "\niOS toolchain OK. Host the bundle from your backend and load it in a\n\
+                 WKWebView app (see examples/60-spa-todos/mobile-ios for the shell + build)."
+            );
+        }
+        "android" => {
+            println!(
+                "\nAndroid toolchain OK. Host the bundle from your backend and load it in a\n\
+                 WebView app (see examples/60-spa-todos/mobile-android + build-apk.sh)."
+            );
+        }
+        _ => {}
+    }
+    ExitCode::SUCCESS
+}
+
+/// Copy `main.wasm` + `wasm_exec.js` from the wasm build dir into `dist/`, and
+/// write the standard Go-wasm `index.html` bootstrap if one isn't already there.
+fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dist).map_err(|e| format!("create {}: {e}", dist.display()))?;
+    for f in ["main.wasm", "wasm_exec.js"] {
+        let src = out_dir.join(f);
+        if !src.exists() {
+            return Err(format!(
+                "{f} not found in {} — did the wasm build run? (this is an internal error)",
+                out_dir.display()
+            ));
+        }
+        std::fs::copy(&src, dist.join(f)).map_err(|e| format!("copy {f}: {e}"))?;
+    }
+    let index = dist.join("index.html");
+    if !index.exists() {
+        std::fs::write(&index, WASM_INDEX_HTML).map_err(|e| format!("write index.html: {e}"))?;
+    }
+    Ok(())
+}
+
+const WASM_INDEX_HTML: &str = r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sky.Spa</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="wasm_exec.js"></script>
+    <script>
+      const go = new Go();
+      WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((res) => {
+        go.run(res.instance);
+      });
+    </script>
+  </body>
+</html>
+"#;
+
+/// Verify an iOS build toolchain is present (full Xcode + the iPhone Simulator
+/// SDK), returning an actionable install message otherwise.
+fn detect_ios_toolchain() -> Result<(), String> {
+    let ok = Command::new("xcrun")
+        .args(["--sdk", "iphonesimulator", "--show-sdk-path"])
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false);
+    if ok {
+        Ok(())
+    } else {
+        Err("sky build --target ios: no iOS toolchain found.\n  \
+             Install the full Xcode (the App Store) — Command Line Tools alone is not\n  \
+             enough — then run `xcodebuild -downloadPlatform iOS` once for the simulator\n  \
+             runtime. (`xcrun --sdk iphonesimulator --show-sdk-path` must succeed.)"
+            .to_string())
+    }
+}
+
+/// Verify an Android build toolchain is present (the SDK, via ANDROID_HOME /
+/// ANDROID_SDK_ROOT or `adb` on PATH), returning an actionable install message.
+fn detect_android_toolchain() -> Result<(), String> {
+    let has_sdk = std::env::var_os("ANDROID_HOME").is_some()
+        || std::env::var_os("ANDROID_SDK_ROOT").is_some()
+        || Command::new("adb")
+            .arg("version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    if has_sdk {
+        Ok(())
+    } else {
+        Err("sky build --target android: no Android SDK found.\n  \
+             Install Android Studio (or the command-line tools) and set ANDROID_HOME to\n  \
+             the SDK path (e.g. ~/Library/Android/sdk). `adb` should be on your PATH."
+            .to_string())
+    }
 }
 
 fn verb(check_only: bool) -> &'static str {
@@ -919,6 +1104,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         entry_module: entry_module_name(file),
         progress: true,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -2233,6 +2419,7 @@ fn build_temp_db_entry(
         entry_module: Some(module.to_string()),
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_project(&opts, &[scratch.clone()], Some(module));
     if !(report.emitted && report.go_build_ok) {
@@ -2947,6 +3134,7 @@ fn cmd_db(args: &[String]) -> ExitCode {
         entry_module: entry_module_name(file),
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -3235,6 +3423,7 @@ fn watch_build_and_spawn(
         entry_module: entry_module_name(file),
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -4013,6 +4202,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
             entry_module: None,
             progress: false,
             embed_bundle: None,
+            wasm: false,
         };
         let report = build_example(&opts);
         if !report.emitted {
@@ -4128,6 +4318,7 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
         entry_module: None,
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_example(&opts);
     if report.emitted && report.go_build_ok {
@@ -4709,6 +4900,11 @@ fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
         match a.as_str() {
             "--out" | "-o" => out = it.next().cloned(),
             s if s.starts_with("--out=") => out = Some(s["--out=".len()..].to_string()),
+            // `--target <value>` (sky build): consume the value so it is not
+            // mistaken for the entry file. cmd_build reads --target from `args`.
+            "--target" => {
+                it.next();
+            }
             s if s.starts_with('-') => { /* ignore unknown flags for forward-compat */ }
             s => positional.push(s.to_string()),
         }

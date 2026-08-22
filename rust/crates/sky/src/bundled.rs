@@ -92,6 +92,7 @@ pub fn ensure_built(
         entry_module: None,
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
