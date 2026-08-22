@@ -1,0 +1,69 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Html as Html exposing (Html)
+import Std.Html.Attributes as Attr
+import Std.Html.Events as Events
+
+
+
+-- A text field bound to the model plus a derived live character count.
+-- Every keystroke dispatches `SetText`, re-runs `view`, and the diff renderer
+-- must update the derived count WITHOUT rebuilding (and thus refocusing /
+-- caret-resetting) the input the user is typing into.
+
+
+type alias Model =
+    { text : String }
+
+
+type Msg
+    = SetText String
+    | Uppercase
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { text = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        SetText t ->
+            ( { model | text = t }, Cmd.none )
+
+        Uppercase ->
+            -- A PROGRAMMATIC value change (model differs from what the DOM
+            -- shows) that must reach the focused input as a value patch and
+            -- apply WITHOUT jumping the caret.
+            ( { model | text = String.toUpper model.text }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Html.div []
+        [ Html.h1 [] [ Html.text "Sky.Spa input" ]
+        , Html.input
+            [ Attr.id "field"
+            , Attr.type_ "text"
+            , Attr.value model.text
+            , Events.onInput SetText
+            ]
+        , Html.p [ Attr.id "count" ]
+            [ Html.text (String.fromInt (String.length model.text)) ]
+        , Html.p [ Attr.id "echo" ]
+            [ Html.text ("You typed: " ++ model.text) ]
+        , Html.button [ Attr.id "upper", Events.onClick Uppercase ]
+            [ Html.text "Uppercase" ]
+        ]
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init, update = update, view = view }
+        )

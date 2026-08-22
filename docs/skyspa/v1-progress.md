@@ -5,12 +5,12 @@
 > Sky.Spa v1. Updated at every phase boundary. Work branch: `exp/spa`. Verified
 > prototype baseline: `exp/spa-prototype`.
 
-## Status: P1 DONE ✅ — P2 next (client-side diff renderer)
+## Status: P2 DONE ✅ — P3 next (interpretCmd real effects)
 
 | Phase | State | Notes |
 |---|---|---|
 | P1 — productionize + land partition | ✅ **done** | partition + census/kernel/coverage fixes on `exp/spa` (@c39dd8a0). Full §0.2.1 verified SERIALLY green: `cargo test --workspace`=0, example-sweep=0, conformance=0, 29 harness gates pass, entry_exit_contract 3/3, `GOOS=js` rt build=0, Sky.Live 09/19 build=0, spa render ALL PASS. |
-| P2 — client-side diff renderer | 🔨 in progress | diffTrees + __skyApplyPatches reuse; focus/cursor test |
+| P2 — client-side diff renderer | ✅ **done** | Full re-render replaced by `diffTrees(prev,new,clientState)` → `[]Patch` applied by sky-id (`spaApplyPatches`); `spaPrev *VNode` kept across dispatches; first render still full-mounts. Focus/caret/dirty-input authority ported from `__skyApplyPatches` to the Go/syscall.js Patch VALUE model. `spa-input/` acceptance test 23/23 PASS (focus retained, caret preserved mid-string + across programmatic value write, value not clobbered, node identity stable, 0 elements created per keystroke = minimal patch); `spa-counter/` still ALL PASS. `diffTrees`/`live_core.go` UNCHANGED — all edits in the two `//go:build js` files, so Sky.Live server diff is untouched. |
 | P3 — interpretCmd real effects | ⏳ | perform async, Time/Http, subscriptions |
 | P4 — Std.Spa v1 + explicit boundary | ⏳ | config(routes/subs), routing, Http+Codec server boundary |
 | P5 — real e2e example + verify | ⏳ | client UI + stateless Sky backend; browser e2e; bundle number |
@@ -50,3 +50,24 @@
   produce FALSE failures (a spurious entry_exit_contract + sweep fail that both
   vanished when re-run serially in a quiet tree). Run suites serially; verify a
   failure in isolation before treating it as real.
+- (P2) DEVIATION from a literal `__skyApplyPatches` port: NO blanket "drop
+  value/checked/selected on a focused field". The server drops them because a
+  Sky.Live keystroke is async (debounced, unacked) so the DOM can hold a value
+  the server hasn't seen. A Sky.Spa dispatch is SYNCHRONOUS + client-authoritative
+  — the keystroke updates the model before the re-render, so there is never an
+  unacked value. `diffTrees`' `clientState` alignment (live_core.go:1596) already
+  skips a value patch precisely when model == what the DOM shows (the user's own
+  typing), which makes typing a minimal patch set; the only value patches that
+  reach a focused input are genuine PROGRAMMATIC changes (model != DOM) which
+  SHOULD apply — and do, with caret snapshot/restore so the cursor never jumps.
+  Kept from the server port: open-<select> defence, focus-containing text/HTML
+  guards, caret/scroll snapshot+restore, idempotent setAttribute.
+- (P2) KNOWN GAP (honest): the focused input's DOM node IDENTITY is preserved
+  only on the attr/text-patch path (the tested typing case — no ancestor rebuild).
+  If an ancestor HTML/child-count patch fires while an input inside it is focused,
+  `rebuildChildrenPreservingFocus` restores focus + caret + value by sky-id but
+  the node is re-created (identity changes). Real browsers keep IME/composition
+  state on the live node; the server solves this by splicing the live node into
+  the parsed HTML (`__skyReplaceHTMLPreservingFocus`). Client-side node-splice is
+  deferred — not needed for the P2 typing acceptance gate, flagged for a later
+  pass if a real app hits it.
