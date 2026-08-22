@@ -128,6 +128,8 @@ apps/ledger	adapter=0	dispatch=0	narrow=462
 apps/relay	adapter=5	dispatch=0	narrow=170
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=8
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=7
+examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=238
+examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=131
 simple	adapter=0	dispatch=0	narrow=1
 sky-bundled/console	adapter=2	dispatch=0	narrow=286
 sky-bundled/doc	adapter=0	dispatch=0	narrow=17
