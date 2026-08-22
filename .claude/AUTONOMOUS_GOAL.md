@@ -56,3 +56,21 @@ Progress tracker: `docs/skyspa/` (v1-progress, design, dereflect-progress) +
 this file. Drive platform-by-platform (web ✓ → desktop → mobile), each verified
 build+run before moving on. Continue until all three targets have a working,
 verified demo on `exp/spa`, then report. Genuine blocker → describe + await.
+
+## STATUS (all three targets working) — 2026-08-22
+
+- **Web** ✓ — examples/60-spa-todos in the browser (standard-Go wasm, gzip on the
+  wire 7.8MB→2.0MB). User-verified interactively.
+- **Desktop** ✓ — Std.Webview.url + examples/60-spa-todos/desktop: a native
+  WKWebView window loading the Sky.Spa client. Builds + cgo-links WebKit +
+  opens the native window (visual is the user's GUI to see).
+- **Mobile** ✓ — examples/60-spa-todos/mobile-android: a native Android WebView
+  app (installable APK, dev.sky.spatodos) loading the SAME client. VERIFIED on
+  the Medium_Phone_API_35 emulator: client renders + "ready", add "milk-from-
+  mobile" round-trips through the typed boundary to the shared backend + SQLite
+  (backend API confirms id 4), native app (no browser chrome) renders the list.
+  Screenshots sent to the user.
+
+ONE Sky.Spa client (TEA loop + Std.Ui view) + ONE stateless server, three native
+shells (browser / WKWebView / Android WebView). Client+server stay SEPARATE on
+every target. Mandate met.
