@@ -1195,6 +1195,16 @@ func pipelineApply(acc any, arg any) any {
 	if f, ok := acc.(func(any) any); ok {
 		return f(arg)
 	}
+	// 2-arg apply-lambda — the codec applicative `\f a -> f a`, emitted
+	// uniformly as `func(func(any) any, any) any`. Partially applying it to its
+	// first (function) argument is reflection-free, so a Sky.Spa/TinyGo client
+	// (whose only multi-arg pipeline use is the codec) never reaches the reflect
+	// path below. Server behaviour is identical to the reflect partial.
+	if f2, ok := acc.(func(func(any) any, any) any); ok {
+		if fa, ok2 := arg.(func(any) any); ok2 {
+			return func(b any) any { return f2(fa, b) }
+		}
+	}
 	// Multi-arg Go function via reflect: take arg and produce a partial
 	rv := reflect.ValueOf(acc)
 	if rv.Kind() != reflect.Func {
