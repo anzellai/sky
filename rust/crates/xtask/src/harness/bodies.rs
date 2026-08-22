@@ -31,7 +31,10 @@ use std::process::Command;
 // ---------------------------------------------------------------------------
 
 /// `.sky` files under `examples/`, excluding generated dirs. Measured.
-pub const ROUNDTRIP_EXPECTED: u64 = 173;
+/// **178 since 2026-08-22**: `examples/60-spa-todos` (the Sky.Spa example) added
+/// its client/server `Main.sky` + `shared/Shared.sky` + the two symlinked
+/// `Shared.sky` (+5); all reprint byte-exact with zero ERROR nodes.
+pub const ROUNDTRIP_EXPECTED: u64 = 178;
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -608,7 +611,9 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// `shared-world` gate has been reporting `126/125` — the gate itself PASSES
 /// (126 items, identical verdicts); only the harness census was behind. 68
 /// reject-corpus files + 58 `examples/` directories = 126.
-pub const SHARED_WORLD_EXPECTED: u64 = 126;
+/// **127 since 2026-08-22**: `examples/60-spa-todos` (the Sky.Spa example) added
+/// one `examples/` directory → 59 dirs + 68 reject = 127; verdicts identical.
+pub const SHARED_WORLD_EXPECTED: u64 = 127;
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
