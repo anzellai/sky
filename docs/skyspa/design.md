@@ -1,11 +1,19 @@
 # Sky.Spa — client-side TEA, statically partitioned (design)
 
-> **Status:** experimental (`exp/spa`). Phase 1 de-risk done — and an adversarial
-> grill then found **two BLOCKING realities** the first spike dodged. Read §0
-> first: the thesis as originally written does **not** hold for real apps, and the
-> production-web path is **not** de-risked. The rest of this document is the
-> design of record with those corrections folded in; every load-bearing claim is
-> grounded in *actual* Sky surfaces (file:line), verified against the code.
+> **Status: EXPERIMENTAL (`exp/spa`) — NOT in any release** (shipped line is
+> v0.21.x). A desktop/mobile-first, **explicit-boundary** Sky.Spa v1 is now
+> **built and green on `exp/spa`** (phases P1–P5 — see the [staged plan §8](#8-staged-plan)
+> and the tracker [v1-progress.md](v1-progress.md); the user-facing guide is
+> [overview.md](overview.md)). Two things this document opened with remain the
+> record and are **honoured, not shipped**: an adversarial grill found two
+> BLOCKING realities the first spike dodged (§0) — the production-**web** path
+> and the **auto-derived** split. Both were resolved *by scoping them to v2*, not
+> by building them: v1 ships the client renderer + explicit boundary on
+> desktop/mobile-embed weight (~2.5 MB gzip); web (TinyGo/Sky→JS) and the
+> compiler-derived auto-split are v2 ([auto-split.md](auto-split.md)). Read §0
+> first for why the *original* thesis and web pillar are not yet earned; every
+> load-bearing claim is grounded in *actual* Sky surfaces (file:line), verified
+> against the code.
 
 ## 0. Phase-1 grill findings — the two blocking realities (READ FIRST)
 
@@ -320,23 +328,30 @@ Reordered post-grill: the two blocking unknowns (§0) are de-risked **before** a
 `live.go` surgery, because the surgery is the low-risk part and the thesis + web
 pillar are what actually gate the direction.
 
+The phase numbers below are the *design* numbering; the built work is tracked as
+P1–P6 in [v1-progress.md](v1-progress.md) and the mapping is called out per row.
+
 | Phase | Deliverable | Status |
 |---|---|---|
 | **1. De-risk (loop)** | wasm feasibility + bundle number + headless renderer/loop proof + arch map | ✅ done ([§9](#9-evidence)) |
-| **1b. De-risk G2 (web bundle)** | empirically confirm the reflection-based core cannot TinyGo-compile (verified by code inspection; a TinyGo compile attempt is the empirical seal); **record the web decision** — reflection-free rewrite *vs* Sky→JS *vs* web out-of-scope (desktop/mobile only) | ⚠️ **blocking — needs the decision** |
-| **1c. De-risk G1 (thesis)** | prototype the effect-classification + read/write-set pass on `19-skyforum`/`13-skyshop`; **measure** what fraction of real `update` branches classify cleanly vs collapse to whole-model write-set; verdict: is the auto-split reachable or empty? | ⚠️ **blocking** |
-| **2. Emit path (explicit boundary)** | `Spa.app` config + a `spa` emit target importing a portable core; author-declared server calls (explicit `Http`, shared `Codec`); `sky build --target spa` → `main.wasm` + JS glue | after 1b/1c |
-| **3. Runtime-partition** | split `live.go` → `live_core.go` + `live_server.go`; build-tag `rt` for `js`; single-threaded wasm effect interpreter over `cmdT`. **Extraction only, no behavior change**; gated by the full example sweep + a real Sky.Live app per CLAUDE.md §0.2.1 | |
-| **4. Client renderer** | `Element→DOM` renderer reusing `__skyApplyPatches` focus/cursor logic; client-side `diffTrees` | |
-| **5. Reconciliation** | per-`data`-field versioning / optimistic-concurrency tokens; a typed `Conflict` variant surfaced to the author (concurrent `data` writes are **not** trivially mergeable — G4) | |
-| **6. Dialect + auto-split (v2)** | the `{ui,data}` + effects-via-`Cmd` dialect (compile-gated) + the body-`Task`-trace partition + generated RPC — full mechanism in **[auto-split.md](auto-split.md)**. Falsified only for the *weak* classify-by-`Cmd` mechanism on inline-effect apps; reachable via the stronger body-trace mechanism under the dialect. | v2 target |
+| **1b. De-risk G2 (web bundle)** | confirm the reflection-based core cannot TinyGo-compile; **record the web decision** | ✅ **decided — web out of scope for v1.** v1 targets desktop/mobile-embed on standard Go→wasm (real app measured ~9.5 MB raw / ~2.5 MB gzip, `examples/60-spa-todos`). TinyGo (can't compile `reflect.MakeFunc`) / Sky→JS = **v2** ([§9](#9-evidence)) |
+| **1c. De-risk G1 (thesis)** | measure whether the auto-derived split is reachable on real apps | ✅ **decided — v1 uses the explicit boundary; auto-split = v2.** The weak classify-by-`Cmd` mechanism was falsified (§0.1); the stronger body-`Task`-trace mechanism under a mandated dialect is reachable and specified in **[auto-split.md](auto-split.md)** |
+| **2. Emit path (explicit boundary)** | `Spa.app` config + a `spa` emit target importing a portable core; author-declared server calls (explicit `Http`, shared `Codec`) | ✅ **done** (P1 land + P4 `Std.Spa` boundary — `getJson`/`postJson`) |
+| **3. Runtime-partition** | split `live.go` core out; build-tag `rt` for `js`; single-threaded wasm effect interpreter over `cmdT`. Extraction only, no behavior change; gated per CLAUDE.md §0.2.1 | ✅ **done** (P1 — `live_core.go`/`spa_core.go`/`live_wasm.go`; Sky.Live server path byte-identical; P3 `interpretCmd` real effects) |
+| **4. Client renderer** | `Element→DOM` renderer reusing `__skyApplyPatches` focus/cursor logic; client-side `diffTrees` | ✅ **done** (P2 — `spaApplyPatches`, focus/caret authority; `Std.Ui` `Element` paints to the DOM, P5) |
+| **5. Reconciliation** | per-`data`-field versioning / optimistic-concurrency tokens; a typed `Conflict` variant (concurrent `data` writes are **not** trivially mergeable — G4) | ⏳ **not built** — v1 is explicit-boundary; per-field versioning is a documented future residual ([auto-split.md §8](auto-split.md)) |
+| **6. Dialect + auto-split (v2)** | the `{ui,data}` + effects-via-`Cmd` dialect (compile-gated) + the body-`Task`-trace partition + generated RPC — full mechanism in **[auto-split.md](auto-split.md)** | ⏳ **v2 target** |
 
-Phases 2–5 are a bounded, shippable **explicit-boundary** Sky.Spa (desktop/mobile
-first). Phase 6 is the **v2 auto-split** — the classify-by-`Cmd` mechanism was
-falsified (§0.1), but the body-`Task`-trace mechanism under a mandated dialect is
-reachable (`auto-split.md`), and v1-dialect apps are forward-compatible with it.
-Sky.Spa's near-term value is the client renderer + explicit boundary + shared
-types; its v2 value is the compiler-derived split.
+Phases 2–4 (design numbering) are the bounded, **built** explicit-boundary
+Sky.Spa v1 (desktop/mobile first), demonstrated end-to-end by
+[`examples/60-spa-todos`](../../examples/60-spa-todos) and tracked as P1–P5 in
+[v1-progress.md](v1-progress.md); P6 is the docs/templates sync (this doc set).
+Phase 5 (reconciliation) and Phase 6 (auto-split) are **not built** — the
+classify-by-`Cmd` mechanism was falsified (§0.1), but the body-`Task`-trace
+mechanism under a mandated dialect is reachable (`auto-split.md`), and v1-dialect
+apps are forward-compatible with it. Sky.Spa's near-term value is the client
+renderer + explicit boundary + shared types; its v2 value is the compiler-derived
+split. **None of this is in a release; it is experimental on `exp/spa`.**
 
 ## 9. Evidence (Phase 1, measured on `exp/spa`)
 
