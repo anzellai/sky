@@ -10159,6 +10159,28 @@ func SkyCall(f any, args ...any) any {
 	if f == nil {
 		return nil
 	}
+	// Reflection-free fast paths for the boxed-Sky-closure convention: a
+	// first-class Sky function value is emitted as `func(any) any` /
+	// `func(any, any) any` / `func() any`. Dispatch by type assertion + direct
+	// call so the common view / event-handler / HOF dispatch carries no
+	// reflect.Value. This is also what lets SkyCall run under TinyGo at all —
+	// it implements neither reflect.Value.Call nor reflect.Type.NumIn (the
+	// panic site). A curried under/over-application (arity mismatch) falls
+	// through to the reflect path below, unchanged.
+	switch len(args) {
+	case 1:
+		if g, ok := f.(func(any) any); ok {
+			return g(args[0])
+		}
+	case 2:
+		if g, ok := f.(func(any, any) any); ok {
+			return g(args[0], args[1])
+		}
+	case 0:
+		if g, ok := f.(func() any); ok {
+			return g()
+		}
+	}
 	rv := reflect.ValueOf(f)
 	if rv.Kind() != reflect.Func {
 		if len(args) == 0 {

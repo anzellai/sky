@@ -3344,7 +3344,7 @@ impl<'a> Ctx<'a> {
                 // function (`Result.map3 Profile …`, `List.map Piece …`): eta
                 // to a closure over its fields, same as a `Res::Ctor` value.
                 if self.record_ctor_name(d).is_some() {
-                    return self.lower_ctor_value(d, actual, None);
+                    return self.lower_ctor_value(d, actual, expected, None);
                 }
                 if let Some(raw) = self.kernel_alias.get(&d) {
                     // value-reference to a kernel-alias: use the runtime symbol.
@@ -3500,7 +3500,7 @@ impl<'a> Ctx<'a> {
             }
             Res::Ctor(cr) => {
                 let pin = self.pinned_union_go(cr.type_);
-                self.lower_ctor_value(cr.def, actual, pin)
+                self.lower_ctor_value(cr.def, actual, expected, pin)
             }
             Res::Foreign { package, name } => {
                 self.warnings.push(format!(
@@ -3613,7 +3613,13 @@ impl<'a> Ctx<'a> {
         Some(self.kernel_partial(go, &[], arity, expected))
     }
 
-    fn lower_ctor_value(&mut self, def: DefId, actual: &GoTy, pin: Option<String>) -> GoExpr {
+    fn lower_ctor_value(
+        &mut self,
+        def: DefId,
+        actual: &GoTy,
+        expected: &GoTy,
+        pin: Option<String>,
+    ) -> GoExpr {
         // A bare constructor reference used as a VALUE. For a nullary ctor this
         // is just the constructed value. For a ctor of arity ≥ 1 used as a
         // function value (`onInput UpdateDraft`, `onClick (Select room)` after
@@ -3649,6 +3655,77 @@ impl<'a> Ctx<'a> {
             }
             _ => (vec![GoTy::Any; arity], GoTy::Any),
         };
+        // Emit a constructor VALUE as a curried, uniformly `func(any) any` nest
+        // (the boxed-Sky-closure convention) rather than a flat/typed
+        // `func(T0, …, Tn) R`, in the two cases where the value is dispatched
+        // dynamically and the typed form forces reflect:
+        //   * arity ≥ 2 — a multi-arg ctor value is only ever applied through
+        //     the runtime's currying appliers (`pipelineApply` / `apply-N` /
+        //     `SkyCall`), never flat-called (Go cannot call a curried Sky
+        //     function directly). e.g. a `Std.Codec` record constructor.
+        //   * arity 1 into a BOXED-CLOSURE slot — an `any` slot, OR a
+        //     `func(any…) any` slot (a Sky higher-order param: `Cmd.perform
+        //     task GotTodos`, `getJson … GotTodos`, an event handler). Such a
+        //     slot dispatches the value via `SkyCall`/`pipelineApply`, whose
+        //     `func(any) any` fast path a typed `func(any) Msg` misses; matching
+        //     the slot's `func(any) any` shape hits it (and needs no coerce
+        //     bridge, which produced the un-fast-pathable shape before).
+        // The typed HOF path (a 1-arg ctor into a `func(A) B` slot with a
+        // CONCRETE param/return — `List.map Ctor xs`) keeps the flat typed form
+        // below, so the typed twin still type-checks. The reflect form these
+        // replace needs `reflect.Type.NumIn` to recover the arity, which TinyGo
+        // does not implement (the panic on a Sky.Spa client's non-empty record
+        // decode + task-completion dispatch).
+        let is_boxed_slot = |t: &GoTy| -> bool {
+            matches!(t, GoTy::Any)
+                || matches!(t, GoTy::Func(ps, r)
+                    if ps.iter().all(|p| *p == GoTy::Any) && **r == GoTy::Any)
+        };
+        let boxed_closure = arity >= 2 || (arity == 1 && is_boxed_slot(expected));
+        if boxed_closure {
+            let pnames: Vec<String> = (0..arity)
+                .map(|_| {
+                    let n = format!("_p{}", self.local_counter);
+                    self.local_counter += 1;
+                    n
+                })
+                .collect();
+            // ctor args: each `any` lambda param coerced to its field type
+            // (`rt.AsInt(_p0)`, …). `ctor_emit` widens/coerces per ctor kind.
+            let arg_exprs: Vec<GoExpr> = pnames
+                .iter()
+                .zip(param_tys.iter())
+                .map(|(pn, pty)| {
+                    let id = GoExpr::new(GoExprKind::Ident(pn.clone()), GoTy::Any);
+                    self.coerce_if_needed(id, pty)
+                })
+                .collect();
+            let ctor_val = self.ctor_emit(&cname, arg_exprs, &ret, pin.as_deref());
+            let ctor_val = self.coerce_if_needed(ctor_val, &ret);
+            // Wrap from the innermost param outward. Every lambda returns `any`
+            // (the constructed value, or the next lambda boxed) so its Go type is
+            // uniformly `func(any) any`.
+            let mut lambda: Option<GoExpr> = None;
+            for pn in pnames.iter().rev() {
+                let ret_body = match lambda.take() {
+                    None => widen(ctor_val.clone()),
+                    Some(inner) => widen(inner),
+                };
+                lambda = Some(GoExpr::new(
+                    GoExprKind::FuncLit(
+                        vec![GoParam {
+                            name: pn.clone(),
+                            ty: GoTy::Any,
+                        }],
+                        GoTy::Any,
+                        vec![GoStmt::Return(Some(ret_body))],
+                    ),
+                    GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any)),
+                ));
+            }
+            // Safe: `boxed_closure` guarantees arity ≥ 1 → ≥ 1 iteration.
+            return lambda.expect("curried ctor nest has ≥1 lambda");
+        }
         let mut gparams: Vec<GoParam> = Vec::new();
         let mut arg_exprs: Vec<GoExpr> = Vec::new();
         for pty in param_tys.iter().take(arity) {
@@ -5162,7 +5239,18 @@ impl<'a> Ctx<'a> {
                 let GoTy::Named(n, margs) = &*f_r else {
                     return erased(self, f, xs);
                 };
-                if f_ps.len() != 1 || n != "rt.SkyMaybe" || margs.len() != 1 || !provable(&margs[0])
+                // `B` may be `any` — a `List.filterMap : … -> List any` (the
+                // heterogeneous result of `Std.Ui.collectHtmlAttrs`, etc.). The
+                // typed twin `List_filterMapT[A, any]` still dispatches `fn`
+                // typed (`func(A) SkyMaybe[any]` — reflection-free), and `any` is
+                // a valid Go type argument; only a type-var / anonymous-struct
+                // `B` would be unrenderable. So allow `any` explicitly instead of
+                // falling to the reflect `List_filterMap` (which SkyCalls `fn`
+                // per element — the site TinyGo cannot run).
+                if f_ps.len() != 1
+                    || n != "rt.SkyMaybe"
+                    || margs.len() != 1
+                    || !(provable(&margs[0]) || margs[0] == GoTy::Any)
                 {
                     return erased(self, f, xs);
                 }

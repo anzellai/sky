@@ -406,61 +406,7 @@ pub fn render_expr(e: &GoExpr) -> String {
                 return render_expr(inner);
             }
             let comment = format!("/* {} */ ", reason.comment());
-            let call = match to {
-                GoTy::Named(n, args) if n == "rt.SkyTask" && args.len() == 2 => format!(
-                    "rt.TaskCoerceT[{}, {}]({})",
-                    render_ty(&args[0]),
-                    render_ty(&args[1]),
-                    render_expr(inner)
-                ),
-                GoTy::Named(n, args) if n == "rt.SkyMaybe" && args.len() == 1 => {
-                    format!(
-                        "rt.MaybeCoerce[{}]({})",
-                        render_ty(&args[0]),
-                        render_expr(inner)
-                    )
-                }
-                GoTy::Named(n, args) if n == "rt.SkyResult" && args.len() == 2 => {
-                    // A `Result e (List x)` narrow decomposes the Ok value through
-                    // the reflection-free `rt.AsListT[x]` instead of reflect-
-                    // narrowing the whole Result: the container is reconstructed
-                    // by typed assertion (rt.ResultCoerceOk), the Ok value by the
-                    // emitted narrow. Removes reflect.Value from the common
-                    // Result-of-list coercion (e.g. an Http/Codec decode result).
-                    match &args[1] {
-                        GoTy::Slice(elem) => format!(
-                            "rt.ResultCoerceOk[{}, {}]({}, func(_v any) {} {{ return rt.AsListT[{}](_v) }})",
-                            render_ty(&args[0]),
-                            render_ty(&args[1]),
-                            render_expr(inner),
-                            render_ty(&args[1]),
-                            render_ty(elem),
-                        ),
-                        _ => format!(
-                            "rt.ResultCoerce[{}, {}]({})",
-                            render_ty(&args[0]),
-                            render_ty(&args[1]),
-                            render_expr(inner)
-                        ),
-                    }
-                }
-                GoTy::Slice(t) => {
-                    format!("rt.AsListT[{}]({})", render_ty(t), render_expr(inner))
-                }
-                // A Sky `Dict k v` is `map[string]V` at runtime; narrow an `any`
-                // (`rt.Dict_empty()`, an untyped kernel return) via `rt.AsMapT[V]`,
-                // which REBUILDS the value-coerced `map[string]V` (matching the
-                // oracle). `rt.Coerce[map[…]…]` would assert the exact Go map type
-                // and panic (Go map types are invariant).
-                GoTy::Map(_, v) => {
-                    format!("rt.AsMapT[{}]({})", render_ty(v), render_expr(inner))
-                }
-                GoTy::Bare(Prim::Str) => format!("rt.AsString({})", render_expr(inner)),
-                GoTy::Bare(Prim::Int) => format!("rt.AsInt({})", render_expr(inner)),
-                GoTy::Bare(Prim::Bool) => format!("rt.AsBool({})", render_expr(inner)),
-                GoTy::Bare(Prim::Float) => format!("rt.AsFloat({})", render_expr(inner)),
-                other => format!("rt.Coerce[{}]({})", render_ty(other), render_expr(inner)),
-            };
+            let call = narrow_call(to, &render_expr(inner));
             format!("{comment}{call}")
         }
         GoExprKind::Widen(inner) => format!("any({})", render_expr(inner)),
@@ -582,6 +528,94 @@ fn render_tuple_ty(xs: &[GoTy]) -> String {
             format!("rt.T{n}[{}]", a.join(", "))
         }
         _ => "rt.SkyTupleN".to_string(),
+    }
+}
+
+/// Render a reflection-free narrow of an `any`-typed `inner` expression to the
+/// Go type `to`, choosing the typed fast-path helper per shape so emitted Go
+/// carries no `reflect.Value` for shapes whose element/field types are
+/// statically known here. Recurses into a struct target's fields. Falls back to
+/// the reflect helper `rt.Coerce[T]` only for shapes with no typed
+/// decomposition (and, inside the struct arm, only when the boxed source is
+/// neither the canonical all-`any` form nor already the target).
+fn narrow_call(to: &GoTy, inner: &str) -> String {
+    match to {
+        GoTy::Named(n, args) if n == "rt.SkyTask" && args.len() == 2 => format!(
+            "rt.TaskCoerceT[{}, {}]({})",
+            render_ty(&args[0]),
+            render_ty(&args[1]),
+            inner
+        ),
+        GoTy::Named(n, args) if n == "rt.SkyMaybe" && args.len() == 1 => {
+            format!("rt.MaybeCoerce[{}]({})", render_ty(&args[0]), inner)
+        }
+        GoTy::Named(n, args) if n == "rt.SkyResult" && args.len() == 2 => {
+            // A `Result e a` narrow reconstructs the Result by typed assertion
+            // (`rt.ResultCoerceOk`) and narrows the Ok value with the
+            // reflection-free narrow for `a` (e.g. `rt.AsListT[x]` for `List x`)
+            // instead of reflect-narrowing the whole Result. The err type stays
+            // `e`. An `a == any` payload needs no narrow — keep plain
+            // `rt.ResultCoerce`, whose `SkyResult[e, any]` fast path is already
+            // reflection-free.
+            match &args[1] {
+                GoTy::Any => format!(
+                    "rt.ResultCoerce[{}, {}]({})",
+                    render_ty(&args[0]),
+                    render_ty(&args[1]),
+                    inner
+                ),
+                ok => format!(
+                    "rt.ResultCoerceOk[{}, {}]({}, func(_v any) {} {{ return {} }})",
+                    render_ty(&args[0]),
+                    render_ty(&args[1]),
+                    inner,
+                    render_ty(ok),
+                    narrow_call(ok, "_v"),
+                ),
+            }
+        }
+        GoTy::Slice(t) => format!("rt.AsListT[{}]({})", render_ty(t), inner),
+        // A Sky `Dict k v` is `map[string]V` at runtime; narrow via `rt.AsMapT`,
+        // which REBUILDS the value-coerced `map[string]V` (Go map types are
+        // invariant, so `rt.Coerce[map[…]…]` would assert the exact type + panic).
+        GoTy::Map(_, v) => format!("rt.AsMapT[{}]({})", render_ty(v), inner),
+        GoTy::Bare(Prim::Str) => format!("rt.AsString({})", inner),
+        GoTy::Bare(Prim::Int) => format!("rt.AsInt({})", inner),
+        GoTy::Bare(Prim::Bool) => format!("rt.AsBool({})", inner),
+        GoTy::Bare(Prim::Float) => format!("rt.AsFloat({})", inner),
+        GoTy::Struct(fs) if !fs.is_empty() => {
+            // A structural (anonymous) record target — e.g. the applicative
+            // `Std.Codec` record `{Dec, Enc, Shp}` pulled from its ADT bag. Every
+            // anonymous record boxed into `any` is emitted as the canonical
+            // all-`any` struct with field names SORTED (lower::lower_record's
+            // all-`any` fallback), so narrow it with a reflection-free comma-ok
+            // assertion to that shape, then rebuild the typed target field-by-
+            // field (each field re-narrowed by this same function). Falls back to
+            // the reflect `rt.Coerce` for any other boxed shape, so correctness
+            // is preserved universally while the common codec/record path carries
+            // no `reflect.Value`. The reflect form is unimplemented under TinyGo;
+            // this closes it there.
+            let tgt = render_ty(to);
+            let mut sorted: Vec<&str> = fs.iter().map(|(n, _)| n.as_str()).collect();
+            sorted.sort();
+            let src_fields = sorted
+                .iter()
+                .map(|n| format!("{n} any"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let assigns = fs
+                .iter()
+                .map(|(n, t)| {
+                    let f = n.as_str();
+                    format!("{f}: {}", narrow_call(t, &format!("_m.{f}")))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "func(_s any) {tgt} {{ if _m, _ok := _s.(struct{{ {src_fields} }}); _ok {{ return {tgt}{{{assigns}}} }}; return rt.Coerce[{tgt}](_s) }}({inner})"
+            )
+        }
+        other => format!("rt.Coerce[{}]({})", render_ty(other), inner),
     }
 }
 
