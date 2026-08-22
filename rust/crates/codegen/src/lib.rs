@@ -417,12 +417,30 @@ pub fn render_expr(e: &GoExpr) -> String {
                         render_expr(inner)
                     )
                 }
-                GoTy::Named(n, args) if n == "rt.SkyResult" && args.len() == 2 => format!(
-                    "rt.ResultCoerce[{}, {}]({})",
-                    render_ty(&args[0]),
-                    render_ty(&args[1]),
-                    render_expr(inner)
-                ),
+                GoTy::Named(n, args) if n == "rt.SkyResult" && args.len() == 2 => {
+                    // A `Result e (List x)` narrow decomposes the Ok value through
+                    // the reflection-free `rt.AsListT[x]` instead of reflect-
+                    // narrowing the whole Result: the container is reconstructed
+                    // by typed assertion (rt.ResultCoerceOk), the Ok value by the
+                    // emitted narrow. Removes reflect.Value from the common
+                    // Result-of-list coercion (e.g. an Http/Codec decode result).
+                    match &args[1] {
+                        GoTy::Slice(elem) => format!(
+                            "rt.ResultCoerceOk[{}, {}]({}, func(_v any) {} {{ return rt.AsListT[{}](_v) }})",
+                            render_ty(&args[0]),
+                            render_ty(&args[1]),
+                            render_expr(inner),
+                            render_ty(&args[1]),
+                            render_ty(elem),
+                        ),
+                        _ => format!(
+                            "rt.ResultCoerce[{}, {}]({})",
+                            render_ty(&args[0]),
+                            render_ty(&args[1]),
+                            render_expr(inner)
+                        ),
+                    }
+                }
                 GoTy::Slice(t) => {
                     format!("rt.AsListT[{}]({})", render_ty(t), render_expr(inner))
                 }

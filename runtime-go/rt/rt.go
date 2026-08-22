@@ -355,6 +355,34 @@ func ResultCoerce[E any, A any](src any) SkyResult[E, A] {
 	return Ok[E, A](coerceInner[A](src))
 }
 
+// ResultCoerceOk reconstructs a SkyResult[E, A] from an any-erased source,
+// applying `narrow` — a codegen-emitted, REFLECTION-FREE converter for A (e.g.
+// rt.AsListT[Elem] for a slice A, or a struct field-wise converter) — to the Ok
+// value, instead of reflect-narrowing it. This is how typed codegen emits a
+// `ResultCoerce[E, sliceOrStruct]` without any reflect.Value: the container is
+// reconstructed by typed assertion; the value by the emitted narrow. The reflect
+// `ResultCoerce` fallback is retained only for a non-standard source shape and is
+// unreached for Sky-emitted values (so a TinyGo client that emits only
+// ResultCoerceOk never links a reachable reflect.Value.Call for this).
+func ResultCoerceOk[E any, A any](src any, narrow func(any) A) SkyResult[E, A] {
+	if r, ok := src.(SkyResult[E, any]); ok {
+		if r.Tag == 0 {
+			return Ok[E, A](narrow(r.OkValue))
+		}
+		return Err[E, A](r.ErrValue)
+	}
+	if r, ok := src.(SkyResult[any, any]); ok {
+		if r.Tag == 0 {
+			return Ok[E, A](narrow(r.OkValue))
+		}
+		return Err[E, A](coerceInner[E](r.ErrValue))
+	}
+	if r, ok := src.(SkyResult[E, A]); ok {
+		return r
+	}
+	return ResultCoerce[E, A](src)
+}
+
 // MaybeCoerce reconstructs a SkyMaybe with a target generic param.
 func MaybeCoerce[A any](src any) SkyMaybe[A] {
 	if m, ok := src.(SkyMaybe[any]); ok {
