@@ -332,3 +332,49 @@ before any generator or RPC exists. If the split it derives on a real app
 (todos, + a crafted effectful-CAF/env fixture) is correct and unambiguous,
 Infer wins; if not, we add the annotation fallback. Only then: the generator
 (source-to-source) + the runtime RPC glue.
+
+## 13. Phase 1 DONE + verified (2026-08-23): `sky spa-partition` + the inference verdict
+
+The inference + report shipped as **`sky spa-partition <entry>`**
+(`rust/crates/project/src/spa_partition.rs`, dispatched from
+`crates/sky/src/main.rs`; fixture + test in `crates/sky/tests/`). It walks the
+resolved + typed HIR only — no codegen, no IR change. Verified by running it on a
+crafted fixture, a direct-inline-effect app, and the real todos client, all
+classifications hand-checked.
+
+**Correction to §11 (found empirically — the consult was wrong here).** §11 said
+"classify off `Res::Kernel.module`." **That misses every server effect.** With
+the full stdlib loaded, `Http.post` / `System.getenv` / `Db.query` / `Auth.*` /
+`File.*` resolve to **`Res::Def`** in their ordinary Sky-*source* modules
+(`Sky.Core.Http`, `Std.Db`, … are `.sky` whose bodies are
+`Ffi.kernel "Http_post"` etc.) — NOT `Res::Kernel`. The real effect origin is the
+**`Ffi.kernel "<Symbol>"` string-literal prefix** (`Db_`, `Http_`, `System_`,
+…). Keying off `Res::Kernel.module` alone silently classified the todos DB
+mutations as CLIENT — the exact leak the analysis must never produce. The shipped
+analyzer classifies by the FFI-symbol prefix + follows `Res::Def` callees into
+stdlib bodies to a taint fixpoint. (Types are read for the `update` body, but the
+server/client decision is symbol-identity + reference-graph, not type-based — an
+env read via pure-typed `getenvOr` proves types alone are insufficient.)
+
+**The verdict — can it be inferred well? Mostly YES; one class needs annotation.**
+- **Clean / unambiguous:** pure branches → CLIENT; `Db`/`File`/`Auth`/`System`
+  (incl. pure-typed `getenvOr`) / `Process` / `Io` → SERVER; effectful-origin
+  CAFs + env reads and anything transitively referencing them → SERVER via the
+  taint fixpoint. For the auto-split's INTENDED input (one unsplit app doing
+  `Db`/env work inline in `update`), the partition is exact.
+- **The one ambiguous class — `Http.*`.** A client-issued `fetch` to a stateless
+  backend is statically indistinguishable from a server-side HTTP call (one
+  pseudo-family, relative URLs). Marked SERVER conservatively (sound: never a
+  client leak). Consequence: on the *already-split* todos **client**, its four
+  `Spa.postJson` mutations read as SERVER even though they run client-side — the
+  analyzer cannot tell "client half of a split app" from "inline server call to
+  become an RPC." **This is the case that needs the §12 annotation fallback** (a
+  marker distinguishing a client-issued fetch from a server effect).
+
+**Residual for the enforcing GATE (not the advisory report).** `classify_kernel`
+is an allowlist (client-safe: `Time`/`Random`/`Uuid`; server: the families above)
+with unknown families → Neutral(client). Fine for an advisory report, but the
+Phase-3 generator/gate — where a mis-classification becomes a real leak — MUST
+**fail-closed** on any unrecognized effect-kernel family (a new server kernel
+added without updating the table would otherwise default client). Guard it with a
+test that enumerates effect families and asserts each is classified.

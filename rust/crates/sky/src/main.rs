@@ -91,6 +91,7 @@ fn main() -> ExitCode {
         // tree (`console`/`console-serve`/`doc --serve`/`doc --tui`).
         Some("console") => cmd_console(&args[1..]),
         Some("console-serve") => cmd_console_serve(&args[1..]),
+        Some("spa-partition") => cmd_spa_partition(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
         Some(other) => {
             eprintln!("sky: unknown command `{other}`. Try `sky --help`.");
@@ -728,6 +729,39 @@ fn entry_module_name(file: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// `sky spa-partition <file.sky>` — READ-ONLY Sky.Spa auto-split analysis
+/// (Phase 1). Infers and prints which `update` branches would run client-side
+/// vs server-side, plus the server-tainted top-level bindings. No codegen, no
+/// emission — it reads the resolved + typed HIR and prints a report.
+fn cmd_spa_partition(args: &[String]) -> ExitCode {
+    let (positional, _out) = parse_out(args);
+    let file = match resolve_entry_arg(
+        &positional,
+        "usage: sky spa-partition <file.sky>  (or run inside a Sky.Spa project directory)",
+    ) {
+        Ok(f) => f,
+        Err(code) => return code,
+    };
+    let file = file.as_path();
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    match project::spa_partition::analyze(
+        &repo_root,
+        &project_dir,
+        entry_module_name(file).as_deref(),
+    ) {
+        Ok(report) => {
+            print!("{}", report.render());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("sky spa-partition: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
@@ -5402,6 +5436,7 @@ fn print_help() {
          \x20 doctor [--fix] [-v]  diagnose project / environment health\n\
          \x20 upgrade-claude       refresh ./CLAUDE.md from the embedded template\n\
          \x20 verify [target]      build + run each example / the project\n\
+         \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
          \x20 version          print the version\n\n\
          DEFERRED (bring-up): upgrade"
     );

@@ -1959,7 +1959,62 @@ fn prune_stale_rt(
 /// dropped here so they can never be mistaken for — nor shadow — the consuming
 /// example's entry point. Enumeration is sorted (via `load_dir`) so the result
 /// is deterministic. Absent `.skydeps/` → empty (the common no-deps case).
-fn load_skydeps(
+/// Assemble a read-only source db for `example_dir`: stdlib + fetched `.skydeps`
+/// + the project's own `src/`, each registered as a module. Returns the db, the
+/// entry module id, and the app (check) module ids — the same load path
+/// [`assemble_and_emit_with`] uses, stopping BEFORE type-check / lower / emit.
+/// Used by read-only analyses (`sky spa-partition`) that need the resolved world
+/// without building. Reuses the SAME loader primitives (`load_dir` /
+/// `load_skydeps` / `configured_source_root`), never a parallel discovery.
+pub(crate) fn load_source_db(
+    repo_root: &Path,
+    example_dir: &Path,
+    entry_module: Option<&str>,
+) -> Result<(skydb::SkyDatabase, base::ModuleId, Vec<base::ModuleId>), String> {
+    let mut db = skydb::SkyDatabase::with_kernel();
+    let mut next_id: u32 = 0;
+    let stdlib = load_dir(&db, &mut next_id, &repo_root.join("sky-stdlib"));
+    if stdlib.is_empty() {
+        return Err("no stdlib under sky-stdlib".into());
+    }
+    for (n, file, _p) in stdlib {
+        db.add_module(&n, file);
+    }
+    for (path, _spec) in crate::ffi_ops::read_sky_dependencies(&example_dir.join("sky.toml")) {
+        let slug = path.replace('/', "_");
+        if !example_dir.join(".skydeps").join(&slug).is_dir() {
+            return Err(format!("Sky dependency {path} not fetched — run 'sky install'"));
+        }
+    }
+    for (n, file) in load_skydeps(&db, &mut next_id, &example_dir.join(".skydeps")) {
+        db.add_module(&n, file);
+    }
+    let source_root = configured_source_root(example_dir);
+    let locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
+    if locals.is_empty() {
+        return Err(format!("no .sky under {source_root}/"));
+    }
+    let mut entry = None;
+    let mut check_ids: Vec<base::ModuleId> = Vec::new();
+    for (n, file, _p) in locals {
+        let id = db.add_module(&n, file);
+        check_ids.push(id);
+        let is_entry = match entry_module {
+            Some(want) => n == want,
+            None => n == "Main" || n.ends_with(".Main") || n == "main",
+        };
+        if is_entry {
+            entry = Some(id);
+        }
+    }
+    let entry = entry.ok_or_else(|| match entry_module {
+        Some(want) => format!("no entry module named {want}"),
+        None => "no entry module named Main".into(),
+    })?;
+    Ok((db, entry, check_ids))
+}
+
+pub(crate) fn load_skydeps(
     sdb: &skydb::SkyDatabase,
     next_id: &mut u32,
     skydeps: &Path,
@@ -2071,7 +2126,7 @@ fn collect_sky_unfiltered(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn load_dir(
+pub(crate) fn load_dir(
     sdb: &skydb::SkyDatabase,
     next_id: &mut u32,
     dir: &Path,
