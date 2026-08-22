@@ -199,3 +199,18 @@
   blocker: the app serves same-origin and `run.sh`/README document the exact URL
   (`http://localhost:8951/`) and click-through; the 24/24 headless full-loop is
   the acceptance proof.
+- (P6) CORRECTION (my diagnosis was wrong; the P6b agent disproved it with
+  measurements): the CI `build-corpus` TIMEOUT (18-min cap → job `cancelled`) on
+  the P5 push was NOT caused by the Sky.Spa work. `examples/60-spa-todos` is a
+  client/server BUNDLE with no top-level `src/`, so build-run's single-level
+  discovery never built it (client OR server); the client's native build is ~1.5s
+  regardless. build-corpus is chronically ~16.6 min against its 18-min cap
+  (measured at P3, which was green), so a slow runner tips it — pre-existing
+  infra/chronic-budget variance, not a Spa regression. A re-run on a normal
+  runner passes. P6b (a Shape::Spa skip + a bundle-descent that would have ADDED
+  the server + 2 hub apps as new cold builds) was DISCARDED: its premise was
+  false and its bundle-descent would WORSEN the chronic build-corpus budget. The
+  todos remains verified e2e by its committed `run_roundtrip.sh` (24/24) + P5's
+  build; it is intentionally out of build-run (bundle structure). The chronic
+  build-corpus budget is a PRE-EXISTING main-branch concern to flag to the user,
+  out of scope for Spa v1 (and the gate forbids raising the ceiling).
