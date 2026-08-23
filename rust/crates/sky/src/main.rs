@@ -1325,27 +1325,73 @@ fn valid_bundle_id(id: &str) -> bool {
         })
 }
 
-/// Resolve the packaging identity from the `[bundle]` section, falling back to
-/// the project directory name / version for any absent field. Errors only when a
-/// user-SUPPLIED `[bundle] id` is not a valid reverse-DNS id (a silent fallback
-/// there would ship an app under the wrong identifier).
+/// Read the project's entry `.sky` source (sky.toml `entry`, default
+/// `src/Main.sky`) — the file whose optional `bundle = Bundle.default |> …`
+/// binding declares the packaging identity.
+fn read_entry_source(project_dir: &Path) -> Option<String> {
+    let toml = std::fs::read_to_string(project_dir.join("sky.toml")).ok();
+    let entry = toml
+        .as_deref()
+        .and_then(parse_toml_entry)
+        .unwrap_or_else(|| "src/Main.sky".to_string());
+    std::fs::read_to_string(project_dir.join(entry)).ok()
+}
+
+/// Pull the string-literal argument of a `Std.Bundle` `withX` call out of the
+/// entry source — `Bundle.withId "com.acme.app"` → `Some("com.acme.app")`.
+///
+/// Deliberately a source scan, not a `sky.toml` read: keeping the packaging
+/// identity in code (the `withX` builder) is what lets `sky.toml` stay lean, and
+/// a source scan is not a pre-binary config read so it never touches the
+/// config-surface census. It resolves string LITERALS only (the identity is
+/// always written as one); a computed value falls back to the default. `func`
+/// is matched on word boundaries so `withId` does not match `withIdentifier`.
+fn scan_bundle_call(src: &str, func: &str) -> Option<String> {
+    let bytes = src.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut from = 0;
+    while let Some(rel) = src[from..].find(func) {
+        let at = from + rel;
+        from = at + func.len();
+        let before_ok = at == 0 || !is_word(bytes[at - 1]);
+        let after_ok = bytes.get(at + func.len()).map(|b| !is_word(*b)).unwrap_or(true);
+        if !before_ok || !after_ok {
+            continue;
+        }
+        // The next string literal after the call name is the argument.
+        let rest = &src[at + func.len()..];
+        if let Some(q) = rest.find('"') {
+            let after_q = &rest[q + 1..];
+            if let Some(end) = after_q.find('"') {
+                return Some(after_q[..end].to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Resolve the packaging identity from the app's optional `bundle` binding
+/// (`Std.Bundle` `withX` in the entry source), falling back to the project
+/// name / version for any field left unset. Errors only when a user-SUPPLIED
+/// `Bundle.withId` is not valid reverse-DNS (a silent fallback there would ship
+/// under the wrong identifier). Prints a one-line note when the id is defaulted,
+/// because a store submission needs an id tied to a domain the user owns.
 fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String> {
-    // Each `[bundle]` scalar is read with a LITERAL section+key so the
-    // config-surface census can resolve the pre-binary read (a wrapper taking
-    // the key as a parameter would be an unresolved read); blank counts as unset.
+    let src = read_entry_source(project_dir).unwrap_or_default();
     let nonblank = |v: String| if v.trim().is_empty() { None } else { Some(v) };
-    let name_cfg =
-        project::sky_toml_section_key(project_dir, "bundle", "name").and_then(nonblank);
-    let id_cfg = project::sky_toml_section_key(project_dir, "bundle", "id").and_then(nonblank);
-    let version_cfg =
-        project::sky_toml_section_key(project_dir, "bundle", "version").and_then(nonblank);
-    let build_cfg =
-        project::sky_toml_section_key(project_dir, "bundle", "build").and_then(nonblank);
+    let name_cfg = scan_bundle_call(&src, "withName").and_then(nonblank);
+    let id_cfg = scan_bundle_call(&src, "withId").and_then(nonblank);
+    let version_cfg = scan_bundle_call(&src, "withVersion").and_then(nonblank);
 
     let dir_name = project_dir
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "app".to_string());
+    // "the sky app name IS the app name": default the display name to the project
+    // directory name (which `sky init` makes equal to the project's own `name`).
+    // Read from the directory rather than sky.toml's `name` on purpose — a
+    // sky.toml read would be a new pre-binary config surface for a value that is
+    // already to hand; `Bundle.withName` is the override when they differ.
     let display_name = name_cfg.unwrap_or_else(|| dir_name.clone());
     let seg = sanitize_pkg_segment(&display_name);
 
@@ -1354,14 +1400,22 @@ fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String>
             let id = id.trim().to_string();
             if !valid_bundle_id(&id) {
                 return Err(format!(
-                    "[bundle] id = \"{id}\" is not a valid reverse-DNS identifier \
+                    "Bundle.withId \"{id}\" is not a valid reverse-DNS identifier \
                      (need two or more dot-separated segments, each starting with a \
                      letter — e.g. \"com.example.myapp\")."
                 ));
             }
             id
         }
-        None => format!("sky.spa.{seg}"),
+        None => {
+            let dev_id = format!("sky.spa.{seg}");
+            eprintln!(
+                "  note: using a default bundle id `{dev_id}` — set your own with \
+                 Bundle.withId \"com.you.app\" (a reverse-DNS id you own) before \
+                 publishing to a store."
+            );
+            dev_id
+        }
     };
 
     // Executable / .app basename: capitalise the last id segment (id is the
@@ -1376,9 +1430,13 @@ fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String>
         }
     };
 
-    let short_version = version_cfg
-        .unwrap_or_else(|| project::sky_toml_project_key(project_dir, "version", "1.0"));
-    let build_number = build_cfg.unwrap_or_else(|| "1".to_string());
+    // Default to "1.0" (a literal, not a sky.toml read — keeping bundle out of
+    // the pre-binary config surface entirely); `Bundle.withVersion` sets a real
+    // one, which you do for a release anyway.
+    let short_version = version_cfg.unwrap_or_else(|| "1.0".to_string());
+    // versionCode (Android) has no `withX` yet; a marketing string cannot be one,
+    // so it stays 1 until a `Bundle.withBuild` lands.
+    let build_number = "1".to_string();
 
     Ok(BundleIdentity {
         display_name,
@@ -6117,7 +6175,7 @@ mod tests {
 
     // ---- [bundle] cross-platform identity (Phase 1) ----------------------
 
-    fn bundle_scratch(name: &str, toml: &str) -> std::path::PathBuf {
+    fn bundle_scratch(name: &str, toml: &str, main_sky: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "sky-bundle-{}-{}-{}",
             name,
@@ -6127,8 +6185,9 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(dir.join("sky.toml"), toml).unwrap();
+        std::fs::write(dir.join("src").join("Main.sky"), main_sky).unwrap();
         dir
     }
 
@@ -6146,36 +6205,59 @@ mod tests {
     }
 
     #[test]
-    fn bundle_identity_falls_back_to_dir_name_with_no_section() {
-        let dir = bundle_scratch("nofield", "name = \"proj\"\nversion = \"1.2.3\"\n");
+    fn scan_bundle_call_extracts_literals_on_word_boundaries() {
+        let src = "bundle = Bundle.default |> Bundle.withId \"com.acme.app\" |> Bundle.withName \"Cool App\"";
+        assert_eq!(scan_bundle_call(src, "withId").as_deref(), Some("com.acme.app"));
+        assert_eq!(scan_bundle_call(src, "withName").as_deref(), Some("Cool App"));
+        assert_eq!(scan_bundle_call(src, "withIcon"), None);
+        // Word boundary: `withId` must not match inside `withIdentifier`.
+        let decoy = "x |> withIdentifier \"nope\" |> Bundle.withId \"com.real.id\"";
+        assert_eq!(scan_bundle_call(decoy, "withId").as_deref(), Some("com.real.id"));
+    }
+
+    #[test]
+    fn bundle_identity_defaults_to_dir_name_with_no_binding() {
+        let dir = bundle_scratch(
+            "nofield",
+            "name = \"proj\"\nversion = \"1.2.3\"\n",
+            "module Main exposing (main)\nmain = 0\n",
+        );
+        let dir_name = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let dir_seg = sanitize_pkg_segment(&dir_name);
         let id = resolve_bundle_identity(&dir).unwrap();
-        let dir_seg = sanitize_pkg_segment(&dir.file_name().unwrap().to_string_lossy());
-        assert_eq!(id.display_name, dir.file_name().unwrap().to_string_lossy());
-        assert_eq!(id.bundle_id, format!("sky.spa.{dir_seg}")); // derived default
-        assert_eq!(id.short_version, "1.2.3"); // falls back to project version
+        assert_eq!(id.display_name, dir_name); // the project directory name
+        assert_eq!(id.bundle_id, format!("sky.spa.{dir_seg}")); // dev-default id
+        assert_eq!(id.short_version, "1.0"); // literal default (no sky.toml read)
         assert_eq!(id.build_number, "1"); // default
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn bundle_identity_reads_the_section() {
-        let toml = "name = \"proj\"\nversion = \"1.0.0\"\n\n\
-                    [bundle]\nname = \"Sky Notes Pro\"\nid = \"com.acme.notes\"\n\
-                    version = \"2.3.0\"\nbuild = \"42\"\n";
-        let dir = bundle_scratch("section", toml);
+    fn bundle_identity_reads_the_bundle_binding() {
+        let main_sky = "module Main exposing (main, bundle)\n\n\
+                        import Std.Bundle as Bundle exposing (Bundle)\n\n\
+                        bundle : Bundle\n\
+                        bundle =\n    Bundle.default\n\
+                        \x20       |> Bundle.withName \"Sky Notes Pro\"\n\
+                        \x20       |> Bundle.withId \"com.acme.notes\"\n\
+                        \x20       |> Bundle.withVersion \"2.3.0\"\n\n\
+                        main = 0\n";
+        let dir = bundle_scratch("binding", "name = \"proj\"\nversion = \"1.0.0\"\n", main_sky);
 
         let id = resolve_bundle_identity(&dir).unwrap();
         assert_eq!(id.display_name, "Sky Notes Pro");
         assert_eq!(id.bundle_id, "com.acme.notes");
         assert_eq!(id.exe_name, "Notes"); // capitalised last id segment
-        assert_eq!(id.short_version, "2.3.0"); // [bundle] version wins over project
-        assert_eq!(id.build_number, "42");
+        assert_eq!(id.short_version, "2.3.0"); // withVersion wins over project
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn bundle_identity_rejects_a_malformed_user_supplied_id() {
-        let dir = bundle_scratch("badid", "name = \"proj\"\n\n[bundle]\nid = \"notreversedns\"\n");
+        let main_sky = "module Main exposing (main, bundle)\n\
+                        bundle = Bundle.default |> Bundle.withId \"notreversedns\"\n\
+                        main = 0\n";
+        let dir = bundle_scratch("badid", "name = \"proj\"\n", main_sky);
         let err = resolve_bundle_identity(&dir).unwrap_err();
         assert!(err.contains("reverse-DNS"), "error should explain the id rule: {err}");
         let _ = std::fs::remove_dir_all(&dir);

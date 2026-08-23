@@ -38,7 +38,10 @@ That's enough — every other field has a sensible default.
 | `[log]`              | Std.Log default format and level                     |
 | `[env]`              | Env-var namespace prefix (v0.11.5+)                  |
 | `[security]`         | CSRF opt-out                                         |
-| `[bundle]`           | Cross-platform packaging identity for `sky build --target ios\|android\|desktop` |
+
+> **Cross-platform packaging (app name, bundle id, icon) is NOT in `sky.toml`.**
+> It lives in code, as an optional `bundle` binding built with `Std.Bundle`'s
+> `withX` API, so `sky.toml` stays lean — see [`## Packaging identity`](#packaging-identity--std-bundle) below.
 
 > **There is no `[auth]` section.** `Std.Auth` is a library, not a framework
 > layer — it takes the JWT secret and TTL as Sky arguments — so there is nothing
@@ -676,48 +679,64 @@ reads `FENCE_HOST`.
 
 ---
 
-## `[bundle]` *(v0.21+)*
+## Packaging identity — `Std.Bundle` *(v0.21+)*
 
-The cross-platform packaging identity used by `sky build --target
-ios|android|desktop`. It is a **build-time** section — nothing in the runtime
-reads it — so it never appears as an env var. With no `[bundle]` section a
-`--target` build falls back to the project directory name exactly as before.
+The cross-platform app identity used by `sky build --target ios|android|desktop`
+— display name, reverse-DNS id, icon, version — **is not a `sky.toml` section**.
+It lives in code, so `sky.toml` stays lean and packaging sits next to the app.
+Declare an optional top-level `bundle` binding with the `Std.Bundle` `withX`
+builder:
 
-```toml
-[bundle]
-name    = "Sky Notes"          # display name — CFBundleDisplayName / android:label / desktop window title
-id      = "com.acme.notes"     # reverse-DNS identifier — CFBundleIdentifier / the Android package
-version = "2.3.0"              # marketing version — CFBundleShortVersionString / android:versionName
-build   = "42"                # build number — CFBundleVersion / android:versionCode (integer for Android)
+```elm
+module Main exposing (main, bundle)
+
+import Std.Bundle as Bundle exposing (Bundle)
+
+bundle : Bundle
+bundle =
+    Bundle.default                          -- name = project dir, default Sky icon
+        |> Bundle.withId "com.acme.notes"   -- YOUR reverse-DNS id (a domain you own)
+        |> Bundle.withIcon "assets/icon.png"
+        |> Bundle.withVersion "2.3.0"
+
+main =
+    Spa.app (Spa.config { init = init, update = update, view = view, subscriptions = subscriptions })
 ```
 
-| Key       | Default (when absent)                     | Maps to |
-|-----------|-------------------------------------------|---------|
-| `name`    | project directory name                    | CFBundleDisplayName · `android:label` · desktop window title |
-| `id`      | `sky.spa.<sanitised-dir-name>`            | CFBundleIdentifier · Android `package` |
-| `version` | the top-level `version` (else `1.0`)      | CFBundleShortVersionString · `android:versionName` |
-| `build`   | `1`                                       | CFBundleVersion · `android:versionCode` (non-integer → `1` on Android) |
+`sky build --target …` reads those `withX` values *from the source* (no runtime
+eval, no `sky.toml`) to fill the generated iOS `Info.plist`, the Android manifest
+(`package` + `versionName` + `versionCode`), and the desktop window title.
+
+| `withX`       | Default (when unset)              | Maps to |
+|---------------|-----------------------------------|---------|
+| `withName`    | project directory name            | CFBundleDisplayName · `android:label` · desktop title |
+| `withId`      | `sky.spa.<sanitised-dir-name>` (dev) | CFBundleIdentifier · Android `package` |
+| `withVersion` | `1.0`                             | CFBundleShortVersionString · `android:versionName` |
+| `withIcon`    | a shipped Sky mark                | app icon (icon generation is a later phase) |
 
 Rules:
 
-- **`id` must be reverse-DNS** — two or more dot-separated segments, each
-  starting with a letter and otherwise alphanumeric or `_` (e.g.
-  `com.example.myapp`). A malformed user-supplied `id` fails the build with a
-  message rather than shipping under a wrong identifier. (Android additionally
-  requires the `package` to be exactly this `id`, which is why the same bar
-  applies to every target.)
-- **The executable / `.app` basename** is derived from the last `id` segment,
-  capitalised (`com.acme.notes` → `Notes`), because the display `name` may
-  contain spaces or emoji the filesystem and Swift/Java toolchains reject.
-- For an **auto-split** app, put `[bundle]` in the project's own `sky.toml` and
-  run `--target` inside `.split/frontend/` after `sky spa-split`. For a
-  **client-only** app, `--target` runs on the project directly.
+- **A `bundle` binding is optional.** With none, a `--target` build still
+  packages, under the dev-default id and the directory name.
+- **`withId` must be reverse-DNS** — two or more dot-separated segments, each
+  starting with a letter (e.g. `com.example.myapp`). A malformed id fails the
+  build rather than shipping under a wrong identifier. The dev default works for
+  local / simulator / sideload, and every `--target` build prints a note that a
+  real id (tied to a domain you own) is required before a store submission.
+- **The executable / `.app` basename** is the capitalised last `id` segment
+  (`com.acme.notes` → `Notes`), because the display name may contain spaces or
+  emoji the filesystem and Swift/Java toolchains reject.
+- For an **auto-split** app, run `--target` inside `.split/frontend/` after
+  `sky spa-split`; for a **client-only** app, `--target` runs on the project
+  directly.
 
-> Roadmap, not yet covered by `[bundle]`: per-platform `[bundle.ios|android|
-> desktop]` overrides, app icons, declared native permissions, and release
-> signing/notarization. `--target ios` still builds for the **simulator** and
-> `--target android` signs with the **debug** keystore — neither is
-> store-ready.
+Full API: `sky doc Std.Bundle`.
+
+> Roadmap: per-platform overrides, icon generation from `withIcon`, shipped
+> assets (`Bundle.withAsset` + a runtime `Bundle.asset*` loader), native
+> permissions, and release signing/notarization. `--target ios` still builds for
+> the **simulator** and `--target android` signs with the **debug** keystore —
+> neither is store-ready yet.
 
 ---
 

@@ -1,0 +1,80 @@
+module Std.Bundle exposing (Bundle, default, withName, withId, withIcon, withVersion)
+
+-- | `Std.Bundle` — everything a Sky app ships WITH: its cross-platform identity
+-- (display name, reverse-DNS id, icon, version) and, in a later phase, the
+-- static assets embedded alongside the binary.
+--
+-- Declared once as a top-level `bundle` binding using the `withX` builder, so
+-- `sky.toml` stays lean and packaging lives in code next to the app:
+--
+--     module Main exposing (main, bundle)
+--
+--     import Std.Bundle as Bundle exposing (Bundle)
+--
+--     bundle : Bundle
+--     bundle =
+--         Bundle.default                         -- name = project name, default icon
+--             |> Bundle.withId "com.acme.notes"  -- YOUR reverse-DNS id (owned domain)
+--             |> Bundle.withIcon "assets/icon.png"
+--
+--     main =
+--         Spa.app (Spa.config { ... })
+--
+-- `sky build --target ios|android|desktop` reads these values to fill the
+-- generated Info.plist / AndroidManifest / desktop shell. Every field has a
+-- sane default (the app name falls back to the project name, the icon to a
+-- shipped Sky mark), so a `bundle` binding is entirely OPTIONAL — a project with
+-- none still packages, under a default id. A real store submission needs an id
+-- tied to a domain you own, so set `withId` before publishing.
+
+import Sky.Core.Prelude exposing (..)
+
+-- | The shipped-with-the-app manifest. Opaque: build it from `default` and the
+-- `withX` setters so a new field can be added without breaking callers. Each
+-- field is `Maybe`, so "unset" is distinct from "set to empty" and the packager
+-- can supply its own default for the ones left `Nothing`.
+type Bundle
+    = Bundle { name : Maybe String
+, id : Maybe String
+, icon : Maybe String
+, version : Maybe String
+}
+
+
+-- | The empty manifest: every field defaulted by the packager (app name → the
+-- project name, id → a dev placeholder, icon → the shipped Sky mark, version →
+-- the project version).
+default : Bundle
+default =
+    Bundle { name = Nothing, id = Nothing, icon = Nothing, version = Nothing }
+
+
+-- | Set the human display name — CFBundleDisplayName / `android:label` / the
+-- desktop window title. Defaults to the project name.
+withName : String -> Bundle -> Bundle
+withName name (Bundle fields) =
+    Bundle { fields | name = Just name }
+
+
+-- | Set the reverse-DNS identifier — CFBundleIdentifier / the Android package
+-- (e.g. `"com.acme.notes"`). Two or more dot-separated segments, each starting
+-- with a letter. Defaults to a dev placeholder; set your own (an id tied to a
+-- domain you own) before submitting to a store.
+withId : String -> Bundle -> Bundle
+withId id (Bundle fields) =
+    Bundle { fields | id = Just id }
+
+
+-- | Set the app icon — a path (relative to the project) to a source PNG the
+-- packager renders into each platform's icon set. Defaults to a shipped Sky
+-- mark.
+withIcon : String -> Bundle -> Bundle
+withIcon path (Bundle fields) =
+    Bundle { fields | icon = Just path }
+
+
+-- | Set the marketing version — CFBundleShortVersionString / `android:versionName`.
+-- Defaults to the project version.
+withVersion : String -> Bundle -> Bundle
+withVersion version (Bundle fields) =
+    Bundle { fields | version = Just version }
