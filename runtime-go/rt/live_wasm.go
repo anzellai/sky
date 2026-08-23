@@ -105,10 +105,13 @@ func spaRun(cfg any) any {
 	// first render, so handlers built during render can dispatch.
 	spaDispatch = step
 
-	// init : a -> ( model, Cmd msg ) — the flags arg is unused by the client
-	// (no server request); pass nil. The adapter closure returns the ( model,
-	// Cmd ) tuple already repacked as SkyTuple2, read reflect-free.
-	pair := spaInit(nil)
+	// init : () -> ( model, Cmd msg ) — the flags arg is Sky Unit, which lowers
+	// to Go `struct{}`; the reflect-free Init adapter asserts `a0.(struct{})`,
+	// so pass the Unit VALUE `struct{}{}`, NOT nil (nil.(struct{}) panics
+	// "interface conversion: interface {} is nil, not struct {}" at boot — the
+	// client never renders). The adapter returns the ( model, Cmd ) tuple
+	// repacked as SkyTuple2, read reflect-free.
+	pair := spaInit(struct{}{})
 	spaModel = pair.V0
 	cmd0 := pair.V1
 
