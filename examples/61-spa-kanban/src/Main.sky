@@ -610,22 +610,19 @@ laneFooter laneIdx draft =
 
 
 
--- ─── global stylesheet (the Sky.Spa viewport/responsive layer) ──────────────
+-- ─── responsive layer (a raw-CSS @media, the Ui.html escape hatch) ──────────
 --
--- Sky.Spa runs the SAME Std.Ui view as Sky.Live, but the WASM DOM renderer
--- (runtime-go/rt/dom_render_wasm.go) is a plain VNode→DOM patcher: unlike the
--- server renderer (live.go) it injects neither the base reset NOR the
--- `@media`/`:hover` post-processing that backs `Ui.breakpoint`. Two consequences
--- this example handles head-on, in ONE injected <style> (via the `Ui.html` raw
--- escape hatch), so the app is correct on any static host with no runtime change:
+-- The Sky.Spa wasm runtime injects the base reset (box-sizing, the flex-fill
+-- root) and processes `Ui.breakpoint` / `:hover` markers, exactly like the
+-- server — so this app carries NO box-sizing/reset workaround. `Ui.breakpoint`
+-- is the typed way to make ONE element responsive (it wraps that element).
 --
---   1. box-sizing: without the reset, `width + padding` elements render
---      content-box and overflow their declared width (cards spill past the
---      lane). `*{box-sizing:border-box}` restores the layout the view intends.
---   2. responsiveness: `Ui.breakpoint` is inert in wasm, so the mobile layout is
---      expressed as a real CSS `@media` block keyed on ids the view assigns
---      (#tagline / #board / #lanes / lane-*). Under 768px the lanes flip from a
---      horizontally-scrolling row to a vertical stack, and the board scrolls.
+-- This example's mobile layout instead restyles SEVERAL existing elements at
+-- once (the tagline, the board, the lanes row, every lane) — the case a raw CSS
+-- `@media` block keyed on the ids the view assigns (#tagline / #board / #lanes /
+-- lane-*) expresses most directly. That's a deliberate use of the `Ui.html`
+-- escape hatch, not a workaround. Under 768px the lanes flip from a
+-- horizontally-scrolling row to a vertical stack, and the board scrolls.
 --
 -- CSS selectors are written without quotes (`[id^=lane-]`) so HTML-escaping of
 -- the <style> text can never corrupt them.
@@ -633,9 +630,7 @@ laneFooter laneIdx draft =
 
 globalCss : String
 globalCss =
-    "*,*::before,*::after{box-sizing:border-box}"
-        ++ "html,body{margin:0;padding:0}"
-        ++ "@media (max-width:767px){"
+    "@media (max-width:767px){"
         ++ "#tagline{display:none !important}"
         ++ "#board{overflow-y:auto !important;overflow-x:hidden !important}"
         ++ "#lanes{flex-direction:column !important;height:auto !important;overflow-x:hidden !important}"
