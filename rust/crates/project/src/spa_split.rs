@@ -34,9 +34,22 @@
 //! `Codec.maybe`), and the **whole-model fallback** (a branch reading/writing
 //! `model` opaquely carries every field, each wired through the same resolver).
 //! Fail-closed rather than mis-handled: a field whose codec cannot be resolved
-//! is an Err (never a placeholder that won't compile), and a **multi-module**
-//! app (the entry importing sibling project modules) is refused with a clear
-//! message rather than emitting a backend that references uncopied modules.
+//! is an Err (never a placeholder that won't compile).
+//!
+//! **Multi-module apps (§17).** A project whose `src/` spans several modules is
+//! split by classifying EACH sibling module by whether it contains a
+//! server-tainted def (the partition analysis already tracks these across every
+//! module):
+//!   * a module with NO tainted def is **pure** → copied verbatim into BOTH the
+//!     frontend and backend trees (`Shared` imports it for any wire type/codec it
+//!     declares, rather than re-copying the def);
+//!   * a module with ANY tainted def is routed to the **backend only** — the
+//!     whole module (§17's simpler+sound rule), never emitted into the wasm
+//!     frontend nor imported by it.
+//! The security invariant holds: an effectful module can never reach the client.
+//! If a frontend-retained def references a (pure) def that lives in a
+//! backend-only module, the generator refuses with a clear Err rather than leak
+//! the module — fail-closed, never mis-generate.
 
 use crate::spa_partition::{self, BranchIo, ModelFieldTy, SpaPartitionReport};
 use base::{DefId, ModuleId};
@@ -59,6 +72,10 @@ use syntax::SyntaxKind;
 struct CodecBinding {
     name: String,
     def: DefId,
+    /// The module the codec binding lives in. Entry-module codecs are COPIED into
+    /// `Shared`; pure-sibling-module codecs are referenced via an `import` of that
+    /// module into `Shared` instead (the module is copied whole to both trees).
+    module: ModuleId,
     coded_ty: ty::Ty,
     /// The declared coded type as the user wrote it (`List Todo`), sliced from
     /// the binding's type annotation — the surface used for the generated Req/
@@ -474,6 +491,12 @@ fn has_module(imports: &[ImportInfo], path: &str) -> bool {
     imports.iter().any(|i| i.module_path == path)
 }
 
+/// A module name → its `src/`-relative file path (`Domain` → `Domain.sky`,
+/// `Data.Todo` → `Data/Todo.sky`), matching the compiler's dotted-module layout.
+fn module_relpath(name: &str) -> String {
+    format!("{}.sky", name.replace('.', "/"))
+}
+
 fn sky_toml(name: &str) -> String {
     format!("name = \"{name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n")
 }
@@ -516,22 +539,108 @@ pub fn generate(
 
     let mut notes: Vec<String> = Vec::new();
 
-    // Multi-module is deferred (§14 #4): copying a codec/type defined in a
-    // sibling app module into Shared is not yet supported, and generating only
-    // the entry module would produce a backend that fails to compile. Fail
-    // closed with a clear message rather than mis-generate.
-    if check_ids.len() > 1 {
-        let extra = check_ids
-            .iter()
-            .filter(|m| **m != entry)
-            .map(|m| db.module_name(*m).to_string())
-            .filter(|n| !n.starts_with("Sky.") && !n.starts_with("Std.") && n != "Shared")
-            .collect::<Vec<_>>();
-        if !extra.is_empty() {
-            return Err(format!(
-                "multi-module app not supported yet: the entry imports sibling project module(s) {extra:?}. `sky spa-split` currently splits a single-entry-module app; move the app into one module, or wait for multi-module support. (Refusing rather than emitting a backend that references uncopied modules.)"
-            ));
+    // ---- multi-module routing (§17) ----
+    // Every project module other than the entry is classified by whether it
+    // contains a server-tainted def. A module with NO tainted def is PURE and is
+    // copied into BOTH trees; a module with ANY tainted def is routed to the
+    // BACKEND ONLY (whole module → backend, per §17's simpler+sound rule) and
+    // its effects never reach the wasm frontend. `report.tainted` already tracks
+    // server-tainted top-level bindings across every module.
+    let entry_name = db.module_name(entry).to_string();
+    let mut tainted_by_module: HashMap<String, HashSet<String>> = HashMap::new();
+    for t in &report.tainted {
+        tainted_by_module
+            .entry(t.module.clone())
+            .or_default()
+            .insert(t.name.clone());
+    }
+    let module_is_backend_only = |mid: ModuleId, db: &SkyDatabase| -> bool {
+        let mname = db.module_name(mid).to_string();
+        tainted_by_module
+            .get(&mname)
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+    };
+    let mut backend_only_mods: Vec<ModuleId> = Vec::new();
+    let mut pure_sibling_mods: Vec<ModuleId> = Vec::new();
+    for m in check_ids.iter().copied().filter(|m| *m != entry) {
+        if module_is_backend_only(m, &db) {
+            backend_only_mods.push(m);
+        } else {
+            pure_sibling_mods.push(m);
         }
+    }
+    let backend_only_names: HashSet<String> = backend_only_mods
+        .iter()
+        .map(|m| db.module_name(*m).to_string())
+        .collect();
+
+    // Leak check (fail-closed): a PURE def that happens to live in a backend-only
+    // (mixed) module cannot be reached by the frontend, because the whole module
+    // is backend-only. If a frontend-retained def references such a pure def, the
+    // frontend would need a value from a server-tainted module — a real error, so
+    // we refuse with a clear message rather than emit a frontend that will not
+    // compile (or, worse, silently drag the module in). Server-tainted defs are
+    // never in this set, so a normal server helper referenced from a rewritten
+    // server branch does NOT trip it.
+    let mut backend_only_pure_defs: HashSet<DefId> = HashSet::new();
+    for m in &backend_only_mods {
+        let mname = db.module_name(*m).to_string();
+        let tainted_here = tainted_by_module.get(&mname);
+        for td in &db.resolve(*m).top_defs {
+            let is_tainted = tainted_here
+                .map(|s| s.contains(td.name.as_str()))
+                .unwrap_or(false);
+            if !is_tainted {
+                backend_only_pure_defs.insert(td.def);
+            }
+        }
+    }
+    if !backend_only_pure_defs.is_empty() {
+        // Frontend keeps: entry's non-tainted defs (update is rewritten, so its
+        // server branches no longer reference the backend module) + every pure
+        // sibling module's defs (copied verbatim).
+        let entry_tainted = tainted_by_module.get(&entry_name);
+        let mut roots: Vec<(ModuleId, DefId, String)> = Vec::new();
+        for td in &db.resolve(entry).top_defs {
+            let is_tainted = entry_tainted
+                .map(|s| s.contains(td.name.as_str()))
+                .unwrap_or(false);
+            if !is_tainted {
+                roots.push((entry, td.def, td.name.as_str().to_string()));
+            }
+        }
+        for m in &pure_sibling_mods {
+            for td in &db.resolve(*m).top_defs {
+                roots.push((*m, td.def, td.name.as_str().to_string()));
+            }
+        }
+        for (mid, def, name) in &roots {
+            for c in spa_partition::body_def_callees(&db, *mid, *def) {
+                if backend_only_pure_defs.contains(&c) {
+                    let (cmod, cname) = db
+                        .def_loc(c)
+                        .map(|l| (db.module_name(l.module).to_string(), l.name.as_str().to_string()))
+                        .unwrap_or_default();
+                    return Err(format!(
+                        "cannot auto-split: the frontend-retained def `{name}` references `{cname}` in module `{cmod}`, which is server-tainted and routed backend-only. A pure client value cannot depend on a server-tainted module — move `{cname}` into a PURE module (e.g. a `Domain` module) shared by both trees. (Refusing rather than leaking a server-tainted module into the wasm frontend.)"
+                    ));
+                }
+            }
+        }
+    }
+    if !backend_only_mods.is_empty() || !pure_sibling_mods.is_empty() {
+        let pure: Vec<String> = pure_sibling_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        let back: Vec<String> = backend_only_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        notes.push(format!(
+            "multi-module split: pure module(s) {pure:?} copied to BOTH trees; server-tainted module(s) {back:?} routed backend-only (never emitted into the wasm frontend)."
+        ));
     }
 
     // SERVER branches, keyed by ctor name, with their RPC I/O + typed Msg args.
@@ -565,9 +674,14 @@ pub fn generate(
     let tainted_set: HashSet<String> = tainted_names.iter().cloned().collect();
 
     // ---- resolve the wire codecs (§14 #2) ----
-    // Registry of the project's own `Codec <T>` bindings; the resolver records
-    // which ones a wire field references so we can copy them into Shared.
-    let registry = build_codec_registry(&db, entry, &file, &src);
+    // Registry of the project's own `Codec <T>` bindings, scanned across the
+    // entry module AND every pure sibling module (a codec may live in `Domain`);
+    // the resolver records which ones a wire field references, and each binding
+    // remembers its module so Shared can COPY an entry codec but IMPORT a
+    // sibling one.
+    let mut codec_scan_mods: Vec<ModuleId> = vec![entry];
+    codec_scan_mods.extend(pure_sibling_mods.iter().copied());
+    let registry = build_codec_registry(&db, &codec_scan_mods);
     let mut resolver = CodecResolver::new(&registry);
     let mut wires: Vec<Wire> = Vec::new();
     for (name, io) in &server {
@@ -598,7 +712,37 @@ pub fn generate(
     copied_names.extend(copied_types.iter().cloned());
     let copied_decls = render_copied_decls(&file, &src, &copied_names);
     let copied_exposing = copied_exposing_list(&project_types, &copied_types, &copied_values);
-    let shared_imports = shared_import_lines(&imports);
+
+    // ---- pure sibling modules the wire references (Shared imports them) ----
+    // A referenced codec or a wire-field type that is DECLARED in a pure sibling
+    // module is NOT copied into Shared (the module is copied whole to both
+    // trees); Shared imports the module instead. A referenced codec that lives in
+    // a backend-only module is a real error (the wire would need a value from a
+    // server-tainted module) — fail closed.
+    let mut needed_siblings: BTreeSet<String> = BTreeSet::new();
+    for b in &registry {
+        if resolver.needed.contains(&b.name) && b.module != entry {
+            let bmod = db.module_name(b.module).to_string();
+            if backend_only_names.contains(&bmod) {
+                return Err(format!(
+                    "cannot auto-split: the wire references codec `{}` in module `{bmod}`, which is server-tainted and routed backend-only. Move the codec into a PURE module shared by both trees. (Refusing rather than leaking a server-tainted module into the wasm frontend / Shared.)",
+                    b.name
+                ));
+            }
+            needed_siblings.insert(bmod);
+        }
+    }
+    // Wire-field types declared in a pure sibling module (e.g. `Todo` in `Domain`).
+    for m in &pure_sibling_mods {
+        let mname = db.module_name(*m).to_string();
+        let mparse = db.module_parse(*m);
+        let mfile = mparse.tree();
+        let mtypes = project_type_decls(&mfile);
+        if seed_ty.iter().any(|n| mtypes.contains_key(n)) {
+            needed_siblings.insert(mname);
+        }
+    }
+    let shared_imports = shared_import_lines(&imports, &needed_siblings, &backend_only_names);
 
     // update param names + the update annotation + the model type name.
     let update_decl = file
@@ -639,6 +783,7 @@ pub fn generate(
         &model_param,
         &update_anno,
         &model_ty,
+        &backend_only_names,
     )?;
 
     let mut files: Vec<String> = Vec::new();
@@ -660,6 +805,21 @@ pub fn generate(
     write("backend/sky.toml", &sky_toml(&format!("{proj_name}-backend")), &mut files)?;
     write("frontend/sky.toml", &sky_toml(&format!("{proj_name}-frontend")), &mut files)?;
 
+    // ---- copy the sibling project modules (§17) ----
+    // Pure modules go into BOTH trees verbatim; server-tainted (backend-only)
+    // modules go into the backend ONLY (never the wasm frontend).
+    for m in &pure_sibling_mods {
+        let rel = module_relpath(&db.module_name(*m).to_string());
+        let text = db.module_parse(*m).syntax().text().to_string();
+        write(&format!("backend/src/{rel}"), &text, &mut files)?;
+        write(&format!("frontend/src/{rel}"), &text, &mut files)?;
+    }
+    for m in &backend_only_mods {
+        let rel = module_relpath(&db.module_name(*m).to_string());
+        let text = db.module_parse(*m).syntax().text().to_string();
+        write(&format!("backend/src/{rel}"), &text, &mut files)?;
+    }
+
     Ok(SpaSplitReport {
         out_dir: out_dir.to_string_lossy().to_string(),
         files,
@@ -674,34 +834,43 @@ pub fn generate(
 // Codec registry + copy-closure helpers (§14 #2).
 // ---------------------------------------------------------------------------
 
-/// Scan the entry module for the project's own zero-arg `Codec <T>` bindings.
-fn build_codec_registry(db: &SkyDatabase, entry: ModuleId, file: &SourceFile, src: &str) -> Vec<CodecBinding> {
-    let resolved = db.resolve(entry);
+/// Scan `mods` (the entry module + every PURE sibling project module) for the
+/// project's own zero-arg `Codec <T>` bindings. Each binding records the module
+/// it lives in, so the generator can decide whether to COPY it into `Shared`
+/// (entry-module codecs) or reference it via an `import` (sibling-module codecs).
+fn build_codec_registry(db: &SkyDatabase, mods: &[ModuleId]) -> Vec<CodecBinding> {
     let mut out: Vec<CodecBinding> = Vec::new();
-    for td in &resolved.top_defs {
-        let Some(body) = resolved.bodies.get(&td.def) else {
-            continue;
-        };
-        // Only a zero-arg value binding IS a `Codec <T>` value (a function
-        // `mkCodec : X -> Codec Y` is not directly referenceable as a codec).
-        if !body.params.is_empty() {
-            continue;
-        }
-        let result = ty::Typer::new(db).body_types(entry, td.def, body).result;
-        if let Some(ty::Ty::App(name, args)) = &result {
-            if tail_seg(name.as_str()) == "Codec" && args.len() == 1 {
-                let bname = td.name.as_str().to_string();
-                // Prefer the user's declared surface (`Codec (List Todo)` → `List
-                // Todo`); fall back to the solved (alias-expanded) type.
-                let surface = decl_text_by(file, src, &bname, DeclKind::TypeAnno)
-                    .and_then(|a| codec_arg_surface(&a))
-                    .unwrap_or_else(|| render_ty(&args[0]));
-                out.push(CodecBinding {
-                    name: bname,
-                    def: td.def,
-                    coded_ty: args[0].clone(),
-                    surface,
-                });
+    for &mid in mods {
+        let resolved = db.resolve(mid);
+        let parse = db.module_parse(mid);
+        let file = parse.tree();
+        let src = parse.syntax().text().to_string();
+        for td in &resolved.top_defs {
+            let Some(body) = resolved.bodies.get(&td.def) else {
+                continue;
+            };
+            // Only a zero-arg value binding IS a `Codec <T>` value (a function
+            // `mkCodec : X -> Codec Y` is not directly referenceable as a codec).
+            if !body.params.is_empty() {
+                continue;
+            }
+            let result = ty::Typer::new(db).body_types(mid, td.def, body).result;
+            if let Some(ty::Ty::App(name, args)) = &result {
+                if tail_seg(name.as_str()) == "Codec" && args.len() == 1 {
+                    let bname = td.name.as_str().to_string();
+                    // Prefer the user's declared surface (`Codec (List Todo)` →
+                    // `List Todo`); fall back to the solved (alias-expanded) type.
+                    let surface = decl_text_by(&file, &src, &bname, DeclKind::TypeAnno)
+                        .and_then(|a| codec_arg_surface(&a))
+                        .unwrap_or_else(|| render_ty(&args[0]));
+                    out.push(CodecBinding {
+                        name: bname,
+                        def: td.def,
+                        module: mid,
+                        coded_ty: args[0].clone(),
+                        surface,
+                    });
+                }
             }
         }
     }
@@ -899,10 +1068,18 @@ fn copied_exposing_list(
     out
 }
 
-/// Shared's imports: the input's imports minus the server-only effect families
-/// and the `Std.Spa` framework (Shared is pure wire types + codecs), with
-/// Prelude + Codec guaranteed present.
-fn shared_import_lines(imports: &[ImportInfo]) -> Vec<String> {
+/// Shared's imports: the input's imports minus the server-only effect families,
+/// the `Std.Spa` framework (Shared is pure wire types + codecs), and any
+/// **backend-only** project module (whose effects must never reach the wasm
+/// client), with Prelude + Codec guaranteed present. `needed_siblings` are the
+/// PURE sibling project modules whose types/codecs the wire references — Shared
+/// imports each with a canonical `exposing (..)` (dropping the entry's own,
+/// possibly-aliased, form to avoid a duplicate import).
+fn shared_import_lines(
+    imports: &[ImportInfo],
+    needed_siblings: &BTreeSet<String>,
+    backend_only: &HashSet<String>,
+) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for i in imports {
         if is_server_only_module(&i.module_path) {
@@ -911,7 +1088,16 @@ fn shared_import_lines(imports: &[ImportInfo]) -> Vec<String> {
         if i.module_path.rsplit('.').next() == Some("Spa") {
             continue;
         }
+        if backend_only.contains(&i.module_path) {
+            continue;
+        }
+        if needed_siblings.contains(&i.module_path) {
+            continue;
+        }
         out.push(i.text.clone());
+    }
+    for m in needed_siblings {
+        out.push(format!("import {m} exposing (..)"));
     }
     if !imports.iter().any(|i| i.module_path == "Sky.Core.Prelude") {
         out.insert(0, "import Sky.Core.Prelude exposing (..)".to_string());
@@ -1149,11 +1335,14 @@ fn gen_frontend(
     model_param: &str,
     update_anno: &str,
     model_ty: &str,
+    backend_only: &HashSet<String>,
 ) -> Result<String, String> {
-    // Imports: drop server-only effect modules, add Error + Shared.
+    // Imports: drop server-only effect modules AND any backend-only project
+    // module (the security spine — an effectful module never reaches the client),
+    // add Error + Shared.
     let mut import_lines: Vec<String> = imports
         .iter()
-        .filter(|i| !is_server_only_module(&i.module_path))
+        .filter(|i| !is_server_only_module(&i.module_path) && !backend_only.contains(&i.module_path))
         .map(|i| i.text.clone())
         .collect();
     if !has_module(imports, "Sky.Core.Error") {

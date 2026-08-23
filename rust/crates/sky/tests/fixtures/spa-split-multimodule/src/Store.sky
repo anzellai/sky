@@ -1,0 +1,35 @@
+module Store exposing (..)
+
+-- EFFECTFUL storage module: File load/save of the todo list. Every exported
+-- effect here is server-tainted, so the auto-split routes this whole module to
+-- the BACKEND only and NEVER emits it (or an import of it) into the wasm
+-- frontend. `storePath` is a pure helper that lives alongside the effects; it is
+-- backend-only too (the whole module goes backend), and because no frontend def
+-- references it that is sound.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Std.Codec as Codec
+import Domain exposing (..)
+
+
+storePath : String
+storePath =
+    "todos.json"
+
+
+-- server effect (File): load the persisted list (missing file -> empty).
+loadTodos : () -> Task Error (List Todo)
+loadTodos _ =
+    File.readFile storePath
+        |> Task.map
+               (\s -> Result.withDefault [] (Codec.fromJson todoListCodec s))
+        |> Task.onError (\_ -> Task.succeed [])
+
+
+-- server effect (File): persist the list.
+saveTodos : List Todo -> Task Error ()
+saveTodos todos =
+    File.writeFile storePath (Codec.toJson todoListCodec todos)

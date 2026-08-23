@@ -1,0 +1,27 @@
+module Domain exposing (..)
+
+-- PURE domain module: the Todo type + its codecs. No effects at all, so the
+-- auto-split copies this module into BOTH the frontend (wasm) and backend
+-- (native) trees. Shared imports it for the wire field type + codec.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+
+type alias Todo =
+    { id : Int
+    , title : String
+    , done : Bool
+    }
+
+
+todoCodec : Codec Todo
+todoCodec =
+    Codec.object Todo |> Codec.field "id" .id Codec.int
+        |> Codec.field "title" .title Codec.string
+        |> Codec.field "done" .done Codec.bool
+        |> Codec.buildObject
+
+
+todoListCodec : Codec (List Todo)
+todoListCodec =
+    Codec.list todoCodec

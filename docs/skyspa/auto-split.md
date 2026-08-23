@@ -613,3 +613,64 @@ two `POST /_rpc/Increment` calls fire — no browser needed. `rt` unit tests
 (`spa_push_test.go`) cover the `publish → broker` leg; the generator wiring +
 build are asserted in `spa_split_flow.rs`
 (`wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic`).
+
+## 17. Multi-module apps (2026-08-23): pure modules → both trees, effectful modules → backend-only
+
+§15 shipped the single-entry-module generator and **refused** any project whose
+`src/` spanned more than the entry module. Real apps span modules — the Model/Msg
+loop in `Main`, the domain types + codecs in a `Domain` module, the effects in a
+`Store` module — so the generator now splits them. The mechanism is
+source-to-source still; no compiler IR, no runtime-narrowing floor is touched.
+
+**The routing rule (simpler + sound).** Every project module other than the
+entry is classified by whether it contains a **server-tainted def** (the
+`spa_partition` taint analysis already tracks tainted top-level bindings across
+*every* module, not just the entry):
+
+- A module with **no** tainted def is **pure** → copied **verbatim into BOTH
+  trees** (frontend wasm + backend native). Pure domain types, codecs and pure
+  helpers are shared unchanged.
+- A module with **any** tainted def is routed to the **backend only** — the
+  **whole module**, never emitted into the wasm frontend and never imported by
+  it. This is the simpler of the two options (the alternative — splitting a
+  mixed module's pure parts into the frontend — is unnecessary and error-prone);
+  it is sound because the client keeps zero effects.
+
+`Shared` still holds the generated `<Msg>Req`/`<Msg>Resp` records + codecs. When
+a wire field's codec or type is **declared in a pure sibling module** (e.g.
+`todoListCodec` / `Todo` in `Domain`), `Shared` **imports** that module rather
+than re-copying the def — the module is already present in both trees. Only
+codecs/types declared in the **entry** module are copied into `Shared` (as
+before, to avoid a duplicate definition, since the entry is transformed).
+
+**The mixed-module rule → a pure def that lives in a backend-only module.** A
+module can be backend-only (it has ≥1 effect) yet also contain a pure helper.
+That pure helper is backend-only too (the whole module goes backend). This is
+sound **as long as no frontend def needs it**. The generator verifies exactly
+that: it walks every frontend-retained def (the entry's non-tainted defs — with
+`update` rewritten so its server branches no longer reference the module — plus
+every pure sibling module's defs) and, if any references a pure def in a
+backend-only module, **refuses with a clear Err** ("a pure client value cannot
+depend on a server-tainted module — move it into a pure module shared by both
+trees"). Fail-closed: a real error rather than a silent leak or a frontend that
+won't compile. A referenced codec that lives in a backend-only module is refused
+the same way.
+
+**What each tree gets:**
+- `frontend/src/` — the transformed `Main` + `Shared` + every **pure** sibling
+  module. It imports neither the effectful modules nor `Std.Spa`'s server side;
+  the leak-check (`grep -rnE 'File\.|Db\.|System\.|Store\.|load|save'
+  frontend/src/`) is clean.
+- `backend/src/` — the transformed `Main` (RPC handlers) + `Shared` + **every**
+  sibling module, pure and effectful alike (it runs the real effects
+  server-side).
+
+**Verified end-to-end** on `tests/fixtures/spa-split-multimodule` — a todos app
+split across `Main` (Model/Msg/TEA loop), a pure `Domain` (the `Todo` type +
+`todoCodec`/`todoListCodec`) and an effectful `Store` (`File` load/save). `sky
+spa-split` routes `Domain` into both trees and `Store` into the backend only;
+the frontend leak-check is clean; both projects build (backend native, frontend
+wasm); and a live round-trip (`POST /_rpc/Add`, `POST /_rpc/Toggle`) persists to
+`todos.json` and returns the write-set. The generator wiring + build + routing
+are asserted in `spa_split_flow.rs`
+(`splits_a_multi_module_app_routing_pure_and_effectful_modules`).

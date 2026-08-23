@@ -53,6 +53,11 @@ fn push_fixture_entry() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-push-counter/src/Main.sky")
 }
 
+fn multimodule_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-split-multimodule/src/Main.sky")
+}
+
 fn scratch() -> PathBuf {
     let uniq = format!(
         "sky-spasplit-{}-{}",
@@ -265,6 +270,132 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
         .status()
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "todos frontend must build to wasm");
+    assert!(out.join("frontend/dist/main.wasm").is_file(), "frontend stages dist/main.wasm");
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A MULTI-MODULE app (docs/skyspa/auto-split.md §17): the todos app split
+/// across `Main` (Model/Msg/TEA loop) + a PURE `Domain` (Todo type + codecs) +
+/// an EFFECTFUL `Store` (File load/save). The generator must:
+///   * copy the pure `Domain` module into BOTH trees (frontend + backend);
+///   * route the server-tainted `Store` module to the BACKEND ONLY, and NEVER
+///     emit it — or an import of it — into the wasm frontend (the security spine);
+///   * have `Shared` reference the sibling codec (`todoListCodec`) by IMPORTING
+///     `Domain` rather than re-copying it;
+///   * still wire the RPCs (Msg-arg Req fields, non-primitive codecs) as it does
+///     for a single-module app.
+#[test]
+fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            multimodule_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed on a multi-module app (no longer refused)"
+    );
+
+    // --- Module routing: pure `Domain` → both trees, effectful `Store` → backend only. ---
+    assert!(
+        out.join("backend/src/Domain.sky").is_file() && out.join("frontend/src/Domain.sky").is_file(),
+        "the PURE Domain module must be copied into BOTH trees"
+    );
+    assert!(
+        out.join("backend/src/Store.sky").is_file(),
+        "the effectful Store module must be present in the backend"
+    );
+    assert!(
+        !out.join("frontend/src/Store.sky").exists(),
+        "SECURITY LEAK: the server-tainted Store module must NOT be in the frontend"
+    );
+
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let front_shared = std::fs::read_to_string(out.join("frontend/src/Shared.sky")).unwrap();
+
+    // --- Shared IMPORTS the sibling codec's module (Domain), does NOT re-copy it. ---
+    assert!(
+        shared.contains("import Domain"),
+        "Shared must import the sibling Domain module for the codec/type:\n{shared}"
+    );
+    assert!(
+        shared.contains("Codec.field \"todos\" .todos todoListCodec"),
+        "the todos field must wire to the sibling `todoListCodec`:\n{shared}"
+    );
+    assert!(
+        !shared.contains("type alias Todo ="),
+        "Shared must NOT re-declare Todo — it comes from the imported Domain module"
+    );
+
+    // --- Frontend must NOT import the backend-only Store module. ---
+    assert!(
+        !front.contains("import Store"),
+        "SECURITY LEAK: frontend/src/Main.sky imports the backend-only Store module:\n{front}"
+    );
+
+    // --- SECURITY: no server effect / tainted helper / effectful module in the client. ---
+    for needle in ["File.", "loadTodos", "saveTodos", "Store.", "Db.", "System."] {
+        assert!(
+            !front.contains(needle),
+            "SECURITY LEAK: frontend/src/Main.sky contains `{needle}`"
+        );
+        assert!(
+            !front_shared.contains(needle),
+            "SECURITY LEAK: frontend/src/Shared.sky contains `{needle}`"
+        );
+        assert!(
+            !std::fs::read_to_string(out.join("frontend/src/Domain.sky"))
+                .unwrap()
+                .contains(needle),
+            "SECURITY LEAK: frontend/src/Domain.sky contains `{needle}`"
+        );
+    }
+
+    // --- The backend keeps the effects + reconstructs the Msg-arg RPCs. ---
+    assert!(
+        std::fs::read_to_string(out.join("backend/src/Store.sky")).unwrap().contains("File."),
+        "backend Store must keep the File effect (it runs it server-side)"
+    );
+    assert!(
+        back.contains("update (Toggle p.id) m"),
+        "backend must reconstruct `update (Toggle p.id) m`:\n{back}"
+    );
+    assert!(
+        front.contains("Spa.postJson toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" { id = id } AppliedToggle"),
+        "frontend must send the Msg arg to the RPC:\n{front}"
+    );
+
+    // --- Both build (Go-gated). Backend native, frontend wasm. ---
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(backend_build.success(), "multi-module backend must build natively");
+    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(frontend_build.success(), "multi-module frontend must build to wasm");
     assert!(out.join("frontend/dist/main.wasm").is_file(), "frontend stages dist/main.wasm");
 
     let _ = std::fs::remove_dir_all(&out);

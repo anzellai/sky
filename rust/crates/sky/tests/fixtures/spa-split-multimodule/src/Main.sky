@@ -1,0 +1,112 @@
+module Main exposing (main)
+
+-- Auto-split INPUT: a MULTI-MODULE todos app. The Model/Msg/TEA loop live here;
+-- the pure `Todo` type + codecs live in `Domain` (copied to both trees); the
+-- File effects live in `Store` (routed backend-only). Fed to `sky spa-split`:
+-- the pure branch runs client-local, the effectful branches (Add/Toggle/Remove,
+-- which reach `Store`'s File effects) become RPCs.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Domain exposing (..)
+import Store exposing (..)
+
+type alias Model =
+    { todos : List Todo
+    , draft : String
+    }
+
+type Msg
+    = DraftChanged String
+    | Add
+    | Toggle Int
+    | Remove Int
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { todos = [], draft = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        DraftChanged s ->
+            -- PURE -> client
+            ( { model | draft = s }, Cmd.none )
+
+        Add ->
+            -- SERVER: reaches Store.loadTodos / Store.saveTodos (File effects)
+            let
+                current = Result.withDefault [] (Task.run (loadTodos ()))
+                next =
+                    current
+                        ++ [ { id = List.length current + 1
+                             , title = model.draft
+                             , done = False
+                             }
+                           ]
+                _ = Task.run (saveTodos next)
+            in
+                ( { model | todos = next, draft = "" }, Cmd.none )
+
+        Toggle id ->
+            -- SERVER: Msg arg {id}, write-set {todos}
+            let
+                next =
+                    List.map
+                        (\t ->
+                            if t.id == id then
+                                { t | done = not t.done }
+
+                            else
+                                t)
+                        (Result.withDefault [] (Task.run (loadTodos ())))
+                _ = Task.run (saveTodos next)
+            in
+                ( { model | todos = next }, Cmd.none )
+
+        Remove id ->
+            -- SERVER: Msg arg {id}, write-set {todos}
+            let
+                next =
+                    List.filter
+                        (\t -> t.id /= id)
+                        (Result.withDefault [] (Task.run (loadTodos ())))
+                _ = Task.run (saveTodos next)
+            in
+                ( { model | todos = next }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("todos: " ++ String.fromInt (List.length model.todos)) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })
