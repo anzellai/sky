@@ -339,7 +339,7 @@ sidebar : Model -> Element Msg
 sidebar model =
     Ui.column
         [ hid "sidebar"
-        , Ui.width (Ui.px 280)
+        , Ui.width (Ui.minimum 260 (Ui.fillPortion 1))
         , Ui.height Ui.fill
         , Background.color panelBg
         , Border.widthEach { top = 0, right = 1, bottom = 0, left = 0 }
@@ -397,7 +397,7 @@ editor : Model -> Element Msg
 editor model =
     Ui.column
         [ hid "editor"
-        , Ui.width (Ui.minimum 380 Ui.fill)
+        , Ui.width (Ui.minimum 380 (Ui.fillPortion 3))
         , Ui.height Ui.fill
         , Ui.padding 24
         , Ui.spacing 16
@@ -483,24 +483,25 @@ view model =
             ]
             [ header model
 
-            -- Sidebar + editor. RESPONSIVE DECISION: on desktop this is a real
-            -- two-pane row (280px sidebar beside a flex-fill editor). On a narrow
-            -- viewport the editor keeps a 380px minimum, so this `wrappedRow`
-            -- flex-WRAPS and the sidebar band STACKS ABOVE the editor; the
-            -- `Ui.breakpoint Ui.mobile` layer turns that band full-width and caps
-            -- its height so it reads as a compact list on top of the editor. This
-            -- is a real @media rule injected by the renderer — no reset workaround
-            -- of any kind: the wasm renderer already ships the base CSS reset and
-            -- runs the style injections (commit 57fcd63f).
+            -- Sidebar + editor. RESPONSIVE DECISION: a `wrappedRow` with two
+            -- fill-PORTION panes (sidebar 1 : editor 3) that each carry a
+            -- min-width. On a desktop the mins both fit, so the portions split
+            -- the row ~25/75 — a narrow note list beside a wide editor. On a
+            -- phone the two mins (260 + 380) exceed the viewport, so the row
+            -- flex-WRAPS: each pane drops onto its own line and — because it
+            -- still has a fill portion — grows to the FULL width of that line.
+            -- That is why neither the sidebar nor the editor leaves a side
+            -- gutter when stacked, and why no per-breakpoint width override is
+            -- needed: the same fill portions that size the desktop columns also
+            -- fill each wrapped mobile row. `Std.Ui` maps this straight onto CSS
+            -- flexbox (flex-grow + flex-wrap), so it is one layout, no @media.
             , Ui.wrappedRow
                 [ hid "main"
                 , Ui.width Ui.fill
                 , Ui.height Ui.fill
                 , Ui.clip
                 ]
-                [ Ui.breakpoint Ui.mobile
-                    [ Ui.width Ui.fill, Ui.height (Ui.px 240) ]
-                    (sidebar model)
+                [ sidebar model
                 , editor model
                 ]
             ]

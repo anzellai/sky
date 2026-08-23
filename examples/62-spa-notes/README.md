@@ -3,8 +3,10 @@
 A real-world **Notes / knowledge-base** app: a dark header bar, a scrollable
 sidebar of note cards with live search, and a full editor (title + growing
 textarea + Save/Delete). Rich `Std.Ui` throughout — `vh`/`fill`/`px`/`minimum`
-sizing, `scrollbarY` panels, a real `Ui.breakpoint Ui.mobile` responsive layout,
-plus colours/borders/rounding/shadow — with **SQLite persistence**.
+sizing, `scrollbarY` panels, and a `wrappedRow` of two fill-portion panes that
+splits ~25/75 on a desktop and stacks full-width on a phone (one layout, no
+`@media` — the wrapped panes fill their own line), plus
+colours/borders/rounding/shadow — with **SQLite persistence**.
 
 This is the **auto-split tier**. You write **ONE** Sky.Spa project with effects
 inline; `sky spa-split` derives the wasm frontend, the native SQLite backend, and
