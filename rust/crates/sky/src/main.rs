@@ -1651,6 +1651,7 @@ const ANDROID_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -1669,7 +1670,10 @@ const ANDROID_STRINGS: &str = r#"<resources>
 const ANDROID_MAIN_ACTIVITY: &str = r#"package {{PACKAGE}};
 
 import android.app.Activity;
+import android.graphics.Insets;
 import android.os.Bundle;
+import android.view.View;
+import android.view.WindowInsets;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -1696,6 +1700,27 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);   // the wasm bootstrap needs JS
         s.setDomStorageEnabled(true);
         web.setWebViewClient(new WebViewClient());  // keep navigation inside the WebView
+
+        // Android 15 (targetSdk 35) draws edge-to-edge by default, so the WebView
+        // would render UNDER the status bar (header/clock overlap) and the
+        // gesture navigation bar (a bottom button row clipped). Pad the WebView by
+        // the system-bar insets so its content stays within the safe area — the
+        // Android counterpart of the iOS safe-area handling.
+        web.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override
+            public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
+                    v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                } else {
+                    v.setPadding(
+                        insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
+                        insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+                }
+                return insets;
+            }
+        });
+
         setContentView(web);
         web.loadUrl(APP_URL);
     }
