@@ -1134,6 +1134,24 @@ func pseudoSelectorForTag(tag string) (selector string, hoverGated bool, known b
 // re-invoking is safe.
 //
 // Pre-condition: assignSkyIDs has already stamped n.SkyID.
+// liveBaseCSS is the base reset the server splices into <head> (live.go) AND the
+// Sky.Spa wasm client injects at boot (live_wasm.go) — one shared source, so the
+// client renders with the SAME box-sizing / flex-fill root / form resets as the
+// server. Shared (no build tag) precisely so both the //go:build !js server and
+// the //go:build js client can reference it. The root rule targets BOTH mounts:
+// `#sky-root` (Sky.Live / Sky.Webview) and `#app` (Sky.Spa) — otherwise a
+// `Ui.height Ui.fill` root has no resolvable parent height and collapses to
+// content height (issue #63).
+const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
+	`html,body{margin:0;padding:0;min-height:100%}` +
+	`body{min-height:100vh;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;line-height:1.4}` +
+	`#sky-root,#app{display:flex;flex-direction:column;flex:1 0 auto;min-height:0}` +
+	`h1,h2,h3,h4,h5,h6,p,ul,ol,li,figure,blockquote,pre,dl,dd{margin:0;padding:0;font-weight:inherit;font-size:inherit}` +
+	`button,input,select,textarea{font:inherit;color:inherit}` +
+	`button{background:none;border:0;padding:0;cursor:pointer;text-align:inherit}` +
+	`a{color:inherit;text-decoration:none}` +
+	`img,video,canvas,svg{display:block;max-width:100%}`
+
 func applyStyleInjections(n *VNode) {
 	present := scanStyleMarkers(n)
 	if present == 0 {

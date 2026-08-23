@@ -2680,25 +2680,10 @@ func renderAppHead(head any, model any) string {
 //
 // The reset is ~600 bytes — negligible compared to the typical page
 // body. NO !important is used; user view styles always win.
-const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
-	`html,body{margin:0;padding:0;min-height:100%}` +
-	`body{min-height:100vh;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;line-height:1.4}` +
-	// #sky-root must grow to fill <body> and be a flex column itself,
-	// otherwise a Std.Ui `Ui.height Ui.fill` root has no resolvable
-	// parent height to flex against and collapses to content height
-	// (issue #63). flex:1 0 auto fills the viewport; min-height:0 lets
-	// inner scroll regions shrink below content size.
-	`#sky-root{display:flex;flex-direction:column;flex:1 0 auto;min-height:0}` +
-	`h1,h2,h3,h4,h5,h6,p,ul,ol,li,figure,blockquote,pre,dl,dd{margin:0;padding:0;font-weight:inherit;font-size:inherit}` +
-	`button,input,select,textarea{font:inherit;color:inherit}` +
-	// Buttons keep their native chrome (border / background / padding) so a raw
-	// Std.Html `button` looks like a button out of the box. Std.Ui buttons set
-	// their own background/border/padding inline, which overrides the native
-	// look — so this only affects unstyled buttons, giving them a sensible
-	// default instead of rendering as bare inline text.
-	`button{background:none;border:0;padding:0;cursor:pointer;text-align:inherit}` +
-	`a{color:inherit;text-decoration:none}` +
-	`img,video,canvas,svg{display:block;max-width:100%}`
+// liveBaseCSS moved to live_core.go (shared, no build tag) so the Sky.Spa wasm
+// client (live_wasm.go, //go:build js) injects the SAME base reset the server
+// splices into <head> here — box-sizing, the flex-fill root, form/heading
+// resets. Server + client share one source; see live_core.go.
 
 // handleConfig exposes client-facing runtime config (no secrets) so the
 // JS driver can adjust behaviour without recompilation. Served at

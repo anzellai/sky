@@ -43,6 +43,23 @@ func spaMount(mount js.Value, root VNode) {
 	mount.Call("appendChild", buildDOM(root))
 }
 
+// spaInjectBaseCSS appends a <style id="sky-base-reset"> carrying liveBaseCSS
+// (the shared server/client reset) into the document <head>, once. Idempotent —
+// a page that already ships the reset (or a hot reload) is a no-op.
+func spaInjectBaseCSS(doc js.Value) {
+	head := doc.Get("head")
+	if !head.Truthy() {
+		return
+	}
+	if doc.Call("getElementById", "sky-base-reset").Truthy() {
+		return
+	}
+	style := doc.Call("createElement", "style")
+	style.Call("setAttribute", "id", "sky-base-reset")
+	style.Set("textContent", liveBaseCSS)
+	head.Call("appendChild", style)
+}
+
 // buildDOM interprets a VNode into a real DOM node, attaching real event
 // listeners (recorded under the node's sky-id for later release) and reflecting
 // user-facing input properties (.value/.checked/.disabled) so the live DOM

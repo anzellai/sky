@@ -101,6 +101,13 @@ func spaRun(cfg any) any {
 		spaRoot = doc.Get("body")
 	}
 
+	// Inject the SAME base reset the server splices into <head> (liveBaseCSS,
+	// live_core.go) — box-sizing:border-box, the flex-fill `#app` root, form /
+	// heading resets. The Sky.Spa index.html carries none of this, so without it
+	// padding+width overflow (content-box) and a `Ui.height Ui.fill` root
+	// collapses. Idempotent: skipped if a page already provides it.
+	spaInjectBaseCSS(doc)
+
 	// Wire the DOM renderer's event callbacks back into this loop before the
 	// first render, so handlers built during render can dispatch.
 	spaDispatch = step
@@ -319,6 +326,12 @@ func step(msg any) {
 func renderCurrent() {
 	vn := HtmlToVNode(spaView(spaModel))
 	assignSkyIDs(&vn, "r")
+	// Parity with the server (HtmlRenderWithHandlers): hoist media-query /
+	// pseudo-class (:hover/:focus) / transition / animation markers into scoped
+	// <style> children. Without this pass `Ui.breakpoint` / `Ui.onPseudo` etc.
+	// are INERT in the wasm client (their data-sky-mq/pc markers are never
+	// consumed) — responsive + hover styling silently do nothing.
+	applyStyleInjections(&vn)
 	if spaPrev == nil {
 		spaMount(spaRoot, vn)
 	} else {
