@@ -356,25 +356,35 @@ stdlib bodies to a taint fixpoint. (Types are read for the `update` body, but th
 server/client decision is symbol-identity + reference-graph, not type-based — an
 env read via pure-typed `getenvOr` proves types alone are insufficient.)
 
-**The verdict — can it be inferred well? Mostly YES; one class needs annotation.**
-- **Clean / unambiguous:** pure branches → CLIENT; `Db`/`File`/`Auth`/`System`
-  (incl. pure-typed `getenvOr`) / `Process` / `Io` → SERVER; effectful-origin
-  CAFs + env reads and anything transitively referencing them → SERVER via the
-  taint fixpoint. For the auto-split's INTENDED input (one unsplit app doing
-  `Db`/env work inline in `update`), the partition is exact.
-- **The one ambiguous class — `Http.*`.** A client-issued `fetch` to a stateless
-  backend is statically indistinguishable from a server-side HTTP call (one
-  pseudo-family, relative URLs). Marked SERVER conservatively (sound: never a
-  client leak). Consequence: on the *already-split* todos **client**, its four
-  `Spa.postJson` mutations read as SERVER even though they run client-side — the
-  analyzer cannot tell "client half of a split app" from "inline server call to
-  become an RPC." **This is the case that needs the §12 annotation fallback** (a
-  marker distinguishing a client-issued fetch from a server effect).
+**The verdict — can it be inferred well? YES, with no Http exception.** The key
+realisation (user, 2026-08-23): **Http is not ambiguous — it is *client-capable*.**
+wasm routes `net/http` through the browser `fetch`, and every renderer
+(browser / desktop+mobile WebView / native) can issue it, so an Http call runs
+client-side by default. The genuine line is:
+- **Server-only** — `Db`/`File`/`Auth`/`System` (incl. pure-typed `getenvOr`) /
+  `Server` / `Process` / `Io`, and inline `Task.run`/auto-force over them:
+  physically cannot run in a browser → SERVER.
+- **Client-capable** — `Http`, `Time`, `Random`, `Uuid`: run in the wasm client →
+  CLIENT.
+- **Taint is the real safety net.** Any effect — Http included — that touches a
+  **server-tainted** value (a secret env read, an `Auth`/DB value) is forced
+  SERVER, because the branch then references a tainted binding / server kernel.
+  So a secret-carrying `Http.post` → SERVER automatically; a public external
+  `Http.get` → CLIENT; no marker needed for either.
+
+Verified across apps: the todos **client** now reads **0 SERVER / 10 CLIENT**
+(its `Spa.postJson` mutations are correctly client-issued fetches — the earlier
+"conservative SERVER" was the *wrong* answer); a CAF born from a **client** Http
+effect is **not** server-tainted (so a branch using it → CLIENT), while an env
+CAF is (→ SERVER). Only a genuinely rare case needs an explicit override — an
+external API that is CORS-blocked / must use the server IP / must hide the
+request — and that annotates the *server* exception, not the client rule.
 
 **Residual for the enforcing GATE (not the advisory report).** `classify_kernel`
-is an allowlist (client-safe: `Time`/`Random`/`Uuid`; server: the families above)
-with unknown families → Neutral(client). Fine for an advisory report, but the
-Phase-3 generator/gate — where a mis-classification becomes a real leak — MUST
-**fail-closed** on any unrecognized effect-kernel family (a new server kernel
-added without updating the table would otherwise default client). Guard it with a
-test that enumerates effect families and asserts each is classified.
+is an allowlist (client-capable: `Http`/`Time`/`Random`/`Uuid`; server: the
+families above) with unknown families → Neutral(client). Fine for an advisory
+report, but the Phase-3 generator/gate — where a mis-classification becomes a
+real leak — MUST **fail-closed** on any unrecognized effect-kernel family (a new
+server kernel added without updating the table would otherwise default client).
+Guard it with a test that enumerates effect families and asserts each is
+classified.

@@ -39,11 +39,13 @@ enum KernelClass {
     /// Cannot run in the browser at all — DB, files, secrets, the server socket,
     /// process/stdio, environment. Always server.
     ServerOnly,
-    /// `Http.*` — can be a client-side `fetch` OR a call to the app's own
-    /// backend. Not statically separable (one pseudo-module, relative URLs),
-    /// so classified **server** for soundness (design §11 "soft edge").
-    HttpAmbiguous,
-    /// Runs in the client runtime (an effect, but client-side).
+    /// Runs in the client runtime (an effect, but CLIENT-CAPABLE). `Http.*` (the
+    /// HTTP client) is here: wasm routes `net/http` through the browser `fetch`
+    /// API, and every renderer (browser / desktop+mobile WebView / native) can
+    /// issue it, so an Http call runs client-side by default. It is forced SERVER
+    /// only by the TAINT path — a secret (env / `Auth`) or DB value flowing into
+    /// the request makes the branch reference a tainted binding / server kernel,
+    /// which the analysis already catches. `Time`/`Random`/`Uuid` are here too.
     ClientEffect,
     /// Pure / plumbing — irrelevant to the partition.
     Neutral,
@@ -60,7 +62,12 @@ fn classify_kernel(module: &str, _func: &str) -> KernelClass {
         // `String -> String -> String` (NOT `Task`), so they are caught ONLY by
         // kernel identity, here — never by a Task-type check.
         "System" => KernelClass::ServerOnly,
-        "Http" | "RateLimit" | "Middleware" => KernelClass::HttpAmbiguous,
+        // HTTP-SERVER machinery (the listener, middleware, rate limiter) is
+        // server-only; the HTTP CLIENT (`Http.get`/`post`/`request`) is
+        // client-capable (browser/WebView/native `fetch`) — taint forces it
+        // server when it carries a secret/DB value.
+        "RateLimit" | "Middleware" => KernelClass::ServerOnly,
+        "Http" => KernelClass::ClientEffect,
         "Time" | "Random" | "Uuid" => KernelClass::ClientEffect,
         _ => KernelClass::Neutral,
     }
@@ -88,19 +95,13 @@ struct Refs {
 impl Refs {
     /// Does this subtree DIRECTLY hit a server kernel or a Go FFI reference?
     fn direct_server_reason(&self) -> Option<String> {
-        if let Some((m, f, class)) = self.server_kernels.first() {
-            let tag = match class {
-                KernelClass::HttpAmbiguous => {
-                    " (own-backend/unprovable-external -> conservative server)"
-                }
-                _ => "",
-            };
+        if let Some((m, f, _class)) = self.server_kernels.first() {
             let how = if self.inline_force {
                 "inline effect "
             } else {
                 ""
             };
-            return Some(format!("{how}reaches server kernel {m}.{f}{tag}"));
+            return Some(format!("{how}reaches server kernel {m}.{f}"));
         }
         if self.foreign {
             return Some("reaches a Go FFI reference (opaque -> conservative server)".into());
@@ -467,12 +468,15 @@ pub fn analyze(
         }
     }
 
-    // Ambiguity notes.
-    let http_branches = branches.iter().filter(|b| b.reason.contains("Http.")).count();
-    if http_branches > 0 {
-        notes.push(format!(
-            "{http_branches} branch(es) marked SERVER only because they reach Http.* — a client-issued fetch to a stateless backend is indistinguishable from a server call at this layer, so Http is conservatively server (sound: never a client leak)."
-        ));
+    // Http note: Http is a CLIENT-capable effect (wasm/WebView/native fetch), so
+    // an Http call runs client-side and is forced SERVER only by TAINT — a secret
+    // (env / Auth) or DB value flowing into the request, which shows up as a
+    // server reach on that branch. There is no Http-specific over-approximation.
+    if !branches.is_empty() {
+        notes.push(
+            "Http runs client-side (wasm/WebView fetch); a call carrying a secret/DB value is forced SERVER by taint. Server-only effects are Db/File/Auth/System/Server/Process/Io."
+                .to_string(),
+        );
     }
 
     Ok(SpaPartitionReport {
