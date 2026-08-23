@@ -268,15 +268,19 @@ func applyAttrs(el js.Value, attrs map[string]string, id string, newRoot *VNode)
 		if strings.HasPrefix(k, "sky-") || strings.HasPrefix(k, "data-sky-ev-") || k == "data-sky-hid" {
 			eventChanged = true
 		}
+		// Sync the ATTRIBUTE. Empty removes it; otherwise an idempotent
+		// setAttribute — some elements re-fetch/re-navigate on ANY assignment
+		// (iframe/img src, link href), even to an identical value.
 		if v == "" {
 			el.Call("removeAttribute", k)
-			continue
-		}
-		// Idempotent setAttribute: some elements re-fetch/re-navigate on ANY
-		// assignment (iframe/img src, link href), even to an identical value.
-		if cur := el.Call("getAttribute", k); cur.Type() != js.TypeString || cur.String() != v {
+		} else if cur := el.Call("getAttribute", k); cur.Type() != js.TypeString || cur.String() != v {
 			el.Call("setAttribute", k, v)
 		}
+		// Sync the live DOM PROPERTY for property-backed attributes — REQUIRED
+		// even when cleared to "". Removing the `value` attribute does NOT reset
+		// an input's current `.value`, so a programmatic clear (a model field set
+		// to "") must write the property to actually empty the box; likewise an
+		// empty `checked`/`selected`/`disabled` must drive the property to false.
 		switch k {
 		case "value":
 			el.Set("value", v)
