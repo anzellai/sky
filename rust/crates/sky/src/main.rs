@@ -1155,29 +1155,64 @@ fn cmd_build_target(target: &str, project_dir: &Path, out_dir: &Path) -> ExitCod
     ExitCode::SUCCESS
 }
 
-/// Copy `main.wasm` + `wasm_exec.js` from the wasm build dir into `dist/`, and
-/// write the standard Go-wasm `index.html` bootstrap if one isn't already there.
+/// Stage a servable web bundle in `dist/`: `wasm_exec.js`, a CONTENT-HASHED
+/// `main.<hash>.wasm`, and an `index.html` that references it.
+///
+/// The wasm filename carries a hash of its bytes so a redeploy is never served a
+/// stale copy: browsers and webviews cache `/main.wasm` aggressively by URL, so
+/// two builds (or two apps) at the same path collide — a new build's users keep
+/// running the old wasm until they hard-refresh, and a shared dev host can serve
+/// one app's wasm to another. A content-addressed name changes whenever the bytes
+/// change, so the cache is always correct (and the file can be cached forever).
+/// `index.html` is regenerated every build to point at the current hash.
 fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dist).map_err(|e| format!("create {}: {e}", dist.display()))?;
-    for f in ["main.wasm", "wasm_exec.js"] {
-        let src = out_dir.join(f);
-        if !src.exists() {
-            return Err(format!(
-                "{f} not found in {} — did the wasm build run? (this is an internal error)",
-                out_dir.display()
-            ));
+
+    // wasm_exec.js — the Go runtime glue; copy as-is (it changes only with the
+    // toolchain). Remove the prior copy first: GOROOT ships it read-only (0444),
+    // so a second `--target` build in the same dir would EPERM on the overwrite.
+    let exec_src = out_dir.join("wasm_exec.js");
+    if !exec_src.exists() {
+        return Err(format!(
+            "wasm_exec.js not found in {} — did the wasm build run? (internal error)",
+            out_dir.display()
+        ));
+    }
+    let exec_dest = dist.join("wasm_exec.js");
+    let _ = std::fs::remove_file(&exec_dest);
+    std::fs::copy(&exec_src, &exec_dest).map_err(|e| format!("copy wasm_exec.js: {e}"))?;
+
+    // main.wasm — content-hash the filename.
+    let wasm_src = out_dir.join("main.wasm");
+    if !wasm_src.exists() {
+        return Err(format!(
+            "main.wasm not found in {} — did the wasm build run? (internal error)",
+            out_dir.display()
+        ));
+    }
+    let wasm_bytes = std::fs::read(&wasm_src).map_err(|e| format!("read main.wasm: {e}"))?;
+    let hash = &db_provision::sha256_hex(&wasm_bytes)[..12];
+    let wasm_name = format!("main.{hash}.wasm");
+
+    // Drop any previous wasm (hashed or the legacy `main.wasm`) so dist/ does not
+    // accumulate stale bundles across rebuilds.
+    if let Ok(rd) = std::fs::read_dir(dist) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with("main.") && n.ends_with(".wasm") {
+                let _ = std::fs::remove_file(e.path());
+            }
         }
-        // Remove a prior dest first: wasm_exec.js is copied from GOROOT as
-        // read-only (0444), so a second `--target` build in the same dir would
-        // EPERM on the overwrite. (Mirrors run_wasm_build's own remove-then-copy.)
-        let dest = dist.join(f);
-        let _ = std::fs::remove_file(&dest);
-        std::fs::copy(&src, &dest).map_err(|e| format!("copy {f}: {e}"))?;
     }
-    let index = dist.join("index.html");
-    if !index.exists() {
-        std::fs::write(&index, WASM_INDEX_HTML).map_err(|e| format!("write index.html: {e}"))?;
-    }
+    std::fs::write(dist.join(&wasm_name), &wasm_bytes)
+        .map_err(|e| format!("write {wasm_name}: {e}"))?;
+
+    // index.html — always regenerated so it references the current hashed wasm.
+    std::fs::write(
+        dist.join("index.html"),
+        WASM_INDEX_HTML.replace("{{WASM}}", &wasm_name),
+    )
+    .map_err(|e| format!("write index.html: {e}"))?;
     Ok(())
 }
 
@@ -1770,7 +1805,7 @@ const WASM_INDEX_HTML: &str = r#"<!doctype html>
     <script src="wasm_exec.js"></script>
     <script>
       const go = new Go();
-      WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((res) => {
+      WebAssembly.instantiateStreaming(fetch("{{WASM}}"), go.importObject).then((res) => {
         go.run(res.instance);
       });
     </script>
@@ -6281,6 +6316,61 @@ mod tests {
         assert_eq!(id.exe_name, "Notes"); // capitalised last id segment
         assert_eq!(id.short_version, "2.3.0"); // withVersion wins over project
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stage_web_bundle_content_hashes_the_wasm() {
+        let base = std::env::temp_dir().join(format!(
+            "sky-stage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let out = base.join("out");
+        let dist = base.join("dist");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("main.wasm"), b"AAAA-wasm-bytes").unwrap();
+        std::fs::write(out.join("wasm_exec.js"), b"// go glue").unwrap();
+
+        stage_web_bundle(&out, &dist).unwrap();
+
+        let wasm_name = |d: &std::path::Path| -> String {
+            std::fs::read_dir(d)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
+                .expect("a hashed wasm")
+        };
+        let n1 = wasm_name(&dist);
+        // main.<12 hex>.wasm
+        assert!(n1.starts_with("main.") && n1.ends_with(".wasm"));
+        let hash = &n1["main.".len()..n1.len() - ".wasm".len()];
+        assert_eq!(hash.len(), 12, "12-char content hash: {n1}");
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        // index.html references exactly that file, and wasm_exec.js is present.
+        let index = std::fs::read_to_string(dist.join("index.html")).unwrap();
+        assert!(index.contains(&format!("fetch(\"{n1}\")")), "index must fetch {n1}");
+        assert!(dist.join("wasm_exec.js").is_file());
+
+        // Different bytes → different name, and the old wasm is removed (no
+        // accumulation): exactly one main.*.wasm remains.
+        std::fs::write(out.join("main.wasm"), b"BBBB-different").unwrap();
+        stage_web_bundle(&out, &dist).unwrap();
+        let n2 = wasm_name(&dist);
+        assert_ne!(n1, n2, "changed content must change the hashed name");
+        let count = std::fs::read_dir(&dist)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.starts_with("main.") && n.ends_with(".wasm")
+            })
+            .count();
+        assert_eq!(count, 1, "old hashed wasm must be pruned");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
