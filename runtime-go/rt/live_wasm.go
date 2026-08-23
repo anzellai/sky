@@ -476,6 +476,19 @@ func performTask(task, toMsg any, dispatch func(any)) {
 		ev, _ := r.ErrValue.(SkyADT)
 		result = SkyResult[SkyADT, any]{Tag: r.Tag, OkValue: r.OkValue, ErrValue: ev}
 	}
+	// Built-in connection resilience: if the perform failed because the server
+	// was unreachable (a fetch rejection → Err(ErrNetwork)), show the retry
+	// overlay armed to re-run THIS exact perform, instead of leaving the client
+	// stranded when the generated `Applied<Msg> (Err _)` arm folds nothing back.
+	// Any successful perform clears the overlay (connectivity is back). The
+	// result is still dispatched below, so app-level handling is unaffected.
+	if spaIsNetworkErr(result) {
+		t, tm := task, toMsg
+		spaShowRetryOverlay(func() { performTask(t, tm, dispatch) })
+	} else if result.Tag == 0 {
+		spaHideRetryOverlay()
+	}
+
 	if tm, ok := toMsg.(func(SkyResult[SkyADT, any]) any); ok {
 		dispatch(tm(result))
 		return
