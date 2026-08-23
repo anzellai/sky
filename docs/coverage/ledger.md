@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 153 |
+| surfaces | 154 |
 | covered by the new corpus (>= Asserted) | 137 |
 | verdict `stronger` | 132 |
-| verdict `equal` | 21 |
+| verdict `equal` | 22 |
 | verdict `weaker` | 0 |
-| corpus units | 76 |
-| stdlib modules (denominator) | 89 |
-| stdlib entries (denominator) | 1828 |
+| corpus units | 79 |
+| stdlib modules (denominator) | 90 |
+| stdlib entries (denominator) | 1837 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 6 | 6.7% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 817 | 44.7% |
-| symbols unreferenced under the generous rule | 736 | 40.3% |
+| stdlib modules imported by nothing | 7 | 7.8% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 819 | 44.6% |
+| symbols unreferenced under the generous rule | 738 | 40.2% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -50,6 +50,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.upgrade-claude`
 - `cli.verify`
 - `stdlib.Sky.Core.Io`
+- `stdlib.Std.Bundle`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Live.Console`
 
@@ -59,8 +60,8 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 16 |
-| stdlib modules owned by exactly one unit of any role | 14 |
+| stdlib modules owned by exactly one `examples/*` | 17 |
+| stdlib modules owned by exactly one unit of any role | 13 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **2** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -192,6 +193,7 @@ None.
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Bundle` | stdlib | None | None | equal |
 | `stdlib.Std.Cache` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Cli` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Cmd` | stdlib | Asserted | Falsified | stronger |
@@ -219,7 +221,7 @@ None.
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Spa` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |
@@ -229,7 +231,7 @@ None.
 | `stdlib.Std.Ui.Background` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Border` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Chart` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Ui.Events` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ui.Events` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Font` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Grid` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Input` | stdlib | Asserted | Falsified | stronger |
