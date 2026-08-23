@@ -63,6 +63,19 @@ fn clientonly_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-split-clientonly/src/Main.sky")
 }
 
+/// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
+/// rather than a fixed `main.wasm`.
+fn dist_has_wasm(dist: &std::path::Path) -> bool {
+    std::fs::read_dir(dist)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok()).any(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.starts_with("main.") && n.ends_with(".wasm")
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn scratch() -> PathBuf {
     let uniq = format!(
         "sky-spasplit-{}-{}",
@@ -157,8 +170,8 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "frontend must build to wasm");
     assert!(
-        out.join("frontend/dist/main.wasm").is_file(),
-        "frontend build must stage dist/main.wasm"
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend build must stage a content-hashed main.<hash>.wasm"
     );
     assert!(
         out.join("frontend/dist/index.html").is_file(),
@@ -337,7 +350,7 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
         .status()
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "todos frontend must build to wasm");
-    assert!(out.join("frontend/dist/main.wasm").is_file(), "frontend stages dist/main.wasm");
+    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
 
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -463,7 +476,7 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
         .status()
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "multi-module frontend must build to wasm");
-    assert!(out.join("frontend/dist/main.wasm").is_file(), "frontend stages dist/main.wasm");
+    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
 
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -549,7 +562,7 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
         .status()
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "push frontend must build to wasm");
-    assert!(out.join("frontend/dist/main.wasm").is_file(), "frontend stages dist/main.wasm");
+    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
 
     let _ = std::fs::remove_dir_all(&out);
 }

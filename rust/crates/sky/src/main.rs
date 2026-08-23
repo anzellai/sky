@@ -1096,7 +1096,7 @@ fn cmd_build_target(target: &str, project_dir: &Path, out_dir: &Path) -> ExitCod
         return ExitCode::FAILURE;
     }
     let dist_name = "dist";
-    println!("Bundled web client → {dist_name}/ (index.html + main.wasm + wasm_exec.js)");
+    println!("Bundled web client → {dist_name}/ (index.html + main.<hash>.wasm + wasm_exec.js)");
 
     match target {
         "web" | "tablet" => {

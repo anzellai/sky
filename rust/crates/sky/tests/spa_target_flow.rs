@@ -77,16 +77,23 @@ fn target_web_stages_a_servable_wasm_bundle() {
         dir.join("sky-out").join("wasm_exec.js").is_file(),
         "no sky-out/wasm_exec.js:\n{log}"
     );
-    // …and the servable bundle is staged under dist/.
+    // …and the servable bundle is staged under dist/ (the wasm is CONTENT-HASHED,
+    // main.<hash>.wasm, so a redeploy is never served a stale cached copy).
     let dist = dir.join("dist");
-    for f in ["index.html", "main.wasm", "wasm_exec.js"] {
+    for f in ["index.html", "wasm_exec.js"] {
         assert!(dist.join(f).is_file(), "dist/{f} missing:\n{log}");
     }
-    // index.html must actually bootstrap the wasm (not an empty placeholder).
+    let hashed = std::fs::read_dir(&dist)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
+        .unwrap_or_else(|| panic!("no content-hashed main.<hash>.wasm in dist:\n{log}"));
+    // index.html must actually bootstrap THAT wasm (not an empty placeholder).
     let index = std::fs::read_to_string(dist.join("index.html")).unwrap();
     assert!(
-        index.contains("wasm_exec.js") && index.contains("main.wasm"),
-        "index.html does not bootstrap the wasm client:\n{index}"
+        index.contains("wasm_exec.js") && index.contains(&hashed),
+        "index.html does not bootstrap the hashed wasm ({hashed}):\n{index}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

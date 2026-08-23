@@ -847,6 +847,12 @@ pub fn generate(
         write(&format!("backend/src/{rel}"), &text, &mut files)?;
     }
 
+    // ---- propagate shipped assets (Bundle.withAsset / withAssetDir) ----
+    // The `bundle` binding already copies into frontend/src/Main.sky verbatim, so
+    // `sky build --target` (run on frontend/) reads the SAME declarations; copy
+    // the declared asset files/dirs alongside it so it can stage them into dist/.
+    propagate_bundle_assets(&src, project_dir, &out_dir.join("frontend"))?;
+
     Ok(SpaSplitReport {
         out_dir: out_dir.to_string_lossy().to_string(),
         files,
@@ -855,6 +861,82 @@ pub fn generate(
         excluded: tainted_names,
         notes,
     })
+}
+
+/// Every string-literal argument of a `Bundle.<func>` call in `src`, matched on
+/// word boundaries (so `withAsset` does not match `withAssetDir`). Mirrors
+/// `scan_bundle_calls_all` in the sky crate — kept local to avoid a cross-crate
+/// dependency for a 15-line scan.
+fn scan_bundle_asset_calls(src: &str, func: &str) -> Vec<String> {
+    let bytes = src.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = src[from..].find(func) {
+        let at = from + rel;
+        from = at + func.len();
+        let before_ok = at == 0 || !is_word(bytes[at - 1]);
+        let after_ok = bytes.get(at + func.len()).map(|b| !is_word(*b)).unwrap_or(true);
+        if !before_ok || !after_ok {
+            continue;
+        }
+        let rest = &src[at + func.len()..];
+        if let Some(q) = rest.find('"') {
+            let after_q = &rest[q + 1..];
+            if let Some(end) = after_q.find('"') {
+                out.push(after_q[..end].to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Recursively copy `from` into `to` (skipping dot-files), preserving structure.
+fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| format!("create {}: {e}", to.display()))?;
+    let rd = std::fs::read_dir(from).map_err(|e| format!("read {}: {e}", from.display()))?;
+    for entry in rd {
+        let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let src_path = entry.path();
+        let dst_path = to.join(&name);
+        if src_path.is_dir() {
+            copy_tree(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("copy {}: {e}", src_path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy the app's `Bundle.withAsset` / `withAssetDir` sources from the input
+/// project into the generated frontend project (at the same relative path), so
+/// `sky build --target` run on `frontend/` finds and stages them. A declared
+/// path that does not exist is left for `stage_bundle_assets` to report at build
+/// time (a clearer, target-specific error than one raised here).
+fn propagate_bundle_assets(src: &str, project_dir: &Path, frontend_dir: &Path) -> Result<(), String> {
+    for dir in scan_bundle_asset_calls(src, "withAssetDir") {
+        let from = project_dir.join(&dir);
+        if from.is_dir() {
+            copy_tree(&from, &frontend_dir.join(&dir))?;
+        }
+    }
+    for file in scan_bundle_asset_calls(src, "withAsset") {
+        let from = project_dir.join(&file);
+        if from.is_file() {
+            let to = frontend_dir.join(&file);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("create {}: {e}", parent.display()))?;
+            }
+            std::fs::copy(&from, &to).map_err(|e| format!("copy asset {file}: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
