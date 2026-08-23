@@ -1092,7 +1092,12 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
                 out_dir.display()
             ));
         }
-        std::fs::copy(&src, dist.join(f)).map_err(|e| format!("copy {f}: {e}"))?;
+        // Remove a prior dest first: wasm_exec.js is copied from GOROOT as
+        // read-only (0444), so a second `--target` build in the same dir would
+        // EPERM on the overwrite. (Mirrors run_wasm_build's own remove-then-copy.)
+        let dest = dist.join(f);
+        let _ = std::fs::remove_file(&dest);
+        std::fs::copy(&src, &dest).map_err(|e| format!("copy {f}: {e}"))?;
     }
     let index = dist.join("index.html");
     if !index.exists() {
