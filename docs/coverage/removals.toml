@@ -208,4 +208,4 @@ from   = 14
 to     = 19
 reason = "surface grew, not measurement: `sky build --target ios|android|desktop` now reads a new build-time `[bundle]` section (resolve_bundle_identity in rust/crates/sky/src/main.rs) for the cross-platform app identity — four literal scalar reads (bundle.name / bundle.id / bundle.version / bundle.build) plus the project-level `version` fallback read. All are genuinely NEW pre-binary reads; none is a rescan of an existing one. The section is build-time only (never seeded into the runtime env — see is_externally_consumed_section)."
 owner  = "anzel"
-commit = "0000000"
+commit = "2e991971"
