@@ -34,6 +34,8 @@
       "migrate",
       "remove",
       "run",
+      "spa-partition",
+      "spa-split",
       "test",
       "update",
       "upgrade",
@@ -619,16 +621,16 @@
           "apps:dispatch"
         ]
       },
+      "Std.Spa": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Trace": {
         "path": "apps/relay",
         "units": [
           "apps:relay"
-        ]
-      },
-      "Std.Ui.Events": {
-        "path": "apps/fieldbook",
-        "units": [
-          "apps:fieldbook"
         ]
       }
     }
@@ -641,13 +643,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1827,
+    "stdlib_entries": 1828,
     "stdlib_modules": 89,
-    "surfaces_covered": 135,
-    "surfaces_covered_pct": 89.4,
+    "surfaces_covered": 137,
+    "surfaces_covered_pct": 89.5,
     "surfaces_equal": 21,
-    "surfaces_stronger": 130,
-    "surfaces_total": 151,
+    "surfaces_stronger": 132,
+    "surfaces_total": 153,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -1090,6 +1092,44 @@
       },
       "description": "`sky run`",
       "id": "cli.run",
+      "verdict": "stronger"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky spa-partition`",
+      "id": "cli.spa-partition",
+      "verdict": "equal"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky spa-split`",
+      "id": "cli.spa-split",
       "verdict": "stronger"
     },
     {
@@ -3316,6 +3356,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -3778,6 +3823,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -4520,6 +4570,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
@@ -4732,6 +4787,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -5259,6 +5319,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -5433,6 +5498,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -6681,6 +6751,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -6953,6 +7028,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
@@ -7818,6 +7898,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
@@ -9230,9 +9315,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -9241,7 +9332,7 @@
       },
       "description": "the Std.Spa public API",
       "id": "stdlib.Std.Spa",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -9250,6 +9341,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -9721,6 +9817,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -10259,6 +10360,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
@@ -10994,17 +11100,16 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 7,
+      "count": 6,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
         "Std.Db.Migrate",
         "Std.Db.Table",
-        "Std.Live.Console",
-        "Std.Spa"
+        "Std.Live.Console"
       ],
-      "pct_of_denominator": 7.9
+      "pct_of_denominator": 6.7
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -11023,18 +11128,18 @@
         "cli.console-serve",
         "cli.fmt",
         "cli.lsp",
+        "cli.spa-partition",
         "cli.upgrade-claude",
         "cli.verify",
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Db.Table",
-        "stdlib.Std.Live.Console",
-        "stdlib.Std.Spa"
+        "stdlib.Std.Live.Console"
       ]
     },
     "symbols_unreferenced_generous": {
       "by_module": {
         "Sky.Config": {
-          "count": 13,
+          "count": 14,
           "symbols": [
             "Capacity",
             "JobStore",
@@ -11043,6 +11148,7 @@
             "Telemetry",
             "withCsrf",
             "withJobs",
+            "withLiveBroker",
             "withLog",
             "withTelemetry",
             "withTelemetryAggregationWindow",
@@ -11227,12 +11333,11 @@
           ]
         },
         "Sky.Core.System": {
-          "count": 9,
+          "count": 8,
           "symbols": [
             "cwd",
             "getArg",
             "getcwd",
-            "getenv",
             "getenvBool",
             "getenvInt",
             "loadEnv",
@@ -11788,12 +11893,10 @@
           ]
         },
         "Std.Spa": {
-          "count": 11,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "Route",
-            "app",
-            "config",
             "getJson",
             "postJson",
             "route",
@@ -12117,13 +12220,13 @@
           ]
         }
       },
-      "count": 738,
-      "pct_of_denominator": 40.4
+      "count": 736,
+      "pct_of_denominator": 40.3
     },
     "symbols_unreferenced_strict": {
       "by_module": {
         "Sky.Config": {
-          "count": 15,
+          "count": 16,
           "symbols": [
             "Capacity",
             "Database",
@@ -12134,6 +12237,7 @@
             "Telemetry",
             "withCsrf",
             "withJobs",
+            "withLiveBroker",
             "withLog",
             "withTelemetry",
             "withTelemetryAggregationWindow",
@@ -12327,12 +12431,11 @@
           ]
         },
         "Sky.Core.System": {
-          "count": 9,
+          "count": 8,
           "symbols": [
             "cwd",
             "getArg",
             "getcwd",
-            "getenv",
             "getenvBool",
             "getenvInt",
             "loadEnv",
@@ -12962,12 +13065,10 @@
           ]
         },
         "Std.Spa": {
-          "count": 11,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "Route",
-            "app",
-            "config",
             "getJson",
             "postJson",
             "route",
@@ -13292,8 +13393,8 @@
           ]
         }
       },
-      "count": 819,
-      "pct_of_denominator": 44.8
+      "count": 817,
+      "pct_of_denominator": 44.7
     }
   },
   "units": [
@@ -13313,12 +13414,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 0,
+      "modules_imported": 13,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 0,
-      "refs_qualified": 0,
+      "refs_generous": 40,
+      "refs_qualified": 37,
       "role": "Layer2",
-      "sky_files": 0,
+      "sky_files": 9,
       "sky_toml_sections": []
     },
     {

@@ -162,6 +162,47 @@ func TestConfigPrecedence_LiteralNames(t *testing.T) {
 	}
 }
 
+// TestConfigPrecedence_LiveBroker pins the withLiveBroker builder end to end:
+// it is a PREFIXED but UNSEEDED suffix (no legacy [live] broker key), so it has
+// three layers (operator > withX > fallback), and — the point of the whole
+// feature — the value it applies is what effectiveBrokerUrl reads back for the
+// Sky.Live path (live.go passes "" there). Operator env still overrides it.
+func TestConfigPrecedence_LiveBroker(t *testing.T) {
+	const suffix = "LIVE_BROKER_URL"
+
+	t.Run("withx_beats_fallback_and_effectiveBrokerUrl_reads_it", func(t *testing.T) {
+		resetEnvFor(t, suffix)
+		applyCfg(Config_withLiveBroker("redis://from-config:6379", Config_default()))
+		if got := skyGetenv(suffix); got != "redis://from-config:6379" {
+			t.Fatalf("withLiveBroker must write the broker URL; got %q", got)
+		}
+		// The Sky.Live path passes "" and relies on effectiveBrokerUrl reading
+		// the ApplyConfig-written env back.
+		if got := effectiveBrokerUrl(""); got != "redis://from-config:6379" {
+			t.Fatalf("effectiveBrokerUrl(\"\") must return the applied config URL; got %q", got)
+		}
+	})
+
+	t.Run("operator_beats_withx", func(t *testing.T) {
+		resetEnvFor(t, suffix)
+		setOperator(suffix, "redis://from-operator:6379")
+		applyCfg(Config_withLiveBroker("redis://from-config:6379", Config_default()))
+		if got := skyGetenv(suffix); got != "redis://from-operator:6379" {
+			t.Fatalf("an operator SKY_LIVE_BROKER_URL must beat withLiveBroker; got %q", got)
+		}
+		if got := effectiveBrokerUrl(""); got != "redis://from-operator:6379" {
+			t.Fatalf("effectiveBrokerUrl must honour the operator override; got %q", got)
+		}
+	})
+
+	t.Run("kernel_stores_the_url", func(t *testing.T) {
+		m := Config_withLiveBroker("redis://h:6379", Config_default()).(map[string]any)
+		if m["LiveBroker"] != "redis://h:6379" {
+			t.Fatalf("Config_withLiveBroker must store LiveBroker: %v", m)
+		}
+	})
+}
+
 // The mutation contrast extended to a NEW seeded suffix: the real seed-aware
 // applyConfigValue lets withSessions win over a legacy [live] store seed; the
 // set-if-unset mutant lets the seed win — the same inversion the foundation

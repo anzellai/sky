@@ -279,6 +279,13 @@ fn is_server_only_module(module_path: &str) -> bool {
     )
 }
 
+/// Render `s` as a Sky string literal (`redis://h:6379` → `"redis://h:6379"`),
+/// escaping the two characters that would otherwise break the literal. Used to
+/// bake the `--broker` URL into the generated backend's `spaBroker` binding.
+fn sky_string_literal(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 fn lower_first(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
@@ -507,6 +514,7 @@ pub fn generate(
     project_dir: &Path,
     entry_module: Option<&str>,
     out_dir: &Path,
+    broker_url: Option<&str>,
 ) -> Result<SpaSplitReport, String> {
     // Fail-closed gate: the generator writes the wasm frontend, so an
     // unclassified effect kernel silently defaulting to client would be a real
@@ -765,12 +773,22 @@ pub fn generate(
     // ---- write the three trees ----
     let shared_src = gen_shared(&wires, &shared_imports, &copied_decls, &copied_exposing);
     let push_mode = report.subscribes_topics || report.publishes;
+    let broker_url = broker_url.map(str::trim).filter(|s| !s.is_empty());
     if push_mode {
+        match broker_url {
+            Some(url) => notes.push(format!(
+                "server->client PUSH enabled: mounted `GET /_sky/sub` (SSE) + a shared broker; RPC handlers fan their returned Cmd.publish through it. Cross-replica broker BAKED via --broker ({url}); SKY_LIVE_BROKER_URL still overrides it."
+            )),
+            None => notes.push(
+                "server->client PUSH enabled: mounted `GET /_sky/sub` (SSE) + a shared broker; RPC handlers fan their returned Cmd.publish through it. In-process broker (single replica); pass --broker <url> (or set SKY_LIVE_BROKER_URL) for cross-replica fan-out, same as Sky.Live.".into(),
+            ),
+        }
+    } else if broker_url.is_some() {
         notes.push(
-            "server->client PUSH enabled: mounted `GET /_sky/sub` (SSE) + a shared broker; RPC handlers fan their returned Cmd.publish through it. In-process broker (single replica); cross-replica needs a shared broker, same as Sky.Live.".into(),
+            "note: --broker <url> was given but the app has no Cmd.publish / Sub.subscribeTopic, so no push broker is generated; the flag is ignored.".into(),
         );
     }
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode)?;
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode, broker_url)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -1120,6 +1138,7 @@ fn gen_backend(
     model_fields: &[ModelFieldTy],
     copied_names: &HashSet<String>,
     push_mode: bool,
+    broker_url: Option<&str>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -1171,17 +1190,22 @@ fn gen_backend(
     // Server→client PUSH: one process-shared broker, a Cmd-publish interpreter,
     // and the SSE stream handler body — all thin kernel aliases (spa_push.go).
     if push_mode {
-        handlers.push_str(
+        // The broker URL baked by `sky spa-split --broker <url>` (empty string
+        // when absent → env/in-process). SKY_LIVE_BROKER_URL still overrides it
+        // at runtime (effectiveBrokerUrl, live_redis_broker.go).
+        let baked_url = sky_string_literal(broker_url.unwrap_or(""));
+        handlers.push_str(&format!(
             "-- Server->client PUSH (SSE) — the auto-split's Sub.subscribeTopic /\n\
              -- Cmd.publish channel (docs/skyspa/auto-split.md §16). One process-shared\n\
-             -- in-process broker (a memoised CAF); each RPC handler fans its returned\n\
-             -- Cmd's publishes through it; `GET /_sky/sub?topic=…` streams them as SSE.\n\
-             spaNewBroker : () -> any\n\
+             -- broker (a memoised CAF); each RPC handler fans its returned Cmd's\n\
+             -- publishes through it; `GET /_sky/sub?topic=…` streams them as SSE. The\n\
+             -- broker URL below is baked by `--broker`; SKY_LIVE_BROKER_URL overrides it.\n\
+             spaNewBroker : String -> any\n\
              spaNewBroker =\n\
              \x20   Ffi.kernel \"Spa_newBroker\"\n\n\n\
              spaBroker : any\n\
              spaBroker =\n\
-             \x20   spaNewBroker ()\n\n\n\
+             \x20   spaNewBroker {baked_url}\n\n\n\
              spaInterpretPublish : any -> Cmd Msg -> Task Error ()\n\
              spaInterpretPublish =\n\
              \x20   Ffi.kernel \"Spa_interpretPublish\"\n\n\n\
@@ -1191,8 +1215,8 @@ fn gen_backend(
              subHandler : Request -> Task Error Response\n\
              subHandler req =\n\
              \x20   Stream.stream \"text/event-stream\"\n\
-             \x20       (spaStreamTopic spaBroker (Maybe.withDefault \"\" (Server.queryParam \"topic\" req)))\n\n\n",
-        );
+             \x20       (spaStreamTopic spaBroker (Maybe.withDefault \"\" (Server.queryParam \"topic\" req)))\n\n\n"
+        ));
     }
     for (name, io) in server {
         let handler = format!("{}Handler", lower_first(name));

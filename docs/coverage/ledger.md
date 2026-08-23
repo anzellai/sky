@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 151 |
-| covered by the new corpus (>= Asserted) | 135 |
-| verdict `stronger` | 130 |
+| surfaces | 153 |
+| covered by the new corpus (>= Asserted) | 137 |
+| verdict `stronger` | 132 |
 | verdict `equal` | 21 |
 | verdict `weaker` | 0 |
 | corpus units | 76 |
 | stdlib modules (denominator) | 89 |
-| stdlib entries (denominator) | 1827 |
+| stdlib entries (denominator) | 1828 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 7 | 7.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 819 | 44.8% |
-| symbols unreferenced under the generous rule | 738 | 40.4% |
+| stdlib modules imported by nothing | 6 | 6.7% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 817 | 44.7% |
+| symbols unreferenced under the generous rule | 736 | 40.3% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -46,12 +46,12 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.console-serve`
 - `cli.fmt`
 - `cli.lsp`
+- `cli.spa-partition`
 - `cli.upgrade-claude`
 - `cli.verify`
 - `stdlib.Sky.Core.Io`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Live.Console`
-- `stdlib.Std.Spa`
 
 ## Sole ownership
 
@@ -108,6 +108,8 @@ None.
 | `cli.migrate` | cli | None | Falsified | stronger |
 | `cli.remove` | cli | None | Falsified | stronger |
 | `cli.run` | cli | None | Falsified | stronger |
+| `cli.spa-partition` | cli | None | None | equal |
+| `cli.spa-split` | cli | None | Falsified | stronger |
 | `cli.test` | cli | None | Falsified | stronger |
 | `cli.update` | cli | None | Falsified | stronger |
 | `cli.upgrade` | cli | None | Falsified | stronger |
@@ -217,7 +219,7 @@ None.
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Spa` | stdlib | None | None | equal |
+| `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |

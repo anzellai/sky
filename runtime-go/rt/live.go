@@ -1941,7 +1941,10 @@ func liveAppRun(cfg any) any {
 	// Postgres sessions + Redis pub/sub) via SKY_LIVE_BROKER_URL. No-op
 	// when unset or when the store already provides a cross-instance
 	// broker (store=redis).
-	app.topics = maybeOverrideBroker(app.topics)
+	// "" configUrl: Sky.Config.withLiveBroker (if the app set it) already flowed
+	// into SKY_LIVE_BROKER_URL via ApplyConfig, so effectiveBrokerUrl reads it
+	// from the env here — with an operator's own value still winning.
+	app.topics = maybeOverrideBroker(app.topics, "")
 	// L6: a non-Redis broker is IN-PROCESS, so cross-replica broadcasts
 	// (Cmd.publish, and multi-tab fan-out across instances) silently don't reach
 	// users on OTHER replicas. Replica count can't be reliably detected from

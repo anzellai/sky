@@ -60,6 +60,7 @@ module Sky.Config exposing
     , withTelemetryHistogramWindow
     , withTelemetryDbCapacity
     , withTelemetrySynchronousCommit
+    , withLiveBroker
     )
 
 import Sky.Ffi as Ffi
@@ -132,7 +133,6 @@ type JobStore
 -- belongs to the deployment, not the source).
 type Telemetry
     = Otlp String
-
 
 -- | An operator-declared database capacity for the telemetry size-report danger
 -- flag. Choose the unit that reads best at the call site; all reduce to a byte
@@ -236,6 +236,20 @@ withTelemetrySynchronousCommit durable cfg =
     setTelemetrySynchronousCommit (onOff durable) cfg
 
 
+-- | Set the Sky.Live cross-instance pub/sub broker URL — e.g.
+-- `"redis://host:6379"` — so `Cmd.publish` fans out across replicas
+-- (`SKY_LIVE_BROKER_URL`). The broker is app-scoped, not store-scoped, so this
+-- works even with a non-Redis session store (Postgres sessions + Redis pub/sub).
+-- Leave it unset for the single-replica in-process default. Operator env still
+-- wins. See `docs/skylive/pubsub.md`.
+--
+-- For the Sky.Spa auto-split backend (which has no `Sky.Config`), bake the URL
+-- with `sky spa-split --broker <url>` instead; env still overrides.
+withLiveBroker : String -> Config -> Config
+withLiveBroker url cfg =
+    setLiveBroker url cfg
+
+
 -- The raw kernels take already-normalised strings, so the ADT → env-string
 -- mapping stays a total `case` in Sky (type-safe, robust to constructor
 -- reordering) rather than a fragile tag-index read in Go.
@@ -291,6 +305,11 @@ setTelemetryDbCapacity =
 setTelemetrySynchronousCommit : String -> Config -> Config
 setTelemetrySynchronousCommit =
     Ffi.kernel "Config_withTelemetrySynchronousCommit"
+
+
+setLiveBroker : String -> Config -> Config
+setLiveBroker =
+    Ffi.kernel "Config_withLiveBroker"
 
 
 -- Reduce a Capacity to a byte count (decimal units, pure arithmetic — no String

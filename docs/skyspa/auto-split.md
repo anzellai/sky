@@ -596,19 +596,33 @@ chose to publish. A publish payload is server-authored — never echoed from a
 client-sent field for anything authoritative (§7). The client only ever talks to
 its own backend (same-origin → no CORS).
 
-**Multi-replica — wired.** `Spa_newBroker` routes through
-`maybeOverrideBroker(newTopicRegistry(0))`: the **default is in-process** (single
-replica — a publish on A reaches only SSE connections on A), and setting
-**`SKY_LIVE_BROKER_URL`** upgrades it to the SAME cross-instance **Redis broker
-Sky.Live uses** (the `Broker` interface, `live_redis_broker.go`) — so a publish
-on replica A reaches an SSE subscriber on replica B — with **no session store
-required** (the broker is app-scoped, not store-scoped). An undialable URL
-degrades to in-process (logged); `SKY_LIVE_BROKER=inprocess` forces local. A
-multi-replica deploy still needs **sticky routing** so a client's `/_sky/sub`
-and `/_rpc/*` hit a coherent set. Verified: default in-process push, and the
-`SKY_LIVE_BROKER_URL`-unreachable graceful fallback, both push; a live
-two-replica + Redis fan-out is the remaining verification (needs a Redis
-deployment) — the seam itself is the one Sky.Live ships.
+**Multi-replica — wired, and configurable in code.** `Spa_newBroker urlArg`
+routes through `maybeOverrideBroker(newTopicRegistry(0), effectiveBrokerUrl(url))`:
+the **default is in-process** (single replica — a publish on A reaches only SSE
+connections on A). A broker URL upgrades it to the SAME cross-instance **Redis
+broker Sky.Live uses** (the `Broker` interface, `live_redis_broker.go`) — so a
+publish on replica A reaches an SSE subscriber on replica B — with **no session
+store required** (the broker is app-scoped, not store-scoped).
+
+The URL comes from one of two places, reconciled by `effectiveBrokerUrl`
+(**env wins**):
+
+* **`sky spa-split --broker <url>`** bakes the URL into the generated backend
+  (`spaBroker = spaNewBroker "redis://host:6379"`). This is the auto-split
+  analogue of `Sky.Config.withLiveBroker` — the generated backend is a stateless
+  `Sky.Http.Server`, so it has no `config` binding of its own; the flag is how
+  the URL gets into the source. Without the flag the backend emits
+  `spaNewBroker ""` (in-process; env still applies).
+* **`SKY_LIVE_BROKER_URL`** (operator env) overrides the baked value at runtime.
+
+An undialable URL degrades to in-process (logged); `SKY_LIVE_BROKER=inprocess`
+forces local. A multi-replica deploy still needs **sticky routing** so a
+client's `/_sky/sub` and `/_rpc/*` hit a coherent set. Verified end-to-end
+against a live Redis: two backend instances (no shared session store), a POST
+`/_rpc/Increment` on instance A delivers a `data:` frame to an SSE subscriber on
+instance B — driven by the **baked** `--broker` URL (no env), by the
+**`SKY_LIVE_BROKER_URL`** env (no bake), and the default (no URL) keeps
+single-instance in-process push.
 
 **Verified.** `tests/fixtures/spa-push-counter` (a shared counter:
 `Increment` writes count+1 to disk inline and publishes `"count"`; `GotCount n`

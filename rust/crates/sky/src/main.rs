@@ -790,9 +790,22 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
         }
     }
     let do_build = split_target.is_some() || args.iter().any(|a| a == "--build");
+    // `--broker <url>` bakes a cross-instance pub/sub broker URL into the
+    // generated backend (the auto-split analogue of Sky.Config.withLiveBroker,
+    // which the stateless backend cannot use). SKY_LIVE_BROKER_URL still
+    // overrides it at runtime. Absent → in-process (env still applies).
+    let broker_url = args
+        .iter()
+        .position(|a| a == "--broker")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    if args.iter().any(|a| a == "--broker") && broker_url.as_deref().unwrap_or("").is_empty() {
+        eprintln!("sky spa-split: --broker requires a URL, e.g. --broker redis://host:6379");
+        return ExitCode::from(2);
+    }
     let file = match resolve_entry_arg(
         &positional,
-        "usage: sky spa-split <file.sky> --out <dir> [--build] [--target <t>]  (or run inside a Sky.Spa project directory)",
+        "usage: sky spa-split <file.sky> --out <dir> [--build] [--target <t>] [--broker <url>]  (or run inside a Sky.Spa project directory)",
     ) {
         Ok(f) => f,
         Err(code) => return code,
@@ -813,6 +826,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
         &project_dir,
         entry_module_name(file).as_deref(),
         &out_dir,
+        broker_url.as_deref(),
     ) {
         Ok(report) => {
             println!("sky spa-split → {}", report.out_dir);
@@ -5509,6 +5523,11 @@ fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
             "--target" => {
                 it.next();
             }
+            // `--broker <value>` (sky spa-split): same — consume the URL value so
+            // it is not mistaken for the entry file. cmd_spa_split reads it.
+            "--broker" => {
+                it.next();
+            }
             s if s.starts_with('-') => { /* ignore unknown flags for forward-compat */ }
             s => positional.push(s.to_string()),
         }
@@ -5578,7 +5597,7 @@ fn print_help() {
          \x20 upgrade-claude       refresh ./CLAUDE.md from the embedded template\n\
          \x20 verify [target]      build + run each example / the project\n\
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
-         \x20 spa-split <file> --out <dir> [--build|--target <t>]  auto-split: generate (+build) the wasm frontend + native backend\n\
+         \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\
          \x20 version          print the version\n\n\
          DEFERRED (bring-up): upgrade"
     );

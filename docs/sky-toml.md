@@ -155,6 +155,17 @@ Connection-status banner config is env-only (not in sky.toml):
 `<PREFIX>_LIVE_RETRY_MAX_ATTEMPTS` (default `10`),
 `<PREFIX>_LIVE_QUEUE_MAX` (default `50`).
 
+**Cross-instance pub/sub broker.** `<PREFIX>_LIVE_BROKER_URL` (unset →
+in-process) points `Cmd.publish` at a shared **Redis** broker so a publish on
+replica A reaches subscribers on replica B — required for multi-replica
+`Cmd.publish` / cross-device fan-out. The broker is app-scoped, not
+store-scoped, so it works even with a non-Redis session store (e.g. Postgres
+sessions + Redis pub/sub). Set it in code with the builder
+`Sky.Config.withLiveBroker "redis://host:6379"` (operator env still wins); for
+the Sky.Spa auto-split backend, bake it with `sky spa-split --broker <url>`
+(env still overrides). `<PREFIX>_LIVE_BROKER=inprocess` forces the local
+registry back for a single-instance Redis deploy.
+
 ---
 
 ## Std.Auth configuration (no `[auth]` section)
@@ -731,8 +742,9 @@ fallback). Where a setting has both a `Sky.Config.withX` and a more-specific
 `Live.withStore`/`withStorePath`), the app-shape `Live.withX` wins.
 
 The full surface — `default`, `withLog`, `withDatabase`, `withSessions`,
-`withJobs`, `withCsrf`, `withTelemetry`, and the strategy ADTs — is the live
-API: **`sky doc Sky.Config`** (generated from source, never drifts). The design
+`withJobs`, `withCsrf`, `withTelemetry`, `withLiveBroker`, and the strategy
+ADTs — is the live API: **`sky doc Sky.Config`** (generated from source, never
+drifts). The design
 of record is [config-architecture.md](tooling/config-architecture.md).
 
 > Console / telemetry **tokens** are deliberately NOT builders — a secret

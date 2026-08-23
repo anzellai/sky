@@ -8,7 +8,7 @@ import "testing"
 // the Broker interface (the standalone in-process registry the auto-split
 // backend uses without a Live.app).
 func Test_Spa_newBroker_returns_a_broker(t *testing.T) {
-	b := Spa_newBroker(skyUnit())
+	b := Spa_newBroker("")
 	if _, ok := b.(Broker); !ok {
 		t.Fatalf("Spa_newBroker should return a Broker, got %T", b)
 	}
@@ -17,7 +17,7 @@ func Test_Spa_newBroker_returns_a_broker(t *testing.T) {
 // Test_Spa_interpretPublish_fans_out_a_publish is the core push-path unit: a
 // `Cmd.publish` fed to Spa_interpretPublish reaches a broker subscriber.
 func Test_Spa_interpretPublish_fans_out_a_publish(t *testing.T) {
-	broker := Spa_newBroker(skyUnit()).(Broker)
+	broker := Spa_newBroker("").(Broker)
 	ch, cancel := broker.Subscribe("count")
 	defer cancel()
 
@@ -42,7 +42,7 @@ func Test_Spa_interpretPublish_fans_out_a_publish(t *testing.T) {
 // Test_Spa_interpretPublish_handles_batch asserts a publish nested inside a
 // Cmd.batch is fanned out too.
 func Test_Spa_interpretPublish_handles_batch(t *testing.T) {
-	broker := Spa_newBroker(skyUnit()).(Broker)
+	broker := Spa_newBroker("").(Broker)
 	ch, cancel := broker.Subscribe("t")
 	defer cancel()
 
@@ -62,7 +62,7 @@ func Test_Spa_interpretPublish_handles_batch(t *testing.T) {
 // Test_Spa_interpretPublish_ignores_non_publish asserts a non-publish Cmd
 // (Cmd.none / a perform) delivers nothing — the backend fans out publishes only.
 func Test_Spa_interpretPublish_ignores_non_publish(t *testing.T) {
-	broker := Spa_newBroker(skyUnit()).(Broker)
+	broker := Spa_newBroker("").(Broker)
 	ch, cancel := broker.Subscribe("t")
 	defer cancel()
 

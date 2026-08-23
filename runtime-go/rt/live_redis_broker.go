@@ -471,16 +471,37 @@ func brokerForRedisStore(client *redis.Client) Broker {
 	return newRedisBroker(client, false)
 }
 
+// effectiveBrokerUrl resolves the cross-instance pub/sub broker URL under the
+// ONE precedence the config layer promises: an operator's SKY_LIVE_BROKER_URL
+// wins; else the in-code value; else empty (in-process). `configUrl` is the
+// in-code source with no single channel:
+//
+//   - Sky.Live: `Sky.Config.withLiveBroker` flows through ApplyConfig into the
+//     SKY_LIVE_BROKER_URL env before live.go builds the broker, so the caller
+//     passes "" here and the value is read back from the env (operator still
+//     wins because applyConfigValue deferred to an operator-set var);
+//   - Sky.Spa auto-split: the backend has no Sky.Config, so `sky spa-split
+//     --broker <url>` BAKES the URL as an arg to Spa_newBroker, passed here —
+//     and the env still overrides it.
+func effectiveBrokerUrl(configUrl string) string {
+	if env := strings.TrimSpace(skyGetenv("LIVE_BROKER_URL")); env != "" {
+		return env
+	}
+	return strings.TrimSpace(configUrl)
+}
+
 // maybeOverrideBroker lets a deploy run a Redis broker EVEN when the
 // session store is not Redis — e.g. Postgres sessions + Redis pub/sub —
-// by setting SKY_LIVE_BROKER_URL. Because the broker is app-scoped, not
-// store-scoped, the two are legitimately decoupled. Returns `fallback`
-// unchanged when: the var is unset; the store already yielded a
-// cross-instance broker (store=redis); the in-process escape hatch is
-// set; or the URL can't be dialled (logged — degrade to local). A broker
-// created here owns its client and Closes it on Close.
-func maybeOverrideBroker(fallback Broker) Broker {
-	url := strings.TrimSpace(skyGetenv("LIVE_BROKER_URL"))
+// by setting SKY_LIVE_BROKER_URL or, in code, Sky.Config.withLiveBroker /
+// `sky spa-split --broker` (reconciled by effectiveBrokerUrl, env-wins).
+// Because the broker is app-scoped, not store-scoped, the two are
+// legitimately decoupled. Returns `fallback` unchanged when: no URL resolves;
+// the store already yielded a cross-instance broker (store=redis); the
+// in-process escape hatch is set; or the URL can't be dialled (logged —
+// degrade to local). A broker created here owns its client and Closes it on
+// Close.
+func maybeOverrideBroker(fallback Broker, configUrl string) Broker {
+	url := effectiveBrokerUrl(configUrl)
 	if url == "" || brokerForcedInProcess() {
 		return fallback
 	}

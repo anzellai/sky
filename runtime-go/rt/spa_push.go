@@ -27,11 +27,13 @@
 // All three are referenced ONLY from generated backend code (native), so there
 // is no `//go:build js` counterpart — a wasm frontend never links them.
 //
-// Multi-replica: the broker is in-process, exactly like Sky.Live's default. A
-// publish on replica A reaches only subscribers connected to A. Cross-replica
-// fan-out is the same seam as Sky.Live — a Redis / NATS / Postgres broker
-// implementing the Broker interface (SKY_LIVE_BROKER_URL); wiring that into the
-// auto-split backend is future work. See docs/skyspa/auto-split.md §16.
+// Multi-replica: the broker defaults to in-process, exactly like Sky.Live's
+// default — a publish on replica A reaches only subscribers connected to A.
+// Cross-replica fan-out is the same seam as Sky.Live: a Redis broker
+// implementing the Broker interface, selected by SKY_LIVE_BROKER_URL or the URL
+// baked in by `sky spa-split --broker <url>` (env overrides the baked arg),
+// reconciled by effectiveBrokerUrl in live_redis_broker.go. See
+// docs/skyspa/auto-split.md §16.
 
 package rt
 
@@ -61,23 +63,36 @@ var spaSSEPad = func() string {
 	return string(b)
 }()
 
-// Spa_newBroker constructs a standalone in-process pub/sub broker for the
-// auto-split backend. Sky surface (generated backend):
+// Spa_newBroker constructs the pub/sub broker for the auto-split backend. Sky
+// surface (generated backend):
 //
-//	spaNewBroker : () -> any
+//	spaNewBroker : String -> any
 //	spaNewBroker = Ffi.kernel "Spa_newBroker"
-//	spaBroker = spaNewBroker ()   -- memoised CAF: one broker for the process
+//	spaBroker = spaNewBroker "<url>"   -- memoised CAF: one broker for the process
 //
 // Returns a Broker as an opaque `any`. The generated backend holds it as a
-// zero-arg top-level binding, so every RPC handler + the SSE endpoint share the
-// ONE broker. Defaults to an in-process *topicRegistry (single replica); when
-// SKY_LIVE_BROKER_URL is set (and dialable), `maybeOverrideBroker` upgrades it to
-// the SAME cross-instance Redis broker Sky.Live uses — so a publish on replica A
-// reaches an SSE subscriber on replica B — with no session store required
-// (the broker is app-scoped, not store-scoped). An undialable URL degrades to
-// in-process (logged), and SKY_LIVE_BROKER=inprocess forces local.
-func Spa_newBroker(_ any) any {
-	return maybeOverrideBroker(newTopicRegistry(0))
+// top-level binding, so every RPC handler + the SSE endpoint share the ONE
+// broker. `urlArg` is the URL baked in by `sky spa-split --broker <url>` (empty
+// string when the flag is absent). It defaults to an in-process *topicRegistry
+// (single replica); when a URL resolves through effectiveBrokerUrl — the env
+// SKY_LIVE_BROKER_URL if set, else the baked arg — `maybeOverrideBroker`
+// upgrades it to the SAME cross-instance Redis broker Sky.Live uses, so a
+// publish on replica A reaches an SSE subscriber on replica B, with no session
+// store required (the broker is app-scoped, not store-scoped). The env still
+// OVERRIDES the baked arg. An undialable URL degrades to in-process (logged),
+// and SKY_LIVE_BROKER=inprocess forces local.
+func Spa_newBroker(urlArg any) any {
+	return maybeOverrideBroker(newTopicRegistry(0), spaBrokerArgURL(urlArg))
+}
+
+// spaBrokerArgURL extracts the baked broker URL from the kernel arg. Only a
+// real string counts; anything else (e.g. the legacy `()` unit, or a nil) is
+// treated as "no baked URL" so the resolver falls back to the env / in-process.
+func spaBrokerArgURL(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // Spa_interpretPublish interprets an `update`-returned Cmd against the broker,

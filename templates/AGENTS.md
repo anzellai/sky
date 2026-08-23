@@ -447,7 +447,7 @@ env override.
 |---|---|---|
 | Single instance, **low–medium** traffic | **`sqlite`** | One local file — sessions + app data on one host, survives restart, zero external services. The right default for a prototype or a single VM. |
 | Production, **medium–heavy** traffic | **`postgres`** | Shared across replicas → run several instances behind a load balancer; one managed database for durable data + sessions. |
-| Production, **global / heavy** traffic | **`postgres` + `redis`** | Postgres for durable data + sessions; Redis adds the cross-instance pub/sub broker (broadcast to users across replicas — chat/collab/presence) and a fast session cache. Set `store = "redis"` (or `SKY_LIVE_BROKER_URL` to a Redis) alongside your Postgres. |
+| Production, **global / heavy** traffic | **`postgres` + `redis`** | Postgres for durable data + sessions; Redis adds the cross-instance pub/sub broker (broadcast to users across replicas — chat/collab/presence) and a fast session cache. Set `store = "redis"`, or keep Postgres sessions and point pub/sub at Redis in code with `Sky.Config.withLiveBroker "redis://host:6379"` (or the `SKY_LIVE_BROKER_URL` env, which still wins). |
 
 The app code is identical across all three — you change only the config. `memory`
 is dev-only (per-process, lost on restart).
