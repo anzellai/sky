@@ -596,13 +596,19 @@ chose to publish. A publish payload is server-authored — never echoed from a
 client-sent field for anything authoritative (§7). The client only ever talks to
 its own backend (same-origin → no CORS).
 
-**Multi-replica.** The broker is **in-process**, exactly like Sky.Live's
-default: a publish on replica A reaches only clients whose SSE connection landed
-on A. For cross-replica fan-out use a shared broker — a Redis / NATS / Postgres
-implementation of the same `Broker` interface (`SKY_LIVE_BROKER_URL`), the same
-seam Sky.Live uses — plus sticky routing so a client's `/_sky/sub` and its
-`/_rpc/*` hit a coherent set. Wiring a shared broker into the auto-split backend
-is the one deferred piece; the single-replica path is complete.
+**Multi-replica — wired.** `Spa_newBroker` routes through
+`maybeOverrideBroker(newTopicRegistry(0))`: the **default is in-process** (single
+replica — a publish on A reaches only SSE connections on A), and setting
+**`SKY_LIVE_BROKER_URL`** upgrades it to the SAME cross-instance **Redis broker
+Sky.Live uses** (the `Broker` interface, `live_redis_broker.go`) — so a publish
+on replica A reaches an SSE subscriber on replica B — with **no session store
+required** (the broker is app-scoped, not store-scoped). An undialable URL
+degrades to in-process (logged); `SKY_LIVE_BROKER=inprocess` forces local. A
+multi-replica deploy still needs **sticky routing** so a client's `/_sky/sub`
+and `/_rpc/*` hit a coherent set. Verified: default in-process push, and the
+`SKY_LIVE_BROKER_URL`-unreachable graceful fallback, both push; a live
+two-replica + Redis fan-out is the remaining verification (needs a Redis
+deployment) — the seam itself is the one Sky.Live ships.
 
 **Verified.** `tests/fixtures/spa-push-counter` (a shared counter:
 `Increment` writes count+1 to disk inline and publishes `"count"`; `GotCount n`

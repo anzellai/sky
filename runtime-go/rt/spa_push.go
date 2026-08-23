@@ -68,11 +68,16 @@ var spaSSEPad = func() string {
 //	spaNewBroker = Ffi.kernel "Spa_newBroker"
 //	spaBroker = spaNewBroker ()   -- memoised CAF: one broker for the process
 //
-// Returns a *topicRegistry (implements Broker) as an opaque `any`. The generated
-// backend holds it as a zero-arg top-level binding, so every RPC handler + the
-// SSE endpoint share the ONE broker.
+// Returns a Broker as an opaque `any`. The generated backend holds it as a
+// zero-arg top-level binding, so every RPC handler + the SSE endpoint share the
+// ONE broker. Defaults to an in-process *topicRegistry (single replica); when
+// SKY_LIVE_BROKER_URL is set (and dialable), `maybeOverrideBroker` upgrades it to
+// the SAME cross-instance Redis broker Sky.Live uses — so a publish on replica A
+// reaches an SSE subscriber on replica B — with no session store required
+// (the broker is app-scoped, not store-scoped). An undialable URL degrades to
+// in-process (logged), and SKY_LIVE_BROKER=inprocess forces local.
 func Spa_newBroker(_ any) any {
-	return newTopicRegistry(0)
+	return maybeOverrideBroker(newTopicRegistry(0))
 }
 
 // Spa_interpretPublish interprets an `update`-returned Cmd against the broker,
