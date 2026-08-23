@@ -1090,6 +1090,11 @@ fn cmd_build_target(target: &str, project_dir: &Path, out_dir: &Path) -> ExitCod
         eprintln!("sky build --target {target}: {e}");
         return ExitCode::FAILURE;
     }
+    // Shipped assets declared via Bundle.withAsset / withAssetDir → dist/assets/.
+    if let Err(e) = stage_bundle_assets(project_dir, &dist) {
+        eprintln!("sky build --target {target}: {e}");
+        return ExitCode::FAILURE;
+    }
     let dist_name = "dist";
     println!("Bundled web client → {dist_name}/ (index.html + main.wasm + wasm_exec.js)");
 
@@ -1403,6 +1408,99 @@ fn scan_bundle_call(src: &str, func: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Like [`scan_bundle_call`] but collects EVERY occurrence — `Bundle.withAsset`
+/// / `withAssetDir` can appear many times in one `bundle` binding.
+fn scan_bundle_calls_all(src: &str, func: &str) -> Vec<String> {
+    let bytes = src.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = src[from..].find(func) {
+        let at = from + rel;
+        from = at + func.len();
+        let before_ok = at == 0 || !is_word(bytes[at - 1]);
+        let after_ok = bytes.get(at + func.len()).map(|b| !is_word(*b)).unwrap_or(true);
+        if !before_ok || !after_ok {
+            continue;
+        }
+        let rest = &src[at + func.len()..];
+        if let Some(q) = rest.find('"') {
+            let after_q = &rest[q + 1..];
+            if let Some(end) = after_q.find('"') {
+                out.push(after_q[..end].to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Recursively copy the CONTENTS of `src` into `dest`, preserving the relative
+/// structure (so `src/sub/x.png` lands at `dest/sub/x.png`).
+fn copy_dir_contents(src: &Path, dest: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| format!("create {}: {e}", dest.display()))?;
+    let rd = std::fs::read_dir(src).map_err(|e| format!("read {}: {e}", src.display()))?;
+    for entry in rd {
+        let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        let name = entry.file_name();
+        // Skip dot-files (a `.DS_Store`, editor cruft) — never ship hidden files.
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let from = entry.path();
+        let to = dest.join(&name);
+        if from.is_dir() {
+            copy_dir_contents(&from, &to)?;
+        } else {
+            let _ = std::fs::remove_file(&to);
+            std::fs::copy(&from, &to).map_err(|e| format!("copy {}: {e}", from.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Stage the app's declared shipped assets (`Bundle.withAsset` / `withAssetDir`
+/// in the entry source) into `dist/assets/`, so they are served same-origin at
+/// `/assets/…` — exactly what `Bundle.assetUrl` resolves to. A missing declared
+/// file/dir fails the build (a broken asset reference should not ship silently).
+fn stage_bundle_assets(project_dir: &Path, dist: &Path) -> Result<(), String> {
+    let src = read_entry_source(project_dir).unwrap_or_default();
+    let file_assets = scan_bundle_calls_all(&src, "withAsset"); // word-boundary: excludes withAssetDir
+    let dir_assets = scan_bundle_calls_all(&src, "withAssetDir");
+    if file_assets.is_empty() && dir_assets.is_empty() {
+        return Ok(());
+    }
+    let assets_out = dist.join("assets");
+    std::fs::create_dir_all(&assets_out)
+        .map_err(|e| format!("create {}: {e}", assets_out.display()))?;
+
+    for d in &dir_assets {
+        let dir = project_dir.join(d);
+        if !dir.is_dir() {
+            return Err(format!(
+                "Bundle.withAssetDir \"{d}\": no such directory at {}",
+                dir.display()
+            ));
+        }
+        copy_dir_contents(&dir, &assets_out)?;
+    }
+    for f in &file_assets {
+        let file = project_dir.join(f);
+        if !file.is_file() {
+            return Err(format!(
+                "Bundle.withAsset \"{f}\": no such file at {}",
+                file.display()
+            ));
+        }
+        let base = file
+            .file_name()
+            .ok_or_else(|| format!("Bundle.withAsset \"{f}\": not a file path"))?;
+        let to = assets_out.join(base);
+        let _ = std::fs::remove_file(&to);
+        std::fs::copy(&file, &to).map_err(|e| format!("copy asset {f}: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Resolve the packaging identity from the app's optional `bundle` binding
@@ -6371,6 +6469,53 @@ mod tests {
             .count();
         assert_eq!(count, 1, "old hashed wasm must be pruned");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn scan_bundle_calls_all_collects_files_and_excludes_dir_variant() {
+        let src = "bundle = Bundle.default \
+                   |> Bundle.withAsset \"a.png\" |> Bundle.withAsset \"b.css\" \
+                   |> Bundle.withAssetDir \"assets\"";
+        // withAsset must NOT match inside withAssetDir (word boundary).
+        assert_eq!(scan_bundle_calls_all(src, "withAsset"), vec!["a.png", "b.css"]);
+        assert_eq!(scan_bundle_calls_all(src, "withAssetDir"), vec!["assets"]);
+    }
+
+    #[test]
+    fn stage_bundle_assets_copies_declared_files_and_dirs() {
+        let dir = bundle_scratch(
+            "assets",
+            "name = \"proj\"\n",
+            "module Main exposing (main, bundle)\n\
+             bundle = Bundle.default \
+             |> Bundle.withAssetDir \"assets\" |> Bundle.withAsset \"extra/note.txt\"\n\
+             main = 0\n",
+        );
+        std::fs::create_dir_all(dir.join("assets/sub")).unwrap();
+        std::fs::write(dir.join("assets/logo.png"), b"png").unwrap();
+        std::fs::write(dir.join("assets/sub/deep.svg"), b"svg").unwrap();
+        std::fs::write(dir.join("assets/.DS_Store"), b"cruft").unwrap();
+        std::fs::create_dir_all(dir.join("extra")).unwrap();
+        std::fs::write(dir.join("extra/note.txt"), b"hi").unwrap();
+
+        let dist = dir.join("dist");
+        stage_bundle_assets(&dir, &dist).unwrap();
+
+        assert!(dist.join("assets/logo.png").is_file(), "dir asset staged");
+        assert!(dist.join("assets/sub/deep.svg").is_file(), "nested dir asset staged");
+        assert!(dist.join("assets/note.txt").is_file(), "single file asset staged by basename");
+        assert!(!dist.join("assets/.DS_Store").exists(), "hidden files must not ship");
+
+        // A missing declared asset fails the build rather than shipping broken.
+        let bad = bundle_scratch(
+            "badasset",
+            "name = \"p\"\n",
+            "module Main exposing (main, bundle)\n\
+             bundle = Bundle.default |> Bundle.withAsset \"nope.png\"\nmain = 0\n",
+        );
+        assert!(stage_bundle_assets(&bad, &bad.join("dist")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&bad);
     }
 
     #[test]

@@ -1,4 +1,14 @@
-module Std.Bundle exposing (Bundle, default, withName, withId, withIcon, withVersion)
+module Std.Bundle exposing
+    ( Bundle
+    , default
+    , withName
+    , withId
+    , withIcon
+    , withVersion
+    , withAsset
+    , withAssetDir
+    , assetUrl
+    )
 
 -- | `Std.Bundle` — everything a Sky app ships WITH: its cross-platform identity
 -- (display name, reverse-DNS id, icon, version) and, in a later phase, the
@@ -38,15 +48,22 @@ type Bundle
 , id : Maybe String
 , icon : Maybe String
 , version : Maybe String
+, assets : List String
 }
 
 
 -- | The empty manifest: every field defaulted by the packager (app name → the
 -- project name, id → a dev placeholder, icon → the shipped Sky mark, version →
--- the project version).
+-- the project version) and no extra assets.
 default : Bundle
 default =
-    Bundle { name = Nothing, id = Nothing, icon = Nothing, version = Nothing }
+    Bundle
+        { name = Nothing
+        , id = Nothing
+        , icon = Nothing
+        , version = Nothing
+        , assets = []
+        }
 
 
 -- | Set the human display name — CFBundleDisplayName / `android:label` / the
@@ -78,3 +95,30 @@ withIcon path (Bundle fields) =
 withVersion : String -> Bundle -> Bundle
 withVersion version (Bundle fields) =
     Bundle { fields | version = Just version }
+
+
+-- | Ship a single asset FILE with the app (a path relative to the project, e.g.
+-- `"images/logo.png"`). `sky build` stages it into the served bundle under
+-- `/assets/<basename>`, so `Bundle.assetUrl "logo.png"` resolves it — e.g.
+-- `Ui.image [] { src = Bundle.assetUrl "logo.png", description = "logo" }`.
+withAsset : String -> Bundle -> Bundle
+withAsset path (Bundle fields) =
+    Bundle { fields | assets = fields.assets ++ [ path ] }
+
+
+-- | Ship a whole DIRECTORY of assets with the app (a path relative to the
+-- project, e.g. `"assets"`). Its contents are staged under `/assets/…` keeping
+-- their names, so `assets/logo.png` becomes `Bundle.assetUrl "logo.png"`. The
+-- common case: keep every image/font/data file in one `assets/` folder.
+withAssetDir : String -> Bundle -> Bundle
+withAssetDir dir (Bundle fields) =
+    Bundle { fields | assets = fields.assets ++ [ dir ] }
+
+
+-- | The URL a shipped asset is served at — `Bundle.assetUrl "logo.png"` →
+-- `"/assets/logo.png"`. Use it wherever a URL is expected (an `Ui.image` source,
+-- a CSS background). Same-origin, so it works on web, desktop, and mobile
+-- webviews alike.
+assetUrl : String -> String
+assetUrl path =
+    "/assets/" ++ path
