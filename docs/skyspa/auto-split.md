@@ -387,3 +387,52 @@ becomes a real leak — MUST **fail-closed** on any unrecognised effect-kernel
 family (a new effect kernel added without updating the table would otherwise
 default client/pure). Guard it with a test enumerating effect families and
 asserting each is classified as an effect.
+
+## 14. Generator — the e2e implementation plan (authorised 2026-08-23)
+
+The user authorised the full e2e generator. Approach: **source-to-source, two
+normal Sky projects, built by the existing compiler** (§12). Phased, each phase
+verified before the next.
+
+**B0 — Msg-constant precision (in progress).** update's own arms resolve
+`update <LiteralMsg>` to that arm; helpers stay conservative. Sound; removes
+false-server on pure composition.
+
+**B1 — read/write-set analysis (per server branch).** Extend the partition with,
+for each SERVER branch: the **read-set** (Model fields + Msg args the branch
+reads → the RPC *inputs*) and the **write-set** (Model fields it writes → the RPC
+*outputs*). Field-precise for direct `model.field` access / `{ model | f = … }`;
+**over-approximate to "whole model" when a branch threads `model` into a helper**
+(sound: bigger payload, never a wrong value — under-approximating reads is a
+correctness bug, so unknown ⇒ send more). This is what keeps payloads ∝ effect
+I/O, not Model size (§ the large-Model answer).
+
+**B2 — the RPC shape + runtime glue (prove on a minimal app first).** One generic
+per-server-branch endpoint. Client → server: `{ msg args + read-set fields }`;
+server runs the whole branch server-side (dodges interleaving) → returns
+`{ write-set fields }`; client applies them. Reuse `Spa.postJson` (client) +
+`Server.api` (server) + `Codec.auto` for the I/O records. **Trust boundary:** the
+server treats client-sent fields as effect *inputs* only — anything authoritative
+is re-read from the DB / derived from the signed `sky_sid`, never trusted from the
+wire (§7). Hand-write the two projects for a counter-with-one-effect first, prove
+the round-trip, THEN generate.
+
+**B3 — the generator.** `sky spa-split <entry> [--out]` emits two projects:
+- **shared/** — Model / Msg / codecs, copied to both.
+- **backend/** — the full app (normal Sky) + a generated `Server.api "POST
+  /_rpc/<Msg>"` per server branch (decode inputs → run the branch → encode
+  outputs) + `Server.listen` serving the frontend `dist/`.
+- **frontend/** — Model/Msg/view + pure branches verbatim; each server branch
+  rewritten to `(model, Spa.postJson … "/_rpc/<Msg>" inputs Applied<Msg>)` + a
+  generated `Applied<Msg>` apply-branch; `main = Spa.app`; built `--wasm`.
+Parse↔render via the `sky fmt` machinery (syntax parse → arm rewrite → render).
+`examples/60-spa-todos` (client+server+shared) is the hand-written TARGET the
+output must match in shape.
+
+**B4 — build both + e2e verify + fail-closed guard.** Build backend (native) +
+frontend (wasm); run the round-trip (pure branch = zero network; server branch =
+RPC persists). Wire the **fail-closed** effect-family guard (§ residual). Then
+generalise to a real app.
+
+Security is the spine: every phase preserves "an effectful value/function never
+reaches client code," and B4's guard makes it a build failure, not a hope.
