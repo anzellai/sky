@@ -771,9 +771,28 @@ fn cmd_spa_partition(args: &[String]) -> ExitCode {
 /// Source-to-source; no compiler-IR change. See `project::spa_split`.
 fn cmd_spa_split(args: &[String]) -> ExitCode {
     let (positional, out) = parse_out(args);
+    // `--build` (or `--target <t>`, which implies build): after generating, build
+    // both projects — backend native, frontend for the given delivery surface
+    // (web/desktop/ios/android/tablet; default web) — so ONE command produces the
+    // whole running app. `--target` for the FRONTEND shell is checked up front.
+    let split_target = args
+        .iter()
+        .position(|a| a == "--target")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    if let Some(t) = &split_target {
+        if !matches!(t.as_str(), "web" | "desktop" | "ios" | "android" | "tablet") {
+            eprintln!(
+                "sky spa-split --target: unknown target `{t}`\n  \
+                 supported: web · desktop · ios · android · tablet (= responsive web)"
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+    let do_build = split_target.is_some() || args.iter().any(|a| a == "--build");
     let file = match resolve_entry_arg(
         &positional,
-        "usage: sky spa-split <file.sky> --out <dir>  (or run inside a Sky.Spa project directory)",
+        "usage: sky spa-split <file.sky> --out <dir> [--build] [--target <t>]  (or run inside a Sky.Spa project directory)",
     ) {
         Ok(f) => f,
         Err(code) => return code,
@@ -827,7 +846,49 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
             for n in &report.notes {
                 println!("  note: {n}");
             }
-            println!("\nBuild: (cd {} && sky build --target web frontend/src/Main.sky) && (cd {} && sky build backend/src/Main.sky)", report.out_dir, report.out_dir);
+            if !do_build {
+                println!("\nBuild: (cd {} && sky build --target web frontend/src/Main.sky) && (cd {} && sky build backend/src/Main.sky)", report.out_dir, report.out_dir);
+                println!("  or re-run with --build (native backend + web frontend) / --target <t> (frontend shell).");
+                return ExitCode::SUCCESS;
+            }
+            // --build / --target: build both projects with THIS compiler.
+            let target = split_target.as_deref().unwrap_or("web");
+            let sky = match std::env::current_exe() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("sky spa-split: locate the sky binary: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let od = PathBuf::from(&report.out_dir);
+            println!("\n== building backend (native) ==");
+            let backend_ok = Command::new(&sky)
+                .arg("build")
+                .arg("src/Main.sky")
+                .current_dir(od.join("backend"))
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !backend_ok {
+                eprintln!("sky spa-split --build: backend failed to build");
+                return ExitCode::FAILURE;
+            }
+            println!("\n== building frontend (--target {target}) ==");
+            let frontend_ok = Command::new(&sky)
+                .args(["build", "--target", target, "src/Main.sky"])
+                .current_dir(od.join("frontend"))
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !frontend_ok {
+                eprintln!("sky spa-split --build: frontend failed to build");
+                return ExitCode::FAILURE;
+            }
+            println!(
+                "\nBuilt: backend/sky-out/app (native) + frontend for `{target}`.\n  \
+                 Run the backend (it serves the frontend + /_rpc + /_sky/sub); \
+                 for desktop/ios/android also launch the generated shell under frontend/sky-out/."
+            );
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -5517,7 +5578,7 @@ fn print_help() {
          \x20 upgrade-claude       refresh ./CLAUDE.md from the embedded template\n\
          \x20 verify [target]      build + run each example / the project\n\
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
-         \x20 spa-split <file> --out <dir>  generate the wasm frontend + native backend split\n\
+         \x20 spa-split <file> --out <dir> [--build|--target <t>]  auto-split: generate (+build) the wasm frontend + native backend\n\
          \x20 version          print the version\n\n\
          DEFERRED (bring-up): upgrade"
     );
