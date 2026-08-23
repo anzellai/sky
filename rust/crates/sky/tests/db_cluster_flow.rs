@@ -25,6 +25,19 @@ use std::process::{Command, Output};
 mod live_gate;
 use live_gate::{gate_if_postgres_cannot_start, required, Need};
 
+// Every cluster test does `sky db start`, which `initdb`s + boots a real
+// PostgreSQL — each grabbing a System V shared-memory segment. Cargo runs a
+// binary's tests in parallel by default, so nine clusters `shmget` at once and
+// exhaust macOS's low SysV segment limit ("initdb failed: … shmget …") — an
+// intermittent false red, worse when another heavy job (the example sweep) runs
+// alongside. Serialize the cluster-spinning tests through one lock: only one
+// cluster boots at a time. `cluster_guard()` is held for the test's duration.
+static CLUSTER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn cluster_guard() -> std::sync::MutexGuard<'static, ()> {
+    CLUSTER_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// A test's FIRST `sky db start`, or a gated skip.
 ///
 /// # Why a start is not just an assertion
@@ -294,6 +307,7 @@ fn both(o: &Output) -> String {
 /// project-local socket, against a real PostgreSQL.
 #[test]
 fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
+    let _cluster = cluster_guard();
     let Some(fx) = fixture("cluster") else {
         required(Need::Postgres, false);
         return;
@@ -414,6 +428,7 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
 /// that a postmaster, and sky would then refuse to clear the pid file at all.
 #[test]
 fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
+    let _cluster = cluster_guard();
     let Some(fx) = fixture("stale") else {
         required(Need::Postgres, false);
         return;
@@ -628,6 +643,7 @@ fn a_project_path_carrying_a_command_substitution_is_refused_not_executed() {
 /// installing two PostgreSQL majors — is not something a test can assume.
 #[test]
 fn a_major_version_mismatch_is_reported_and_never_attempted() {
+    let _cluster = cluster_guard();
     let Some(fx) = fixture("mismatch") else {
         required(Need::Postgres, false);
         return;
@@ -762,6 +778,7 @@ fn conf_max_connections(conf: &str) -> Option<u32> {
 /// about the file passed while the live cluster still served the stale number.
 #[test]
 fn a_second_start_retunes_the_managed_block() {
+    let _cluster = cluster_guard();
     let pg_bin = require_pg_bin();
     let fx = Fixture {
         project: deep_scratch_project("retune"),
@@ -882,6 +899,7 @@ const SKY_CONF_MARKER: &str = "# --- sky db: development cluster tuning (managed
 /// clamped to 4..32, so a conf carrying 23 cannot have come from the machine.
 #[test]
 fn the_cluster_is_sized_for_the_pool_the_project_asks_for() {
+    let _cluster = cluster_guard();
     let pg_bin = require_pg_bin();
     let fx = Fixture {
         project: deep_scratch_project("knob"),
