@@ -92,6 +92,47 @@ sky build --embed src/Main.sky
 
 `--embed` belongs on `sky build`, not on `sky run` — see below.
 
+### `sky spa-split <path> --out <dir> [--build | --target <t>]`
+
+The **Sky.Spa auto-split**: take ONE Sky.Spa project whose `update` runs effects
+inline, and generate a **wasm frontend + native stateless backend + a shared wire
+contract** — no hand-written API. The compiler infers the client/server split
+from effects (the rule is dead simple: **pure → client, any effect → server; the
+client is 100 % pure UI**), so a database/file/secret/auth value or function can
+**never** reach the browser — it is a build failure if it could (a fail-closed
+guard over every kernel family). Server branches become generated RPC endpoints;
+`Cmd.publish` fans out to subscribed clients over SSE (server→client push).
+
+- **bare** — generates `shared/`, `backend/`, `frontend/` and prints the build
+  commands.
+- **`--build`** — also builds both: backend native, frontend wasm (`--target web`).
+- **`--target <web|desktop|ios|android|tablet>`** — builds the frontend for that
+  delivery surface (implies `--build`); `desktop`/`ios`/`android` also produce the
+  native shell (WKWebView / WebView2 / webkit2gtk / Android WebView / SwiftUI)
+  over the same wasm client.
+
+```bash
+sky spa-split src/Main.sky --out dist/split                 # generate only
+sky spa-split src/Main.sky --out dist/split --build         # + build backend + web frontend
+sky spa-split src/Main.sky --out dist/split --target desktop # + native desktop shell
+```
+
+The generated backend serves the frontend, the `/_rpc/<Msg>` endpoints, and
+`GET /_sky/sub` (SSE). Client→server is HTTP RPC, server→client is SSE — same
+origin, so no CORS and a trivial `connect-src 'self'` CSP. Inspect the derived
+split first with [`sky spa-partition`](#sky-spa-partition-path) — it prints each
+branch CLIENT/SERVER with the reason. (In-process broker = single replica;
+`SKY_LIVE_BROKER_URL` gives cross-replica push, same as Sky.Live.) Design +
+internals: `docs/skyspa/auto-split.md`.
+
+### `sky spa-partition <path>`
+
+Read-only: prints the inferred client/server partition of a Sky.Spa `update` —
+each branch as CLIENT or SERVER with the taint reason, each server branch's RPC
+inputs/outputs, and the server-tainted top-level bindings. Answers "what runs
+where, and why" before you generate anything with `sky spa-split`. Nothing is
+hidden: the split is inferred but always inspectable.
+
 ### `sky run [path]`
 
 For development you do not need `--embed` (and `sky run --embed` is refused with
