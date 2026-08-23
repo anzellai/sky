@@ -713,7 +713,7 @@ eval, no `sky.toml`) to fill the generated iOS `Info.plist`, the Android manifes
 | `withName`    | project directory name            | CFBundleDisplayName · `android:label` · desktop title |
 | `withId`      | `sky.spa.<sanitised-dir-name>` (dev) | CFBundleIdentifier · Android `package` |
 | `withVersion` | `1.0`                             | CFBundleShortVersionString · `android:versionName` |
-| `withIcon`    | a shipped Sky mark                | app icon (icon generation is a later phase) |
+| `withIcon`    | platform default icon             | app icon — a source PNG rendered into the iOS AppIcon set + Android mipmaps (needs macOS `sips`) |
 
 Rules:
 
@@ -733,11 +733,11 @@ Rules:
 
 Full API: `sky doc Std.Bundle`.
 
-> Roadmap: per-platform overrides, icon generation from `withIcon`, shipped
-> assets (`Bundle.withAsset` + a runtime `Bundle.asset*` loader), native
-> permissions, and release signing/notarization. `--target ios` still builds for
-> the **simulator** and `--target android` signs with the **debug** keystore —
-> neither is store-ready yet.
+> Roadmap: per-platform overrides, a `Bundle.assetBytes` reader (bytes, not just
+> a URL), a shipped default icon, native permissions, and release
+> signing/notarization. `--target ios` still builds for the **simulator** and
+> `--target android` signs with the **debug** keystore — neither is store-ready
+> yet.
 
 ---
 

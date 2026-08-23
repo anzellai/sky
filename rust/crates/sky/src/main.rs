@@ -1349,6 +1349,9 @@ struct BundleIdentity {
     short_version: String,
     /// Build number — CFBundleVersion / `android:versionCode`.
     build_number: String,
+    /// App-icon source PNG (`Bundle.withIcon`), relative to the project. `None`
+    /// leaves the platform default icon in place.
+    icon: Option<String>,
 }
 
 /// A syntactically valid reverse-DNS / Android package id: two or more
@@ -1503,6 +1506,92 @@ fn stage_bundle_assets(project_dir: &Path, dist: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether macOS `sips` (the built-in image tool used to resize app icons) is on
+/// PATH. When absent (non-macOS), icon generation is skipped with a note and the
+/// platform default icon is used.
+fn sips_available() -> bool {
+    Command::new("sips")
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Resize a square source PNG to `size`×`size` into `dest` via `sips`.
+fn sips_resize(src: &Path, size: u32, dest: &Path) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    let status = Command::new("sips")
+        .args(["-z", &size.to_string(), &size.to_string()])
+        .arg(src)
+        .arg("--out")
+        .arg(dest)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("run sips: {e}"))?;
+    if !status.success() {
+        return Err(format!("sips could not resize {} to {size}px", src.display()));
+    }
+    Ok(())
+}
+
+/// The Info.plist `CFBundleIcons` block that names the iPhone home-screen icon
+/// (60pt, whose @2x/@3x PNGs `generate_ios_app_icons` writes into the `.app`).
+const IOS_ICON_PLIST: &str = "\n    <key>CFBundleIcons</key>\n    \
+    <dict><key>CFBundlePrimaryIcon</key><dict><key>CFBundleIconFiles</key>\
+    <array><string>AppIcon60x60</string></array></dict></dict>";
+
+/// Render the app icon into the iOS `.app` at the iPhone home-screen sizes
+/// (60pt @2x = 120px, @3x = 180px), named as `CFBundleIconFiles` expects.
+fn generate_ios_app_icons(icon_src: &Path, app_dir: &Path) -> Result<(), String> {
+    sips_resize(icon_src, 120, &app_dir.join("AppIcon60x60@2x.png"))?;
+    sips_resize(icon_src, 180, &app_dir.join("AppIcon60x60@3x.png"))?;
+    Ok(())
+}
+
+/// Render the app icon into the Android res tree as `mipmap-<density>/ic_launcher.png`
+/// at each launcher density.
+fn generate_android_icons(icon_src: &Path, res_root: &Path) -> Result<(), String> {
+    for (density, size) in [
+        ("mdpi", 48u32),
+        ("hdpi", 72),
+        ("xhdpi", 96),
+        ("xxhdpi", 144),
+        ("xxxhdpi", 192),
+    ] {
+        let dest = res_root.join(format!("mipmap-{density}")).join("ic_launcher.png");
+        sips_resize(icon_src, size, &dest)?;
+    }
+    Ok(())
+}
+
+/// The resolved app-icon source PNG to render, or `None` (after a note) when
+/// there is nothing to render: no `withIcon` declared, the declared file is
+/// missing, or `sips` is unavailable. Keeps the "should we generate icons?"
+/// decision (and its user-facing notes) in one place for iOS and Android.
+fn bundle_icon_source(project_dir: &Path, id: &BundleIdentity) -> Option<PathBuf> {
+    let icon = id.icon.as_ref()?;
+    let path = project_dir.join(icon);
+    if !path.is_file() {
+        eprintln!(
+            "  note: Bundle.withIcon \"{icon}\" — no such file at {}; using the platform default icon.",
+            path.display()
+        );
+        return None;
+    }
+    if !sips_available() {
+        eprintln!(
+            "  note: app-icon generation needs macOS `sips` (absent here); using the platform default icon."
+        );
+        return None;
+    }
+    Some(path)
+}
+
 /// Resolve the packaging identity from the app's optional `bundle` binding
 /// (`Std.Bundle` `withX` in the entry source), falling back to the project
 /// name / version for any field left unset. Errors only when a user-SUPPLIED
@@ -1570,6 +1659,7 @@ fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String>
     // versionCode (Android) has no `withX` yet; a marketing string cannot be one,
     // so it stays 1 until a `Bundle.withBuild` lands.
     let build_number = "1".to_string();
+    let icon = scan_bundle_call(&src, "withIcon").and_then(nonblank);
 
     Ok(BundleIdentity {
         display_name,
@@ -1577,6 +1667,7 @@ fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String>
         bundle_id,
         short_version,
         build_number,
+        icon,
     })
 }
 
@@ -1597,9 +1688,20 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
 
     let root = out_dir.join("android");
     let java_dir = root.join("app/src/main/java").join(&pkg_path);
-    let res_dir = root.join("app/src/main/res/values");
+    let res_root = root.join("app/src/main/res");
+    let res_dir = res_root.join("values");
     std::fs::create_dir_all(&java_dir).map_err(|e| format!("create {}: {e}", java_dir.display()))?;
     std::fs::create_dir_all(&res_dir).map_err(|e| format!("create {}: {e}", res_dir.display()))?;
+
+    // App icon → mipmap-<density>/ic_launcher.png; the manifest points at it only
+    // when we actually generated the mipmaps (else Android uses its default).
+    let icon_attr = match bundle_icon_source(project_dir, &id) {
+        Some(icon) => {
+            generate_android_icons(&icon, &res_root)?;
+            "\n        android:icon=\"@mipmap/ic_launcher\""
+        }
+        None => "",
+    };
 
     std::fs::write(
         root.join("app/src/main/AndroidManifest.xml"),
@@ -1607,7 +1709,8 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
             .replace("{{PACKAGE}}", package)
             .replace("{{LABEL}}", &id.display_name)
             .replace("{{VERSION_NAME}}", &id.short_version)
-            .replace("{{VERSION_CODE}}", &version_code),
+            .replace("{{VERSION_CODE}}", &version_code)
+            .replace("{{ICON_ATTR}}", icon_attr),
     )
     .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
     std::fs::write(
@@ -1647,6 +1750,8 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
 fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let name = &id.exe_name;
+    let icon_src = bundle_icon_source(project_dir, &id);
+    let do_icons = icon_src.is_some();
 
     let root = out_dir.join("ios");
     let src = root.join(name);
@@ -1662,7 +1767,8 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
             .replace("{{DISPLAY}}", &id.display_name)
             .replace("{{BUNDLE_ID}}", &id.bundle_id)
             .replace("{{SHORT_VERSION}}", &id.short_version)
-            .replace("{{BUILD_NUMBER}}", &id.build_number),
+            .replace("{{BUILD_NUMBER}}", &id.build_number)
+            .replace("{{ICONS}}", if do_icons { IOS_ICON_PLIST } else { "" }),
     )
     .map_err(|e| format!("write Info.plist: {e}"))?;
     std::fs::write(
@@ -1679,7 +1785,11 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
     if !status.success() {
         return Err("the iOS app failed to build (see the errors above)".to_string());
     }
-    Ok(root.join("build").join(format!("{name}.app")))
+    let app = root.join("build").join(format!("{name}.app"));
+    if let Some(icon) = &icon_src {
+        generate_ios_app_icons(icon, &app)?;
+    }
+    Ok(app)
 }
 
 const IOS_APP_SWIFT: &str = r#"import SwiftUI
@@ -1743,7 +1853,7 @@ const IOS_INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>17.0</string>
     <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
-    <key>UILaunchScreen</key><dict/>
+    <key>UILaunchScreen</key><dict/>{{ICONS}}
     <!-- Dev only: allow cleartext to the local backend (localhost). Production
          uses https, so remove this. -->
     <key>NSAppTransportSecurity</key>
@@ -1778,7 +1888,7 @@ const ANDROID_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:label="{{LABEL}}"
+        android:label="{{LABEL}}"{{ICON_ATTR}}
         android:usesCleartextTraffic="true"
         android:supportsRtl="true">
         <activity
@@ -6516,6 +6626,28 @@ mod tests {
         assert!(stage_bundle_assets(&bad, &bad.join("dist")).is_err());
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&bad);
+    }
+
+    #[test]
+    fn bundle_icon_source_is_none_when_absent_or_missing() {
+        // No withIcon declared → nothing to render.
+        let dir = bundle_scratch("noicon", "name = \"p\"\n", "module Main exposing (main)\nmain = 0\n");
+        let id = resolve_bundle_identity(&dir).unwrap();
+        assert!(id.icon.is_none());
+        assert!(bundle_icon_source(&dir, &id).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // withIcon declared but the file is missing → None (a note, not a crash).
+        let dir2 = bundle_scratch(
+            "missingicon",
+            "name = \"p\"\n",
+            "module Main exposing (main, bundle)\n\
+             bundle = Bundle.default |> Bundle.withIcon \"nope.png\"\nmain = 0\n",
+        );
+        let id2 = resolve_bundle_identity(&dir2).unwrap();
+        assert_eq!(id2.icon.as_deref(), Some("nope.png"));
+        assert!(bundle_icon_source(&dir2, &id2).is_none());
+        let _ = std::fs::remove_dir_all(&dir2);
     }
 
     #[test]
