@@ -449,11 +449,12 @@ view model =
             [ hid "app-shell"
             , Ui.width Ui.fill
 
-            -- the whole app is exactly one viewport tall; `vh 100` pins the shell
-            -- so the header + composer stay put and the message panel owns the
-            -- scrolling.
-            , Ui.height (Ui.vh 100)
-            , Ui.clip
+            -- `height fill` (not `vh 100 + clip`): fills the viewport so the
+            -- message panel owns the scrolling when the history is long, but lets
+            -- the shell grow and the page scroll on a short phone viewport rather
+            -- than clipping the composer off the bottom — `vh 100 + clip` pinned
+            -- the height and cut the composer off below the fold.
+            , Ui.height Ui.fill
             , Background.color pageBg
             , Font.family "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
             , Font.color textDark

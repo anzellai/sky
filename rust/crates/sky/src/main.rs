@@ -1565,8 +1565,14 @@ struct {{NAME}}App: App {
 
     var body: some Scene {
         WindowGroup {
+            // Respect the device safe area (status bar / notch at the top, home
+            // indicator at the bottom) so the app's header sits below the clock
+            // and a bottom button/composer row is not clipped by the home
+            // indicator. Only the KEYBOARD safe area is ignored, so the web view
+            // keeps its own height when the keyboard appears (the page scrolls
+            // its own content) rather than being shoved upward.
             WebView(url: Self.appURL)
-                .ignoresSafeArea()
+                .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 }

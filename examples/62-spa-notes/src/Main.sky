@@ -473,10 +473,13 @@ view model =
             [ hid "app-shell"
             , Ui.width Ui.fill
 
-            -- the whole app is exactly one viewport tall; `vh 100` pins the shell
-            -- so the header stays put and the sidebar/editor own their scrolling.
-            , Ui.height (Ui.vh 100)
-            , Ui.clip
+            -- `height fill` (not `vh 100 + clip`) fills the viewport when content
+            -- is short — the base CSS makes the app root at least 100vh — but LETS
+            -- THE SHELL GROW and the page scroll when it isn't: on a phone the
+            -- sidebar + editor stack and together exceed the viewport, so the
+            -- Save/Delete row must stay reachable. `vh 100 + clip` pinned the
+            -- height and cut the buttons off below the fold.
+            , Ui.height Ui.fill
             , Background.color pageBg
             , Font.family "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
             , Font.color textDark
@@ -499,7 +502,6 @@ view model =
                 [ hid "main"
                 , Ui.width Ui.fill
                 , Ui.height Ui.fill
-                , Ui.clip
                 ]
                 [ sidebar model
                 , editor model
