@@ -688,6 +688,7 @@ Declare an optional top-level `bundle` binding with the `Std.Bundle` `withX`
 builder:
 
 ```elm
+-- doc-example: skip  (illustrative — init/update/view/subscriptions elided)
 module Main exposing (main, bundle)
 
 import Std.Bundle as Bundle exposing (Bundle)
