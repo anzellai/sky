@@ -1,0 +1,101 @@
+module Main exposing (main)
+
+-- Acceptance fixture for the B1 read-set / write-set extension of
+-- `sky spa-partition`. It type-checks clean and exercises every I/O class the
+-- analysis must derive for a SERVER branch:
+--
+--   * `Inc`        — pure → CLIENT. No RPC I/O (client-local transition).
+--   * `Save`       — SERVER (references the env value `readEnv`). FIELD-PRECISE:
+--                    it READS `model.seed` and WRITES `note` via
+--                    `{ model | note = readEnv ++ model.seed }` → read-set {seed},
+--                    write-set {note}, no Msg args.
+--   * `SaveTagged tag` — SERVER, with a Msg ARG. It reads no model field (the new
+--                    note is `readEnv ++ tag`, `tag` being the Msg arg) and writes
+--                    `note` → read-set {}, write-set {note}, Msg args {tag}.
+--   * `Bulk`       — SERVER, WHOLE-MODEL. It threads `model` into the server
+--                    helper `persistAll`, so the branch uses `model` opaquely →
+--                    read-set = whole model, write-set = whole model (the returned
+--                    model is a helper call, not a visible `{ model | … }`).
+--
+-- `readEnv` (a pure-typed env read) and `persistAll` (which reaches it) are both
+-- server-tainted top-level bindings.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Std.Spa as Spa
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Events as Ev
+
+
+readEnv : String
+readEnv =
+    System.getenvOr "NOTE" "hi"
+
+
+type alias Model =
+    { count : Int, note : String, seed : String }
+
+
+type Msg
+    = Inc
+    | Save
+    | SaveTagged String
+    | Bulk
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, note = "", seed = "s" }, Cmd.none )
+
+
+persistAll : Model -> Model
+persistAll m =
+    { m | note = readEnv ++ m.note }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Inc ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Save ->
+            ( { model | note = readEnv ++ model.seed }, Cmd.none )
+
+        SaveTagged tag ->
+            ( { model | note = readEnv ++ tag }, Cmd.none )
+
+        Bulk ->
+            ( persistAll model, Cmd.none )
+
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8, Ui.padding 12 ]
+            [ Ui.el [ Ev.onClick Inc ] (Ui.text ("count " ++ String.fromInt model.count))
+            , Ui.el [ Ev.onClick Save ] (Ui.text "save")
+            , Ui.el [ Ev.onClick (SaveTagged "x") ] (Ui.text "save tagged")
+            , Ui.el [ Ev.onClick Bulk ] (Ui.text "bulk")
+            , Ui.el [] (Ui.text model.note)
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

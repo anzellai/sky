@@ -33,6 +33,10 @@ fn compose_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-partition-compose")
 }
 
+fn io_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-partition-io")
+}
+
 #[test]
 fn fixture_partitions_into_the_expected_client_server_split() {
     let report = project::spa_partition::analyze(&repo_root(), &fixture_dir(), Some("Main"))
@@ -140,4 +144,67 @@ fn compose_fixture_partitions_with_msg_constant_precision() {
     let server = report.branches.iter().filter(|b| b.server).count();
     let client = report.branches.iter().filter(|b| !b.server).count();
     assert_eq!((server, client), (3, 2), "3 SERVER / 2 CLIENT");
+}
+
+/// B1 — per-SERVER-branch read-set / write-set (the RPC I/O). Asserts the EXACT
+/// derived sets on the crafted `spa-partition-io` fixture:
+///   * `Save`        → reads {seed}, writes {note}, no Msg args (field-precise).
+///   * `SaveTagged`  → reads {}, writes {note}, Msg args {tag} (arg becomes input).
+///   * `Bulk`        → whole-model reads AND writes (threads `model` into a helper).
+///   * `Inc`         → CLIENT, so no I/O at all.
+#[test]
+fn io_fixture_derives_exact_read_and_write_sets() {
+    let report = project::spa_partition::analyze(&repo_root(), &io_fixture_dir(), Some("Main"))
+        .expect("analysis should succeed on a clean-typechecking fixture");
+
+    assert_eq!(report.update_name.as_deref(), Some("Main.update"));
+    assert!(report.whole_update.is_none(), "per-branch must be available");
+    assert_eq!(report.branches.len(), 4, "four Msg branches");
+
+    let find = |prefix: &str| {
+        report
+            .branches
+            .iter()
+            .find(|b| b.msg == prefix || b.msg.starts_with(&format!("{prefix} ")))
+            .unwrap_or_else(|| {
+                panic!(
+                    "branch {prefix} not found; got {:?}",
+                    report.branches.iter().map(|b| &b.msg).collect::<Vec<_>>()
+                )
+            })
+    };
+
+    // CLIENT branch: pure, no round-trip → no I/O sets at all.
+    let inc = find("Inc");
+    assert!(!inc.server, "Inc must be CLIENT");
+    assert!(inc.io.is_none(), "a CLIENT branch carries no RPC I/O");
+
+    // Save — FIELD-PRECISE: reads `model.seed`, writes `note`, no Msg args.
+    let save = find("Save");
+    assert!(save.server, "Save must be SERVER");
+    let io = save.io.as_ref().expect("SERVER branch has I/O sets");
+    assert!(!io.reads_whole_model, "Save reads a specific field, not the whole model");
+    assert_eq!(io.read_fields, vec!["seed".to_string()], "read-set = {{seed}}");
+    assert!(io.msg_args.is_empty(), "Save binds no Msg args");
+    assert!(!io.writes_whole_model, "Save writes a specific field, not the whole model");
+    assert_eq!(io.write_fields, vec!["note".to_string()], "write-set = {{note}}");
+
+    // SaveTagged tag — the Msg ARG is the RPC input; no model field is read.
+    let tagged = find("SaveTagged");
+    assert!(tagged.server, "SaveTagged must be SERVER");
+    let io = tagged.io.as_ref().expect("SERVER branch has I/O sets");
+    assert!(!io.reads_whole_model, "SaveTagged does not read the whole model");
+    assert!(io.read_fields.is_empty(), "SaveTagged reads no model field (input is the Msg arg)");
+    assert_eq!(io.msg_args, vec!["tag".to_string()], "Msg args = {{tag}}");
+    assert!(!io.writes_whole_model, "SaveTagged writes a specific field");
+    assert_eq!(io.write_fields, vec!["note".to_string()], "write-set = {{note}}");
+
+    // Bulk — WHOLE-MODEL both ways: `persistAll model` uses `model` opaquely
+    // (read) and returns a helper call, not a visible `{ model | … }` (write).
+    let bulk = find("Bulk");
+    assert!(bulk.server, "Bulk must be SERVER");
+    let io = bulk.io.as_ref().expect("SERVER branch has I/O sets");
+    assert!(io.reads_whole_model, "Bulk threads `model` into a helper → whole-model read");
+    assert!(io.writes_whole_model, "Bulk returns a helper call → whole-model write");
+    assert!(io.msg_args.is_empty(), "Bulk binds no Msg args");
 }

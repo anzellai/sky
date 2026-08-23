@@ -25,8 +25,8 @@
 //! lowerer consumes) — it never re-implements resolution or inference.
 
 use base::{DefId, ModuleId};
-use hir::{Body, Expr, ExprId, LocalDef, Pattern, Res, SkyDb};
-use std::collections::{HashMap, HashSet};
+use hir::{Body, Expr, ExprId, LocalDef, LocalId, PatId, Pattern, Res, SkyDb};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
@@ -332,11 +332,73 @@ fn record_res(res: &Res, acc: &mut Refs) {
 // The report.
 // ---------------------------------------------------------------------------
 
+/// The RPC read-set / write-set of a SERVER branch (B1). Client branches carry
+/// no I/O (`BranchVerdict::io == None`) — they run locally with no round-trip.
+///
+/// The read-set (Model fields read + Msg args bound) becomes the RPC *request*;
+/// the write-set (Model fields written) becomes the RPC *response*. Both are
+/// **over-approximated to the whole Model** when the branch uses `model`
+/// opaquely (threads it into a helper, returns a fresh record, …) — a bigger
+/// payload, never a wrong value. Under-approximating reads/writes would be a
+/// correctness bug, so on any ambiguity we include MORE (`*_whole_model`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BranchIo {
+    /// The branch reads `model` opaquely → the request must carry EVERY field.
+    pub reads_whole_model: bool,
+    /// Model fields read via `model.field` (sorted, deduped). Ignored for the
+    /// request shape when `reads_whole_model` is set (whole model subsumes them).
+    pub read_fields: Vec<String>,
+    /// Msg args the arm pattern binds (`ToggleTodo id` → `["id"]`) — RPC inputs
+    /// that are NOT model fields. In source (binding) order.
+    pub msg_args: Vec<String>,
+    /// The branch's returned model flows out opaquely (a helper call / a fresh
+    /// record) → the response must carry EVERY field.
+    pub writes_whole_model: bool,
+    /// Model fields written via `{ model | f = … }` in tail position (sorted,
+    /// deduped). Ignored for the response shape when `writes_whole_model` is set.
+    pub write_fields: Vec<String>,
+}
+
+impl BranchIo {
+    /// The RPC request shape (`in: …`) — read-set fields ∪ Msg args.
+    fn render_in(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.reads_whole_model {
+            parts.push("<whole model>".to_string());
+        } else if !self.read_fields.is_empty() {
+            parts.push(fmt_set(&self.read_fields));
+        }
+        if !self.msg_args.is_empty() {
+            parts.push(fmt_set(&self.msg_args));
+        }
+        if parts.is_empty() {
+            "{}".to_string()
+        } else {
+            parts.join(" + ")
+        }
+    }
+    /// The RPC response shape (`out: …`) — write-set fields.
+    fn render_out(&self) -> String {
+        if self.writes_whole_model {
+            "<whole model>".to_string()
+        } else {
+            fmt_set(&self.write_fields)
+        }
+    }
+}
+
+fn fmt_set(items: &[String]) -> String {
+    format!("{{{}}}", items.join(", "))
+}
+
 /// One `update` branch's verdict.
 pub struct BranchVerdict {
     pub msg: String,
     pub server: bool,
     pub reason: String,
+    /// The RPC read-set / write-set — `Some` for SERVER branches (the derived
+    /// RPC I/O), `None` for CLIENT branches (no round-trip, so no I/O sets).
+    pub io: Option<BranchIo>,
 }
 
 /// A server-tainted top-level binding (excluded from the client build).
@@ -391,12 +453,30 @@ impl SpaPartitionReport {
                 .max(4);
             for b in &self.branches {
                 let tag = if b.server { "SERVER" } else { "CLIENT" };
-                o.push_str(&format!(
-                    "  {tag}  {:<width$}  {}\n",
-                    b.msg,
-                    b.reason,
-                    width = w
-                ));
+                match &b.io {
+                    // SERVER branch: lead with the derived RPC I/O, reason below.
+                    Some(io) => {
+                        o.push_str(&format!(
+                            "  {tag}  {:<width$}  in: {:<24}  out: {}\n",
+                            b.msg,
+                            io.render_in(),
+                            io.render_out(),
+                            width = w
+                        ));
+                        o.push_str(&format!(
+                            "          {:<width$}  {}\n",
+                            "",
+                            b.reason,
+                            width = w
+                        ));
+                    }
+                    None => o.push_str(&format!(
+                        "  {tag}  {:<width$}  {}\n",
+                        b.msg,
+                        b.reason,
+                        width = w
+                    )),
+                }
             }
             o.push('\n');
         }
@@ -832,9 +912,25 @@ fn classify_update_body(
     notes: &mut Vec<String>,
 ) {
     // Read the typed HIR table for this def (the same `BodyTypes.exprs` the
-    // lowerer consumes) — proves the analysis runs over TYPED hir, and lets the
-    // inline-force reason be precise.
-    let _types = ty::Typer::new(db).body_types(module, def, body);
+    // lowerer consumes) — proves the analysis runs over TYPED hir, lets the
+    // inline-force reason be precise, and gives the Model field list (from the
+    // `( Model, Cmd msg )` result type) for the whole-model I/O over-approx.
+    let types = ty::Typer::new(db).body_types(module, def, body);
+    let model_fields = model_fields_from_result(&types.result);
+    let model_local = model_param_local(body);
+    // Source text of the update module, for slicing Msg-arg binder names out of
+    // their pattern spans (a `Pattern::Var` carries a `LocalId`, not a name).
+    let src = db.module_parse(module).syntax().text().to_string();
+    if model_local.is_none() {
+        notes.push(
+            "could not identify `update`'s `model` parameter — server-branch read/write sets are over-approximated to the whole model.".into(),
+        );
+    }
+    if model_fields.is_none() {
+        notes.push(
+            "could not recover the Model field list — whole-model I/O is shown without enumerating fields.".into(),
+        );
+    }
 
     let Some(root) = body.root else {
         return;
@@ -870,7 +966,9 @@ fn classify_update_body(
             db: Some(db),
             update_def: Some(def),
         };
-        classify_case_arms(db, graph, body, arms, &shared, &ctx, branches);
+        classify_case_arms(
+            db, graph, body, arms, &shared, &ctx, model_local, &src, branches,
+        );
     }
 }
 
@@ -890,6 +988,7 @@ struct ArmFacts {
 /// FFI / non-`update` server callee / a generic `update` use) OR it scoped-calls
 /// `update <S>` where arm `S` is server. Iterated to a fixpoint (arms compose
 /// arms; cycles terminate). Match scoped-call names to arm keys by name.
+#[allow(clippy::too_many_arguments)]
 fn classify_case_arms(
     db: &dyn SkyDb,
     graph: &Graph,
@@ -897,6 +996,8 @@ fn classify_case_arms(
     arms: &[hir::CaseBranch],
     shared: &Refs,
     ctx: &CollectCtx,
+    model_local: Option<LocalId>,
+    src: &str,
     out: &mut Vec<BranchVerdict>,
 ) {
     let facts: Vec<ArmFacts> = arms
@@ -951,7 +1052,8 @@ fn classify_case_arms(
         }
     }
 
-    // Emit verdicts with a helpful reason.
+    // Emit verdicts with a helpful reason. SERVER branches also carry their
+    // derived RPC read-set / write-set (B1); CLIENT branches need no I/O.
     for i in 0..n {
         let f = &facts[i];
         if let Some(r) = &direct[i] {
@@ -959,12 +1061,14 @@ fn classify_case_arms(
                 msg: f.label.clone(),
                 server: true,
                 reason: r.clone(),
+                io: Some(compute_branch_io(body, arms[i].body, arms[i].pat, model_local, src)),
             });
         } else if server[i] {
             out.push(BranchVerdict {
                 msg: f.label.clone(),
                 server: true,
                 reason: compose_reason(&f.refs.scoped_updates, &by_name, &server, &direct),
+                io: Some(compute_branch_io(body, arms[i].body, arms[i].pat, model_local, src)),
             });
         } else {
             let reason = match f.refs.client_effect_note() {
@@ -975,8 +1079,328 @@ fn classify_case_arms(
                 msg: f.label.clone(),
                 server: false,
                 reason,
+                io: None,
             });
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// B1 — per-server-branch read-set / write-set (the RPC I/O).
+// ---------------------------------------------------------------------------
+
+/// Compute the RPC read-set / write-set for ONE `update` arm (§13-§14). Walks
+/// the arm body over the SAME HIR the verdict used:
+///   * read-set  = every `field` in `Access(Var(model), field)`, PLUS the Msg
+///     args the arm pattern binds.
+///   * write-set = every `field` key of a tail `Update { base = Var(model), … }`.
+///   * OVER-APPROXIMATE to the whole Model (sound) when `model` is used opaquely
+///     — any `Var(model)` that is NOT the base of an `Access`/`Update` nor a bare
+///     model returned in the final `(model, cmd)` tuple ⇒ `reads_whole_model`;
+///     a returned model that is a fresh `Record` or flows through a helper ⇒
+///     `writes_whole_model`. Under-approximating is a correctness bug — unknown
+///     ⇒ send more (§14 B1).
+fn compute_branch_io(
+    body: &Body,
+    arm_body: ExprId,
+    pat: PatId,
+    model_local: Option<LocalId>,
+    src: &str,
+) -> BranchIo {
+    // Writes first — the tail walk also records the bare-model returns that the
+    // read walk must NOT count as opaque uses.
+    let mut write_fields: BTreeSet<String> = BTreeSet::new();
+    let mut writes_whole = false;
+    let mut allowed_bare: HashSet<ExprId> = HashSet::new();
+    collect_writes_tail(
+        body,
+        arm_body,
+        model_local,
+        &mut write_fields,
+        &mut writes_whole,
+        &mut allowed_bare,
+    );
+
+    let mut read_fields: BTreeSet<String> = BTreeSet::new();
+    let mut reads_whole = false;
+    collect_reads(
+        body,
+        arm_body,
+        model_local,
+        &allowed_bare,
+        &mut read_fields,
+        &mut reads_whole,
+    );
+
+    // If we could not identify the `model` parameter at all, we cannot bound the
+    // read/write sets — over-approximate BOTH to the whole model (sound).
+    if model_local.is_none() {
+        reads_whole = true;
+        writes_whole = true;
+    }
+
+    BranchIo {
+        reads_whole_model: reads_whole,
+        read_fields: read_fields.into_iter().collect(),
+        msg_args: msg_arg_names(body, pat, src),
+        writes_whole_model: writes_whole,
+        write_fields: write_fields.into_iter().collect(),
+    }
+}
+
+/// Is expression `e` the bare model parameter (`Var(Res::Local(model))`)?
+fn is_model_var(body: &Body, e: ExprId, model_local: Option<LocalId>) -> bool {
+    matches!(&body.exprs[e], Expr::Var(Res::Local(l)) if Some(*l) == model_local)
+}
+
+/// Walk the arm body for the READ-SET. `Access(model, f)` records `f`; the model
+/// base of an `Update` and the bare-model tail returns (`allowed_bare`) are the
+/// only permitted `model` occurrences — any OTHER `Var(model)` is an opaque use
+/// and forces `reads_whole` (sound over-approximation).
+fn collect_reads(
+    body: &Body,
+    e: ExprId,
+    model_local: Option<LocalId>,
+    allowed_bare: &HashSet<ExprId>,
+    read_fields: &mut BTreeSet<String>,
+    reads_whole: &mut bool,
+) {
+    macro_rules! go {
+        ($x:expr) => {
+            collect_reads(body, $x, model_local, allowed_bare, read_fields, reads_whole)
+        };
+    }
+    match &body.exprs[e] {
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Chr(_)
+        | Expr::Bool(_)
+        | Expr::Unit
+        | Expr::Accessor(_)
+        | Expr::Error => {}
+        Expr::Access(base, field) => {
+            if is_model_var(body, *base, model_local) {
+                // `model.field` — a precise field read.
+                read_fields.insert(field.as_str().to_string());
+            } else {
+                // e.g. `model.ui.newTitle` — the inner `model.ui` records "ui".
+                go!(*base);
+            }
+        }
+        Expr::Update { base, fields } => {
+            // `{ model | … }` — the model base is a WRITE base, not an opaque
+            // read; skip it. A non-model base is walked normally.
+            if !is_model_var(body, *base, model_local) {
+                go!(*base);
+            }
+            for (_, v) in fields {
+                go!(*v);
+            }
+        }
+        Expr::Var(res) => {
+            if let Res::Local(l) = res {
+                if Some(*l) == model_local && !allowed_bare.contains(&e) {
+                    // An opaque use of `model` (helper arg, list element, …).
+                    *reads_whole = true;
+                }
+            }
+        }
+        Expr::List(xs) | Expr::Tuple(xs) => {
+            for x in xs {
+                go!(*x);
+            }
+        }
+        Expr::Record(fields) => {
+            for (_, x) in fields {
+                go!(*x);
+            }
+        }
+        Expr::Negate(x) => go!(*x),
+        Expr::Lambda { body: b, .. } => go!(*b),
+        Expr::Call(callee, args) => {
+            go!(*callee);
+            for a in args {
+                go!(*a);
+            }
+        }
+        Expr::Binop { lhs, rhs, .. } => {
+            go!(*lhs);
+            go!(*rhs);
+        }
+        Expr::If { arms, els } => {
+            for (c, t) in arms {
+                go!(*c);
+                go!(*t);
+            }
+            go!(*els);
+        }
+        Expr::Let { defs, body: b } => {
+            for d in defs {
+                go!(d.body);
+            }
+            go!(*b);
+        }
+        Expr::Case { subject, branches } => {
+            go!(*subject);
+            for br in branches {
+                go!(br.body);
+            }
+        }
+    }
+}
+
+/// Walk the arm body's TAIL positions for the WRITE-SET. The tail of an
+/// `update` arm is the `(model', cmd)` tuple (possibly under `let`/`if`/`case`).
+/// A tail `{ model | … }` records its field keys; a bare `model` is a no-write
+/// return (recorded in `allowed_bare` so the read walk does not count it as
+/// opaque); a fresh `Record` or any other shape (a helper call producing the
+/// model) ⇒ `writes_whole`.
+fn collect_writes_tail(
+    body: &Body,
+    e: ExprId,
+    model_local: Option<LocalId>,
+    write_fields: &mut BTreeSet<String>,
+    writes_whole: &mut bool,
+    allowed_bare: &mut HashSet<ExprId>,
+) {
+    match &body.exprs[e] {
+        Expr::Tuple(xs) if xs.len() == 2 => {
+            let m = xs[0];
+            match &body.exprs[m] {
+                Expr::Update { base, fields } if is_model_var(body, *base, model_local) => {
+                    for (n, _) in fields {
+                        write_fields.insert(n.as_str().to_string());
+                    }
+                }
+                Expr::Var(Res::Local(l)) if Some(*l) == model_local => {
+                    // Bare `( model, cmd )` — returns model unchanged, writes
+                    // nothing. Mark so the read walk does not over-approximate.
+                    allowed_bare.insert(m);
+                }
+                // A fresh record, or `helper model` / any other producer — the
+                // written shape is not a visible `{ model | … }`, so be sound.
+                _ => *writes_whole = true,
+            }
+        }
+        Expr::Let { body: b, .. } => {
+            collect_writes_tail(body, *b, model_local, write_fields, writes_whole, allowed_bare)
+        }
+        Expr::If { arms, els } => {
+            for (_, t) in arms {
+                collect_writes_tail(body, *t, model_local, write_fields, writes_whole, allowed_bare);
+            }
+            collect_writes_tail(body, *els, model_local, write_fields, writes_whole, allowed_bare);
+        }
+        Expr::Case { branches, .. } => {
+            for br in branches {
+                collect_writes_tail(
+                    body, br.body, model_local, write_fields, writes_whole, allowed_bare,
+                );
+            }
+        }
+        // The arm did not evaluate to a recognizable `(model', cmd)` tuple (e.g.
+        // it delegates to a helper returning the whole pair) — be conservative.
+        _ => *writes_whole = true,
+    }
+}
+
+/// The Msg args an arm pattern binds, in source order (`ToggleTodo id` →
+/// `["id"]`; `StartEdit id current` → `["id", "current"]`). Names are sliced
+/// from each binder's source span (`Pattern::Var` carries a `LocalId`, not a
+/// name); a `Record`-destructure binder already carries its field name.
+fn msg_arg_names(body: &Body, pat: PatId, src: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Pattern::Ctor { args, .. } = &body.pats[pat] {
+        for a in args {
+            collect_binder_names(body, *a, src, &mut out);
+        }
+    }
+    out
+}
+
+fn collect_binder_names(body: &Body, pat: PatId, src: &str, out: &mut Vec<String>) {
+    match &body.pats[pat] {
+        Pattern::Var(_) => {
+            if let Some(name) = slice_binder_name(body, pat, src) {
+                out.push(name);
+            }
+        }
+        Pattern::Alias(inner, _) => {
+            // `p as name` — take the alias name plus any binders inside `p`.
+            if let Some(name) = slice_binder_name(body, pat, src) {
+                out.push(name);
+            }
+            collect_binder_names(body, *inner, src, out);
+        }
+        Pattern::Record(binders) => {
+            for (n, _) in binders {
+                out.push(n.as_str().to_string());
+            }
+        }
+        Pattern::Tuple(ps) | Pattern::List(ps) => {
+            for p in ps {
+                collect_binder_names(body, *p, src, out);
+            }
+        }
+        Pattern::Cons(h, t) => {
+            collect_binder_names(body, *h, src, out);
+            collect_binder_names(body, *t, src, out);
+        }
+        Pattern::Ctor { args, .. } => {
+            for a in args {
+                collect_binder_names(body, *a, src, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Slice a binder's identifier text out of the module source via its pattern
+/// span. Returns `None` if the span is absent or the sliced text is not a plain
+/// identifier (e.g. a recovery node) — never fabricates a name.
+fn slice_binder_name(body: &Body, pat: PatId, src: &str) -> Option<String> {
+    let span = body.pat_span(pat)?;
+    let (start, end) = (span.range.0 as usize, span.range.1 as usize);
+    let text = src.get(start..end)?.trim();
+    if !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
+        && text.chars().next().is_some_and(|c| !c.is_numeric())
+    {
+        Some(text.to_string())
+    } else {
+        None
+    }
+}
+
+/// The Model's field list from the `update` result type `( Model, Cmd msg )`.
+/// `None` when the shape is not the expected TEA tuple (then callers print
+/// "whole model" without enumerating).
+fn model_fields_from_result(result: &Option<ty::Ty>) -> Option<Vec<String>> {
+    if let Some(ty::Ty::Tuple(xs)) = result {
+        if xs.len() == 2 {
+            if let ty::Ty::Record(fields, _) = &xs[0] {
+                let mut names: Vec<String> =
+                    fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+                names.sort();
+                return Some(names);
+            }
+        }
+    }
+    None
+}
+
+/// The `LocalId` of `update`'s second parameter (`model`), if it is a plain
+/// `Pattern::Var`. `None` for a destructured / aliased model param — callers
+/// then over-approximate the I/O sets to the whole model.
+fn model_param_local(body: &Body) -> Option<LocalId> {
+    let pat = *body.params.get(1)?;
+    match &body.pats[pat] {
+        Pattern::Var(l) => Some(*l),
+        Pattern::Alias(_, l) => Some(*l),
+        _ => None,
     }
 }
 
@@ -1098,6 +1522,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             msg: label.to_string(),
             server: true,
             reason,
+            io: None,
         };
     }
     // Deterministic: pick the lowest-id server callee.
@@ -1118,6 +1543,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             msg: label.to_string(),
             server: true,
             reason: format!("references {cn} ({origin})"),
+            io: None,
         };
     }
     // Client — note a client effect if present.
@@ -1129,6 +1555,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         msg: label.to_string(),
         server: false,
         reason,
+        io: None,
     }
 }
 
