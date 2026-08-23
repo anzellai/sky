@@ -58,6 +58,11 @@ fn multimodule_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-split-multimodule/src/Main.sky")
 }
 
+fn clientonly_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-split-clientonly/src/Main.sky")
+}
+
 fn scratch() -> PathBuf {
     let uniq = format!(
         "sky-spasplit-{}-{}",
@@ -158,6 +163,68 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
     assert!(
         out.join("frontend/dist/index.html").is_file(),
         "frontend build must stage dist/index.html"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A client-ONLY app (every `update` branch pure, no effect kernels) still
+/// spa-splits into a buildable backend. Regression for the empty-route-list bug:
+/// with no RPC/push routes the generated `Server.listen` list opened
+/// `[ , Server.static …]` — a leading comma the parser rejected — so `sky build`
+/// on the generated backend failed with a PARSE ERROR. The static-asset route is
+/// now a normal list entry, so the `[` always has a first element to attach to.
+#[test]
+fn client_only_app_generates_a_buildable_static_only_backend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            clientonly_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed on a client-only app");
+
+    // The backend has NO RPC routes (nothing was server-tainted) but MUST still
+    // serve static assets — and the generated list must be well-formed.
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    assert!(
+        back.contains("Server.static \"/\" \"../frontend/dist\""),
+        "backend must still serve the frontend's static assets"
+    );
+    assert!(
+        !back.contains("/_rpc/"),
+        "a client-only app must generate no RPC endpoints"
+    );
+    // The exact defect: a list opening with a leading comma.
+    assert!(
+        !back.contains("[\n        , Server.static") && !back.contains("[ , Server.static"),
+        "backend Server.listen list must not open with a leading comma"
+    );
+
+    // The real proof: the generated backend BUILDS (it used to fail to parse).
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.success(),
+        "client-only backend must build (regression: leading-comma parse error)"
+    );
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend build must produce sky-out/app"
     );
 
     let _ = std::fs::remove_dir_all(&out);

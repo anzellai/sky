@@ -1,0 +1,70 @@
+module Main exposing (main)
+
+-- Auto-split INPUT with NO effects: every `update` branch is pure, so the split
+-- has ZERO server branches. `sky spa-split` still emits a backend, but it only
+-- serves the wasm client's static assets (no RPC, no push). This is the
+-- regression fixture for the empty-route-list bug: with no RPC/push routes to
+-- seed the opening bracket, the generated backend's listen list used to begin
+-- with a stray leading comma before the static route, which the parser rejects.
+-- (The spa-split generator copies this module's doc comment into the backend
+-- verbatim, so this text is deliberately worded to not contain that literal.)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { n : Int }
+
+
+type Msg
+    = Bump
+    | Reset
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        Reset ->
+            ( { model | n = 0 }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8 ]
+            [ Ui.text ("n = " ++ String.fromInt model.n)
+            , Ui.button [] { onPress = Just Bump, label = Ui.text "Bump" }
+            , Ui.button [] { onPress = Just Reset, label = Ui.text "Reset" }
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )
