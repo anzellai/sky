@@ -1,0 +1,41 @@
+module Domain exposing (Message, messageCodec, messageListCodec)
+
+-- The PURE wire contract — the `Message` record and its hand-written
+-- `Codec.object` codec. This module reaches no effect, so the auto-split copies
+-- it VERBATIM into BOTH trees (wasm frontend + native backend): one type, one
+-- codec, one wire shape, no drift.
+--
+-- It is used on BOTH sides of the real-time push:
+--   * the SERVER encodes a freshly-persisted `Message` to a JSON string
+--     (`Codec.toJson messageCodec msg`) before `Cmd.publish`-ing it to the room
+--     topic, so the payload is a plain, self-describing string on the wire;
+--   * the CLIENT decodes that string back to a `Message`
+--     (`Codec.fromJson messageCodec raw`) when the SSE frame arrives.
+-- `Shared.sky` (generated) also imports this module for the per-RPC
+-- request/response codecs rather than re-declaring `Message`.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+
+-- `id` is assigned by the database (a serial primary key) and `ts` is stamped
+-- server-side from the wall clock; the client never invents either.
+type alias Message =
+    { id : Int
+    , author : String
+    , body : String
+    , ts : Int
+    }
+
+
+messageCodec : Codec Message
+messageCodec =
+    Codec.object Message |> Codec.field "id" .id Codec.int
+        |> Codec.field "author" .author Codec.string
+        |> Codec.field "body" .body Codec.string
+        |> Codec.field "ts" .ts Codec.int
+        |> Codec.buildObject
+
+
+messageListCodec : Codec (List Message)
+messageListCodec =
+    Codec.list messageCodec

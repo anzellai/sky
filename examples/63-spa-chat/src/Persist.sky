@@ -1,0 +1,144 @@
+module Persist exposing (loadHistory, appendMessage)
+
+-- The EFFECTFUL persistence layer — every def here reaches a `Db_*` kernel (or
+-- `Time.now`), so the auto-split marks the WHOLE module server-tainted and routes
+-- it to the backend ONLY (docs/skyspa/auto-split.md §17). It is never emitted
+-- into the wasm frontend and never imported by it, so no database handle,
+-- connection string, or store ever reaches the browser — the security spine of
+-- the split.
+--
+-- The two exported helpers are the effect surface the entry module's server
+-- branches call:
+--   * `loadHistory ()`         — the boot `Load` RPC: the ordered chat history.
+--   * `appendMessage a b`      — the `Send` RPC: sanitize, insert, and RETURN the
+--                                newly-created row (its DB-assigned id + server ts)
+--                                so `Send` can publish exactly that row to the room.
+--
+-- SECURITY: the client is untrusted. `sanitize` trims + clamps author and body
+-- server-side; the store assigns the id (a serial PK) and the server stamps `ts`
+-- from its own clock, so a client-sent id, timestamp, or oversized field can
+-- never dictate durable state.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Time as Time
+import Sky.Core.Error as Error exposing (Error)
+import Std.Log exposing (println)
+import Std.Codec as Codec
+import Std.Db as Db exposing (Db)
+import Std.Db.Store as Store exposing (Store)
+import Domain exposing (Message)
+
+
+-- `Codec.auto` reflects the record into columns (id, author, body, ts);
+-- `Store.serial "id"` makes id an auto-increment PK the DATABASE fills, so
+-- `insert` omits it and a client-sent id is structurally impossible to honour.
+messagesStore : Store Message
+messagesStore =
+    Store.fromCodec
+        "messages"
+        (Codec.auto { id = 0, author = "", body = "", ts = 0 })
+        |> Store.serial "id"
+
+
+-- A memoised CAF: `Db.connect ()` opens exactly one shared pool for the whole
+-- process, and — the first time it is forced — creates the `messages` table
+-- (idempotent), so the generated backend needs no separate boot step.
+dbConn : Db
+dbConn =
+    case Task.run (Db.connect ()) of
+
+        Ok c ->
+            let
+                _ = Task.run (Store.create c messagesStore)
+            in
+                c
+
+        Err e ->
+            let
+                _ =
+                    println
+                        ("[FATAL] spa-chat: cannot open db: " ++ Error.toString e)
+            in
+                System.exit 1
+
+
+-- Server-side validation: trim + clamp. The server never stores a client string
+-- verbatim. A display name is short; a chat line is a sentence, not an essay.
+sanitizeName : String -> String
+sanitizeName raw =
+    let
+        trimmed = String.left 40 (String.trim raw)
+    in
+        if String.isEmpty trimmed then
+            "anon"
+
+        else
+            trimmed
+
+
+sanitizeBody : String -> String
+sanitizeBody raw =
+    String.left 500 (String.trim raw)
+
+
+-- The server's own wall clock (an effect — fine, this whole module is
+-- server-side). Millis since the epoch; the client only ever formats it.
+nowMillis : () -> Int
+nowMillis _ =
+    case Task.run (Time.now ()) of
+
+        Ok t ->
+            t
+
+        Err _ ->
+            0
+
+
+-- Re-read the authoritative, ordered chat history from the store (oldest first).
+loadHistory : () -> List Message
+loadHistory _ =
+    case Task.run
+             (Store.query messagesStore |> Store.orderAsc "id"
+                 |> Store.toList dbConn) of
+
+        Ok rows ->
+            rows
+
+        Err _ ->
+            []
+
+
+-- Insert one chat line from a client's draft and RETURN the durable row: the
+-- DB-assigned serial `id` plus the server-stamped `ts`. The `Send` branch
+-- publishes exactly this row to the room topic, so every connected client
+-- (including the sender, via the echo) renders the same authoritative message.
+appendMessage : String -> String -> Message
+appendMessage author body =
+    let
+        cleanAuthor = sanitizeName author
+        cleanBody = sanitizeBody body
+        ts = nowMillis ()
+        -- `insert` returns the row's freshly-assigned serial id (Store.insert :
+        -- Db -> Store a -> a -> Task Error Int). The `id = 0` we pass is ignored
+        -- because the column is `serial`.
+        newId =
+            case Task.run
+                     (Store.insert
+                         dbConn
+                         messagesStore
+                         { id = 0
+                         , author = cleanAuthor
+                         , body = cleanBody
+                         , ts = ts
+                         }) of
+
+                Ok assigned ->
+                    assigned
+
+                Err _ ->
+                    0
+    in
+        { id = newId, author = cleanAuthor, body = cleanBody, ts = ts }
