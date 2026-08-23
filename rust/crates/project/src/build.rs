@@ -1231,6 +1231,14 @@ fn is_externally_consumed_section(section: &str) -> bool {
         | "dependencies"
         | "go.dependencies"
         | "lib"
+        // Cross-platform packaging identity, read by `sky build --target
+        // <ios|android|desktop>` (main.rs resolve_bundle_identity) — never by the
+        // runtime. A build-time-only section, so it is silenced here rather than
+        // wired into accepted_config_keys / the runtime parse arms (which would
+        // draw it into the config-surface census it has no reader for).
+        // (Per-platform `[bundle.<target>]` overrides are a later phase and are
+        // deliberately NOT silenced yet — until they are read, one should warn.)
+        | "bundle"
     )
 }
 

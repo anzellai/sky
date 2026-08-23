@@ -1188,10 +1188,8 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
 /// window is native. Built by shelling out to THIS `sky` binary so it reuses the
 /// full cgo/WebKit build path (`Webview.url` → cgo).
 fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
-    let app = project_dir
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "app".to_string());
+    let id = resolve_bundle_identity(project_dir)?;
+    let app = &id.display_name;
     // The shell PROJECT is generated in a temp dir, NOT under `out_dir`: the
     // project resolver refuses a sky.toml nested inside a `sky-out/` build tree
     // ("no .sky under src/"). Build there, then copy the binary into `out_dir`
@@ -1204,9 +1202,10 @@ fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, St
     let shell = std::env::temp_dir().join(format!("sky-desktop-shell-{}-{stamp}", std::process::id()));
     std::fs::create_dir_all(shell.join("src"))
         .map_err(|e| format!("create {}: {e}", shell.display()))?;
+    let shell_name = format!("{}-desktop", sanitize_pkg_segment(app));
     std::fs::write(
         shell.join("sky.toml"),
-        format!("name = \"{app}-desktop\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
+        format!("name = \"{shell_name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
     )
     .map_err(|e| format!("write sky.toml: {e}"))?;
     let title = format!("{app} — Desktop");
@@ -1292,6 +1291,104 @@ fn sanitize_pkg_segment(name: &str) -> String {
     s
 }
 
+/// The cross-platform packaging identity for a `--target` build. Every field is
+/// resolved from the optional `[bundle]` section of sky.toml (with per-platform
+/// `[bundle.ios|android|desktop]` overrides), and falls back to the project
+/// directory name when a field is absent — so an app with no `[bundle]` section
+/// builds exactly as before. Read ONLY by `sky build --target …`, never by the
+/// runtime (see `is_externally_consumed_section` in the project crate).
+#[derive(Debug)]
+struct BundleIdentity {
+    /// Human display name — CFBundleDisplayName / `android:label` / window title.
+    display_name: String,
+    /// Executable / `.app` / package-safe base name (capitalised, sanitised).
+    exe_name: String,
+    /// Reverse-DNS identifier — CFBundleIdentifier / the Android `package`.
+    bundle_id: String,
+    /// Marketing version — CFBundleShortVersionString / `android:versionName`.
+    short_version: String,
+    /// Build number — CFBundleVersion / `android:versionCode`.
+    build_number: String,
+}
+
+/// A syntactically valid reverse-DNS / Android package id: two or more
+/// dot-separated segments, each starting with a letter and otherwise
+/// alphanumeric or `_`. (Android rejects anything else outright; iOS is looser
+/// but we hold both to the same bar so one `id` works on every target.)
+fn valid_bundle_id(id: &str) -> bool {
+    let segs: Vec<&str> = id.split('.').collect();
+    segs.len() >= 2
+        && segs.iter().all(|s| {
+            let mut cs = s.chars();
+            cs.next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+}
+
+/// Resolve the packaging identity from the `[bundle]` section, falling back to
+/// the project directory name / version for any absent field. Errors only when a
+/// user-SUPPLIED `[bundle] id` is not a valid reverse-DNS id (a silent fallback
+/// there would ship an app under the wrong identifier).
+fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String> {
+    // Each `[bundle]` scalar is read with a LITERAL section+key so the
+    // config-surface census can resolve the pre-binary read (a wrapper taking
+    // the key as a parameter would be an unresolved read); blank counts as unset.
+    let nonblank = |v: String| if v.trim().is_empty() { None } else { Some(v) };
+    let name_cfg =
+        project::sky_toml_section_key(project_dir, "bundle", "name").and_then(nonblank);
+    let id_cfg = project::sky_toml_section_key(project_dir, "bundle", "id").and_then(nonblank);
+    let version_cfg =
+        project::sky_toml_section_key(project_dir, "bundle", "version").and_then(nonblank);
+    let build_cfg =
+        project::sky_toml_section_key(project_dir, "bundle", "build").and_then(nonblank);
+
+    let dir_name = project_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app".to_string());
+    let display_name = name_cfg.unwrap_or_else(|| dir_name.clone());
+    let seg = sanitize_pkg_segment(&display_name);
+
+    let bundle_id = match id_cfg {
+        Some(id) => {
+            let id = id.trim().to_string();
+            if !valid_bundle_id(&id) {
+                return Err(format!(
+                    "[bundle] id = \"{id}\" is not a valid reverse-DNS identifier \
+                     (need two or more dot-separated segments, each starting with a \
+                     letter — e.g. \"com.example.myapp\")."
+                ));
+            }
+            id
+        }
+        None => format!("sky.spa.{seg}"),
+    };
+
+    // Executable / .app basename: capitalise the last id segment (id is the
+    // stable identity; the display name may contain spaces/emoji the filesystem
+    // and Swift/Java would choke on).
+    let exe_seg = bundle_id.rsplit('.').next().unwrap_or(&seg);
+    let exe_name = {
+        let mut c = exe_seg.chars();
+        match c.next() {
+            Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
+            None => "App".to_string(),
+        }
+    };
+
+    let short_version = version_cfg
+        .unwrap_or_else(|| project::sky_toml_project_key(project_dir, "version", "1.0"));
+    let build_number = build_cfg.unwrap_or_else(|| "1".to_string());
+
+    Ok(BundleIdentity {
+        display_name,
+        exe_name,
+        bundle_id,
+        short_version,
+        build_number,
+    })
+}
+
 /// Generate a native Android WebView shell for the client and build a signed,
 /// installable APK, returning its path. Not a second copy of the app: a thin
 /// WebView over the SAME wasm client, loading it from the backend (client and
@@ -1300,13 +1397,12 @@ fn sanitize_pkg_segment(name: &str) -> String {
 /// Gradle, no Android Studio. Requires the SDK (checked before the build ran)
 /// plus a JDK on PATH.
 fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
-    let app = project_dir
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "app".to_string());
-    let seg = sanitize_pkg_segment(&app);
-    let package = format!("sky.spa.{seg}");
+    let id = resolve_bundle_identity(project_dir)?;
+    let package = &id.bundle_id;
     let pkg_path = package.replace('.', "/");
+    // versionCode must be an integer; a marketing "1.2.0" cannot be one, so map a
+    // non-integer build number to 1 (the user can set `[bundle] build = 7`).
+    let version_code = id.build_number.trim().parse::<u32>().unwrap_or(1).to_string();
 
     let root = out_dir.join("android");
     let java_dir = root.join("app/src/main/java").join(&pkg_path);
@@ -1317,21 +1413,23 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
     std::fs::write(
         root.join("app/src/main/AndroidManifest.xml"),
         ANDROID_MANIFEST
-            .replace("{{PACKAGE}}", &package)
-            .replace("{{LABEL}}", &app),
+            .replace("{{PACKAGE}}", package)
+            .replace("{{LABEL}}", &id.display_name)
+            .replace("{{VERSION_NAME}}", &id.short_version)
+            .replace("{{VERSION_CODE}}", &version_code),
     )
     .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
     std::fs::write(
         res_dir.join("strings.xml"),
-        ANDROID_STRINGS.replace("{{LABEL}}", &app),
+        ANDROID_STRINGS.replace("{{LABEL}}", &id.display_name),
     )
     .map_err(|e| format!("write strings.xml: {e}"))?;
     std::fs::write(
         java_dir.join("MainActivity.java"),
-        ANDROID_MAIN_ACTIVITY.replace("{{PACKAGE}}", &package),
+        ANDROID_MAIN_ACTIVITY.replace("{{PACKAGE}}", package),
     )
     .map_err(|e| format!("write MainActivity.java: {e}"))?;
-    let apk_name = format!("{seg}.apk");
+    let apk_name = format!("{}.apk", sanitize_pkg_segment(&id.exe_name));
     std::fs::write(
         root.join("build-apk.sh"),
         ANDROID_BUILD_APK.replace("{{APK}}", &apk_name),
@@ -1356,42 +1454,29 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
 /// the build ran). The simulator shares the host network, so it points at
 /// `http://localhost:8951/`.
 fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
-    let app = project_dir
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "app".to_string());
-    let seg = sanitize_pkg_segment(&app);
-    // Executable + .app basename: capitalise the sanitised segment.
-    let name = {
-        let mut c = seg.chars();
-        match c.next() {
-            Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
-            None => "App".to_string(),
-        }
-    };
-    let bundle_id = format!("sky.spa.{seg}");
+    let id = resolve_bundle_identity(project_dir)?;
+    let name = &id.exe_name;
 
     let root = out_dir.join("ios");
-    let src = root.join(&name);
+    let src = root.join(name);
     std::fs::create_dir_all(&src).map_err(|e| format!("create {}: {e}", src.display()))?;
-    std::fs::write(
-        src.join("App.swift"),
-        IOS_APP_SWIFT.replace("{{NAME}}", &name),
-    )
-    .map_err(|e| format!("write App.swift: {e}"))?;
+    std::fs::write(src.join("App.swift"), IOS_APP_SWIFT.replace("{{NAME}}", name))
+        .map_err(|e| format!("write App.swift: {e}"))?;
     std::fs::write(src.join("WebView.swift"), IOS_WEBVIEW_SWIFT)
         .map_err(|e| format!("write WebView.swift: {e}"))?;
     std::fs::write(
         src.join("Info.plist"),
         IOS_INFO_PLIST
-            .replace("{{NAME}}", &name)
-            .replace("{{DISPLAY}}", &app)
-            .replace("{{BUNDLE_ID}}", &bundle_id),
+            .replace("{{NAME}}", name)
+            .replace("{{DISPLAY}}", &id.display_name)
+            .replace("{{BUNDLE_ID}}", &id.bundle_id)
+            .replace("{{SHORT_VERSION}}", &id.short_version)
+            .replace("{{BUILD_NUMBER}}", &id.build_number),
     )
     .map_err(|e| format!("write Info.plist: {e}"))?;
     std::fs::write(
         root.join("build-app.sh"),
-        IOS_BUILD_APP.replace("{{NAME}}", &name),
+        IOS_BUILD_APP.replace("{{NAME}}", name),
     )
     .map_err(|e| format!("write build-app.sh: {e}"))?;
 
@@ -1456,8 +1541,8 @@ const IOS_INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <key>CFBundleIdentifier</key><string>{{BUNDLE_ID}}</string>
     <key>CFBundleExecutable</key><string>{{NAME}}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>{{SHORT_VERSION}}</string>
+    <key>CFBundleVersion</key><string>{{BUILD_NUMBER}}</string>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>17.0</string>
     <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
@@ -1488,7 +1573,9 @@ echo "OK -> build/{{NAME}}.app"
 
 const ANDROID_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="{{PACKAGE}}">
+    package="{{PACKAGE}}"
+    android:versionCode="{{VERSION_CODE}}"
+    android:versionName="{{VERSION_NAME}}">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -6026,5 +6113,71 @@ mod tests {
         // profiling on.
         let (_rest, prof) = parse_profile(&sw("app.sky --profile-dir out"));
         assert!(prof.is_some());
+    }
+
+    // ---- [bundle] cross-platform identity (Phase 1) ----------------------
+
+    fn bundle_scratch(name: &str, toml: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-bundle-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("sky.toml"), toml).unwrap();
+        dir
+    }
+
+    #[test]
+    fn valid_bundle_id_accepts_reverse_dns_and_rejects_junk() {
+        assert!(valid_bundle_id("com.acme.app"));
+        assert!(valid_bundle_id("dev.sky.my_app"));
+        assert!(valid_bundle_id("io.a.b.c"));
+        assert!(!valid_bundle_id("nodots")); // single segment
+        assert!(!valid_bundle_id("com.9acme.app")); // segment starts with digit
+        assert!(!valid_bundle_id("com..app")); // empty segment
+        assert!(!valid_bundle_id("com.acme app")); // space
+        assert!(!valid_bundle_id("com.acme-app")); // hyphen
+        assert!(!valid_bundle_id("")); // empty
+    }
+
+    #[test]
+    fn bundle_identity_falls_back_to_dir_name_with_no_section() {
+        let dir = bundle_scratch("nofield", "name = \"proj\"\nversion = \"1.2.3\"\n");
+        let id = resolve_bundle_identity(&dir).unwrap();
+        let dir_seg = sanitize_pkg_segment(&dir.file_name().unwrap().to_string_lossy());
+        assert_eq!(id.display_name, dir.file_name().unwrap().to_string_lossy());
+        assert_eq!(id.bundle_id, format!("sky.spa.{dir_seg}")); // derived default
+        assert_eq!(id.short_version, "1.2.3"); // falls back to project version
+        assert_eq!(id.build_number, "1"); // default
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bundle_identity_reads_the_section() {
+        let toml = "name = \"proj\"\nversion = \"1.0.0\"\n\n\
+                    [bundle]\nname = \"Sky Notes Pro\"\nid = \"com.acme.notes\"\n\
+                    version = \"2.3.0\"\nbuild = \"42\"\n";
+        let dir = bundle_scratch("section", toml);
+
+        let id = resolve_bundle_identity(&dir).unwrap();
+        assert_eq!(id.display_name, "Sky Notes Pro");
+        assert_eq!(id.bundle_id, "com.acme.notes");
+        assert_eq!(id.exe_name, "Notes"); // capitalised last id segment
+        assert_eq!(id.short_version, "2.3.0"); // [bundle] version wins over project
+        assert_eq!(id.build_number, "42");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bundle_identity_rejects_a_malformed_user_supplied_id() {
+        let dir = bundle_scratch("badid", "name = \"proj\"\n\n[bundle]\nid = \"notreversedns\"\n");
+        let err = resolve_bundle_identity(&dir).unwrap_err();
+        assert!(err.contains("reverse-DNS"), "error should explain the id rule: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
