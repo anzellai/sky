@@ -1,0 +1,699 @@
+module Main exposing (main)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Sky.Spa Kanban — a CLIENT-ONLY board that runs ENTIRELY in the browser (wasm).
+--
+-- There is NO server, NO database, NO Http, NO File, NO Task. Every `update`
+-- branch is a PURE, client-local state transition that returns `Cmd.none`, so
+-- interacting with the board makes ZERO network calls. All state lives in
+-- memory and is intentionally lost on reload — this is the "no server needed"
+-- tier: ship a folder of static files (index.html + main.wasm + wasm_exec.js)
+-- to any static host and it just runs.
+--
+-- The point of this example is RICH Std.Ui + VIEWPORT / SCROLL management:
+--   * a full-viewport shell (`Ui.vh 100`) with a fixed-height header bar and a
+--     board area that fills the rest (`Ui.height Ui.fill`),
+--   * lanes in a horizontal row that scrolls sideways when it overflows
+--     (`Ui.scrollbarX`) — the header never moves,
+--   * each lane's card list scrolls VERTICALLY within the lane
+--     (`Ui.scrollbarY`, `Ui.height Ui.fill`) — the page itself never scrolls,
+--   * a responsive `Ui.breakpoint Ui.mobile` layer so the chrome adapts to a
+--     narrow viewport.
+-- Every viewport/scroll decision carries a short comment where it is made.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Error as Error exposing (Error)
+import Std.Spa as Spa
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Html as Html
+
+
+
+-- ─── Model (100% in-memory — no codec, never leaves the browser) ────────────
+
+
+type alias Card =
+    { id : Int
+    , title : String
+    }
+
+
+type alias Lane =
+    { name : String
+    , cards : List Card
+
+    -- The per-lane "new card" draft. Ephemeral client state: editing it is a
+    -- pure `update` branch, so typing never touches the network.
+    , draft : String
+    }
+
+
+type alias Model =
+    { lanes : List Lane
+
+    -- A plain monotonic Int is the id source — NO Uuid / Random / Time kernel,
+    -- because those are effects. Pure code owns its own ids.
+    , nextId : Int
+    }
+
+
+-- Direction a card moves between adjacent lanes.
+type Dir
+    = MoveLeft
+    | MoveRight
+
+
+type Msg
+    = -- All PURE, client-local. Every branch returns `Cmd.none`.
+      DraftChanged Int String
+      -- laneIndex, text
+    | AddCard Int
+      -- laneIndex
+    | MoveCard Int Int Dir
+      -- cardId, fromLaneIndex, direction
+    | DeleteCard Int
+      -- cardId
+
+
+
+-- ─── init ───────────────────────────────────────────────────────────────────
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { lanes =
+            [ { name = "Backlog"
+              , draft = ""
+              , cards =
+                    [ { id = 1, title = "Sketch the board layout" }
+                    , { id = 2, title = "Pick a colour palette" }
+                    , { id = 3, title = "Write the README" }
+                    , { id = 4, title = "Add keyboard shortcuts" }
+                    , { id = 5, title = "Ship a dark theme" }
+                    ]
+              }
+            , { name = "In Progress"
+              , draft = ""
+              , cards =
+                    [ { id = 6, title = "Build the Std.Ui shell" }
+                    , { id = 7, title = "Wire up move / delete" }
+                    ]
+              }
+            , { name = "Done"
+              , draft = ""
+              , cards =
+                    [ { id = 8, title = "Scaffold the Spa.app" }
+                    , { id = 9, title = "Prove zero network calls" }
+                    ]
+              }
+            ]
+      , nextId = 10
+      }
+    , Cmd.none
+    )
+
+
+
+-- ─── update (every branch is pure — Cmd.none everywhere) ────────────────────
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        DraftChanged laneIdx text ->
+            ( { model
+                | lanes =
+                    mapLaneAt laneIdx (\lane -> { lane | draft = text }) model.lanes
+              }
+            , Cmd.none
+            )
+
+        AddCard laneIdx ->
+            let
+                trimmed =
+                    String.trim (draftAt laneIdx model.lanes)
+            in
+            if String.isEmpty trimmed then
+                -- Nothing to add — pure no-op, still zero network.
+                ( model, Cmd.none )
+
+            else
+                ( { model
+                    | nextId = model.nextId + 1
+                    , lanes =
+                        mapLaneAt laneIdx
+                            (\lane ->
+                                { lane
+                                    | draft = ""
+                                    , cards = lane.cards ++ [ { id = model.nextId, title = trimmed } ]
+                                }
+                            )
+                            model.lanes
+                  }
+                , Cmd.none
+                )
+
+        MoveCard cardId fromIdx dir ->
+            ( moveCard cardId fromIdx dir model, Cmd.none )
+
+        DeleteCard cardId ->
+            ( { model
+                | lanes =
+                    List.map
+                        (\lane -> { lane | cards = List.filter (\c -> c.id /= cardId) lane.cards })
+                        model.lanes
+              }
+            , Cmd.none
+            )
+
+
+
+-- ─── pure helpers ────────────────────────────────────────────────────────────
+
+
+mapLaneAt : Int -> (Lane -> Lane) -> List Lane -> List Lane
+mapLaneAt idx f lanes =
+    List.indexedMap
+        (\i lane ->
+            if i == idx then
+                f lane
+
+            else
+                lane
+        )
+        lanes
+
+
+draftAt : Int -> List Lane -> String
+draftAt idx lanes =
+    case laneAt idx lanes of
+        Just lane ->
+            lane.draft
+
+        Nothing ->
+            ""
+
+
+laneAt : Int -> List Lane -> Maybe Lane
+laneAt idx lanes =
+    List.head (List.drop idx lanes)
+
+
+findCard : Int -> List Lane -> Maybe Card
+findCard cardId lanes =
+    List.head
+        (List.filter (\c -> c.id == cardId)
+            (List.concatMap (\lane -> lane.cards) lanes)
+        )
+
+
+clampIdx : Int -> Int -> Int
+clampIdx maxIdx n =
+    if n < 0 then
+        0
+
+    else if n > maxIdx then
+        maxIdx
+
+    else
+        n
+
+
+moveCard : Int -> Int -> Dir -> Model -> Model
+moveCard cardId fromIdx dir model =
+    let
+        delta =
+            case dir of
+                MoveLeft ->
+                    -1
+
+                MoveRight ->
+                    1
+
+        toIdx =
+            clampIdx (List.length model.lanes - 1) (fromIdx + delta)
+    in
+    if toIdx == fromIdx then
+        -- Already at the edge — pure no-op.
+        model
+
+    else
+        case findCard cardId model.lanes of
+            Nothing ->
+                model
+
+            Just card ->
+                { model
+                    | lanes =
+                        List.indexedMap
+                            (\i lane ->
+                                if i == fromIdx then
+                                    { lane | cards = List.filter (\c -> c.id /= cardId) lane.cards }
+
+                                else if i == toIdx then
+                                    { lane | cards = lane.cards ++ [ card ] }
+
+                                else
+                                    lane
+                            )
+                            model.lanes
+                }
+
+
+totalCards : Model -> Int
+totalCards model =
+    List.length (List.concatMap (\lane -> lane.cards) model.lanes)
+
+
+
+-- ─── palette ─────────────────────────────────────────────────────────────────
+
+
+white : Ui.Color
+white =
+    Ui.rgb 255 255 255
+
+
+pageBg : Ui.Color
+pageBg =
+    Ui.rgb 241 245 249
+
+
+headerBg : Ui.Color
+headerBg =
+    Ui.rgb 79 70 229
+
+
+ink : Ui.Color
+ink =
+    Ui.rgb 30 41 59
+
+
+muted : Ui.Color
+muted =
+    Ui.rgb 100 116 139
+
+
+laneBg : Ui.Color
+laneBg =
+    Ui.rgb 248 250 252
+
+
+cardBg : Ui.Color
+cardBg =
+    Ui.rgb 255 255 255
+
+
+cardBorder : Ui.Color
+cardBorder =
+    Ui.rgb 226 232 240
+
+
+-- Accent colour per lane, keyed on its position.
+laneAccent : Int -> Ui.Color
+laneAccent idx =
+    if idx == 0 then
+        Ui.rgb 100 116 139
+        -- Backlog — slate
+
+    else if idx == 1 then
+        Ui.rgb 217 119 6
+        -- In Progress — amber
+
+    else
+        Ui.rgb 22 163 74
+        -- Done — green
+
+
+
+-- ─── small view helpers ──────────────────────────────────────────────────────
+
+
+tid : String -> Ui.Attribute msg
+tid v =
+    Ui.htmlAttribute "id" v
+
+
+fontStack : Ui.Attribute msg
+fontStack =
+    Font.family "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+
+
+-- A rounded count "pill".
+pill : Ui.Color -> Ui.Color -> String -> Element Msg
+pill bg fg label =
+    Ui.el
+        [ Background.color bg
+        , Font.color fg
+        , Font.size 12
+        , Font.bold
+        , Ui.paddingXY 9 3
+        , Border.rounded 999
+        ]
+        (Ui.text label)
+
+
+
+-- ─── header (fixed height — the board scrolls, this bar never does) ──────────
+
+
+header : Model -> Element Msg
+header model =
+    Ui.row
+        [ Ui.width Ui.fill
+
+        -- Fixed pixel height: the header is a stable frame; only the board area
+        -- below it flexes and scrolls.
+        , Ui.height (Ui.px 64)
+        , Background.color headerBg
+        , Ui.paddingXY 24 0
+        , Ui.spacing 14
+        , Ui.centerY
+        ]
+        [ Ui.el
+            [ tid "app-title", Font.size 22, Font.bold, Font.color white ]
+            (Ui.text "Sky Kanban")
+        , pill (Ui.rgba 255 255 255 0.18) white (String.fromInt (totalCards model) ++ " cards")
+
+        -- A fill spacer pushes the tagline to the right edge of the bar.
+        , Ui.el [ Ui.width Ui.fill ] Ui.none
+
+        -- The tagline is dead weight on a phone. It carries id "tagline"; the
+        -- injected media query (see `globalStyle`) collapses it under 768px.
+        , Ui.el
+            [ tid "tagline", Font.size 13, Font.color (Ui.rgba 255 255 255 0.85) ]
+            (Ui.text "client-only · in-memory · zero network")
+        ]
+
+
+
+-- ─── board area (fills the viewport under the header) ────────────────────────
+
+
+board : Model -> Element Msg
+board model =
+    Ui.el
+        [ tid "board"
+        , Ui.width Ui.fill
+
+        -- `height fill` = take ALL remaining viewport height under the 64px
+        -- header. Because the shell is `vh 100`, this is a bounded height, which
+        -- is what lets each lane's inner list actually scroll instead of the
+        -- whole page growing.
+        , Ui.height Ui.fill
+        , Ui.padding 16
+        ]
+        (lanesRow model)
+
+
+lanesRow : Model -> Element Msg
+lanesRow model =
+    Ui.row
+        [ tid "lanes"
+        , Ui.width Ui.fill
+        , Ui.height Ui.fill
+        , Ui.spacing 16
+
+        -- Lanes lay out left-to-right. When they don't fit the viewport width
+        -- the BOARD scrolls sideways (Trello-style) — the header stays put and
+        -- the page never gets a horizontal scrollbar of its own.
+        , Ui.scrollbarX
+        ]
+        (List.indexedMap (laneView model) model.lanes)
+
+
+
+-- ─── a single lane ───────────────────────────────────────────────────────────
+
+
+laneView : Model -> Int -> Lane -> Element Msg
+laneView model idx lane =
+    let
+        accent =
+            laneAccent idx
+
+        countStr =
+            String.fromInt (List.length lane.cards)
+    in
+    Ui.column
+        [ tid ("lane-" ++ String.fromInt idx)
+
+        -- Fixed lane width keeps columns readable; on a narrow viewport the row
+        -- above scrolls sideways rather than crushing them. `minimum` guards
+        -- against the flex layout shrinking a lane below usability.
+        , Ui.width (Ui.minimum 260 (Ui.px 300))
+
+        -- `height fill` makes the lane as tall as the board so its card list has
+        -- a bounded box to scroll within.
+        , Ui.height Ui.fill
+        , Background.color laneBg
+        , Border.width 1
+        , Border.color cardBorder
+        , Border.rounded 12
+        , Ui.padding 12
+        , Ui.spacing 12
+        ]
+        [ laneHeader accent lane.name countStr
+        , cardList idx lane.cards
+        , laneFooter idx lane.draft
+        ]
+
+
+laneHeader : Ui.Color -> String -> String -> Element Msg
+laneHeader accent name countStr =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 8, Ui.centerY ]
+        [ -- A small accent chip so each lane reads as its own column at a glance.
+          Ui.el
+            [ Ui.width (Ui.px 10)
+            , Ui.height (Ui.px 10)
+            , Background.color accent
+            , Border.rounded 999
+            ]
+            Ui.none
+        , Ui.el [ Font.size 15, Font.bold, Font.color ink ] (Ui.text name)
+        , Ui.el [ Ui.width Ui.fill ] Ui.none
+        , pill (Ui.rgb 226 232 240) muted countStr
+        ]
+
+
+cardList : Int -> List Card -> Element Msg
+cardList laneIdx cards =
+    if List.isEmpty cards then
+        Ui.el
+            [ Ui.width Ui.fill
+            , Ui.height Ui.fill
+            , Ui.centerX
+            , Ui.centerY
+            , Font.color muted
+            , Font.size 13
+            ]
+            (Ui.text "No cards yet")
+
+    else
+        Ui.column
+            [ tid ("cards-" ++ String.fromInt laneIdx)
+            , Ui.width Ui.fill
+
+            -- The scroll region. `height fill` bounds it to the space left after
+            -- the lane header + footer; `scrollbarY` lets a long stack of cards
+            -- scroll WITHIN the lane. The lane header, the footer input, and the
+            -- page all stay fixed while only this list moves.
+            , Ui.height Ui.fill
+            , Ui.scrollbarY
+            , Ui.spacing 10
+
+            -- A little right padding so cards don't kiss the scrollbar.
+            , Ui.paddingEach { top = 2, right = 6, bottom = 2, left = 2 }
+            ]
+            (List.map (cardView laneIdx) cards)
+
+
+cardView : Int -> Card -> Element Msg
+cardView laneIdx card =
+    Ui.column
+        [ tid ("card-" ++ String.fromInt card.id)
+        , Ui.width Ui.fill
+        , Background.color cardBg
+        , Border.width 1
+        , Border.color cardBorder
+        , Border.rounded 10
+        , Border.shadow { offsetX = 0, offsetY = 1, blur = 3, spread = 0, color = Ui.rgba 15 23 42 0.08 }
+        , Ui.padding 12
+        , Ui.spacing 10
+        ]
+        [ Ui.el [ Font.size 14, Font.color ink ] (Ui.text card.title)
+        , cardControls laneIdx card.id
+        ]
+
+
+cardControls : Int -> Int -> Element Msg
+cardControls laneIdx cardId =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 8, Ui.centerY ]
+        [ ctrlButton
+            ("move-left-" ++ String.fromInt cardId)
+            (Ui.rgb 241 245 249)
+            ink
+            "←"
+            (MoveCard cardId laneIdx MoveLeft)
+        , ctrlButton
+            ("move-right-" ++ String.fromInt cardId)
+            (Ui.rgb 241 245 249)
+            ink
+            "→"
+            (MoveCard cardId laneIdx MoveRight)
+        , Ui.el [ Ui.width Ui.fill ] Ui.none
+        , ctrlButton
+            ("delete-" ++ String.fromInt cardId)
+            (Ui.rgb 254 226 226)
+            (Ui.rgb 185 28 28)
+            "Delete"
+            (DeleteCard cardId)
+        ]
+
+
+ctrlButton : String -> Ui.Color -> Ui.Color -> String -> Msg -> Element Msg
+ctrlButton domId bg fg label msg =
+    Ui.el
+        [ tid domId
+        , Ui.onClick msg
+        , Ui.pointer
+        , Background.color bg
+        , Font.color fg
+        , Font.size 12
+        , Font.bold
+        , Ui.paddingXY 10 6
+        , Border.rounded 8
+        ]
+        (Ui.text label)
+
+
+laneFooter : Int -> String -> Element Msg
+laneFooter laneIdx draft =
+    Ui.row
+        [ Ui.width Ui.fill, Ui.spacing 8, Ui.centerY ]
+        [ Ui.input
+            [ tid ("draft-" ++ String.fromInt laneIdx)
+            , Ui.width Ui.fill
+            , Ui.htmlAttribute "value" draft
+            , Ui.htmlAttribute "placeholder" "Add a card…"
+            , Ui.onInput (DraftChanged laneIdx)
+            , Background.color white
+            , Border.width 1
+            , Border.color cardBorder
+            , Border.rounded 8
+            , Ui.paddingXY 10 8
+            , Font.size 13
+            , Font.color ink
+            ]
+        , Ui.el
+            [ tid ("add-" ++ String.fromInt laneIdx)
+            , Ui.onClick (AddCard laneIdx)
+            , Ui.pointer
+            , Background.color headerBg
+            , Font.color white
+            , Font.size 18
+            , Font.bold
+            , Ui.paddingXY 12 6
+            , Border.rounded 8
+            ]
+            (Ui.text "+")
+        ]
+
+
+
+-- ─── global stylesheet (the Sky.Spa viewport/responsive layer) ──────────────
+--
+-- Sky.Spa runs the SAME Std.Ui view as Sky.Live, but the WASM DOM renderer
+-- (runtime-go/rt/dom_render_wasm.go) is a plain VNode→DOM patcher: unlike the
+-- server renderer (live.go) it injects neither the base reset NOR the
+-- `@media`/`:hover` post-processing that backs `Ui.breakpoint`. Two consequences
+-- this example handles head-on, in ONE injected <style> (via the `Ui.html` raw
+-- escape hatch), so the app is correct on any static host with no runtime change:
+--
+--   1. box-sizing: without the reset, `width + padding` elements render
+--      content-box and overflow their declared width (cards spill past the
+--      lane). `*{box-sizing:border-box}` restores the layout the view intends.
+--   2. responsiveness: `Ui.breakpoint` is inert in wasm, so the mobile layout is
+--      expressed as a real CSS `@media` block keyed on ids the view assigns
+--      (#tagline / #board / #lanes / lane-*). Under 768px the lanes flip from a
+--      horizontally-scrolling row to a vertical stack, and the board scrolls.
+--
+-- CSS selectors are written without quotes (`[id^=lane-]`) so HTML-escaping of
+-- the <style> text can never corrupt them.
+
+
+globalCss : String
+globalCss =
+    "*,*::before,*::after{box-sizing:border-box}"
+        ++ "html,body{margin:0;padding:0}"
+        ++ "@media (max-width:767px){"
+        ++ "#tagline{display:none !important}"
+        ++ "#board{overflow-y:auto !important;overflow-x:hidden !important}"
+        ++ "#lanes{flex-direction:column !important;height:auto !important;overflow-x:hidden !important}"
+        ++ "[id^=lane-]{width:100% !important;min-width:0 !important;height:78vh !important}"
+        ++ "}"
+
+
+globalStyle : Element Msg
+globalStyle =
+    -- A <style> element is display:none, so it adds no layout box; it just
+    -- carries the stylesheet above into the document.
+    Ui.html (Html.node "style" [] [ Html.text globalCss ])
+
+
+
+-- ─── view / app ──────────────────────────────────────────────────────────────
+
+
+view : Model -> any
+view model =
+    Ui.layout
+        [ Ui.width Ui.fill
+        , Ui.height Ui.fill
+        , Background.color pageBg
+        , fontStack
+        ]
+        (Ui.column
+            [ tid "shell"
+            , Ui.width Ui.fill
+
+            -- The whole app is exactly one viewport tall. `vh 100` pins the
+            -- shell to the visible area so the header stays put and the board
+            -- (not the page) owns the scrolling.
+            , Ui.height (Ui.vh 100)
+
+            -- Belt-and-braces: clip any accidental overflow at the shell edge so
+            -- the page body never grows its own scrollbars.
+            , Ui.clip
+            ]
+            [ globalStyle
+            , header model
+            , board model
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )
