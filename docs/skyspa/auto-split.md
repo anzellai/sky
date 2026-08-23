@@ -380,13 +380,28 @@ Verified: the todos **client** reads **4 SERVER / 6 CLIENT** — the four
 branches stay client — the correct auto-split shape; the effectful-CAF/env
 fixture reads 2 SERVER / 2 CLIENT.
 
-**Residual for the enforcing GATE (not the advisory report).** `classify_kernel`
-lists the effect families (all → server) with unknown families → Neutral(client).
-Fine for an advisory report, but the generator/gate — where a mis-classification
-becomes a real leak — MUST **fail-closed** on any unrecognised effect-kernel
-family (a new effect kernel added without updating the table would otherwise
-default client/pure). Guard it with a test enumerating effect families and
-asserting each is classified as an effect.
+**Residual for the enforcing GATE — SHIPPED (2026-08-23): fail-closed guard.**
+`classify_kernel` no longer defaults an unrecognised family to Neutral(client).
+It now classifies against two explicit, exhaustive lists in `spa_partition` —
+`EFFECT_KERNELS` (all → server, incl. `Log`/`Live`/`Jobs`/`Cli`/`Tui`/`Webview`/
+`Context`/`Ffi` alongside the physically-server and client-capable families) and
+`KNOWN_PURE_KERNELS` (`Basics`/`String`/`List`/`Dict`/`Set`/`Maybe`/`Result`/
+`Task`/`Math`/`Regex`/`Crypto`/`Encoding`/`Char`/`Path`/`Cmd`/`Sub`/`JsonEnc`/
+`JsonDec`/`JsonDecP`/`Fmt`) — and a family in **neither** falls through to a
+conservative **SERVER** verdict (never client). Two enforcement legs:
+
+- **Compile-time completeness test** (`spa_partition::tests::classification_is_exhaustive`):
+  enumerates every kernel pseudo-module the compiler knows from the authoritative
+  `hir::KERNEL_MODULES` table (no hardcoded copy) and asserts each appears in
+  `EFFECT_KERNELS` or `KNOWN_PURE_KERNELS`. Adding a kernel without deciding its
+  split side is now a **build failure**. A companion test
+  (`unclassified_kernel_is_rejected`) proves the guard bites on a synthetic
+  unclassified family.
+- **Runtime fail-closed** — `classify_kernel` returns `ServerOnly` for an unknown
+  family (conservative), `analyze_loaded` emits a `FAIL-CLOSED:` note naming any
+  unclassified family, and `spa_split::generate` **refuses to emit** (returns an
+  error naming the culprit) rather than risk leaking an undecided kernel into the
+  wasm frontend.
 
 ## 14. Generator — the e2e implementation plan (authorised 2026-08-23)
 
@@ -480,3 +495,11 @@ field-precise read/write sets, primitive (`Int`/`String`/`Bool`/`Float`) field
 types. **Deferred (noted on the report, never silently mis-handled):** typed Req
 fields for Msg args, the whole-model fallback record, multi-module apps, and
 non-primitive field codecs.
+
+**Fail-closed classification guard — SHIPPED (2026-08-23).** The §13 residual is
+closed: `spa_partition::classify_kernel` classifies against exhaustive
+`EFFECT_KERNELS` / `KNOWN_PURE_KERNELS` lists with an unknown family falling
+through to a conservative **SERVER** verdict, `spa_split::generate` refuses to
+emit when the compiler knows an unclassified kernel, and the compile-time
+`classification_is_exhaustive` test (over the real `hir::KERNEL_MODULES`) makes
+"add a kernel without deciding its split side" a build failure. See §13.

@@ -221,6 +221,20 @@ pub fn generate(
     entry_module: Option<&str>,
     out_dir: &Path,
 ) -> Result<SpaSplitReport, String> {
+    // Fail-closed gate: the generator writes the wasm frontend, so an
+    // unclassified effect kernel silently defaulting to client would be a real
+    // leak. Refuse to emit if the compiler knows a kernel the auto-split
+    // classification has not decided a split side for. (The
+    // `classification_is_exhaustive` test keeps this empty on a shipped tree; this
+    // is the runtime backstop for a kernel added ahead of the lists.)
+    let gaps = spa_partition::unclassified_kernel_families();
+    if !gaps.is_empty() {
+        return Err(format!(
+            "kernel module(s) {} are not classified for the Sky.Spa auto-split — add each to EFFECT (server) or KNOWN_PURE (client) in spa_partition::classify_kernel; defaulting an unknown kernel to client would leak it into the wasm frontend.",
+            gaps.join(", ")
+        ));
+    }
+
     let (db, entry, check_ids) = crate::build::load_source_db(repo_root, project_dir, entry_module)?;
     let proj_name = project_dir
         .file_name()

@@ -54,26 +54,96 @@ enum KernelClass {
     Neutral,
 }
 
+/// **EFFECT** kernel pseudo-modules — every one runs on the **SERVER** under the
+/// v1 rule "any effect -> server" (the client is 100% pure UI). This list is one
+/// half of the exhaustive classification the `classification_is_exhaustive`
+/// completeness test enforces against the compiler's real kernel-module table
+/// (`hir::kernel::KERNEL_MODULES`): a kernel pseudo-module MUST appear here or in
+/// [`KNOWN_PURE_KERNELS`], or the build fails. Defaulting an unclassified kernel
+/// to client/pure would leak a real effect into the wasm frontend.
+///
+/// Two sub-groups, both server under the v1 rule:
+///   * physically server-only — the browser cannot reach them at all:
+///     `Db`/`Auth`/`File`/`Server`/`Process`/`Io`/`System`/`RateLimit`/
+///     `Middleware`, plus the shell/host loops `Log`/`Live`/`Jobs`/`Cli`/`Tui`/
+///     `Webview` and the effect-plumbing `Context` (cancellation/deadline).
+///   * client-*capable* but routed to the server for the v1 secure-by-default
+///     model — `Http` (routes through the backend), `Time`/`Random`/`Uuid`
+///     (a client-local timestamp/uuid is a documented *later* optimisation).
+///
+/// `System.*` env reads are the SEED-2b "pure-typed" case: `getenvOr`/`getenvInt`
+/// are typed `String -> String -> String` (NOT `Task`), so they are caught ONLY
+/// by kernel identity, here — never by a Task-type check.
+///
+/// **`Ffi` is deliberately NOT here** — see [`KNOWN_PURE_KERNELS`]: it is the
+/// universal implementation mechanism of *every* kernel (pure and effect), so
+/// the effect lives in the symbol string, not the bare `Ffi` reference.
+const EFFECT_KERNELS: &[&str] = &[
+    "Db", "Auth", "File", "Server", "Process", "Io", "System", "RateLimit", "Middleware", "Http",
+    "Time", "Random", "Uuid", "Log", "Live", "Jobs", "Cli", "Tui", "Webview", "Context",
+];
+
+/// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
+/// that is safe on the **CLIENT** (maps to [`KernelClass::Neutral`]). The other
+/// half of the exhaustive classification (see [`EFFECT_KERNELS`]).
+///
+/// `Task` is here because `Task.succeed`/`map`/`andThen` merely *build* a task;
+/// the effect is the `Ffi.kernel "<Symbol>"` inside it (classified by symbol
+/// prefix) and the force site is `Task.run` (tracked separately as an inline
+/// effect). `Cmd`/`Sub` are pure descriptions in the TEA loop. `Crypto` covers
+/// pure hashing (`sha256`) — a client-side hash is pure UI, not an effect.
+///
+/// **`Ffi` is here, not in [`EFFECT_KERNELS`], and this is load-bearing.** A bare
+/// `Ffi.*` reference (`Ffi.kernel`, `Ffi.call`, …) is the compiler's universal
+/// kernel-implementation plumbing: EVERY kernel — pure (`String.isEmpty`,
+/// `List.filter`, `Codec.*`) and effectful (`Db.query`) alike — has a body of
+/// `Ffi.kernel "<Symbol>"`, so treating the bare `Ffi` module as an effect would
+/// mark the entire stdlib server and leak nothing but false positives. The real
+/// effect is the **symbol prefix**, classified by [`record_ffi_symbol`] (which is
+/// itself fail-closed: an unknown prefix → server). Raw Go FFI is caught
+/// separately as a `Res::Foreign` reference (`Refs::foreign` → server).
+const KNOWN_PURE_KERNELS: &[&str] = &[
+    "Basics", "String", "List", "Dict", "Set", "Maybe", "Result", "Task", "Math", "Regex",
+    "Crypto", "Encoding", "Char", "Path", "Cmd", "Sub", "JsonEnc", "JsonDec", "JsonDecP", "Fmt",
+    "Ffi",
+];
+
 /// Classify a kernel pseudo-module + function. `module` is the pseudo name
-/// (`Db`, `Http`, `System`, …) as produced by the resolver's `Res::Kernel`.
+/// (`Db`, `Http`, `System`, …) as produced by the resolver's `Res::Kernel`, or
+/// an `Ffi.kernel "<Symbol>"` prefix (`Db`, `Http`, …).
+///
+/// **FAIL-CLOSED.** A module in neither [`EFFECT_KERNELS`] nor
+/// [`KNOWN_PURE_KERNELS`] is treated as a SERVER effect — never Neutral/client.
+/// Defaulting an unrecognised kernel to client would leak it into the wasm
+/// frontend. The `classification_is_exhaustive` test makes an unclassified
+/// *known* kernel a BUILD FAILURE; this branch is the runtime defense-in-depth
+/// for a family added ahead of the lists (or an unexpected FFI-symbol prefix).
 fn classify_kernel(module: &str, _func: &str) -> KernelClass {
-    match module {
-        // Server-only: browser cannot reach any of these.
-        "Db" | "Auth" | "File" | "Server" | "Process" | "Io" => KernelClass::ServerOnly,
-        // `System.*` — env / args / secrets / exit. Env reads are the SEED-2b
-        // "pure-typed" case: `getenvOr`/`getenvInt`/`getenvBool` are typed
-        // `String -> String -> String` (NOT `Task`), so they are caught ONLY by
-        // kernel identity, here — never by a Task-type check.
-        "System" => KernelClass::ServerOnly,
-        "RateLimit" | "Middleware" => KernelClass::ServerOnly,
-        // v1 rule: EVERY effect is server-side (secure by default — an effectful
-        // value/function never reaches client code). The HTTP client, and the
-        // client-capable `Time`/`Random`/`Uuid`, are effects, so they go server
-        // too: an external Http call routes through the backend; a client-local
-        // uuid/timestamp is a documented later optimisation, not the v1 rule.
-        "Http" | "Time" | "Random" | "Uuid" => KernelClass::ServerOnly,
-        _ => KernelClass::Neutral,
+    if EFFECT_KERNELS.contains(&module) {
+        KernelClass::ServerOnly
+    } else if KNOWN_PURE_KERNELS.contains(&module) {
+        KernelClass::Neutral
+    } else {
+        // Unknown family → conservative server (fail-closed).
+        KernelClass::ServerOnly
     }
+}
+
+/// The kernel pseudo-modules the compiler knows (`hir::kernel::KERNEL_MODULES`)
+/// that are classified for the Sky.Spa auto-split in **neither** [`EFFECT_KERNELS`]
+/// **nor** [`KNOWN_PURE_KERNELS`]. The completeness invariant is that this is
+/// **empty** (enforced by `classification_is_exhaustive`). The generator
+/// (`spa_split::generate`) calls this and refuses to emit when it is non-empty —
+/// a kernel whose split side has not been decided must not silently default to
+/// client. Sorted + deduped; distinct pseudo-module names only.
+pub fn unclassified_kernel_families() -> Vec<String> {
+    let mut gaps: BTreeSet<String> = BTreeSet::new();
+    for (_import_path, pseudo) in hir::KERNEL_MODULES {
+        if !EFFECT_KERNELS.contains(pseudo) && !KNOWN_PURE_KERNELS.contains(pseudo) {
+            gaps.insert((*pseudo).to_string());
+        }
+    }
+    gaps.into_iter().collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -725,6 +795,18 @@ pub fn analyze_loaded(
             "Rule: pure -> client, any effect -> server. The client is 100% pure UI; effectful values/functions (Db/File/Auth/System/Http/Time/Random/…) never reach it — secure by default."
                 .to_string(),
         );
+    }
+
+    // Fail-closed defense-in-depth: if the compiler knows a kernel pseudo-module
+    // the auto-split classification lists have not caught up to, say so loudly.
+    // `classify_kernel` already treats such a family as SERVER (conservative), so
+    // the report stays sound; this note names it so the omission gets fixed.
+    let gaps = unclassified_kernel_families();
+    if !gaps.is_empty() {
+        notes.push(format!(
+            "FAIL-CLOSED: kernel module(s) {} are not classified for the Sky.Spa auto-split (neither EFFECT nor KNOWN_PURE in spa_partition); treated conservatively as SERVER. Add each to EFFECT (server) or KNOWN_PURE (client) in spa_partition::classify_kernel.",
+            gaps.join(", ")
+        ));
     }
 
     Ok(SpaPartitionReport {
@@ -1680,5 +1762,96 @@ fn pattern_head_of(p: &Pattern) -> String {
         Pattern::Tuple(_) => "(…)".into(),
         Pattern::List(_) => "[…]".into(),
         _ => "_".into(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fail-closed classification-completeness guard (design §13/§15 residual).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The classification-completeness check, parametrised over a kernel-module
+    /// table so the "guard bites" test can feed it a synthetic extra module.
+    /// Returns the distinct pseudo-modules classified in NEITHER set (sorted).
+    /// The shipped [`unclassified_kernel_families`] is this same logic pinned to
+    /// the real `hir::KERNEL_MODULES` — asserted equal below, so the "bites" test
+    /// exercises the exact guard the compiler ships.
+    fn gaps_in(modules: &[(&str, &str)]) -> Vec<String> {
+        let mut gaps: BTreeSet<String> = BTreeSet::new();
+        for (_import, pseudo) in modules {
+            if !EFFECT_KERNELS.contains(pseudo) && !KNOWN_PURE_KERNELS.contains(pseudo) {
+                gaps.insert((*pseudo).to_string());
+            }
+        }
+        gaps.into_iter().collect()
+    }
+
+    /// COMPLETENESS — the build fails if ANY kernel pseudo-module the compiler
+    /// knows (`hir::KERNEL_MODULES`, the authoritative table — NOT a hardcoded
+    /// copy) is classified for the Sky.Spa auto-split in neither [`EFFECT_KERNELS`]
+    /// (server) nor [`KNOWN_PURE_KERNELS`] (client). Adding a kernel without
+    /// deciding its split side is a BUILD FAILURE — an unclassified effect kernel
+    /// defaulting to client would leak it into the wasm frontend.
+    #[test]
+    fn classification_is_exhaustive() {
+        let gaps = unclassified_kernel_families();
+        assert!(
+            gaps.is_empty(),
+            "kernel module(s) `{}` are not classified for the Sky.Spa auto-split — add each to EFFECT (server) or KNOWN_PURE (client) in spa_partition::classify_kernel; defaulting an unknown kernel to client would leak it into the wasm frontend.",
+            gaps.join("`, `")
+        );
+        // The public guard and the parametrised check agree over the real table.
+        assert_eq!(gaps, gaps_in(hir::KERNEL_MODULES));
+    }
+
+    /// The guard BITES — a synthetic new effect kernel added to the table but not
+    /// classified is reported as a gap, with the failure message the completeness
+    /// gate would raise. (Demonstrates the failure, then leaves the real tree
+    /// green: `classification_is_exhaustive` proves the shipped table has none.)
+    #[test]
+    fn unclassified_kernel_is_rejected() {
+        let mut table: Vec<(&str, &str)> = hir::KERNEL_MODULES.to_vec();
+        // A brand-new EFFECT kernel family added to the compiler but NOT to the
+        // classification lists — exactly the leak this guard exists to catch.
+        table.push(("Sky.Core.Telemetry", "Telemetry"));
+        let gaps = gaps_in(&table);
+        assert!(
+            gaps.contains(&"Telemetry".to_string()),
+            "a kernel in neither EFFECT nor KNOWN_PURE must be reported as a gap"
+        );
+        let msg = format!(
+            "kernel module(s) `{}` are not classified for the Sky.Spa auto-split — add each to EFFECT (server) or KNOWN_PURE (client) in spa_partition::classify_kernel; defaulting an unknown kernel to client would leak it into the wasm frontend.",
+            gaps.join("`, `")
+        );
+        assert!(msg.contains("Telemetry"), "failure message names the culprit: {msg}");
+    }
+
+    /// The three classification outcomes — including the fail-closed default that
+    /// treats an unrecognised family as SERVER (never Neutral/client).
+    #[test]
+    fn classify_kernel_is_fail_closed() {
+        // Known effect -> server.
+        assert_eq!(classify_kernel("Db", "query"), KernelClass::ServerOnly);
+        assert_eq!(classify_kernel("Log", "println"), KernelClass::ServerOnly);
+        assert_eq!(classify_kernel("Http", "get"), KernelClass::ServerOnly);
+        // Known pure -> client (Neutral).
+        assert_eq!(classify_kernel("String", "toUpper"), KernelClass::Neutral);
+        assert_eq!(classify_kernel("List", "map"), KernelClass::Neutral);
+        // Unknown family -> conservative SERVER (fail-closed), never Neutral.
+        assert_eq!(classify_kernel("BrandNewEffect", "boom"), KernelClass::ServerOnly);
+    }
+
+    /// EFFECT and KNOWN_PURE are disjoint — no kernel can be both server and pure.
+    #[test]
+    fn effect_and_pure_are_disjoint() {
+        for m in EFFECT_KERNELS {
+            assert!(
+                !KNOWN_PURE_KERNELS.contains(m),
+                "kernel `{m}` is in both EFFECT and KNOWN_PURE"
+            );
+        }
     }
 }
