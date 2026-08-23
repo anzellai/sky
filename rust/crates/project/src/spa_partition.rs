@@ -417,6 +417,48 @@ pub fn body_def_callees(db: &dyn SkyDb, module: ModuleId, def: DefId) -> Vec<Def
     out
 }
 
+/// True when `def`'s body is a direct kernel alias `Ffi.kernel "<sym>"` whose
+/// symbol is one of `targets`. The Sky-source stdlib defines `Sub.subscribeTopic`
+/// / `Cmd.publish` as exactly this shape (`Ffi.kernel "Sub_subscribeTopic"`,
+/// `Ffi.kernel "Cmd_publish"`), so a reachable def matching a target proves the
+/// app uses that surface — the raw material for the `spa-split` generator's
+/// push-mode decision.
+fn def_is_kernel_alias_to(db: &dyn SkyDb, def: DefId, targets: &[&str]) -> bool {
+    let Some(loc) = db.def_loc(def) else {
+        return false;
+    };
+    let resolved = db.resolve(loc.module);
+    let Some(body) = resolved.bodies.get(&def) else {
+        return false;
+    };
+    let Some(root) = body.root else {
+        return false;
+    };
+    if let Expr::Call(callee, args) = &body.exprs[root] {
+        if args.len() == 1 {
+            if let Expr::Var(Res::Kernel { func, .. }) = &body.exprs[*callee] {
+                if func.as_str() == "kernel" {
+                    if let Expr::Str(sym) = &body.exprs[args[0]] {
+                        let sym_str: &str = sym;
+                        return targets.contains(&sym_str);
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Whether the app reaches ANY def that is a kernel alias to one of `targets`,
+/// scanning every def in the reachability graph (app top-defs + their transitive
+/// callees, which is where `Sub.subscribeTopic` / `Cmd.publish` land when used).
+fn app_reaches_kernel(db: &dyn SkyDb, graph: &Graph, targets: &[&str]) -> bool {
+    graph
+        .nodes
+        .keys()
+        .any(|d| def_is_kernel_alias_to(db, *d, targets))
+}
+
 // ---------------------------------------------------------------------------
 // The report.
 // ---------------------------------------------------------------------------
@@ -615,6 +657,13 @@ pub struct SpaPartitionReport {
     /// generator's shared wire records). Empty when the Model shape could not
     /// be recovered from `update`'s result type.
     pub model_fields: Vec<ModelFieldTy>,
+    /// The app reaches `Sub.subscribeTopic` (a server→client PUSH consumer) —
+    /// the `spa-split` generator mounts the SSE push endpoint when set.
+    pub subscribes_topics: bool,
+    /// The app reaches `Cmd.publish` / `Cmd.publishNoEcho` (a server→client
+    /// PUSH producer) — the generator wires publish-interpreting RPC handlers +
+    /// the broker when set. Either flag turns on the auto-split's push mode.
+    pub publishes: bool,
     /// Non-fatal notes (why a branch was conservatively marked server, etc.).
     pub notes: Vec<String>,
 }
@@ -866,6 +915,12 @@ pub fn analyze_loaded(
         ));
     }
 
+    // Server→client PUSH detection (docs/skyspa/auto-split.md §16). The generator
+    // turns on push mode (broker + publish-interpreting handlers + the SSE
+    // endpoint) when the app produces or consumes topic broadcasts.
+    let subscribes_topics = app_reaches_kernel(db, &graph, &["Sub_subscribeTopic"]);
+    let publishes = app_reaches_kernel(db, &graph, &["Cmd_publish", "Cmd_publishNoEcho"]);
+
     Ok(SpaPartitionReport {
         project,
         entry_module: entry_module_name,
@@ -874,6 +929,8 @@ pub fn analyze_loaded(
         whole_update,
         tainted,
         model_fields,
+        subscribes_topics,
+        publishes,
         notes,
     })
 }

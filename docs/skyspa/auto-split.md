@@ -524,3 +524,92 @@ through to a conservative **SERVER** verdict, `spa_split::generate` refuses to
 emit when the compiler knows an unclassified kernel, and the compile-time
 `classification_is_exhaustive` test (over the real `hir::KERNEL_MODULES`) makes
 "add a kernel without deciding its split side" a build failure. See §13.
+
+## 16. Server→client PUSH (SSE) — `Cmd.publish` → `Sub.subscribeTopic` (2026-08-23)
+
+B1–B4 (§14/§15) generate the **client→server** direction: an effectful branch
+becomes a `POST /_rpc/<Msg>` the client calls. This section adds the
+**server→client** direction, so a Sky.Spa app whose `subscriptions` subscribes
+to a topic is *pushed* messages when a server-effect branch publishes to it. It
+is the auto-split's counterpart of Sky.Live pub/sub, delivered over **SSE**
+(not WebSocket), and it **reuses the existing runtime** — the same in-process
+broker Sky.Live uses, the same `Sky.Http.Server.Stream` chunk-writer, the same
+`Sub.subscribeTopic` surface. No runtime-narrowing floor is touched (runtime Go
++ generator only).
+
+**The wire path, end to end:**
+
+```
+client A: Increment ─▶ POST /_rpc/Increment ─▶ backend runs update (real File
+                                                effect) ─▶ returns (m2, Cmd.publish
+                                                "count" n) ─▶ spaInterpretPublish
+                                                fans it through the broker
+                                                        │
+broker.Publish("count", n) ─────────────────────────────┤
+                                                        ▼
+every client subscribed via GET /_sky/sub?topic=count receives an SSE
+`data: <json>\n\n` frame ─▶ EventSource onmessage ─▶ JSON→Sky decode ─▶
+sky_call(toMsg, payload) ─▶ GotCount n ─▶ update ─▶ re-render
+```
+
+**What the generator emits (push mode).** Push mode turns on when the app
+reaches `Cmd.publish` / `Cmd.publishNoEcho` **or** `Sub.subscribeTopic`
+(`SpaPartitionReport.{publishes, subscribes_topics}`, detected by walking the
+reachable defs for the kernel-alias symbols). Then `sky spa-split` adds to the
+**backend**:
+
+- **A standalone broker** — `spaBroker = spaNewBroker ()`, a memoised CAF over
+  `rt.Spa_newBroker`, which constructs a bare `*topicRegistry`
+  (`runtime-go/rt/live_topics.go`). It does **not** use `PubSub_publish` /
+  `Std.PubSub`, which need a `Live.app`-registered process broker
+  (`live_pubsub_task.go`) — a plain `Sky.Http.Server` backend registers none.
+- **Publish-interpreting RPC handlers** — each handler now binds the `Cmd` its
+  `update` returns and feeds it to `rt.Spa_interpretPublish(broker, cmd)` before
+  answering (previously the `Cmd` was discarded, §15). The interpreter
+  pattern-matches `publish` / `publishNoEcho` (recursing through `Cmd.batch`) and
+  calls `broker.Publish(topic, SessionEvent{Payload, …})`; every other `Cmd`
+  kind is ignored (a stateless backend delivers broadcasts, not client effects).
+  It lives in **package `rt`** because `cmdT`'s fields are unexported.
+- **The SSE endpoint** — `Server.api "GET /_sky/sub" subHandler`, where
+  `subHandler` reads `?topic=` and returns
+  `Stream.stream "text/event-stream" (spaStreamTopic spaBroker topic)`.
+  `rt.Spa_streamTopic` subscribes to the topic, primes a ≥2 KB proxy pad, then
+  loops emitting each published payload as `data: <json>\n\n` until the client
+  disconnects (a failed write) — then cancels the subscription and finishes. A
+  15 s heartbeat comment detects dead connections. `serveStreamingResponse` now
+  sets `Cache-Control: no-cache`, `Connection: keep-alive`, and
+  `X-Accel-Buffering: no` for any `text/event-stream` response (parity with
+  Sky.Live's SSE headers), so proxies don't buffer.
+
+The **frontend** keeps `subscriptions` verbatim; the client driver
+(`runtime-go/rt/live_wasm.go`) reconciles `Sub.subscribeTopic` leaves (identity
+= the topic string, same diff shape as `Sub.every`): an added topic opens
+`new EventSource("/_sky/sub?topic=" + topic)` whose `onmessage` JSON-decodes
+`e.data` to a Sky `any` and runs `step(sky_call(toMsg, payload))`; a removed
+topic closes the EventSource and releases its callback. The decode is
+structural (`JSON.parse` → Sky `any`, integral numbers → `int`), reconstructing
+the value's Sky shape rather than a `.(T)` assertion.
+
+**Security carries over unchanged.** The client has no effects, so no secret /
+DB handle ever reaches it; the SSE endpoint only *delivers* what a server branch
+chose to publish. A publish payload is server-authored — never echoed from a
+client-sent field for anything authoritative (§7). The client only ever talks to
+its own backend (same-origin → no CORS).
+
+**Multi-replica.** The broker is **in-process**, exactly like Sky.Live's
+default: a publish on replica A reaches only clients whose SSE connection landed
+on A. For cross-replica fan-out use a shared broker — a Redis / NATS / Postgres
+implementation of the same `Broker` interface (`SKY_LIVE_BROKER_URL`), the same
+seam Sky.Live uses — plus sticky routing so a client's `/_sky/sub` and its
+`/_rpc/*` hit a coherent set. Wiring a shared broker into the auto-split backend
+is the one deferred piece; the single-replica path is complete.
+
+**Verified.** `tests/fixtures/spa-push-counter` (a shared counter:
+`Increment` writes count+1 to disk inline and publishes `"count"`; `GotCount n`
+folds a pushed count; `subscriptions = Sub.subscribeTopic "count" GotCount`)
+generates, both projects build, and a live run proves push deterministically:
+an SSE reader on `/_sky/sub?topic=count` receives `data: 1` then `data: 2` as
+two `POST /_rpc/Increment` calls fire — no browser needed. `rt` unit tests
+(`spa_push_test.go`) cover the `publish → broker` leg; the generator wiring +
+build are asserted in `spa_split_flow.rs`
+(`wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic`).

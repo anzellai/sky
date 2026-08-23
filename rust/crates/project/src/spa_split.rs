@@ -620,7 +620,13 @@ pub fn generate(
 
     // ---- write the three trees ----
     let shared_src = gen_shared(&wires, &shared_imports, &copied_decls, &copied_exposing);
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names)?;
+    let push_mode = report.subscribes_topics || report.publishes;
+    if push_mode {
+        notes.push(
+            "server->client PUSH enabled: mounted `GET /_sky/sub` (SSE) + a shared broker; RPC handlers fan their returned Cmd.publish through it. In-process broker (single replica); cross-replica needs a shared broker, same as Sky.Live.".into(),
+        );
+    }
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -927,6 +933,7 @@ fn gen_backend(
     server: &[(String, BranchIo)],
     model_fields: &[ModelFieldTy],
     copied_names: &HashSet<String>,
+    push_mode: bool,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -944,6 +951,13 @@ fn gen_backend(
     add(imports, &mut import_lines, "Std.Codec", "import Std.Codec as Codec");
     add(imports, &mut import_lines, "Sky.Core.System", "import Sky.Core.System as System");
     add(imports, &mut import_lines, "Sky.Core.Error", "import Sky.Core.Error as Error exposing (Error)");
+    if push_mode {
+        // Server→client PUSH machinery (docs/skyspa/auto-split.md §16).
+        add(imports, &mut import_lines, "Sky.Core.Task", "import Sky.Core.Task as Task");
+        add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
+        add(imports, &mut import_lines, "Sky.Core.Maybe", "import Sky.Core.Maybe as Maybe");
+        add(imports, &mut import_lines, "Sky.Http.Server.Stream", "import Sky.Http.Server.Stream as Stream exposing (StreamWriter)");
+    }
     import_lines.push("import Shared exposing (..)".to_string());
 
     // All decls except `main` (both its annotation and value), verbatim —
@@ -967,6 +981,33 @@ fn gen_backend(
     let mut handlers = String::new();
     let mut routes: Vec<String> = Vec::new();
     handlers.push_str("badRequest : String -> Response\nbadRequest msg =\n    Server.withStatus 400 (Server.text msg)\n\n\n");
+
+    // Server→client PUSH: one process-shared broker, a Cmd-publish interpreter,
+    // and the SSE stream handler body — all thin kernel aliases (spa_push.go).
+    if push_mode {
+        handlers.push_str(
+            "-- Server->client PUSH (SSE) — the auto-split's Sub.subscribeTopic /\n\
+             -- Cmd.publish channel (docs/skyspa/auto-split.md §16). One process-shared\n\
+             -- in-process broker (a memoised CAF); each RPC handler fans its returned\n\
+             -- Cmd's publishes through it; `GET /_sky/sub?topic=…` streams them as SSE.\n\
+             spaNewBroker : () -> any\n\
+             spaNewBroker =\n\
+             \x20   Ffi.kernel \"Spa_newBroker\"\n\n\n\
+             spaBroker : any\n\
+             spaBroker =\n\
+             \x20   spaNewBroker ()\n\n\n\
+             spaInterpretPublish : any -> Cmd Msg -> Task Error ()\n\
+             spaInterpretPublish =\n\
+             \x20   Ffi.kernel \"Spa_interpretPublish\"\n\n\n\
+             spaStreamTopic : any -> String -> (StreamWriter -> Task Error ())\n\
+             spaStreamTopic =\n\
+             \x20   Ffi.kernel \"Spa_streamTopic\"\n\n\n\
+             subHandler : Request -> Task Error Response\n\
+             subHandler req =\n\
+             \x20   Stream.stream \"text/event-stream\"\n\
+             \x20       (spaStreamTopic spaBroker (Maybe.withDefault \"\" (Server.queryParam \"topic\" req)))\n\n\n",
+        );
+    }
     for (name, io) in server {
         let handler = format!("{}Handler", lower_first(name));
         let req_codec = format!("{}ReqCodec", lower_first(name));
@@ -1026,6 +1067,23 @@ fn gen_backend(
                 .collect::<String>();
             format!("{{ {sets} }}")
         };
+        // In push mode the returned Cmd is fed to the broker (a Cmd.publish fans
+        // out to SSE subscribers) BEFORE the RPC answers; otherwise it is
+        // discarded (`_`) exactly as before.
+        let (cmd_binder, answer) = if push_mode {
+            (
+                "cmd",
+                format!(
+                    "spaInterpretPublish spaBroker cmd\n\
+                     \x20               |> Task.andThen (\\_ -> Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val})))"
+                ),
+            )
+        } else {
+            (
+                "_",
+                format!("Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))"),
+            )
+        };
         handlers.push_str(&format!(
             "-- Generated endpoint for the SERVER branch `{name}`: decode the read-set,\n\
              -- reuse the app's own init + update to run the REAL effect, encode the write-set.\n\
@@ -1035,14 +1093,18 @@ fn gen_backend(
              \x20       Ok p ->\n\
              \x20           let\n\
              {run_setup}\n\
-             \x20               ( m2, _ ) =\n\
+             \x20               ( m2, {cmd_binder} ) =\n\
              \x20                   update {ctor_app} m\n\
              \x20           in\n\
-             \x20           Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))\n\n\
+             \x20           {answer}\n\n\
              \x20       Err e ->\n\
              \x20           Task.succeed (badRequest (Error.toString e))\n\n\n"
         ));
         routes.push(format!("        , Server.api \"POST /_rpc/{name}\" {handler}"));
+    }
+    if push_mode {
+        // The SSE push endpoint (topic from the query string).
+        routes.push("        , Server.api \"GET /_sky/sub\" subHandler".to_string());
     }
 
     // serverPort + main.

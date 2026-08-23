@@ -23,6 +23,14 @@ use live_gate::{required, Need};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
+// Each test in this file generates + `go build`s two projects (backend native +
+// frontend wasm). Cargo runs the tests in a binary in parallel by default, so
+// three of them at once means up to six concurrent `go build`s — which contend
+// and time out under load, an intermittent false red (same class as the
+// db_cluster flake). Serialize the build-heavy bodies through one lock: the
+// generation + assertions are cheap, but only one test compiles at a time.
+static BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn have_go() -> bool {
     Command::new("go")
         .arg("version")
@@ -41,6 +49,10 @@ fn todos_fixture_entry() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-split-todos/src/Main.sky")
 }
 
+fn push_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-push-counter/src/Main.sky")
+}
+
 fn scratch() -> PathBuf {
     let uniq = format!(
         "sky-spasplit-{}-{}",
@@ -55,6 +67,7 @@ fn scratch() -> PathBuf {
 
 #[test]
 fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let out = scratch();
     let _ = std::fs::remove_dir_all(&out);
 
@@ -155,6 +168,7 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
 ///     `todoListCodec`, which (with `Todo` + `todoCodec`) is COPIED into Shared.
 #[test]
 fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let out = scratch();
     let _ = std::fs::remove_dir_all(&out);
 
@@ -251,6 +265,92 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
         .status()
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "todos frontend must build to wasm");
+    assert!(out.join("frontend/dist/main.wasm").is_file(), "frontend stages dist/main.wasm");
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Server→client PUSH (SSE): the shared-counter fixture uses `Cmd.publish` +
+/// `Sub.subscribeTopic`, so the generator must turn on push mode — a shared
+/// broker, publish-interpreting RPC handlers, and the `GET /_sky/sub` SSE
+/// endpoint — while the frontend keeps `subscriptions` verbatim and leaks no
+/// server effect. Both projects must build. (docs/skyspa/auto-split.md §16.)
+#[test]
+fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            push_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed on the push fixture");
+
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+
+    // --- Backend push wiring: shared broker + interpret + the SSE endpoint. ---
+    assert!(
+        back.contains("Ffi.kernel \"Spa_newBroker\"") && back.contains("spaBroker ="),
+        "backend must construct the shared broker CAF:\n{back}"
+    );
+    assert!(
+        back.contains("Ffi.kernel \"Spa_interpretPublish\""),
+        "backend must wire the Cmd-publish interpreter"
+    );
+    assert!(
+        back.contains("spaInterpretPublish spaBroker cmd"),
+        "the RPC handler must feed its returned Cmd to the broker (not discard it):\n{back}"
+    );
+    assert!(
+        back.contains("Server.api \"GET /_sky/sub\" subHandler")
+            && back.contains("Ffi.kernel \"Spa_streamTopic\""),
+        "backend must mount the SSE push endpoint:\n{back}"
+    );
+
+    // --- Frontend keeps the subscription verbatim; no server effect leaks. ---
+    assert!(
+        front.contains("Sub.subscribeTopic \"count\" GotCount"),
+        "frontend must keep `subscriptions` (the EventSource client wires it):\n{front}"
+    );
+    for needle in ["File.", "saveCount", "Db.", "System.", "Cmd.publish"] {
+        assert!(
+            !front.contains(needle),
+            "SECURITY LEAK: frontend/src/Main.sky contains `{needle}`"
+        );
+    }
+    // The server branch still routes through the RPC boundary.
+    assert!(
+        front.contains("Spa.postJson") && front.contains("/_rpc/Increment"),
+        "frontend must call the RPC boundary for the Increment server branch"
+    );
+
+    // --- Both build (Go-gated). Backend native, frontend wasm. ---
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(backend_build.success(), "push backend must build natively");
+    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(frontend_build.success(), "push frontend must build to wasm");
     assert!(out.join("frontend/dist/main.wasm").is_file(), "frontend stages dist/main.wasm");
 
     let _ = std::fs::remove_dir_all(&out);

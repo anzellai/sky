@@ -43,6 +43,14 @@ var (
 	// browser setInterval handle, the js.Func callback (released on stop), and
 	// the current msg/toMsg to dispatch each tick.
 	spaTimers = map[int]*spaTimer{}
+	// spaTopics holds the active Sub.subscribeTopic EventSource connections,
+	// keyed by topic string (a subscribeTopic leaf's identity for
+	// reconciliation). Each carries its browser EventSource handle, the
+	// onmessage js.Func (released on close), and the current toMsg decoder. This
+	// is the server→client PUSH channel of the Sky.Spa auto-split: the generated
+	// backend mounts `GET /_sky/sub?topic=<topic>` and emits each broker publish
+	// as an SSE `data: <json>` frame (docs/skyspa/auto-split.md §16).
+	spaTopics = map[string]*spaTopicSub{}
 	// Routing (P4). spaRoutes is the registered client-side routes (empty ⇒ no
 	// routing; a route-less app keeps native <a href> behaviour). spaNotFound is
 	// the 404 page value (nil ⇒ leave the model's Page unchanged on a miss).
@@ -56,6 +64,12 @@ type spaTimer struct {
 	id  js.Value // setInterval handle
 	fn  js.Func  // the interval callback — MUST be Released when the timer stops
 	msg any      // Sub.every's second arg: a Msg value, or an (Int -> Msg) fn
+}
+
+type spaTopicSub struct {
+	es    js.Value // the browser EventSource handle
+	onMsg js.Func  // the onmessage callback — MUST be Released when the sub stops
+	toMsg any      // subscribeTopic's decoder: `any -> Msg`, called per frame
 }
 
 // spaRun is the js/wasm implementation of the Spa_app task thunk (the host stub
@@ -463,12 +477,18 @@ func performTask(task, toMsg any, dispatch func(any)) {
 // Reconciliation identity is the interval in ms: two Sub.every with the same
 // interval are the same timer. Unlike the server (which honours ONE Sub.every
 // per dispatch), the client honours any number of distinct intervals.
-// Sub kinds other than "every" (subscribeTopic / stream / websocket) are not
-// wired on the client in v1 — see interpretCmd's publish note.
+//
+// "subscribeTopic" leaves are ALSO reconciled here (identity = the topic
+// string): each opens an EventSource to the auto-split backend's
+// `/_sky/sub?topic=<topic>` push endpoint (openTopic). Sub kinds "stream" /
+// "websocket" are still not wired on the client in v1.
 func reconcileSubs() {
-	desired := map[int]any{} // interval ms -> msg (last-write-wins per interval)
+	desired := map[int]any{}       // interval ms -> msg (last-write-wins per interval)
+	desiredTopics := map[string]any{} // topic -> toMsg (last-write-wins per topic)
 	if spaSubs != nil {
-		collectEvery(asSubT(spaSubs(spaModel)), desired)
+		root := asSubT(spaSubs(spaModel))
+		collectEvery(root, desired)
+		collectTopics(root, desiredTopics)
 	}
 
 	// Stop intervals no longer desired.
@@ -485,6 +505,157 @@ func reconcileSubs() {
 		}
 		startTimer(ms, msg)
 	}
+
+	// Close topic subscriptions no longer desired.
+	for topic, sub := range spaTopics {
+		if _, keep := desiredTopics[topic]; !keep {
+			closeTopic(topic, sub)
+		}
+	}
+	// Open new topic subscriptions; refresh the decoder on ones already open.
+	for topic, toMsg := range desiredTopics {
+		if sub, ok := spaTopics[topic]; ok {
+			sub.toMsg = toMsg
+			continue
+		}
+		openTopic(topic, toMsg)
+	}
+}
+
+// collectTopics flattens a Sub tree into the topic->toMsg map, recursing through
+// Sub.batch. Mirrors collectEvery for the "subscribeTopic" leaf. An empty topic
+// is ignored (nothing to connect to).
+func collectTopics(s subT, out map[string]any) {
+	switch s.kind {
+	case "subscribeTopic":
+		if s.topic != "" {
+			out[s.topic] = s.toMsg // last-write-wins for a repeated topic
+		}
+	case "batch":
+		for _, c := range s.batch {
+			collectTopics(asSubT(c), out)
+		}
+	}
+}
+
+// openTopic opens an EventSource to the auto-split backend's SSE push endpoint
+// for `topic` and wires each `data:` frame back into the TEA loop. The frame
+// body is JSON (the server marshals the published payload); it is decoded to the
+// Sky `any` value the user's `toMsg` decoder expects — `sky_call(toMsg, payload)`
+// yields the Msg, and `step` runs update + render + effects + re-reconcile.
+//
+// Same-origin: the client only ever talks to its own backend, so the endpoint
+// is a bare absolute path (no CORS). Reconciliation identity is the topic
+// string (see reconcileSubs).
+func openTopic(topic string, toMsg any) {
+	esCtor := js.Global().Get("EventSource")
+	if esCtor.Type() != js.TypeFunction {
+		logEmit(logLevelError, "error",
+			"Sky.Spa Sub.subscribeTopic: EventSource is unavailable in this runtime", map[string]any{
+				"topic": topic,
+			})
+		return
+	}
+	sub := &spaTopicSub{toMsg: toMsg}
+	sub.es = esCtor.New("/_sky/sub?topic=" + jsEncodeURIComponent(topic))
+	sub.onMsg = js.FuncOf(func(this js.Value, args []js.Value) any {
+		defer func() {
+			if r := recover(); r != nil {
+				logEmit(logLevelError, "error",
+					"Sky.Spa Sub.subscribeTopic: frame handling panicked", map[string]any{
+						"panic": fmt.Sprintf("%v", r),
+						"topic": topic,
+					})
+			}
+		}()
+		if len(args) == 0 {
+			return nil
+		}
+		data := args[0].Get("data")
+		if data.Type() != js.TypeString {
+			return nil
+		}
+		payload := spaDecodeSSEData(data.String())
+		step(sky_call(sub.toMsg, payload))
+		return nil
+	})
+	sub.es.Call("addEventListener", "message", sub.onMsg)
+	spaTopics[topic] = sub
+}
+
+// closeTopic tears down a topic EventSource and releases its callback.
+func closeTopic(topic string, sub *spaTopicSub) {
+	if sub.es.Truthy() {
+		sub.es.Call("close")
+	}
+	sub.onMsg.Release()
+	delete(spaTopics, topic)
+}
+
+// spaDecodeSSEData turns an SSE `data:` frame body (JSON text) into the Sky `any`
+// value a subscribeTopic `toMsg` decoder consumes — the client counterpart of
+// the raw in-process payload Sky.Live hands `toMsg`. Decoding via the browser's
+// JSON.parse (not encoding/json) keeps this reflect-free and matches the wire
+// exactly; a JSON number that is integral becomes a Go `int` (so an `Int` Msg
+// arg is not handed a float). This is structural JSON→Sky decoding, NOT a `.(T)`
+// assertion: the value's Sky shape is reconstructed, not coerced.
+func spaDecodeSSEData(raw string) any {
+	jsonObj := js.Global().Get("JSON")
+	if jsonObj.Type() != js.TypeObject {
+		return raw
+	}
+	// JSON.parse can throw on malformed input; guard so a bad frame is dropped
+	// rather than killing the message callback.
+	defer func() { _ = recover() }()
+	return jsValueToSky(jsonObj.Call("parse", raw))
+}
+
+// jsValueToSky converts a parsed JS value into the Sky `any` representation the
+// runtime uses (int/float64/string/bool, []any for arrays, map[string]any for
+// objects, nil for null/undefined). Integral numbers map to int.
+func jsValueToSky(v js.Value) any {
+	switch v.Type() {
+	case js.TypeNumber:
+		f := v.Float()
+		if f == float64(int(f)) {
+			return int(f)
+		}
+		return f
+	case js.TypeString:
+		return v.String()
+	case js.TypeBoolean:
+		return v.Bool()
+	case js.TypeObject:
+		if v.InstanceOf(js.Global().Get("Array")) {
+			n := v.Length()
+			out := make([]any, 0, n)
+			for i := 0; i < n; i++ {
+				out = append(out, jsValueToSky(v.Index(i)))
+			}
+			return out
+		}
+		keys := js.Global().Get("Object").Call("keys", v)
+		n := keys.Length()
+		out := make(map[string]any, n)
+		for i := 0; i < n; i++ {
+			k := keys.Index(i).String()
+			out[k] = jsValueToSky(v.Get(k))
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// jsEncodeURIComponent percent-encodes a topic for the `?topic=` query via the
+// browser's encodeURIComponent, so a topic with spaces / reserved chars forms a
+// valid URL. Falls back to the raw string if the global is unavailable.
+func jsEncodeURIComponent(s string) string {
+	enc := js.Global().Get("encodeURIComponent")
+	if enc.Type() != js.TypeFunction {
+		return s
+	}
+	return enc.Invoke(s).String()
 }
 
 // collectEvery flattens a Sub tree into the interval->msg map, recursing through
