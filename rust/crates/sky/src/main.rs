@@ -92,6 +92,7 @@ fn main() -> ExitCode {
         Some("console") => cmd_console(&args[1..]),
         Some("console-serve") => cmd_console_serve(&args[1..]),
         Some("spa-partition") => cmd_spa_partition(&args[1..]),
+        Some("spa-split") => cmd_spa_split(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
         Some(other) => {
             eprintln!("sky: unknown command `{other}`. Try `sky --help`.");
@@ -759,6 +760,78 @@ fn cmd_spa_partition(args: &[String]) -> ExitCode {
         }
         Err(e) => {
             eprintln!("sky spa-partition: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `sky spa-split <entry.sky> --out <dir>` — the Sky.Spa auto-split GENERATOR.
+/// Reads one Sky.Spa project with inline effects and emits two buildable Sky
+/// projects (a wasm frontend + a native backend) plus the shared wire contract.
+/// Source-to-source; no compiler-IR change. See `project::spa_split`.
+fn cmd_spa_split(args: &[String]) -> ExitCode {
+    let (positional, out) = parse_out(args);
+    let file = match resolve_entry_arg(
+        &positional,
+        "usage: sky spa-split <file.sky> --out <dir>  (or run inside a Sky.Spa project directory)",
+    ) {
+        Ok(f) => f,
+        Err(code) => return code,
+    };
+    let out_dir = match out {
+        Some(o) => PathBuf::from(o),
+        None => {
+            eprintln!("sky spa-split: --out <dir> is required (where to write shared/ backend/ frontend/)");
+            return ExitCode::from(2);
+        }
+    };
+    let file = file.as_path();
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    match project::spa_split::generate(
+        &repo_root,
+        &project_dir,
+        entry_module_name(file).as_deref(),
+        &out_dir,
+    ) {
+        Ok(report) => {
+            println!("sky spa-split → {}", report.out_dir);
+            println!(
+                "  server branches (→ RPC): {}",
+                if report.server_branches.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    report.server_branches.join(", ")
+                }
+            );
+            println!(
+                "  client branches (local): {}",
+                if report.client_branches.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    report.client_branches.join(", ")
+                }
+            );
+            println!(
+                "  excluded from frontend (server-tainted): {}",
+                if report.excluded.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    report.excluded.join(", ")
+                }
+            );
+            for f in &report.files {
+                println!("  wrote {f}");
+            }
+            for n in &report.notes {
+                println!("  note: {n}");
+            }
+            println!("\nBuild: (cd {} && sky build --target web frontend/src/Main.sky) && (cd {} && sky build backend/src/Main.sky)", report.out_dir, report.out_dir);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("sky spa-split: {e}");
             ExitCode::FAILURE
         }
     }
@@ -5413,6 +5486,8 @@ fn print_help() {
          USAGE:\n  sky <command> [args]\n\n\
          WIRED COMMANDS:\n\
          \x20 build <file>     compile → sky-out/ + go build (--embed bundles PostgreSQL)\n\
+         \x20                   --wasm compiles the Sky.Spa client for the browser (GOOS=js);\n\
+         \x20                   --target <web|desktop|ios|android|tablet> bundles that client\n\
          \x20 check <file>     type-check + go build (no binary run)\n\
          \x20 run   <file>     build + execute\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\
@@ -5437,6 +5512,7 @@ fn print_help() {
          \x20 upgrade-claude       refresh ./CLAUDE.md from the embedded template\n\
          \x20 verify [target]      build + run each example / the project\n\
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
+         \x20 spa-split <file> --out <dir>  generate the wasm frontend + native backend split\n\
          \x20 version          print the version\n\n\
          DEFERRED (bring-up): upgrade"
     );

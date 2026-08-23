@@ -1,0 +1,84 @@
+module Main exposing (main)
+
+-- Auto-split INPUT: one project, effects inline in `update`. Fed to
+-- `sky spa-split`, which emits a wasm frontend (pure branches local, effectful
+-- branches -> RPC) + a native backend (runs the effects behind generated RPC
+-- endpoints). Not built directly (File can't run in the wasm client) — that is
+-- the whole point of the split.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { n : Int
+    , log : String
+    }
+
+
+type Msg
+    = Bump
+    | Persist
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, log = "" }, Cmd.none )
+
+
+-- server effect (File): writes n, reads it back, returns a confirmation.
+saveN : Int -> Task Error String
+saveN n =
+    File.writeFile "count.txt" (String.fromInt n)
+        |> Task.andThen (\_ -> File.readFile "count.txt")
+        |> Task.map (\s -> "saved: " ++ s)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            -- PURE -> client-local, zero round-trip
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        Persist ->
+            -- EFFECTFUL (File) -> server; read-set {n}, write-set {log}
+            ( { model | log = Result.withDefault "err" (Task.run (saveN model.n)) }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8 ]
+            [ Ui.text ("n = " ++ String.fromInt model.n)
+            , Ui.text model.log
+            , Ui.button [] { onPress = Just Bump, label = Ui.text "Bump" }
+            , Ui.button [] { onPress = Just Persist, label = Ui.text "Persist" }
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

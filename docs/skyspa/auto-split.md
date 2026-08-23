@@ -436,3 +436,47 @@ generalise to a real app.
 
 Security is the spine: every phase preserves "an effectful value/function never
 reaches client code," and B4's guard makes it a build failure, not a hope.
+
+## 15. B3/B4 DONE (2026-08-23): `sky spa-split <entry> --out <dir>`
+
+The generator shipped as **`sky spa-split`**
+(`rust/crates/project/src/spa_split.rs`, dispatched from `crates/sky/src/main.rs`;
+fixture + acceptance test in `crates/sky/tests/spa_split_flow.rs` +
+`tests/fixtures/spa-split/`). It is **source-to-source only** — it reuses
+`spa_partition`'s analysis (now split into `analyze` + `analyze_loaded`, plus a
+`model_fields` typed field-list on the report) and the syntax crate's CST for
+verbatim slicing. **No compiler-IR change; the runtime-narrowing floor is
+untouched.**
+
+**What it emits** (matching the `examples/60-spa-todos` client+server+shared
+target shape):
+- **shared/Shared.sky** — per SERVER branch `M`, `type alias MReq` (read-set) /
+  `type alias MResp` (write-set) + their `Codec.object … |> Codec.field … |>
+  Codec.buildObject` codecs, copied into BOTH projects' `src/`.
+- **backend/** — the input app copied **verbatim** (Model, Msg, init, `update`,
+  all helpers incl. the server ones), `main` replaced by a `Server.listen` with
+  one `Server.api "POST /_rpc/M" MHandler` per SERVER branch + `Server.static
+  "/" "../frontend/dist"`. Each handler decodes the read-set, **reuses the app's
+  own `init` + `update`** to run the REAL effect server-side (dodging inline
+  interleaving), and answers with the write-set. The effect body is never
+  rewritten.
+- **frontend/** — Model/init/view/subscriptions/`main` verbatim (view's
+  annotation adjusted to `-> any` for the wasm renderer); Msg extended with an
+  `AppliedM (Result Error MResp)` variant per SERVER branch; `update`'s pure arms
+  kept verbatim, each SERVER arm rewritten to `Spa.postJson MReqCodec MRespCodec
+  "/_rpc/M" <read-set> AppliedM` with a generated `AppliedM` apply-arm.
+  **Server-tainted top-level bindings (from the analysis) are OMITTED** — the
+  security spine, asserted by the test (the frontend source contains no `File.` /
+  `saveN` / `Db.` / `System.`).
+
+**Verified end-to-end** on the counter-with-one-File-effect skeleton: `sky
+spa-split` → both projects build (`sky build backend`, `sky build --target web
+frontend`); `POST /_rpc/Persist -d '{"n":7}'` returns `{"log":"saved: 7"}`,
+`count.txt` is written with `7`, `GET /` serves the wasm bootstrap and
+`/main.wasm` is 200.
+
+**Handled fully:** the single-entry-module skeleton — pure + one effectful branch,
+field-precise read/write sets, primitive (`Int`/`String`/`Bool`/`Float`) field
+types. **Deferred (noted on the report, never silently mis-handled):** typed Req
+fields for Msg args, the whole-model fallback record, multi-module apps, and
+non-primitive field codecs.

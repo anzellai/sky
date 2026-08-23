@@ -408,6 +408,71 @@ pub struct TaintedBinding {
     pub reason: String,
 }
 
+/// One Model field with its rendered Sky type name and the `Std.Codec`
+/// combinator that encodes it — the raw material the `spa-split` generator uses
+/// to synthesise the shared wire records (`<Msg>Req` / `<Msg>Resp`). Populated
+/// for primitive field types (`Int` / `String` / `Bool` / `Float`); `codec` is
+/// `None` for a field whose type the generator does not know how to encode
+/// (the generator then notes it as a deferred shape rather than guessing).
+#[derive(Clone, Debug)]
+pub struct ModelFieldTy {
+    pub name: String,
+    /// The rendered type name (`Int`), tail-segment of a folded nominal name.
+    pub ty_name: String,
+    /// The `Std.Codec` combinator (`Codec.int`), or `None` if unsupported.
+    pub codec: Option<String>,
+}
+
+/// Map a solved field type to its `(type name, codec combinator)` — the four
+/// JSON primitives the generator can wire. Keys off the nominal tail so a
+/// home-folded `Sky.Core.Basics.Int` still reads as `Int`.
+fn field_ty_codec(t: &ty::Ty) -> ModelFieldTy {
+    if let ty::Ty::App(name, args) = t {
+        if args.is_empty() {
+            let tail = name.as_str().rsplit('.').next().unwrap_or(name.as_str());
+            let codec = match tail {
+                "Int" => Some("Codec.int"),
+                "String" => Some("Codec.string"),
+                "Bool" => Some("Codec.bool"),
+                "Float" => Some("Codec.float"),
+                _ => None,
+            };
+            return ModelFieldTy {
+                name: String::new(),
+                ty_name: tail.to_string(),
+                codec: codec.map(str::to_string),
+            };
+        }
+    }
+    ModelFieldTy {
+        name: String::new(),
+        ty_name: "any".to_string(),
+        codec: None,
+    }
+}
+
+/// The Model's fields — name + type + codec — recovered from the `update`
+/// result type `( Model, Cmd msg )`. Empty when the shape is not the TEA tuple.
+fn model_fields_typed(result: &Option<ty::Ty>) -> Vec<ModelFieldTy> {
+    if let Some(ty::Ty::Tuple(xs)) = result {
+        if xs.len() == 2 {
+            if let ty::Ty::Record(fields, _) = &xs[0] {
+                let mut out: Vec<ModelFieldTy> = fields
+                    .iter()
+                    .map(|(n, t)| {
+                        let mut f = field_ty_codec(t);
+                        f.name = n.as_str().to_string();
+                        f
+                    })
+                    .collect();
+                out.sort_by(|a, b| a.name.cmp(&b.name));
+                return out;
+            }
+        }
+    }
+    Vec::new()
+}
+
 /// The full partition report for one project.
 pub struct SpaPartitionReport {
     pub project: String,
@@ -419,6 +484,10 @@ pub struct SpaPartitionReport {
     /// partial-app / delegating shape) — the whole-update verdict, no per-branch.
     pub whole_update: Option<BranchVerdict>,
     pub tainted: Vec<TaintedBinding>,
+    /// The Model's fields with their types + codecs (for the `spa-split`
+    /// generator's shared wire records). Empty when the Model shape could not
+    /// be recovered from `update`'s result type.
+    pub model_fields: Vec<ModelFieldTy>,
     /// Non-fatal notes (why a branch was conservatively marked server, etc.).
     pub notes: Vec<String>,
 }
@@ -533,18 +602,30 @@ pub fn analyze(
     entry_module: Option<&str>,
 ) -> Result<SpaPartitionReport, String> {
     let (db, entry, check_ids) = crate::build::load_source_db(repo_root, project_dir, entry_module)?;
-
     let project = project_dir
         .strip_prefix(repo_root)
         .unwrap_or(project_dir)
         .to_string_lossy()
         .to_string();
+    analyze_loaded(&db, entry, &check_ids, project)
+}
+
+/// The analysis over an already-loaded source db. `analyze` is the thin wrapper
+/// that assembles the db from a project dir; the `spa-split` generator calls
+/// this directly so it can reuse the SAME db for its CST slicing + type reads.
+pub fn analyze_loaded(
+    db: &skydb::SkyDatabase,
+    entry: ModuleId,
+    check_ids: &[ModuleId],
+    project: String,
+) -> Result<SpaPartitionReport, String> {
+    let check_ids = check_ids.to_vec();
     let entry_module_name = db.module_name(entry).to_string();
 
     // Type-check first — the report is only meaningful for a program that
     // `sky check`s clean (mirrors the build's accept/reject gate). We do not
     // re-render the diagnostics here; a broken project is reported as such.
-    let checked = ty::check_modules(&db, &check_ids);
+    let checked = ty::check_modules(db, &check_ids);
     if checked.type_errors > 0 || checked.name_errors > 0 {
         return Err(format!(
             "project does not type-check ({} type error(s), {} name error(s)) — run `sky check` first",
@@ -556,15 +637,15 @@ pub fn analyze(
     let spa_mod = db
         .module_by_name("Std.Spa")
         .ok_or_else(|| "not a Sky.Spa project: Std.Spa is not imported".to_string())?;
-    let config_def = def_by_name(&db, spa_mod, "config")
+    let config_def = def_by_name(db, spa_mod, "config")
         .ok_or_else(|| "Std.Spa.config not found (stdlib mismatch?)".to_string())?;
 
     let mut notes: Vec<String> = Vec::new();
-    let update_field = find_config_update_field(&db, &check_ids, entry, config_def);
+    let update_field = find_config_update_field(db, &check_ids, entry, config_def);
 
     // Build the reachability + taint graph over every def reachable from the
     // app modules (pulls in only the stdlib defs actually referenced).
-    let graph = build_graph(&db, &check_ids);
+    let graph = build_graph(db, &check_ids);
 
     // ---- server-tainted top-level bindings (app modules only) ----
     let mut tainted: Vec<TaintedBinding> = Vec::new();
@@ -585,7 +666,7 @@ pub fn analyze(
                 tainted.push(TaintedBinding {
                     module: mname.clone(),
                     name: n.to_string(),
-                    reason: graph.reason_for(&db, td.def),
+                    reason: graph.reason_for(db, td.def),
                 });
             }
         }
@@ -597,6 +678,7 @@ pub fn analyze(
     let mut branches: Vec<BranchVerdict> = Vec::new();
     let mut whole_update: Option<BranchVerdict> = None;
     let mut update_name: Option<String> = None;
+    let mut model_fields: Vec<ModelFieldTy> = Vec::new();
 
     match update_field {
         UpdateField::Def(update_def) => {
@@ -607,8 +689,12 @@ pub fn analyze(
             update_name = Some(format!("{}.{}", db.module_name(umod), uname));
             let resolved = db.resolve(umod);
             if let Some(body) = resolved.bodies.get(&update_def) {
+                // Recover the Model field list + types from `update`'s result
+                // type — the raw material for the generator's wire records.
+                let types = ty::Typer::new(db).body_types(umod, update_def, body);
+                model_fields = model_fields_typed(&types.result);
                 classify_update_body(
-                    &db, &graph, umod, update_def, body, &mut branches, &mut whole_update,
+                    db, &graph, umod, update_def, body, &mut branches, &mut whole_update,
                     &mut notes,
                 );
             } else {
@@ -619,7 +705,7 @@ pub fn analyze(
             update_name = Some(format!("{}.<lambda update>", db.module_name(umod)));
             // A lambda update: analyse its body as one unit (no stable Msg
             // pattern names unless it is itself a `case`).
-            classify_lambda_update(&db, &graph, umod, &body, root, &mut branches, &mut whole_update);
+            classify_lambda_update(db, &graph, umod, &body, root, &mut branches, &mut whole_update);
             notes.push(
                 "update is an inline lambda; per-branch names taken from its `case` if present."
                     .into(),
@@ -648,6 +734,7 @@ pub fn analyze(
         branches,
         whole_update,
         tainted,
+        model_fields,
         notes,
     })
 }
