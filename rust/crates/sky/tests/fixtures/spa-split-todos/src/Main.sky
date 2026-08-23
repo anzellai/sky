@@ -1,0 +1,148 @@
+module Main exposing (main)
+
+-- Auto-split INPUT: a REAL todos app in ONE project, effects inline. Exercises
+-- Msg args (Toggle/Remove Int), a non-primitive Model field (todos : List Todo),
+-- non-primitive codecs (List Todo), and multiple server branches. Fed to
+-- `sky spa-split`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.File as File
+import Std.Codec as Codec exposing (Codec)
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Todo =
+    { id : Int
+    , title : String
+    , done : Bool
+    }
+
+
+type alias Model =
+    { todos : List Todo
+    , draft : String
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Add
+    | Toggle Int
+    | Remove Int
+
+
+todoCodec : Codec Todo
+todoCodec =
+    Codec.object Todo
+        |> Codec.field "id" .id Codec.int
+        |> Codec.field "title" .title Codec.string
+        |> Codec.field "done" .done Codec.bool
+        |> Codec.buildObject
+
+
+todoListCodec : Codec (List Todo)
+todoListCodec =
+    Codec.list todoCodec
+
+
+storePath : String
+storePath =
+    "todos.json"
+
+
+-- server effect (File): load the persisted list (missing file -> empty).
+loadTodos : () -> Task Error (List Todo)
+loadTodos _ =
+    File.readFile storePath
+        |> Task.map (\s -> Result.withDefault [] (Codec.fromJson todoListCodec s))
+        |> Task.onError (\_ -> Task.succeed [])
+
+
+-- server effect (File): persist the list.
+saveTodos : List Todo -> Task Error ()
+saveTodos todos =
+    File.writeFile storePath (Codec.toJson todoListCodec todos)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { todos = [], draft = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        DraftChanged s ->
+            -- PURE -> client
+            ( { model | draft = s }, Cmd.none )
+
+        Add ->
+            -- SERVER: read-set {draft}, write-set {todos, draft}
+            let
+                current =
+                    Result.withDefault [] (Task.run (loadTodos ()))
+
+                next =
+                    current ++ [ { id = List.length current + 1, title = model.draft, done = False } ]
+
+                _ =
+                    Task.run (saveTodos next)
+            in
+            ( { model | todos = next, draft = "" }, Cmd.none )
+
+        Toggle id ->
+            -- SERVER: Msg arg {id}, write-set {todos}
+            let
+                next =
+                    List.map
+                        (\t -> if t.id == id then { t | done = not t.done } else t)
+                        (Result.withDefault [] (Task.run (loadTodos ())))
+
+                _ =
+                    Task.run (saveTodos next)
+            in
+            ( { model | todos = next }, Cmd.none )
+
+        Remove id ->
+            -- SERVER: Msg arg {id}, write-set {todos}
+            let
+                next =
+                    List.filter (\t -> t.id /= id) (Result.withDefault [] (Task.run (loadTodos ())))
+
+                _ =
+                    Task.run (saveTodos next)
+            in
+            ( { model | todos = next }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8 ]
+            [ Ui.text ("todos: " ++ String.fromInt (List.length model.todos)) ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

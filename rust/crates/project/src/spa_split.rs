@@ -24,17 +24,219 @@
 //! syntax crate's CST for verbatim slicing. It never lowers, emits Go, or
 //! touches the compiler IR / the runtime-narrowing floor.
 //!
-//! Scope handled fully: the single-entry-module skeleton (pure branch + one
-//! effectful branch with field-precise read/write sets, primitive field types,
-//! no Msg args). Deferred (noted, not silently mis-handled): Msg-arg-typed RPC
-//! inputs, whole-model fallback records, multi-module apps, non-primitive field
-//! types. See the `notes` on the returned report.
+//! Scope handled fully: a single-entry-module app — pure + N effectful branches,
+//! field-precise read/write sets, **Msg-arg-typed RPC inputs** (a `Toggle Int`
+//! puts a typed `id : Int` into the request; the backend reconstructs
+//! `update (Toggle p.id) m`; the frontend sends `{ id = id }`), **non-primitive
+//! field codecs** (a `List Todo` field wires to the project's own
+//! `todoListCodec`, which — with the `Todo` type + `todoCodec` it needs — is
+//! COPIED into `Shared`; `List X` / `Maybe X` fall back to `Codec.list` /
+//! `Codec.maybe`), and the **whole-model fallback** (a branch reading/writing
+//! `model` opaquely carries every field, each wired through the same resolver).
+//! Fail-closed rather than mis-handled: a field whose codec cannot be resolved
+//! is an Err (never a placeholder that won't compile), and a **multi-module**
+//! app (the entry importing sibling project modules) is refused with a clear
+//! message rather than emitting a backend that references uncopied modules.
 
 use crate::spa_partition::{self, BranchIo, ModelFieldTy, SpaPartitionReport};
+use base::{DefId, ModuleId};
 use hir::SkyDb;
+use skydb::SkyDatabase;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use syntax::ast::{AstNode, SourceFile};
 use syntax::SyntaxKind;
+
+// ---------------------------------------------------------------------------
+// Codec resolution — the non-primitive-field engine (§14 #2).
+// ---------------------------------------------------------------------------
+
+/// A top-level `Codec <T>` binding the INPUT project defines — e.g. the user's
+/// `todoCodec : Codec Todo` / `todoListCodec : Codec (List Todo)`. The generator
+/// resolves a non-primitive Req/Resp field's codec against these first (priority
+/// (a)): it references the binding by name and COPIES its def (+ the type + any
+/// helper codec it needs) into the generated `Shared` module.
+struct CodecBinding {
+    name: String,
+    def: DefId,
+    coded_ty: ty::Ty,
+    /// The declared coded type as the user wrote it (`List Todo`), sliced from
+    /// the binding's type annotation — the surface used for the generated Req/
+    /// Resp field type, because the solved `coded_ty` has type aliases EXPANDED
+    /// (a `List Todo` field would otherwise render as `List { id : Int, … }`).
+    surface: String,
+}
+
+/// A resolved field codec: the codec expression to emit + the surface type name
+/// to give the generated record field.
+struct ResolvedCodec {
+    codec: String,
+    surface: String,
+}
+
+/// Resolves the `Std.Codec` expression for a field type, accumulating which user
+/// codec bindings must be copied into `Shared`. Priority (§14 #2):
+///   (a) a project `Codec <T>` binding whose T matches   → reference + copy it
+///   (b) `List X` / `Maybe X` with a resolvable inner    → `Codec.list <inner>`
+///   (c) a JSON primitive                                → `Codec.int` / …
+///   (d) otherwise                                       → a clear Err (never a
+///       placeholder codec that will not compile).
+struct CodecResolver<'a> {
+    registry: &'a [CodecBinding],
+    /// Names of user codec bindings referenced (→ copied into `Shared`).
+    needed: BTreeSet<String>,
+}
+
+impl<'a> CodecResolver<'a> {
+    fn new(registry: &'a [CodecBinding]) -> Self {
+        CodecResolver {
+            registry,
+            needed: BTreeSet::new(),
+        }
+    }
+
+    fn resolve(&mut self, t: &ty::Ty) -> Result<ResolvedCodec, String> {
+        // (a) A project-defined `Codec <T>` binding for exactly this type. Use
+        // the binding's DECLARED surface for the field type (aliases un-expanded).
+        for b in self.registry {
+            if ty_matches(t, &b.coded_ty) {
+                self.needed.insert(b.name.clone());
+                return Ok(ResolvedCodec {
+                    codec: b.name.clone(),
+                    surface: b.surface.clone(),
+                });
+            }
+        }
+        // (b) List X / Maybe X built from the inner codec.
+        if let ty::Ty::App(name, args) = t {
+            let tail = tail_seg(name.as_str());
+            if tail == "List" && args.len() == 1 {
+                let inner = self.resolve(&args[0])?;
+                return Ok(ResolvedCodec {
+                    codec: format!("(Codec.list {})", inner.codec),
+                    surface: format!("List {}", wrap_arg(&inner.surface)),
+                });
+            }
+            if tail == "Maybe" && args.len() == 1 {
+                let inner = self.resolve(&args[0])?;
+                return Ok(ResolvedCodec {
+                    codec: format!("(Codec.maybe {})", inner.codec),
+                    surface: format!("Maybe {}", wrap_arg(&inner.surface)),
+                });
+            }
+            // (c) JSON primitives.
+            if args.is_empty() {
+                let codec = match tail {
+                    "Int" => Some("Codec.int"),
+                    "String" => Some("Codec.string"),
+                    "Bool" => Some("Codec.bool"),
+                    "Float" => Some("Codec.float"),
+                    _ => None,
+                };
+                if let Some(c) = codec {
+                    return Ok(ResolvedCodec {
+                        codec: c.to_string(),
+                        surface: tail.to_string(),
+                    });
+                }
+            }
+        }
+        // (d) No codec — fail closed with an actionable message.
+        Err(format!(
+            "no codec for a field of type `{0}` — define a top-level `Codec {0}` binding in the project (spa-split copies it into Shared) or reduce the field to `List`/`Maybe`/`Int`/`String`/`Bool`/`Float`",
+            render_ty(t)
+        ))
+    }
+}
+
+/// Parenthesise a type argument if it is an application (`List Todo` → wrap;
+/// `Todo` → leave) so `List (List Todo)` renders correctly.
+fn wrap_arg(surface: &str) -> String {
+    if surface.contains(' ') {
+        format!("({surface})")
+    } else {
+        surface.to_string()
+    }
+}
+
+/// Surface rendering of a type for an error message / a generated field type
+/// (`List Todo`, `Todo`, `Int`). Tail-normalises folded nominal names.
+fn render_ty(t: &ty::Ty) -> String {
+    match t {
+        ty::Ty::App(name, args) => {
+            let tail = tail_seg(name.as_str());
+            if args.is_empty() {
+                tail.to_string()
+            } else {
+                let inner: Vec<String> = args.iter().map(render_ty).collect();
+                format!("{} {}", tail, inner.join(" "))
+            }
+        }
+        ty::Ty::Var(n) => n.as_str().to_string(),
+        ty::Ty::Unit => "()".to_string(),
+        _ => "any".to_string(),
+    }
+}
+
+/// The tail segment of a folded nominal name (`Sky.Core.List.List` → `List`).
+fn tail_seg(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
+
+/// Structural type equality, tolerant of home-folding (compares nominal tails)
+/// and of type-variable renaming — enough to match a field's type against a
+/// user `Codec <T>` binding's T (`List Todo` ≡ `List Todo`).
+fn ty_matches(a: &ty::Ty, b: &ty::Ty) -> bool {
+    use ty::Ty;
+    match (a, b) {
+        (Ty::App(n1, a1), Ty::App(n2, a2)) => {
+            tail_seg(n1.as_str()) == tail_seg(n2.as_str())
+                && a1.len() == a2.len()
+                && a1.iter().zip(a2).all(|(x, y)| ty_matches(x, y))
+        }
+        (Ty::Tuple(x), Ty::Tuple(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| ty_matches(p, q))
+        }
+        (Ty::Record(f1, _), Ty::Record(f2, _)) => {
+            f1.len() == f2.len()
+                && f1.iter().zip(f2).all(|((n1, t1), (n2, t2))| {
+                    n1.as_str() == n2.as_str() && ty_matches(t1, t2)
+                })
+        }
+        (Ty::Var(_), Ty::Var(_)) => true,
+        (Ty::Unit, Ty::Unit) => true,
+        (Ty::Fun(a1, b1), Ty::Fun(a2, b2)) => ty_matches(a1, a2) && ty_matches(b1, b2),
+        _ => false,
+    }
+}
+
+/// Collect every nominal type NAME (tail-normalised) appearing in a type — used
+/// to discover which project type declarations a wire field drags in.
+fn collect_ty_names(t: &ty::Ty, out: &mut BTreeSet<String>) {
+    match t {
+        ty::Ty::App(name, args) => {
+            out.insert(tail_seg(name.as_str()).to_string());
+            for a in args {
+                collect_ty_names(a, out);
+            }
+        }
+        ty::Ty::Tuple(xs) => {
+            for x in xs {
+                collect_ty_names(x, out);
+            }
+        }
+        ty::Ty::Record(fields, _) => {
+            for (_, ft) in fields {
+                collect_ty_names(ft, out);
+            }
+        }
+        ty::Ty::Fun(a, b) => {
+            collect_ty_names(a, out);
+            collect_ty_names(b, out);
+        }
+        ty::Ty::Var(_) | ty::Ty::Unit | ty::Ty::Error => {}
+    }
+}
 
 /// What `generate` produced, for the CLI + the acceptance test.
 pub struct SpaSplitReport {
@@ -88,41 +290,88 @@ fn first_upper(node: &syntax::SyntaxNode) -> Option<String> {
         .map(|t| t.text().to_string())
 }
 
-/// The `<Msg>Req` / `<Msg>Resp` field lists for one SERVER branch, resolved
-/// against the typed Model fields. Returns `(req_fields, resp_fields)` where
-/// each entry is `(name, ty_name, codec)`. `codec` `None` ⇒ unsupported type.
-fn wire_fields(
-    io: &BranchIo,
-    model_fields: &[ModelFieldTy],
-) -> (Vec<ModelFieldTy>, Vec<ModelFieldTy>) {
-    let lookup = |name: &str| -> ModelFieldTy {
-        model_fields
-            .iter()
-            .find(|f| f.name == name)
-            .cloned()
-            .unwrap_or(ModelFieldTy {
-                name: name.to_string(),
-                ty_name: "any".into(),
-                codec: None,
-            })
-    };
-    let req: Vec<ModelFieldTy> = if io.reads_whole_model {
-        model_fields.to_vec()
-    } else {
-        io.read_fields.iter().map(|f| lookup(f)).collect()
-    };
-    let resp: Vec<ModelFieldTy> = if io.writes_whole_model {
-        model_fields.to_vec()
-    } else {
-        io.write_fields.iter().map(|f| lookup(f)).collect()
-    };
-    (req, resp)
+/// One SERVER branch's fully-resolved wire contract: the `<Msg>Req` (read-set
+/// fields ∪ Msg args) and `<Msg>Resp` (write-set) records, EACH field carrying a
+/// real, compilable `Std.Codec` combinator (never a placeholder).
+struct Wire {
+    name: String,
+    req_fields: Vec<ModelFieldTy>,
+    resp_fields: Vec<ModelFieldTy>,
 }
 
-/// A `type alias <Name> = { … }` + its codec, rendered from a field list.
+/// Look a Model field's typed entry up by name.
+fn lookup_field(model_fields: &[ModelFieldTy], name: &str) -> ModelFieldTy {
+    model_fields
+        .iter()
+        .find(|f| f.name == name)
+        .cloned()
+        .unwrap_or(ModelFieldTy {
+            name: name.to_string(),
+            ty_name: "any".into(),
+            codec: None,
+            ty: None,
+        })
+}
+
+/// Build one branch's resolved [`Wire`], resolving every field's codec through
+/// `resolver` (which records the user codec bindings that must be copied into
+/// `Shared`). Fails closed: a field whose codec cannot be resolved returns an
+/// Err naming the field + type, so the generator refuses rather than emit a
+/// `Shared` that will not compile.
+fn build_wire(
+    name: &str,
+    io: &BranchIo,
+    msg_arg_tys: &[ModelFieldTy],
+    model_fields: &[ModelFieldTy],
+    resolver: &mut CodecResolver,
+) -> Result<Wire, String> {
+    // Request = read-set (or whole model) + Msg args. Dedup by name (a Msg arg
+    // shadowing a model field would otherwise emit a duplicate record field).
+    let mut req: Vec<ModelFieldTy> = if io.reads_whole_model {
+        model_fields.to_vec()
+    } else {
+        io.read_fields
+            .iter()
+            .map(|f| lookup_field(model_fields, f))
+            .collect()
+    };
+    for a in msg_arg_tys {
+        if !req.iter().any(|f| f.name == a.name) {
+            req.push(a.clone());
+        }
+    }
+    let mut resp: Vec<ModelFieldTy> = if io.writes_whole_model {
+        model_fields.to_vec()
+    } else {
+        io.write_fields
+            .iter()
+            .map(|f| lookup_field(model_fields, f))
+            .collect()
+    };
+    for f in req.iter_mut().chain(resp.iter_mut()) {
+        if f.codec.is_none() {
+            let t = f
+                .ty
+                .clone()
+                .ok_or_else(|| format!("branch `{name}` field `{}` has no recoverable type — cannot wire a codec", f.name))?;
+            let r = resolver
+                .resolve(&t)
+                .map_err(|e| format!("branch `{name}`, field `{}`: {e}", f.name))?;
+            f.codec = Some(r.codec);
+            f.ty_name = r.surface;
+        }
+    }
+    Ok(Wire {
+        name: name.to_string(),
+        req_fields: req,
+        resp_fields: resp,
+    })
+}
+
+/// A `type alias <Name> = { … }` + its codec, rendered from a resolved field
+/// list (every field's `codec` is `Some`).
 fn render_wire_type(name: &str, codec_name: &str, fields: &[ModelFieldTy]) -> String {
     let mut out = String::new();
-    // The record type.
     if fields.is_empty() {
         out.push_str(&format!("type alias {name} =\n    {{}}\n\n\n"));
     } else {
@@ -133,10 +382,10 @@ fn render_wire_type(name: &str, codec_name: &str, fields: &[ModelFieldTy]) -> St
         }
         out.push_str("    }\n\n\n");
     }
-    // The codec.
     out.push_str(&format!("{codec_name} : Codec {name}\n{codec_name} =\n"));
     out.push_str(&format!("    Codec.object {name}\n"));
     for f in fields {
+        // Every field is resolved by construction; the fallback is defensive.
         let codec = f.codec.clone().unwrap_or_else(|| "Codec.string".into());
         out.push_str(&format!("        |> Codec.field \"{0}\" .{0} {1}\n", f.name, codec));
     }
@@ -144,48 +393,63 @@ fn render_wire_type(name: &str, codec_name: &str, fields: &[ModelFieldTy]) -> St
     out
 }
 
-/// Build `shared/Shared.sky` from the SERVER branches.
-fn gen_shared(server: &[(String, BranchIo)], model_fields: &[ModelFieldTy], notes: &mut Vec<String>) -> String {
-    let mut exposing: Vec<String> = Vec::new();
+/// Build `shared/Shared.sky`: the copied user types + codecs (the transitive
+/// closure the wire codecs reference) followed by the generated per-branch
+/// `<Msg>Req` / `<Msg>Resp` records + codecs. `copied_decls` is the verbatim
+/// source of the copied declarations (in source order), `copied_exposing` the
+/// names to re-export for them.
+fn gen_shared(
+    wires: &[Wire],
+    imports: &[String],
+    copied_decls: &str,
+    copied_exposing: &[String],
+) -> String {
+    let mut exposing: Vec<String> = copied_exposing.to_vec();
     let mut bodies = String::new();
-    for (name, io) in server {
-        let req_ty = format!("{name}Req");
-        let resp_ty = format!("{name}Resp");
-        let req_codec = format!("{}ReqCodec", lower_first(name));
-        let resp_codec = format!("{}RespCodec", lower_first(name));
+    for w in wires {
+        let req_ty = format!("{}Req", w.name);
+        let resp_ty = format!("{}Resp", w.name);
+        let req_codec = format!("{}ReqCodec", lower_first(&w.name));
+        let resp_codec = format!("{}RespCodec", lower_first(&w.name));
         exposing.push(req_ty.clone());
         exposing.push(req_codec.clone());
         exposing.push(resp_ty.clone());
         exposing.push(resp_codec.clone());
-        let (req_fields, resp_fields) = wire_fields(io, model_fields);
-        for f in req_fields.iter().chain(resp_fields.iter()) {
-            if f.codec.is_none() {
-                notes.push(format!(
-                    "field `{}` has an unsupported type `{}` — its codec is a placeholder; wire it by hand.",
-                    f.name, f.ty_name
-                ));
-            }
-        }
-        bodies.push_str(&format!("-- | {name} RPC — request = read-set, response = write-set.\n"));
-        bodies.push_str(&render_wire_type(&req_ty, &req_codec, &req_fields));
+        bodies.push_str(&format!(
+            "-- | {} RPC — request = read-set + Msg args, response = write-set.\n",
+            w.name
+        ));
+        bodies.push_str(&render_wire_type(&req_ty, &req_codec, &w.req_fields));
         bodies.push_str("\n\n");
-        bodies.push_str(&render_wire_type(&resp_ty, &resp_codec, &resp_fields));
+        bodies.push_str(&render_wire_type(&resp_ty, &resp_codec, &w.resp_fields));
         bodies.push_str("\n\n");
     }
+    // Dedup while preserving order (a type + its constructor could collide).
+    let mut seen: HashSet<String> = HashSet::new();
+    exposing.retain(|e| seen.insert(e.clone()));
     let exposing_list = exposing
         .iter()
         .map(|s| format!("    , {s}"))
         .collect::<Vec<_>>()
         .join("\n")
         .replacen("    ,", "    (", 1);
+    let import_block = imports.join("\n");
+    let copied_block = if copied_decls.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "-- Project types + codecs the wire contract references, copied verbatim\n\
+             -- from the input so BOTH projects share ONE definition.\n{}\n\n\n",
+            copied_decls.trim_end()
+        )
+    };
     format!(
         "-- | Shared — the ONE RPC wire contract compiled into BOTH the Sky.Spa wasm\n\
          -- client and the native Sky.Http.Server backend. Generated by `sky spa-split`.\n\
          -- One type, one codec, one wire shape: change a field and BOTH stop compiling.\n\
          module Shared exposing\n{exposing_list}\n    )\n\n\
-         import Sky.Core.Prelude exposing (..)\n\
-         import Std.Codec as Codec exposing (Codec)\n\n\n\
-         {bodies}"
+         {import_block}\n\n\n\
+         {copied_block}{bodies}"
     )
     .trim_end()
     .to_string()
@@ -252,8 +516,27 @@ pub fn generate(
 
     let mut notes: Vec<String> = Vec::new();
 
-    // SERVER branches, keyed by ctor name, with their RPC I/O.
+    // Multi-module is deferred (§14 #4): copying a codec/type defined in a
+    // sibling app module into Shared is not yet supported, and generating only
+    // the entry module would produce a backend that fails to compile. Fail
+    // closed with a clear message rather than mis-generate.
+    if check_ids.len() > 1 {
+        let extra = check_ids
+            .iter()
+            .filter(|m| **m != entry)
+            .map(|m| db.module_name(*m).to_string())
+            .filter(|n| !n.starts_with("Sky.") && !n.starts_with("Std.") && n != "Shared")
+            .collect::<Vec<_>>();
+        if !extra.is_empty() {
+            return Err(format!(
+                "multi-module app not supported yet: the entry imports sibling project module(s) {extra:?}. `sky spa-split` currently splits a single-entry-module app; move the app into one module, or wait for multi-module support. (Refusing rather than emitting a backend that references uncopied modules.)"
+            ));
+        }
+    }
+
+    // SERVER branches, keyed by ctor name, with their RPC I/O + typed Msg args.
     let mut server: Vec<(String, BranchIo)> = Vec::new();
+    let mut server_args: HashMap<String, Vec<ModelFieldTy>> = HashMap::new();
     let mut client_names: Vec<String> = Vec::new();
     for b in &report.branches {
         let name = ctor_name(&b.msg).to_string();
@@ -261,13 +544,8 @@ pub fn generate(
             let io = b.io.clone().ok_or_else(|| {
                 format!("server branch `{name}` has no derived RPC I/O")
             })?;
-            if !io.msg_args.is_empty() {
-                notes.push(format!(
-                    "branch `{name}` binds Msg args {:?}; typed Req fields for Msg args are DEFERRED (skeleton has none). The arg is passed through but its codec field is omitted.",
-                    io.msg_args
-                ));
-            }
-            server.push((name, io));
+            server.push((name.clone(), io));
+            server_args.insert(name, b.msg_arg_tys.clone());
         } else {
             client_names.push(name);
         }
@@ -276,21 +554,6 @@ pub fn generate(
         notes.push("no SERVER branches — the frontend is fully client-local and the backend only serves static assets.".into());
     }
 
-    // CST + source text of the entry module (single-module apps).
-    if check_ids.len() > 1 {
-        // App modules beyond the entry are not sliced; note it.
-        let extra = check_ids
-            .iter()
-            .filter(|m| **m != entry)
-            .map(|m| db.module_name(*m).to_string())
-            .filter(|n| !n.starts_with("Sky.") && !n.starts_with("Std.") && n != "Shared")
-            .collect::<Vec<_>>();
-        if !extra.is_empty() {
-            notes.push(format!(
-                "multi-module app: only the entry module is split; extra app modules {extra:?} are NOT copied (deferred)."
-            ));
-        }
-    }
     let parse = db.module_parse(entry);
     let src = parse.syntax().text().to_string();
     let file = parse.tree();
@@ -299,6 +562,43 @@ pub fn generate(
 
     // Tainted binding names → excluded from the frontend.
     let tainted_names: Vec<String> = report.tainted.iter().map(|t| t.name.clone()).collect();
+    let tainted_set: HashSet<String> = tainted_names.iter().cloned().collect();
+
+    // ---- resolve the wire codecs (§14 #2) ----
+    // Registry of the project's own `Codec <T>` bindings; the resolver records
+    // which ones a wire field references so we can copy them into Shared.
+    let registry = build_codec_registry(&db, entry, &file, &src);
+    let mut resolver = CodecResolver::new(&registry);
+    let mut wires: Vec<Wire> = Vec::new();
+    for (name, io) in &server {
+        let args = server_args.get(name).cloned().unwrap_or_default();
+        wires.push(build_wire(name, io, &args, &report.model_fields, &mut resolver)?);
+    }
+
+    // ---- the copy closure Shared needs (§14 #2) ----
+    // Value defs: the referenced user codecs + their transitive project-local,
+    // non-tainted helper closure. Type decls: everything the wire field types /
+    // copied codec bodies mention that is a project type declaration.
+    let project_types = project_type_decls(&file);
+    let mut copied_values = compute_value_copy(&db, entry, &registry, &resolver.needed, &tainted_set);
+    // A record-alias constructor (`Codec.object Todo`) resolves to a def named
+    // like the type — keep those in the TYPE-copy set, never the value set.
+    copied_values.retain(|n| !project_types.contains_key(n));
+    let mut seed_ty: BTreeSet<String> = BTreeSet::new();
+    for w in &wires {
+        for f in w.req_fields.iter().chain(w.resp_fields.iter()) {
+            if let Some(t) = &f.ty {
+                collect_ty_names(t, &mut seed_ty);
+            }
+        }
+    }
+    let copied_types = compute_type_copy(&file, &project_types, &seed_ty, &copied_values);
+    let mut copied_names: HashSet<String> = HashSet::new();
+    copied_names.extend(copied_values.iter().cloned());
+    copied_names.extend(copied_types.iter().cloned());
+    let copied_decls = render_copied_decls(&file, &src, &copied_names);
+    let copied_exposing = copied_exposing_list(&project_types, &copied_types, &copied_values);
+    let shared_imports = shared_import_lines(&imports);
 
     // update param names + the update annotation + the model type name.
     let update_decl = file
@@ -319,8 +619,8 @@ pub fn generate(
     let model_ty = model_type_name(&file, &src).unwrap_or_else(|| "Model".to_string());
 
     // ---- write the three trees ----
-    let shared_src = gen_shared(&server, &report.model_fields, &mut notes);
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields)?;
+    let shared_src = gen_shared(&wires, &shared_imports, &copied_decls, &copied_exposing);
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -328,6 +628,7 @@ pub fn generate(
         &server,
         &client_names,
         &tainted_names,
+        &copied_names,
         &msg_param,
         &model_param,
         &update_anno,
@@ -364,6 +665,258 @@ pub fn generate(
 }
 
 // ---------------------------------------------------------------------------
+// Codec registry + copy-closure helpers (§14 #2).
+// ---------------------------------------------------------------------------
+
+/// Scan the entry module for the project's own zero-arg `Codec <T>` bindings.
+fn build_codec_registry(db: &SkyDatabase, entry: ModuleId, file: &SourceFile, src: &str) -> Vec<CodecBinding> {
+    let resolved = db.resolve(entry);
+    let mut out: Vec<CodecBinding> = Vec::new();
+    for td in &resolved.top_defs {
+        let Some(body) = resolved.bodies.get(&td.def) else {
+            continue;
+        };
+        // Only a zero-arg value binding IS a `Codec <T>` value (a function
+        // `mkCodec : X -> Codec Y` is not directly referenceable as a codec).
+        if !body.params.is_empty() {
+            continue;
+        }
+        let result = ty::Typer::new(db).body_types(entry, td.def, body).result;
+        if let Some(ty::Ty::App(name, args)) = &result {
+            if tail_seg(name.as_str()) == "Codec" && args.len() == 1 {
+                let bname = td.name.as_str().to_string();
+                // Prefer the user's declared surface (`Codec (List Todo)` → `List
+                // Todo`); fall back to the solved (alias-expanded) type.
+                let surface = decl_text_by(file, src, &bname, DeclKind::TypeAnno)
+                    .and_then(|a| codec_arg_surface(&a))
+                    .unwrap_or_else(|| render_ty(&args[0]));
+                out.push(CodecBinding {
+                    name: bname,
+                    def: td.def,
+                    coded_ty: args[0].clone(),
+                    surface,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Extract the `T` surface from a `<name> : Codec <T>` annotation, dropping one
+/// layer of enclosing parentheses (`todoListCodec : Codec (List Todo)` →
+/// `List Todo`). Returns `None` if the annotation is not a `Codec <T>` shape.
+fn codec_arg_surface(anno: &str) -> Option<String> {
+    let rhs = anno.split_once(':')?.1.trim();
+    let after = rhs.strip_prefix("Codec")?.trim();
+    let after = after.trim_start_matches('.').trim(); // tolerate `Codec.Codec`-ish
+    let s = after.trim();
+    // Strip a single fully-enclosing pair of parens.
+    let s = if s.starts_with('(') && s.ends_with(')') {
+        let inner = &s[1..s.len() - 1];
+        // only strip if the parens are balanced as one group
+        if paren_balanced_single_group(inner) {
+            inner.trim().to_string()
+        } else {
+            s.to_string()
+        }
+    } else {
+        s.to_string()
+    };
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// True if `inner` never drops to depth 0 before its end — i.e. the stripped
+/// outer parens were a single enclosing group, not `(A) (B)`.
+fn paren_balanced_single_group(inner: &str) -> bool {
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// The transitive, project-local, non-tainted value-def closure of the codec
+/// bindings the wire references — the value declarations to copy into Shared.
+fn compute_value_copy(
+    db: &SkyDatabase,
+    entry: ModuleId,
+    registry: &[CodecBinding],
+    needed: &BTreeSet<String>,
+    tainted: &HashSet<String>,
+) -> BTreeSet<String> {
+    let mut result: BTreeSet<String> = BTreeSet::new();
+    let mut work: Vec<DefId> = registry
+        .iter()
+        .filter(|b| needed.contains(&b.name))
+        .map(|b| b.def)
+        .collect();
+    let mut seen: HashSet<DefId> = HashSet::new();
+    while let Some(d) = work.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        let Some(loc) = db.def_loc(d) else {
+            continue;
+        };
+        // Only the entry module is copied (multi-module is refused up front).
+        if loc.module != entry {
+            continue;
+        }
+        let name = loc.name.as_str().to_string();
+        // Never drag a server-tainted (effectful) def into Shared.
+        if tainted.contains(&name) {
+            continue;
+        }
+        result.insert(name);
+        for c in spa_partition::body_def_callees(db, entry, d) {
+            if !seen.contains(&c) {
+                work.push(c);
+            }
+        }
+    }
+    result
+}
+
+/// The project type declarations (aliases + unions) by name.
+fn project_type_decls(file: &SourceFile) -> HashMap<String, syntax::ast::Decl> {
+    let mut out: HashMap<String, syntax::ast::Decl> = HashMap::new();
+    for d in file.decls() {
+        if matches!(decl_kind(&d), DeclKind::Alias | DeclKind::Union) {
+            if let Some(n) = decl_name(&d) {
+                out.insert(n, d);
+            }
+        }
+    }
+    out
+}
+
+/// Every `UpperIdent` token under a node (type names a decl mentions).
+fn upper_idents(node: &syntax::SyntaxNode) -> Vec<String> {
+    node.descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+        .filter(|t| t.kind() == SyntaxKind::UpperIdent)
+        .map(|t| t.text().to_string())
+        .collect()
+}
+
+/// The transitive set of project type declarations the wire drags in: seeded
+/// from the wire field types + the copied codec bodies, closed over each copied
+/// type declaration's own referenced type names.
+fn compute_type_copy(
+    file: &SourceFile,
+    project_types: &HashMap<String, syntax::ast::Decl>,
+    seed: &BTreeSet<String>,
+    copied_values: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut result: BTreeSet<String> = BTreeSet::new();
+    let mut work: Vec<String> = Vec::new();
+    for n in seed {
+        if project_types.contains_key(n) {
+            work.push(n.clone());
+        }
+    }
+    // A copied codec body (`Codec.object Todo …`) names its record type.
+    for d in file.decls() {
+        if is_value_decl(&d) {
+            if let Some(n) = decl_name(&d) {
+                if copied_values.contains(&n) {
+                    for u in upper_idents(d.syntax()) {
+                        if project_types.contains_key(&u) {
+                            work.push(u);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    while let Some(n) = work.pop() {
+        if !result.insert(n.clone()) {
+            continue;
+        }
+        if let Some(decl) = project_types.get(&n) {
+            for u in upper_idents(decl.syntax()) {
+                if project_types.contains_key(&u) && !result.contains(&u) {
+                    work.push(u);
+                }
+            }
+        }
+    }
+    result
+}
+
+/// The verbatim source of the copied declarations, in source order (each copied
+/// name's type-annotation AND value declaration are emitted, as both match by
+/// name).
+fn render_copied_decls(file: &SourceFile, src: &str, copied: &HashSet<String>) -> String {
+    let mut out = String::new();
+    for d in file.decls() {
+        if let Some(n) = decl_name(&d) {
+            if copied.contains(&n) {
+                out.push_str(slice(src, d.syntax()).trim_end());
+                out.push_str("\n\n\n");
+            }
+        }
+    }
+    out
+}
+
+/// The `exposing` entries for the copied declarations (a union exports `(..)`).
+fn copied_exposing_list(
+    project_types: &HashMap<String, syntax::ast::Decl>,
+    copied_types: &BTreeSet<String>,
+    copied_values: &BTreeSet<String>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for t in copied_types {
+        let is_union = project_types
+            .get(t)
+            .map(|d| decl_kind(d) == DeclKind::Union)
+            .unwrap_or(false);
+        out.push(if is_union { format!("{t}(..)") } else { t.clone() });
+    }
+    for v in copied_values {
+        out.push(v.clone());
+    }
+    out
+}
+
+/// Shared's imports: the input's imports minus the server-only effect families
+/// and the `Std.Spa` framework (Shared is pure wire types + codecs), with
+/// Prelude + Codec guaranteed present.
+fn shared_import_lines(imports: &[ImportInfo]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for i in imports {
+        if is_server_only_module(&i.module_path) {
+            continue;
+        }
+        if i.module_path.rsplit('.').next() == Some("Spa") {
+            continue;
+        }
+        out.push(i.text.clone());
+    }
+    if !imports.iter().any(|i| i.module_path == "Sky.Core.Prelude") {
+        out.insert(0, "import Sky.Core.Prelude exposing (..)".to_string());
+    }
+    if !imports.iter().any(|i| i.module_path == "Std.Codec") {
+        out.push("import Std.Codec as Codec exposing (Codec)".to_string());
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Backend generation — copy the app verbatim, swap `main`, append handlers.
 // ---------------------------------------------------------------------------
 
@@ -373,6 +926,7 @@ fn gen_backend(
     imports: &[ImportInfo],
     server: &[(String, BranchIo)],
     model_fields: &[ModelFieldTy],
+    copied_names: &HashSet<String>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -392,11 +946,18 @@ fn gen_backend(
     add(imports, &mut import_lines, "Sky.Core.Error", "import Sky.Core.Error as Error exposing (Error)");
     import_lines.push("import Shared exposing (..)".to_string());
 
-    // All decls except `main` (both its annotation and value), verbatim.
+    // All decls except `main` (both its annotation and value), verbatim —
+    // MINUS the types/codecs copied into Shared (they arrive via `import Shared
+    // exposing (..)`; re-declaring them here would be a duplicate definition).
     let mut body = String::new();
     for d in file.decls() {
         if decl_name(&d).as_deref() == Some("main") {
             continue;
+        }
+        if let Some(n) = decl_name(&d) {
+            if copied_names.contains(&n) {
+                continue;
+            }
         }
         body.push_str(slice(src, d.syntax()).trim_end());
         body.push_str("\n\n\n");
@@ -410,7 +971,13 @@ fn gen_backend(
         let handler = format!("{}Handler", lower_first(name));
         let req_codec = format!("{}ReqCodec", lower_first(name));
         let resp_codec = format!("{}RespCodec", lower_first(name));
-        let (_req_fields, resp_fields) = wire_fields(io, model_fields);
+        // Response field NAMES = the write-set (or the whole model). Codecs live
+        // in Shared; the backend only needs the names to read `m2.<field>`.
+        let resp_field_names: Vec<String> = if io.writes_whole_model {
+            model_fields.iter().map(|f| f.name.clone()).collect()
+        } else {
+            io.write_fields.clone()
+        };
 
         // The model the branch runs against.
         let run_setup = if io.reads_whole_model {
@@ -446,15 +1013,15 @@ fn gen_backend(
         // The response value.
         let resp_val = if io.writes_whole_model {
             "m2".to_string()
-        } else if resp_fields.is_empty() {
+        } else if resp_field_names.is_empty() {
             "{}".to_string()
         } else {
-            let sets = resp_fields
+            let sets = resp_field_names
                 .iter()
                 .enumerate()
                 .map(|(i, f)| {
                     let sep = if i == 0 { "" } else { ", " };
-                    format!("{sep}{0} = m2.{0}", f.name)
+                    format!("{sep}{f} = m2.{f}")
                 })
                 .collect::<String>();
             format!("{{ {sets} }}")
@@ -515,6 +1082,7 @@ fn gen_frontend(
     server: &[(String, BranchIo)],
     _client_names: &[String],
     tainted: &[String],
+    copied_names: &HashSet<String>,
     msg_param: &str,
     model_param: &str,
     update_anno: &str,
@@ -541,6 +1109,11 @@ fn gen_frontend(
         // Skip server-tainted bindings (both annotation + value) — the security spine.
         if let Some(n) = name {
             if tainted.iter().any(|t| t == n) {
+                continue;
+            }
+            // Skip types/codecs copied into Shared — they arrive via `import
+            // Shared exposing (..)`; re-declaring them would be a duplicate.
+            if copied_names.contains(n) {
                 continue;
             }
         }

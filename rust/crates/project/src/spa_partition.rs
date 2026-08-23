@@ -398,6 +398,25 @@ fn record_res(res: &Res, acc: &mut Refs) {
     }
 }
 
+/// The top-level defs (`Res::Def`) referenced by `def`'s body — the raw
+/// material the `spa-split` generator uses to copy a user codec's transitive
+/// helper closure into the generated `Shared` module. Read-only walk over the
+/// resolved HIR; conservative `default()` context (no Msg-precision needed here).
+/// Returns the callee `DefId`s (deduped, sorted for determinism).
+pub fn body_def_callees(db: &dyn SkyDb, module: ModuleId, def: DefId) -> Vec<DefId> {
+    let resolved = db.resolve(module);
+    let Some(body) = resolved.bodies.get(&def) else {
+        return Vec::new();
+    };
+    let mut acc = Refs::default();
+    if let Some(root) = body.root {
+        collect(body, root, &mut acc, &CollectCtx::default());
+    }
+    let mut out: Vec<DefId> = acc.callees.into_iter().collect();
+    out.sort();
+    out
+}
+
 // ---------------------------------------------------------------------------
 // The report.
 // ---------------------------------------------------------------------------
@@ -469,6 +488,12 @@ pub struct BranchVerdict {
     /// The RPC read-set / write-set — `Some` for SERVER branches (the derived
     /// RPC I/O), `None` for CLIENT branches (no round-trip, so no I/O sets).
     pub io: Option<BranchIo>,
+    /// The Msg args this branch's pattern binds, with their **types** (parallel
+    /// to `io.msg_args` by name+order) — the raw material the `spa-split`
+    /// generator uses to give each Msg-arg Req field a real codec. Empty for a
+    /// nullary branch or a CLIENT branch. Kept off [`BranchIo`] so that type
+    /// stays `Eq` (the typed `ty::Ty` is not).
+    pub msg_arg_tys: Vec<ModelFieldTy>,
 }
 
 /// A server-tainted top-level binding (excluded from the client build).
@@ -488,9 +513,18 @@ pub struct TaintedBinding {
 pub struct ModelFieldTy {
     pub name: String,
     /// The rendered type name (`Int`), tail-segment of a folded nominal name.
+    /// For a non-primitive type this is a best-effort surface rendering
+    /// (`List Todo`) — the authoritative shape for codec resolution is [`ty`].
     pub ty_name: String,
-    /// The `Std.Codec` combinator (`Codec.int`), or `None` if unsupported.
+    /// The `Std.Codec` combinator for a primitive field (`Codec.int`), or `None`
+    /// when the field's type is non-primitive. The `spa-split` generator resolves
+    /// the non-primitive case against the project's own `Codec <T>` bindings /
+    /// `Codec.list`, using [`ty`].
     pub codec: Option<String>,
+    /// The field's fully-resolved type, when recoverable — the raw material the
+    /// generator's codec resolver consumes (`List Todo`, a user record/union,
+    /// …). `None` only when the type could not be read from the typed HIR.
+    pub ty: Option<ty::Ty>,
 }
 
 /// Map a solved field type to its `(type name, codec combinator)` — the four
@@ -511,13 +545,36 @@ fn field_ty_codec(t: &ty::Ty) -> ModelFieldTy {
                 name: String::new(),
                 ty_name: tail.to_string(),
                 codec: codec.map(str::to_string),
+                ty: Some(t.clone()),
             };
         }
     }
+    // Non-primitive (a `List X`, a user record/union, …). Carry the full type so
+    // the generator's codec resolver can wire it against the project's codecs;
+    // render a best-effort surface name for display.
     ModelFieldTy {
         name: String::new(),
-        ty_name: "any".to_string(),
+        ty_name: render_ty_name(t),
         codec: None,
+        ty: Some(t.clone()),
+    }
+}
+
+/// A best-effort surface rendering of a type for a generated `type alias` field
+/// (`List Todo`, `Todo`, `Int`). Tail-normalises folded nominal names. Falls
+/// back to `any` for shapes the generator cannot spell as a field type.
+fn render_ty_name(t: &ty::Ty) -> String {
+    match t {
+        ty::Ty::App(name, args) => {
+            let tail = name.as_str().rsplit('.').next().unwrap_or(name.as_str());
+            if args.is_empty() {
+                tail.to_string()
+            } else {
+                let inner: Vec<String> = args.iter().map(render_ty_name).collect();
+                format!("{} {}", tail, inner.join(" "))
+            }
+        }
+        _ => "any".to_string(),
     }
 }
 
@@ -1136,7 +1193,7 @@ fn classify_update_body(
             update_def: Some(def),
         };
         classify_case_arms(
-            db, graph, body, arms, &shared, &ctx, model_local, &src, branches,
+            db, graph, body, arms, &shared, &ctx, model_local, &src, &types.locals, branches,
         );
     }
 }
@@ -1167,6 +1224,7 @@ fn classify_case_arms(
     ctx: &CollectCtx,
     model_local: Option<LocalId>,
     src: &str,
+    locals: &HashMap<LocalId, ty::Ty>,
     out: &mut Vec<BranchVerdict>,
 ) {
     let facts: Vec<ArmFacts> = arms
@@ -1231,6 +1289,7 @@ fn classify_case_arms(
                 server: true,
                 reason: r.clone(),
                 io: Some(compute_branch_io(body, arms[i].body, arms[i].pat, model_local, src)),
+                msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
             });
         } else if server[i] {
             out.push(BranchVerdict {
@@ -1238,6 +1297,7 @@ fn classify_case_arms(
                 server: true,
                 reason: compose_reason(&f.refs.scoped_updates, &by_name, &server, &direct),
                 io: Some(compute_branch_io(body, arms[i].body, arms[i].pat, model_local, src)),
+                msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
             });
         } else {
             let reason = match f.refs.client_effect_note() {
@@ -1249,6 +1309,7 @@ fn classify_case_arms(
                 server: false,
                 reason,
                 io: None,
+                msg_arg_tys: Vec::new(),
             });
         }
     }
@@ -1488,6 +1549,85 @@ fn msg_arg_names(body: &Body, pat: PatId, src: &str) -> Vec<String> {
     out
 }
 
+/// The Msg args an arm pattern binds, WITH their types — parallel to
+/// [`msg_arg_names`] by name+order, but each entry carries the binder's resolved
+/// `ty::Ty` (from the typed HIR `locals` table) + its primitive codec. The
+/// `spa-split` generator uses these to give each Msg-arg RPC-request field a real
+/// codec (`Toggle Int` → `id : Int` with `Codec.int`). A binder whose type could
+/// not be read yields `ty: None` / `codec: None`, which the generator reports as
+/// an unresolved-codec error rather than guessing.
+fn msg_arg_field_tys(
+    body: &Body,
+    pat: PatId,
+    src: &str,
+    locals: &HashMap<LocalId, ty::Ty>,
+) -> Vec<ModelFieldTy> {
+    let mut out: Vec<ModelFieldTy> = Vec::new();
+    if let Pattern::Ctor { args, .. } = &body.pats[pat] {
+        for a in args {
+            collect_binder_fields(body, *a, src, locals, &mut out);
+        }
+    }
+    out
+}
+
+fn field_for_local(name: String, local: Option<LocalId>, locals: &HashMap<LocalId, ty::Ty>) -> ModelFieldTy {
+    let ty = local.and_then(|l| locals.get(&l)).cloned();
+    let mut f = match &ty {
+        Some(t) => field_ty_codec(t),
+        None => ModelFieldTy {
+            name: String::new(),
+            ty_name: "any".to_string(),
+            codec: None,
+            ty: None,
+        },
+    };
+    f.name = name;
+    f
+}
+
+fn collect_binder_fields(
+    body: &Body,
+    pat: PatId,
+    src: &str,
+    locals: &HashMap<LocalId, ty::Ty>,
+    out: &mut Vec<ModelFieldTy>,
+) {
+    match &body.pats[pat] {
+        Pattern::Var(l) => {
+            if let Some(name) = slice_binder_name(body, pat, src) {
+                out.push(field_for_local(name, Some(*l), locals));
+            }
+        }
+        Pattern::Alias(inner, l) => {
+            if let Some(name) = slice_binder_name(body, pat, src) {
+                out.push(field_for_local(name, Some(*l), locals));
+            }
+            collect_binder_fields(body, *inner, src, locals, out);
+        }
+        Pattern::Record(binders) => {
+            for (n, l) in binders {
+                out.push(field_for_local(n.as_str().to_string(), Some(*l), locals));
+            }
+        }
+        Pattern::Tuple(ps) | Pattern::List(ps) => {
+            for p in ps {
+                collect_binder_fields(body, *p, src, locals, out);
+            }
+        }
+        Pattern::Cons(h, t) => {
+            collect_binder_fields(body, *h, src, locals, out);
+            collect_binder_fields(body, *t, src, locals, out);
+        }
+        Pattern::Ctor { args, .. } => {
+            for a in args {
+                collect_binder_fields(body, *a, src, locals, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn collect_binder_names(body: &Body, pat: PatId, src: &str, out: &mut Vec<String>) {
     match &body.pats[pat] {
         Pattern::Var(_) => {
@@ -1692,6 +1832,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             server: true,
             reason,
             io: None,
+            msg_arg_tys: Vec::new(),
         };
     }
     // Deterministic: pick the lowest-id server callee.
@@ -1713,6 +1854,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             server: true,
             reason: format!("references {cn} ({origin})"),
             io: None,
+            msg_arg_tys: Vec::new(),
         };
     }
     // Client — note a client effect if present.
@@ -1725,6 +1867,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         server: false,
         reason,
         io: None,
+        msg_arg_tys: Vec::new(),
     }
 }
 

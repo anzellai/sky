@@ -490,11 +490,32 @@ frontend`); `POST /_rpc/Persist -d '{"n":7}'` returns `{"log":"saved: 7"}`,
 `count.txt` is written with `7`, `GET /` serves the wasm bootstrap and
 `/main.wasm` is 200.
 
-**Handled fully:** the single-entry-module skeleton — pure + one effectful branch,
-field-precise read/write sets, primitive (`Int`/`String`/`Bool`/`Float`) field
-types. **Deferred (noted on the report, never silently mis-handled):** typed Req
-fields for Msg args, the whole-model fallback record, multi-module apps, and
-non-primitive field codecs.
+**Handled fully (generalised 2026-08-23 to a REAL one-project app —
+`tests/fixtures/spa-split-todos`, a todos app with `Model { todos : List Todo,
+draft : String }`, `Msg = DraftChanged String | Add | Toggle Int | Remove Int`,
+user-defined `todoCodec`/`todoListCodec`):**
+- **Single-entry-module app** — pure + N effectful branches, field-precise
+  read/write sets, primitive (`Int`/`String`/`Bool`/`Float`) field types.
+- **Msg-arg-typed RPC inputs** — a server branch that binds a Msg arg
+  (`Toggle Int`) puts a *typed* field into the request (`ToggleReq { id : Int }`
+  + `Codec.int`); the backend RECONSTRUCTS the Msg (`update (Toggle p.id) m`, not
+  a bare ctor); the frontend SENDS it (`… "/_rpc/Toggle" { id = id } AppliedToggle`).
+  The arg types come from the typed HIR (`BranchVerdict.msg_arg_tys`), distinct
+  from the read-set model fields.
+- **Non-primitive field codecs** — a Req/Resp field of a non-primitive type
+  (`List Todo`) is resolved in priority order: (a) a project `Codec <T>` binding
+  (the user's `todoListCodec : Codec (List Todo)`) — referenced AND copied into
+  `Shared` together with the type + helper codec it needs (`Todo` + `todoCodec`),
+  never re-declared in either Main; (b) `List X` / `Maybe X` → `Codec.list` /
+  `Codec.maybe`; (c) a JSON primitive → `Codec.int`/…; (d) otherwise a **clear
+  Err** naming the field + type — never a placeholder codec that will not
+  compile.
+- **Whole-model fallback** — a branch reading/writing `model` opaquely carries
+  the whole `Model` (every field wired through the same codec resolver).
+
+**Refused, not mis-generated:** a **multi-module** app (the entry importing
+sibling project modules) returns a clear Err rather than emitting a backend that
+references uncopied modules; a field whose codec cannot be resolved is an Err.
 
 **Fail-closed classification guard — SHIPPED (2026-08-23).** The §13 residual is
 closed: `spa_partition::classify_kernel` classifies against exhaustive
