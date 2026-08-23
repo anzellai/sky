@@ -93,6 +93,34 @@ struct Refs {
     /// Saw an inline effect-execution site: `Task.run …` or a `let _ = <expr>`
     /// empty-binder auto-force (`lower.rs:2708`). Enriches the reason only.
     inline_force: bool,
+    /// Msg-constant precision (arm analysis ONLY): scoped `update <LiteralMsg> …`
+    /// calls found in this subtree, recorded by the literal Msg ctor's NAME. A
+    /// scoped call does NOT record `update` as a generic callee — the composing
+    /// arm inherits the *composed* arm's verdict via the arm-level fixpoint,
+    /// keyed by name. Populated only when `CollectCtx::update_def` is set.
+    scoped_updates: Vec<String>,
+    /// A NON-scoped use of the `update` def within this subtree: `update` with no
+    /// args, a dynamic (non-literal) first arg, or `update` referenced as a
+    /// value. Forces the arm conservatively to server (update-as-a-whole reaches
+    /// server). Populated only when `CollectCtx::update_def` is set.
+    generic_update: bool,
+}
+
+/// Context for `collect`. Empty (`default()`) reproduces the conservative walk
+/// used everywhere except an `update` arm: `update` is recorded as an ordinary
+/// callee, so any def (including a helper) that calls it is forced to server.
+///
+/// The Msg-constant precision applies ONLY to `update`'s own arms: when
+/// `update_def` (and `db`, for ctor-name lookup) are set, a direct
+/// `update <LiteralMsg> …` call is recorded as a *scoped* composition instead of
+/// a generic callee, so composing a PURE arm no longer over-marks the composer
+/// server. A NON-arm helper that calls `update` never sets this — it keeps the
+/// conservative treatment. Never under-marks: a non-literal / dynamic-Msg / value
+/// use of `update` sets `generic_update` → server.
+#[derive(Clone, Copy, Default)]
+struct CollectCtx<'a> {
+    db: Option<&'a dyn SkyDb>,
+    update_def: Option<DefId>,
 }
 
 impl Refs {
@@ -118,8 +146,10 @@ impl Refs {
     }
 }
 
-/// Walk one expression subtree, accumulating references into `acc`.
-fn collect(body: &Body, e: ExprId, acc: &mut Refs) {
+/// Walk one expression subtree, accumulating references into `acc`. `ctx` is
+/// `default()` everywhere except the Msg-constant-precision arm walk (see
+/// `CollectCtx`).
+fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
     match &body.exprs[e] {
         Expr::Int(_)
         | Expr::Float(_)
@@ -131,24 +161,58 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs) {
         | Expr::Error => {}
         Expr::List(xs) | Expr::Tuple(xs) => {
             for x in xs {
-                collect(body, *x, acc);
+                collect(body, *x, acc, ctx);
             }
         }
         Expr::Record(fields) => {
             for (_, x) in fields {
-                collect(body, *x, acc);
+                collect(body, *x, acc, ctx);
             }
         }
         Expr::Update { base, fields } => {
-            collect(body, *base, acc);
+            collect(body, *base, acc, ctx);
             for (_, x) in fields {
-                collect(body, *x, acc);
+                collect(body, *x, acc, ctx);
             }
         }
-        Expr::Var(res) => record_res(res, acc),
-        Expr::Negate(x) => collect(body, *x, acc),
-        Expr::Lambda { body: b, .. } => collect(body, *b, acc),
+        Expr::Var(res) => {
+            // Msg-constant precision: `update` referenced as a VALUE (not the
+            // callee of a `update <LiteralMsg> …` call) is a GENERIC use →
+            // conservative server. Never record `update` as a callee here.
+            if let (Some(update_def), Res::Def(d)) = (ctx.update_def, res) {
+                if *d == update_def {
+                    acc.generic_update = true;
+                    return;
+                }
+            }
+            record_res(res, acc);
+        }
+        Expr::Negate(x) => collect(body, *x, acc, ctx),
+        Expr::Lambda { body: b, .. } => collect(body, *b, acc, ctx),
         Expr::Call(callee, args) => {
+            // Msg-constant precision (arm analysis only): a direct
+            // `update <LiteralMsg> …` call composes another arm. Record it as a
+            // SCOPED call keyed by the Msg ctor name — NOT as a generic `update`
+            // callee — so composing a pure arm does not force this arm server.
+            if let (Some(update_def), Some(db)) = (ctx.update_def, ctx.db) {
+                if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
+                    if *d == update_def {
+                        match args.first().and_then(|a| literal_ctor_name(body, db, *a)) {
+                            Some(name) => acc.scoped_updates.push(name),
+                            // No args, or a dynamic / non-literal first arg →
+                            // GENERIC use → conservative server.
+                            None => acc.generic_update = true,
+                        }
+                        // Descend into the ARGS (a payload may carry its own
+                        // effect) but NOT the callee — `update` stays off the
+                        // callee set for this scoped/generic use.
+                        for a in args {
+                            collect(body, *a, acc, ctx);
+                        }
+                        return;
+                    }
+                }
+            }
             if let Expr::Var(Res::Kernel { module, func }) = &body.exprs[*callee] {
                 let m = module.as_str().rsplit('.').next().unwrap_or(module.as_str());
                 // `Task.run <arg>` — an inline effect-execution site.
@@ -170,46 +234,61 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs) {
                     }
                 }
             }
-            collect(body, *callee, acc);
+            collect(body, *callee, acc, ctx);
             for a in args {
-                collect(body, *a, acc);
+                collect(body, *a, acc, ctx);
             }
         }
         Expr::Binop { res, lhs, rhs, .. } => {
             record_res(res, acc);
-            collect(body, *lhs, acc);
-            collect(body, *rhs, acc);
+            collect(body, *lhs, acc, ctx);
+            collect(body, *rhs, acc, ctx);
         }
         Expr::If { arms, els } => {
             for (c, t) in arms {
-                collect(body, *c, acc);
-                collect(body, *t, acc);
+                collect(body, *c, acc, ctx);
+                collect(body, *t, acc, ctx);
             }
-            collect(body, *els, acc);
+            collect(body, *els, acc, ctx);
         }
         Expr::Let { defs, body: b } => {
             for d in defs {
-                collect_localdef(body, d, acc);
+                collect_localdef(body, d, acc, ctx);
             }
-            collect(body, *b, acc);
+            collect(body, *b, acc, ctx);
         }
         Expr::Case { subject, branches } => {
-            collect(body, *subject, acc);
+            collect(body, *subject, acc, ctx);
             for br in branches {
-                collect(body, br.body, acc);
+                collect(body, br.body, acc, ctx);
             }
         }
-        Expr::Access(x, _) => collect(body, *x, acc),
+        Expr::Access(x, _) => collect(body, *x, acc, ctx),
     }
 }
 
-fn collect_localdef(body: &Body, d: &LocalDef, acc: &mut Refs) {
+/// The literal Msg ctor NAME of an `update` call's first argument, if it is one:
+/// a nullary ctor (`Expr::Var(Res::Ctor _)`) or an applied ctor
+/// (`Expr::Call(Var(Res::Ctor _), …)`). `None` for a dynamic / non-ctor arg.
+fn literal_ctor_name(body: &Body, db: &dyn SkyDb, e: ExprId) -> Option<String> {
+    let cref = match &body.exprs[e] {
+        Expr::Var(Res::Ctor(c)) => c,
+        Expr::Call(callee, _) => match &body.exprs[*callee] {
+            Expr::Var(Res::Ctor(c)) => c,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    db.def_loc(cref.def).map(|l| l.name.as_str().to_string())
+}
+
+fn collect_localdef(body: &Body, d: &LocalDef, acc: &mut Refs, ctx: &CollectCtx) {
     // `let _ = <expr>` — an empty-binder, non-destructuring def is the auto-force
     // site (`lower.rs:2708-2711`); the effect it forces is executed inline.
     if d.binders.is_empty() && d.pat.is_none() {
         acc.inline_force = true;
     }
-    collect(body, d.body, acc);
+    collect(body, d.body, acc, ctx);
 }
 
 /// Classify an `Ffi.kernel "<Symbol>"` string by its `<Prefix>_` — the runtime
@@ -663,7 +742,10 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
         };
         let mut acc = Refs::default();
         if let Some(root) = body.root {
-            collect(body, root, &mut acc);
+            // Conservative ctx: `update` is an ordinary callee here, so a helper
+            // that calls `update` is forced to server (soundness — never under-
+            // mark). Msg-constant precision applies ONLY to update's own arms.
+            collect(body, root, &mut acc, &CollectCtx::default());
         }
         let direct = acc.direct_server_reason();
         for c in &acc.callees {
@@ -757,14 +839,16 @@ fn classify_update_body(
     let Some(root) = body.root else {
         return;
     };
-    // Shared context along the spine above the case (top-level `let`s).
+    // Shared context along the spine above the case (top-level `let`s). The
+    // conservative ctx here means a `let` above the case using `update` is
+    // treated conservatively (server) — sound; precision is per-arm below.
     let mut shared = Refs::default();
-    let case_expr = find_top_case(body, root, &mut shared);
+    let case_expr = find_top_case(body, root, &mut shared, &CollectCtx::default());
 
     let Some(case_expr) = case_expr else {
         // No `case msg of` — classify the whole update as one unit.
         let mut acc = Refs::default();
-        collect(body, root, &mut acc);
+        collect(body, root, &mut acc, &CollectCtx::default());
         *whole_update = Some(verdict(db, "(whole update)", &acc, graph));
         notes.push("update has no top-level `case msg of` — showing a whole-update verdict.".into());
         return;
@@ -777,12 +861,187 @@ fn classify_update_body(
     }
 
     if let Expr::Case { branches: arms, .. } = &body.exprs[case_expr] {
-        for arm in arms {
+        // Msg-constant precision. `def` IS the `update` DefId — thread it in so a
+        // direct `update <LiteralMsg> …` call in an arm composes another arm
+        // (scoped) rather than dragging in `update`-as-a-whole (server). Helpers
+        // keep the conservative treatment (build_graph uses `default()`), so this
+        // never under-marks (§ soundness).
+        let ctx = CollectCtx {
+            db: Some(db),
+            update_def: Some(def),
+        };
+        classify_case_arms(db, graph, body, arms, &shared, &ctx, branches);
+    }
+}
+
+/// One arm's collected facts, before the arm-level fixpoint.
+struct ArmFacts {
+    /// Full pattern label for display (`GotTodos (Ok _)`).
+    label: String,
+    /// The arm's head Msg-ctor NAME, for keying composition. `None` for a
+    /// non-ctor pattern (`_`, literal) — such an arm can never be a compose
+    /// TARGET (a scoped call naming it would not resolve → conservative server).
+    key: Option<String>,
+    refs: Refs,
+}
+
+/// Classify each `case` arm with the arm-level server fixpoint (Msg-constant
+/// precision). An arm is server iff it has a DIRECT server reason (own kernel /
+/// FFI / non-`update` server callee / a generic `update` use) OR it scoped-calls
+/// `update <S>` where arm `S` is server. Iterated to a fixpoint (arms compose
+/// arms; cycles terminate). Match scoped-call names to arm keys by name.
+fn classify_case_arms(
+    db: &dyn SkyDb,
+    graph: &Graph,
+    body: &Body,
+    arms: &[hir::CaseBranch],
+    shared: &Refs,
+    ctx: &CollectCtx,
+    out: &mut Vec<BranchVerdict>,
+) {
+    let facts: Vec<ArmFacts> = arms
+        .iter()
+        .map(|arm| {
             let mut acc = shared.clone();
-            collect(body, arm.body, &mut acc);
-            let label = pattern_label(body, arm.pat);
-            branches.push(verdict(db, &label, &acc, graph));
+            collect(body, arm.body, &mut acc, ctx);
+            ArmFacts {
+                label: pattern_label(body, arm.pat),
+                key: arm_ctor_key(body, arm.pat),
+                refs: acc,
+            }
+        })
+        .collect();
+
+    // Name → arm index (first wins; Msg ctors are unique per union anyway).
+    let mut by_name: HashMap<String, usize> = HashMap::new();
+    for (i, f) in facts.iter().enumerate() {
+        if let Some(k) = &f.key {
+            by_name.entry(k.clone()).or_insert(i);
         }
+    }
+
+    // Direct (non-compose) server reason per arm — independent of composition.
+    let direct: Vec<Option<String>> = facts
+        .iter()
+        .map(|f| arm_direct_reason(db, &f.refs, graph))
+        .collect();
+
+    // Fixpoint: seed with direct-server arms, then propagate scoped composition.
+    let n = facts.len();
+    let mut server: Vec<bool> = direct.iter().map(|d| d.is_some()).collect();
+    loop {
+        let mut changed = false;
+        for i in 0..n {
+            if server[i] {
+                continue;
+            }
+            let force = facts[i].refs.scoped_updates.iter().any(|s| match by_name.get(s) {
+                Some(&j) => server[j],
+                // A scoped Msg name that matches no arm → cannot resolve → be
+                // conservative (server). Never under-mark.
+                None => true,
+            });
+            if force {
+                server[i] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // Emit verdicts with a helpful reason.
+    for i in 0..n {
+        let f = &facts[i];
+        if let Some(r) = &direct[i] {
+            out.push(BranchVerdict {
+                msg: f.label.clone(),
+                server: true,
+                reason: r.clone(),
+            });
+        } else if server[i] {
+            out.push(BranchVerdict {
+                msg: f.label.clone(),
+                server: true,
+                reason: compose_reason(&f.refs.scoped_updates, &by_name, &server, &direct),
+            });
+        } else {
+            let reason = match f.refs.client_effect_note() {
+                Some(note) => format!("client — {note}, no server reach"),
+                None => "pure — no server effect or tainted value".to_string(),
+            };
+            out.push(BranchVerdict {
+                msg: f.label.clone(),
+                server: false,
+                reason,
+            });
+        }
+    }
+}
+
+/// The DIRECT (non-compose) server reason for an arm: its own server kernel /
+/// FFI, a non-`update` server callee, or a generic `update` use. `None` → the
+/// arm is server only if it composes a server arm (handled by the fixpoint).
+fn arm_direct_reason(db: &dyn SkyDb, acc: &Refs, graph: &Graph) -> Option<String> {
+    if let Some(reason) = acc.direct_server_reason() {
+        return Some(reason);
+    }
+    // `update` is never in `acc.callees` under precision ctx, so this cannot pick
+    // it up — only genuine non-`update` server callees.
+    let mut server_callees: Vec<DefId> = acc
+        .callees
+        .iter()
+        .copied()
+        .filter(|c| graph.server.contains(c))
+        .collect();
+    server_callees.sort();
+    if let Some(c) = server_callees.first() {
+        let origin = graph
+            .root_reason
+            .get(c)
+            .cloned()
+            .unwrap_or_else(|| "server".into());
+        let cn = db
+            .def_loc(*c)
+            .map(|l| format!("{}.{}", db.module_name(l.module), l.name.as_str()))
+            .unwrap_or_else(|| "a server-tainted binding".into());
+        return Some(format!("references {cn} ({origin})"));
+    }
+    if acc.generic_update {
+        return Some("uses `update` generically (dynamic/value use → conservative server)".into());
+    }
+    None
+}
+
+/// The reason a composing arm is server: name the first scoped call it makes to
+/// a server arm, carrying that arm's origin ("composes DoServer (…)").
+fn compose_reason(
+    scoped: &[String],
+    by_name: &HashMap<String, usize>,
+    server: &[bool],
+    direct: &[Option<String>],
+) -> String {
+    for s in scoped {
+        match by_name.get(s) {
+            Some(&j) if server[j] => {
+                let origin = direct[j]
+                    .clone()
+                    .unwrap_or_else(|| "reaches a server branch".to_string());
+                return format!("composes {s} ({origin})");
+            }
+            None => return format!("composes {s} (unresolved Msg → conservative server)"),
+            _ => {}
+        }
+    }
+    "composes a server branch".to_string()
+}
+
+/// The head Msg-ctor NAME of an arm pattern, for composition keying.
+fn arm_ctor_key(body: &Body, pat: hir::PatId) -> Option<String> {
+    match &body.pats[pat] {
+        Pattern::Ctor { name, .. } => Some(name.as_str().to_string()),
+        _ => None,
     }
 }
 
@@ -795,13 +1054,16 @@ fn classify_lambda_update(
     branches: &mut Vec<BranchVerdict>,
     whole_update: &mut Option<BranchVerdict>,
 ) {
+    // A lambda `update` has no stable DefId for itself to compose against, so the
+    // conservative ctx is correct here (any `update` reference stays server).
+    let ctx = CollectCtx::default();
     let mut shared = Refs::default();
-    let case_expr = find_top_case(body, root, &mut shared);
+    let case_expr = find_top_case(body, root, &mut shared, &ctx);
     if let Some(ce) = case_expr {
         if let Expr::Case { branches: arms, .. } = &body.exprs[ce] {
             for arm in arms {
                 let mut acc = shared.clone();
-                collect(body, arm.body, &mut acc);
+                collect(body, arm.body, &mut acc, &ctx);
                 let label = pattern_label(body, arm.pat);
                 branches.push(verdict(db, &label, &acc, graph));
             }
@@ -809,20 +1071,20 @@ fn classify_lambda_update(
         }
     }
     let mut acc = Refs::default();
-    collect(body, root, &mut acc);
+    collect(body, root, &mut acc, &ctx);
     *whole_update = Some(verdict(db, "(whole update)", &acc, graph));
 }
 
 /// Follow the `let`/`if`-spine from `e` to the outermost `case`, folding shared
 /// `let` refs into `shared`. Returns the case ExprId, or None.
-fn find_top_case(body: &Body, e: ExprId, shared: &mut Refs) -> Option<ExprId> {
+fn find_top_case(body: &Body, e: ExprId, shared: &mut Refs, ctx: &CollectCtx) -> Option<ExprId> {
     match &body.exprs[e] {
         Expr::Case { .. } => Some(e),
         Expr::Let { defs, body: b } => {
             for d in defs {
-                collect_localdef(body, d, shared);
+                collect_localdef(body, d, shared, ctx);
             }
-            find_top_case(body, *b, shared)
+            find_top_case(body, *b, shared, ctx)
         }
         _ => None,
     }

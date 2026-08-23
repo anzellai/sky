@@ -1,0 +1,106 @@
+module Main exposing (main)
+
+-- Acceptance fixture for `sky spa-partition` — Msg-constant precision. An
+-- `update` arm that COMPOSES another arm by calling `update <LiteralMsg> model`
+-- must inherit THAT arm's verdict, not `update`-as-a-whole:
+--
+--   * `DoServer`      → SERVER  — references the effectful-origin `readEnv` CAF.
+--   * `DoPure`        → CLIENT  — pure.
+--   * `ComposeServer` → SERVER  — scoped `update DoServer model` (composes a
+--                                 server arm).
+--   * `ComposePure`   → CLIENT  — scoped `update DoPure model` (composes a pure
+--                                 arm) — the precision win; used to be over-marked.
+--   * `ViaHelper`     → SERVER  — calls a helper `h` that itself calls
+--                                 `update DoServer model`. A NON-arm helper that
+--                                 calls `update` keeps the conservative treatment
+--                                 (soundness): helper-calls-update → server.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Std.Spa as Spa
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Events as Ev
+
+
+readEnv : String
+readEnv =
+    Result.withDefault "x" (Task.run (System.getenv "X"))
+
+
+type alias Model =
+    { count : Int, note : String }
+
+
+type Msg
+    = DoServer
+    | DoPure
+    | ComposeServer
+    | ComposePure
+    | ViaHelper
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, note = "" }, Cmd.none )
+
+
+-- A NON-arm helper that calls `update`. This MUST keep the conservative
+-- treatment: because it references `update` (which reaches a server effect via
+-- DoServer), the helper is server-tainted, and any arm calling it is SERVER.
+h : Model -> ( Model, Cmd Msg )
+h model =
+    update DoServer model
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        DoServer ->
+            ( { model | note = readEnv }, Cmd.none )
+
+        DoPure ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        ComposeServer ->
+            update DoServer model
+
+        ComposePure ->
+            update DoPure model
+
+        ViaHelper ->
+            h model
+
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8, Ui.padding 12 ]
+            [ Ui.el [ Ev.onClick DoServer ] (Ui.text "do server")
+            , Ui.el [ Ev.onClick DoPure ] (Ui.text ("count " ++ String.fromInt model.count))
+            , Ui.el [ Ev.onClick ComposeServer ] (Ui.text "compose server")
+            , Ui.el [ Ev.onClick ComposePure ] (Ui.text "compose pure")
+            , Ui.el [ Ev.onClick ViaHelper ] (Ui.text "via helper")
+            , Ui.el [] (Ui.text model.note)
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )
