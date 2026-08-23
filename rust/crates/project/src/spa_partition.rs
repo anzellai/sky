@@ -36,16 +36,19 @@ use std::path::Path;
 /// The target a reached effect kernel runs on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum KernelClass {
-    /// Cannot run in the browser at all — DB, files, secrets, the server socket,
-    /// process/stdio, environment. Always server.
+    /// An EFFECT — runs on the server. v1 rule: **any** effect is server-side,
+    /// so the client stays 100% pure. That includes not just the physically
+    /// server-only families (DB, files, auth, secrets, the socket, process/stdio,
+    /// env) but also the client-*capable* ones (`Http`, `Time`, `Random`, `Uuid`)
+    /// — an Http call routes through the backend, a uuid/timestamp is a server
+    /// round-trip. The trust model this buys: the client has NO effects, so no
+    /// secret / DB handle / env value can ever reach it — auditable at a glance,
+    /// and no env/CORS/CSP semantics for the author to learn.
     ServerOnly,
-    /// Runs in the client runtime (an effect, but CLIENT-CAPABLE). `Http.*` (the
-    /// HTTP client) is here: wasm routes `net/http` through the browser `fetch`
-    /// API, and every renderer (browser / desktop+mobile WebView / native) can
-    /// issue it, so an Http call runs client-side by default. It is forced SERVER
-    /// only by the TAINT path — a secret (env / `Auth`) or DB value flowing into
-    /// the request makes the branch reference a tainted binding / server kernel,
-    /// which the analysis already catches. `Time`/`Random`/`Uuid` are here too.
+    /// Reserved: a client-side effect. v1 puts every effect on the server (see
+    /// `ServerOnly`), so nothing maps here yet — kept as the seam for a future
+    /// opt-in (e.g. a client-local uuid/time) rather than deleted.
+    #[allow(dead_code)]
     ClientEffect,
     /// Pure / plumbing — irrelevant to the partition.
     Neutral,
@@ -62,13 +65,13 @@ fn classify_kernel(module: &str, _func: &str) -> KernelClass {
         // `String -> String -> String` (NOT `Task`), so they are caught ONLY by
         // kernel identity, here — never by a Task-type check.
         "System" => KernelClass::ServerOnly,
-        // HTTP-SERVER machinery (the listener, middleware, rate limiter) is
-        // server-only; the HTTP CLIENT (`Http.get`/`post`/`request`) is
-        // client-capable (browser/WebView/native `fetch`) — taint forces it
-        // server when it carries a secret/DB value.
         "RateLimit" | "Middleware" => KernelClass::ServerOnly,
-        "Http" => KernelClass::ClientEffect,
-        "Time" | "Random" | "Uuid" => KernelClass::ClientEffect,
+        // v1 rule: EVERY effect is server-side (secure by default — an effectful
+        // value/function never reaches client code). The HTTP client, and the
+        // client-capable `Time`/`Random`/`Uuid`, are effects, so they go server
+        // too: an external Http call routes through the backend; a client-local
+        // uuid/timestamp is a documented later optimisation, not the v1 rule.
+        "Http" | "Time" | "Random" | "Uuid" => KernelClass::ServerOnly,
         _ => KernelClass::Neutral,
     }
 }
@@ -468,13 +471,13 @@ pub fn analyze(
         }
     }
 
-    // Http note: Http is a CLIENT-capable effect (wasm/WebView/native fetch), so
-    // an Http call runs client-side and is forced SERVER only by TAINT — a secret
-    // (env / Auth) or DB value flowing into the request, which shows up as a
-    // server reach on that branch. There is no Http-specific over-approximation.
+    // The rule, stated on every report so the model is never a mystery:
+    // pure → client, ANY effect → server. Secure by default — an effectful
+    // value/function (DB, files, auth, secrets, env, Http, time, random) never
+    // reaches client code, so the client is 100% pure UI.
     if !branches.is_empty() {
         notes.push(
-            "Http runs client-side (wasm/WebView fetch); a call carrying a secret/DB value is forced SERVER by taint. Server-only effects are Db/File/Auth/System/Server/Process/Io."
+            "Rule: pure -> client, any effect -> server. The client is 100% pure UI; effectful values/functions (Db/File/Auth/System/Http/Time/Random/…) never reach it — secure by default."
                 .to_string(),
         );
     }

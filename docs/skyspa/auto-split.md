@@ -356,35 +356,34 @@ stdlib bodies to a taint fixpoint. (Types are read for the `update` body, but th
 server/client decision is symbol-identity + reference-graph, not type-based — an
 env read via pure-typed `getenvOr` proves types alone are insufficient.)
 
-**The verdict — can it be inferred well? YES, with no Http exception.** The key
-realisation (user, 2026-08-23): **Http is not ambiguous — it is *client-capable*.**
-wasm routes `net/http` through the browser `fetch`, and every renderer
-(browser / desktop+mobile WebView / native) can issue it, so an Http call runs
-client-side by default. The genuine line is:
-- **Server-only** — `Db`/`File`/`Auth`/`System` (incl. pure-typed `getenvOr`) /
-  `Server` / `Process` / `Io`, and inline `Task.run`/auto-force over them:
-  physically cannot run in a browser → SERVER.
-- **Client-capable** — `Http`, `Time`, `Random`, `Uuid`: run in the wasm client →
-  CLIENT.
-- **Taint is the real safety net.** Any effect — Http included — that touches a
-  **server-tainted** value (a secret env read, an `Auth`/DB value) is forced
-  SERVER, because the branch then references a tainted binding / server kernel.
-  So a secret-carrying `Http.post` → SERVER automatically; a public external
-  `Http.get` → CLIENT; no marker needed for either.
+**The FINAL rule (user, 2026-08-23) — dead simple, secure by default: pure →
+client, ANY effect → server; the client is 100% pure UI.** We considered a
+client-capable-Http refinement (wasm can `fetch`) and a public-vs-secret env
+distinction, and the user rejected both as too much for an author to hold in
+their head — the model must fit 99% of cases with an exception only for the 1%.
+So **every** effect is server-side — not just the physically server-only
+families (`Db`/`File`/`Auth`/`System`/`Server`/`Process`/`Io`) but also the
+client-capable ones (`Http`/`Time`/`Random`/`Uuid`). An external Http call routes
+through the backend; a client-local uuid/timestamp is a documented *later*
+optimisation, not the v1 rule.
 
-Verified across apps: the todos **client** now reads **0 SERVER / 10 CLIENT**
-(its `Spa.postJson` mutations are correctly client-issued fetches — the earlier
-"conservative SERVER" was the *wrong* answer); a CAF born from a **client** Http
-effect is **not** server-tainted (so a branch using it → CLIENT), while an env
-CAF is (→ SERVER). Only a genuinely rare case needs an explicit override — an
-external API that is CORS-blocked / must use the server IP / must hide the
-request — and that annotates the *server* exception, not the client rule.
+**Why this is the right call:** it is **secure by default** — an effectful
+value or function can never reach client code, because effects don't run on the
+client at all. No secret / DB handle / env value is ever in the bundle,
+auditable at a glance. And every operational worry dissolves: the client only
+calls its own backend (**same-origin → no CORS**, `connect-src 'self'` →
+**trivial CSP**), and all env/config lives in server code (**no env semantics to
+learn**). The only cost is an extra hop for external HTTP — accepted for v1.
+
+Verified: the todos **client** reads **4 SERVER / 6 CLIENT** — the four
+`Spa.postJson` mutations become RPCs (they reach `Http`), the six pure UI
+branches stay client — the correct auto-split shape; the effectful-CAF/env
+fixture reads 2 SERVER / 2 CLIENT.
 
 **Residual for the enforcing GATE (not the advisory report).** `classify_kernel`
-is an allowlist (client-capable: `Http`/`Time`/`Random`/`Uuid`; server: the
-families above) with unknown families → Neutral(client). Fine for an advisory
-report, but the Phase-3 generator/gate — where a mis-classification becomes a
-real leak — MUST **fail-closed** on any unrecognized effect-kernel family (a new
-server kernel added without updating the table would otherwise default client).
-Guard it with a test that enumerates effect families and asserts each is
-classified.
+lists the effect families (all → server) with unknown families → Neutral(client).
+Fine for an advisory report, but the generator/gate — where a mis-classification
+becomes a real leak — MUST **fail-closed** on any unrecognised effect-kernel
+family (a new effect kernel added without updating the table would otherwise
+default client/pure). Guard it with a test enumerating effect families and
+asserting each is classified as an effect.
