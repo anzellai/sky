@@ -257,10 +257,18 @@ capturePhoto =
 --             return JSON.stringify({ token })   // resolve the Task with this
 --         }
 --
---   * iOS — extend the generated shell's `skyNative` handler (a `native/*.swift`
---     snippet): on your `type`, drive PassKit / Apple Pay and reply the JSON.
---   * Android — extend `SkyNative` (@JavascriptInterface): drive Google Pay and
---     call back `window.__skyBridgeCb[cbId](true, jsonReply)`.
+--   * iOS — a `native/ios/<Name>.swift` file (in the app OR a library) that
+--     defines `func register<Name>(_ reg: SkyNativeRegistry)` and calls
+--     `reg.on("pay") { payload, reply in … }` (drive PassKit, reply the JSON).
+--     `sky build --target ios` links it + fills the installer automatically.
+--   * Android — a `native/android/<Name>.java` (package `sky.nativeext`) that
+--     defines `public static void register()` calling
+--     `SkyRegistry.register("pay", …)` (drive Google Pay, reply the JSON).
+--
+-- Because these live under `native/<platform>/`, a LIBRARY can ship them: an app
+-- that `sky add --sky`s the library gets the Sky wrapper AND its native handler,
+-- entitlements (`native/ios/app.entitlements`) and manifest entries
+-- (`native/android/permissions.xml`) merged into the build — no compiler change.
 --
 -- `Err` when no handler is registered for `name` — the Task never hangs. This is
 -- how a Sky app adds a native capability WITHOUT changing the compiler:

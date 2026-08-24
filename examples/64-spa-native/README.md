@@ -57,14 +57,34 @@ resolved in this order (all optional):
   }
   ```
   Registered in the page, so it works on web AND inside the iOS/Android webviews.
-- **iOS native** — add a `case "pay":` to the shell's `skyNative`
-  `WKScriptMessageHandlerWithReply` (drive PassKit / Apple Pay), reply the JSON.
-- **Android native** — extend `SkyNativeBridge.handleBridge(name, payload)` in
-  the shell (drive Google Pay), or call back `__skyBridgeCb[cbId]` for async.
+- **iOS native** — a `native/ios/<Name>.swift` file with
+  `func register<Name>(_ reg: SkyNativeRegistry) { reg.on("pay") { payload, reply in … } }`
+  (drive PassKit). `sky build --target ios` links it automatically.
+- **Android native** — a `native/android/<Name>.java` (package `sky.nativeext`)
+  with `public static void register() { SkyRegistry.register("pay", …) }`.
 
-A missing handler returns `Err` — the Task never hangs. (Apple Pay / Google Pay
-still need your merchant account, a payment processor, and — for iOS native — the
-`com.apple.developer.in-app-payments` entitlement on a signed build.)
+### Shipping it as a library
+
+The native files live under `native/<platform>/`, so a whole capability is a
+**distributable Sky library** — no compiler change in the consuming app:
+
+```
+sky-applepay/                        # a git repo someone `sky add --sky`s
+  src/Pay/ApplePay.sky               #   charge = Native.bridge "applePay" …
+  native/ios/ApplePay.swift          #   registerApplePay(reg) { … PassKit … }
+  native/ios/app.entitlements        #   com.apple.developer.in-app-payments
+  native/android/ApplePay.java       #   SkyRegistry.register("applePay", …)
+  native/android/permissions.xml     #   extra <uses-permission …/>
+```
+
+An app runs `sky add --sky github.com/acme/sky-applepay`, then
+`import Pay.ApplePay`. `sky spa-split --target ios|android` resolves the Sky
+import, **links the library's native code into the shell, and merges its
+entitlements / manifest entries** — the app just calls `Pay.charge`.
+
+(Apple Pay / Google Pay still need your merchant account + a payment processor;
+the iOS `com.apple.developer.in-app-payments` entitlement is written but only
+takes effect on a **signed device build** — the simulator build is unsigned.)
 
 Note the effect-boundary discipline: a **write** returns `Task Error ()`, a
 **read** returns `Task Error <value>`, and a read that can legitimately find

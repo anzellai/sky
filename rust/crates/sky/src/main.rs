@@ -1860,12 +1860,19 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
     // the WebView plumbing that grants the in-page prompt + a runtime request.
     let (perms, want_location, want_media) = resolve_permissions(project_dir);
     let mut seen = std::collections::HashSet::new();
-    let manifest_perms: String = perms
+    let mut manifest_perms: String = perms
         .iter()
         .flat_map(|s| s.android_perms.iter())
         .filter(|p| seen.insert(**p))
         .map(|p| format!("\n    <uses-permission android:name=\"{p}\" />"))
         .collect();
+    // A native/android/permissions.xml fragment from the project or a lib — extra
+    // <uses-permission …/> lines (or other manifest-root nodes) a capability needs.
+    let ext_perms = collect_native_fragment(project_dir, "android", "permissions.xml");
+    if !ext_perms.trim().is_empty() {
+        manifest_perms.push('\n');
+        manifest_perms.push_str(ext_perms.trim_end());
+    }
     let (perm_imports, webchrome, runtime_request) = android_permission_java(&perms, want_location, want_media);
 
     std::fs::write(
@@ -1893,6 +1900,40 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
             .replace("{{RUNTIME_REQUEST}}", &runtime_request),
     )
     .map_err(|e| format!("write MainActivity.java: {e}"))?;
+
+    // Native extensions (Std.Native.bridge): the registry + installer + each
+    // injected native/android/*.java from the project + its Sky deps, all in
+    // package sky.nativeext (javac globs app/src/main/java, so they compile).
+    let ext_java_dir = root.join("app/src/main/java/sky/nativeext");
+    std::fs::create_dir_all(&ext_java_dir)
+        .map_err(|e| format!("create {}: {e}", ext_java_dir.display()))?;
+    std::fs::write(ext_java_dir.join("SkyRegistry.java"), ANDROID_EXT_REGISTRY)
+        .map_err(|e| format!("write SkyRegistry.java: {e}"))?;
+    let java_exts = collect_native_files(project_dir, "android", "java");
+    for (stem, path) in &java_exts {
+        std::fs::copy(path, ext_java_dir.join(format!("{stem}.java")))
+            .map_err(|e| format!("copy native/android/{stem}.java: {e}"))?;
+    }
+    let install_calls: String = java_exts
+        .iter()
+        .map(|(stem, _)| format!("        {stem}.register();\n"))
+        .collect();
+    std::fs::write(
+        ext_java_dir.join("SkyNativeExtInstall.java"),
+        format!(
+            "package sky.nativeext;\n\npublic final class SkyNativeExtInstall {{\n    \
+             public static void installAll() {{\n{install_calls}    }}\n}}\n"
+        ),
+    )
+    .map_err(|e| format!("write SkyNativeExtInstall.java: {e}"))?;
+    if !java_exts.is_empty() {
+        eprintln!(
+            "  native/android: linked {} extension file(s): {}",
+            java_exts.len(),
+            java_exts.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(", ")
+        );
+    }
+
     let apk_name = format!("{}.apk", sanitize_pkg_segment(&id.exe_name));
     std::fs::write(
         root.join("build-apk.sh"),
@@ -1917,6 +1958,108 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
 /// the shell is native. Requires full Xcode + the simulator SDK (checked before
 /// the build ran). The simulator shares the host network, so it points at
 /// `http://localhost:8951/`.
+/// All `native/<platform>/` directories that contribute native code to the
+/// generated shell: the project's own, plus each fetched Sky dependency's
+/// (`.skydeps/<slug>/native/<platform>/`). This is how a LIBRARY ships native
+/// code — the app and every lib it imports merge their `native/` trees.
+fn collect_native_dirs(project_dir: &Path, platform: &str) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let own = project_dir.join("native").join(platform);
+    if own.is_dir() {
+        dirs.push(own);
+    }
+    if let Ok(rd) = std::fs::read_dir(project_dir.join(".skydeps")) {
+        let mut slugs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        slugs.sort();
+        for slug in slugs {
+            let d = slug.join("native").join(platform);
+            if d.is_dir() {
+                dirs.push(d);
+            }
+        }
+    }
+    dirs
+}
+
+/// Every `*.<ext>` source across the native dirs for `platform`, as
+/// `(file_stem, path)`, sorted + deduped by stem (a project file wins over a
+/// dep's on a stem clash, since the project dir is scanned first).
+fn collect_native_files(project_dir: &Path, platform: &str, ext: &str) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for dir in collect_native_dirs(project_dir, platform) {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        files.sort();
+        for p in files {
+            if p.extension().and_then(|s| s.to_str()) == Some(ext) {
+                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                    if !out.iter().any(|(s, _)| s == stem) {
+                        out.push((stem.to_string(), p));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Concatenate a named fragment file (`Info.plist.append`, manifest appends,
+/// entitlements) across the project + its deps' `native/<platform>/` dirs.
+fn collect_native_fragment(project_dir: &Path, platform: &str, file: &str) -> String {
+    let mut out = String::new();
+    for dir in collect_native_dirs(project_dir, platform) {
+        if let Ok(s) = std::fs::read_to_string(dir.join(file)) {
+            out.push_str(s.trim_end());
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The Swift registry the shell's `skyNative` handler consults for custom
+/// `Native.bridge` capabilities. Always emitted; the installer body is filled
+/// from the injected `native/ios/*.swift` files (each defines `register<Stem>`).
+/// The Java registry an injected `native/android/*.java` lib registers into. The
+/// MainActivity's bridge `call()` dispatches to it. Always emitted (empty
+/// installer when no libs), so the shell compiles either way.
+const ANDROID_EXT_REGISTRY: &str = r#"package sky.nativeext;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/** Registry of custom native capabilities (Std.Native.bridge). An injected
+ *  native/android/&lt;Name&gt;.java file (package sky.nativeext) defines
+ *  `public static void register()` and calls SkyRegistry.register("type", …). */
+public final class SkyRegistry {
+    public interface Reply { void ok(String json); void err(String message); }
+    public interface Handler { void handle(String payload, Reply reply); }
+    private static final Map<String, Handler> HANDLERS = new HashMap<>();
+    public static void register(String name, Handler h) { HANDLERS.put(name, h); }
+    public static boolean has(String name) { return HANDLERS.containsKey(name); }
+    public static void dispatch(String name, String payload, Reply reply) {
+        Handler h = HANDLERS.get(name);
+        if (h != null) { h.handle(payload, reply); }
+        else { reply.err("no native handler for '" + name + "'"); }
+    }
+}
+"#;
+
+const IOS_EXT_REGISTRY: &str = r#"import Foundation
+
+/// Registry of custom native capabilities (Std.Native.bridge). Each injected
+/// native/ios/<Name>.swift file defines `func register<Name>(_ reg: SkyNativeRegistry)`
+/// and calls `reg.on("yourType") { payload, reply in … }`; the build wires them
+/// into installSkyNativeExtensions() below.
+final class SkyNativeRegistry {
+    typealias Reply = (String?, String?) -> Void      // (jsonReply, errorMessage)
+    typealias Handler = (String, @escaping Reply) -> Void
+    var handlers: [String: Handler] = [:]
+    func on(_ name: String, _ handler: @escaping Handler) { handlers[name] = handler }
+}
+
+let skyNativeRegistry = SkyNativeRegistry()
+"#;
+
 fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let name = &id.exe_name;
@@ -1954,6 +2097,40 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
     .map_err(|e| format!("write App.swift: {e}"))?;
     std::fs::write(src.join("WebView.swift"), IOS_WEBVIEW_SWIFT)
         .map_err(|e| format!("write WebView.swift: {e}"))?;
+
+    // Native extensions (Std.Native.bridge): copy each native/ios/*.swift from
+    // the project + its Sky deps into the shell, and generate the registry
+    // installer that calls each file's `register<Stem>` — so a library ships a
+    // Swift handler and the app just imports it.
+    let swift_exts = collect_native_files(project_dir, "ios", "swift");
+    for (stem, path) in &swift_exts {
+        std::fs::copy(path, src.join(format!("{stem}.swift")))
+            .map_err(|e| format!("copy native/ios/{stem}.swift: {e}"))?;
+    }
+    let installer_calls: String = swift_exts
+        .iter()
+        .map(|(stem, _)| format!("    register{stem}(skyNativeRegistry)\n"))
+        .collect();
+    std::fs::write(
+        src.join("SkyNativeExt.swift"),
+        format!("{IOS_EXT_REGISTRY}\nfunc installSkyNativeExtensions() {{\n{installer_calls}}}\n"),
+    )
+    .map_err(|e| format!("write SkyNativeExt.swift: {e}"))?;
+    if !swift_exts.is_empty() {
+        eprintln!(
+            "  native/ios: linked {} extension file(s): {}",
+            swift_exts.len(),
+            swift_exts.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(", ")
+        );
+    }
+
+    // Merge any native/ios/Info.plist.append fragments (extra plist keys a lib
+    // needs) alongside the permission keys, and write an .entitlements file from
+    // native/ios/app.entitlements (applied at codesign time — the simulator build
+    // is unsigned, so an entitlement like in-app-payments needs a real signed
+    // device build; the file is emitted so a signed build can use it).
+    let ext_plist = collect_native_fragment(project_dir, "ios", "Info.plist.append");
+    let entitlements = collect_native_fragment(project_dir, "ios", "app.entitlements");
     std::fs::write(
         src.join("Info.plist"),
         IOS_INFO_PLIST
@@ -1963,9 +2140,17 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
             .replace("{{SHORT_VERSION}}", &id.short_version)
             .replace("{{BUILD_NUMBER}}", &id.build_number)
             .replace("{{ICONS}}", if do_icons { IOS_ICON_PLIST } else { "" })
-            .replace("{{PERMISSIONS}}", &plist_perms),
+            .replace("{{PERMISSIONS}}", &format!("{plist_perms}{ext_plist}")),
     )
     .map_err(|e| format!("write Info.plist: {e}"))?;
+    if !entitlements.trim().is_empty() {
+        std::fs::write(root.join(format!("{name}.entitlements")), &entitlements)
+            .map_err(|e| format!("write entitlements: {e}"))?;
+        eprintln!(
+            "  native/ios: wrote {name}.entitlements — apply it with a SIGNED device build \
+             (the simulator build is unsigned, so signing entitlements are not active here)."
+        );
+    }
     std::fs::write(
         root.join("build-app.sh"),
         IOS_BUILD_APP.replace("{{NAME}}", name),
@@ -2044,6 +2229,7 @@ struct WebView: UIViewRepresentable {
         let web = WKWebView(frame: .zero, configuration: cfg)
         web.uiDelegate = context.coordinator
         UNUserNotificationCenter.current().delegate = context.coordinator
+        installSkyNativeExtensions()   // register any native/ios/* bridge handlers
         web.load(URLRequest(url: url))
         return web
     }
@@ -2093,11 +2279,15 @@ struct WebView: UIViewRepresentable {
                     }
                 }
             default:
-                // EXTENSION POINT: a custom Std.Native.bridge capability. Add a
-                // `case "yourType":` above (drive PassKit / Apple Pay etc.) and
-                // call replyHandler(jsonReplyString, nil) on success or
-                // replyHandler(nil, "message") to reject the JS Task.
-                replyHandler(nil, "skyNative: no native handler for '\(type)'")
+                // A custom Std.Native.bridge capability registered by an injected
+                // native/ios/*.swift file (e.g. a payments library). The build
+                // links those files + fills SkyNativeExt.swift's installer.
+                let payload = dict["payload"] as? String ?? ""
+                if let handler = skyNativeRegistry.handlers[type] {
+                    handler(payload) { reply, err in replyHandler(reply, err) }
+                } else {
+                    replyHandler(nil, "skyNative: no native handler for '\(type)'")
+                }
             }
         }
 
@@ -2145,7 +2335,7 @@ cd "$(dirname "$0")"
 SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 rm -rf build && mkdir -p "build/{{NAME}}.app"
 xcrun --sdk iphonesimulator swiftc -sdk "$SDK" -target arm64-apple-ios17.0-simulator \
-  -parse-as-library {{NAME}}/App.swift {{NAME}}/WebView.swift \
+  -parse-as-library {{NAME}}/*.swift \
   -o "build/{{NAME}}.app/{{NAME}}"
 cp {{NAME}}/Info.plist "build/{{NAME}}.app/Info.plist"
 echo "OK -> build/{{NAME}}.app"
@@ -2253,6 +2443,7 @@ public class MainActivity extends Activity {
         // over the Web Notification API. @JavascriptInterface methods run on a
         // background thread and may return a value synchronously to JS.
         web.addJavascriptInterface(new SkyNativeBridge(this, web), "SkyNative");
+        sky.nativeext.SkyNativeExtInstall.installAll();   // register native/android/* handlers
         web.loadUrl(APP_URL);
     }
 
@@ -2271,7 +2462,16 @@ public class MainActivity extends Activity {
         // window.__skyBridgeCb[cbId](ok, jsonReply). The work may be async; call
         // reply() when done. EXTENSION POINT: add your capability to handleBridge.
         @JavascriptInterface
-        public void call(String name, String payload, String cbId) {
+        public void call(String name, String payload, final String cbId) {
+            // A capability registered by an injected native/android/*.java lib
+            // (via sky.nativeext.SkyRegistry) — may reply asynchronously.
+            if (sky.nativeext.SkyRegistry.has(name)) {
+                sky.nativeext.SkyRegistry.dispatch(name, payload, new sky.nativeext.SkyRegistry.Reply() {
+                    @Override public void ok(String json) { replyOk(cbId, json); }
+                    @Override public void err(String msg) { replyErr(cbId, msg); }
+                });
+                return;
+            }
             String reply = handleBridge(name, payload);
             if (reply != null) {
                 replyOk(cbId, reply);
@@ -7084,14 +7284,22 @@ mod tests {
     /// capability (payments, biometrics…) without changing the compiler.
     #[test]
     fn mobile_shells_expose_the_bridge_extension_point() {
-        for needle in ["no native handler for", "replyHandler"] {
+        // iOS: the default case consults the injected-handler registry + the
+        // shell installs it at startup.
+        for needle in [
+            "skyNativeRegistry.handlers[type]",
+            "installSkyNativeExtensions()",
+            "no native handler for",
+        ] {
             assert!(
                 IOS_WEBVIEW_SWIFT.contains(needle),
                 "iOS shell must route custom bridge calls: missing `{needle}`"
             );
         }
+        // Android: call() dispatches to the injected registry + installs it.
         for needle in [
-            "public void call(String name, String payload, String cbId)",
+            "sky.nativeext.SkyRegistry.has(name)",
+            "sky.nativeext.SkyNativeExtInstall.installAll()",
             "handleBridge",
             "__skyBridgeCb",
         ] {
@@ -7100,6 +7308,42 @@ mod tests {
                 "Android shell must route custom bridge calls: missing `{needle}`"
             );
         }
+        // The registry sources compile-shaped: the Swift declares the registry,
+        // the Java declares the dispatch table.
+        assert!(IOS_EXT_REGISTRY.contains("class SkyNativeRegistry"));
+        assert!(ANDROID_EXT_REGISTRY.contains("public final class SkyRegistry")
+            && ANDROID_EXT_REGISTRY.contains("package sky.nativeext;"));
+    }
+
+    /// A library ships native code + fragments under `native/<platform>/`;
+    /// `collect_native_*` discovers them across the project AND its `.skydeps`
+    /// packages — the mechanism that lets an app import a lib's native handler.
+    #[test]
+    fn native_extension_files_are_discovered_from_project_and_deps() {
+        let dir = bundle_scratch("nativeext", "name = \"p\"\n", "module Main exposing (main)\nmain = 0\n");
+        // The project's own native file + a fragment.
+        std::fs::create_dir_all(dir.join("native/ios")).unwrap();
+        std::fs::write(dir.join("native/ios/AppOwn.swift"), "func registerAppOwn(_ r: Any) {}\n").unwrap();
+        std::fs::write(dir.join("native/ios/app.entitlements"), "<own/>\n").unwrap();
+        // A fetched Sky dependency shipping its own native file + fragment.
+        let dep = dir.join(".skydeps/github.com_acme_pay/native/ios");
+        std::fs::create_dir_all(&dep).unwrap();
+        std::fs::write(dep.join("ApplePay.swift"), "func registerApplePay(_ r: Any) {}\n").unwrap();
+        std::fs::write(dep.join("app.entitlements"), "<dep/>\n").unwrap();
+
+        let files = collect_native_files(&dir, "ios", "swift");
+        let stems: Vec<&str> = files.iter().map(|(s, _)| s.as_str()).collect();
+        assert!(
+            stems.contains(&"AppOwn") && stems.contains(&"ApplePay"),
+            "native files from BOTH the project and its deps must be discovered, got {stems:?}"
+        );
+        // Fragments concatenate across project + deps.
+        let ent = collect_native_fragment(&dir, "ios", "app.entitlements");
+        assert!(ent.contains("<own/>") && ent.contains("<dep/>"), "fragments merge, got:\n{ent}");
+        // A platform with no native dir yields nothing.
+        assert!(collect_native_files(&dir, "android", "java").is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
