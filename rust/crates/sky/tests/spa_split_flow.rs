@@ -297,6 +297,49 @@ fn native_effects_stay_client_side_not_rpc() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// The generated backend's DEFAULT port must match the port the generated
+/// desktop / iOS / Android shells load, or a user who starts the backend bare
+/// (`./app`, no PORT) and launches a shell lands on a dead port. Regression: the
+/// backend defaulted to 8971 while every shell baked 8951, so the mobile shells
+/// could not reach the backend on its own default. Both sides now default 8951.
+#[test]
+fn backend_default_port_matches_the_generated_shell() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            clientnative_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed");
+
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    assert!(
+        back.contains("getenvOr \"PORT\" \"8951\""),
+        "backend serverPort must default to 8951 (the shells' port), got:\n{}",
+        back.lines().filter(|l| l.contains("PORT")).collect::<Vec<_>>().join("\n")
+    );
+
+    // The shell generator (this crate's main.rs) must bake the SAME default, or
+    // the two drift apart again. Pin them together.
+    let main_rs = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+    )
+    .unwrap();
+    assert!(
+        main_rs.contains("getenvOr \"PORT\" \"8951\"") && main_rs.contains("localhost:8951"),
+        "the generated shell (main.rs) must load the same 8951 the backend serves"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A REAL one-project app: the todos app (Model `{ todos : List Todo, draft }`,
 /// Msg `DraftChanged String | Add | Toggle Int | Remove Int`, user-defined
 /// `todoCodec`/`todoListCodec`). Exercises the generalised generator:

@@ -1424,8 +1424,13 @@ fn gen_backend(
         rs = rs.replacen("        ,", "        [", 1);
         rs
     };
+    // Default port 8951 — MUST match the port the generated desktop/iOS/Android
+    // shells load (`sky/src/main.rs`, "default 8951"). The mobile shells bake
+    // `http://localhost:8951/` (iOS) / `http://10.0.2.2:8951/` (Android), so a
+    // user who starts the backend bare (`./app`, no PORT) and launches the shell
+    // must land on the same port. An explicit PORT still overrides both.
     handlers.push_str(
-        "serverPort : Int\nserverPort =\n    case String.toInt (System.getenvOr \"PORT\" \"8971\") of\n        Just p ->\n            p\n\n        Nothing ->\n            8971\n\n\n",
+        "serverPort : Int\nserverPort =\n    case String.toInt (System.getenvOr \"PORT\" \"8951\") of\n        Just p ->\n            p\n\n        Nothing ->\n            8951\n\n\n",
     );
     handlers.push_str(&format!(
         "main : Task Error ()\nmain =\n    Server.listen\n        serverPort\n{route_block}\n        ]\n"

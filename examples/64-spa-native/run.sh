@@ -11,7 +11,7 @@
 # (localStorage), Locate (grant location), Online?/Language, Vibrate (a phone),
 # Share (a phone's share sheet), Set tab title. Each result shows in the log.
 #
-# Usage:  PORT=8974 ./run.sh          (Ctrl-C to stop)
+# Usage:  ./run.sh          (Ctrl-C to stop; PORT defaults to 8951)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -22,7 +22,7 @@ SKY="${SKY:-$ROOT/sky-out/sky}"
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 
-PORT="${PORT:-8974}"
+PORT="${PORT:-8951}"
 export PORT
 
 echo "==> deriving frontend + backend from src/ via sky spa-split"
