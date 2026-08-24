@@ -1,8 +1,8 @@
 # Sky.Spa — client-side TEA, statically partitioned (design)
 
-> **Status: EXPERIMENTAL (`exp/spa`) — NOT in any release** (shipped line is
-> v0.21.x). A desktop/mobile-first, **explicit-boundary** Sky.Spa v1 is now
-> **built and green on `exp/spa`** (phases P1–P5 — see the [staged plan §8](#8-staged-plan)
+> **Status: shipped feature.** A desktop/mobile-first, **explicit-boundary**
+> Sky.Spa is built, tested, and part of the stdlib (phases P1–P5 — see the
+> [staged plan §8](#8-staged-plan)
 > and the tracker [v1-progress.md](v1-progress.md); the user-facing guide is
 > [overview.md](overview.md)). Two things this document opened with remain the
 > record and are **honoured, not shipped**: an adversarial grill found two
@@ -351,7 +351,8 @@ classify-by-`Cmd` mechanism was falsified (§0.1), but the body-`Task`-trace
 mechanism under a mandated dialect is reachable (`auto-split.md`), and v1-dialect
 apps are forward-compatible with it. Sky.Spa's near-term value is the client
 renderer + explicit boundary + shared types; its v2 value is the compiler-derived
-split. **None of this is in a release; it is experimental on `exp/spa`.**
+split. **The v1 client renderer + explicit boundary ship as a feature; the v2
+compiler-derived split remains the forward path.**
 
 ## 9. Evidence (Phase 1, measured on `exp/spa`)
 

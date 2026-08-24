@@ -29,7 +29,7 @@ memorise or inline signatures here — they drift; `sky doc` doesn't.
 | You want… | Use | Entry |
 |---|---|---|
 | Web app (forms, real-time, UI state) | **Sky.Live** | `Live.app (Live.config {…})` |
-| Client-rendered SPA / cross-platform client loop | **Sky.Spa** *(experimental — `exp/spa`, not in a release yet)* | `Spa.app (Spa.config {…})` |
+| Client-rendered SPA / cross-platform client loop | **Sky.Spa** | `Spa.app (Spa.config {…})` |
 | HTTP/JSON API (no browser UI) | **Sky.Http.Server** | `Server.listen 8000 [...]` |
 | Terminal UI | **Sky.Tui** | `Tui.app (Tui.config {…})` |
 | Desktop app (macOS) | **Sky.Webview** | `Webview.app { … }` (closed record) |

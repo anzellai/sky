@@ -127,12 +127,11 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
    side. It is closed in the other direction instead: rejected at check
    time, so it can no longer reach the runtime at all.
 
-## Sky.Spa (EXPERIMENTAL — `exp/spa`, not in any release)
+## Sky.Spa
 
-Sky.Spa (client-side TEA compiled to wasm) is a **preview on the `exp/spa`
-branch** and ships in **no release** (the shipped line is v0.21.x). These are the
-known limits of the v1 preview — documented so they are not mistaken for bugs.
-Full context: `docs/skyspa/overview.md` + `docs/skyspa/design.md`.
+Sky.Spa (client-side TEA compiled to wasm) is a supported feature; these are its
+current scope boundaries — documented so they are not mistaken for bugs. Full
+context: `docs/skyspa/overview.md` + `docs/skyspa/design.md`.
 
 * **Web bundle weight → desktop/mobile-embed only.** A real Sky.Spa app is a
   standard Go→wasm bundle of ~9.5 MB raw / ~2.5 MB gzip

@@ -1,10 +1,11 @@
 # Sky.Spa — client-side TEA (overview)
 
-> **Status: EXPERIMENTAL / preview.** Sky.Spa lives on the `exp/spa` branch and is
-> **not part of any release** (the shipped line is v0.21.x). The API, the runtime
-> partition, and the bundle story may all change before it ships. Nothing here is
-> a stability promise. This page documents what the v1 preview *is* and, just as
-> importantly, what it is **not** yet.
+> **Status: supported feature.** Sky.Spa is part of the Sky stdlib (`Std.Spa`);
+> the runtime partition, the auto-split, and the `Std.Bundle` packaging story are
+> built, tested, and stable. It targets **desktop / mobile-embed webview first**;
+> the constraints below (e.g. web-as-a-first-class-target) are real current scope
+> boundaries, not instability. This page documents what Sky.Spa *is* and what is
+> **not yet** in scope.
 
 Sky.Spa runs the Sky TEA loop **on the client**. You write the *same*
 `Model / Msg / update / view` you would write for [Sky.Live](../skylive/overview.md),
@@ -33,7 +34,7 @@ a full server-side re-render each interaction. It scales, but the ceiling is the
 stateful fleet (sticky sessions, session store, SSE fan-out). Sky.Spa moves the
 loop to the client, which changes the trade:
 
-| | Sky.Live | Sky.Spa (experimental) |
+| | Sky.Live | Sky.Spa |
 |---|---|---|
 | Where `update` runs | server (trusted) | client (**untrusted** — see [Security](#security)) |
 | Pure UI transition | round-trips to the server | **client-local, zero round-trip** |
@@ -175,7 +176,7 @@ on the user's machine → **untrusted**. Therefore, unavoidably:
 
 ## Honest limits
 
-These are real, current constraints of the v1 preview — not roadmap optimism:
+These are real, current scope boundaries — not roadmap optimism:
 
 - **Bundle weight → desktop/mobile-embed only.** A real Sky.Spa app compiles to a
   standard Go→wasm bundle of **~9.5 MB raw / ~2.5 MB gzip**
