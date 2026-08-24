@@ -615,7 +615,19 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// gate
 /// (`rust/crates/project/tests/kernel_surface.rs`, which pins `Std/Spa.sky`'s
 /// `config`/`app` bindings + `Spa_config`/`Spa_app` runtime symbols in sync).
-pub const DARK_MODULE_CEILING: usize = 64;
+///
+/// Raised 64 → 66 (2026-08-24) for `Std.Native` + `Std.Bundle` (exp/spa):
+///   * `Std.Native` is client device capabilities, every binding an effect
+///     (`geolocation`/`clipboard*`/`share`/`storage*`/`notify`/`pick*`/`bridge`,
+///     each `Ffi.kernel "Native_*"` → `Task Error a`). There is no pure value for
+///     a Family-S corpus to assert; the effects are covered e2e by
+///     `examples/64-spa-native` (browser + iOS + Android) and the `!js` Err-stub
+///     tests in `runtime-go/rt/native_test.go`.
+///   * `Std.Bundle` is BUILD-TIME packaging identity — an opaque `Bundle` built
+///     by the `withX` builder, read at `sky build --target` time, not at runtime.
+///     It has no runtime value semantics to assert; it is covered by the bundle
+///     unit tests + `--target` build tests in `rust/crates/sky/src/main.rs`.
+pub const DARK_MODULE_CEILING: usize = 66;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
