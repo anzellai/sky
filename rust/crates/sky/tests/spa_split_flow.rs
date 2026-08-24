@@ -340,6 +340,126 @@ fn backend_default_port_matches_the_generated_shell() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// An app that imports an EXTERNAL Sky library (a `.skydeps/` package) must
+/// survive spa-split: the generated frontend/backend need the `[dependencies]`
+/// section AND a copy of the `.skydeps/` tree, or they can't rebuild the import.
+/// Regression: before this, spa-split emitted a fixed manifest and copied only the
+/// project's own src/, so a third-party import analysed fine but the generated
+/// projects failed to resolve it. `.skydeps/` is gitignored, so the lib is
+/// constructed here rather than checked in.
+#[test]
+fn spa_split_carries_external_sky_dependencies() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    let slug = "github.com_test_sky-greet";
+
+    // The fetched library (as `sky add --sky` would leave it under .skydeps/).
+    let lib_src = proj.join(".skydeps").join(slug).join("src/Ext");
+    std::fs::create_dir_all(&lib_src).unwrap();
+    std::fs::write(
+        lib_src.join("Greet.sky"),
+        "module Ext.Greet exposing (greet)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\n\
+         greet : String -> String\ngreet name =\n    \"Hi from the lib, \" ++ name\n",
+    )
+    .unwrap();
+
+    // The consumer project declaring the dependency + importing it.
+    std::fs::write(
+        proj.join("sky.toml"),
+        "name = \"extdep\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
+         [source]\nroot = \"src\"\n\n[dependencies]\n\"github.com/test/sky-greet\" = \"latest\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(proj.join("src")).unwrap();
+    let main_sky = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Ext.Greet exposing (greet)
+
+
+type alias Model =
+    { who : String }
+
+
+type Msg
+    = Noop
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { who = "Sky" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Noop ->
+            ( model, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout [] (Ui.text (greet model.who))
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init, update = update, view = view, subscriptions = subscriptions }
+        )
+"#;
+    std::fs::write(proj.join("src/Main.sky"), main_sky).unwrap();
+
+    let out = proj.join("dist");
+    let status = Command::new(SKY)
+        .args(["spa-split", proj.join("src/Main.sky").to_str().unwrap(), "--out", out.to_str().unwrap()])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "spa-split should succeed on an app with an external dep");
+
+    // The generated frontend must declare the dep AND carry its .skydeps source.
+    let front_toml = std::fs::read_to_string(out.join("frontend/sky.toml")).unwrap();
+    assert!(
+        front_toml.contains("[dependencies]") && front_toml.contains("github.com/test/sky-greet"),
+        "generated frontend manifest must carry [dependencies], got:\n{front_toml}"
+    );
+    assert!(
+        out.join("frontend/.skydeps").join(slug).join("src/Ext/Greet.sky").is_file(),
+        "generated frontend must carry the .skydeps source tree"
+    );
+    // And the same for the backend.
+    let back_toml = std::fs::read_to_string(out.join("backend/sky.toml")).unwrap();
+    assert!(
+        back_toml.contains("github.com/test/sky-greet"),
+        "generated backend manifest must carry [dependencies] too"
+    );
+
+    // The real proof: the generated frontend BUILDS (resolves the import).
+    if required(Need::Go, have_go()) {
+        let build = Command::new(SKY)
+            .args(["build", "src/Main.sky"])
+            .current_dir(out.join("frontend"))
+            .status()
+            .expect("run sky build (frontend)");
+        assert!(build.success(), "generated frontend must build with the external import resolved");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// A REAL one-project app: the todos app (Model `{ todos : List Todo, draft }`,
 /// Msg `DraftChanged String | Add | Toggle Int | Remove Int`, user-defined
 /// `todoCodec`/`todoListCodec`). Exercises the generalised generator:

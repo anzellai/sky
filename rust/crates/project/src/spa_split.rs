@@ -829,8 +829,23 @@ pub fn generate(
     write("frontend/src/Shared.sky", &shared_src, &mut files)?;
     write("backend/src/Main.sky", &backend_src, &mut files)?;
     write("frontend/src/Main.sky", &frontend_src, &mut files)?;
-    write("backend/sky.toml", &sky_toml(&format!("{proj_name}-backend")), &mut files)?;
-    write("frontend/sky.toml", &sky_toml(&format!("{proj_name}-frontend")), &mut files)?;
+    // The generated projects must be able to REBUILD any third-party imports the
+    // app uses: carry the `[dependencies]` (Sky packages) + `["go.dependencies"]`
+    // (Go FFI) sections into each manifest, and copy the fetched `.skydeps/` /
+    // `sky-ffi/` trees alongside (below). Without this, an app that imports an
+    // external Sky library analyses fine but the generated frontend/backend can't
+    // resolve the import.
+    let dep_sections = emit_dep_sections(project_dir);
+    write(
+        "backend/sky.toml",
+        &format!("{}{dep_sections}", sky_toml(&format!("{proj_name}-backend"))),
+        &mut files,
+    )?;
+    write(
+        "frontend/sky.toml",
+        &format!("{}{dep_sections}", sky_toml(&format!("{proj_name}-frontend"))),
+        &mut files,
+    )?;
 
     // ---- copy the sibling project modules (§17) ----
     // Pure modules go into BOTH trees verbatim; server-tainted (backend-only)
@@ -852,6 +867,12 @@ pub fn generate(
     // `sky build --target` (run on frontend/) reads the SAME declarations; copy
     // the declared asset files/dirs alongside it so it can stage them into dist/.
     propagate_bundle_assets(&src, project_dir, &out_dir.join("frontend"))?;
+
+    // ---- propagate external dependencies (Sky `.skydeps/`, Go `sky-ffi/`) ----
+    // so `sky build --target` run on the generated frontend/backend can resolve
+    // the same third-party imports the app declared.
+    propagate_deps(project_dir, &out_dir.join("frontend"))?;
+    propagate_deps(project_dir, &out_dir.join("backend"))?;
 
     Ok(SpaSplitReport {
         out_dir: out_dir.to_string_lossy().to_string(),
@@ -934,6 +955,42 @@ fn propagate_bundle_assets(src: &str, project_dir: &Path, frontend_dir: &Path) -
                     .map_err(|e| format!("create {}: {e}", parent.display()))?;
             }
             std::fs::copy(&from, &to).map_err(|e| format!("copy asset {file}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Reconstruct the `[dependencies]` (Sky packages) and `["go.dependencies"]` (Go
+/// FFI) sections from the project's `sky.toml`, to append to a generated
+/// manifest. Empty string when the project declares no external deps.
+fn emit_dep_sections(project_dir: &Path) -> String {
+    let sky_toml = project_dir.join("sky.toml");
+    let mut out = String::new();
+    let sky_deps = crate::ffi_ops::read_sky_dependencies(&sky_toml);
+    if !sky_deps.is_empty() {
+        out.push_str("\n[dependencies]\n");
+        for (k, v) in sky_deps {
+            out.push_str(&format!("\"{k}\" = \"{v}\"\n"));
+        }
+    }
+    let go_deps = crate::ffi_ops::read_go_dependencies(&sky_toml);
+    if !go_deps.is_empty() {
+        out.push_str("\n[\"go.dependencies\"]\n");
+        for (k, v) in go_deps {
+            out.push_str(&format!("\"{k}\" = \"{v}\"\n"));
+        }
+    }
+    out
+}
+
+/// Copy the project's fetched external-dependency trees (`.skydeps/` Sky sources,
+/// `sky-ffi/` Go FFI surface) into a generated project so it can rebuild the same
+/// imports. No-op for trees that don't exist (a dep-free app).
+fn propagate_deps(project_dir: &Path, gen_dir: &Path) -> Result<(), String> {
+    for tree in [".skydeps", "sky-ffi"] {
+        let from = project_dir.join(tree);
+        if from.is_dir() {
+            copy_tree(&from, &gen_dir.join(tree))?;
         }
     }
     Ok(())
