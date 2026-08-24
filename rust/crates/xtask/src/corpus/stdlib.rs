@@ -610,9 +610,9 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// `config` (produces an opaque `AppConfig` consumed for its EFFECT by
 /// `Spa_app`) + `app` (returns `Task Error ()`, forced at `main`), so the
 /// Family-S value corpus has no value to assert on. Its behaviour is covered
-/// instead by the wasm render harness (`spa-counter/run_headless.cjs` — a real
-/// Sky.Spa app compiled to `GOOS=js GOARCH=wasm`, headless DOM, init/+1/Reset/-1
-/// transitions asserted) and the kernel-surface gate
+/// instead by the Sky.Spa examples (`examples/60-spa-todos` … `64-spa-native` —
+/// real Sky.Spa apps compiled to `GOOS=js GOARCH=wasm`) and the kernel-surface
+/// gate
 /// (`rust/crates/project/tests/kernel_surface.rs`, which pins `Std/Spa.sky`'s
 /// `config`/`app` bindings + `Spa_config`/`Spa_app` runtime symbols in sync).
 pub const DARK_MODULE_CEILING: usize = 64;

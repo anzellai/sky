@@ -1248,7 +1248,9 @@ fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, St
         format!("name = \"{shell_name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
     )
     .map_err(|e| format!("write sky.toml: {e}"))?;
-    let title = format!("{app} — Desktop");
+    // `app` (the display name) goes into a Sky string literal — escape it so a
+    // name containing `"` or `\` can't break the generated source.
+    let title = sky_str_escape(&format!("{app} — Desktop"));
     std::fs::write(
         shell.join("src").join("Main.sky"),
         DESKTOP_SHELL_MAIN.replace("{{TITLE}}", &title),
@@ -1354,10 +1356,60 @@ struct BundleIdentity {
     icon: Option<String>,
 }
 
+/// XML-escape a value going into a plist / AndroidManifest / strings.xml (as
+/// element text OR an attribute value). Covers all five predefined entities, so
+/// an app name like `Ben & Jerry's <Beta>` or one containing `"`/`</string>`
+/// cannot break — or inject into — the generated XML. `&apos;` also satisfies
+/// aapt2, which rejects a bare apostrophe in an Android string resource.
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Escape a value for embedding in a Sky (or Swift/JSON) double-quoted string
+/// literal — backslash + quote + the control chars a raw newline/tab would break.
+fn sky_str_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Java/Kotlin reserved words that cannot be a package-name segment — a bundle id
+/// like `com.native.app` or `com.int.thing` is valid reverse-DNS but makes the
+/// generated `package …;` (and the Java source dir) fail to compile.
+const JVM_RESERVED_SEGMENTS: &[&str] = &[
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const",
+    "continue", "default", "do", "double", "else", "enum", "extends", "final", "finally", "float",
+    "for", "goto", "if", "implements", "import", "instanceof", "int", "interface", "long", "native",
+    "new", "package", "private", "protected", "public", "return", "short", "static", "strictfp",
+    "super", "switch", "synchronized", "this", "throw", "throws", "transient", "try", "void",
+    "volatile", "while", "true", "false", "null", "fun", "val", "var", "object", "when", "is", "in",
+];
+
 /// A syntactically valid reverse-DNS / Android package id: two or more
-/// dot-separated segments, each starting with a letter and otherwise
-/// alphanumeric or `_`. (Android rejects anything else outright; iOS is looser
-/// but we hold both to the same bar so one `id` works on every target.)
+/// dot-separated segments, each starting with a letter, otherwise alphanumeric
+/// or `_`, and not a JVM reserved word (Android rejects anything else outright,
+/// and a reserved-word segment breaks the generated Java `package`; iOS is looser
+/// but we hold both to the same bar so one `id` works on every target).
 fn valid_bundle_id(id: &str) -> bool {
     let segs: Vec<&str> = id.split('.').collect();
     segs.len() >= 2
@@ -1365,6 +1417,7 @@ fn valid_bundle_id(id: &str) -> bool {
             let mut cs = s.chars();
             cs.next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
                 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !JVM_RESERVED_SEGMENTS.contains(&s.to_ascii_lowercase().as_str())
         })
 }
 
@@ -1380,41 +1433,51 @@ fn read_entry_source(project_dir: &Path) -> Option<String> {
     std::fs::read_to_string(project_dir.join(entry)).ok()
 }
 
-/// Pull the string-literal argument of a `Std.Bundle` `withX` call out of the
-/// entry source — `Bundle.withId "com.acme.app"` → `Some("com.acme.app")`.
+/// Is the byte offset `at` inside a `--` line comment? (True if a `--` precedes
+/// it on the same source line.) A conservative guard so a `withX` mentioned in a
+/// comment is not read as a real declaration.
+fn in_line_comment(src: &str, at: usize) -> bool {
+    let line_start = src[..at].rfind('\n').map(|n| n + 1).unwrap_or(0);
+    src[line_start..at].contains("--")
+}
+
+/// If `s` starts with a `"…"` string literal, return its (unescaped) contents;
+/// else `None`. Char-based so multi-byte names survive, with `\"`/`\\` handled —
+/// so the argument is read as the IMMEDIATE literal, never a forward scan.
+fn string_literal_prefix(s: &str) -> Option<String> {
+    let mut chars = s.chars();
+    if chars.next() != Some('"') {
+        return None;
+    }
+    let mut out = String::new();
+    let mut escaped = false;
+    for c in chars {
+        if escaped {
+            out.push(c);
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == '"' {
+            return Some(out);
+        } else {
+            out.push(c);
+        }
+    }
+    None // unterminated literal
+}
+
+/// Every string-literal argument of a `Std.Bundle` `withX` call in the entry
+/// source, in order — `Bundle.withId "com.acme.app"` → `["com.acme.app"]`.
 ///
 /// Deliberately a source scan, not a `sky.toml` read: keeping the packaging
 /// identity in code (the `withX` builder) is what lets `sky.toml` stay lean, and
 /// a source scan is not a pre-binary config read so it never touches the
-/// config-surface census. It resolves string LITERALS only (the identity is
-/// always written as one); a computed value falls back to the default. `func`
-/// is matched on word boundaries so `withId` does not match `withIdentifier`.
-fn scan_bundle_call(src: &str, func: &str) -> Option<String> {
-    let bytes = src.as_bytes();
-    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut from = 0;
-    while let Some(rel) = src[from..].find(func) {
-        let at = from + rel;
-        from = at + func.len();
-        let before_ok = at == 0 || !is_word(bytes[at - 1]);
-        let after_ok = bytes.get(at + func.len()).map(|b| !is_word(*b)).unwrap_or(true);
-        if !before_ok || !after_ok {
-            continue;
-        }
-        // The next string literal after the call name is the argument.
-        let rest = &src[at + func.len()..];
-        if let Some(q) = rest.find('"') {
-            let after_q = &rest[q + 1..];
-            if let Some(end) = after_q.find('"') {
-                return Some(after_q[..end].to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Like [`scan_bundle_call`] but collects EVERY occurrence — `Bundle.withAsset`
-/// / `withAssetDir` can appear many times in one `bundle` binding.
+/// config-surface census. It resolves the IMMEDIATE string literal after the
+/// call (skipping only whitespace / an opening paren) — a computed value, or a
+/// call inside a `--` comment, is ignored rather than reaching forward to an
+/// unrelated quote elsewhere in the file. `func` is matched on word boundaries so
+/// `withId` does not match `withIdentifier`. (A full HIR-based resolver is the
+/// tracked ideal; this bounded, comment-aware scan closes the practical gaps.)
 fn scan_bundle_calls_all(src: &str, func: &str) -> Vec<String> {
     let bytes = src.as_bytes();
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
@@ -1423,20 +1486,26 @@ fn scan_bundle_calls_all(src: &str, func: &str) -> Vec<String> {
     while let Some(rel) = src[from..].find(func) {
         let at = from + rel;
         from = at + func.len();
+        let after = at + func.len();
         let before_ok = at == 0 || !is_word(bytes[at - 1]);
-        let after_ok = bytes.get(at + func.len()).map(|b| !is_word(*b)).unwrap_or(true);
-        if !before_ok || !after_ok {
+        let after_ok = bytes.get(after).map(|b| !is_word(*b)).unwrap_or(true);
+        if !before_ok || !after_ok || in_line_comment(src, at) {
             continue;
         }
-        let rest = &src[at + func.len()..];
-        if let Some(q) = rest.find('"') {
-            let after_q = &rest[q + 1..];
-            if let Some(end) = after_q.find('"') {
-                out.push(after_q[..end].to_string());
-            }
+        // The argument must be a string literal IMMEDIATELY after the call name
+        // (only whitespace / an opening paren may intervene).
+        let arg = src[after..].trim_start_matches([' ', '\t', '(']);
+        if let Some(lit) = string_literal_prefix(arg) {
+            out.push(lit);
         }
     }
     out
+}
+
+/// The first `withX` string-literal argument (the singular identity fields:
+/// name / id / icon / version). See [`scan_bundle_calls_all`].
+fn scan_bundle_call(src: &str, func: &str) -> Option<String> {
+    scan_bundle_calls_all(src, func).into_iter().next()
 }
 
 /// Recursively copy the CONTENTS of `src` into `dest`, preserving the relative
@@ -1520,7 +1589,7 @@ fn scan_bundle_permissions(src: &str) -> Vec<String> {
         let at = from + rel;
         from = at + func.len();
         let before_ok = at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
-        if !before_ok {
+        if !before_ok || in_line_comment(src, at) {
             continue;
         }
         let rest = src[at + func.len()..].trim_start();
@@ -1879,8 +1948,8 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
         root.join("app/src/main/AndroidManifest.xml"),
         ANDROID_MANIFEST
             .replace("{{PACKAGE}}", package)
-            .replace("{{LABEL}}", &id.display_name)
-            .replace("{{VERSION_NAME}}", &id.short_version)
+            .replace("{{LABEL}}", &xml_escape(&id.display_name))
+            .replace("{{VERSION_NAME}}", &xml_escape(&id.short_version))
             .replace("{{VERSION_CODE}}", &version_code)
             .replace("{{ICON_ATTR}}", icon_attr)
             .replace("{{USES_PERMISSIONS}}", &manifest_perms),
@@ -1888,7 +1957,7 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
     .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
     std::fs::write(
         res_dir.join("strings.xml"),
-        ANDROID_STRINGS.replace("{{LABEL}}", &id.display_name),
+        ANDROID_STRINGS.replace("{{LABEL}}", &xml_escape(&id.display_name)),
     )
     .map_err(|e| format!("write strings.xml: {e}"))?;
     std::fs::write(
@@ -2135,10 +2204,10 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
         src.join("Info.plist"),
         IOS_INFO_PLIST
             .replace("{{NAME}}", name)
-            .replace("{{DISPLAY}}", &id.display_name)
+            .replace("{{DISPLAY}}", &xml_escape(&id.display_name))
             .replace("{{BUNDLE_ID}}", &id.bundle_id)
-            .replace("{{SHORT_VERSION}}", &id.short_version)
-            .replace("{{BUILD_NUMBER}}", &id.build_number)
+            .replace("{{SHORT_VERSION}}", &xml_escape(&id.short_version))
+            .replace("{{BUILD_NUMBER}}", &xml_escape(&id.build_number))
             .replace("{{ICONS}}", if do_icons { IOS_ICON_PLIST } else { "" })
             .replace("{{PERMISSIONS}}", &format!("{plist_perms}{ext_plist}")),
     )
@@ -7055,6 +7124,56 @@ mod tests {
         assert!(!valid_bundle_id("com.acme app")); // space
         assert!(!valid_bundle_id("com.acme-app")); // hyphen
         assert!(!valid_bundle_id("")); // empty
+        // JVM reserved words as segments break the generated `package …;`.
+        assert!(!valid_bundle_id("com.native.app"));
+        assert!(!valid_bundle_id("com.int.thing"));
+        assert!(!valid_bundle_id("com.acme.new"));
+        assert!(!valid_bundle_id("com.Class.app")); // case-insensitive
+        assert!(valid_bundle_id("com.acme.internal")); // near-miss is fine
+    }
+
+    /// An ordinary app name with XML-significant characters must NOT break — or
+    /// inject into — the generated plist / manifest / strings.xml. Regression for
+    /// the unescaped-`withName` codegen defect.
+    #[test]
+    fn xml_escape_neutralises_dangerous_app_names() {
+        assert_eq!(xml_escape("Ben & Jerry's"), "Ben &amp; Jerry&apos;s");
+        assert_eq!(xml_escape("Café <Beta>"), "Café &lt;Beta&gt;");
+        // The attribute-injection attempt becomes inert text, not a new attribute.
+        let evil = "x\" android:debuggable=\"true";
+        let escaped = xml_escape(evil);
+        assert!(!escaped.contains('"'), "quotes must be escaped: {escaped}");
+        assert!(escaped.contains("&quot;"));
+        // The plist-injection attempt can't close the <string>.
+        assert!(!xml_escape("a</string><key>hax</key><string>b").contains("</string>"));
+    }
+
+    /// The bundle-source scan reads the IMMEDIATE string literal only, skips
+    /// comments, and ignores computed args — never reaching forward to an
+    /// unrelated quote. Regression for the byte-scan fragility.
+    #[test]
+    fn scan_bundle_call_is_bounded_and_comment_aware() {
+        // Normal literal.
+        assert_eq!(
+            scan_bundle_call("bundle = Bundle.default |> Bundle.withId \"com.acme.app\"", "withId"),
+            Some("com.acme.app".to_string())
+        );
+        // A computed (non-literal) arg must NOT grab a distant quote (e.g. a URL).
+        let computed = "bundle = Bundle.withName appName\nx = Http.get \"https://evil/\"";
+        assert_eq!(scan_bundle_call(computed, "withName"), None);
+        // A call inside a `--` comment is ignored.
+        let commented = "-- old: Bundle.withId \"com.old.id\"\nbundle = Bundle.withId \"com.new.id\"";
+        assert_eq!(scan_bundle_call(commented, "withId"), Some("com.new.id".to_string()));
+        // Escaped quotes inside the literal are handled.
+        assert_eq!(
+            scan_bundle_call("Bundle.withName \"A \\\"B\\\" C\"", "withName"),
+            Some("A \"B\" C".to_string())
+        );
+        // Word boundary: withId must not match withIdentifier.
+        assert_eq!(scan_bundle_call("Bundle.withIdentifier \"nope\"", "withId"), None);
+        // A withPermission in a comment is not a real declaration.
+        let perm = "-- Bundle.withPermission Bundle.Camera\nbundle = Bundle.withPermission Bundle.Location";
+        assert_eq!(scan_bundle_permissions(perm), vec!["Location".to_string()]);
     }
 
     #[test]

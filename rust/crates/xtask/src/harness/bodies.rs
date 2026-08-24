@@ -2974,8 +2974,8 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// (`surfaces_total` 150 -> 151), so `surfaces.len() + 4` is now 155. The new
 /// surface is registered-gate-uncovered by design — `Std.Spa` is config/Task-
 /// shaped (see the DARK_MODULE_CEILING note in `corpus/stdlib.rs`) and is
-/// covered instead by the wasm render harness (`spa-counter/run_headless.cjs`)
-/// and the kernel-surface gate.
+/// covered instead by the Sky.Spa examples (`examples/60-spa-todos` …
+/// `64-spa-native`, built to wasm) and the kernel-surface gate.
 pub const COVERAGE_LEDGER_EXPECTED: u64 = 155;
 
 /// `xtask coverage-ledger --check`, run in-process.
