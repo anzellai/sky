@@ -984,10 +984,12 @@ fn emit_dep_sections(project_dir: &Path) -> String {
 }
 
 /// Copy the project's fetched external-dependency trees (`.skydeps/` Sky sources,
-/// `sky-ffi/` Go FFI surface) into a generated project so it can rebuild the same
-/// imports. No-op for trees that don't exist (a dep-free app).
+/// `sky-ffi/` Go FFI surface) and its own `native/` extension tree (native
+/// Swift/Kotlin/Java + entitlement/manifest fragments) into a generated project,
+/// so `sky build --target` run there can rebuild the same imports AND link the
+/// same native code. No-op for trees that don't exist (a dep-free app).
 fn propagate_deps(project_dir: &Path, gen_dir: &Path) -> Result<(), String> {
-    for tree in [".skydeps", "sky-ffi"] {
+    for tree in [".skydeps", "sky-ffi", "native"] {
         let from = project_dir.join(tree);
         if from.is_dir() {
             copy_tree(&from, &gen_dir.join(tree))?;
