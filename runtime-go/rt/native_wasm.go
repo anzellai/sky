@@ -334,13 +334,72 @@ func Native_openUrl(url any) any {
 }
 
 // Native_notify is the Std.Native.notify kernel (`String -> String -> Task Error
-// ()`). Requests Notification permission if needed, then shows one. Denial /
-// absence is Err (e.g. an iOS WKWebView disables the Web Notification API).
+// ()`). It shows a real device notification, preferring a NATIVE bridge the
+// generated mobile shells install over the Web Notification API:
+//
+//   1. iOS  — `window.webkit.messageHandlers.skyNative` (a
+//      WKScriptMessageHandlerWithReply the WKWebView shell registers). The
+//      shell's Swift handler drives `UNUserNotificationCenter`, so a real local
+//      notification fires even though iOS WKWebView disables the Web
+//      Notification API. postMessage returns a Promise → Ok/Err.
+//   2. Android — `window.SkyNative.notify(title, body)` (an @JavascriptInterface
+//      the WebView shell installs) drives `NotificationManager`; returns a bool.
+//   3. Web / desktop — the Web Notification API (requestPermission + new
+//      Notification), the original path.
 func Native_notify(title any, body any) any {
 	t := fmt.Sprintf("%v", title)
 	b := fmt.Sprintf("%v", body)
 	return func() any {
-		ctor := js.Global().Get("Notification")
+		win := js.Global()
+
+		// 1. iOS native bridge (WKScriptMessageHandlerWithReply → Promise).
+		if webkit := win.Get("webkit"); webkit.Truthy() {
+			if mh := webkit.Get("messageHandlers"); mh.Truthy() {
+				if sky := mh.Get("skyNative"); sky.Truthy() &&
+					sky.Get("postMessage").Type() == js.TypeFunction {
+					msg := win.Get("Object").New()
+					msg.Set("type", "notify")
+					msg.Set("title", t)
+					msg.Set("body", b)
+					reply := sky.Call("postMessage", msg)
+					// A reply handler returns a Promise; a plain handler returns
+					// undefined — fall through to the Web path if so.
+					if reply.Truthy() && reply.Type() == js.TypeObject {
+						return blockOnJsPromise(reply, func(a []js.Value) SkyResult[any, any] {
+							return Ok[any, any](struct{}{})
+						})
+					}
+				}
+			}
+		}
+
+		// 2. Android native bridge (@JavascriptInterface, synchronous bool). The
+		// injected object is a Java-reflection proxy: its methods are CALLABLE but
+		// property access (`SkyNative.notify` as a value) does not always report
+		// js.TypeFunction, so gate on the object's presence and attempt the call
+		// under recover rather than introspecting the method.
+		if sn := win.Get("SkyNative"); sn.Truthy() {
+			called := false
+			ok := false
+			func() {
+				defer func() { recover() }()
+				res := sn.Call("notify", t, b)
+				called = true
+				// A bool false = the device denied / failed; undefined = the proxy
+				// returned nothing but did not throw (treat as issued).
+				ok = res.Type() != js.TypeBoolean || res.Bool()
+			}()
+			if called {
+				if ok {
+					return Ok[any, any](struct{}{})
+				}
+				return Err[any, any](ErrPermissionDenied("notify: the device denied notifications"))
+			}
+			// The call threw — fall through to the Web path.
+		}
+
+		// 3. Web Notification API (browser / desktop webview).
+		ctor := win.Get("Notification")
 		if !ctor.Truthy() {
 			return Err[any, any](ErrFfi("notifications: unavailable in this runtime"))
 		}

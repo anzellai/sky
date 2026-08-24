@@ -1,4 +1,4 @@
-module Main exposing (main)
+module Main exposing (main, bundle)
 
 -- Sky.Spa — Native capability playground.
 --
@@ -22,6 +22,16 @@ import Std.Ui.Font as Font
 import Std.Ui.Border as Border
 import Std.Ui.Background as Background
 import Std.Native as Native exposing (Coords)
+import Std.Bundle as Bundle exposing (Bundle)
+
+
+-- Declares the OS-level notification permission so `Native.notify` can post a
+-- real system notification through the generated mobile shells' native bridge
+-- (iOS UNUserNotificationCenter / Android POST_NOTIFICATIONS + NotificationManager).
+bundle : Bundle
+bundle =
+    Bundle.default |> Bundle.withName "Sky Native"
+        |> Bundle.withPermission Bundle.Notifications
 
 -- MODEL
 type alias Model =

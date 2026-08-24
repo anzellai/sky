@@ -2018,18 +2018,32 @@ struct {{NAME}}App: App {
 
 const IOS_WEBVIEW_SWIFT: &str = r#"import SwiftUI
 import WebKit
+import UserNotifications
 
 /// SwiftUI wrapper over WKWebView. JS + WebAssembly run by default. A
 /// WKUIDelegate grants in-page media-capture requests (getUserMedia for the
 /// camera / microphone), so a Sky app that declares `Bundle.withPermission
 /// Camera` / `Microphone` works; iOS still shows its own permission prompt the
 /// first time. Geolocation is handled by the app's CLLocationManager (App.swift).
+///
+/// The Coordinator ALSO installs the `skyNative` native bridge: a
+/// WKScriptMessageHandlerWithReply the wasm client calls as
+/// `window.webkit.messageHandlers.skyNative.postMessage({type:"notify",…})`.
+/// This is how `Std.Native.notify` shows a REAL local notification on iOS, where
+/// the Web Notification API is disabled — the handler drives
+/// `UNUserNotificationCenter`, and its reply resolves/rejects the JS Promise so
+/// the Sky `Task` gets Ok / Err. As the center's delegate it also presents the
+/// banner while the app is in the foreground.
 struct WebView: UIViewRepresentable {
     let url: URL
 
     func makeUIView(context: Context) -> WKWebView {
-        let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let cfg = WKWebViewConfiguration()
+        cfg.userContentController.addScriptMessageHandler(
+            context.coordinator, contentWorld: .page, name: "skyNative")
+        let web = WKWebView(frame: .zero, configuration: cfg)
         web.uiDelegate = context.coordinator
+        UNUserNotificationCenter.current().delegate = context.coordinator
         web.load(URLRequest(url: url))
         return web
     }
@@ -2038,7 +2052,8 @@ struct WebView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    final class Coordinator: NSObject, WKUIDelegate {
+    final class Coordinator: NSObject, WKUIDelegate, WKScriptMessageHandlerWithReply,
+        UNUserNotificationCenterDelegate {
         @available(iOS 15.0, *)
         func webView(_ webView: WKWebView,
                      requestMediaCapturePermissionFor origin: WKSecurityOrigin,
@@ -2046,6 +2061,48 @@ struct WebView: UIViewRepresentable {
                      type: WKMediaCaptureType,
                      decisionHandler: @escaping (WKPermissionDecision) -> Void) {
             decisionHandler(.grant)
+        }
+
+        // The native bridge. Each message is `{ type, ... }`; reply(nil, nil) is
+        // success, reply(nil, "msg") rejects the JS Promise with an error.
+        func userContentController(_ ucc: WKUserContentController,
+                                   didReceive message: WKScriptMessage,
+                                   replyHandler: @escaping (Any?, String?) -> Void) {
+            guard let dict = message.body as? [String: Any],
+                  let type = dict["type"] as? String else {
+                replyHandler(nil, "skyNative: malformed message"); return
+            }
+            switch type {
+            case "notify":
+                let title = dict["title"] as? String ?? ""
+                let body = dict["body"] as? String ?? ""
+                let center = UNUserNotificationCenter.current()
+                center.requestAuthorization(options: [.alert, .sound]) { granted, err in
+                    if let err = err { replyHandler(nil, err.localizedDescription); return }
+                    if !granted { replyHandler(nil, "notifications not authorized"); return }
+                    let content = UNMutableNotificationContent()
+                    content.title = title
+                    content.body = body
+                    content.sound = .default
+                    let req = UNNotificationRequest(
+                        identifier: UUID().uuidString, content: content,
+                        trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+                    center.add(req) { addErr in
+                        if let addErr = addErr { replyHandler(nil, addErr.localizedDescription) }
+                        else { replyHandler(nil, nil) }
+                    }
+                }
+            default:
+                replyHandler(nil, "skyNative: unknown message type \(type)")
+            }
+        }
+
+        // Show the banner even while the app is in the foreground.
+        func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                    willPresent notification: UNNotification,
+                                    withCompletionHandler completionHandler:
+                                        @escaping (UNNotificationPresentationOptions) -> Void) {
+            completionHandler([.banner, .sound, .list])
         }
     }
 }
@@ -2131,7 +2188,12 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;{{PERMISSION_IMPORTS}}
+import android.webkit.WebViewClient;
+import android.webkit.JavascriptInterface;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.content.Context;{{PERMISSION_IMPORTS}}
 
 /**
  * Native Android WebView shell for a Sky.Spa client (generated by
@@ -2154,6 +2216,9 @@ public class MainActivity extends Activity {
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);   // the wasm bootstrap needs JS
         s.setDomStorageEnabled(true);
+        if (android.os.Build.VERSION.SDK_INT >= 19) {
+            WebView.setWebContentsDebuggingEnabled(true);  // dev: chrome://inspect
+        }
         web.setWebViewClient(new WebViewClient());  // keep navigation inside the WebView
 {{WEBCHROME}}
         // Android 15 (targetSdk 35) draws edge-to-edge by default, so the WebView
@@ -2178,7 +2243,48 @@ public class MainActivity extends Activity {
 
         setContentView(web);
 {{RUNTIME_REQUEST}}
+        // The `skyNative` native bridge: the wasm client calls
+        // `window.SkyNative.notify(title, body)` and this shows a REAL system
+        // notification via NotificationManager. Std.Native.notify prefers this
+        // over the Web Notification API. @JavascriptInterface methods run on a
+        // background thread and may return a value synchronously to JS.
+        web.addJavascriptInterface(new SkyNativeBridge(this), "SkyNative");
         web.loadUrl(APP_URL);
+    }
+
+    /** JS-reachable native capabilities. Method names are the JS API. */
+    public static class SkyNativeBridge {
+        private final Context ctx;
+        private static final String CHANNEL = "sky_native";
+
+        SkyNativeBridge(Context c) { this.ctx = c; }
+
+        @JavascriptInterface
+        public boolean notify(String title, String body) {
+            try {
+                NotificationManager nm =
+                    (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm == null) return false;
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    nm.createNotificationChannel(new NotificationChannel(
+                        CHANNEL, "Sky", NotificationManager.IMPORTANCE_DEFAULT));
+                }
+                Notification n;
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    n = new Notification.Builder(ctx, CHANNEL)
+                        .setContentTitle(title).setContentText(body)
+                        .setSmallIcon(android.R.drawable.ic_dialog_info).build();
+                } else {
+                    n = new Notification.Builder(ctx)
+                        .setContentTitle(title).setContentText(body)
+                        .setSmallIcon(android.R.drawable.ic_dialog_info).build();
+                }
+                nm.notify((int) (System.currentTimeMillis() & 0x7fffffff), n);
+                return true;
+            } catch (Throwable t) {
+                return false;
+            }
+        }
     }
 }
 "#;
@@ -6873,6 +6979,43 @@ mod tests {
         let (i2, wc2, rt2) = android_permission_java(&notif, false, false);
         assert!(i2.is_empty() && wc2.is_empty());
         assert!(rt2.contains("POST_NOTIFICATIONS"));
+    }
+
+    /// Both mobile shells must install the `skyNative` native notification bridge
+    /// so `Std.Native.notify` shows a REAL local notification — essential on iOS,
+    /// where the Web Notification API is disabled in WKWebView. Regression: pins
+    /// the bridge wiring in the shell templates so it can't be dropped.
+    #[test]
+    fn mobile_shells_wire_the_native_notification_bridge() {
+        // iOS: a WKScriptMessageHandlerWithReply named "skyNative" driving
+        // UNUserNotificationCenter, presenting in the foreground.
+        for needle in [
+            "import UserNotifications",
+            "WKScriptMessageHandlerWithReply",
+            "name: \"skyNative\"",
+            "UNUserNotificationCenter.current()",
+            "UNMutableNotificationContent()",
+            "willPresent notification",
+        ] {
+            assert!(
+                IOS_WEBVIEW_SWIFT.contains(needle),
+                "iOS shell must wire the notification bridge: missing `{needle}`"
+            );
+        }
+        // Android: an @JavascriptInterface object "SkyNative" with notify(), driving
+        // NotificationManager.
+        for needle in [
+            "addJavascriptInterface(new SkyNativeBridge(this), \"SkyNative\")",
+            "@JavascriptInterface",
+            "public boolean notify(String title, String body)",
+            "NotificationManager",
+            "NotificationChannel",
+        ] {
+            assert!(
+                ANDROID_MAIN_ACTIVITY.contains(needle),
+                "Android shell must wire the notification bridge: missing `{needle}`"
+            );
+        }
     }
 
     #[test]
