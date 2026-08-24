@@ -5,7 +5,15 @@ most commonly used browser / webview capabilities, each driven through the
 ordinary TEA loop. It doubles as the **dedicated manual + e2e test harness** for
 the native-capability set.
 
-![Native capabilities playground](screenshot-web-desktop.png)
+The **same view** runs on web, iOS, and Android from one source — one `view`
+function, one wasm client:
+
+| Web | iOS | Android |
+|---|---|---|
+| ![web](screenshot-web-desktop.png) | ![iOS](screenshot-ios.png) | ![Android](screenshot-android.png) |
+
+(The Android shot is live: `net: online` and `lang: en-US` are `isOnline` and
+`language` having fired in the Android WebView.)
 
 Every button is `Cmd.perform (Native.<cap> …) OnResult`, and every capability is
 a **`Task Error a`** — a denial, a timeout, or an unavailable API is a clean
