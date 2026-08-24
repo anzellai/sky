@@ -50,7 +50,7 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1576 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:4999 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:5434 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:143 (toml_value)"
