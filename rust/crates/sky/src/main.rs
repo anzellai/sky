@@ -2093,7 +2093,11 @@ struct WebView: UIViewRepresentable {
                     }
                 }
             default:
-                replyHandler(nil, "skyNative: unknown message type \(type)")
+                // EXTENSION POINT: a custom Std.Native.bridge capability. Add a
+                // `case "yourType":` above (drive PassKit / Apple Pay etc.) and
+                // call replyHandler(jsonReplyString, nil) on success or
+                // replyHandler(nil, "message") to reject the JS Task.
+                replyHandler(nil, "skyNative: no native handler for '\(type)'")
             }
         }
 
@@ -2248,22 +2252,78 @@ public class MainActivity extends Activity {
         // notification via NotificationManager. Std.Native.notify prefers this
         // over the Web Notification API. @JavascriptInterface methods run on a
         // background thread and may return a value synchronously to JS.
-        web.addJavascriptInterface(new SkyNativeBridge(this), "SkyNative");
+        web.addJavascriptInterface(new SkyNativeBridge(this, web), "SkyNative");
         web.loadUrl(APP_URL);
     }
 
     /** JS-reachable native capabilities. Method names are the JS API. */
     public static class SkyNativeBridge {
-        private final Context ctx;
+        private final Activity act;
+        private final WebView web;
         private static final String CHANNEL = "sky_native";
 
-        SkyNativeBridge(Context c) { this.ctx = c; }
+        SkyNativeBridge(Activity a, WebView w) { this.act = a; this.web = w; }
+
+        private Context ctx() { return act; }
+
+        // Std.Native.bridge → here. Dispatch a custom capability `name` with a JSON
+        // `payload`, then resolve the JS Task by calling back
+        // window.__skyBridgeCb[cbId](ok, jsonReply). The work may be async; call
+        // reply() when done. EXTENSION POINT: add your capability to handleBridge.
+        @JavascriptInterface
+        public void call(String name, String payload, String cbId) {
+            String reply = handleBridge(name, payload);
+            if (reply != null) {
+                replyOk(cbId, reply);
+            } else {
+                replyErr(cbId, "no native handler for '" + name + "'");
+            }
+        }
+
+        // EXTENSION POINT — return a JSON reply for `name`, or null if unhandled
+        // (add e.g. a Google Pay case here). Runs on a background thread; for UI
+        // work post to `act`. For an ASYNC capability, return null here, keep the
+        // cbId, do the work, then call replyOk(cbId, json) / replyErr(cbId, msg).
+        protected String handleBridge(String name, String payload) {
+            return null;
+        }
+
+        protected void replyOk(String cbId, String jsonReply) { reply(cbId, true, jsonReply); }
+        protected void replyErr(String cbId, String message) { reply(cbId, false, message); }
+
+        private void reply(String cbId, boolean ok, String data) {
+            final String js = "window.__skyBridgeCb && window.__skyBridgeCb['" + cbId
+                + "'] && window.__skyBridgeCb['" + cbId + "']("
+                + (ok ? "true" : "false") + "," + jsonString(data) + ")";
+            act.runOnUiThread(new Runnable() {
+                @Override public void run() { web.evaluateJavascript(js, null); }
+            });
+        }
+
+        // Encode an arbitrary Java string as a JS string literal (safe to embed).
+        private static String jsonString(String s) {
+            StringBuilder b = new StringBuilder("\"");
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case '"': b.append("\\\""); break;
+                    case '\\': b.append("\\\\"); break;
+                    case '\n': b.append("\\n"); break;
+                    case '\r': b.append("\\r"); break;
+                    case '\t': b.append("\\t"); break;
+                    default:
+                        if (c < 0x20) { b.append(String.format("\\u%04x", (int) c)); }
+                        else { b.append(c); }
+                }
+            }
+            return b.append("\"").toString();
+        }
 
         @JavascriptInterface
         public boolean notify(String title, String body) {
             try {
                 NotificationManager nm =
-                    (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+                    (NotificationManager) ctx().getSystemService(Context.NOTIFICATION_SERVICE);
                 if (nm == null) return false;
                 if (android.os.Build.VERSION.SDK_INT >= 26) {
                     nm.createNotificationChannel(new NotificationChannel(
@@ -2271,11 +2331,11 @@ public class MainActivity extends Activity {
                 }
                 Notification n;
                 if (android.os.Build.VERSION.SDK_INT >= 26) {
-                    n = new Notification.Builder(ctx, CHANNEL)
+                    n = new Notification.Builder(ctx(), CHANNEL)
                         .setContentTitle(title).setContentText(body)
                         .setSmallIcon(android.R.drawable.ic_dialog_info).build();
                 } else {
-                    n = new Notification.Builder(ctx)
+                    n = new Notification.Builder(ctx())
                         .setContentTitle(title).setContentText(body)
                         .setSmallIcon(android.R.drawable.ic_dialog_info).build();
                 }
@@ -7005,7 +7065,7 @@ mod tests {
         // Android: an @JavascriptInterface object "SkyNative" with notify(), driving
         // NotificationManager.
         for needle in [
-            "addJavascriptInterface(new SkyNativeBridge(this), \"SkyNative\")",
+            "addJavascriptInterface(new SkyNativeBridge(this, web), \"SkyNative\")",
             "@JavascriptInterface",
             "public boolean notify(String title, String body)",
             "NotificationManager",
@@ -7014,6 +7074,30 @@ mod tests {
             assert!(
                 ANDROID_MAIN_ACTIVITY.contains(needle),
                 "Android shell must wire the notification bridge: missing `{needle}`"
+            );
+        }
+    }
+
+    /// Both mobile shells must expose the user-extensible `Native.bridge`
+    /// extension point (iOS default case → handler; Android SkyNative.call →
+    /// handleBridge + __skyBridgeCb callback) so an app can add a native
+    /// capability (payments, biometrics…) without changing the compiler.
+    #[test]
+    fn mobile_shells_expose_the_bridge_extension_point() {
+        for needle in ["no native handler for", "replyHandler"] {
+            assert!(
+                IOS_WEBVIEW_SWIFT.contains(needle),
+                "iOS shell must route custom bridge calls: missing `{needle}`"
+            );
+        }
+        for needle in [
+            "public void call(String name, String payload, String cbId)",
+            "handleBridge",
+            "__skyBridgeCb",
+        ] {
+            assert!(
+                ANDROID_MAIN_ACTIVITY.contains(needle),
+                "Android shell must route custom bridge calls: missing `{needle}`"
             );
         }
     }

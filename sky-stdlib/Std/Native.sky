@@ -21,6 +21,7 @@ module Std.Native exposing
     , pickFile
     , pickImage
     , capturePhoto
+    , bridge
     )
 
 -- | `Std.Native` — typed access to native device capabilities from a Sky.Spa
@@ -239,3 +240,37 @@ pickImage =
 capturePhoto : () -> Task Error PickedFile
 capturePhoto =
     Ffi.kernel "Native_capturePhoto"
+
+
+-- | Call a CUSTOM native capability the app registers itself — the extension
+-- point for anything `Std.Native` doesn't ship (payments, biometrics, contacts,
+-- push, …). `name` selects the handler; `payload` is a JSON string handed to it;
+-- the result is the handler's JSON reply. Encode/decode with `Std.Codec` /
+-- `Std.Json`. Register a handler per platform (all optional):
+--
+--   * Web / desktop — a JS function on `window.skyNativeHandlers`:
+--
+--         window.skyNativeHandlers = window.skyNativeHandlers || {}
+--         window.skyNativeHandlers["pay"] = async (payloadJson) => {
+--             const req = JSON.parse(payloadJson)
+--             // … drive the Payment Request API / your PSP …
+--             return JSON.stringify({ token })   // resolve the Task with this
+--         }
+--
+--   * iOS — extend the generated shell's `skyNative` handler (a `native/*.swift`
+--     snippet): on your `type`, drive PassKit / Apple Pay and reply the JSON.
+--   * Android — extend `SkyNative` (@JavascriptInterface): drive Google Pay and
+--     call back `window.__skyBridgeCb[cbId](true, jsonReply)`.
+--
+-- `Err` when no handler is registered for `name` — the Task never hangs. This is
+-- how a Sky app adds a native capability WITHOUT changing the compiler:
+--
+--     Pay ->
+--         ( model
+--         , Cmd.perform
+--             (Native.bridge "pay" (Codec.toJson payReqCodec req))
+--             Paid
+--         )
+bridge : String -> String -> Task Error String
+bridge =
+    Ffi.kernel "Native_bridge"

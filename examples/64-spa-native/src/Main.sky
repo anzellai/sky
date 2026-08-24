@@ -96,6 +96,8 @@ type Msg
     | PickAny
     | CapturePhoto
     | Picked (Result Error Native.PickedFile)
+    | CallBridge
+    | Bridged (Result Error String)
     | Did String (Result Error ())
 
 
@@ -285,6 +287,19 @@ update msg model =
         Picked (Err e) ->
             ( { model | log = "pick failed: " ++ Error.toString e }, Cmd.none )
 
+        CallBridge ->
+            ( model
+            , Cmd.perform
+                  (Native.bridge "echo" ("{\"draft\":\"" ++ model.draft ++ "\"}"))
+                  Bridged
+            )
+
+        Bridged (Ok reply) ->
+            ( { model | log = "bridge replied: " ++ reply }, Cmd.none )
+
+        Bridged (Err e) ->
+            ( { model | log = "bridge: " ++ Error.toString e }, Cmd.none )
+
         Did what (Ok _) ->
             ( { model | log = what }, Cmd.none )
 
@@ -415,6 +430,14 @@ filesSection model =
               Ui.image
                   [ Ui.width (Ui.maximum 200 Ui.fill), Border.rounded 8 ]
                   { src = model.preview, description = "picked image" }
+        , Ui.el
+              [ Font.size 15, Font.bold ]
+              (Ui.text "Custom capability (Native.bridge)")
+        , Ui.el
+              [ Font.size 13, Font.color (Ui.rgb255 90 96 108) ]
+              (Ui.text
+                  "Calls a handler the app registers itself — the extension point for payments, biometrics, …")
+        , Ui.wrappedRow [ Ui.spacing 8 ] [ btn "Call \"echo\"" CallBridge ]
         ]
 
 

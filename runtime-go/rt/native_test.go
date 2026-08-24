@@ -102,4 +102,5 @@ func TestNativeCapabilitiesAreErrOffClient(t *testing.T) {
 	// The 2-arg capabilities.
 	assertErrThunk("storageSet", Native_storageSet(nil, nil))
 	assertErrThunk("notify", Native_notify(nil, nil))
+	assertErrThunk("bridge", Native_bridge(nil, nil))
 }

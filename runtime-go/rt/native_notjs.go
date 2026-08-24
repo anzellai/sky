@@ -136,3 +136,10 @@ func Native_capturePhoto(_ any) any {
 			"Native.capturePhoto is a client-only capability (no camera in this runtime)"))
 	}
 }
+
+func Native_bridge(_ any, _ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.bridge is a client-only capability (no native bridge in this runtime)"))
+	}
+}

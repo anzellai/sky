@@ -35,6 +35,37 @@ Android `NotificationManager`) so it posts a real notification even where the We
 Notification API is unavailable. The pickers use `<input type="file">`
 (`accept="image/*"` / `capture`), so on mobile they open the gallery / camera.
 
+## Extending it yourself — `Native.bridge`
+
+Anything `Std.Native` doesn't ship (payments, biometrics, contacts, push…) is a
+one-liner from Sky plus a handler you register — **no compiler changes**:
+
+```elm
+Cmd.perform (Native.bridge "pay" (Codec.toJson payReqCodec req)) Paid
+```
+
+`Native.bridge name payloadJson : Task Error String` calls a handler you provide,
+resolved in this order (all optional):
+
+- **Web / any webview** — a JS function, the simplest and most portable:
+  ```js
+  window.skyNativeHandlers = window.skyNativeHandlers || {}
+  window.skyNativeHandlers["pay"] = async (payloadJson) => {
+      const req = JSON.parse(payloadJson)
+      // …drive the Payment Request API / your PSP…
+      return JSON.stringify({ token })   // resolves the Sky Task
+  }
+  ```
+  Registered in the page, so it works on web AND inside the iOS/Android webviews.
+- **iOS native** — add a `case "pay":` to the shell's `skyNative`
+  `WKScriptMessageHandlerWithReply` (drive PassKit / Apple Pay), reply the JSON.
+- **Android native** — extend `SkyNativeBridge.handleBridge(name, payload)` in
+  the shell (drive Google Pay), or call back `__skyBridgeCb[cbId]` for async.
+
+A missing handler returns `Err` — the Task never hangs. (Apple Pay / Google Pay
+still need your merchant account, a payment processor, and — for iOS native — the
+`com.apple.developer.in-app-payments` entitlement on a signed build.)
+
 Note the effect-boundary discipline: a **write** returns `Task Error ()`, a
 **read** returns `Task Error <value>`, and a read that can legitimately find
 nothing (`storageGet`) returns `Task Error (Maybe String)` — a missing key is

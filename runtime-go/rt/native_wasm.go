@@ -4,8 +4,13 @@ package rt
 
 import (
 	"fmt"
+	"strconv"
 	"syscall/js"
 )
+
+// bridgeSeq numbers async Android bridge callbacks. wasm is single-threaded
+// (cooperative), so a plain counter is race-free.
+var bridgeSeq int
 
 // blockOnJsPromise bridges a JS Promise into a blocking Sky Result. It registers
 // then/catch callbacks, blocks the calling (perform) goroutine on a channel they
@@ -558,5 +563,122 @@ func Native_batteryStatus(_ any) any {
 				Level:    bm.Get("level").Float(),
 			})
 		})
+	}
+}
+
+// Native_bridge is the Std.Native.bridge kernel (`String -> String -> Task Error
+// String`) — the USER-EXTENSIBLE native call. It sends `{name, payload}` (payload
+// a JSON string) to a handler the app registers, and returns the handler's JSON
+// reply. Resolution order:
+//
+//  1. Web/desktop — `window.skyNativeHandlers[name](payload)`, a JS function the
+//     app registers (may return a value or a Promise). Checked FIRST so a user's
+//     explicit handler wins — and it works in EVERY webview (web, iOS, Android),
+//     so a capability JS can do (e.g. the Payment Request API) needs no native
+//     code. It also makes a custom capability testable in a plain browser.
+//  2. iOS — `window.webkit.messageHandlers.skyNative` (a
+//     WKScriptMessageHandlerWithReply); the shell's Swift `default` case routes
+//     unknown types to the user's native extension. postMessage returns a Promise.
+//  3. Android — `window.SkyNative.call(name, payload, cbId)`; the Java shell does
+//     the (possibly async) native work and calls back `window.__skyBridgeCb[cbId]`.
+//
+// `Err` when no handler is registered for `name` — never a hang.
+func Native_bridge(name any, payload any) any {
+	n := fmt.Sprintf("%v", name)
+	p := fmt.Sprintf("%v", payload)
+	return func() any {
+		global := js.Global()
+
+		// 1. Web / desktop JS handler (app-registered; wins everywhere).
+		if handlers := global.Get("skyNativeHandlers"); handlers.Truthy() {
+			if h := handlers.Get(n); h.Type() == js.TypeFunction {
+				res := h.Invoke(p)
+				if res.Type() == js.TypeObject && res.Get("then").Type() == js.TypeFunction {
+					return blockOnJsPromise(res, func(a []js.Value) SkyResult[any, any] {
+						s := ""
+						if len(a) > 0 {
+							if a[0].Type() == js.TypeString {
+								s = a[0].String()
+							} else if a[0].Truthy() {
+								s = global.Get("JSON").Call("stringify", a[0]).String()
+							}
+						}
+						return Ok[any, any](s)
+					})
+				}
+				if res.Type() == js.TypeString {
+					return Ok[any, any](res.String())
+				}
+				if res.Truthy() {
+					return Ok[any, any](global.Get("JSON").Call("stringify", res).String())
+				}
+				return Ok[any, any]("")
+			}
+		}
+
+		// 2. iOS reply-Promise bridge.
+		if webkit := global.Get("webkit"); webkit.Truthy() {
+			if mh := webkit.Get("messageHandlers"); mh.Truthy() {
+				if sky := mh.Get("skyNative"); sky.Truthy() &&
+					sky.Get("postMessage").Type() == js.TypeFunction {
+					msg := global.Get("Object").New()
+					msg.Set("type", n)
+					msg.Set("payload", p)
+					reply := sky.Call("postMessage", msg)
+					if reply.Truthy() && reply.Type() == js.TypeObject {
+						return blockOnJsPromise(reply, func(a []js.Value) SkyResult[any, any] {
+							s := ""
+							if len(a) > 0 && a[0].Type() == js.TypeString {
+								s = a[0].String()
+							}
+							return Ok[any, any](s)
+						})
+					}
+				}
+			}
+		}
+
+		// 3. Android async callback bridge.
+		if sn := global.Get("SkyNative"); sn.Truthy() && sn.Get("call").Truthy() {
+			reg := global.Get("__skyBridgeCb")
+			if !reg.Truthy() {
+				reg = global.Get("Object").New()
+				global.Set("__skyBridgeCb", reg)
+			}
+			bridgeSeq++
+			cbId := "cb" + strconv.Itoa(bridgeSeq)
+			ch := make(chan SkyResult[any, any], 1)
+			var resolver js.Func
+			resolver = js.FuncOf(func(this js.Value, a []js.Value) any {
+				ok := len(a) > 0 && a[0].Truthy()
+				data := ""
+				if len(a) > 1 && a[1].Type() == js.TypeString {
+					data = a[1].String()
+				}
+				reg.Delete(cbId)
+				resolver.Release()
+				if ok {
+					ch <- Ok[any, any](data)
+				} else {
+					ch <- Err[any, any](ErrFfi("native bridge '" + n + "': " + data))
+				}
+				return nil
+			})
+			reg.Set(cbId, resolver)
+			called := false
+			func() {
+				defer func() { recover() }()
+				sn.Call("call", n, p, cbId)
+				called = true
+			}()
+			if called {
+				return <-ch
+			}
+			reg.Delete(cbId)
+			resolver.Release()
+			// fall through — this SkyNative has no `call`.
+		}
+
+		return Err[any, any](ErrFfi("native bridge: no handler registered for '" + n + "'"))
 	}
 }
