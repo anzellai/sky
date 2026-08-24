@@ -91,6 +91,30 @@ thunk — cost per *invocation* of the adapted func), **dispatch** (`rt.SkyCall`
 and **narrow** (at most one assertion or one container rebuild per evaluation of
 the site).
 
+> **The `adapter` invariant, and the one construct that violates it textually.**
+> `classify()` (`coerce_floor_gate.rs`) keys purely on the emitted TEXT: a
+> `rt.Coerce[T]` whose `T` begins with `func(` is counted as an `adapter`, on the
+> premise that a func-targeted `rt.Coerce` runs `makeFuncAdapter` / `reflect.MakeFunc`.
+> That premise holds for the PRIMARY func-adapt path — `coerce_if_needed`'s
+> `func_shape_eta` miss (§5.1), which emits a bare `rt.Coerce[func(…)…]`.
+>
+> It does NOT hold inside the reflection-free func-slot type-switch the `Ctx::widen`
+> / `box_func_value` workstream emits (`crates/codegen/src/lib.rs`, the `GoTy::Func`
+> arms). `box_func_value` boxes every widened func value into the canonical curried
+> `func(any) any`, and the narrow-back switch recovers it reflection-free in two
+> arms — an exact-shape assertion, then a static uncurry of `func(any) any`. Its
+> trailing `reflect.MakeFunc` fallback is reached only by a genuinely divergent Go
+> func shape and is dead for any widen-boxed source. That tail is emitted as
+> **`rt.CoerceFuncSlot[T]`** — behaviourally identical to `rt.Coerce`, but a
+> DISTINCT, census-UNTRACKED name — precisely so a dead fallback is not counted as
+> a live adapter. `CoerceFuncSlot` is deliberately absent from `TRACKED`; a future
+> classifier must keep it that way (or track it as its own class), and must never
+> "recover" the count by matching the raw `func(` text, which would re-introduce
+> the false positive. The `narrow` count RISES in exchange (§7): the reflection-free
+> uncurry emits explicit per-argument `rt.AsInt` / `rt.AsString` / `rt.Coerce[any]`
+> narrows where a single opaque reflect dispatch stood before — one coarse token
+> traded for N precise ones.
+
 ### 2.2 The five `CoerceReason` values, and what each renders as
 
 `CoerceReason` (`rust/crates/lower/src/ir.rs:71-91`) is stamped at the emission

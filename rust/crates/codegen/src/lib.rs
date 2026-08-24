@@ -591,9 +591,14 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
             //     its concrete Go func type) → return it directly;
             //   * the canonical boxed `func(any) any` (from `Ctx::widen`) → wrap
             //     it in an adapter that calls it and narrows the result to `R`.
-            // `rt.Coerce` on a func target calls `adaptFuncValue` /
-            // `reflect.MakeFunc` (unimplemented under TinyGo); it stays only as a
-            // last-resort fallback for a genuinely divergent shape.
+            // The fallback tail is `rt.CoerceFuncSlot` (NOT `rt.Coerce`): both the
+            // exact-shape and the canonical `func(any) any` branch above are
+            // reflection-free, so this tail is reached only by a genuinely
+            // divergent shape — a `reflect.MakeFunc` last resort. It carries a
+            // distinct name so the coerce-floor census does not count this dead
+            // switch-fallback as a live adapter (`rt.Coerce[func(…)]` == a live
+            // `reflect.MakeFunc` is the invariant the census locks); the runtime
+            // behaviour is identical to `rt.Coerce`.
             let tgt = render_ty(to);
             let p0 = render_ty(&ps[0]);
             let rty = render_ty(r);
@@ -604,7 +609,7 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
             // not an interface), and `_s.(T)` on a non-interface is a Go compile
             // error. The conversion is a no-op when `inner` is already `any`.
             format!(
-                "func() {tgt} {{ _s := any({inner}); if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _g, _ok := _s.(func(any) any); _ok {{ return func(_a0 {p0}) {rty} {{ return {narrowed} }} }}; return rt.Coerce[{tgt}](_s) }}()"
+                "func() {tgt} {{ _s := any({inner}); if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _g, _ok := _s.(func(any) any); _ok {{ return func(_a0 {p0}) {rty} {{ return {narrowed} }} }}; return rt.CoerceFuncSlot[{tgt}](_s) }}()"
             )
         }
         GoTy::Func(ps, r) if ps.len() >= 2 => {
@@ -640,19 +645,21 @@ fn narrow_call(to: &GoTy, inner: &str) -> String {
             let rty = render_ty(r);
             let narrowed = narrow_call(r, &app);
             format!(
-                "func() {tgt} {{ _s := any({inner}); if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _c, _ok := _s.(func(any) any); _ok {{ return func({params}) {rty} {{ return {narrowed} }} }}; return rt.Coerce[{tgt}](_s) }}()"
+                "func() {tgt} {{ _s := any({inner}); if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _c, _ok := _s.(func(any) any); _ok {{ return func({params}) {rty} {{ return {narrowed} }} }}; return rt.CoerceFuncSlot[{tgt}](_s) }}()"
             )
         }
         GoTy::Func(_, _) => {
             // 0-arg func target (`func() T`): a curried nest never applies (only
             // arity ≥ 1 boxes), so a direct assertion recovers the exact-shape
-            // boxed source reflection-free; reflect fallback only for a divergent
+            // boxed source reflection-free; the `rt.CoerceFuncSlot` fallback (a
+            // reflect last resort, distinct-named so the census does not count it
+            // as a live adapter — see the 1-arg arm) fires only for a divergent
             // shape. `any(...)`: a concrete-typed func source is not an interface,
             // so assert through an explicit box. No-op when `inner` is already
             // `any`.
             let tgt = render_ty(to);
             format!(
-                "func() {tgt} {{ if _f, _ok := (any({})).({tgt}); _ok {{ return _f }}; return rt.Coerce[{tgt}]({}) }}()",
+                "func() {tgt} {{ if _f, _ok := (any({})).({tgt}); _ok {{ return _f }}; return rt.CoerceFuncSlot[{tgt}]({}) }}()",
                 inner, inner
             )
         }

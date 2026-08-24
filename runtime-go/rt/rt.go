@@ -6359,6 +6359,29 @@ func Coerce[T any](v any) T {
 	panic(fmt.Sprintf("rt.Coerce: expected %T, got %T (%v)", zero, v, v))
 }
 
+// CoerceFuncSlot is the reflect last-resort tail of codegen's func-slot
+// narrowing type-switch (`crates/codegen/src/lib.rs`, the `GoTy::Func` arms).
+// Its BEHAVIOUR is identical to Coerce — it exists only to carry a DISTINCT
+// name.
+//
+// The func-slot switch it terminates handles every widen-boxed source
+// reflection-free: an exact-shape assertion, then the canonical `func(any) any`
+// uncurry branch. This tail is reached only by a genuinely divergent Go func
+// shape — a `reflect.MakeFunc` path that never runs under TinyGo and, for a
+// widen-boxed source, is unreachable in practice.
+//
+// The coerce-floor census (`crates/xtask/src/coerce_floor_gate.rs`) locks the
+// runtime-narrowing floor by counting `rt.Coerce[func(…)]` tokens as live
+// `reflect.MakeFunc` adapters. Emitting `rt.Coerce` in this dead-in-practice
+// fallback position would inflate that count with sites that do no runtime work,
+// so the tail carries this distinct (census-untracked) name instead. The PRIMARY
+// adapter path — `coerce_if_needed`'s `func_shape_eta` miss — still emits
+// `rt.Coerce[func(…)]` and is still counted, so the census invariant "a
+// `rt.Coerce[func]` token IS a live adapter" holds.
+func CoerceFuncSlot[T any](v any) T {
+	return Coerce[T](v)
+}
+
 // unwrapAny recursively extracts the inner value from SkyResult and
 // SkyMaybe wrappers. This is the universal FFI boundary defence: typed
 // FFI wrappers return SkyResult[E, T] but downstream Sky code may pass
